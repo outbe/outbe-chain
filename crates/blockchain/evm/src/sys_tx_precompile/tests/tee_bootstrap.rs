@@ -266,13 +266,14 @@ fn run_bootstrap_v1(provider: &mut HashMapStorageProvider, payload: TeeBootstrap
     );
     provider.enter(|storage| {
         let input = SystemTx::TeeBootstrap { payload }.encode().unwrap();
+        let host = crate::test_support::DomainEvmHost::new();
         dispatch_system_tx_domain(
-            &crate::test_support::DomainEvmHost::new(),
             storage,
             &input,
             SYSTEM_ADDRESS,
             U256::ZERO,
             DispatchAuthorities {
+                host: &host,
                 tee_attestation_v1: &activation,
             },
         )

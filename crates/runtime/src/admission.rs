@@ -469,8 +469,7 @@ where
     P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
     read_gated_finalized_local_tee_admission_with_resident_offer(
-        protocol,
-        provider,
+        (protocol, provider),
         chain,
         identity,
         anchors,
@@ -482,8 +481,7 @@ where
 }
 
 pub(crate) fn read_gated_finalized_local_tee_admission_with_resident_offer<P, F>(
-    protocol: &dyn EngineProtocolState,
-    provider: &P,
+    (protocol, provider): (&dyn EngineProtocolState, &P),
     chain: RegistryChainIdentity,
     identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
     anchors: &mut TeeLeaseGuardAnchorsV1,
@@ -544,8 +542,7 @@ where
     let validator_now =
         read_local_tee_admission_at_block(protocol, provider, chain, identity, head)?;
     try_arm_validator_tee_gate(
-        protocol,
-        provider,
+        (protocol, provider),
         finalized,
         (fullnode_now, validator_now),
         (gate, anchor),
@@ -555,8 +552,7 @@ where
 }
 
 fn try_arm_validator_tee_gate<P, F>(
-    protocol: &dyn EngineProtocolState,
-    provider: &P,
+    (protocol, provider): (&dyn EngineProtocolState, &P),
     finalized: alloy_eips::BlockNumHash,
     (fullnode_now, validator_now): (
         outbe_engine::validators::LocalTeeRuntimeAdmissionV1,

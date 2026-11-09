@@ -563,12 +563,14 @@ fn retire_finalized_pending_boundary(
 }
 
 fn validate_unfinalized_pending_boundary(
-    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    (protocol, node): (
+        &dyn crate::protocol_state::EngineProtocolState,
+        &OutbeFullNode,
+    ),
     snapshot: PendingDkgBoundarySnapshot,
     storage_dir: &std::path::Path,
     key_backend: &bls::KeyBackend,
     local_consensus_key: &bls12381::PublicKey,
-    node: &OutbeFullNode,
 ) -> Result<Option<PendingDkgBoundarySnapshot>> {
     let Ok(boundary_output) = decode_boundary_output(&snapshot.artifact).inspect_err(|error| {
         quarantine_pending_dkg_boundary_snapshot(
@@ -648,11 +650,13 @@ fn check_unfinalized_pending_private_state(
 }
 
 pub(in crate::stack) fn recover_pending_dkg_boundary_snapshot(
-    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    (protocol, node): (
+        &dyn crate::protocol_state::EngineProtocolState,
+        &OutbeFullNode,
+    ),
     storage_dir: &std::path::Path,
     key_backend: &bls::KeyBackend,
     local_consensus_key: &bls12381::PublicKey,
-    node: &OutbeFullNode,
     recovered_boundary: Option<&(u64, DkgBoundaryArtifact)>,
 ) -> Result<Option<PendingDkgBoundarySnapshot>> {
     let Some(snapshot) = load_or_quarantine_pending_boundary(storage_dir, key_backend) else {
@@ -678,22 +682,23 @@ pub(in crate::stack) fn recover_pending_dkg_boundary_snapshot(
         return Ok(None);
     }
     validate_unfinalized_pending_boundary(
-        protocol,
+        (protocol, node),
         snapshot,
         storage_dir,
         key_backend,
         local_consensus_key,
-        node,
     )
 }
 
 pub(in crate::stack) fn restore_pending_dkg_activation(
-    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    (protocol, node): (
+        &dyn crate::protocol_state::EngineProtocolState,
+        &OutbeFullNode,
+    ),
     snapshot: PendingDkgBoundarySnapshot,
     storage_dir: &std::path::Path,
     key_backend: &bls::KeyBackend,
     local_consensus_key: &bls12381::PublicKey,
-    node: &OutbeFullNode,
 ) -> Result<RestoredPendingDkgActivation> {
     let output = decode_boundary_output(&snapshot.artifact)
         .wrap_err("failed to decode pending DKG output during runtime restore")?;

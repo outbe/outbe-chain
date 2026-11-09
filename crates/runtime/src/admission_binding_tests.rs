@@ -30,8 +30,7 @@ fn validator_gate_stays_pending_after_tee_join_until_validator_binding_and_offer
 
     let admission_at_join =
         crate::admission::read_gated_finalized_local_tee_admission_with_resident_offer(
-            &crate::OutbeRuntime::new(),
-            &provider_at_join,
+            (&crate::OutbeRuntime::new(), &provider_at_join),
             chain,
             identity,
             &mut anchors,
@@ -72,8 +71,7 @@ fn validator_gate_stays_pending_after_tee_join_until_validator_binding_and_offer
 
     let admission_at_stake =
         crate::admission::read_gated_finalized_local_tee_admission_with_resident_offer(
-            &crate::OutbeRuntime::new(),
-            &provider_at_stake,
+            (&crate::OutbeRuntime::new(), &provider_at_stake),
             chain,
             identity,
             &mut anchors,
@@ -94,8 +92,7 @@ fn validator_gate_stays_pending_after_tee_join_until_validator_binding_and_offer
     };
     let admission_after_restart =
         crate::admission::read_gated_finalized_local_tee_admission_with_resident_offer(
-            &crate::OutbeRuntime::new(),
-            &provider_at_stake,
+            (&crate::OutbeRuntime::new(), &provider_at_stake),
             chain,
             identity,
             &mut dual_anchors,
@@ -137,8 +134,7 @@ async fn validator_gate_never_arms_or_signals_armed_on_terminal_rejection_or_off
     };
     let jailed_verdict =
         crate::admission::read_gated_finalized_local_tee_admission_with_resident_offer(
-            &crate::OutbeRuntime::new(),
-            &jailed_provider,
+            (&crate::OutbeRuntime::new(), &jailed_provider),
             chain,
             identity,
             &mut anchors,
@@ -199,8 +195,7 @@ async fn validator_gate_never_arms_or_signals_armed_on_terminal_rejection_or_off
     };
     assert_eq!(
         crate::admission::read_gated_finalized_local_tee_admission_with_resident_offer(
-            &crate::OutbeRuntime::new(),
-            &mismatch_provider,
+            (&crate::OutbeRuntime::new(), &mismatch_provider),
             chain,
             identity,
             &mut mismatch_anchors,
@@ -255,8 +250,7 @@ async fn validator_gate_never_arms_or_signals_armed_on_terminal_rejection_or_off
     };
     let wrong_offer = alloy_primitives::B256::repeat_byte(0xEE);
     let offer_err = crate::admission::read_gated_finalized_local_tee_admission_with_resident_offer(
-        &crate::OutbeRuntime::new(),
-        &ready_provider,
+        (&crate::OutbeRuntime::new(), &ready_provider),
         chain,
         identity,
         &mut offer_anchors,
@@ -289,8 +283,7 @@ async fn validator_gate_never_arms_or_signals_armed_on_terminal_rejection_or_off
     };
     assert_eq!(
         crate::admission::read_gated_finalized_local_tee_admission_with_resident_offer(
-            &crate::OutbeRuntime::new(),
-            &expired_now_provider,
+            (&crate::OutbeRuntime::new(), &expired_now_provider),
             chain,
             identity,
             &mut expired_anchors,
@@ -337,8 +330,7 @@ async fn validator_gate_never_arms_or_signals_armed_on_terminal_rejection_or_off
     };
     assert!(
         crate::admission::read_gated_finalized_local_tee_admission_with_resident_offer(
-            &crate::OutbeRuntime::new(),
-            &failing_provider,
+            (&crate::OutbeRuntime::new(), &failing_provider),
             chain,
             identity,
             &mut failing_anchors,

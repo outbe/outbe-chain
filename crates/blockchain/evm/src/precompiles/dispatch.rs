@@ -301,9 +301,9 @@ impl DispatchCall<'_> {
         let storage = StorageHandle::new(provider);
         if self.inputs.bytecode_address == OUTBE_SYSTEM_TX_ADDRESS {
             crate::sys_tx_precompile::dispatch_with_runtime(
-                self.host.as_ref(),
                 storage,
                 crate::sys_tx_precompile::SystemTxRuntime {
+                    host: self.host.as_ref(),
                     tee_attestation_v1: runtime.tee_attestation_v1,
                 },
                 self.data.as_ref(),

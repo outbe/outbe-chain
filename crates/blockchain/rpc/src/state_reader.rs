@@ -1,12 +1,14 @@
 //! Chain reads behind the `outbe_*` RPC methods.
 //!
 //! The handler keeps the RPC wire types. This trait supplies the chain facts.
-//! Callers pass the installed reader. [`UninstalledRpcStateReader`] fails closed.
+//! Callers pass the installed reader.
 //! Emission percent is a constant shared with the emission crate and does not
 //! read chain state.
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::error::{PrecompileError, Result};
+#[cfg(test)]
+use outbe_primitives::error::PrecompileError;
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::tribute_encryption::EncryptedTributeV2;
 use outbe_primitives::validator_dto::EpochSnapshot;
@@ -83,76 +85,6 @@ pub trait OutbeRpcStateReader: Send + Sync {
         timestamp: u64,
         legacy_direct_dev_source: bool,
     ) -> Result<bool>;
-}
-
-/// Fail-closed reader used when no composition root installed chain reads.
-pub struct UninstalledRpcStateReader;
-
-fn not_installed<T>() -> Result<T> {
-    Err(PrecompileError::storage(
-        "rpc state reader is not installed",
-    ))
-}
-
-impl OutbeRpcStateReader for UninstalledRpcStateReader {
-    fn validators(&self, _storage: StorageHandle<'_>) -> Result<Vec<ValidatorInfo>> {
-        not_installed()
-    }
-
-    fn validator(
-        &self,
-        _storage: StorageHandle<'_>,
-        _address: Address,
-    ) -> Result<Option<ValidatorDetailInfo>> {
-        not_installed()
-    }
-
-    fn epoch(&self, _storage: StorageHandle<'_>) -> Result<EpochInfo> {
-        not_installed()
-    }
-
-    fn epoch_snapshot(&self, _storage: StorageHandle<'_>) -> Result<EpochSnapshot> {
-        not_installed()
-    }
-
-    fn stake(&self, _storage: StorageHandle<'_>, _address: Address) -> Result<U256> {
-        not_installed()
-    }
-
-    fn slash_info(&self, _storage: StorageHandle<'_>, _address: Address) -> Result<SlashInfo> {
-        not_installed()
-    }
-
-    fn slash_config(&self, _storage: StorageHandle<'_>) -> Result<SlashConfig> {
-        not_installed()
-    }
-
-    fn participation(
-        &self,
-        _storage: StorageHandle<'_>,
-        _address: Address,
-    ) -> Result<ParticipationInfo> {
-        not_installed()
-    }
-
-    fn tribute_words(
-        &self,
-        _storage: StorageHandle<'_>,
-        _subject: &TributeSourceSubject,
-        _tribute_id: WwdEntityId,
-    ) -> Result<TributeWords> {
-        not_installed()
-    }
-
-    fn live_upgrade_candidate(
-        &self,
-        _storage: StorageHandle<'_>,
-        _context: &DcapOnboardingContextV1,
-        _timestamp: u64,
-        _legacy_direct_dev_source: bool,
-    ) -> Result<bool> {
-        not_installed()
-    }
 }
 
 #[cfg(test)]

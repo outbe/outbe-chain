@@ -13,6 +13,7 @@ pub(crate) type ConsensusLaunch = (
         outbe_radicle::integration::EndpointTaskOwner,
     )>,
     Option<oneshot::Receiver<()>>,
+    Arc<dyn outbe_engine::protocol_state::EngineProtocolState>,
 );
 
 pub(crate) fn run(
@@ -21,7 +22,6 @@ pub(crate) fn run(
     shutdown_token_clone: tokio_util::sync::CancellationToken,
     radicle_shutdown_for_consensus: tokio_util::sync::CancellationToken,
     bridge_for_consensus: ConsensusExecutionBridge,
-    protocol: Arc<dyn outbe_engine::protocol_state::EngineProtocolState>,
 ) -> eyre::Result<()> {
     let (
         node,
@@ -31,6 +31,7 @@ pub(crate) fn run(
         tee_lease_armed_rx,
         radicle,
         radicle_drained,
+        protocol,
     ) = match node_rx.blocking_recv() {
         Ok(v) => v,
         Err(_) => return Ok(()),

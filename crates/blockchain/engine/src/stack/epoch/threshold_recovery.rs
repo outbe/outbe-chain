@@ -63,11 +63,11 @@ where
     let local_consensus_key = signing_key.public_key();
     let startup_snapshot = resolve_startup_dkg_snapshot(
         ctx.child("startup_dkg_snapshot"),
-        protocol,
         node,
         args,
         key_backend,
         StartupDkgRequest {
+            protocol,
             local_pk: &local_consensus_key,
             validator_set,
             genesis_hash,

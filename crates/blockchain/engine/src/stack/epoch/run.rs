@@ -197,8 +197,8 @@ where
         &ctx,
         &args,
         &node,
-        protocol.as_ref(),
         super::transport::TransportAdmission {
+            protocol: protocol.as_ref(),
             signing_key: &signing_key,
             validator_set: &validator_set,
             initial_peer_hash,

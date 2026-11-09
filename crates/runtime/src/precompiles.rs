@@ -273,3 +273,7 @@ pub(crate) fn dispatch(
         "precompile route is not installed".into(),
     ))
 }
+
+#[cfg(test)]
+#[path = "precompiles_tests.rs"]
+mod precompiles_tests;

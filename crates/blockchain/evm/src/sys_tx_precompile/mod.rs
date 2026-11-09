@@ -81,19 +81,22 @@ pub fn dispatch_with_tee_attestation(
 
 /// Immutable chain-manifest authorities for system-transaction execution.
 pub(crate) struct SystemTxRuntime<'a> {
+    pub(crate) host: &'a dyn crate::EvmRuntimeHost,
     pub(crate) tee_attestation_v1:
         &'a crate::tee_attestation_activation::TeeAttestationChainSpecStateV1,
 }
 
 pub(crate) fn dispatch_with_runtime(
-    host: &dyn crate::EvmRuntimeHost,
     storage: StorageHandle,
     runtime: SystemTxRuntime<'_>,
     data: &[u8],
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
-    let SystemTxRuntime { tee_attestation_v1 } = runtime;
+    let SystemTxRuntime {
+        host,
+        tee_attestation_v1,
+    } = runtime;
     host.dispatch_system_tx(storage, data, caller, value, tee_attestation_v1)
 }
 
@@ -106,12 +109,12 @@ pub(crate) fn dispatch_system_tx_route(
 ) -> Result<Bytes> {
     let host = crate::test_support::DomainEvmHost::new();
     dispatch_system_tx_domain(
-        &host,
         storage,
         data,
         caller,
         value,
         SystemTxRuntime {
+            host: &host,
             tee_attestation_v1:
                 &crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::Unbound,
         },
@@ -153,14 +156,16 @@ pub(crate) fn with_forced_dirty_system_precompile_revert<R>(
 
 #[cfg(feature = "test-utils")]
 pub(crate) fn dispatch_system_tx_domain(
-    host: &dyn crate::EvmRuntimeHost,
     storage: StorageHandle,
     data: &[u8],
     caller: Address,
     value: U256,
     authorities: DispatchAuthorities<'_>,
 ) -> Result<Bytes> {
-    let DispatchAuthorities { tee_attestation_v1 } = authorities;
+    let DispatchAuthorities {
+        host,
+        tee_attestation_v1,
+    } = authorities;
     if caller != SYSTEM_ADDRESS {
         return Err(crate::errors::BeginBlockPrecompileError::InvalidSystemCaller.into());
     }

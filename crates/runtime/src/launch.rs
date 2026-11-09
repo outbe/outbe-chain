@@ -66,7 +66,6 @@ where
             shutdown_token_clone,
             radicle_shutdown_for_consensus,
             bridge_for_consensus,
-            runtime_for_consensus,
         )
     };
 
@@ -215,8 +214,10 @@ where
             tee_lease_armed_rx,
             tee_lease_armed_tx: _tee_lease_armed_tx,
         } = tee::start_runtime_workers(
-            Arc::clone(&runtime_for_launcher) as Arc<dyn EngineProtocolState>,
-            Arc::clone(&runtime_for_launcher) as Arc<dyn TeeSessionStateReader>,
+            (
+                Arc::clone(&runtime_for_launcher) as Arc<dyn EngineProtocolState>,
+                Arc::clone(&runtime_for_launcher) as Arc<dyn TeeSessionStateReader>,
+            ),
             (&node, &args),
             (proof_chain_id, genesis_hash, &node_data_dir),
             (local_tee_identity, tee_admission_anchor, &initial_tee_policy),
@@ -272,6 +273,7 @@ where
                 tee_lease_armed_rx,
                 radicle_consensus,
                 radicle_drained,
+                runtime_for_consensus,
             ));
 
             let exit_cause = crate::shutdown::wait_for_launcher_exit(

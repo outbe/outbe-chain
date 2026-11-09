@@ -26,27 +26,16 @@ outbe-chain-constants.workspace = true
 outbe-runtime.workspace = true
 outbe-snapshot.workspace = true
 outbe-evm.workspace = true
-outbe-rpc.workspace = true
-outbe-node.workspace = true
 outbe-consensus.workspace = true
 outbe-engine.workspace = true
 outbe-primitives.workspace = true
-outbe-radicle.workspace = true
-outbe-operator.workspace = true
 outbe-tee.workspace = true
-outbe-txpool.workspace = true
 
 reth-ethereum = { workspace = true, features = ["node", "cli"] }
 reth-chainspec.workspace = true
 reth-cli.workspace = true
-reth-cli-runner.workspace = true
-reth-node-builder.workspace = true
-reth-node-core.workspace = true
 reth-provider.workspace = true
 reth-rpc-server-types.workspace = true
-
-commonware-runtime.workspace = true
-commonware-macros.workspace = true
 
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
@@ -54,14 +43,9 @@ clap.workspace = true
 eyre.workspace = true
 hex.workspace = true
 k256.workspace = true
-alloy-eips.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
-tokio-util.workspace = true
-tracing.workspace = true
-futures.workspace = true
 tempfile.workspace = true
 tar.workspace = true
 reth-primitives-traits.workspace = true

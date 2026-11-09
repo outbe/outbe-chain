@@ -61,7 +61,6 @@ outbe-radicle.workspace = true
 outbe-rewards.workspace = true
 outbe-rpc.workspace = true
 outbe-slashindicator.workspace = true
-outbe-snapshot.workspace = true
 outbe-stablecoinfactory.workspace = true
 outbe-stablecoinpolicy.workspace = true
 outbe-staking.workspace = true
@@ -103,6 +102,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 alloy-consensus.workspace = true
+outbe-evm = { workspace = true, features = ["test-utils"] }
 commonware-codec.workspace = true
 commonware-consensus.workspace = true
 commonware-cryptography.workspace = true

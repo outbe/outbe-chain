@@ -52,6 +52,7 @@ pub(super) struct StartupTransport<E: Clock> {
 }
 /// Bind P2P admission to the same canonical state used to load membership.
 pub(super) struct TransportAdmission<'a> {
+    pub(super) protocol: &'a dyn crate::protocol_state::EngineProtocolState,
     pub(super) signing_key: &'a bls12381::PrivateKey,
     pub(super) validator_set: &'a validators::ValidatorSet,
     pub(super) initial_peer_hash: B256,
@@ -61,7 +62,6 @@ pub(super) async fn start_transport<E>(
     ctx: &E,
     args: &ConsensusArgs,
     node: &OutbeFullNode,
-    protocol: &dyn crate::protocol_state::EngineProtocolState,
     admission: TransportAdmission<'_>,
     radicle_endpoint: Option<(
         outbe_radicle::integration::EndpointNetworkService,
@@ -83,6 +83,7 @@ where
         + 'static,
 {
     let TransportAdmission {
+        protocol,
         signing_key,
         validator_set,
         initial_peer_hash,

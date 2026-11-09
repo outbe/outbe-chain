@@ -261,9 +261,11 @@ fn local_tee_admission_ready_v1(
 /// durable join anchor against the upstream chain, and waits at the higher
 /// anchor. Every check fails closed.
 async fn initial_tee_lease_gate_v1(
-    protocol: &dyn outbe_engine::protocol_state::EngineProtocolState,
-    node: &OutbeFullNode,
-    args: &ConsensusArgs,
+    (protocol, node, args): (
+        &dyn outbe_engine::protocol_state::EngineProtocolState,
+        &OutbeFullNode,
+        &ConsensusArgs,
+    ),
     chain: (u64, alloy_primitives::B256),
     identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
     prepared_anchor: Option<crate::admission::LocalTeeAdmissionAnchorV1>,
@@ -442,8 +444,11 @@ fn keyless_runtime_workers() -> TeeRuntimeWorkers {
 }
 
 fn verify_initial_local_tee_admission_v1(
-    protocol: &dyn outbe_engine::protocol_state::EngineProtocolState,
-    (node, args): (&OutbeFullNode, &ConsensusArgs),
+    (protocol, node, args): (
+        &dyn outbe_engine::protocol_state::EngineProtocolState,
+        &OutbeFullNode,
+        &ConsensusArgs,
+    ),
     chain: outbe_node::tee_remote_session::RegistryChainIdentity,
     local_tee_identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
     anchors: &mut crate::admission::TeeLeaseGuardAnchorsV1,
@@ -489,8 +494,10 @@ fn verify_initial_local_tee_admission_v1(
 }
 
 pub(crate) async fn start_runtime_workers(
-    protocol: Arc<dyn outbe_engine::protocol_state::EngineProtocolState>,
-    session: Arc<dyn outbe_node::tee_remote_session::TeeSessionStateReader>,
+    (protocol, session): (
+        Arc<dyn outbe_engine::protocol_state::EngineProtocolState>,
+        Arc<dyn outbe_node::tee_remote_session::TeeSessionStateReader>,
+    ),
     (node, args): (&OutbeFullNode, &ConsensusArgs),
     (proof_chain_id, genesis_hash, node_data_dir): (u64, alloy_primitives::B256, &Path),
     (local_tee_identity, tee_admission_anchor, initial_tee_policy): (
@@ -513,17 +520,14 @@ pub(crate) async fn start_runtime_workers(
         genesis_hash,
     };
     let mut anchors = initial_tee_lease_gate_v1(
-        protocol.as_ref(),
-        node,
-        args,
+        (protocol.as_ref(), node, args),
         (proof_chain_id, genesis_hash),
         local_tee_identity,
         tee_admission_anchor,
     )
     .await?;
     verify_initial_local_tee_admission_v1(
-        protocol.as_ref(),
-        (node, args),
+        (protocol.as_ref(), node, args),
         chain,
         local_tee_identity,
         &mut anchors,

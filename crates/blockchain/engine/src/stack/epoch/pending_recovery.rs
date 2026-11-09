@@ -34,12 +34,11 @@ where
         self.dkg_manager
             .note_recovered_pending_boundary(snapshot.artifact.clone());
         let restored = restore_pending_dkg_activation(
-            self.protocol.as_ref(),
+            (self.protocol.as_ref(), &self.node),
             snapshot,
             &keys_dir,
             &self.key_backend,
             &self.signing_key.public_key(),
-            &self.node,
         )?;
         let (pending_artifact, restored_target_dkg_cycle) =
             restored_boundary_artifact_and_cycle(&restored)?;

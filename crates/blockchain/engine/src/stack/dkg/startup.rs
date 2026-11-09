@@ -127,6 +127,7 @@ pub(in crate::stack) fn recover_latest_boundary_artifact(
 /// Pinned identity, membership and chain history for each startup snapshot probe.
 #[derive(Clone, Copy)]
 pub(in crate::stack) struct StartupDkgRequest<'a> {
+    pub(in crate::stack) protocol: &'a dyn crate::protocol_state::EngineProtocolState,
     pub(in crate::stack) local_pk: &'a bls12381::PublicKey,
     pub(in crate::stack) validator_set: &'a validators::ValidatorSet,
     pub(in crate::stack) genesis_hash: B256,
@@ -161,13 +162,13 @@ fn startup_threshold_material_candidate_available(args: &ConsensusArgs) -> bool 
 }
 
 fn read_startup_dkg_snapshot(
-    protocol: &dyn crate::protocol_state::EngineProtocolState,
     node: &OutbeFullNode,
     args: &ConsensusArgs,
     key_backend: &bls::KeyBackend,
     request: &StartupDkgRequest<'_>,
 ) -> Result<StartupDkgSnapshot> {
     let StartupDkgRequest {
+        protocol,
         local_pk: local_consensus_key,
         genesis_hash,
         dkg_rotation_params,
@@ -227,11 +228,10 @@ fn read_startup_dkg_snapshot(
 
     if let Some(keys_dir) = args.keys_dir.as_ref() {
         if let Some(snapshot) = recover_pending_dkg_boundary_snapshot(
-            protocol,
+            (protocol, node),
             keys_dir,
             key_backend,
             local_consensus_key,
-            node,
             recovered_boundary.as_ref(),
         )
         .wrap_err("failed to recover pending DKG boundary snapshot")?
@@ -306,7 +306,6 @@ async fn collect_reth_genesis_peer_evidence(node: &OutbeFullNode) -> RethGenesis
 
 pub(in crate::stack) async fn resolve_startup_dkg_snapshot<E>(
     ctx: E,
-    protocol: &dyn crate::protocol_state::EngineProtocolState,
     node: &OutbeFullNode,
     args: &ConsensusArgs,
     key_backend: &bls::KeyBackend,
@@ -338,7 +337,7 @@ where
     let started_at = ctx.current();
 
     loop {
-        let mut snapshot = read_startup_dkg_snapshot(protocol, node, args, key_backend, &request)?;
+        let mut snapshot = read_startup_dkg_snapshot(node, args, key_backend, &request)?;
         let evidence = collect_reth_genesis_peer_evidence(node).await;
         let gate = genesis_formation_gate_decision(
             snapshot.context,

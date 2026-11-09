@@ -35,8 +35,6 @@ use std::path::Path;
 
 use crate::state_proof::{verify_public_account_proof, PublicAccountProofV1};
 
-const READER_MISSING: &str = "tee session reader is not installed";
-
 /// Reads finalized Registry session state. Header and proof checks stay here.
 pub trait TeeSessionStateReader: Send + Sync {
     fn node_binding(
@@ -69,58 +67,6 @@ pub trait TeeSessionStateReader: Send + Sync {
         &self,
         storage: StorageHandle<'_>,
     ) -> Result<EnclaveUpgradeV1, PrecompileError>;
-}
-
-/// Fail-closed reader used when no composition root installed chain reads.
-pub struct UninstalledTeeSessionReader;
-
-fn reader_missing() -> PrecompileError {
-    PrecompileError::Fatal(READER_MISSING.into())
-}
-
-impl TeeSessionStateReader for UninstalledTeeSessionReader {
-    fn node_binding(
-        &self,
-        _storage: StorageHandle<'_>,
-        _node_id: &NodeIdV1,
-    ) -> Result<Option<NodeEnclaveBindingV1>, PrecompileError> {
-        Err(reader_missing())
-    }
-
-    fn binding_admitted(
-        &self,
-        _storage: StorageHandle<'_>,
-        _binding: &NodeEnclaveBindingV1,
-        _height: u64,
-    ) -> Result<bool, PrecompileError> {
-        Err(reader_missing())
-    }
-
-    fn binding_slots(
-        &self,
-        _storage: StorageHandle<'_>,
-        _node_id: &NodeIdV1,
-    ) -> Result<Vec<B256>, PrecompileError> {
-        Err(reader_missing())
-    }
-
-    fn retirement_height(&self, _storage: StorageHandle<'_>) -> Result<u64, PrecompileError> {
-        Err(reader_missing())
-    }
-
-    fn successor(
-        &self,
-        _storage: StorageHandle<'_>,
-    ) -> Result<Option<(U256, TeePolicyV1)>, PrecompileError> {
-        Err(reader_missing())
-    }
-
-    fn enclave_upgrade(
-        &self,
-        _storage: StorageHandle<'_>,
-    ) -> Result<EnclaveUpgradeV1, PrecompileError> {
-        Err(reader_missing())
-    }
 }
 
 #[cfg(any(test, feature = "test-utils"))]

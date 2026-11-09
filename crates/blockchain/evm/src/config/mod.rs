@@ -55,7 +55,8 @@ pub struct OutbeEvmConfig {
     accounted_parent_artifact_provider: Option<Arc<dyn AccountedParentArtifactProvider>>,
     /// Validator-mode EVM signer used to authenticate system-tx artifacts.
     evm_signer: Option<SharedOutbeEvmSigner>,
-    /// Host installed for this config. `None` uses the process-wide host.
+    /// Host installed for this config. `None` falls back to `default_runtime_host()`:
+    /// the domain host under `test-utils`, fail-closed otherwise.
     runtime_host: Option<Arc<dyn crate::EvmRuntimeHost>>,
 }
 

@@ -504,8 +504,7 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             RethStateReader {
                 state: state.as_ref(),
             },
-            self.chain_id,
-            self.genesis_hash,
+            (self.chain_id, self.genesis_hash),
             block,
             proposal_id,
             self.protocol.as_ref(),
@@ -678,8 +677,7 @@ fn read_repository_authority_from_storage(
 
 fn read_patch_approval_from_storage(
     reader: impl StorageReader,
-    chain_id: u64,
-    genesis_hash: B256,
+    (chain_id, genesis_hash): (u64, B256),
     block: FinalizedBlock,
     proposal_id: U256,
     protocol: &dyn RadicleProtocolState,

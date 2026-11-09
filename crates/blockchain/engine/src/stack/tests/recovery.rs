@@ -1563,12 +1563,11 @@ mod copied_native_dkg_prerequisites {
             let own = root.join("own-dkg");
             let snapshot = load_pending_dkg_boundary(&own)?.expect("durable pending boundary");
             let restored = restore_pending_dkg_activation(
-                &crate::protocol_state::StorageEngineState,
+                (&crate::protocol_state::StorageEngineState, node),
                 snapshot,
                 &own,
                 &bls::KeyBackend::Plaintext,
                 &self.keys[0].public_key(),
-                node,
             )?;
             let RestoredPendingDkgActivation::Participant(restored) = restored else {
                 eyre::bail!("local participant was incorrectly restored as dealer-only");
@@ -1704,12 +1703,11 @@ mod copied_native_dkg_prerequisites {
         let own = root.join("own-dkg");
         let snapshot = load_pending_dkg_boundary(&own)?.expect("pending boundary still exists");
         let error = restore_pending_dkg_activation(
-            &crate::protocol_state::StorageEngineState,
+            (&crate::protocol_state::StorageEngineState, node),
             snapshot,
             &own,
             &bls::KeyBackend::Plaintext,
             &fixture.keys[0].public_key(),
-            node,
         )
         .err()
         .expect("ordinary restore must reject missing prerequisite");

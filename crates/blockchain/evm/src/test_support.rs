@@ -313,12 +313,12 @@ mod domain_host {
             tee: &TeeAttestationChainSpecStateV1,
         ) -> Result<Bytes> {
             crate::sys_tx_precompile::dispatch_system_tx_domain(
-                self,
                 storage,
                 data,
                 caller,
                 value,
                 crate::sys_tx_precompile::SystemTxRuntime {
+                    host: self,
                     tee_attestation_v1: tee,
                 },
             )

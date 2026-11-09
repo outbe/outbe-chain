@@ -419,7 +419,8 @@ pub struct OutbeEvmFactory {
     genesis_hash: B256,
     genesis_timestamp: u64,
     tee_attestation_v1: TeeAttestationChainSpecStateV1,
-    /// Installed host. `None` leaves the process-wide host in place.
+    /// Installed host. `None` falls back to `default_runtime_host()`:
+    /// the domain host under `test-utils`, fail-closed otherwise.
     runtime_host: Option<std::sync::Arc<dyn crate::EvmRuntimeHost>>,
 }
 
