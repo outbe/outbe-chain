@@ -355,14 +355,14 @@ fn build_outbe_node(
     shutdown: outbe_node::shutdown::NodeShutdown,
     runtime: Arc<OutbeRuntime>,
 ) -> OutbeNode {
+    let pool_policy = Arc::clone(&runtime) as Arc<dyn TxPoolZeroFeePolicy>;
     let outbe_node = match evm_signer {
-        Some(signer) => OutbeNode::with_bridge_and_evm_signer(bridge, signer),
-        None => OutbeNode::with_bridge(bridge),
+        Some(signer) => OutbeNode::with_bridge_and_evm_signer(bridge, signer, pool_policy),
+        None => OutbeNode::with_bridge(bridge, pool_policy),
     };
     outbe_node
         .with_shutdown(shutdown)
-        .with_runtime_host(Arc::clone(&runtime) as Arc<dyn EvmRuntimeHost>)
-        .with_pool_policy(runtime as Arc<dyn TxPoolZeroFeePolicy>)
+        .with_runtime_host(runtime as Arc<dyn EvmRuntimeHost>)
 }
 
 fn create_outbe_rpc_handler<P>(

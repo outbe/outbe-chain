@@ -100,8 +100,7 @@ fn transact_from(
     data: Bytes,
     gas: u64,
 ) -> ExecutionResult {
-    let mut evm = OutbeEvmFactory::default()
-        .with_runtime_host(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
+    let mut evm = OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
         .create_evm(db, env());
     let tx = TxEnv::builder()
         .caller(caller)

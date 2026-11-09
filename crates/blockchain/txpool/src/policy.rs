@@ -1,9 +1,9 @@
 //! Pool-facing zero-fee policy.
 //!
 //! The pool asks this trait whether a transaction is a fee waiver. The node
-//! passes the policy into [`crate::OutbePoolBuilder`]. Without one, the pool
-//! uses [`NormalFeePolicy`] and every transaction pays the normal fee.
+//! passes the policy into [`crate::OutbePoolBuilder`].
 
+#[cfg(test)]
 use std::sync::Arc;
 
 use outbe_primitives::{
@@ -70,14 +70,17 @@ pub trait TxPoolZeroFeePolicy: Send + Sync + std::fmt::Debug {
     ) -> Result<(), ZeroFeePolicyError>;
 }
 
+#[cfg(test)]
 pub(crate) fn normal_policy() -> Arc<dyn TxPoolZeroFeePolicy> {
     Arc::new(NormalFeePolicy)
 }
 
-/// Admits nothing as a waiver. Every transaction uses the normal fee path.
+/// Admits nothing as a waiver. Unit tests use this when the case is the normal fee path.
+#[cfg(test)]
 #[derive(Debug, Default)]
 struct NormalFeePolicy;
 
+#[cfg(test)]
 impl TxPoolZeroFeePolicy for NormalFeePolicy {
     fn classify(
         &self,

@@ -105,9 +105,12 @@ mod epoch;
 mod follower;
 mod marshal_archive;
 mod recovery;
+#[cfg(any(test, feature = "snapshot-integration"))]
+mod recovery_marshal;
 mod services;
 mod shutdown;
 #[cfg(feature = "snapshot-integration")]
+#[doc(hidden)]
 pub mod snapshot_native;
 mod startup;
 #[cfg(test)]

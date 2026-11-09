@@ -56,48 +56,19 @@ futures.workspace = true
 metrics.workspace = true
 x25519-dalek.workspace = true
 thiserror.workspace = true
-k256.workspace = true
 
 [dev-dependencies]
 outbe-node = { path = ".", features = ["test-utils"] }
-outbe-genesis-cli.workspace = true
 reth-engine-tree = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
 reth-stages-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
 reth-static-file = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
-outbe-chain-constants.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
-outbe-tee-enclave = { workspace = true, features = ["mock"] }
-alloy-provider.workspace = true
-alloy-trie.workspace = true
 ed25519-dalek.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
-reth-e2e-test-utils.workspace = true
-reth-node-api.workspace = true
 reth-node-core.workspace = true
-reth-rpc-server-types.workspace = true
-reth-tracing.workspace = true
 serde_json.workspace = true
 hex.workspace = true
-tempfile.workspace = true
-commonware-codec.workspace = true
-commonware-consensus.workspace = true
-commonware-cryptography.workspace = true
-commonware-utils.workspace = true
-outbe-cycle.workspace = true
-outbe-desis.workspace = true
-outbe-intex.workspace = true
-outbe-promislimit.workspace = true
-outbe-rewards.workspace = true
-outbe-update.workspace = true
-outbe-vaultrouter.workspace = true
-rand-commonware.workspace = true
-rand-core-commonware.workspace = true
-outbe-tribute = { workspace = true, features = ["test-enclave"] }
-outbe-validatorset = { workspace = true, features = ["test-utils"] }
 reth-trie = { workspace = true, features = ["test-utils"] }
-outbe-oracle = { workspace = true, features = ["test-utils"] }
-outbe-teeregistry.workspace = true
-outbe-runtime.workspace = true
 outbe-evm = { workspace = true, features = ["test-utils"] }
 
 [lints]

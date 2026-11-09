@@ -157,7 +157,7 @@ const fn is_ethereum_precompile(address: Address) -> bool {
     address.0 .0[19] >= 1 && address.0 .0[19] <= 10
 }
 
-const fn assert_valid_production_routes(addresses: &[Address]) {
+pub const fn assert_valid_production_routes(addresses: &[Address]) {
     let mut index = 0;
     while index < addresses.len() {
         if is_ethereum_precompile(addresses[index]) {

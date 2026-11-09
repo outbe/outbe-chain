@@ -1,12 +1,15 @@
 //! Runtime host seam. Callers pass the host they were constructed with.
 
+#[cfg(any(test, feature = "test-utils"))]
 use std::sync::Arc;
 
 use crate::errors::TeeBootstrapHostError;
 use crate::precompiles::MetadosisMutationCall;
 use crate::tee_attestation_activation::TeeAttestationChainSpecStateV1;
 use alloy_primitives::{Address, Bytes, B256, U256};
+#[cfg(any(test, feature = "test-utils"))]
 use outbe_primitives::error::PrecompileError;
+#[cfg(any(test, feature = "test-utils"))]
 use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 use outbe_primitives::{
     block::{BlockHeightRegime, BlockRuntimeContext},
@@ -26,13 +29,16 @@ use outbe_primitives::{
     },
 };
 
+#[cfg(any(test, feature = "test-utils"))]
 const HOST_MISSING: &str = "evm runtime host is not installed";
 
+#[cfg(any(test, feature = "test-utils"))]
 fn missing() -> PrecompileError {
     PrecompileError::Fatal(HOST_MISSING.into())
 }
 
-/// Fail-closed host for callers that do not execute precompiles.
+/// Fail-closed host for tests that do not execute precompiles.
+#[cfg(any(test, feature = "test-utils"))]
 pub fn stub_host() -> Arc<dyn EvmRuntimeHost> {
     Arc::new(FailClosedHost)
 }
@@ -236,9 +242,11 @@ pub trait EvmRuntimeHost: std::fmt::Debug + Send + Sync {
     fn user_fee_policy(&self) -> &dyn UserTxFeePolicy;
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 #[derive(Debug)]
 struct FailClosedFeePolicy;
 
+#[cfg(any(test, feature = "test-utils"))]
 impl UserTxFeePolicy for FailClosedFeePolicy {
     fn classify(
         &self,
@@ -296,9 +304,11 @@ impl UserTxFeePolicy for FailClosedFeePolicy {
     }
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 #[derive(Debug)]
 struct FailClosedHost;
 
+#[cfg(any(test, feature = "test-utils"))]
 impl EvmRuntimeHost for FailClosedHost {
     fn marker_addresses(&self) -> &'static [Address] {
         &crate::executor::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES
@@ -523,4 +533,5 @@ impl EvmRuntimeHost for FailClosedHost {
     }
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 static FAIL_CLOSED_FEE_POLICY: FailClosedFeePolicy = FailClosedFeePolicy;

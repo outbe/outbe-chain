@@ -52,19 +52,7 @@ pub struct SubCallEnvironment {
 ///
 /// `environment.outer_is_static = true` forces the child to STATICCALL regardless of the
 /// caller's `input.is_static` field (outer STATIC propagates inward).
-pub fn run<DB>(
-    ctx: &mut EthEvmContext<DB>,
-    environment: SubCallEnvironment,
-    input: SubCallInput,
-) -> std::result::Result<SubCallOutput, SubCallError>
-where
-    DB: Database + Debug,
-    DB::Error: Debug,
-{
-    run_with_host(ctx, environment, input, crate::host::stub_host())
-}
-
-/// Same as [`run`], with the caller-supplied runtime host.
+/// `host` authorizes every precompile the child frame reaches.
 pub fn run_with_host<DB>(
     ctx: &mut EthEvmContext<DB>,
     environment: SubCallEnvironment,

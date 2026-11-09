@@ -21,6 +21,7 @@ mod tests;
 mod value_policy;
 
 pub use outcome::map_outbe_precompile_result;
+pub use routes::assert_valid_production_routes;
 pub(crate) use sub_call_provider::OutbeSubCallPrecompiles;
 
 /// Returns the list of outbe precompile addresses registered by
@@ -94,7 +95,7 @@ impl OutbePrecompileRuntime {
 /// - builds a [`crate::storage::CtxStorageProvider`] that borrows that context.
 /// - dispatches the outbe precompile through a [`StorageHandle`].
 ///
-/// A sub-call from a precompile body reaches `sub_call::run` through the provider's
+/// A sub-call from a precompile body reaches `sub_call::run_with_host` through the provider's
 /// `sub_call` method.
 /// Registers Outbe precompiles with the executor-owned EVM context.
 pub fn extend_outbe_precompiles<DB>(

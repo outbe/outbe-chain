@@ -413,14 +413,14 @@ where
 }
 
 /// Custom EVM factory that registers Outbe stateful precompiles.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct OutbeEvmFactory {
     /// Immutable chain identity installed by `OutbeEvmConfig`.
     genesis_hash: B256,
     genesis_timestamp: u64,
     tee_attestation_v1: TeeAttestationChainSpecStateV1,
-    /// Installed host. `None` uses the fail-closed stub.
-    runtime_host: Option<std::sync::Arc<dyn crate::EvmRuntimeHost>>,
+    /// Host installed for every EVM this factory creates.
+    runtime_host: std::sync::Arc<dyn crate::EvmRuntimeHost>,
 }
 
 impl core::fmt::Debug for OutbeEvmFactory {
@@ -430,12 +430,23 @@ impl core::fmt::Debug for OutbeEvmFactory {
             .field("genesis_hash", &self.genesis_hash)
             .field("genesis_timestamp", &self.genesis_timestamp)
             .field("tee_attestation_v1", &self.tee_attestation_v1)
-            .field("runtime_host", &self.runtime_host.is_some())
+            .field("runtime_host", &"installed")
             .finish()
     }
 }
 
 impl OutbeEvmFactory {
+    /// Creates a factory that installs `host` on every EVM it builds.
+    #[must_use]
+    pub fn new(runtime_host: std::sync::Arc<dyn crate::EvmRuntimeHost>) -> Self {
+        Self {
+            genesis_hash: B256::ZERO,
+            genesis_timestamp: 0,
+            tee_attestation_v1: TeeAttestationChainSpecStateV1::default(),
+            runtime_host,
+        }
+    }
+
     /// Binds every EVM/precompile context created by this factory to the
     /// canonical genesis hash from ChainSpec.
     #[must_use]
@@ -462,7 +473,7 @@ impl OutbeEvmFactory {
     /// Stores `host` for every EVM this factory creates.
     #[must_use]
     pub fn with_runtime_host(mut self, host: std::sync::Arc<dyn crate::EvmRuntimeHost>) -> Self {
-        self.runtime_host = Some(host);
+        self.runtime_host = host;
         self
     }
 
@@ -496,9 +507,7 @@ impl EvmFactory for OutbeEvmFactory {
                 .with_tee_attestation_v1(self.tee_attestation_v1.clone()),
             crate::precompiles::OutbePrecompileRuntime::new()
                 .with_abort_bridge(abort_bridge.clone()),
-            self.runtime_host
-                .clone()
-                .unwrap_or_else(crate::host::stub_host),
+            std::sync::Arc::clone(&self.runtime_host),
         );
 
         let mut evm = Context::mainnet()
@@ -557,7 +566,7 @@ mod tests {
 
     #[test]
     fn outbe_system_call_uses_artifact_gas_limit_without_changing_block_limit() {
-        let factory = OutbeEvmFactory::default();
+        let factory = OutbeEvmFactory::new(crate::host::stub_host());
         let mut evm = factory.create_evm(EmptyDB::default(), test_env());
 
         let caller = outbe_primitives::addresses::SYSTEM_ADDRESS;
@@ -588,7 +597,7 @@ mod tests {
 
     #[test]
     fn non_outbe_system_call_keeps_upstream_gas_limit() {
-        let factory = OutbeEvmFactory::default();
+        let factory = OutbeEvmFactory::new(crate::host::stub_host());
         let mut evm = factory.create_evm(EmptyDB::default(), test_env());
 
         let _ = evm.transact_system_call(

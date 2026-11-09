@@ -211,8 +211,7 @@ fn run(db: &mut CacheDB<EmptyDB>, caller: Address, to: Address, data: Vec<u8>) -
         .basic(caller)
         .expect("caller account loads")
         .map_or(0, |info| info.nonce);
-    let mut evm = OutbeEvmFactory::default()
-        .with_runtime_host(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
+    let mut evm = OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
         .create_evm(&mut *db, test_env());
     let tx = TxEnv::builder()
         .caller(caller)

@@ -12,6 +12,7 @@ publish.workspace = true
 
 [features]
 default = []
+# Exports hidden snapshot test support (`DiskFixture` and native snapshot helpers).
 snapshot-integration = ["dep:tempfile"]
 
 [dependencies]

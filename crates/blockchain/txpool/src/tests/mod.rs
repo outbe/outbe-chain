@@ -363,7 +363,8 @@ fn malformed_zero_fee_marker_gets_no_pool_priority() {
 
 #[test]
 fn default_policy_keeps_normal_tip_priority() {
-    let ordering = OutbeTransactionOrdering::<EthPooledTransaction>::default();
+    let ordering =
+        OutbeTransactionOrdering::<EthPooledTransaction>::new(crate::policy::normal_policy());
     let tx = pooled_tx(Address::ZERO, Bytes::new(), u128::MAX, 1);
     assert!(matches!(ordering.priority(&tx, 0), Priority::Value((0, _))));
 }

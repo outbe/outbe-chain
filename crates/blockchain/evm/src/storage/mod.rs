@@ -8,7 +8,7 @@
 //! [`CtxStorageProvider`] owns a `&'a mut EthEvmContext<DB>` field so that
 //! `sub_call(input)` can pass the same
 //! `&mut ctx` to `sub_call::run_frame`, then settles against its parent meter.
-//! The public standalone `sub_call::run` is used by direct-driver callers.
+//! The public standalone `sub_call::run_with_host` is used by direct-driver callers.
 //! The outer dispatch path
 //! borrows `CtxStorageProvider` through
 //! [`outbe_primitives::storage::StorageHandle::with_provider`]. That method uses

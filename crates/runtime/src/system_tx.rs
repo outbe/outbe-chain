@@ -50,6 +50,7 @@ pub fn dispatch(
     }
     outbe_primitives::dispatch::ensure_mutation_allowed(&storage)?;
 
+    #[cfg(feature = "test-hooks")]
     if let Some((dirty_addr, dirty_slot, dirty_val)) =
         outbe_evm::sys_tx_precompile::forced_dirty_system_precompile_revert()
     {
@@ -221,6 +222,7 @@ fn block_runtime_context(
         proposer,
         validators,
     };
+    #[cfg(feature = "test-hooks")]
     outbe_evm::sys_tx_precompile::record_observed_runtime_block_context(&block);
     Ok(BlockRuntimeContext::new(block, storage))
 }

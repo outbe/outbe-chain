@@ -182,9 +182,9 @@ fn invalid_evidence_reward_reverts_transaction_and_identical_signed_evidence_can
             },
         };
         let outcome = {
-            let mut evm = OutbeEvmFactory::default()
-                .with_runtime_host(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
-                .create_evm(&mut db, env);
+            let mut evm =
+                OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
+                    .create_evm(&mut db, env);
             evm.transact_raw(
                 TxEnv::builder()
                     .chain_id(Some(CHAIN_ID))

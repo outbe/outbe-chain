@@ -1,18 +1,15 @@
 //! Storage and subcall API tests using real revm frames.
-#![allow(dead_code, unused_imports, unused_variables, unused_mut)]
-
 use alloy_evm::eth::EthEvmContext;
-use alloy_primitives::{Address, Bytes, Log, B256, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolError;
 use core::fmt::Debug;
 use outbe_evm::gas::SubcallGasMeter;
-use outbe_evm::precompiles::ExecutionAbortBridge;
 use outbe_evm::storage::{CtxStorageProvider, CtxStorageProviderConfig, ReentrancyStack};
 use outbe_evm::EvmRuntimeHost;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::{
     MetadosisMutationEntitlements, PrecompileStorageProvider, SubCallError, SubCallInput,
-    SubCallOutput, SubCallStatus,
+    SubCallStatus,
 };
 use revm::context_interface::journaled_state::account::JournaledAccountTr as _;
 use revm::context_interface::ContextTr as _;

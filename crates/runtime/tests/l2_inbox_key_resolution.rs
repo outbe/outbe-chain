@@ -231,8 +231,9 @@ fn call(db: &mut CacheDB<EmptyDB>, to: Address, calldata: Bytes) -> ExecutionRes
         },
     };
 
-    let factory = outbe_evm::factory::OutbeEvmFactory::default()
-        .with_runtime_host(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()));
+    let factory = outbe_evm::factory::OutbeEvmFactory::new(std::sync::Arc::new(
+        outbe_runtime::OutbeRuntime::new(),
+    ));
     let mut evm = factory.create_evm(&mut *db, env);
     let ResultAndState { result, state } = evm
         .transact_raw(

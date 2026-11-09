@@ -128,11 +128,10 @@ impl OutbeEvmConfig {
         Self {
             inner: EthEvmConfig::new_with_evm_factory(
                 chain_spec.clone(),
-                OutbeEvmFactory::default()
+                OutbeEvmFactory::new(Arc::clone(&runtime_host))
                     .with_genesis_hash(chain_spec.genesis_hash())
                     .with_genesis_timestamp(chain_spec.genesis_timestamp())
-                    .with_tee_attestation_v1(tee_attestation_v1.clone())
-                    .with_runtime_host(Arc::clone(&runtime_host)),
+                    .with_tee_attestation_v1(tee_attestation_v1.clone()),
             ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
             tee_attestation_v1,
@@ -158,11 +157,10 @@ impl OutbeEvmConfig {
         Self {
             inner: EthEvmConfig::new_with_evm_factory(
                 chain_spec.clone(),
-                OutbeEvmFactory::default()
+                OutbeEvmFactory::new(Arc::clone(&runtime_host))
                     .with_genesis_hash(chain_spec.genesis_hash())
                     .with_genesis_timestamp(chain_spec.genesis_timestamp())
-                    .with_tee_attestation_v1(tee_attestation_v1.clone())
-                    .with_runtime_host(Arc::clone(&runtime_host)),
+                    .with_tee_attestation_v1(tee_attestation_v1.clone()),
             ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
             tee_attestation_v1,
@@ -189,11 +187,10 @@ impl OutbeEvmConfig {
         Self {
             inner: EthEvmConfig::new_with_evm_factory(
                 chain_spec.clone(),
-                OutbeEvmFactory::default()
+                OutbeEvmFactory::new(Arc::clone(&runtime_host))
                     .with_genesis_hash(chain_spec.genesis_hash())
                     .with_genesis_timestamp(chain_spec.genesis_timestamp())
-                    .with_tee_attestation_v1(tee_attestation_v1.clone())
-                    .with_runtime_host(Arc::clone(&runtime_host)),
+                    .with_tee_attestation_v1(tee_attestation_v1.clone()),
             ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
             tee_attestation_v1,
@@ -225,11 +222,10 @@ impl OutbeEvmConfig {
         Self {
             inner: EthEvmConfig::new_with_evm_factory(
                 chain_spec.clone(),
-                OutbeEvmFactory::default()
+                OutbeEvmFactory::new(Arc::clone(&runtime_host))
                     .with_genesis_hash(chain_spec.genesis_hash())
                     .with_genesis_timestamp(chain_spec.genesis_timestamp())
-                    .with_tee_attestation_v1(tee_attestation_v1.clone())
-                    .with_runtime_host(Arc::clone(&runtime_host)),
+                    .with_tee_attestation_v1(tee_attestation_v1.clone()),
             ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
             tee_attestation_v1,

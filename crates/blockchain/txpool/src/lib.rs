@@ -12,7 +12,6 @@ pub use policy::TxPoolZeroFeePolicy;
 mod state_reader;
 
 use crate::errors::{OutbeReservedSystemTxPoolError, OutbeZeroFeePoolError};
-use crate::policy::normal_policy;
 use alloy_eips::{eip7840::BlobParams, merge::EPOCH_SLOTS};
 use alloy_primitives::{Address, B256, KECCAK256_EMPTY, U256};
 use outbe_primitives::{
@@ -76,12 +75,6 @@ impl<T> Clone for OutbeTransactionOrdering<T> {
     }
 }
 
-impl<T> Default for OutbeTransactionOrdering<T> {
-    fn default() -> Self {
-        Self::new(normal_policy())
-    }
-}
-
 impl<T> OutbeTransactionOrdering<T> {
     /// Orders transactions with `policy`.
     pub fn new(policy: Arc<dyn TxPoolZeroFeePolicy>) -> Self {
@@ -136,12 +129,6 @@ impl fmt::Debug for OutbePoolBuilder {
             .debug_struct("OutbePoolBuilder")
             .field("policy", &"installed")
             .finish()
-    }
-}
-
-impl Default for OutbePoolBuilder {
-    fn default() -> Self {
-        Self::new(normal_policy())
     }
 }
 

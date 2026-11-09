@@ -25,10 +25,11 @@ mod copied_native_dkg_prerequisites {
         RestoredPendingDkgActivation, H,
     };
     use outbe_engine::validators;
-    use outbe_evm::OutbeEvmConfig;
+    use outbe_evm::{EvmRuntimeHost, OutbeEvmConfig};
     use outbe_node::{OutbeBeaconConsensus, OutbeFullNode, OutbeNode, OutbePoolBuilder};
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
     use outbe_primitives::OutbeHeader;
+    use outbe_txpool::TxPoolZeroFeePolicy;
     use reth_ethereum::{
         network::NetworkManager,
         node::core::{args::DatadirArgs, primitives::Head},
@@ -193,8 +194,12 @@ mod copied_native_dkg_prerequisites {
                         toml_config: Default::default(),
                     },
                 );
-                let evm = OutbeEvmConfig::new(chain.clone(), outbe_evm::stub_host());
-                let pool = OutbePoolBuilder::default()
+                let host = std::sync::Arc::new(outbe_runtime::OutbeRuntime::new());
+                let evm = OutbeEvmConfig::new(
+                    chain.clone(),
+                    std::sync::Arc::clone(&host) as std::sync::Arc<dyn EvmRuntimeHost>,
+                );
+                let pool = OutbePoolBuilder::new(host as std::sync::Arc<dyn TxPoolZeroFeePolicy>)
                     .build_pool(&ctx, evm.clone())
                     .await?;
                 let network_config = ctx.build_network_config(

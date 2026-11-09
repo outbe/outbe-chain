@@ -354,7 +354,7 @@ mod tests {
             crate::OutbeTransactionValidator::new(inner, crate::policy::normal_policy());
         let pool = Pool::new(
             validator,
-            crate::OutbeTransactionOrdering::default(),
+            crate::OutbeTransactionOrdering::new(crate::policy::normal_policy()),
             blob_store,
             Default::default(),
         );

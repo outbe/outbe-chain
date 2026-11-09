@@ -124,7 +124,7 @@ impl Drop for ReentrancyGuard {
 /// has a `Journal: Debug` bound (Journal<DB> Debug-derives over DB).
 pub struct CtxStorageProvider<'a, DB: Database + Debug> {
     /// Borrowed EVM context. Sub-call hands this to
-    /// [`crate::sub_call::run`]. Non-sub-call ops derive an
+    /// [`crate::sub_call::run_with_host`]. Non-sub-call ops derive an
     /// [`alloy_evm::EvmInternals`] facade on-the-fly per call.
     pub ctx: &'a mut EthEvmContext<DB>,
     /// Per-call gas meter (mirrors `revm::Gas`).

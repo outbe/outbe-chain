@@ -50,10 +50,10 @@ pub struct OutbeNode {
     pub bridge: Option<ConsensusExecutionBridge>,
     /// Optional validator EVM signer for proposer-side system tx artifacts.
     pub evm_signer: Option<SharedOutbeEvmSigner>,
-    /// Host installed before the executor is built. Absent leaves the process default.
+    /// Host installed before the executor is built. Absent leaves the executor builder to fail closed.
     pub runtime_host: Option<Arc<dyn EvmRuntimeHost>>,
-    /// Pool policy installed before the pool is built. Absent leaves normal fees.
-    pub pool_policy: Option<Arc<dyn TxPoolZeroFeePolicy>>,
+    /// Pool policy installed before the pool is built.
+    pub pool_policy: Arc<dyn TxPoolZeroFeePolicy>,
 }
 
 impl std::fmt::Debug for OutbeNode {
@@ -71,27 +71,31 @@ impl std::fmt::Debug for OutbeNode {
 }
 
 impl OutbeNode {
-    /// Creates a new node with a consensus bridge.
-    pub fn with_bridge(bridge: ConsensusExecutionBridge) -> Self {
+    /// Creates a new node with a consensus bridge and the pool policy.
+    pub fn with_bridge(
+        bridge: ConsensusExecutionBridge,
+        pool_policy: Arc<dyn TxPoolZeroFeePolicy>,
+    ) -> Self {
         Self {
             shutdown: NodeShutdown::default(),
             bridge: Some(bridge),
             evm_signer: None,
             runtime_host: None,
-            pool_policy: None,
+            pool_policy,
         }
     }
 
     pub fn with_bridge_and_evm_signer(
         bridge: ConsensusExecutionBridge,
         evm_signer: SharedOutbeEvmSigner,
+        pool_policy: Arc<dyn TxPoolZeroFeePolicy>,
     ) -> Self {
         Self {
             shutdown: NodeShutdown::default(),
             bridge: Some(bridge),
             evm_signer: Some(evm_signer),
             runtime_host: None,
-            pool_policy: None,
+            pool_policy,
         }
     }
 
@@ -108,12 +112,10 @@ impl OutbeNode {
         self
     }
 
-    /// Stores `policy` for [`Node::components_builder`] to install.
-    ///
-    /// An unset policy leaves the pool on its normal-fee default.
+    /// Replaces the pool policy installed by the constructor.
     #[must_use]
     pub fn with_pool_policy(mut self, policy: Arc<dyn TxPoolZeroFeePolicy>) -> Self {
-        self.pool_policy = Some(policy);
+        self.pool_policy = policy;
         self
     }
 }
@@ -159,10 +161,7 @@ where
             Some(host) => executor.with_runtime_host(host),
             None => executor,
         };
-        let pool = match self.pool_policy.clone() {
-            Some(policy) => OutbePoolBuilder::new(policy),
-            None => OutbePoolBuilder::default(),
-        };
+        let pool = OutbePoolBuilder::new(Arc::clone(&self.pool_policy));
         ComponentsBuilder::default()
             .node_types::<N>()
             .pool(pool)

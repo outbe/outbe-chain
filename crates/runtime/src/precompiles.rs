@@ -153,49 +153,9 @@ define_exact_routes! {
     UPDATE_ADDRESS => (outbe_update::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_update::precompile::PAYABLE_SELECTORS),
 }
 
-const fn addresses_equal(left: Address, right: Address) -> bool {
-    let mut index = 0;
-    while index < 20 {
-        if left.0 .0[index] != right.0 .0[index] {
-            return false;
-        }
-        index += 1;
-    }
-    true
-}
-
-const fn is_ethereum_precompile(address: Address) -> bool {
-    let mut index = 0;
-    while index < 19 {
-        if address.0 .0[index] != 0 {
-            return false;
-        }
-        index += 1;
-    }
-    address.0 .0[19] >= 1 && address.0 .0[19] <= 10
-}
-
-const fn assert_valid_production_routes(addresses: &[Address]) {
-    let mut index = 0;
-    while index < addresses.len() {
-        if is_ethereum_precompile(addresses[index]) {
-            panic!("Outbe exact route overlaps an Ethereum precompile");
-        }
-        if is_stablecoin_address(addresses[index]) {
-            panic!("Outbe exact route overlaps the Stablecoin address class");
-        }
-        let mut other = index + 1;
-        while other < addresses.len() {
-            if addresses_equal(addresses[index], addresses[other]) {
-                panic!("duplicate Outbe exact route");
-            }
-            other += 1;
-        }
-        index += 1;
-    }
-}
-
-const _: () = assert_valid_production_routes(outbe_evm::precompiles::outbe_precompile_addresses());
+const _: () = outbe_evm::precompiles::assert_valid_production_routes(
+    outbe_evm::precompiles::outbe_precompile_addresses(),
+);
 
 pub(crate) fn is_payable(address: &Address) -> bool {
     if let Some(route) = exact_route(address) {

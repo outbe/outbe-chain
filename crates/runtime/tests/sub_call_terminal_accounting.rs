@@ -38,8 +38,7 @@ fn vault_read(code: &[u8]) -> revm::context::result::ExecutionResult {
             ..Default::default()
         },
     );
-    let mut evm = OutbeEvmFactory::default()
-        .with_runtime_host(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
+    let mut evm = OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
         .create_evm(
             db,
             EvmEnv {
@@ -320,22 +319,23 @@ fn gem_static_gate_and_nested_child_failures_settle_inside_evm() {
                 ..Default::default()
             },
         );
-        let mut evm = outbe_evm::factory::OutbeEvmFactory::default()
-            .with_runtime_host(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
-            .create_evm(
-                &mut db,
-                EvmEnv {
-                    cfg_env: CfgEnv::new()
-                        .with_chain_id(1)
-                        .with_spec_and_mainnet_gas_params(SpecId::PRAGUE),
-                    block_env: BlockEnv {
-                        number: U256::ONE,
-                        timestamp: U256::from(1_700_000_000),
-                        gas_limit: 30_000_000,
-                        ..Default::default()
-                    },
+        let mut evm = outbe_evm::factory::OutbeEvmFactory::new(std::sync::Arc::new(
+            outbe_runtime::OutbeRuntime::new(),
+        ))
+        .create_evm(
+            &mut db,
+            EvmEnv {
+                cfg_env: CfgEnv::new()
+                    .with_chain_id(1)
+                    .with_spec_and_mainnet_gas_params(SpecId::PRAGUE),
+                block_env: BlockEnv {
+                    number: U256::ONE,
+                    timestamp: U256::from(1_700_000_000),
+                    gas_limit: 30_000_000,
+                    ..Default::default()
                 },
-            );
+            },
+        );
         let outcome = evm
             .transact_raw(
                 TxEnv::builder()

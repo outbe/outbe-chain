@@ -104,7 +104,7 @@ where
     Provider: StateProviderFactory + ChainSpecProvider<ChainSpec = ChainSpec<OutbeHeader>>,
     Pool: TransactionPool<Transaction: PoolTransaction<Consensus = OutbeTxEnvelope>>,
 {
-    fn build_payload<Txs>(
+    pub fn build_payload<Txs>(
         &self,
         args: BuildArguments<OutbePayloadAttributes, OutbeBuiltPayload>,
         best_txs: impl FnOnce(BestTransactionsAttributes) -> Txs,

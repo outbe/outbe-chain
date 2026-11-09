@@ -2,7 +2,7 @@ use super::*;
 use alloy_primitives::{Address, Bytes, B256};
 use commonware_actor::{Feedback, Unreliable};
 use commonware_consensus::{
-    marshal::{self, core::Buffer, resolver::handler, Start, Update},
+    marshal::{resolver::handler, Update},
     simplex::{
         elector::{Config as _, Elector as _, RoundRobin},
         types::{Activity, Finalization, Finalize, Proposal, Subject},
@@ -24,7 +24,6 @@ use commonware_runtime::{
 use commonware_storage::archive::immutable;
 use commonware_utils::{
     acknowledgement::Acknowledgement,
-    channel::oneshot,
     ordered::{Quorum as _, Set},
     NZUsize,
 };
@@ -48,7 +47,7 @@ use std::{
     collections::BTreeMap,
     convert::Infallible,
     marker::PhantomData,
-    num::{NonZeroU16, NonZeroU64, NonZeroUsize},
+    num::NonZeroU16,
     sync::{
         atomic::{AtomicU64, Ordering},
         mpsc, Arc, Barrier, Mutex as StdMutex,

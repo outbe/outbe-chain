@@ -1,4 +1,4 @@
-//! In-memory EVM that drives calls through [`sub_call::run`], for integration tests.
+//! In-memory EVM that drives calls through [`sub_call::run_with_host`], for integration tests.
 
 use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, Bytes, Log, U256};

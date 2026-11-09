@@ -45,4 +45,6 @@ pub use signer::{
 };
 
 mod host;
-pub use host::{stub_host, EvmRuntimeHost, UserTxFeePolicy};
+#[cfg(any(test, feature = "test-utils"))]
+pub use host::stub_host;
+pub use host::{EvmRuntimeHost, UserTxFeePolicy};
