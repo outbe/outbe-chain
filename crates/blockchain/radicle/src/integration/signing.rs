@@ -25,6 +25,7 @@ use super::review::{CheckpointPreparedReview, CheckpointPreparedReviewRefs};
 use super::review::{PreparedPatchReview, PreparedReviewRefs, ReviewSigningContext};
 use crate::manager::FinalizedPatchSigningState;
 use crate::manager::FinalizedRepositoryAuthority;
+use outbe_primitives::code_registry as cr;
 
 const PARTIAL_NAMESPACE: &[u8] = b"outbe.radicle.partial.v1";
 pub(crate) const MAX_PUBLIC_OUTPUT_BYTES: usize = 1024 * 1024;
@@ -62,7 +63,7 @@ pub struct RepositorySigningMaterial {
 }
 
 type PatchTarget<'a> = (
-    &'a outbe_primitives::code_registry::PatchApprovalRecord,
+    &'a cr::PatchApprovalRecord,
     &'a CheckpointOwnerSnapshot,
     &'a ReviewSigningContext,
     RepositoryKey,
@@ -92,12 +93,7 @@ impl PreparedSubject for PreparedReviewRefs {
 }
 
 trait PatchJob: std::ops::Deref<Target: PreparedSubject> {
-    fn approval_and_snapshot(
-        &self,
-    ) -> (
-        &outbe_primitives::code_registry::PatchApprovalRecord,
-        &CheckpointOwnerSnapshot,
-    );
+    fn approval_and_snapshot(&self) -> (&cr::PatchApprovalRecord, &CheckpointOwnerSnapshot);
     fn review_receipt(&self) -> Option<&crate::manager::FinalizedPublicationReceipt> {
         None
     }
@@ -112,34 +108,19 @@ trait PatchJob: std::ops::Deref<Target: PreparedSubject> {
 }
 
 impl PatchJob for CheckpointPreparedReview {
-    fn approval_and_snapshot(
-        &self,
-    ) -> (
-        &outbe_primitives::code_registry::PatchApprovalRecord,
-        &CheckpointOwnerSnapshot,
-    ) {
+    fn approval_and_snapshot(&self) -> (&cr::PatchApprovalRecord, &CheckpointOwnerSnapshot) {
         (self.approval(), self.snapshot())
     }
 }
 
 impl PatchJob for CheckpointPreparedReviewRefs {
-    fn approval_and_snapshot(
-        &self,
-    ) -> (
-        &outbe_primitives::code_registry::PatchApprovalRecord,
-        &CheckpointOwnerSnapshot,
-    ) {
+    fn approval_and_snapshot(&self) -> (&cr::PatchApprovalRecord, &CheckpointOwnerSnapshot) {
         (self.approval(), self.snapshot())
     }
 }
 
 impl PatchJob for super::merge::CheckpointPreparedMerge {
-    fn approval_and_snapshot(
-        &self,
-    ) -> (
-        &outbe_primitives::code_registry::PatchApprovalRecord,
-        &CheckpointOwnerSnapshot,
-    ) {
+    fn approval_and_snapshot(&self) -> (&cr::PatchApprovalRecord, &CheckpointOwnerSnapshot) {
         (self.approval(), self.snapshot())
     }
     fn review_receipt(&self) -> Option<&crate::manager::FinalizedPublicationReceipt> {
@@ -148,12 +129,7 @@ impl PatchJob for super::merge::CheckpointPreparedMerge {
 }
 
 impl PatchJob for super::merge::CheckpointPreparedMergeRefs {
-    fn approval_and_snapshot(
-        &self,
-    ) -> (
-        &outbe_primitives::code_registry::PatchApprovalRecord,
-        &CheckpointOwnerSnapshot,
-    ) {
+    fn approval_and_snapshot(&self) -> (&cr::PatchApprovalRecord, &CheckpointOwnerSnapshot) {
         (self.approval(), self.snapshot())
     }
     fn review_receipt(&self) -> Option<&crate::manager::FinalizedPublicationReceipt> {
@@ -218,10 +194,8 @@ impl RepositorySigningMaterial {
         (approval, snapshot, context, owner): PatchTarget<'_>,
         review: &crate::manager::FinalizedPublicationReceipt,
     ) -> Result<(), Error> {
-        let decision = outbe_primitives::code_registry::PatchVotePayloadV1::decode(
-            approval.payload.as_bytes(),
-        )
-        .map_err(|_| Error::Context)?;
+        let decision = cr::PatchVotePayloadV1::decode(approval.payload.as_bytes())
+            .map_err(|_| Error::Context)?;
         let body = &review.receipt().body;
         if body.action != outbe_primitives::radicle_publication::PublicationAction::Review
             || body.proposal_id != approval.proposal_id
@@ -239,7 +213,7 @@ impl RepositorySigningMaterial {
         self.authorize_current_patch(
             state,
             (approval, snapshot, context, owner),
-            outbe_primitives::code_registry::PATCH_EXECUTION_REVIEWED,
+            cr::PATCH_EXECUTION_REVIEWED,
         )
     }
 
@@ -250,11 +224,9 @@ impl RepositorySigningMaterial {
     ) -> Result<(), Error> {
         match job.review_receipt() {
             Some(review) => self.authorize_current_merge(state, job.patch_target(), review),
-            None => self.authorize_current_patch(
-                state,
-                job.patch_target(),
-                outbe_primitives::code_registry::PATCH_EXECUTION_PENDING,
-            ),
+            None => {
+                self.authorize_current_patch(state, job.patch_target(), cr::PATCH_EXECUTION_PENDING)
+            }
         }
     }
 

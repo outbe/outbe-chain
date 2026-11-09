@@ -1,7 +1,7 @@
 use super::*;
 use crate::manager::ManagerError;
 use alloy_primitives::U256;
-use outbe_primitives::radicle_publication::PublicationAction;
+use outbe_primitives::{code_registry as cr, radicle_publication::PublicationAction};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::sync::{mpsc, oneshot};
 
@@ -477,7 +477,7 @@ pub(crate) fn signing_fixture(
         },
         checkpoint: receipt.clone(),
         material: receipt,
-        stage: outbe_primitives::code_registry::PATCH_EXECUTION_PENDING,
+        stage: cr::PATCH_EXECUTION_PENDING,
         anchor: FinalizedBlock {
             number: 10,
             hash: B256::repeat_byte(10),
@@ -562,7 +562,7 @@ async fn local_signing_state_is_requested_fresh_for_the_exact_proposal() {
         state.approval.block = state.authority.block;
         state.checkpoint.block = state.authority.block;
         state.material.block = state.authority.block;
-        state.stage = outbe_primitives::code_registry::PATCH_EXECUTION_REVIEWED;
+        state.stage = cr::PATCH_EXECUTION_REVIEWED;
     }
     let changed = authority.state.lock().unwrap().clone();
     assert_eq!(
