@@ -9037,6 +9037,7 @@ dependencies = [
  "rand_chacha 0.3.1",
  "tempfile",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]

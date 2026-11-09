@@ -336,4 +336,44 @@ mod tests {
         assert_eq!(decoded.current, 4);
         assert_eq!(decoded.attempted, 9);
     }
+
+    #[test]
+    fn accounting_progress_errors_encode_icycle_selectors() {
+        let cases = [
+            (
+                AccountingProgressError::BlockNumberRegression {
+                    current: 10,
+                    attempted: 9,
+                },
+                ICycle::BlockNumberRegression {
+                    current: 10,
+                    attempted: 9,
+                }
+                .abi_encode(),
+            ),
+            (
+                AccountingProgressError::ZeroBlockNumber,
+                ICycle::ZeroAccountingProgress {}.abi_encode(),
+            ),
+            (
+                AccountingProgressError::BlockNumberGap {
+                    current: 4,
+                    attempted: 9,
+                },
+                ICycle::AccountingProgressGap {
+                    current: 4,
+                    attempted: 9,
+                }
+                .abi_encode(),
+            ),
+        ];
+        for (err, encoded) in cases {
+            match PrecompileError::from(err) {
+                PrecompileError::RevertBytes(bytes) => {
+                    assert_eq!(bytes.as_ref(), encoded.as_slice())
+                }
+                other => panic!("expected typed revert bytes, got {other:?}"),
+            }
+        }
+    }
 }

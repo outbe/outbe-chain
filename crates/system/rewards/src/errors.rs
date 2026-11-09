@@ -334,7 +334,31 @@ impl From<FinalizationError> for PrecompileError {
             FinalizationError::MissingPreloadedExecutionSummary { .. } => {
                 PrecompileError::Storage(error.to_string())
             }
-            _ => PrecompileError::Revert(error.to_string()),
+            FinalizationError::SignerBitmapLengthMismatch
+            | FinalizationError::DuplicateCommitteeAddresses
+            | FinalizationError::UnregisteredCommitteeMember { .. }
+            | FinalizationError::MissedProposerNotInCommittee { .. }
+            | FinalizationError::NonBinarySignerBitmapEntry
+            | FinalizationError::IdenticalReplayUnexpectedProgress { .. }
+            | FinalizationError::ProgressGap { .. }
+            | FinalizationError::RequiresBlockNumberAtLeastTwo
+            | FinalizationError::BlockNumberUnderflow
+            | FinalizationError::TargetImmediateParentMismatch { .. }
+            | FinalizationError::ZeroFinalizedBlockHash
+            | FinalizationError::LateCreditEpochMismatch { .. }
+            | FinalizationError::LateCreditCommitteeSetHashMismatch { .. }
+            | FinalizationError::LateCreditViewMismatch { .. }
+            | FinalizationError::LateCreditParentViewMismatch { .. }
+            | FinalizationError::LateCreditMissingEscrow { .. }
+            | FinalizationError::LateCreditFbHashMismatch { .. }
+            | FinalizationError::LateCreditFbNumberAtOrAboveBlock { .. }
+            | FinalizationError::LateCreditOutsideInclusionWindow { .. }
+            | FinalizationError::LateCreditInclusionDistanceExceedsU8 { .. }
+            | FinalizationError::LateCreditMissingCommitteeSnapshot { .. }
+            | FinalizationError::LateCreditProofVerifyFailed { .. }
+            | FinalizationError::LateCreditSignerIndexOutOfRange { .. } => {
+                PrecompileError::Revert(error.to_string())
+            }
         }
     }
 }

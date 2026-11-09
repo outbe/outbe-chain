@@ -236,6 +236,12 @@ fn verify_metadata_progress(
                 }
                 .into());
             }
+            tracing::warn!(
+                target: "outbe::system_tx",
+                block_number = ctx.block.block_number,
+                parent_block_number = expected_parent_number,
+                "CertifiedParentAccounting identical replay accepted",
+            );
             Ok(false)
         }
         MetadataFingerprintOutcome::Fresh => {
@@ -370,6 +376,12 @@ fn record_window_close_absentees(ctx: &BlockRuntimeContext<'_>, block_number: u6
         return Ok(());
     };
     let Some(absentees) = absentees_for_window(ctx, &info)? else {
+        tracing::warn!(
+            target: "outbe::slashing",
+            fb_number,
+            epoch = info.epoch,
+            "window-close absentee pass: committee snapshot missing; skipping",
+        );
         return Ok(());
     };
     if absentees.is_empty() {
