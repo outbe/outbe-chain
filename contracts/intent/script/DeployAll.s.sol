@@ -8,6 +8,7 @@ import {DeploySolverEscrow} from "./1_DeploySolverEscrow.s.sol";
 import {DeployAuction} from "./2_DeployAuction.s.sol";
 import {DeployRouter} from "./3_DeployRouter.s.sol";
 import {ConfigureAll} from "./4_ConfigureAll.s.sol";
+import {IntentCreate3} from "./IntentCreate3.sol";
 import {SALT_VERSION} from "@shared/SaltVersion.sol";
 
 /// @dev Full deployment + configuration in a single script.
@@ -51,7 +52,18 @@ contract DeployAll is DeployRouter, DeploySolverEscrow, DeployAuction, Configure
         // proxies it already has.
         address routerAddr = Create3Factory(factoryAddr).predict(vm.addr(deployerPrivateKey), getRouterSalt(salt));
         if (routerAddr.code.length != 0) {
+            address deployer = vm.addr(deployerPrivateKey);
             console2.log("Already deployed - skipping. Router:", routerAddr);
+            console2.log(
+                "  SolverEscrow:", IntentCreate3.predict(factoryAddr, deployer, IntentCreate3.SOLVER_ESCROW, salt)
+            );
+            console2.log(
+                "  SolverAllocator:", IntentCreate3.predict(factoryAddr, deployer, IntentCreate3.SOLVER_ALLOCATOR, salt)
+            );
+            console2.log("  Auction:", IntentCreate3.predict(factoryAddr, deployer, IntentCreate3.AUCTION, salt));
+            console2.log(
+                "  RouterAllocator:", IntentCreate3.predict(factoryAddr, deployer, IntentCreate3.ROUTER_ALLOCATOR, salt)
+            );
             vm.stopBroadcast();
             return;
         }
