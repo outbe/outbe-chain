@@ -1168,6 +1168,17 @@
   },
   {
     "type": "error",
+    "name": "DomainTooLarge",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ERC1967InvalidImplementation",
     "inputs": [
       {
