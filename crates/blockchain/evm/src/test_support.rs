@@ -177,7 +177,6 @@ fn decode_success<C: SolCall>(out: &SubCallOutput) -> C::Return {
 mod domain_host {
     use alloy_primitives::{Address, Bytes, B256, U256};
     use outbe_primitives::{
-        addresses::SYSTEM_ADDRESS,
         block::{BlockHeightRegime, BlockRuntimeContext},
         committee_snapshot::CommitteeSnapshot,
         consensus::{DkgBoundaryArtifact, GenesisValidators},
@@ -502,14 +501,12 @@ mod domain_host {
             outbe_cycle::handler::derive_active_utc_day(storage, genesis_timestamp, block_timestamp)
         }
 
-        fn settle_block_burned_fees(&self, storage: StorageHandle<'_>, amount: U256) -> Result<()> {
-            outbe_promislimit::PromisLimitContract::new(storage)
-                .burn_to_promis_limit(
-                    SYSTEM_ADDRESS,
-                    amount,
-                    outbe_promislimit::BurnSource::BaseFee,
-                )
-                .map(|_| ())
+        fn settle_block_burned_fees(
+            &self,
+            mut storage: StorageHandle<'_>,
+            amount: U256,
+        ) -> Result<()> {
+            outbe_promislimit::settle_block_burned_fees(&mut storage, amount)
         }
 
         fn sync_hyperlane_validators(&self, ctx: &BlockRuntimeContext<'_>) -> Result<()> {

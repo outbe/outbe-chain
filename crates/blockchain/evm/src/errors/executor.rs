@@ -114,6 +114,9 @@ pub enum SystemTxBuildError {
     ActiveTeePolicy(#[from] TeeAttestationActivationError),
     #[error("block-1 OST3 policy does not match the immutable ChainSpec schedule")]
     Block1Ost3PolicyScheduleMismatch,
+    /// The block builder has no runtime host, so it cannot check the bootstrap.
+    #[error("evm runtime host is not installed")]
+    RuntimeHostNotInstalled,
     #[error("OST3 bootstrap payload is forbidden at block {block_number}")]
     Ost3BootstrapForbiddenAtBlock { block_number: u64 },
     #[error("encode system tx input: {0}")]

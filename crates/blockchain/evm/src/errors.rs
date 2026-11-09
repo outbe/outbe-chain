@@ -9,16 +9,6 @@ use outbe_primitives::{
 use std::path::Path;
 use std::sync::Arc;
 
-/// Checks whether a precompile error is a user revert.
-#[must_use]
-#[cfg(feature = "test-utils")]
-pub(crate) const fn is_revert_error(error: &PrecompileError) -> bool {
-    matches!(
-        error,
-        PrecompileError::Revert(_) | PrecompileError::RevertBytes(_)
-    )
-}
-
 /// Checks whether a parent subcall out-of-gas overrides a nested precompile result.
 #[must_use]
 pub(crate) const fn is_overridden_by_subcall_out_of_gas(error: &PrecompileError) -> bool {
@@ -285,41 +275,6 @@ pub enum TeeBootstrapHostError {
     HostNotInstalled,
 }
 
-/// Errors that occur when a route dispatches a precompile call.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum PrecompileRouteError {
-    #[error("unregistered stablecoin address")]
-    UnregisteredStablecoinAddress,
-    #[error("stablecoin token cannot receive native value")]
-    StablecoinCannotReceiveNativeValue,
-    #[error("stablecoin registry unavailable")]
-    StablecoinRegistryUnavailable,
-    #[error("stablecoin Factory reverse id does not derive callee {token}")]
-    StablecoinReverseIdMismatch { token: Address },
-    #[error("stablecoin {token} marker code mismatch")]
-    StablecoinMarkerCodeMismatch { token: Address },
-    #[error("stablecoin {token} schema is not initialized for V1")]
-    StablecoinSchemaNotInitialized { token: Address },
-    #[error("stablecoin {token} identity does not match Factory registration")]
-    StablecoinIdentityMismatch { token: Address },
-}
-
-impl From<PrecompileRouteError> for PrecompileError {
-    fn from(error: PrecompileRouteError) -> Self {
-        match error {
-            PrecompileRouteError::UnregisteredStablecoinAddress
-            | PrecompileRouteError::StablecoinCannotReceiveNativeValue
-            | PrecompileRouteError::StablecoinRegistryUnavailable
-            | PrecompileRouteError::StablecoinReverseIdMismatch { .. }
-            | PrecompileRouteError::StablecoinMarkerCodeMismatch { .. }
-            | PrecompileRouteError::StablecoinSchemaNotInitialized { .. }
-            | PrecompileRouteError::StablecoinIdentityMismatch { .. } => {
-                Self::Revert(error.to_string())
-            }
-        }
-    }
-}
-
 /// Errors that occur in the begin-block system precompile.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum BeginBlockPrecompileError {
@@ -331,74 +286,6 @@ pub enum BeginBlockPrecompileError {
     InvalidSystemTxInput(String),
     #[error("proposer is not a current consensus participant: {proposer}")]
     ProposerNotConsensusParticipant { proposer: Address },
-    #[error(
-        "missing preloaded execution summary for finalized block {block_number} ({block_hash})"
-    )]
-    MissingPreloadedExecutionSummary { block_number: u64, block_hash: B256 },
-    #[error(
-        "CertifiedParentAccounting identical replay at unexpected progress: last_accounted={last_accounted}, expected={expected}"
-    )]
-    IdenticalReplayUnexpectedProgress { last_accounted: u64, expected: u64 },
-    #[error(
-        "CertifiedParentAccounting progress gap: last_accounted={last_accounted}, expected_previous={expected_previous}, accounting_parent={accounting_parent}"
-    )]
-    ProgressGap {
-        last_accounted: u64,
-        expected_previous: u64,
-        accounting_parent: u64,
-    },
-    #[error("CertifiedParentAccounting system tx requires block_number >= 2")]
-    RequiresBlockNumberAtLeastTwo,
-    #[error("block number underflow")]
-    BlockNumberUnderflow,
-    #[error(
-        "CertifiedParentAccounting metadata must target immediate parent: expected {expected}, got {actual}"
-    )]
-    TargetImmediateParentMismatch { expected: u64, actual: u64 },
-    #[error("CertifiedParentAccounting metadata has zero finalized block hash")]
-    ZeroFinalizedBlockHash,
-    #[error(
-        "LateFinalizeCredits: epoch mismatch for fb_number {fb_number} (escrow {escrowed_epoch}, credit {credit_epoch})"
-    )]
-    LateCreditEpochMismatch {
-        fb_number: u64,
-        escrowed_epoch: u64,
-        credit_epoch: u64,
-    },
-    #[error(
-        "LateFinalizeCredits: committee_set_hash mismatch for fb_number {fb_number} (escrow {escrowed_csh}, credit {credit_csh})"
-    )]
-    LateCreditCommitteeSetHashMismatch {
-        fb_number: u64,
-        escrowed_csh: B256,
-        credit_csh: B256,
-    },
-    #[error(
-        "LateFinalizeCredits: view mismatch for fb_number {fb_number} (escrow {escrowed_view}, credit {credit_view})"
-    )]
-    LateCreditViewMismatch {
-        fb_number: u64,
-        escrowed_view: u64,
-        credit_view: u64,
-    },
-    #[error(
-        "LateFinalizeCredits: parent_view mismatch for fb_number {fb_number} (escrow {escrowed_parent_view}, credit {credit_parent_view})"
-    )]
-    LateCreditParentViewMismatch {
-        fb_number: u64,
-        escrowed_parent_view: u64,
-        credit_parent_view: u64,
-    },
-    #[error("LateFinalizeCredits: no escrow for fb_number {fb_number} (credit fb_hash {fb_hash})")]
-    LateCreditMissingEscrow { fb_number: u64, fb_hash: B256 },
-    #[error(
-        "LateFinalizeCredits: fb_hash mismatch for fb_number {fb_number} (escrow {escrowed_hash}, credit {credit_hash})"
-    )]
-    LateCreditFbHashMismatch {
-        fb_number: u64,
-        escrowed_hash: B256,
-        credit_hash: B256,
-    },
     #[error("LateFinalizeCredits: fb_number {fb_number} >= block {block_number}")]
     LateCreditFbNumberAtOrAboveBlock { fb_number: u64, block_number: u64 },
     #[error(
@@ -414,14 +301,6 @@ pub enum BeginBlockPrecompileError {
         "LateFinalizeCredits: inclusion distance {distance} exceeds u8 for block {block_number}"
     )]
     LateCreditInclusionDistanceExceedsU8 { distance: u64, block_number: u64 },
-    #[error(
-        "LateFinalizeCredits: missing committee snapshot for epoch={epoch} key={snapshot_key}"
-    )]
-    LateCreditMissingCommitteeSnapshot { epoch: u64, snapshot_key: B256 },
-    #[error("LateFinalizeCredits: proof verify failed for fb={fb_hash}: {reason}")]
-    LateCreditProofVerifyFailed { fb_hash: B256, reason: String },
-    #[error("LateFinalizeCredits: signer index {idx} out of committee range")]
-    LateCreditSignerIndexOutOfRange { idx: usize },
     #[error("invalid TEE ChainSpec authority: {0}")]
     InvalidTeeChainSpecAuthority(String),
     #[error("OST3 is not active at the current block")]
@@ -430,33 +309,6 @@ pub enum BeginBlockPrecompileError {
     InvalidActiveTeePolicy(String),
     #[error("OST3 policy does not match the active ChainSpec schedule")]
     Ost3PolicyScheduleMismatch,
-    #[error("TeeBootstrapV2: registry already bootstrapped")]
-    TeeRegistryAlreadyBootstrapped,
-    #[error(
-        "TeeBootstrapV2: committee snapshot block {snapshot_block} does not equal current block {current_block}"
-    )]
-    TeeCommitteeSnapshotBlockMismatch {
-        snapshot_block: u64,
-        current_block: u64,
-    },
-    #[error("TeeBootstrapV2: payload policy is not the authoritative active V1 policy")]
-    TeePayloadPolicyNotAuthoritative,
-    #[error("canonical TeeBootstrapV2 cannot produce its signing hash: {0}")]
-    TeeCannotProduceSigningHash(String),
-    #[error("TeeBootstrapV2: invalid committee signature for {validator}")]
-    TeeInvalidCommitteeSignature { validator: Address },
-    #[error("TeeBootstrapV2: epoch-0 committee snapshot is missing")]
-    TeeMissingEpoch0CommitteeSnapshot,
-    #[error("TeeBootstrapV2: committee snapshot hash mismatch")]
-    TeeCommitteeSnapshotHashMismatch,
-    #[error("canonical TeeBootstrapV2 cannot reconstruct evidence {index}: {reason}")]
-    TeeCannotReconstructEvidence { index: usize, reason: String },
-    #[error("authoritative TeeBootstrapV2 policy cannot be hashed: {0}")]
-    TeeCannotHashAuthoritativePolicy(String),
-    #[error("TeeBootstrapV2: active consensus committee is empty")]
-    TeeEmptyActiveConsensusCommittee,
-    #[error("TeeBootstrapV2: participants must equal the complete active consensus committee")]
-    TeeParticipantsMismatchActiveCommittee,
 }
 
 impl BeginBlockPrecompileError {
@@ -477,46 +329,17 @@ impl BeginBlockPrecompileError {
 impl From<BeginBlockPrecompileError> for PrecompileError {
     fn from(error: BeginBlockPrecompileError) -> Self {
         match error {
-            BeginBlockPrecompileError::MissingPreloadedExecutionSummary { .. } => {
-                Self::Storage(error.to_string())
-            }
             BeginBlockPrecompileError::InvalidTeeChainSpecAuthority(_)
             | BeginBlockPrecompileError::InvalidActiveTeePolicy(_)
             | BeginBlockPrecompileError::InvalidSystemCaller
             | BeginBlockPrecompileError::NativeValueRejected
             | BeginBlockPrecompileError::InvalidSystemTxInput(_)
             | BeginBlockPrecompileError::ProposerNotConsensusParticipant { .. }
-            | BeginBlockPrecompileError::IdenticalReplayUnexpectedProgress { .. }
-            | BeginBlockPrecompileError::ProgressGap { .. }
-            | BeginBlockPrecompileError::RequiresBlockNumberAtLeastTwo
-            | BeginBlockPrecompileError::BlockNumberUnderflow
-            | BeginBlockPrecompileError::TargetImmediateParentMismatch { .. }
-            | BeginBlockPrecompileError::ZeroFinalizedBlockHash
-            | BeginBlockPrecompileError::LateCreditEpochMismatch { .. }
-            | BeginBlockPrecompileError::LateCreditCommitteeSetHashMismatch { .. }
-            | BeginBlockPrecompileError::LateCreditViewMismatch { .. }
-            | BeginBlockPrecompileError::LateCreditParentViewMismatch { .. }
-            | BeginBlockPrecompileError::LateCreditMissingEscrow { .. }
-            | BeginBlockPrecompileError::LateCreditFbHashMismatch { .. }
             | BeginBlockPrecompileError::LateCreditFbNumberAtOrAboveBlock { .. }
             | BeginBlockPrecompileError::LateCreditOutsideInclusionWindow { .. }
             | BeginBlockPrecompileError::LateCreditInclusionDistanceExceedsU8 { .. }
-            | BeginBlockPrecompileError::LateCreditMissingCommitteeSnapshot { .. }
-            | BeginBlockPrecompileError::LateCreditProofVerifyFailed { .. }
-            | BeginBlockPrecompileError::LateCreditSignerIndexOutOfRange { .. }
             | BeginBlockPrecompileError::Ost3NotActive
-            | BeginBlockPrecompileError::Ost3PolicyScheduleMismatch
-            | BeginBlockPrecompileError::TeeRegistryAlreadyBootstrapped
-            | BeginBlockPrecompileError::TeeCommitteeSnapshotBlockMismatch { .. }
-            | BeginBlockPrecompileError::TeePayloadPolicyNotAuthoritative
-            | BeginBlockPrecompileError::TeeCannotProduceSigningHash(_)
-            | BeginBlockPrecompileError::TeeInvalidCommitteeSignature { .. }
-            | BeginBlockPrecompileError::TeeMissingEpoch0CommitteeSnapshot
-            | BeginBlockPrecompileError::TeeCommitteeSnapshotHashMismatch
-            | BeginBlockPrecompileError::TeeCannotReconstructEvidence { .. }
-            | BeginBlockPrecompileError::TeeCannotHashAuthoritativePolicy(_)
-            | BeginBlockPrecompileError::TeeEmptyActiveConsensusCommittee
-            | BeginBlockPrecompileError::TeeParticipantsMismatchActiveCommittee => {
+            | BeginBlockPrecompileError::Ost3PolicyScheduleMismatch => {
                 Self::Revert(error.to_string())
             }
         }
@@ -526,101 +349,14 @@ impl From<BeginBlockPrecompileError> for PrecompileError {
 /// Errors that occur in executor hooks, boundary updates, and genesis checks.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ExecutorHookError {
-    #[error("consensus metadata signer bitmap length mismatch")]
-    SignerBitmapLengthMismatch,
-    #[error("consensus metadata committee contains duplicate addresses")]
-    DuplicateCommitteeAddresses,
-    #[error("consensus metadata committee member is not a registered validator: {address}")]
-    UnregisteredCommitteeMember { address: Address },
-    #[error(
-        "consensus metadata missed proposer is not in finalized committee: {validator} (view {view})"
-    )]
-    MissedProposerNotInCommittee { validator: Address, view: u64 },
-    #[error("consensus metadata signer bitmap contains non-binary entry")]
-    NonBinarySignerBitmapEntry,
-    #[error(
-        "boundary TEE expiry exclusions commitment mismatch: expected {expected}, got {actual}"
-    )]
-    TeeExpiryExclusionsHashMismatch { expected: B256, actual: B256 },
-    #[error("boundary active_set_hash mismatch: expected {expected}, got {actual}")]
-    ActiveSetHashMismatch { expected: B256, actual: B256 },
-    #[error("boundary VRF group public key hash mismatch: expected {expected}, got {actual}")]
-    VrfGroupPublicKeyHashMismatch { expected: B256, actual: B256 },
-    #[error("boundary committee_set_hash mismatch: expected {expected}, got {actual}")]
-    CommitteeSetHashMismatch { expected: B256, actual: B256 },
-    #[error("ValidatorSet epoch exceeds u64")]
-    ValidatorSetEpochExceedsU64,
-    #[error(
-        "boundary active_set_hash changed without validator-set change: current={current}, boundary={boundary}"
-    )]
-    ActiveSetHashChangedWithoutValidatorSetChange { current: B256, boundary: B256 },
-    #[error("ValidatorSet epoch overflow at BoundaryOutcome")]
-    ValidatorSetEpochOverflow,
-    #[error(
-        "BoundaryOutcome epoch must bootstrap epoch 0 at block 1 or activate current+1: current={current}, incoming={incoming}, block={block}"
-    )]
-    InvalidBoundaryEpochTransition {
-        current: u64,
-        incoming: u64,
-        block: u64,
-    },
-    #[error("boundary active set contains unregistered validator {address}")]
-    UnregisteredBoundaryValidator { address: Address },
     #[error("Staking min_stake must be initialized in genesis")]
     StakingMinStakeUninitialized,
-    #[error("genesis total stake overflow")]
-    GenesisTotalStakeOverflow,
-    #[error("genesis total_staked mismatch: state={state}, expected={expected}")]
-    GenesisTotalStakedMismatch { state: U256, expected: U256 },
-    #[error("ValidatorSet must be initialized in genesis; executor genesis backfill is disabled")]
-    ValidatorSetUninitializedInGenesis,
-    #[error("genesis ValidatorSet epoch_length_blocks mismatch: state={state}, genesis={genesis}")]
-    GenesisEpochLengthMismatch { state: u32, genesis: u32 },
-    #[error(
-        "genesis active consensus set size mismatch: state={state}, genesis validators={genesis}"
-    )]
-    GenesisActiveConsensusCountMismatch { state: u32, genesis: usize },
-    #[error("genesis validator {address} is missing from ValidatorSet")]
-    MissingGenesisValidator { address: Address },
-    #[error("genesis validator {address} consensus pubkey mismatch")]
-    GenesisConsensusPubkeyMismatch { address: Address },
-    #[error("genesis validator {address} must be active with a BLS share")]
-    GenesisValidatorNotActive { address: Address },
-    #[error("genesis validator {address} stake below min_stake")]
-    GenesisValidatorStakeBelowMinimum { address: Address },
 }
 
 impl From<ExecutorHookError> for PrecompileError {
     fn from(error: ExecutorHookError) -> Self {
         match error {
-            ExecutorHookError::SignerBitmapLengthMismatch
-            | ExecutorHookError::DuplicateCommitteeAddresses
-            | ExecutorHookError::UnregisteredCommitteeMember { .. }
-            | ExecutorHookError::MissedProposerNotInCommittee { .. }
-            | ExecutorHookError::NonBinarySignerBitmapEntry
-            | ExecutorHookError::TeeExpiryExclusionsHashMismatch { .. }
-            | ExecutorHookError::ActiveSetHashMismatch { .. }
-            | ExecutorHookError::VrfGroupPublicKeyHashMismatch { .. }
-            | ExecutorHookError::CommitteeSetHashMismatch { .. }
-            | ExecutorHookError::ActiveSetHashChangedWithoutValidatorSetChange { .. }
-            | ExecutorHookError::InvalidBoundaryEpochTransition { .. }
-            | ExecutorHookError::UnregisteredBoundaryValidator { .. } => {
-                Self::Revert(error.to_string())
-            }
-            ExecutorHookError::ValidatorSetEpochExceedsU64
-            | ExecutorHookError::ValidatorSetEpochOverflow
-            | ExecutorHookError::StakingMinStakeUninitialized
-            | ExecutorHookError::GenesisTotalStakeOverflow
-            | ExecutorHookError::GenesisTotalStakedMismatch { .. }
-            | ExecutorHookError::ValidatorSetUninitializedInGenesis
-            | ExecutorHookError::GenesisEpochLengthMismatch { .. }
-            | ExecutorHookError::GenesisActiveConsensusCountMismatch { .. }
-            | ExecutorHookError::MissingGenesisValidator { .. }
-            | ExecutorHookError::GenesisConsensusPubkeyMismatch { .. }
-            | ExecutorHookError::GenesisValidatorNotActive { .. }
-            | ExecutorHookError::GenesisValidatorStakeBelowMinimum { .. } => {
-                Self::Fatal(error.to_string())
-            }
+            ExecutorHookError::StakingMinStakeUninitialized => Self::Fatal(error.to_string()),
         }
     }
 }

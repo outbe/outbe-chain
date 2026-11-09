@@ -4,8 +4,6 @@
 //! dispatch adapter and base-gas function. Activation, persistence, warming,
 //! sponsorship and future address classes intentionally remain outside this table.
 
-#[cfg(feature = "test-utils")]
-use alloy_primitives::B256;
 use alloy_primitives::{Address, Bytes, U256};
 #[cfg(feature = "test-utils")]
 use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
@@ -41,6 +39,7 @@ pub(crate) const EXACT_ADDRESSES: &[Address] = &[
     ORACLE_ADDRESS,
     ZEROFEE_ADDRESS,
     OUTBE_SYSTEM_TX_ADDRESS,
+    ZKPROOF_VERIFY_ADDRESS,
     TEE_REGISTRY_ADDRESS,
     L2_REGISTRY_ADDRESS,
     HYPERLANE_CONTROLLER_ADDRESS,
@@ -212,94 +211,6 @@ fn stablecoin_factory_dispatch(
 }
 
 #[cfg(feature = "test-utils")]
-fn stablecoin_class_dispatch(storage: StorageHandle, call: RouteCall<'_>) -> Result<Bytes> {
-    let RouteCall {
-        callee: token,
-        data,
-        caller,
-        value,
-    } = call;
-    let plain_native_transfer = data.is_empty() && !value.is_zero();
-    let registered = read_stablecoin_registration(&storage, token, plain_native_transfer)?;
-    let Some(factory_token_id) = registered else {
-        if plain_native_transfer {
-            return Ok(Bytes::new());
-        }
-        return Err(crate::errors::PrecompileRouteError::UnregisteredStablecoinAddress.into());
-    };
-    if plain_native_transfer {
-        return Err(crate::errors::PrecompileRouteError::StablecoinCannotReceiveNativeValue.into());
-    }
-    authenticate_registered_stablecoin(&storage, token, factory_token_id)?;
-    outbe_stablecoin::precompile::dispatch(storage, token, data, caller, value)
-}
-
-#[cfg(feature = "test-utils")]
-fn read_stablecoin_registration(
-    storage: &StorageHandle,
-    token: Address,
-    plain_native_transfer: bool,
-) -> Result<Option<B256>> {
-    match outbe_stablecoinfactory::StablecoinFactoryApi::token_id_of(storage.clone(), token) {
-        Ok(registered) => Ok(registered),
-        Err(_) if plain_native_transfer => {
-            Err(crate::errors::PrecompileRouteError::StablecoinRegistryUnavailable.into())
-        }
-        Err(error) => Err(error),
-    }
-}
-
-#[cfg(feature = "test-utils")]
-fn authenticate_registered_stablecoin(
-    storage: &StorageHandle,
-    token: Address,
-    factory_token_id: B256,
-) -> Result<()> {
-    let expected_address = outbe_primitives::stablecoin::stablecoin_address(
-        factory_token_id,
-        STABLECOIN_ADDRESS_PREFIX,
-    );
-    if expected_address != token {
-        return Err(
-            crate::errors::PrecompileRouteError::StablecoinReverseIdMismatch { token }.into(),
-        );
-    }
-
-    storage.with_account_info(token, |info| {
-        let marker = info
-            .code
-            .as_ref()
-            .map(revm::state::Bytecode::original_bytes)
-            .unwrap_or_default();
-        if marker.as_ref() != STABLECOIN_MARKER_CODE {
-            return Err(
-                crate::errors::PrecompileRouteError::StablecoinMarkerCodeMismatch { token }.into(),
-            );
-        }
-        Ok(())
-    })?;
-
-    if let Err(error) = outbe_stablecoin::api::schema_version(storage.clone(), token) {
-        if crate::errors::is_revert_error(&error) {
-            return Err(
-                crate::errors::PrecompileRouteError::StablecoinSchemaNotInitialized { token }
-                    .into(),
-            );
-        }
-        return Err(error);
-    }
-
-    let identity = outbe_stablecoin::api::identity(storage.clone(), token)?;
-    if identity.token_id != factory_token_id {
-        return Err(
-            crate::errors::PrecompileRouteError::StablecoinIdentityMismatch { token }.into(),
-        );
-    }
-
-    Ok(())
-}
-
-#[cfg(feature = "test-utils")]
 fn vote_dispatch(
     storage: StorageHandle,
     data: &[u8],
@@ -375,6 +286,7 @@ define_domain_routes! {
     ORACLE_ADDRESS => (outbe_oracle::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_oracle::precompile::PAYABLE_SELECTORS),
     ZEROFEE_ADDRESS => (outbe_zerofee::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_zerofee::precompile::PAYABLE_SELECTORS),
     OUTBE_SYSTEM_TX_ADDRESS => (crate::sys_tx_precompile::dispatch_system_tx_route, default_base_gas, ValuePolicy::Reject, crate::sys_tx_precompile::PAYABLE_SELECTORS),
+    ZKPROOF_VERIFY_ADDRESS => (outbe_zk_backend::precompile::dispatch_zk_verify, outbe_zk_backend::precompile::zk_verify_base_gas, ValuePolicy::Reject, outbe_zk_backend::precompile::ZK_VERIFY_PAYABLE_SELECTORS),
     TEE_REGISTRY_ADDRESS => (outbe_teeregistry::v1_precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_teeregistry::v1_precompile::PAYABLE_SELECTORS),
     L2_REGISTRY_ADDRESS => (outbe_l2registry::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_l2registry::precompile::PAYABLE_SELECTORS),
     HYPERLANE_CONTROLLER_ADDRESS => (outbe_hyperlanecontroller::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_hyperlanecontroller::precompile::PAYABLE_SELECTORS),
@@ -398,14 +310,8 @@ pub(crate) fn dispatch_domain_precompile(
         return route.dispatch(storage, data, caller, value);
     }
     if is_stablecoin_address(*address) {
-        return stablecoin_class_dispatch(
-            storage,
-            RouteCall {
-                callee: *address,
-                data,
-                caller,
-                value,
-            },
+        return outbe_stablecoinfactory::precompile::stablecoin_class_dispatch(
+            storage, *address, data, caller, value,
         );
     }
     Err(outbe_primitives::error::PrecompileError::Fatal(

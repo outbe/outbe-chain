@@ -8239,6 +8239,7 @@ dependencies = [
  "outbe-vaultrouter",
  "outbe-vote",
  "outbe-zerofee",
+ "outbe-zk-backend",
  "parking_lot",
  "postcard",
  "proptest",

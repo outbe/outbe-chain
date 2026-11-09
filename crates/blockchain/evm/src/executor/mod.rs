@@ -16,7 +16,9 @@ use alloy_evm::{
     revm::context::Block as _,
     Database, RecoveredTx,
 };
-use alloy_primitives::{keccak256, map::AddressMap, Address, Bytes, Log, B256, U256};
+#[cfg(test)]
+use alloy_primitives::keccak256;
+use alloy_primitives::{map::AddressMap, Address, Bytes, Log, B256, U256};
 use outbe_primitives::zero_fee_types::{BootstrapTransactionView, ZeroFeeTransaction};
 use outbe_primitives::{
     block::{BlockContext, BlockHeightRegime, BlockRuntimeContext},

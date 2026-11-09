@@ -96,7 +96,7 @@ pub(crate) fn prepare_boundary_epoch_counters(
     crate::active_evm_runtime_host().prepare_boundary(storage, boundary, block_number)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(in crate::executor) fn hash_boundary_active_set(addresses: &[Address]) -> B256 {
     let mut bytes = Vec::with_capacity(8 + addresses.len() * 20);
     bytes.extend_from_slice(&(addresses.len() as u64).to_be_bytes());

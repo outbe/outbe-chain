@@ -49,6 +49,7 @@ outbe-promislimit = { workspace = true, optional = true }
 outbe-oracle = { workspace = true, optional = true }
 outbe-zerofee = { workspace = true, optional = true }
 outbe-cycle = { workspace = true, optional = true }
+outbe-zk-backend = { workspace = true, optional = true }
 
 # Alloy
 alloy-rpc-types-eth.workspace = true
@@ -162,6 +163,7 @@ test-utils = [
     "dep:outbe-oracle",
     "dep:outbe-zerofee",
     "dep:outbe-cycle",
+    "dep:outbe-zk-backend",
 ]
 # Names stay. The compile-time test-enclave forward is empty until the
 # runtime composition root owns these features.

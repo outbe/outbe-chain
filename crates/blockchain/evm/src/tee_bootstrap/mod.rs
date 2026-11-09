@@ -48,9 +48,7 @@ pub fn validate_tee_bootstrap_for_build(
             Err(SystemTxBuildError::Block1Ost3PolicyScheduleMismatch)
         }
         Err(TeeBootstrapHostError::HostNotInstalled) => {
-            Err(SystemTxBuildError::invalid_block1_ost3_bootstrap_payload(
-                "evm runtime host is not installed",
-            ))
+            Err(SystemTxBuildError::RuntimeHostNotInstalled)
         }
     }
 }
