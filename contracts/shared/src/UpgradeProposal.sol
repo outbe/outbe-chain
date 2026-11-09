@@ -26,6 +26,7 @@ abstract contract UpgradeProposal is Script {
 
     Mode internal mode;
     string[] internal upgrades;
+    mapping(uint256 chainId => bool) internal prepared;
 
     /// @dev The private key that deploys the implementations and, before the hand-over, upgrades.
     function _deployerKey() internal view virtual returns (uint256);
@@ -59,8 +60,11 @@ abstract contract UpgradeProposal is Script {
         printProposal();
     }
 
-    /// @dev Upgrades with the key or records the upgrades of every deployed proxy on this chain.
+    /// @dev Upgrades with the key or records the upgrades of every deployed proxy on this chain. A
+    ///      chain listed twice is prepared once.
     function prepareChain(uint256 pk) public {
+        if (prepared[block.chainid]) return;
+        prepared[block.chainid] = true;
         address deployer = vm.addr(pk);
         address[] memory proxies = _proxies(deployer);
         for (uint256 i = 0; i < proxies.length; i++) {

@@ -93,6 +93,16 @@ contract PrepareUpgradeTest is Test {
         assertEq(address(HyperlaneGatewayAdapter(impl).MAILBOX()), mailbox, "mailbox kept");
     }
 
+    function test_ChainListedTwice_IsPreparedOnce() public {
+        _handOver();
+        script.setSourceCommit("abc123");
+
+        script.prepareChain(PK);
+        script.prepareChain(PK);
+
+        assertFalse(vm.keyExistsJson(script.proposal(), ".upgrades[2]"), "no duplicate upgrades");
+    }
+
     function test_RevertWhen_PayloadHasNoSourceCommit() public {
         _handOver();
         vm.expectRevert(UpgradeProposal.MissingSourceCommit.selector);
