@@ -9501,6 +9501,7 @@ version = "0.1.0"
 dependencies = [
  "acir",
  "acvm",
+ "alloy-primitives",
  "ark-ff 0.6.0",
  "ark-std 0.6.0",
  "barretenberg-rs",
@@ -9512,6 +9513,7 @@ dependencies = [
  "reqwest 0.13.2",
  "sha2 0.10.9",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
