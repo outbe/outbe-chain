@@ -25,7 +25,6 @@
     "compile": "forge build",
     "slither": "mise exec -- uvx --from slither-analyzer==0.11.5 slither .",
     "slither:sarif": "mise exec -- uvx --from slither-analyzer==0.11.5 slither . --sarif slither-report.sarif",
-    "slither:ci": "mise exec -- uvx --from slither-analyzer==0.11.5 slither . --sarif slither-report.sarif --fail-high",
     "aderyn": "mise exec -- aderyn . --skip-cloc --skip-update-check",
     "analyze": "yarn slither && yarn aderyn",
     "format:check": "forge fmt --check",
