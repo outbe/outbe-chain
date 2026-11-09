@@ -144,10 +144,6 @@ impl TxPoolZeroFeePolicy for OutbeRuntime {
 }
 
 impl EvmRuntimeHost for OutbeRuntime {
-    fn exact_addresses(&self) -> &'static [Address] {
-        crate::precompiles::EXACT_ADDRESSES
-    }
-
     fn marker_addresses(&self) -> &'static [Address] {
         &outbe_evm::executor::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES
     }

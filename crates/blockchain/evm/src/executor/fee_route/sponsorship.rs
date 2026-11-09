@@ -11,7 +11,7 @@ where
     E::Spec: Into<revm::primitives::hardfork::SpecId>,
     E::Error: std::fmt::Display,
 {
-    pub(super) fn execute_sponsored_transaction<R, F>(
+    pub fn execute_sponsored_transaction<R, F>(
         &mut self,
         ctx: BlockContext,
         tx_env: TxEnv,

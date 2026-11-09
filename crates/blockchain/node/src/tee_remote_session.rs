@@ -69,55 +69,6 @@ pub trait TeeSessionStateReader: Send + Sync {
     ) -> Result<EnclaveUpgradeV1, PrecompileError>;
 }
 
-#[cfg(any(test, feature = "test-utils"))]
-pub struct DomainTeeSessionReader;
-
-#[cfg(any(test, feature = "test-utils"))]
-impl TeeSessionStateReader for DomainTeeSessionReader {
-    fn node_binding(
-        &self,
-        storage: StorageHandle<'_>,
-        node_id: &NodeIdV1,
-    ) -> Result<Option<NodeEnclaveBindingV1>, PrecompileError> {
-        outbe_teeregistry::TeeRegistry::new(storage).node_enclave_binding_for_identity_v1(node_id)
-    }
-
-    fn binding_admitted(
-        &self,
-        storage: StorageHandle<'_>,
-        binding: &NodeEnclaveBindingV1,
-        height: u64,
-    ) -> Result<bool, PrecompileError> {
-        outbe_teeregistry::TeeRegistry::new(storage).binding_code_admitted_at_v1(binding, height)
-    }
-
-    fn binding_slots(
-        &self,
-        storage: StorageHandle<'_>,
-        node_id: &NodeIdV1,
-    ) -> Result<Vec<B256>, PrecompileError> {
-        outbe_teeregistry::TeeRegistry::new(storage).node_enclave_binding_storage_slots_v1(node_id)
-    }
-
-    fn retirement_height(&self, storage: StorageHandle<'_>) -> Result<u64, PrecompileError> {
-        outbe_teeregistry::TeeRegistry::new(storage).last_enclave_retirement_height_v1()
-    }
-
-    fn successor(
-        &self,
-        storage: StorageHandle<'_>,
-    ) -> Result<Option<(U256, TeePolicyV1)>, PrecompileError> {
-        outbe_teeregistry::TeeRegistry::new(storage).staged_successor_policy_v1()
-    }
-
-    fn enclave_upgrade(
-        &self,
-        storage: StorageHandle<'_>,
-    ) -> Result<EnclaveUpgradeV1, PrecompileError> {
-        outbe_teeregistry::TeeRegistry::new(storage).enclave_upgrade_v1()
-    }
-}
-
 /// Exact consensus-finalized number/hash read inside one node-owned Registry
 /// operation. It is deliberately private so callers cannot retain a once-valid
 /// marker and submit it after the node's finalized head has advanced.

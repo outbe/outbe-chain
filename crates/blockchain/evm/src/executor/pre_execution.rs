@@ -11,9 +11,7 @@ where
     E::Spec: Into<revm::primitives::hardfork::SpecId>,
     E::Error: std::fmt::Display,
 {
-    pub(in crate::executor) fn apply_outbe_pre_execution(
-        &mut self,
-    ) -> Result<(), BlockExecutionError> {
+    pub fn apply_outbe_pre_execution(&mut self) -> Result<(), BlockExecutionError> {
         use crate::errors::ExecutorValidationError;
 
         self.inner.evm.set_executor_owned(true);
@@ -246,8 +244,8 @@ where
     }
 }
 
-#[cfg(test)]
-pub(in crate::executor) fn run_atomic_storage_hooks<DB, F>(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn run_atomic_storage_hooks<DB, F>(
     db: &mut DB,
     ctx: BlockContext,
     hooks: F,
@@ -260,7 +258,7 @@ where
     run_atomic_storage_hooks_with_pre_flush(db, ctx, hooks, || Ok(()))
 }
 
-pub(in crate::executor) fn run_atomic_storage_hooks_with_pre_flush<DB, F, G>(
+pub fn run_atomic_storage_hooks_with_pre_flush<DB, F, G>(
     db: &mut DB,
     ctx: BlockContext,
     hooks: F,

@@ -61,6 +61,20 @@ where
     DB: Database + Debug,
     DB::Error: Debug,
 {
+    run_with_host(ctx, environment, input, crate::host::stub_host())
+}
+
+/// Same as [`run`], with the caller-supplied runtime host.
+pub fn run_with_host<DB>(
+    ctx: &mut EthEvmContext<DB>,
+    environment: SubCallEnvironment,
+    input: SubCallInput,
+    host: std::sync::Arc<dyn crate::EvmRuntimeHost>,
+) -> std::result::Result<SubCallOutput, SubCallError>
+where
+    DB: Database + Debug,
+    DB::Error: Debug,
+{
     let SubCallEnvironment {
         self_address,
         outer_is_static,
@@ -73,7 +87,7 @@ where
             outer_is_static,
             execution: OutbePrecompileExecutionContext::new(spec, B256::ZERO),
             runtime: OutbePrecompileRuntime::new(),
-            host: fallback_subcall_host(),
+            host,
         },
         input,
     )
@@ -85,10 +99,6 @@ pub(crate) struct SubCallContext {
     pub(crate) execution: OutbePrecompileExecutionContext,
     pub(crate) runtime: OutbePrecompileRuntime,
     pub(crate) host: std::sync::Arc<dyn crate::EvmRuntimeHost>,
-}
-
-fn fallback_subcall_host() -> std::sync::Arc<dyn crate::EvmRuntimeHost> {
-    crate::host::default_runtime_host()
 }
 
 pub(crate) fn run_with_context<DB>(

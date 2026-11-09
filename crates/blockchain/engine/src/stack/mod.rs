@@ -107,6 +107,8 @@ mod marshal_archive;
 mod recovery;
 mod services;
 mod shutdown;
+#[cfg(feature = "snapshot-integration")]
+pub mod snapshot_native;
 mod startup;
 #[cfg(test)]
 mod tests;

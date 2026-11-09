@@ -6,14 +6,13 @@ license.workspace = true
 publish.workspace = true
 
 # Engine layer that glues pure `outbe-consensus` (Simplex/hybrid/DKG/proof) with
-# `outbe-evm` (execution), `outbe-validatorset` (storage facade), and
-# `outbe-node` (Reth node assembly). Owns the stack startup, the consensus
-# application handler tests, the validators ValidatorSet reader, and the peer
-# manager actor. Anything that needs both consensus and EVM lives here.
+# `outbe-evm` (execution) and `outbe-node` (Reth node assembly). Owns the stack
+# startup, the consensus application handler tests, the validator reader, and
+# the peer manager actor. Anything that needs both consensus and EVM lives here.
 
 [features]
 default = []
-snapshot-integration = []
+snapshot-integration = ["dep:tempfile"]
 
 [dependencies]
 # Internal
@@ -48,6 +47,7 @@ reth-stages-types.workspace = true
 
 # Alloy
 alloy-primitives.workspace = true
+tempfile = { workspace = true, optional = true }
 alloy-eips.workspace = true
 alloy-consensus.workspace = true
 bytes.workspace = true
@@ -80,9 +80,6 @@ reth-primitives-traits.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 alloy-rpc-types-engine.workspace = true
 outbe-consensus = { workspace = true, features = ["test-utils"] }
-outbe-validatorset = { workspace = true, features = ["test-utils"] }
-outbe-teeregistry.workspace = true
-outbe-update.workspace = true
 commonware-resolver = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.9.0" }
 tempfile.workspace = true
 tracing-subscriber = { version = "0.3", features = ["fmt"] }

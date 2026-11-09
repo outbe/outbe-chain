@@ -14,20 +14,12 @@ impl EnclaveUpgradeDeadline {
     }
 }
 
-#[cfg(feature = "test-utils")]
-pub(crate) fn run_validator_liveness(
-    host: &dyn crate::EvmRuntimeHost,
-    ctx: &BlockRuntimeContext,
-) -> Result<()> {
-    host.run_validator_liveness(ctx)
-}
-
 /// Applies the canonical post-bootstrap TEE lease deadline to the bounded ACTIVE
 /// validator set. The sweep is part of receipt-visible `ValidatorLiveness`, before any
 /// user transaction in the block. Block 1 is excluded because its earlier
 /// `TeeBootstrap` system transaction creates the founder bindings atomically.
-#[cfg(test)]
-pub(super) fn enforce_tee_lease_deadlines(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn enforce_tee_lease_deadlines(
     host: &dyn crate::EvmRuntimeHost,
     ctx: &BlockRuntimeContext,
 ) -> Result<usize> {

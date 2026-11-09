@@ -55,9 +55,8 @@ pub struct OutbeEvmConfig {
     accounted_parent_artifact_provider: Option<Arc<dyn AccountedParentArtifactProvider>>,
     /// Validator-mode EVM signer used to authenticate system-tx artifacts.
     evm_signer: Option<SharedOutbeEvmSigner>,
-    /// Host installed for this config. `None` falls back to `default_runtime_host()`:
-    /// the domain host under `test-utils`, fail-closed otherwise.
-    runtime_host: Option<Arc<dyn crate::EvmRuntimeHost>>,
+    /// Host installed for this config. Constructors require it.
+    runtime_host: Arc<dyn crate::EvmRuntimeHost>,
 }
 
 impl std::fmt::Debug for OutbeEvmConfig {
@@ -75,7 +74,7 @@ impl std::fmt::Debug for OutbeEvmConfig {
                 "evm_signer",
                 &self.evm_signer.as_ref().map(|signer| signer.address()),
             )
-            .field("runtime_host", &self.runtime_host.is_some())
+            .field("runtime_host", &"installed")
             .finish()
     }
 }
@@ -116,8 +115,11 @@ impl OutbeEvmConfig {
         });
     }
 
-    /// Creates a new [`OutbeEvmConfig`] with the given chain spec.
-    pub fn new(chain_spec: Arc<ChainSpec<OutbeHeader>>) -> Self {
+    /// Creates a new [`OutbeEvmConfig`] with the given chain spec and host.
+    pub fn new(
+        chain_spec: Arc<ChainSpec<OutbeHeader>>,
+        runtime_host: Arc<dyn crate::EvmRuntimeHost>,
+    ) -> Self {
         Self::install_consensus_chain_id(&chain_spec);
         let tee_attestation_v1 =
             crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
@@ -129,14 +131,15 @@ impl OutbeEvmConfig {
                 OutbeEvmFactory::default()
                     .with_genesis_hash(chain_spec.genesis_hash())
                     .with_genesis_timestamp(chain_spec.genesis_timestamp())
-                    .with_tee_attestation_v1(tee_attestation_v1.clone()),
+                    .with_tee_attestation_v1(tee_attestation_v1.clone())
+                    .with_runtime_host(Arc::clone(&runtime_host)),
             ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
             tee_attestation_v1,
             bridge: None,
             accounted_parent_artifact_provider: None,
             evm_signer: None,
-            runtime_host: None,
+            runtime_host,
         }
     }
 
@@ -144,6 +147,7 @@ impl OutbeEvmConfig {
     pub fn new_with_bridge(
         chain_spec: Arc<ChainSpec<OutbeHeader>>,
         bridge: ConsensusExecutionBridge,
+        runtime_host: Arc<dyn crate::EvmRuntimeHost>,
     ) -> Self {
         Self::install_consensus_chain_id(&chain_spec);
         let summary_cache = bridge.clone();
@@ -157,7 +161,8 @@ impl OutbeEvmConfig {
                 OutbeEvmFactory::default()
                     .with_genesis_hash(chain_spec.genesis_hash())
                     .with_genesis_timestamp(chain_spec.genesis_timestamp())
-                    .with_tee_attestation_v1(tee_attestation_v1.clone()),
+                    .with_tee_attestation_v1(tee_attestation_v1.clone())
+                    .with_runtime_host(Arc::clone(&runtime_host)),
             ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
             tee_attestation_v1,
@@ -166,7 +171,7 @@ impl OutbeEvmConfig {
                 BridgeAccountedParentArtifactProvider::new(summary_cache),
             )),
             evm_signer: None,
-            runtime_host: None,
+            runtime_host,
         }
     }
 
@@ -174,6 +179,7 @@ impl OutbeEvmConfig {
         chain_spec: Arc<ChainSpec<OutbeHeader>>,
         bridge: ConsensusExecutionBridge,
         accounted_parent_artifact_provider: Arc<dyn AccountedParentArtifactProvider>,
+        runtime_host: Arc<dyn crate::EvmRuntimeHost>,
     ) -> Self {
         Self::install_consensus_chain_id(&chain_spec);
         let tee_attestation_v1 =
@@ -186,14 +192,15 @@ impl OutbeEvmConfig {
                 OutbeEvmFactory::default()
                     .with_genesis_hash(chain_spec.genesis_hash())
                     .with_genesis_timestamp(chain_spec.genesis_timestamp())
-                    .with_tee_attestation_v1(tee_attestation_v1.clone()),
+                    .with_tee_attestation_v1(tee_attestation_v1.clone())
+                    .with_runtime_host(Arc::clone(&runtime_host)),
             ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
             tee_attestation_v1,
             bridge: Some(bridge),
             accounted_parent_artifact_provider: Some(accounted_parent_artifact_provider),
             evm_signer: None,
-            runtime_host: None,
+            runtime_host,
         }
     }
 
@@ -208,6 +215,7 @@ impl OutbeEvmConfig {
     pub fn new_with_provider_only(
         chain_spec: Arc<ChainSpec<OutbeHeader>>,
         accounted_parent_artifact_provider: Arc<dyn AccountedParentArtifactProvider>,
+        runtime_host: Arc<dyn crate::EvmRuntimeHost>,
     ) -> Self {
         Self::install_consensus_chain_id(&chain_spec);
         let tee_attestation_v1 =
@@ -220,21 +228,22 @@ impl OutbeEvmConfig {
                 OutbeEvmFactory::default()
                     .with_genesis_hash(chain_spec.genesis_hash())
                     .with_genesis_timestamp(chain_spec.genesis_timestamp())
-                    .with_tee_attestation_v1(tee_attestation_v1.clone()),
+                    .with_tee_attestation_v1(tee_attestation_v1.clone())
+                    .with_runtime_host(Arc::clone(&runtime_host)),
             ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
             tee_attestation_v1,
             bridge: None,
             accounted_parent_artifact_provider: Some(accounted_parent_artifact_provider),
             evm_signer: None,
-            runtime_host: None,
+            runtime_host,
         }
     }
 
     /// Stores `host` on this config and on the factory that builds its EVMs.
     #[must_use]
     pub fn with_runtime_host(mut self, host: Arc<dyn crate::EvmRuntimeHost>) -> Self {
-        self.runtime_host = Some(Arc::clone(&host));
+        self.runtime_host = Arc::clone(&host);
         let evm_factory = self
             .inner
             .executor_factory

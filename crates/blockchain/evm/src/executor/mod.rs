@@ -16,7 +16,7 @@ use alloy_evm::{
     revm::context::Block as _,
     Database, RecoveredTx,
 };
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use alloy_primitives::keccak256;
 use alloy_primitives::{map::AddressMap, Address, Bytes, Log, B256, U256};
 use outbe_primitives::zero_fee_types::{BootstrapTransactionView, ZeroFeeTransaction};
@@ -56,7 +56,7 @@ use revm::database::DatabaseCommitExt;
 mod artifacts;
 mod block;
 mod boundary;
-pub(crate) mod context;
+pub mod context;
 mod end_block;
 mod fee_route;
 mod finalization;
@@ -65,9 +65,9 @@ mod post_execution;
 mod pre_execution;
 mod receipts;
 mod system_execution;
-#[cfg(test)]
-mod tests;
-pub(crate) mod witness;
+#[cfg(any(test, feature = "test-hooks"))]
+mod test_hooks;
+pub mod witness;
 mod zero_fee;
 
 pub use crate::finalization::{
@@ -76,41 +76,40 @@ pub use crate::finalization::{
 pub use crate::genesis::validate_genesis_state;
 
 pub use block::OutbeBlockExecutor;
-pub(crate) use inputs::{
+pub use inputs::{
     BlockExecutionDependencies, BlockExecutionIdentity, BlockExecutorInputs, BlockSystemPlan,
     ParentAccountingInputs,
 };
 
 pub use boundary::marker_addresses;
 
-#[cfg(any(test, feature = "test-utils"))]
-pub(crate) use boundary::apply_boundary_outcome;
-pub(crate) use boundary::prepare_boundary_epoch_counters;
+#[cfg(any(test, feature = "test-hooks", feature = "test-utils"))]
+pub use boundary::apply_boundary_outcome;
+pub use boundary::prepare_boundary_epoch_counters;
 
-pub(crate) use system_execution::execute::system_tx_failure_code_for_result;
-pub(crate) use system_execution::layout::ResolvedBeginSystemTx;
+pub use system_execution::execute::system_tx_failure_code_for_result;
+pub use system_execution::layout::ResolvedBeginSystemTx;
 
 pub use zero_fee::{
     enclave_witness_budget_deferral, is_enclave_witness_budget_deferral,
     is_sponsored_block_budget_deferral, sponsored_block_budget_deferral,
     ENCLAVE_WITNESS_BUDGET_EXCEEDED, SPONSORED_BLOCK_BUDGET_EXCEEDED,
 };
-pub(crate) use zero_fee::{ZeroFeeCfgAccess, ZeroFeeCfgSnapshot};
+pub use zero_fee::{ZeroFeeCfgAccess, ZeroFeeCfgSnapshot};
 
-#[cfg(test)]
-pub(crate) use tests::harness::with_phase1_verify_disabled;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use test_hooks::{with_phase1_verify_disabled, PHASE1_VERIFY_DISABLED};
 
 use context::build_block_context;
 
-#[cfg(test)]
-use pre_execution::run_atomic_storage_hooks;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use pre_execution::run_atomic_storage_hooks;
 
-use receipts::{burned_fee_for_gas, validator_fee_for_gas, SystemFailureReceiptInput};
+use receipts::{burned_fee_for_gas, validator_fee_for_gas};
 
 use zero_fee::zero_fee_transaction;
 
-#[cfg(test)]
-use boundary::hash_boundary_active_set;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use boundary::hash_boundary_active_set;
 
-#[cfg(test)]
-pub(crate) use tests::harness::PHASE1_VERIFY_DISABLED;
+pub use receipts::SystemFailureReceiptInput;

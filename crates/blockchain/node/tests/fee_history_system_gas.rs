@@ -300,7 +300,7 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
         shutdown: Default::default(),
         bridge: Some(bridge),
         evm_signer: Some(signer),
-        runtime_host: None,
+        runtime_host: Some(Arc::new(outbe_runtime::OutbeRuntime::new())),
         pool_policy: None,
     };
     let NodeHandle {

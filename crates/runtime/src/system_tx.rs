@@ -50,6 +50,22 @@ pub fn dispatch(
     }
     outbe_primitives::dispatch::ensure_mutation_allowed(&storage)?;
 
+    if let Some((dirty_addr, dirty_slot, dirty_val)) =
+        outbe_evm::sys_tx_precompile::forced_dirty_system_precompile_revert()
+    {
+        storage.sstore(dirty_addr, dirty_slot, dirty_val)?;
+        storage.emit_event(
+            dirty_addr,
+            alloy_primitives::LogData::new_unchecked(
+                vec![alloy_primitives::keccak256("DirtySoftFailEvent()")],
+                Bytes::from_static(b"dirty-soft-fail-log"),
+            ),
+        )?;
+        return Err(outbe_primitives::error::PrecompileError::Revert(
+            "forced dirty system precompile revert".into(),
+        ));
+    }
+
     let input = SystemTx::decode(data).map_err(|error| {
         PrecompileError::from(BeginBlockPrecompileError::InvalidSystemTxInput(
             error.to_string(),
@@ -205,6 +221,7 @@ fn block_runtime_context(
         proposer,
         validators,
     };
+    outbe_evm::sys_tx_precompile::record_observed_runtime_block_context(&block);
     Ok(BlockRuntimeContext::new(block, storage))
 }
 

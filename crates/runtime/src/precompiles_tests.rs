@@ -2,19 +2,20 @@
 
 use alloy_primitives::Address;
 use outbe_evm::EvmRuntimeHost;
-use outbe_primitives::addresses::STABLECOIN_ADDRESS_PREFIX;
+use outbe_primitives::addresses::{
+    CCA_REGISTRY_ADDRESS, CREDIS_FACTORY_ADDRESS, CROSSCHAIN_BRIDGE_ADDRESS, INTEX_FACTORY_ADDRESS,
+    STABLECOIN_ADDRESS_PREFIX, STAKING_ADDRESS, VOTE_ADDRESS,
+};
 
-use super::{exact_route, is_payable, EXACT_ADDRESSES};
+use super::{exact_route, is_payable, ROUTE_COUNT};
 
 #[test]
 fn exact_routes_match_the_evm_address_list_and_value_policy() {
-    assert_eq!(EXACT_ADDRESSES.len(), 39);
-    let host = outbe_evm::test_support::DomainEvmHost::new();
-    assert_eq!(
-        EXACT_ADDRESSES,
-        outbe_evm::precompiles::outbe_precompile_addresses()
-    );
-    for address in EXACT_ADDRESSES {
+    let addresses = outbe_evm::precompiles::outbe_precompile_addresses();
+    assert_eq!(addresses.len(), 39);
+    assert_eq!(ROUTE_COUNT, addresses.len());
+    let host = crate::OutbeRuntime::new();
+    for address in addresses {
         assert!(
             exact_route(address).is_some(),
             "missing exact route for {address}"
@@ -23,6 +24,22 @@ fn exact_routes_match_the_evm_address_list_and_value_policy() {
             is_payable(address),
             host.precompile_is_payable(address),
             "payable policy drifted for {address}"
+        );
+    }
+
+    const PAYABLE: &[Address] = &[
+        STAKING_ADDRESS,
+        INTEX_FACTORY_ADDRESS,
+        VOTE_ADDRESS,
+        CREDIS_FACTORY_ADDRESS,
+        CCA_REGISTRY_ADDRESS,
+        CROSSCHAIN_BRIDGE_ADDRESS,
+    ];
+    for address in addresses {
+        assert_eq!(
+            is_payable(address),
+            PAYABLE.contains(address),
+            "unexpected value policy for {address}"
         );
     }
 

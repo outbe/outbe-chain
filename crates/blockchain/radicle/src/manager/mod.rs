@@ -8,7 +8,7 @@ pub use actor::{RadicleManager, RadicleManagerHandle};
 pub use adapters::{HttpRepositoryStatus, NativeHeartwoodControl};
 pub use fsm::{evaluate_phase, PhaseInput, PhaseMode};
 pub use outbe_primitives::code_registry::RepoId;
-pub use snapshot::{RethFinalizedFeed, RethSnapshotReader};
+pub use snapshot::{read_snapshot_from_storage, RethFinalizedFeed, RethSnapshotReader};
 pub use types::{
     BoxFuture, ControlSession, DisconnectDisposition, EndpointResolver, FinalizedBlock,
     FinalizedBootstrapSigningState, FinalizedFeed, FinalizedMaterialSigningState,

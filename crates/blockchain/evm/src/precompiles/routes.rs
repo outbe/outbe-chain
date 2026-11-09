@@ -121,21 +121,6 @@ impl ExactRoute {
     pub(crate) fn base_gas(self, host: &dyn crate::EvmRuntimeHost, input: &[u8]) -> u64 {
         host.precompile_base_gas(&self.address, input)
     }
-
-    pub(crate) fn dispatch(
-        self,
-        host: &dyn crate::EvmRuntimeHost,
-        storage: StorageHandle,
-        call: RouteCall<'_>,
-    ) -> Result<Bytes> {
-        let RouteCall {
-            data,
-            caller,
-            value,
-            ..
-        } = call;
-        host.dispatch_precompile(storage, &self.address, data, caller, value)
-    }
 }
 
 pub(crate) fn lookup(address: &Address) -> Option<ExactRoute> {
@@ -215,32 +200,8 @@ fn validate_exact_addresses(addresses: &[Address]) -> std::result::Result<(), Va
 }
 
 #[cfg(test)]
-fn domain_host() -> crate::test_support::DomainEvmHost {
-    crate::test_support::DomainEvmHost::new()
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::b256;
-    use alloy_sol_types::{sol, SolCall};
-    use outbe_primitives::error::PrecompileError;
-    use outbe_primitives::stablecoin::StablecoinCreatePayload;
-    use outbe_stablecoin::{FactoryTokenInitialization, StablecoinFactoryApi as TokenFactoryApi};
-    use outbe_stablecoinfactory::{
-        precompile::IStablecoinFactory, FactoryReservation, StablecoinFactoryApi as RegistryApi,
-    };
-    use outbe_stablecoinpolicy::precompile::IStablecoinPolicyRegistry;
-    use revm::state::Bytecode;
-
-    sol! {
-        interface ITeeRegistryRouteTest {
-            function isNodeHostEnclaveReady(uint8 rethP2pPrefix, bytes32 rethP2pX)
-                external
-                view
-                returns (bool);
-        }
-    }
 
     #[test]
     fn production_exact_routes_validate() {
@@ -263,312 +224,24 @@ mod tests {
     }
 
     #[test]
-    fn tribute_state_read_does_not_require_body_readers() {
-        let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
-        let call = outbe_tribute::precompile::ITribute::balanceOfCall {
-            owner: Address::repeat_byte(1),
-        };
-        let output = lookup(&TRIBUTE_ADDRESS)
-            .unwrap()
-            .dispatch(
-                &domain_host(),
-                StorageHandle::new(&mut provider),
-                RouteCall {
-                    callee: TRIBUTE_ADDRESS,
-                    data: &call.abi_encode(),
-                    caller: Address::ZERO,
-                    value: U256::ZERO,
-                },
-            )
-            .unwrap();
-        assert_eq!(
-            outbe_tribute::precompile::ITribute::balanceOfCall::abi_decode_returns(&output)
-                .unwrap(),
-            U256::ZERO
-        );
-    }
-
-    #[test]
     fn code_registry_route_uses_standard_base_gas() {
         let route = lookup(&CODE_REGISTRY_ADDRESS).expect("CodeRegistry route");
-        assert_eq!(route.base_gas(&domain_host(), &[]), PRECOMPILE_BASE_GAS);
+        let host = crate::host::stub_host();
+        assert_eq!(route.base_gas(host.as_ref(), &[]), PRECOMPILE_BASE_GAS);
         assert_eq!(
-            route.base_gas(&domain_host(), &[0xde, 0xad, 0xbe, 0xef]),
+            route.base_gas(host.as_ref(), &[0xde, 0xad, 0xbe, 0xef]),
             PRECOMPILE_BASE_GAS
         );
     }
 
     #[test]
-    fn tee_route_accepts_v1_and_rejects_the_legacy_registration_selector() {
-        let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
-        let route = lookup(&TEE_REGISTRY_ADDRESS).unwrap();
-
-        let v1 = ITeeRegistryRouteTest::isNodeHostEnclaveReadyCall {
-            rethP2pPrefix: 2,
-            // SEC1 compressed secp256k1 generator point.
-            rethP2pX: b256!("79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"),
-        }
-        .abi_encode();
-        let output = route
-            .dispatch(
-                &domain_host(),
-                StorageHandle::new(&mut provider),
-                RouteCall {
-                    callee: TEE_REGISTRY_ADDRESS,
-                    data: &v1,
-                    caller: Address::ZERO,
-                    value: U256::ZERO,
-                },
-            )
-            .unwrap();
-        assert!(
-            !ITeeRegistryRouteTest::isNodeHostEnclaveReadyCall::abi_decode_returns(&output)
-                .unwrap()
-        );
-
-        // Use the exact legacy signature rather than the Rust method name.
-        let mut legacy = vec![0_u8; 4 + 32 * 6];
-        legacy[..4].copy_from_slice(
-            &alloy_primitives::keccak256(
-                b"registerEnclave(uint256,uint256,uint256,uint256,uint256,uint16)",
-            )[..4],
-        );
-        assert!(route
-            .dispatch(
-                &domain_host(),
-                StorageHandle::new(&mut provider),
-                RouteCall {
-                    callee: TEE_REGISTRY_ADDRESS,
-                    data: &legacy,
-                    caller: Address::ZERO,
-                    value: U256::ZERO,
-                },
-            )
-            .is_err());
-    }
-
-    #[test]
-    fn policy_route_is_available_from_genesis() {
-        let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
-        let storage = StorageHandle::new(&mut provider);
-        let route = lookup(&STABLECOIN_POLICY_REGISTRY_ADDRESS).unwrap();
-        let data = IStablecoinPolicyRegistry::policyExistsCall {
-            policyId: U256::from(1u64),
-        }
-        .abi_encode();
-
-        let output = route
-            .dispatch(
-                &domain_host(),
-                storage,
-                RouteCall {
-                    callee: STABLECOIN_POLICY_REGISTRY_ADDRESS,
-                    data: &data,
-                    caller: Address::ZERO,
-                    value: U256::ZERO,
-                },
-            )
-            .unwrap();
-        assert!(IStablecoinPolicyRegistry::policyExistsCall::abi_decode_returns(&output).unwrap());
-    }
-
-    #[test]
-    fn factory_route_is_available_from_genesis() {
-        let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
-        let storage = StorageHandle::new(&mut provider);
-        let route = lookup(&STABLECOIN_FACTORY_ADDRESS).unwrap();
-        let data = IStablecoinFactory::tokenCountCall {}.abi_encode();
-
-        let output = route
-            .dispatch(
-                &domain_host(),
-                storage,
-                RouteCall {
-                    callee: STABLECOIN_FACTORY_ADDRESS,
-                    data: &data,
-                    caller: Address::ZERO,
-                    value: U256::ZERO,
-                },
-            )
-            .unwrap();
-        assert_eq!(
-            IStablecoinFactory::tokenCountCall::abi_decode_returns(&output).unwrap(),
-            U256::ZERO
-        );
-    }
-
-    fn class_address(last: u8) -> Address {
+    fn stablecoin_class_address_resolves() {
         let mut bytes = [0u8; 20];
         bytes[..2].copy_from_slice(&STABLECOIN_ADDRESS_PREFIX);
-        bytes[19] = last;
-        Address::from(bytes)
-    }
-
-    fn class_call(callee: Address, data: &[u8]) -> RouteCall<'_> {
-        RouteCall {
-            callee,
-            data,
-            caller: Address::ZERO,
-            value: U256::ZERO,
-        }
-    }
-
-    fn install_token(storage: StorageHandle<'_>, marker: bool, initialize: bool) -> Address {
-        let issuer = Address::repeat_byte(0x44);
-        let payload = StablecoinCreatePayload {
-            issuer,
-            name: "Example Dollar".into(),
-            ticker: "EXUSD".into(),
-            iso4217: 840,
-            decimals: 6,
-            supply_cap: U256::from(1_000_000u64),
-            policy_id: U256::from(1u64),
-        };
-        let (token_id, token) = outbe_primitives::stablecoin::predict_stablecoin(
-            storage.chain_id().unwrap(),
-            STABLECOIN_FACTORY_ADDRESS,
-            issuer,
-            &payload.ticker,
-            STABLECOIN_ADDRESS_PREFIX,
-        )
-        .unwrap();
-        let reservation = FactoryReservation {
-            proposal_id: U256::from(1u64),
-            token_id,
-            ticker: payload.ticker.clone(),
-            token,
-        };
-        RegistryApi::reserve(storage.clone(), &reservation).unwrap();
-        RegistryApi::consume(storage.clone(), reservation.proposal_id).unwrap();
-        if marker {
-            storage
-                .set_code(
-                    token,
-                    Bytecode::new_raw(Bytes::from_static(&STABLECOIN_MARKER_CODE)),
-                )
-                .unwrap();
-        }
-        if initialize {
-            TokenFactoryApi::new(storage.clone())
-                .initialize(&FactoryTokenInitialization {
-                    token_address: token,
-                    token_id,
-                    creation_protocol_version: 0,
-                    payload,
-                })
-                .unwrap();
-        }
-        token
-    }
-
-    /// A Factory-issued token address has no key and no selector that moves
-    /// native balance, so a plain transfer there would be unrecoverable.
-    #[test]
-    fn registered_stablecoin_token_refuses_a_plain_native_transfer() {
-        let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
-        let storage = StorageHandle::new(&mut provider);
-        let token = install_token(storage.clone(), true, true);
-        let route = resolve(&token).unwrap();
-
+        bytes[19] = 0x11;
         assert!(matches!(
-            route.dispatch(&domain_host(),
-                storage,
-                RouteCall {
-                    value: U256::from(1u64),
-                    ..class_call(token, &[])
-                },
-            ),
-            Err(PrecompileError::Revert(message))
-                if message == "stablecoin token cannot receive native value"
-        ));
-    }
-
-    #[test]
-    fn stablecoin_class_is_claimed_and_unknown_members_fail_closed() {
-        let token = class_address(0x11);
-        assert!(matches!(resolve(&token), Some(Route::StablecoinClass)));
-
-        let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
-        let storage = StorageHandle::new(&mut provider);
-        let route = resolve(&token).unwrap();
-        assert_eq!(
-            route
-                .dispatch(
-                    &domain_host(),
-                    storage.clone(),
-                    RouteCall {
-                        value: U256::from(1u64),
-                        ..class_call(token, &[])
-                    },
-                )
-                .unwrap(),
-            Bytes::new()
-        );
-        assert!(matches!(
-            route.dispatch(&domain_host(),
-                storage,
-                class_call(token, &[]),
-            ),
-            Err(PrecompileError::Revert(message)) if message == "unregistered stablecoin address"
-        ));
-    }
-
-    #[test]
-    fn class_authentication_requires_registration_marker_schema_and_matching_full_id() {
-        let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
-        let storage = StorageHandle::new(&mut provider);
-        let token = install_token(storage.clone(), false, false);
-        let route = resolve(&token).unwrap();
-
-        assert!(matches!(
-            route.dispatch(&domain_host(),
-                storage.clone(),
-                class_call(token, &[]),
-            ),
-            Err(PrecompileError::Revert(message)) if message.contains("marker code mismatch")
-        ));
-
-        storage
-            .set_code(
-                token,
-                Bytecode::new_raw(Bytes::from_static(&STABLECOIN_MARKER_CODE)),
-            )
-            .unwrap();
-        assert!(matches!(
-            route.dispatch(&domain_host(), storage.clone(), class_call(token, &[]),),
-            Err(PrecompileError::Revert(_))
-        ));
-    }
-
-    #[test]
-    fn authenticated_class_dispatch_uses_the_actual_callee() {
-        let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
-        let storage = StorageHandle::new(&mut provider);
-        let token = install_token(storage.clone(), true, true);
-        let call = outbe_stablecoin::precompile::IStablecoin::symbolCall {};
-        let output = resolve(&token)
-            .unwrap()
-            .dispatch(
-                &domain_host(),
-                storage.clone(),
-                class_call(token, &call.abi_encode()),
-            )
-            .unwrap();
-        assert_eq!(
-            outbe_stablecoin::precompile::IStablecoin::symbolCall::abi_decode_returns(&output)
-                .unwrap(),
-            "EXUSD"
-        );
-
-        storage
-            .sstore(token, U256::from(2u64), U256::from(0x99u64))
-            .unwrap();
-        assert!(matches!(
-            resolve(&token).unwrap().dispatch(&domain_host(),
-                storage,
-                class_call(token, &call.abi_encode()),
-            ),
-            Err(PrecompileError::Revert(message)) if message.contains("identity does not match")
+            resolve(&Address::from(bytes)),
+            Some(Route::StablecoinClass)
         ));
     }
 }

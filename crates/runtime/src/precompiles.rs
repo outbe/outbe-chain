@@ -10,49 +10,6 @@ use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 use outbe_primitives::storage::StorageHandle;
 
-/// Exact precompile addresses, in registration order.
-pub const EXACT_ADDRESSES: &[Address] = &[
-    GRATIS_ADDRESS,
-    GRATIS_FACTORY_ADDRESS,
-    PROMIS_ADDRESS,
-    PROMIS_FACTORY_ADDRESS,
-    TRIBUTE_ADDRESS,
-    NOD_ADDRESS,
-    NOD_FACTORY_ADDRESS,
-    GEM_ADDRESS,
-    GEM_FACTORY_ADDRESS,
-    INTEX_ADDRESS,
-    INTEX_FACTORY_ADDRESS,
-    DESIS_ADDRESS,
-    VAULT_ROUTER_ADDRESS,
-    CREDIS_ADDRESS,
-    CREDIS_FACTORY_ADDRESS,
-    CCA_REGISTRY_ADDRESS,
-    TRIBUTE_FACTORY_ADDRESS,
-    VALIDATOR_SET_ADDRESS,
-    SLASH_INDICATOR_ADDRESS,
-    STAKING_ADDRESS,
-    REWARDS_ADDRESS,
-    AGENT_REWARD_ADDRESS,
-    EMISSION_ADDRESS,
-    METADOSIS_ADDRESS,
-    FIDELITY_ADDRESS,
-    PROMIS_LIMIT_ADDRESS,
-    ORACLE_ADDRESS,
-    ZEROFEE_ADDRESS,
-    OUTBE_SYSTEM_TX_ADDRESS,
-    ZKPROOF_VERIFY_ADDRESS,
-    TEE_REGISTRY_ADDRESS,
-    L2_REGISTRY_ADDRESS,
-    HYPERLANE_CONTROLLER_ADDRESS,
-    CROSSCHAIN_BRIDGE_ADDRESS,
-    STABLECOIN_FACTORY_ADDRESS,
-    STABLECOIN_POLICY_REGISTRY_ADDRESS,
-    CODE_REGISTRY_ADDRESS,
-    VOTE_ADDRESS,
-    UPDATE_ADDRESS,
-];
-
 #[derive(Clone, Copy)]
 enum ValuePolicy {
     Reject,
@@ -134,6 +91,9 @@ macro_rules! define_exact_routes {
                 ),
             );
         )+
+
+        #[cfg(test)]
+        const ROUTE_COUNT: usize = [$($address),+].len();
 
         fn exact_route(address: &Address) -> Option<ExactRoute> {
             match *address {
@@ -235,7 +195,7 @@ const fn assert_valid_production_routes(addresses: &[Address]) {
     }
 }
 
-const _: () = assert_valid_production_routes(EXACT_ADDRESSES);
+const _: () = assert_valid_production_routes(outbe_evm::precompiles::outbe_precompile_addresses());
 
 pub(crate) fn is_payable(address: &Address) -> bool {
     if let Some(route) = exact_route(address) {

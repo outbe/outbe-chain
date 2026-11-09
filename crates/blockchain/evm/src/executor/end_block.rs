@@ -129,7 +129,7 @@ fn expected_next_end_phase(
 }
 
 impl<E: Evm> OutbeBlockExecutor<'_, E> {
-    pub(super) fn accounted_block_gas(&self) -> u64 {
+    pub fn accounted_block_gas(&self) -> u64 {
         if self.inner.evm.cfg_env().enable_amsterdam_eip8037 {
             self.inner.max_block_gas_used()
         } else {
@@ -212,7 +212,7 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
             .ok_or_else(|| ExecutorValidationError::MissingBeginZoneProposerAddress.into())
     }
 
-    pub(crate) fn take_staged_end_block_txs(&mut self) -> Vec<Recovered<TransactionSigned>> {
+    pub fn take_staged_end_block_txs(&mut self) -> Vec<Recovered<TransactionSigned>> {
         std::mem::take(&mut self.staged_end_block_txs)
     }
 
@@ -261,7 +261,7 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         )
     }
 
-    pub(in crate::executor) fn execute_end_block_system_tx<DB>(
+    pub fn execute_end_block_system_tx<DB>(
         &mut self,
         tx: &TransactionSigned,
         signer: Address,

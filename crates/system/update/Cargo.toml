@@ -20,7 +20,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
-outbe-evm = { workspace = true, features = ["test-utils"] }
+outbe-slashindicator.workspace = true
 outbe-vote.workspace = true
 outbe-oracle.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }

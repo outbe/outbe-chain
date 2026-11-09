@@ -20,10 +20,9 @@ const PAYABLE: [Address; 6] = [
 ];
 
 fn policy(address: Address) -> ValuePolicy {
-    let host = crate::test_support::DomainEvmHost::new();
     routes::resolve(&address)
         .expect("address must be a routed precompile")
-        .value_policy(&host)
+        .value_policy(crate::host::stub_host().as_ref())
 }
 
 /// Apparent value names an amount that was never transferred. Delegated

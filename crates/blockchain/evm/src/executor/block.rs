@@ -14,71 +14,71 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// Inner Ethereum execution strategy.
     pub inner: EthBlockExecutor<'a, Evm, &'a Arc<ChainSpec<OutbeHeader>>, &'a RethReceiptBuilder>,
     /// Immutable chain identity sourced from the executor's canonical ChainSpec.
-    pub(super) chain_id: u64,
-    pub(super) genesis_hash: B256,
-    pub(super) genesis_timestamp: u64,
+    pub chain_id: u64,
+    pub genesis_hash: B256,
+    pub genesis_timestamp: u64,
     /// Optional bridge to the consensus layer for finalization data.
     pub bridge: Option<ConsensusExecutionBridge>,
     /// Header-carried consensus artifact bytes (`extra_data`) used by begin-zone phases.
-    pub(super) block_extra_data: Bytes,
+    pub block_extra_data: Bytes,
     /// Canonical final header `extra_data` bytes. On the verifier path this is
     /// initialized from the sealed block header. On the proposer path the block
     /// builder overwrites it after it injects the execution summary and timestamp
     /// millis, but before `finish()`.
-    pub(super) final_extra_data: Bytes,
+    pub final_extra_data: Bytes,
     /// Historical header artifact reader used for finalized-block settlement.
-    pub(super) accounted_parent_artifact_provider: Option<Arc<dyn AccountedParentArtifactProvider>>,
+    pub accounted_parent_artifact_provider: Option<Arc<dyn AccountedParentArtifactProvider>>,
     /// Whether this executor is validating an already-built block and must
     /// compare the header-carried execution summary to local execution output.
-    pub(super) validate_execution_summary: bool,
+    pub validate_execution_summary: bool,
     /// Hash of the block being validated, when execution is for an existing block.
-    pub(super) block_hash: Option<B256>,
+    pub block_hash: Option<B256>,
     /// State root committed by the validated block, cached with its execution summary.
     block_state_root: Option<B256>,
     /// Hash of this block's parent header.
-    pub(super) parent_hash: B256,
+    pub parent_hash: B256,
     /// Priority/coinbase fees collected by user transactions in this block.
-    pub(super) current_block_validator_fees: U256,
+    pub current_block_validator_fees: U256,
     /// Base fees and EIP-4844 blob fees burned by paid transactions in this block.
-    pub(super) current_block_burned_fees: U256,
+    pub current_block_burned_fees: U256,
     /// Whether `settle_block_burned_fees` has already flushed this block's burned fees.
-    pub(super) burned_fees_settled: bool,
+    pub burned_fees_settled: bool,
     /// Refund-adjusted gas consumed by begin-zone system transactions under the
     /// Outbe-only execution lane (`SYSTEM_TX_ARTIFACT_GAS_LIMIT`, 10B gas). The
     /// Ethereum-visible block counters use each system tx envelope's visible
     /// intrinsic gas instead.
-    pub(super) system_tx_execution_gas: u64,
+    pub system_tx_execution_gas: u64,
     /// Gross begin-zone gas before refunds. Kept separate from receipt gas and
     /// the existing refund-adjusted internal limit for work-budget calibration.
-    pub(super) system_tx_gross_gas: u64,
+    pub system_tx_gross_gas: u64,
     /// Validator-mode signer used by proposer path to sign system-tx artifacts.
-    pub(super) evm_signer: Option<SharedOutbeEvmSigner>,
-    pub(super) expected_begin_system_txs: Vec<Recovered<TransactionSigned>>,
+    pub evm_signer: Option<SharedOutbeEvmSigner>,
+    pub expected_begin_system_txs: Vec<Recovered<TransactionSigned>>,
     /// Standard Ethereum post-execution output used to assemble the final result.
-    pub(super) ethereum_post_execution_requests: Option<Requests>,
-    pub(super) system_layout_error: Option<crate::errors::SystemTxExpectationError>,
-    pub(super) parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
-    pub(super) proposer_evm_address: Option<Address>,
-    pub(super) execute_outbe_block_hooks: bool,
+    pub ethereum_post_execution_requests: Option<Requests>,
+    pub system_layout_error: Option<crate::errors::SystemTxExpectationError>,
+    pub parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
+    pub proposer_evm_address: Option<Address>,
+    pub execute_outbe_block_hooks: bool,
     /// Cursor that drives begin-zone phase routing inside
     /// `execute_transaction_with_commit_condition` instead of
     /// `self.inner.receipts.len()`. The executor sets it to the per-block
     /// initial value when it enters `apply_pre_execution_changes`. The executor
     /// advances it once per consumed begin-zone system tx.
-    pub(super) system_tx_phase_cursor: crate::system_tx::SystemTxPhase,
+    pub system_tx_phase_cursor: crate::system_tx::SystemTxPhase,
     /// Proposer-side prebuilt Phase 1 body[0] tx. The payload builder sets it
     /// before `apply_pre_execution_changes`. `apply_phase1_commit_in_preexec`
     /// consumes it as the canonical witness whose `signature_hash` is cached in
     /// the phase cursor. It is `None` on the validator path (the witness comes
     /// from `expected_begin_system_txs.first()`) and for
     /// `block_number <= GENESIS_BOOTSTRAP_BLOCK_NUMBER`.
-    pub(super) prebuilt_phase1_tx: Option<Recovered<TransactionSigned>>,
+    pub prebuilt_phase1_tx: Option<Recovered<TransactionSigned>>,
     /// Optional accounted-parent artifact hint from the payload builder.
     /// [`Self::accounted_parent_artifact_for_metadata`] consumes it when the
     /// [`AccountedParentArtifactProvider`] returns `None`. That function accepts
     /// the hint only if the metadata's `(finalized_block_number, finalized_block_hash)`
     /// matches `(block_number - 1, self.parent_hash)`.
-    pub(super) parent_artifact_hint: Option<AccountedParentArtifact>,
+    pub parent_artifact_hint: Option<AccountedParentArtifact>,
     /// Canonical VRF proof hash that `verify_phase1_in_preexec` captures from
     /// the verified parent certificate
     /// (`outbe_consensus::proof::VerifiedProof::vrf_proof_hash`).
@@ -86,7 +86,7 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// consume it to populate `PreloadedSystemTxContext.canonical_vrf_proof_hash`.
     /// The V3 Rewards fingerprint binds that field. It is `None` until the
     /// preflight runs. It remains `None` for skip paths (block 0 / 1, test opt-out).
-    pub(super) verified_phase1_vrf_proof_hash: Option<B256>,
+    pub verified_phase1_vrf_proof_hash: Option<B256>,
     /// Proposer-only one-time Phase 3b `TeeBootstrap` payload. When `Some` on the
     /// proposer path, `begin_block_system_tx_inputs` injects the bootstrap system
     /// tx after `BoundaryOutcome`. It does this identically to
@@ -94,44 +94,44 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// inputs that the executor expects. It is `None` on the validator path (the
     /// body carries it via `expected_begin_system_txs`) and until the tribute-DKG
     /// bootstrap producer supplies a payload.
-    pub(super) pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>,
+    pub pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>,
     /// Explicit 4-stage block execution state machine (`ConsensusStage -> BeginBlock -> MidBlock -> EndBlock -> Completed`).
-    pub(super) fsm: outbe_primitives::system_tx::BlockExecutionFsm,
+    pub fsm: outbe_primitives::system_tx::BlockExecutionFsm,
     /// Number of zero-fee soft-failure receipts emitted in THIS
     /// block. Bounds block-stuffing by zero-cost 21k soft-failures (see
     /// [`Self::record_zero_fee_soft_failure`]). The executor is constructed
     /// fresh per block, so this resets per block. It is identical on the
     /// proposer (build) and validator (re-execution) paths.
-    pub(super) zero_fee_soft_failures: u32,
+    pub zero_fee_soft_failures: u32,
     /// Sum of included sponsored and bootstrap gas limits, reset per block.
-    pub(super) sponsored_gas_used: u64,
+    pub sponsored_gas_used: u64,
     /// Block-scoped consensus enclave witness state (`ProposerRecord`, `VerifierWithEnclave`,
     /// `VerifierReplay`, or `RpcDirect`).
-    pub(super) witness_state: Option<Arc<std::sync::Mutex<outbe_tee::witness::WitnessState>>>,
+    pub witness_state: Option<Arc<std::sync::Mutex<outbe_tee::witness::WitnessState>>>,
     /// Zero-based index of the next committed transaction in `body.transactions`.
-    pub(super) body_tx_index: u32,
+    pub body_tx_index: u32,
     /// Cached compressed `OART 0x0A` payload on the proposer path so `prepare_final_header_artifacts`
     /// and `finalize_header_artifacts` never re-compress the witness tape.
-    pub(super) frozen_enclave_witness: Option<Bytes>,
+    pub frozen_enclave_witness: Option<Bytes>,
     /// End-zone transactions built by the proposer. The block builder appends them.
-    pub(super) staged_end_block_txs: Vec<Recovered<TransactionSigned>>,
+    pub staged_end_block_txs: Vec<Recovered<TransactionSigned>>,
     /// Decoded `block_extra_data` cached once at block open so reserved system transactions
     /// do not re-decode header artifacts on every system tx.
-    pub(super) decoded_block_artifacts: Option<OutbeBlockArtifacts>,
+    pub decoded_block_artifacts: Option<OutbeBlockArtifacts>,
     /// Phase-1 (`CertifiedParentAccounting`) input and parent execution summary resolved once
     /// and shared across `verify_phase1_in_preexec`, `apply_phase1_commit_in_preexec`,
     /// and `begin_block_system_tx_inputs`.
-    pub(super) cached_phase1_input: Option<(SystemTx, AccountedParentArtifact)>,
+    pub cached_phase1_input: Option<(SystemTx, AccountedParentArtifact)>,
     /// Resolved begin-zone system transactions and visible gas plan computed once per block.
-    pub(super) resolved_begin_zone: Option<Vec<ResolvedBeginSystemTx>>,
+    pub resolved_begin_zone: Option<Vec<ResolvedBeginSystemTx>>,
     /// Pre-verified signer indices per `LateFinalizeCredits` batch from `verify_late_finalize_credits_in_preexec`.
-    pub(super) verified_late_credit_signers: Option<Arc<Vec<Vec<usize>>>>,
+    pub verified_late_credit_signers: Option<Arc<Vec<Vec<usize>>>>,
     /// Domain host captured when this executor is built.
-    pub(super) runtime_host: Arc<dyn crate::EvmRuntimeHost>,
+    pub runtime_host: Arc<dyn crate::EvmRuntimeHost>,
 }
 
 impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
-    pub(crate) fn new(
+    pub fn new(
         inner: EthBlockExecutor<'a, Evm, &'a Arc<ChainSpec<OutbeHeader>>, &'a RethReceiptBuilder>,
         inputs: BlockExecutorInputs,
     ) -> Self {
@@ -221,7 +221,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
 }
 
 impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
-    pub(crate) fn current_execution_summary(&self) -> ExecutionSummaryArtifact
+    pub fn current_execution_summary(&self) -> ExecutionSummaryArtifact
     where
         Evm: reth_ethereum::evm::primitives::Evm,
     {
@@ -237,11 +237,11 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
 
     /// Canonical final header `extra_data` bytes used by `finish()` for
     /// execution-summary validation and bridge recording.
-    pub(crate) fn final_extra_data(&self) -> &Bytes {
+    pub fn final_extra_data(&self) -> &Bytes {
         &self.final_extra_data
     }
 
-    pub(crate) fn set_final_extra_data(&mut self, bytes: Bytes) {
+    pub fn set_final_extra_data(&mut self, bytes: Bytes) {
         self.final_extra_data = bytes;
     }
 

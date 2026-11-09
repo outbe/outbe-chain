@@ -10,16 +10,13 @@ pub(in crate::stack) struct DkgBoundaryContext<'a> {
 }
 
 /// File custody shared by material reads and writes.
-pub(in crate::stack) struct DkgStateStore<'a> {
+pub struct DkgStateStore<'a> {
     pub(in crate::stack) directory: &'a std::path::Path,
     pub(in crate::stack) key_backend: &'a bls::KeyBackend,
 }
 
 impl<'a> DkgStateStore<'a> {
-    pub(in crate::stack) fn new(
-        directory: &'a std::path::Path,
-        key_backend: &'a bls::KeyBackend,
-    ) -> Self {
+    pub fn new(directory: &'a std::path::Path, key_backend: &'a bls::KeyBackend) -> Self {
         Self {
             directory,
             key_backend,
@@ -34,10 +31,10 @@ struct DkgStateFiles {
     label: &'static str,
 }
 
-pub(in crate::stack) struct DkgStateMaterial<'a> {
-    pub(in crate::stack) share: &'a Share,
-    pub(in crate::stack) polynomial: &'a Sharing<MinSig>,
-    pub(in crate::stack) output: &'a Output<MinSig, bls12381::PublicKey>,
+pub struct DkgStateMaterial<'a> {
+    pub share: &'a Share,
+    pub polynomial: &'a Sharing<MinSig>,
+    pub output: &'a Output<MinSig, bls12381::PublicKey>,
 }
 
 /// DKG state file names within keys_dir.
@@ -137,9 +134,9 @@ const DKG_PENDING_BOUNDARY_MAGIC: &[u8; 8] = b"ODKGPB02";
 const DKG_PENDING_BOUNDARY_LEGACY_MAGIC: &[u8; 8] = b"ODKGPB01";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::stack) struct PendingDkgBoundarySnapshot {
-    pub(in crate::stack) artifact: DkgBoundaryArtifact,
-    pub(in crate::stack) completed_at_height: u64,
+pub struct PendingDkgBoundarySnapshot {
+    pub artifact: DkgBoundaryArtifact,
+    pub completed_at_height: u64,
 }
 
 pub(in crate::stack) fn decode_boundary_output(
@@ -336,7 +333,7 @@ pub(in crate::stack) fn persist_observed_dkg_boundary_before_activation(
     Ok(boundary_artifact)
 }
 
-pub(in crate::stack) fn save_pending_dkg_boundary(
+pub fn save_pending_dkg_boundary(
     storage_dir: &std::path::Path,
     snapshot: &PendingDkgBoundarySnapshot,
 ) -> Result<()> {
@@ -356,7 +353,7 @@ pub(in crate::stack) fn save_pending_dkg_boundary(
     Ok(())
 }
 
-pub(in crate::stack) fn load_pending_dkg_boundary(
+pub fn load_pending_dkg_boundary(
     storage_dir: &std::path::Path,
 ) -> Result<Option<PendingDkgBoundarySnapshot>> {
     let path = pending_dkg_boundary_path(storage_dir);
@@ -690,7 +687,7 @@ pub(in crate::stack) fn recover_pending_dkg_boundary_snapshot(
     )
 }
 
-pub(in crate::stack) fn restore_pending_dkg_activation(
+pub fn restore_pending_dkg_activation(
     (protocol, node): (
         &dyn crate::protocol_state::EngineProtocolState,
         &OutbeFullNode,
@@ -879,7 +876,7 @@ pub(in crate::stack) fn save_dkg_state(
     save_dkg_state_files(store, SAVED_DKG_FILES, material)
 }
 
-pub(in crate::stack) fn save_pending_dkg_state(
+pub fn save_pending_dkg_state(
     store: DkgStateStore<'_>,
     material: DkgStateMaterial<'_>,
 ) -> Result<()> {

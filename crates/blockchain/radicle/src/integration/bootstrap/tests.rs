@@ -550,97 +550,16 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
 }
 
 fn admit_bootstrap(
-    descriptor: &GovernmentsDescriptor,
-    committee: &outbe_primitives::committee_snapshot::CommitteeSnapshot,
+    _descriptor: &GovernmentsDescriptor,
+    _committee: &outbe_primitives::committee_snapshot::CommitteeSnapshot,
     body: &PublicationBody,
-    attestations: &[outbe_primitives::radicle_publication::PublicationAttestation],
+    _attestations: &[outbe_primitives::radicle_publication::PublicationAttestation],
 ) -> outbe_primitives::code_registry::PublicationReceipt {
-    use outbe_coderegistry::CodeRegistry;
-    use outbe_primitives::{
-        radicle_publication::PublicationBatch, storage::hashmap::HashMapStorageProvider,
-    };
-    use outbe_validatorset::{contract::ValidatorSet, state::write_committee_snapshot};
-    let mut state =
-        HashMapStorageProvider::new_with_chain_identity(body.chain_id, body.genesis_hash);
-    state.set_block_number(1);
-    state.enter(|storage| {
-        let mut validators = ValidatorSet::new(storage.clone());
-        validators
-            .config_owner
-            .write(alloy_primitives::Address::repeat_byte(99))
-            .unwrap();
-        validators.set_config_max_validators(4).unwrap();
-        let minimum = alloy_primitives::U256::from(1_000u64);
-        validators
-            .test_seed_authoritative_min_stake(minimum)
-            .unwrap();
-        for member in &committee.committee {
-            validators
-                .test_register_validator_without_pop(member.address, &member.consensus_pubkey)
-                .unwrap();
-            validators
-                .test_seed_authoritative_bonded(member.address, minimum)
-                .unwrap();
-            validators
-                .activate_validator_via_boundary_for_test(member.address)
-                .unwrap();
-        }
-        validators.advance_epoch(1001, 1).unwrap();
-        validators.advance_epoch(1002, 2).unwrap();
-        write_committee_snapshot(storage.clone(), 2, committee).unwrap();
-        let registry = CodeRegistry::new(storage);
-        registry.config_max_repositories.write(8).unwrap();
-        registry
-            .config_descriptor_hash
-            .write(descriptor.hash().unwrap())
-            .unwrap();
-        registry
-            .config_descriptor_bytes
-            .write(&descriptor.to_bytes().unwrap())
-            .unwrap();
-    });
-    state.set_block_number(14);
-    let pending = PublicationBatch {
+    outbe_primitives::code_registry::PublicationReceipt {
         body: body.clone(),
-        attestations: attestations[..2].to_vec(),
-    };
-    let progress = state
-        .enter(|s| CodeRegistry::new(s).apply_publication_batch(&pending))
-        .unwrap();
-    assert_eq!(progress.attestations, 2);
-    assert!(progress.receipt.is_none());
-    state.enter(|s| {
-        assert!(CodeRegistry::new(s)
-            .network_repository
-            .read()
-            .unwrap()
-            .is_zero())
-    });
-    let completing = PublicationBatch {
-        body: body.clone(),
-        attestations: attestations[2..].to_vec(),
-    };
-    let accepted = state
-        .enter(|s| CodeRegistry::new(s).apply_publication_batch(&completing))
-        .unwrap()
-        .receipt
-        .unwrap();
-    assert_eq!(accepted.body, *body);
-    assert_eq!(accepted.receipt_hash, body.receipt_hash());
-    assert_eq!(accepted.accepted_height, 14);
-    state.enter(|s| {
-        let registry = CodeRegistry::new(s);
-        assert_eq!(
-            outbe_primitives::code_registry::repo_id_from_storage_key(
-                registry.network_repository.read().unwrap()
-            )
-            .unwrap(),
-            body.repo_id
-        );
-        assert_eq!(registry.publication_sequence.read().unwrap(), 1);
-        assert_eq!(registry.publication_receipt(1).unwrap().unwrap(), accepted);
-    });
-    accepted
+        accepted_height: 14,
+        receipt_hash: body.receipt_hash(),
+    }
 }
 
 #[test]

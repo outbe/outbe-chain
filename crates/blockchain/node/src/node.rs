@@ -159,7 +159,10 @@ where
             Some(host) => executor.with_runtime_host(host),
             None => executor,
         };
-        let pool = OutbePoolBuilder::new(self.pool_policy.clone());
+        let pool = match self.pool_policy.clone() {
+            Some(policy) => OutbePoolBuilder::new(policy),
+            None => OutbePoolBuilder::default(),
+        };
         ComponentsBuilder::default()
             .node_types::<N>()
             .pool(pool)

@@ -9,9 +9,7 @@ use outbe_tee::witness::{
 use std::sync::{Arc, Mutex};
 
 impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
-    pub(crate) fn final_enclave_witness_bytes(
-        &mut self,
-    ) -> Result<Option<Bytes>, BlockExecutionError> {
+    pub fn final_enclave_witness_bytes(&mut self) -> Result<Option<Bytes>, BlockExecutionError> {
         if let Some(cached) = self.frozen_enclave_witness.as_ref() {
             return Ok(Some(cached.clone()));
         }
@@ -59,7 +57,7 @@ where
     E: Evm<DB = DB, Tx = TxEnv> + ZeroFeeCfgAccess,
     E::Error: std::fmt::Display,
 {
-    pub(in crate::executor) fn resolve_leader_attestation_pub(
+    pub fn resolve_leader_attestation_pub(
         &mut self,
         block_number: u64,
         proposer: Address,
@@ -85,7 +83,7 @@ where
         Ok(None)
     }
 
-    pub(in crate::executor) fn init_block_witness_state(
+    pub fn init_block_witness_state(
         &mut self,
         block_number: u64,
         proposer: Address,

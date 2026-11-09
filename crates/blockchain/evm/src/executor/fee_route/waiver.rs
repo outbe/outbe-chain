@@ -3,7 +3,7 @@
 use super::*;
 use revm::state::AccountInfo;
 
-pub(super) fn bootstrap_fee_waiver_authorized(
+pub fn bootstrap_fee_waiver_authorized(
     policy: &dyn crate::UserTxFeePolicy,
     tx: &TransactionSigned,
     signer: Address,
@@ -35,7 +35,7 @@ where
     E::Spec: Into<revm::primitives::hardfork::SpecId>,
     E::Error: std::fmt::Display,
 {
-    pub(super) fn execute_protocol_fee_waiver<R, F>(
+    pub fn execute_protocol_fee_waiver<R, F>(
         &mut self,
         candidate: outbe_primitives::zero_fee_types::ZeroFeeCandidate,
         tx_env: TxEnv,
@@ -65,7 +65,7 @@ where
 
     /// Restore the exact previous configuration after every ordinary Result
     /// exit, including an execution error or a declined commit.
-    pub(super) fn execute_without_user_fee<R, F>(
+    pub fn execute_without_user_fee<R, F>(
         &mut self,
         mut tx_env: TxEnv,
         recovered: R,
@@ -89,7 +89,7 @@ where
         result
     }
 
-    pub(super) fn read_fee_route_account(
+    pub fn read_fee_route_account(
         &mut self,
         signer: Address,
         ctx: BlockContext,
@@ -109,7 +109,7 @@ where
             })
     }
 
-    pub(super) fn fee_route_delegation(
+    pub fn fee_route_delegation(
         &mut self,
         account: AccountInfo,
     ) -> Result<Option<Address>, BlockExecutionError> {

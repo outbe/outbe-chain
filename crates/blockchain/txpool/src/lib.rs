@@ -125,23 +125,29 @@ where
 }
 
 /// Builds the transaction pool used by Outbe nodes.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct OutbePoolBuilder {
-    policy: Option<Arc<dyn TxPoolZeroFeePolicy>>,
+    policy: Arc<dyn TxPoolZeroFeePolicy>,
 }
 
 impl fmt::Debug for OutbePoolBuilder {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("OutbePoolBuilder")
-            .field("policy", &self.policy.is_some())
+            .field("policy", &"installed")
             .finish()
     }
 }
 
+impl Default for OutbePoolBuilder {
+    fn default() -> Self {
+        Self::new(normal_policy())
+    }
+}
+
 impl OutbePoolBuilder {
-    /// Uses `policy` for waiver classification. `None` charges every transaction.
-    pub fn new(policy: Option<Arc<dyn TxPoolZeroFeePolicy>>) -> Self {
+    /// Uses `policy` for waiver classification.
+    pub fn new(policy: Arc<dyn TxPoolZeroFeePolicy>) -> Self {
         Self { policy }
     }
 }
@@ -181,7 +187,7 @@ where
         let blob_store =
             reth_node_builder::components::create_blob_store_with_cache(ctx, blob_cache_size)?;
 
-        let policy = self.policy.clone().unwrap_or_else(normal_policy);
+        let policy = Arc::clone(&self.policy);
         let validator =
             TransactionValidationTaskExecutor::eth_builder(ctx.provider().clone(), evm_config)
                 .set_eip4844(!blobs_disabled)
@@ -301,7 +307,7 @@ pub struct OutbeTransactionValidator<Client, Tx, Evm> {
 }
 
 impl<Client, Tx, Evm> OutbeTransactionValidator<Client, Tx, Evm> {
-    fn new(
+    pub fn new(
         inner: EthTransactionValidator<Client, Tx, Evm>,
         policy: Arc<dyn TxPoolZeroFeePolicy>,
     ) -> Self {
@@ -549,7 +555,7 @@ where
 
 /// Outcome of the EIP-7702 sponsorship probe in `apply_outbe_policy`.
 #[derive(Debug, PartialEq, Eq)]
-enum SponsorshipOutcome {
+pub enum SponsorshipOutcome {
     /// Signer is delegated to ZEROFEE_ADDRESS and passes all policy checks.
     Accepted,
     /// Signer is not delegated to ZEROFEE_ADDRESS. Fall back to normal
@@ -581,7 +587,7 @@ enum SponsorshipOutcome {
 /// This function deliberately does NOT check the quota. The executor is
 /// authoritative, and quota-exhausted txs must land in the block as
 /// soft-failures (code 110). So the pool admits them.
-fn sponsorship_decision(
+pub fn sponsorship_decision(
     policy: &dyn TxPoolZeroFeePolicy,
     signer: Address,
     delegated_to: Option<Address>,

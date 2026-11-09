@@ -1242,8 +1242,8 @@ fn slashindicator_dedup_retains_invalid_vrf_evidence_seen_hash() {
 //     different dispatcher). So the canonical revert text is a
 //     behavioural marker for "this ran through the user-tx precompile
 //     dispatch and was gated by the ACL".
-// The begin-zone path lives in a different crate (`outbe-evm`) that
-// `outbe-slashindicator` cannot depend on without cycle. So the type
+// The begin-zone path lives in the execution crate, which this crate
+// cannot depend on without a cycle. So the type
 // system enforces the structural "begin-zone does NOT host this selector"
 // claim. `outbe_evm::system_tx::SystemTx` is a closed enum with
 // 8 named variants. None of them reference `submitInvalidVrfProofEvidence`.

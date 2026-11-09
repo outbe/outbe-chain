@@ -37,12 +37,12 @@ use crate::{
     tee_attestation_activation::TeeAttestationChainSpecStateV1,
 };
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use reth_ethereum::evm::revm::context_interface::result::{
     ExecutionResult, OutOfGasError, ResultGas,
 };
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     static FORCE_OUTBE_SYSTEM_CALL_ERROR: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
@@ -52,8 +52,8 @@ thread_local! {
         const { std::cell::Cell::new(false) };
 }
 
-#[cfg(test)]
-pub(crate) fn with_forced_outbe_system_call_error<R>(f: impl FnOnce() -> R) -> R {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn with_forced_outbe_system_call_error<R>(f: impl FnOnce() -> R) -> R {
     struct ResetForcedOutbeSystemCallError;
 
     impl Drop for ResetForcedOutbeSystemCallError {
@@ -67,8 +67,8 @@ pub(crate) fn with_forced_outbe_system_call_error<R>(f: impl FnOnce() -> R) -> R
     f()
 }
 
-#[cfg(test)]
-pub(crate) fn with_forced_outbe_system_call_oog_halt<R>(f: impl FnOnce() -> R) -> R {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn with_forced_outbe_system_call_oog_halt<R>(f: impl FnOnce() -> R) -> R {
     struct ResetForcedOutbeSystemCallOogHalt;
 
     impl Drop for ResetForcedOutbeSystemCallOogHalt {
@@ -82,8 +82,8 @@ pub(crate) fn with_forced_outbe_system_call_oog_halt<R>(f: impl FnOnce() -> R) -
     f()
 }
 
-#[cfg(test)]
-pub(crate) fn with_forced_outbe_system_call_revert<R>(f: impl FnOnce() -> R) -> R {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn with_forced_outbe_system_call_revert<R>(f: impl FnOnce() -> R) -> R {
     struct ResetForcedOutbeSystemCallRevert;
 
     impl Drop for ResetForcedOutbeSystemCallRevert {
@@ -322,13 +322,13 @@ where
             return Ok(ResultAndState::new(result, self.inner.finalize()));
         }
 
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         if FORCE_OUTBE_SYSTEM_CALL_ERROR.with(|cell| cell.get()) {
             return Err(EVMError::Custom(
                 "forced Outbe system-call error for regression test".into(),
             ));
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         if FORCE_OUTBE_SYSTEM_CALL_OOG_HALT.with(|cell| cell.get()) {
             return Ok(ResultAndState::new(
                 ExecutionResult::Halt {
@@ -344,7 +344,7 @@ where
                 Default::default(),
             ));
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         if FORCE_OUTBE_SYSTEM_CALL_REVERT.with(|cell| cell.get()) {
             return Ok(ResultAndState::new(
                 ExecutionResult::Revert {
@@ -419,8 +419,7 @@ pub struct OutbeEvmFactory {
     genesis_hash: B256,
     genesis_timestamp: u64,
     tee_attestation_v1: TeeAttestationChainSpecStateV1,
-    /// Installed host. `None` falls back to `default_runtime_host()`:
-    /// the domain host under `test-utils`, fail-closed otherwise.
+    /// Installed host. `None` uses the fail-closed stub.
     runtime_host: Option<std::sync::Arc<dyn crate::EvmRuntimeHost>>,
 }
 
@@ -499,7 +498,7 @@ impl EvmFactory for OutbeEvmFactory {
                 .with_abort_bridge(abort_bridge.clone()),
             self.runtime_host
                 .clone()
-                .unwrap_or_else(crate::host::default_runtime_host),
+                .unwrap_or_else(crate::host::stub_host),
         );
 
         let mut evm = Context::mainnet()

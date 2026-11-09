@@ -375,7 +375,7 @@ async fn wait_for_bootstrap_tee_lease_parks_when_sender_is_dropped() {
         local_key_in_genesis_validator_set: false,
         dkg_rotation_params: rotation(60, 5),
         tee_lease_armed_rx: rx,
-        protocol: std::sync::Arc::new(crate::protocol_state::UninstalledEngineState),
+        protocol: std::sync::Arc::new(ClosedEngineState),
     };
     assert!(
         wait_for_bootstrap_tee_lease(Some(&mut readiness))
@@ -383,4 +383,108 @@ async fn wait_for_bootstrap_tee_lease_parks_when_sender_is_dropped() {
             .is_none(),
         "dropped tee_lease_armed watch sender must park rather than busy-spin FinalityObserver"
     );
+}
+
+struct ClosedEngineState;
+
+fn closed<T>() -> outbe_primitives::error::Result<T> {
+    Err(outbe_primitives::error::PrecompileError::storage(
+        "engine protocol state is not installed",
+    ))
+}
+
+impl crate::protocol_state::EngineProtocolState for ClosedEngineState {
+    fn validator_rows(
+        &self,
+        _: outbe_primitives::storage::StorageHandle<'_>,
+        _: crate::protocol_state::EngineValidatorQuery,
+    ) -> outbe_primitives::error::Result<Vec<crate::protocol_state::EngineValidatorRow>> {
+        closed()
+    }
+
+    fn committee_snapshot(
+        &self,
+        _: outbe_primitives::storage::StorageHandle<'_>,
+        _: u64,
+    ) -> outbe_primitives::error::Result<
+        Option<outbe_primitives::committee_snapshot::CommitteeSnapshot>,
+    > {
+        closed()
+    }
+
+    fn has_pending_set_change(
+        &self,
+        _: outbe_primitives::storage::StorageHandle<'_>,
+    ) -> outbe_primitives::error::Result<bool> {
+        closed()
+    }
+
+    fn tee_offer_public(
+        &self,
+        _: outbe_primitives::storage::StorageHandle<'_>,
+    ) -> outbe_primitives::error::Result<alloy_primitives::B256> {
+        closed()
+    }
+
+    fn tee_offer_epoch(
+        &self,
+        _: outbe_primitives::storage::StorageHandle<'_>,
+    ) -> outbe_primitives::error::Result<u64> {
+        closed()
+    }
+
+    fn tee_recipient(
+        &self,
+        _: outbe_primitives::storage::StorageHandle<'_>,
+        _: alloy_primitives::Address,
+    ) -> outbe_primitives::error::Result<Option<alloy_primitives::B256>> {
+        closed()
+    }
+
+    fn node_host_binding(
+        &self,
+        _: outbe_primitives::storage::StorageHandle<'_>,
+        _: [u8; 33],
+    ) -> outbe_primitives::error::Result<
+        Option<outbe_primitives::tee_registry_abi_v1::NodeEnclaveBindingV1>,
+    > {
+        closed()
+    }
+
+    fn binding_code_admitted(
+        &self,
+        _: outbe_primitives::storage::StorageHandle<'_>,
+        _: &outbe_primitives::tee_registry_abi_v1::NodeEnclaveBindingV1,
+        _: u64,
+    ) -> outbe_primitives::error::Result<bool> {
+        closed()
+    }
+
+    fn validator_enclave_binding(
+        &self,
+        _: outbe_primitives::storage::StorageHandle<'_>,
+        _: alloy_primitives::Address,
+    ) -> outbe_primitives::error::Result<
+        Option<outbe_primitives::tee_registry_abi_v1::NodeEnclaveBindingV1>,
+    > {
+        closed()
+    }
+
+    fn validator_record(
+        &self,
+        _: outbe_primitives::storage::StorageHandle<'_>,
+        _: alloy_primitives::Address,
+    ) -> outbe_primitives::error::Result<Option<outbe_primitives::validator_dto::ValidatorRecord>>
+    {
+        closed()
+    }
+
+    fn check_binary_compatibility(
+        &self,
+        _: outbe_primitives::storage::StorageHandle<'_>,
+    ) -> Result<(), crate::protocol_state::EngineProtocolError> {
+        Err(crate::protocol_state::EngineProtocolError::Compatibility(
+            "engine protocol state is not installed".to_string(),
+        ))
+    }
 }

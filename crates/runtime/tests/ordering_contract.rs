@@ -1,0 +1,190 @@
+//! - executor ordering contract.
+//!
+//! Pins the invariant that backs the epoch-lag admissibility of the
+//! slashindicator precompile. `ValidatorSet.epoch_number` names the committee
+//! that a certified `BoundaryOutcome` actually activated. It does not name the
+//! epoch whose nominal height was merely reached.
+//!
+//! The behaviour test here drives the begin-block modules against a primed
+//! in-memory storage provider. It asserts that the activated epoch stays
+//! untouched when a block reaches the nominal boundary without a certified
+//! `BoundaryOutcome`. The receipt-visible BoundaryOutcome path owns
+//! the later atomic epoch/member/snapshot switch before user transactions.
+
+use alloy_primitives::{Address, U256};
+use outbe_evm::system_tx::SystemTx;
+use outbe_evm::EvmRuntimeHost;
+use outbe_primitives::addresses::SYSTEM_ADDRESS;
+use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+use outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT;
+use outbe_validatorset::contract::ValidatorSet;
+use outbe_validatorset::test_support::StorageOverrides;
+use outbe_validatorset::EpochSnapshot;
+
+const CHAIN_ID: u64 = 1;
+const EPOCH_LENGTH: u32 = 10;
+const PROPOSER: Address = Address::ZERO;
+
+/// Seeds the minimum on-chain state the pre-exec hook chain needs to reach a
+/// nominal epoch boundary:
+///   * `config_epoch_length_blocks = EPOCH_LENGTH`
+///   * `epoch_start_block = 0`
+///   * `epoch_number = 1` (the currently activated epoch)
+fn seed_validator_set(storage: StorageHandle, initial_epoch: u64) {
+    let mut vs = ValidatorSet::new(storage.clone());
+    vs.test_set_epoch_snapshot(EpochSnapshot {
+        number: U256::from(initial_epoch),
+        start_timestamp: 0,
+        start_block: 0,
+        length_blocks: EPOCH_LENGTH,
+    })
+    .unwrap();
+    // Seed COEN/840 pair + 1.0 rate so begin-block NOD/GEM/INTEX promotion
+    // reads a registered pair instead of reverting "pair not registered".
+    outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
+    outbe_oracle::api::set_exchange_rate(
+        storage,
+        Address::ZERO,
+        outbe_oracle::api::DAY_TYPE_PAIR,
+        outbe_oracle::api::RateObservation {
+            rate: U256::from(1_000_000u64),
+            block_number: 0,
+            timestamp: 0,
+        },
+    )
+    .unwrap();
+}
+
+/// A block with no certified `BoundaryOutcome` does not reset epoch counters.
+/// Begin-block modules still run and must leave the activated epoch in place.
+fn run_begin_block_without_certified_boundary(ctx: &BlockRuntimeContext) {
+    for kind in [
+        SystemTx::Vote,
+        SystemTx::Update,
+        SystemTx::EnclaveUpgradeDeadline,
+        SystemTx::Rewards,
+        SystemTx::Staking,
+        SystemTx::Oracle,
+        SystemTx::OracleSlash,
+        SystemTx::HyperlaneSlash,
+        SystemTx::CycleTick,
+    ] {
+        let input = kind.encode().expect("begin-block system tx encodes");
+        outbe_runtime::OutbeRuntime::new()
+            .dispatch_system_tx(
+                ctx.storage.clone(),
+                &input,
+                SYSTEM_ADDRESS,
+                U256::ZERO,
+                &outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::Unbound,
+            )
+            .expect("begin-block module must succeed");
+    }
+}
+
+fn arm_begin_block_gas(provider: &mut HashMapStorageProvider) {
+    provider.enable_production_storage_gas_metering();
+    provider.set_gas_limit(SYSTEM_TX_ARTIFACT_GAS_LIMIT);
+}
+
+#[test]
+fn nominal_epoch_boundary_without_certified_outcome_keeps_activated_epoch() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let boundary_block = EPOCH_LENGTH as u64;
+    provider.set_block_number(boundary_block);
+    arm_begin_block_gas(&mut provider);
+
+    provider.enter(|storage| {
+        // (1) Seed the boundary-crossing epoch state.
+        seed_validator_set(storage.clone(), 1);
+
+        // Sanity: epoch_number BEFORE the pre-exec hook chain is the
+        // pre-bump value.
+        let vs_before = ValidatorSet::new(storage.clone());
+        let epoch_before = vs_before.epoch_snapshot().unwrap();
+        assert_eq!(
+            epoch_before.number,
+            U256::from(1u64),
+            "pre-condition: epoch_number must be 1 before pre-exec",
+        );
+        assert_eq!(
+            epoch_before.start_block, 0,
+            "pre-condition: epoch_start_block must be 0 before pre-exec",
+        );
+
+        // (2) Drive begin-block with no certified BoundaryOutcome.
+        let ctx = BlockRuntimeContext::new(
+            BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
+                block_number: boundary_block,
+                timestamp: /*timestamp=*/ 1_700_000_000,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: 1_700_000_000,
+                proposer: PROPOSER,
+                validators: Vec::new(),
+            },
+            storage.clone(),
+        );
+        run_begin_block_without_certified_boundary(&ctx);
+
+        // (3) The scheduled height is not activation authority. Until the
+        // receipt-visible BoundaryOutcome executes, every consumer - including
+        // native Lysis - must continue to observe the old epoch and its snapshot.
+        let vs_after = ValidatorSet::new(storage);
+        let epoch_after = vs_after.epoch_snapshot().unwrap();
+        assert_eq!(
+            epoch_after.number,
+            U256::from(1u64),
+            "nominal boundary without certified outcome must not advance epoch",
+        );
+        assert_eq!(
+            epoch_after.start_block, 0,
+            "nominal boundary without certified outcome must not move epoch anchor",
+        );
+    });
+}
+
+/// Companion negative test: an ordinary mid-epoch block also leaves the
+/// activated epoch untouched.
+#[test]
+fn transition_epoch_does_not_fire_inside_an_epoch() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let mid_epoch_block = (EPOCH_LENGTH as u64) / 2;
+    provider.set_block_number(mid_epoch_block);
+    arm_begin_block_gas(&mut provider);
+
+    provider.enter(|storage| {
+        seed_validator_set(storage.clone(), 1);
+
+        let ctx = BlockRuntimeContext::new(
+            BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
+                block_number: mid_epoch_block,
+                timestamp: 1_700_000_000,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: 1_700_000_000,
+                proposer: PROPOSER,
+                validators: Vec::new(),
+            },
+            storage.clone(),
+        );
+        run_begin_block_without_certified_boundary(&ctx);
+
+        let vs_after = ValidatorSet::new(storage);
+        let epoch_after = vs_after.epoch_snapshot().unwrap();
+        assert_eq!(
+            epoch_after.number,
+            U256::from(1u64),
+            "mid-epoch block must NOT bump epoch_number",
+        );
+        assert_eq!(
+            epoch_after.start_block, 0,
+            "mid-epoch block must NOT advance epoch_start_block",
+        );
+    });
+}

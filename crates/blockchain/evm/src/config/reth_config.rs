@@ -243,10 +243,7 @@ impl ConfigureEvm for OutbeEvmConfig {
                         dependencies: BlockExecutionDependencies {
                             bridge,
                             evm_signer,
-                            runtime_host: self
-                                .runtime_host
-                                .clone()
-                                .unwrap_or_else(crate::host::default_runtime_host),
+                            runtime_host: std::sync::Arc::clone(&self.runtime_host),
                         },
                     },
                 )

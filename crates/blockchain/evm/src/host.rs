@@ -6,9 +6,7 @@ use crate::errors::TeeBootstrapHostError;
 use crate::precompiles::MetadosisMutationCall;
 use crate::tee_attestation_activation::TeeAttestationChainSpecStateV1;
 use alloy_primitives::{Address, Bytes, B256, U256};
-#[cfg(not(feature = "test-utils"))]
 use outbe_primitives::error::PrecompileError;
-#[cfg(not(feature = "test-utils"))]
 use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 use outbe_primitives::{
     block::{BlockHeightRegime, BlockRuntimeContext},
@@ -28,33 +26,15 @@ use outbe_primitives::{
     },
 };
 
-#[cfg(not(feature = "test-utils"))]
 const HOST_MISSING: &str = "evm runtime host is not installed";
 
-#[cfg(not(feature = "test-utils"))]
 fn missing() -> PrecompileError {
     PrecompileError::Fatal(HOST_MISSING.into())
 }
 
-/// Fail-closed host used when a caller was built without one.
-#[cfg(not(feature = "test-utils"))]
-pub(crate) fn uninstalled_host() -> Arc<dyn EvmRuntimeHost> {
-    Arc::new(UninstalledEvmHost)
-}
-
-/// Host for a caller that did not inject one.
-///
-/// `test-utils` keeps the domain host so existing crate tests execute.
-/// A production build stays fail-closed until the process injects a host.
-pub(crate) fn default_runtime_host() -> Arc<dyn EvmRuntimeHost> {
-    #[cfg(feature = "test-utils")]
-    {
-        Arc::new(crate::test_support::DomainEvmHost::new())
-    }
-    #[cfg(not(feature = "test-utils"))]
-    {
-        uninstalled_host()
-    }
+/// Fail-closed host for callers that do not execute precompiles.
+pub fn stub_host() -> Arc<dyn EvmRuntimeHost> {
+    Arc::new(FailClosedHost)
 }
 
 /// Classifies and authorizes user-transaction fee waivers and sponsorship.
@@ -109,8 +89,6 @@ pub trait UserTxFeePolicy: std::fmt::Debug + Send + Sync {
 
 /// Domain operations the EVM calls without naming a domain crate.
 pub trait EvmRuntimeHost: std::fmt::Debug + Send + Sync {
-    /// Exact precompile addresses this host dispatches.
-    fn exact_addresses(&self) -> &'static [Address];
     /// EIP-161 marker addresses preserved at the start of every block.
     fn marker_addresses(&self) -> &'static [Address];
     /// Whether an exact route may be credited native value.
@@ -258,12 +236,10 @@ pub trait EvmRuntimeHost: std::fmt::Debug + Send + Sync {
     fn user_fee_policy(&self) -> &dyn UserTxFeePolicy;
 }
 
-#[cfg(not(feature = "test-utils"))]
 #[derive(Debug)]
-struct UninstalledFeePolicy;
+struct FailClosedFeePolicy;
 
-#[cfg(not(feature = "test-utils"))]
-impl UserTxFeePolicy for UninstalledFeePolicy {
+impl UserTxFeePolicy for FailClosedFeePolicy {
     fn classify(
         &self,
         _tx: &ZeroFeeTransaction<'_>,
@@ -320,29 +296,28 @@ impl UserTxFeePolicy for UninstalledFeePolicy {
     }
 }
 
-#[cfg(not(feature = "test-utils"))]
 #[derive(Debug)]
-struct UninstalledEvmHost;
+struct FailClosedHost;
 
-#[cfg(not(feature = "test-utils"))]
-impl UninstalledEvmHost {
-    fn addresses() -> &'static [Address] {
-        crate::precompiles::routes::EXACT_ADDRESSES
-    }
-}
-
-#[cfg(not(feature = "test-utils"))]
-impl EvmRuntimeHost for UninstalledEvmHost {
-    fn exact_addresses(&self) -> &'static [Address] {
-        Self::addresses()
-    }
-
+impl EvmRuntimeHost for FailClosedHost {
     fn marker_addresses(&self) -> &'static [Address] {
         &crate::executor::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES
     }
 
-    fn precompile_is_payable(&self, _address: &Address) -> bool {
-        false
+    fn precompile_is_payable(&self, address: &Address) -> bool {
+        use outbe_primitives::addresses::{
+            CCA_REGISTRY_ADDRESS, CREDIS_FACTORY_ADDRESS, CROSSCHAIN_BRIDGE_ADDRESS,
+            INTEX_FACTORY_ADDRESS, STAKING_ADDRESS, VOTE_ADDRESS,
+        };
+        const PAYABLE: &[Address] = &[
+            STAKING_ADDRESS,
+            INTEX_FACTORY_ADDRESS,
+            VOTE_ADDRESS,
+            CREDIS_FACTORY_ADDRESS,
+            CCA_REGISTRY_ADDRESS,
+            CROSSCHAIN_BRIDGE_ADDRESS,
+        ];
+        PAYABLE.contains(address)
     }
 
     fn precompile_base_gas(&self, _address: &Address, _input: &[u8]) -> u64 {
@@ -544,9 +519,8 @@ impl EvmRuntimeHost for UninstalledEvmHost {
     }
 
     fn user_fee_policy(&self) -> &dyn UserTxFeePolicy {
-        &UNINSTALLED_FEE_POLICY
+        &FAIL_CLOSED_FEE_POLICY
     }
 }
 
-#[cfg(not(feature = "test-utils"))]
-static UNINSTALLED_FEE_POLICY: UninstalledFeePolicy = UninstalledFeePolicy;
+static FAIL_CLOSED_FEE_POLICY: FailClosedFeePolicy = FailClosedFeePolicy;

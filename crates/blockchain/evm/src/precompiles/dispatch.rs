@@ -234,9 +234,12 @@ impl DispatchCall<'_> {
                 gas_budget,
                 "precompile dispatch entry"
             );
-            let mut provider =
-                CtxStorageProvider::new(ctx, gas_meter, self.provider_config(runtime, &admission));
-            provider.set_runtime_host(std::sync::Arc::clone(&self.host));
+            let mut provider = CtxStorageProvider::new(
+                ctx,
+                gas_meter,
+                self.provider_config(runtime, &admission),
+                std::sync::Arc::clone(&self.host),
+            );
             // A failing probe or command must still settle consumed provider gas.
             let mut result = self.dispatch_with_provider(&mut provider, runtime, &admission);
             if provider.subcall_out_of_gas {

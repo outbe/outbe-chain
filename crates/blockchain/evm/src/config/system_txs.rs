@@ -209,10 +209,7 @@ impl OutbeEvmConfig {
         if regime.requires_genesis_bootstrap_txs() {
             let payload = pending_tee_bootstrap
                 .ok_or(SystemTxBuildError::MissingBlock1Ost3BootstrapPayload)?;
-            let host = self
-                .runtime_host
-                .clone()
-                .unwrap_or_else(crate::host::default_runtime_host);
+            let host = self.runtime_host.clone();
             crate::tee_bootstrap::validate_tee_bootstrap_for_build(
                 host.as_ref(),
                 block_number,

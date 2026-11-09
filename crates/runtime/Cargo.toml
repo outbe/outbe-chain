@@ -102,18 +102,64 @@ tracing.workspace = true
 
 [dev-dependencies]
 alloy-consensus.workspace = true
-outbe-evm = { workspace = true, features = ["test-utils"] }
+alloy-signer.workspace = true
+alloy-signer-local.workspace = true
+reth-transaction-pool.workspace = true
+alloy-evm.workspace = true
 commonware-codec.workspace = true
+commonware-p2p.workspace = true
+commonware-parallel.workspace = true
 commonware-consensus.workspace = true
 commonware-cryptography.workspace = true
 commonware-storage.workspace = true
 commonware-utils.workspace = true
 futures.workspace = true
+eyre.workspace = true
 k256.workspace = true
 outbe-consensus = { workspace = true, features = ["test-utils"] }
+outbe-gratis = { workspace = true, features = ["test-enclave", "test-utils"] }
+rand-commonware.workspace = true
+radicle.workspace = true
+rand_core.workspace = true
+outbe-nod = { workspace = true, features = ["test-utils", "test-enclave"] }
 outbe-nodfactory = { workspace = true, features = ["test-utils"] }
+outbe-oracle = { workspace = true, features = ["test-utils"] }
+outbe-tee = { workspace = true, features = ["test-utils"] }
+outbe-tee-enclave.workspace = true
+outbe-vaultrouter = { workspace = true, features = ["test-utils"] }
+revm.workspace = true
 outbe-teeregistry.workspace = true
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
+outbe-evm = { workspace = true, features = ["test-hooks"] }
+outbe-stablecoin.workspace = true
+outbe-genesis-cli.workspace = true
+outbe-cycle = { workspace = true, features = ["test-utils"] }
+outbe-gem = { workspace = true, features = ["test-utils"] }
+outbe-metadosis = { workspace = true, features = ["test-utils"] }
+outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-tribute = { workspace = true, features = ["test-enclave"] }
+outbe-rewards.workspace = true
+outbe-staking.workspace = true
+outbe-slashindicator = { workspace = true, features = ["test-utils"] }
+outbe-vote.workspace = true
+outbe-zerofee = { workspace = true, features = ["test-utils"] }
+outbe-credis = { workspace = true, features = ["test-utils"] }
+outbe-intex = { workspace = true, features = ["test-utils"] }
+outbe-intexfactory.workspace = true
+outbe-l2registry.workspace = true
+outbe-update.workspace = true
+outbe-ccaregistry.workspace = true
+reth-trie = { workspace = true, features = ["test-utils"] }
+reth-chainspec.workspace = true
+reth-evm.workspace = true
+commonware-math.workspace = true
+rand-core-commonware.workspace = true
+ed25519-dalek.workspace = true
+blst.workspace = true
+proptest.workspace = true
+alloy-sol-types.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
 postcard.workspace = true
 reth-chain-state.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }

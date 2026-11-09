@@ -9,7 +9,7 @@ use super::super::*;
 /// - 201 - explicit revert (Solidity `require`, `revert`, etc.)
 /// - 202 - out-of-gas (any `OutOfGasError` variant)
 /// - 299 - other halt reasons (precompile error, opcode not found, ...)
-pub(crate) fn system_tx_failure_code_for_result(result: &ExecutionResult<HaltReason>) -> u16 {
+pub fn system_tx_failure_code_for_result(result: &ExecutionResult<HaltReason>) -> u16 {
     match result {
         // Callers only reach this fn under `!result.is_success()`, so the Success
         // arm is unreachable in practice. Map it deterministically to the generic
@@ -44,7 +44,7 @@ where
     /// (`SYSTEM_TX_ARTIFACT_GAS_LIMIT`, 10B gas). The public Ethereum block gas
     /// counters (`cumulative_tx_gas_used`, `block_regular_gas_used`,
     /// `block_state_gas_used`) remain unchanged (`0` visible gas).
-    pub(crate) fn commit_system_transaction(
+    pub fn commit_system_transaction(
         &mut self,
         output: EthTxResult<E::HaltReason, alloy_consensus::TxType>,
     ) -> Result<GasOutput, BlockExecutionError> {

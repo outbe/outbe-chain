@@ -160,11 +160,7 @@ fn run_pre_execution_hooks(storage: StorageHandle, block_number: u64) {
     let ctx = block_ctx(storage, block_number);
     <outbe_vote::lifecycle::VoteModule as ProtocolModule>::begin_block(&ctx).unwrap();
     <outbe_update::lifecycle::UpdateModule as ProtocolModule>::begin_block(&ctx).unwrap();
-    outbe_evm::sys_tx_precompile::enforce_enclave_upgrade_deadline(
-        &outbe_evm::test_support::DomainEvmHost::new(),
-        &ctx,
-    )
-    .unwrap();
+    outbe_slashindicator::liveness::enforce_enclave_upgrade_deadline(&ctx).unwrap();
 }
 
 fn dispatch_get_active_version_u32(storage: StorageHandle) -> u32 {

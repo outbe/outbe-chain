@@ -23,7 +23,7 @@ where
     E::Error: std::fmt::Display,
 {
     /// Resolves the accounted-parent artifact for the given Phase 1 metadata.
-    pub(crate) fn accounted_parent_artifact_for_metadata(
+    pub fn accounted_parent_artifact_for_metadata(
         &self,
         metadata: &CertifiedParentAccountingMetadata,
     ) -> Result<AccountedParentArtifact, BlockExecutionError> {
@@ -41,7 +41,7 @@ where
     /// parent execution summary once per block so `verify_phase1_in_preexec`,
     /// `apply_phase1_commit_in_preexec`, and `begin_block_system_tx_inputs`
     /// never duplicate the parent DB lookup.
-    pub(in crate::executor) fn ensure_phase1_input(
+    pub fn ensure_phase1_input(
         &mut self,
     ) -> Result<(SystemTx, AccountedParentArtifact), BlockExecutionError> {
         if let Some(cached) = self.cached_phase1_input.as_ref() {
@@ -58,7 +58,7 @@ where
     /// the BLS aggregate proof once, caching the verified signer indices so
     /// [`crate::finalization::late_credits::run_late_finalize_credits`] does not
     /// repeat the BLS pairing.
-    pub(in crate::executor) fn verify_late_finalize_credits_in_preexec(
+    pub fn verify_late_finalize_credits_in_preexec(
         &mut self,
         block_number: u64,
         block_artifacts: &OutbeBlockArtifacts,
@@ -102,7 +102,7 @@ where
     E::Error: std::fmt::Display,
 {
     /// V2 Phase 1 preflight for `BlockHeightRegime::SteadyState` (`block_number >= 2`).
-    pub(crate) fn verify_phase1_in_preexec(
+    pub fn verify_phase1_in_preexec(
         &mut self,
         block_number: u64,
         _block_artifacts: &OutbeBlockArtifacts,
@@ -116,7 +116,7 @@ where
             }
             return Ok(());
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         if crate::executor::PHASE1_VERIFY_DISABLED.with(|cell| cell.get()) {
             return Ok(());
         }
@@ -155,7 +155,7 @@ where
 
     /// Executes and commits the Phase 1 (`CertifiedParentAccounting`) system tx
     /// in pre-execution so subsequent `BeginBlock` system transactions observe post-Phase-1 state.
-    pub(crate) fn apply_phase1_commit_in_preexec(
+    pub fn apply_phase1_commit_in_preexec(
         &mut self,
         block_number: u64,
         block_artifacts: &OutbeBlockArtifacts,
@@ -163,7 +163,7 @@ where
         if !BlockHeightRegime::for_block(block_number).has_parent_finalization_accounting() {
             return Ok(());
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         if crate::executor::PHASE1_VERIFY_DISABLED.with(|cell| cell.get()) {
             return Ok(());
         }

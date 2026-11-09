@@ -283,9 +283,12 @@ fn narrow_user_stage_fixture() -> (OutbeEvmConfig, TestProvider) {
     let signer =
         Arc::new(OutbeEvmSigner::from_secret_bytes([1u8; 32]).expect("test proposer key is valid"));
     let proposer = signer.address();
-    let evm_config =
-        OutbeEvmConfig::new_with_bridge(chain_spec.clone(), ConsensusExecutionBridge::new())
-            .with_evm_signer(signer);
+    let evm_config = OutbeEvmConfig::new_with_bridge(
+        chain_spec.clone(),
+        ConsensusExecutionBridge::new(),
+        outbe_evm::stub_host(),
+    )
+    .with_evm_signer(signer);
     let provider = active_native_provider(
         &chain_spec,
         proposer,
@@ -330,8 +333,12 @@ fn build_active_payload_case(
         committee_snapshot_hash,
     );
     bridge.set_pending_tee_bootstrap(bootstrap.clone());
-    let evm_config =
-        OutbeEvmConfig::new_with_bridge(chain_spec.clone(), bridge).with_evm_signer(signer);
+    let evm_config = OutbeEvmConfig::new_with_bridge(
+        chain_spec.clone(),
+        bridge,
+        Arc::new(outbe_runtime::OutbeRuntime::new()),
+    )
+    .with_evm_signer(signer);
     let parent = Arc::new(SealedHeader::seal_slow(OutbeHeader::new(
         alloy_consensus::Header {
             number: 0,

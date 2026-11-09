@@ -86,6 +86,9 @@ where
         // `AccountedParentArtifactProvider` so the executor can resolve the
         // parent artifact in both bridge mode (cache + provider) and full-node
         // mode (provider only).
+        let runtime_host = self
+            .runtime_host
+            .ok_or_else(|| eyre::eyre!("EVM runtime host is required"))?;
         let config = match self.bridge {
             Some(bridge) => {
                 let summary_cache = bridge.clone();
@@ -96,6 +99,7 @@ where
                         ctx.provider().clone(),
                         Some(summary_cache),
                     )),
+                    Arc::clone(&runtime_host),
                 )
             }
             None => OutbeEvmConfig::new_with_provider_only(
@@ -104,6 +108,7 @@ where
                     ctx.provider().clone(),
                     None,
                 )),
+                runtime_host,
             ),
         };
 
@@ -111,9 +116,6 @@ where
             Some(signer) => config.with_evm_signer(signer),
             None => config,
         };
-        Ok(match self.runtime_host {
-            Some(host) => config.with_runtime_host(host),
-            None => config,
-        })
+        Ok(config)
     }
 }

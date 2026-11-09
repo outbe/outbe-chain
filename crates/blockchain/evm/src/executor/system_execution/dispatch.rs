@@ -24,7 +24,7 @@ where
     E::Spec: Into<revm::primitives::hardfork::SpecId>,
     E::Error: std::fmt::Display,
 {
-    pub(in crate::executor) fn execute_reserved_system_tx<R, F>(
+    pub fn execute_reserved_system_tx<R, F>(
         &mut self,
         recovered: R,
         f: F,

@@ -10,46 +10,6 @@ publish.workspace = true
 outbe-primitives.workspace = true
 outbe-tee.workspace = true
 outbe-consensus.workspace = true
-outbe-gratis = { workspace = true, optional = true }
-outbe-gratisfactory = { workspace = true, optional = true }
-outbe-promis = { workspace = true, optional = true }
-outbe-promisfactory = { workspace = true, optional = true }
-outbe-tribute = { workspace = true, optional = true }
-outbe-nod = { workspace = true, optional = true }
-outbe-nodfactory = { workspace = true, optional = true }
-outbe-gem = { workspace = true, optional = true }
-outbe-gemfactory = { workspace = true, optional = true }
-outbe-intex = { workspace = true, optional = true }
-outbe-intexfactory = { workspace = true, optional = true }
-outbe-desis = { workspace = true, optional = true }
-outbe-vaultrouter = { workspace = true, optional = true }
-outbe-credis = { workspace = true, optional = true }
-outbe-credisfactory = { workspace = true, optional = true }
-outbe-tributefactory = { workspace = true, optional = true }
-outbe-stablecoinpolicy = { workspace = true, optional = true }
-outbe-stablecoin = { workspace = true, optional = true }
-outbe-stablecoinfactory = { workspace = true, optional = true }
-outbe-teeregistry = { workspace = true, optional = true, features = ["tee-attestation-v1"] }
-outbe-l2registry = { workspace = true, optional = true }
-outbe-hyperlanecontroller = { workspace = true, optional = true }
-outbe-crosschainbridge = { workspace = true, optional = true }
-outbe-coderegistry = { workspace = true, optional = true }
-outbe-vote = { workspace = true, optional = true }
-outbe-update = { workspace = true, optional = true }
-outbe-agentreward = { workspace = true, optional = true }
-outbe-ccaregistry = { workspace = true, optional = true }
-outbe-metadosis = { workspace = true, optional = true }
-outbe-emission = { workspace = true, optional = true }
-outbe-validatorset = { workspace = true, optional = true }
-outbe-slashindicator = { workspace = true, optional = true }
-outbe-staking = { workspace = true, optional = true }
-outbe-rewards = { workspace = true, optional = true }
-outbe-fidelity = { workspace = true, optional = true }
-outbe-promislimit = { workspace = true, optional = true }
-outbe-oracle = { workspace = true, optional = true }
-outbe-zerofee = { workspace = true, optional = true }
-outbe-cycle = { workspace = true, optional = true }
-outbe-zk-backend = { workspace = true, optional = true }
 
 # Alloy
 alloy-rpc-types-eth.workspace = true
@@ -87,22 +47,13 @@ parking_lot.workspace = true
 postcard.workspace = true
 
 [dev-dependencies]
-outbe-cycle = { workspace = true, features = ["test-utils"] }
 outbe-genesis-cli.workspace = true
 outbe-consensus = { workspace = true, features = ["test-utils"] }
-outbe-evm = { path = ".", features = ["test-utils"] }
 outbe-tee = { workspace = true, features = ["test-utils"] }
-outbe-tribute = { workspace = true, features = ["test-enclave"] }
 outbe-chain-constants.workspace = true
 outbe-node.workspace = true
-outbe-metadosis = { workspace = true, features = ["test-utils"] }
-outbe-nod = { workspace = true, features = ["test-utils", "test-enclave"] }
-outbe-gem = { workspace = true, features = ["test-utils"] }
-outbe-gratis = { workspace = true, features = ["test-enclave"] }
 alloy-sol-types.workspace = true
-outbe-oracle = { workspace = true, features = ["test-utils"] }
 outbe-primitives = { workspace = true, features = ["test-utils"] }
-outbe-validatorset = { workspace = true, features = ["test-utils"] }
 reth-chainspec.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-trie = { workspace = true, features = ["test-utils"] }
@@ -123,52 +74,14 @@ rand-commonware.workspace = true
 rand-core-commonware.workspace = true
 
 [features]
-test-utils = [
-    "dep:outbe-gratis",
-    "dep:outbe-gratisfactory",
-    "dep:outbe-promis",
-    "dep:outbe-promisfactory",
-    "dep:outbe-tribute",
-    "dep:outbe-nod",
-    "dep:outbe-nodfactory",
-    "dep:outbe-gem",
-    "dep:outbe-gemfactory",
-    "dep:outbe-intex",
-    "dep:outbe-intexfactory",
-    "dep:outbe-desis",
-    "dep:outbe-vaultrouter",
-    "dep:outbe-credis",
-    "dep:outbe-credisfactory",
-    "dep:outbe-tributefactory",
-    "dep:outbe-stablecoinpolicy",
-    "dep:outbe-stablecoin",
-    "dep:outbe-stablecoinfactory",
-    "dep:outbe-teeregistry",
-    "dep:outbe-l2registry",
-    "dep:outbe-hyperlanecontroller",
-    "dep:outbe-crosschainbridge",
-    "dep:outbe-coderegistry",
-    "dep:outbe-vote",
-    "dep:outbe-update",
-    "dep:outbe-agentreward",
-    "dep:outbe-ccaregistry",
-    "dep:outbe-metadosis",
-    "dep:outbe-emission",
-    "dep:outbe-validatorset",
-    "dep:outbe-slashindicator",
-    "dep:outbe-staking",
-    "dep:outbe-rewards",
-    "dep:outbe-fidelity",
-    "dep:outbe-promislimit",
-    "dep:outbe-oracle",
-    "dep:outbe-zerofee",
-    "dep:outbe-cycle",
-    "dep:outbe-zk-backend",
-]
+test-utils = []
 # Names stay. The compile-time test-enclave forward is empty until the
 # runtime composition root owns these features.
 production-enclave = []
 e2e-test = []
+# Exposes execution test controls to crates/runtime integration tests.
+# It does not pull a domain crate.
+test-hooks = []
 
 [package.metadata.cargo-machete]
 ignored = ["hex"]

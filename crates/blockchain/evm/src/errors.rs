@@ -310,11 +310,6 @@ pub enum BeginBlockPrecompileError {
 }
 
 impl BeginBlockPrecompileError {
-    #[cfg(feature = "test-utils")]
-    pub(crate) fn invalid_system_tx_input(error: impl Display) -> PrecompileError {
-        Self::InvalidSystemTxInput(error.to_string()).into()
-    }
-
     pub(crate) fn invalid_tee_chain_spec_authority(error: impl Display) -> PrecompileError {
         Self::InvalidTeeChainSpecAuthority(error.to_string()).into()
     }

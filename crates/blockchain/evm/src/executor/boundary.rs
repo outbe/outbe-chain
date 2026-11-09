@@ -69,8 +69,8 @@ pub mod marker_addresses {
 /// - mismatch + `is_validator_set_change == true` -> apply boundary activation
 ///   and write incoming snapshot atomically.
 /// - mismatch + `is_validator_set_change == false` -> fatal.
-#[cfg(any(test, feature = "test-utils"))]
-pub(crate) fn apply_boundary_outcome(
+#[cfg(any(test, feature = "test-hooks", feature = "test-utils"))]
+pub fn apply_boundary_outcome(
     host: &dyn crate::EvmRuntimeHost,
     storage: StorageHandle,
     boundary: &outbe_primitives::consensus::DkgBoundaryArtifact,
@@ -84,7 +84,7 @@ pub(crate) fn apply_boundary_outcome(
 /// next certified BoundaryOutcome. This runs before receipt-visible
 /// LateFinalizeCredits. The BoundaryOutcome later advances epoch/set/snapshot
 /// without erasing misses recorded by that earlier phase.
-pub(crate) fn prepare_boundary_epoch_counters(
+pub fn prepare_boundary_epoch_counters(
     host: &dyn crate::EvmRuntimeHost,
     storage: StorageHandle,
     boundary: &outbe_primitives::consensus::DkgBoundaryArtifact,
@@ -93,8 +93,8 @@ pub(crate) fn prepare_boundary_epoch_counters(
     host.prepare_boundary(storage, boundary, block_number)
 }
 
-#[cfg(test)]
-pub(in crate::executor) fn hash_boundary_active_set(addresses: &[Address]) -> B256 {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn hash_boundary_active_set(addresses: &[Address]) -> B256 {
     let mut bytes = Vec::with_capacity(8 + addresses.len() * 20);
     bytes.extend_from_slice(&(addresses.len() as u64).to_be_bytes());
     for address in addresses {
@@ -111,7 +111,7 @@ where
     E: Evm<DB = DB, Tx = TxEnv> + ZeroFeeCfgAccess,
     E::Error: std::fmt::Display,
 {
-    pub(crate) fn begin_zone_proposer(
+    pub fn begin_zone_proposer(
         &self,
         block_number: u64,
     ) -> Result<Option<Address>, BlockExecutionError> {
@@ -135,7 +135,7 @@ where
             .map(Some)
     }
 
-    pub(in crate::executor) fn validate_proposer_identity(
+    pub fn validate_proposer_identity(
         &mut self,
         proposer: Address,
         allow_boundary_proposer: bool,
@@ -170,7 +170,7 @@ where
         Err(ExecutorValidationError::ProposerNotActiveConsensusParticipant { proposer }.into())
     }
 
-    pub(crate) fn boundary_allows_proposer(
+    pub fn boundary_allows_proposer(
         &self,
         block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
         proposer: Address,

@@ -38,15 +38,6 @@ tokio.workspace = true
 tempfile.workspace = true
 commonware-cryptography.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
-outbe-emission.workspace = true
-outbe-slashindicator.workspace = true
-outbe-staking.workspace = true
-outbe-teeregistry.workspace = true
-outbe-tribute.workspace = true
-outbe-update.workspace = true
-outbe-validatorset.workspace = true
-outbe-vote.workspace = true
-alloy-sol-types.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 

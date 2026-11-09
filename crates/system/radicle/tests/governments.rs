@@ -811,7 +811,7 @@ async fn automatic_bootstrap_vote_review_and_merge_with_one_offline_member_and_r
         provider.clone(),
         chain.chain_id,
         chain.genesis_hash,
-        Arc::new(outbe_radicle::protocol_state::UninstalledRadicleState),
+        Arc::new(outbe_runtime::OutbeRuntime::new()),
     ));
     let mut sidecars: Vec<_> = (71..74).map(Sidecar::new).collect();
     let mut routes = BTreeMap::new();

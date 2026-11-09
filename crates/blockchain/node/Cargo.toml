@@ -7,7 +7,7 @@ publish.workspace = true
 
 [features]
 default = []
-test-utils = ["outbe-primitives/test-utils", "dep:outbe-teeregistry"]
+test-utils = ["outbe-primitives/test-utils"]
 
 [dependencies]
 # Internal
@@ -15,7 +15,6 @@ outbe-evm.workspace = true
 outbe-primitives.workspace = true
 outbe-txpool.workspace = true
 outbe-tee.workspace = true
-outbe-teeregistry = { workspace = true, optional = true }
 
 # Reth
 reth-ethereum = { workspace = true, features = ["node", "cli"] }
@@ -98,6 +97,7 @@ outbe-validatorset = { workspace = true, features = ["test-utils"] }
 reth-trie = { workspace = true, features = ["test-utils"] }
 outbe-oracle = { workspace = true, features = ["test-utils"] }
 outbe-teeregistry.workspace = true
+outbe-runtime.workspace = true
 outbe-evm = { workspace = true, features = ["test-utils"] }
 
 [lints]

@@ -1,7 +1,7 @@
 use super::*;
 
 impl<E: Evm> OutbeBlockExecutor<'_, E> {
-    pub(crate) fn block_context(
+    pub fn block_context(
         &self,
         block_number: u64,
         timestamp: u64,
@@ -21,7 +21,7 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
     }
 }
 
-pub(crate) fn read_committee_snapshot<DB>(
+pub fn read_committee_snapshot<DB>(
     host: &dyn crate::EvmRuntimeHost,
     db: &mut DB,
     context: BlockContext,
@@ -44,7 +44,7 @@ where
         })
 }
 
-pub(in crate::executor) fn build_block_context<DB>(
+pub fn build_block_context<DB>(
     host: &dyn crate::EvmRuntimeHost,
     db: &mut DB,
     mut context: BlockContext,

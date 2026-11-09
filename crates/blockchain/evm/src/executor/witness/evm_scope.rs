@@ -14,11 +14,11 @@ use reth_ethereum::evm::revm::{
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Default)]
-pub(crate) struct DetachedTraceExecutionMeta {
-    pub(crate) expected_begin_inputs: Vec<Bytes>,
-    pub(crate) expected_tx_count: Option<usize>,
-    pub(crate) phase1_preexecuted: bool,
-    pub(crate) system_tx_context: Option<PreloadedSystemTxContext>,
+pub struct DetachedTraceExecutionMeta {
+    pub expected_begin_inputs: Vec<Bytes>,
+    pub expected_tx_count: Option<usize>,
+    pub phase1_preexecuted: bool,
+    pub system_tx_context: Option<PreloadedSystemTxContext>,
 }
 
 #[derive(Clone)]
@@ -36,16 +36,16 @@ thread_local! {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct EvmTransactWitnessInput<'a> {
-    pub(crate) attached_state: Option<&'a Arc<Mutex<WitnessState>>>,
-    pub(crate) owned_by_executor: bool,
-    pub(crate) precompiles_mut_called: bool,
-    pub(crate) chain_id: u64,
-    pub(crate) block_number: u64,
-    pub(crate) block_timestamp: u64,
+pub struct EvmTransactWitnessInput<'a> {
+    pub attached_state: Option<&'a Arc<Mutex<WitnessState>>>,
+    pub owned_by_executor: bool,
+    pub precompiles_mut_called: bool,
+    pub chain_id: u64,
+    pub block_number: u64,
+    pub block_timestamp: u64,
 }
 
-pub(crate) enum DetachedTraceTxAction {
+pub enum DetachedTraceTxAction {
     NormalTransact,
     SkipPreexecutedPhase1 {
         gas_limit: u64,
@@ -56,14 +56,14 @@ pub(crate) enum DetachedTraceTxAction {
     },
 }
 
-pub(crate) struct MatchedDetachedTraceTx {
-    pub(crate) state: Arc<Mutex<WitnessState>>,
-    pub(crate) expected_tx_count: Option<usize>,
-    pub(crate) action: DetachedTraceTxAction,
+pub struct MatchedDetachedTraceTx {
+    pub state: Arc<Mutex<WitnessState>>,
+    pub expected_tx_count: Option<usize>,
+    pub action: DetachedTraceTxAction,
 }
 
-#[cfg(test)]
-pub(crate) fn install_detached_trace_witness(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn install_detached_trace_witness(
     chain_id: u64,
     block_number: u64,
     block_timestamp: u64,
@@ -80,7 +80,7 @@ pub(crate) fn install_detached_trace_witness(
     });
 }
 
-pub(crate) fn install_detached_trace_witness_with_meta(
+pub fn install_detached_trace_witness_with_meta(
     chain_id: u64,
     block_number: u64,
     block_timestamp: u64,
@@ -106,7 +106,7 @@ pub(crate) fn install_detached_trace_witness_with_meta(
     });
 }
 
-pub(crate) fn clear_detached_trace_witness() {
+pub fn clear_detached_trace_witness() {
     DETACHED_TRACE_WITNESS.with(|slot| {
         *slot.borrow_mut() = None;
     });
@@ -115,7 +115,7 @@ pub(crate) fn clear_detached_trace_witness() {
 /// Accumulates user-transaction gas in the detached trace context so `EndBlock`
 /// system transactions replayed via `TxTracer` observe the exact `MidBlock`
 /// `user_gas_used` snapshot.
-pub(crate) fn record_detached_trace_user_gas(user_gas: u64) {
+pub fn record_detached_trace_user_gas(user_gas: u64) {
     DETACHED_TRACE_WITNESS.with(|slot| {
         if let Some(context) = slot
             .borrow_mut()
@@ -127,10 +127,7 @@ pub(crate) fn record_detached_trace_user_gas(user_gas: u64) {
     });
 }
 
-pub(crate) fn synthetic_trace_success(
-    gas_limit: u64,
-    logs: Vec<Log>,
-) -> ResultAndState<HaltReason> {
+pub fn synthetic_trace_success(gas_limit: u64, logs: Vec<Log>) -> ResultAndState<HaltReason> {
     ResultAndState::new(
         ExecutionResult::Success {
             reason: SuccessReason::Stop,
@@ -200,7 +197,7 @@ fn active_trace_cursor_for_input(
     is_still_active_trace_cursor(ctx, idx).then_some(idx)
 }
 
-pub(crate) fn match_detached_trace_tx(
+pub fn match_detached_trace_tx(
     input: &EvmTransactWitnessInput<'_>,
     tx: &TxEnv,
 ) -> Option<MatchedDetachedTraceTx> {
@@ -317,7 +314,7 @@ fn run_with_attached_evm_witness<R>(state: Arc<Mutex<WitnessState>>, f: impl FnO
     output
 }
 
-pub(crate) fn run_matched_detached_trace_tx<R>(
+pub fn run_matched_detached_trace_tx<R>(
     matched: MatchedDetachedTraceTx,
     f: impl FnOnce(DetachedTraceTxAction) -> R,
 ) -> R {
@@ -337,7 +334,7 @@ pub(crate) fn run_matched_detached_trace_tx<R>(
     output
 }
 
-pub(crate) fn with_evm_transact_witness_scope<R>(
+pub fn with_evm_transact_witness_scope<R>(
     input: EvmTransactWitnessInput<'_>,
     f: impl FnOnce() -> R,
 ) -> R {

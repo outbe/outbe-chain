@@ -12,7 +12,7 @@ mod call_authority;
 pub(crate) mod routes;
 pub use call_authority::MetadosisMutationCall;
 mod cancellation;
-pub(crate) use cancellation::ExecutionAbortBridge;
+pub use cancellation::ExecutionAbortBridge;
 mod dispatch;
 mod outcome;
 mod sub_call_provider;
@@ -29,7 +29,7 @@ pub(crate) use sub_call_provider::OutbeSubCallPrecompiles;
 /// Lookup and enumeration are generated from the same compact declaration in
 /// [`routes`], so dispatch-recognized exact routes cannot be omitted
 /// from this list.
-pub fn outbe_precompile_addresses() -> &'static [Address] {
+pub const fn outbe_precompile_addresses() -> &'static [Address] {
     routes::EXACT_ADDRESSES
 }
 

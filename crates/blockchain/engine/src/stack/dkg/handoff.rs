@@ -81,35 +81,35 @@ pub(in crate::stack) fn activate_vrf_material_and_publish_local_share(
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::stack) struct FrozenDkgTarget {
+pub struct FrozenDkgTarget {
     pub(in crate::stack) dkg_cycle: u64,
-    pub(in crate::stack) freeze_height: u64,
+    pub freeze_height: u64,
     pub(in crate::stack) planned_activation_height: u64,
-    pub(in crate::stack) validator_set: validators::ValidatorSet,
-    pub(in crate::stack) participants: commonware_utils::ordered::Set<bls12381::PublicKey>,
+    pub validator_set: validators::ValidatorSet,
+    pub participants: commonware_utils::ordered::Set<bls12381::PublicKey>,
     pub(in crate::stack) tee_expired_target_exclusions: Vec<EthAddress>,
     pub(in crate::stack) is_validator_set_change: bool,
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::stack) struct PendingDkgActivation {
-    pub(in crate::stack) target: FrozenDkgTarget,
-    pub(in crate::stack) complete: dkg_actor::DkgComplete,
-    pub(in crate::stack) boundary_artifact: DkgBoundaryArtifact,
+pub struct PendingDkgActivation {
+    pub target: FrozenDkgTarget,
+    pub complete: dkg_actor::DkgComplete,
+    pub boundary_artifact: DkgBoundaryArtifact,
     /// Present only after restart. The process-local finalized dealer-log
     /// reconstruction is gone, but this output was revalidated against both
     /// the durable pending material and the exact boundary artifact.
-    pub(in crate::stack) recovered_output: Option<Output<MinSig, bls12381::PublicKey>>,
+    pub recovered_output: Option<Output<MinSig, bls12381::PublicKey>>,
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::stack) struct DealerOnlyDkgActivation {
+pub struct DealerOnlyDkgActivation {
     pub(in crate::stack) target: FrozenDkgTarget,
     pub(in crate::stack) boundary_artifact: Option<DkgBoundaryArtifact>,
     pub(in crate::stack) recovered_output: Option<Output<MinSig, bls12381::PublicKey>>,
 }
 
-pub(in crate::stack) enum RestoredPendingDkgActivation {
+pub enum RestoredPendingDkgActivation {
     Participant(PendingDkgActivation),
     DealerOnly(DealerOnlyDkgActivation),
 }
@@ -147,7 +147,7 @@ pub(in crate::stack) fn classify_local_reshare_role(
     }
 }
 
-pub(in crate::stack) enum FrozenValidatorSetRefresh {
+pub enum FrozenValidatorSetRefresh {
     Ready {
         validator_set: validators::ValidatorSet,
         participants: commonware_utils::ordered::Set<bls12381::PublicKey>,
@@ -609,7 +609,7 @@ fn collect_finalized_dealer_logs(
 ///
 /// Called at freeze_height so dynamically added/removed validators are applied
 /// from the same historical state on every node.
-pub(in crate::stack) fn refresh_validator_set_at_height(
+pub fn refresh_validator_set_at_height(
     protocol: &dyn crate::protocol_state::EngineProtocolState,
     node: &OutbeFullNode,
     freeze_height: u64,

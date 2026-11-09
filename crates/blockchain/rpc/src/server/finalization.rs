@@ -217,7 +217,7 @@ mod tests {
         let handler = OutbeApiHandler::with_bridge(
             Arc::new(()),
             bridge.clone(),
-            std::sync::Arc::new(crate::state_reader::StorageRpcStateReader),
+            std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
         );
 
         assert_all_three_fail(
@@ -260,7 +260,7 @@ mod tests {
         let unserved_handler = OutbeApiHandler::with_bridge(
             Arc::new(()),
             unserved_bridge,
-            std::sync::Arc::new(crate::state_reader::StorageRpcStateReader),
+            std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
         );
         let err = unserved_handler
             .get_finalization_for_height(5)
@@ -297,7 +297,7 @@ mod tests {
         let busy_handler = OutbeApiHandler::with_bridge(
             Arc::new(()),
             busy_bridge,
-            std::sync::Arc::new(crate::state_reader::StorageRpcStateReader),
+            std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
         );
         assert_all_three_fail(
             &busy_handler,
@@ -315,7 +315,7 @@ mod tests {
         let timeout_handler = OutbeApiHandler::with_bridge(
             Arc::new(()),
             timeout_bridge,
-            std::sync::Arc::new(crate::state_reader::StorageRpcStateReader),
+            std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
         );
 
         assert_all_three_fail(
@@ -338,7 +338,7 @@ mod tests {
         let none_handler = OutbeApiHandler::with_bridge(
             Arc::new(()),
             none_bridge,
-            std::sync::Arc::new(crate::state_reader::StorageRpcStateReader),
+            std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
         );
 
         let err = none_handler
@@ -390,7 +390,7 @@ mod tests {
         let handler = OutbeApiHandler::with_bridge(
             Arc::new(()),
             bridge,
-            std::sync::Arc::new(crate::state_reader::StorageRpcStateReader),
+            std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
         );
 
         // Height 10 has an empty direct certificate: rejected by get_finalization,
@@ -441,7 +441,7 @@ mod tests {
         let handler = OutbeApiHandler::with_bridge(
             Arc::new(()),
             bridge,
-            std::sync::Arc::new(crate::state_reader::StorageRpcStateReader),
+            std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
         );
 
         let proof = handler.finality_proof_for_height(20).await.unwrap();
@@ -474,7 +474,7 @@ mod tests {
         let handler = OutbeApiHandler::with_bridge(
             Arc::new(()),
             bridge,
-            std::sync::Arc::new(crate::state_reader::StorageRpcStateReader),
+            std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
         );
         let err = handler.finality_proof_for_height(100).await.unwrap_err();
         assert_eq!(err.code(), RESOURCE_EXHAUSTED_ERROR_CODE);

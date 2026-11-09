@@ -73,8 +73,11 @@ where
     let bridge_for_evm = bridge.clone();
     let runtime_for_evm = Arc::clone(&runtime_for_launcher);
     let components = move |spec: Arc<ChainSpec<OutbeHeader>>| {
-        let evm = outbe_evm::OutbeEvmConfig::new_with_bridge(spec.clone(), bridge_for_evm.clone())
-            .with_runtime_host(Arc::clone(&runtime_for_evm) as Arc<dyn EvmRuntimeHost>);
+        let evm = outbe_evm::OutbeEvmConfig::new_with_bridge(
+            spec.clone(),
+            bridge_for_evm.clone(),
+            Arc::clone(&runtime_for_evm) as Arc<dyn EvmRuntimeHost>,
+        );
         (
             evm,
             Arc::new(

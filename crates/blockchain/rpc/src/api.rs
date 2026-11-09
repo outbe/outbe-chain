@@ -588,7 +588,7 @@ mod tests {
         // Plain EL full node (no consensus bridge): reports not syncing and consensus_active = false.
         let full_node = crate::server::OutbeApiHandler::new(
             Arc::new(()),
-            std::sync::Arc::new(crate::state_reader::StorageRpcStateReader),
+            std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
         );
         let full_node_status = full_node.sync_status_info();
         assert!(!full_node_status.is_syncing);
@@ -602,7 +602,7 @@ mod tests {
         let syncing_node = crate::server::OutbeApiHandler::with_bridge(
             Arc::new(()),
             inactive_bridge,
-            std::sync::Arc::new(crate::state_reader::StorageRpcStateReader),
+            std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
         );
         let syncing_status = syncing_node.sync_status_info();
         assert!(syncing_status.is_syncing);
@@ -620,7 +620,7 @@ mod tests {
         let active_node = crate::server::OutbeApiHandler::with_bridge(
             Arc::new(()),
             active_bridge,
-            std::sync::Arc::new(crate::state_reader::StorageRpcStateReader),
+            std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
         );
         let active_status = active_node.sync_status_info();
         let json = serde_json::to_string(&active_status).unwrap();

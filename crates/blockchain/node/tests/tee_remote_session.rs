@@ -149,7 +149,7 @@ fn current_finalized_registry_admits_role_neutral_nodes_and_rejects_superseded_s
                 source_witness: &source_witness,
                 target_node: &target_node,
             },
-            &outbe_node::tee_remote_session::DomainTeeSessionReader,
+            &outbe_runtime::OutbeRuntime::new(),
         )
         .unwrap();
 
@@ -173,7 +173,7 @@ fn current_finalized_registry_admits_role_neutral_nodes_and_rejects_superseded_s
                     node_data_dir: missing_candidate_dir.path(),
                     node_id: &source_node,
                 },
-                &outbe_node::tee_remote_session::DomainTeeSessionReader
+                &outbe_runtime::OutbeRuntime::new()
             ),
             Err(LocalRegistryAdmissionError::ReplacementAuthorization(_))
         ));
@@ -196,7 +196,7 @@ fn current_finalized_registry_admits_role_neutral_nodes_and_rejects_superseded_s
                     source_witness: &source_witness,
                     target_node: &target_node,
                 },
-                &outbe_node::tee_remote_session::DomainTeeSessionReader
+                &outbe_runtime::OutbeRuntime::new()
             ),
             Err(LocalRegistryAdmissionError::SourceBindingMissing)
         ));
@@ -211,7 +211,7 @@ fn current_finalized_registry_admits_role_neutral_nodes_and_rejects_superseded_s
                     node_data_dir: missing_candidate_dir.path(),
                     node_id: &source_node,
                 },
-                &outbe_node::tee_remote_session::DomainTeeSessionReader
+                &outbe_runtime::OutbeRuntime::new()
             ),
             Err(LocalRegistryAdmissionError::ReplacementBindingMissing)
         ));
@@ -235,7 +235,7 @@ fn current_finalized_registry_admits_role_neutral_nodes_and_rejects_superseded_s
                     source_witness: &source_witness,
                     target_node: &target_node,
                 },
-                &outbe_node::tee_remote_session::DomainTeeSessionReader
+                &outbe_runtime::OutbeRuntime::new()
             ),
             Err(LocalRegistryAdmissionError::FinalizedBlockUnavailable)
         ));
@@ -409,7 +409,7 @@ fn production_facade_installs_current_finalized_ticket_in_live_enclave() {
             source_witness: &source_witness,
             target_node: &target_node,
         },
-        &outbe_node::tee_remote_session::DomainTeeSessionReader,
+        &outbe_runtime::OutbeRuntime::new(),
     )
     .unwrap();
     assert_eq!(ticket.finalized_block_hash(), block_hash);
@@ -593,7 +593,7 @@ fn current_finalized_registry_constructs_exact_replacement_authorization() {
             node_data_dir: &node_data_dir,
             node_id: &node_id,
         },
-        &outbe_node::tee_remote_session::DomainTeeSessionReader,
+        &outbe_runtime::OutbeRuntime::new(),
     )
     .unwrap();
     assert_eq!(authorized.view.block_number, 90);
@@ -606,7 +606,7 @@ fn current_finalized_registry_constructs_exact_replacement_authorization() {
                 chain_id,
                 genesis_hash,
             },
-            &outbe_node::tee_remote_session::DomainTeeSessionReader,
+            &outbe_runtime::OutbeRuntime::new(),
         )
         .unwrap();
     assert_eq!(successor_status.view, authorized.view);
@@ -740,7 +740,7 @@ fn external_light_client_checkpoint_authenticates_the_exact_registry_storage_pro
             source_witness: &source_witness,
             target_node: &target_node,
         },
-        &outbe_node::tee_remote_session::DomainTeeSessionReader,
+        &outbe_runtime::OutbeRuntime::new(),
     )
     .unwrap();
 
@@ -765,7 +765,7 @@ fn external_light_client_checkpoint_authenticates_the_exact_registry_storage_pro
                 source_witness: &source_witness,
                 target_node: &target_node,
             },
-            &outbe_node::tee_remote_session::DomainTeeSessionReader
+            &outbe_runtime::OutbeRuntime::new()
         ),
         Err(ExternalRegistryAdmissionError::Proof(_))
     ));

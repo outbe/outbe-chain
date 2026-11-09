@@ -15,7 +15,7 @@ where
     E::Spec: Into<revm::primitives::hardfork::SpecId>,
     E::Error: std::fmt::Display,
 {
-    pub(in crate::executor) fn route_user_transaction<R, F>(
+    pub fn route_user_transaction<R, F>(
         &mut self,
         tx_env: TxEnv,
         recovered: R,
@@ -132,9 +132,7 @@ where
 }
 
 impl<E: Evm> OutbeBlockExecutor<'_, E> {
-    pub(in crate::executor) fn fee_route_context(
-        &self,
-    ) -> Result<BlockContext, BlockExecutionError> {
+    pub fn fee_route_context(&self) -> Result<BlockContext, BlockExecutionError> {
         let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
             .map_err(crate::errors::ExecutorValidationError::from)?;
         Ok(self.block_context(

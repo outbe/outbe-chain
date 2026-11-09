@@ -65,7 +65,7 @@ mod epoch_transition_harness;
 mod fixtures;
 mod follower;
 mod genesis_formation;
-mod harness;
+pub(in crate::stack) mod harness;
 mod lifecycle;
 mod local_anchor;
 mod marshal_reporter;

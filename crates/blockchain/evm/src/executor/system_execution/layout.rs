@@ -5,7 +5,7 @@ type BeginSystemTransaction = (SystemTx, Option<AccountedParentArtifact>);
 type ExpectedSystemTransaction = (usize, SystemTx, Option<AccountedParentArtifact>);
 
 #[derive(Debug, Clone)]
-pub(crate) struct ResolvedBeginSystemTx {
+pub struct ResolvedBeginSystemTx {
     pub input: SystemTx,
     pub finalized_summary: Option<AccountedParentArtifact>,
 }
@@ -14,11 +14,11 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     /// Read the current begin-zone system-tx phase cursor.
     /// Test-only introspection point. The production driver is internal.
     #[allow(dead_code)]
-    pub(crate) fn system_tx_phase_cursor(&self) -> crate::system_tx::SystemTxPhase {
+    pub fn system_tx_phase_cursor(&self) -> crate::system_tx::SystemTxPhase {
         self.system_tx_phase_cursor
     }
 
-    pub(crate) fn is_preexecuted_phase1_witness(&self, tx: &TransactionSigned) -> bool {
+    pub fn is_preexecuted_phase1_witness(&self, tx: &TransactionSigned) -> bool {
         let crate::system_tx::SystemTxPhase::Phase1Preexecuted {
             tx_hash: cached_hash,
             ..
@@ -58,7 +58,7 @@ where
     /// reads it from the injected `pending_tee_bootstrap` payload. Both feed the
     /// same `has_tee_bootstrap` cursor signal so the phase cursor matches the
     /// actual begin-zone on both paths.
-    pub(in crate::executor) fn block_has_tee_bootstrap(&self) -> bool {
+    pub fn block_has_tee_bootstrap(&self) -> bool {
         if self.pending_tee_bootstrap.is_some() {
             return true;
         }
@@ -73,7 +73,7 @@ where
     /// Advances the begin-zone system-transaction phase cursor and 4-stage FSM
     /// after committing a begin-zone system transaction receipt (or consuming a
     /// pre-executed Phase 1 witness).
-    pub(in crate::executor) fn advance_system_tx_phase_cursor(
+    pub fn advance_system_tx_phase_cursor(
         &mut self,
         kind: outbe_primitives::system_tx::SystemTxKind,
         block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
@@ -99,7 +99,7 @@ where
         Ok(())
     }
 
-    pub(in crate::executor) fn begin_block_system_tx_inputs(
+    pub fn begin_block_system_tx_inputs(
         &self,
         block_number: u64,
         block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
@@ -208,7 +208,7 @@ where
         Ok(())
     }
 
-    pub(in crate::executor) fn certified_parent_begin_input(
+    pub fn certified_parent_begin_input(
         &self,
         ordinal: usize,
     ) -> Result<(SystemTx, AccountedParentArtifact), BlockExecutionError> {
@@ -347,7 +347,7 @@ where
     /// the expected kind of the cursor does not match the resolved expected kind
     /// for that body index. An example is block 1 + Phase 1 cursor, which is a
     /// programmer invariant violation.
-    pub(in crate::executor) fn expected_system_tx_for_cursor(
+    pub fn expected_system_tx_for_cursor(
         &mut self,
         block_number: u64,
         block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
