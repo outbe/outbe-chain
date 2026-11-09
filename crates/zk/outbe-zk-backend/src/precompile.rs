@@ -72,17 +72,30 @@ pub(crate) fn zk_verify(input: &[u8]) -> Result<[u8; 32]> {
             circuit_hash = ?call.circuit_hash,
             "zk_verify: unknown circuit_hash"
         );
-        return Ok([0u8; 32]);
+        return Ok(unknown_circuit_word());
     };
+    verify_known_circuit(descriptor, call.combined_proof)
+}
 
+fn verify_known_circuit(
+    descriptor: &outbe_zk::L2CircuitVersion,
+    combined_proof: &[u8],
+) -> Result<[u8; 32]> {
     let verified = Barretenberg::default()
-        .verify_combined(descriptor.vk_bytes, call.combined_proof)
+        .verify_combined(descriptor.vk_bytes, combined_proof)
         .map_err(ZkPrecompileError::backend_failed)?;
     trace!(circuit = descriptor.label, verified, "zk_verify");
+    Ok(verification_word(verified))
+}
 
+const fn unknown_circuit_word() -> [u8; 32] {
+    [0u8; 32]
+}
+
+const fn verification_word(verified: bool) -> [u8; 32] {
     let mut output = [0u8; 32];
-    output[31] = u8::from(verified);
-    Ok(output)
+    output[31] = verified as u8;
+    output
 }
 
 #[cfg(test)]

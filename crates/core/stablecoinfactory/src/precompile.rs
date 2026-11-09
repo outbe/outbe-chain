@@ -99,17 +99,8 @@ pub enum PrecompileRouteError {
 
 impl From<PrecompileRouteError> for PrecompileError {
     fn from(error: PrecompileRouteError) -> Self {
-        match error {
-            PrecompileRouteError::UnregisteredStablecoinAddress
-            | PrecompileRouteError::StablecoinCannotReceiveNativeValue
-            | PrecompileRouteError::StablecoinRegistryUnavailable
-            | PrecompileRouteError::StablecoinReverseIdMismatch { .. }
-            | PrecompileRouteError::StablecoinMarkerCodeMismatch { .. }
-            | PrecompileRouteError::StablecoinSchemaNotInitialized { .. }
-            | PrecompileRouteError::StablecoinIdentityMismatch { .. } => {
-                Self::Revert(error.to_string())
-            }
-        }
+        // Every route failure is a user revert. The variant text is the reason.
+        Self::Revert(error.to_string())
     }
 }
 
