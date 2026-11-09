@@ -262,6 +262,7 @@ library TargetInbound {
         ) = BridgeMsgCodec.decodeIssuanceInstructions(message);
 
         bytes32 chunkKey = bytes32((uint256(emissionDay) << 16) | chunkIndex);
+        // forge-lint: disable-next-line(incorrect-shift) -- the bit of chunk `chunkIndex`
         uint256 bit = 1 << chunkIndex;
         if ($.issuanceChunksApplied[emissionDay] & bit != 0) {
             _ignore(srcChainId, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, chunkKey, InboundReason.DUPLICATE);
@@ -398,6 +399,7 @@ library TargetInbound {
         ) = BridgeMsgCodec.decodeRefundInstructions(message);
 
         bytes32 chunkKey = bytes32((uint256(emissionDay) << 16) | chunkIndex);
+        // forge-lint: disable-next-line(incorrect-shift) -- the bit of chunk `chunkIndex`
         uint256 bit = 1 << chunkIndex;
         if ($.refundChunksApplied[emissionDay] & bit != 0) {
             _ignore(srcChainId, BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS, chunkKey, InboundReason.DUPLICATE);

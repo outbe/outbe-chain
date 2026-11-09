@@ -126,7 +126,7 @@ contract SyncTokenBridge {
         payable
         returns (bytes32)
     {
-        TOKEN.transferFrom(msg.sender, to, amount);
+        require(TOKEN.transferFrom(msg.sender, to, amount));
         IERC7786TokenReceiver(to)
             .onCrosschainTokensReceived(
                 uint32(block.chainid), InteroperableAddress.formatEvmV1(block.chainid, msg.sender), amount, extraData

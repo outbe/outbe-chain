@@ -50,10 +50,10 @@ for p in $FORGE_PROJECTS intex; do echo "==> fmt $p"; (cd "$p" && forge fmt); do
 '''
 
 [tasks.lint]
-description = "Lint every Forge sub-project (forge lint); intex lints via its own `yarn lint`"
+description = "Lint every Forge sub-project (forge lint)"
 run = '''
 set -e
-for p in $FORGE_PROJECTS; do echo "==> lint $p"; (cd "$p" && forge lint); done
+for p in $FORGE_PROJECTS intex; do echo "==> lint $p"; (cd "$p" && forge lint); done
 '''
 
 [tasks.clean]

@@ -146,6 +146,7 @@ contract TargetRouter is
 
     /// @notice Whether issuance chunk `chunkIndex` of `emissionDay` has been applied here.
     function issuanceChunkApplied(uint32 emissionDay, uint16 chunkIndex) external view returns (bool) {
+        // forge-lint: disable-next-line(incorrect-shift) -- the bit of chunk `chunkIndex`
         return _ts().issuanceChunksApplied[emissionDay] & (1 << chunkIndex) != 0;
     }
 

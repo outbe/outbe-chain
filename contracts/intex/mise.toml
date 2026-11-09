@@ -36,8 +36,8 @@ description = "Format Solidity code"
 run = "forge fmt"
 
 [tasks.lint]
-description = "Lint Solidity code (solhint)"
-run = "yarn lint"
+description = "Lint Solidity code (forge lint)"
+run = "forge lint"
 
 [tasks.export-abi]
 description = "Compile and extract ABIs"
