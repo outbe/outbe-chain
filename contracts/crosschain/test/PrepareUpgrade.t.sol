@@ -114,6 +114,30 @@ contract PrepareUpgradeTest is Test {
         assertFalse(vm.keyExistsJson(script.proposal(), ".upgrades[2]"), "no duplicate upgrades");
     }
 
+    /// @dev CREATE3 puts the stack at the same addresses on every chain, so one EVM stands in for two.
+    function test_TwoChains_ShareOnePayload() public {
+        _handOver();
+        script.setSourceCommit("abc123");
+
+        vm.chainId(1);
+        script.prepareChain(PK);
+        vm.chainId(2);
+        script.prepareChain(PK);
+        vm.chainId(1);
+        script.prepareChain(PK);
+
+        string memory payload = script.proposal();
+        assertEq(vm.parseJsonUint(payload, ".upgrades[0].chainId"), 1);
+        assertEq(vm.parseJsonUint(payload, ".upgrades[2].chainId"), 2);
+        assertEq(vm.parseJsonAddress(payload, ".upgrades[3].proxy"), address(adapter));
+        assertFalse(vm.keyExistsJson(payload, ".upgrades[4]"), "each chain once");
+        assertEq(
+            address(HyperlaneGatewayAdapter(vm.parseJsonAddress(payload, ".upgrades[3].implementation")).MAILBOX()),
+            mailbox,
+            "mailbox kept"
+        );
+    }
+
     function test_AnyKey_PreparesThePayloadOfTheDeployersStack() public {
         _handOver();
         script.setSourceCommit("abc123");
