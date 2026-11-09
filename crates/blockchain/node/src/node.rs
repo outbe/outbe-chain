@@ -9,7 +9,7 @@ use crate::{
     payload_builder::OutbePayloadBuilder,
     shutdown::{NodeShutdown, OutbePayloadServiceBuilder},
 };
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use outbe_evm::{
     install_evm_runtime_host, EvmRuntimeHost, OutbeExecutorBuilder, SharedOutbeEvmSigner,
@@ -52,6 +52,10 @@ pub struct OutbeNode {
     pub bridge: Option<ConsensusExecutionBridge>,
     /// Optional validator EVM signer for proposer-side system tx artifacts.
     pub evm_signer: Option<SharedOutbeEvmSigner>,
+    /// Host installed before the executor is built. Absent leaves the process default.
+    pub runtime_host: Option<Arc<dyn EvmRuntimeHost>>,
+    /// Pool policy installed before the pool is built. Absent leaves normal fees.
+    pub pool_policy: Option<Arc<dyn TxPoolZeroFeePolicy>>,
 }
 
 impl std::fmt::Debug for OutbeNode {
@@ -62,6 +66,8 @@ impl std::fmt::Debug for OutbeNode {
                 "evm_signer",
                 &self.evm_signer.as_ref().map(|signer| signer.address()),
             )
+            .field("runtime_host", &self.runtime_host)
+            .field("pool_policy", &self.pool_policy)
             .finish()
     }
 }
@@ -73,6 +79,8 @@ impl OutbeNode {
             shutdown: NodeShutdown::default(),
             bridge: Some(bridge),
             evm_signer: None,
+            runtime_host: None,
+            pool_policy: None,
         }
     }
 
@@ -84,6 +92,8 @@ impl OutbeNode {
             shutdown: NodeShutdown::default(),
             bridge: Some(bridge),
             evm_signer: Some(evm_signer),
+            runtime_host: None,
+            pool_policy: None,
         }
     }
 
@@ -93,38 +103,21 @@ impl OutbeNode {
         self
     }
 
-    /// Stashes `host` until [`Node::components_builder`] installs it.
-    ///
-    /// `OutbeNode` has no host field. An external struct literal constructs it,
-    /// so the pending value lives in a process-wide lock.
+    /// Stores `host` for [`Node::components_builder`] to install.
     #[must_use]
-    pub fn with_runtime_host(self, host: Arc<dyn EvmRuntimeHost>) -> Self {
-        *pending_host()
-            .lock()
-            .unwrap_or_else(|error| error.into_inner()) = Some(host);
+    pub fn with_runtime_host(mut self, host: Arc<dyn EvmRuntimeHost>) -> Self {
+        self.runtime_host = Some(host);
         self
     }
 
-    /// Stashes `policy` until [`Node::components_builder`] installs it.
+    /// Stores `policy` for [`Node::components_builder`] to install.
     ///
     /// An unset policy leaves the pool on its normal-fee default.
     #[must_use]
-    pub fn with_pool_policy(self, policy: Arc<dyn TxPoolZeroFeePolicy>) -> Self {
-        *pending_pool()
-            .lock()
-            .unwrap_or_else(|error| error.into_inner()) = Some(policy);
+    pub fn with_pool_policy(mut self, policy: Arc<dyn TxPoolZeroFeePolicy>) -> Self {
+        self.pool_policy = Some(policy);
         self
     }
-}
-
-fn pending_host() -> &'static Mutex<Option<Arc<dyn EvmRuntimeHost>>> {
-    static PENDING: Mutex<Option<Arc<dyn EvmRuntimeHost>>> = Mutex::new(None);
-    &PENDING
-}
-
-fn pending_pool() -> &'static Mutex<Option<Arc<dyn TxPoolZeroFeePolicy>>> {
-    static PENDING: Mutex<Option<Arc<dyn TxPoolZeroFeePolicy>>> = Mutex::new(None);
-    &PENDING
 }
 
 impl NodeTypes for OutbeNode {
@@ -164,22 +157,14 @@ where
             Some(signer) => executor.with_evm_signer(signer.clone()),
             None => executor,
         };
-        let executor = match pending_host()
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .clone()
-        {
+        let executor = match self.runtime_host.clone() {
             Some(host) => {
                 let _ = install_evm_runtime_host(Arc::clone(&host));
                 executor.with_runtime_host(host)
             }
             None => executor,
         };
-        if let Some(policy) = pending_pool()
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .clone()
-        {
+        if let Some(policy) = self.pool_policy.clone() {
             let _ = install_txpool_zero_fee_policy(policy);
         }
         ComponentsBuilder::default()
