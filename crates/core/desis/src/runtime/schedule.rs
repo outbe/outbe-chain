@@ -1,9 +1,13 @@
 use super::clearing::{clearing_round_gas, fetch_targets};
 use super::*;
 use outbe_primitives::error::PrecompileError;
+use sweep::Sweep;
 
-/// Cycle `auction_advance` trigger: poll one scheduled auction in fair rotation.
-/// Each day runs in its own checkpoint; ordinary failures are retried on a later pass.
+mod sweep;
+
+/// Cycle `auction_advance` trigger: advance every scheduled day that has a due step.
+/// Each day runs in its own checkpoint. A day that reverts is retried on a later pass.
+/// The sweep stops before a day that the rest of the trigger budget cannot pay for.
 pub fn tick_schedule(ctx: &BlockRuntimeContext) -> Result<()> {
     schedule_tick(&ctx.storage, ctx.block.timestamp)
 }
@@ -18,25 +22,41 @@ fn poll_schedule(storage: &StorageHandle<'_>, now: u64) -> Result<()> {
     if count == 0 {
         return Ok(());
     }
-    let index = contract.sched_poll_cursor.read()? % count;
-    let day = contract.sched_active_at.read(&index)?.into();
-    match storage.with_checkpoint(|| advance_day(storage, day, now)) {
-        Ok(()) => {}
-        Err(e @ (PrecompileError::Revert(_) | PrecompileError::RevertBytes(_))) => {
-            tracing::warn!(target: "outbe::desis", %day, error = ?e, "schedule tick: skipping day");
+    let cursor = contract.sched_poll_cursor.read()?;
+    let mut sweep = Sweep::new(cursor % count, count);
+    let mut next = 0;
+    while let Some(index) = sweep.next() {
+        if !budget_pays_for_day(storage)? {
+            // The next run starts with the days that this run did not reach.
+            next = index;
+            break;
         }
-        Err(e) => return Err(e),
+        let day = contract.sched_active_at.read(&index)?.into();
+        match storage.with_checkpoint(|| advance_day(storage, day, now)) {
+            Ok(()) => {}
+            Err(e @ (PrecompileError::Revert(_) | PrecompileError::RevertBytes(_))) => {
+                tracing::warn!(target: "outbe::desis", %day, error = ?e, "schedule tick: skipping day");
+            }
+            Err(e) => return Err(e),
+        }
+        if contract.sched_active_slot.read(&day)? == 0 {
+            sweep.removed(contract.sched_active_count.read()?);
+        } else {
+            sweep.kept();
+        }
     }
-    let remaining = contract.sched_active_count.read()?;
-    let next = if remaining == 0 {
-        0
-    } else if contract.sched_active_slot.read(&day)? == 0 {
-        // Swap-remove moved the tail into this slot; poll that day next.
-        index % remaining
-    } else {
-        (index + 1) % remaining
-    };
-    contract.sched_poll_cursor.write(next)
+    if next != cursor {
+        contract.sched_poll_cursor.write(next)?;
+    }
+    Ok(())
+}
+
+/// Whether the rest of the trigger budget pays for one more day. A run outside a trigger
+/// scope has no budget.
+fn budget_pays_for_day(storage: &StorageHandle<'_>) -> Result<bool> {
+    Ok(storage
+        .trigger_budget_remaining()?
+        .is_none_or(|remaining| remaining >= ADVANCE_DAY_RESERVE_GAS))
 }
 
 /// Walk one day's schedule: start at the anchor, move to `RevealingBids` at commit end, collect

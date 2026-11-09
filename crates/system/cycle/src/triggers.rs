@@ -149,8 +149,9 @@ impl TriggerHandler {
     }
 }
 
-/// A brief only becomes a live auction on this tick: a slower cadence would spend
-/// the commit window on waiting for the start.
+/// Each tick advances every scheduled day that has a due step. So the days due at the
+/// same midnight all move on the first tick after it. A brief only becomes a live auction
+/// on this tick: a slower cadence would spend the commit window on waiting for the start.
 ///
 /// An e2e day is minutes long, so it advances faster still.
 #[cfg(not(feature = "e2e-test"))]
@@ -197,7 +198,7 @@ pub const PROTOCOL_CYCLE_PERIOD_SECONDS: u64 = 3_600;
 /// Budgets use measured successful gross maxima from
 /// `crates/blockchain/evm/src/executor/tests/receipts_and_gas/calibration.rs`, multiplied by four
 /// and rounded up to 1,000 gas. In stable-id order those maxima are
-/// [381500, 50300, 159263, 50300, 2583089, 50300, 50300, 765752].
+/// [381500, 50300, 991492, 50300, 2583089, 50300, 50300, 765752].
 /// The supported nested bridge profile performs calldata copy/hash, persistent
 /// reads/writes, logs, and a real relay call. It is not a universal contract bound.
 pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleError> {
@@ -241,12 +242,16 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleEr
         // A poll, not a calendar slot. The handler reads the block clock and
         // sweeps every scheduled day. So replaying a missed slot does nothing
         // that the next firing would not already do.
+        // The budget is measured on four days due at the same midnight: a start,
+        // a commit end, a reveal end and a day that waits for its bids. The
+        // handler stops before a day when less than `ADVANCE_DAY_RESERVE_GAS`
+        // remains, and the next run starts with that day.
         {
             let mut spec = const_spec!(TriggerSpec::new(
                 TriggerId::AuctionAdvance.as_u32(),
                 "auction_advance",
                 (AUCTION_ADVANCE_PERIOD_SECONDS, 0),
-                638_000,
+                3_966_000,
                 TriggerHandler::AuctionAdvance,
             ));
             spec.requires_accounting_window = true;
@@ -414,7 +419,7 @@ mod protocol_parameter_tests {
     #[test]
     fn calibrated_budgets_are_nonzero_and_follow_checked_headroom_rule() {
         let maxima = [
-            381_500u64, 50_300, 159_263, 50_300, 2_583_089, 50_300, 50_300, 765_752,
+            381_500u64, 50_300, 991_492, 50_300, 2_583_089, 50_300, 50_300, 765_752,
         ];
         let triggers = active_triggers().expect("calibrated trigger table");
         let mut total = 0u64;
@@ -431,7 +436,7 @@ mod protocol_parameter_tests {
                 .checked_add(spec.work_budget_gas())
                 .expect("combined allowances fit u64");
         }
-        assert_eq!(total, 16_369_000);
+        assert_eq!(total, 19_697_000);
     }
 
     #[test]

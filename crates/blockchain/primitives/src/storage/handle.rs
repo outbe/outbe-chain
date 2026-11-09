@@ -302,6 +302,11 @@ impl<'storage> StorageHandle<'storage> {
         self.with_provider(|provider| Ok(provider.metered_gas_remaining()))
     }
 
+    /// Unspent work allowance of the running trigger scope. `None` outside a scope.
+    pub fn trigger_budget_remaining(&self) -> Result<Option<u64>> {
+        self.with_provider(|provider| Ok(provider.trigger_budget_remaining()))
+    }
+
     /// Runs one atomic handler under a gross work allowance. Spent gas is never reverted.
     pub fn with_trigger_budget<R>(
         &self,
@@ -558,6 +563,24 @@ mod tests {
         provider.set_gas_limit(gas);
         provider.enable_production_storage_gas_metering();
         provider
+    }
+
+    #[test]
+    fn trigger_budget_remaining_reads_the_local_allowance_only_inside_a_scope() {
+        let mut provider = metered_provider(50_000);
+        provider.enter(|storage| {
+            assert_eq!(storage.trigger_budget_remaining().unwrap(), None);
+            storage
+                .with_trigger_budget(30_000, || {
+                    assert_eq!(storage.trigger_budget_remaining()?, Some(30_000));
+                    storage.deduct_gas(1_234)?;
+                    assert_eq!(storage.trigger_budget_remaining()?, Some(28_766));
+                    assert_eq!(storage.metered_gas_remaining()?, Some(48_766));
+                    Ok(())
+                })
+                .unwrap();
+            assert_eq!(storage.trigger_budget_remaining().unwrap(), None);
+        });
     }
 
     #[test]

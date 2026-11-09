@@ -16,6 +16,15 @@ pub const PROMIS_LOAD_OVERRIDE: Option<u128> = Some(1);
 /// same UTC day as the dispatch.
 pub const BIDS_FANIN_TIMEOUT_SECS: u64 = 8 * 3600;
 
+/// Trigger budget that the `auction_advance` sweep keeps for one more day. The sweep stops
+/// before a day when less than this remains.
+///
+/// The value is the measured gross maximum of one day × 3, rounded up to 1,000 gas. The
+/// maximum is 847,229: the reveal end of a day with 16 chains, which arms the clearing
+/// (`calibration_four_due_auctions_at_midnight` in `outbe-evm`). The factor is 3, not 4, so
+/// that the budget of `auction_advance` (four due days × 4) also pays for the fourth day.
+pub const ADVANCE_DAY_RESERVE_GAS: u64 = 2_542_000;
+
 /// Midnight-anchored schedule: the commit, reveal and Intex issuance windows each span one day.
 #[cfg(not(feature = "e2e-test"))]
 pub const COMMIT_WINDOW_SECONDS: u64 = outbe_primitives::time::SECONDS_PER_DAY;
