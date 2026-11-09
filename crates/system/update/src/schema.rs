@@ -81,7 +81,7 @@ pub struct Update {
     #[attribute(order = 4)]
     pub version_history: Mapping<u64, ProtocolVersion>,
 
-    /// Proposal id => keccak256 of the approved `upgradeContract` payload.
+    /// Proposal id => keccak256 of the approved `upgradeContracts` payload.
     /// Zero = none or already applied.
     #[attribute(order = 5)]
     pub approved_upgrades: outbe_primitives::storage::dsl::Map<U256, B256>,
