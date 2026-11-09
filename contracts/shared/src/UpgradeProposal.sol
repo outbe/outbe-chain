@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
-import {IUUPSUpgradeable} from "./IUUPSUpgradeable.sol";
+import {IUUPSUpgradeable} from "@shared/IUUPSUpgradeable.sol";
 
 /// @title UpgradeProposal
 /// @notice Prepares an upgrade of a project's UUPS proxies on every chain of its stack: it deploys
