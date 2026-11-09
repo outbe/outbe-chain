@@ -103,6 +103,16 @@ impl OracleClient {
                 .into(),
         })
     }
+    /// Timestamp of the Outbe block at `height`.
+    pub async fn block_timestamp(&self, height: u64) -> Result<u64> {
+        let value = self
+            .rpc(
+                "eth_getBlockByNumber",
+                json!([format!("{height:#x}"), false]),
+            )
+            .await?;
+        quantity(&value["timestamp"])
+    }
     pub async fn identity(
         &self,
         expected_chain: u64,

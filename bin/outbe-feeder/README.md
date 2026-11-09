@@ -328,23 +328,23 @@ price_feed = { chainlink = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419" }   # ET
 
 At each vote, for each entry, the feeder:
 
-1. Calls `eth_feeHistory(fee_history_blocks, "latest", [50])` on the RPC of
-   `chain_id`.
-2. Takes the larger of these two values:
-   - the median base fee plus the median priority fee (p50) of the blocks.
-   - the base fee of the next block plus the priority fee of the latest block.
-
-   A rise of the gas price counts at once. A fall counts slowly.
-3. Reads the native token price in USD from `price_feed`. It rejects a
-   Chainlink round with an answer that is not positive or that is older than
-   25 hours.
-4. Calculates `gas × native/USD ÷ COEN/USD`. `COEN/USD` is the COEN/840 price
+1. Finds the anchor block on `chain_id`: the last block that is 60 seconds
+   or more older than the first block of the Outbe vote period. All feeders
+   find the same block, at any time in the period.
+2. Calls `eth_feeHistory(fee_history_blocks, <anchor block>, [50])`.
+3. Takes the median base fee plus the median priority fee (p50) of these
+   blocks. The priority fee median skips zero values: on BSC each block has a
+   system transaction with a gas price of 0. A gas price of 0 gives no vote.
+4. Reads the native token price in USD from `price_feed` at the anchor block.
+   It rejects a Chainlink round with an answer that is not positive or that
+   is older than 25 hours at that block.
+5. Calculates `gas × native/USD ÷ COEN/USD`. `COEN/USD` is the COEN/840 price
    of the same vote. Each native token has 18 decimals, as COEN.
 
 The gas prices go in the same `submitVote` transaction as the pair prices.
-When a chain fails (no RPC, no feed round, no COEN/840 price), the feeder logs
-a warning and sends no gas price for that chain. The Oracle keeps the last
-price.
+When a chain fails (no RPC, an RPC that is behind the anchor time, no feed
+round, no COEN/840 price), the feeder logs a warning and sends no gas price for
+that chain. The Oracle keeps the last price.
 
 Each chain of `IOracle.getGasPrices()` is one more vote target, as a pair is.
 The node registers the chains of the same sources. The Oracle rejects the

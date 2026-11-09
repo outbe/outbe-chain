@@ -4,23 +4,29 @@
 //! chain and the native token price in USD from a Chainlink feed on the same
 //! chain. Then it converts the gas price to COEN with the COEN/840 price of
 //! the same vote. Each native token has 18 decimals, as COEN.
+//!
+//! All feeders read the same blocks: the blocks up to the last block that is
+//! [`ANCHOR_LAG_SECS`] older than the start of the Outbe vote period. So the
+//! time of a vote inside the period does not change the gas price.
 
 use alloy_primitives::{Address, U256, U512};
 use eyre::{ensure, eyre, Result};
 use outbe_primitives::asset_type::{currency_address, COEN_ASSET};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::warn;
 
 use crate::aggregator::AggregatedPrice;
 use crate::config::FeederConfig;
 use crate::provider::dex::math::scale_fp18;
-use crate::provider::evm_rpc::Rpc;
+use crate::provider::evm_rpc::{Block, Rpc};
 use crate::provider::onchain_feed::{AggregatorV3, MAX_FEED_AGE_SECS};
 
 /// Blocks of fee history in one gas price when the entry gives none.
 const DEFAULT_FEE_HISTORY_BLOCKS: u16 = 20;
+/// The remote block is this many seconds older than the start of the vote
+/// period, so that each RPC has it and it does not change.
+const ANCHOR_LAG_SECS: u64 = 60;
 /// Percentile of the priority fees in each block.
 const PRIORITY_PERCENTILE: f64 = 50.0;
 /// COEN/840 has six decimals. The conversion works at 18.
@@ -55,10 +61,12 @@ fn default_fee_history_blocks() -> u16 {
 
 /// The gas votes of this vote. A chain that fails gets no vote, and the
 /// Oracle keeps its last price.
-pub async fn gas_votes(config: &FeederConfig, prices: &[AggregatedPrice]) -> Vec<(u32, U256)> {
-    if config.gas_providers.is_empty() {
-        return Vec::new();
-    }
+/// `period_start` is the timestamp of the first block of the Outbe vote period.
+pub async fn gas_votes(
+    config: &FeederConfig,
+    prices: &[AggregatedPrice],
+    period_start: u64,
+) -> Vec<(u32, U256)> {
     let usd = currency_address(840);
     let Some(coen_usd) = prices
         .iter()
@@ -70,7 +78,14 @@ pub async fn gas_votes(config: &FeederConfig, prices: &[AggregatedPrice]) -> Vec
     };
     let mut votes = Vec::with_capacity(config.gas_providers.len());
     for entry in &config.gas_providers {
-        match gas_vote(config, entry, coen_usd).await {
+        let Some(endpoint) = config.rpc_endpoints.get(&entry.chain_id.to_string()) else {
+            warn!(
+                chain_id = entry.chain_id,
+                "no rpc_endpoints entry; no gas vote for chain"
+            );
+            continue;
+        };
+        match gas_vote(endpoint, entry, coen_usd, period_start).await {
             Ok(price) => votes.push((entry.chain_id, price)),
             Err(error) => warn!(chain_id = entry.chain_id, %error, "no gas vote for chain"),
         }
@@ -78,56 +93,70 @@ pub async fn gas_votes(config: &FeederConfig, prices: &[AggregatedPrice]) -> Vec
     votes
 }
 
+/// The gas price of `entry` in COEN-wei per unit of gas, read over `endpoint`
+/// at the anchor block of `period_start`.
 async fn gas_vote(
-    config: &FeederConfig,
+    endpoint: &str,
     entry: &GasProviderConfig,
     coen_usd: U256,
+    period_start: u64,
 ) -> Result<U256> {
-    let endpoint = config
-        .rpc_endpoints
-        .get(&entry.chain_id.to_string())
-        .ok_or_else(|| eyre!("no rpc_endpoints entry for chain {}", entry.chain_id))?;
     let rpc = Rpc::new(endpoint)?;
+    let block = anchor_block(&rpc, period_start.saturating_sub(ANCHOR_LAG_SECS)).await?;
     let history = rpc
         .request(
             "eth_feeHistory",
             json!([
                 format!("{:#x}", entry.fee_history_blocks),
-                "latest",
+                format!("{:#x}", block.number),
                 [PRIORITY_PERCENTILE]
             ]),
         )
         .await?;
     let gas_wei = fee_history_gas_price(&history)?;
     let native_usd = match entry.price_feed {
-        PriceFeed::Chainlink(feed) => chainlink_price(&rpc, feed).await?,
+        PriceFeed::Chainlink(feed) => chainlink_price(&rpc, feed, &block).await?,
     };
     gas_price_coen(gas_wei, native_usd, coen_usd)
 }
 
-/// The answer of a Chainlink feed at 18 decimals. Rejects a non-positive or
-/// stale round.
-async fn chainlink_price(rpc: &Rpc, feed: Address) -> Result<U256> {
-    let decimals = rpc.call_latest(feed, AggregatorV3::decimalsCall {}).await?;
+/// The last block with a timestamp at or before `cutoff`. Fails when the RPC
+/// has no newer block yet, because then it can miss the block that other
+/// feeders read.
+async fn anchor_block(rpc: &Rpc, cutoff: u64) -> Result<Block> {
+    let head = rpc.block("latest").await?;
+    ensure!(head.timestamp > cutoff, "the RPC is behind the anchor time");
+    let first_after = rpc.first_after(cutoff, &head).await?;
+    ensure!(first_after > 0, "no block before the anchor time");
+    rpc.block_at(first_after - 1).await
+}
+
+/// The answer of a Chainlink feed at `block`, at 18 decimals. Rejects a
+/// non-positive answer or a round that is stale at `block`.
+async fn chainlink_price(rpc: &Rpc, feed: Address, block: &Block) -> Result<U256> {
+    let decimals = rpc.call(feed, AggregatorV3::decimalsCall {}, block).await?;
     let round = rpc
-        .call_latest(feed, AggregatorV3::latestRoundDataCall {})
+        .call(feed, AggregatorV3::latestRoundDataCall {}, block)
         .await?;
     ensure!(
         round.answer.is_positive(),
         "price feed answer is not positive"
     );
-    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     ensure!(
-        U256::from(now).saturating_sub(round.updatedAt) <= U256::from(MAX_FEED_AGE_SECS),
+        U256::from(block.timestamp).saturating_sub(round.updatedAt)
+            <= U256::from(MAX_FEED_AGE_SECS),
         "price feed round is stale"
     );
     Ok(scale_fp18(round.answer.into_raw(), decimals)?.raw())
 }
 
-/// The larger of `median(baseFeePerGas) + median(reward)` and the latest
-/// base fee plus the latest reward of an `eth_feeHistory` result. The median
-/// makes a fall slow. The latest block makes a rise count at once, so a
-/// short spike does not leave the relayer to pay the difference.
+/// `median(baseFeePerGas) + median(reward)` of an `eth_feeHistory` result.
+/// Feeders read at different blocks, and the gas price of one block moves
+/// much. The median keeps their votes inside the gas reward band.
+///
+/// The reward median skips zero rewards: on BSC each block has a system
+/// transaction with a gas price of 0, so a quiet block has a p50 of 0.
+/// A gas price of 0 is an error, not a vote.
 fn fee_history_gas_price(history: &Value) -> Result<U256> {
     let base_fees = quantities(history["baseFeePerGas"].as_array())?;
     let rewards = quantities(
@@ -142,11 +171,18 @@ fn fee_history_gas_price(history: &Value) -> Result<U256> {
             })
             .as_ref(),
     )?;
-    let latest = match (base_fees.last(), rewards.last()) {
-        (Some(base_fee), Some(reward)) => *base_fee + *reward,
-        _ => return Err(eyre!("eth_feeHistory returned no blocks")),
+    let rewards: Vec<U256> = rewards
+        .into_iter()
+        .filter(|reward| !reward.is_zero())
+        .collect();
+    let reward = if rewards.is_empty() {
+        U256::ZERO
+    } else {
+        median(rewards)?
     };
-    Ok((median(base_fees)? + median(rewards)?).max(latest))
+    let price = median(base_fees)? + reward;
+    ensure!(!price.is_zero(), "eth_feeHistory gives a gas price of 0");
+    Ok(price)
 }
 
 fn quantities(values: Option<&Vec<Value>>) -> Result<Vec<U256>> {
@@ -212,6 +248,19 @@ mod tests {
     }
 
     #[test]
+    fn the_reward_median_skips_zero_rewards() {
+        // BSC: base fee 0, rewards 0 (system transactions), 1 and 3 gwei.
+        let history = json!({
+            "baseFeePerGas": ["0x0", "0x0", "0x0", "0x0"],
+            "reward": [["0x0"], ["0x0"], ["0x3b9aca00"], ["0xb2d05e00"]],
+        });
+        assert_eq!(
+            fee_history_gas_price(&history).unwrap(),
+            U256::from(2_000_000_000u64)
+        );
+    }
+
+    #[test]
     fn a_gas_entry_names_its_price_feed_and_defaults_to_20_blocks() {
         let entry: GasProviderConfig = toml::from_str(
             r#"
@@ -224,16 +273,42 @@ mod tests {
         assert_eq!(entry.fee_history_blocks, 20);
     }
 
-    #[test]
-    fn a_rise_in_the_latest_block_counts_at_once() {
-        // Medians 1 + 1 gwei, latest block 9 + 1 gwei.
-        let history = json!({
-            "baseFeePerGas": ["0x3b9aca00", "0x3b9aca00", "0x218711a00"],
-            "reward": [["0x3b9aca00"], ["0x3b9aca00"]],
-        });
-        assert_eq!(
-            fee_history_gas_price(&history).unwrap(),
-            U256::from(10_000_000_000u64)
-        );
+    /// Reads the gas price of real chains over public RPCs, at COEN = $0.50.
+    /// Two runs in the same 120-second period print the same prices:
+    /// `cargo test -p outbe-feeder live_gas_votes -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn live_gas_votes() {
+        let chains = [
+            (
+                1,
+                "https://ethereum-rpc.publicnode.com",
+                "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
+            ),
+            (
+                11155111,
+                "https://ethereum-sepolia-rpc.publicnode.com",
+                "0x694AA1769357215DE4FAC081bf1f309aDC325306",
+            ),
+            (
+                97,
+                "https://bsc-testnet-rpc.publicnode.com",
+                "0x2514895c72f50D8bd4B4F9b1110F0D6bD2c97526",
+            ),
+        ];
+        for (chain_id, endpoint, feed) in chains {
+            let entry: GasProviderConfig = toml::from_str(&format!(
+                "chain_id = {chain_id}\nprice_feed = {{ chainlink = \"{feed}\" }}"
+            ))
+            .unwrap();
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            // The start of a 120-second vote period, as on Outbe.
+            let period_start = now / 120 * 120;
+            let price = gas_vote(endpoint, &entry, U256::from(500_000), period_start).await;
+            println!("chain {chain_id}: {price:?} COEN-wei per gas");
+        }
     }
 }
