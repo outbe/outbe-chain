@@ -481,21 +481,13 @@ mod router_abi {
 }
 
 #[test]
-fn calibration_populated_auction_and_parked_handlers() {
+fn calibration_populated_auction_handlers() {
     let (_, samples, logs, _) = populated_auction(16);
-    assert_eq!(samples.len(), 8);
+    assert_eq!(samples.len(), 7);
     assert!(logs.iter().any(|log| log.data.topics().first()
         == Some(&keccak256("IntexAuctionCompletedEmpty(uint32,uint64)"))));
-    let resend = router_abi::IOriginRouter::resendParkedMessageCall::SELECTOR;
-    for address in [outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS, RELAY] {
-        assert_eq!(
-            logs.iter()
-                .filter(|log| log.address == address && log.data.data.starts_with(&resend))
-                .count(),
-            16
-        );
-    }
-    assert!(logs.iter().any(
+    // The Cycle does not push parked router work. Any address pushes it.
+    assert!(!logs.iter().any(
         |log| outbe_cycle::ICycle::CycleTriggerExecuted::decode_log(log)
             .is_ok_and(|event| event.data.id == 8)
     ));
@@ -518,51 +510,23 @@ fn calibrated_canonical_envelope_fits_artifact_limit() {
         .iter()
         .try_fold(0u64, |sum, spec| sum.checked_add(spec.work_budget_gas()))
         .unwrap();
-    assert_eq!(outbe_cycle::triggers::ACTIVE_TRIGGERS.len(), 8);
-    assert_eq!(handlers, 27_863_000);
+    assert_eq!(outbe_cycle::triggers::ACTIVE_TRIGGERS.len(), 7);
+    assert_eq!(handlers, 24_799_000);
     assert!(handlers < outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT);
 }
 
 fn populated_auction(chain_count: u32) -> Calibration {
     use router_abi::IOriginRouter;
     let targets: Vec<u32> = (1..=chain_count).collect();
-    let router = returning_contract(vec![
-        (
-            IOriginRouter::targetsOfCall::SELECTOR,
-            IOriginRouter::targetsOfCall::abi_encode_returns(&targets),
-        ),
-        (
-            IOriginRouter::parkedMessageCountCall::SELECTOR,
-            IOriginRouter::parkedMessageCountCall::abi_encode_returns(&U256::from(64)),
-        ),
-        (
-            IOriginRouter::parkedProceedsCountCall::SELECTOR,
-            IOriginRouter::parkedProceedsCountCall::abi_encode_returns(&U256::from(64)),
-        ),
-        (
-            IOriginRouter::parkedMessageCall::SELECTOR,
-            IOriginRouter::parkedMessageCall::abi_encode_returns(&IOriginRouter::ParkedMessage {
-                dstChainId: 1,
-                gasLimit: 100_000,
-                sent: false,
-                payload: vec![7; 256].into(),
-            }),
-        ),
-        (
-            IOriginRouter::parkedProceedsCall::SELECTOR,
-            IOriginRouter::parkedProceedsCall::abi_encode_returns(&IOriginRouter::ParkedProceeds {
-                emissionDay: 20240101,
-                srcChainId: 1,
-                amount: 1_000_000,
-                settled: false,
-            }),
-        ),
-    ]);
+    let router = returning_contract(vec![(
+        IOriginRouter::targetsOfCall::SELECTOR,
+        IOriginRouter::targetsOfCall::abi_encode_returns(&targets),
+    )]);
     let proposer = test_evm_signer().address();
     let timestamp = GENESIS + SECONDS_PER_DAY + 60;
     run_prefix(
         &format!(
-            "populated auction{} bids/{chain_count} chains + parked64",
+            "populated auction{} bids/{chain_count} chains",
             chain_count * 2
         ),
         &[(proposer, dummy_pubkey(0xa2))],
@@ -839,20 +803,10 @@ fn calibration_live_auction_start() {
     use router_abi::IOriginRouter;
     let proposer = test_evm_signer().address();
     let timestamp = GENESIS + SECONDS_PER_DAY + 60;
-    let router = returning_contract(vec![
-        (
-            IOriginRouter::targetsOfCall::SELECTOR,
-            IOriginRouter::targetsOfCall::abi_encode_returns(&(1..=16u32).collect::<Vec<_>>()),
-        ),
-        (
-            IOriginRouter::parkedMessageCountCall::SELECTOR,
-            IOriginRouter::parkedMessageCountCall::abi_encode_returns(&U256::ZERO),
-        ),
-        (
-            IOriginRouter::parkedProceedsCountCall::SELECTOR,
-            IOriginRouter::parkedProceedsCountCall::abi_encode_returns(&U256::ZERO),
-        ),
-    ]);
+    let router = returning_contract(vec![(
+        IOriginRouter::targetsOfCall::SELECTOR,
+        IOriginRouter::targetsOfCall::abi_encode_returns(&(1..=16u32).collect::<Vec<_>>()),
+    )]);
     let (_, _, logs, _) = run_prefix(
         "live priced auction start16 chains",
         &[(proposer, dummy_pubkey(0xa2))],
@@ -1242,20 +1196,10 @@ fn accepted_1088_bid_auction_completes_before_incremental_cycle_cleanup() {
     use router_abi::IOriginRouter;
     let proposer = test_evm_signer().address();
     let timestamp = GENESIS + SECONDS_PER_DAY + 60;
-    let router = returning_contract(vec![
-        (
-            IOriginRouter::targetsOfCall::SELECTOR,
-            IOriginRouter::targetsOfCall::abi_encode_returns(&vec![1u32]),
-        ),
-        (
-            IOriginRouter::parkedMessageCountCall::SELECTOR,
-            IOriginRouter::parkedMessageCountCall::abi_encode_returns(&U256::ZERO),
-        ),
-        (
-            IOriginRouter::parkedProceedsCountCall::SELECTOR,
-            IOriginRouter::parkedProceedsCountCall::abi_encode_returns(&U256::ZERO),
-        ),
-    ]);
+    let router = returning_contract(vec![(
+        IOriginRouter::targetsOfCall::SELECTOR,
+        IOriginRouter::targetsOfCall::abi_encode_returns(&vec![1u32]),
+    )]);
     let (_, samples, logs, _) = run_prefix_checked(
         "accepted1088 valid bids/1chain + incremental GC",
         &[(proposer, dummy_pubkey(0xa2))],

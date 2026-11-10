@@ -103,8 +103,8 @@ contract LoopbackRelayRoundTest is CrossChainTest {
     }
 
     /// @dev A day too heavy for one round parks its next round rather than answering inline.
-    ///      The test resends the parked entry in a transaction of its own, as the drain trigger
-    ///      does. That entry then finishes the day.
+    ///      The test resends the parked entry in a transaction of its own, as any caller of
+    ///      `resendParkedMessage` does. That entry then finishes the day.
     function test_AnUnfinishedLoopbackDayParksItsNextRound() public {
         stub.setCount(130);
 

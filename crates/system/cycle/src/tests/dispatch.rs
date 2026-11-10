@@ -436,6 +436,26 @@ const TOPUP_VOTERS: [Address; 3] = [
 /// Block time of the first settlement dispatch on day 2.
 const TOPUP_FIRE_TS: u64 = GENESIS_TS + SECONDS_PER_DAY + 60;
 
+/// Returns the slot that trigger `id` records at `TOPUP_FIRE_TS`.
+/// The slot is the day boundary in production. Under `e2e-test`, a period of
+/// 60 s gives a later slot.
+fn topup_slot(id: TriggerId) -> u64 {
+    let spec = ACTIVE_TRIGGERS
+        .iter()
+        .find(|spec| spec.id == id.as_u32())
+        .expect("active trigger");
+    assert!(
+        spec.coalesces_backlog,
+        "the trigger records its latest slot"
+    );
+    last_fire_at(
+        spec.period_seconds(),
+        spec.start_offset_seconds,
+        TOPUP_FIRE_TS,
+    )
+    .unwrap()
+}
+
 /// Anchors with a bonded CCA, then runs the first settlement dispatch without
 /// Metadosis mutation frames, so the terminal sink reverts. The slot is consumed.
 fn failed_terminal_dispatch() -> HashMapStorageProvider {
@@ -502,7 +522,8 @@ fn topup_voters_claimable(ctx: &BlockRuntimeContext<'_>) -> U256 {
 #[test]
 fn failed_terminal_dispatch_rolls_back_validator_topup() {
     let mut storage = failed_terminal_dispatch();
-    let recorded_at = GENESIS_TS + SECONDS_PER_DAY;
+    let recorded_at = topup_slot(TriggerId::ProtocolCycle);
+    assert_eq!(recorded_at, GENESIS_TS + SECONDS_PER_DAY);
     let failed = cycle_failure(&storage, EMISSION_LIMIT_1_ID).expect("protocol failure receipt");
     assert_eq!(failed.scheduledAt, recorded_at);
     assert_eq!(failed.blockTimestamp, TOPUP_FIRE_TS);
@@ -517,7 +538,10 @@ fn failed_terminal_dispatch_rolls_back_validator_topup() {
     }
     let independent = cycle_executed(&storage, TriggerId::IntexCallDaily.as_u32())
         .expect("an independent trigger still runs");
-    assert_eq!(independent.scheduledAt, recorded_at);
+    assert_eq!(
+        independent.scheduledAt,
+        topup_slot(TriggerId::IntexCallDaily)
+    );
     storage.enter(|handle| {
         let fire = runtime_context(block_ctx(2, TOPUP_FIRE_TS), handle);
         assert!(!is_day_settled(&fire, 20_240_101));
@@ -549,11 +573,14 @@ fn failed_terminal_dispatch_rolls_back_validator_topup() {
             recorded_at
         );
         for id in [
-            TriggerId::AuctionAdvance.as_u32(),
-            TriggerId::AuctionClearing.as_u32(),
-            TriggerId::IntexCallDaily.as_u32(),
+            TriggerId::AuctionAdvance,
+            TriggerId::AuctionClearing,
+            TriggerId::IntexCallDaily,
         ] {
-            assert_eq!(cycle.last_executed_at.read(&id).unwrap(), recorded_at);
+            assert_eq!(
+                cycle.last_executed_at.read(&id.as_u32()).unwrap(),
+                topup_slot(id)
+            );
         }
         assert_eq!(active_utc_day(&fire), 20_240_101);
     });
@@ -638,7 +665,7 @@ fn a_dependency_that_is_not_due_keeps_its_watermark() {
             .write(&TriggerId::AuctionAdvance.as_u32(), held_at)
             .unwrap();
     });
-    let recorded_at = GENESIS_TS + SECONDS_PER_DAY;
+    let recorded_at = topup_slot(TriggerId::AuctionClearing);
     assert!(cycle_failure(&storage, EMISSION_LIMIT_1_ID).is_some());
     assert!(cycle_failure(&storage, TriggerId::AuctionAdvance.as_u32()).is_none());
     assert!(cycle_executed(&storage, TriggerId::AuctionAdvance.as_u32()).is_none());
