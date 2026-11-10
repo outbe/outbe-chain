@@ -28,7 +28,7 @@ const GEMS: u8 = 5;
 fn prod_terms(entry: U256) -> CallTerms {
     let prod = GemParams::PROD;
     CallTerms {
-        call_price_minor: outbe_primitives::markup::marked_up(entry, prod.call_rate).unwrap(),
+        call_price_minor: outbe_common::markup::marked_up(entry, prod.call_rate).unwrap(),
         reference_currency: 840,
         call_rate: prod.call_rate,
         call_window_seconds: prod.call_window_seconds,

@@ -65,6 +65,7 @@ outbe-slashindicator.workspace = true
 outbe-stablecoinfactory.workspace = true
 outbe-stablecoinpolicy.workspace = true
 outbe-staking.workspace = true
+outbe-system-common.workspace = true
 outbe-tee.workspace = true
 outbe-teeregistry = { workspace = true, features = ["tee-attestation-v1"] }
 outbe-tribute.workspace = true
@@ -102,6 +103,7 @@ tokio-util.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+outbe-common.workspace = true
 outbe-runtime = { path = ".", features = ["test-hooks"] }
 alloy-consensus.workspace = true
 alloy-trie.workspace = true

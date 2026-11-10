@@ -8,6 +8,7 @@ mod aggregator;
 mod config;
 mod errors;
 mod fixed;
+mod gas;
 mod health;
 mod journal;
 mod oracle_client;
@@ -453,7 +454,16 @@ impl FeederTickContext<'_> {
         if aggregated.is_empty() {
             return Err(FeederError::NoPriceDataAvailable.into());
         }
-        let calldata = vote_builder::encode_vote(&aggregated);
+        let gas = if self.config.gas_providers.is_empty() {
+            Vec::new()
+        } else {
+            let period_start = self
+                .client
+                .block_timestamp(period * self.config.oracle.vote_period)
+                .await?;
+            gas::gas_votes(self.config, &aggregated, period_start).await
+        };
+        let calldata = vote_builder::encode_vote(&aggregated, &gas);
         if let Ok(decoded) = vote_builder::decode_vote_log(&calldata) {
             info!(vote=%decoded,"vote calldata");
         }

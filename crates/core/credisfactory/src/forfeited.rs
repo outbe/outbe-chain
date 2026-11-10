@@ -2,14 +2,11 @@
 //! and hands their Credis to the cleanup.
 
 use alloy_primitives::U256;
+use outbe_common::deadline_queue::{self, DeadlineHandler, Due};
 use outbe_credis::precompile::ICredis;
 use outbe_credis::{CredisContract, ForfeitQueue};
 use outbe_primitives::{
-    block::BlockRuntimeContext,
-    deadline_queue::{self, DeadlineHandler, Due},
-    error::Result,
-    pass_budget::PassBudget,
-    series_id::SeriesId,
+    block::BlockRuntimeContext, error::Result, pass_budget::PassBudget, series_id::SeriesId,
 };
 
 pub(crate) fn forfeit_through(

@@ -23,7 +23,7 @@ fn seed_legacy_vote(
             )
         })
         .collect();
-    oracle.submit_vote(voter, &bounded).unwrap();
+    oracle.submit_vote(voter, &bounded, &[]).unwrap();
     for (index, (_, _, rate, volume)) in tuples.iter().enumerate() {
         let index = index as u32;
         oracle
@@ -65,6 +65,7 @@ fn begin_block_skips_only_the_unrepresentable_legacy_cross_row() {
                         pair_vote(higher, fixed18(100), SCALE_1E18),
                         pair_vote(lower, fixed18(50), SCALE_1E18),
                     ],
+                    &[],
                 )
                 .unwrap();
         }
@@ -138,7 +139,7 @@ fn unrepresentable_legacy_volume_keeps_the_vote_and_stays_out_of_the_median() {
         );
         for voter in &voters[1..] {
             oracle
-                .submit_vote(*voter, &[pair_vote(pair, coen_iso(2), coen_iso(1))])
+                .submit_vote(*voter, &[pair_vote(pair, coen_iso(2), coen_iso(1))], &[])
                 .unwrap();
         }
 
@@ -161,7 +162,7 @@ fn unrepresentable_legacy_median_volume_omits_snapshot_without_penalizing_any_va
             seed_legacy_vote(oracle, *voter, &[(COEN, usd(), coen_iso(2), U256::MAX)]);
         }
         oracle
-            .submit_vote(voters[3], &[(COEN, usd(), coen_iso(2), coen_iso(1))])
+            .submit_vote(voters[3], &[(COEN, usd(), coen_iso(2), coen_iso(1))], &[])
             .unwrap();
 
         crate::tally::run_tally(oracle, 2, 24).unwrap();
@@ -188,7 +189,7 @@ fn exhausted_existing_aggregate_omits_snapshot_without_penalizing_valid_votes() 
         let voters = register_four_voters(&storage);
         for voter in &voters[..3] {
             oracle
-                .submit_vote(*voter, &[(COEN, usd(), coen_iso(2), coen_iso(1))])
+                .submit_vote(*voter, &[(COEN, usd(), coen_iso(2), coen_iso(1))], &[])
                 .unwrap();
         }
 
@@ -228,7 +229,7 @@ fn limited_existing_headroom_omits_snapshot_without_penalizing_any_validator() {
         for voter in voters {
             register_validator(storage.clone(), voter, native_coen(100));
             oracle
-                .submit_vote(voter, &[(COEN, usd(), rate, unit_volume)])
+                .submit_vote(voter, &[(COEN, usd(), rate, unit_volume)], &[])
                 .unwrap();
         }
 

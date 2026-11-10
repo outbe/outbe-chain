@@ -2,11 +2,11 @@
 //! the forfeit already returned their load.
 
 use alloy_primitives::{B256, U256};
+use outbe_common::deadline_queue::{self, DeadlineHandler, Due};
 use outbe_nod::state::CleanupQueue;
 use outbe_nod::{api, schema::NodContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    deadline_queue::{self, DeadlineHandler, Due},
     error::{PassFailure, PrecompileError, Result},
     storage::StorageHandle,
 };

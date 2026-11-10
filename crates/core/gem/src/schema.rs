@@ -176,8 +176,8 @@ impl GemView {
     /// gem past its deadline reads Forfeited.
     #[must_use]
     pub fn effective_state(&self, now: u64) -> u8 {
-        use outbe_primitives::settlement::RightState;
-        let state = match outbe_primitives::settlement::effective_state(
+        use outbe_common::settlement::RightState;
+        let state = match outbe_common::settlement::effective_state(
             self.item.is_settled(),
             self.group_called_at,
             self.settlement_deadline(),

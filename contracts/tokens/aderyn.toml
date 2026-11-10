@@ -1,0 +1,21 @@
+version = 1
+
+root = "./."
+src = "src/"
+
+exclude = [
+    "/vendor/",
+    "/Mock",
+]
+
+[detectors]
+exclude = [
+    # every UUPS proxy has a payable upgradeToAndCall and forwards all other native value
+    "contract-locks-ether",
+    # WCOEN.withdraw pays the caller, as WETH does
+    "eth-send-unchecked-address",
+    # the local IERC20 is the minimal interface the node binds to
+    "reused-contract-name",
+]
+
+[env]

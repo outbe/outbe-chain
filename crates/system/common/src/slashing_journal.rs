@@ -262,7 +262,7 @@ pub fn flush() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::time::iso8601_now;
+    use outbe_primitives::time::iso8601_now;
     use std::io::Read;
 
     #[test]

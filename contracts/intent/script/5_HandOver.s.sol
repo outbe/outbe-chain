@@ -5,6 +5,8 @@ import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {CROSSCHAIN_BRIDGE, ICrosschainBridge} from "@precompiles/ICrosschainBridge.sol";
+import {SALT_VERSION} from "@shared/SaltVersion.sol";
+import {IntentCreate3} from "./IntentCreate3.sol";
 
 /// @dev Gives every intent contract on this chain to governance: the Router, the
 ///      Auction, the SolverEscrow and the two allocators. Governance is CrosschainBridge on Outbe and
@@ -13,31 +15,23 @@ import {CROSSCHAIN_BRIDGE, ICrosschainBridge} from "@precompiles/ICrosschainBrid
 ///      Run it last: after DeployAll and ConfigureRouter, which need the deployer as the owner.
 ///      After it, an upgrade or a configuration change is an `upgradeContracts` vote of Update.
 ///
-/// Required env: `DEPLOYER_PK` (the current owner), `OUTBE_CHAIN_ID`, `ROUTER_ADDRESS`,
-///   `AUCTION_ADDRESS`, `ESCROW_ADDRESS`, `ALLOCATOR_ADDRESS` (RouterAllocator),
-///   `SOLVER_ALLOCATOR_ADDRESS` (not read once the Router is handed over), and on another chain
-///   `OUTBE_RPC_URL`.
+/// Required env: `DEPLOYER_PK` (the current owner), `OUTBE_CHAIN_ID`, `CREATE3_FACTORY_ADDRESS`,
+///   `CONTRACT_SALT` (default `SALT_VERSION`), and on another chain `OUTBE_RPC_URL`. The contract
+///   addresses come from CREATE3.
 contract HandOver is Script {
     error DomainTooLarge(uint256 chainId);
     error NotHandedOver(address target, address owner);
-    error MissingAddress(string name);
 
     function run() public virtual {
         uint256 deployerPk = vm.envUint("DEPLOYER_PK");
-        address router = vm.envAddress("ROUTER_ADDRESS");
+        address[5] memory owned = stack(vm.addr(deployerPk));
+        address router = owned[4];
         // Read before the broadcast: on a chain other than Outbe this asks the Outbe node.
         address governance = governanceOwner();
         if (Ownable(router).owner() == governance) {
             console2.log("already handed over to governance:", governance);
             return;
         }
-        address[5] memory owned = [
-            _envAddress("AUCTION_ADDRESS"),
-            _envAddress("ESCROW_ADDRESS"),
-            _envAddress("ALLOCATOR_ADDRESS"),
-            _envAddress("SOLVER_ALLOCATOR_ADDRESS"),
-            router
-        ];
 
         vm.startBroadcast(deployerPk);
         handOver(governance, owned);
@@ -62,12 +56,17 @@ contract HandOver is Script {
         }
     }
 
-    /// @dev A deploy job exports an address it could not parse as an empty variable, so name the
-    ///      variable instead of failing on the parse.
-    function _envAddress(string memory name) internal view returns (address) {
-        string memory value = vm.envOr(name, string(""));
-        if (bytes(value).length == 0) revert MissingAddress(name);
-        return vm.parseAddress(value);
+    /// @dev The five intent proxies of `deployer`, the Router last.
+    function stack(address deployer) public view returns (address[5] memory) {
+        address factory = vm.envAddress("CREATE3_FACTORY_ADDRESS");
+        string memory salt = vm.envOr("CONTRACT_SALT", SALT_VERSION);
+        return [
+            IntentCreate3.predict(factory, deployer, IntentCreate3.AUCTION, salt),
+            IntentCreate3.predict(factory, deployer, IntentCreate3.SOLVER_ESCROW, salt),
+            IntentCreate3.predict(factory, deployer, IntentCreate3.ROUTER_ALLOCATOR, salt),
+            IntentCreate3.predict(factory, deployer, IntentCreate3.SOLVER_ALLOCATOR, salt),
+            IntentCreate3.predict(factory, deployer, IntentCreate3.ROUTER, salt)
+        ];
     }
 
     /// @dev Asks CrosschainBridge on Outbe for its Interchain Account on `domain`. A fork cannot run

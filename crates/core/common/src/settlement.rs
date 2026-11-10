@@ -5,7 +5,7 @@
 use alloy_primitives::{Address, U256};
 
 pub use crate::errors::RoundingError;
-use crate::units::{MAX_ASSET_DECIMALS, PROTOCOL_AMOUNT_DECIMALS, SCALE_1E6_U256};
+use outbe_primitives::units::{MAX_ASSET_DECIMALS, PROTOCOL_AMOUNT_DECIMALS, SCALE_1E6_U256};
 
 /// Decimals of a price x load product.
 pub const COST_DECIMALS: u8 = 2 * PROTOCOL_AMOUNT_DECIMALS;

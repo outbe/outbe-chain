@@ -323,6 +323,16 @@ contract RouterE2E is BaseTest {
         destinationRouter.refund{value: 1}(orders);
     }
 
+    /// @dev A source chain id that does not fit a domain would truncate into another chain's domain.
+    function test_receiveMessage_RevertWhen_SourceChainIdTooLarge() public {
+        uint256 chainId = uint256(type(uint32).max) + 1;
+        bytes memory sender = _interop(chainId, address(originRouter));
+
+        vm.prank(address(destBridge));
+        vm.expectRevert(abi.encodeWithSelector(Router.DomainTooLarge.selector, chainId));
+        destinationRouter.receiveMessage(bytes32(0), sender, "");
+    }
+
     function test_RevertWhen_ReceiveFromNonBridge() public {
         bytes memory sender = _interop(origin, address(originRouter));
         vm.prank(makeAddr("intruder"));

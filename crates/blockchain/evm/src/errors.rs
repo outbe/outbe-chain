@@ -309,16 +309,6 @@ pub enum BeginBlockPrecompileError {
     Ost3PolicyScheduleMismatch,
 }
 
-impl BeginBlockPrecompileError {
-    pub(crate) fn invalid_tee_chain_spec_authority(error: impl Display) -> PrecompileError {
-        Self::InvalidTeeChainSpecAuthority(error.to_string()).into()
-    }
-
-    pub(crate) fn invalid_active_tee_policy(error: impl Display) -> PrecompileError {
-        Self::InvalidActiveTeePolicy(error.to_string()).into()
-    }
-}
-
 impl From<BeginBlockPrecompileError> for PrecompileError {
     fn from(error: BeginBlockPrecompileError) -> Self {
         match error {

@@ -9,6 +9,8 @@ import {Auction} from "../src/Auction.sol";
 import {SolverEscrow} from "../src/SolverEscrow.sol";
 import {RouterAllocator} from "../src/allocators/RouterAllocator.sol";
 import {Router} from "../src/router/Router.sol";
+import {SALT_VERSION} from "@shared/SaltVersion.sol";
+import {IntentCreate3} from "./IntentCreate3.sol";
 
 /// @dev Post-deployment wiring:
 ///   1. escrow.setAuthorizedCaller(router)
@@ -19,12 +21,10 @@ import {Router} from "../src/router/Router.sol";
 /// (router->auction is immutable, bound at router construction.)
 /// ConfigureRouter.s.sol remains as a standalone helper to add/update a single remote later.
 ///
-/// Required env vars:
+/// Required env vars (the contract addresses come from CREATE3):
 ///   DEPLOYER_PK       - deployer private key
-///   ROUTER_ADDRESS    - deployed Router address
-///   AUCTION_ADDRESS   - deployed Auction address
-///   ESCROW_ADDRESS    - deployed SolverEscrow address
-///   ALLOCATOR_ADDRESS - deployed RouterAllocator address
+///   CREATE3_FACTORY_ADDRESS - deployed Create3Factory (from contracts/shared)
+///   CONTRACT_SALT     - salt string used at deploy (default SALT_VERSION)
 /// Optional:
 ///   REMOTE_CHAIN_IDS      - csv of remote EVM chain ids to register (skipped if unset)
 ///   AUCTION_COMMIT_PERIOD - commit window in seconds (skipped if unset. Set it per target chain.)
@@ -33,10 +33,13 @@ import {Router} from "../src/router/Router.sol";
 contract ConfigureAll is Script {
     function run() public virtual {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PK");
-        address routerAddress = vm.envAddress("ROUTER_ADDRESS");
-        address auctionAddress = vm.envAddress("AUCTION_ADDRESS");
-        address escrowAddress = vm.envAddress("ESCROW_ADDRESS");
-        address allocatorAddress = vm.envAddress("ALLOCATOR_ADDRESS");
+        address factory = vm.envAddress("CREATE3_FACTORY_ADDRESS");
+        string memory salt = vm.envOr("CONTRACT_SALT", SALT_VERSION);
+        address deployer = vm.addr(deployerPrivateKey);
+        address routerAddress = IntentCreate3.predict(factory, deployer, IntentCreate3.ROUTER, salt);
+        address auctionAddress = IntentCreate3.predict(factory, deployer, IntentCreate3.AUCTION, salt);
+        address escrowAddress = IntentCreate3.predict(factory, deployer, IntentCreate3.SOLVER_ESCROW, salt);
+        address allocatorAddress = IntentCreate3.predict(factory, deployer, IntentCreate3.ROUTER_ALLOCATOR, salt);
 
         vm.startBroadcast(deployerPrivateKey);
         configureAll(routerAddress, auctionAddress, escrowAddress, allocatorAddress);
@@ -77,14 +80,9 @@ contract ConfigureAll is Script {
             console2.log("  auction.setMaxQuotesPerOrder:", maxQuotes);
         }
 
-        // 3. Allocator -> Router. Skipped when the script reused the router: its allocator is
-        //    already wired.
-        if (allocatorAddress != address(0)) {
-            RouterAllocator(allocatorAddress).addOperator(routerAddress);
-            console2.log("  allocator.addOperator done");
-        } else {
-            console2.log("  allocator.addOperator skipped (router reused)");
-        }
+        // 3. Allocator -> Router
+        RouterAllocator(allocatorAddress).addOperator(routerAddress);
+        console2.log("  allocator.addOperator done");
 
         // Router -> Auction binding is immutable (set at router construction). There is no
         // setAuction step.

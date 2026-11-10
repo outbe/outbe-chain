@@ -179,7 +179,7 @@ pub fn group_key_at(
 ) -> B256 {
     crate::identity::group_key(
         issued_at,
-        outbe_primitives::markup::marked_up(entry_price_minor, params.call_rate).unwrap(),
+        outbe_common::markup::marked_up(entry_price_minor, params.call_rate).unwrap(),
         reference_currency,
     )
     .expect("date step")
@@ -218,7 +218,7 @@ pub fn sealed_terms(
     }
     let params = crate::config::read(storage).unwrap();
     Some(crate::schema::CallTerms {
-        call_price_minor: outbe_primitives::markup::marked_up(entry_price_minor, params.call_rate)
+        call_price_minor: outbe_common::markup::marked_up(entry_price_minor, params.call_rate)
             .unwrap(),
         reference_currency: item.reference_currency,
         call_rate: params.call_rate,

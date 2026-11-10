@@ -13,7 +13,9 @@ library Create3Proxy {
         returns (address)
     {
         return factory.deploy(
-            salt, abi.encodePacked(type(ERC1967Proxy).creationCode, abi.encode(implementation, initData))
+            salt,
+            // aderyn-ignore-next-line(abi-encode-packed-hash-collision) -- init code, never hashed
+            abi.encodePacked(type(ERC1967Proxy).creationCode, abi.encode(implementation, initData))
         );
     }
 }

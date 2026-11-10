@@ -5,9 +5,9 @@ import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
-import {Create3Factory} from "@shared/Create3Factory.sol";
 import {Router} from "../src/router/Router.sol";
 import {SALT_VERSION} from "@shared/SaltVersion.sol";
+import {IntentCreate3} from "./IntentCreate3.sol";
 
 /// @dev Registers the matching Router on each remote chain. Routers share one CREATE3 address
 ///      across chains, so the remote address equals the local address (computed here). The env
@@ -29,8 +29,7 @@ contract ConfigureRouter is Script {
 
         uint256[] memory remoteChainIds = vm.envUint("REMOTE_CHAIN_IDS", ",");
 
-        address remoteRouterAddr =
-            Create3Factory(factory).predict(deployer, keccak256(abi.encodePacked("Router", salt)));
+        address remoteRouterAddr = IntentCreate3.predict(factory, deployer, IntentCreate3.ROUTER, salt);
 
         vm.startBroadcast(deployerPk);
 

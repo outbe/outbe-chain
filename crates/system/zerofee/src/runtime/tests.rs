@@ -247,7 +247,7 @@ fn authorize_bootstrap_rejects_stale_nonce_or_existing_code() {
 fn sponsored_target() -> Address {
     // First whitelisted address. The value is incidental. Only
     // membership in `SPONSORED_TARGET_WHITELIST` matters here.
-    outbe_primitives::zero_fee::SPONSORED_TARGET_WHITELIST[0]
+    outbe_system_common::zero_fee::SPONSORED_TARGET_WHITELIST[0]
 }
 
 fn ok_envelope<'a>(input: &'a [u8]) -> ZeroFeeTransaction<'a> {

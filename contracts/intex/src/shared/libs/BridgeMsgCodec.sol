@@ -298,6 +298,7 @@ library BridgeMsgCodec {
         }
         // Split into packed halves: this many packed args in one call is too deep for the IR
         // pipeline. Concatenation of encodePacked results is byte-identical to a single call.
+        // aderyn-ignore-next-line(abi-encode-packed-hash-collision) -- a message body, never hashed
         return abi.encodePacked(
             abi.encodePacked(
                 BODY_VERSION_V1,

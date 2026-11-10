@@ -9,7 +9,7 @@
 //! The trait lives in `outbe-primitives` so callers can abstract over
 //! the storage reader in tests.
 
-use crate::error::Result;
+use outbe_primitives::error::Result;
 
 /// Read-only view of the V2 Phase 1 accounting-progress slot.
 ///

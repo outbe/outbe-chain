@@ -13,10 +13,16 @@ impl OracleContract<'_> {
     /// Clears all votes and resets the voter list. Called after tally.
     pub fn clear_votes(&mut self) -> Result<()> {
         let count = self.voter_list.len()?;
+        let gas_chains = self.gas_chains.read_all()?;
 
         for i in 0..count {
             let voter = self.voter_list.get(i)?.unwrap_or(Address::ZERO);
             self.vote_exists.write(&voter, false)?;
+
+            let gas_votes = self.vote_gas_price.get_nested(&voter);
+            for chain_id in &gas_chains {
+                gas_votes.write(chain_id, U256::ZERO)?;
+            }
 
             let tuple_count = self.vote_tuple_count.read(&voter)?;
             let entries = self.vote_entries(&voter);

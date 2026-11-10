@@ -29,6 +29,7 @@ pub fn export_genesis(
 ) -> Result<OracleGenesisConfig> {
     let vote_period = oracle.config_vote_period.read()?;
     let reward_band = oracle.config_reward_band.read()?;
+    let gas_reward_band = oracle.config_gas_reward_band.read()?;
     let slash_window = oracle.config_slash_window.read()?;
     let min_valid_per_window = oracle.config_min_valid_per_window.read()?;
     let slash_fraction = oracle.config_slash_fraction.read()?;
@@ -45,6 +46,7 @@ pub fn export_genesis(
     Ok(OracleGenesisConfig {
         vote_period,
         reward_band,
+        gas_reward_band,
         slash_window,
         min_valid_per_window,
         slash_fraction,

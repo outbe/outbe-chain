@@ -49,6 +49,33 @@ pub fn seed_oracle(storage: &mut StorageBuilder, config: &Value) -> Result<(), G
     let pair_ids = seed_oracle_registry(storage, config, &validated_pairs)?;
     seed_oracle_scurves(storage, config, &pair_ids)?;
     seed_oracle_currencies(storage, config)?;
+    seed_gas_chains(storage, config)
+}
+
+/// Oracle slot 85: the chains with a gas price vote target.
+fn seed_gas_chains(storage: &mut StorageBuilder, config: &Value) -> Result<(), GenesisError> {
+    let chains = config
+        .get("gas_chains")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let mut parsed: Vec<u32> = Vec::with_capacity(chains.len());
+    for chain in chains {
+        let chain_id = parse_u32(chain)?;
+        if chain_id == 0 || parsed.contains(&chain_id) {
+            return Err(GenesisError::validation(format!(
+                "oracle.gas_chains: invalid or duplicate chain id {chain_id}"
+            )));
+        }
+        parsed.push(chain_id);
+    }
+    if parsed.is_empty() {
+        return Ok(());
+    }
+    storage.set_slot(85u64, parsed.len());
+    for (i, chain_id) in parsed.iter().enumerate() {
+        storage.set_raw_slot(data_slot(85u64) + U256::from(i), *chain_id);
+    }
     Ok(())
 }
 
@@ -108,6 +135,11 @@ fn seed_oracle_config(
         .map(parse_u256)
         .transpose()?
         .unwrap_or_else(|| U256::from(20_000_000_000_000_000u64));
+    let gas_reward_band = cfg
+        .get("gas_reward_band")
+        .map(parse_u256)
+        .transpose()?
+        .unwrap_or_else(|| U256::from(200_000_000_000_000_000u64));
     let penalties_enabled = cfg
         .get("penalties_enabled")
         .and_then(Value::as_bool)
@@ -130,6 +162,7 @@ fn seed_oracle_config(
     let one_e18 = U256::from(1_000_000_000_000_000_000u64);
     for (field, value) in [
         ("reward_band", reward_band),
+        ("gas_reward_band", gas_reward_band),
         ("min_valid_per_window", min_valid_per_window),
         ("slash_fraction", slash_fraction),
     ] {
@@ -169,6 +202,7 @@ fn seed_oracle_config(
     storage.set_slot(6u64, u64::from(enabled));
     storage.set_slot(7u64, u64::from(initialized));
     storage.set_slot(8u64, pair_count);
+    storage.set_slot(89u64, gas_reward_band);
     Ok(())
 }
 

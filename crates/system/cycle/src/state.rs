@@ -37,10 +37,10 @@
 //! `cycle_window_resolution_deterministic_from_headers` pins this.
 
 use outbe_primitives::{
-    accounting_progress::AccountingProgressView,
     block::{BlockContext, BlockRuntimeContext},
     error::Result,
 };
+use outbe_system_common::accounting_progress::AccountingProgressView;
 
 use crate::triggers::TriggerSpec;
 

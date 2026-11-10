@@ -1,0 +1,19 @@
+version = 1
+
+root = "./."
+src = "src/"
+
+exclude = [
+    "/vendor/",
+    "/Mock",
+]
+
+[detectors]
+exclude = [
+    # every UUPS proxy has a payable upgradeToAndCall and forwards all other native value
+    "contract-locks-ether",
+    # ORDER_DATA_TYPE packs string literals, so no two inputs collide
+    "abi-encode-packed-hash-collision",
+]
+
+[env]

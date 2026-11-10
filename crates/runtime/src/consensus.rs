@@ -94,7 +94,7 @@ pub(crate) fn run(
     // initialization fails, log a warning and continue. The
     // journal is best-effort observability and must not block node
     // startup.
-    if let Err(error) = outbe_primitives::slashing_journal::init(&consensus_storage) {
+    if let Err(error) = outbe_system_common::slashing_journal::init(&consensus_storage) {
         tracing::warn!(
             target: "outbe::slashing::journal",
             %error,

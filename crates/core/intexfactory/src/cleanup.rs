@@ -2,13 +2,9 @@
 //! the expiry already returned what the groups forfeited.
 
 use alloy_primitives::B256;
+use outbe_common::deadline_queue::{self, DeadlineHandler, Due};
 use outbe_intex::{CleanupQueue, IntexContract, SeriesId};
-use outbe_primitives::{
-    block::BlockRuntimeContext,
-    deadline_queue::{self, DeadlineHandler, Due},
-    error::Result,
-    storage::StorageHandle,
-};
+use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::StorageHandle};
 
 /// Walks the expired groups and deletes each series nothing is left in. Returns the
 /// series deleted.

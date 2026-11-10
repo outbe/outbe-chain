@@ -57,6 +57,7 @@ contract Router is BaseRouter, UUPSUpgradeable, IERC7786Recipient {
     error UnauthorizedBridge(address caller);
     error RemoteRouterNotSet(uint32 domain);
     error BatchTooLarge(uint256 length);
+    error DomainTooLarge(uint256 chainId);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor(address _bridge, address _compact, bytes12 _lockTag, address _escrow, address _auction)
@@ -131,6 +132,8 @@ contract Router is BaseRouter, UUPSUpgradeable, IERC7786Recipient {
         require(msg.sender == address(bridge), UnauthorizedBridge(msg.sender));
 
         (uint256 srcChainId, address srcRouter) = sender.parseEvmV1Calldata();
+        if (srcChainId > type(uint32).max) revert DomainTooLarge(srcChainId);
+        // aderyn-ignore-next-line(unsafe-casting) -- bounded just above
         uint32 originDomain = uint32(srcChainId);
         bytes32 messageSender = TypeCasts.addressToBytes32(srcRouter);
 

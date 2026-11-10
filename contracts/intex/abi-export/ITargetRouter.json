@@ -21,24 +21,6 @@
     },
     {
       "type": "function",
-      "name": "sweepNative",
-      "inputs": [
-        {
-          "name": "to",
-          "type": "address",
-          "internalType": "address payable"
-        },
-        {
-          "name": "amount",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
       "name": "wire",
       "inputs": [
         {
@@ -375,25 +357,6 @@
     },
     {
       "type": "event",
-      "name": "NativeSwept",
-      "inputs": [
-        {
-          "name": "to",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "amount",
-          "type": "uint256",
-          "indexed": false,
-          "internalType": "uint256"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
       "name": "ParkedMarkApplied",
       "inputs": [
         {
@@ -544,27 +507,6 @@
     {
       "type": "error",
       "name": "EscrowHasLiveLocks",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "NativeBalanceInsufficient",
-      "inputs": [
-        {
-          "name": "available",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "requested",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "NativeSweepFailed",
       "inputs": []
     },
     {
