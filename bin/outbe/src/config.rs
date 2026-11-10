@@ -41,7 +41,39 @@ pub struct NetworkConfig {
 #[serde(deny_unknown_fields)]
 pub struct TeeConfig {
     pub runtime: EnclaveRuntime,
-    pub lease_duration_seconds: u64,
+    pub lease_duration_seconds: LeaseDuration,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum LeaseDuration {
+    Seconds(u64),
+    Mode(LeaseDurationMode),
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LeaseDurationMode {
+    Auto,
+}
+
+impl LeaseDuration {
+    pub fn resolve(self, minimum: u64, maximum: u64) -> Result<u64> {
+        ensure!(
+            minimum <= maximum,
+            "finalized TEE policy has an invalid lease range {minimum}..={maximum} seconds"
+        );
+        match self {
+            Self::Mode(LeaseDurationMode::Auto) => Ok(maximum),
+            Self::Seconds(seconds) => {
+                ensure!(
+                    (minimum..=maximum).contains(&seconds),
+                    "tee.lease_duration_seconds={seconds} is outside the finalized TEE policy range {minimum}..={maximum} seconds"
+                );
+                Ok(seconds)
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -171,10 +203,9 @@ impl OperatorConfig {
         {
             bail!("network.consensus_peers contains an invalid peer");
         }
-        ensure!(
-            self.tee.lease_duration_seconds > 0,
-            "tee.lease_duration_seconds must be positive"
-        );
+        if let LeaseDuration::Seconds(seconds) = self.tee.lease_duration_seconds {
+            ensure!(seconds > 0, "tee.lease_duration_seconds must be positive");
+        }
         ensure!(
             !self.feeder.public_toml.trim().is_empty(),
             "feeder.public_toml is empty"
@@ -239,7 +270,7 @@ network:
   use_local_defaults: true
 tee:
   runtime: bundled-sgx
-  lease_duration_seconds: 86400
+  lease_duration_seconds: auto
 feeder:
   public_toml: |
     [oracle]
@@ -251,5 +282,41 @@ feeder:
         ))
         .unwrap();
         config.validate().unwrap();
+        assert!(matches!(
+            config.tee.lease_duration_seconds,
+            LeaseDuration::Mode(LeaseDurationMode::Auto)
+        ));
+    }
+
+    #[test]
+    fn resolves_lease_duration_against_policy() {
+        assert_eq!(
+            LeaseDuration::Mode(LeaseDurationMode::Auto)
+                .resolve(3_600, 1_209_600)
+                .unwrap(),
+            1_209_600
+        );
+        assert_eq!(
+            LeaseDuration::Seconds(86_400)
+                .resolve(3_600, 1_209_600)
+                .unwrap(),
+            86_400
+        );
+        assert!(LeaseDuration::Seconds(2_592_000)
+            .resolve(3_600, 1_209_600)
+            .unwrap_err()
+            .to_string()
+            .contains("outside the finalized TEE policy range"));
+    }
+
+    #[test]
+    fn accepts_existing_numeric_lease_config() {
+        let config: TeeConfig =
+            serde_yaml_ng::from_str("runtime: bundled-sgx\nlease_duration_seconds: 86400\n")
+                .unwrap();
+        assert!(matches!(
+            config.lease_duration_seconds,
+            LeaseDuration::Seconds(86_400)
+        ));
     }
 }

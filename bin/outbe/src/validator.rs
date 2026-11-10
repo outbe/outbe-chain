@@ -351,10 +351,16 @@ async fn ensure_join_identity(journal: &mut Journal, remote: &RpcClient) -> Resu
         journal.binding_id = Some(hex::encode(binding));
     }
     if journal.valid_until.is_none() {
-        let timestamp = remote.finalized_block().await?.timestamp;
+        let (finalized, policy) = remote.finalized_tee_lease_policy().await?;
+        let duration = journal
+            .config
+            .tee
+            .lease_duration_seconds
+            .resolve(policy.minimum, policy.maximum)?;
         journal.valid_until = Some(
-            timestamp
-                .checked_add(journal.config.tee.lease_duration_seconds)
+            finalized
+                .timestamp
+                .checked_add(duration)
                 .ok_or_else(|| eyre::eyre!("TEE lease deadline overflow"))?,
         );
     }

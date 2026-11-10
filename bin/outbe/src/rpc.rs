@@ -11,9 +11,15 @@ use serde_json::{json, Value};
 
 const STAKING: Address = address!("000000000000000000000000000000000000EE02");
 const VALIDATOR_SET: Address = address!("000000000000000000000000000000000000EE00");
+const TEE_REGISTRY: Address = address!("000000000000000000000000000000000000EE0A");
+
+const TEE_POLICY_V1_MINIMUM_LEASE_OFFSET: usize = 180;
+const TEE_POLICY_V1_MAXIMUM_LEASE_OFFSET: usize = 188;
+const TEE_POLICY_V1_LEASE_PREFIX_LEN: usize = 196;
 
 sol!("../../contracts/precompiles/src/IStaking.sol");
 sol!("../../contracts/precompiles/src/IValidatorSet.sol");
+sol!("../../contracts/precompiles/src/ITeeRegistryV1.sol");
 
 pub struct RpcClient {
     url: String,
@@ -26,6 +32,12 @@ pub struct Block {
     pub number: u64,
     pub hash: String,
     pub timestamp: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct TeeLeasePolicy {
+    pub minimum: u64,
+    pub maximum: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -167,6 +179,20 @@ impl RpcClient {
         Ok(IStaking::getMinStakeCall::abi_decode_returns(&result)?)
     }
 
+    pub async fn finalized_tee_lease_policy(&self) -> Result<(Block, TeeLeasePolicy)> {
+        let block = self.finalized_block().await?;
+        let call = ITeeRegistryV1::activePolicyV1Call {};
+        let result = self
+            .eth_call_at(
+                TEE_REGISTRY,
+                &call.abi_encode(),
+                &format!("0x{:x}", block.number),
+            )
+            .await?;
+        let canonical = ITeeRegistryV1::activePolicyV1Call::abi_decode_returns(&result)?;
+        Ok((block, decode_tee_lease_policy_v1(&canonical)?))
+    }
+
     pub async fn validator(&self, address: Address) -> Result<ValidatorRecord> {
         let call = IValidatorSet::isValidatorCall { addr: address };
         let result = self.eth_call(VALIDATOR_SET, &call.abi_encode()).await?;
@@ -214,13 +240,17 @@ impl RpcClient {
     }
 
     async fn eth_call(&self, to: Address, data: &[u8]) -> Result<Vec<u8>> {
+        self.eth_call_at(to, data, "finalized").await
+    }
+
+    async fn eth_call_at(&self, to: Address, data: &[u8], block: &str) -> Result<Vec<u8>> {
         let value = self
             .call(
                 "eth_call",
                 json!([{
                     "to": format!("{to:#x}"),
                     "data": format!("0x{}", hex::encode(data)),
-                }, "finalized"]),
+                }, block]),
             )
             .await?;
         let encoded = value
@@ -268,6 +298,29 @@ impl RpcClient {
         }
         Ok(response.result)
     }
+}
+
+fn decode_tee_lease_policy_v1(bytes: &[u8]) -> Result<TeeLeasePolicy> {
+    ensure!(
+        bytes.len() >= TEE_POLICY_V1_LEASE_PREFIX_LEN,
+        "finalized TEE policy is truncated before its lease range"
+    );
+    ensure!(bytes[0] == 1, "unsupported finalized TEE policy version");
+    let minimum = u64::from_be_bytes(
+        bytes[TEE_POLICY_V1_MINIMUM_LEASE_OFFSET..TEE_POLICY_V1_MAXIMUM_LEASE_OFFSET]
+            .try_into()
+            .expect("fixed-size TEE policy field"),
+    );
+    let maximum = u64::from_be_bytes(
+        bytes[TEE_POLICY_V1_MAXIMUM_LEASE_OFFSET..TEE_POLICY_V1_LEASE_PREFIX_LEN]
+            .try_into()
+            .expect("fixed-size TEE policy field"),
+    );
+    ensure!(
+        minimum <= maximum,
+        "finalized TEE policy has an invalid lease range {minimum}..={maximum} seconds"
+    );
+    Ok(TeeLeasePolicy { minimum, maximum })
 }
 
 fn parse_hex_u64(value: &Value) -> Result<u64> {

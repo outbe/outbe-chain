@@ -14,7 +14,7 @@ network:
 
 tee:
   runtime: bundled-sgx
-  lease_duration_seconds: 1209600
+  lease_duration_seconds: auto
 
 feeder:
   public_toml: |
