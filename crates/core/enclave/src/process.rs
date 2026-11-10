@@ -253,7 +253,7 @@ mod tests {
         );
     }
 
-    /// The TEE canary names ISO 4217 code 999 ("XXX", no currency). The enclave
+    /// The TEE canary names ISO 4217 code 999 (no currency). The enclave
     /// does not read the codes, so 999/999 prices the same as 840/840.
     #[test]
     fn no_currency_code_prices_the_same_as_usd() {

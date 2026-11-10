@@ -326,7 +326,7 @@ mod tests {
     #[test]
     fn lysis_dispatch_requires_resident_chain_and_attests_ready_nods() {
         use outbe_tee::protocol::EnclaveRequest;
-        let request = crate::lysis::tests::fixture();
+        let request = crate::lysis_fixture::fixture();
         let keys = EnclaveKeys::new([0x43; 32], None).unwrap();
         let offer: SharedTributeOfferKey = Arc::new(OnceLock::new());
         let chain = B256::from(alloy_primitives::U256::ONE);
@@ -402,7 +402,7 @@ mod tests {
             ))
             .is_ok());
         let chain = B256::from(alloy_primitives::U256::ONE);
-        let mut request = crate::lysis::tests::fixture();
+        let mut request = crate::lysis_fixture::fixture();
         request.lysis_limit_minor = alloy_primitives::U256::ONE;
         let EnclaveResponse::LysisRejected {
             inputs_canonical_hash,

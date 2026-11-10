@@ -8104,6 +8104,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-enclave"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "ark-bn254",
+ "ark-ff 0.6.0",
+ "ed25519-dalek",
+ "hex",
+ "k256 0.13.4",
+ "outbe-core-common",
+ "outbe-fidelity-math",
+ "outbe-lysis",
+ "outbe-primitives",
+ "outbe-tee",
+ "outbe-zk",
+ "postcard",
+ "proptest",
+ "rand_core 0.6.4",
+ "ring",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "x25519-dalek 2.0.1",
+ "zeroize",
+]
+
+[[package]]
 name = "outbe-engine"
 version = "0.1.0"
 dependencies = [
@@ -9264,6 +9291,7 @@ dependencies = [
  "k256 0.13.4",
  "outbe-consensus",
  "outbe-core-common",
+ "outbe-enclave",
  "outbe-fidelity-math",
  "outbe-lysis",
  "outbe-primitives",

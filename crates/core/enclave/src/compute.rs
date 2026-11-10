@@ -161,7 +161,7 @@ mod tests {
     fn canonical_amount_cases() -> CanonicalAmountCases {
         serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../testdata/tribute/canonical-amounts-v1.json"
+            "/../../../testdata/tribute/canonical-amounts-v1.json"
         )))
         .unwrap()
     }

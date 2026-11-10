@@ -1,4 +1,4 @@
-//! Enclave crypto core (secret-bearing - lives only in the enclave binary).
+//! Pure enclave cryptography shared by the sidecar and domain consumers.
 //!
 //! Responsibilities:
 //!
@@ -83,6 +83,25 @@ pub fn hkdf_sha256(salt: &[u8], ikm: &[u8], info: &[u8]) -> Result<[u8; 32]> {
     let mut out = [0u8; 32];
     okm.fill(&mut out).map_err(|_| TeeError::HkdfFailed)?;
     Ok(out)
+}
+
+/// Persistent Ed25519 attestation identity without daemon or SGX initialization.
+pub struct AttestationKeyPair(ed25519_dalek::SigningKey);
+
+impl AttestationKeyPair {
+    pub fn from_identity_seed(seed: &[u8; 32]) -> Result<Self> {
+        let secret = Zeroizing::new(hkdf_sha256(seed, b"", b"outbe/tee/attestation-ed25519/v1")?);
+        Ok(Self(ed25519_dalek::SigningKey::from_bytes(&secret)))
+    }
+
+    pub fn sign_attestation(&self, msg: &[u8]) -> [u8; 64] {
+        use ed25519_dalek::Signer as _;
+        self.0.sign(msg).to_bytes()
+    }
+
+    pub fn attestation_pub(&self) -> [u8; 32] {
+        self.0.verifying_key().to_bytes()
+    }
 }
 
 /// ChaCha20Poly1305 AEAD decrypt (empty AAD), matching host semantics.

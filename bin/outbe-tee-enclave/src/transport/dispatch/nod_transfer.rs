@@ -206,7 +206,7 @@ mod tests {
             append(invalid, 100_000, 0, &vec![1; TRANSFER_CHUNK_BYTES + 1]),
             EnclaveResponse::Error { .. }
         ));
-        let mut input = crate::lysis::tests::fixture();
+        let mut input = crate::lysis_fixture::fixture();
         input.tributes[0].encrypted_amounts = vec![255; 70_000];
         let request = EnclaveRequest::ExecuteLysis {
             request: Box::new(input),

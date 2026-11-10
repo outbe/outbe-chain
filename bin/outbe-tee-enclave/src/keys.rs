@@ -373,6 +373,20 @@ impl EnclaveKeys {
 mod tests {
     use super::*;
 
+    #[test]
+    fn domain_attestation_key_preserves_identity_seed_signatures() {
+        for seed in [[0; 32], [0x42; 32]] {
+            let daemon = EnclaveKeys::new(seed, Some(seed)).unwrap();
+            let domain = crate::crypto::AttestationKeyPair::from_identity_seed(&seed).unwrap();
+            let message = b"outbe attestation compatibility";
+            assert_eq!(domain.attestation_pub(), daemon.attestation_pub());
+            assert_eq!(
+                domain.sign_attestation(message),
+                daemon.sign_attestation(message)
+            );
+        }
+    }
+
     /// Off SGX hardware (CI / gramine-direct / bare) the enclave MUST run
     /// unattested: empty quote and zero measurements. It must never fabricate a
     /// quote or measurements. The old mock did exactly
