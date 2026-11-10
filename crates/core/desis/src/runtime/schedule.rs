@@ -404,10 +404,7 @@ fn arm_clearing(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u6
     }
     for chain_id in targets {
         let sent = storage.with_checkpoint(|| {
-            let mut gas = clearing_round_gas(storage, emission_day, chain_id)?;
-            if u64::from(chain_id) == storage.chain_id()? {
-                gas = gas.min(OWN_CHAIN_ROUND_GAS);
-            }
+            let gas = clearing_round_gas(storage, emission_day, chain_id)?;
             storage.call(
                 ORIGIN_ROUTER_ADDRESS,
                 U256::ZERO,

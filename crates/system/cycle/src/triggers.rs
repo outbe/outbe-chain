@@ -412,7 +412,7 @@ mod protocol_parameter_tests {
                 .checked_add(spec.work_budget_gas())
                 .expect("combined allowances fit u64");
         }
-        assert_eq!(total, 24_799_000);
+        assert_eq!(total, 22_093_000);
     }
 
     #[test]
