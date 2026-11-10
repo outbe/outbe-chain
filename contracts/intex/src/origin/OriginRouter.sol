@@ -83,7 +83,6 @@ contract OriginRouter is
     bytes32 private constant _STORAGE_SLOT = 0x2c9073d8b0cd30aa4aa3061d90da176c3d040651b0847724f0e9a4a76777f100;
 
     function _os() private pure returns (OriginRouterStorage storage $) {
-        // solhint-disable-next-line no-inline-assembly
         assembly ("memory-safe") {
             $.slot := _STORAGE_SLOT
         }
@@ -103,7 +102,6 @@ contract OriginRouter is
     }
 
     /// @dev The admin role gates upgrades.
-    // solhint-disable-next-line no-empty-blocks
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     // --- Storage getters ---
@@ -225,6 +223,7 @@ contract OriginRouter is
         ParkedMessage storage p = _os().parkedMessages[idx];
         if (p.payload.length == 0 || p.sent) revert NoParkedMessage(idx);
         p.sent = true; // CEI. A revert in `_send` rolls this back and keeps the entry retryable.
+        // aderyn-ignore-next-line(storage-array-memory-edit) -- the payload is only read
         bytes32 sendId = _send(p.dstChainId, p.payload, p.gasLimit);
         emit ParkedMessageResent(idx, p.dstChainId, sendId);
     }
@@ -570,20 +569,6 @@ contract OriginRouter is
     /// @notice ERC-165 support check, resolving the AccessControl interface ids.
     function supportsInterface(bytes4 interfaceId) public view override(AccessControlUpgradeable) returns (bool) {
         return super.supportsInterface(interfaceId);
-    }
-
-    /// @inheritdoc IOriginRouter
-    function sweepNative(address payable to, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (to == address(0)) revert ZeroAddress("to");
-        uint256 balance = address(this).balance;
-        if (amount > balance) revert NativeBalanceInsufficient(balance, amount);
-
-        // admin-only native recovery. The arbitrary destination is intentional.
-        // slither-disable-next-line arbitrary-send-eth
-        (bool ok,) = to.call{value: amount}("");
-        if (!ok) revert NativeSweepFailed();
-
-        emit NativeSwept(to, amount);
     }
 
     // --- Proceeds route ---

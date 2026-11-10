@@ -1,0 +1,13 @@
+version = 1
+
+root = "./."
+src = "src/"
+
+exclude = [
+    "/vendor/",
+    "/Mock",
+]
+
+[detectors]
+
+[env]

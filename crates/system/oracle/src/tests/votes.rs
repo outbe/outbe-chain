@@ -15,7 +15,7 @@ fn submit_vote_stores_tuples_until_clear_votes_drains_them() {
         assert_vote_stored(oracle, &validator, 1, 1);
 
         // Double vote should fail
-        assert!(oracle.submit_vote(validator, &[vote]).is_err());
+        assert!(oracle.submit_vote(validator, &[vote], &[]).is_err());
 
         // Clear
         oracle.clear_votes().unwrap();
@@ -29,7 +29,11 @@ fn submit_vote_rejects_an_unregistered_signer() {
     with_coen840_oracle(|_storage, oracle, _pair| {
         let stranger = Address::new([0x99; 20]);
         let err = oracle
-            .submit_vote(stranger, &[(COEN, usd(), coen_iso(50), COEN_ISO_SCALE)])
+            .submit_vote(
+                stranger,
+                &[(COEN, usd(), coen_iso(50), COEN_ISO_SCALE)],
+                &[],
+            )
             .unwrap_err();
 
         assert_typed_revert(&err, crate::errors::OracleError::NotActiveOracleSigner);
@@ -46,7 +50,11 @@ fn submit_vote_rejects_a_validator_that_is_no_longer_active() {
             .unwrap();
 
         let err = oracle
-            .submit_vote(validator, &[(COEN, usd(), coen_iso(50), COEN_ISO_SCALE)])
+            .submit_vote(
+                validator,
+                &[(COEN, usd(), coen_iso(50), COEN_ISO_SCALE)],
+                &[],
+            )
             .unwrap_err();
 
         assert_typed_revert(&err, crate::errors::OracleError::NotActiveOracleSigner);
@@ -70,6 +78,7 @@ fn submit_vote_rejects_the_reverse_of_the_registered_direction() {
                     fixed18(2),
                     SCALE_1E18,
                 )],
+                &[],
             )
             .unwrap_err();
 
@@ -96,7 +105,7 @@ fn submit_vote_rejects_a_duplicated_pair() {
         // Two tuples naming the same pair: within the pair-count bound, so the
         // dedup scan is what must reject it.
         let err = oracle
-            .submit_vote(validator, &[(COEN, USDT, rate, volume); 2])
+            .submit_vote(validator, &[(COEN, USDT, rate, volume); 2], &[])
             .unwrap_err();
         assert_typed_revert(&err, crate::errors::OracleError::DuplicatePairInVote);
         assert!(!oracle.vote_exists.read(&validator).unwrap());
@@ -120,7 +129,7 @@ fn submit_vote_reports_a_duplicate_before_an_inactive_vote_target() {
         // duplicate first. The revert text is visible in the receipt, so this
         // test pins the order.
         let err = oracle
-            .submit_vote(validator, &[(ETH, USDT, rate, volume); 2])
+            .submit_vote(validator, &[(ETH, USDT, rate, volume); 2], &[])
             .unwrap_err();
         assert_typed_revert(&err, crate::errors::OracleError::DuplicatePairInVote);
     });
@@ -229,6 +238,7 @@ fn get_aggregate_vote_returns_the_stored_tuples() {
             .submit_vote(
                 validator,
                 &[(COEN, USDT, rate1, vol1), (ETH, USDT, rate2, vol2)],
+                &[],
             )
             .unwrap();
 
@@ -293,7 +303,7 @@ fn delegate_feeder_round_trips_and_revokes_on_the_zero_address() {
 
         // Feeder can submit vote on behalf of validator
         oracle
-            .submit_vote(feeder, &[(COEN, USDT, fixed18(50), SCALE_1E18)])
+            .submit_vote(feeder, &[(COEN, USDT, fixed18(50), SCALE_1E18)], &[])
             .unwrap();
 
         assert!(oracle.vote_exists.read(&validator).unwrap());

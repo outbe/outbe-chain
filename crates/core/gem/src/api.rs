@@ -176,7 +176,7 @@ pub fn settlement_deadline(storage: &StorageHandle<'_>, group_key: B256) -> Resu
     Ok(settlement_deadline_of(called_at, notice))
 }
 
-pub use outbe_primitives::settlement::settlement_deadline_of;
+pub use outbe_common::settlement::settlement_deadline_of;
 
 /// Records a loaded gem paid for. GemFactory decides the settlement and takes the payment.
 pub fn record_settled(

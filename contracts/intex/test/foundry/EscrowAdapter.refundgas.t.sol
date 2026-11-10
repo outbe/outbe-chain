@@ -72,7 +72,7 @@ contract LocalWcoenTokenBridge {
         payable
         returns (bytes32)
     {
-        TOKEN.transferFrom(msg.sender, address(this), amount);
+        require(TOKEN.transferFrom(msg.sender, address(this), amount));
         return GATEWAY.sendMessage{value: msg.value}(_remoteBridge, _payload(to, amount, extraData), _attrs(gasLimit));
     }
 

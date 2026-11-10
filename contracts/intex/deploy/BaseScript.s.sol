@@ -25,6 +25,12 @@ abstract contract BaseScript is Script {
         if (!IAccessControl(proxy).hasRole(bytes32(0), deployer)) revert HandedOverToGovernance(proxy);
     }
 
+    /// @notice `proxy` exists and the deployer gave up its admin role: HandOver.s.sol ran here.
+    ///         A deploy re-run then has nothing to change, so it logs the addresses and sends nothing.
+    function handedOver(address proxy, address deployer) internal view returns (bool) {
+        return proxy.code.length != 0 && !IAccessControl(proxy).hasRole(bytes32(0), deployer);
+    }
+
     /// @notice CREATE3 salt version. `SALT_VERSION` in the env overrides it, so a test run can
     ///         target a throwaway address set without disturbing the pinned production set. A
     ///         blank or unset value selects production.
@@ -40,6 +46,12 @@ abstract contract BaseScript is Script {
         address f = vm.envAddress("CREATE3_FACTORY_ADDRESS");
         require(f.code.length != 0, "Create3Factory not deployed - deploy it from contracts/shared first");
         return Create3Factory(f);
+    }
+
+    /// @notice CREATE3 prefixes of every intex proxy. Outbe has all six, a remote target has the
+    ///         last five.
+    function intexProxyPrefixes() internal pure returns (string[6] memory) {
+        return ["OriginRouter", "IntexNFT1155", "EscrowAdapter", "IntexAuction", "IntexNFT1155Bridge", "TargetRouter"];
     }
 
     /// @notice Predict a proxy address without deploying.

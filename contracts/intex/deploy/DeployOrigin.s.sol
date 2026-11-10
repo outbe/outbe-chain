@@ -25,9 +25,16 @@ contract DeployOrigin is BaseScript {
         address bridge = vm.envAddress("BRIDGE_ADDRESS");
         uint256[] memory targetChainIds = vm.envUint("TARGET_CHAIN_IDS", ",");
 
-        vm.startBroadcast(pk);
-
         Create3Factory factory = create3Factory();
+        address handedOverRouter = predictProxy(factory, deployer, "OriginRouter");
+        if (handedOver(handedOverRouter, deployer)) {
+            console.log("Create3Factory:", address(factory));
+            console.log("OriginRouter:", handedOverRouter);
+            console.log("Handed over to governance - skipping.");
+            return;
+        }
+
+        vm.startBroadcast(pk);
 
         address router = deployProxy(
             factory,

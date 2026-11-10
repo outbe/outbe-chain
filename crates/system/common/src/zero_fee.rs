@@ -1,21 +1,21 @@
 //! Zero-fee (EIP-7702 sponsored path) protocol constants.
 //!
-//! Split out of [`crate::addresses`] so the sponsored-target allowlist is easy
+//! Split out of [`outbe_primitives::addresses`] so the sponsored-target allowlist is easy
 //! to find and review as its own protocol surface. The paymaster address
-//! itself ([`crate::addresses::ZEROFEE_ADDRESS`]) and the policy log address
-//! ([`crate::addresses::ZERO_FEE_POLICY_LOG_ADDRESS`]) stay with the other
+//! itself ([`outbe_primitives::addresses::ZEROFEE_ADDRESS`]) and the policy log address
+//! ([`outbe_primitives::addresses::ZERO_FEE_POLICY_LOG_ADDRESS`]) stay with the other
 //! precompile addresses. Only the editable allowlist lives here.
 
 use alloy_primitives::Address;
 
-use crate::addresses::{
+use outbe_primitives::addresses::{
     AGENT_REWARD_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, FIDELITY_ADDRESS,
     GEM_FACTORY_ADDRESS, GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS, NOD_ADDRESS, NOD_FACTORY_ADDRESS,
     PROMIS_ADDRESS, PROMIS_FACTORY_ADDRESS, TRIBUTE_ADDRESS, TRIBUTE_FACTORY_ADDRESS,
 };
 
 /// Whitelist of `to` addresses accepted on the EIP-7702 sponsored
-/// (zero-fee) path enabled by [`crate::addresses::ZEROFEE_ADDRESS`].
+/// (zero-fee) path enabled by [`outbe_primitives::addresses::ZEROFEE_ADDRESS`].
 ///
 /// Sponsored transactions can call only protocol-defined system
 /// precompiles. They cannot enter arbitrary EVM execution. The

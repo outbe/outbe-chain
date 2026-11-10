@@ -78,6 +78,14 @@ pub fn dispatch(
                         .read(&validator_domain_key(c.validator, c.domain))
                 }),
                 missCount(c) => view(c, |c| controller.miss_count.read(&c.validator)),
+                getExchangeRateAndGasPrice(c) => view(c, |c| {
+                    let (rate, price) = controller.gas_quote(c.destinationDomain)?;
+                    Ok(IHyperlaneController::getExchangeRateAndGasPriceReturn {
+                        tokenExchangeRate: rate,
+                        gasPrice: price,
+                    })
+                }),
+                gasMarkupBps(c) => view(c, |_| controller.gas_markup_bps.read()),
             }
         },
     )

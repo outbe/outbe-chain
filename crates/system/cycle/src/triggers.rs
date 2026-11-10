@@ -56,7 +56,7 @@ pub struct TriggerSpec {
     /// `last_accounted_block_number >= window.end_inclusive`. When `false`
     /// (e.g., a job that does NOT depend on parent accounting state), the
     /// handler runs on its own schedule. It does not consult
-    /// [`outbe_primitives::accounting_progress::AccountingProgressView`].
+    /// [`outbe_system_common::accounting_progress::AccountingProgressView`].
     /// Default for the canonical protocol-cycle trigger is `true`.
     pub requires_accounting_window: bool,
     /// When `true` a backlog collapses to the latest due slot instead of

@@ -7,15 +7,16 @@
 
 use alloy_primitives::{keccak256, B256, U256};
 
-pub use crate::day_pass::Progress;
-use crate::error::{PassFailure, PrecompileError, Result};
-use crate::math::constants::MAX_BIN_ID;
-use crate::math::tree_math::{self, BinTreeStorage};
-use crate::pass_budget::{BlockAllowance, PassBudget};
-use crate::storage::dsl::{Map, Value};
-use crate::storage::types::{Storable, StorageKey};
-use crate::storage::StorageHandle;
-use crate::time::SECONDS_PER_DAY;
+pub use outbe_primitives::day_pass::Progress;
+use outbe_primitives::error::{PassFailure, PrecompileError, Result};
+use outbe_primitives::math::constants::MAX_BIN_ID;
+use outbe_primitives::math::tree_math::{self, BinTreeStorage};
+use outbe_primitives::pass_budget::{BlockAllowance, PassBudget};
+use outbe_primitives::series_id::{SeriesId, SERIES_ID_LEN};
+use outbe_primitives::storage::dsl::{Map, Value};
+use outbe_primitives::storage::types::{Storable, StorageKey};
+use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 mod walk;
 pub use walk::{process_through, PassTime};
@@ -40,6 +41,12 @@ impl QueueEntry for B256 {
 impl QueueEntry for u64 {
     fn is_vacant(&self) -> bool {
         *self == 0
+    }
+}
+
+impl QueueEntry for SeriesId {
+    fn is_vacant(&self) -> bool {
+        *self.as_bytes() == [0; SERIES_ID_LEN]
     }
 }
 
@@ -248,7 +255,7 @@ pub trait DeadlineHandler<E> {
 /// This function resumes the selected deadline day with the caller's shared allowance for the block.
 pub fn process_day<'s, Q, H>(
     queue: &Q,
-    ctx: &crate::block::BlockRuntimeContext<'s>,
+    ctx: &outbe_primitives::block::BlockRuntimeContext<'s>,
     through_day: u32,
     budget: &mut PassBudget,
     handler: &mut H,
@@ -273,7 +280,7 @@ where
 /// Repeated calls at the same block height cannot reset the allowance.
 pub fn process_cleanup<'s, Q, H>(
     queue: &Q,
-    ctx: &crate::block::BlockRuntimeContext<'s>,
+    ctx: &outbe_primitives::block::BlockRuntimeContext<'s>,
     saved_budget: &Value<'s, U256>,
     handler: &mut H,
 ) -> Result<Progress>
@@ -338,7 +345,7 @@ macro_rules! impl_deadline_queue {
         sweep_day: $sweep_day:ident,
         cursor: $cursor:ident $(,)?
     }) => {
-        $crate::impl_bin_tree_storage!($adapter {
+        ::outbe_primitives::impl_bin_tree_storage!($adapter {
             root: $root,
             mid: $mid,
             leaf: $leaf
@@ -346,25 +353,27 @@ macro_rules! impl_deadline_queue {
 
         impl<'s> $crate::deadline_queue::DeadlineQueueStore<'s> for $adapter<'_, 's> {
             type Entry = $entry;
-            fn day_len(&self) -> &$crate::storage::dsl::Map<'s, u32, u32> {
+            fn day_len(&self) -> &::outbe_primitives::storage::dsl::Map<'s, u32, u32> {
                 &self.0.$len
             }
-            fn day_live(&self) -> &$crate::storage::dsl::Map<'s, u32, u32> {
+            fn day_live(&self) -> &::outbe_primitives::storage::dsl::Map<'s, u32, u32> {
                 &self.0.$live
             }
-            fn day_at(&self) -> &$crate::storage::dsl::Map<'s, ::alloy_primitives::B256, $entry> {
+            fn day_at(
+                &self,
+            ) -> &::outbe_primitives::storage::dsl::Map<'s, ::alloy_primitives::B256, $entry> {
                 &self.0.$at
             }
-            fn entry_slot(&self) -> &$crate::storage::dsl::Map<'s, $entry, u64> {
+            fn entry_slot(&self) -> &::outbe_primitives::storage::dsl::Map<'s, $entry, u64> {
                 &self.0.$slot
             }
-            fn entry_deadline(&self) -> &$crate::storage::dsl::Map<'s, $entry, u64> {
+            fn entry_deadline(&self) -> &::outbe_primitives::storage::dsl::Map<'s, $entry, u64> {
                 &self.0.$deadline
             }
-            fn sweep_day(&self) -> &$crate::storage::dsl::Value<'s, u32> {
+            fn sweep_day(&self) -> &::outbe_primitives::storage::dsl::Value<'s, u32> {
                 &self.0.$sweep_day
             }
-            fn sweep_cursor(&self) -> &$crate::storage::dsl::Value<'s, u64> {
+            fn sweep_cursor(&self) -> &::outbe_primitives::storage::dsl::Value<'s, u64> {
                 &self.0.$cursor
             }
         }
@@ -374,8 +383,8 @@ macro_rules! impl_deadline_queue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::hashmap::HashMapStorageProvider;
     use alloy_primitives::{address, Address};
+    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 
     const CONTRACT: Address = address!("0x0000000000000000000000000000000000001003");
     const DAY: u64 = SECONDS_PER_DAY;
@@ -838,8 +847,8 @@ mod tests {
     #[test]
     fn cleanup_persists_its_allowance_and_rolls_back_a_failed_continuation() {
         with_queue(|queue, storage| {
-            use crate::block::{BlockContext, BlockRuntimeContext};
-            use crate::pass_budget::{SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
+            use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+            use outbe_primitives::pass_budget::{SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
 
             push(queue, id(1), 10 * DAY).unwrap();
             push(queue, id(2), 10 * DAY).unwrap();

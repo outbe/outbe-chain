@@ -42,6 +42,9 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
 fn write_config_slots(oracle: &mut OracleContract, config: &OracleGenesisConfig) -> Result<()> {
     oracle.config_vote_period.write(config.vote_period)?;
     oracle.config_reward_band.write(config.reward_band)?;
+    oracle
+        .config_gas_reward_band
+        .write(config.gas_reward_band)?;
     oracle.config_slash_window.write(config.slash_window)?;
     oracle
         .config_min_valid_per_window

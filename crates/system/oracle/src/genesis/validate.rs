@@ -23,6 +23,7 @@ pub(super) fn validate_genesis_config(config: &OracleGenesisConfig) -> Result<()
     // percent above 100, and a large value overflows the u64 percent.
     for (field, value) in [
         ("reward_band", config.reward_band),
+        ("gas_reward_band", config.gas_reward_band),
         ("min_valid_per_window", config.min_valid_per_window),
         ("slash_fraction", config.slash_fraction),
     ] {

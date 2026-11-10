@@ -8,7 +8,6 @@ import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
 import {IIntexNFT1155Bridge} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
-import {RejectingReceiver} from "@test-mocks/RejectingReceiver.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
@@ -121,83 +120,5 @@ contract TargetRouterTest is CrossChainTest {
         // IAccessControl interface ID
         bytes4 accessControlId = 0x7965db0b;
         assertTrue(targetRouter.supportsInterface(accessControlId));
-    }
-
-    // --- sweepNative Tests (TargetRouter) ---
-    function test_sweepNative_bnb_success() public {
-        vm.deal(address(targetRouter), 5 ether);
-        address payable recipient = payable(address(0xBEEF));
-        uint256 before = recipient.balance;
-
-        targetRouter.sweepNative(recipient, 5 ether);
-
-        assertEq(recipient.balance - before, 5 ether);
-        assertEq(address(targetRouter).balance, 0);
-    }
-
-    function test_sweepNative_bnb_revert_zeroTo() public {
-        vm.deal(address(targetRouter), 1 ether);
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "to"));
-        targetRouter.sweepNative(payable(address(0)), 1 ether);
-    }
-
-    function test_sweepNative_bnb_revert_insufficientBalance() public {
-        vm.deal(address(targetRouter), 1 ether);
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NativeBalanceInsufficient.selector, 1 ether, 2 ether));
-        targetRouter.sweepNative(payable(address(0xBEEF)), 2 ether);
-    }
-
-    function test_sweepNative_bnb_revert_failedCall() public {
-        vm.deal(address(targetRouter), 1 ether);
-        RejectingReceiver rejector = new RejectingReceiver();
-        vm.expectRevert(ITargetRouter.NativeSweepFailed.selector);
-        targetRouter.sweepNative(payable(address(rejector)), 1 ether);
-    }
-
-    function test_sweepNative_bnb_revert_unauthorized() public {
-        vm.deal(address(targetRouter), 1 ether);
-        vm.prank(user);
-        vm.expectRevert();
-        targetRouter.sweepNative(payable(address(0xBEEF)), 1 ether);
-    }
-
-    // --- sweepNative Tests (IntexNFT1155Bridge) ---
-    function test_sweepNative_batch_success() public {
-        vm.deal(address(nftBridge), 3 ether);
-        address payable recipient = payable(address(0xCAFE));
-        uint256 before = recipient.balance;
-
-        nftBridge.sweepNative(recipient, 3 ether);
-
-        assertEq(recipient.balance - before, 3 ether);
-        assertEq(address(nftBridge).balance, 0);
-    }
-
-    function test_sweepNative_batch_revert_zeroTo() public {
-        vm.deal(address(nftBridge), 1 ether);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.ZeroAddress.selector, "to"));
-        nftBridge.sweepNative(payable(address(0)), 1 ether);
-    }
-
-    function test_sweepNative_batch_revert_insufficientBalance() public {
-        vm.deal(address(nftBridge), 1 ether);
-        vm.expectRevert(
-            abi.encodeWithSelector(IIntexNFT1155Bridge.NativeBalanceInsufficient.selector, 1 ether, 2 ether)
-        );
-        nftBridge.sweepNative(payable(address(0xCAFE)), 2 ether);
-    }
-
-    function test_sweepNative_batch_revert_failedCall() public {
-        vm.deal(address(nftBridge), 1 ether);
-        RejectingReceiver rejector = new RejectingReceiver();
-        vm.expectRevert(IIntexNFT1155Bridge.NativeSweepFailed.selector);
-        nftBridge.sweepNative(payable(address(rejector)), 1 ether);
-    }
-
-    function test_sweepNative_batch_revert_unauthorized() public {
-        vm.deal(address(nftBridge), 1 ether);
-        vm.prank(user);
-        vm.expectRevert();
-        nftBridge.sweepNative(payable(address(0xCAFE)), 1 ether);
     }
 }

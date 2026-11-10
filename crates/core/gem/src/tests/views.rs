@@ -204,7 +204,7 @@ fn transfer_logs_announce_mint_and_burn() {
 
 #[test]
 fn supported_interfaces_match_the_implemented_selectors() {
-    use outbe_primitives::erc::{
+    use outbe_common::erc::{
         ERC165_INTERFACE_ID, ERC20_INTERFACE_ID, ERC4906_INTERFACE_ID,
         ERC721_ENUMERABLE_INTERFACE_ID, ERC721_INTERFACE_ID, ERC721_METADATA_INTERFACE_ID,
     };

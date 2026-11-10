@@ -10,6 +10,7 @@ default = []
 test-utils = []
 
 [dependencies]
+outbe-system-common.workspace = true
 outbe-consensus.workspace = true
 outbe-macros.workspace = true
 outbe-primitives.workspace = true

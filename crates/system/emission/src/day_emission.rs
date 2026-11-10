@@ -8,7 +8,7 @@
 //! independent Python `Decimal` script generates the committed reference
 //! vectors.
 
-pub use outbe_primitives::emission::{
+pub use outbe_system_common::emission::{
     day_emission_limit, FLOOR_DAY_EMISSION, FLOOR_DAY_THRESHOLD, INITIAL_DAY_EMISSION,
 };
 

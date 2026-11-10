@@ -1,6 +1,6 @@
 //! Canonical encrypted Tribute body. Other entity schemas remain at V1.
 
-use crate::tribute_encryption::{EncryptedTributeV2, TributeContextV2};
+use outbe_primitives::tribute_encryption::{EncryptedTributeV2, TributeContextV2};
 
 use super::*;
 

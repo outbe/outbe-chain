@@ -67,7 +67,6 @@ contract IntexNFT1155V2Reinit is IntexNFT1155 {
     bytes32 private constant _V2_SLOT = 0xa6131e184e5aae318840a83507194e5ed64c56b50a1ac526e8c519cdd8bb2200;
 
     function _v2() private pure returns (V2Storage storage $) {
-        // solhint-disable-next-line no-inline-assembly
         assembly ("memory-safe") {
             $.slot := _V2_SLOT
         }

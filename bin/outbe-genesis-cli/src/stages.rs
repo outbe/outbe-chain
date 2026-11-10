@@ -198,6 +198,7 @@ fn add_feeder_pairs(seed: &mut Value, config: &Value) -> Result<(), GenesisError
     };
 
     merge_feeder_currency_pairs(oracle_obj, &table);
+    merge_feeder_gas_chains(oracle_obj, &table);
     append_feeder_seed_arrays(oracle_obj, config)
 }
 
@@ -231,6 +232,28 @@ fn merge_feeder_currency_pairs(oracle_obj: &mut Map<String, Value>, table: &Valu
         };
         if listed.insert((base.to_owned(), quote.to_owned())) {
             pairs_arr.push(json!({ "base": base, "quote": quote }));
+        }
+    }
+}
+
+/// Adds the `chain_id` of each `gas_providers` entry to `oracle.gas_chains`,
+/// once, as the pairs of `currency_pairs` go to `oracle.pairs`.
+fn merge_feeder_gas_chains(oracle_obj: &mut Map<String, Value>, table: &Value) {
+    let Some(providers) = table.get("gas_providers").and_then(Value::as_array) else {
+        return;
+    };
+    let chains_val = oracle_obj
+        .entry("gas_chains".to_owned())
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let Some(chains) = chains_val.as_array_mut() else {
+        return;
+    };
+    for chain_id in providers
+        .iter()
+        .filter_map(|provider| provider.get("chain_id"))
+    {
+        if !chains.contains(chain_id) {
+            chains.push(chain_id.clone());
         }
     }
 }

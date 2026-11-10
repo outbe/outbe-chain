@@ -98,11 +98,6 @@ interface IOriginRouter {
     /// @param intexFactoryNew New `intexFactory` granted `INTEX_FACTORY_ROLE`.
     event DependenciesWired(address desisOld, address desisNew, address intexFactoryOld, address intexFactoryNew);
 
-    /// @notice Emitted when `sweepNative` transfers native tokens out of the contract.
-    /// @param to Recipient of the swept native balance.
-    /// @param amount Amount of native tokens (wei) swept.
-    event NativeSwept(address indexed to, uint256 amount);
-
     /// @notice Emitted when the proceeds route (token bridge + WCOEN) is set.
     event ProceedsRouteSet(address tokenBridge, address wcoen);
     /// @notice Emitted when inbound auction proceeds are handed to the factory to be burned.
@@ -232,12 +227,6 @@ interface IOriginRouter {
     /// @notice Address wired as `desis` does not advertise `IDesis` via ERC-165 or is an EOA.
     /// @param wired Address that failed the interface probe.
     error InvalidDesisInterface(address wired);
-    /// @notice Native-token sweep transfer failed.
-    error NativeSweepFailed();
-    /// @notice Native-token balance is insufficient for the requested sweep.
-    /// @param available Current contract balance.
-    /// @param requested Amount the admin attempted to sweep.
-    error NativeBalanceInsufficient(uint256 available, uint256 requested);
 
     // --- Admin ---
     /// @notice Wire contract dependencies and grant the demand/supply roles.
@@ -262,11 +251,6 @@ interface IOriginRouter {
     function isTarget(uint32 chainId) external view returns (bool);
     /// @notice The frozen target snapshot taken for `emissionDay` at STAGE_START (empty if never started).
     function targetsOf(uint32 emissionDay) external view returns (uint32[] memory);
-
-    /// @notice Sweep native tokens (the relay-funded float) from the contract to an admin recipient.
-    /// @param to Recipient address (must be non-zero).
-    /// @param amount Amount in wei to sweep. It must be <= contract balance.
-    function sweepNative(address payable to, uint256 amount) external;
 
     // --- Send ---
     /// @notice Broadcast auction stage start to every registered target, and take a snapshot of the

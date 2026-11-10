@@ -11,6 +11,7 @@ use super::ballot::{
     vote_has_price,
 };
 use super::cross_rate::{from_cross_rate, to_cross_rate};
+use super::gas::tally_gas;
 use super::{Claim, VoteForTally};
 use crate::precompile::IOracle;
 use crate::schema::{OracleContract, PairIndex};
@@ -82,8 +83,11 @@ pub(super) fn run_tally_inner(
         oracle.write_snapshot(timestamp, &rates.snapshot_entries)?;
     }
 
+    // Each chain in `gas_chains` is one more vote target.
+    let gas_targets = tally_gas(oracle, &mut round.claims, timestamp)?;
+
     // Count miss/success/abstain per validator
-    count_outcomes(oracle, &round.claims, total_targets)?;
+    count_outcomes(oracle, &round.claims, total_targets + gas_targets)?;
 
     // Emit TallyCompleted event
     let event = IOracle::TallyCompleted {
@@ -103,7 +107,7 @@ pub(super) fn run_tally_inner(
 /// Reads the validators, vote targets and votes of the round.
 ///
 /// Returns `None` when the round has no active validator, no vote, or no
-/// vote target. The caller then clears the votes. A round without votes
+/// vote target (no pair target and no gas chain). The caller then clears the votes. A round without votes
 /// first records an abstention for every active validator.
 fn open_round(oracle: &mut OracleContract) -> Result<Option<TallyRound>> {
     // Collect the active validator set at tally time.
@@ -112,12 +116,7 @@ fn open_round(oracle: &mut OracleContract) -> Result<Option<TallyRound>> {
     // validator that exited after submitting cannot contribute to quorum.
     // Snapshotting membership at vote
     // time would require additional storage per period per validator.
-    let vs = outbe_validatorset::contract::ValidatorSet::new(oracle.storage.clone());
-    let validators: Vec<Address> = vs
-        .get_active_validators()?
-        .iter()
-        .map(|v| v.validator_address)
-        .collect();
+    let validators = active_validators(oracle)?;
     if validators.is_empty() {
         return Ok(None);
     }
@@ -132,7 +131,8 @@ fn open_round(oracle: &mut OracleContract) -> Result<Option<TallyRound>> {
     }
 
     let ballots = active_ballots(oracle)?;
-    if ballots.is_empty() {
+    // A round with gas chains but no pair targets still tallies the gas votes.
+    if ballots.is_empty() && oracle.gas_chains.is_empty()? {
         return Ok(None);
     }
 
@@ -146,6 +146,16 @@ fn open_round(oracle: &mut OracleContract) -> Result<Option<TallyRound>> {
     };
     round.collect_votes(oracle, voter_count)?;
     Ok(Some(round))
+}
+
+/// Addresses of the active validators at tally time.
+fn active_validators(oracle: &OracleContract) -> Result<Vec<Address>> {
+    let vs = outbe_validatorset::contract::ValidatorSet::new(oracle.storage.clone());
+    Ok(vs
+        .get_active_validators()?
+        .iter()
+        .map(|v| v.validator_address)
+        .collect())
 }
 
 /// Returns an empty ballot for each vote target (active pair), in registry

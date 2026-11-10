@@ -1222,4 +1222,109 @@ mod vote_target {
             assert_eq!(c.ism_by_domain.read(&BSC).unwrap(), bsc_ism());
         });
     }
+
+    #[test]
+    fn set_gas_config_makes_the_controller_the_gas_oracle_of_the_domain() {
+        use crate::sol_ext::IInterchainGasPaymaster::{
+            setDestinationGasConfigsCall, DomainGasConfig, GasParam,
+        };
+        let payload = format!(
+            r#"{{"operation":"setGasConfig","igp":"{:#x}","chainId":{ARBITRUM},"gasOverhead":200000}}"#,
+            v(0x16)
+        );
+        let mut p = initialized_provider();
+        approve(&mut p, &payload);
+        let start = p.sub_call_inputs().len();
+        apply(&mut p, &payload).unwrap();
+
+        let expected = setDestinationGasConfigsCall {
+            _configs: vec![GasParam {
+                remoteDomain: ARBITRUM,
+                config: DomainGasConfig {
+                    gasOracle: HYPERLANE_CONTROLLER_ADDRESS,
+                    gasOverhead: alloy_primitives::aliases::U96::from(200_000u64),
+                },
+            }],
+        };
+        assert_eq!(
+            owner_calls(&p, start),
+            vec![(None, v(0x16), Bytes::from(expected.abi_encode()))]
+        );
+    }
+
+    #[test]
+    fn set_outbe_gas_data_sends_the_outbe_gas_price_to_the_remote_gas_oracle() {
+        use crate::sol_ext::IStorageGasOracle::{setRemoteGasDataConfigsCall, RemoteGasDataConfig};
+        let payload = format!(
+            r#"{{"operation":"setOutbeGasData","chainId":{ARBITRUM},"gasOracle":"{:#x}","gasPrice":"8"}}"#,
+            v(0x17)
+        );
+        let mut p = initialized_provider();
+        approve(&mut p, &payload);
+        let start = p.sub_call_inputs().len();
+        apply(&mut p, &payload).unwrap();
+
+        let expected = setRemoteGasDataConfigsCall {
+            _configs: vec![RemoteGasDataConfig {
+                remoteDomain: LOCAL,
+                tokenExchangeRate: crate::TOKEN_EXCHANGE_RATE_SCALE,
+                gasPrice: 8,
+            }],
+        };
+        assert_eq!(
+            owner_calls(&p, start),
+            vec![(Some(ARBITRUM), v(0x17), Bytes::from(expected.abi_encode()))]
+        );
+    }
+
+    #[test]
+    fn set_gas_markup_writes_the_markup() {
+        let payload = r#"{"operation":"setGasMarkup","markupBps":5000}"#;
+        let mut p = initialized_provider();
+        approve(&mut p, payload);
+        apply(&mut p, payload).unwrap();
+        StorageHandle::enter(&mut p, |storage| {
+            let c = HyperlaneControllerContract::new(storage);
+            assert_eq!(c.gas_markup_bps.read().unwrap(), 5_000);
+        });
+    }
+}
+
+mod gas_oracle {
+    use super::*;
+    use outbe_oracle::schema::OracleContract;
+
+    fn quote(p: &mut HashMapStorageProvider, domain: u32) -> Result<Bytes, PrecompileError> {
+        let call = IHyperlaneController::getExchangeRateAndGasPriceCall {
+            destinationDomain: domain,
+        };
+        StorageHandle::enter(p, |storage| {
+            dispatch(storage, &call.abi_encode(), stranger(), U256::ZERO)
+        })
+    }
+
+    #[test]
+    fn the_quote_is_one_to_one_and_the_oracle_price_plus_the_default_markup() {
+        let mut p = initialized_provider();
+        StorageHandle::enter(&mut p, |storage| {
+            let oracle = OracleContract::new(storage);
+            oracle.gas_price.write(&BSC, U256::from(1_000)).unwrap();
+        });
+
+        let ret = IHyperlaneController::getExchangeRateAndGasPriceCall::abi_decode_returns(
+            &quote(&mut p, BSC).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(ret.tokenExchangeRate, crate::TOKEN_EXCHANGE_RATE_SCALE);
+        assert_eq!(ret.gasPrice, 1_200);
+    }
+
+    #[test]
+    fn a_domain_without_an_oracle_gas_price_reverts() {
+        let mut p = initialized_provider();
+        assert_eq!(
+            revert_selector(quote(&mut p, BSC).unwrap_err()),
+            IHyperlaneController::NoGasPrice::SELECTOR
+        );
+    }
 }

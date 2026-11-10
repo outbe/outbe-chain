@@ -61,7 +61,6 @@ contract IntexNFT1155Bridge is
     bytes32 private constant _STORAGE_SLOT = 0x769097ec453d253ed110328ac911e291d0940836557f2ebb5d6ffb80fa001500;
 
     function _bs() private pure returns (IntexNFT1155BridgeStorage storage $) {
-        // solhint-disable-next-line no-inline-assembly
         assembly ("memory-safe") {
             $.slot := _STORAGE_SLOT
         }
@@ -81,7 +80,6 @@ contract IntexNFT1155Bridge is
         _grantRole(DEFAULT_ADMIN_ROLE, _delegate);
     }
 
-    // solhint-disable-next-line no-empty-blocks
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     /// @notice Failed crosschainMint snapshot for item `idx` of the message `receiveId`.
@@ -343,19 +341,5 @@ contract IntexNFT1155Bridge is
         return IntexNFT1155BridgeCodec.encodeMulti(
             IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, units: units})
         );
-    }
-
-    /// @inheritdoc IIntexNFT1155Bridge
-    function sweepNative(address payable to, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (to == address(0)) revert ZeroAddress("to");
-        uint256 balance = address(this).balance;
-        if (amount > balance) revert NativeBalanceInsufficient(balance, amount);
-
-        // admin-only native recovery. The arbitrary destination is intentional.
-        // slither-disable-next-line arbitrary-send-eth
-        (bool ok,) = to.call{value: amount}("");
-        if (!ok) revert NativeSweepFailed();
-
-        emit NativeSwept(to, amount);
     }
 }
