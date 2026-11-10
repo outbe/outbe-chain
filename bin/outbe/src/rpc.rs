@@ -58,7 +58,7 @@ pub struct EnclaveStatus {
     pub offer_key_ready: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct ValidatorRecord {
     pub registered: bool,
     pub status: u8,
@@ -155,6 +155,12 @@ impl RpcClient {
     }
 
     pub async fn validator(&self, address: Address) -> Result<ValidatorRecord> {
+        let call = IValidatorSet::isValidatorCall { addr: address };
+        let result = self.eth_call(VALIDATOR_SET, &call.abi_encode()).await?;
+        if !IValidatorSet::isValidatorCall::abi_decode_returns(&result)? {
+            return Ok(ValidatorRecord::default());
+        }
+
         let call = IValidatorSet::validatorByAddressCall { addr: address };
         let result = self.eth_call(VALIDATOR_SET, &call.abi_encode()).await?;
         let record = IValidatorSet::validatorByAddressCall::abi_decode_returns(&result)?;
