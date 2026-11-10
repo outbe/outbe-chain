@@ -2,7 +2,7 @@
 use super::*;
 use commonware_storage::archive::immutable;
 
-pub(super) enum ArchiveKind {
+pub enum ArchiveKind {
     Finalizations,
     Blocks,
 }
@@ -14,7 +14,7 @@ impl ArchiveKind {
         }
     }
 }
-pub(super) fn archive_config<C>(
+pub fn archive_config<C>(
     partition_prefix: &str,
     kind: ArchiveKind,
     page_cache: &CacheRef,
@@ -51,16 +51,16 @@ pub(super) fn archive_config<C>(
     })
 }
 
-pub(super) struct MarshalSettings<'a> {
-    pub(super) partition_prefix: &'a str,
-    pub(super) page_cache: &'a CacheRef,
-    pub(super) view_retention_timeout: u64,
+pub struct MarshalSettings<'a> {
+    pub partition_prefix: &'a str,
+    pub page_cache: &'a CacheRef,
+    pub view_retention_timeout: u64,
 }
-pub(super) struct MarshalStart<ES> {
-    pub(super) epocher: ES,
-    pub(super) genesis: outbe_consensus::block::ConsensusBlock,
+pub struct MarshalStart<ES> {
+    pub epocher: ES,
+    pub genesis: crate::block::ConsensusBlock,
 }
-pub(super) fn marshal_config<ES: commonware_consensus::types::Epocher>(
+pub fn marshal_config<ES: commonware_consensus::types::Epocher>(
     provider: HybridSchemeProvider<MinSig>,
     start: MarshalStart<ES>,
     settings: MarshalSettings<'_>,
@@ -69,8 +69,8 @@ pub(super) fn marshal_config<ES: commonware_consensus::types::Epocher>(
         HybridSchemeProvider<MinSig>,
         ES,
         commonware_parallel::Sequential,
-        outbe_consensus::block::ConsensusBlock,
-        outbe_consensus::block::ConsensusBlock,
+        crate::block::ConsensusBlock,
+        crate::block::ConsensusBlock,
     >,
 > {
     Ok(commonware_consensus::marshal::Config {

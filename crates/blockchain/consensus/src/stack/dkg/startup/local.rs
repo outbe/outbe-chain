@@ -1,7 +1,7 @@
 //! Restart precedence and recovery of durable pending threshold material.
 use super::*;
 
-pub(super) fn load_local_material(
+pub fn load_local_material(
     args: &ConsensusArgs,
     key_backend: &bls::KeyBackend,
     startup_dkg_context: StartupDkgContext,

@@ -1,5 +1,11 @@
 //! Restore a follower committee only from accepted local finalized history.
 use crate::errors::FollowerStackError;
+use crate::{
+    block::ConsensusBlock,
+    digest::Digest,
+    follow::{CommitteeChain, FollowerEpocher},
+    hybrid::HybridScheme,
+};
 use alloy_consensus::BlockHeader as _;
 use alloy_primitives::B256;
 use commonware_consensus::{
@@ -9,26 +15,20 @@ use commonware_consensus::{
 use commonware_cryptography::bls12381::primitives::variant::MinSig;
 use commonware_storage::archive::Identifier;
 use eyre::Result;
-use outbe_consensus::{
-    block::ConsensusBlock,
-    digest::Digest,
-    follow::{CommitteeChain, FollowerEpocher},
-    hybrid::HybridScheme,
-};
 use outbe_primitives::reshare_artifact::ConsensusHeaderArtifact;
 
-pub(in crate::stack) struct RestoredCommittee {
-    pub(in crate::stack) chain: CommitteeChain,
-    pub(in crate::stack) epocher: FollowerEpocher,
+pub struct RestoredCommittee {
+    pub chain: CommitteeChain,
+    pub epocher: FollowerEpocher,
 }
 
-pub(in crate::stack) struct LocalFinalizedHistory<'a, C, B, H> {
-    pub(in crate::stack) certificates: &'a C,
-    pub(in crate::stack) blocks: &'a B,
-    pub(in crate::stack) canonical_hash: H,
-    pub(in crate::stack) floor: u64,
-    pub(in crate::stack) epoch_length: u64,
-    pub(in crate::stack) activation_grace: u64,
+pub struct LocalFinalizedHistory<'a, C, B, H> {
+    pub certificates: &'a C,
+    pub blocks: &'a B,
+    pub canonical_hash: H,
+    pub floor: u64,
+    pub epoch_length: u64,
+    pub activation_grace: u64,
 }
 
 impl<C, B, H> LocalFinalizedHistory<'_, C, B, H>
@@ -37,7 +37,7 @@ where
     B: Blocks<Block = ConsensusBlock>,
     H: Fn(u64) -> Result<Option<B256>>,
 {
-    pub(in crate::stack) async fn restore(self) -> Result<Option<RestoredCommittee>> {
+    pub async fn restore(self) -> Result<Option<RestoredCommittee>> {
         let Some(certificate) = self.read_floor().await? else {
             return Ok(None);
         };
@@ -52,7 +52,7 @@ where
         Ok(Some(restored))
     }
 
-    async fn read_floor(&self) -> Result<Option<outbe_consensus::marshal_types::Finalization>> {
+    async fn read_floor(&self) -> Result<Option<crate::marshal_types::Finalization>> {
         if self.floor == 0 {
             return Ok(None);
         }

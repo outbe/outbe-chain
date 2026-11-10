@@ -1,7 +1,7 @@
 //! The one-time interactive genesis ceremony, admitted only by the startup proof gate.
 use super::*;
 
-pub(super) async fn run_genesis_dkg<C>(
+pub async fn run_genesis_dkg<C>(
     clock: C,
     key_backend: &bls::KeyBackend,
     request: ThresholdMaterialRequest<'_>,

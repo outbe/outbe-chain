@@ -7,7 +7,7 @@ use super::*;
 /// zero. An empty-DB verifier join may carry an already-installed key until
 /// certified sync makes the canonical value locally available. Every other
 /// existing identity must match canonical state exactly at this gate.
-pub(in crate::stack) fn validate_offer_key_before_threshold_work(
+pub fn validate_offer_key_before_threshold_work(
     context: StartupDkgContext,
     local_key_in_current_consensus_set: bool,
     verifier_join: bool,

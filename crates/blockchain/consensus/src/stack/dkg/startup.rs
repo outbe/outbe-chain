@@ -4,9 +4,9 @@ mod genesis;
 mod local;
 mod offer_key;
 
-pub(in crate::stack) use offer_key::validate_offer_key_before_threshold_work;
+pub use offer_key::validate_offer_key_before_threshold_work;
 
-pub(in crate::stack) fn required_block_hash(
+pub fn required_block_hash(
     provider: &impl BlockHashReader,
     height: u64,
     read_error: impl FnOnce(String) -> eyre::Report,
@@ -18,7 +18,7 @@ pub(in crate::stack) fn required_block_hash(
         .ok_or(missing_error)
 }
 
-pub(in crate::stack) fn validate_recovered_vrf_material(
+pub fn validate_recovered_vrf_material(
     polynomial: &Sharing<MinSig>,
     boundary: Option<&DkgBoundaryArtifact>,
 ) -> Result<()> {
@@ -33,7 +33,7 @@ pub(in crate::stack) fn validate_recovered_vrf_material(
     Ok(())
 }
 
-pub(in crate::stack) fn vrf_group_public_key_hash(polynomial: &Sharing<MinSig>) -> B256 {
+pub fn vrf_group_public_key_hash(polynomial: &Sharing<MinSig>) -> B256 {
     let group_pk_bytes = commonware_codec::Encode::encode(polynomial.public());
     alloy_primitives::keccak256(&group_pk_bytes)
 }
@@ -63,7 +63,7 @@ pub(in crate::stack) fn vrf_group_public_key_hash(polynomial: &Sharing<MinSig>) 
 /// recovered chain boundary (e.g. a stale or partial consensus-archive restore).
 /// Recovery then fails fast with an explicit drift error, rather than reconstruct the
 /// scheme against the wrong committee.
-pub(in crate::stack) fn select_recovery_participants(
+pub fn select_recovery_participants(
     recovered_output_players: &commonware_utils::ordered::Set<bls12381::PublicKey>,
     boundary: &DkgBoundaryArtifact,
 ) -> Result<commonware_utils::ordered::Set<bls12381::PublicKey>> {
@@ -83,7 +83,7 @@ pub(in crate::stack) fn select_recovery_participants(
     Ok(recovered_output_players.clone())
 }
 
-pub(in crate::stack) fn recover_latest_boundary_artifact(
+pub fn recover_latest_boundary_artifact(
     provider: &(impl HeaderProvider<Header = OutbeHeader> + BlockHashReader),
     last_execution_height: u64,
     dkg_rotation_params: DkgRotationParams,
@@ -126,30 +126,30 @@ pub(in crate::stack) fn recover_latest_boundary_artifact(
 
 /// Pinned identity, membership and chain history for each startup snapshot probe.
 #[derive(Clone, Copy)]
-pub(in crate::stack) struct StartupDkgRequest<'a> {
-    pub(in crate::stack) protocol: &'a dyn crate::protocol_state::EngineProtocolState,
-    pub(in crate::stack) local_pk: &'a bls12381::PublicKey,
-    pub(in crate::stack) validator_set: &'a validators::ValidatorSet,
-    pub(in crate::stack) genesis_hash: B256,
-    pub(in crate::stack) dkg_rotation_params: DkgRotationParams,
-    pub(in crate::stack) last_consensus_finalized_height: u64,
+pub struct StartupDkgRequest<'a> {
+    pub protocol: &'a dyn crate::protocol_state::EngineProtocolState,
+    pub local_pk: &'a bls12381::PublicKey,
+    pub validator_set: &'a validators::ValidatorSet,
+    pub genesis_hash: B256,
+    pub dkg_rotation_params: DkgRotationParams,
+    pub last_consensus_finalized_height: u64,
 }
 
 /// Threshold selection inputs. Runtime, key backend and transport stay separate.
-pub(in crate::stack) struct ThresholdMaterialRequest<'a> {
-    pub(in crate::stack) args: &'a ConsensusArgs,
-    pub(in crate::stack) signing_key: bls12381::PrivateKey,
-    pub(in crate::stack) validator_set: &'a validators::ValidatorSet,
-    pub(in crate::stack) context: StartupDkgContext,
+pub struct ThresholdMaterialRequest<'a> {
+    pub args: &'a ConsensusArgs,
+    pub signing_key: bls12381::PrivateKey,
+    pub validator_set: &'a validators::ValidatorSet,
+    pub context: StartupDkgContext,
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::stack) struct StartupDkgSnapshot {
-    pub(in crate::stack) last_execution_height: u64,
-    pub(in crate::stack) last_execution_hash: B256,
-    pub(in crate::stack) recovered_boundary: Option<(u64, DkgBoundaryArtifact)>,
-    pub(in crate::stack) pending_boundary: Option<PendingDkgBoundarySnapshot>,
-    pub(in crate::stack) context: StartupDkgContext,
+pub struct StartupDkgSnapshot {
+    pub last_execution_height: u64,
+    pub last_execution_hash: B256,
+    pub recovered_boundary: Option<(u64, DkgBoundaryArtifact)>,
+    pub pending_boundary: Option<PendingDkgBoundarySnapshot>,
+    pub context: StartupDkgContext,
 }
 
 fn startup_threshold_material_candidate_available(args: &ConsensusArgs) -> bool {
@@ -162,7 +162,7 @@ fn startup_threshold_material_candidate_available(args: &ConsensusArgs) -> bool 
 }
 
 fn read_startup_dkg_snapshot(
-    node: &OutbeFullNode,
+    node: &impl ExecutionProviderAccess,
     args: &ConsensusArgs,
     key_backend: &bls::KeyBackend,
     request: &StartupDkgRequest<'_>,
@@ -175,14 +175,14 @@ fn read_startup_dkg_snapshot(
         last_consensus_finalized_height,
         ..
     } = *request;
-    let last_execution_height = node.provider.last_block_number().map_err(|e| {
+    let last_execution_height = node.provider().last_block_number().map_err(|e| {
         crate::errors::StackDkgError::GetLastBlockNumber {
             reason: format!("{e}"),
         }
     })?;
     let last_execution_hash = if last_execution_height > 0 {
         required_block_hash(
-            &node.provider,
+            node.provider(),
             last_execution_height,
             |reason| {
                 crate::errors::StackDkgError::GetBlockHashForHeight {
@@ -217,7 +217,7 @@ fn read_startup_dkg_snapshot(
     // freshly promoted one), the new epoch is 3-of-5 < quorum and the chain
     // deadlocks at the boundary. Anchor = commit_height - 1, uniformly.
     let recovered_boundary = recover_latest_boundary_artifact(
-        &node.provider,
+        node.provider(),
         boundary_recovery_height,
         dkg_rotation_params,
     )
@@ -272,41 +272,15 @@ fn read_startup_dkg_snapshot(
     })
 }
 
-async fn collect_reth_genesis_peer_evidence(node: &OutbeFullNode) -> RethGenesisPeerEvidence {
-    let peers_result = node.network.get_all_peers().await;
-    let (peer_query_failed, peers) = match peers_result {
-        Ok(peers) => {
-            let statuses = peers
-                .into_iter()
-                .map(|peer| RethGenesisPeerStatus {
-                    genesis: peer.status.genesis,
-                    blockhash: peer.status.blockhash,
-                    latest_block: peer.status.latest_block,
-                })
-                .collect();
-            (false, statuses)
-        }
-        Err(error) => {
-            warn!(
-                ?error,
-                "failed to query Reth peers during genesis formation gate"
-            );
-            (true, Vec::new())
-        }
-    };
-
-    RethGenesisPeerEvidence {
-        connected_peers: node.network.num_connected_peers(),
-        is_syncing: node.network.is_syncing(),
-        is_initially_syncing: node.network.is_initially_syncing(),
-        peer_query_failed,
-        peers,
-    }
+async fn collect_reth_genesis_peer_evidence(
+    node: &impl StackNodeAccess,
+) -> RethGenesisPeerEvidence {
+    node.collect_genesis_peer_evidence().await
 }
 
-pub(in crate::stack) async fn resolve_startup_dkg_snapshot<E>(
+pub async fn resolve_startup_dkg_snapshot<E>(
     ctx: E,
-    node: &OutbeFullNode,
+    node: &impl StackNodeAccess,
     args: &ConsensusArgs,
     key_backend: &bls::KeyBackend,
     request: StartupDkgRequest<'_>,
@@ -394,7 +368,7 @@ where
     }
 }
 
-pub(in crate::stack) enum ThresholdMaterial {
+pub enum ThresholdMaterial {
     Ready {
         signing_share: Share,
         polynomial: Sharing<MinSig>,
@@ -412,9 +386,7 @@ pub(in crate::stack) enum ThresholdMaterial {
     },
 }
 
-pub(in crate::stack) fn missing_current_threshold_material_error(
-    reason: impl std::fmt::Display,
-) -> eyre::Report {
+pub fn missing_current_threshold_material_error(reason: impl std::fmt::Display) -> eyre::Report {
     crate::errors::StackDkgError::MissingCurrentThresholdMaterial {
         reason: format!("{reason}"),
     }
@@ -422,26 +394,26 @@ pub(in crate::stack) fn missing_current_threshold_material_error(
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::stack) enum StartupDkgMode {
+pub enum StartupDkgMode {
     InitialGenesisDkg,
     LiveJoinRequired,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::stack) enum GenesisFormationGate {
+pub enum GenesisFormationGate {
     Proven,
     WaitForExecutionSync,
     ExistingChainJoin,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(in crate::stack) struct StartupDkgContext {
-    pub(in crate::stack) last_execution_height: u64,
-    pub(in crate::stack) last_consensus_finalized_height: u64,
-    pub(in crate::stack) recovered_boundary_finalized: bool,
-    pub(in crate::stack) recovered_vrf_group_public_key: Option<B256>,
-    pub(in crate::stack) recovered_dkg_output_hash: Option<B256>,
-    pub(in crate::stack) genesis_formation_proven: bool,
+pub struct StartupDkgContext {
+    pub last_execution_height: u64,
+    pub last_consensus_finalized_height: u64,
+    pub recovered_boundary_finalized: bool,
+    pub recovered_vrf_group_public_key: Option<B256>,
+    pub recovered_dkg_output_hash: Option<B256>,
+    pub genesis_formation_proven: bool,
 }
 
 impl StartupDkgContext {
@@ -450,23 +422,11 @@ impl StartupDkgContext {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::stack) struct RethGenesisPeerStatus {
-    pub(in crate::stack) genesis: B256,
-    pub(in crate::stack) blockhash: B256,
-    pub(in crate::stack) latest_block: Option<u64>,
-}
+pub use crate::execution_port::{
+    GenesisPeerEvidence as RethGenesisPeerEvidence, GenesisPeerStatus as RethGenesisPeerStatus,
+};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::stack) struct RethGenesisPeerEvidence {
-    pub(in crate::stack) connected_peers: usize,
-    pub(in crate::stack) is_syncing: bool,
-    pub(in crate::stack) is_initially_syncing: bool,
-    pub(in crate::stack) peer_query_failed: bool,
-    pub(in crate::stack) peers: Vec<RethGenesisPeerStatus>,
-}
-
-pub(in crate::stack) fn startup_dkg_mode(
+pub fn startup_dkg_mode(
     context: StartupDkgContext,
     local_key_in_current_consensus_set: bool,
 ) -> StartupDkgMode {
@@ -485,7 +445,7 @@ pub(in crate::stack) fn startup_dkg_mode(
     }
 }
 
-pub(in crate::stack) fn should_coordinate_genesis_tee_bootstrap(
+pub fn should_coordinate_genesis_tee_bootstrap(
     context: StartupDkgContext,
     local_key_in_current_consensus_set: bool,
     shareless_verifier: bool,
@@ -495,7 +455,7 @@ pub(in crate::stack) fn should_coordinate_genesis_tee_bootstrap(
             == StartupDkgMode::InitialGenesisDkg
 }
 
-pub(in crate::stack) fn genesis_formation_gate_decision(
+pub fn genesis_formation_gate_decision(
     context: StartupDkgContext,
     genesis_hash: B256,
     required_remote_peers: usize,
@@ -532,14 +492,14 @@ pub(in crate::stack) fn genesis_formation_gate_decision(
 /// evidence. Together they form an `N-f` BFT quorum. DKG itself still requires
 /// every configured genesis dealer log, so lowering this transport gate cannot
 /// let a partial committee complete network formation.
-pub(in crate::stack) fn genesis_formation_required_remote_peers(validator_count: usize) -> usize {
+pub fn genesis_formation_required_remote_peers(validator_count: usize) -> usize {
     let max_byzantine = validator_count.saturating_sub(1) / 3;
     validator_count
         .saturating_sub(max_byzantine)
         .saturating_sub(1)
 }
 
-pub(in crate::stack) fn vrf_material_matches_recovered_boundary(
+pub fn vrf_material_matches_recovered_boundary(
     polynomial: &Sharing<MinSig>,
     context: StartupDkgContext,
 ) -> bool {
@@ -570,7 +530,7 @@ fn dkg_output_matches_recovered_boundary(
 /// restart when Reth head may have executed an unfinalized membership-changing
 /// `BoundaryOutcome` while marshal-finalized consensus still needs the old
 /// committee.
-pub(in crate::stack) fn ordered_addresses_from_recovered_boundary(
+pub fn ordered_addresses_from_recovered_boundary(
     participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
     boundary: &DkgBoundaryArtifact,
 ) -> Result<Vec<EthAddress>> {
@@ -607,19 +567,18 @@ pub(in crate::stack) fn ordered_addresses_from_recovered_boundary(
                 actual: encoded.len(),
             }
         })?;
-        committee.push(outbe_consensus::proof::CommitteeEntry {
+        committee.push(crate::proof::CommitteeEntry {
             address: *address,
             consensus_pubkey,
         });
     }
-    let snapshot = outbe_consensus::proof::CommitteeSnapshot {
+    let snapshot = crate::proof::CommitteeSnapshot {
         committee,
         vrf_material_version: boundary.vrf_material_version,
         vrf_group_public_key_bytes: boundary.vrf_group_public_key_bytes.to_vec(),
         vrf_public_polynomial_hash: dkg_manager::public_polynomial_hash(boundary_output.public()),
     };
-    if outbe_consensus::proof::committee_set_hash_v2(boundary.epoch, &snapshot)
-        != boundary.committee_set_hash
+    if crate::proof::committee_set_hash_v2(boundary.epoch, &snapshot) != boundary.committee_set_hash
     {
         return Err(crate::errors::StackDkgError::RecoveredBoundaryCommitteeSetHashMismatch.into());
     }
@@ -629,7 +588,7 @@ pub(in crate::stack) fn ordered_addresses_from_recovered_boundary(
 
 /// Load the validator EVM signer and the committee address set for the one-time
 /// TEE bootstrap coordination.
-pub(in crate::stack) fn tee_bootstrap_setup(
+pub fn tee_bootstrap_setup(
     args: &ConsensusArgs,
     participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
     validator_set: &validators::ValidatorSet,
@@ -645,12 +604,12 @@ pub(in crate::stack) fn tee_bootstrap_setup(
             reason: format!("{error}"),
         }
     })?;
-    let evm_signer = outbe_consensus::bls::load_validator_evm_signer(&evm_key_path, &backend)
-        .map_err(
-            |error| crate::errors::StackDkgError::LoadValidatorEvmSignerForTeeBootstrap {
+    let evm_signer =
+        crate::bls::load_validator_evm_signer(&evm_key_path, &backend).map_err(|error| {
+            crate::errors::StackDkgError::LoadValidatorEvmSignerForTeeBootstrap {
                 reason: format!("{error}"),
-            },
-        )?;
+            }
+        })?;
     let committee: std::collections::BTreeSet<alloy_primitives::Address> =
         ordered_validator_addresses(participants, validator_set)?
             .into_iter()
@@ -666,7 +625,7 @@ pub(in crate::stack) fn tee_bootstrap_setup(
 /// intentionally absent until `BoundaryOutcome` executes. Deriving both system
 /// transactions from this single artifact preserves proposer/executor parity and
 /// introduces no second committee authority.
-pub(in crate::stack) fn build_genesis_dkg_boundary_artifact(
+pub fn build_genesis_dkg_boundary_artifact(
     validator_set: &validators::ValidatorSet,
     output: &Output<MinSig, bls12381::PublicKey>,
     is_full_dkg: bool,
@@ -692,7 +651,7 @@ pub(in crate::stack) fn build_genesis_dkg_boundary_artifact(
 /// Saved local state takes precedence over matching pending recovery.
 /// Only proven empty genesis formation admits interactive DKG.
 /// Existing-chain recovery and corrupt-material errors remain fail-fast.
-pub(in crate::stack) async fn obtain_threshold_material<C>(
+pub async fn obtain_threshold_material<C>(
     clock: C,
     key_backend: &bls::KeyBackend,
     request: ThresholdMaterialRequest<'_>,
@@ -709,7 +668,7 @@ where
     genesis::run_genesis_dkg(clock, key_backend, request, dkg_sender, dkg_receiver).await
 }
 
-pub(in crate::stack) fn validator_set_for_dkg_output_players(
+pub fn validator_set_for_dkg_output_players(
     output: &Output<MinSig, bls12381::PublicKey>,
     source: &validators::ValidatorSet,
 ) -> Result<validators::ValidatorSet> {
@@ -734,7 +693,7 @@ pub(in crate::stack) fn validator_set_for_dkg_output_players(
     })
 }
 
-pub(in crate::stack) fn participants_from_validator_set(
+pub fn participants_from_validator_set(
     validator_set: &validators::ValidatorSet,
 ) -> Result<commonware_utils::ordered::Set<bls12381::PublicKey>> {
     validator_set

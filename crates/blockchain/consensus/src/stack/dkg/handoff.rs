@@ -1,14 +1,14 @@
 use super::super::*;
 
 #[derive(Clone, Copy, Debug)]
-pub(in crate::stack) struct DkgRotationParams {
-    pub(in crate::stack) epoch_length_blocks: u64,
-    pub(in crate::stack) prepare_window_blocks: u64,
-    pub(in crate::stack) activation_grace_blocks: u64,
+pub struct DkgRotationParams {
+    pub epoch_length_blocks: u64,
+    pub prepare_window_blocks: u64,
+    pub activation_grace_blocks: u64,
 }
 
 impl DkgRotationParams {
-    pub(in crate::stack) fn from_genesis(node: &OutbeFullNode, epoch_length_blocks: u32) -> Self {
+    pub fn from_genesis(node: &impl StackNodeAccess, epoch_length_blocks: u32) -> Self {
         let extra = &node.chain_spec().genesis.config.extra_fields;
         let prepare_window_blocks = extra
             .get_deserialized::<u64>("dkgPrepareWindowBlocks")
@@ -27,20 +27,17 @@ impl DkgRotationParams {
         }
     }
 
-    pub(in crate::stack) fn planned_activation_height(self, last_activation_height: u64) -> u64 {
+    pub fn planned_activation_height(self, last_activation_height: u64) -> u64 {
         last_activation_height.saturating_add(self.epoch_length_blocks)
     }
 
-    pub(in crate::stack) fn freeze_height(self, last_activation_height: u64) -> u64 {
+    pub fn freeze_height(self, last_activation_height: u64) -> u64 {
         self.planned_activation_height(last_activation_height)
             .saturating_sub(self.prepare_window_blocks)
     }
 }
 
-pub(in crate::stack) fn publish_randomness_status(
-    bridge: &ConsensusExecutionBridge,
-    vrf_safety: &VrfSafetyGate,
-) {
+pub fn publish_randomness_status(bridge: &ConsensusExecutionBridge, vrf_safety: &VrfSafetyGate) {
     let snapshot = vrf_safety.snapshot();
     info!(
         randomness_status = ?snapshot.randomness_status,
@@ -63,7 +60,7 @@ pub(in crate::stack) fn publish_randomness_status(
 /// authority report. Publication is ordered fail-safe: adding a
 /// share becomes visible only after provider installation, while removing one
 /// becomes visible before provider demotion.
-pub(in crate::stack) fn activate_vrf_material_and_publish_local_share(
+pub fn activate_vrf_material_and_publish_local_share(
     bridge: &ConsensusExecutionBridge,
     vrf_materials: &VrfMaterialProvider<MinSig>,
     version: u64,
@@ -82,13 +79,13 @@ pub(in crate::stack) fn activate_vrf_material_and_publish_local_share(
 
 #[derive(Clone, Debug)]
 pub struct FrozenDkgTarget {
-    pub(in crate::stack) dkg_cycle: u64,
+    pub dkg_cycle: u64,
     pub freeze_height: u64,
-    pub(in crate::stack) planned_activation_height: u64,
+    pub planned_activation_height: u64,
     pub validator_set: validators::ValidatorSet,
     pub participants: commonware_utils::ordered::Set<bls12381::PublicKey>,
-    pub(in crate::stack) tee_expired_target_exclusions: Vec<EthAddress>,
-    pub(in crate::stack) is_validator_set_change: bool,
+    pub tee_expired_target_exclusions: Vec<EthAddress>,
+    pub is_validator_set_change: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -104,9 +101,9 @@ pub struct PendingDkgActivation {
 
 #[derive(Clone, Debug)]
 pub struct DealerOnlyDkgActivation {
-    pub(in crate::stack) target: FrozenDkgTarget,
-    pub(in crate::stack) boundary_artifact: Option<DkgBoundaryArtifact>,
-    pub(in crate::stack) recovered_output: Option<Output<MinSig, bls12381::PublicKey>>,
+    pub target: FrozenDkgTarget,
+    pub boundary_artifact: Option<DkgBoundaryArtifact>,
+    pub recovered_output: Option<Output<MinSig, bls12381::PublicKey>>,
 }
 
 pub enum RestoredPendingDkgActivation {
@@ -116,20 +113,20 @@ pub enum RestoredPendingDkgActivation {
 
 #[derive(Clone, Debug)]
 #[allow(clippy::large_enum_variant)]
-pub(in crate::stack) enum DkgTaskOutcome {
+pub enum DkgTaskOutcome {
     Complete(dkg_actor::DkgComplete),
     DealerOnly(dkg_actor::DkgDealerOnlyComplete),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::stack) enum LocalDkgRole {
+pub enum LocalDkgRole {
     DealerAndPlayer,
     DealerOnly,
     PlayerOnly,
     NotParticipant,
 }
 
-pub(in crate::stack) fn classify_local_reshare_role(
+pub fn classify_local_reshare_role(
     local: &bls12381::PublicKey,
     previous_output: Option<&Output<MinSig, bls12381::PublicKey>>,
     target_participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
@@ -156,7 +153,7 @@ pub enum FrozenValidatorSetRefresh {
     PendingBlockHash,
 }
 
-pub(in crate::stack) fn should_start_dkg_rotation(
+pub fn should_start_dkg_rotation(
     has_frozen_target: bool,
     has_pending_activation: bool,
     current_height: u64,
@@ -166,14 +163,14 @@ pub(in crate::stack) fn should_start_dkg_rotation(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::stack) enum PendingDkgHandoffDecision {
+pub enum PendingDkgHandoffDecision {
     Wait,
     Activate { activation_anchor: u64 },
     Expired { deadline: u64 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::stack) enum StartupPendingDkgEpochPlan {
+pub enum StartupPendingDkgEpochPlan {
     /// The outgoing epoch remains active. Its channels must be acquired before
     /// the recovered future-epoch channels are pre-registered.
     Defer {
@@ -190,12 +187,12 @@ pub(in crate::stack) enum StartupPendingDkgEpochPlan {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::stack) enum PendingFreezeBlockHashDecision {
+pub enum PendingFreezeBlockHashDecision {
     Retry,
     Expired,
 }
 
-pub(in crate::stack) fn pending_freeze_block_hash_decision(
+pub fn pending_freeze_block_hash_decision(
     current_height: u64,
     planned_activation_height: u64,
 ) -> PendingFreezeBlockHashDecision {
@@ -206,7 +203,7 @@ pub(in crate::stack) fn pending_freeze_block_hash_decision(
     }
 }
 
-pub(in crate::stack) fn pending_dkg_handoff_decision(
+pub fn pending_dkg_handoff_decision(
     finalized_height: u64,
     planned_activation_height: u64,
     activation_grace_blocks: u64,
@@ -234,14 +231,14 @@ pub(in crate::stack) fn pending_dkg_handoff_decision(
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(in crate::stack) struct StartupPendingDkgHandoff {
-    pub(in crate::stack) finalized_height: u64,
-    pub(in crate::stack) planned_activation_height: u64,
-    pub(in crate::stack) activation_grace_blocks: u64,
-    pub(in crate::stack) exact_carrier_height: Option<u64>,
+pub struct StartupPendingDkgHandoff {
+    pub finalized_height: u64,
+    pub planned_activation_height: u64,
+    pub activation_grace_blocks: u64,
+    pub exact_carrier_height: Option<u64>,
 }
 
-pub(in crate::stack) fn startup_pending_dkg_epoch_plan(
+pub fn startup_pending_dkg_epoch_plan(
     current_epoch: Epoch,
     pending_epoch: Epoch,
     handoff: StartupPendingDkgHandoff,
@@ -290,14 +287,14 @@ pub(in crate::stack) fn startup_pending_dkg_epoch_plan(
     }
 }
 
-pub(in crate::stack) fn select_pending_canonical_output(
+pub fn select_pending_canonical_output(
     finalized_log_output: Option<Output<MinSig, bls12381::PublicKey>>,
     recovered_output: Option<&Output<MinSig, bls12381::PublicKey>>,
 ) -> Option<Output<MinSig, bls12381::PublicKey>> {
     finalized_log_output.or_else(|| recovered_output.cloned())
 }
 
-pub(in crate::stack) fn preannounce_matches_pending(
+pub fn preannounce_matches_pending(
     artifact: &ConsensusHeaderArtifact,
     pending: &DkgBoundaryArtifact,
 ) -> bool {
@@ -308,7 +305,7 @@ pub(in crate::stack) fn preannounce_matches_pending(
     )
 }
 
-pub(in crate::stack) fn find_exact_finalized_preannounce_carrier(
+pub fn find_exact_finalized_preannounce_carrier(
     provider: &(impl HeaderProvider<Header = OutbeHeader> + BlockHashReader),
     pending: &DkgBoundaryArtifact,
     finalized_height: u64,
@@ -399,7 +396,7 @@ pub(in crate::stack) fn find_exact_finalized_preannounce_carrier(
     Ok(None)
 }
 
-pub(in crate::stack) fn frozen_dkg_target_expired(
+pub fn frozen_dkg_target_expired(
     current_height: u64,
     planned_activation_height: u64,
     activation_grace_blocks: u64,
@@ -408,18 +405,18 @@ pub(in crate::stack) fn frozen_dkg_target_expired(
     current_height >= deadline
 }
 
-pub(in crate::stack) fn next_consensus_epoch_after_dkg_activation(current_epoch: Epoch) -> Epoch {
+pub fn next_consensus_epoch_after_dkg_activation(current_epoch: Epoch) -> Epoch {
     Epoch::new(current_epoch.get().saturating_add(1))
 }
 
-pub(in crate::stack) fn next_dkg_cycle_after_restored_target(
+pub fn next_dkg_cycle_after_restored_target(
     current_next_cycle: u64,
     restored_target_cycle: u64,
 ) -> u64 {
     current_next_cycle.max(restored_target_cycle.saturating_add(1))
 }
 
-pub(in crate::stack) fn ordered_validator_addresses(
+pub fn ordered_validator_addresses(
     participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
     validator_set: &validators::ValidatorSet,
 ) -> Result<Vec<alloy_primitives::Address>> {
@@ -445,7 +442,7 @@ pub(in crate::stack) fn ordered_validator_addresses(
     Ok(ordered)
 }
 
-pub(in crate::stack) fn active_set_hash_from_addresses(addresses: &[EthAddress]) -> B256 {
+pub fn active_set_hash_from_addresses(addresses: &[EthAddress]) -> B256 {
     let mut bytes = Vec::with_capacity(8 + addresses.len() * 20);
     bytes.extend_from_slice(&(addresses.len() as u64).to_be_bytes());
     for address in addresses {
@@ -468,7 +465,7 @@ pub(in crate::stack) fn active_set_hash_from_addresses(addresses: &[EthAddress])
 /// from `scan_height`) before the ceremony. Signers already hold the correct output from
 /// their prior ceremony, so this only runs for the share-less case. Best-effort: on any
 /// recovery/decode failure it keeps the local value and warns.
-pub(in crate::stack) fn refresh_verifier_join_prev_output(
+pub fn refresh_verifier_join_prev_output(
     provider: &(impl HeaderProvider<Header = OutbeHeader> + BlockHashReader),
     scan_height: u64,
     dkg_rotation_params: DkgRotationParams,
@@ -501,7 +498,7 @@ pub(in crate::stack) fn refresh_verifier_join_prev_output(
     }
 }
 
-pub(in crate::stack) fn startup_live_join_scan_height(
+pub fn startup_live_join_scan_height(
     execution_height: u64,
     consensus_finalized_height: u64,
     trust_el_head: bool,
@@ -527,19 +524,19 @@ pub(in crate::stack) fn startup_live_join_scan_height(
     Ok(execution_height.min(consensus_finalized_height))
 }
 
-pub(in crate::stack) struct DkgCeremonyReplaySpec {
-    pub(in crate::stack) freeze_height: u64,
-    pub(in crate::stack) epoch: Epoch,
-    pub(in crate::stack) round: u64,
-    pub(in crate::stack) previous_output: Option<Output<MinSig, bls12381::PublicKey>>,
-    pub(in crate::stack) participants: commonware_utils::ordered::Set<bls12381::PublicKey>,
-    pub(in crate::stack) finalized_dealer_log_tx: Option<tokio::sync::mpsc::UnboundedSender<Bytes>>,
+pub struct DkgCeremonyReplaySpec {
+    pub freeze_height: u64,
+    pub epoch: Epoch,
+    pub round: u64,
+    pub previous_output: Option<Output<MinSig, bls12381::PublicKey>>,
+    pub participants: commonware_utils::ordered::Set<bls12381::PublicKey>,
+    pub finalized_dealer_log_tx: Option<tokio::sync::mpsc::UnboundedSender<Bytes>>,
 }
 
 /// Recreate the manager's ceremony and replay the finalized DealerLog prefix
 /// before a frozen-target DKG retry starts.
 ///
-pub(in crate::stack) fn restart_dkg_manager_from_finalized_history(
+pub fn restart_dkg_manager_from_finalized_history(
     provider: &(impl HeaderProvider<Header = OutbeHeader> + BlockHashReader),
     dkg_manager: &DkgManagerMailbox,
     spec: DkgCeremonyReplaySpec,
@@ -564,16 +561,14 @@ pub(in crate::stack) fn restart_dkg_manager_from_finalized_history(
         spec.freeze_height,
         verified_consensus_tip.height.get(),
     )?;
-    replay_guard.restart_ceremony_with_finalized_logs(
-        outbe_consensus::dkg_manager::CeremonyReplayRequest {
-            epoch: spec.epoch,
-            round: spec.round,
-            previous_output: spec.previous_output,
-            participants: spec.participants,
-            finalized_dealer_log_tx: spec.finalized_dealer_log_tx,
-            finalized_logs,
-        },
-    )
+    replay_guard.restart_ceremony_with_finalized_logs(crate::dkg_manager::CeremonyReplayRequest {
+        epoch: spec.epoch,
+        round: spec.round,
+        previous_output: spec.previous_output,
+        participants: spec.participants,
+        finalized_dealer_log_tx: spec.finalized_dealer_log_tx,
+        finalized_logs,
+    })
 }
 
 fn collect_finalized_dealer_logs(
@@ -611,10 +606,10 @@ fn collect_finalized_dealer_logs(
 /// from the same historical state on every node.
 pub fn refresh_validator_set_at_height(
     protocol: &dyn crate::protocol_state::EngineProtocolState,
-    node: &OutbeFullNode,
+    node: &impl ExecutionProviderAccess,
     freeze_height: u64,
 ) -> Result<FrozenValidatorSetRefresh> {
-    let Some(block_hash) = node.provider.block_hash(freeze_height).map_err(|e| {
+    let Some(block_hash) = node.provider().block_hash(freeze_height).map_err(|e| {
         crate::errors::StackDkgError::GetBlockHashAtFreezeHeight {
             freeze_height,
             reason: format!("{e}"),
@@ -624,7 +619,7 @@ pub fn refresh_validator_set_at_height(
         return Ok(FrozenValidatorSetRefresh::PendingBlockHash);
     };
     let Some(header) = node
-        .provider
+        .provider()
         .sealed_header(freeze_height)
         .map_err(
             |error| crate::errors::StackDkgError::GetCanonicalHeaderAtFreezeHeight {
@@ -651,12 +646,13 @@ pub fn refresh_validator_set_at_height(
         .into());
     }
 
-    let state = node.provider.state_by_block_hash(block_hash).map_err(|e| {
-        crate::errors::StackDkgError::GetStateAtFreezeHeight {
+    let state = node
+        .provider()
+        .state_by_block_hash(block_hash)
+        .map_err(|e| crate::errors::StackDkgError::GetStateAtFreezeHeight {
             freeze_height,
             reason: format!("{e}"),
-        }
-    })?;
+        })?;
     // CycleTick has already moved every overdue ACTIVE validator into the jailed
     // lifecycle before this exact freeze state. The ordinary reshare target is
     // therefore authoritative. Legacy boundary expiry fields remain empty.
