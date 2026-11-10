@@ -18,7 +18,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-outbe-consensus = { workspace = true, features = ["test-utils"] }
+outbe-simplex = { workspace = true, features = ["test-utils"] }
 commonware-utils.workspace = true
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
 outbe-vote.workspace = true

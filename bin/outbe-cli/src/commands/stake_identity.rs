@@ -11,8 +11,8 @@ use alloy_primitives::{Address, B256};
 use commonware_codec::Encode as _;
 use commonware_cryptography::Signer as _;
 use eyre::Result;
-use outbe_consensus::bls::{self, KeyBackend};
 use outbe_primitives::validators::{validator_registration_message, VALIDATOR_REGISTRATION_DST};
+use outbe_simplex::bls::{self, KeyBackend};
 use zeroize::Zeroizing;
 
 use crate::errors::StakingError;

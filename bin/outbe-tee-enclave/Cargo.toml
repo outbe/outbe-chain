@@ -76,7 +76,7 @@ postcard.workspace = true
 # change vs. today); declared directly only to name `tee_bootstrap::recover_signer`,
 # reused so the enclave and host recover EIP-191 signers with one identical impl.
 outbe-primitives = { workspace = true, features = ["tee-attestation-v1"] }
-outbe-consensus.workspace = true
+outbe-simplex.workspace = true
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
 alloy-rlp.workspace = true
@@ -125,7 +125,7 @@ tempfile.workspace = true
 alloy-primitives.workspace = true
 tokio = { workspace = true }
 commonware-runtime.workspace = true
-outbe-consensus = { workspace = true, features = ["test-utils"] }
+outbe-simplex = { workspace = true, features = ["test-utils"] }
 criterion.workspace = true
 # Test-only: sign EIP-191 owner proofs for the DeriveAccountKeys ownership gate.
 k256.workspace = true

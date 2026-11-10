@@ -412,7 +412,7 @@ pub(crate) fn signing_fixture(
         .map(bls12381::PrivateKey::from_seed)
         .collect();
     keys.sort_by_key(|key| key.public_key());
-    let dkg = outbe_consensus::bls::bootstrap_dkg_for_participants(
+    let dkg = outbe_simplex::bls::bootstrap_dkg_for_participants(
         keys.iter()
             .map(|key| key.public_key())
             .try_collect()
@@ -434,7 +434,7 @@ pub(crate) fn signing_fixture(
             .collect(),
         vrf_material_version: 6,
         vrf_group_public_key_bytes: dkg.polynomial.public().encode().to_vec(),
-        vrf_public_polynomial_hash: outbe_consensus::dkg_manager::public_polynomial_hash(
+        vrf_public_polynomial_hash: outbe_simplex::bls::odko::public_polynomial_hash(
             &dkg.polynomial,
         ),
     };
@@ -641,7 +641,7 @@ fn signing_state_wire_rejects_mixed_contexts_bad_bindings_and_noncanonical_frame
 
 #[test]
 fn signing_state_wire_supports_the_protocol_maximum_committee() {
-    let current = signing_state_with_members(u64::from(outbe_consensus::bls::MAX_VALIDATORS));
+    let current = signing_state_with_members(u64::from(outbe_simplex::bls::MAX_VALIDATORS));
     let proposal = current.approval.approval.proposal_id;
     let bytes = state::encode(&current).unwrap();
     assert!(bytes.len() <= state::MAX_FRAME);
@@ -800,7 +800,7 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
     );
     assert_eq!(bootstrap.state.descriptor().description.len(), 256);
     assert!(client.sign_bootstrap_document(&bootstrap).await.is_err());
-    publisher.install_local_signer(outbe_consensus::hybrid::VrfMaterialProvider::new(
+    publisher.install_local_signer(outbe_simplex::hybrid::VrfMaterialProvider::new(
         6,
         output.public().clone(),
         Some(shares[0].clone()),
@@ -859,7 +859,7 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
     assert!(client.sign_bootstrap_document(&changed).await.is_err());
 
     use commonware_cryptography::Signer as _;
-    use outbe_consensus::hybrid::VrfMaterialProvider;
+    use outbe_simplex::hybrid::VrfMaterialProvider;
     use radicle::storage::WriteRepository as _;
     let providers: Vec<_> = shares
         .iter()
@@ -1434,7 +1434,7 @@ fn preparation_manifest(
         native_policy_context, NativeSubject, ObjectCommitment, ObjectKind, OwnerRef, RefUpdate,
     };
     use commonware_codec::Encode as _;
-    use outbe_consensus::hybrid::VrfMaterialProvider;
+    use outbe_simplex::hybrid::VrfMaterialProvider;
     use radicle::crypto::{BlsEnvelope, BlsPublicKey, RepositorySubject};
     let body = &state.checkpoint.receipt.body;
     let owner = BlsPublicKey::from_bytes(body.owner_bls_public.0).unwrap();

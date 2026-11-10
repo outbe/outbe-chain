@@ -9,7 +9,7 @@ use commonware_cryptography::bls12381::{
 };
 use commonware_cryptography::{Signer as _, Verifier as _};
 use commonware_utils::TryCollect as _;
-use outbe_consensus::hybrid::VrfMaterialProvider;
+use outbe_simplex::hybrid::VrfMaterialProvider;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -360,7 +360,7 @@ async fn repository_material_bridge_requires_matching_live_output_and_fresh_fina
         .map(|key| key.public_key())
         .try_collect()
         .unwrap();
-    let dkg = outbe_consensus::bls::bootstrap_dkg_for_participants(players).unwrap();
+    let dkg = outbe_simplex::bls::bootstrap_dkg_for_participants(players).unwrap();
     let owner = radicle::crypto::BlsPublicKey::from_bytes(
         dkg.polynomial
             .public()
@@ -391,7 +391,7 @@ async fn repository_material_bridge_requires_matching_live_output_and_fresh_fina
                 .collect(),
             vrf_material_version: 7,
             vrf_group_public_key_bytes: dkg.polynomial.public().encode().to_vec(),
-            vrf_public_polynomial_hash: outbe_consensus::dkg_manager::public_polynomial_hash(
+            vrf_public_polynomial_hash: outbe_simplex::bls::odko::public_polynomial_hash(
                 &dkg.polynomial,
             ),
         },
@@ -512,7 +512,7 @@ async fn repository_material_requests_share_the_bounded_nonblocking_local_mailbo
         .into_iter()
         .try_collect()
         .unwrap();
-    let dkg = outbe_consensus::bls::bootstrap_dkg_for_participants(players).unwrap();
+    let dkg = outbe_simplex::bls::bootstrap_dkg_for_participants(players).unwrap();
     let owner = radicle::crypto::BlsPublicKey::from_bytes(
         dkg.polynomial
             .public()

@@ -17,7 +17,7 @@ use commonware_cryptography::{
     Hasher as _, Sha256, Signer as _, Verifier as _,
 };
 use commonware_utils::{ordered::Quorum as _, Participant};
-use outbe_consensus::hybrid::{RepositorySigningError, VrfMaterialProvider};
+use outbe_simplex::hybrid::{RepositorySigningError, VrfMaterialProvider};
 use radicle::crypto::{BlsEnvelope, BlsPublicKey, RepositoryKey, RepositorySubject};
 
 use super::publication::CheckpointOwnerSnapshot;
@@ -585,9 +585,7 @@ impl RepositorySigningMaterial {
     ) -> Result<Self, Error> {
         let committee = authority.committee();
         let n = committee.committee.len();
-        if n == 0
-            || n > outbe_consensus::bls::MAX_VALIDATORS as usize
-            || output.players().len() != n
+        if n == 0 || n > outbe_simplex::bls::MAX_VALIDATORS as usize || output.players().len() != n
         {
             return Err(Error::Material);
         }
@@ -599,7 +597,7 @@ impl RepositorySigningMaterial {
         }
         if committee.vrf_group_public_key_bytes.as_slice() != owner.as_bytes()
             || committee.vrf_public_polynomial_hash
-                != outbe_consensus::dkg_manager::public_polynomial_hash(output.public())
+                != outbe_simplex::bls::odko::public_polynomial_hash(output.public())
             || output
                 .players()
                 .iter()
@@ -1041,7 +1039,7 @@ fn decode_output(bytes: &[u8]) -> Result<Output<MinSig, bls12381::PublicKey>, Er
     }
     let mut reader = bytes;
     let cfg = (
-        std::num::NonZeroU32::new(outbe_consensus::bls::MAX_VALIDATORS).ok_or(Error::Material)?,
+        std::num::NonZeroU32::new(outbe_simplex::bls::MAX_VALIDATORS).ok_or(Error::Material)?,
         ModeVersion::v0(),
     );
     let output = Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut reader, &cfg)

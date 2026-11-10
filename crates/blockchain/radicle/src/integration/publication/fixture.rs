@@ -8,8 +8,8 @@ use commonware_codec::Encode as _;
 use commonware_cryptography::bls12381;
 use commonware_cryptography::Signer as _;
 use commonware_utils::{Participant, TryCollect as _};
-use outbe_consensus::{bls::bootstrap_dkg_for_participants, hybrid::VrfMaterialProvider};
 use outbe_primitives::radicle_publication::{PublicationAction, PublicationBody};
+use outbe_simplex::{bls::bootstrap_dkg_for_participants, hybrid::VrfMaterialProvider};
 use radicle::crypto::{BlsEnvelope, BlsPublicKey, RepositorySubject};
 
 fn oid_string(byte: u8) -> String {

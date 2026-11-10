@@ -24,7 +24,7 @@ metrics.workspace = true
 outbe-validatorset = { path = ".", features = ["test-utils"] }
 # Test only: the shared finalized guard-ring fixtures.
 outbe-primitives = { workspace = true, features = ["test-utils"] }
-outbe-consensus = { workspace = true, features = ["test-utils"] }
+outbe-simplex = { workspace = true, features = ["test-utils"] }
 commonware-codec.workspace = true
 commonware-cryptography.workspace = true
 commonware-math.workspace = true

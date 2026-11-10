@@ -1,7 +1,7 @@
 //! Audit follow-up.
 //!
 //! Real-BLS+VRF integration test that closes the wire-level gap
-//! between `outbe_consensus::proof::verify_v2_proof` and the V3 Rewards
+//! between `outbe_simplex::proof::verify_v2_proof` and the V3 Rewards
 //! fingerprint helper. A stub-based test alone asserts that
 //! `compute_metadata_fingerprint` is *sensitive* to its `canonical_vrf_proof_hash`
 //! argument. But it uses a stubbed `B256` value and does NOT exercise the
@@ -27,18 +27,18 @@ use commonware_consensus::{simplex::types::Proposal, types::View};
 use commonware_cryptography::{
     bls12381::primitives::variant::MinSig, sha256::Digest as Sha256Digest,
 };
-use outbe_consensus::proof::{
-    canonical_vrf_proof_hash_v2, constants::finalize_namespace, verify_v2_proof, HybridCertificate,
-    VrfProof,
-};
-use outbe_consensus::test_harness::{
-    finalize_messages, test_fully_signed_metadata, vrf_test_committee, CertificateMessages,
-    TestFinalizedParent, VrfTestCommittee,
-};
 use outbe_primitives::consensus_metadata::{
     CertifiedParentAccountingMetadata, ParentParticipationProof,
 };
 use outbe_rewards::runtime::compute_metadata_fingerprint;
+use outbe_simplex::proof::{
+    canonical_vrf_proof_hash_v2, constants::finalize_namespace, verify_v2_proof, HybridCertificate,
+    VrfProof,
+};
+use outbe_simplex::test_harness::{
+    finalize_messages, test_fully_signed_metadata, vrf_test_committee, CertificateMessages,
+    TestFinalizedParent, VrfTestCommittee,
+};
 use outbe_validatorset::state::CommitteeSnapshot;
 
 // Fixture constants. They have the same shape as the verifier_cluster.rs
@@ -116,8 +116,8 @@ fn phase1_end_to_end_real_vrf_proof_binds_v3_fingerprint() {
     let (round, _, _) =
         finalize_messages(FINALIZED_EPOCH, FINALIZED_VIEW, PARENT_VIEW, parent_hash);
     let proposal = Proposal::new(round, View::new(PARENT_VIEW), Sha256Digest(parent_hash.0));
-    let finalization: outbe_consensus::proof::Finalization<
-        outbe_consensus::hybrid::HybridScheme<MinSig>,
+    let finalization: outbe_simplex::proof::Finalization<
+        outbe_simplex::hybrid::HybridScheme<MinSig>,
         Sha256Digest,
     > = commonware_consensus::simplex::types::Finalization {
         proposal,

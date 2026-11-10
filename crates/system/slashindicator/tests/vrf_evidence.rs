@@ -41,14 +41,6 @@ use commonware_cryptography::{
     bls12381::primitives::{ops::keypair, variant::MinSig},
     sha256::Digest as Sha256Digest,
 };
-use outbe_consensus::hybrid::HybridScheme;
-use outbe_consensus::proof::{
-    constants::finalize_namespace, invalid_vrf_evidence_hash_v2, HybridCertificate, V2VerifyError,
-};
-use outbe_consensus::test_harness::{
-    finalize_messages, test_fully_signed_metadata, vrf_test_committee, CertificateMessages,
-    TestFinalizedParent, VrfTestCommittee,
-};
 use outbe_primitives::addresses::{PROMIS_LIMIT_ADDRESS, STAKING_ADDRESS};
 use outbe_primitives::consensus_metadata::{
     CertifiedParentAccountingMetadata, ParentParticipationProof,
@@ -59,6 +51,14 @@ use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::system_tx::{build_unsigned_system_tx, SystemTx};
 use outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
 use outbe_promislimit::PromisLimitContract;
+use outbe_simplex::hybrid::HybridScheme;
+use outbe_simplex::proof::{
+    constants::finalize_namespace, invalid_vrf_evidence_hash_v2, HybridCertificate, V2VerifyError,
+};
+use outbe_simplex::test_harness::{
+    finalize_messages, test_fully_signed_metadata, vrf_test_committee, CertificateMessages,
+    TestFinalizedParent, VrfTestCommittee,
+};
 use outbe_slashindicator::precompile::ISlashIndicator as Isi;
 use outbe_slashindicator::runtime::classify_vrf_failure;
 use outbe_slashindicator::schema::SlashIndicator;

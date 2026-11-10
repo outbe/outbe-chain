@@ -23,7 +23,7 @@ tracing.workspace = true
 ignored = ["alloy-sol-types"]
 
 [dev-dependencies]
-outbe-consensus = { workspace = true, features = ["test-utils"] }
+outbe-simplex = { workspace = true, features = ["test-utils"] }
 outbe-validatorset = { path = "../validatorset", features = ["test-utils"] }
 outbe-promislimit.workspace = true
 tempfile.workspace = true

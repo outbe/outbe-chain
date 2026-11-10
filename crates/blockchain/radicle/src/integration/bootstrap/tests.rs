@@ -2,7 +2,7 @@ use super::*;
 use commonware_codec::Encode as _;
 use commonware_cryptography::{bls12381, Signer as _};
 use commonware_utils::{Participant, TryCollect as _};
-use outbe_consensus::{bls::bootstrap_dkg_for_participants, hybrid::VrfMaterialProvider};
+use outbe_simplex::{bls::bootstrap_dkg_for_participants, hybrid::VrfMaterialProvider};
 use radicle::identity::doc::GetPayload as _;
 use radicle::{crypto::Signer as _, storage::WriteStorage as _};
 mod local_review;
@@ -48,7 +48,7 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
                 .collect(),
             vrf_material_version: 7,
             vrf_group_public_key_bytes: dkg.polynomial.public().encode().to_vec(),
-            vrf_public_polynomial_hash: outbe_consensus::dkg_manager::public_polynomial_hash(
+            vrf_public_polynomial_hash: outbe_simplex::bls::odko::public_polynomial_hash(
                 &dkg.polynomial,
             ),
         },

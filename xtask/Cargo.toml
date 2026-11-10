@@ -43,7 +43,7 @@ eyre.workspace = true
 filetime.workspace = true
 hex.workspace = true
 libc = { workspace = true, optional = true }
-outbe-consensus.workspace = true
+outbe-simplex.workspace = true
 outbe-evm.workspace = true
 outbe-primitives.workspace = true
 outbe-tee.workspace = true

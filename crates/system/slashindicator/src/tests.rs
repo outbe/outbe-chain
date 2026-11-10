@@ -1425,7 +1425,7 @@ fn sign_nullify_evidence(
 /// evidence epoch resolves to the test committee.
 fn write_test_committee(storage: &StorageHandle) {
     let snapshot = outbe_validatorset::state::CommitteeSnapshot {
-        committee: outbe_consensus::test_harness::committee_entries(
+        committee: outbe_simplex::test_harness::committee_entries(
             test_signing::committee_public_keys().iter(),
         ),
         vrf_material_version: 1,

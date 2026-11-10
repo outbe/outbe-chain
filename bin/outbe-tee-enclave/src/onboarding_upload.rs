@@ -351,8 +351,8 @@ mod tests {
     use super::*;
     use alloy_primitives::U256;
     use commonware_consensus::types::Epoch;
-    use outbe_consensus::finalized_admission_test_utils::FinalityCommitteeFixture;
     use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
+    use outbe_simplex::finalized_admission_test_utils::FinalityCommitteeFixture;
     use outbe_tee::dcap_protocol::DcapOnboardingContextV1;
 
     fn expect_error(result: EnclaveResult<OnboardingArtifactUploadProgressV1>) -> String {

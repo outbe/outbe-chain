@@ -161,7 +161,7 @@ fn test_is_validator() {
 #[test]
 fn config_max_validators_cannot_exceed_consensus_bound() {
     with_vs_configured(10, |vs| {
-        let consensus_bound = outbe_consensus::bls::MAX_VALIDATORS;
+        let consensus_bound = outbe_simplex::bls::MAX_VALIDATORS;
         vs.set_config_max_validators(consensus_bound).unwrap();
         assert_eq!(vs.config_max_validators.read().unwrap(), consensus_bound);
 

@@ -35,7 +35,7 @@ impl RepositoryWitnessBundle {
         if subjects.len() > 3
             || subjects
                 .iter()
-                .any(|frames| frames.len() > outbe_consensus::bls::MAX_VALIDATORS as usize)
+                .any(|frames| frames.len() > outbe_simplex::bls::MAX_VALIDATORS as usize)
         {
             return Err(Error::Witness);
         }
@@ -62,7 +62,7 @@ impl RepositoryWitnessBundle {
             .enumerate()
             .map(|(ordinal, subject)| {
                 if subject.ordinal as usize != ordinal
-                    || subject.partials.len() > outbe_consensus::bls::MAX_VALIDATORS as usize
+                    || subject.partials.len() > outbe_simplex::bls::MAX_VALIDATORS as usize
                 {
                     return Err(Error::Witness);
                 }
@@ -92,7 +92,7 @@ impl RepositoryWitnessBundle {
             || self.subjects.len() > 3
             || self.subjects.iter().any(|frames| {
                 frames.is_empty()
-                    || frames.len() > outbe_consensus::bls::MAX_VALIDATORS as usize
+                    || frames.len() > outbe_simplex::bls::MAX_VALIDATORS as usize
                     || frames
                         .windows(2)
                         .any(|pair| pair[0].participant_index() >= pair[1].participant_index())
