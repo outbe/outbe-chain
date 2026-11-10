@@ -59,7 +59,7 @@ fn workspace_root() -> PathBuf {
 }
 
 fn load_test_genesis_alloc() -> serde_json::Map<String, Value> {
-    let path = workspace_root().join("crates/blockchain/node/tests/assets/genesis.json");
+    let path = workspace_root().join("crates/blockchain/execution/tests/assets/genesis.json");
     let bytes = std::fs::read(&path).expect("test genesis.json should be readable");
     let v: Value = serde_json::from_slice(&bytes).expect("test genesis.json should parse");
     v["alloc"]

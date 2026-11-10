@@ -66,7 +66,7 @@ pub(crate) fn start(
     ),
     (radicle_shutdown_token, shutdown, publication_mailbox): (
         tokio_util::sync::CancellationToken,
-        outbe_node::shutdown::NodeShutdown,
+        outbe_execution::shutdown::NodeShutdown,
         outbe_primitives::radicle_publication::RepositoryPublicationMailbox,
     ),
 ) -> eyre::Result<RadicleLaunch> {

@@ -34,7 +34,7 @@ use outbe_consensus::block::ConsensusBlock;
 use outbe_consensus::follow::{
     CertifiedFinalizedBlock, FinalizedSource, LocalBlockSource, TipSource,
 };
-use outbe_node::OutbeFullNode;
+use outbe_execution::OutbeFullNode;
 use reth_ethereum::storage::{BlockReader, TransactionVariant};
 use tracing::{debug, warn};
 

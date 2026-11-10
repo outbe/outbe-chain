@@ -1,7 +1,7 @@
 use crate::*;
 use outbe_engine::protocol_state::EngineProtocolState;
 use outbe_evm::EvmRuntimeHost;
-use outbe_node::tee_remote_session::TeeSessionStateReader;
+use outbe_execution::tee_remote_session::TeeSessionStateReader;
 use outbe_radicle::protocol_state::RadicleProtocolState;
 use outbe_rpc::state_reader::OutbeRpcStateReader;
 use outbe_txpool::TxPoolZeroFeePolicy;
@@ -72,23 +72,23 @@ where
     // Thread 1 (main): Reth execution layer.
     let bridge_for_evm = bridge.clone();
     let runtime_for_evm = Arc::clone(&runtime_for_launcher);
-    let components = move |spec: Arc<ChainSpec<OutbeHeader>>| {
-        let evm = outbe_evm::OutbeEvmConfig::new_with_bridge(
-            spec.clone(),
-            bridge_for_evm.clone(),
-            Arc::clone(&runtime_for_evm) as Arc<dyn EvmRuntimeHost>,
-        );
-        (
-            evm,
-            Arc::new(
-                OutbeBeaconConsensus::new(spec)
-                    .with_max_extra_data_size(outbe_node::consensus::OUTBE_MAX_EXTRA_DATA_SIZE),
-            ),
-        )
-    };
+    let components =
+        move |spec: Arc<ChainSpec<OutbeHeader>>| {
+            let evm = outbe_evm::OutbeEvmConfig::new_with_bridge(
+                spec.clone(),
+                bridge_for_evm.clone(),
+                Arc::clone(&runtime_for_evm) as Arc<dyn EvmRuntimeHost>,
+            );
+            (
+                evm,
+                Arc::new(OutbeBeaconConsensus::new(spec).with_max_extra_data_size(
+                    outbe_execution::consensus::OUTBE_MAX_EXTRA_DATA_SIZE,
+                )),
+            )
+        };
 
     // This owner outlives cancellation of the launcher and Reth runtime teardown.
-    let process_shutdown = outbe_node::shutdown::NodeShutdown::default();
+    let process_shutdown = outbe_execution::shutdown::NodeShutdown::default();
     let launcher_shutdown = process_shutdown.clone();
     let runtime_config = runtime_config_for_command(&cli.command);
     let command_result = execution_runtime::run_with_execution_runtime(runtime_config, |runner| {
@@ -133,7 +133,7 @@ where
         });
         let proof_chain_id = builder.config().chain.chain().id();
         let genesis_hash = builder.config().chain.genesis_hash();
-        let outbe_node = build_outbe_node(
+        let outbe_execution = build_outbe_execution(
             bridge.clone(),
             evm_signer,
             shutdown.clone(),
@@ -149,7 +149,7 @@ where
             node,
             node_exit_future,
         } = builder
-            .node(outbe_node)
+            .node(outbe_execution)
             .apply(|mut builder| {
                 configure_outbe_engine_args(&mut builder.config_mut().engine);
                 let discovery = &mut builder.config_mut().network.discovery;
@@ -174,7 +174,7 @@ where
                     let provider = Arc::new(ctx.provider().clone());
                     let context_provider = Arc::clone(&provider);
                     outbe_tee::call_context::install_provider(Arc::new(move || {
-                        outbe_node::tee_call_context::read(
+                        outbe_execution::tee_call_context::read(
                             context_provider.as_ref(),
                             proof_chain_id,
                             genesis_hash,
@@ -349,18 +349,18 @@ where
     }
 }
 
-fn build_outbe_node(
+fn build_outbe_execution(
     bridge: ConsensusExecutionBridge,
     evm_signer: Option<Arc<OutbeEvmSigner>>,
-    shutdown: outbe_node::shutdown::NodeShutdown,
+    shutdown: outbe_execution::shutdown::NodeShutdown,
     runtime: Arc<OutbeRuntime>,
 ) -> OutbeNode {
     let pool_policy = Arc::clone(&runtime) as Arc<dyn TxPoolZeroFeePolicy>;
-    let outbe_node = match evm_signer {
+    let outbe_execution = match evm_signer {
         Some(signer) => OutbeNode::with_bridge_and_evm_signer(bridge, signer, pool_policy),
         None => OutbeNode::with_bridge(bridge, pool_policy),
     };
-    outbe_node
+    outbe_execution
         .with_shutdown(shutdown)
         .with_runtime_host(runtime as Arc<dyn EvmRuntimeHost>)
 }

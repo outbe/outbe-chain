@@ -190,7 +190,7 @@ pub(crate) fn build_tee_admission_mock_provider(
     state_cfg: SeededTeeState,
 ) -> (
     FinalizedMockProvider,
-    outbe_node::tee_remote_session::RegistryChainIdentity,
+    outbe_execution::tee_remote_session::RegistryChainIdentity,
     outbe_engine::validators::LocalTeeRuntimeIdentityV1,
     Vec<(u64, alloy_primitives::B256)>,
 ) {
@@ -340,7 +340,7 @@ pub(crate) fn build_tee_admission_mock_provider(
             historical_states: HashMap::new(),
             fail_state_read: false,
         },
-        outbe_node::tee_remote_session::RegistryChainIdentity {
+        outbe_execution::tee_remote_session::RegistryChainIdentity {
             chain_id,
             genesis_hash,
         },

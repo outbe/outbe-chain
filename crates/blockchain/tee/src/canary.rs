@@ -1,6 +1,6 @@
 //! Shared status cell for the node's periodic enclave canary probe.
 //!
-//! The canary worker (in `outbe-node`) publishes snapshots. The RPC layer reads
+//! The canary worker (in `outbe-execution`) publishes snapshots. The RPC layer reads
 //! them into `outbe_consensusStatus.enclave`, and `outbe-cli monitor readiness`
 //! consumes that. This is a signal only. Nothing here gates consensus
 //! participation.

@@ -241,7 +241,7 @@ pub fn precheck_sponsorship(signer: Address) -> Result<(), ZeroFeePolicyError> {
 ///
 /// Validators enforce this inclusive band with
 /// `validate_against_parent_timestamp_millis` in
-/// `crates/blockchain/node/src/consensus/policy.rs` (`outbe-node`). A parent at
+/// `crates/blockchain/execution/src/consensus/policy.rs` (`outbe-execution`). A parent at
 /// height zero skips only the minimum advance. Strict monotonicity and the
 /// maximum still apply. This function does not validate the timestamp. It
 /// relies on the surrounding block-validation flow.

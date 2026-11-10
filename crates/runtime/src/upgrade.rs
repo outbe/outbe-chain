@@ -1,5 +1,5 @@
 use crate::*;
-use outbe_node::tee_remote_session::RegistryChainIdentity;
+use outbe_execution::tee_remote_session::RegistryChainIdentity;
 
 use crate::upgrade_ports::{NodeUpgradeIo, UpgradePromotionIo};
 use crate::upgrade_promotion as promotion;
@@ -29,7 +29,7 @@ pub(crate) struct UpgradePromotionWorkerConfigV1 {
 
 pub(crate) async fn run_upgrade_promotion_worker_v1<P>(
     provider: P,
-    session: Arc<dyn outbe_node::tee_remote_session::TeeSessionStateReader>,
+    session: Arc<dyn outbe_execution::tee_remote_session::TeeSessionStateReader>,
     config: UpgradePromotionWorkerConfigV1,
 ) where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory + Send + Sync + 'static,

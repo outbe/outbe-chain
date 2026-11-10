@@ -11,7 +11,7 @@ use tracing::{debug, error, instrument, warn, Span};
 
 use crate::validators::{read_admitted_non_consensus_at_block, read_consensus_validators_at_block};
 use outbe_consensus::{block::ConsensusBlock, config};
-use outbe_node::OutbeFullNode;
+use outbe_execution::OutbeFullNode;
 
 use super::{
     admission::PeerAdmission,

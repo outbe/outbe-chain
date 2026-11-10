@@ -127,7 +127,7 @@ mod tests {
 
     #[test]
     fn startup_rejection_survives_graceful_runtime_teardown() {
-        let shutdown = outbe_node::shutdown::NodeShutdown::default();
+        let shutdown = outbe_execution::shutdown::NodeShutdown::default();
         let result = run_with_execution_runtime(RuntimeConfig::default(), |runner| {
             runner.run_command_until_exit(|_| async {
                 // Match run_node: retain the admission error, then enter the

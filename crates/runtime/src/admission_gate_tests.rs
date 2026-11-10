@@ -13,7 +13,7 @@ async fn pending_lease_guard_cancellation_is_a_clean_stop() {
             std::sync::Arc::new(crate::OutbeRuntime::new()),
             std::sync::Arc::new(crate::OutbeRuntime::new()),
             crate::admission::TeeLeaseGuardConfigV1 {
-                chain: outbe_node::tee_remote_session::RegistryChainIdentity {
+                chain: outbe_execution::tee_remote_session::RegistryChainIdentity {
                     chain_id: 676,
                     genesis_hash: alloy_primitives::B256::repeat_byte(1),
                 },
@@ -439,7 +439,7 @@ fn durable_validator_anchor_must_match_the_running_chain_node_and_enclave() {
 
 #[test]
 fn canonical_tee_lease_rejection_is_a_clean_stop() {
-    let outcome = outbe_node::shutdown::NodeShutdown::default();
+    let outcome = outbe_execution::shutdown::NodeShutdown::default();
     assert_eq!(
         super::tee_lease_exit_reason(Some(Ok("lease expired".into())), &outcome),
         "lease expired"
@@ -452,7 +452,7 @@ fn tee_lease_read_failure_and_missing_verdict_remain_errors() {
     let _no_logging =
         tracing::subscriber::set_default(tracing::subscriber::NoSubscriber::default());
     for verdict in [Some(Err(eyre::eyre!("provider read failed"))), None] {
-        let outcome = outbe_node::shutdown::NodeShutdown::default();
+        let outcome = outbe_execution::shutdown::NodeShutdown::default();
         let reason = super::tee_lease_exit_reason(verdict, &outcome);
         assert!(format!("{:#}", outcome.finish(Ok(())).unwrap_err()).contains(&reason));
     }

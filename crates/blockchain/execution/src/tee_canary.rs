@@ -40,7 +40,7 @@ const CANARY_DAY: u32 = 20250115;
 const CANARY_EPH_SK: [u8; 32] = [0xC5; 32];
 const CANARY_NONCE: [u8; 12] = [0xC6; 12];
 const CANARY_PRICE_MINOR: u64 = 2_000_000;
-/// ISO 4217 code 999, "XXX": no currency. The canary names no real currency.
+/// ISO 4217 numeric code 999 (no currency). The canary names no real currency.
 const CANARY_CURRENCY: u16 = 999;
 
 /// How many consecutive skipped ticks (probe still in flight) before the

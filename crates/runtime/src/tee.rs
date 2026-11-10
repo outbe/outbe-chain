@@ -449,7 +449,7 @@ fn verify_initial_local_tee_admission_v1(
         &OutbeFullNode,
         &ConsensusArgs,
     ),
-    chain: outbe_node::tee_remote_session::RegistryChainIdentity,
+    chain: outbe_execution::tee_remote_session::RegistryChainIdentity,
     local_tee_identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
     anchors: &mut crate::admission::TeeLeaseGuardAnchorsV1,
     node_data_dir: &Path,
@@ -496,7 +496,7 @@ fn verify_initial_local_tee_admission_v1(
 pub(crate) async fn start_runtime_workers(
     (protocol, session): (
         Arc<dyn outbe_engine::protocol_state::EngineProtocolState>,
-        Arc<dyn outbe_node::tee_remote_session::TeeSessionStateReader>,
+        Arc<dyn outbe_execution::tee_remote_session::TeeSessionStateReader>,
     ),
     (node, args): (&OutbeFullNode, &ConsensusArgs),
     (proof_chain_id, genesis_hash, node_data_dir): (u64, alloy_primitives::B256, &Path),
@@ -508,14 +508,14 @@ pub(crate) async fn start_runtime_workers(
     (tee_canary_status, shutdown_token, shutdown): (
         outbe_tee::TeeEnclaveHealthChannel,
         tokio_util::sync::CancellationToken,
-        outbe_node::shutdown::NodeShutdown,
+        outbe_execution::shutdown::NodeShutdown,
     ),
 ) -> eyre::Result<TeeRuntimeWorkers> {
     if keyless_follower_launch(args) {
         info!("keyless follower: skipping TEE lease guard, canary, and upgrade watcher");
         return Ok(keyless_runtime_workers());
     }
-    let chain = outbe_node::tee_remote_session::RegistryChainIdentity {
+    let chain = outbe_execution::tee_remote_session::RegistryChainIdentity {
         chain_id: proof_chain_id,
         genesis_hash,
     };
@@ -568,9 +568,9 @@ pub(crate) async fn start_runtime_workers(
     let tee_canary_handle = (args.tee_canary_interval_secs > 0).then(|| {
         tokio::spawn(shutdown.track_task(
             "TEE canary worker",
-            outbe_node::tee_canary::run_tee_canary_worker(
-                outbe_node::tee_canary::GlobalEnclaveRequester,
-                outbe_node::tee_canary::TeeCanaryConfig {
+            outbe_execution::tee_canary::run_tee_canary_worker(
+                outbe_execution::tee_canary::GlobalEnclaveRequester,
+                outbe_execution::tee_canary::TeeCanaryConfig {
                     interval: std::time::Duration::from_secs(args.tee_canary_interval_secs),
                     failure_threshold: args.tee_canary_failure_threshold,
                 },

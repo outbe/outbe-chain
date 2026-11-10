@@ -1,7 +1,7 @@
 use super::*;
 use alloy_primitives::B256;
-use outbe_node::tee_remote_session::RegistryChainIdentity;
-use outbe_node::tee_remote_session::{
+use outbe_execution::tee_remote_session::RegistryChainIdentity;
+use outbe_execution::tee_remote_session::{
     construct_local_finalized_replacement_authorization_with_view_v1,
     inspect_local_finalized_successor_status_v1, LocalFinalizedSuccessorStatusV1,
     LocalRegistryAdmissionError, ReplacementAuthorizationRequest,
@@ -39,7 +39,7 @@ pub(crate) struct NodeUpgradeIo<P> {
     pub(crate) provider: P,
     pub(crate) chain: RegistryChainIdentity,
     pub(crate) node_data_dir: PathBuf,
-    pub(crate) session: Arc<dyn outbe_node::tee_remote_session::TeeSessionStateReader>,
+    pub(crate) session: Arc<dyn outbe_execution::tee_remote_session::TeeSessionStateReader>,
 }
 
 impl<P> UpgradePromotionIo for NodeUpgradeIo<P>

@@ -781,7 +781,7 @@ impl AuthorizedEnclaveClient {
 
     /// Installs one one-use remote admission after the caller has verified its
     /// source and target bindings from local or anchored finalized state.
-    /// Production node code uses the finalized facade in `outbe-node`. This
+    /// Production node code uses the finalized facade in `outbe-execution`. This
     /// low-level transport method remains public only across the crate seam.
     #[doc(hidden)]
     pub fn authorize_remote_session(

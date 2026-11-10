@@ -1,7 +1,7 @@
 use super::*;
 use crate::upgrade::CycleOutcome;
 use crate::upgrade_ports::UpgradePromotionIo;
-use outbe_node::tee_remote_session::LocalFinalizedSuccessorStatusV1;
+use outbe_execution::tee_remote_session::LocalFinalizedSuccessorStatusV1;
 use outbe_operator::tee::UpgradeContextV1;
 
 pub(crate) fn policy_matches(

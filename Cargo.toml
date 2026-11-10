@@ -11,7 +11,7 @@ members = [
     "crates/blockchain/engine",
     "crates/blockchain/rpc",
     "crates/blockchain/txpool",
-    "crates/blockchain/node",
+    "crates/blockchain/execution",
     "crates/blockchain/operator",
     "crates/blockchain/radicle",
     "crates/blockchain/snapshot",
@@ -95,7 +95,7 @@ default-members = [
     "crates/blockchain/engine",
     "crates/blockchain/rpc",
     "crates/blockchain/txpool",
-    "crates/blockchain/node",
+    "crates/blockchain/execution",
     "crates/blockchain/operator",
     "crates/blockchain/radicle",
     "crates/blockchain/snapshot",
@@ -196,7 +196,7 @@ outbe-consensus = { path = "crates/blockchain/consensus" }
 outbe-engine = { path = "crates/blockchain/engine" }
 outbe-rpc = { path = "crates/blockchain/rpc" }
 outbe-txpool = { path = "crates/blockchain/txpool" }
-outbe-node = { path = "crates/blockchain/node" }
+outbe-execution = { path = "crates/blockchain/execution" }
 outbe-runtime = { path = "crates/runtime" }
 outbe-operator = { path = "crates/blockchain/operator" }
 outbe-radicle = { path = "crates/blockchain/radicle" }

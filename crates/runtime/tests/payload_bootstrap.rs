@@ -21,7 +21,7 @@ use outbe_evm::{
     },
     OutbeEvmConfig, OutbeEvmSigner,
 };
-use outbe_node::OutbePayloadBuilder;
+use outbe_execution::OutbePayloadBuilder;
 use outbe_primitives::{
     addresses::REWARDS_ADDRESS,
     consensus::{ConsensusExecutionBridge, DkgBoundaryArtifact, ReshareResult},

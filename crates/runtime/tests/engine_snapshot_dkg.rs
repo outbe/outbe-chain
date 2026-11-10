@@ -26,7 +26,7 @@ mod copied_native_dkg_prerequisites {
     };
     use outbe_engine::validators;
     use outbe_evm::{EvmRuntimeHost, OutbeEvmConfig};
-    use outbe_node::{OutbeBeaconConsensus, OutbeFullNode, OutbeNode, OutbePoolBuilder};
+    use outbe_execution::{OutbeBeaconConsensus, OutbeFullNode, OutbeNode, OutbePoolBuilder};
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
     use outbe_primitives::OutbeHeader;
     use outbe_txpool::TxPoolZeroFeePolicy;

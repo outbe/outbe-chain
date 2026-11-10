@@ -1,5 +1,5 @@
 [package]
-name = "outbe-node"
+name = "outbe-execution"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -58,7 +58,7 @@ x25519-dalek.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-outbe-node = { path = ".", features = ["test-utils"] }
+outbe-execution = { path = ".", features = ["test-utils"] }
 reth-engine-tree = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
 reth-stages-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
 reth-static-file = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }

@@ -15,7 +15,7 @@
 //! A permissioned validator set produces blocks.
 //! The node still computes an EIP-1559 base fee.
 //! Header checks call `validate_against_parent_eip1559_base_fee`
-//! in `crates/blockchain/node/src/consensus/policy.rs`.
+//! in `crates/blockchain/execution/src/consensus/policy.rs`.
 //! The base fee applies to ordinary EVM execution and to transaction order.
 //! The base fee does not scale the constants in this file.
 //!

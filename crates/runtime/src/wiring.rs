@@ -9,7 +9,7 @@ use outbe_engine::protocol_state::{
 use outbe_evm::errors::TeeBootstrapHostError;
 use outbe_evm::precompiles::MetadosisMutationCall;
 use outbe_evm::{EvmRuntimeHost, UserTxFeePolicy};
-use outbe_node::tee_remote_session::TeeSessionStateReader;
+use outbe_execution::tee_remote_session::TeeSessionStateReader;
 use outbe_primitives::block::{BlockHeightRegime, BlockRuntimeContext};
 use outbe_primitives::code_registry::{PatchApprovalRecord, PublicationReceipt, RepoId};
 use outbe_primitives::committee_snapshot::CommitteeSnapshot;

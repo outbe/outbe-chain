@@ -1,4 +1,4 @@
-//! This module defines typed errors for `outbe-node`.
+//! This module defines typed errors for `outbe-execution`.
 
 use alloy_primitives::Address;
 use reth_ethereum::consensus::ConsensusError;
@@ -120,7 +120,7 @@ impl TeeCallContextError {
     }
 }
 
-/// Errors returned by read-only [`outbe_primitives::storage::readonly::StorageReader`] adapters in `outbe-node`.
+/// Errors returned by read-only [`outbe_primitives::storage::readonly::StorageReader`] adapters in `outbe-execution`.
 #[derive(Debug, thiserror::Error)]
 pub enum NodeStorageReadError {
     #[error("anchored proof reader is restricted to TeeRegistry")]

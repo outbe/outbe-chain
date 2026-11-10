@@ -17,7 +17,7 @@ async fn unreadable_journal_stops_before_finalized_reads_or_promotion() {
 
 use fixtures::{context, finalized, finalized_view, security, status, submission, submitted};
 use futures::FutureExt as _;
-use outbe_node::tee_remote_session::LocalRegistryAdmissionError;
+use outbe_execution::tee_remote_session::LocalRegistryAdmissionError;
 
 async fn assert_worker(io: RecordingIo, expected: &[Action], notified: bool) {
     let config = config();

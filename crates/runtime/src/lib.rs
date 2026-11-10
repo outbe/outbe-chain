@@ -55,7 +55,7 @@ pub(crate) use outbe_engine::args::ConsensusArgs;
 pub(crate) use outbe_engine::bridge::ConsensusExecutionBridge;
 pub(crate) use outbe_engine::finalization::{RethDurableExecutionState, RethFinalizationBarrier};
 pub(crate) use outbe_evm::OutbeEvmSigner;
-pub(crate) use outbe_node::{
+pub(crate) use outbe_execution::{
     state_persistence::{validate_state_persistence_runtime_config, StatePersistenceRuntimeConfig},
     OutbeBeaconConsensus, OutbeFullNode, OutbeNode,
 };

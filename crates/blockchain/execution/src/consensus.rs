@@ -33,7 +33,7 @@
 //! share a single stateful evaluator and cannot diverge.
 //!
 //! The integration-level pin for this stateless contract is
-//! `crates/blockchain/node/tests/consensus_stateless.rs`.
+//! `crates/blockchain/execution/tests/consensus_stateless.rs`.
 
 use outbe_primitives::{
     addresses::REWARDS_ADDRESS, OutbeBlock, OutbeBlockBody, OutbeHeader, OutbePrimitives,
@@ -219,7 +219,7 @@ where
 ///
 /// Drives the `OutbeBeaconConsensus::validate_block_pre_execution` path and is
 /// also exposed for integration coverage in
-/// `crates/blockchain/node/tests/consensus_stateless.rs`. Stateful BLS / VRF /
+/// `crates/blockchain/execution/tests/consensus_stateless.rs`. Stateful BLS / VRF /
 /// accounting checks live in the EVM executor. See module docs.
 pub fn validate_system_tx_consensus_boundary(
     body: &OutbeBlockBody,

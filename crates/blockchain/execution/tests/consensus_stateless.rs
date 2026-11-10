@@ -1,6 +1,6 @@
 //! Stateless V2 layout / version / fork validator integration tests.
 //!
-//! Pins the contract that `crates/blockchain/node/src/consensus.rs::OutbeBeaconConsensus`
+//! Pins the contract that `crates/blockchain/execution/src/consensus.rs::OutbeBeaconConsensus`
 //! is a **stateless** V2 validator. It rejects these envelopes **without**
 //! running any stateful BLS / VRF / accounting verification:
 //! - legacy V1 envelopes, at every height.
@@ -12,7 +12,7 @@
 //! `OutbeBlockExecutor::apply_pre_execution_changes`.
 //!
 //! Most tests drive the public stateless entry point
-//! `outbe_node::consensus::validate_system_tx_consensus_boundary(body, header)`
+//! `outbe_execution::consensus::validate_system_tx_consensus_boundary(body, header)`
 //! directly. Regression tests that depend on upstream Reth validation drive
 //! `OutbeBeaconConsensus::validate_block_pre_execution` with a sealed block.
 
@@ -24,7 +24,7 @@ use outbe_evm::system_tx::{
     SYSTEM_TX_ARTIFACT_GAS_LIMIT, SYSTEM_TX_INPUT_VERSION,
 };
 use outbe_evm::OutbeEvmSigner;
-use outbe_node::consensus::{validate_system_tx_consensus_boundary, OutbeBeaconConsensus};
+use outbe_execution::consensus::{validate_system_tx_consensus_boundary, OutbeBeaconConsensus};
 use outbe_primitives::addresses::{OUTBE_SYSTEM_TX_ADDRESS, REWARDS_ADDRESS};
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use outbe_primitives::reshare_artifact::{encode_outbe_block_artifacts, OutbeBlockArtifacts};

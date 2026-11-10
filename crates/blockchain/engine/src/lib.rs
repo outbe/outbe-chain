@@ -1,12 +1,12 @@
 //! `outbe-engine` - bridge layer between pure `outbe-consensus`
 //! (Simplex/hybrid/DKG/proof) and the EVM/node side (`outbe-evm`,
-//! `outbe-validatorset`, `outbe-node`).
+//! `outbe-validatorset`, `outbe-execution`).
 //!
 //! Owns:
 //! * `stack/` - engine startup, epoch loop, reshare monitoring.
 //! * `validators.rs` - ValidatorSet storage reader (Reth state -> Commonware
 //!   participant set).
-//! * `peer_manager/` - P2P peer registration against `outbe-node`.
+//! * `peer_manager/` - P2P peer registration against `outbe-execution`.
 //! * `args.rs` - `ConsensusArgs` CLI bundle for engine startup.
 //! * `bridge.rs` - re-exports for `ConsensusExecutionBridge` wiring.
 

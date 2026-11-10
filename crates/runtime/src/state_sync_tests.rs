@@ -33,7 +33,7 @@ use reth_provider::{
 };
 use std::{fs, path::Path, sync::Arc};
 
-type Nodes = NodeTypesWithDBAdapter<outbe_node::OutbeNode, DatabaseEnv>;
+type Nodes = NodeTypesWithDBAdapter<outbe_execution::OutbeNode, DatabaseEnv>;
 type Provider = BlockchainProvider<Nodes>;
 type Stage = <tables::StageCheckpoints as Table>::Value;
 const H: u64 = 3;

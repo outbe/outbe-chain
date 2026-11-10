@@ -1,5 +1,5 @@
 use super::*;
-use outbe_node::tee_remote_session::{
+use outbe_execution::tee_remote_session::{
     LocalFinalizedSuccessorStatusV1, LocalRegistryAdmissionError,
 };
 use outbe_primitives::tee_attestation_v1::{

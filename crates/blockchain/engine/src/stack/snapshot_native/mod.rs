@@ -59,7 +59,7 @@ pub use super::dkg::persistence::{
 use disk::copy_tree;
 pub use disk::inventory;
 
-type Nodes = NodeTypesWithDBAdapter<outbe_node::OutbeNode, DatabaseEnv>;
+type Nodes = NodeTypesWithDBAdapter<outbe_execution::OutbeNode, DatabaseEnv>;
 type Provider = BlockchainProvider<Nodes>;
 type Stage = <tables::StageCheckpoints as Table>::Value;
 type Certificate = outbe_consensus::marshal_types::Finalization;

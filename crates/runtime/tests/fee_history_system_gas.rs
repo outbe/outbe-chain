@@ -13,7 +13,7 @@ use alloy_provider::{Provider, ProviderBuilder};
 use eyre::Context;
 use outbe_chain_constants::GenesisProtocolParametersV1;
 use outbe_evm::OutbeEvmSigner;
-use outbe_node::OutbeNode;
+use outbe_execution::OutbeNode;
 use outbe_primitives::{
     addresses::REWARDS_ADDRESS,
     chain::DEVNET_CHAIN_ID,
@@ -296,7 +296,7 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
         )
         .set_dev(true);
 
-    let outbe_node = OutbeNode {
+    let outbe_execution = OutbeNode {
         shutdown: Default::default(),
         bridge: Some(bridge),
         evm_signer: Some(signer),
@@ -309,8 +309,8 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
     } = NodeBuilder::new(node_config)
         .testing_node(runtime.clone())
         .with_types_and_provider::<OutbeNode, BlockchainProvider<_>>()
-        .with_components(outbe_node.components_builder())
-        .with_add_ons(outbe_node.add_ons())
+        .with_components(outbe_execution.components_builder())
+        .with_add_ons(outbe_execution.add_ons())
         .launch_with_fn(|builder| {
             let launcher = EngineNodeLauncher::new(
                 builder.task_executor().clone(),

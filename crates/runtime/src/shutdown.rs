@@ -111,7 +111,7 @@ pub(crate) enum LauncherExitCause {
 pub(crate) struct ConsensusThreadGuard {
     shutdown: tokio_util::sync::CancellationToken,
     handle: Option<thread::JoinHandle<eyre::Result<()>>>,
-    outcome: Option<outbe_node::shutdown::NodeShutdown>,
+    outcome: Option<outbe_execution::shutdown::NodeShutdown>,
 }
 
 impl ConsensusThreadGuard {
@@ -126,7 +126,7 @@ impl ConsensusThreadGuard {
         }
     }
 
-    pub(crate) fn with_outcome(mut self, outcome: outbe_node::shutdown::NodeShutdown) -> Self {
+    pub(crate) fn with_outcome(mut self, outcome: outbe_execution::shutdown::NodeShutdown) -> Self {
         self.outcome = Some(outcome);
         self
     }
@@ -166,7 +166,7 @@ impl Drop for ConsensusThreadGuard {
 }
 
 pub(crate) async fn wait_for_launcher_exit(
-    shutdown: &outbe_node::shutdown::NodeShutdown,
+    shutdown: &outbe_execution::shutdown::NodeShutdown,
     consensus_dead_rx: Option<&mut oneshot::Receiver<()>>,
     upgrade_promotion: &tokio::sync::Notify,
     tee_lease_exit_rx: Option<&mut tokio::sync::mpsc::UnboundedReceiver<eyre::Result<String>>>,
@@ -222,7 +222,7 @@ pub(crate) async fn wait_for_launcher_exit(
 
 pub(crate) fn join_consensus_thread(
     consensus_lifecycle: ConsensusThreadGuard,
-    shutdown: &outbe_node::shutdown::NodeShutdown,
+    shutdown: &outbe_execution::shutdown::NodeShutdown,
 ) {
     let consensus_joined = consensus_lifecycle.join();
     tracing::debug!("consensus thread join completed");
@@ -246,7 +246,7 @@ pub(crate) struct LauncherDrainTasks {
 async fn abort_and_record(
     handle: tokio::task::JoinHandle<()>,
     label: &str,
-    shutdown: &outbe_node::shutdown::NodeShutdown,
+    shutdown: &outbe_execution::shutdown::NodeShutdown,
 ) {
     handle.abort();
     match handle.await {
@@ -266,7 +266,7 @@ async fn abort_and_record(
 
 async fn drain_radicle_observer(
     mut handle: tokio::task::JoinHandle<()>,
-    shutdown: &outbe_node::shutdown::NodeShutdown,
+    shutdown: &outbe_execution::shutdown::NodeShutdown,
 ) {
     match tokio::time::timeout(RADICLE_DRAIN_DEADLINE, &mut handle).await {
         Ok(Ok(())) => {}
@@ -292,7 +292,7 @@ async fn drain_radicle_observer(
 
 pub(crate) async fn drain_launcher_tasks(
     shutdown_token: &tokio_util::sync::CancellationToken,
-    shutdown: &outbe_node::shutdown::NodeShutdown,
+    shutdown: &outbe_execution::shutdown::NodeShutdown,
     tasks: LauncherDrainTasks,
 ) {
     shutdown_token.cancel();
@@ -332,8 +332,8 @@ mod tests {
     };
     use std::time::Duration;
 
-    fn shutdown() -> outbe_node::shutdown::NodeShutdown {
-        outbe_node::shutdown::NodeShutdown::default()
+    fn shutdown() -> outbe_execution::shutdown::NodeShutdown {
+        outbe_execution::shutdown::NodeShutdown::default()
     }
 
     #[tokio::test]

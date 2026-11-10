@@ -8,8 +8,8 @@ use alloy_consensus::{Header, Sealable as _};
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{Bytes, B256, U256};
 use alloy_trie::{TrieAccount, KECCAK_EMPTY};
-use outbe_node::state_proof::{PublicAccountProofV1, PublicStorageProofV1};
-use outbe_node::tee_remote_session::{
+use outbe_execution::state_proof::{PublicAccountProofV1, PublicStorageProofV1};
+use outbe_execution::tee_remote_session::{
     admit_anchored_remote_session_v1, admit_local_finalized_remote_session_v1,
     authorize_local_finalized_remote_session_v1,
     construct_local_finalized_replacement_authorization_v1,
@@ -600,7 +600,7 @@ fn current_finalized_registry_constructs_exact_replacement_authorization() {
     assert_eq!(authorized.view.block_hash, block_hash);
     assert_eq!(authorized.successor_activation_height, None);
     let successor_status =
-        outbe_node::tee_remote_session::inspect_local_finalized_successor_status_v1(
+        outbe_execution::tee_remote_session::inspect_local_finalized_successor_status_v1(
             &finalized,
             RegistryChainIdentity {
                 chain_id,

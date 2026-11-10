@@ -142,7 +142,7 @@ async fn idle_backfill_has_no_fatal_event_after_runtime_shutdown() {
 // deferred it until the real launcher/signal/restart path is reproduced.
 // Keep the assertion red-capable rather than accepting a fatal event as success.
 // Manual reproduction (expected to fail on the currently pinned Reth):
-// cargo test -p outbe-node --test backfill_shutdown \
+// cargo test -p outbe-execution --test backfill_shutdown \
 //   graceful_shutdown_must_not_report_backfill_fatal -- --ignored --exact
 #[tokio::test]
 #[ignore = "outbe-chain-7vz.38: forced component interleaving; full-node occurrence and restart impact unverified"]

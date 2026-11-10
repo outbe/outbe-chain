@@ -6,7 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 # Engine layer that glues pure `outbe-consensus` (Simplex/hybrid/DKG/proof) with
-# `outbe-evm` (execution) and `outbe-node` (Reth node assembly). Owns the stack
+# `outbe-evm` (execution) and `outbe-execution` (Reth node assembly). Owns the stack
 # startup, the consensus application handler tests, the validator reader, and
 # the peer manager actor. Anything that needs both consensus and EVM lives here.
 
@@ -18,7 +18,7 @@ snapshot-integration = ["dep:tempfile"]
 [dependencies]
 # Internal
 outbe-consensus.workspace = true
-outbe-node.workspace = true
+outbe-execution.workspace = true
 outbe-primitives.workspace = true
 outbe-radicle.workspace = true
 outbe-tee.workspace = true

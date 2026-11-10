@@ -1,7 +1,7 @@
 use crate::errors::LaunchError;
 use crate::*;
 use outbe_engine::protocol_state::EngineProtocolState;
-use outbe_node::tee_remote_session::{
+use outbe_execution::tee_remote_session::{
     inspect_local_finalized_successor_status_v1, RegistryChainIdentity,
 };
 
@@ -648,7 +648,7 @@ pub(crate) struct TeeLeaseGuardConfigV1 {
 pub(crate) async fn run_tee_lease_guard_v1<P>(
     provider: P,
     protocol: Arc<dyn EngineProtocolState>,
-    session: Arc<dyn outbe_node::tee_remote_session::TeeSessionStateReader>,
+    session: Arc<dyn outbe_execution::tee_remote_session::TeeSessionStateReader>,
     config: TeeLeaseGuardConfigV1,
     shutdown: tokio_util::sync::CancellationToken,
 ) -> eyre::Result<Option<String>>
@@ -709,7 +709,7 @@ where
 fn retire_superseded_remote_sessions_v1<P>(
     provider: &P,
     chain: RegistryChainIdentity,
-    session: &dyn outbe_node::tee_remote_session::TeeSessionStateReader,
+    session: &dyn outbe_execution::tee_remote_session::TeeSessionStateReader,
     retired_at: &mut u64,
 ) -> eyre::Result<()>
 where
@@ -744,7 +744,7 @@ where
 /// is still an operational error, even though both stop the local node.
 pub(crate) fn tee_lease_exit_reason(
     verdict: Option<eyre::Result<String>>,
-    shutdown: &outbe_node::shutdown::NodeShutdown,
+    shutdown: &outbe_execution::shutdown::NodeShutdown,
 ) -> String {
     match verdict.unwrap_or_else(|| Err(LaunchError::TeeLeaseGuardStoppedWithoutVerdict.into())) {
         Ok(reason) => reason,

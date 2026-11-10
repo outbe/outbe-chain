@@ -115,7 +115,7 @@ fn supervised_shutdown_waits_for_descendants() {
 
 #[test]
 fn cancellation_guard_preserves_consensus_error_after_launcher_drop() {
-    let outcome = outbe_node::shutdown::NodeShutdown::default();
+    let outcome = outbe_execution::shutdown::NodeShutdown::default();
     let worker = std::thread::spawn(|| Err(eyre::eyre!("consensus drain failed")));
     let guard =
         super::ConsensusThreadGuard::new(tokio_util::sync::CancellationToken::new(), worker)
@@ -221,7 +221,7 @@ fn consensus_shutdown_preserves_both_timeout_and_stack_error() {
 
 #[test]
 fn cancellation_guard_preserves_consensus_panic_after_launcher_drop() {
-    let outcome = outbe_node::shutdown::NodeShutdown::default();
+    let outcome = outbe_execution::shutdown::NodeShutdown::default();
     let worker = std::thread::spawn(|| -> eyre::Result<()> { panic!("consensus panic marker") });
     let guard =
         super::ConsensusThreadGuard::new(tokio_util::sync::CancellationToken::new(), worker)

@@ -133,9 +133,9 @@ fn real_reth_provider_preserves_artifact_lookup_contract() {
     use reth_provider::{test_utils::create_test_provider_factory_with_node_types, BlockWriter};
 
     // This fixture uses MDBX indices and real static-file headers.
-    let factory = create_test_provider_factory_with_node_types::<outbe_node::OutbeNode>(Arc::new(
-        ChainSpec::<OutbeHeader>::default(),
-    ));
+    let factory = create_test_provider_factory_with_node_types::<outbe_execution::OutbeNode>(
+        Arc::new(ChainSpec::<OutbeHeader>::default()),
+    );
     let provider = RethAccountedParentArtifactProvider::new(factory.clone(), None);
     let unknown_hash = B256::repeat_byte(0x9d);
     assert!(provider

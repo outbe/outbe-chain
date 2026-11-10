@@ -99,7 +99,7 @@ pub(crate) fn reconcile_submitted(
             Some(CycleOutcome::Stop)
         }
         Err(
-            outbe_node::tee_remote_session::LocalRegistryAdmissionError::ReplacementBindingMissing,
+            outbe_execution::tee_remote_session::LocalRegistryAdmissionError::ReplacementBindingMissing,
         ) => None,
         Err(error) => {
             tracing::error!(error = %error, "finalized enclave transition authorization failed");

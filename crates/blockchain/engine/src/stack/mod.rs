@@ -88,7 +88,7 @@ use outbe_consensus::{
 };
 use outbe_radicle::integration::{RadicleVotingGate, RadicleVotingGateError};
 
-use outbe_node::OutbeFullNode;
+use outbe_execution::OutbeFullNode;
 use outbe_primitives::{
     consensus::{ConsensusExecutionBridge, DkgBoundaryArtifact},
     projection::ProjectionCheckpoint,

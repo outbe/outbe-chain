@@ -48,7 +48,6 @@ postcard.workspace = true
 outbe-genesis-cli.workspace = true
 outbe-tee = { workspace = true, features = ["test-utils"] }
 outbe-chain-constants.workspace = true
-outbe-node.workspace = true
 alloy-sol-types.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 reth-chainspec.workspace = true
