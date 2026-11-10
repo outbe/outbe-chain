@@ -21,7 +21,7 @@ pub(crate) const VOTE_ENVELOPE: ZeroFeeEnvelope = ZeroFeeEnvelope {
     min_max_fee_per_gas: MIN_ZERO_FEE_ORACLE_MAX_FEE_PER_GAS,
     max_calldata_bytes: MAX_ZERO_FEE_ORACLE_CALLDATA_BYTES,
     max_gas_limit: MAX_ZERO_FEE_ORACLE_GAS_LIMIT,
-    malformed_reason: "submitVote(ExchangeRateTuple[]) decode failed",
+    malformed_reason: "submitVote(ExchangeRateTuple[],GasTuple[]) decode failed",
 };
 
 /// The signer must be an active validator or its oracle delegate, and that

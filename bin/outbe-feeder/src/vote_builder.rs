@@ -1,9 +1,9 @@
 //! ABI encoding for Oracle vote submission.
 //!
 //! Takes U256 fixed-point prices from the aggregator and encodes them
-//! into `submitVote(ExchangeRateTuple[])` calldata.
+//! into `submitVote(ExchangeRateTuple[], GasTuple[])` calldata.
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::asset_type::AssetType;
 
@@ -22,10 +22,10 @@ fn show_asset(address: Address) -> String {
 
 /// Decodes ABI-encoded `submitVote` calldata back into a human-readable string.
 ///
-/// Shows exactly what goes on-chain: `COEN/840:rate,vol | ETH/840:rate,vol`
+/// Shows exactly what goes on-chain: `COEN/840:rate,vol | ETH/840:rate,vol | gas 56:price`
 pub fn decode_vote_log(calldata: &[u8]) -> eyre::Result<String> {
     let call = IOracle::submitVoteCall::abi_decode(calldata).map_err(VoteDecodeError::AbiDecode)?;
-    let parts: Vec<String> = call
+    let mut parts: Vec<String> = call
         .tuples
         .iter()
         .map(|t| {
@@ -38,6 +38,11 @@ pub fn decode_vote_log(calldata: &[u8]) -> eyre::Result<String> {
             )
         })
         .collect();
+    parts.extend(
+        call.gas
+            .iter()
+            .map(|g| format!("gas {}:{}", g.chainId, g.gasPrice)),
+    );
     Ok(parts.join(" | "))
 }
 
@@ -66,7 +71,7 @@ pub fn only_vote_targets(
         .collect()
 }
 
-pub fn encode_vote(prices: &[AggregatedPrice]) -> Vec<u8> {
+pub fn encode_vote(prices: &[AggregatedPrice], gas: &[(u32, U256)]) -> Vec<u8> {
     let tuples: Vec<IOracle::ExchangeRateTuple> = prices
         .iter()
         .map(|p| IOracle::ExchangeRateTuple {
@@ -77,14 +82,20 @@ pub fn encode_vote(prices: &[AggregatedPrice]) -> Vec<u8> {
         })
         .collect();
 
-    let call = IOracle::submitVoteCall { tuples };
+    let gas = gas
+        .iter()
+        .map(|&(chain_id, gas_price)| IOracle::GasTuple {
+            chainId: chain_id,
+            gasPrice: gas_price,
+        })
+        .collect();
+    let call = IOracle::submitVoteCall { tuples, gas };
     call.abi_encode()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::U256;
 
     #[test]
     fn test_encode_vote_produces_calldata() {
@@ -94,7 +105,7 @@ mod tests {
             price: U256::from(1_500_000u64),
             volume: U256::from(10_000_000_000u64),
         }];
-        let calldata = encode_vote(&prices);
+        let calldata = encode_vote(&prices, &[]);
         // The submitVote selector is the first 4 bytes.
         assert!(calldata.len() > 4);
         let decoded = IOracle::submitVoteCall::abi_decode(&calldata).unwrap();

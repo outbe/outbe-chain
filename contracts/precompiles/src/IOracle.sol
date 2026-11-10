@@ -15,6 +15,8 @@ interface IOracle {
     error VoteTupleCountExceedsPairCount();
     error DuplicatePairInVote();
     error PairNotVoteTarget();
+    error DuplicateGasChainInVote(uint32 chainId);
+    error GasChainNotVoteTarget(uint32 chainId);
     error AlreadyVotedThisPeriod();
     error VotePriceExceedsCap(uint256 price, uint256 max);
     error VoteVolumeExceedsCap(uint256 volume, uint256 max);
@@ -96,6 +98,12 @@ interface IOracle {
         address quote;
         uint256 exchangeRate;
         uint256 volume;
+    }
+
+    /// @notice Gas vote for one remote chain: COEN-wei per unit of gas.
+    struct GasTuple {
+        uint32 chainId;
+        uint256 gasPrice;
     }
 
     /// @notice Returns the current exchange rate for a market, quoted in the
@@ -219,8 +227,10 @@ interface IOracle {
     /// @notice Delegate feeder consent from validator to feeder address.
     function delegateFeederConsent(address feeder) external;
 
-    /// @notice Submit aggregate oracle vote.
-    function submitVote(ExchangeRateTuple[] calldata tuples) external;
+    /// @notice Submit aggregate oracle vote: the prices of the pairs and the
+    ///         gas prices of the remote chains. Each gas chain must be a gas
+    ///         vote target, at most once.
+    function submitVote(ExchangeRateTuple[] calldata tuples, GasTuple[] calldata gas) external;
 
     /// @notice Deactivate a pair's vote target status (system-only).
     function deactivateVoteTarget(address base, address quote) external;
@@ -408,4 +418,12 @@ interface IOracle {
     /// @notice Returns the annualized policy rate (scale 1e6) for an ISO 4217
     ///         code. Reverts when no policy rate is configured for the code.
     function getPolicyRate(uint16 isoCode) external view returns (uint256 rate);
+
+    /// @notice Returns each chain with a gas price vote target, its gas price
+    ///         in COEN-wei per unit of gas, and the time of the tally that
+    ///         wrote it. A chain without a price has zeros.
+    function getGasPrices()
+        external
+        view
+        returns (uint32[] memory chainIds, uint256[] memory prices, uint64[] memory updatedAt);
 }

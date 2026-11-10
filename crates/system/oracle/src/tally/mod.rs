@@ -6,6 +6,7 @@
 
 mod ballot;
 mod cross_rate;
+mod gas;
 mod round;
 mod slash_window;
 

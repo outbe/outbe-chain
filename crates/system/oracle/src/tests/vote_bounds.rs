@@ -21,6 +21,7 @@ fn submit_vote_accepts_the_price_and_volume_ceiling() {
                     coen_iso(1_000_000_000),
                     coen_iso(1_000_000_000_000),
                 )],
+                &[],
             )
             .expect("a price of 10^9 and a volume of 10^12 are inside the ceiling");
         assert!(oracle.vote_exists.read(&validator).unwrap());
@@ -36,6 +37,7 @@ fn submit_vote_rejects_a_price_above_one_billion() {
             .submit_vote(
                 validator,
                 &[(COEN, usd(), coen_iso(1_000_000_001), COEN_ISO_SCALE)],
+                &[],
             )
             .expect_err("a whole price of 10^9 + 1 is above the ceiling");
         assert_typed_revert(
@@ -58,6 +60,7 @@ fn submit_vote_rejects_a_volume_above_one_trillion() {
             .submit_vote(
                 validator,
                 &[(COEN, usd(), coen_iso(1), coen_iso(1_000_000_000_001))],
+                &[],
             )
             .expect_err("a whole volume of 10^12 + 1 is above the ceiling");
         assert_typed_revert(
@@ -84,6 +87,7 @@ fn submit_vote_keeps_the_in_range_tuples() {
                     (COEN, usd(), coen_iso(2), COEN_ISO_SCALE),
                     (COEN, eur(), coen_iso(1_000_000_001), COEN_ISO_SCALE),
                 ],
+                &[],
             )
             .unwrap();
         assert_eq!(admitted, 1);

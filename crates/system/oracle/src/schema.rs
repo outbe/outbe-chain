@@ -261,6 +261,21 @@ pub struct OracleContract {
     pub(crate) scurve_peak_wwd: Mapping<AddressPair, Mapping<u64, WorldwideDay>>,
     // The WWD VWAP of that day, in the pair-registered scale.
     pub(crate) scurve_peak_price: Mapping<AddressPair, Mapping<u64, U256>>,
+
+    // === Remote gas prices (slots 85-88) ===
+    // Chains with a gas price vote target: the sources file on mainnet, the
+    // genesis on other networks. Each is one more target of each tally.
+    pub gas_chains: StorageVec<u32>,
+    // COEN-wei per unit of gas on a chain: the median of the last tally that
+    // reached quorum for that chain, and the time of that tally.
+    pub gas_price: Mapping<u32, U256>,
+    pub gas_price_timestamp: Mapping<u32, u64>,
+    // Pending gas votes: validator -> chain id -> price.
+    pub(crate) vote_gas_price: Mapping<Address, Mapping<u32, U256>>,
+
+    // === Gas reward band (slot 89) ===
+    // FP18, as `config_reward_band`, for the gas price votes.
+    pub config_gas_reward_band: Slot<U256>,
 }
 
 #[cfg(test)]
@@ -328,5 +343,10 @@ mod tests {
         assert_eq!(c.scurve_len.base_slot(), U256::from(82));
         assert_eq!(c.scurve_peak_wwd.base_slot(), U256::from(83));
         assert_eq!(c.scurve_peak_price.base_slot(), U256::from(84));
+        assert_eq!(c.gas_chains.base_slot(), U256::from(85));
+        assert_eq!(c.gas_price.base_slot(), U256::from(86));
+        assert_eq!(c.gas_price_timestamp.base_slot(), U256::from(87));
+        assert_eq!(c.vote_gas_price.base_slot(), U256::from(88));
+        assert_eq!(c.config_gas_reward_band.slot(), U256::from(89));
     }
 }

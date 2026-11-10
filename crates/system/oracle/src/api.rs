@@ -444,3 +444,14 @@ pub fn get_policy_rate(storage: StorageHandle, iso_code: u16) -> Result<U256> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     oracle.get_policy_rate(iso_code)
 }
+
+/// Gas price of the remote chain `chain_id` in COEN-wei per unit of gas, with
+/// the time of the tally that wrote it. `None` when the chain has no price.
+pub fn gas_price(storage: StorageHandle, chain_id: u32) -> Result<Option<(U256, u64)>> {
+    let oracle: OracleContract<'_> = OracleContract::new(storage);
+    let price = oracle.gas_price.read(&chain_id)?;
+    if price.is_zero() {
+        return Ok(None);
+    }
+    Ok(Some((price, oracle.gas_price_timestamp.read(&chain_id)?)))
+}
