@@ -108,7 +108,6 @@ esac
 
 required_files=(
   genesis.json
-  reth-bootnodes.txt
   SHA256SUMS
 )
 required_binaries=(
