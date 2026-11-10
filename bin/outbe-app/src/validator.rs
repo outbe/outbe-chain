@@ -166,6 +166,7 @@ pub async fn sync(snapshot_path: Option<&Path>) -> Result<()> {
     let local = RpcClient::new(LOCAL_RPC)?;
     let remote = RpcClient::new(journal.config.network.certified_rpc.clone())?;
     wait_for_rpc_chain(&local, journal.config.network.chain_id, &mut progress).await?;
+    progress.stage("synchronizing keyless full node");
     let (height, peers) = wait_for_sync(&local, &remote, &mut progress).await?;
     progress.done(&format!(
         "full node synchronized at finalized height {height} with {peers} peers"
@@ -259,6 +260,7 @@ pub async fn promote() -> Result<()> {
         wait_transaction_finalized(&remote, hash, &mut progress).await?;
     }
 
+    progress.stage("waiting for DKG signer activation");
     let activation = wait_for_signer(&local, &remote, validator, &mut progress).await?;
     progress.done(&format!(
         "validator {validator:#x} is active signer; DKG activation height {activation}"
