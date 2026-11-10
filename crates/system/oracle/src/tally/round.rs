@@ -107,7 +107,7 @@ pub(super) fn run_tally_inner(
 /// Reads the validators, vote targets and votes of the round.
 ///
 /// Returns `None` when the round has no active validator, no vote, or no
-/// vote target. The caller then clears the votes. A round without votes
+/// vote target (no pair target and no gas chain). The caller then clears the votes. A round without votes
 /// first records an abstention for every active validator.
 fn open_round(oracle: &mut OracleContract) -> Result<Option<TallyRound>> {
     // Collect the active validator set at tally time.
@@ -131,7 +131,8 @@ fn open_round(oracle: &mut OracleContract) -> Result<Option<TallyRound>> {
     }
 
     let ballots = active_ballots(oracle)?;
-    if ballots.is_empty() {
+    // A round with gas chains but no pair targets still tallies the gas votes.
+    if ballots.is_empty() && oracle.gas_chains.is_empty()? {
         return Ok(None);
     }
 

@@ -421,6 +421,36 @@ impl FeederTickContext<'_> {
         }
     }
 
+    /// Gas prices of the `gas_providers` chains for `period`, within 30 seconds.
+    /// A failure or a timeout gives no gas prices, and the pair prices still go.
+    async fn gas_votes(
+        &self,
+        period: u64,
+        aggregated: &[aggregator::AggregatedPrice],
+    ) -> Vec<(u32, alloy_primitives::U256)> {
+        if self.config.gas_providers.is_empty() {
+            return Vec::new();
+        }
+        let collect = async {
+            let period_start = self
+                .client
+                .block_timestamp(period * self.config.oracle.vote_period)
+                .await?;
+            Ok::<_, eyre::Report>(gas::gas_votes(self.config, aggregated, period_start).await)
+        };
+        match tokio::time::timeout(std::time::Duration::from_secs(30), collect).await {
+            Ok(Ok(gas)) => gas,
+            Ok(Err(error)) => {
+                warn!(%error, "no gas prices in this vote");
+                Vec::new()
+            }
+            Err(_) => {
+                warn!("gas prices took longer than 30 seconds; no gas prices in this vote");
+                Vec::new()
+            }
+        }
+    }
+
     async fn prepare_pending_vote(&mut self, period: u64, replace_pending: bool) -> Result<bool> {
         use oracle_client::{PreflightResult, VoteSigningContext};
         let aggregated = tokio::time::timeout(
@@ -431,6 +461,9 @@ impl FeederTickContext<'_> {
         if aggregated.is_empty() {
             return Err(FeederError::NoPriceDataAvailable.into());
         }
+        // Gas prices come before the period check below, so a slow RPC cannot
+        // carry the vote into the next period.
+        let gas = self.gas_votes(period, &aggregated).await;
         let fresh = self.client.head().await?;
         if fresh.period(self.config.oracle.vote_period) != period {
             self.health
@@ -454,15 +487,6 @@ impl FeederTickContext<'_> {
         if aggregated.is_empty() {
             return Err(FeederError::NoPriceDataAvailable.into());
         }
-        let gas = if self.config.gas_providers.is_empty() {
-            Vec::new()
-        } else {
-            let period_start = self
-                .client
-                .block_timestamp(period * self.config.oracle.vote_period)
-                .await?;
-            gas::gas_votes(self.config, &aggregated, period_start).await
-        };
         let calldata = vote_builder::encode_vote(&aggregated, &gas);
         if let Ok(decoded) = vote_builder::decode_vote_log(&calldata) {
             info!(vote=%decoded,"vote calldata");

@@ -84,21 +84,28 @@ pub async fn gas_votes(
         warn!("no COEN/840 price in this vote; no gas votes");
         return Vec::new();
     };
-    let mut votes = Vec::with_capacity(config.gas_providers.len());
-    for entry in &config.gas_providers {
+    // The chains are read in parallel: the time is that of the slowest chain.
+    let reads = config.gas_providers.iter().map(|entry| async move {
         let Some(endpoint) = config.rpc_endpoints.get(&entry.chain_id.to_string()) else {
             warn!(
                 chain_id = entry.chain_id,
                 "no rpc_endpoints entry; no gas vote for chain"
             );
-            continue;
+            return None;
         };
         match gas_vote(endpoint, entry, coen_usd, period_start).await {
-            Ok(price) => votes.push((entry.chain_id, price)),
-            Err(error) => warn!(chain_id = entry.chain_id, %error, "no gas vote for chain"),
+            Ok(price) => Some((entry.chain_id, price)),
+            Err(error) => {
+                warn!(chain_id = entry.chain_id, %error, "no gas vote for chain");
+                None
+            }
         }
-    }
-    votes
+    });
+    futures::future::join_all(reads)
+        .await
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 /// The gas price of `entry` in COEN-wei per unit of gas, read over `endpoint`
