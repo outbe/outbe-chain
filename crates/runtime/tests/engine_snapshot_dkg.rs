@@ -17,6 +17,7 @@ mod copied_native_dkg_prerequisites {
     use futures::FutureExt as _;
     use outbe_consensus::bls;
     use outbe_consensus::dkg_manager;
+    use outbe_consensus::validators;
     use outbe_engine::stack::snapshot_native::{
         load_pending_dkg_boundary, open_native, refresh_validator_set_at_height,
         remove_native_header, replace_native_header, restore_pending_dkg_activation,
@@ -24,7 +25,6 @@ mod copied_native_dkg_prerequisites {
         DkgStateStore, FrozenValidatorSetRefresh, PendingDkgBoundarySnapshot,
         RestoredPendingDkgActivation, H,
     };
-    use outbe_engine::validators;
     use outbe_evm::{EvmRuntimeHost, OutbeEvmConfig};
     use outbe_execution::{OutbeBeaconConsensus, OutbeFullNode, OutbeNode, OutbePoolBuilder};
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
@@ -306,13 +306,15 @@ mod copied_native_dkg_prerequisites {
         }
     }
 
-    fn run_test_dkg_complete() -> (
+    type CompletedDkg = (
         Vec<bls12381::PrivateKey>,
         Set<bls12381::PublicKey>,
         Output<MinSig, bls12381::PublicKey>,
         Share,
         Sharing<MinSig>,
-    ) {
+    );
+
+    fn run_test_dkg_complete() -> CompletedDkg {
         use commonware_cryptography::bls12381::dkg::feldman_desmedt::{Dealer, Info, Player};
         use commonware_cryptography::bls12381::primitives::sharing::Mode;
         use commonware_math::algebra::Random as _;

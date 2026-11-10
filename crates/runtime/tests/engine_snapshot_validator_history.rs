@@ -6,8 +6,8 @@ mod copied_genesis_validator_history {
     use alloy_primitives::{Address, B256};
     use commonware_codec::Encode as _;
     use commonware_cryptography::{bls12381, Signer as _};
+    use outbe_consensus::validators::read_consensus_validators_at_block;
     use outbe_engine::stack::snapshot_native::{open_native, DiskFixture, H};
-    use outbe_engine::validators::read_consensus_validators_at_block;
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
     use reth_ethereum::provider::db::{
         database::Database,

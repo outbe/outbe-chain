@@ -5,7 +5,7 @@ use commonware_codec::Encode as _;
 use commonware_cryptography::{bls12381, Signer as _};
 use commonware_p2p::Address as CommonwareAddress;
 use eyre::Result;
-use outbe_engine::validators::{
+use outbe_consensus::validators::{
     has_pending_set_change, read_consensus_validators_from_state,
     read_local_tee_runtime_admission_from_state,
     read_reshare_target_with_empty_tee_exclusions_from_state, read_validators_from_state,
@@ -500,7 +500,7 @@ fn test_has_pending_set_change_reflects_contract_flag() {
 #[test]
 fn jailed_status_byte_matches_validator_set() {
     assert_eq!(
-        outbe_engine::protocol_state::VALIDATOR_STATUS_JAILED,
+        outbe_consensus::protocol_state::VALIDATOR_STATUS_JAILED,
         outbe_validatorset::runtime::status::JAILED
     );
 }

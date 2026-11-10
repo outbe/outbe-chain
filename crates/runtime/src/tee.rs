@@ -8,7 +8,7 @@ pub(crate) async fn prepare(
     initial_tee_policy: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
 ) -> eyre::Result<(
     Option<Arc<OutbeEvmSigner>>,
-    outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+    outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
     Option<crate::admission::LocalTeeAdmissionAnchorV1>,
 )> {
     let evm_signer = if args.is_validator {
@@ -49,7 +49,7 @@ pub(crate) async fn prepare(
         info!("keyless follower: enclave socket not configured; admission and offer-key checks skipped");
         return Ok((
             evm_signer,
-            outbe_engine::validators::LocalTeeRuntimeIdentityV1 {
+            outbe_consensus::validators::LocalTeeRuntimeIdentityV1 {
                 reth_p2p_public,
                 expected_enclave_id: None,
                 validator: validator_evm_address,
@@ -79,7 +79,7 @@ pub(crate) async fn prepare(
     let (node_host_signing, reth_p2p_public) =
         load_reth_p2p_node_host_signer(&config.network, config.datadir().p2p_secret())?;
     let expected_enclave_id = match tee_session {
-        outbe_engine::args::ResolvedTeeSession::ProductionNodeHost => {
+        outbe_consensus::args::ResolvedTeeSession::ProductionNodeHost => {
             use k256::ecdsa::signature::hazmat::PrehashSigner as _;
 
             let client = outbe_tee::connect_or_initialize_node_host_enclave(
@@ -120,7 +120,7 @@ pub(crate) async fn prepare(
             .wrap_err("enclave session install failed")?;
             Some(enclave_id)
         }
-        outbe_engine::args::ResolvedTeeSession::Development => {
+        outbe_consensus::args::ResolvedTeeSession::Development => {
             let client = outbe_tee::EnclaveClient::connect_endpoint(endpoint)
                 .wrap_err("development enclave connection failed")?;
             outbe_tee::install_enclave_client(client, endpoint.to_owned())
@@ -128,7 +128,7 @@ pub(crate) async fn prepare(
             None
         }
     };
-    let local_tee_identity = outbe_engine::validators::LocalTeeRuntimeIdentityV1 {
+    let local_tee_identity = outbe_consensus::validators::LocalTeeRuntimeIdentityV1 {
         reth_p2p_public,
         expected_enclave_id,
         validator: validator_evm_address,
@@ -179,7 +179,7 @@ pub(crate) async fn prepare(
 /// Require that the local enclave holds the exact offer key of the selected
 /// upstream. Losing the key is terminal for this node identity.
 async fn require_upstream_offer_key_v1(upstream: &str) -> eyre::Result<()> {
-    let expected_offer = outbe_engine::read_upstream_tribute_offer_public_key(upstream)
+    let expected_offer = outbe_consensus::read_upstream_tribute_offer_public_key(upstream)
         .await
         .wrap_err("failed to read mandatory offer key from the selected upstream")?;
     if expected_offer.is_zero() {
@@ -221,13 +221,13 @@ async fn upstream_block_hash_v1(
 /// offer key equal to the on-chain key. Returns the admission for the
 /// rejection report.
 fn local_tee_admission_ready_v1(
-    protocol: &dyn outbe_engine::protocol_state::EngineProtocolState,
+    protocol: &dyn outbe_consensus::protocol_state::EngineProtocolState,
     node: &OutbeFullNode,
     (chain_id, genesis_hash): (u64, alloy_primitives::B256),
-    identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+    identity: outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
 ) -> eyre::Result<(
     bool,
-    Option<outbe_engine::validators::LocalTeeRuntimeAdmissionV1>,
+    Option<outbe_consensus::validators::LocalTeeRuntimeAdmissionV1>,
 )> {
     let admission = crate::admission::read_finalized_local_tee_admission(
         protocol,
@@ -238,12 +238,12 @@ fn local_tee_admission_ready_v1(
     )?;
     if !matches!(
         admission,
-        Some(outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready { .. })
+        Some(outbe_consensus::validators::LocalTeeRuntimeAdmissionV1::Ready { .. })
     ) {
         return Ok((false, admission));
     }
     let on_chain_offer =
-        outbe_engine::validators::read_tee_offer_public_at_latest(protocol, &node.provider)
+        outbe_consensus::validators::read_tee_offer_public_at_latest(protocol, &node.provider)
             .wrap_err("read the canonical offer key for the TEE lease guard")?;
     let resident_offer = outbe_tee::resident_offer_public_key_state_v1()
         .wrap_err("read the resident offer key for the TEE lease guard")?;
@@ -262,12 +262,12 @@ fn local_tee_admission_ready_v1(
 /// anchor. Every check fails closed.
 async fn initial_tee_lease_gate_v1(
     (protocol, node, args): (
-        &dyn outbe_engine::protocol_state::EngineProtocolState,
+        &dyn outbe_consensus::protocol_state::EngineProtocolState,
         &OutbeFullNode,
         &ConsensusArgs,
     ),
     chain: (u64, alloy_primitives::B256),
-    identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+    identity: outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
     prepared_anchor: Option<crate::admission::LocalTeeAdmissionAnchorV1>,
 ) -> eyre::Result<crate::admission::TeeLeaseGuardAnchorsV1> {
     use crate::admission::{
@@ -296,12 +296,12 @@ async fn initial_tee_lease_gate_v1(
         let signing_key_path = args
             .signing_key
             .as_ref()
-            .ok_or(outbe_engine::errors::StackEpochError::SigningKeyRequired)?;
+            .ok_or(outbe_consensus::errors::StackEpochError::SigningKeyRequired)?;
         let key_backend = args.key_backend().wrap_err("invalid BLS key backend")?;
         let local_consensus_key =
-            outbe_engine::validators::load_signing_public_key(signing_key_path, &key_backend)
+            outbe_consensus::validators::load_signing_public_key(signing_key_path, &key_backend)
                 .wrap_err("failed to load consensus signing public key for TEE lease guard")?;
-        let genesis_validators = outbe_engine::validators::read_consensus_validators_at_block(
+        let genesis_validators = outbe_consensus::validators::read_consensus_validators_at_block(
             protocol,
             &node.provider,
             chain.1,
@@ -445,12 +445,12 @@ fn keyless_runtime_workers() -> TeeRuntimeWorkers {
 
 fn verify_initial_local_tee_admission_v1(
     (protocol, node, args): (
-        &dyn outbe_engine::protocol_state::EngineProtocolState,
+        &dyn outbe_consensus::protocol_state::EngineProtocolState,
         &OutbeFullNode,
         &ConsensusArgs,
     ),
     chain: outbe_execution::tee_remote_session::RegistryChainIdentity,
-    local_tee_identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+    local_tee_identity: outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
     anchors: &mut crate::admission::TeeLeaseGuardAnchorsV1,
     node_data_dir: &Path,
 ) -> eyre::Result<()> {
@@ -495,13 +495,13 @@ fn verify_initial_local_tee_admission_v1(
 
 pub(crate) async fn start_runtime_workers(
     (protocol, session): (
-        Arc<dyn outbe_engine::protocol_state::EngineProtocolState>,
+        Arc<dyn outbe_consensus::protocol_state::EngineProtocolState>,
         Arc<dyn outbe_execution::tee_remote_session::TeeSessionStateReader>,
     ),
     (node, args): (&OutbeFullNode, &ConsensusArgs),
     (proof_chain_id, genesis_hash, node_data_dir): (u64, alloy_primitives::B256, &Path),
     (local_tee_identity, tee_admission_anchor, initial_tee_policy): (
-        outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+        outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
         Option<crate::admission::LocalTeeAdmissionAnchorV1>,
         &outbe_primitives::tee_attestation_v1::TeePolicyV1,
     ),

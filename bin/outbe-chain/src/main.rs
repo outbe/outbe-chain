@@ -13,7 +13,7 @@ mod tee_genesis;
 mod test_utils;
 
 use clap::Parser;
-use outbe_engine::args::ConsensusArgs;
+use outbe_consensus::args::ConsensusArgs;
 use outbe_primitives::OutbeHeader;
 use reth_chainspec::{ChainSpec, EthChainSpec};
 use reth_cli::chainspec::ChainSpecParser;

@@ -1,5 +1,5 @@
 use crate::*;
-use outbe_engine::protocol_state::EngineProtocolState;
+use outbe_consensus::protocol_state::EngineProtocolState;
 use outbe_evm::EvmRuntimeHost;
 use outbe_execution::tee_remote_session::TeeSessionStateReader;
 use outbe_radicle::protocol_state::RadicleProtocolState;
@@ -256,7 +256,7 @@ where
                 RethDurableExecutionState::new(node.provider.clone()),
             )));
 
-        outbe_engine::validators::check_binary_version_compatibility(
+        outbe_consensus::validators::check_binary_version_compatibility(
             runtime_for_launcher.as_ref(),
             &node.provider,
             outbe_update::handlers::registry(),

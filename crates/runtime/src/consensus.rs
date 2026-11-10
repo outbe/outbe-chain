@@ -13,7 +13,7 @@ pub(crate) type ConsensusLaunch = (
         outbe_radicle::integration::EndpointTaskOwner,
     )>,
     Option<oneshot::Receiver<()>>,
-    Arc<dyn outbe_engine::protocol_state::EngineProtocolState>,
+    Arc<dyn outbe_consensus::protocol_state::EngineProtocolState>,
 );
 
 pub(crate) fn run(
@@ -80,7 +80,7 @@ pub(crate) fn run(
     .wrap_err("validate consensus restart storage identity")?;
 
     // Migrate DKG files from legacy location (consensus/) to keys/.
-    outbe_engine::stack::migrate_dkg_keys_if_needed(&consensus_storage, &keys_dir)?;
+    outbe_consensus::stack::migrate_dkg_keys_if_needed(&consensus_storage, &keys_dir)?;
 
     info!(
         path = %consensus_storage.display(),
@@ -115,31 +115,31 @@ pub(crate) fn run(
         runner.start(async move |ctx| {
                 let graceful_shutdown = ctx.child("shutdown");
                 let application_shutdown = radicle_shutdown_for_consensus;
-                let application_drain = outbe_engine::application_shutdown::ApplicationDrain::new(async move {
+                let application_drain = outbe_consensus::application_shutdown::ApplicationDrain::new(async move {
                     application_shutdown.cancel();
                     await_radicle_drain(radicle_drained, RADICLE_DRAIN_DEADLINE).await
                 });
                 let stack_application_drain = application_drain.clone();
                 let (follower_drain, follower_shutdown) =
-                    outbe_engine::follower_shutdown::follower_drain_pair();
+                    outbe_consensus::follower_shutdown::follower_drain_pair();
                 let mut stack_handle = ctx.child("consensus_stack").spawn(move |stack_ctx| {
-                    outbe_engine::run_consensus_stack(
+                    run_consensus_with_execution(
                         stack_ctx,
                         args,
-                        node,
+                        RethExecutionBackend::new(node),
                         bridge_for_consensus,
-                        outbe_engine::ConsensusStackServices::new(
-                            outbe_engine::ConsensusExecutionServices {
+                        outbe_consensus::stack::ConsensusStackServices::new(
+                            outbe_consensus::stack::ConsensusExecutionServices {
                                 finalized_execution_barrier,
                                 finalization_notify,
                                 tee_lease_armed_rx,
                             },
-                            outbe_engine::ConsensusShutdownServices {
+                            outbe_consensus::stack::ConsensusShutdownServices {
                                 application_drain: stack_application_drain,
                                 follower_shutdown: Some(follower_shutdown),
                             },
                             radicle.map(|(endpoint, local_identity, status, task_owner)| {
-                                outbe_engine::ConsensusRadicleServices {
+                                outbe_consensus::stack::ConsensusRadicleServices {
                                     status,
                                     endpoint,
                                     local_identity,
@@ -179,7 +179,7 @@ pub(crate) fn run(
                             (Err(error), _) | (_, Err(error)) => Err(error),
                             (Ok(()), Ok(())) => Ok(()),
                         };
-                        outbe_engine::application_shutdown::combine(
+                        outbe_consensus::application_shutdown::combine(
                             consensus_shutdown_result(stop_result, stack_result), radicle_result,
                         )
                     },

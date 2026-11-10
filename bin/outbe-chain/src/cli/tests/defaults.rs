@@ -30,7 +30,7 @@ fn only_node_execution_requires_the_crs() {
     install_cli_defaults_for_test();
     type FixtureCli = reth_ethereum::cli::interface::Cli<
         ExplicitFixtureChainSpecParser,
-        outbe_engine::args::ConsensusArgs,
+        outbe_consensus::args::ConsensusArgs,
         super::OutbeRpcModuleValidator,
     >;
 
