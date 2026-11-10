@@ -186,7 +186,7 @@ pub(super) fn bootstrap() -> SystemTx {
 
 pub(super) fn publication() -> SystemTx {
     SystemTx::RadiclePublication {
-        batch: crate::radicle_publication::tests::batch(1),
+        batch: crate::test_utils::sample_radicle_publication_batch(1),
     }
 }
 

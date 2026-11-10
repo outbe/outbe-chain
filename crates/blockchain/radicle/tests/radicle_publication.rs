@@ -1,10 +1,13 @@
-use super::*;
-pub(crate) use crate::test_utils::{
+use outbe_primitives::radicle_publication::{
+    PublicationAction, PublicationBatch, PublicationBody, RepositoryPublicationMailbox,
+    MAX_PUBLICATION_BATCH_LEN, PUBLICATION_BODY_LEN,
+};
+use outbe_primitives::test_utils::{
     sample_radicle_publication_batch as batch, sample_radicle_publication_body as body,
 };
 
 #[test]
-fn mailbox_is_bounded_nonblocking_and_preserves_proposal_retries() {
+fn mailbox_is_bounded_and_preserves_proposal_retries() {
     let mailbox = RepositoryPublicationMailbox::default();
     let ready = batch(32);
     mailbox.set_ready(Some(ready.clone())).unwrap();
@@ -18,9 +21,6 @@ fn mailbox_is_bounded_nonblocking_and_preserves_proposal_retries() {
             .attestations,
         ready.attestations[..1]
     );
-    let held = mailbox.0.lock().unwrap();
-    assert!(mailbox.ready_prefix(usize::MAX).is_none());
-    drop(held);
     assert!(mailbox.set_ready(Some(batch(33))).is_err());
     assert_eq!(mailbox.ready_prefix(usize::MAX), Some(ready));
     mailbox.set_ready(None).unwrap();

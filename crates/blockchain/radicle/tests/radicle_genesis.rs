@@ -1,4 +1,7 @@
-use super::*;
+use alloy_primitives::{FixedBytes, B256};
+use outbe_primitives::radicle_genesis::{
+    validate_publication_window, GovernmentsDescriptor, MAX_GOVERNMENTS_DESCRIPTOR_BYTES,
+};
 
 #[test]
 fn publication_window_matches_effective_dkg_freeze_cadence() {

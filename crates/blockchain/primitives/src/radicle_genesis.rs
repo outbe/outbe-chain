@@ -162,6 +162,3 @@ fn take<const N: usize>(input: &mut &[u8]) -> Result<[u8; N]> {
     head.try_into()
         .map_err(|_| PrecompileError::revert("invalid governments descriptor field"))
 }
-
-#[cfg(test)]
-mod tests;

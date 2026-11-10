@@ -41,6 +41,7 @@ tokio.workspace = true
 metrics.workspace = true
 
 [dev-dependencies]
+outbe-primitives = { workspace = true, features = ["test-utils"] }
 reth-chainspec.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 hex.workspace = true

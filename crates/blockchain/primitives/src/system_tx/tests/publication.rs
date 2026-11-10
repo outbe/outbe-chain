@@ -1,8 +1,8 @@
 use super::*;
 use crate::{
-    radicle_publication::tests::batch,
     reshare_artifact::{encode_outbe_block_artifacts, OutbeBlockArtifacts},
     system_tx::binding::validate_system_layout,
+    test_utils::sample_radicle_publication_batch as batch,
     OutbeBlockBody, OutbeHeader,
 };
 
