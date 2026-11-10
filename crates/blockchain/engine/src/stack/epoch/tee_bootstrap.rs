@@ -71,14 +71,14 @@ where
         .clone()
         .ok_or(crate::errors::StackEpochError::MandatoryTeeRequiresEnclaveSocket)?;
     let tee_attestation =
-        outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
+        outbe_tee::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
             node.chain_spec().as_ref(),
         );
     let tee_activation = tee_attestation
         .activation()
         .map_err(crate::errors::StackEpochError::invalid_tee_attestation_chain_spec)?;
     let tee_policy = tee_activation
-        .policy_at(outbe_evm::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)?
+        .policy_at(outbe_tee::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)?
         .clone();
     let tee_session = args.tee_session_mode.resolve(tee_policy.attestation_mode)?;
     {

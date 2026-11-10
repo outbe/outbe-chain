@@ -12,7 +12,7 @@ mod native_delegation;
 pub mod precompiles;
 pub mod storage;
 pub mod sub_call;
-pub mod tee_attestation_activation;
+pub use outbe_tee::tee_attestation_activation;
 pub mod tee_bootstrap;
 pub mod test_support;
 

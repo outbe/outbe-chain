@@ -8,7 +8,6 @@ use outbe_engine::protocol_state::{
 };
 use outbe_evm::errors::TeeBootstrapHostError;
 use outbe_evm::precompiles::MetadosisMutationCall;
-use outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1;
 use outbe_evm::{EvmRuntimeHost, UserTxFeePolicy};
 use outbe_node::tee_remote_session::TeeSessionStateReader;
 use outbe_primitives::block::{BlockHeightRegime, BlockRuntimeContext};
@@ -38,6 +37,7 @@ use outbe_rpc::{
     EpochInfo, ParticipationInfo, SlashConfig, SlashInfo, ValidatorDetailInfo, ValidatorInfo,
 };
 use outbe_tee::dcap_protocol::DcapOnboardingContextV1;
+use outbe_tee::tee_attestation_activation::TeeAttestationChainSpecStateV1;
 use outbe_tee::tribute_source::TributeSourceSubject;
 use outbe_txpool::TxPoolZeroFeePolicy;
 

@@ -179,7 +179,7 @@ pub fn read_local_tee_runtime_admission_from_state(
     else {
         return Ok(
             if context.block_number
-                == outbe_evm::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT
+                == outbe_tee::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT
                 && identity.validator.is_some()
             {
                 LocalTeeRuntimeAdmissionV1::BootstrapPending

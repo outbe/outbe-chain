@@ -18,7 +18,6 @@ snapshot-integration = ["dep:tempfile"]
 [dependencies]
 # Internal
 outbe-consensus.workspace = true
-outbe-evm.workspace = true
 outbe-node.workspace = true
 outbe-primitives.workspace = true
 outbe-radicle.workspace = true

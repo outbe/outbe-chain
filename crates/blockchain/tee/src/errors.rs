@@ -9,6 +9,7 @@ mod host_collateral;
 mod protocol;
 mod quote;
 mod session;
+mod tee_attestation_activation;
 mod transport;
 
 pub use balance::BalanceClientError;
@@ -23,6 +24,7 @@ pub use protocol::{
 };
 pub use quote::QuoteParseError;
 pub use session::DevIdentityMismatchError;
+pub use tee_attestation_activation::TeeAttestationActivationError;
 pub use transport::TransportError;
 
 #[cfg(test)]

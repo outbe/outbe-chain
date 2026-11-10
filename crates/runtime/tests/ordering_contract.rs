@@ -77,7 +77,7 @@ fn run_begin_block_without_certified_boundary(ctx: &BlockRuntimeContext) {
                 &input,
                 SYSTEM_ADDRESS,
                 U256::ZERO,
-                &outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::Unbound,
+                &outbe_tee::tee_attestation_activation::TeeAttestationChainSpecStateV1::Unbound,
             )
             .expect("begin-block module must succeed");
     }

@@ -50,6 +50,6 @@ fn dispatch(
         data,
         caller,
         value,
-        &outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::Unbound,
+        &outbe_tee::tee_attestation_activation::TeeAttestationChainSpecStateV1::Unbound,
     )
 }

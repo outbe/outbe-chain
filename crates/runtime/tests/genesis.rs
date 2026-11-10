@@ -424,7 +424,7 @@ fn block1_boundary_outcome_writes_epoch0_snapshot_before_block2() {
                 &input,
                 SYSTEM_ADDRESS,
                 U256::ZERO,
-                &outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::Unbound,
+                &outbe_tee::tee_attestation_activation::TeeAttestationChainSpecStateV1::Unbound,
             )
             .expect("block 1 genesis DKG BoundaryOutcome must commit epoch-0 snapshot");
     });

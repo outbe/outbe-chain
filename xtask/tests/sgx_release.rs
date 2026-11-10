@@ -3,7 +3,6 @@ use std::{collections::BTreeMap, fs, io::Cursor, process::Command};
 use alloy_primitives::{keccak256, B256, U256};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use outbe_consensus::storage_identity::bind_consensus_storage_identity;
-use outbe_evm::tee_attestation_activation::DcapChainSpecBindingV1;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::{
     chain::TESTNET_CHAIN_ID,
@@ -16,6 +15,7 @@ use outbe_primitives::{
         ProductionSgxMeasurementV1,
     },
 };
+use outbe_tee::tee_attestation_activation::DcapChainSpecBindingV1;
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 use xtask::release::sgx::{

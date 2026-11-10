@@ -11,6 +11,9 @@ path = "src/bin/outbe-dcap-fixture.rs"
 required-features = ["dcap-fixture-tool"]
 
 [dependencies]
+reth-ethereum = { workspace = true, features = ["node", "cli"] }
+blst.workspace = true
+hex.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 outbe-primitives = { workspace = true, features = ["tee-attestation-v1"] }
 serde = { workspace = true, features = ["derive"] }

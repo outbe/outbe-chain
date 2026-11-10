@@ -21,7 +21,7 @@ pub(crate) fn validate_startup_authority_and_pruning(
     // Validator and follower both enter this function before `launch()`.
     validate_slash_indicator_genesis(config)?;
     let tee_attestation_v1 =
-        outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
+        outbe_tee::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
             config.chain.as_ref(),
         );
     let tee_activation = tee_attestation_v1.activation().map_err(|error| {
@@ -30,7 +30,7 @@ pub(crate) fn validate_startup_authority_and_pruning(
         }
     })?;
     let initial_tee_policy = tee_activation
-        .policy_at(outbe_evm::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)?;
+        .policy_at(outbe_tee::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)?;
     let extra = &config.chain.genesis.config.extra_fields;
     let dkg_prepare_window_blocks = extra
         .get_deserialized::<u64>("dkgPrepareWindowBlocks")

@@ -252,9 +252,9 @@ fn run_bootstrap_v1(provider: &mut HashMapStorageProvider, payload: TeeBootstrap
             policy: payload.authority.policy.clone(),
         }],
     };
-    let activation = outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::Active(
+    let activation = outbe_tee::tee_attestation_activation::TeeAttestationChainSpecStateV1::Active(
         std::sync::Arc::new(
-            outbe_evm::tee_attestation_activation::TeeAttestationActivationV1 {
+            outbe_tee::tee_attestation_activation::TeeAttestationActivationV1 {
                 manifest: TeeAttestationManifestV1 {
                     activation_height: 1,
                     policy_schedule_hash: policy_schedule.schedule_hash().unwrap(),

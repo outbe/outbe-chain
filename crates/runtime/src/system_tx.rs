@@ -4,7 +4,6 @@
 
 use alloy_primitives::{Address, Bytes, U256};
 use outbe_evm::errors::BeginBlockPrecompileError;
-use outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1;
 use outbe_primitives::addresses::SYSTEM_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext, ProtocolModule};
 use outbe_primitives::error::{PrecompileError, Result};
@@ -13,6 +12,7 @@ use outbe_primitives::system_tx::SystemTx;
 use outbe_primitives::system_tx_context::SystemTxExecutionContext;
 use outbe_primitives::tee_attestation_v1::TeePolicyV1;
 use outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2;
+use outbe_tee::tee_attestation_activation::TeeAttestationChainSpecStateV1;
 
 /// Selectors on the system-transaction precompile that accept native value.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];

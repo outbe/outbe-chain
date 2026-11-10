@@ -43,6 +43,7 @@ pub mod release_dcap_artifacts;
 pub mod remote_session;
 pub mod response_auth;
 pub mod session;
+pub mod tee_attestation_activation;
 pub mod tee_dkg;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
