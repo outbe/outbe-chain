@@ -218,11 +218,7 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    /// @dev Deliberately not `nonReentrant`. On a chain that is its own target, the send is
-    ///      delivered inside this frame and comes back through `receiveMessage`. The
-    ///      contract-wide guard would reject that call. The code sets the `sent` flag below before
-    ///      the send, so a re-entrant call cannot send the entry twice.
-    function resendParkedMessage(uint256 idx) external {
+    function resendParkedMessage(uint256 idx) external nonReentrant {
         ParkedMessage storage p = _os().parkedMessages[idx];
         if (p.payload.length == 0 || p.sent) revert NoParkedMessage(idx);
         p.sent = true; // CEI. A revert in `_send` rolls this back and keeps the entry retryable.
@@ -490,17 +486,7 @@ contract OriginRouter is
         uint64 budget = _os().clearingGas[emissionDay][srcChainId];
         uint256 gasLimit = budget == 0 ? IntexGas.AUCTION_STAGE_COLLECTING_BIDS : budget;
         bytes memory round = BridgeMsgCodec.encodeAuctionStageCollectingBids(emissionDay);
-
-        // A target on this very chain gets the delivery inside this frame, where `receiveMessage`
-        // still holds its re-entry guard. So the guard would reject the round's own chunk sends
-        // coming back in. Park the round instead, and let the drain trigger carry it in a
-        // transaction of its own.
-        bytes32 sendId;
-        if (srcChainId == block.chainid) {
-            _park(srcChainId, round, gasLimit);
-        } else {
-            sendId = _sendOrPark(srcChainId, round, gasLimit);
-        }
+        bytes32 sendId = _sendOrPark(srcChainId, round, gasLimit);
         emit BidsRelayRoundSent(sendId, emissionDay, srcChainId, nextBatch, totalBatches);
     }
 
