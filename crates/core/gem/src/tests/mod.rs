@@ -47,7 +47,7 @@ pub(crate) fn sample_params(owner: Address) -> GemAddParams {
 pub(crate) fn add(storage: &StorageHandle, mut params: GemAddParams) -> U256 {
     let profile = crate::config::read(storage).unwrap();
     params.call_terms = Some(CallTerms {
-        call_price_minor: outbe_primitives::markup::marked_up(
+        call_price_minor: outbe_common::markup::marked_up(
             params.entry_price_minor,
             profile.call_rate,
         )

@@ -22,6 +22,7 @@ name = "outbe-chain"
 path = "src/main.rs"
 
 [dependencies]
+outbe-system-common.workspace = true
 outbe-chain-constants.workspace = true
 outbe-snapshot.workspace = true
 outbe-evm.workspace = true

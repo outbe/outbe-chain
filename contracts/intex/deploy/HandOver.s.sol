@@ -30,8 +30,7 @@ contract HandOver is BaseScript {
         // Read before the broadcast: on a chain other than Outbe this asks the Outbe node.
         address governance = governanceOwner();
 
-        string[6] memory prefixes =
-            ["OriginRouter", "IntexNFT1155", "EscrowAdapter", "IntexAuction", "IntexNFT1155Bridge", "TargetRouter"];
+        string[6] memory prefixes = intexProxyPrefixes();
         vm.startBroadcast(pk);
         for (uint256 i = 0; i < prefixes.length; i++) {
             address proxy = predictProxy(factory, deployer, prefixes[i]);

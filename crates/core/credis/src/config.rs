@@ -11,7 +11,7 @@ use crate::constants::{CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_W
 use crate::errors::CredisError;
 use crate::schema::CredisContract;
 
-pub use outbe_primitives::profile::{PROFILE_AUTO, PROFILE_DEV, PROFILE_PROD};
+pub use outbe_common::profile::{PROFILE_AUTO, PROFILE_DEV, PROFILE_PROD};
 
 /// Resolved Credis call terms. All periods are in seconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,7 +44,7 @@ impl CredisParams {
     };
 
     pub fn from_selector(selector: u8, chain_id: u64) -> Result<Self> {
-        outbe_primitives::profile::select(selector, chain_id, Self::PROD, Self::DEV)
+        outbe_common::profile::select(selector, chain_id, Self::PROD, Self::DEV)
             .ok_or_else(|| CredisError::UnknownProfileSelector(selector).into())
     }
 }

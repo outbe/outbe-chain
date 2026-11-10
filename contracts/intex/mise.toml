@@ -20,8 +20,8 @@ bin_path = "aderyn-aarch64-unknown-linux-gnu"
 # Forge sub-projects (run them from here, e.g. `mise run build`).
 
 [tasks.install]
-description = "Install dependencies using yarn"
-run = "yarn install"
+description = "Install the Solidity dependencies (soldeer) and the Hardhat tooling (yarn)"
+run = "forge soldeer install && yarn install"
 
 [tasks.build]
 description = "Compile contracts (hardhat)"
@@ -36,8 +36,8 @@ description = "Format Solidity code"
 run = "forge fmt"
 
 [tasks.lint]
-description = "Lint Solidity code (solhint)"
-run = "yarn lint"
+description = "Lint Solidity code (forge lint)"
+run = "forge lint"
 
 [tasks.export-abi]
 description = "Compile and extract ABIs"
@@ -48,6 +48,6 @@ description = "Clean up forge artifacts"
 run = "forge clean"
 
 [tasks.clean-all]
-description = "Clean all build artifacts, caches, and installed deps (node_modules)"
+description = "Clean all build artifacts, caches, and installed deps (dependencies, node_modules)"
 depends = ["clean"]
-run = "rm -rf ./out ./cache ./artifacts ./types ./dist ./coverage ./bundle ./lcov.info ./node_modules"
+run = "forge soldeer clean; rm -rf ./out ./cache ./artifacts ./types ./dist ./coverage ./bundle ./lcov.info ./node_modules"

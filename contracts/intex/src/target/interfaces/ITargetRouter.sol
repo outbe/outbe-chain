@@ -110,11 +110,6 @@ interface ITargetRouter {
     /// @notice Emitted when a slotted mark is applied to its series.
     event ParkedMarkApplied(bytes14 indexed seriesId);
 
-    /// @notice Emitted when `sweepNative` transfers native tokens out of the contract.
-    /// @param to Recipient of the swept native balance.
-    /// @param amount Amount of native tokens (wei) swept.
-    event NativeSwept(address indexed to, uint256 amount);
-
     // --- Errors ---
     /// @notice Zero address provided.
     /// @param field Field name that contains zero address.
@@ -124,12 +119,6 @@ interface ITargetRouter {
     /// @param emissionDay Emission day (yyyymmdd) whose relay was rejected.
     /// @param totalBatches Batch count the relay would have needed.
     error TooManyBidsBatches(uint32 emissionDay, uint16 totalBatches);
-    /// @notice Native-token sweep transfer failed.
-    error NativeSweepFailed();
-    /// @notice Native-token balance is insufficient for the requested sweep.
-    /// @param available Current contract balance.
-    /// @param requested Amount the admin attempted to sweep.
-    error NativeBalanceInsufficient(uint256 available, uint256 requested);
     /// @notice An external caller invoked the self-call shim. Only `address(this)` is allowed.
     error NotSelf();
     /// @notice `wire` would move the venue off an escrow that still holds something to claim.
@@ -159,9 +148,4 @@ interface ITargetRouter {
     /// @param chainId Destination/source chainId.
     /// @param interop ERC-7930 interoperable address (empty to clear).
     function setRemoteMessenger(uint32 chainId, bytes calldata interop) external;
-
-    /// @notice Sweep native tokens (the relay-funded float) from the contract to an admin recipient.
-    /// @param to Recipient address (must be non-zero).
-    /// @param amount Amount in wei to sweep; must be <= contract balance.
-    function sweepNative(address payable to, uint256 amount) external;
 }

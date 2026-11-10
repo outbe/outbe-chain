@@ -200,7 +200,7 @@ contract IntexAuctionBondTest is Test {
     function test_RevealBid_BondFundsTheBid() public {
         // Burn everything beyond the bond, then commit (bond consumes the full balance).
         vm.prank(iba1);
-        paymentToken.transfer(outsider, 1000e18 - BOND);
+        assertTrue(paymentToken.transfer(outsider, 1000e18 - BOND));
         _commit();
         assertEq(paymentToken.balanceOf(iba1), 0, "everything is in the bond");
 

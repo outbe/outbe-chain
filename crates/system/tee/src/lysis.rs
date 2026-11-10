@@ -93,9 +93,7 @@ fn matches_tribute_terms(
         context.reference_currency,
     );
     let identity_match = terms.owner == context.owner
-        && series_id
-            .map(|series_id| outbe_primitives::nod_rules::derive_nod_id(series_id, context.owner))
-            == Ok(terms.nod_id);
+        && series_id.map(|series_id| series_id.derive_nod_id(context.owner)) == Ok(terms.nod_id);
     let currency_match = terms.issuance_currency == context.issuance_currency
         && terms.reference_currency == context.reference_currency;
     basic_match && identity_match && currency_match

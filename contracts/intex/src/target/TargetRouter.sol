@@ -54,7 +54,6 @@ contract TargetRouter is
     bytes32 private constant _STORAGE_SLOT = 0x69b6aeeb915a7ddfacf9fc7eeda850d126d37a2c760f56ea4c74fddcae77ba00;
 
     function _ts() private pure returns (TargetRouterStorage storage $) {
-        // solhint-disable-next-line no-inline-assembly
         assembly ("memory-safe") {
             $.slot := _STORAGE_SLOT
         }
@@ -75,7 +74,6 @@ contract TargetRouter is
     }
 
     /// @dev Upgrades are gated by the admin role.
-    // solhint-disable-next-line no-empty-blocks
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     // --- Storage getters ---
@@ -146,6 +144,7 @@ contract TargetRouter is
 
     /// @notice Whether issuance chunk `chunkIndex` of `emissionDay` has been applied here.
     function issuanceChunkApplied(uint32 emissionDay, uint16 chunkIndex) external view returns (bool) {
+        // forge-lint: disable-next-line(incorrect-shift) -- the bit of chunk `chunkIndex`
         return _ts().issuanceChunksApplied[emissionDay] & (1 << chunkIndex) != 0;
     }
 
@@ -268,7 +267,6 @@ contract TargetRouter is
     function _reportIfAdvanced(uint32 emissionDay, uint16 batchBefore) internal {
         BidsRelayProgress storage p = _ts().bidsRelay[emissionDay];
         if (!TargetInbound.advanced(p, batchBefore)) return;
-        // solhint-disable-next-line no-empty-blocks
         try this.reportBidsRemaining(emissionDay) {}
         catch {
             emit BidsRemainingUnreported(emissionDay, p.nextBatch, p.totalBatches);
@@ -298,6 +296,7 @@ contract TargetRouter is
         }
 
         uint16 batch = progress.nextBatch;
+        // aderyn-ignore-next-line(msg-value-in-loop) -- relayBids is not payable; each chunk pays from the float
         while (batch < totalBatches) {
             // The last chunk has to leave room for the marker that follows it in the same round.
             uint256 need = batch + 1 == totalBatches
@@ -425,20 +424,6 @@ contract TargetRouter is
         // slither-disable-next-line unused-return,arbitrary-send-eth
         $.tokenBridge.sendAndCall{value: fee}(OUTBE_CHAIN_ID, to, amount, extraData, IntexGas.PROCEEDS_COMPOSE);
         emit ProceedsRouted(emissionDay, chunkIndex, amount);
-    }
-
-    /// @inheritdoc ITargetRouter
-    function sweepNative(address payable to, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (to == address(0)) revert ZeroAddress("to");
-        uint256 balance = address(this).balance;
-        if (amount > balance) revert NativeBalanceInsufficient(balance, amount);
-
-        // admin-only native recovery. The arbitrary destination is intentional.
-        // slither-disable-next-line arbitrary-send-eth
-        (bool ok,) = to.call{value: amount}("");
-        if (!ok) revert NativeSweepFailed();
-
-        emit NativeSwept(to, amount);
     }
 
     /// @notice ERC-165 support check, resolving the AccessControl interface ids.

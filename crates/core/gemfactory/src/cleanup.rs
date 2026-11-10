@@ -2,10 +2,10 @@
 //! the expiry already returned their load.
 
 use alloy_primitives::{B256, U256};
+use outbe_common::deadline_queue::{self, DeadlineHandler, Due};
 use outbe_gem::{api as gem_api, CleanupQueue, GemContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    deadline_queue::{self, DeadlineHandler, Due},
     error::{PassFailure, PrecompileError, Result},
     storage::StorageHandle,
 };

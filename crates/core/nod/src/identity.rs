@@ -19,7 +19,7 @@ pub fn group_key(
 
 /// `keccak256(series_id || owner)`: one Nod per owner and series.
 pub fn generate_nod_id(series_id: SeriesId, owner: Address) -> U256 {
-    outbe_primitives::nod_rules::derive_nod_id(series_id, owner)
+    outbe_common::nod_rules::derive_nod_id(series_id, owner)
 }
 
 pub fn parse_nod_id(nod_id: &str) -> Result<U256> {

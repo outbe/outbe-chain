@@ -183,6 +183,7 @@ contract = "0x5555555555555555555555555555555555555555"   # Chainlink JPY / USD,
 | `gas_providers[].chain_id` | with the entry | Remote EVM chain to vote a gas price for. Its RPC is `rpc_endpoints.<chain_id>`. See [Gas prices](#gas-prices) |
 | `gas_providers[].price_feed` | with the entry | Source of the native token price in USD: `{ chainlink = "0x…" }`, a Chainlink feed on the same chain |
 | `gas_providers[].fee_history_blocks` | no | Blocks of `eth_feeHistory` in one gas price (default: 20) |
+| `gas_providers[].delay_secs` | no | The last block read is this many seconds older than the start of the vote period (default: 60). Keep it above the block time of the chain |
 | `deviation_thresholds[].base` | no | Asset to apply threshold to |
 | `deviation_thresholds[].threshold` | no | Max sigma deviation as an exact decimal string (default: `"2.0"`) |
 
@@ -317,18 +318,25 @@ price to the Outbe Hyperlane IGP (OIP-00367).
 [[gas_providers]]
 chain_id = 1                                                               # Ethereum
 price_feed = { chainlink = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419" }   # ETH/USD
-# fee_history_blocks = 20 (default)
+fee_history_blocks = 20   # default 20: 20 × 12 s = 4 minutes of gas history
+delay_secs = 60           # default 60: 5 blocks behind the start of the vote period
+
+[[gas_providers]]
+chain_id = 56                                                              # BSC
+price_feed = { chainlink = "0x0567F2323251f0Aab15c8dFb1967E4e8A7D42aeE" }   # BNB/USD
+delay_secs = 10           # blocks of 0.45 s: a short delay is enough
 ```
 
 ```toml
 # feeder.toml: the RPC of each chain in gas_providers.
 [rpc_endpoints]
 1 = "https://ethereum-rpc.example"
+56 = "https://bsc-rpc.example"
 ```
 
 At each vote, for each entry, the feeder:
 
-1. Finds the anchor block on `chain_id`: the last block that is 60 seconds
+1. Finds the anchor block on `chain_id`: the last block that is `delay_secs`
    or more older than the first block of the Outbe vote period. All feeders
    find the same block, at any time in the period.
 2. Calls `eth_feeHistory(fee_history_blocks, <anchor block>, [50])`.

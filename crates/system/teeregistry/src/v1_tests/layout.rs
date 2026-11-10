@@ -1,5 +1,5 @@
 use super::*;
-use outbe_primitives::zero_fee::VALIDATOR_V1_NODE_HASH_SLOT;
+use outbe_system_common::zero_fee::VALIDATOR_V1_NODE_HASH_SLOT;
 
 #[test]
 fn finalized_admission_slot_contract_matches_the_physical_registry_layout() {

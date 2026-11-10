@@ -1,6 +1,6 @@
 //! Canonical self-contained encrypted NOD bodies.
 use super::*;
-use crate::nod_encryption::{EncryptedNodV1, NodTermsV1};
+use outbe_primitives::nod_encryption::{EncryptedNodV1, NodTermsV1};
 
 pub const NOD_BODY_SCHEMA_V1: u32 = BODY_SCHEMA_V1;
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -23,3 +23,5 @@ jobs:
     with:
       project: precompiles
       abi-check: true
+      slither-check: true
+      aderyn-check: true

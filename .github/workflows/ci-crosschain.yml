@@ -25,3 +25,5 @@ jobs:
     with:
       project: crosschain
       upgrade-check: true
+      slither-check: true
+      aderyn-check: true

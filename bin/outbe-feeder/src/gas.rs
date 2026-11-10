@@ -6,8 +6,8 @@
 //! the same vote. Each native token has 18 decimals, as COEN.
 //!
 //! All feeders read the same blocks: the blocks up to the last block that is
-//! [`ANCHOR_LAG_SECS`] older than the start of the Outbe vote period. So the
-//! time of a vote inside the period does not change the gas price.
+//! `delay_secs` older than the start of the Outbe vote period. So the time of
+//! a vote inside the period does not change the gas price.
 
 use alloy_primitives::{Address, U256, U512};
 use eyre::{ensure, eyre, Result};
@@ -24,9 +24,8 @@ use crate::provider::onchain_feed::{AggregatorV3, MAX_FEED_AGE_SECS};
 
 /// Blocks of fee history in one gas price when the entry gives none.
 const DEFAULT_FEE_HISTORY_BLOCKS: u16 = 20;
-/// The remote block is this many seconds older than the start of the vote
-/// period, so that each RPC has it and it does not change.
-const ANCHOR_LAG_SECS: u64 = 60;
+/// `delay_secs` when the entry gives none.
+const DEFAULT_DELAY_SECS: u64 = 60;
 /// Percentile of the priority fees in each block.
 const PRIORITY_PERCENTILE: f64 = 50.0;
 /// COEN/840 has six decimals. The conversion works at 18.
@@ -44,6 +43,11 @@ pub struct GasProviderConfig {
     /// divided by the block time of the chain.
     #[serde(default = "default_fee_history_blocks")]
     pub fee_history_blocks: u16,
+    /// The last block read is this many seconds older than the start of the
+    /// vote period, so that each RPC has it and it does not change. Keep it
+    /// above the block time of the chain.
+    #[serde(default = "default_delay_secs")]
+    pub delay_secs: u64,
 }
 
 /// Source of the native token price in USD, for example
@@ -57,6 +61,10 @@ pub enum PriceFeed {
 
 fn default_fee_history_blocks() -> u16 {
     DEFAULT_FEE_HISTORY_BLOCKS
+}
+
+fn default_delay_secs() -> u64 {
+    DEFAULT_DELAY_SECS
 }
 
 /// The gas votes of this vote. A chain that fails gets no vote, and the
@@ -102,7 +110,7 @@ async fn gas_vote(
     period_start: u64,
 ) -> Result<U256> {
     let rpc = Rpc::new(endpoint)?;
-    let block = anchor_block(&rpc, period_start.saturating_sub(ANCHOR_LAG_SECS)).await?;
+    let block = anchor_block(&rpc, period_start.saturating_sub(entry.delay_secs)).await?;
     let history = rpc
         .request(
             "eth_feeHistory",
@@ -261,7 +269,7 @@ mod tests {
     }
 
     #[test]
-    fn a_gas_entry_names_its_price_feed_and_defaults_to_20_blocks() {
+    fn a_gas_entry_names_its_price_feed_and_has_defaults() {
         let entry: GasProviderConfig = toml::from_str(
             r#"
             chain_id = 56
@@ -271,6 +279,7 @@ mod tests {
         .unwrap();
         assert!(matches!(entry.price_feed, PriceFeed::Chainlink(_)));
         assert_eq!(entry.fee_history_blocks, 20);
+        assert_eq!(entry.delay_secs, 60);
     }
 
     /// Reads the gas price of real chains over public RPCs, at COEN = $0.50.

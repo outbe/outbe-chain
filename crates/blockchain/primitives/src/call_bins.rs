@@ -6,13 +6,13 @@
 use alloy_primitives::{keccak256, B256, U256};
 
 use crate::day_pass::currency_position;
-use crate::deadline_queue::QueueEntry;
 use crate::error::{CallBinError, PrimitivesMathError, Result};
 use crate::math::constants::MAX_BIN_ID;
 use crate::math::reference_price;
 use crate::math::tree_math::{self, BinTreeStorage};
 use crate::pass_budget::PassBudget;
 use crate::storage::dsl::{Map, Value};
+use crate::storage::types::{Storable, StorageKey};
 
 /// Bin step of the call-price ladder, in basis points.
 pub const BIN_STEP_BP: u16 = 25;
@@ -65,7 +65,7 @@ pub const fn unpack_cursor(packed: u64) -> (u32, u32) {
 
 /// One reference currency's slice of a contract's bin index.
 pub trait CallBinStore<'storage>: BinTreeStorage {
-    type Entry: QueueEntry;
+    type Entry: Copy + PartialEq + Storable + StorageKey;
 
     fn currency(&self) -> u16;
     /// [`scoped`]`(currency, bin)` -> entries in the bin.

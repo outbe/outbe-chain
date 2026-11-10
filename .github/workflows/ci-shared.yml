@@ -22,3 +22,5 @@ jobs:
     uses: ./.github/workflows/_contract-ci.yml
     with:
       project: shared
+      slither-check: true
+      aderyn-check: true

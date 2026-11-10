@@ -15,6 +15,18 @@ on:
         description: "Check that the upgradeable contracts are upgrade-safe"
         type: boolean
         default: false
+      slither-check:
+        description: "Run slither; a high-severity finding fails the job"
+        type: boolean
+        default: false
+      aderyn-check:
+        description: "Run aderyn; a high-severity finding fails the job"
+        type: boolean
+        default: false
+      isolated-tests:
+        description: "Test path that runs on its own with --isolate (e.g. a gas budget test)"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -87,7 +99,16 @@ jobs:
           working-directory: contracts/${{ inputs.project }}
 
       - name: Run tests
+        if: ${{ inputs.isolated-tests == '' }}
         run: forge test -vvv
+
+      - name: Run tests except the isolated ones
+        if: ${{ inputs.isolated-tests != '' }}
+        run: forge test -vvv --no-match-path '${{ inputs.isolated-tests }}'
+
+      - name: Run the isolated tests
+        if: ${{ inputs.isolated-tests != '' }}
+        run: forge test --isolate --match-path '${{ inputs.isolated-tests }}' -vv
 
   lint:
     name: Forge Lint
@@ -135,6 +156,12 @@ jobs:
         with:
           working-directory: contracts/${{ inputs.project }}
 
+      - name: Setup Node.js and Yarn
+        if: ${{ hashFiles(format('contracts/{0}/package.json', inputs.project)) != '' }}
+        uses: ./.github/actions/setup-node-yarn
+        with:
+          working-directory: contracts/${{ inputs.project }}
+
       - name: Export ABI
         run: mise run export-abi
 
@@ -179,6 +206,78 @@ jobs:
           npx --yes @openzeppelin/upgrades-core@1.46.0 validate out/build-info --exclude 'test/**'
           --unsafeAllow 'constructor,state-variable-immutable,missing-initializer-call,external-library-linking'
 
+  slither:
+    name: Slither
+    if: ${{ inputs.slither-check }}
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
+    defaults:
+      run:
+        working-directory: contracts/${{ inputs.project }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup-foundry-soldeer
+        with:
+          working-directory: contracts/${{ inputs.project }}
+
+      - name: Run Slither
+        run: uvx --from slither-analyzer==0.11.5 slither . --sarif slither-report.sarif --fail-high
+
+      - name: Upload Slither report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.project }}-slither-report
+          path: contracts/${{ inputs.project }}/slither-report.sarif
+          retention-days: 14
+
+  aderyn:
+    name: Aderyn
+    if: ${{ inputs.aderyn-check }}
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
+    defaults:
+      run:
+        working-directory: contracts/${{ inputs.project }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup-foundry-soldeer
+        with:
+          working-directory: contracts/${{ inputs.project }}
+
+      - name: Run Aderyn
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: aderyn . --skip-cloc --skip-update-check -o aderyn-report.json
+
+      - name: Fail on a high-severity finding
+        run: |
+          if ! jq -e '.high_issues.issues | length == 0' aderyn-report.json >/dev/null; then
+            echo "::error::aderyn found high-severity issues - see the aderyn report artifact"
+            jq -r '.high_issues.issues[] | "\(.title): \(.instances | length) instance(s)"' aderyn-report.json
+            exit 1
+          fi
+
+      - name: Upload Aderyn report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.project }}-aderyn-report
+          path: contracts/${{ inputs.project }}/aderyn-report.json
+          retention-days: 14
+
   ci-success:
     name: ci success
     runs-on: ubuntu-24.04
@@ -190,10 +289,12 @@ jobs:
       - lint
       - abi
       - upgrade
+      - slither
+      - aderyn
     timeout-minutes: 5
     steps:
       - name: Decide whether all jobs succeeded or failed
         uses: re-actors/alls-green@release/v1
         with:
-          allowed-skips: test,abi,upgrade
+          allowed-skips: test,abi,upgrade,slither,aderyn
           jobs: ${{ toJSON(needs) }}

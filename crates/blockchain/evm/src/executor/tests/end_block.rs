@@ -691,7 +691,7 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
     let stale_series = SeriesId::pack(20_240_101, *b"USD", b'U').unwrap();
 
     struct TestExpiryQueue<'a, 's>(&'a GemFactoryContract<'s>);
-    outbe_primitives::impl_deadline_queue!(TestExpiryQueue<u64> {
+    outbe_common::impl_deadline_queue!(TestExpiryQueue<u64> {
         root: expiry_tree_root,
         mid: expiry_tree_mid,
         leaf: expiry_tree_leaf,
@@ -727,7 +727,7 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
             credis.call_sweep_day.write(expires_day).unwrap();
             credis.call_latest_day.write(expires_day).unwrap();
             credis.daily_phase.write(2).unwrap();
-            outbe_primitives::deadline_queue::push(
+            outbe_common::deadline_queue::push(
                 &CredisCleanupQueue(&credis),
                 stale_series,
                 expires_at,
@@ -750,12 +750,8 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
             )
             .insert(pos.position_id)
             .unwrap();
-            outbe_primitives::deadline_queue::push(
-                &TestExpiryQueue(&gf),
-                expired_hour + 1,
-                expires_at,
-            )
-            .unwrap();
+            outbe_common::deadline_queue::push(&TestExpiryQueue(&gf), expired_hour + 1, expires_at)
+                .unwrap();
             outbe_primitives::storage::indexed_list::IndexedList::new(
                 gf.hour_positions.list(&expired_hour),
                 gf.hour_position_index.clone(),

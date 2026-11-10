@@ -4,10 +4,10 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolInterface};
 
+use outbe_common::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::dispatch::{
     dispatch_call, mutate, mutate_payable, reject_value_unless_payable, view, PayableCallContext,
 };
-use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 

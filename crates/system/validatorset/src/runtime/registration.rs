@@ -8,9 +8,9 @@ use outbe_primitives::consensus_p2p::{
     decode_versioned, MAX_P2P_ADDRESS_ENCODED_LEN, P2P_ADDRESS_VERSION_V1,
 };
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::slashing_journal::{record as journal_record, JournalRecord};
 use outbe_primitives::time::iso8601_now;
 use outbe_primitives::validators::{validator_registration_message, VALIDATOR_REGISTRATION_DST};
+use outbe_system_common::slashing_journal::{record as journal_record, JournalRecord};
 use std::num::NonZeroU64;
 use tracing::info;
 

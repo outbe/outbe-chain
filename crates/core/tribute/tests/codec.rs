@@ -1,9 +1,6 @@
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::{
-    entity_codec::{decode_tribute_v1, encode_tribute_v1},
-    time::WorldwideDay,
-    wwd_entity_id::WwdEntityId,
-};
+use outbe_common::entity_codec::{decode_tribute_v1, encode_tribute_v1};
+use outbe_primitives::{time::WorldwideDay, wwd_entity_id::WwdEntityId};
 use outbe_tribute::TributeData;
 
 #[test]

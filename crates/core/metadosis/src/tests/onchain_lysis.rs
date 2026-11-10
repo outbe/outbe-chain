@@ -369,7 +369,7 @@ fn production_command_issues_encrypted_nods_and_completes_without_worker() {
         );
         assert_eq!(
             nods[0].nod_id,
-            outbe_primitives::nod_rules::derive_nod_id(nods[0].series_id, owner)
+            outbe_common::nod_rules::derive_nod_id(nods[0].series_id, owner)
         );
         assert_ne!(
             nods[0].nod_id,
@@ -422,7 +422,7 @@ fn existing_full_digest_target_rejects_lysis_before_mutation() {
         let mut item = outbe_nod::test_support::sample_item(Address::repeat_byte(1), DAY);
         item.reference_currency = 840;
         item.series_id = outbe_primitives::series_id::SeriesId::for_pair(DAY, 840, 840).unwrap();
-        item.nod_id = outbe_primitives::nod_rules::derive_nod_id(item.series_id, item.owner);
+        item.nod_id = outbe_common::nod_rules::derive_nod_id(item.series_id, item.owner);
         outbe_nod::test_support::set_terms(&mut item);
         let terms =
             outbe_nod::test_support::sealed_terms(&storage, &item, item.entry_price_minor())

@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+outbe-system-common.workspace = true
 outbe-primitives.workspace = true
 outbe-oracle.workspace = true
 outbe-hyperlanecontroller.workspace = true
