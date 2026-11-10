@@ -4,8 +4,8 @@ use alloy_primitives::Address;
 use eyre::{bail, ensure, Result};
 
 use crate::{
-    progress::Progress,
-    rpc::{Block, RpcClient},
+    support::progress::Progress,
+    validator::rpc::{Block, RpcClient},
 };
 
 const SYNC_POLL_TIMEOUT: Duration = Duration::from_secs(5);

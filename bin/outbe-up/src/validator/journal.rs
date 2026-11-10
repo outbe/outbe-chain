@@ -8,7 +8,7 @@ use std::{
 use eyre::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::{config::OperatorConfig, process::STATE_ROOT};
+use crate::{support::process::STATE_ROOT, validator::config::OperatorConfig};
 
 const JOURNAL_VERSION: u32 = 1;
 const JOURNAL_NAME: &str = "validator-state.json";

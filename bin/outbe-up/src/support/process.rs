@@ -1,7 +1,7 @@
 use std::{
     fs::{File, OpenOptions},
-    io::Write,
-    os::unix::fs::OpenOptionsExt,
+    io::{self, Write},
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::Path,
     process::{Command, Output},
 };
@@ -72,6 +72,50 @@ pub fn capture(program: impl AsRef<Path>, args: &[&str]) -> Result<String> {
         .output()
         .wrap_err_with(|| format!("failed to execute {}", program.display()))?;
     output_text(program, output)
+}
+
+pub fn capture_in(program: impl AsRef<Path>, args: &[&str], directory: &Path) -> Result<String> {
+    let program = program.as_ref();
+    let output = Command::new(program)
+        .args(args)
+        .current_dir(directory)
+        .output()
+        .wrap_err_with(|| format!("failed to execute {}", program.display()))?;
+    output_text(program, output)
+}
+
+pub fn command_succeeds(program: impl AsRef<Path>, args: &[&str]) -> bool {
+    Command::new(program.as_ref())
+        .args(args)
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+pub fn write_file(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
+    let temporary = path.with_extension(format!("tmp.{}", std::process::id()));
+    if temporary.exists() {
+        std::fs::remove_file(&temporary)?;
+    }
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(mode)
+        .open(&temporary)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(mode))?;
+    std::fs::rename(temporary, path)?;
+    Ok(())
+}
+
+pub fn chown(path: &Path, uid: u32, gid: u32) -> Result<()> {
+    rustix::fs::chown(
+        path,
+        Some(rustix::process::Uid::from_raw(uid)),
+        Some(rustix::process::Gid::from_raw(gid)),
+    )
+    .map_err(io::Error::from)
+    .wrap_err_with(|| format!("failed to change ownership of {}", path.display()))
 }
 
 pub fn systemctl(args: &[&str]) -> Result<()> {

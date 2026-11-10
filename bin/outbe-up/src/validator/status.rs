@@ -4,12 +4,16 @@ use alloy_primitives::Address;
 use eyre::{Context, Result};
 
 use crate::{
-    journal::Journal,
-    process::{self, ROOT},
-    progress::WatchDisplay,
-    rpc::{Block, ConsensusStatus, EpochInfo, RpcClient, ValidatorRecord},
-    validator::validator_address,
-    wait::{estimate_block_seconds, eta_suffix, yes_no},
+    support::{
+        process::{self, ROOT},
+        progress::WatchDisplay,
+    },
+    validator::{
+        journal::Journal,
+        rpc::{Block, ConsensusStatus, EpochInfo, RpcClient, ValidatorRecord},
+        validator_address,
+        wait::{estimate_block_seconds, eta_suffix, yes_no},
+    },
 };
 
 const LOCAL_RPC: &str = "http://127.0.0.1:8545";

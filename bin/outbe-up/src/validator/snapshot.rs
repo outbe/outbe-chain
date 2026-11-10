@@ -9,7 +9,7 @@ use eyre::{bail, ensure, Context, Result};
 use outbe_snapshot::manifest::{EntryKind, NativeRoot, SnapshotManifestV1};
 use sha2::{Digest, Sha256};
 
-use crate::{config::OperatorConfig, process};
+use crate::{support::process, validator::config::OperatorConfig};
 
 pub fn restore(path: &Path, config: &OperatorConfig, resume: bool) -> Result<u64> {
     let index = outbe_snapshot::archive::read_archive_index(open(path)?, None)

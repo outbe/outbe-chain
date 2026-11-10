@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 #[cfg(test)]
-use crate::config::sha256;
+use crate::validator::config::sha256;
 
 pub const MANIFEST_NAME: &str = "operator-manifest.json";
 const MANIFEST_VERSION: u32 = 1;

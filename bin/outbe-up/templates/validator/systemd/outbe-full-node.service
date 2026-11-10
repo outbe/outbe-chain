@@ -34,7 +34,7 @@ ExecStart=/opt/outbe-chain/outbe-chain node \
   --ipcpath /opt/outbe-chain/validator-0/data/reth.ipc \
   --log.file.directory /opt/outbe-chain/validator-0/logs \
   --upstream ${OUTBE_CERTIFIED_RPC}
-ExecStartPost=/opt/outbe-chain/deploy/validator/outbe-validator-service.py wait-rpc
+ExecStartPost=@OUTBE_UP@ internal wait-rpc
 Restart=always
 RestartMode=direct
 RestartSec=5
