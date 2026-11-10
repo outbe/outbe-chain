@@ -16,20 +16,17 @@ bin_path = "aderyn-x86_64-unknown-linux-gnu"
 [tools."github:Cyfrin/aderyn".platforms.linux-arm64]
 bin_path = "aderyn-aarch64-unknown-linux-gnu"
 
-# Hardhat + Forge hybrid: tasks wrap the yarn scripts so intex matches the
-# Forge sub-projects (run them from here, e.g. `mise run build`).
-
 [tasks.install]
-description = "Install the Solidity dependencies (soldeer) and the Hardhat tooling (yarn)"
-run = "forge soldeer install && yarn install"
+description = "Install dependencies using soldeer"
+run = "forge soldeer install"
 
 [tasks.build]
-description = "Compile contracts (hardhat)"
-run = "yarn compile"
+description = "Build Solidity contracts using forge"
+run = "forge build"
 
 [tasks.test]
-description = "Run Hardhat + Forge tests"
-run = "yarn test"
+description = "Test Solidity contracts using forge"
+run = "forge test"
 
 [tasks.fmt]
 description = "Format Solidity code"
@@ -68,6 +65,9 @@ description = "Clean up forge artifacts"
 run = "forge clean"
 
 [tasks.clean-all]
-description = "Clean all build artifacts, caches, and installed deps (dependencies, node_modules)"
+description = "Clean all build artifacts, and caches"
 depends = ["clean"]
-run = "forge soldeer clean; rm -rf ./out ./cache ./artifacts ./types ./dist ./coverage ./bundle ./lcov.info ./node_modules"
+run = '''
+forge soldeer clean
+rm -rf ./out ./cache ./lcov.info
+'''
