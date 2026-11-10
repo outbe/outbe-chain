@@ -14,11 +14,11 @@ network:
 
 tee:
   runtime: bundled-sgx
-  lease_duration_seconds: 2592000
+  lease_duration_seconds: 1209600
 
 feeder:
   public_toml: |
     [oracle]
-    sources = "chain"
+    sources = "local"
     vote_period = 60
     poll_interval_secs = 2

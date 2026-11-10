@@ -243,7 +243,7 @@ tee:
 feeder:
   public_toml: |
     [oracle]
-    sources = "chain"
+    sources = "local"
 "#,
             "a".repeat(64),
             "b".repeat(64),

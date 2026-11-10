@@ -1,6 +1,6 @@
 use std::{fs, os::unix::fs::PermissionsExt, path::Path, time::Duration};
 
-use alloy_primitives::{keccak256, Address};
+use alloy_primitives::{keccak256, Address, U256};
 use eyre::{bail, ensure, Context, Result};
 use k256::ecdsa::SigningKey;
 use rand::RngCore;
@@ -40,6 +40,7 @@ pub async fn prepare(bundle_path: &Path, config_path: &Path) -> Result<()> {
         remote_genesis.strip_prefix("0x").unwrap_or(&remote_genesis) == config.network.genesis_hash,
         "certified RPC genesis hash does not match operator config"
     );
+    let minimum_stake = remote.min_stake().await?;
 
     progress.stage("verifying every operator bundle file");
     let extracted = bundle::verify_and_extract(bundle_path, Path::new("/opt"))?;
@@ -59,7 +60,13 @@ pub async fn prepare(bundle_path: &Path, config_path: &Path) -> Result<()> {
             journal.installed = true;
             journal.save()?;
         }
+        let validator = validator_address(&root.join("keys/evm-key.hex"))?;
         progress.done("host is already prepared with this exact bundle and config");
+        print_prepare_summary(
+            validator,
+            minimum_stake,
+            &journal.config.network.certified_rpc,
+        );
         return Ok(());
     }
 
@@ -68,7 +75,7 @@ pub async fn prepare(bundle_path: &Path, config_path: &Path) -> Result<()> {
     let keys = staging.join("keys");
     let keygen = staging.join("outbe-keygen");
     let keys_text = path_text(&keys)?;
-    process::run(
+    process::capture(
         &keygen,
         &[
             "validator",
@@ -95,6 +102,11 @@ pub async fn prepare(bundle_path: &Path, config_path: &Path) -> Result<()> {
     progress.done(&format!(
         "prepared validator {validator:#x}; no services started"
     ));
+    print_prepare_summary(
+        validator,
+        minimum_stake,
+        &journal.config.network.certified_rpc,
+    );
     Ok(())
 }
 
@@ -513,51 +525,117 @@ fn format_status(
     consensus: Option<&ConsensusStatus>,
     validator: Option<&ValidatorRecord>,
 ) -> String {
-    let services = format!(
-        "fullnode={} validator={} enclave={} radicle={} feeder={} renew={}",
-        state(FULL_NODE),
-        state(VALIDATOR_SERVICE),
-        state(ENCLAVE_SERVICE),
-        state(RADICLE_SERVICE),
-        state(FEEDER_SERVICE),
-        state(RENEW_TIMER),
-    );
+    let fullnode = process::systemctl_is_active(FULL_NODE);
+    let validator_service = process::systemctl_is_active(VALIDATOR_SERVICE);
+    let role = match (fullnode, validator_service) {
+        (true, true) => "conflict",
+        (true, false) => "fullnode",
+        (false, true) => "validator",
+        (false, false) => "stopped",
+    };
     let chain = format!(
-        "local={} remote={}",
+        "{}/{}",
         local.map_or_else(|| "?".into(), |value| value.to_string()),
         remote.map_or_else(|| "?".into(), |value| value.to_string())
     );
-    let mode = consensus.map_or_else(
-        || "mode=? peers=? shares=? enclave=?".to_owned(),
+    let consensus_text = consensus.map_or_else(
+        || "mode=? p=? shares=?".to_owned(),
         |value| {
-            let enclave = value
-                .enclave
-                .as_ref()
-                .is_some_and(|enclave| enclave.ready && enclave.offer_key_ready);
             format!(
-                "mode={} peers={} shares={} enclave={}",
-                value.mode, value.connected_peers, value.has_threshold_shares, enclave
+                "{} p={} shares={}",
+                value.mode,
+                value.connected_peers,
+                yes_no(value.has_threshold_shares)
             )
         },
     );
-    let lifecycle = validator.map_or_else(
-        || "validator=?".to_owned(),
-        |value| {
-            format!(
-                "validator_status={} bls_share={}",
-                value.status, value.has_bls_share
-            )
-        },
-    );
-    format!("{services} | {chain} | {mode} | {lifecycle}")
+    let lifecycle = validator.map_or_else(|| "unknown".to_owned(), validator_lifecycle);
+    let mut down = Vec::new();
+    if validator_service {
+        for (name, unit) in [
+            ("enclave", ENCLAVE_SERVICE),
+            ("radicle", RADICLE_SERVICE),
+            ("feeder", FEEDER_SERVICE),
+            ("renew", RENEW_TIMER),
+        ] {
+            if !process::systemctl_is_active(unit) {
+                down.push(name);
+            }
+        }
+    }
+    let services = if down.is_empty() {
+        "svc=ok".to_owned()
+    } else {
+        format!("down={}", down.join(","))
+    };
+    let dkg = consensus_status_suffix(consensus, validator_service);
+    let role = if validator_service {
+        format!("{role}/{lifecycle}")
+    } else {
+        role.to_owned()
+    };
+    format!("{role} | h={chain} | {consensus_text} | {services}{dkg}")
 }
 
-fn state(unit: &str) -> &'static str {
-    if process::systemctl_is_active(unit) {
-        "active"
-    } else {
-        "inactive"
+fn consensus_status_suffix(consensus: Option<&ConsensusStatus>, validator: bool) -> String {
+    let Some(consensus) = consensus else {
+        return String::new();
+    };
+    if !validator || consensus.mode == "signer" || consensus.next_planned_activation_height == 0 {
+        return String::new();
     }
+    let remaining = consensus
+        .next_planned_activation_height
+        .saturating_sub(consensus.last_finalized_block);
+    format!(
+        " | DKG={} (-{})",
+        consensus.next_planned_activation_height, remaining
+    )
+}
+
+fn validator_lifecycle(record: &ValidatorRecord) -> String {
+    match record.status {
+        1 => "pending".to_owned(),
+        2 => "active".to_owned(),
+        3 => "exiting".to_owned(),
+        4 => "unbonding".to_owned(),
+        5 => "inactive".to_owned(),
+        6 => "jailed".to_owned(),
+        status => format!("status-{status}"),
+    }
+}
+
+const fn yes_no(value: bool) -> &'static str {
+    if value {
+        "yes"
+    } else {
+        "no"
+    }
+}
+
+fn print_prepare_summary(validator: Address, minimum_stake: U256, certified_rpc: &str) {
+    let funding = minimum_stake + U256::from(1_000_000_000_000_000_000_u64);
+    println!();
+    println!("Validator files:");
+    println!("  address:          {validator:#x}");
+    println!("  BLS key:          /opt/outbe-chain/keys/signing-key.hex");
+    println!("  EVM key:          /opt/outbe-chain/keys/evm-key.hex");
+    println!("  Reth P2P key:     /opt/outbe-chain/keys/reth-p2p-secret.hex");
+    println!("  Radicle identity: /opt/outbe-chain/keys/radicle");
+    println!();
+    println!("Fund this address before `outbe validator promote`:");
+    println!("VALIDATOR_ADDR='{validator:#x}'");
+    println!("CERTIFIED_RPC='{certified_rpc}'");
+    println!("MINIMUM_STAKE_WEI='{minimum_stake}'");
+    println!("FUNDING_AMOUNT_WEI='{funding}'");
+    println!("printf 'Funder private key: '");
+    println!("read -r -s FUNDER_PRIVATE_KEY");
+    println!("printf '\\n'");
+    println!("cast send \"$VALIDATOR_ADDR\" \\");
+    println!("  --value \"$FUNDING_AMOUNT_WEI\" \\");
+    println!("  --rpc-url \"$CERTIFIED_RPC\" \\");
+    println!("  --private-key \"$FUNDER_PRIVATE_KEY\"");
+    println!("unset FUNDER_PRIVATE_KEY");
 }
 
 fn transaction_hash(output: &str) -> Result<String> {

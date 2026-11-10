@@ -43,6 +43,7 @@ ExecStart=/opt/outbe-chain/outbe-chain node \
   --consensus.listen-addr 0.0.0.0:30400 \
   --consensus.peers ${OUTBE_CONSENSUS_PEERS} \
   $OUTBE_CONSENSUS_EXTRA_ARGS \
+  --upstream ${OUTBE_CERTIFIED_RPC} \
   --radicle.control-socket /opt/outbe-chain/keys/radicle/node/outbe-control.sock \
   --radicle.status-address 127.0.0.1:8876
 ExecStartPost=/opt/outbe-chain/deploy/validator/outbe-validator-service.py wait-rpc
