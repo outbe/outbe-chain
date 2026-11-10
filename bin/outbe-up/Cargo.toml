@@ -1,12 +1,12 @@
 [package]
-name = "outbe-app"
+name = "outbe-up"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
 [[bin]]
-name = "outbe-app"
+name = "outbe-up"
 path = "src/main.rs"
 
 [dependencies]

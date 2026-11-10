@@ -65,7 +65,7 @@ members = [
     "crates/core/common",
     "crates/core/enclave",
     # binaries
-    "bin/outbe-app",
+    "bin/outbe-up",
     "bin/outbe-chain",
     "bin/outbe-genesis-cli",
     "bin/outbe-keygen",
@@ -150,7 +150,7 @@ default-members = [
     "crates/core/stablecoinfactory",
     "crates/core/common",
     # binaries
-    "bin/outbe-app",
+    "bin/outbe-up",
     "bin/outbe-chain",
     "bin/outbe-genesis-cli",
     "bin/outbe-keygen",

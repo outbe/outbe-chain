@@ -133,7 +133,7 @@ required_files=(
   SHA256SUMS
 )
 required_binaries=(
-  outbe-app
+  outbe-up
   outbe-chain
   outbe-cli
   outbe-keygen
@@ -157,7 +157,7 @@ if [[ $OUTBE_ENCLAVE_RUNTIME == system-gramine ]]; then
   install_system_gramine_paths
 fi
 
-install -o root -g root -m 0755 "$OUTBE_ROOT/outbe-app" /usr/local/bin/outbe-app
+install -o root -g root -m 0755 "$OUTBE_ROOT/outbe-up" /usr/local/bin/outbe-up
 
 [[ $(jq -er '.config.chainId' "$OUTBE_ROOT/genesis.json") == "$OUTBE_CHAIN_ID" ]] || \
   fail 'genesis chain ID does not match validator.env'

@@ -17,7 +17,7 @@ mod validator;
 mod wait;
 
 #[derive(Debug, Parser)]
-#[command(name = "outbe-app", about = "Outbe node operator CLI")]
+#[command(name = "outbe-up", about = "Outbe node operator CLI")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -81,7 +81,7 @@ mod tests {
     #[test]
     fn lifecycle_commands_parse() {
         assert!(Cli::try_parse_from([
-            "outbe-app",
+            "outbe-up",
             "validator",
             "prepare",
             "--bundle",
@@ -91,14 +91,14 @@ mod tests {
         ])
         .is_ok());
         assert!(Cli::try_parse_from([
-            "outbe-app",
+            "outbe-up",
             "validator",
             "sync",
             "--snapshot",
             "snapshot.tar",
         ])
         .is_ok());
-        assert!(Cli::try_parse_from(["outbe-app", "validator", "promote"]).is_ok());
-        assert!(Cli::try_parse_from(["outbe-app", "validator", "status", "--watch"]).is_ok());
+        assert!(Cli::try_parse_from(["outbe-up", "validator", "promote"]).is_ok());
+        assert!(Cli::try_parse_from(["outbe-up", "validator", "status", "--watch"]).is_ok());
     }
 }

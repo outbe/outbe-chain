@@ -7771,7 +7771,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-app"
+name = "outbe-up"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",

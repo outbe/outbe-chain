@@ -4,8 +4,8 @@
       "classification": "production",
       "features": [],
       "install_profiles": ["operator-tools", "validator"],
-      "name": "outbe-app",
-      "package": "outbe-app",
+      "name": "outbe-up",
+      "package": "outbe-up",
       "role": "installer"
     },
     {
