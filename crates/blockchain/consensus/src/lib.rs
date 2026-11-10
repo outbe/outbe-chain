@@ -22,6 +22,7 @@ pub mod follower_shutdown;
 pub mod marshal_update_reporter;
 pub mod peer_manager;
 pub mod protocol_state;
+pub mod stack;
 pub mod tee_bootstrap;
 pub mod validators;
 pub use follow_transport::read_upstream_tribute_offer_public_key;

@@ -1,18 +1,17 @@
 use super::super::*;
 
 /// Active authority and the exact frozen target used to construct the next boundary.
-pub(in crate::stack) struct DkgBoundaryContext<'a> {
-    pub(in crate::stack) current_epoch: Epoch,
-    pub(in crate::stack) vrf_material_version: u64,
-    pub(in crate::stack) current_participants:
-        &'a commonware_utils::ordered::Set<bls12381::PublicKey>,
-    pub(in crate::stack) target: &'a FrozenDkgTarget,
+pub struct DkgBoundaryContext<'a> {
+    pub current_epoch: Epoch,
+    pub vrf_material_version: u64,
+    pub current_participants: &'a commonware_utils::ordered::Set<bls12381::PublicKey>,
+    pub target: &'a FrozenDkgTarget,
 }
 
 /// File custody shared by material reads and writes.
 pub struct DkgStateStore<'a> {
-    pub(in crate::stack) directory: &'a std::path::Path,
-    pub(in crate::stack) key_backend: &'a bls::KeyBackend,
+    pub directory: &'a std::path::Path,
+    pub key_backend: &'a bls::KeyBackend,
 }
 
 impl<'a> DkgStateStore<'a> {
@@ -38,25 +37,25 @@ pub struct DkgStateMaterial<'a> {
 }
 
 /// DKG state file names within keys_dir.
-pub(in crate::stack) const DKG_SHARE_FILE: &str = "dkg_share.hex";
+pub const DKG_SHARE_FILE: &str = "dkg_share.hex";
 
-pub(in crate::stack) const DKG_POLYNOMIAL_FILE: &str = "dkg_polynomial.hex";
+pub const DKG_POLYNOMIAL_FILE: &str = "dkg_polynomial.hex";
 
-pub(in crate::stack) const DKG_OUTPUT_FILE: &str = "dkg_output.hex";
+pub const DKG_OUTPUT_FILE: &str = "dkg_output.hex";
 
-pub(in crate::stack) const DKG_PENDING_SHARE_FILE: &str = "dkg_pending_share.hex";
+pub const DKG_PENDING_SHARE_FILE: &str = "dkg_pending_share.hex";
 
-pub(in crate::stack) const DKG_PENDING_POLYNOMIAL_FILE: &str = "dkg_pending_polynomial.hex";
+pub const DKG_PENDING_POLYNOMIAL_FILE: &str = "dkg_pending_polynomial.hex";
 
-pub(in crate::stack) const DKG_PENDING_OUTPUT_FILE: &str = "dkg_pending_output.hex";
+pub const DKG_PENDING_OUTPUT_FILE: &str = "dkg_pending_output.hex";
 
-pub(in crate::stack) const DKG_PENDING_BOUNDARY_FILE: &str = "dkg_pending_boundary.bin";
+pub const DKG_PENDING_BOUNDARY_FILE: &str = "dkg_pending_boundary.bin";
 
-pub(in crate::stack) const DKG_PENDING_BOUNDARY_TMP_FILE: &str = "dkg_pending_boundary.bin.tmp";
+pub const DKG_PENDING_BOUNDARY_TMP_FILE: &str = "dkg_pending_boundary.bin.tmp";
 
-pub(in crate::stack) const DKG_DEALER_RETRY_FILE: &str = "dkg_dealer_retry.hex";
+pub const DKG_DEALER_RETRY_FILE: &str = "dkg_dealer_retry.hex";
 
-pub(in crate::stack) const DKG_PLAYER_RETRY_FILE: &str = "dkg_player_retry.hex";
+pub const DKG_PLAYER_RETRY_FILE: &str = "dkg_player_retry.hex";
 
 const SAVED_DKG_FILES: DkgStateFiles = DkgStateFiles {
     share: DKG_SHARE_FILE,
@@ -72,7 +71,7 @@ const PENDING_DKG_FILES: DkgStateFiles = DkgStateFiles {
     label: "pending",
 };
 
-pub(in crate::stack) fn dkg_retry_store(
+pub fn dkg_retry_store(
     args: &ConsensusArgs,
     key_backend: &bls::KeyBackend,
 ) -> Result<dkg_actor::DkgRetryStore> {
@@ -82,7 +81,7 @@ pub(in crate::stack) fn dkg_retry_store(
         .ok_or_else(|| crate::errors::StackDkgError::DkgParticipantRecoveryRequiresKeysDir.into())
 }
 
-pub(in crate::stack) fn retire_activated_dkg_retry_state(
+pub fn retire_activated_dkg_retry_state(
     keys_dir: &std::path::Path,
     key_backend: &bls::KeyBackend,
 ) -> Result<()> {
@@ -139,7 +138,7 @@ pub struct PendingDkgBoundarySnapshot {
     pub completed_at_height: u64,
 }
 
-pub(in crate::stack) fn decode_boundary_output(
+pub fn decode_boundary_output(
     artifact: &DkgBoundaryArtifact,
 ) -> Result<Output<MinSig, bls12381::PublicKey>> {
     let decoded = dkg_manager::OdkoOutcome::decode(artifact.outcome.as_ref())?;
@@ -153,7 +152,7 @@ pub(in crate::stack) fn decode_boundary_output(
     Ok(decoded.output)
 }
 
-pub(in crate::stack) fn encode_pending_dkg_boundary_snapshot(
+pub fn encode_pending_dkg_boundary_snapshot(
     snapshot: &PendingDkgBoundarySnapshot,
 ) -> Result<Vec<u8>> {
     let boundary = encode_boundary_artifact(&snapshot.artifact).map_err(|error| {
@@ -174,9 +173,7 @@ pub(in crate::stack) fn encode_pending_dkg_boundary_snapshot(
     Ok(out)
 }
 
-pub(in crate::stack) fn decode_pending_dkg_boundary_snapshot(
-    bytes: &[u8],
-) -> Result<PendingDkgBoundarySnapshot> {
+pub fn decode_pending_dkg_boundary_snapshot(bytes: &[u8]) -> Result<PendingDkgBoundarySnapshot> {
     let header_len = DKG_PENDING_BOUNDARY_MAGIC.len() + 8 + 4;
     if bytes.len() < header_len {
         return Err(
@@ -236,7 +233,7 @@ fn pending_dkg_boundary_path(storage_dir: &std::path::Path) -> std::path::PathBu
     storage_dir.join(DKG_PENDING_BOUNDARY_FILE)
 }
 
-pub(in crate::stack) fn build_completed_dkg_boundary(
+pub fn build_completed_dkg_boundary(
     context: DkgBoundaryContext<'_>,
     output: &Output<MinSig, bls12381::PublicKey>,
     completed_participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
@@ -270,7 +267,7 @@ pub(in crate::stack) fn build_completed_dkg_boundary(
     })
 }
 
-pub(in crate::stack) fn persist_completed_dkg_before_activation(
+pub fn persist_completed_dkg_before_activation(
     store: DkgStateStore<'_>,
     context: DkgBoundaryContext<'_>,
     complete: &dkg_actor::DkgComplete,
@@ -314,7 +311,7 @@ pub(in crate::stack) fn persist_completed_dkg_before_activation(
     Ok(boundary_artifact)
 }
 
-pub(in crate::stack) fn persist_observed_dkg_boundary_before_activation(
+pub fn persist_observed_dkg_boundary_before_activation(
     keys_dir: &std::path::Path,
     context: DkgBoundaryContext<'_>,
     output: &Output<MinSig, bls12381::PublicKey>,
@@ -365,12 +362,12 @@ pub fn load_pending_dkg_boundary(
     decode_pending_dkg_boundary_snapshot(&bytes).map(Some)
 }
 
-pub(in crate::stack) fn clear_pending_dkg_boundary(storage_dir: &std::path::Path) {
+pub fn clear_pending_dkg_boundary(storage_dir: &std::path::Path) {
     let _ = std::fs::remove_file(pending_dkg_boundary_path(storage_dir));
     let _ = std::fs::remove_file(storage_dir.join(DKG_PENDING_BOUNDARY_TMP_FILE));
 }
 
-pub(in crate::stack) fn pending_boundary_is_finalized(
+pub fn pending_boundary_is_finalized(
     pending: &PendingDkgBoundarySnapshot,
     recovered_boundary: Option<&(u64, DkgBoundaryArtifact)>,
 ) -> bool {
@@ -381,7 +378,7 @@ pub(in crate::stack) fn pending_boundary_is_finalized(
 
 fn require_frozen_validator_set(
     protocol: &dyn crate::protocol_state::EngineProtocolState,
-    node: &OutbeFullNode,
+    node: &impl ExecutionProviderAccess,
     freeze_height: u64,
     unavailable: impl FnOnce() -> eyre::Report,
 ) -> Result<(validators::ValidatorSet, Vec<EthAddress>)> {
@@ -399,7 +396,7 @@ fn validate_pending_boundary_snapshot(
     protocol: &dyn crate::protocol_state::EngineProtocolState,
     snapshot: &PendingDkgBoundarySnapshot,
     local_output: &Output<MinSig, bls12381::PublicKey>,
-    node: &OutbeFullNode,
+    node: &impl ExecutionProviderAccess,
 ) -> Result<()> {
     let boundary_output = decode_boundary_output(&snapshot.artifact)
         .wrap_err("failed to decode pending DKG boundary output")?;
@@ -562,7 +559,7 @@ fn retire_finalized_pending_boundary(
 fn validate_unfinalized_pending_boundary(
     (protocol, node): (
         &dyn crate::protocol_state::EngineProtocolState,
-        &OutbeFullNode,
+        &impl ExecutionProviderAccess,
     ),
     snapshot: PendingDkgBoundarySnapshot,
     storage_dir: &std::path::Path,
@@ -646,10 +643,10 @@ fn check_unfinalized_pending_private_state(
     }
 }
 
-pub(in crate::stack) fn recover_pending_dkg_boundary_snapshot(
+pub fn recover_pending_dkg_boundary_snapshot(
     (protocol, node): (
         &dyn crate::protocol_state::EngineProtocolState,
-        &OutbeFullNode,
+        &impl ExecutionProviderAccess,
     ),
     storage_dir: &std::path::Path,
     key_backend: &bls::KeyBackend,
@@ -690,7 +687,7 @@ pub(in crate::stack) fn recover_pending_dkg_boundary_snapshot(
 pub fn restore_pending_dkg_activation(
     (protocol, node): (
         &dyn crate::protocol_state::EngineProtocolState,
-        &OutbeFullNode,
+        &impl ExecutionProviderAccess,
     ),
     snapshot: PendingDkgBoundarySnapshot,
     storage_dir: &std::path::Path,
@@ -807,7 +804,7 @@ fn load_dkg_state_files(
 
 /// Load finalized DKG results from disk for crash recovery.
 #[allow(clippy::type_complexity)]
-pub(in crate::stack) fn load_saved_dkg_state(
+pub fn load_saved_dkg_state(
     storage_dir: &std::path::Path,
     key_backend: &bls::KeyBackend,
 ) -> Result<Option<PersistedDkgState>> {
@@ -820,7 +817,7 @@ pub(in crate::stack) fn load_saved_dkg_state(
     )
 }
 
-pub(in crate::stack) fn load_pending_dkg_state(
+pub fn load_pending_dkg_state(
     storage_dir: &std::path::Path,
     key_backend: &bls::KeyBackend,
 ) -> Result<Option<PersistedDkgState>> {
@@ -869,10 +866,7 @@ fn save_dkg_state_files(
 }
 
 /// Save finalized DKG results to disk for crash recovery.
-pub(in crate::stack) fn save_dkg_state(
-    store: DkgStateStore<'_>,
-    material: DkgStateMaterial<'_>,
-) -> Result<()> {
+pub fn save_dkg_state(store: DkgStateStore<'_>, material: DkgStateMaterial<'_>) -> Result<()> {
     save_dkg_state_files(store, SAVED_DKG_FILES, material)
 }
 
@@ -883,7 +877,7 @@ pub fn save_pending_dkg_state(
     save_dkg_state_files(store, PENDING_DKG_FILES, material)
 }
 
-pub(in crate::stack) fn remove_pending_dkg_state(storage_dir: &std::path::Path) {
+pub fn remove_pending_dkg_state(storage_dir: &std::path::Path) {
     for file in [
         DKG_PENDING_SHARE_FILE,
         DKG_PENDING_POLYNOMIAL_FILE,

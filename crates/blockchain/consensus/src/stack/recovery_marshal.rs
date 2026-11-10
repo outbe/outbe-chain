@@ -1,4 +1,7 @@
 //! One marshal opener for engine tests and snapshot fixtures.
+use crate::block::ConsensusBlock;
+use crate::config;
+use crate::hybrid::{HybridScheme, HybridSchemeProvider};
 use commonware_consensus::{
     marshal::{self, resolver::handler, Start},
     types::ViewDelta,
@@ -11,10 +14,7 @@ use commonware_runtime::buffer::paged::CacheRef;
 use commonware_runtime::Supervisor as _;
 use commonware_storage::archive::immutable;
 use commonware_utils::channel::oneshot;
-use outbe_consensus::block::ConsensusBlock;
-use outbe_consensus::config;
-use outbe_consensus::hybrid::{HybridScheme, HybridSchemeProvider};
-use outbe_consensus::test_harness::NoopMarshalResolver;
+
 use std::num::{NonZeroU16, NonZeroU64, NonZeroUsize};
 use std::sync::{Arc, Mutex};
 
@@ -24,26 +24,23 @@ struct EmptyMarshalBuffer {
     pending_commitment_subscribers: Arc<Mutex<Vec<oneshot::Sender<Arc<ConsensusBlock>>>>>,
 }
 
-impl marshal::core::Buffer<outbe_consensus::marshal_types::Variant> for EmptyMarshalBuffer {
+impl marshal::core::Buffer<crate::marshal_types::Variant> for EmptyMarshalBuffer {
     type PublicKey = commonware_cryptography::bls12381::PublicKey;
 
-    async fn find_by_digest(
-        &self,
-        _digest: outbe_consensus::digest::Digest,
-    ) -> Option<Arc<ConsensusBlock>> {
+    async fn find_by_digest(&self, _digest: crate::digest::Digest) -> Option<Arc<ConsensusBlock>> {
         None
     }
 
     async fn find_by_commitment(
         &self,
-        _commitment: outbe_consensus::digest::Digest,
+        _commitment: crate::digest::Digest,
     ) -> Option<Arc<ConsensusBlock>> {
         None
     }
 
     fn subscribe_by_digest(
         &self,
-        _digest: outbe_consensus::digest::Digest,
+        _digest: crate::digest::Digest,
     ) -> Option<oneshot::Receiver<Arc<ConsensusBlock>>> {
         let (tx, rx) = oneshot::channel();
         self.pending_digest_subscribers.lock().unwrap().push(tx);
@@ -52,14 +49,14 @@ impl marshal::core::Buffer<outbe_consensus::marshal_types::Variant> for EmptyMar
 
     fn subscribe_by_commitment(
         &self,
-        _commitment: outbe_consensus::digest::Digest,
+        _commitment: crate::digest::Digest,
     ) -> Option<oneshot::Receiver<Arc<ConsensusBlock>>> {
         let (tx, rx) = oneshot::channel();
         self.pending_commitment_subscribers.lock().unwrap().push(tx);
         Some(rx)
     }
 
-    fn retire(&self, _update: marshal::core::Retirement<outbe_consensus::digest::Digest>) {}
+    fn retire(&self, _update: marshal::core::Retirement<crate::digest::Digest>) {}
 
     fn send(
         &self,
@@ -70,19 +67,19 @@ impl marshal::core::Buffer<outbe_consensus::marshal_types::Variant> for EmptyMar
     }
 }
 
-pub(super) async fn start_recovery_marshal_in_partition<R>(
+pub async fn start_recovery_marshal_in_partition<R>(
     context: commonware_runtime::tokio::Context,
     provider: HybridSchemeProvider<MinSig>,
     reporter: R,
     partition_prefix: String,
     genesis: ConsensusBlock,
 ) -> (
-    outbe_consensus::marshal_types::MarshalMailbox,
-    handler::Handler<outbe_consensus::digest::Digest>,
+    crate::marshal_types::MarshalMailbox,
+    handler::Handler<crate::digest::Digest>,
     commonware_runtime::Handle<()>,
 )
 where
-    R: commonware_consensus::Reporter<Activity = outbe_consensus::marshal_types::MarshalUpdate>
+    R: commonware_consensus::Reporter<Activity = crate::marshal_types::MarshalUpdate>
         + Send
         + 'static,
 {
@@ -152,7 +149,7 @@ where
         blocks_archive,
         marshal::Config {
             provider,
-            epocher: outbe_consensus::follow::FollowerEpocher::new(10_000, 0),
+            epocher: crate::follow::FollowerEpocher::new(10_000, 0),
             start: Start::Genesis(genesis),
             partition_prefix,
             mailbox_size: NonZeroUsize::new(32).unwrap(),
@@ -170,7 +167,7 @@ where
     )
     .await;
 
-    let (resolver_rx, resolver_handler) = handler::init::<outbe_consensus::digest::Digest>(
+    let (resolver_rx, resolver_handler) = handler::init::<crate::digest::Digest>(
         context.child("resolver_handler"),
         NonZeroUsize::new(16).unwrap(),
     );
@@ -180,4 +177,69 @@ where
         (resolver_rx, NoopMarshalResolver),
     );
     (mailbox, resolver_handler, handle)
+}
+
+use commonware_actor::Feedback;
+
+use commonware_cryptography::bls12381;
+use commonware_resolver::{Resolver, TargetedResolver};
+use commonware_utils::vec::NonEmptyVec;
+
+use crate::digest::Digest;
+
+/// Accept requests without delivering blocks. The caller retains the handler keepalive.
+#[derive(Clone, Default)]
+struct NoopMarshalResolver;
+
+// commonware 2026.5.0 split the resolver surface:
+// - The base `Resolver` keeps `fetch`/`fetch_all`/`retain` (now SYNC, returning
+//   `Feedback`, generic over `Into<Fetch<Key, Subscriber>>`) and gained
+//   `type Subscriber`.
+// - commonware 2026.5.0 removed `cancel`/`clear`.
+// - The targeted methods moved to `TargetedResolver`.
+// The marshal actor requires `Key = handler::Key<Commitment>` and `Subscriber =
+// handler::Annotation`.
+impl Resolver for NoopMarshalResolver {
+    type Key = handler::Key<Digest>;
+    type Subscriber = handler::Annotation;
+
+    fn fetch<F>(&mut self, _key: F) -> Feedback
+    where
+        F: Into<commonware_resolver::Fetch<Self::Key, Self::Subscriber>> + Send,
+    {
+        Feedback::Ok
+    }
+
+    fn fetch_all<F>(&mut self, _keys: Vec<F>) -> Feedback
+    where
+        F: Into<commonware_resolver::Fetch<Self::Key, Self::Subscriber>> + Send,
+    {
+        Feedback::Ok
+    }
+
+    fn retain(
+        &mut self,
+        _predicate: impl Fn(&Self::Key, &Self::Subscriber) -> bool + Send + 'static,
+    ) -> Feedback {
+        Feedback::Ok
+    }
+}
+
+impl TargetedResolver for NoopMarshalResolver {
+    type PublicKey = bls12381::PublicKey;
+
+    fn fetch_targeted(
+        &mut self,
+        _fetch: impl Into<commonware_resolver::Fetch<Self::Key, Self::Subscriber>> + Send,
+        _targets: NonEmptyVec<Self::PublicKey>,
+    ) -> Feedback {
+        Feedback::Ok
+    }
+
+    fn fetch_all_targeted<F>(&mut self, _keys: Vec<(F, NonEmptyVec<Self::PublicKey>)>) -> Feedback
+    where
+        F: Into<commonware_resolver::Fetch<Self::Key, Self::Subscriber>> + Send,
+    {
+        Feedback::Ok
+    }
 }

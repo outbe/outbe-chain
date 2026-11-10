@@ -16,17 +16,27 @@ const CERTIFIED_FOLLOWER_FCU_RETRY_DELAY: std::time::Duration =
     std::time::Duration::from_millis(100);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::stack) enum RecoveredFcuAction {
+pub enum RecoveredFcuAction {
     Complete,
     Retry,
     Fatal,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::stack) struct RecoveredRethForkchoice {
-    pub(in crate::stack) head: ProjectionCheckpoint,
-    pub(in crate::stack) safe: Option<ProjectionCheckpoint>,
-    pub(in crate::stack) finalized: Option<ProjectionCheckpoint>,
+pub struct RecoveredRethForkchoice {
+    pub head: ProjectionCheckpoint,
+    pub safe: Option<ProjectionCheckpoint>,
+    pub finalized: Option<ProjectionCheckpoint>,
+}
+
+impl From<crate::execution_port::RecoveryForkchoice> for RecoveredRethForkchoice {
+    fn from(value: crate::execution_port::RecoveryForkchoice) -> Self {
+        Self {
+            head: value.head,
+            safe: value.safe,
+            finalized: value.finalized,
+        }
+    }
 }
 
 impl RecoveredRethForkchoice {
@@ -35,7 +45,7 @@ impl RecoveredRethForkchoice {
     }
 }
 
-pub(in crate::stack) fn classify_recovered_fcu_attempt(
+pub fn classify_recovered_fcu_attempt(
     anchor: ProjectionCheckpoint,
     response: &RecoveredForkchoiceAttempt,
     readback: RecoveredRethForkchoice,
@@ -71,12 +81,7 @@ pub(in crate::stack) fn classify_recovered_fcu_attempt(
     }
 }
 
-pub(in crate::stack) async fn confirm_recovered_forkchoice<
-    C,
-    Attempt,
-    AttemptFuture,
-    ReadProvider,
->(
+pub async fn confirm_recovered_forkchoice<C, Attempt, AttemptFuture, ReadProvider>(
     clock: C,
     anchor: ProjectionCheckpoint,
     mut attempt: Attempt,
@@ -150,32 +155,42 @@ where
     unreachable!("certified follower FCU attempt budget is non-zero")
 }
 
-pub(in crate::stack) fn read_reth_recovery_forkchoice(
-    state: &reth_chain_state::CanonicalInMemoryState<outbe_primitives::OutbePrimitives>,
+pub fn read_reth_recovery_forkchoice(
+    state: &impl crate::execution_port::RecoveryForkchoiceReader,
 ) -> Result<RecoveredRethForkchoice> {
-    // Persisted execution progress may remain ahead after a canonical rollback.
-    let head = state.get_canonical_head();
-    if head.hash() == B256::ZERO {
-        return Err(crate::errors::StackRecoveryError::RethZeroCanonicalHead.into());
+    Ok(state.recovery_forkchoice()?.into())
+}
+
+impl crate::execution_port::RecoveryForkchoiceReader
+    for reth_chain_state::CanonicalInMemoryState<outbe_primitives::OutbePrimitives>
+{
+    fn recovery_forkchoice(
+        &self,
+    ) -> Result<crate::execution_port::RecoveryForkchoice, crate::errors::StackRecoveryError> {
+        // Persisted execution progress may remain ahead after a canonical rollback.
+        let head = self.get_canonical_head();
+        if head.hash() == B256::ZERO {
+            return Err(crate::errors::StackRecoveryError::RethZeroCanonicalHead);
+        }
+        let checkpoint = |checkpoint: alloy_eips::BlockNumHash| ProjectionCheckpoint {
+            block_number: checkpoint.number,
+            block_hash: checkpoint.hash,
+        };
+        Ok(crate::execution_port::RecoveryForkchoice {
+            head: checkpoint(head.num_hash()),
+            safe: self.get_safe_num_hash().map(checkpoint),
+            finalized: self.get_finalized_num_hash().map(checkpoint),
+        })
     }
-    let checkpoint = |checkpoint: alloy_eips::BlockNumHash| ProjectionCheckpoint {
-        block_number: checkpoint.number,
-        block_hash: checkpoint.hash,
-    };
-    Ok(RecoveredRethForkchoice {
-        head: checkpoint(head.num_hash()),
-        safe: state.get_safe_num_hash().map(checkpoint),
-        finalized: state.get_finalized_num_hash().map(checkpoint),
-    })
 }
 
 // ===========================================================================
 // Helper functions
 // ===========================================================================
 
-pub(in crate::stack) async fn recover_application_finalized_round<C>(
+pub async fn recover_application_finalized_round<C>(
     clock: C,
-    marshal_mailbox: outbe_consensus::marshal_types::MarshalMailbox,
+    marshal_mailbox: crate::marshal_types::MarshalMailbox,
     last_execution_height: u64,
 ) -> Result<Option<RecoveredApplicationFinalization>>
 where

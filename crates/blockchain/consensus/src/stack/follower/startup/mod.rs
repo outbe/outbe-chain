@@ -1,16 +1,16 @@
 use super::*;
 use crate::stack::recovery::forkchoice::RecoveredRethForkchoice;
-use commonware_consensus::marshal;
-use commonware_cryptography::certificate::Verifier as _;
-use commonware_storage::archive::immutable;
-use outbe_consensus::{
+use crate::{
     block::ConsensusBlock,
     follow::{CommitteeChain, FinalizedSource as _, FollowerEpocher, SharedCommitteeChain},
     marshal_types::{Finalization, FollowMarshalActor, MarshalMailbox},
 };
+use commonware_consensus::marshal;
+use commonware_cryptography::certificate::Verifier as _;
+use commonware_storage::archive::immutable;
 use services::{FollowerConnection, FollowerStackServices};
 
-pub(super) trait FollowerRuntime:
+pub trait FollowerRuntime:
     BufferPooler
     + Clock
     + CryptoRng
@@ -39,9 +39,9 @@ impl<E> FollowerRuntime for E where
 {
 }
 
-pub(super) struct FollowerTrustAnchor {
-    pub(super) participants: commonware_utils::ordered::Set<bls12381::PublicKey>,
-    pub(super) epoch_length_blocks: u32,
+pub struct FollowerTrustAnchor {
+    pub participants: commonware_utils::ordered::Set<bls12381::PublicKey>,
+    pub epoch_length_blocks: u32,
 }
 struct StartupChainState {
     genesis_hash: B256,
@@ -82,7 +82,7 @@ struct RecoveryAuthority<'a> {
     upstream: &'a crate::follow_transport::UpstreamRpcClient,
     epocher: &'a FollowerEpocher,
 }
-struct RecoveredFollowerHistory<E: FollowerRuntime> {
+struct RecoveredFollowerHistory<E: FollowerRuntime, N: StackNodeAccess> {
     marshal_actor: FollowMarshalActor<E>,
     marshal_mailbox: MarshalMailbox,
     last_consensus_finalized: Height,
@@ -93,19 +93,19 @@ struct RecoveredFollowerHistory<E: FollowerRuntime> {
     epocher: FollowerEpocher,
     upstream_client: crate::follow_transport::UpstreamRpcClient,
     tip_client: crate::follow_transport::UpstreamRpcClient,
-    local: crate::follow_transport::RethLocalBlockSource,
+    local: crate::follow_transport::RethLocalBlockSource<N>,
 }
-struct HistoryBootstrap<'a, E: FollowerRuntime> {
+struct HistoryBootstrap<'a, E: FollowerRuntime, N: StackNodeAccess> {
     ctx: &'a E,
-    node: &'a OutbeFullNode,
+    node: &'a N,
     startup: &'a StartupChainState,
     upstream: &'a str,
     participants: commonware_utils::ordered::Set<bls12381::PublicKey>,
     epoch_length_blocks: u32,
 }
-pub(super) async fn run_certified_follow_stack<E>(
+pub async fn run_certified_follow_stack<E, N: StackNodeAccess>(
     ctx: E,
-    connection: FollowerConnection,
+    connection: FollowerConnection<N>,
     trust: FollowerTrustAnchor,
     services: FollowerStackServices,
 ) -> Result<crate::follower_shutdown::FollowStackExit>
@@ -144,15 +144,14 @@ where
     .await
 }
 
-fn read_startup_chain_state(node: &OutbeFullNode) -> Result<StartupChainState> {
+fn read_startup_chain_state(node: &impl StackNodeAccess) -> Result<StartupChainState> {
     // -- 0. Startup chain-state sources -----------------------------------
     let genesis_hash = genesis_hash(node)?;
     let last_execution_height = node
-        .provider
+        .provider()
         .last_block_number()
         .map_err(|e| crate::errors::FollowerStackError::GetLastBlockNumber(format!("{e}")))?;
-    let initial_reth_forkchoice =
-        read_reth_recovery_forkchoice(&node.provider.canonical_in_memory_state())?;
+    let initial_reth_forkchoice = node.recovery_forkchoice()?.into();
 
     Ok(StartupChainState {
         genesis_hash,
@@ -229,21 +228,18 @@ async fn normalize_replay_suffix<E: FollowerRuntime>(
     );
     if replay_suffix_upper > 0 {
         let (_, restored_finalizations, restored_blocks) =
-            outbe_consensus::follow::engine::authenticate_and_reconcile_replay_suffix(
-                outbe_consensus::follow::engine::ReplayAuthority {
+            crate::follow::engine::authenticate_and_reconcile_replay_suffix(
+                crate::follow::engine::ReplayAuthority {
                     chain,
                     source: upstream_client,
                     epocher,
                 },
-                outbe_consensus::follow::engine::ReplayWindow {
+                crate::follow::engine::ReplayWindow {
                     anchor_epoch,
                     lower: Height::new(replay_suffix_lower),
                     upper: Height::new(replay_suffix_upper),
                 },
-                outbe_consensus::follow::engine::ReplayArchives::new(
-                    finalizations_archive,
-                    blocks_archive,
-                ),
+                crate::follow::engine::ReplayArchives::new(finalizations_archive, blocks_archive),
             )
             .await
             .wrap_err("failed to authenticate and normalize follower replay suffix")?;
@@ -332,7 +328,7 @@ async fn inspect_archive_anchor<E: FollowerRuntime>(
 }
 async fn initialize_marshal<E: FollowerRuntime>(
     ctx: &E,
-    node: &OutbeFullNode,
+    node: &impl StackNodeAccess,
     archives: FollowerArchives<E>,
     authority: MarshalAuthority<'_>,
 ) -> Result<InitializedMarshal<E>> {
@@ -376,7 +372,7 @@ async fn initialize_marshal<E: FollowerRuntime>(
     })
 }
 fn recovered_checkpoint(
-    node: &OutbeFullNode,
+    node: &impl StackNodeAccess,
     startup: &StartupChainState,
     inspected: &ArchiveAnchor,
     last_consensus_finalized: Height,
@@ -410,7 +406,7 @@ fn recovered_checkpoint(
     let recovery_hash = if recovery_height == 0 {
         genesis_hash
     } else {
-        node.provider
+        node.provider()
             .block_hash(recovery_height)
             .map_err(
                 |error| crate::errors::FollowerStackError::ReadCanonicalRethHashAtRecovery {
@@ -485,7 +481,7 @@ impl RecoveryAuthority<'_> {
         Ok(recovery_anchor)
     }
 }
-impl<E: FollowerRuntime> HistoryBootstrap<'_, E> {
+impl<E: FollowerRuntime, N: StackNodeAccess> HistoryBootstrap<'_, E, N> {
     async fn restore_committee(
         &self,
         archives: &FollowerArchives<E>,
@@ -503,7 +499,7 @@ impl<E: FollowerRuntime> HistoryBootstrap<'_, E> {
         let restored = super::local_anchor::LocalFinalizedHistory {
             certificates: &archives.finalizations_archive,
             blocks: &archives.blocks_archive,
-            canonical_hash: |height| self.node.provider.block_hash(height).map_err(Into::into),
+            canonical_hash: |height| self.node.provider().block_hash(height).map_err(Into::into),
             floor,
             epoch_length,
             activation_grace,
@@ -531,7 +527,7 @@ impl<E: FollowerRuntime> HistoryBootstrap<'_, E> {
         })
     }
 
-    async fn recover(self) -> Result<RecoveredFollowerHistory<E>> {
+    async fn recover(self) -> Result<RecoveredFollowerHistory<E, N>> {
         let archives = initialize_archives(self.ctx).await?;
         let super::local_anchor::RestoredCommittee { chain, epocher } =
             self.restore_committee(&archives).await?;
@@ -603,6 +599,5 @@ impl<E: FollowerRuntime> HistoryBootstrap<'_, E> {
 }
 
 mod execution;
-#[cfg(test)]
-pub(in crate::stack) use execution::wait_for_bootstrap_tee_lease;
+pub use execution::wait_for_bootstrap_tee_lease;
 use execution::ExecutionBootstrap;

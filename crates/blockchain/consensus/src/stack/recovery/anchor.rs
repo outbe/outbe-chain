@@ -7,14 +7,14 @@ use super::super::*;
 /// corruption. A head that leads the marshal finalized tip by at most this many
 /// blocks is treated as that benign case. A larger lead is suspicious and stays
 /// fatal.
-pub(in crate::stack) const MAX_UNFINALIZED_HEAD_LEAD: u64 = 16;
+pub const MAX_UNFINALIZED_HEAD_LEAD: u64 = 16;
 
 /// Whether an execution head that leads the marshal's durable finalized tip is
 /// the benign "unfinalized in-flight head" case rather than archive corruption.
 /// The benign case is a real finalized tip (`> 0`) and a positive, bounded lead.
 /// The caller still confirms that the marshal actually holds the finalized tip's
 /// finalization record before it treats the restart as recoverable.
-pub(in crate::stack) fn unfinalized_head_lead_is_recoverable(
+pub fn unfinalized_head_lead_is_recoverable(
     last_execution_height: u64,
     finalized_tip: u64,
 ) -> bool {
@@ -25,16 +25,13 @@ pub(in crate::stack) fn unfinalized_head_lead_is_recoverable(
 /// Highest height that both the execution store and durable consensus finality
 /// can authorize at startup. An execution-only head is speculative and must not
 /// seed finalized forkchoice state. A consensus-only suffix is backfilled later.
-pub(in crate::stack) fn durable_recovery_anchor_height(
-    last_execution_height: u64,
-    finalized_tip: u64,
-) -> u64 {
+pub fn durable_recovery_anchor_height(last_execution_height: u64, finalized_tip: u64) -> u64 {
     last_execution_height.min(finalized_tip)
 }
 
 /// Inclusive suffix that must be authenticated before a certified follower's
 /// Marshal actor can repair or dispatch durable consensus records.
-pub(in crate::stack) fn certified_follower_replay_suffix_bounds(
+pub fn certified_follower_replay_suffix_bounds(
     archive_finalization_tip: u64,
     archive_block_tip: u64,
     execution_tip: u64,
@@ -48,19 +45,19 @@ pub(in crate::stack) fn certified_follower_replay_suffix_bounds(
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::stack) struct CertifiedFollowerRecoveryFloors {
-    pub(in crate::stack) marshal_processed: u64,
-    pub(in crate::stack) archive_finalization_tip: u64,
-    pub(in crate::stack) archive_block_tip: u64,
-    pub(in crate::stack) execution_tip: u64,
-    pub(in crate::stack) reth_finalized: u64,
+pub struct CertifiedFollowerRecoveryFloors {
+    pub marshal_processed: u64,
+    pub archive_finalization_tip: u64,
+    pub archive_block_tip: u64,
+    pub execution_tip: u64,
+    pub reth_finalized: u64,
 }
 
 /// Select the only height that can still become the certified follower startup
 /// anchor before exact identity and certificate verification. Heights merely
 /// bound the candidate: they never authorize it without the later hash and
 /// certificate checks.
-pub(in crate::stack) fn select_certified_follower_recovery_height(
+pub fn select_certified_follower_recovery_height(
     floors: CertifiedFollowerRecoveryFloors,
 ) -> Result<u64> {
     let anchor = floors
@@ -98,21 +95,21 @@ pub(in crate::stack) fn select_certified_follower_recovery_height(
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::stack) struct CertifiedFollowerRecoveryAnchor {
-    pub(in crate::stack) checkpoint: ProjectionCheckpoint,
-    pub(in crate::stack) finalization: Option<outbe_consensus::marshal_types::Finalization>,
-    pub(in crate::stack) block: outbe_consensus::block::ConsensusBlock,
+pub struct CertifiedFollowerRecoveryAnchor {
+    pub checkpoint: ProjectionCheckpoint,
+    pub finalization: Option<crate::marshal_types::Finalization>,
+    pub block: crate::block::ConsensusBlock,
 }
 
-pub(in crate::stack) struct FollowerRecoveryBlock<'a> {
-    pub(in crate::stack) checkpoint: ProjectionCheckpoint,
-    pub(in crate::stack) block: &'a outbe_consensus::block::ConsensusBlock,
+pub struct FollowerRecoveryBlock<'a> {
+    pub checkpoint: ProjectionCheckpoint,
+    pub block: &'a crate::block::ConsensusBlock,
 }
 
 fn check_ancestor_recovery_envelope_and_epoch(
     local: &FollowerRecoveryBlock<'_>,
-    upstream: &outbe_consensus::follow::upstream::AncestorFinalityProof,
-    epocher: &outbe_consensus::follow::FollowerEpocher,
+    upstream: &crate::follow::upstream::AncestorFinalityProof,
+    epocher: &crate::follow::FollowerEpocher,
 ) -> Result<Epoch> {
     use commonware_consensus::types::Epocher as _;
     let height = local.checkpoint.block_number;
@@ -139,8 +136,8 @@ fn check_ancestor_recovery_envelope_and_epoch(
 fn verify_ancestor_certificates(
     epoch: Epoch,
     canonical_hash: B256,
-    certified_finalization: &outbe_consensus::marshal_types::Finalization,
-    local_finalization: Option<&outbe_consensus::marshal_types::Finalization>,
+    certified_finalization: &crate::marshal_types::Finalization,
+    local_finalization: Option<&crate::marshal_types::Finalization>,
     schemes: &HybridSchemeProvider<MinSig>,
 ) -> Result<()> {
     let scheme = schemes
@@ -169,12 +166,12 @@ fn verify_ancestor_certificates(
     Ok(())
 }
 
-pub(in crate::stack) fn validate_ancestor_follower_recovery_record(
+pub fn validate_ancestor_follower_recovery_record(
     local: FollowerRecoveryBlock<'_>,
-    local_finalization: Option<&outbe_consensus::marshal_types::Finalization>,
-    upstream: &outbe_consensus::follow::upstream::AncestorFinalityProof,
+    local_finalization: Option<&crate::marshal_types::Finalization>,
+    upstream: &crate::follow::upstream::AncestorFinalityProof,
     schemes: &HybridSchemeProvider<MinSig>,
-    epocher: &outbe_consensus::follow::FollowerEpocher,
+    epocher: &crate::follow::FollowerEpocher,
 ) -> Result<CertifiedFollowerRecoveryAnchor> {
     let epoch = check_ancestor_recovery_envelope_and_epoch(&local, upstream, epocher)?;
     let certified = &upstream.certified;
@@ -204,7 +201,7 @@ pub(in crate::stack) fn validate_ancestor_follower_recovery_record(
 
 fn check_certified_recovery_blocks(
     local: &FollowerRecoveryBlock<'_>,
-    upstream_block: &outbe_consensus::block::ConsensusBlock,
+    upstream_block: &crate::block::ConsensusBlock,
 ) -> Result<()> {
     let height = local.checkpoint.block_number;
     let canonical_hash = local.checkpoint.block_hash;
@@ -251,8 +248,8 @@ fn check_certified_recovery_blocks(
 
 fn check_certified_recovery_finalizations(
     checkpoint: ProjectionCheckpoint,
-    local_finalization: &outbe_consensus::marshal_types::Finalization,
-    upstream_finalization: &outbe_consensus::marshal_types::Finalization,
+    local_finalization: &crate::marshal_types::Finalization,
+    upstream_finalization: &crate::marshal_types::Finalization,
 ) -> Result<Epoch> {
     let height = checkpoint.block_number;
     let canonical_hash = checkpoint.block_hash;
@@ -291,11 +288,11 @@ fn check_certified_recovery_finalizations(
     Ok(local_epoch)
 }
 
-pub(in crate::stack) fn validate_certified_follower_recovery_record(
+pub fn validate_certified_follower_recovery_record(
     local: FollowerRecoveryBlock<'_>,
-    local_finalization: &outbe_consensus::marshal_types::Finalization,
-    upstream_finalization: &outbe_consensus::marshal_types::Finalization,
-    upstream_block: &outbe_consensus::block::ConsensusBlock,
+    local_finalization: &crate::marshal_types::Finalization,
+    upstream_finalization: &crate::marshal_types::Finalization,
+    upstream_block: &crate::block::ConsensusBlock,
     schemes: &HybridSchemeProvider<MinSig>,
 ) -> Result<CertifiedFollowerRecoveryAnchor> {
     check_certified_recovery_blocks(&local, upstream_block)?;
@@ -338,15 +335,15 @@ pub(in crate::stack) fn validate_certified_follower_recovery_record(
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::stack) struct RecoveredApplicationFinalization {
-    pub(in crate::stack) round: Round,
-    pub(in crate::stack) digest: Digest,
+pub struct RecoveredApplicationFinalization {
+    pub round: Round,
+    pub digest: Digest,
 }
 
 /// Promote the conservative cross-store anchor only when marshal proves the
 /// exact canonical execution-head digest. Height agreement alone is not
 /// sufficient: it could conceal a same-height fork after a partial restore.
-pub(in crate::stack) fn reconcile_recovered_execution_head(
+pub fn reconcile_recovered_execution_head(
     last_execution_height: u64,
     last_execution_hash: B256,
     recovered: Option<RecoveredApplicationFinalization>,

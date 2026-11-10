@@ -1,13 +1,13 @@
 use super::*;
-use commonware_codec::Encode as _;
-use outbe_consensus::{
+use crate::{
     block::ConsensusBlock,
     bls::MAX_COMMITTEE_MEMBERS,
     finalization::parent_cert_store::FinalizedParentCertStore,
     marshal_types::{Finalization, MarshalMailbox},
 };
+use commonware_codec::Encode as _;
 
-pub(super) async fn finalization_bytes_for_height(
+pub async fn finalization_bytes_for_height(
     mailbox: &MarshalMailbox,
     parent_store: &FinalizedParentCertStore,
     height: Height,
@@ -35,10 +35,9 @@ fn same_block_finalization(
     digest: Digest,
 ) -> Option<Finalization> {
     for record in parent_store.finalizations_for_block(height.get(), block.block_hash()) {
-        if let Ok(candidate) = outbe_consensus::follow::decode_public_finalization(
-            &record.encoded_proof,
-            MAX_COMMITTEE_MEMBERS,
-        ) {
+        if let Ok(candidate) =
+            crate::follow::decode_public_finalization(&record.encoded_proof, MAX_COMMITTEE_MEMBERS)
+        {
             if candidate.proposal.payload == digest {
                 return Some(candidate);
             }
@@ -54,5 +53,5 @@ async fn child_finalization(
     let next = Height::new(height.get().checked_add(1)?);
     let (_, child_digest) = mailbox.get_info(next).await?;
     let child = mailbox.get_block(&child_digest).await?;
-    outbe_consensus::follow::upstream::parent_finalization_from_child(block, &child)
+    crate::follow::upstream::parent_finalization_from_child(block, &child)
 }

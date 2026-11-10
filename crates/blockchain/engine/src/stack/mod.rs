@@ -19,10 +19,11 @@
 //!    d. On reshare: run DKG in parallel, then abort engine + restart at new epoch
 
 use alloy_primitives::{Address as EthAddress, Bytes, B256};
+#[cfg(test)]
 use commonware_codec::Encode as _;
 use commonware_consensus::{
     simplex,
-    types::{Epoch, Height, Round, ViewDelta},
+    types::{Epoch, Height, ViewDelta},
     Reporters,
 };
 use commonware_cryptography::{
@@ -33,10 +34,7 @@ use commonware_cryptography::{
     },
     Signer as _,
 };
-use commonware_p2p::{
-    authenticated::lookup, utils::mux::Muxer, Address, AddressableManager, Receiver as P2pReceiver,
-    Sender as P2pSender,
-};
+use commonware_p2p::{authenticated::lookup, utils::mux::Muxer, Address, AddressableManager};
 use commonware_runtime::{
     buffer::paged::CacheRef, BufferPooler, Clock, Metrics, Network, Quota, Resolver, Spawner,
     Storage,
@@ -45,9 +43,8 @@ use commonware_utils::{ordered::Map, TryCollect as _, NZU32};
 use eyre::{Result, WrapErr};
 use rand_core_commonware::CryptoRng;
 use reth_ethereum::chainspec::EthChainSpec as _;
-use reth_ethereum::network::api::{NetworkInfo, Peers, PeersInfo};
 use reth_ethereum::provider::{BlockHashReader, StateProviderFactory};
-use reth_node_builder::ConsensusEngineHandle;
+#[cfg(test)]
 use reth_provider::HeaderProvider;
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -73,7 +70,7 @@ use outbe_consensus::{
     digest::Digest,
     dkg_actor,
     dkg_manager::{self, Mailbox as DkgManagerMailbox},
-    executor::actor::{ExecutorActor, FinalizedExecutionBarrier, RecoveredForkchoiceAttempt},
+    executor::actor::{ExecutorActor, FinalizedExecutionBarrier},
     finalization::{
         actor::{FinalizationActor, FinalizationActorBuilder, FinalizationActorDeps},
         block_cache::BlockCache,
@@ -92,23 +89,18 @@ use outbe_execution::OutbeFullNode;
 use outbe_primitives::{
     consensus::{ConsensusExecutionBridge, DkgBoundaryArtifact},
     projection::ProjectionCheckpoint,
-    reshare_artifact::{
-        decode_boundary_artifact, decode_outbe_block_artifacts, encode_boundary_artifact,
-        ConsensusHeaderArtifact,
-    },
-    OutbeHeader, OutbePayloadTypes,
 };
 use reth_ethereum::storage::{BlockNumReader, BlockReader, TransactionVariant};
 
-mod dkg;
+pub use outbe_consensus::stack::dkg;
 mod epoch;
-mod follower;
-mod marshal_archive;
-mod recovery;
+pub use outbe_consensus::stack::follower;
+pub use outbe_consensus::stack::marshal_archive;
+pub use outbe_consensus::stack::recovery;
 #[cfg(any(test, feature = "snapshot-integration"))]
-mod recovery_marshal;
-mod services;
-mod shutdown;
+pub use outbe_consensus::stack::recovery_marshal;
+pub use outbe_consensus::stack::services;
+pub use outbe_consensus::stack::shutdown;
 #[cfg(feature = "snapshot-integration")]
 #[doc(hidden)]
 pub mod snapshot_native;
@@ -128,12 +120,11 @@ pub use services::{
 pub(crate) use startup::{build_peer_map, map_marshal_init_height};
 
 use dkg::handoff::{
-    activate_vrf_material_and_publish_local_share, active_set_hash_from_addresses,
-    classify_local_reshare_role, find_exact_finalized_preannounce_carrier,
-    frozen_dkg_target_expired, next_consensus_epoch_after_dkg_activation,
-    next_dkg_cycle_after_restored_target, ordered_validator_addresses,
-    pending_dkg_handoff_decision, pending_freeze_block_hash_decision, publish_randomness_status,
-    refresh_validator_set_at_height, refresh_verifier_join_prev_output,
+    activate_vrf_material_and_publish_local_share, classify_local_reshare_role,
+    find_exact_finalized_preannounce_carrier, frozen_dkg_target_expired,
+    next_consensus_epoch_after_dkg_activation, next_dkg_cycle_after_restored_target,
+    ordered_validator_addresses, pending_dkg_handoff_decision, pending_freeze_block_hash_decision,
+    publish_randomness_status, refresh_validator_set_at_height, refresh_verifier_join_prev_output,
     restart_dkg_manager_from_finalized_history, select_pending_canonical_output,
     should_start_dkg_rotation, startup_live_join_scan_height, startup_pending_dkg_epoch_plan,
     DealerOnlyDkgActivation, DkgCeremonyReplaySpec, DkgRotationParams, DkgTaskOutcome,
@@ -143,13 +134,10 @@ use dkg::handoff::{
 };
 
 use dkg::persistence::{
-    build_completed_dkg_boundary, clear_pending_dkg_boundary, decode_boundary_output,
-    dkg_retry_store, load_pending_dkg_state, load_saved_dkg_state,
+    build_completed_dkg_boundary, decode_boundary_output, dkg_retry_store,
     persist_completed_dkg_before_activation, persist_observed_dkg_boundary_before_activation,
-    recover_pending_dkg_boundary_snapshot, remove_pending_dkg_state,
-    restore_pending_dkg_activation, retire_activated_dkg_retry_state, save_dkg_state,
-    DkgBoundaryContext, DkgStateMaterial, DkgStateStore, PendingDkgBoundarySnapshot,
-    DKG_OUTPUT_FILE, DKG_POLYNOMIAL_FILE, DKG_SHARE_FILE,
+    restore_pending_dkg_activation, retire_activated_dkg_retry_state, DkgBoundaryContext,
+    DkgStateStore, PendingDkgBoundarySnapshot,
 };
 
 use dkg::promotion::{
@@ -181,11 +169,8 @@ use epoch::watchdog::{
 use follower::{run_follow_stack, spawn_finalization_drainer};
 
 use recovery::anchor::{
-    certified_follower_replay_suffix_bounds, durable_recovery_anchor_height,
-    reconcile_recovered_execution_head, select_certified_follower_recovery_height,
-    unfinalized_head_lead_is_recoverable, validate_ancestor_follower_recovery_record,
-    CertifiedFollowerRecoveryAnchor, CertifiedFollowerRecoveryFloors,
-    RecoveredApplicationFinalization,
+    durable_recovery_anchor_height, reconcile_recovered_execution_head,
+    unfinalized_head_lead_is_recoverable,
 };
 
 use recovery::forkchoice::{
@@ -245,3 +230,39 @@ use shutdown::preserve_stack_result_after_drain;
 
 #[cfg(test)]
 use startup::{read_ms, require_genesis_hash, validate_timing};
+
+#[cfg(test)]
+use outbe_consensus::{
+    executor::actor::RecoveredForkchoiceAttempt,
+    stack::{
+        dkg::{
+            handoff::active_set_hash_from_addresses,
+            persistence::{
+                clear_pending_dkg_boundary, load_pending_dkg_state, load_saved_dkg_state,
+                save_dkg_state, DkgStateMaterial, DKG_OUTPUT_FILE, DKG_POLYNOMIAL_FILE,
+                DKG_SHARE_FILE,
+            },
+        },
+        recovery::anchor::{
+            certified_follower_replay_suffix_bounds, select_certified_follower_recovery_height,
+            validate_ancestor_follower_recovery_record, CertifiedFollowerRecoveryFloors,
+        },
+    },
+};
+#[cfg(test)]
+use outbe_primitives::reshare_artifact::{decode_outbe_block_artifacts, ConsensusHeaderArtifact};
+
+#[cfg(test)]
+use reth_node_builder::ConsensusEngineHandle;
+
+// Keep the legacy helper reachable until startup.rs moves in Task 4.3.
+const _: fn(u64, &str) -> Result<NonZeroU64> = nonzero_u64;
+
+#[cfg(feature = "snapshot-integration")]
+use commonware_consensus::types::Round;
+#[cfg(feature = "snapshot-integration")]
+use outbe_primitives::OutbeHeader;
+#[cfg(all(test, feature = "snapshot-integration"))]
+use outbe_primitives::OutbePayloadTypes;
+#[cfg(any(test, feature = "snapshot-integration"))]
+use recovery::anchor::RecoveredApplicationFinalization;

@@ -1,7 +1,7 @@
 use super::*;
 
 #[derive(Debug)]
-pub(in crate::stack) enum EpochLoopOutcome {
+pub enum EpochLoopOutcome {
     RestartEpoch,
     ReplaceSigner,
     GlobalStop,
@@ -10,7 +10,7 @@ pub(in crate::stack) enum EpochLoopOutcome {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::stack) enum EpochLoopAction {
+pub enum EpochLoopAction {
     RestartEpoch,
     ReplaceSigner,
     ExitStack,
@@ -92,7 +92,7 @@ where
         })
 }
 
-pub(in crate::stack) fn preserve_stack_result_after_drain<T>(
+pub fn preserve_stack_result_after_drain<T>(
     result: Result<T>,
     drain_result: Result<()>,
 ) -> Result<T> {
@@ -106,7 +106,7 @@ pub(in crate::stack) fn preserve_stack_result_after_drain<T>(
     }
 }
 
-pub(in crate::stack) async fn supervise_epoch_loop_result<E>(
+pub async fn supervise_epoch_loop_result<E>(
     ctx: &E,
     outcome: Result<EpochLoopOutcome>,
     engine: &mut commonware_runtime::Handle<()>,

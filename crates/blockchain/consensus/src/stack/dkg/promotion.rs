@@ -12,7 +12,7 @@ use super::super::*;
 
 /// Which pending-DKG state a promotion retires.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::stack) enum RetireScope {
+pub enum RetireScope {
     /// No later ceremony is running: retire pending material and the retry store.
     All,
     /// A later ceremony is running or just completed: its retry store stays.
@@ -20,7 +20,7 @@ pub(in crate::stack) enum RetireScope {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::stack) enum BoundaryPromotion {
+pub enum BoundaryPromotion {
     /// No committed boundary was waiting to be taken.
     NothingCommitted,
     /// The committed boundary's material is durable and pending state retired.
@@ -31,7 +31,7 @@ pub(in crate::stack) enum BoundaryPromotion {
 
 /// The node's currently active threshold material, which the committed
 /// boundary must match to be promoted.
-pub(in crate::stack) struct ActiveDkgMaterial<'a> {
+pub struct ActiveDkgMaterial<'a> {
     pub local_key: &'a bls12381::PublicKey,
     pub output: Option<&'a Output<MinSig, bls12381::PublicKey>>,
     pub share: Option<&'a Share>,
@@ -40,7 +40,7 @@ pub(in crate::stack) struct ActiveDkgMaterial<'a> {
 
 /// Take the committed boundary, if any, and make the active material that
 /// matches it durable.
-pub(in crate::stack) async fn promote_committed_boundary(
+pub async fn promote_committed_boundary(
     dkg_manager: &DkgManagerMailbox,
     keys_dir: Option<&std::path::Path>,
     key_backend: &bls::KeyBackend,
@@ -108,7 +108,7 @@ pub(in crate::stack) async fn promote_committed_boundary(
 /// chain when live finalization delivery never did. A boundary always rides the
 /// first block after its activation anchor, so only `activation_anchor + 1` is
 /// read, and only once it is finalized. Returns whether the carrier was adopted.
-pub(in crate::stack) fn adopt_finalized_boundary_carrier(
+pub fn adopt_finalized_boundary_carrier(
     dkg_manager: &DkgManagerMailbox,
     provider: &(impl HeaderProvider<Header = OutbeHeader> + BlockHashReader),
     activation_anchor: u64,

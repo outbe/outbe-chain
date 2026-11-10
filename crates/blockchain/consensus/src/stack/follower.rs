@@ -1,8 +1,7 @@
 mod finalization;
-pub(in crate::stack) mod local_anchor;
+pub mod local_anchor;
 mod startup;
-#[cfg(test)]
-pub(in crate::stack) use startup::wait_for_bootstrap_tee_lease;
+pub use startup::wait_for_bootstrap_tee_lease;
 
 use finalization::finalization_bytes_for_height;
 
@@ -11,7 +10,7 @@ use super::*;
 /// Keyless replay has no enclave socket. Skip the resident probe only when the
 /// process policy is explicitly `ReplayOnly`. A configured socket keeps the
 /// resident-key check.
-pub(in crate::stack) fn follower_skips_resident_offer_probe(args: &ConsensusArgs) -> bool {
+pub fn follower_skips_resident_offer_probe(args: &ConsensusArgs) -> bool {
     if args.tee_enclave_socket.is_some() {
         return false;
     }
@@ -20,17 +19,17 @@ pub(in crate::stack) fn follower_skips_resident_offer_probe(args: &ConsensusArgs
 
 /// Local chain and process facts that decide `ValidatorBootstrapReady`.
 #[derive(Clone, Copy, Debug)]
-pub(in crate::stack) struct BootstrapFacts {
-    pub(in crate::stack) finalized_height: u64,
-    pub(in crate::stack) local_key_in_validator_set: bool,
-    pub(in crate::stack) finalized_boundary_present: bool,
-    pub(in crate::stack) on_chain_offer: B256,
-    pub(in crate::stack) resident_offer: Option<B256>,
-    pub(in crate::stack) tee_lease_armed: bool,
+pub struct BootstrapFacts {
+    pub finalized_height: u64,
+    pub local_key_in_validator_set: bool,
+    pub finalized_boundary_present: bool,
+    pub on_chain_offer: B256,
+    pub resident_offer: Option<B256>,
+    pub tee_lease_armed: bool,
 }
 
 /// Pure `ValidatorBootstrapReady` decision.
-pub(in crate::stack) fn bootstrap_ready_from_facts(facts: BootstrapFacts) -> bool {
+pub fn bootstrap_ready_from_facts(facts: BootstrapFacts) -> bool {
     if !facts.local_key_in_validator_set {
         return false;
     }
@@ -44,18 +43,18 @@ pub(in crate::stack) fn bootstrap_ready_from_facts(facts: BootstrapFacts) -> boo
 }
 
 /// Local authority required before a validator leaves certified sync.
-pub(in crate::stack) struct ValidatorBootstrap {
-    pub(in crate::stack) local_consensus_key: bls12381::PublicKey,
-    pub(in crate::stack) local_key_in_genesis_validator_set: bool,
-    pub(in crate::stack) dkg_rotation_params: DkgRotationParams,
-    pub(in crate::stack) tee_lease_armed_rx: tokio::sync::watch::Receiver<bool>,
-    pub(in crate::stack) protocol: Arc<dyn crate::protocol_state::EngineProtocolState>,
+pub struct ValidatorBootstrap {
+    pub local_consensus_key: bls12381::PublicKey,
+    pub local_key_in_genesis_validator_set: bool,
+    pub dkg_rotation_params: DkgRotationParams,
+    pub tee_lease_armed_rx: tokio::sync::watch::Receiver<bool>,
+    pub protocol: Arc<dyn crate::protocol_state::EngineProtocolState>,
 }
 
 impl ValidatorBootstrap {
-    pub(in crate::stack) fn is_validator_bootstrap_ready(
+    pub fn is_validator_bootstrap_ready(
         &self,
-        node: &OutbeFullNode,
+        node: &impl ExecutionProviderAccess,
         height: u64,
     ) -> Result<bool> {
         if height == 0 {
@@ -73,29 +72,29 @@ impl ValidatorBootstrap {
             return Ok(false);
         }
         let finalized_boundary_present =
-            recover_latest_boundary_artifact(&node.provider, height, self.dkg_rotation_params)?
+            recover_latest_boundary_artifact(node.provider(), height, self.dkg_rotation_params)?
                 .is_some();
         if !finalized_boundary_present {
             return Ok(false);
         }
         let hash = node
-            .provider
+            .provider()
             .block_hash(height)?
             .ok_or(crate::errors::StackEpochError::StartupP2pAdmissionBlockMissing)?;
-        let state = node.provider.state_by_block_hash(hash)?;
+        let state = node.provider().state_by_block_hash(hash)?;
         let on_chain_offer =
             validators::read_tee_offer_public_from_state(self.protocol.as_ref(), &state)?;
         let resident_offer = outbe_tee::resident_offer_public_key_state_v1()?;
         let local_key_in_validator_set = validators::read_consensus_validators_at_block(
             self.protocol.as_ref(),
-            &node.provider,
+            node.provider(),
             hash,
         )?
         .public_keys
         .contains(&self.local_consensus_key)
             || validators::read_admitted_non_consensus_at_block(
                 self.protocol.as_ref(),
-                &node.provider,
+                node.provider(),
                 hash,
             )?
             .public_keys
@@ -128,11 +127,11 @@ impl ValidatorBootstrap {
 /// block is missing locally. The RPC maps `None` to a "not available" error.
 /// When it finds no certificate, it answers `Some` with an empty
 /// `finalization` field.
-pub(in crate::stack) fn spawn_finalization_drainer<E>(
+pub fn spawn_finalization_drainer<E>(
     ctx: &E,
-    marshal_mailbox: outbe_consensus::marshal_types::MarshalMailbox,
+    marshal_mailbox: crate::marshal_types::MarshalMailbox,
     bridge: ConsensusExecutionBridge,
-    parent_store: outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore,
+    parent_store: crate::finalization::parent_cert_store::FinalizedParentCertStore,
     mut phase_cancel: tokio::sync::watch::Receiver<bool>,
 ) -> commonware_runtime::Handle<()>
 where
@@ -173,10 +172,10 @@ where
 /// 3. Drive the EL via the existing executor.
 ///
 /// The `--upstream` flag selects this stack.
-pub(in crate::stack) async fn run_follow_stack<E>(
+pub async fn run_follow_stack<E, N: StackNodeAccess>(
     ctx: E,
     args: ConsensusArgs,
-    connection: services::FollowerConnection,
+    connection: services::FollowerConnection<N>,
     services: services::FollowerStackServices,
 ) -> Result<crate::follower_shutdown::FollowStackExit>
 where
@@ -210,7 +209,7 @@ where
     let follower_genesis_hash = genesis_hash(&node)?;
     let genesis_validators = validators::read_consensus_validators_at_block(
         services.protocol.as_ref(),
-        &node.provider,
+        node.provider(),
         follower_genesis_hash,
     )
     .wrap_err("failed to read genesis validator set for the follower trust anchor")?;
@@ -276,12 +275,12 @@ where
 /// snapshot committed in the follower's own canonical state. A mismatch is
 /// node-fatal. A substitute (the current committee or a same-height block)
 /// would make the locally produced parent certificate unverifiable.
-pub(in crate::stack) fn build_certified_follower_parent_record(
-    finalization: &outbe_consensus::marshal_types::Finalization,
-    block: &outbe_consensus::block::ConsensusBlock,
-    historical_snapshot: &outbe_consensus::proof::CommitteeSnapshot,
+pub fn build_certified_follower_parent_record(
+    finalization: &crate::marshal_types::Finalization,
+    block: &crate::block::ConsensusBlock,
+    historical_snapshot: &crate::proof::CommitteeSnapshot,
     scheme: &HybridScheme<MinSig>,
-) -> Result<outbe_consensus::finalization::parent_cert_store::CertifiedParentProofRecord> {
+) -> Result<crate::finalization::parent_cert_store::CertifiedParentProofRecord> {
     let finalized_hash = finalization.proposal.payload.0;
     if finalized_hash != block.block_hash() {
         return Err(
@@ -300,12 +299,12 @@ pub(in crate::stack) fn build_certified_follower_parent_record(
         .iter()
         .map(|entry| entry.address)
         .collect();
-    let record = outbe_consensus::finalization::resolver::build_recovered_finalization_record(
-        outbe_consensus::finalization::resolver::RecoveredFinalizedBlock::from_proposal(
+    let record = crate::finalization::resolver::build_recovered_finalization_record(
+        crate::finalization::resolver::RecoveredFinalizedBlock::from_proposal(
             block.number(),
             &finalization.proposal,
         ),
-        outbe_consensus::finalization::resolver::RecoveredFinalizationMaterial {
+        crate::finalization::resolver::RecoveredFinalizationMaterial {
             ordered_committee: &ordered_addresses,
             certificate: &finalization.certificate,
             encoded_certificate: finalization.encode().into(),
@@ -326,19 +325,18 @@ pub(in crate::stack) fn build_certified_follower_parent_record(
     Ok(record)
 }
 
-struct FollowerProofPersistence<'a> {
+struct FollowerProofPersistence<'a, N: StackNodeAccess> {
     protocol: &'a dyn crate::protocol_state::EngineProtocolState,
-    node: &'a OutbeFullNode,
+    node: &'a N,
     certificate_scheme_provider: &'a HybridSchemeProvider<MinSig>,
-    parent_cert_store:
-        &'a outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore,
+    parent_cert_store: &'a crate::finalization::parent_cert_store::FinalizedParentCertStore,
 }
-impl FollowerProofPersistence<'_> {
+impl<N: StackNodeAccess> FollowerProofPersistence<'_, N> {
     async fn reconcile_height(
         &self,
-        marshal_mailbox: &outbe_consensus::marshal_types::MarshalMailbox,
+        marshal_mailbox: &crate::marshal_types::MarshalMailbox,
         height: u64,
-    ) -> Result<outbe_consensus::block::ConsensusBlock> {
+    ) -> Result<crate::block::ConsensusBlock> {
         let finalization = marshal_mailbox
             .get_finalization(Height::new(height))
             .await
@@ -371,10 +369,10 @@ impl FollowerProofPersistence<'_> {
 
     fn reconcile_record(
         &self,
-        finalization: &outbe_consensus::marshal_types::Finalization,
-        block: &outbe_consensus::block::ConsensusBlock,
+        finalization: &crate::marshal_types::Finalization,
+        block: &crate::block::ConsensusBlock,
     ) -> Result<()> {
-        use outbe_consensus::finalization::parent_cert_store::CertifiedParentProofStore as _;
+        use crate::finalization::parent_cert_store::CertifiedParentProofStore as _;
         let Self {
             protocol: _,
             node,
@@ -388,10 +386,12 @@ impl FollowerProofPersistence<'_> {
             crate::errors::FollowerStackError::MissingVerifierSchemeForFinalizedEpoch(epoch.get())
         })?;
         let snapshot =
-            validators::read_committee_snapshot_at_latest(protocol, &node.provider, epoch.get())?
+            validators::read_committee_snapshot_at_latest(protocol, node.provider(), epoch.get())?
                 .ok_or_else(|| {
-                crate::errors::FollowerStackError::MissingHistoricalCommitteeSnapshot(epoch.get())
-            })?;
+                    crate::errors::FollowerStackError::MissingHistoricalCommitteeSnapshot(
+                        epoch.get(),
+                    )
+                })?;
         let height = block.number();
         let record = match build_certified_follower_parent_record(
             finalization,
@@ -410,7 +410,7 @@ impl FollowerProofPersistence<'_> {
             {
                 let refreshed = validators::read_committee_snapshot_at_latest(
                     protocol,
-                    &node.provider,
+                    node.provider(),
                     epoch.get(),
                 )?
                 .ok_or_else(|| {
@@ -434,7 +434,7 @@ impl FollowerProofPersistence<'_> {
             })?;
         parent_cert_store
             .prune_below_height(
-                height.saturating_sub(outbe_consensus::finalization::actor::PARENT_CERT_KEEP_DEPTH),
+                height.saturating_sub(crate::finalization::actor::PARENT_CERT_KEEP_DEPTH),
             )
             .wrap_err("failed to prune follower finalized parent certificates")?;
 
@@ -447,7 +447,7 @@ impl FollowerProofPersistence<'_> {
 /// observes the already-canonical genesis block. So finality observers must
 /// ignore that one notification. They must not ask marshal for an impossible
 /// certificate.
-pub(in crate::stack) const fn follower_height_has_certified_finalization(height: u64) -> bool {
+pub const fn follower_height_has_certified_finalization(height: u64) -> bool {
     height > 0
 }
 

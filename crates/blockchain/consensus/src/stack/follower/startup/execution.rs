@@ -4,29 +4,29 @@ use super::super::{
     FollowerProofPersistence, ValidatorBootstrap,
 };
 use super::{FollowerRuntime, RecoveredFollowerHistory, StartupChainState};
+use crate::follow::{run_follow_engine, FollowEngineConfig, TipSource as _};
+use crate::marshal_types::MarshalMailbox;
 use crate::stack::recovery::anchor::CertifiedFollowerRecoveryAnchor;
-use crate::stack::recovery::forkchoice::read_reth_recovery_forkchoice;
-use outbe_consensus::follow::{run_follow_engine, FollowEngineConfig, TipSource as _};
-use outbe_consensus::marshal_types::MarshalMailbox;
+
 use services::FollowerStackServices;
 
-pub(super) struct ExecutionBootstrap<E: FollowerRuntime> {
-    pub(super) ctx: E,
-    pub(super) node: OutbeFullNode,
-    pub(super) bridge: ConsensusExecutionBridge,
-    pub(super) history: RecoveredFollowerHistory<E>,
-    pub(super) startup: StartupChainState,
-    pub(super) services: FollowerStackServices,
+pub struct ExecutionBootstrap<E: FollowerRuntime, N: StackNodeAccess> {
+    pub ctx: E,
+    pub node: N,
+    pub bridge: ConsensusExecutionBridge,
+    pub history: RecoveredFollowerHistory<E, N>,
+    pub startup: StartupChainState,
+    pub services: FollowerStackServices,
 }
 struct ConfirmedExecutor<E: FollowerRuntime> {
     actor: ExecutorActor<E>,
-    mailbox: outbe_consensus::executor::Mailbox,
+    mailbox: crate::executor::Mailbox,
     finalized_heights: tokio::sync::mpsc::UnboundedReceiver<u64>,
 }
-struct ParentCertificateBootstrap<'a> {
+struct ParentCertificateBootstrap<'a, N: StackNodeAccess> {
     protocol: &'a dyn crate::protocol_state::EngineProtocolState,
-    node: &'a OutbeFullNode,
-    store: outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore,
+    node: &'a N,
+    store: crate::finalization::parent_cert_store::FinalizedParentCertStore,
     recovery_anchor: &'a CertifiedFollowerRecoveryAnchor,
     certificate_scheme_provider: &'a HybridSchemeProvider<MinSig>,
 }
@@ -36,19 +36,19 @@ struct RecoveredExecutionBootstrap<'a> {
     last_consensus_finalized: Height,
     last_execution_height: u64,
 }
-impl<E: FollowerRuntime> ExecutionBootstrap<E> {
+impl<E: FollowerRuntime, N: StackNodeAccess> ExecutionBootstrap<E, N> {
     async fn confirmed_executor(&self) -> Result<ConfirmedExecutor<E>> {
         let ctx = &self.ctx;
         let node = &self.node;
         let genesis_hash = self.startup.genesis_hash;
         let recovery_anchor = &self.history.recovery_anchor;
-        let engine_handle: EngineHandle = node.add_ons_handle.beacon_engine_handle.clone();
+        let engine_handle: EngineHandle = node.beacon_engine_handle();
         let (execution_finalized_height_tx, execution_finalized_height_rx) =
             tokio::sync::mpsc::unbounded_channel::<u64>();
         let (executor_actor, executor_mailbox) = ExecutorActor::new(
             ctx.child("executor"),
             engine_handle,
-            outbe_consensus::executor::actor::RecoveredFinalizedState {
+            crate::executor::actor::RecoveredFinalizedState {
                 genesis_hash,
                 last_finalized_height: recovery_anchor.checkpoint.block_number,
                 last_finalized_hash: recovery_anchor.checkpoint.block_hash,
@@ -60,11 +60,7 @@ impl<E: FollowerRuntime> ExecutionBootstrap<E> {
             ctx.child("recovered_forkchoice"),
             recovery_anchor.checkpoint,
             || executor_actor.replay_recovered_forkchoice_once(recovery_anchor.checkpoint),
-            move || {
-                read_reth_recovery_forkchoice(
-                    &fcu_provider_node.provider.canonical_in_memory_state(),
-                )
-            },
+            move || Ok(fcu_provider_node.recovery_forkchoice()?.into()),
         )
         .await
         .wrap_err("failed to confirm recovered Reth forkchoice before follower startup")?;
@@ -75,7 +71,7 @@ impl<E: FollowerRuntime> ExecutionBootstrap<E> {
             finalized_heights: execution_finalized_height_rx,
         })
     }
-    pub(super) async fn run(self) -> Result<crate::follower_shutdown::FollowStackExit> {
+    pub async fn run(self) -> Result<crate::follower_shutdown::FollowStackExit> {
         let ConfirmedExecutor {
             actor: executor_actor,
             mailbox: executor_mailbox,
@@ -139,10 +135,8 @@ impl<E: FollowerRuntime> ExecutionBootstrap<E> {
         .await
     }
 }
-impl ParentCertificateBootstrap<'_> {
-    fn install(
-        self,
-    ) -> Result<outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore> {
+impl<N: StackNodeAccess> ParentCertificateBootstrap<'_, N> {
+    fn install(self) -> Result<crate::finalization::parent_cert_store::FinalizedParentCertStore> {
         let Self {
             protocol,
             node,
@@ -185,13 +179,12 @@ impl RecoveredExecutionBootstrap<'_> {
         );
     }
 }
-struct LiveFollower<E: FollowerRuntime> {
+struct LiveFollower<E: FollowerRuntime, N: StackNodeAccess> {
     ctx: E,
-    node: OutbeFullNode,
+    node: N,
     bridge: ConsensusExecutionBridge,
-    history: RecoveredFollowerHistory<E>,
-    finalized_parent_cert_store:
-        outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore,
+    history: RecoveredFollowerHistory<E, N>,
+    finalized_parent_cert_store: crate::finalization::parent_cert_store::FinalizedParentCertStore,
     executor_reporter: crate::follower_shutdown::FollowerReporter,
     observer_ingress: crate::follower_shutdown::FollowerReporter,
     executor_handle: commonware_runtime::Handle<Result<()>>,
@@ -201,7 +194,7 @@ struct LiveFollower<E: FollowerRuntime> {
     finalization_notify: Arc<tokio::sync::Notify>,
     protocol: Arc<dyn crate::protocol_state::EngineProtocolState>,
 }
-impl<E: FollowerRuntime> LiveFollower<E> {
+impl<E: FollowerRuntime, N: StackNodeAccess> LiveFollower<E, N> {
     async fn run(self) -> Result<crate::follower_shutdown::FollowStackExit> {
         let Self {
             ctx,
@@ -314,12 +307,12 @@ enum BootstrapPromotionError {
     UpstreamTipUnavailable,
 }
 
-struct FinalityObserver {
+struct FinalityObserver<N: StackNodeAccess> {
     protocol: Arc<dyn crate::protocol_state::EngineProtocolState>,
     observer_mailbox: MarshalMailbox,
-    observer_node: OutbeFullNode,
+    observer_node: N,
     observer_schemes: HybridSchemeProvider<MinSig>,
-    observer_store: outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore,
+    observer_store: crate::finalization::parent_cert_store::FinalizedParentCertStore,
     observer_bridge: ConsensusExecutionBridge,
     observer_ingress: crate::follower_shutdown::FollowerReporter,
     execution_finalized_height_rx: tokio::sync::mpsc::UnboundedReceiver<u64>,
@@ -329,7 +322,7 @@ struct FinalityObserver {
     driver_cancel: tokio::sync::watch::Sender<bool>,
     finalization_notify: Arc<tokio::sync::Notify>,
 }
-impl FinalityObserver {
+impl<N: StackNodeAccess> FinalityObserver<N> {
     async fn run(mut self) -> Result<()> {
         let mut last_persisted = Some(self.initial_persisted_height);
         loop {
@@ -384,9 +377,7 @@ impl FinalityObserver {
     }
 }
 
-pub(in crate::stack) async fn wait_for_bootstrap_tee_lease(
-    bootstrap: Option<&mut ValidatorBootstrap>,
-) {
+pub async fn wait_for_bootstrap_tee_lease(bootstrap: Option<&mut ValidatorBootstrap>) {
     match bootstrap {
         Some(readiness) => {
             if readiness.tee_lease_armed_rx.changed().await.is_err() {

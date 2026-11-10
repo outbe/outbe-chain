@@ -1,7 +1,7 @@
 use super::*;
 
 /// Type alias for the engine handle.
-pub(super) type EngineHandle = ConsensusEngineHandle<OutbePayloadTypes>;
+pub type EngineHandle = ConsensusEngineHandle<OutbePayloadTypes>;
 
 /// Node-owned services consumed by one consensus stack runtime.
 ///
@@ -9,18 +9,18 @@ pub(super) type EngineHandle = ConsensusEngineHandle<OutbePayloadTypes>;
 /// point from growing one positional argument for every execution-side
 /// subsystem.
 pub struct ConsensusStackServices {
-    pub(super) application_drain: crate::application_shutdown::ApplicationDrain,
-    pub(super) follower_shutdown: Option<crate::follower_shutdown::FollowerDrain>,
-    pub(super) finalized_execution_barrier: Arc<dyn FinalizedExecutionBarrier>,
-    pub(super) finalization_notify: Arc<tokio::sync::Notify>,
-    pub(super) tee_lease_armed_rx: tokio::sync::watch::Receiver<bool>,
-    pub(super) radicle_status: outbe_radicle::integration::RadicleStatusHandle,
-    pub(super) radicle_endpoint: Option<(
+    pub application_drain: crate::application_shutdown::ApplicationDrain,
+    pub follower_shutdown: Option<crate::follower_shutdown::FollowerDrain>,
+    pub finalized_execution_barrier: Arc<dyn FinalizedExecutionBarrier>,
+    pub finalization_notify: Arc<tokio::sync::Notify>,
+    pub tee_lease_armed_rx: tokio::sync::watch::Receiver<bool>,
+    pub radicle_status: outbe_radicle::integration::RadicleStatusHandle,
+    pub radicle_endpoint: Option<(
         outbe_radicle::integration::EndpointNetworkService,
         outbe_radicle::integration::LocalEndpointIdentityHandle,
         outbe_radicle::integration::EndpointTaskOwner,
     )>,
-    pub(super) protocol: Arc<dyn crate::protocol_state::EngineProtocolState>,
+    pub protocol: Arc<dyn crate::protocol_state::EngineProtocolState>,
 }
 
 /// Execution-side services shared with the node's consensus stack.
@@ -96,19 +96,18 @@ impl ConsensusStackServices {
 }
 
 /// Execution-side capabilities consumed only by the certified follower.
-pub(in crate::stack) struct FollowerStackServices {
-    pub(in crate::stack) finalized_execution_barrier: Arc<dyn FinalizedExecutionBarrier>,
-    pub(in crate::stack) follower_shutdown: crate::follower_shutdown::FollowerDrain,
-    pub(in crate::stack) parent_cert_store:
-        outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore,
-    pub(in crate::stack) bootstrap: Option<super::follower::ValidatorBootstrap>,
-    pub(in crate::stack) finalization_notify: Arc<tokio::sync::Notify>,
-    pub(in crate::stack) protocol: Arc<dyn crate::protocol_state::EngineProtocolState>,
+pub struct FollowerStackServices {
+    pub finalized_execution_barrier: Arc<dyn FinalizedExecutionBarrier>,
+    pub follower_shutdown: crate::follower_shutdown::FollowerDrain,
+    pub parent_cert_store: crate::finalization::parent_cert_store::FinalizedParentCertStore,
+    pub bootstrap: Option<super::follower::ValidatorBootstrap>,
+    pub finalization_notify: Arc<tokio::sync::Notify>,
+    pub protocol: Arc<dyn crate::protocol_state::EngineProtocolState>,
 }
 
 /// The execution node and the transport selected for its follower stack.
-pub(in crate::stack) struct FollowerConnection {
-    pub(in crate::stack) node: OutbeFullNode,
-    pub(in crate::stack) bridge: ConsensusExecutionBridge,
-    pub(in crate::stack) upstream: String,
+pub struct FollowerConnection<N> {
+    pub node: N,
+    pub bridge: ConsensusExecutionBridge,
+    pub upstream: String,
 }
