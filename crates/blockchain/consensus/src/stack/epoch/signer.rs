@@ -1,22 +1,19 @@
 use super::super::*;
 
-pub(in crate::stack) struct EpochValidationCommittee<'a> {
-    pub(in crate::stack) epoch: Epoch,
-    pub(in crate::stack) participants: &'a commonware_utils::ordered::Set<bls12381::PublicKey>,
-    pub(in crate::stack) validator_set: &'a validators::ValidatorSet,
-    pub(in crate::stack) recovered_boundary: Option<&'a DkgBoundaryArtifact>,
+pub struct EpochValidationCommittee<'a> {
+    pub epoch: Epoch,
+    pub participants: &'a commonware_utils::ordered::Set<bls12381::PublicKey>,
+    pub validator_set: &'a validators::ValidatorSet,
+    pub recovered_boundary: Option<&'a DkgBoundaryArtifact>,
 }
 
-pub(in crate::stack) struct EpochValidationProviders<'a> {
-    pub(in crate::stack) vrf_materials: &'a VrfMaterialProvider<MinSig>,
-    pub(in crate::stack) certificate_scheme: &'a HybridSchemeProvider<MinSig>,
-    pub(in crate::stack) committee: &'a CommitteeProvider,
+pub struct EpochValidationProviders<'a> {
+    pub vrf_materials: &'a VrfMaterialProvider<MinSig>,
+    pub certificate_scheme: &'a HybridSchemeProvider<MinSig>,
+    pub committee: &'a CommitteeProvider,
 }
 
-pub(in crate::stack) fn radicle_signer_enabled(
-    gate: RadicleVotingGate,
-    has_share: bool,
-) -> Result<bool> {
+pub fn radicle_signer_enabled(gate: RadicleVotingGate, has_share: bool) -> Result<bool> {
     match gate {
         RadicleVotingGate::Verifier => Ok(false),
         RadicleVotingGate::SignerAllowed => Ok(has_share),
@@ -32,7 +29,7 @@ pub(in crate::stack) fn radicle_signer_enabled(
     }
 }
 
-pub(in crate::stack) async fn wait_for_radicle_role_change(
+pub async fn wait_for_radicle_role_change(
     updates: &mut tokio::sync::watch::Receiver<outbe_radicle::integration::RadicleStatusSnapshot>,
     current_signer: bool,
     has_share: bool,
@@ -48,7 +45,7 @@ pub(in crate::stack) async fn wait_for_radicle_role_change(
     }
 }
 
-pub(in crate::stack) fn epoch_validation_inputs(
+pub fn epoch_validation_inputs(
     committee: EpochValidationCommittee<'_>,
     vrf_materials: &VrfMaterialProvider<MinSig>,
 ) -> Result<(HybridScheme<MinSig>, Vec<alloy_primitives::Address>)> {
@@ -76,7 +73,7 @@ pub(in crate::stack) fn epoch_validation_inputs(
     Ok((verifier_scheme, ordered_addresses))
 }
 
-pub(in crate::stack) fn register_epoch_validation_providers(
+pub fn register_epoch_validation_providers(
     committee: EpochValidationCommittee<'_>,
     providers: EpochValidationProviders<'_>,
 ) -> Result<()> {
@@ -90,18 +87,18 @@ pub(in crate::stack) fn register_epoch_validation_providers(
     Ok(())
 }
 
-pub(in crate::stack) struct ValidatorEvmIdentity<'a> {
-    pub(in crate::stack) signing_key: &'a bls12381::PrivateKey,
-    pub(in crate::stack) consensus_validator_set: &'a validators::ValidatorSet,
-    pub(in crate::stack) reshare_target_validator_set: &'a validators::ValidatorSet,
-    pub(in crate::stack) recovered_committee: Option<(
+pub struct ValidatorEvmIdentity<'a> {
+    pub signing_key: &'a bls12381::PrivateKey,
+    pub consensus_validator_set: &'a validators::ValidatorSet,
+    pub reshare_target_validator_set: &'a validators::ValidatorSet,
+    pub recovered_committee: Option<(
         &'a commonware_utils::ordered::Set<bls12381::PublicKey>,
         &'a DkgBoundaryArtifact,
     )>,
-    pub(in crate::stack) shareless_verifier: bool,
+    pub shareless_verifier: bool,
 }
 
-pub(in crate::stack) fn validate_validator_evm_signer(
+pub fn validate_validator_evm_signer(
     args: &ConsensusArgs,
     identity: ValidatorEvmIdentity<'_>,
 ) -> Result<Option<EthAddress>> {
@@ -109,8 +106,8 @@ pub(in crate::stack) fn validate_validator_evm_signer(
         return Ok(None);
     };
     let backend = args.evm_key_backend()?;
-    let signer = outbe_consensus::bls::load_validator_evm_signer(&evm_key_path, &backend)
-        .wrap_err_with(|| {
+    let signer =
+        crate::bls::load_validator_evm_signer(&evm_key_path, &backend).wrap_err_with(|| {
             format!(
                 "failed to load validator EVM key from {}",
                 evm_key_path.display()

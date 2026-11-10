@@ -14,7 +14,7 @@ impl From<&FrozenDkgTarget> for DkgTargetDeadline {
         }
     }
 }
-impl<E> EpochSupervisor<E>
+impl<E, N: StackNodeAccess> EpochSupervisor<E, N>
 where
     E: BufferPooler
         + Clock

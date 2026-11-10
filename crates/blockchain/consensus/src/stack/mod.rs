@@ -1,8 +1,30 @@
-//! Consensus-owned DKG, certified follower, recovery, and lifecycle services.
+//! Consensus stack - wires P2P, Simplex engine, application handler, and executor.
+//!
+//! This is the entry point for the consensus layer, called from the consensus
+//! runtime thread in `main.rs`.
+//!
+//! Startup flow:
+//! 1. Load signing key and validator set
+//! 2. Configure P2P network (register ALL channels including DKG)
+//! 3. Start P2P network, register peers, and create Muxers for epoch-scoped
+//!    consensus channels (all in transport startup)
+//! 4. Obtain threshold material:
+//!    a. From saved DKG state on disk (restart precedence)
+//!    b. From finalized on-chain `BoundaryOutcome` (shareless Verifier join/restart)
+//!    c. Via interactive DKG ceremony during fresh genesis formation
+//! 5. Enter epoch loop:
+//!    a. Register epoch sub-channels, build HybridScheme + Reporter
+//!    b. Start Simplex engine
+//!    c. Monitor for the reshare trigger (the block-height freeze schedule, `freeze_height`)
+//!    d. On reshare: run DKG in parallel, then abort engine + restart at new epoch
 
 use alloy_primitives::{Address as EthAddress, Bytes, B256};
 use commonware_codec::Encode as _;
-use commonware_consensus::types::{Epoch, Height, Round, ViewDelta};
+use commonware_consensus::{
+    simplex,
+    types::{Epoch, Height, Round, ViewDelta},
+    Reporters,
+};
 use commonware_cryptography::{
     bls12381::{
         self,
@@ -11,175 +33,167 @@ use commonware_cryptography::{
     },
     Signer as _,
 };
-use commonware_p2p::{Receiver as P2pReceiver, Sender as P2pSender};
+use commonware_p2p::{authenticated::lookup, utils::mux::Muxer, Address, AddressableManager};
 use commonware_runtime::{
-    buffer::paged::CacheRef, BufferPooler, Clock, Metrics, Network, Resolver, Spawner, Storage,
+    buffer::paged::CacheRef, BufferPooler, Clock, Metrics, Network, Quota, Resolver, Spawner,
+    Storage,
 };
-use commonware_utils::TryCollect as _;
+use commonware_utils::{ordered::Map, TryCollect as _, NZU32};
 use eyre::{Result, WrapErr};
 use rand_core_commonware::CryptoRng;
-use reth_ethereum::network::api::{NetworkInfo, Peers, PeersInfo};
+use reth_ethereum::chainspec::EthChainSpec as _;
 use reth_ethereum::provider::{BlockHashReader, StateProviderFactory};
-use reth_node_builder::ConsensusEngineHandle;
 use reth_provider::HeaderProvider;
+use std::collections::BTreeMap;
 use std::future::Future;
-use std::num::{NonZeroU16, NonZeroU64, NonZeroUsize};
+use std::net::SocketAddr;
+use std::num::{NonZeroU16, NonZeroU32, NonZeroU64, NonZeroUsize};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::args::ConsensusArgs;
 use crate::validators;
 use crate::{
-    bls, config,
+    ancestry_readiness::AncestryReadiness,
+    application::{
+        actor::OutbeApplication,
+        handler::{ApplicationDeps, ApplicationHandler},
+        ApplicationEpochFence,
+    },
+    bls,
+    committee_provider::CommitteeProvider,
+    config,
     digest::Digest,
     dkg_actor,
     dkg_manager::{self, Mailbox as DkgManagerMailbox},
-    executor::actor::{ExecutorActor, FinalizedExecutionBarrier, RecoveredForkchoiceAttempt},
-    hybrid::{HybridScheme, HybridSchemeProvider, VrfMaterialProvider},
+    executor::actor::{ExecutorActor, FinalizedExecutionBarrier},
+    finalization::{
+        actor::{FinalizationActor, FinalizationActorBuilder, FinalizationActorDeps},
+        block_cache::BlockCache,
+        state::new_finalization_view,
+    },
+    hybrid::{
+        election::{HybridElectorConfigProvider, HybridRandom},
+        HybridScheme, HybridSchemeProvider, VrfMaterialProvider,
+    },
+    reporter::{OutbeReporter, ReporterContinuity},
     vrf_safety::VrfSafetyGate,
 };
+use outbe_radicle::integration::{RadicleVotingGate, RadicleVotingGateError};
 
 use crate::execution_port::{ExecutionProviderAccess, ExecutionStateAccess};
+use commonware_p2p::{Receiver as P2pReceiver, Sender as P2pSender};
 use outbe_primitives::{
     consensus::{ConsensusExecutionBridge, DkgBoundaryArtifact},
     projection::ProjectionCheckpoint,
-    reshare_artifact::{
-        decode_boundary_artifact, decode_outbe_block_artifacts, encode_boundary_artifact,
-        ConsensusHeaderArtifact,
-    },
-    OutbeHeader, OutbePayloadTypes,
 };
+use outbe_primitives::{OutbeHeader, OutbePayloadTypes};
+use reth_ethereum::network::api::{NetworkInfo, Peers, PeersInfo};
 use reth_ethereum::storage::{BlockNumReader, BlockReader, TransactionVariant};
+use reth_node_builder::ConsensusEngineHandle;
 
 pub mod dkg;
+pub mod epoch;
 pub mod follower;
 pub mod marshal_archive;
 pub mod recovery;
 pub mod recovery_marshal;
 pub mod services;
 pub mod shutdown;
-
+pub mod startup;
 use dkg::handoff::{
-    active_set_hash_from_addresses, next_consensus_epoch_after_dkg_activation,
-    ordered_validator_addresses, refresh_validator_set_at_height, startup_live_join_scan_height,
-    DealerOnlyDkgActivation, DkgRotationParams, FrozenDkgTarget, FrozenValidatorSetRefresh,
-    PendingDkgActivation, RestoredPendingDkgActivation,
+    activate_vrf_material_and_publish_local_share, classify_local_reshare_role,
+    find_exact_finalized_preannounce_carrier, frozen_dkg_target_expired,
+    next_consensus_epoch_after_dkg_activation, next_dkg_cycle_after_restored_target,
+    ordered_validator_addresses, pending_dkg_handoff_decision, pending_freeze_block_hash_decision,
+    publish_randomness_status, refresh_validator_set_at_height, refresh_verifier_join_prev_output,
+    restart_dkg_manager_from_finalized_history, select_pending_canonical_output,
+    should_start_dkg_rotation, startup_live_join_scan_height, startup_pending_dkg_epoch_plan,
+    DealerOnlyDkgActivation, DkgCeremonyReplaySpec, DkgRotationParams, DkgTaskOutcome,
+    FrozenDkgTarget, FrozenValidatorSetRefresh, LocalDkgRole, PendingDkgActivation,
+    PendingDkgHandoffDecision, PendingFreezeBlockHashDecision, RestoredPendingDkgActivation,
+    StartupPendingDkgEpochPlan,
 };
 pub use dkg::persistence::migrate_dkg_keys_if_needed;
-use dkg::persistence::{
-    clear_pending_dkg_boundary, decode_boundary_output, dkg_retry_store, load_pending_dkg_state,
-    load_saved_dkg_state, recover_pending_dkg_boundary_snapshot, remove_pending_dkg_state,
-    retire_activated_dkg_retry_state, save_dkg_state, DkgStateMaterial, DkgStateStore,
-    PendingDkgBoundarySnapshot, DKG_OUTPUT_FILE, DKG_POLYNOMIAL_FILE, DKG_SHARE_FILE,
+pub use epoch::run::run_consensus_stack;
+pub use services::{
+    ConsensusExecutionServices, ConsensusRadicleServices, ConsensusShutdownServices,
+    ConsensusStackServices,
 };
+
+use dkg::persistence::{
+    build_completed_dkg_boundary, decode_boundary_output, dkg_retry_store,
+    persist_completed_dkg_before_activation, persist_observed_dkg_boundary_before_activation,
+    restore_pending_dkg_activation, retire_activated_dkg_retry_state, DkgBoundaryContext,
+    DkgStateStore, PendingDkgBoundarySnapshot,
+};
+
+use dkg::promotion::{
+    adopt_finalized_boundary_carrier, promote_committed_boundary, ActiveDkgMaterial,
+    BoundaryPromotion, RetireScope,
+};
+
 use dkg::startup::{
-    participants_from_validator_set, recover_latest_boundary_artifact,
-    validator_set_for_dkg_output_players,
+    build_genesis_dkg_boundary_artifact, obtain_threshold_material,
+    ordered_addresses_from_recovered_boundary, participants_from_validator_set,
+    recover_latest_boundary_artifact, resolve_startup_dkg_snapshot, select_recovery_participants,
+    should_coordinate_genesis_tee_bootstrap, startup_dkg_mode, tee_bootstrap_setup,
+    validate_offer_key_before_threshold_work, validate_recovered_vrf_material,
+    validator_set_for_dkg_output_players, vrf_group_public_key_hash, StartupDkgMode,
+    ThresholdMaterial,
+};
+
+use epoch::signer::{
+    epoch_validation_inputs, radicle_signer_enabled, register_epoch_validation_providers,
+    validate_validator_evm_signer, wait_for_radicle_role_change, EpochValidationCommittee,
+    EpochValidationProviders, ValidatorEvmIdentity,
+};
+
+pub use epoch::watchdog::{
+    elapsed_since, execution_watchdog_decision, provider_matches_consensus_tip,
+    ExecutionWatchdogDecision, ExecutionWatchdogObservation,
+};
+
+use follower::{run_follow_stack, spawn_finalization_drainer};
+
+use recovery::anchor::{
+    durable_recovery_anchor_height, reconcile_recovered_execution_head,
+    unfinalized_head_lead_is_recoverable,
+};
+
+use recovery::forkchoice::{
+    confirm_recovered_forkchoice, read_reth_recovery_forkchoice,
+    recover_application_finalized_round,
+};
+
+use services::EngineHandle;
+
+use shutdown::{supervise_epoch_loop_result, EpochLoopAction, EpochLoopOutcome};
+
+pub use startup::{
+    block_timing_from_genesis, build_peer_map, epoch_length_blocks_from_genesis,
+    genesis_consensus_block, genesis_hash, map_marshal_init_height, nonzero_u16, nonzero_u64,
+    nonzero_usize, parse_consensus_peers, require_genesis_hash, validate_testnet_only_flags,
+};
+
+use crate::executor::actor::RecoveredForkchoiceAttempt;
+use dkg::handoff::active_set_hash_from_addresses;
+use dkg::persistence::{
+    clear_pending_dkg_boundary, load_pending_dkg_state, load_saved_dkg_state,
+    recover_pending_dkg_boundary_snapshot, remove_pending_dkg_state, save_dkg_state,
+    DkgStateMaterial, DKG_OUTPUT_FILE, DKG_POLYNOMIAL_FILE, DKG_SHARE_FILE,
+};
+use outbe_primitives::reshare_artifact::{
+    decode_boundary_artifact, decode_outbe_block_artifacts, encode_boundary_artifact,
+    ConsensusHeaderArtifact,
 };
 use recovery::anchor::{
     certified_follower_replay_suffix_bounds, select_certified_follower_recovery_height,
     validate_ancestor_follower_recovery_record, CertifiedFollowerRecoveryAnchor,
     CertifiedFollowerRecoveryFloors, RecoveredApplicationFinalization,
 };
-use recovery::forkchoice::confirm_recovered_forkchoice;
-use services::EngineHandle;
-pub use services::{
-    ConsensusExecutionServices, ConsensusRadicleServices, ConsensusShutdownServices,
-    ConsensusStackServices,
-};
-
-/// Read `epochLengthBlocks` from genesis.json `config` section.
-/// Falls back to [`config::DEFAULT_EPOCH_LENGTH_BLOCKS`] if absent.
-pub fn epoch_length_blocks_from_genesis(node: &impl StackNodeAccess) -> Result<u32> {
-    use crate::errors::StackStartupError;
-    let extra = &node.chain_spec().genesis.config.extra_fields;
-    for (legacy_key, err) in [
-        ("epochDuration", StackStartupError::DeprecatedEpochDuration),
-        (
-            "dkgRotationIntervalBlocks",
-            StackStartupError::DeprecatedDkgRotationIntervalBlocks,
-        ),
-    ] {
-        if extra.get(legacy_key).is_some() {
-            return Err(err.into());
-        }
-    }
-    let Some(parsed) = extra.get_deserialized::<u32>("epochLengthBlocks") else {
-        return Ok(config::DEFAULT_EPOCH_LENGTH_BLOCKS);
-    };
-    let blocks =
-        parsed.map_err(|err| StackStartupError::InvalidEpochLengthBlocks(err.to_string()))?;
-    (blocks > 0)
-        .then_some(blocks)
-        .ok_or_else(|| StackStartupError::EpochLengthBlocksZero.into())
-}
-
-pub fn genesis_hash(node: &impl StackNodeAccess) -> Result<B256> {
-    let hash = node
-        .provider()
-        .block_hash(0)
-        .map_err(|e| crate::errors::StackStartupError::GetGenesisHash(format!("{e}")))?;
-    require_genesis_hash(hash)
-}
-
-pub fn require_genesis_hash(hash: Option<B256>) -> Result<B256> {
-    hash.ok_or_else(|| crate::errors::StackStartupError::MissingGenesisBlockHash.into())
-}
-
-/// Read the canonical height-0 genesis block from the provider and wrap it as a
-/// [`ConsensusBlock`](crate::block::ConsensusBlock).
-///
-/// commonware 2026.5.0 replaced the removed `Automaton::genesis` call with an
-/// explicit `marshal::Config.start`. Marshal's `Start::Genesis` anchor must be
-/// the real height-0 block (the actor asserts `anchor.height() == 0`). So we
-/// read the canonical genesis block straight from the execution DB rather than
-/// synthesizing one. Sealing comes from the provider's stored block, so the
-/// anchor's `block_hash()` is byte-identical to the chain `genesis_hash`.
-pub fn genesis_consensus_block(
-    node: &impl StackNodeAccess,
-) -> Result<crate::block::ConsensusBlock> {
-    let recovered = node
-        .provider()
-        .recovered_block(0u64.into(), TransactionVariant::NoHash)
-        .map_err(|e| crate::errors::StackStartupError::ReadGenesisBlock(format!("{e}")))?
-        .ok_or(crate::errors::StackStartupError::MissingGenesisBlock)?;
-    Ok(crate::block::ConsensusBlock::from_sealed(
-        recovered.into_sealed_block(),
-    ))
-}
-
-pub fn nonzero_u16(value: u16, name: &str) -> Result<NonZeroU16> {
-    NonZeroU16::new(value).ok_or_else(|| {
-        crate::errors::StackStartupError::ValueMustBePositive(name.to_string()).into()
-    })
-}
-
-pub fn nonzero_usize(value: usize, name: &str) -> Result<NonZeroUsize> {
-    NonZeroUsize::new(value).ok_or_else(|| {
-        crate::errors::StackStartupError::ValueMustBePositive(name.to_string()).into()
-    })
-}
-
-pub fn nonzero_u64(value: u64, name: &str) -> Result<NonZeroU64> {
-    NonZeroU64::new(value).ok_or_else(|| {
-        crate::errors::StackStartupError::ValueMustBePositive(name.to_string()).into()
-    })
-}
-
-/// Map `marshal::core::Actor::init`'s `Option<Height>` to the executor/startup
-/// finalized height:
-/// - `None` (no durable consensus finalization yet) means a fresh genesis node.
-///   It maps to height 0.
-/// - `Some(n)` resumes from the durable finalized height `n` (finalization is
-///   monotonic).
-///
-/// A restarted node that already finalized must NOT be reset toward genesis.
-/// This mapping is a separate function so that the regression test exercises
-/// this exact mapping rather than stdlib `unwrap_or`.
-pub fn map_marshal_init_height(opt: Option<Height>) -> Height {
-    opt.unwrap_or(Height::zero())
-}
 
 /// Node capabilities needed by the migrated CL stacks during engine compatibility.
 pub trait StackNodeAccess:
@@ -187,6 +201,14 @@ pub trait StackNodeAccess:
 {
     fn chain_spec(&self) -> Arc<reth_chainspec::ChainSpec<OutbeHeader>>;
     fn beacon_engine_handle(&self) -> EngineHandle;
+    fn payload_builder_handle(
+        &self,
+    ) -> reth_payload_builder::PayloadBuilderHandle<OutbePayloadTypes>;
+    fn data_dir(&self) -> std::path::PathBuf;
+    fn p2p_secret_path(&self) -> std::path::PathBuf;
+    fn has_p2p_secret_key_hex(&self) -> bool;
+    fn load_p2p_secret_key(&self, path: std::path::PathBuf) -> Result<[u8; 32]>;
+
     fn collect_genesis_peer_evidence(
         &self,
     ) -> impl Future<Output = crate::execution_port::GenesisPeerEvidence> + Send;
@@ -211,6 +233,29 @@ where
 
     fn beacon_engine_handle(&self) -> EngineHandle {
         self.add_ons_handle.beacon_engine_handle.clone()
+    }
+
+    fn payload_builder_handle(
+        &self,
+    ) -> reth_payload_builder::PayloadBuilderHandle<OutbePayloadTypes> {
+        self.payload_builder_handle.clone()
+    }
+    fn data_dir(&self) -> std::path::PathBuf {
+        self.config
+            .datadir
+            .clone()
+            .resolve_datadir(self.chain_spec().chain())
+            .data_dir()
+            .to_path_buf()
+    }
+    fn p2p_secret_path(&self) -> std::path::PathBuf {
+        self.data_dir.p2p_secret()
+    }
+    fn has_p2p_secret_key_hex(&self) -> bool {
+        self.config.network.p2p_secret_key_hex.is_some()
+    }
+    fn load_p2p_secret_key(&self, path: std::path::PathBuf) -> Result<[u8; 32]> {
+        Ok(self.config.network.secret_key(path)?.secret_bytes())
     }
 
     async fn collect_genesis_peer_evidence(&self) -> crate::execution_port::GenesisPeerEvidence {
@@ -275,33 +320,6 @@ where
     }
 }
 
-pub fn provider_matches_consensus_tip(
-    provider: &impl BlockHashReader,
-    tip: crate::marshal_update_reporter::ConsensusTip,
-    required_height: u64,
-) -> Result<bool> {
-    let tip_height = tip.height.get();
-    if tip_height < required_height {
-        return Ok(false);
-    }
-    provider
-        .block_hash(tip_height)
-        .map(|hash| hash == Some(tip.digest.0))
-        .map_err(|err| {
-            crate::errors::StackEpochError::read_provider_block_hash_at_consensus_tip(
-                tip_height, err,
-            )
-            .into()
-        })
-}
-
-pub fn elapsed_since(now: SystemTime, since: SystemTime) -> Duration {
-    match now.duration_since(since) {
-        Ok(elapsed) => elapsed,
-        Err(_) => Duration::ZERO,
-    }
-}
-
 #[cfg(test)]
 mod helper_contract_tests {
     use super::*;
@@ -339,6 +357,23 @@ mod helper_contract_tests {
         }
         fn beacon_engine_handle(&self) -> EngineHandle {
             unreachable!("genesis configuration does not access the engine")
+        }
+        fn payload_builder_handle(
+            &self,
+        ) -> reth_payload_builder::PayloadBuilderHandle<OutbePayloadTypes> {
+            unreachable!("genesis configuration does not access payload building")
+        }
+        fn data_dir(&self) -> std::path::PathBuf {
+            unreachable!("genesis configuration does not access disk")
+        }
+        fn p2p_secret_path(&self) -> std::path::PathBuf {
+            unreachable!("genesis configuration does not access disk")
+        }
+        fn has_p2p_secret_key_hex(&self) -> bool {
+            unreachable!("genesis configuration does not access keys")
+        }
+        fn load_p2p_secret_key(&self, _: std::path::PathBuf) -> Result<[u8; 32]> {
+            unreachable!("genesis configuration does not access keys")
         }
         async fn collect_genesis_peer_evidence(&self) -> GenesisPeerEvidence {
             unreachable!("genesis configuration does not access peers")

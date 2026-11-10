@@ -4,10 +4,10 @@ use super::helpers::{
     seed_genesis_validation, startup_ancestry_readiness, ValidatorBootstrapFollowInputs,
 };
 
-pub fn run_consensus_stack<E>(
+pub fn run_consensus_stack<E, N: StackNodeAccess>(
     ctx: E,
     args: ConsensusArgs,
-    node: OutbeFullNode,
+    node: N,
     bridge: ConsensusExecutionBridge,
     services: ConsensusStackServices,
 ) -> impl Future<Output = Result<()>> + Send
@@ -34,10 +34,10 @@ where
     }
 }
 
-async fn run_consensus_stack_inner<E>(
+async fn run_consensus_stack_inner<E, N: StackNodeAccess>(
     ctx: E,
     args: ConsensusArgs,
-    node: OutbeFullNode,
+    node: N,
     bridge: ConsensusExecutionBridge,
     services: ConsensusStackServices,
 ) -> Result<()>
@@ -102,10 +102,8 @@ where
         .ok_or(crate::errors::StackEpochError::ConsensusStorageDirRequired)?
         .join("finalized_parent_certs");
     let finalized_parent_cert_store =
-        outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore::open(
-            &parent_cert_dir,
-        )
-        .wrap_err("failed to open finalized parent certificate store")?;
+        crate::finalization::parent_cert_store::FinalizedParentCertStore::open(&parent_cert_dir)
+            .wrap_err("failed to open finalized parent certificate store")?;
     use outbe_primitives::consensus::ConsensusOperatingMode;
     if !args.is_validator {
         bridge.set_operating_mode(ConsensusOperatingMode::Follower);
@@ -174,16 +172,16 @@ where
     // fresh network this is the genesis ValidatorSet storage. For restart/join
     // this is the synced canonical state.
     let initial_peer_height = node
-        .provider
+        .provider()
         .last_block_number()
         .wrap_err("failed to read startup P2P admission height")?;
     let initial_peer_hash = node
-        .provider
+        .provider()
         .block_hash(initial_peer_height)?
         .ok_or(crate::errors::StackEpochError::StartupP2pAdmissionBlockMissing)?;
     let validator_set = validators::read_consensus_validators_at_block(
         protocol.as_ref(),
-        &node.provider,
+        node.provider(),
         initial_peer_hash,
     )
     .wrap_err("failed to load consensus validator set at startup")?;
@@ -380,8 +378,8 @@ where
     let ancestry_readiness =
         startup_ancestry_readiness(last_execution_height, ancestry_readiness_target);
     // -- 9. Get beacon engine handle and payload builder handle ----------
-    let engine_handle: EngineHandle = node.add_ons_handle.beacon_engine_handle.clone();
-    let payload_builder = node.payload_builder_handle.clone();
+    let engine_handle: EngineHandle = node.beacon_engine_handle();
+    let payload_builder = node.payload_builder_handle();
 
     // sus-5: the executor publishes execution-finalized heights here. The
     // supervisor consumes them to drive height-based DKG/VRF rotation. A guard
@@ -409,7 +407,7 @@ where
     let recovery_anchor_height =
         durable_recovery_anchor_height(last_execution_height, last_consensus_finalized.get());
     let recovery_anchor_hash = recovery_anchor_hash(
-        &node.provider,
+        node.provider(),
         recovery_anchor_height,
         (last_execution_height, last_execution_hash),
         genesis_hash,
@@ -419,7 +417,7 @@ where
     let (mut executor_actor, executor_mailbox) = ExecutorActor::new(
         ctx.child("executor"),
         engine_handle.clone(),
-        outbe_consensus::executor::actor::RecoveredFinalizedState {
+        crate::executor::actor::RecoveredFinalizedState {
             genesis_hash,
             last_finalized_height: recovery_anchor_height,
             last_finalized_hash: recovery_anchor_hash,
@@ -621,9 +619,7 @@ where
         ctx.child("recovered_forkchoice"),
         recovery_checkpoint,
         || executor_actor.replay_recovered_forkchoice_once(recovery_checkpoint),
-        move || {
-            read_reth_recovery_forkchoice(&fcu_provider_node.provider.canonical_in_memory_state())
-        },
+        move || read_reth_recovery_forkchoice(&fcu_provider_node),
     )
     .await
     .wrap_err("failed to confirm recovered Reth forkchoice before validator startup")?;
@@ -688,17 +684,17 @@ where
     // - every per-epoch OutbeReporter (records observed individual finalize votes).
     // Best-effort, never consensus state. Every node re-verifies the resulting
     // artifact pre-exec.
-    let late_sig_store = outbe_consensus::finalization::late_sig_store::shared(
+    let late_sig_store = crate::finalization::late_sig_store::shared(
         outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K,
     );
 
     // Create application handler with marshal mailbox and shared finalization state.
     let application_handler = ApplicationHandler::new(ApplicationDeps {
         unix_time_source: match args.testnet_unix_time_offset_secs {
-            Some(offset_secs) => Arc::new(outbe_consensus::application::OffsetUnixTimeSource::new(
-                offset_secs,
-            )),
-            None => Arc::new(outbe_consensus::application::SystemUnixTimeSource),
+            Some(offset_secs) => {
+                Arc::new(crate::application::OffsetUnixTimeSource::new(offset_secs))
+            }
+            None => Arc::new(crate::application::SystemUnixTimeSource),
         },
         rx: application_rx,
         engine: engine_handle,
@@ -720,7 +716,7 @@ where
         ancestry_readiness: ancestry_readiness.clone(),
         finalization_view: finalization_view.clone(),
         block_cache: finalization_block_cache.clone(),
-        finalization_selector: outbe_consensus::finalization::selection::ParentProofSelector::new(
+        finalization_selector: crate::finalization::selection::ParentProofSelector::new(
             finalized_parent_cert_store.clone(),
             bt.leader_timeout,
         ),
@@ -782,7 +778,7 @@ where
     // `certificate_scheme_provider`. It admits only verified votes to
     // `late_sig_store`.
     let (finalize_verify_actor, finalize_verify_mailbox) =
-        outbe_consensus::finalization::finalize_verify::FinalizeVerifyActor::new(
+        crate::finalization::finalize_verify::FinalizeVerifyActor::new(
             certificate_scheme_provider.clone(),
             late_sig_store.clone(),
         );

@@ -54,13 +54,13 @@ pub(super) enum EventAction {
     Proceed,
     Outcome(EpochLoopOutcome),
 }
-pub(super) struct EpochSupervisor<E: Clock> {
+pub(super) struct EpochSupervisor<E: Clock, N: StackNodeAccess> {
     pub(super) state: EpochState,
     pub(super) rotation: DkgRotation<E>,
     pub(super) channels: EpochChannels<E>,
     pub(super) actors: PersistentActors,
     pub(super) args: ConsensusArgs,
-    pub(super) node: OutbeFullNode,
+    pub(super) node: N,
     pub(super) bridge: ConsensusExecutionBridge,
     pub(super) signing_key: bls12381::PrivateKey,
     pub(super) key_backend: bls::KeyBackend,
@@ -83,13 +83,12 @@ pub(super) struct EpochSupervisor<E: Clock> {
     pub(super) bt: super::super::startup::BlockTiming,
     pub(super) page_cache: CacheRef,
     pub(super) application: OutbeApplication<E>,
-    pub(super) marshal_mailbox: outbe_consensus::marshal_types::MarshalMailbox,
-    pub(super) finalization_mailbox: outbe_consensus::finalization::ingress::Mailbox,
-    pub(super) finalization_view: outbe_consensus::finalization::state::FinalizationViewHandle,
+    pub(super) marshal_mailbox: crate::marshal_types::MarshalMailbox,
+    pub(super) finalization_mailbox: crate::finalization::ingress::Mailbox,
+    pub(super) finalization_view: crate::finalization::state::FinalizationViewHandle,
     pub(super) finalized_parent_cert_store:
-        outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore,
-    pub(super) finalize_verify_mailbox:
-        outbe_consensus::finalization::finalize_verify::FinalizeVerifyMailbox,
+        crate::finalization::parent_cert_store::FinalizedParentCertStore,
+    pub(super) finalize_verify_mailbox: crate::finalization::finalize_verify::FinalizeVerifyMailbox,
     pub(super) application_drain: crate::application_shutdown::ApplicationDrain,
     pub(super) radicle_status: outbe_radicle::integration::RadicleStatusHandle,
     pub(super) radicle_updates:
@@ -98,7 +97,7 @@ pub(super) struct EpochSupervisor<E: Clock> {
     pub(super) execution_finalized_height_tx: tokio::sync::mpsc::UnboundedSender<u64>,
     pub(super) consensus_tip_rx:
         tokio::sync::watch::Receiver<Option<crate::marshal_update_reporter::ConsensusTip>>,
-    pub(super) epocher: outbe_consensus::follow::FollowerEpocher,
+    pub(super) epocher: crate::follow::FollowerEpocher,
     pub(super) vote_backup_rx: super::transport::VoteBackupRx,
     pub(super) protocol: Arc<dyn crate::protocol_state::EngineProtocolState>,
 }

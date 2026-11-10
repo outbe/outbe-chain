@@ -1,7 +1,7 @@
 //! Freeze a deterministic target and supervise durable DKG ceremonies.
 use super::*;
 
-impl<E> EpochSupervisor<E>
+impl<E, N: StackNodeAccess> EpochSupervisor<E, N>
 where
     E: BufferPooler
         + Clock
@@ -26,7 +26,7 @@ where
             "retrying DKG for frozen target"
         );
         self.rotation.reshare_in_progress = true;
-        outbe_consensus::metrics::record_dkg_status(1);
+        crate::metrics::record_dkg_status(1);
 
         match self.rotation.dkg_mux.register(target.dkg_cycle).await {
             Ok((dkg_tx, dkg_rx)) => {

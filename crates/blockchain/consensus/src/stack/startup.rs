@@ -1,8 +1,6 @@
 use super::*;
 
-pub(in crate::stack) fn repository_publication_enabled_from_genesis(
-    node: &OutbeFullNode,
-) -> Result<bool> {
+pub fn repository_publication_enabled_from_genesis(node: &impl StackNodeAccess) -> Result<bool> {
     use outbe_primitives::radicle_genesis::{
         GovernmentsDescriptor, GENESIS_GOVERNMENTS_FIELD, GOVERNMENTS_DESCRIPTOR_HASH_SLOT,
     };
@@ -32,7 +30,7 @@ pub(in crate::stack) fn repository_publication_enabled_from_genesis(
 
 /// Read `epochLengthBlocks` from genesis.json `config` section.
 /// Falls back to [`config::DEFAULT_EPOCH_LENGTH_BLOCKS`] if absent.
-pub(in crate::stack) fn epoch_length_blocks_from_genesis(node: &OutbeFullNode) -> Result<u32> {
+pub fn epoch_length_blocks_from_genesis(node: &impl StackNodeAccess) -> Result<u32> {
     let extra = &node.chain_spec().genesis.config.extra_fields;
     if extra.get("epochDuration").is_some() {
         return Err(crate::errors::StackStartupError::DeprecatedEpochDuration.into());
@@ -56,7 +54,7 @@ pub(in crate::stack) fn epoch_length_blocks_from_genesis(node: &OutbeFullNode) -
 /// `default` when the key is absent. It is generic over the deserialize error.
 /// So the engine crate needs no direct `serde_json` dependency, and the helper
 /// stays unit-testable with a plain string error.
-pub(in crate::stack) fn read_ms<E: std::fmt::Display>(
+pub fn read_ms<E: std::fmt::Display>(
     parsed: Option<Result<u64, E>>,
     key: &str,
     default: u64,
@@ -77,7 +75,7 @@ pub(in crate::stack) fn read_ms<E: std::fmt::Display>(
 /// Startup invariants for the consensus-sync timing trio (structured error, no
 /// panic): `0 < min < leader <= cert`. This function rejects a `minBlockTimeMs`
 /// of `0`. The proposer floor cannot be disabled.
-pub(in crate::stack) fn validate_timing(min_ms: u64, leader_ms: u64, cert_ms: u64) -> Result<()> {
+pub fn validate_timing(min_ms: u64, leader_ms: u64, cert_ms: u64) -> Result<()> {
     if min_ms == 0 {
         return Err(crate::errors::StackStartupError::MinBlockTimeMsZero.into());
     }
@@ -110,34 +108,34 @@ pub(in crate::stack) fn validate_timing(min_ms: u64, leader_ms: u64, cert_ms: u6
 
 /// Consensus-sync block-timing knobs, resolved from genesis with `timing.rs`
 /// fallbacks. There is no CLI override for any of these (see
-/// `outbe_consensus::timing`). The values are in-memory only. The node never
+/// `crate::timing`). The values are in-memory only. The node never
 /// writes them to EVM storage.
 #[derive(Clone, Copy, Debug)]
-pub(in crate::stack) struct BlockTiming {
-    pub(in crate::stack) min_block_time: std::time::Duration,
-    pub(in crate::stack) leader_timeout: std::time::Duration,
-    pub(in crate::stack) certification_timeout: std::time::Duration,
+pub struct BlockTiming {
+    pub min_block_time: std::time::Duration,
+    pub leader_timeout: std::time::Duration,
+    pub certification_timeout: std::time::Duration,
 }
 
 /// Read the timing trio from genesis `config` (`minBlockTimeMs` /
 /// `leaderTimeoutMs` / `certificationTimeoutMs`), each falling back to its
 /// `timing.rs` default, then validate the startup invariants.
-pub(in crate::stack) fn block_timing_from_genesis(node: &OutbeFullNode) -> Result<BlockTiming> {
+pub fn block_timing_from_genesis(node: &impl StackNodeAccess) -> Result<BlockTiming> {
     let extra = &node.chain_spec().genesis.config.extra_fields;
     let min_ms = read_ms(
         extra.get_deserialized::<u64>("minBlockTimeMs"),
         "minBlockTimeMs",
-        outbe_consensus::timing::DEFAULT_MIN_BLOCK_TIME_MS,
+        crate::timing::DEFAULT_MIN_BLOCK_TIME_MS,
     )?;
     let leader_ms = read_ms(
         extra.get_deserialized::<u64>("leaderTimeoutMs"),
         "leaderTimeoutMs",
-        outbe_consensus::timing::DEFAULT_LEADER_TIMEOUT_MS,
+        crate::timing::DEFAULT_LEADER_TIMEOUT_MS,
     )?;
     let cert_ms = read_ms(
         extra.get_deserialized::<u64>("certificationTimeoutMs"),
         "certificationTimeoutMs",
-        outbe_consensus::timing::DEFAULT_CERTIFICATION_TIMEOUT_MS,
+        crate::timing::DEFAULT_CERTIFICATION_TIMEOUT_MS,
     )?;
     validate_timing(min_ms, leader_ms, cert_ms)?;
     Ok(BlockTiming {
@@ -147,20 +145,20 @@ pub(in crate::stack) fn block_timing_from_genesis(node: &OutbeFullNode) -> Resul
     })
 }
 
-pub(in crate::stack) fn genesis_hash(node: &OutbeFullNode) -> Result<B256> {
+pub fn genesis_hash(node: &impl StackNodeAccess) -> Result<B256> {
     let hash = node
-        .provider
+        .provider()
         .block_hash(0)
         .map_err(|e| crate::errors::StackStartupError::GetGenesisHash(format!("{e}")))?;
     require_genesis_hash(hash)
 }
 
-pub(in crate::stack) fn require_genesis_hash(hash: Option<B256>) -> Result<B256> {
+pub fn require_genesis_hash(hash: Option<B256>) -> Result<B256> {
     hash.ok_or_else(|| crate::errors::StackStartupError::MissingGenesisBlockHash.into())
 }
 
 /// Read the canonical height-0 genesis block from the provider and wrap it as a
-/// [`ConsensusBlock`](outbe_consensus::block::ConsensusBlock).
+/// [`ConsensusBlock`](crate::block::ConsensusBlock).
 ///
 /// commonware 2026.5.0 replaced the removed `Automaton::genesis` call with an
 /// explicit `marshal::Config.start`. Marshal's `Start::Genesis` anchor must be
@@ -168,32 +166,32 @@ pub(in crate::stack) fn require_genesis_hash(hash: Option<B256>) -> Result<B256>
 /// read the canonical genesis block straight from the execution DB rather than
 /// synthesizing one. Sealing comes from the provider's stored block, so the
 /// anchor's `block_hash()` is byte-identical to the chain `genesis_hash`.
-pub(in crate::stack) fn genesis_consensus_block(
-    node: &OutbeFullNode,
-) -> Result<outbe_consensus::block::ConsensusBlock> {
+pub fn genesis_consensus_block(
+    node: &impl StackNodeAccess,
+) -> Result<crate::block::ConsensusBlock> {
     let recovered = node
-        .provider
+        .provider()
         .recovered_block(0u64.into(), TransactionVariant::NoHash)
         .map_err(|e| crate::errors::StackStartupError::ReadGenesisBlock(format!("{e}")))?
         .ok_or(crate::errors::StackStartupError::MissingGenesisBlock)?;
-    Ok(outbe_consensus::block::ConsensusBlock::from_sealed(
+    Ok(crate::block::ConsensusBlock::from_sealed(
         recovered.into_sealed_block(),
     ))
 }
 
-pub(in crate::stack) fn nonzero_u16(value: u16, name: &str) -> Result<NonZeroU16> {
+pub fn nonzero_u16(value: u16, name: &str) -> Result<NonZeroU16> {
     NonZeroU16::new(value).ok_or_else(|| {
         crate::errors::StackStartupError::ValueMustBePositive(name.to_string()).into()
     })
 }
 
-pub(in crate::stack) fn nonzero_usize(value: usize, name: &str) -> Result<NonZeroUsize> {
+pub fn nonzero_usize(value: usize, name: &str) -> Result<NonZeroUsize> {
     NonZeroUsize::new(value).ok_or_else(|| {
         crate::errors::StackStartupError::ValueMustBePositive(name.to_string()).into()
     })
 }
 
-pub(in crate::stack) fn nonzero_u64(value: u64, name: &str) -> Result<NonZeroU64> {
+pub fn nonzero_u64(value: u64, name: &str) -> Result<NonZeroU64> {
     NonZeroU64::new(value).ok_or_else(|| {
         crate::errors::StackStartupError::ValueMustBePositive(name.to_string()).into()
     })
@@ -209,13 +207,11 @@ pub(in crate::stack) fn nonzero_u64(value: u64, name: &str) -> Result<NonZeroU64
 /// A restarted node that already finalized must NOT be reset toward genesis.
 /// This mapping is a separate function so that the regression test exercises
 /// this exact mapping rather than stdlib `unwrap_or`.
-pub(crate) fn map_marshal_init_height(opt: Option<Height>) -> Height {
+pub fn map_marshal_init_height(opt: Option<Height>) -> Height {
     opt.unwrap_or(Height::zero())
 }
 
-pub(in crate::stack) fn parse_consensus_peers(
-    entries: &[String],
-) -> Result<BTreeMap<Vec<u8>, SocketAddr>> {
+pub fn parse_consensus_peers(entries: &[String]) -> Result<BTreeMap<Vec<u8>, SocketAddr>> {
     let mut peers = BTreeMap::new();
     for entry in entries {
         let (pk_hex, addr_str) = entry.split_once('@').ok_or_else(|| {
@@ -259,7 +255,7 @@ pub(in crate::stack) fn parse_consensus_peers(
     Ok(peers)
 }
 
-pub(in crate::stack) fn validate_testnet_only_flags(
+pub fn validate_testnet_only_flags(
     trust_el_head: bool,
     unix_time_offset_secs: Option<i64>,
     chain_id: u64,
@@ -284,7 +280,7 @@ pub(in crate::stack) fn validate_testnet_only_flags(
 /// Registry/config P2P address takes priority. Bootnodes fill missing gaps.
 /// This function excludes invalid registry entries and never replaces them with
 /// static bootstrap addresses.
-pub(crate) fn build_peer_map(
+pub fn build_peer_map(
     validator_set: &validators::ValidatorSet,
     bootnode_map: &BTreeMap<Vec<u8>, SocketAddr>,
 ) -> Map<bls12381::PublicKey, Address> {

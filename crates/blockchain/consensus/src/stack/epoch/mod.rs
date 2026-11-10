@@ -7,21 +7,21 @@
 //! separate state in `runtime`. These are private seams within the stack;
 //! callers continue to use `run_consensus_stack`.
 
-pub(super) mod activation;
-pub(super) mod ceremony;
+pub mod activation;
+pub mod ceremony;
 pub(super) mod completion;
-pub(super) mod continuity;
+pub mod continuity;
 pub(super) mod execution_monitor;
 mod expiry;
 mod helpers;
-pub(super) mod marshal_recovery;
+pub mod marshal_recovery;
 pub(super) mod pending_recovery;
-pub(super) mod run;
+pub mod run;
 pub(super) mod runtime;
-pub(super) mod signer;
-pub(super) mod simplex;
-pub(super) mod supervisor;
+pub mod signer;
+pub mod simplex;
+pub mod supervisor;
 pub(super) mod tee_bootstrap;
 pub(super) mod threshold_recovery;
-pub(super) mod transport;
-pub(super) mod watchdog;
+pub mod transport;
+pub mod watchdog;

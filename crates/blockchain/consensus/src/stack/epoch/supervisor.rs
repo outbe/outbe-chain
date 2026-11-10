@@ -2,7 +2,7 @@
 use super::super::*;
 use super::runtime::*;
 
-impl<E> EpochSupervisor<E>
+impl<E, N: StackNodeAccess> EpochSupervisor<E, N>
 where
     E: BufferPooler
         + Clock
@@ -171,7 +171,7 @@ where
                 Some(current_height) = wait_for_execution_finalized_height => {
                     match latest_consensus_tip {
                         Some(tip) => {
-                            if !provider_matches_consensus_tip(&self.node.provider, tip, current_height)? {
+                            if !provider_matches_consensus_tip(self.node.provider(), tip, current_height)? {
                                 pending_provider_ready_height = Some(current_height);
                                 provider_ready_retry_timer =
                                     Box::pin(ctx.sleep(config::DEFAULT_PEER_RESPONSE_TIMEOUT));
@@ -280,14 +280,14 @@ where
                 EpochLoopAction::RestartEpoch => continue 'epoch_loop,
                 EpochLoopAction::ReplaceSigner => {
                     self.channels.replacement_epoch_subchannels = Some(
-                    outbe_consensus::epoch_subchannels::reacquire_epoch_subchannels(
+                    crate::epoch_subchannels::reacquire_epoch_subchannels(
                         self.state.current_epoch,
                         &ctx,
-                        outbe_consensus::epoch_subchannels::SubchannelRetryPolicy {
+                        crate::epoch_subchannels::SubchannelRetryPolicy {
                             timeout: Duration::from_secs(5),
                             retry_interval: Duration::from_millis(10),
                         },
-                        outbe_consensus::epoch_subchannels::EpochMuxHandles {
+                        crate::epoch_subchannels::EpochMuxHandles {
                             vote: &mut self.channels.vote_mux,
                             cert: &mut self.channels.cert_mux,
                             res: &mut self.channels.res_mux,
@@ -311,7 +311,7 @@ where
 
     async fn acquire_epoch_subchannels(&mut self) -> Result<super::transport::EpochSubchannels<E>> {
         let current_subchannels = if self.channels.replacement_epoch_subchannels.is_some() {
-            outbe_consensus::epoch_subchannels::take_or_register_current(
+            crate::epoch_subchannels::take_or_register_current(
                 self.state.current_epoch,
                 &mut self.channels.replacement_epoch_subchannels,
                 &mut self.channels.vote_mux,
@@ -320,7 +320,7 @@ where
             )
             .await?
         } else {
-            outbe_consensus::epoch_subchannels::take_or_register_current(
+            crate::epoch_subchannels::take_or_register_current(
                 self.state.current_epoch,
                 &mut self.channels.next_epoch_subchannels,
                 &mut self.channels.vote_mux,
@@ -337,7 +337,7 @@ where
                 );
             }
             self.channels.next_epoch_subchannels = Some(
-                outbe_consensus::epoch_subchannels::register_epoch_subchannels(
+                crate::epoch_subchannels::register_epoch_subchannels(
                     pending_epoch,
                     &mut self.channels.vote_mux,
                     &mut self.channels.cert_mux,
@@ -366,7 +366,7 @@ where
         let finalized_height = self.finalization_view.read().last_finalized_number;
         adopt_finalized_boundary_carrier(
             &self.dkg_manager,
-            &self.node.provider,
+            self.node.provider(),
             self.state.last_dkg_activation_height,
             finalized_height,
         )?;
@@ -388,8 +388,8 @@ where
     }
 }
 
-pub(in crate::stack) fn future_epoch_hint_height(
-    epocher: &outbe_consensus::follow::FollowerEpocher,
+pub fn future_epoch_hint_height(
+    epocher: &crate::follow::FollowerEpocher,
     current_epoch: Epoch,
     their_epoch: Epoch,
 ) -> Option<Height> {

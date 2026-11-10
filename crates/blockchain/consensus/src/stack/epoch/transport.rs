@@ -15,7 +15,7 @@ pub(super) type Subchannel<E> = (
     commonware_p2p::utils::mux::SubSender<lookup::Sender<bls12381::PublicKey, E>>,
     commonware_p2p::utils::mux::SubReceiver<lookup::Receiver<bls12381::PublicKey>>,
 );
-pub(super) type EpochSubchannels<E> = outbe_consensus::epoch_subchannels::EpochSubchannels<
+pub(super) type EpochSubchannels<E> = crate::epoch_subchannels::EpochSubchannels<
     lookup::Sender<bls12381::PublicKey, E>,
     lookup::Receiver<bls12381::PublicKey>,
 >;
@@ -23,7 +23,7 @@ pub(super) type VoteBackupRx = commonware_utils::channel::mpsc::Receiver<(
     u64,
     (bls12381::PublicKey, commonware_runtime::IoBuf),
 )>;
-pub(in crate::stack) fn radicle_channel_config() -> (u64, u32) {
+pub fn radicle_channel_config() -> (u64, u32) {
     (
         config::RADICLE_ENDPOINT_CHANNEL,
         config::RADICLE_ENDPOINT_CHANNEL_QUOTA,
@@ -61,7 +61,7 @@ pub(super) struct TransportAdmission<'a> {
 pub(super) async fn start_transport<E>(
     ctx: &E,
     args: &ConsensusArgs,
-    node: &OutbeFullNode,
+    node: &impl StackNodeAccess,
     admission: TransportAdmission<'_>,
     radicle_endpoint: Option<(
         outbe_radicle::integration::EndpointNetworkService,
@@ -91,8 +91,7 @@ where
     // -- 3. Configure P2P network ---------------------------------------
     let p2p_namespace = commonware_utils::union_unique(&config::outbe_app_namespace(), b"_P2P");
     // Cover the full registered validator set plus a local non-validator identity.
-    let max_peers_per_set =
-        NonZeroUsize::new(outbe_consensus::bls::MAX_VALIDATORS as usize + 1).unwrap();
+    let max_peers_per_set = NonZeroUsize::new(crate::bls::MAX_VALIDATORS as usize + 1).unwrap();
     let network_cfg = if args.use_local_defaults {
         lookup::Config::local(
             signing_key.clone(),
@@ -166,7 +165,7 @@ where
     let peer_map = build_peer_map(validator_set, &bootnode_map);
     let admitted_set = validators::read_admitted_non_consensus_at_block(
         protocol,
-        &node.provider,
+        node.provider(),
         initial_peer_hash,
     )
     .wrap_err("failed to read startup non-consensus P2P admission")?;

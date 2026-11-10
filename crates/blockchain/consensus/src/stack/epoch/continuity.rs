@@ -1,11 +1,11 @@
 //! Finalized continuity anchors required before a Simplex engine starts.
 use super::super::*;
-use outbe_consensus::finalization::state::FinalizationViewHandle;
+use crate::finalization::state::FinalizationViewHandle;
 
 const EPOCH_RESTART_ANCHOR_TIMEOUT: Duration = Duration::from_secs(5);
 const EPOCH_RESTART_ANCHOR_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-pub(in crate::stack) async fn resolve_epoch_floor<E: Clock>(
+pub async fn resolve_epoch_floor<E: Clock>(
     ctx: &E,
     finalization_view: &FinalizationViewHandle,
     epoch: Epoch,
@@ -44,12 +44,12 @@ pub(in crate::stack) async fn resolve_epoch_floor<E: Clock>(
 /// Distinguishes the two existing activation diagnostics. Both require the
 /// exact activation height to be finalized before the next engine starts.
 #[derive(Clone, Copy)]
-pub(in crate::stack) enum AnchorTransition {
+pub enum AnchorTransition {
     Dkg,
     DealerDemotion,
 }
 
-pub(in crate::stack) async fn wait_for_activation_anchor<E: Clock>(
+pub async fn wait_for_activation_anchor<E: Clock>(
     ctx: &E,
     finalization_view: &FinalizationViewHandle,
     activation_height: u64,

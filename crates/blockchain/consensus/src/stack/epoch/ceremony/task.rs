@@ -1,11 +1,11 @@
 //! Freeze a deterministic target and supervise durable DKG ceremonies.
 #[derive(Clone, Copy)]
-pub(in crate::stack) enum CeremonyAttempt {
+pub enum CeremonyAttempt {
     Retry,
     Live { scheduling_height: u64 },
 }
 impl CeremonyAttempt {
-    pub(in crate::stack) fn task_label(self) -> &'static str {
+    pub fn task_label(self) -> &'static str {
         match self {
             Self::Retry => "dkg_retry",
             Self::Live { .. } => "dkg_live",
@@ -37,7 +37,7 @@ impl CeremonyAttempt {
 }
 use super::*;
 
-impl<E> EpochSupervisor<E>
+impl<E, N: StackNodeAccess> EpochSupervisor<E, N>
 where
     E: BufferPooler
         + Clock
@@ -70,7 +70,7 @@ where
         // refresh_verifier_join_prev_output).
         if self.state.signing_share.is_none() {
             refresh_verifier_join_prev_output(
-                &self.node.provider,
+                self.node.provider(),
                 target.freeze_height,
                 self.dkg_rotation_params,
                 &mut self.state.last_dkg_output,
@@ -83,7 +83,7 @@ where
         let (finalized_log_tx, finalized_log_rx) = tokio::sync::mpsc::unbounded_channel();
         let replay_precondition = attempt.replay_precondition();
         if let Err(error) = restart_dkg_manager_from_finalized_history(
-            &self.node.provider,
+            self.node.provider(),
             &self.dkg_manager,
             DkgCeremonyReplaySpec {
                 freeze_height: target.freeze_height,
@@ -105,7 +105,7 @@ where
             };
             self.rotation.reshare_in_progress = false;
             self.rotation.retry_frozen_dkg = true;
-            outbe_consensus::metrics::record_dkg_status(0);
+            crate::metrics::record_dkg_status(0);
             return Ok(EventAction::Continue);
         }
         let retry_store = dkg_retry_store(&self.args, &self.key_backend)?;

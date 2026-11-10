@@ -1,6 +1,6 @@
 use super::super::*;
 
-pub(in crate::stack) fn provider_matches_consensus_tip(
+pub fn provider_matches_consensus_tip(
     provider: &impl BlockHashReader,
     tip: crate::marshal_update_reporter::ConsensusTip,
     required_height: u64,
@@ -20,7 +20,7 @@ pub(in crate::stack) fn provider_matches_consensus_tip(
     Ok(provider_hash == tip.digest.0)
 }
 
-pub(in crate::stack) fn elapsed_since(now: SystemTime, since: SystemTime) -> Duration {
+pub fn elapsed_since(now: SystemTime, since: SystemTime) -> Duration {
     match now.duration_since(since) {
         Ok(elapsed) => elapsed,
         Err(_) => Duration::ZERO,
@@ -28,7 +28,7 @@ pub(in crate::stack) fn elapsed_since(now: SystemTime, since: SystemTime) -> Dur
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::stack) enum ExecutionWatchdogObservation {
+pub enum ExecutionWatchdogObservation {
     ProviderReadError,
     ProviderState {
         consensus_tip_height: u64,
@@ -38,14 +38,14 @@ pub(in crate::stack) enum ExecutionWatchdogObservation {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::stack) enum ExecutionWatchdogDecision {
+pub enum ExecutionWatchdogDecision {
     Healthy,
     StartupGrace,
     Unhealthy { unhealthy_for: Duration },
     Fatal { unhealthy_for: Duration },
 }
 
-pub(in crate::stack) fn execution_watchdog_decision(
+pub fn execution_watchdog_decision(
     observation: ExecutionWatchdogObservation,
     now: SystemTime,
     startup_started_at: SystemTime,

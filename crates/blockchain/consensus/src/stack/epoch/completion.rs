@@ -2,7 +2,7 @@
 use super::super::*;
 use super::runtime::*;
 
-impl<E> EpochSupervisor<E>
+impl<E, N: StackNodeAccess> EpochSupervisor<E, N>
 where
     E: BufferPooler
         + Clock
@@ -33,11 +33,11 @@ where
     ) -> Result<EventAction> {
         let Some(target) = self.rotation.frozen_dkg_target.take() else {
             warn!("DKG completed without a frozen target; ignoring stale outcome");
-            outbe_consensus::metrics::record_dkg_status(0);
+            crate::metrics::record_dkg_status(0);
             return Ok(EventAction::Continue);
         };
 
-        let current_height = self.node.provider.last_block_number().map_err(|error| {
+        let current_height = self.node.provider().last_block_number().map_err(|error| {
             crate::errors::StackEpochError::ReadLatestBlockHeightAfterCompletion {
                 reason: format!("{error}"),
             }
@@ -93,8 +93,8 @@ where
             current_height,
             "DKG completed; waiting for exact outgoing-finalized preannounce carrier"
         );
-        outbe_consensus::metrics::record_dkg_status(2); // completed
-        outbe_consensus::metrics::record_reshare_completed();
+        crate::metrics::record_dkg_status(2); // completed
+        crate::metrics::record_reshare_completed();
         if current_height > target.planned_activation_height {
             self.vrf_safety.note_grace(
                 target.planned_activation_height,
@@ -137,7 +137,7 @@ where
             return Ok(EventAction::Continue);
         }
         self.channels.next_epoch_subchannels = Some(
-            outbe_consensus::epoch_subchannels::register_epoch_subchannels(
+            crate::epoch_subchannels::register_epoch_subchannels(
                 next_epoch,
                 &mut self.channels.vote_mux,
                 &mut self.channels.cert_mux,
@@ -167,14 +167,14 @@ where
     ) -> Result<EventAction> {
         let Some(target) = self.rotation.frozen_dkg_target.as_ref().cloned() else {
             warn!("dealer-only DKG completed without a frozen target; ignoring stale outcome");
-            outbe_consensus::metrics::record_dkg_status(0);
+            crate::metrics::record_dkg_status(0);
             return Ok(EventAction::Continue);
         };
         if dealer_only_complete.participants != target.participants {
             return Err(crate::errors::StackEpochError::DealerOnlyParticipantSetMismatch.into());
         }
 
-        let current_height = self.node.provider.last_block_number().map_err(|error| {
+        let current_height = self.node.provider().last_block_number().map_err(|error| {
             crate::errors::StackEpochError::ReadLatestBlockHeightAfterDealerOnlyCompletion {
                 reason: format!("{error}"),
             }
@@ -197,8 +197,8 @@ where
             boundary_artifact: None,
             recovered_output: None,
         });
-        outbe_consensus::metrics::record_dkg_status(2);
-        outbe_consensus::metrics::record_reshare_completed();
+        crate::metrics::record_dkg_status(2);
+        crate::metrics::record_reshare_completed();
         let _ = self.execution_finalized_height_tx.send(current_height);
         Ok(EventAction::Proceed)
     }

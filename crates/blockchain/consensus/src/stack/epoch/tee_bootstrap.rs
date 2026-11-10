@@ -2,9 +2,9 @@
 use super::super::*;
 use super::transport::Subchannel;
 
-pub(super) struct TeeStartup<'a, E: Clock> {
+pub(super) struct TeeStartup<'a, E: Clock, N: StackNodeAccess> {
     pub(super) args: &'a ConsensusArgs,
-    pub(super) node: &'a OutbeFullNode,
+    pub(super) node: &'a N,
     pub(super) bridge: &'a ConsensusExecutionBridge,
     pub(super) participants: &'a commonware_utils::ordered::Set<bls12381::PublicKey>,
     pub(super) validator_set: &'a validators::ValidatorSet,
@@ -18,7 +18,10 @@ pub(super) struct TeeStartup<'a, E: Clock> {
     pub(super) protocol: &'a dyn crate::protocol_state::EngineProtocolState,
 }
 
-pub(super) async fn prepare_tee<E>(ctx: &E, startup: TeeStartup<'_, E>) -> Result<()>
+pub(super) async fn prepare_tee<E, N: StackNodeAccess>(
+    ctx: &E,
+    startup: TeeStartup<'_, E, N>,
+) -> Result<()>
 where
     E: BufferPooler
         + Clock
@@ -131,13 +134,7 @@ where
                 .timestamp
                 .checked_add(tee_policy.maximum_lease)
                 .ok_or(crate::errors::StackEpochError::Ost3Block1LeaseOverflow)?;
-            let node_data_dir = node
-                .config
-                .datadir
-                .clone()
-                .resolve_datadir(node.chain_spec().chain())
-                .data_dir()
-                .to_path_buf();
+            let node_data_dir = node.data_dir();
             let endpoint = socket
                 .to_str()
                 .ok_or(crate::errors::StackEpochError::TeeEnclaveEndpointInvalidUtf8)?
@@ -295,25 +292,20 @@ where
 /// A protected datadir file is accepted only when the launcher already
 /// installed `p2p_secret_key_hex`. This function does not generate a key.
 fn load_ost3_reth_node_host_identity(
-    node: &OutbeFullNode,
+    node: &impl StackNodeAccess,
 ) -> Result<(
     k256::ecdsa::SigningKey,
     outbe_primitives::tee_attestation_v1::NodeIdV1,
 )> {
-    let p2p_secret_path = node.data_dir.p2p_secret();
-    if node.config.network.p2p_secret_key_hex.is_none()
-        && reth_identity_file_is_protected(&p2p_secret_path)
-    {
+    let p2p_secret_path = node.p2p_secret_path();
+    if !node.has_p2p_secret_key_hex() && reth_identity_file_is_protected(&p2p_secret_path) {
         return Err(crate::errors::StackEpochError::ProtectedRethIdentityNotInstalled.into());
     }
     let reth_p2p_secret = node
-        .config
-        .network
-        .secret_key(p2p_secret_path)
+        .load_p2p_secret_key(p2p_secret_path)
         .wrap_err("failed to load persistent Reth P2P identity for OST3")?;
-    let node_host_signing =
-        k256::ecdsa::SigningKey::from_slice(reth_p2p_secret.secret_bytes().as_slice())
-            .map_err(crate::errors::StackEpochError::invalid_reth_p2p_signing_key)?;
+    let node_host_signing = k256::ecdsa::SigningKey::from_slice(reth_p2p_secret.as_slice())
+        .map_err(crate::errors::StackEpochError::invalid_reth_p2p_signing_key)?;
     let reth_p2p_public = node_host_signing
         .verifying_key()
         .to_encoded_point(true)
@@ -352,7 +344,7 @@ fn require_shareless_resident_offer_key() -> Result<()> {
 fn verify_restarted_validator_holds_chain_offer_key(
     protocol: &dyn crate::protocol_state::EngineProtocolState,
     proposer_evm_address: Option<EthAddress>,
-    node: &OutbeFullNode,
+    node: &impl StackNodeAccess,
     socket: &std::path::Path,
     tee_session: crate::args::ResolvedTeeSession,
 ) -> Result<()> {
@@ -360,20 +352,14 @@ fn verify_restarted_validator_holds_chain_offer_key(
     // pre-V1 delivery protocol.
     let _my_validator = proposer_evm_address
         .ok_or(crate::errors::StackEpochError::ActiveValidatorStartupRequiresEvmIdentity)?;
-    let on_chain_offer = validators::read_tee_offer_public_at_latest(protocol, &node.provider)
+    let on_chain_offer = validators::read_tee_offer_public_at_latest(protocol, node.provider())
         .wrap_err("failed to read the mandatory on-chain TEE offer key")?;
     if on_chain_offer.is_zero() {
         return Err(
             crate::errors::StackEpochError::MandatoryOst3MissingOnChainOfferKeyAfterBlock1.into(),
         );
     }
-    let node_data_dir = node
-        .config
-        .datadir
-        .clone()
-        .resolve_datadir(node.chain_spec().chain())
-        .data_dir()
-        .to_path_buf();
+    let node_data_dir = node.data_dir();
     let endpoint = socket
         .to_str()
         .ok_or(crate::errors::StackEpochError::TeeEnclaveEndpointInvalidUtf8)?;
@@ -407,7 +393,7 @@ fn reth_identity_file_is_protected(path: &std::path::Path) -> bool {
         Err(_) => return false,
     };
     let read = std::io::Read::read(&mut file, &mut prefix).unwrap_or(0);
-    outbe_consensus::bls::reads_as_protected_custody(&prefix[..read])
+    crate::bls::reads_as_protected_custody(&prefix[..read])
 }
 
 #[cfg(test)]

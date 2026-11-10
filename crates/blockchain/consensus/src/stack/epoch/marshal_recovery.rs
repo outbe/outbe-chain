@@ -1,9 +1,9 @@
 //! Durable marshal archives expose the processed height before DKG selection.
 use super::super::*;
+use crate::marshal_types::{MarshalActor, MarshalMailbox};
 use commonware_consensus::marshal;
 use commonware_cryptography::certificate::Verifier as _;
 use commonware_storage::archive::immutable;
-use outbe_consensus::marshal_types::{MarshalActor, MarshalMailbox};
 
 pub(super) struct RecoveredMarshal<
     E: BufferPooler + Clock + CryptoRng + Spawner + Storage + Metrics,
@@ -11,13 +11,13 @@ pub(super) struct RecoveredMarshal<
     pub(super) actor: MarshalActor<E>,
     pub(super) mailbox: MarshalMailbox,
     pub(super) processed_height: Height,
-    pub(super) epocher: outbe_consensus::follow::FollowerEpocher,
+    pub(super) epocher: crate::follow::FollowerEpocher,
 }
 
 pub(super) async fn recover_marshal<E>(
     ctx: &E,
     page_cache: &CacheRef,
-    node: &OutbeFullNode,
+    node: &impl StackNodeAccess,
     certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
     args: &ConsensusArgs,
 ) -> Result<RecoveredMarshal<E>>
@@ -52,7 +52,7 @@ where
     .wrap_err("failed to initialize blocks archive")?;
 
     let dkg_rotation_params = DkgRotationParams::from_genesis(node, epoch_length_blocks);
-    let epocher = outbe_consensus::follow::FollowerEpocher::new(
+    let epocher = crate::follow::FollowerEpocher::new(
         u64::from(epoch_length_blocks),
         dkg_rotation_params.activation_grace_blocks,
     );
@@ -86,7 +86,7 @@ where
     // height 0. This keeps the prior non-optional `Height` semantics that the
     // genesis-formation proof, crash-recovery detection, and executor start use.
     let last_consensus_finalized = map_marshal_init_height(last_consensus_finalized_opt.height());
-    let last_execution_height = node.provider.last_block_number().map_err(|error| {
+    let last_execution_height = node.provider().last_block_number().map_err(|error| {
         crate::errors::StackDkgError::GetLastBlockNumber {
             reason: format!("{error}"),
         }
@@ -97,7 +97,7 @@ where
         args.trust_el_head,
     )?;
     let latest_boundary =
-        recover_latest_boundary_artifact(&node.provider, scan_height, dkg_rotation_params)?
+        recover_latest_boundary_artifact(node.provider(), scan_height, dkg_rotation_params)?
             .map(|(carrier_height, boundary)| (carrier_height, boundary.epoch));
     reset_validator_marshal_epocher(&epocher, latest_boundary)?;
 
@@ -115,7 +115,7 @@ where
 }
 
 pub(in crate::stack) fn reset_validator_marshal_epocher(
-    epocher: &outbe_consensus::follow::FollowerEpocher,
+    epocher: &crate::follow::FollowerEpocher,
     latest_boundary: Option<(u64, u64)>,
 ) -> Result<()> {
     if let Some((carrier_height, epoch)) = latest_boundary {
@@ -134,12 +134,11 @@ pub(in crate::stack) fn reset_validator_marshal_epocher(
     Ok(())
 }
 
-#[cfg(test)]
-pub(in crate::stack) fn validator_marshal_epocher(
+pub fn validator_marshal_epocher(
     latest_boundary: Option<(u64, u64)>,
     rotation: DkgRotationParams,
-) -> outbe_consensus::follow::FollowerEpocher {
-    let epocher = outbe_consensus::follow::FollowerEpocher::new(
+) -> crate::follow::FollowerEpocher {
+    let epocher = crate::follow::FollowerEpocher::new(
         rotation.epoch_length_blocks,
         rotation.activation_grace_blocks,
     );

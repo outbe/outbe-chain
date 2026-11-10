@@ -141,9 +141,9 @@ pub(super) fn reconcile_recovered_vrf_material(
     Ok(())
 }
 
-pub(super) struct ValidatorBootstrapFollowInputs<'a> {
+pub(super) struct ValidatorBootstrapFollowInputs<'a, N: StackNodeAccess> {
     pub(super) args: &'a ConsensusArgs,
-    pub(super) node: &'a OutbeFullNode,
+    pub(super) node: &'a N,
     pub(super) bridge: &'a ConsensusExecutionBridge,
     pub(super) signing_key: &'a bls12381::PrivateKey,
     pub(super) genesis_hash: B256,
@@ -152,14 +152,14 @@ pub(super) struct ValidatorBootstrapFollowInputs<'a> {
     pub(super) finalized_execution_barrier: &'a Arc<dyn FinalizedExecutionBarrier>,
     pub(super) follower_shutdown: Option<crate::follower_shutdown::FollowerDrain>,
     pub(super) finalized_parent_cert_store:
-        &'a outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore,
+        &'a crate::finalization::parent_cert_store::FinalizedParentCertStore,
     pub(super) finalization_notify: &'a Arc<tokio::sync::Notify>,
     pub(super) protocol: Arc<dyn crate::protocol_state::EngineProtocolState>,
 }
 
-pub(super) async fn maybe_run_validator_bootstrap_follow<E>(
+pub(super) async fn maybe_run_validator_bootstrap_follow<E, N: StackNodeAccess>(
     ctx: E,
-    inputs: ValidatorBootstrapFollowInputs<'_>,
+    inputs: ValidatorBootstrapFollowInputs<'_, N>,
 ) -> Result<bool>
 where
     E: BufferPooler
@@ -181,7 +181,7 @@ where
     let bootstrap = super::super::follower::ValidatorBootstrap {
         local_key_in_genesis_validator_set: validators::read_consensus_validators_at_block(
             inputs.protocol.as_ref(),
-            &inputs.node.provider,
+            inputs.node.provider(),
             inputs.genesis_hash,
         )?
         .public_keys
@@ -193,7 +193,7 @@ where
     };
     let finalized_height = inputs
         .node
-        .provider
+        .provider()
         .finalized_block_num_hash()?
         .map_or(0, |head| head.number);
     if bootstrap.is_validator_bootstrap_ready(inputs.node, finalized_height)? {

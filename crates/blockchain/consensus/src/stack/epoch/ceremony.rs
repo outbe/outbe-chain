@@ -4,9 +4,9 @@ mod retry;
 mod task;
 use super::super::*;
 use super::runtime::*;
-pub(in crate::stack) use task::CeremonyAttempt;
+pub use task::CeremonyAttempt;
 
-impl<E> EpochSupervisor<E>
+impl<E, N: StackNodeAccess> EpochSupervisor<E, N>
 where
     E: BufferPooler
         + Clock

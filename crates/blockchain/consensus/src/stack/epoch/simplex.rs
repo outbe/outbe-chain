@@ -9,7 +9,7 @@ use super::transport::EpochSubchannels;
 /// genesis round-robin exception. Every later epoch must start from the last
 /// finalized certificate of the previous epoch so that view 1 continues to use
 /// VRF-derived leader selection rather than silently falling back to round-robin.
-pub(in crate::stack) fn epoch_elector_config(
+pub fn epoch_elector_config(
     epoch: Epoch,
     continuity: &ReporterContinuity,
     vrf_materials: VrfMaterialProvider<MinSig>,
@@ -37,7 +37,7 @@ pub(in crate::stack) fn epoch_elector_config(
     }
 }
 
-pub(in crate::stack) const fn effective_validator_operating_mode(
+pub const fn effective_validator_operating_mode(
     radicle_signer: bool,
 ) -> outbe_primitives::consensus::ConsensusOperatingMode {
     if radicle_signer {
@@ -47,7 +47,7 @@ pub(in crate::stack) const fn effective_validator_operating_mode(
     }
 }
 
-impl<E> EpochSupervisor<E>
+impl<E, N: StackNodeAccess> EpochSupervisor<E, N>
 where
     E: BufferPooler
         + Clock
@@ -66,12 +66,10 @@ where
         ctx: &E,
         channels: EpochSubchannels<E>,
     ) -> Result<(commonware_runtime::Handle<()>, bool)> {
-        let outbe_consensus::epoch_subchannels::EpochSubchannels {
+        let crate::epoch_subchannels::EpochSubchannels {
             vote, cert, res, ..
         } = channels;
-        outbe_consensus::hybrid::election::require_nonempty_committee(
-            self.state.participants.len(),
-        )?;
+        crate::hybrid::election::require_nonempty_committee(self.state.participants.len())?;
         // -- b. Build HybridScheme for this epoch ------------------------
         let radicle_signer = radicle_signer_enabled(
             self.radicle_status.snapshot().voting_gate,
@@ -147,12 +145,12 @@ where
 
         let outbe_reporter = OutbeReporter::new(
             self.reporter_continuity.clone(),
-            outbe_consensus::reporter::ReporterCommittee {
+            crate::reporter::ReporterCommittee {
                 validator_addresses: ordered_addresses,
                 verifier_scheme,
                 epoch: self.state.current_epoch,
             },
-            outbe_consensus::reporter::ReporterDependencies {
+            crate::reporter::ReporterDependencies {
                 finalization_mailbox: self.finalization_mailbox.clone(),
                 bridge: Some(self.bridge.clone()),
                 witness_sink: std::sync::Arc::new(self.finalized_parent_cert_store.clone()),

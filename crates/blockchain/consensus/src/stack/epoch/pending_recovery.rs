@@ -2,7 +2,7 @@
 use super::super::*;
 use super::runtime::*;
 
-impl<E> EpochSupervisor<E>
+impl<E, N: StackNodeAccess> EpochSupervisor<E, N>
 where
     E: BufferPooler
         + Clock
@@ -43,7 +43,7 @@ where
         let (pending_artifact, restored_target_dkg_cycle) =
             restored_boundary_artifact_and_cycle(&restored)?;
         let exact_carrier_height = find_exact_finalized_preannounce_carrier(
-            &self.node.provider,
+            self.node.provider(),
             pending_artifact,
             recovery_anchor_height,
             self.dkg_rotation_params.activation_grace_blocks,
@@ -262,7 +262,7 @@ where
         self.rotation.pending_dkg_activation = None;
         self.rotation.dealer_only_dkg_activation = None;
         self.channels.next_epoch_subchannels = Some(
-            outbe_consensus::epoch_subchannels::register_epoch_subchannels(
+            crate::epoch_subchannels::register_epoch_subchannels(
                 active_epoch,
                 &mut self.channels.vote_mux,
                 &mut self.channels.cert_mux,

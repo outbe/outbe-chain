@@ -2,8 +2,8 @@
 use super::super::*;
 use super::runtime::*;
 
-pub(in crate::stack) fn observe_activated_epoch_boundary(
-    epocher: &outbe_consensus::follow::FollowerEpocher,
+pub fn observe_activated_epoch_boundary(
+    epocher: &crate::follow::FollowerEpocher,
     next_epoch: Epoch,
     activation_anchor: u64,
 ) -> std::result::Result<u64, crate::errors::StackEpochError> {
@@ -20,7 +20,7 @@ pub(in crate::stack) fn observe_activated_epoch_boundary(
     Ok(boundary_carrier_height)
 }
 
-impl<E> EpochSupervisor<E>
+impl<E, N: StackNodeAccess> EpochSupervisor<E, N>
 where
     E: BufferPooler
         + Clock
@@ -65,7 +65,7 @@ where
                 .last_finalized_number
                 .min(current_height);
             let exact_carrier_height = find_exact_finalized_preannounce_carrier(
-                &self.node.provider,
+                self.node.provider(),
                 &pending.boundary_artifact,
                 consensus_finalized_height,
                 self.dkg_rotation_params.activation_grace_blocks,
@@ -230,7 +230,7 @@ where
                     )?;
                     self.state.validator_set = activated_validator_set;
                     self.rotation.frozen_dkg_target = None;
-                    outbe_consensus::metrics::record_dkg_status(0);
+                    crate::metrics::record_dkg_status(0);
 
                     self.state.participants = activated_participants;
                     self.application_epoch_fence.advance_epoch(next_epoch);
@@ -331,7 +331,7 @@ where
                     let next_epoch =
                         next_consensus_epoch_after_dkg_activation(self.state.current_epoch);
                     self.channels.next_epoch_subchannels = Some(
-                                    outbe_consensus::epoch_subchannels::register_epoch_subchannels(
+                                    crate::epoch_subchannels::register_epoch_subchannels(
                                         next_epoch,
                                         &mut self.channels.vote_mux,
                                         &mut self.channels.cert_mux,
@@ -390,7 +390,7 @@ where
                 .last_finalized_number
                 .min(current_height);
             let exact_carrier_height = find_exact_finalized_preannounce_carrier(
-                &self.node.provider,
+                self.node.provider(),
                 &boundary_artifact,
                 consensus_finalized_height,
                 self.dkg_rotation_params.activation_grace_blocks,

@@ -1,7 +1,7 @@
 //! Probe execution readiness against the certified consensus tip.
 use super::super::*;
 use super::runtime::*;
-impl<E> EpochSupervisor<E>
+impl<E, N: StackNodeAccess> EpochSupervisor<E, N>
 where
     E: BufferPooler
         + Clock
@@ -28,7 +28,7 @@ where
         };
 
         let consensus_tip_height = tip.height.get();
-        let mut reth_head_height = match self.node.provider.last_block_number() {
+        let mut reth_head_height = match self.node.provider().last_block_number() {
             Ok(height) => height,
             Err(error) => {
                 let now = ctx.current();
@@ -68,7 +68,7 @@ where
                 return Ok(());
             }
         };
-        let provider_tip_hash = match self.node.provider.block_hash(consensus_tip_height) {
+        let provider_tip_hash = match self.node.provider().block_hash(consensus_tip_height) {
             Ok(hash) => hash,
             Err(error) => {
                 let now = ctx.current();
@@ -118,7 +118,7 @@ where
             }
         };
         let hash_match = provider_tip_hash == Some(tip.digest.0);
-        match self.node.provider.last_block_number() {
+        match self.node.provider().last_block_number() {
             Ok(height) => {
                 reth_head_height = height;
             }
@@ -132,7 +132,7 @@ where
                 );
             }
         }
-        outbe_consensus::metrics::record_consensus_reth_state(
+        crate::metrics::record_consensus_reth_state(
             consensus_tip_height,
             reth_head_height,
             hash_match,

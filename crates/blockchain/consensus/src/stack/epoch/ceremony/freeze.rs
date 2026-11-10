@@ -6,7 +6,7 @@ type AdmittedRotationTarget = (
 );
 use super::*;
 
-impl<E> EpochSupervisor<E>
+impl<E, N: StackNodeAccess> EpochSupervisor<E, N>
 where
     E: BufferPooler
         + Clock
@@ -67,7 +67,7 @@ where
         self.state.dkg_cycle = target_dkg_cycle.saturating_add(1);
 
         self.rotation.reshare_in_progress = true;
-        outbe_consensus::metrics::record_dkg_status(1); // in progress
+        crate::metrics::record_dkg_status(1); // in progress
 
         // Register DKG sub-channel for this reshare round.
         match self.rotation.dkg_mux.register(target_dkg_cycle).await {
@@ -128,7 +128,7 @@ where
                             .await
                             .wrap_err("failed to publish verifier-follower DKG admission")?;
                         restart_dkg_manager_from_finalized_history(
-                                    &self.node.provider,
+                                    self.node.provider(),
                                     &self.dkg_manager,
                                     DkgCeremonyReplaySpec {
                                         freeze_height,
@@ -169,7 +169,7 @@ where
                             boundary_artifact: None,
                             recovered_output: None,
                         });
-                        outbe_consensus::metrics::record_dkg_status(2);
+                        crate::metrics::record_dkg_status(2);
                         let _ = self.execution_finalized_height_tx.send(current_height);
                         return Ok(None);
                     }

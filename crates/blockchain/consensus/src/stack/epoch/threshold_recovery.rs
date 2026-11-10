@@ -18,9 +18,9 @@ pub(super) struct RecoveredThreshold {
     pub(super) proposer_evm_address: Option<EthAddress>,
 }
 /// Pinned startup membership, finality evidence and local threshold inputs.
-pub(super) struct ThresholdRecovery<'a, E: Clock> {
+pub(super) struct ThresholdRecovery<'a, E: Clock, N: StackNodeAccess> {
     pub(super) args: &'a ConsensusArgs,
-    pub(super) node: &'a OutbeFullNode,
+    pub(super) node: &'a N,
     pub(super) key_backend: &'a bls::KeyBackend,
     pub(super) signing_key: &'a bls12381::PrivateKey,
     pub(super) validator_set: &'a validators::ValidatorSet,
@@ -31,9 +31,9 @@ pub(super) struct ThresholdRecovery<'a, E: Clock> {
     pub(super) protocol: &'a dyn crate::protocol_state::EngineProtocolState,
 }
 
-pub(super) async fn recover_threshold<E>(
+pub(super) async fn recover_threshold<E, N: StackNodeAccess>(
     ctx: &E,
-    input: ThresholdRecovery<'_, E>,
+    input: ThresholdRecovery<'_, E, N>,
 ) -> Result<RecoveredThreshold>
 where
     E: BufferPooler
@@ -96,7 +96,7 @@ where
         .public_keys
         .iter()
         .any(|key| key == &local_consensus_key);
-    let on_chain_offer = validators::read_tee_offer_public_at_latest(protocol, &node.provider)
+    let on_chain_offer = validators::read_tee_offer_public_at_latest(protocol, node.provider())
         .wrap_err("failed to read canonical offer key before threshold work")?;
     let resident_offer = outbe_tee::resident_offer_public_key_state_v1()
         .wrap_err("failed to read enclave offer-key readiness before threshold work")?;
@@ -221,7 +221,7 @@ where
 
     let reshare_target_validator_set = {
         let state = node
-            .provider
+            .provider()
             .latest()
             .wrap_err("failed to load latest state for EVM signer validation")?;
         validators::read_reshare_target_from_state(protocol, &state)
