@@ -1,6 +1,6 @@
 use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::SolCall;
-use outbe_primitives::erc::ERC165_INTERFACE_ID;
+use outbe_common::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{
@@ -2200,7 +2200,7 @@ fn issuance_announces_the_mint() {
 #[test]
 fn supported_interfaces_match_the_implemented_selectors() {
     use alloy_sol_types::SolEvent;
-    use outbe_primitives::erc::{
+    use outbe_common::erc::{
         ERC4906_INTERFACE_ID, ERC721_ENUMERABLE_INTERFACE_ID, ERC721_INTERFACE_ID,
         ERC721_METADATA_INTERFACE_ID,
     };

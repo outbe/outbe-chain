@@ -69,7 +69,7 @@ fn requeue_position_hour(
     position_id: U256,
     deadline: u64,
 ) -> Result<()> {
-    use outbe_primitives::deadline_queue;
+    use outbe_common::deadline_queue;
     let factory = crate::GemFactoryContract::new(storage.clone());
     let position = factory
         .positions

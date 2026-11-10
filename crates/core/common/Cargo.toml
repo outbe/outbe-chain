@@ -7,12 +7,15 @@ publish.workspace = true
 
 [dependencies]
 alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
 base64.workspace = true
 outbe-primitives.workspace = true
 ring.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
+outbe-primitives = { workspace = true, features = ["test-utils"] }
 serde_json.workspace = true
 
 [lints]

@@ -19,6 +19,7 @@ default = []
 tee-attestation-v1 = []
 
 [dev-dependencies]
+outbe-system-common.workspace = true
 outbe-tee = { workspace = true, features = ["test-utils"] }
 ed25519-dalek.workspace = true
 k256.workspace = true

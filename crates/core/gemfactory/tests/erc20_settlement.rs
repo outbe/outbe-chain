@@ -38,7 +38,7 @@ impl Rail for Gem {
                 reference_currency: 840,
                 issued_at: TIMESTAMP,
                 call_terms: Some(outbe_gem::CallTerms {
-                    call_price_minor: outbe_primitives::markup::marked_up(
+                    call_price_minor: outbe_common::markup::marked_up(
                         entry_price,
                         profile.call_rate,
                     )

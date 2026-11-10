@@ -12,8 +12,8 @@ use outbe_primitives::{
         MAX_EVIDENCE_CALL_FRAMING_BYTES,
     },
     tee_registry_abi_v1::ITeeRegistryV1,
-    zero_fee::VALIDATOR_V1_NODE_HASH_SLOT,
 };
+use outbe_system_common::zero_fee::VALIDATOR_V1_NODE_HASH_SLOT;
 
 use crate::envelope::ZeroFeeEnvelope;
 use crate::hooks::{
@@ -155,8 +155,8 @@ mod tests {
         },
         tee_registry_abi_v1::ITeeRegistryV1,
         transaction_call::TransactionCallFields,
-        zero_fee::VALIDATOR_V1_NODE_HASH_SLOT,
     };
+    use outbe_system_common::zero_fee::VALIDATOR_V1_NODE_HASH_SLOT;
 
     use crate::hooks::{
         ZeroFeeAuthorization, ZeroFeeCandidate, ZeroFeeHookId, ZeroFeePolicyError,

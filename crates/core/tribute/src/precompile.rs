@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolInterface;
+use outbe_common::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::dispatch::{dispatch_call, metadata, mutate, view};
-use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 

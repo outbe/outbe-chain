@@ -400,11 +400,11 @@ pub fn queued_for_forfeit(
 ) -> outbe_primitives::error::Result<u32> {
     let credis = CredisContract::new(storage.clone());
     let Some(mut day) =
-        outbe_primitives::deadline_queue::first_day(&outbe_credis::ForfeitQueue(&credis))?
+        outbe_common::deadline_queue::first_day(&outbe_credis::ForfeitQueue(&credis))?
     else {
         return Ok(0);
     };
-    let last = outbe_primitives::deadline_queue::deadline_day(timestamp)?;
+    let last = outbe_common::deadline_queue::deadline_day(timestamp)?;
     let mut live = 0;
     while day <= last {
         live += credis.forfeit_day_live.read(&day)?;
@@ -460,11 +460,10 @@ pub fn forfeited_by(
     let credis = CredisContract::new(storage.clone());
     let queue = outbe_credis::ForfeitQueue(&credis);
     let mut due = Vec::new();
-    if let Some(first) = outbe_primitives::deadline_queue::first_day(&queue)? {
-        for day in first..=outbe_primitives::deadline_queue::deadline_day(timestamp)? {
+    if let Some(first) = outbe_common::deadline_queue::first_day(&queue)? {
+        for day in first..=outbe_common::deadline_queue::deadline_day(timestamp)? {
             for slot in 0..credis.forfeit_day_len.read(&day)? {
-                if let Some(series) = outbe_primitives::deadline_queue::entry_at(&queue, day, slot)?
-                {
+                if let Some(series) = outbe_common::deadline_queue::entry_at(&queue, day, slot)? {
                     if credis.series_member_count(series)? != 0 {
                         due.push(series);
                     }

@@ -10,6 +10,7 @@ e2e-test = []
 test-utils = []
 
 [dependencies]
+outbe-system-common.workspace = true
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-emission.workspace = true

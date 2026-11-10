@@ -4,7 +4,7 @@ use outbe_primitives::call_bins::BIN_STEP_BP;
 use outbe_primitives::{error::Result, math::reference_price};
 
 /// Whether the call price at any `u16` call rate fits `U256` for this entry.
-pub use outbe_primitives::nod_rules::is_issuable_entry;
+pub use outbe_common::nod_rules::is_issuable_entry;
 
 /// Inverse of `call_bins::price_to_bin`: returns the lower edge of bin `bin_id` in
 /// six-decimal minor units. Diagnostic-only. `bin_to_price_floor` may

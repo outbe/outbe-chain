@@ -60,7 +60,7 @@ fn the_cost_follows_the_entry_and_the_call_price_follows_the_anchor() {
         let call_rate = outbe_gem::config::read(storage).unwrap().call_rate;
         assert_eq!(
             item.terms.call_price_minor,
-            outbe_primitives::markup::marked_up(rate, call_rate).unwrap()
+            outbe_common::markup::marked_up(rate, call_rate).unwrap()
         );
     });
 }
@@ -221,7 +221,7 @@ fn a_discounted_reward_gem_opens_its_series_at_the_undiscounted_anchor() {
     let anchor = U256::from(2u64) * six_decimal_unit();
     let discount_rate: u16 = 4;
     assert!(discount_rate > 0);
-    let entry = outbe_primitives::markup::marked_down(anchor, discount_rate).unwrap();
+    let entry = outbe_common::markup::marked_down(anchor, discount_rate).unwrap();
     assert!(entry < anchor);
     let mut provider = test_storage(Some(anchor));
     let gem_id = StorageHandle::enter(&mut provider, |storage| {
