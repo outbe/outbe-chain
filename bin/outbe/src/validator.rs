@@ -12,7 +12,7 @@ use crate::{
     journal::Journal,
     process::{self, LifecycleLock},
     progress::Progress,
-    rpc::{ConsensusStatus, RpcClient, ValidatorRecord},
+    rpc::{Block, ConsensusStatus, EpochInfo, RpcClient, ValidatorRecord},
     snapshot,
 };
 
@@ -24,6 +24,17 @@ const ENCLAVE_SERVICE: &str = "outbe-enclave.service";
 const RADICLE_SERVICE: &str = "outbe-radicle.service";
 const FEEDER_SERVICE: &str = "outbe-feeder.service";
 const RENEW_TIMER: &str = "outbe-tee-renew.timer";
+
+struct StatusSnapshot<'a> {
+    local: Option<&'a Block>,
+    remote: Option<&'a Block>,
+    execution_peers: Option<u64>,
+    consensus: Option<&'a ConsensusStatus>,
+    validator: Option<&'a ValidatorRecord>,
+    local_epoch: Option<&'a EpochInfo>,
+    remote_epoch: Option<&'a EpochInfo>,
+    block_seconds: Option<f64>,
+}
 
 pub async fn prepare(bundle_path: &Path, config_path: &Path) -> Result<()> {
     let _lock = LifecycleLock::acquire()?;
@@ -56,7 +67,7 @@ pub async fn prepare(bundle_path: &Path, config_path: &Path) -> Result<()> {
         let installed = OperatorManifest::read(&root.join(bundle::MANIFEST_NAME))?;
         installed.verify_directory(root)?;
         if !journal.installed {
-            process::run(root.join("deploy/validator/install.sh"), &[])?;
+            process::capture(root.join("deploy/validator/install.sh"), &[])?;
             journal.installed = true;
             journal.save()?;
         }
@@ -95,7 +106,7 @@ pub async fn prepare(bundle_path: &Path, config_path: &Path) -> Result<()> {
     fs::rename(&staging_path, root).wrap_err("failed to publish /opt/outbe-chain")?;
     let mut journal = Journal::new(bundle_sha256, config_sha256, config);
     journal.save()?;
-    process::run(root.join("deploy/validator/install.sh"), &[])?;
+    process::capture(root.join("deploy/validator/install.sh"), &[])?;
     journal.installed = true;
     journal.save()?;
 
@@ -270,15 +281,24 @@ pub async fn status(watch: bool) -> Result<()> {
     let local = RpcClient::new(LOCAL_RPC)?;
     let remote = RpcClient::new(journal.config.network.certified_rpc.clone())?;
     let validator = validator_address(&Path::new(process::ROOT).join("keys/evm-key.hex"))?;
+    if !watch {
+        println!("{}", status_line(&local, &remote, validator).await);
+        return Ok(());
+    }
+
+    let interrupt = tokio::signal::ctrl_c();
+    tokio::pin!(interrupt);
     let mut progress = Progress::new();
     loop {
         let line = status_line(&local, &remote, validator).await;
-        if watch {
-            progress.update(&line);
-            tokio::time::sleep(Duration::from_secs(5)).await;
-        } else {
-            println!("{line}");
-            return Ok(());
+        progress.update(&line);
+        tokio::select! {
+            result = &mut interrupt => {
+                result.wrap_err("failed to listen for Ctrl-C")?;
+                progress.finish();
+                return Ok(());
+            }
+            () = tokio::time::sleep(Duration::from_secs(5)) => {}
         }
     }
 }
@@ -416,9 +436,14 @@ async fn wait_for_sync(
         let local_block = local.finalized_block().await?;
         let peers = local.peer_count().await.unwrap_or(0);
         let remaining = remote_block.number.saturating_sub(local_block.number);
+        let block_seconds = estimate_block_seconds(remote, &remote_block).await;
         progress.update(&format!(
-            "sync local={} remote={} remaining={} peers={}",
-            local_block.number, remote_block.number, remaining, peers
+            "sync h={}/{} left={}{} p2p={}",
+            local_block.number,
+            remote_block.number,
+            remaining,
+            eta_field(remaining, block_seconds),
+            peers
         ));
         if peers > 0 && local_block.number >= remote_block.number {
             let local_at_remote = local.block_number(remote_block.number).await?;
@@ -443,8 +468,10 @@ async fn wait_for_verifier(
         wait_for_sync(local, remote, progress).await?;
         let status = local.consensus_status().await?;
         progress.update(&format!(
-            "promotion mode={} peers={} shares={}",
-            status.mode, status.connected_peers, status.has_threshold_shares
+            "validator bootstrap mode={} signers={} shares={}",
+            status.mode,
+            status.connected_peers,
+            yes_no(status.has_threshold_shares)
         ));
         if status.is_validator && matches!(status.mode.as_str(), "verifier" | "signer") {
             return Ok(());
@@ -462,16 +489,19 @@ async fn wait_for_signer(
     loop {
         let status = local.consensus_status().await?;
         let record = remote.validator(validator).await?;
+        let remote_block = remote.finalized_block().await?;
         let remaining = status
             .next_planned_activation_height
-            .saturating_sub(status.last_finalized_block);
+            .saturating_sub(remote_block.number);
+        let block_seconds = estimate_block_seconds(remote, &remote_block).await;
         progress.update(&format!(
-            "DKG mode={} shares={} peers={} activation={} remaining={}",
+            "DKG mode={} shares={} signers={} activation={} left={}{}",
             status.mode,
-            status.has_threshold_shares,
+            yes_no(status.has_threshold_shares),
             status.connected_peers,
             status.next_planned_activation_height,
-            remaining
+            remaining,
+            eta_field(remaining, block_seconds)
         ));
         if status.is_ready_signer(&record) {
             wait_for_sync(local, remote, progress).await?;
@@ -503,94 +533,183 @@ async fn wait_transaction_finalized(
 }
 
 async fn status_line(local: &RpcClient, remote: &RpcClient, validator: Address) -> String {
-    let remote_height = remote
-        .finalized_block()
-        .await
-        .ok()
-        .map(|block| block.number);
-    let local_height = local.finalized_block().await.ok().map(|block| block.number);
-    let consensus = local.consensus_status().await.ok();
-    let record = remote.validator(validator).await.ok();
-    format_status(
-        local_height,
-        remote_height,
-        consensus.as_ref(),
-        record.as_ref(),
-    )
+    let (remote_block, local_block, execution_peers, consensus, record, local_epoch, remote_epoch) = tokio::join!(
+        remote.finalized_block(),
+        local.finalized_block(),
+        local.peer_count(),
+        local.consensus_status(),
+        remote.validator(validator),
+        local.epoch_info(),
+        remote.epoch_info(),
+    );
+    let remote_block = remote_block.ok();
+    let block_seconds = match remote_block.as_ref() {
+        Some(block) => estimate_block_seconds(remote, block).await,
+        None => None,
+    };
+    format_status(StatusSnapshot {
+        local: local_block.as_ref().ok(),
+        remote: remote_block.as_ref(),
+        execution_peers: execution_peers.ok(),
+        consensus: consensus.as_ref().ok(),
+        validator: record.as_ref().ok(),
+        local_epoch: local_epoch.as_ref().ok(),
+        remote_epoch: remote_epoch.as_ref().ok(),
+        block_seconds,
+    })
 }
 
-fn format_status(
-    local: Option<u64>,
-    remote: Option<u64>,
-    consensus: Option<&ConsensusStatus>,
-    validator: Option<&ValidatorRecord>,
-) -> String {
+fn format_status(snapshot: StatusSnapshot<'_>) -> String {
     let fullnode = process::systemctl_is_active(FULL_NODE);
     let validator_service = process::systemctl_is_active(VALIDATOR_SERVICE);
-    let role = match (fullnode, validator_service) {
-        (true, true) => "conflict",
-        (true, false) => "fullnode",
-        (false, true) => "validator",
-        (false, false) => "stopped",
+    let chain = chain_status(snapshot.local, snapshot.remote, snapshot.block_seconds);
+
+    match (fullnode, validator_service) {
+        (true, true) => format!("conflict | {chain} | svc=full-node+validator"),
+        (true, false) => {
+            let peers = snapshot
+                .execution_peers
+                .map_or_else(|| "?".to_owned(), |value| value.to_string());
+            let epoch = epoch_status(snapshot.local_epoch, snapshot.remote_epoch);
+            format!("full-node | {chain} | p2p={peers} | {epoch} | svc=ok")
+        }
+        (false, true) => {
+            let lifecycle = snapshot
+                .validator
+                .map_or_else(|| "unknown".to_owned(), validator_lifecycle);
+            let consensus = validator_consensus_status(
+                snapshot.consensus,
+                snapshot.remote,
+                snapshot.block_seconds,
+            );
+            let services = validator_services_status();
+            format!("validator/{lifecycle} | {chain} | {consensus} | {services}")
+        }
+        (false, false) => format!("stopped | {chain} | svc=down"),
+    }
+}
+
+fn chain_status(local: Option<&Block>, remote: Option<&Block>, seconds: Option<f64>) -> String {
+    let heights = format!(
+        "h={}/{}",
+        local.map_or_else(|| "?".into(), |block| block.number.to_string()),
+        remote.map_or_else(|| "?".into(), |block| block.number.to_string())
+    );
+    let (Some(local), Some(remote)) = (local, remote) else {
+        return heights;
     };
-    let chain = format!(
-        "{}/{}",
-        local.map_or_else(|| "?".into(), |value| value.to_string()),
-        remote.map_or_else(|| "?".into(), |value| value.to_string())
+    let remaining = remote.number.saturating_sub(local.number);
+    if remaining == 0 {
+        format!("{heights} synced")
+    } else {
+        format!(
+            "{heights} ({remaining} behind{})",
+            eta_suffix(remaining, seconds)
+        )
+    }
+}
+
+fn epoch_status(local: Option<&EpochInfo>, remote: Option<&EpochInfo>) -> String {
+    match (local, remote) {
+        (Some(local), Some(remote)) if local.epoch_number == remote.epoch_number => {
+            format!("epoch={}", local.epoch_number)
+        }
+        (Some(local), Some(remote)) => {
+            format!("epochs={}/{}", local.epoch_number, remote.epoch_number)
+        }
+        (Some(local), None) => format!("epoch={}/?", local.epoch_number),
+        (None, Some(remote)) => format!("epoch=?/{}", remote.epoch_number),
+        (None, None) => "epoch=?".to_owned(),
+    }
+}
+
+fn validator_consensus_status(
+    status: Option<&ConsensusStatus>,
+    remote: Option<&Block>,
+    seconds: Option<f64>,
+) -> String {
+    let Some(status) = status else {
+        return "consensus=?".to_owned();
+    };
+    let mut value = format!(
+        "{} signers={} shares={}",
+        status.mode,
+        status.connected_peers,
+        yes_no(status.has_threshold_shares)
     );
-    let consensus_text = consensus.map_or_else(
-        || "mode=? p=? shares=?".to_owned(),
-        |value| {
-            format!(
-                "{} p={} shares={}",
-                value.mode,
-                value.connected_peers,
-                yes_no(value.has_threshold_shares)
-            )
-        },
-    );
-    let lifecycle = validator.map_or_else(|| "unknown".to_owned(), validator_lifecycle);
+    if status.mode != "signer" && status.next_planned_activation_height > 0 {
+        let finalized = remote.map_or(status.last_finalized_block, |block| block.number);
+        let remaining = status
+            .next_planned_activation_height
+            .saturating_sub(finalized);
+        value.push_str(&format!(
+            " | DKG={} ({remaining} blocks{})",
+            status.next_planned_activation_height,
+            eta_suffix(remaining, seconds)
+        ));
+    }
+    value
+}
+
+fn validator_services_status() -> String {
     let mut down = Vec::new();
-    if validator_service {
-        for (name, unit) in [
-            ("enclave", ENCLAVE_SERVICE),
-            ("radicle", RADICLE_SERVICE),
-            ("feeder", FEEDER_SERVICE),
-            ("renew", RENEW_TIMER),
-        ] {
-            if !process::systemctl_is_active(unit) {
-                down.push(name);
-            }
+    for (name, unit) in [
+        ("enclave", ENCLAVE_SERVICE),
+        ("radicle", RADICLE_SERVICE),
+        ("feeder", FEEDER_SERVICE),
+        ("renew", RENEW_TIMER),
+    ] {
+        if !process::systemctl_is_active(unit) {
+            down.push(name);
         }
     }
-    let services = if down.is_empty() {
+    if down.is_empty() {
         "svc=ok".to_owned()
     } else {
         format!("down={}", down.join(","))
-    };
-    let dkg = consensus_status_suffix(consensus, validator_service);
-    let role = if validator_service {
-        format!("{role}/{lifecycle}")
-    } else {
-        role.to_owned()
-    };
-    format!("{role} | h={chain} | {consensus_text} | {services}{dkg}")
+    }
 }
 
-fn consensus_status_suffix(consensus: Option<&ConsensusStatus>, validator: bool) -> String {
-    let Some(consensus) = consensus else {
+async fn estimate_block_seconds(remote: &RpcClient, head: &Block) -> Option<f64> {
+    let window = head.number.min(120);
+    if window == 0 {
+        return None;
+    }
+    let previous = remote.block_number(head.number - window).await.ok()?;
+    let elapsed = head.timestamp.checked_sub(previous.timestamp)?;
+    (elapsed > 0).then_some(elapsed as f64 / window as f64)
+}
+
+fn eta_suffix(blocks: u64, block_seconds: Option<f64>) -> String {
+    let Some(block_seconds) = block_seconds else {
         return String::new();
     };
-    if !validator || consensus.mode == "signer" || consensus.next_planned_activation_height == 0 {
+    let seconds = (blocks as f64 * block_seconds).round() as u64;
+    format!(", ~{}", human_duration(seconds))
+}
+
+fn eta_field(blocks: u64, block_seconds: Option<f64>) -> String {
+    let Some(block_seconds) = block_seconds else {
         return String::new();
+    };
+    let seconds = (blocks as f64 * block_seconds).round() as u64;
+    format!(" eta=~{}", human_duration(seconds))
+}
+
+fn human_duration(seconds: u64) -> String {
+    if seconds < 60 {
+        format!("{seconds}s")
+    } else if seconds < 3_600 {
+        format!("{}m", seconds.div_ceil(60))
+    } else {
+        let hours = seconds / 3_600;
+        let minutes = (seconds % 3_600).div_ceil(60);
+        if minutes == 0 || minutes == 60 {
+            format!("{}h", hours + u64::from(minutes == 60))
+        } else {
+            format!("{hours}h {minutes}m")
+        }
     }
-    let remaining = consensus
-        .next_planned_activation_height
-        .saturating_sub(consensus.last_finalized_block);
-    format!(
-        " | DKG={} (-{})",
-        consensus.next_planned_activation_height, remaining
-    )
 }
 
 fn validator_lifecycle(record: &ValidatorRecord) -> String {

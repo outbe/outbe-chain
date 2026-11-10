@@ -75,7 +75,7 @@ pub fn capture(program: impl AsRef<Path>, args: &[&str]) -> Result<String> {
 }
 
 pub fn systemctl(args: &[&str]) -> Result<()> {
-    run("systemctl", args)
+    capture("systemctl", args).map(|_| ())
 }
 
 pub fn systemctl_is_active(unit: &str) -> bool {
@@ -87,12 +87,18 @@ pub fn systemctl_is_active(unit: &str) -> bool {
 
 fn output_text(program: &Path, output: Output) -> Result<String> {
     if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = match (stdout.trim(), stderr.trim()) {
+            ("", stderr) => stderr.to_owned(),
+            (stdout, "") => stdout.to_owned(),
+            (stdout, stderr) => format!("{stderr}\n{stdout}"),
+        };
         bail!(
             "{} exited with {}: {}",
             program.display(),
             output.status,
-            stderr.trim()
+            detail
         );
     }
     String::from_utf8(output.stdout).wrap_err("command output is not UTF-8")

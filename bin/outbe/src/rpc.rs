@@ -28,6 +28,11 @@ pub struct Block {
     pub timestamp: u64,
 }
 
+#[derive(Clone, Debug)]
+pub struct EpochInfo {
+    pub epoch_number: u64,
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConsensusStatus {
@@ -146,6 +151,14 @@ impl RpcClient {
     pub async fn consensus_status(&self) -> Result<ConsensusStatus> {
         serde_json::from_value(self.call("outbe_consensusStatus", json!([])).await?)
             .wrap_err("invalid outbe_consensusStatus response")
+    }
+
+    pub async fn epoch_info(&self) -> Result<EpochInfo> {
+        let value = self.call("outbe_getEpochInfo", json!([])).await?;
+        Ok(EpochInfo {
+            epoch_number: parse_hex_u64(value.get("epochNumber").unwrap_or(&Value::Null))
+                .wrap_err("invalid outbe_getEpochInfo epoch number")?,
+        })
     }
 
     pub async fn min_stake(&self) -> Result<U256> {
