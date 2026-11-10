@@ -1,13 +1,14 @@
 use std::{
     io::{self, IsTerminal, Write},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
+
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 
 pub struct Progress {
     interactive: bool,
-    line_visible: bool,
     active_stage: Option<String>,
-    rendered_message: Option<String>,
+    spinner: Option<ProgressBar>,
 }
 
 pub struct WatchDisplay {
@@ -18,9 +19,8 @@ impl Progress {
     pub fn new() -> Self {
         Self {
             interactive: io::stdout().is_terminal(),
-            line_visible: false,
             active_stage: None,
-            rendered_message: None,
+            spinner: None,
         }
     }
 
@@ -28,7 +28,7 @@ impl Progress {
         self.finish_active_stage();
         self.active_stage = Some(message.to_owned());
         if self.interactive {
-            self.render(message);
+            self.spinner = Some(new_spinner(message));
         } else {
             println!("==> {message}");
         }
@@ -39,7 +39,10 @@ impl Progress {
             if self.active_stage.is_none() {
                 self.active_stage = Some(message.to_owned());
             }
-            self.render(message);
+            match &self.spinner {
+                Some(spinner) => spinner.set_message(message.to_owned()),
+                None => self.spinner = Some(new_spinner(message)),
+            }
         } else {
             let timestamp = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -49,7 +52,7 @@ impl Progress {
     }
 
     pub fn done(&mut self, message: &str) {
-        self.clear_line();
+        self.clear_spinner();
         self.active_stage = None;
         println!("OK  {message}");
     }
@@ -58,36 +61,36 @@ impl Progress {
         let Some(stage) = self.active_stage.take() else {
             return;
         };
-        self.clear_line();
+        self.clear_spinner();
         if self.interactive {
             println!("OK  {stage}");
         }
     }
 
-    fn render(&mut self, message: &str) {
-        if self.rendered_message.as_deref() == Some(message) {
-            return;
+    fn clear_spinner(&mut self) {
+        if let Some(spinner) = self.spinner.take() {
+            spinner.finish_and_clear();
         }
-        print!("\r\x1b[2K● {message}");
-        let _ = io::stdout().flush();
-        self.line_visible = true;
-        self.rendered_message = Some(message.to_owned());
-    }
-
-    fn clear_line(&mut self) {
-        if self.interactive && self.line_visible {
-            print!("\r\x1b[2K");
-            let _ = io::stdout().flush();
-            self.line_visible = false;
-        }
-        self.rendered_message = None;
     }
 }
 
 impl Drop for Progress {
     fn drop(&mut self) {
-        self.clear_line();
+        self.clear_spinner();
     }
+}
+
+fn new_spinner(message: &str) -> ProgressBar {
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_draw_target(ProgressDrawTarget::stdout());
+    spinner.set_style(
+        ProgressStyle::with_template("{spinner} {msg}")
+            .expect("static progress template must be valid")
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+    );
+    spinner.set_message(message.to_owned());
+    spinner.enable_steady_tick(Duration::from_millis(100));
+    spinner
 }
 
 impl WatchDisplay {

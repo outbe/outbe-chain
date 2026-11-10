@@ -15,6 +15,7 @@ alloy-sol-types.workspace = true
 clap.workspace = true
 eyre.workspace = true
 hex.workspace = true
+indicatif.workspace = true
 k256.workspace = true
 outbe-snapshot.workspace = true
 rand.workspace = true
