@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use alloy_primitives::Address;
 use eyre::{bail, ensure, Result};
@@ -7,6 +7,31 @@ use crate::{
     progress::Progress,
     rpc::{Block, RpcClient},
 };
+
+const SYNC_POLL_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Default)]
+struct CatchupEta {
+    baseline: Option<(u64, Instant)>,
+}
+
+impl CatchupEta {
+    fn seconds_remaining(&mut self, remaining: u64) -> Option<u64> {
+        let now = Instant::now();
+        let Some((baseline, started)) = self.baseline else {
+            self.baseline = Some((remaining, now));
+            return None;
+        };
+        if remaining >= baseline {
+            self.baseline = Some((remaining, now));
+            return None;
+        }
+        let elapsed = started.elapsed().as_secs_f64();
+        let caught_up = (baseline - remaining) as f64;
+        (elapsed >= 1.0 && caught_up > 0.0)
+            .then(|| (remaining as f64 * elapsed / caught_up).round() as u64)
+    }
+}
 
 pub async fn wait_for_rpc_chain(
     rpc: &RpcClient,
@@ -33,18 +58,34 @@ pub async fn wait_for_sync(
     remote: &RpcClient,
     progress: &mut Progress,
 ) -> Result<(u64, u64)> {
+    let mut eta = CatchupEta::default();
+    let mut last = None;
     loop {
-        let remote_block = remote.finalized_block().await?;
-        let local_block = local.finalized_block().await?;
-        let peers = local.peer_count().await.unwrap_or(0);
+        let poll = tokio::time::timeout(SYNC_POLL_TIMEOUT, async {
+            let remote_block = remote.finalized_block().await?;
+            let local_block = local.finalized_block().await?;
+            let peers = local.peer_count().await.unwrap_or(0);
+            Ok::<_, eyre::Report>((remote_block, local_block, peers))
+        })
+        .await;
+        let (remote_block, local_block, peers) = match poll {
+            Ok(result) => result?,
+            Err(_) => {
+                let detail = last.map_or_else(String::new, |(local, remote)| {
+                    format!("; last h={local}/{remote}")
+                });
+                progress.update(&format!("sync RPC busy; node still running{detail}"));
+                continue;
+            }
+        };
         let remaining = remote_block.number.saturating_sub(local_block.number);
-        let block_seconds = estimate_block_seconds(remote, &remote_block).await;
+        last = Some((local_block.number, remote_block.number));
         progress.update(&format!(
             "sync h={}/{} left={}{} p2p={}",
             local_block.number,
             remote_block.number,
             remaining,
-            eta_field(remaining, block_seconds),
+            eta_seconds_field(eta.seconds_remaining(remaining)),
             peers
         ));
         if peers > 0 && local_block.number >= remote_block.number {
@@ -158,6 +199,12 @@ fn eta_field(blocks: u64, block_seconds: Option<f64>) -> String {
     };
     let seconds = (blocks as f64 * block_seconds).round() as u64;
     format!(" eta=~{}", human_duration(seconds))
+}
+
+fn eta_seconds_field(seconds: Option<u64>) -> String {
+    seconds.map_or_else(String::new, |seconds| {
+        format!(" eta=~{}", human_duration(seconds))
+    })
 }
 
 fn human_duration(seconds: u64) -> String {

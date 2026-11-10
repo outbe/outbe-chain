@@ -15,6 +15,28 @@ fail() {
   exit 1
 }
 
+install_system_gramine_paths() {
+  local manifest=$OUTBE_ROOT/outbe-tee-enclave.manifest.sgx
+  local enclave_pattern='/opt/outbe-chain/releases/[A-Za-z0-9._-]+/bin/outbe-tee-enclave'
+  local descriptor_pattern='/opt/outbe-chain/releases/[A-Za-z0-9._-]+/sgx/network-descriptor-v1.bin'
+  local -a enclave_paths descriptor_paths
+
+  mapfile -t enclave_paths < <(grep -oE "$enclave_pattern" "$manifest" | sort -u)
+  mapfile -t descriptor_paths < <(grep -oE "$descriptor_pattern" "$manifest" | sort -u)
+  [[ ${#enclave_paths[@]} -eq 1 ]] || \
+    fail 'signed Gramine manifest must reference one release enclave path'
+  [[ ${#descriptor_paths[@]} -eq 1 ]] || \
+    fail 'signed Gramine manifest must reference one release descriptor path'
+
+  install -d -o root -g root -m 0755 \
+    "$(dirname -- "${enclave_paths[0]}")" \
+    "$(dirname -- "${descriptor_paths[0]}")"
+  install -o root -g root -m 0755 \
+    "$OUTBE_ROOT/outbe-tee-enclave" "${enclave_paths[0]}"
+  install -o root -g root -m 0644 \
+    "$OUTBE_ROOT/network-descriptor-v1.bin" "${descriptor_paths[0]}"
+}
+
 [[ $EUID -eq 0 ]] || fail 'must run as root'
 [[ $SOURCE_DIR == "$EXPECTED_SOURCE_DIR" ]] || \
   fail "deployment assets must be installed at $EXPECTED_SOURCE_DIR"
@@ -130,6 +152,10 @@ done
   cd "$OUTBE_ROOT"
   sha256sum -c --quiet SHA256SUMS
 ) || fail 'bundle checksum verification failed'
+
+if [[ $OUTBE_ENCLAVE_RUNTIME == system-gramine ]]; then
+  install_system_gramine_paths
+fi
 
 install -o root -g root -m 0755 "$OUTBE_ROOT/outbe-app" /usr/local/bin/outbe-app
 

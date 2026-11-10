@@ -19,6 +19,7 @@ const ENCLAVE_SERVICE: &str = "outbe-enclave.service";
 const RADICLE_SERVICE: &str = "outbe-radicle.service";
 const FEEDER_SERVICE: &str = "outbe-feeder.service";
 const RENEW_TIMER: &str = "outbe-tee-renew.timer";
+const STATUS_POLL_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct StatusSnapshot<'a> {
     local: Option<&'a Block>,
@@ -45,15 +46,37 @@ pub async fn show(watch: bool) -> Result<()> {
     let interrupt = tokio::signal::ctrl_c();
     tokio::pin!(interrupt);
     let display = WatchDisplay::new();
+    let mut last_status = None;
     loop {
-        let line = status_line(&local, &remote, validator).await;
+        let (line, refresh_delay) = match tokio::time::timeout(
+            STATUS_POLL_TIMEOUT,
+            status_line(&local, &remote, validator),
+        )
+        .await
+        {
+            Ok(line) => {
+                last_status = Some(line.clone());
+                (line, Duration::from_secs(5))
+            }
+            Err(_) => (
+                last_status.as_ref().map_or_else(
+                    || "Status      RPC busy; node still running".to_owned(),
+                    |status| {
+                        format!(
+                            "{status}\nStatus      RPC busy; node still running (last successful poll)"
+                        )
+                    },
+                ),
+                Duration::ZERO,
+            ),
+        };
         display.render(&line);
         tokio::select! {
             result = &mut interrupt => {
                 result.wrap_err("failed to listen for Ctrl-C")?;
                 return Ok(());
             }
-            () = tokio::time::sleep(Duration::from_secs(5)) => {}
+            () = tokio::time::sleep(refresh_delay) => {}
         }
     }
 }
