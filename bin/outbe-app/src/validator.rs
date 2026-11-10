@@ -184,7 +184,7 @@ pub async fn promote() -> Result<()> {
     progress.stage("checking synchronized full node and validator state");
     ensure!(
         process::systemctl_is_active(FULL_NODE) || process::systemctl_is_active(VALIDATOR_SERVICE),
-        "run `outbe validator sync` before promotion"
+        "run `outbe-app validator sync` before promotion"
     );
     wait_for_rpc_chain(&local, journal.config.network.chain_id, &mut progress).await?;
     wait_for_sync(&local, &remote, &mut progress).await?;
@@ -385,7 +385,7 @@ fn print_prepare_summary(validator: Address, minimum_stake: U256, certified_rpc:
     println!("  Reth P2P key:     /opt/outbe-chain/keys/reth-p2p-secret.hex");
     println!("  Radicle identity: /opt/outbe-chain/keys/radicle");
     println!();
-    println!("Fund this address before `outbe validator promote`:");
+    println!("Fund this address before `outbe-app validator promote`:");
     println!("VALIDATOR_ADDR='{validator:#x}'");
     println!("CERTIFIED_RPC='{certified_rpc}'");
     println!("MINIMUM_STAKE_WEI='{minimum_stake}'");

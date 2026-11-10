@@ -11,7 +11,7 @@ use sha2::{Digest as _, Sha256};
 use time::OffsetDateTime;
 
 pub const EXPECTED_ARTIFACTS: &[&str] = &[
-    "outbe",
+    "outbe-app",
     "outbe-chain",
     "outbe-cli",
     "outbe-keygen",

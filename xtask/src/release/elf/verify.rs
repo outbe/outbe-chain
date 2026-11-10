@@ -16,7 +16,7 @@ use super::manifest::{
 use crate::release::sgx::canonical_json;
 
 pub const EXPECTED_CHECKSUM_PATHS: &[&str] = &[
-    "bin/outbe",
+    "bin/outbe-app",
     "bin/outbe-chain",
     "bin/outbe-cli",
     "bin/outbe-feeder",

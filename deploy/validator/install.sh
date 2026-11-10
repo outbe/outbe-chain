@@ -111,7 +111,7 @@ required_files=(
   SHA256SUMS
 )
 required_binaries=(
-  outbe
+  outbe-app
   outbe-chain
   outbe-cli
   outbe-keygen
@@ -131,7 +131,7 @@ done
   sha256sum -c --quiet SHA256SUMS
 ) || fail 'bundle checksum verification failed'
 
-install -o root -g root -m 0755 "$OUTBE_ROOT/outbe" /usr/local/bin/outbe
+install -o root -g root -m 0755 "$OUTBE_ROOT/outbe-app" /usr/local/bin/outbe-app
 
 [[ $(jq -er '.config.chainId' "$OUTBE_ROOT/genesis.json") == "$OUTBE_CHAIN_ID" ]] || \
   fail 'genesis chain ID does not match validator.env'
