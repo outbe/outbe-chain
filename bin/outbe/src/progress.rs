@@ -15,6 +15,10 @@ pub struct Progress {
     spinner: Option<Spinner>,
 }
 
+pub struct WatchDisplay {
+    interactive: bool,
+}
+
 struct Spinner {
     stop: Arc<AtomicBool>,
     message: Arc<Mutex<String>>,
@@ -63,14 +67,6 @@ impl Progress {
         println!("OK  {message}");
     }
 
-    pub fn finish(&mut self) {
-        self.stop_spinner();
-        self.clear_line();
-        if self.interactive {
-            println!();
-        }
-    }
-
     fn stop_spinner(&mut self) {
         if let Some(mut spinner) = self.spinner.take() {
             spinner.stop.store(true, Ordering::Relaxed);
@@ -93,6 +89,37 @@ impl Drop for Progress {
     fn drop(&mut self) {
         self.stop_spinner();
         self.clear_line();
+    }
+}
+
+impl WatchDisplay {
+    pub fn new() -> Self {
+        let interactive = io::stdout().is_terminal();
+        if interactive {
+            print!("\x1b[?1049h\x1b[?25l");
+            let _ = io::stdout().flush();
+        }
+        Self { interactive }
+    }
+
+    pub fn render(&self, status: &str) {
+        if self.interactive {
+            print!(
+                "\x1b[H\x1b[2JOutbe node status\n\n{status}\n\nRefresh: 5s  |  Ctrl-C to stop\n"
+            );
+            let _ = io::stdout().flush();
+        } else {
+            println!("{status}");
+        }
+    }
+}
+
+impl Drop for WatchDisplay {
+    fn drop(&mut self) {
+        if self.interactive {
+            print!("\x1b[?25h\x1b[?1049l");
+            let _ = io::stdout().flush();
+        }
     }
 }
 
