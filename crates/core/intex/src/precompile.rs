@@ -7,10 +7,10 @@
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolInterface;
-use outbe_primitives::dispatch::{dispatch_call, metadata, view};
-use outbe_primitives::erc::{
+use outbe_common::erc::{
     ERC1155_INTERFACE_ID, ERC1155_METADATA_URI_INTERFACE_ID, ERC165_INTERFACE_ID,
 };
+use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::error::Result;
 
 use crate::constants::{SETTLED_TOKEN_NAME, SETTLED_TOKEN_SYMBOL};

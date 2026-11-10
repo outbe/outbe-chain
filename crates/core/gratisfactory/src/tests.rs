@@ -6,9 +6,9 @@
 use alloy_primitives::{address, Address, Bytes, FixedBytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolInterface};
 
+use outbe_common::erc::ERC165_INTERFACE_ID;
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_primitives::addresses::{GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS};
-use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY;

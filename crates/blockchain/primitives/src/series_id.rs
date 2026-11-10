@@ -2,7 +2,7 @@
 //! reference letter when the two currencies differ; `YYYYMMDD-CCC` names the one currency
 //! when they match, padded with two `0x00` bytes in the 14-byte field.
 
-use alloy_primitives::{FixedBytes, U256};
+use alloy_primitives::{Address, FixedBytes, U256};
 use std::fmt;
 
 use crate::stablecoin::iso_4217_alpha;
@@ -81,6 +81,11 @@ impl SeriesId {
         U256::from_be_bytes(hasher.finalize().0)
     }
 
+    /// Derives `nod_id = keccak256(series_id || owner)`.
+    pub fn derive_nod_id(&self, owner: Address) -> U256 {
+        self.right_id(&[owner.as_slice()])
+    }
+
     /// The date the id leads with, as `YYYYMMDD`.
     pub fn day(&self) -> u32 {
         self.0[..DAY_DIGITS].iter().fold(0u32, |acc, byte| {
@@ -140,12 +145,6 @@ impl Storable for SeriesId {
 impl StorageKey for SeriesId {
     fn key_bytes(&self) -> Vec<u8> {
         self.0.to_vec()
-    }
-}
-
-impl crate::deadline_queue::QueueEntry for SeriesId {
-    fn is_vacant(&self) -> bool {
-        self.0 == [0; SERIES_ID_LEN]
     }
 }
 

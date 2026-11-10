@@ -187,7 +187,7 @@ pub(crate) fn chunk_issuance_messages(
 
 /// `entry x (100 + rate) / 100`, the markup a series seals its call price at.
 pub fn marked_up(entry_price: U256, rate: u16) -> Result<U256> {
-    outbe_primitives::markup::marked_up(entry_price, rate)
+    outbe_common::markup::marked_up(entry_price, rate)
         .ok_or_else(|| IntexFactoryError::MarkedUpPriceOverflow.into())
 }
 

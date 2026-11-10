@@ -88,6 +88,8 @@ parking_lot.workspace = true
 postcard.workspace = true
 
 [dev-dependencies]
+outbe-common.workspace = true
+outbe-system-common.workspace = true
 outbe-cycle = { workspace = true, features = ["test-utils"] }
 outbe-genesis-cli.workspace = true
 outbe-consensus = { workspace = true, features = ["test-utils"] }

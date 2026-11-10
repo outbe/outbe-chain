@@ -26,12 +26,12 @@ use outbe_cycle::{
     ICycle,
 };
 use outbe_primitives::{
-    accounting_progress::AccountingProgressView,
     addresses::ACCOUNTING_PROGRESS_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     error::{PrecompileError, Result},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
+use outbe_system_common::accounting_progress::AccountingProgressView;
 use proptest::prelude::*;
 
 const CHAIN_ID: u64 = 1;

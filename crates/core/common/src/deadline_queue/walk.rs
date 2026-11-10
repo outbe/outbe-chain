@@ -4,10 +4,10 @@ use super::{
     day_end, deadline_day, entry_at, first_day, pack_cursor, remove, retarget, unpack_cursor,
     DeadlineHandler, DeadlineQueueStore, Due, Progress,
 };
-use crate::error::{decide, Decided, PrecompileError, Result};
-use crate::math::constants::MAX_BIN_ID;
-use crate::pass_budget::PassBudget;
-use crate::storage::StorageHandle;
+use outbe_primitives::error::{decide, Decided, PrecompileError, Result};
+use outbe_primitives::math::constants::MAX_BIN_ID;
+use outbe_primitives::pass_budget::PassBudget;
+use outbe_primitives::storage::StorageHandle;
 
 /// This structure stores the actual block time and the selected cutoff day for scheduling.
 /// Processing missed days must not use the cutoff as the clock for retries.

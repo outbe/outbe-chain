@@ -5,8 +5,8 @@
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolInterface;
+use outbe_common::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::dispatch::{dispatch_call, mutate_void, reject_value, view};
-use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 

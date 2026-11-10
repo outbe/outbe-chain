@@ -651,7 +651,7 @@ fn price_coen_in(storage: &StorageHandle<'_>, iso: u16, vwap: U256, reference: b
 
 /// `price` less the agent discount, the entry of an agent reward Gem.
 fn discounted(price: U256) -> U256 {
-    outbe_primitives::markup::marked_down(price, crate::constants::AGENT_DISCOUNT_PCT).unwrap()
+    outbe_common::markup::marked_down(price, crate::constants::AGENT_DISCOUNT_PCT).unwrap()
 }
 
 fn gem_of(storage: &StorageHandle<'_>, owner: Address) -> outbe_gem::GemView {
@@ -693,7 +693,7 @@ fn claiming_a_pool_issues_its_gem() {
         let call_rate = outbe_gem::config::read(&storage).unwrap().call_rate;
         assert_eq!(
             gem.terms.call_price_minor,
-            outbe_primitives::markup::marked_up(ONE_COEN, call_rate).unwrap()
+            outbe_common::markup::marked_up(ONE_COEN, call_rate).unwrap()
         );
 
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), U256::ZERO);

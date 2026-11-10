@@ -2,7 +2,7 @@
 //! (short terms). Genesis seeds the selector byte into each right's contract. An unset
 //! byte resolves by network, so only mainnet runs PROD. The values stay with each right.
 
-use crate::chain::is_mainnet;
+use outbe_primitives::chain::is_mainnet;
 
 /// Resolve by network: PROD on mainnet, DEV everywhere else.
 pub const PROFILE_AUTO: u8 = 0;
@@ -23,7 +23,7 @@ pub fn select<T>(selector: u8, chain_id: u64, prod: T, dev: T) -> Option<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID};
+    use outbe_primitives::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID};
 
     #[test]
     fn auto_resolves_by_network_and_explicit_selectors_win() {

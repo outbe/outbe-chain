@@ -3,15 +3,12 @@
 use alloy_primitives::{Address, U256};
 
 /// `keccak256(series_id || owner)`: one Nod per owner and series.
-pub fn derive_nod_id(series_id: crate::series_id::SeriesId, owner: Address) -> U256 {
-    series_id.right_id(&[owner.as_slice()])
+pub fn derive_nod_id(series_id: outbe_primitives::series_id::SeriesId, owner: Address) -> U256 {
+    series_id.derive_nod_id(owner)
 }
 
-use crate::{
-    error::Result,
-    settlement::{settlement_cost_units, SettlementCost},
-    units::PROTOCOL_AMOUNT_DECIMALS,
-};
+use crate::settlement::{settlement_cost_units, SettlementCost};
+use outbe_primitives::{error::Result, units::PROTOCOL_AMOUNT_DECIMALS};
 
 pub fn is_issuable_entry(entry: U256) -> bool {
     crate::markup::marked_up(entry, u16::MAX).is_some()
@@ -38,7 +35,7 @@ mod tests {
     #[test]
     fn nod_matches_independent_packed_keccak_vector_and_binds_series_and_owner() {
         let owner = Address::repeat_byte(0x42);
-        let series = crate::series_id::SeriesId::for_pair(20261029, 978, 840).unwrap();
+        let series = outbe_primitives::series_id::SeriesId::for_pair(20261029, 978, 840).unwrap();
         let preimage = alloy_primitives::hex!(
             "32303236313032392d4555522d554242424242424242424242424242424242424242"
         );
@@ -54,7 +51,7 @@ mod tests {
         assert_ne!(derive_nod_id(series, Address::repeat_byte(0x43)), expected);
         assert_ne!(
             derive_nod_id(
-                crate::series_id::SeriesId::for_pair(20261030, 978, 840).unwrap(),
+                outbe_primitives::series_id::SeriesId::for_pair(20261030, 978, 840).unwrap(),
                 owner
             ),
             expected

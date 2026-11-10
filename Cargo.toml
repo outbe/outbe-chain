@@ -15,6 +15,7 @@ members = [
     "crates/blockchain/radicle",
     "crates/blockchain/snapshot",
     # system
+    "crates/system/common",
     "crates/system/validatorset",
     "crates/system/slashindicator",
     "crates/system/staking",
@@ -96,6 +97,7 @@ default-members = [
     "crates/blockchain/radicle",
     "crates/blockchain/snapshot",
     # system
+    "crates/system/common",
     "crates/system/validatorset",
     "crates/system/slashindicator",
     "crates/system/staking",
@@ -196,6 +198,7 @@ outbe-operator = { path = "crates/blockchain/operator" }
 outbe-radicle = { path = "crates/blockchain/radicle" }
 outbe-snapshot = { path = "crates/blockchain/snapshot" }
 # Internal - system
+outbe-system-common = { path = "crates/system/common" }
 outbe-validatorset = { path = "crates/system/validatorset" }
 outbe-slashindicator = { path = "crates/system/slashindicator" }
 outbe-staking = { path = "crates/system/staking" }

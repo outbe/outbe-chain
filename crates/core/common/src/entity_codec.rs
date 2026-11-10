@@ -1,8 +1,8 @@
-use crate::time::WorldwideDay;
 use alloy_primitives::{Address, B256, U256};
+use outbe_primitives::time::WorldwideDay;
 use thiserror::Error;
 
-use crate::wwd_entity_id::WwdEntityId;
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 mod nod_v1;
 pub use nod_v1::{
@@ -500,8 +500,8 @@ fn canonical_decoded<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::nod_encryption::{EncryptedNodV1, NodTermsV1, NOD_BLOB_LEN};
-    use crate::tribute_encryption::{
+    use outbe_primitives::nod_encryption::{EncryptedNodV1, NodTermsV1, NOD_BLOB_LEN};
+    use outbe_primitives::tribute_encryption::{
         EncryptedTributeV2, TributeContextV2, TRIBUTE_AMOUNTS_BLOB_LEN,
     };
 

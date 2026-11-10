@@ -7777,6 +7777,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-ccaregistry",
+ "outbe-common",
  "outbe-emission",
  "outbe-gem",
  "outbe-gemfactory",
@@ -7797,6 +7798,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-agentreward",
+ "outbe-common",
  "outbe-emission",
  "outbe-evm",
  "outbe-gem",
@@ -7841,6 +7843,7 @@ dependencies = [
  "outbe-rpc",
  "outbe-slashindicator",
  "outbe-snapshot",
+ "outbe-system-common",
  "outbe-tee",
  "outbe-teeregistry",
  "outbe-txpool",
@@ -7943,11 +7946,13 @@ name = "outbe-common"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
+ "alloy-sol-types",
  "base64 0.22.1",
  "outbe-primitives",
  "ring",
  "serde_json",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -8078,6 +8083,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-promislimit",
  "outbe-rewards",
+ "outbe-system-common",
  "outbe-tribute",
  "outbe-tributefactory",
  "outbe-validatorset",
@@ -8092,6 +8098,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-common",
  "outbe-intex",
  "outbe-intexfactory",
  "outbe-macros",
@@ -8110,6 +8117,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-system-common",
  "serde_json",
  "thiserror 2.0.18",
 ]
@@ -8197,6 +8205,7 @@ dependencies = [
  "outbe-ccaregistry",
  "outbe-chain-constants",
  "outbe-coderegistry",
+ "outbe-common",
  "outbe-consensus",
  "outbe-credis",
  "outbe-credisfactory",
@@ -8230,6 +8239,7 @@ dependencies = [
  "outbe-stablecoinfactory",
  "outbe-stablecoinpolicy",
  "outbe-staking",
+ "outbe-system-common",
  "outbe-tee",
  "outbe-teeregistry",
  "outbe-tribute",
@@ -8388,6 +8398,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-common",
  "outbe-macros",
  "outbe-primitives",
  "outbe-tee",
@@ -8401,6 +8412,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-common",
  "outbe-fidelity",
  "outbe-gratis",
  "outbe-macros",
@@ -8547,6 +8559,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "hex",
+ "outbe-common",
  "outbe-primitives",
  "serde",
  "serde_json",
@@ -8589,6 +8602,7 @@ dependencies = [
  "num-bigint",
  "outbe-agentreward",
  "outbe-chain-constants",
+ "outbe-common",
  "outbe-desis",
  "outbe-emission",
  "outbe-fidelity",
@@ -8837,6 +8851,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-common",
  "outbe-macros",
  "outbe-primitives",
  "outbe-tee",
@@ -8850,6 +8865,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-common",
  "outbe-fidelity",
  "outbe-gratis",
  "outbe-gratisfactory",
@@ -8884,6 +8900,7 @@ dependencies = [
  "commonware-cryptography",
  "hex",
  "outbe-ccaregistry",
+ "outbe-common",
  "outbe-credis",
  "outbe-credisfactory",
  "outbe-fidelity",
@@ -9091,6 +9108,7 @@ dependencies = [
  "outbe-promislimit",
  "outbe-slashindicator",
  "outbe-staking",
+ "outbe-system-common",
  "outbe-validatorset",
  "rand 0.10.2",
  "rand 0.8.6",
@@ -9170,6 +9188,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-system-common"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "outbe-primitives",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "outbe-tee"
 version = "0.1.0"
 dependencies = [
@@ -9222,6 +9252,7 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "k256 0.13.4",
+ "outbe-common",
  "outbe-consensus",
  "outbe-fidelity-math",
  "outbe-lysis",
@@ -9258,6 +9289,7 @@ dependencies = [
  "k256 0.13.4",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-system-common",
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-validatorset",
@@ -9272,6 +9304,7 @@ dependencies = [
  "alloy-consensus",
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-common",
  "outbe-emission",
  "outbe-fidelity",
  "outbe-lysis",
@@ -9398,6 +9431,7 @@ dependencies = [
  "outbe-consensus",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-system-common",
  "outbe-validatorset",
  "rand 0.10.2",
  "rand 0.8.6",
@@ -9414,6 +9448,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-ccaregistry",
  "outbe-chain-constants",
+ "outbe-common",
  "outbe-credis",
  "outbe-evm",
  "outbe-macros",
@@ -9463,6 +9498,7 @@ dependencies = [
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
+ "outbe-system-common",
  "outbe-validatorset",
  "outbe-zerofee",
  "proptest",

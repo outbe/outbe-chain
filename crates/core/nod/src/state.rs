@@ -1,6 +1,6 @@
 use alloy_primitives::{B256, U256};
+use outbe_common::deadline_queue;
 use outbe_primitives::call_bins;
-use outbe_primitives::deadline_queue;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::series_id::SeriesId;
 
@@ -587,7 +587,7 @@ impl NodContract<'_> {
 /// Forfeited groups whose unpaid Nods wait to be deleted.
 pub struct CleanupQueue<'a, 'storage>(pub &'a NodContract<'storage>);
 
-outbe_primitives::impl_deadline_queue!(CleanupQueue<B256> {
+outbe_common::impl_deadline_queue!(CleanupQueue<B256> {
     root: cleanup_tree_root,
     mid: cleanup_tree_mid,
     leaf: cleanup_tree_leaf,
@@ -617,7 +617,7 @@ outbe_primitives::impl_call_bins!(CallBins<B256> {
 /// This queue orders called groups by the UTC day when their notice period closes.
 pub struct ForfeitQueue<'a, 'storage>(pub &'a NodContract<'storage>);
 
-outbe_primitives::impl_deadline_queue!(ForfeitQueue<B256> {
+outbe_common::impl_deadline_queue!(ForfeitQueue<B256> {
     root: forfeit_tree_root,
     mid: forfeit_tree_mid,
     leaf: forfeit_tree_leaf,

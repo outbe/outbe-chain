@@ -175,7 +175,7 @@ pub fn authorize_bootstrap(candidate: BootstrapCandidate, account: BootstrapAcco
 ///   votes do not burn the validator's daily quota).
 ///
 /// The target whitelist is intentionally **not** a parameter. The
-/// policy reads [`outbe_primitives::zero_fee::SPONSORED_TARGET_WHITELIST`]
+/// policy reads [`outbe_system_common::zero_fee::SPONSORED_TARGET_WHITELIST`]
 /// directly, so a future caller cannot drift the policy by passing a
 /// broader list.
 ///
@@ -241,7 +241,7 @@ fn check_sponsored_target(to: Option<Address>) -> Result<(), ZeroFeePolicyError>
         return Err(ZeroFeePolicyError::FreeTxDailyContractCreationForbidden);
     };
 
-    if !outbe_primitives::zero_fee::SPONSORED_TARGET_WHITELIST.contains(&to) {
+    if !outbe_system_common::zero_fee::SPONSORED_TARGET_WHITELIST.contains(&to) {
         return Err(ZeroFeePolicyError::FreeTxDailyTargetNotWhitelisted { to });
     }
 
@@ -649,7 +649,7 @@ mod tests {
     fn sponsored_target() -> Address {
         // First whitelisted address. The value is incidental. Only
         // membership in `SPONSORED_TARGET_WHITELIST` matters here.
-        outbe_primitives::zero_fee::SPONSORED_TARGET_WHITELIST[0]
+        outbe_system_common::zero_fee::SPONSORED_TARGET_WHITELIST[0]
     }
 
     fn ok_envelope<'a>(input: &'a [u8]) -> ZeroFeeTransaction<'a> {
