@@ -235,7 +235,7 @@ fn validate_committee_members(
         .map(|member| member.address)
         .collect();
     if n == 0
-        || n > outbe_consensus::bls::MAX_VALIDATORS as usize
+        || n > outbe_primitives::validators::MAX_VALIDATORS as usize
         || n != effective.len()
         || unique.len() != n
     {

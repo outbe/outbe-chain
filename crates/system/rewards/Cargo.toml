@@ -9,7 +9,6 @@ publish.workspace = true
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-validatorset = { path = "../validatorset" }
-outbe-consensus.workspace = true
 outbe-emission.workspace = true
 outbe-promislimit.workspace = true
 outbe-slashindicator.workspace = true

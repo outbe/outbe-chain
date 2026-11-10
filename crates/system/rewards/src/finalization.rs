@@ -7,11 +7,11 @@ use std::collections::BTreeSet;
 use std::fmt::Display;
 
 use alloy_primitives::{Address, B256};
-use outbe_consensus::proof::verify_late_finalize_proof;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K;
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::proof::verify_late_finalize_proof;
 use outbe_primitives::reshare_artifact::{LateFinalizeCreditsArtifact, PerBlockCredit};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::system_tx_context::SystemTxExecutionContext;

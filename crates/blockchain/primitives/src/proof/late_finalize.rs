@@ -28,6 +28,7 @@ use crate::proof::committee::{committee_set_hash_v2, CommitteeSnapshot};
 use crate::proof::committee_keys::{committee_ordered_set, decode_committee_participants};
 use crate::proof::constants::finalize_namespace;
 use crate::proof::error::V2VerifyError;
+use crate::reshare_artifact::PerBlockCredit;
 use bytes::Bytes;
 use commonware_codec::{DecodeExt, Encode};
 use commonware_consensus::simplex::types::Proposal;
@@ -36,7 +37,6 @@ use commonware_cryptography::bls12381::primitives::{
     ops::aggregate,
     variant::{MinPk, Variant},
 };
-use outbe_primitives::reshare_artifact::PerBlockCredit;
 
 /// Verify one late-finalize credit's BLS aggregate against the epoch committee
 /// snapshot. On success returns the verified signer indices (into

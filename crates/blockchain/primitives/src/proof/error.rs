@@ -12,6 +12,23 @@
 
 use alloy_primitives::B256;
 
+/// Wire decoding error for `VrfProof`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum VrfProofCodecError {
+    #[error("missing material version")]
+    MissingMaterialVersion,
+}
+
+impl From<VrfProofCodecError> for commonware_codec::Error {
+    fn from(error: VrfProofCodecError) -> Self {
+        match error {
+            VrfProofCodecError::MissingMaterialVersion => {
+                Self::Invalid("VrfProof", "missing material version")
+            }
+        }
+    }
+}
+
 /// Failure modes surfaced by [`crate::proof::verify_v2_proof`].
 ///
 /// Each constructed variant corresponds to a specific validation rule. The set

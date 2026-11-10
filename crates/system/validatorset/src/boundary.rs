@@ -78,7 +78,7 @@ pub fn committee_snapshot_from_boundary(
         committee,
         vrf_material_version: boundary.vrf_material_version,
         vrf_group_public_key_bytes: boundary.vrf_group_public_key_bytes.to_vec(),
-        vrf_public_polynomial_hash: outbe_consensus::dkg_manager::boundary_outcome_polynomial_hash(
+        vrf_public_polynomial_hash: outbe_primitives::proof::boundary_outcome_polynomial_hash(
             boundary.outcome.as_ref(),
         ),
     })

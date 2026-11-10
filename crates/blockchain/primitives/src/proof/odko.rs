@@ -7,7 +7,7 @@
 
 use std::{fmt, num::NonZeroU32};
 
-use alloy_primitives::Bytes;
+use alloy_primitives::{Bytes, B256};
 use commonware_codec::Read as _;
 use commonware_consensus::types::Epoch;
 use commonware_cryptography::bls12381::{
@@ -98,9 +98,8 @@ impl OdkoOutcome {
         if declared != actual {
             return Err(OdkoDecodeError::LengthMismatch { declared, actual });
         }
-        let max = NonZeroU32::new(crate::bls::MAX_VALIDATORS).ok_or_else(|| {
-            OdkoDecodeError::invalid_output(crate::errors::DkgError::ZeroValidatorCap)
-        })?;
+        let max = NonZeroU32::new(crate::validators::MAX_VALIDATORS)
+            .ok_or_else(|| OdkoDecodeError::invalid_output("validator cap must be non-zero"))?;
         let output =
             Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut reader, &(max, ModeVersion::v0()))
                 .map_err(OdkoDecodeError::invalid_output)?;
@@ -147,3 +146,37 @@ fn decode_header(bytes: &[u8]) -> Result<OdkoHeader, OdkoDecodeError> {
         declared,
     })
 }
+
+/// Decode the ODKO-wrapped boundary `outcome` and return
+/// `keccak256(Encode(full public polynomial))` of the carried DKG output.
+///
+/// Returns `B256::ZERO` when the outcome is not a decodable full-output ODKO
+/// record (e.g. a group-key-only bootstrap outcome). In that case the
+/// committee's "invalid seed partial" slash offense is unavailable for
+/// that epoch. Deterministic and panic-free. Safe to call in the executor over
+/// the already-consensus-validated boundary `outcome`.
+pub fn boundary_outcome_polynomial_hash(outcome: &[u8]) -> B256 {
+    match decode_boundary_outcome(outcome) {
+        Some(output) => {
+            alloy_primitives::keccak256(commonware_codec::Encode::encode(output.public()))
+        }
+        None => B256::ZERO,
+    }
+}
+
+/// Decode the ODKO-wrapped boundary `outcome` into the full DKG [`Output`]
+/// (public polynomial + players). Returns `None` when the outcome is not a
+/// decodable full-output ODKO record (e.g. a group-key-only bootstrap outcome).
+///
+/// This is the public-data path a `follow`-mode node uses to reconstruct an
+/// epoch's committee (`output.players()`) and verifier polynomial
+/// (`output.public()`) from a finalized boundary block. The path works without
+/// the node ever running the DKG ceremony. Deterministic and panic-free.
+pub fn decode_boundary_outcome(outcome: &[u8]) -> Option<Output<MinSig, bls12381::PublicKey>> {
+    OdkoOutcome::decode(outcome)
+        .ok()
+        .map(|decoded| decoded.output)
+}
+
+#[cfg(test)]
+mod tests;

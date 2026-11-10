@@ -81,7 +81,7 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     pub parent_artifact_hint: Option<AccountedParentArtifact>,
     /// Canonical VRF proof hash that `verify_phase1_in_preexec` captures from
     /// the verified parent certificate
-    /// (`outbe_consensus::proof::VerifiedProof::vrf_proof_hash`).
+    /// (`outbe_primitives::proof::VerifiedProof::vrf_proof_hash`).
     /// `apply_phase1_commit_in_preexec` and the main-tx-loop Phase 1 path
     /// consume it to populate `PreloadedSystemTxContext.canonical_vrf_proof_hash`.
     /// The V3 Rewards fingerprint binds that field. It is `None` until the

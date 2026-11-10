@@ -42,8 +42,8 @@ fn verify_nod_read(
 
 #[test]
 fn reuses_prewarm_results_is_pinned_false() {
-    let _ = outbe_consensus::proof::init_consensus_chain_id(424242);
-    let chain_id = outbe_consensus::proof::consensus_chain_id();
+    let _ = outbe_primitives::proof::init_consensus_chain_id(424242);
+    let chain_id = outbe_primitives::proof::consensus_chain_id();
     let spec = ChainSpec {
         chain: reth_ethereum::chainspec::Chain::from_id(chain_id),
         ..Default::default()

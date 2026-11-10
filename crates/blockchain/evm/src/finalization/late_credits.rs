@@ -5,8 +5,8 @@
 //! block and reused when the precompile executes.
 
 use alloy_evm::block::{BlockExecutionError, StateDB};
-use outbe_consensus::proof::verify_late_finalize_proof;
 use outbe_primitives::committee_snapshot::committee_snapshot_key;
+use outbe_primitives::proof::verify_late_finalize_proof;
 use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     consensus::LATE_FINALIZE_WINDOW_K,

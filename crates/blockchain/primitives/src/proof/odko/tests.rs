@@ -1,10 +1,20 @@
 //! The ODKO boundary-outcome codec: one encoder, one strict decoder.
 
 use super::*;
-use crate::dkg_manager::OdkoOutcome;
+use commonware_cryptography::bls12381::primitives::sharing::Mode;
+use commonware_cryptography::{bls12381::dkg::feldman_desmedt::deal, Signer as _};
+use commonware_utils::{ordered::Set, N3f1};
+use rand_commonware::SeedableRng as _;
 
 fn sample(epoch: u64, is_full_dkg: bool) -> OdkoOutcome {
-    let (_keys, _participants, output, _polynomial, _local_log) = run_test_dkg_complete();
+    let participants =
+        Set::from_iter_dedup((0..4).map(|i| bls12381::PrivateKey::from_seed(i).public_key()));
+    let (output, _) = deal::<MinSig, _, N3f1>(
+        rand_commonware::rngs::StdRng::seed_from_u64(0),
+        Mode::NonZeroCounter,
+        participants,
+    )
+    .unwrap();
     OdkoOutcome {
         epoch: Epoch::new(epoch),
         is_full_dkg,
@@ -49,8 +59,7 @@ fn odko_decoder_rejects_non_canonical_records() {
 #[test]
 fn legacy_helpers_agree_with_the_codec() {
     let outcome = sample(5, false);
-    let encoded = encode_outcome(outcome.epoch, &outcome.output, outcome.is_full_dkg);
-    assert_eq!(encoded, outcome.encode());
+    let encoded = outcome.encode();
     assert_eq!(decode_boundary_outcome(&encoded), Some(outcome.output));
 }
 

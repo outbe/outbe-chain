@@ -78,7 +78,7 @@ pub mod status {
 
 /// Canonical committee/codec bound shared by every validator-registry scan.
 /// This is not a configurable product capacity.
-pub const CONSENSUS_VALIDATOR_BOUND: u32 = outbe_consensus::bls::MAX_VALIDATORS;
+pub const CONSENSUS_VALIDATOR_BOUND: u32 = outbe_primitives::validators::MAX_VALIDATORS;
 
 pub use outbe_primitives::validator_dto::{EpochSnapshot, ValidatorParticipation, ValidatorRecord};
 

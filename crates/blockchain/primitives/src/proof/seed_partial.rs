@@ -9,7 +9,7 @@
 //! To make it attributable, each `HybridSignature` additionally carries a MinPk
 //! identity signature over a domain-separated message binding
 //! `(round, vrf_material_version, partial)`. The signer
-//! ([`crate::hybrid::HybridScheme::sign`]) and the on-chain SlashIndicator
+//! (`outbe_consensus::hybrid::HybridScheme::sign`) and the on-chain SlashIndicator
 //! evidence verifier both build the signed bytes through the helpers here, so
 //! the two sides cannot drift. A workspace test pins a fixed vector.
 //!
@@ -160,7 +160,7 @@ pub fn verify_seed_partial_against_commitment(
     partial_bytes: &[u8],
 ) -> Option<bool> {
     // Cap must cover any real committee. It matches the DKG decode bound.
-    let max = NonZeroU32::new(crate::bls::MAX_VALIDATORS)?;
+    let max = NonZeroU32::new(crate::validators::MAX_VALIDATORS)?;
     let cfg = (max, ModeVersion::v0());
     let sharing = Sharing::<MinSig>::read_cfg(&mut &commitment_bytes[..], &cfg).ok()?;
 

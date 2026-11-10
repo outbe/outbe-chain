@@ -11,6 +11,7 @@
 
 use super::error::V2VerifyError;
 use super::hybrid_wire::{HybridCertificate, VrfProof};
+use crate::consensus_metadata::CertifiedParentAccountingMetadata;
 use crate::proof::committee_keys::decode_committee_participants;
 use crate::proof::CommitteeSnapshot;
 use alloy_primitives::{keccak256, B256};
@@ -20,12 +21,11 @@ use commonware_cryptography::bls12381::{
     self,
     primitives::variant::{MinSig, Variant},
 };
-use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 
 mod bindings;
 mod certificate;
 mod crypto;
-pub(crate) use certificate::decode_parent_prev_randao;
+pub use certificate::decode_parent_prev_randao;
 use crypto::verify_v2_certificate_low_level;
 
 // =============================================================================

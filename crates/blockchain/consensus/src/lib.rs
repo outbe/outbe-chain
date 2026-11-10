@@ -12,7 +12,6 @@ pub mod bls;
 pub mod cli;
 pub mod committee_provider;
 pub mod config;
-pub mod digest;
 pub mod dkg;
 pub mod dkg_actor;
 pub mod dkg_manager;
@@ -22,7 +21,6 @@ pub mod errors;
 pub mod forfeit;
 pub mod hybrid;
 pub mod metrics;
-pub mod proof;
 pub mod timing;
 pub mod vrf_safety;
 
@@ -30,7 +28,7 @@ pub mod vrf_safety;
 /// canonical definitions live in `outbe_primitives::validators`; this alias
 /// keeps existing `outbe_consensus::validators::*` (and crate-local
 /// `crate::validators::*`) call sites unchanged.
-pub use outbe_primitives::validators;
+pub use outbe_primitives::{digest, proof, validators};
 
 #[cfg(test)]
 mod marshal_resolver_p2p_tests;

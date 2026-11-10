@@ -4,8 +4,8 @@ use crate::precompile::ISlashIndicator;
 use alloy_primitives::Bytes;
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolError;
-use outbe_consensus::proof::V2VerifyError;
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::proof::V2VerifyError;
 use thiserror::Error;
 
 /// A stored or genesis percent word is not admitted.

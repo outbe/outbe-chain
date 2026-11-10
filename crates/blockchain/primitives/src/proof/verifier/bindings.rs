@@ -1,8 +1,8 @@
 //! Ordered metadata and verifier-result bindings.
 use super::{CommitteeSnapshot, V2VerifyError, VerifiedProof};
+use crate::consensus_metadata::CertifiedParentAccountingMetadata;
 use crate::proof::committee_set_hash_v2;
 use alloy_primitives::{keccak256, B256};
-use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use std::collections::BTreeSet;
 
 pub(super) fn validate_metadata(

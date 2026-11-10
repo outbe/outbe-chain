@@ -99,7 +99,8 @@ impl OutbeEvmConfig {
     /// construction is a process configuration error and fails immediately
     /// instead of silently retaining the first namespace.
     fn install_consensus_chain_id(chain_spec: &Arc<ChainSpec<OutbeHeader>>) {
-        if let Err(error) = outbe_consensus::proof::init_consensus_chain_id(chain_spec.chain().id())
+        if let Err(error) =
+            outbe_primitives::proof::init_consensus_chain_id(chain_spec.chain().id())
         {
             panic!("failed to bind the EVM to its consensus chain id: {error}");
         }
@@ -109,7 +110,7 @@ impl OutbeEvmConfig {
         LOG_ONCE.call_once(|| {
             tracing::info!(
                 target: "outbe::evm",
-                chain_id = outbe_consensus::proof::consensus_chain_id(),
+                chain_id = outbe_primitives::proof::consensus_chain_id(),
                 "consensus chain id bound into the signing namespace"
             );
         });

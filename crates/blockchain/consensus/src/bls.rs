@@ -32,8 +32,7 @@ use std::{
 };
 use tracing::debug;
 
-/// Maximum number of validators supported (used as upper bound for codec deserialization).
-pub const MAX_VALIDATORS: u32 = 256;
+pub use outbe_primitives::validators::MAX_VALIDATORS;
 /// [`MAX_VALIDATORS`] as the committee bound the finalization decoders take.
 pub const MAX_COMMITTEE_MEMBERS: usize = MAX_VALIDATORS as usize;
 static SECRET_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);

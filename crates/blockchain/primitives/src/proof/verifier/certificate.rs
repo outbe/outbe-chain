@@ -3,20 +3,17 @@ use super::{
     verify_v2_certificate_low_level, CommitteeSnapshotView, V2VerifyError, VerifiedProof,
     VoteBinding, VoteSubject,
 };
+use crate::consensus_metadata::{CertifiedParentAccountingMetadata, ParentParticipationProof};
 use crate::{
     digest::Digest as OutbeDigest,
-    hybrid::HybridScheme,
     proof::{
         committee_keys::committee_ordered_set,
         constants::{finalize_namespace, notarize_namespace},
     },
 };
-use commonware_codec::{Encode, Read};
-use commonware_consensus::simplex::types::{Finalization, Notarization, Proposal};
+use commonware_codec::{Encode, Read, ReadExt as _};
+use commonware_consensus::simplex::types::Proposal;
 use commonware_cryptography::bls12381::primitives::variant::MinSig;
-use outbe_primitives::consensus_metadata::{
-    CertifiedParentAccountingMetadata, ParentParticipationProof,
-};
 
 struct DecodedProof {
     subject: VoteSubject,
@@ -64,18 +61,14 @@ fn decode_proof(
     participants_len: usize,
 ) -> Result<DecodedProof, V2VerifyError> {
     let mut proof_reader = metadata.proof.as_ref();
-    let (subject, proposal, cert) = match metadata.proof_kind {
-        ParentParticipationProof::Finalization => {
-            let proof: Finalization<HybridScheme<MinSig>, OutbeDigest> =
-                read_proof(&mut proof_reader, participants_len)?;
-            (VoteSubject::Finalize, proof.proposal, proof.certificate)
-        }
-        ParentParticipationProof::CertifiedNotarization => {
-            let proof: Notarization<HybridScheme<MinSig>, OutbeDigest> =
-                read_proof(&mut proof_reader, participants_len)?;
-            (VoteSubject::Notarize, proof.proposal, proof.certificate)
-        }
+    let subject = match metadata.proof_kind {
+        ParentParticipationProof::Finalization => VoteSubject::Finalize,
+        ParentParticipationProof::CertifiedNotarization => VoteSubject::Notarize,
     };
+    let proposal =
+        Proposal::<OutbeDigest>::read(&mut proof_reader).map_err(V2VerifyError::Decode)?;
+    let cert = super::HybridCertificate::<MinSig>::read_cfg(&mut proof_reader, &participants_len)
+        .map_err(V2VerifyError::Decode)?;
     if !proof_reader.is_empty() {
         return Err(V2VerifyError::TrailingBytes);
     }
@@ -104,17 +97,10 @@ fn proposal_matches_metadata(
         && proposal.payload.0 == metadata.finalized_block_hash
 }
 
-fn read_proof<P: Read<Cfg = usize>>(
-    reader: &mut &[u8],
-    participants_len: usize,
-) -> Result<P, V2VerifyError> {
-    P::read_cfg(reader, &participants_len).map_err(V2VerifyError::Decode)
-}
-
 /// Decode randomness from the selected local parent-proof record for proposal
 /// construction. This is not proof verification: the shared EVM preflight
 /// authenticates the certificate and checks the resulting header value.
-pub(crate) fn decode_parent_prev_randao(
+pub fn decode_parent_prev_randao(
     metadata: &CertifiedParentAccountingMetadata,
 ) -> Result<alloy_primitives::B256, V2VerifyError> {
     let proof = decode_proof(metadata, metadata.ordered_committee.len())?;

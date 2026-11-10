@@ -10,8 +10,8 @@
 //! * V2 domain-separation namespaces. These are chain-id-bound functions, such
 //!   as `hybrid_seed_namespace()` and `seed_attest_namespace()`, not constants.
 //!
-//! This module intentionally avoids any reference to `crate::stack`,
-//! `crate::validators`, `crate::hybrid::HybridScheme` private DKG state, or any
+//! This module intentionally avoids consensus stack, validator runtime,
+//! `outbe_consensus::hybrid::HybridScheme` private DKG state, or any
 //! runtime/mailbox/marshal type. Thus the EVM executor and full-node import paths
 //! reuse the same code through re-export.
 
@@ -22,6 +22,7 @@ pub mod error;
 pub mod fingerprint;
 pub mod hybrid_wire;
 pub mod late_finalize;
+pub mod odko;
 pub mod seed_partial;
 pub mod verifier;
 
@@ -42,6 +43,9 @@ pub use fingerprint::{
 };
 pub use hybrid_wire::{HybridCertificate, VrfProof};
 pub use late_finalize::verify_late_finalize_proof;
+pub use odko::{
+    boundary_outcome_polynomial_hash, decode_boundary_outcome, OdkoDecodeError, OdkoOutcome,
+};
 pub use seed_partial::{
     seed_partial_attest_message, verify_seed_partial_against_commitment,
     verify_seed_partial_attest, verify_seed_partial_attest_bytes, verify_seed_signature_plain,

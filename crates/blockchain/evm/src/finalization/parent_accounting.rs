@@ -6,8 +6,8 @@ use alloy_evm::{
     RecoveredTx,
 };
 use alloy_primitives::{Address, Bytes, B256};
-use outbe_consensus::proof::verify_v2_proof;
 use outbe_primitives::committee_snapshot::committee_snapshot_key;
+use outbe_primitives::proof::verify_v2_proof;
 use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     consensus_metadata::CertifiedParentAccountingMetadata,

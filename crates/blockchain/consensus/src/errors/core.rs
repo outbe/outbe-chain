@@ -311,22 +311,7 @@ impl From<HeaderArtifactDecodeError> for crate::dkg_manager::BoundaryRequirement
     }
 }
 
-/// Wire decoding error for `VrfProof`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
-pub enum VrfProofCodecError {
-    #[error("missing material version")]
-    MissingMaterialVersion,
-}
-
-impl From<VrfProofCodecError> for commonware_codec::Error {
-    fn from(error: VrfProofCodecError) -> Self {
-        match error {
-            VrfProofCodecError::MissingMaterialVersion => {
-                Self::Invalid("VrfProof", "missing material version")
-            }
-        }
-    }
-}
+pub use outbe_primitives::proof::error::VrfProofCodecError;
 
 /// Error when the node prepares a locally built candidate payload.
 #[derive(Debug, Error)]

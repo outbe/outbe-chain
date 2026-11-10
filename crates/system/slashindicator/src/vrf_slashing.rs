@@ -2,12 +2,12 @@
 //! equivocating or invalid VRF seed partials.
 
 use alloy_primitives::{keccak256, Address, B256};
-use outbe_consensus::proof::{
+use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
+use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::proof::{
     invalid_vrf_evidence_hash_v2, verify_seed_partial_against_commitment,
     verify_seed_partial_attest_bytes, verify_v2_proof, CommitteeSnapshot, SeedPartialAttestation,
 };
-use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
-use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::protocol_schedule::OutbeProtocolSchedule;
 use outbe_primitives::system_tx::{recover_phase1_proposer, SystemTx};
 use outbe_primitives::time::iso8601_now;
@@ -44,7 +44,7 @@ impl SlashIndicator<'_> {
     /// 5. Child and parent canonicity: claimed child and parent
     ///    hashes must match the canonical chain.
     /// 6. Dedup via
-    ///    [`outbe_consensus::proof::invalid_vrf_evidence_hash_v2`] keyed by
+    ///    [`outbe_primitives::proof::invalid_vrf_evidence_hash_v2`] keyed by
     ///    `(child_block_hash, keccak256(phase1_tx_bytes))`. A replay of the same
     ///    evidence reverts with `"evidence already processed"`. This matches the
     ///    `submitDoubleProposalEvidence` / `submitConflictingVoteEvidence`
@@ -59,7 +59,7 @@ impl SlashIndicator<'_> {
     ///    [`outbe_validatorset::state::read_committee_snapshot`] path. Reject
     ///    if the snapshot is absent OR if the recovered proposer is not in
     ///    the committee.
-    /// 9. Re-run [`outbe_consensus::proof::verify_v2_proof`] against the
+    /// 9. Re-run [`outbe_primitives::proof::verify_v2_proof`] against the
     ///    same metadata/snapshot/parent_hash that the child block used. Accept
     ///    only VRF-class failures from `V2VerifyError`. Any `Ok` or
     ///    non-VRF rejection reverts. The precompile is strictly for VRF
