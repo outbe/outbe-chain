@@ -93,7 +93,6 @@ contract EscrowAdapter is
     bytes32 private constant _STORAGE_SLOT = 0x9dc6707131c30ec20e38ebcfbc4641faad640e3439439d400ea9dd2fe8f83a00;
 
     function _s() private pure returns (EscrowAdapterStorage storage $) {
-        // solhint-disable-next-line no-inline-assembly
         assembly ("memory-safe") {
             $.slot := _STORAGE_SLOT
         }
@@ -116,7 +115,6 @@ contract EscrowAdapter is
 
     /// @dev Upgrades are gated by the admin role.
     /// @param newImplementation Address of the implementation the proxy switches to.
-    // solhint-disable-next-line no-empty-blocks
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     // --- Storage getters ---

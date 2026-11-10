@@ -89,11 +89,6 @@ interface IIntexNFT1155Bridge {
         bytes32 indexed receiveId, uint32 srcChainId, bytes32[] recipients, uint256[] tokenIds, uint256[] units
     );
 
-    /// @notice Emitted when residual pre-funded native tokens are swept to an admin recipient.
-    /// @param to Recipient address the native tokens were swept to.
-    /// @param amount Amount in wei swept.
-    event NativeSwept(address indexed to, uint256 amount);
-
     /// @notice Emitted when one item in an inbound batch reverts `token.crosschainMint`.
     /// @param srcChainId Source chainId.
     /// @param receiveId Inbound bridge message id.
@@ -140,12 +135,6 @@ interface IIntexNFT1155Bridge {
     error ArrayLengthMismatch();
     /// @notice Empty batch provided.
     error EmptyBatch();
-    /// @notice Native-token sweep transfer failed.
-    error NativeSweepFailed();
-    /// @notice Native-token balance is insufficient for the requested sweep.
-    /// @param available Current contract balance.
-    /// @param requested Amount the admin attempted to sweep.
-    error NativeBalanceInsufficient(uint256 available, uint256 requested);
     /// @notice Zero address provided.
     /// @param field Field name.
     error ZeroAddress(string field);
@@ -169,11 +158,6 @@ interface IIntexNFT1155Bridge {
     /// @param chainId Destination/source chainId.
     /// @param interop ERC-7930 interoperable address (empty to clear).
     function setRemoteMessenger(uint32 chainId, bytes calldata interop) external;
-
-    /// @notice Sweep residual pre-funded native tokens back to an admin recipient.
-    /// @param to Recipient address (must be non-zero).
-    /// @param amount Amount in wei to sweep. It must be <= contract balance.
-    function sweepNative(address payable to, uint256 amount) external;
 
     // --- Single-recipient batch ---
     /// @notice Quotes the native fee for a batch cross-chain transfer.

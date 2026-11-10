@@ -62,7 +62,6 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
     }
 
     function _s() private pure returns (MessengerStorage storage $) {
-        // solhint-disable-next-line no-inline-assembly
         assembly ("memory-safe") {
             $.slot := _MESSENGER_STORAGE_SLOT
         }

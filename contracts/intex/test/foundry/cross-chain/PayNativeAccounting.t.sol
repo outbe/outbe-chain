@@ -219,41 +219,6 @@ contract PayNativeAccountingTest is CrossChainTest {
             BridgeMsgCodec.encodeAuctionStageCollectingBids(SERIES_ID_DAY)
         );
     }
-
-    // ---------------------------------------------------------------
-    // Admin float recovery (sweepNative)
-    // ---------------------------------------------------------------
-
-    function test_SweepNative_AdminRecoversFloat() public {
-        vm.deal(address(bnbRouter), 3 ether);
-        address payable to = payable(address(0x5EE3));
-
-        bnbRouter.sweepNative(to, 1 ether);
-
-        assertEq(to.balance, 1 ether, "recipient received the swept amount");
-        assertEq(address(bnbRouter).balance, 2 ether, "remainder stays as float");
-    }
-
-    function test_SweepNative_NonAdminReverts() public {
-        vm.deal(address(bnbRouter), 1 ether);
-        vm.prank(auctionRole); // an arbitrary non-admin caller
-        vm.expectRevert();
-        bnbRouter.sweepNative(payable(auctionRole), 1 ether);
-    }
-
-    function test_SweepNative_OverBalanceReverts() public {
-        vm.deal(address(bnbRouter), 1 ether);
-        vm.expectRevert(
-            abi.encodeWithSelector(ITargetRouter.NativeBalanceInsufficient.selector, uint256(1 ether), uint256(2 ether))
-        );
-        bnbRouter.sweepNative(payable(address(0xBEEF)), 2 ether);
-    }
-
-    function test_SweepNative_ZeroRecipientReverts() public {
-        vm.deal(address(bnbRouter), 1 ether);
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "to"));
-        bnbRouter.sweepNative(payable(address(0)), 1 ether);
-    }
 }
 
 /// @dev Auction stub with one bid, so an inbound CLEARING produces exactly one relayed batch - one bridge fee.

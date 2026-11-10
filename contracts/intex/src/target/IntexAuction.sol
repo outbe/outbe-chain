@@ -68,7 +68,6 @@ contract IntexAuction is
     bytes32 private constant _STORAGE_SLOT = 0x0db73aff7344f42850665630fc90d6dc1080fdcdb5bb8f56a3fd235fc49b1c00;
 
     function _s() private pure returns (IntexAuctionStorage storage $) {
-        // solhint-disable-next-line no-inline-assembly
         assembly ("memory-safe") {
             $.slot := _STORAGE_SLOT
         }
@@ -92,7 +91,6 @@ contract IntexAuction is
 
     /// @dev Upgrades are gated by the admin role.
     /// @param newImplementation Address of the implementation the proxy switches to.
-    // solhint-disable-next-line no-empty-blocks
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     // --- Storage getters ---

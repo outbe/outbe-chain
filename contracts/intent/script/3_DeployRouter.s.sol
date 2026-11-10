@@ -6,14 +6,15 @@ import {console2} from "forge-std/console2.sol";
 import {Scope} from "the-compact/src/types/Scope.sol";
 import {ResetPeriod} from "the-compact/src/types/ResetPeriod.sol";
 
-import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {Create3Factory} from "@shared/Create3Factory.sol";
 import {Create3Proxy} from "@shared/Create3Proxy.sol";
 import {Router} from "../src/router/Router.sol";
 import {RouterAllocator} from "../src/allocators/RouterAllocator.sol";
 import {SALT_VERSION} from "@shared/SaltVersion.sol";
+import {IntentCreate3} from "./IntentCreate3.sol";
 
-/// @dev Deploys RouterAllocator + the composition {Router} (a UUPS proxy via Create3Factory). The Router talks to
+/// @dev Deploys RouterAllocator + the composition {Router}, both UUPS proxies via Create3Factory. A proxy that
+///      already exists is kept. The Router talks to
 ///      the `crosschain` hub's `ERC7786Bridge`. This script has no LayerZero endpoint or eids. The
 ///      protocol lives on the bridge.
 ///
@@ -45,9 +46,8 @@ contract DeployRouter is Script {
         console2.log("Router:", router);
     }
 
-    /// @dev The factory namespaces this with the caller, so this salt omits the deployer.
     function getRouterSalt(string memory salt) public pure returns (bytes32) {
-        return keccak256(abi.encodePacked("Router", salt));
+        return IntentCreate3.salt(IntentCreate3.ROUTER, salt);
     }
 
     function deployRouter(
@@ -59,21 +59,24 @@ contract DeployRouter is Script {
         address auction,
         address deployer
     ) public returns (address router, address allocatorAddr) {
-        RouterAllocator allocator = RouterAllocator(
-            address(
-                new ERC1967Proxy(
-                    address(new RouterAllocator(compact)), abi.encodeCall(RouterAllocator.initialize, (deployer))
-                )
-            )
-        );
-        bytes12 lockTag = allocator.buildLockTag(Scope.ChainSpecific, ResetPeriod.ThirtyDays);
-        allocatorAddr = address(allocator);
+        allocatorAddr = IntentCreate3.predict(factory, deployer, IntentCreate3.ROUTER_ALLOCATOR, salt);
+        if (allocatorAddr.code.length == 0) {
+            Create3Proxy.deploy(
+                Create3Factory(factory),
+                IntentCreate3.salt(IntentCreate3.ROUTER_ALLOCATOR, salt),
+                address(new RouterAllocator(compact)),
+                abi.encodeCall(RouterAllocator.initialize, (deployer))
+            );
+        }
+        bytes12 lockTag = RouterAllocator(allocatorAddr).buildLockTag(Scope.ChainSpecific, ResetPeriod.ThirtyDays);
 
-        address routerOwner = vm.envAddress("ROUTER_OWNER");
-        bytes32 routerSalt = getRouterSalt(salt);
-        address impl = address(new Router(bridge, compact, lockTag, escrow, auction));
-        router = Create3Proxy.deploy(
-            Create3Factory(factory), routerSalt, impl, abi.encodeCall(Router.initialize, (routerOwner))
-        );
+        router = IntentCreate3.predict(factory, deployer, IntentCreate3.ROUTER, salt);
+        if (router.code.length == 0) {
+            address routerOwner = vm.envAddress("ROUTER_OWNER");
+            address impl = address(new Router(bridge, compact, lockTag, escrow, auction));
+            Create3Proxy.deploy(
+                Create3Factory(factory), getRouterSalt(salt), impl, abi.encodeCall(Router.initialize, (routerOwner))
+            );
+        }
     }
 }

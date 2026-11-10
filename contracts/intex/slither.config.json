@@ -1,5 +1,5 @@
 {
-  "filter_paths": "node_modules|/archive/|/vendor/|test/|/Mock[A-Za-z]+\\.sol",
+  "filter_paths": "dependencies|node_modules|/archive/|/vendor/|test/|/Mock[A-Za-z]+\\.sol",
   "exclude_informational": true,
   "exclude_low": true,
   "fail_on": "none",

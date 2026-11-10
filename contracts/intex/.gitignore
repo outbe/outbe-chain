@@ -67,3 +67,6 @@ reports/
 
 # Forge broadcast logs (deploy output)
 /broadcast
+
+# soldeer dependencies (restored from soldeer.lock; lockfile IS committed)
+/dependencies

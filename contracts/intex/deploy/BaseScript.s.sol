@@ -48,6 +48,12 @@ abstract contract BaseScript is Script {
         return Create3Factory(f);
     }
 
+    /// @notice CREATE3 prefixes of every intex proxy. Outbe has all six, a remote target has the
+    ///         last five.
+    function intexProxyPrefixes() internal pure returns (string[6] memory) {
+        return ["OriginRouter", "IntexNFT1155", "EscrowAdapter", "IntexAuction", "IntexNFT1155Bridge", "TargetRouter"];
+    }
+
     /// @notice Predict a proxy address without deploying.
     function predictProxy(Create3Factory factory, address deployer, string memory prefix)
         public
