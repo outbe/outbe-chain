@@ -49,7 +49,7 @@ pub fn encrypted_fixture(params: &NodIssueParams, chain_id: u64) -> EncryptedNod
 }
 fn encrypt(terms: NodTermsV1, amount: U256) -> EncryptedNodV1 {
     install();
-    outbe_tee_enclave::nod_encryption::encrypt_nod(&NETWORK_SECRET, terms, amount).unwrap()
+    outbe_enclave::nod_encryption::encrypt_nod(&NETWORK_SECRET, terms, amount).unwrap()
 }
 /// Test-only plaintext inputs; never accepted by a production writer.
 pub struct NodItemFixture {

@@ -24,7 +24,7 @@ pub(crate) fn apply_day_operation(
 ) -> Result<EncryptedTributeDayAmountV2, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
     if let Some(result) = test_enclave::with_key(|key| {
-        outbe_tee_enclave::tribute_day::apply_day_operation(key, key, &request)
+        outbe_enclave::tribute_day::apply_day_operation(key, key, &request)
     }) {
         return result.map_err(crate::errors::enclave_transport_error);
     }
@@ -36,7 +36,7 @@ pub(crate) fn apply_league_operation(
 ) -> Result<EncryptedTributeLeagueAmountV1, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
     if let Some(result) = test_enclave::with_key(|key| {
-        outbe_tee_enclave::tribute_day::apply_league_operation(key, key, &request)
+        outbe_enclave::tribute_day::apply_league_operation(key, key, &request)
     }) {
         return result.map_err(crate::errors::enclave_transport_error);
     }
@@ -47,9 +47,9 @@ pub(crate) fn read_league_amount(
     record: &EncryptedTributeLeagueAmountV1,
 ) -> Result<U256, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
-    if let Some(result) = test_enclave::with_key(|key| {
-        outbe_tee_enclave::tribute_day::read_league_amount(key, record)
-    }) {
+    if let Some(result) =
+        test_enclave::with_key(|key| outbe_enclave::tribute_day::read_league_amount(key, record))
+    {
         return result.map_err(crate::errors::enclave_transport_error);
     }
     outbe_tee::tribute_day_client::read_league_amount(record)
@@ -60,7 +60,7 @@ pub(crate) fn execute_lysis_fractions(
 ) -> Result<LysisFractionsResultV1, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
     if let Some(result) = test_enclave::with_key(|key| {
-        outbe_tee_enclave::tribute_day::execute_lysis_fractions(key, key, key, &request)
+        outbe_enclave::tribute_day::execute_lysis_fractions(key, key, key, &request)
     }) {
         return result.map_err(crate::errors::enclave_transport_error);
     }
@@ -72,9 +72,9 @@ pub(crate) fn read_day_fractions(
     record: &EncryptedTributeDayFractionsV1,
 ) -> Result<BTreeMap<u16, u64>, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
-    if let Some(result) = test_enclave::with_key(|key| {
-        outbe_tee_enclave::tribute_day::read_day_fractions(key, record)
-    }) {
+    if let Some(result) =
+        test_enclave::with_key(|key| outbe_enclave::tribute_day::read_day_fractions(key, record))
+    {
         return result.map_err(crate::errors::enclave_transport_error);
     }
     outbe_tee::tribute_day_client::read_day_fractions(record)
@@ -89,7 +89,7 @@ pub(crate) fn seal_day_fractions(
 ) -> Result<EncryptedTributeDayFractionsV1, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
     if let Some(result) = test_enclave::with_key(|key| {
-        outbe_tee_enclave::tribute_day::seal_day_fractions(
+        outbe_enclave::tribute_day::seal_day_fractions(
             key,
             (chain_id, worldwide_day, completed_at),
             inputs_hash,
@@ -113,7 +113,7 @@ pub(crate) fn issue_nod_from_tribute(
 ) -> Result<IssueNodFromTributeOutcomeV1, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
     if let Some(result) = test_enclave::with_key(|key| {
-        outbe_tee_enclave::nod_encryption::issue_nod_from_tribute(key, key, key, &request)
+        outbe_enclave::nod_encryption::issue_nod_from_tribute(key, key, key, &request)
     }) {
         return result.map_err(crate::errors::enclave_transport_error);
     }
@@ -125,7 +125,7 @@ pub(crate) fn read_day_amount(
 ) -> Result<U256, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
     if let Some(result) =
-        test_enclave::with_key(|key| outbe_tee_enclave::tribute_day::read_day_amount(key, record))
+        test_enclave::with_key(|key| outbe_enclave::tribute_day::read_day_amount(key, record))
     {
         return result.map_err(crate::errors::enclave_transport_error);
     }
@@ -137,7 +137,7 @@ pub(crate) fn read_amounts(
 ) -> Result<TributeAmountsV2, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
     if let Some(result) = test_enclave::with_key(|key| {
-        outbe_tee_enclave::tribute_encryption::decrypt_tribute(key, record)
+        outbe_enclave::tribute_encryption::decrypt_tribute(key, record)
     }) {
         return result.map_err(crate::errors::enclave_transport_error);
     }
@@ -235,7 +235,7 @@ pub mod test_enclave {
     ) -> outbe_primitives::error::Result<outbe_primitives::tribute_encryption::EncryptedTributeV2>
     {
         use outbe_primitives::tribute_encryption::{TributeAmountsV2, TributeContextV2};
-        outbe_tee_enclave::tribute_encryption::encrypt_tribute(
+        outbe_enclave::tribute_encryption::encrypt_tribute(
             &NETWORK_SECRET,
             TributeContextV2 {
                 chain_id,

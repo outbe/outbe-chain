@@ -6,6 +6,7 @@ use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolError, SolEvent, SolInterface};
 
 use outbe_core_common::erc::ERC165_INTERFACE_ID;
+use outbe_enclave::promis::{decrypt_balance, derive_view_key};
 use outbe_fidelity::{MAX_LEAGUE, MIN_LEAGUE};
 use outbe_primitives::addresses::{GRATIS_ADDRESS, PROMIS_ADDRESS, PROMIS_FACTORY_ADDRESS};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -15,7 +16,6 @@ use outbe_primitives::units::{ONE_COEN, SCALE_1E6_U64};
 use outbe_promis::api::{self as promis_api, ModifyAuth};
 use outbe_promis::enclave_client::test_enclave;
 use outbe_tee::protocol::{GratisOp, PromisOp};
-use outbe_tee_enclave::promis::{decrypt_balance, derive_view_key};
 
 use crate::precompile::{dispatch, IPromisFactory};
 use crate::runtime;
@@ -198,11 +198,11 @@ fn with_gratis_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
 /// keyed independently from promis).
 fn gratis_auth(op: GratisOp, account: Address, amount: U256, nonce: u64) -> ModifyAuth {
     let sk = outbe_gratis::enclave_client::test_enclave::state_key();
-    let mk = outbe_tee_enclave::gratis::derive_modify_key(&sk, account).unwrap();
+    let mk = outbe_enclave::gratis::derive_modify_key(&sk, account).unwrap();
     ModifyAuth {
-        mac: outbe_tee_enclave::gratis::modify_mac(
+        mac: outbe_enclave::gratis::modify_mac(
             &mk,
-            &outbe_tee_enclave::gratis::ModifyOperation {
+            &outbe_enclave::gratis::ModifyOperation {
                 account,
                 op,
                 amount,
@@ -217,12 +217,12 @@ fn gratis_auth(op: GratisOp, account: Address, amount: U256, nonce: u64) -> Modi
 /// Decrypt `account`'s confidential gratis balance with its view key.
 fn gratis_view_balance(storage: &StorageHandle<'_>, account: Address) -> U256 {
     let sk = outbe_gratis::enclave_client::test_enclave::state_key();
-    let vk = outbe_tee_enclave::gratis::derive_view_key(&sk, account).unwrap();
+    let vk = outbe_enclave::gratis::derive_view_key(&sk, account).unwrap();
     let blob = outbe_gratis::api::balance_ct(storage.clone(), account).unwrap();
     if blob.is_empty() {
         return U256::ZERO;
     }
-    outbe_tee_enclave::gratis::decrypt_balance(&vk, account, &blob).unwrap()
+    outbe_enclave::gratis::decrypt_balance(&vk, account, &blob).unwrap()
 }
 
 fn eve() -> Address {
@@ -282,13 +282,13 @@ fn mine_gratis_burns_promis_mints_gratis_creating_fidelity_cohort() {
         let call = mine_gratis_call(amount, &pa, &ga);
         let out = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap();
         let minted_ct = IPromisFactory::mineGratisCall::abi_decode_returns(&out).unwrap();
-        let gratis_vk = outbe_tee_enclave::gratis::derive_view_key(
+        let gratis_vk = outbe_enclave::gratis::derive_view_key(
             &outbe_gratis::enclave_client::test_enclave::state_key(),
             alice(),
         )
         .unwrap();
         assert_eq!(
-            outbe_tee_enclave::gratis::decrypt_balance(&gratis_vk, alice(), &minted_ct).unwrap(),
+            outbe_enclave::gratis::decrypt_balance(&gratis_vk, alice(), &minted_ct).unwrap(),
             amount
         );
 

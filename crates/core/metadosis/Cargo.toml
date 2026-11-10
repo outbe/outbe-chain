@@ -28,7 +28,7 @@ thiserror.workspace = true
 [dev-dependencies]
 serde_json.workspace = true
 outbe-tee = { workspace = true, features = ["test-utils"] }
-outbe-tee-enclave.workspace = true
+outbe-enclave.workspace = true
 outbe-nod = { workspace = true, features = ["test-enclave"] }
 outbe-tribute = { workspace = true, features = ["test-enclave", "test-utils"] }
 outbe-tributefactory = { workspace = true, features = ["test-utils"] }

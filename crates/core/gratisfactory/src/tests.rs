@@ -7,6 +7,7 @@ use alloy_primitives::{address, Address, Bytes, FixedBytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolInterface};
 
 use outbe_core_common::erc::ERC165_INTERFACE_ID;
+use outbe_enclave::gratis::{decrypt_balance, decrypt_pledged, derive_view_key};
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_primitives::addresses::{GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -14,7 +15,6 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::units::checked_protocol_to_native;
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
-use outbe_tee_enclave::gratis::{decrypt_balance, decrypt_pledged, derive_view_key};
 
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_fidelity::{MAX_LEAGUE, MIN_LEAGUE};
@@ -35,7 +35,7 @@ fn chain_b256() -> B256 {
 /// Build the modify authorization a client holding `owner`'s modify key sends for
 /// `op` on `amount` at `op_nonce`.
 fn auth(op: GratisOp, owner: Address, amount: U256, op_nonce: u64) -> ModifyAuth {
-    test_enclave::modify_auth(outbe_tee_enclave::gratis::ModifyOperation {
+    test_enclave::modify_auth(outbe_enclave::gratis::ModifyOperation {
         account: owner,
         op,
         amount,
@@ -685,7 +685,7 @@ fn encrypted_nod_mint_preserves_nonce_and_combined_fidelity_state() {
 fn encrypted_nod(amount: U256) -> outbe_primitives::nod_encryption::EncryptedNodV1 {
     use outbe_primitives::{nod_encryption::NodTermsV1, time::WorldwideDay};
     let day = WorldwideDay::new(20250115);
-    outbe_tee_enclave::nod_encryption::encrypt_nod(
+    outbe_enclave::nod_encryption::encrypt_nod(
         &[0x5a; 32],
         NodTermsV1 {
             chain_id: CHAIN_ID,

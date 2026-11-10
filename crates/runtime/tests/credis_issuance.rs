@@ -2,6 +2,9 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
 use outbe_credisfactory::precompile::ICredisFactory;
+use outbe_enclave::gratis::{
+    decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
+};
 use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratis::precompile::IGratis;
@@ -20,9 +23,6 @@ use outbe_primitives::{
     time::{previous_date_key, timestamp_to_date_key},
 };
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
-use outbe_tee_enclave::gratis::{
-    decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
-};
 use outbe_vaultrouter::{
     api::IVaultRouter,
     test_support::{register_source, register_target},
@@ -200,7 +200,7 @@ fn source_auth(key: &[u8; 32], op: GratisOp, op_nonce: u64) -> ModifyAuth {
     ModifyAuth {
         mac: modify_mac(
             key,
-            &outbe_tee_enclave::gratis::ModifyOperation {
+            &outbe_enclave::gratis::ModifyOperation {
                 account: OWNER,
                 op,
                 amount: U256::from(GRATIS),

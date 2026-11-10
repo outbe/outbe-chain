@@ -103,6 +103,7 @@ tokio-util.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+outbe-enclave.workspace = true
 outbe-core-common.workspace = true
 outbe-runtime = { path = ".", features = ["test-hooks"] }
 alloy-consensus.workspace = true

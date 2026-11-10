@@ -5,11 +5,11 @@
 
 use alloy_primitives::{address, Address, B256, U256};
 use alloy_sol_types::{SolCall, SolError, SolEvent};
+use outbe_enclave::promis::{decrypt_balance, derive_view_key};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_tee::protocol::{ModifyAuth, PromisOp};
-use outbe_tee_enclave::promis::{decrypt_balance, derive_view_key};
 
 use crate::api;
 use crate::enclave_client::test_enclave;

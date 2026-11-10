@@ -543,7 +543,7 @@ mod tests {
             2_000_000,
         )));
 
-        // To regenerate: `cargo test -p outbe-tee-enclave fidelity_known_answer -- --nocapture`
+        // To regenerate: `cargo test -p outbe-enclave fidelity_known_answer -- --nocapture`
         // with the asserts commented out, then paste.
         assert_eq!(
             sk_hex,

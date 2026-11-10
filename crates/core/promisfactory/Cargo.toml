@@ -24,7 +24,7 @@ outbe-promis = { workspace = true, features = ["test-enclave"] }
 outbe-gratis = { workspace = true, features = ["test-enclave"] }
 outbe-fidelity = { workspace = true, features = ["test-enclave"] }
 outbe-tee.workspace = true
-outbe-tee-enclave.workspace = true
+outbe-enclave.workspace = true
 
 [lints]
 workspace = true

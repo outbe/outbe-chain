@@ -30,7 +30,7 @@ alloy-primitives = { workspace = true, features = ["rand"] }
 # Drive the confidential Promis mint path in tests via the in-process enclave.
 outbe-promis = { workspace = true, features = ["test-enclave"] }
 outbe-tee.workspace = true
-outbe-tee-enclave.workspace = true
+outbe-enclave.workspace = true
 outbe-vaultrouter = { workspace = true, features = ["test-utils"] }
 revm.workspace = true
 

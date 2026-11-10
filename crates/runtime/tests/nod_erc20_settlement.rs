@@ -4,6 +4,7 @@ mod settlement;
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
+use outbe_enclave::gratis::{derive_modify_key, modify_mac};
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_nod::{precompile::INod, NodIssueParams};
 use outbe_nodfactory::precompile::INodFactory;
@@ -13,7 +14,6 @@ use outbe_primitives::{
     storage::{StorageHandle, SubCallStatus},
 };
 use outbe_tee::protocol::GratisOp;
-use outbe_tee_enclave::gratis::{derive_modify_key, modify_mac};
 use outbe_vaultrouter::api::IVaultRouter::StablesSource;
 use settlement::{Quote, Rail, World, ASSET, FACTORY_FLOAT, OWNER, THIRD_PARTY};
 
@@ -59,7 +59,7 @@ impl Rail for Nod {
                 asset: ASSET,
             },
         );
-        let view_key = outbe_tee_enclave::nod_encryption::derive_view_key(
+        let view_key = outbe_enclave::nod_encryption::derive_view_key(
             &outbe_nod::test_support::NETWORK_SECRET,
             OWNER,
         )
@@ -172,7 +172,7 @@ fn erc20_settlement_moves_exact_full_width_cost_and_preserves_mining() {
     let key = derive_modify_key(&test_enclave::state_key(), OWNER).unwrap();
     let mac = modify_mac(
         &key,
-        &outbe_tee_enclave::gratis::ModifyOperation {
+        &outbe_enclave::gratis::ModifyOperation {
             account: OWNER,
             op: GratisOp::Mint,
             amount: U256::from(GRATIS_LOAD),
@@ -191,7 +191,7 @@ fn erc20_settlement_moves_exact_full_width_cost_and_preserves_mining() {
         },
     );
     let view_key =
-        outbe_tee_enclave::gratis::derive_view_key(&test_enclave::state_key(), OWNER).unwrap();
+        outbe_enclave::gratis::derive_view_key(&test_enclave::state_key(), OWNER).unwrap();
     assert_eq!(
         outbe_tee::gratis_decrypt::decrypt_gratis_balance(&view_key, OWNER, &minted).unwrap(),
         U256::from(GRATIS_LOAD)

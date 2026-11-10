@@ -188,7 +188,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
             nod_item.encrypted.terms.entry_price_minor,
             U256::from(1_234_567u64)
         );
-        let nod_view_key = outbe_tee_enclave::nod_encryption::derive_view_key(
+        let nod_view_key = outbe_enclave::nod_encryption::derive_view_key(
             &crate::enclave_client::test_enclave::NETWORK_SECRET,
             owner1,
         )
@@ -196,7 +196,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
         let owner_decrypted =
             outbe_tee::nod_decrypt::decrypt_nod_for_owner(&nod_view_key, &nod_item.encrypted)
                 .expect("owner must decrypt real encrypted Nod");
-        let enclave_decrypted = outbe_tee_enclave::nod_encryption::decrypt_nod(
+        let enclave_decrypted = outbe_enclave::nod_encryption::decrypt_nod(
             &crate::enclave_client::test_enclave::NETWORK_SECRET,
             &nod_item.encrypted,
         )
@@ -438,7 +438,7 @@ fn series_sealing_zero_nod_forfeit_returns_unclaimed_load_and_enables_permission
         let nod_id = tc.issue_nod(owner1, t1.tribute_id).unwrap();
         let t1_item = outbe_nod::api::get_item(&storage, nod_id).unwrap().unwrap();
         assert_eq!(t1_item.group_key, group_key);
-        let t1_load = outbe_tee_enclave::nod_encryption::decrypt_nod(
+        let t1_load = outbe_enclave::nod_encryption::decrypt_nod(
             &crate::enclave_client::test_enclave::NETWORK_SECRET,
             &t1_item.encrypted,
         )
@@ -1018,12 +1018,12 @@ fn multi_league_lysis_and_issue_nod_keep_league_nominals_fractions_and_loads_pri
             let rec2 = outbe_nod::api::get_item(&storage, nod2_id)
                 .unwrap()
                 .unwrap();
-            let view_key1 = outbe_tee_enclave::nod_encryption::derive_view_key(
+            let view_key1 = outbe_enclave::nod_encryption::derive_view_key(
                 &crate::enclave_client::test_enclave::NETWORK_SECRET,
                 owner1,
             )
             .unwrap();
-            let view_key2 = outbe_tee_enclave::nod_encryption::derive_view_key(
+            let view_key2 = outbe_enclave::nod_encryption::derive_view_key(
                 &crate::enclave_client::test_enclave::NETWORK_SECRET,
                 owner2,
             )
@@ -1098,7 +1098,7 @@ fn multi_league_lysis_and_issue_nod_keep_league_nominals_fractions_and_loads_pri
                 &quote_raw,
             )
             .unwrap();
-        let view_key1 = outbe_tee_enclave::nod_encryption::derive_view_key(
+        let view_key1 = outbe_enclave::nod_encryption::derive_view_key(
             &crate::enclave_client::test_enclave::NETWORK_SECRET,
             owner1,
         )

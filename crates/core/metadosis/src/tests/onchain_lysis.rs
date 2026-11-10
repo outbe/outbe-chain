@@ -26,7 +26,7 @@ pub(crate) fn exchange(
 ) -> std::result::Result<([u8; 32], EnclaveResponse), TransportError> {
     let encoded = serde_json::to_vec(request).unwrap();
     let request: LysisRequest = serde_json::from_slice(&encoded).unwrap();
-    let result = outbe_tee_enclave::lysis::execute(
+    let result = outbe_enclave::lysis::execute(
         &outbe_tribute::enclave_client::test_enclave::NETWORK_SECRET,
         &outbe_nod::test_support::NETWORK_SECRET,
         &outbe_fidelity::enclave_client::test_enclave::state_key(),
@@ -34,7 +34,7 @@ pub(crate) fn exchange(
     );
     match result {
         Ok(result) => attest(&request, result),
-        Err(outbe_tee_enclave::errors::TeeError::LysisCalculationRejected) => {
+        Err(outbe_enclave::errors::TeeError::LysisCalculationRejected) => {
             attest_rejection(&request)
         }
         Err(_) => Err(TransportError::UnexpectedResponse),
@@ -44,8 +44,8 @@ pub(crate) fn exchange(
 fn attest_rejection(
     request: &LysisRequest,
 ) -> std::result::Result<([u8; 32], EnclaveResponse), TransportError> {
-    let keys =
-        outbe_tee_enclave::keys::EnclaveKeys::new([0x31; 32], Some([IDENTITY.get(); 32])).unwrap();
+    let keys = outbe_enclave::crypto::AttestationKeyPair::from_identity_seed(&[IDENTITY.get(); 32])
+        .unwrap();
     let inputs = outbe_tee::lysis::inputs_hash(request)?;
     let mut signature = keys
         .sign_attestation(&outbe_tee::lysis::rejection_preimage(inputs))
@@ -73,8 +73,8 @@ fn attest(
     request: &LysisRequest,
     mut result: LysisResult,
 ) -> std::result::Result<([u8; 32], EnclaveResponse), TransportError> {
-    let keys =
-        outbe_tee_enclave::keys::EnclaveKeys::new([0x31; 32], Some([IDENTITY.get(); 32])).unwrap();
+    let keys = outbe_enclave::crypto::AttestationKeyPair::from_identity_seed(&[IDENTITY.get(); 32])
+        .unwrap();
     let inputs = outbe_tee::lysis::inputs_hash(request)?;
     let signed = outbe_tee::lysis::result_preimage(inputs, &result)?;
     let mut signature = keys.sign_attestation(&signed).to_vec();
@@ -127,7 +127,7 @@ fn attest(
 fn signed_response(
     request: &LysisRequest,
     result: LysisResult,
-    keys: &outbe_tee_enclave::keys::EnclaveKeys,
+    keys: &outbe_enclave::crypto::AttestationKeyPair,
 ) -> std::result::Result<([u8; 32], EnclaveResponse), TransportError> {
     let inputs = outbe_tee::lysis::inputs_hash(request)?;
     let signature = keys
@@ -375,8 +375,8 @@ fn production_command_issues_encrypted_nods_and_completes_without_worker() {
             nods[0].nod_id,
             outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(owner, WWD).to_u256()
         );
-        let load = outbe_tee_enclave::nod_encryption::decrypt_nod(&[0x5a; 32], &nods[0].encrypted)
-            .unwrap();
+        let load =
+            outbe_enclave::nod_encryption::decrypt_nod(&[0x5a; 32], &nods[0].encrypted).unwrap();
         assert!(!tribute.encrypted_day_fractions(WWD).unwrap().is_empty());
         let expected_fraction = LIMIT * 1_000_000 / (3 * NOMINAL + 6);
         assert_eq!(
