@@ -1,5 +1,6 @@
 //! Error types for the Desis precompile.
 
+use crate::constants::MAX_TARGET_CHAINS;
 use crate::precompile::IDesis;
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolError;
@@ -57,6 +58,9 @@ pub enum DesisError {
 
     #[error("targetsOf undecodable")]
     TargetsOfUndecodable,
+
+    #[error("emission day {0} has {1} targets, more than the cap")]
+    TooManyTargets(EmissionDate, usize),
 
     #[error("processBidsBatch: batch total mismatch")]
     BatchTotalMismatch,
@@ -138,6 +142,11 @@ impl From<DesisError> for PrecompileError {
                 revert_with(I::MinBidQuantityScalingOverflow {})
             }
             DesisError::TargetsOfUndecodable => revert_with(I::TargetsOfUndecodable {}),
+            DesisError::TooManyTargets(day, count) => revert_with(I::TooManyTargets {
+                emissionDay: day.value(),
+                count: count as u64,
+                max: MAX_TARGET_CHAINS as u64,
+            }),
             DesisError::BatchTotalMismatch => revert_with(I::BatchTotalMismatch {}),
             DesisError::InvalidTotalBatches => revert_with(I::InvalidTotalBatches {}),
             DesisError::InvalidBatchIndexOrTotal => revert_with(I::InvalidBatchIndexOrTotal {}),

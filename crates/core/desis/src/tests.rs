@@ -1,5 +1,7 @@
 #![cfg(test)]
 
+#[cfg(not(feature = "e2e-test"))]
+mod advance_sweep;
 mod clearing_cleanup;
 mod deadline_cleanup;
 
@@ -42,6 +44,8 @@ const ANCHOR: u64 = NOW - NOW % SECONDS_PER_DAY;
 const ENTRY_PRICE: u128 = 2_000_000; // 2.0 on the COEN/840 scale; escrow basis = promis_load
 /// The load any first priced brief picks, pinned by `the_fixture_load_is_the_one_the_ladder_picks`.
 const LOAD_MINOR: u128 = 1_000_000 * PROMIS_LOAD_MINOR;
+/// The `auction_advance` work budget in `outbe-cycle`.
+const ADVANCE_BUDGET: u64 = crate::constants::AUCTION_ADVANCE_BUDGET_GAS;
 
 #[test]
 fn the_bridge_caps_match_the_contracts() {
@@ -145,6 +149,12 @@ fn targets_stub(chains: &[u32]) -> Bytes {
 }
 
 fn with_targets<R>(chains: &[u32], f: impl FnOnce(StorageHandle) -> R) -> R {
+    let mut storage = fixture_provider(chains);
+    StorageHandle::enter(&mut storage, f)
+}
+
+/// The provider that `with_targets` enters, for a case that has to enter it more than once.
+fn fixture_provider(chains: &[u32]) -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
     // Stub OriginRouter: `targetsOf` returns the snapshot. The runtime ignores send* returns.
@@ -166,8 +176,8 @@ fn with_targets<R>(chains: &[u32], f: impl FnOnce(StorageHandle) -> R) -> R {
         for day in 0..5 {
             seed_rate(&handle, NOW + day * SECONDS_PER_DAY, ENTRY_PRICE);
         }
-        f(handle)
-    })
+    });
+    storage
 }
 
 /// The UTC day an auction starting at `now` prices from: the one that closed before it.

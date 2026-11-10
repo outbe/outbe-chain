@@ -1,8 +1,7 @@
 use super::*;
+use crate::constants::{ADVANCE_DAY_BASE_GAS, ADVANCE_FAIL_GAS};
 use crate::precompile::IDesis;
 use outbe_promislimit::PromisLimitContract;
-
-const ADVANCE_BUDGET: u64 = 638_000;
 
 #[test]
 fn deadline_retirement_fits_budget_for_1088_and_64_accepted_bids() {
@@ -70,7 +69,7 @@ fn deadline_retirement_fits_budget_for_1088_and_64_accepted_bids() {
             s.with_trigger_budget(ADVANCE_BUDGET, || runtime::schedule_tick(&s, deadline))
                 .unwrap();
             let cost = s.gas_used().unwrap() - gas_before;
-            assert!(cost <= ADVANCE_BUDGET);
+            assert!(cost <= ADVANCE_DAY_BASE_GAS + ADVANCE_FAIL_GAS);
             if let Some(previous) = retirement_cost.replace(cost) {
                 assert_eq!(
                     cost, previous,
@@ -140,7 +139,7 @@ fn deadline_retirement_fits_budget_for_1088_and_64_accepted_bids() {
 }
 
 #[test]
-fn schedule_rotates_past_not_ready_days_and_retires_one_backlogged_day_per_tick() {
+fn schedule_retires_every_backlogged_day_in_one_tick_and_keeps_a_not_ready_day() {
     with_storage(|s| {
         let later = EmissionDate::new(20231115);
         let mut contract = s.contract::<DesisContract>();
@@ -163,16 +162,11 @@ fn schedule_rotates_past_not_ready_days_and_retires_one_backlogged_day_per_tick(
             contract.push_sched_active(day).unwrap();
         }
         runtime::schedule_tick(&s, LAST_CLEARING).unwrap();
-        assert_eq!(contract.sched_active_count.read().unwrap(), 3);
-        assert_eq!(contract.sched_poll_cursor.read().unwrap(), 1);
-        runtime::schedule_tick(&s, LAST_CLEARING).unwrap();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
             AuctionStage::Failed
         );
-        assert_eq!(contract.sched_active_count.read().unwrap(), 2);
         // The swapped-in tail must not be skipped after removing slot one.
-        runtime::schedule_tick(&s, LAST_CLEARING).unwrap();
         assert_eq!(
             contract.read_stage(EmissionDate::new(20231114)).unwrap(),
             AuctionStage::Failed

@@ -21,6 +21,7 @@ interface IDesis {
     error BriefAnchorExceedsU32();
     error MinBidQuantityScalingOverflow();
     error TargetsOfUndecodable();
+    error TooManyTargets(uint32 emissionDay, uint64 count, uint64 max);
     error BatchTotalMismatch();
     error InvalidTotalBatches();
     error InvalidBatchIndexOrTotal();
