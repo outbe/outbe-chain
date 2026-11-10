@@ -1,9 +1,9 @@
 use super::*;
-use crate::stack::follower::local_anchor::LocalFinalizedHistory;
 use commonware_consensus::marshal::store::{Blocks, Certificates};
 use commonware_consensus::types::Epocher as _;
 use outbe_consensus::bls::bootstrap_dkg_for_participants;
 use outbe_consensus::dkg_manager::{build_boundary_artifact, BoundaryArtifactInput};
+use outbe_consensus::stack::follower::local_anchor::LocalFinalizedHistory;
 use outbe_primitives::reshare_artifact::{
     encode_outbe_block_artifacts, ConsensusHeaderArtifact, OutbeBlockArtifacts,
 };
@@ -154,7 +154,7 @@ async fn write_local_anchor_archives(
 }
 
 fn assert_restored_committee(
-    restored: &crate::stack::follower::local_anchor::RestoredCommittee,
+    restored: &outbe_consensus::stack::follower::local_anchor::RestoredCommittee,
     fixture: &LocalAnchorRecords,
 ) {
     assert_eq!(restored.chain.anchor_epoch(), RESTORED_EPOCH);

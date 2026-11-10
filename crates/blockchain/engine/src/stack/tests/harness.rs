@@ -44,7 +44,7 @@ where
     R: Reporter<Activity = outbe_consensus::marshal_types::MarshalUpdate> + Send + 'static,
 {
     let test_id = STACK_MARSHAL_TEST_ID.fetch_add(1, Ordering::SeqCst);
-    crate::stack::recovery_marshal::start_recovery_marshal_in_partition(
+    outbe_consensus::stack::recovery_marshal::start_recovery_marshal_in_partition(
         context,
         provider,
         reporter,
@@ -58,8 +58,8 @@ where
 pub(super) fn validator_signer_args(
     signing_key: std::path::PathBuf,
     evm_key: std::path::PathBuf,
-) -> crate::args::ConsensusArgs {
-    crate::args::ConsensusArgs {
+) -> outbe_consensus::args::ConsensusArgs {
+    outbe_consensus::args::ConsensusArgs {
         is_validator: true,
         signing_key: Some(signing_key),
         validator_evm_key: Some(evm_key),
@@ -80,7 +80,7 @@ pub(super) fn validator_signer_args(
         reth_key_backend: "plaintext".to_string(),
         reth_passphrase: None,
         tee_enclave_socket: None,
-        tee_session_mode: crate::args::TeeSessionMode::PolicyDefault,
+        tee_session_mode: outbe_consensus::args::TeeSessionMode::PolicyDefault,
         tee_bootstrap_timeout_secs: 60,
         tee_canary_interval_secs: 30,
         tee_canary_failure_threshold: 3,

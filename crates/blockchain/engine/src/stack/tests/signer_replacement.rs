@@ -114,8 +114,8 @@ async fn canonical_verifier_gate_wakes_a_running_signer_epoch() {
 
 #[test]
 fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_removal() {
-    use crate::args::ConsensusArgs;
     use commonware_cryptography::Signer as _;
+    use outbe_consensus::args::ConsensusArgs;
     use std::net::SocketAddr;
 
     let temp = tempfile::tempdir().unwrap();
@@ -182,7 +182,7 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
         reth_key_backend: "plaintext".to_string(),
         reth_passphrase: None,
         tee_enclave_socket: None,
-        tee_session_mode: crate::args::TeeSessionMode::PolicyDefault,
+        tee_session_mode: outbe_consensus::args::TeeSessionMode::PolicyDefault,
         tee_bootstrap_timeout_secs: 60,
         tee_canary_interval_secs: 30,
         tee_canary_failure_threshold: 3,
@@ -326,8 +326,8 @@ fn test_register_epoch_validation_providers_is_available_and_first_wins() {
 
 #[test]
 fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
-    use crate::validators::{ValidatorP2pAddress, ValidatorSet};
     use commonware_cryptography::Signer as _;
+    use outbe_consensus::validators::{ValidatorP2pAddress, ValidatorSet};
 
     let temp = tempfile::tempdir().unwrap();
     let evm_key_path = temp.path().join("evm-key.hex");
@@ -372,7 +372,7 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
     // Verifier-join: an EVM signer NOT in either set must NOT bail when verifier_join
     // is true. It returns None (the node syncs as a verifier). The same signer with
     // verifier_join=false bails (the existing member-required contract).
-    let empty = crate::validators::ValidatorSet {
+    let empty = outbe_consensus::validators::ValidatorSet {
         public_keys: Vec::new(),
         addresses: Vec::new(),
         p2p_addresses: Vec::new(),

@@ -1,25 +1,50 @@
+#[cfg(test)]
+use commonware_runtime::Spawner as _;
+#[cfg(test)]
+use outbe_consensus::{
+    executor::actor::ExecutorActor, stack::recovery::anchor::reconcile_recovered_execution_head,
+};
+#[cfg(test)]
+use outbe_primitives::OutbePayloadTypes;
+#[cfg(test)]
+use reth_node_builder::ConsensusEngineHandle;
 mod marshal;
 pub mod validator_history;
-use super::*;
 use crate::finalization::{RethDurableExecutionState, RethFinalizationBarrier};
 use alloy_consensus::Sealable;
+use alloy_primitives::B256;
 use alloy_primitives::U256;
 use commonware_actor::Feedback;
+use commonware_consensus::types::{Epoch, Height, Round};
 use commonware_consensus::{
     marshal::Update,
     simplex::types::{Activity, Finalization, Finalize, Proposal},
     types::View,
     Reporter,
 };
+use commonware_cryptography::{bls12381, bls12381::primitives::variant::MinSig, Signer as _};
 use commonware_parallel::Sequential;
 use commonware_runtime::{tokio as commonware_tokio, Runner as _, Supervisor as _};
+use commonware_utils::TryCollect as _;
 use commonware_utils::{
     acknowledgement::Acknowledgement as _,
     ordered::{Quorum as _, Set},
 };
 use outbe_consensus::executor::actor::FinalizedExecutionBarrier;
 use outbe_consensus::{block::ConsensusBlock, bls::bootstrap_dkg};
+use outbe_consensus::{
+    config,
+    digest::Digest,
+    hybrid::{HybridScheme, HybridSchemeProvider},
+    stack::{
+        recovery::anchor::RecoveredApplicationFinalization,
+        recovery::forkchoice::{
+            read_reth_recovery_forkchoice, recover_application_finalized_round,
+        },
+    },
+};
 use outbe_primitives::projection::ProjectionCheckpoint;
+use outbe_primitives::OutbeHeader;
 use reth_ethereum::{
     chainspec::ChainSpec,
     node::api::NodeTypesWithDBAdapter,
@@ -46,18 +71,19 @@ use reth_provider::{
 };
 use std::sync::Mutex as StdMutex;
 use std::{fs, path::Path};
+use std::{sync::Arc, time::Duration};
 
 mod disk;
-pub use super::dkg::handoff::{
+use disk::copy_tree;
+pub use disk::inventory;
+pub use outbe_consensus::stack::dkg::handoff::{
     refresh_validator_set_at_height, FrozenDkgTarget, FrozenValidatorSetRefresh,
     PendingDkgActivation, RestoredPendingDkgActivation,
 };
-pub use super::dkg::persistence::{
+pub use outbe_consensus::stack::dkg::persistence::{
     load_pending_dkg_boundary, restore_pending_dkg_activation, save_pending_dkg_boundary,
     save_pending_dkg_state, DkgStateMaterial, DkgStateStore, PendingDkgBoundarySnapshot,
 };
-use disk::copy_tree;
-pub use disk::inventory;
 
 type Nodes = NodeTypesWithDBAdapter<outbe_execution::OutbeNode, DatabaseEnv>;
 type Provider = BlockchainProvider<Nodes>;

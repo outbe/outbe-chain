@@ -680,7 +680,7 @@ impl BlockHashReader for MockBlockHashProvider {
 #[test]
 fn provider_matches_consensus_tip_checks_height_and_hash() {
     let digest = outbe_consensus::digest::Digest(B256::repeat_byte(0x11));
-    let tip = crate::marshal_update_reporter::ConsensusTip {
+    let tip = outbe_consensus::marshal_update_reporter::ConsensusTip {
         round: Round::new(Epoch::new(0), View::new(7)),
         height: Height::new(42),
         digest,
