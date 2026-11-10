@@ -40,6 +40,10 @@ pub enum OracleError {
     DuplicatePairInVote,
     #[error("pair is not a vote target")]
     PairNotVoteTarget,
+    #[error("duplicate gas chain {chain_id} in vote submission")]
+    DuplicateGasChainInVote { chain_id: u32 },
+    #[error("chain {chain_id} is not a gas vote target")]
+    GasChainNotVoteTarget { chain_id: u32 },
     #[error("validator already voted this period")]
     AlreadyVotedThisPeriod,
     #[error("vote price {price} exceeds {max}")]
@@ -204,6 +208,12 @@ impl From<OracleError> for PrecompileError {
             OracleError::PairNotVoteTarget => PrecompileError::RevertBytes(Bytes::from(
                 IOracle::PairNotVoteTarget {}.abi_encode(),
             )),
+            OracleError::DuplicateGasChainInVote { chain_id } => PrecompileError::RevertBytes(
+                Bytes::from(IOracle::DuplicateGasChainInVote { chainId: chain_id }.abi_encode()),
+            ),
+            OracleError::GasChainNotVoteTarget { chain_id } => PrecompileError::RevertBytes(
+                Bytes::from(IOracle::GasChainNotVoteTarget { chainId: chain_id }.abi_encode()),
+            ),
             OracleError::AlreadyVotedThisPeriod => PrecompileError::RevertBytes(Bytes::from(
                 IOracle::AlreadyVotedThisPeriod {}.abi_encode(),
             )),

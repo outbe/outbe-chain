@@ -12,8 +12,11 @@
 //!   Begin-block liveness calls the same rotation.
 //! - A write to an ISM or the ICA router is an owner call: the controller
 //!   calls `crosschainbridge` like a contract (`callLocal`, `callRemote`).
-//! - [`HyperlaneVoteTarget`] adds and removes the Hyperlane chains by a
-//!   validator vote. Permissionless `applyApproved` runs an approved action.
+//! - [`HyperlaneVoteTarget`] adds and removes the Hyperlane chains and sets
+//!   the gas data of the IGPs by a validator vote. Permissionless
+//!   `applyApproved` runs an approved action.
+//! - `getExchangeRateAndGasPrice` is the gas oracle of the Outbe IGP: the
+//!   Oracle gas price of the domain in COEN-wei plus `gas_markup_bps`.
 
 pub mod errors;
 pub mod lifecycle;
@@ -21,11 +24,13 @@ pub mod precompile;
 pub mod schema;
 pub mod sol_ext;
 
+mod gas;
 mod ism;
 mod liveness;
 mod runtime;
 mod vote_target;
 
+pub use gas::{GAS_MARKUP_BPS, TOKEN_EXCHANGE_RATE_SCALE};
 pub use lifecycle::HyperlaneModule;
 pub use liveness::{
     checkpoint_digest, SignedCheckpoint, GRACE_BLOCKS, LIVENESS_WINDOW_BLOCKS, MAX_MISSES,

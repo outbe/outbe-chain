@@ -382,6 +382,29 @@
   },
   {
     "type": "function",
+    "name": "getGasPrices",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "chainIds",
+        "type": "uint32[]",
+        "internalType": "uint32[]"
+      },
+      {
+        "name": "prices",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "updatedAt",
+        "type": "uint64[]",
+        "internalType": "uint64[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getNominalPrice",
     "inputs": [
       {
@@ -1145,6 +1168,23 @@
             "internalType": "uint256"
           }
         ]
+      },
+      {
+        "name": "gas",
+        "type": "tuple[]",
+        "internalType": "struct IOracle.GasTuple[]",
+        "components": [
+          {
+            "name": "chainId",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "gasPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
       }
     ],
     "outputs": [],
@@ -1484,6 +1524,17 @@
   },
   {
     "type": "error",
+    "name": "DuplicateGasChainInVote",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "DuplicatePairInAggregateVote",
     "inputs": []
   },
@@ -1500,6 +1551,17 @@
         "name": "iso_code",
         "type": "uint16",
         "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GasChainNotVoteTarget",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ]
   },

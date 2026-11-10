@@ -2,10 +2,10 @@
 //! default, and its Gratis burns from the source's pledge into the Promis reserve.
 
 use alloy_primitives::U256;
+use outbe_common::deadline_queue::{self, DeadlineHandler, Due};
 use outbe_credis::{CleanupQueue, CredisContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    deadline_queue::{self, DeadlineHandler, Due},
     error::{PassFailure, PrecompileError, Result},
     pass_budget::PassBudget,
     series_id::SeriesId,

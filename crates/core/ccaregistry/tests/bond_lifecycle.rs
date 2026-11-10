@@ -1131,7 +1131,7 @@ fn expired_reward_transactions_reject_value_static_writes_invalid_pools_and_roll
 
 /// `price` less the agent discount, the entry of an agent reward Gem.
 fn discounted(price: U256) -> U256 {
-    outbe_primitives::markup::marked_down(price, outbe_agentreward::constants::AGENT_DISCOUNT_PCT)
+    outbe_common::markup::marked_down(price, outbe_agentreward::constants::AGENT_DISCOUNT_PCT)
         .unwrap()
 }
 

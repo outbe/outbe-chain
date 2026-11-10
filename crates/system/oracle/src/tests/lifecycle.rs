@@ -10,5 +10,6 @@ use super::common::*;
 
 mod arithmetic;
 mod atomicity;
+mod gas;
 mod hooks;
 mod tally;

@@ -172,6 +172,7 @@ impl HyperlaneControllerContract<'_> {
         self.ica_router.write(bootstrap.ica_router)?;
         self.validator_announce
             .write(bootstrap.validator_announce)?;
+        self.gas_markup_bps.write(crate::gas::GAS_MARKUP_BPS)?;
         let table = bootstrap
             .domains
             .iter()

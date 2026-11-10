@@ -29,7 +29,8 @@ come from:
 | `local` | `feeder.toml`, or the file that `pairs` names | localnet, testnet, e2e |
 
 In `chain` mode `feeder.toml` must not set `currency_pairs`,
-`deviation_thresholds`, `dex_providers` or `onchain_providers`.
+`deviation_thresholds`, `dex_providers`, `onchain_providers` or
+`gas_providers`.
 
 The node files are in `crates/system/oracle/sources/<major>.<minor>.toml`.
 They are for mainnet only. Other networks register pairs in genesis. The node
@@ -179,6 +180,10 @@ contract = "0x5555555555555555555555555555555555555555"   # Chainlink JPY / USD,
 | `onchain_providers[].chain_id` | with the entry | EVM network of the feed contract |
 | `onchain_providers[].rpc_endpoint` | no | JSON-RPC of the feed contract. Omitted takes `rpc_endpoints.<chain_id>` |
 | `onchain_providers[].contract` | with the entry | Feed contract, the vendor's proxy address |
+| `gas_providers[].chain_id` | with the entry | Remote EVM chain to vote a gas price for. Its RPC is `rpc_endpoints.<chain_id>`. See [Gas prices](#gas-prices) |
+| `gas_providers[].price_feed` | with the entry | Source of the native token price in USD: `{ chainlink = "0x…" }`, a Chainlink feed on the same chain |
+| `gas_providers[].fee_history_blocks` | no | Blocks of `eth_feeHistory` in one gas price (default: 20) |
+| `gas_providers[].delay_secs` | no | The last block read is this many seconds older than the start of the vote period (default: 60). Keep it above the block time of the chain |
 | `deviation_thresholds[].base` | no | Asset to apply threshold to |
 | `deviation_thresholds[].threshold` | no | Max sigma deviation as an exact decimal string (default: `"2.0"`) |
 
@@ -302,6 +307,65 @@ the longest documented heartbeat at either vendor is 24 hours, so a round
 older than that means the relayer stopped. Feeds report no volume, so the
 observation weighs one unit in the source mean. Neither vendor lists a COEN
 feed today; a COEN push feed, once deployed, is configured here like any other.
+
+### Gas prices
+
+Each `[[gas_providers]]` entry makes the feeder vote the gas price of one
+remote chain, in COEN-wei per unit of gas. The HyperlaneController gives this
+price to the Outbe Hyperlane IGP (OIP-00367).
+
+```toml
+[[gas_providers]]
+chain_id = 1                                                               # Ethereum
+price_feed = { chainlink = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419" }   # ETH/USD
+fee_history_blocks = 20   # default 20: 20 × 12 s = 4 minutes of gas history
+delay_secs = 60           # default 60: 5 blocks behind the start of the vote period
+
+[[gas_providers]]
+chain_id = 56                                                              # BSC
+price_feed = { chainlink = "0x0567F2323251f0Aab15c8dFb1967E4e8A7D42aeE" }   # BNB/USD
+delay_secs = 10           # blocks of 0.45 s: a short delay is enough
+```
+
+```toml
+# feeder.toml: the RPC of each chain in gas_providers.
+[rpc_endpoints]
+1 = "https://ethereum-rpc.example"
+56 = "https://bsc-rpc.example"
+```
+
+At each vote, for each entry, the feeder:
+
+1. Finds the anchor block on `chain_id`: the last block that is `delay_secs`
+   or more older than the first block of the Outbe vote period. All feeders
+   find the same block, at any time in the period.
+2. Calls `eth_feeHistory(fee_history_blocks, <anchor block>, [50])`.
+3. Takes the median base fee plus the median priority fee (p50) of these
+   blocks. The priority fee median skips zero values: on BSC each block has a
+   system transaction with a gas price of 0. A gas price of 0 gives no vote.
+4. Reads the native token price in USD from `price_feed` at the anchor block.
+   It rejects a Chainlink round with an answer that is not positive or that
+   is older than 25 hours at that block.
+5. Calculates `gas × native/USD ÷ COEN/USD`. `COEN/USD` is the COEN/840 price
+   of the same vote. Each native token has 18 decimals, as COEN.
+
+The gas prices go in the same `submitVote` transaction as the pair prices.
+The feeder reads the chains in parallel, within 30 seconds, before it checks
+that the vote period did not change. After 30 seconds the vote goes without
+gas prices.
+When a chain fails (no RPC, an RPC that is behind the anchor time, no feed
+round, no COEN/840 price), the feeder logs a warning and sends no gas price for
+that chain. The Oracle keeps the last price.
+
+Each chain of `IOracle.getGasPrices()` is one more vote target, as a pair is.
+The node registers the chains of the same sources. The Oracle rejects the
+whole vote if it has a gas price for another chain, so do not add a chain to
+`gas_providers` in a local config. A gas price outside the gas
+reward band (±10% of the median, or the standard deviation when it is larger)
+or no gas price for that chain is a miss.
+
+Choose `fee_history_blocks` near 2 × the vote period divided by the block time
+of the chain.
 
 ### DEX providers
 

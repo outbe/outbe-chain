@@ -7,8 +7,8 @@ use crate::state_machine::{
 };
 use alloy_primitives::Address;
 use outbe_primitives::error::Result;
-use outbe_primitives::slashing_journal::{record as journal_record, JournalRecord};
 use outbe_primitives::time::iso8601_now;
+use outbe_system_common::slashing_journal::{record as journal_record, JournalRecord};
 use tracing::{info, warn};
 
 /// Non-transactional observability produced by a committed punitive validator

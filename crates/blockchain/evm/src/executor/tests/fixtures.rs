@@ -586,6 +586,7 @@ pub(super) fn test_oracle_submit_vote_tx_with_gas_limit(
             exchangeRate: U256::from(1_000_000u64),
             volume: U256::from(10_000_000_000u64),
         }],
+        gas: vec![],
     }
     .abi_encode();
 

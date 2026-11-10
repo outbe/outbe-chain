@@ -18,7 +18,8 @@ impl OracleContract<'_> {
     ///
     /// The caller must be the validator itself or a delegated feeder.
     /// Each tuple contains (base, quote, rate, volume) for one pair, quoted in
-    /// the direction the pair was registered in.
+    /// the direction the pair was registered in. Each gas vote is
+    /// (chain id, COEN-wei per unit of gas) for a chain in `gas_chains`.
     ///
     /// Returns the validator the vote counts for and how many tuples were
     /// admitted.
@@ -26,9 +27,11 @@ impl OracleContract<'_> {
         &mut self,
         caller: Address,
         tuples: &[(Address, Address, U256, U256)],
+        gas: &[(u32, U256)],
     ) -> Result<(Address, u32)> {
         let validator = self.resolve_validator_for_feeder(caller)?;
         let resolved = self.resolve_vote_pairs(tuples)?;
+        self.check_gas_votes(gas)?;
 
         // Check if already voted this period
         let already_voted = self.vote_exists.read(&validator)?;
@@ -63,6 +66,7 @@ impl OracleContract<'_> {
         self.vote_exists.write(&validator, true)?;
 
         self.store_vote_tuples(validator, &kept_pairs, &kept_tuples)?;
+        self.store_gas_votes(validator, gas)?;
 
         // Add to voter list for tally iteration
         self.voter_list.push(validator)?;
@@ -136,6 +140,32 @@ impl OracleContract<'_> {
             pair_map.write_pair(&idx, *pair)?;
             rate_map.write(&idx, *rate)?;
             volume_map.write(&idx, *volume)?;
+        }
+        Ok(())
+    }
+
+    /// Rejects a gas vote for a chain that is not in `gas_chains` and a chain
+    /// that comes twice, as for pairs. Runs before the vote changes storage.
+    fn check_gas_votes(&self, gas: &[(u32, U256)]) -> Result<()> {
+        let targets = self.gas_chains.read_all()?;
+        let mut seen = BTreeSet::new();
+        for &(chain_id, _) in gas {
+            if !targets.contains(&chain_id) {
+                return Err(OracleError::GasChainNotVoteTarget { chain_id }.into());
+            }
+            if !seen.insert(chain_id) {
+                return Err(OracleError::DuplicateGasChainInVote { chain_id }.into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Stores each gas price as the gas vote of `validator`. A zero price is
+    /// kept, and the tally counts it as no price, as a zero rate.
+    fn store_gas_votes(&self, validator: Address, gas: &[(u32, U256)]) -> Result<()> {
+        let votes = self.vote_gas_price.get_nested(&validator);
+        for (chain_id, price) in gas {
+            votes.write(chain_id, *price)?;
         }
         Ok(())
     }

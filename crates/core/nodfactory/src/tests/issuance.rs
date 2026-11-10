@@ -424,7 +424,7 @@ fn lysis_series_of_one_day_and_reference_share_one_call_group() {
         )
         .unwrap();
         let forfeit_ts = deadline + 86_400;
-        let through_day = outbe_primitives::deadline_queue::deadline_day(forfeit_ts).unwrap();
+        let through_day = outbe_common::deadline_queue::deadline_day(forfeit_ts).unwrap();
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext {
                 block_gas_limit: 0,

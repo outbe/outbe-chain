@@ -2,9 +2,9 @@
 //! group, and hands their unpaid Nods to the cleanup.
 
 use alloy_primitives::B256;
+use outbe_common::deadline_queue::{self, DeadlineHandler, Due};
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    deadline_queue::{self, DeadlineHandler, Due},
     error::{PassFailure, PrecompileError, Result},
     pass_budget::PassBudget,
     storage::StorageHandle,

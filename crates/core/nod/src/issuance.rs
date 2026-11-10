@@ -4,8 +4,8 @@ use crate::{
     NodItemState,
 };
 use alloy_primitives::U256;
+use outbe_common::nod_rules::derive_nod_id;
 use outbe_primitives::error::Result;
-use outbe_primitives::nod_rules::derive_nod_id;
 pub(crate) fn validate_item(
     item: &NodItemState,
     call_price_minor: U256,

@@ -110,6 +110,7 @@ pub fn dispatch(
             currencyAlphaCode(c) => currency_alpha_code(c),
             getPolicyRateCurrencies(_) => policy_rate_currencies(oracle),
             getPolicyRate(c) => policy_rate(oracle, c),
+            getGasPrices(_) => gas_prices(oracle),
             getNominalPrice(c) => nominal_price(oracle, c),
             getNominalPriceComponents(c) => nominal_price_components(oracle, c),
             submitVote(c) => submit_vote(oracle, c, caller, value),
@@ -175,6 +176,23 @@ fn policy_rate_currencies(oracle: &OracleContract) -> Result<Bytes> {
 
 fn policy_rate(oracle: &OracleContract, c: IOracle::getPolicyRateCall) -> Result<Bytes> {
     view(c, |c| oracle.get_policy_rate(c.isoCode))
+}
+
+fn gas_prices(oracle: &OracleContract) -> Result<Bytes> {
+    metadata::<IOracle::getGasPricesCall>(|| {
+        let chain_ids = oracle.gas_chains.read_all()?;
+        let mut prices = Vec::with_capacity(chain_ids.len());
+        let mut updated_at = Vec::with_capacity(chain_ids.len());
+        for chain_id in &chain_ids {
+            prices.push(oracle.gas_price.read(chain_id)?);
+            updated_at.push(oracle.gas_price_timestamp.read(chain_id)?);
+        }
+        Ok(IOracle::getGasPricesReturn {
+            chainIds: chain_ids,
+            prices,
+            updatedAt: updated_at,
+        })
+    })
 }
 
 fn set_exchange_rate(
@@ -357,7 +375,8 @@ fn submit_vote(
             .iter()
             .map(|t| (t.base, t.quote, t.exchangeRate, t.volume))
             .collect();
-        let (validator, tuple_count) = oracle.submit_vote(sender, &tuples)?;
+        let gas: Vec<_> = c.gas.iter().map(|g| (g.chainId, g.gasPrice)).collect();
+        let (validator, tuple_count) = oracle.submit_vote(sender, &tuples, &gas)?;
         // Emit event after successful vote; the count excludes rejected tuples.
         Ok(IOracle::VoteSubmitted {
             validator,

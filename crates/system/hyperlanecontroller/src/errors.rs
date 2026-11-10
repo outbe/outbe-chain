@@ -71,6 +71,12 @@ pub enum HyperlaneControllerError {
     #[error("domain {domain} is not configured")]
     UnknownDomain { domain: u32 },
 
+    #[error("the Oracle has no gas price for domain {domain}")]
+    NoGasPrice { domain: u32 },
+
+    #[error("the gas price of domain {domain} does not fit in 128 bits")]
+    GasPriceOverflow { domain: u32 },
+
     #[error("local domain {domain} cannot be removed or targeted remotely")]
     LocalDomainNotAllowed { domain: u32 },
 
@@ -186,6 +192,12 @@ impl From<HyperlaneControllerError> for PrecompileError {
             }
             HyperlaneControllerError::UnknownDomain { domain } => PrecompileError::RevertBytes(
                 Bytes::from(IHyperlaneController::UnknownDomain { domain }.abi_encode()),
+            ),
+            HyperlaneControllerError::NoGasPrice { domain } => PrecompileError::RevertBytes(
+                Bytes::from(IHyperlaneController::NoGasPrice { domain }.abi_encode()),
+            ),
+            HyperlaneControllerError::GasPriceOverflow { domain } => PrecompileError::RevertBytes(
+                Bytes::from(IHyperlaneController::GasPriceOverflow { domain }.abi_encode()),
             ),
             HyperlaneControllerError::LocalDomainNotAllowed { domain } => {
                 PrecompileError::RevertBytes(Bytes::from(

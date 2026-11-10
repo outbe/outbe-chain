@@ -206,12 +206,12 @@ fn issue_enrolls_series_in_dense_enumeration() {
 
 #[test]
 fn call_derivation() {
-    let call = outbe_primitives::markup::marked_up(U256::from(ENTRY_PRICE), CALL_RATE_PCT).unwrap();
+    let call = outbe_common::markup::marked_up(U256::from(ENTRY_PRICE), CALL_RATE_PCT).unwrap();
     assert_eq!(call, U256::from(EXPECTED_TRIGGER));
 
     let one = U256::from(1_000_000u64);
     assert_eq!(
-        outbe_primitives::markup::marked_up(one, CALL_RATE_PCT).unwrap(),
+        outbe_common::markup::marked_up(one, CALL_RATE_PCT).unwrap(),
         U256::from(2_280_000u64)
     );
 }
@@ -533,7 +533,7 @@ fn issuance_currency_settlement_rejects_fx_overflow() {
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(
                 outbe_vaultrouter::settlement::SettlementError::Rounding(
-                    outbe_primitives::settlement::RoundingError::Overflow,
+                    outbe_common::settlement::RoundingError::Overflow,
                 ),
             )
             .to_string(),

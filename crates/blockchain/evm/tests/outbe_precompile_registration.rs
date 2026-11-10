@@ -138,7 +138,7 @@ fn unregistered_address_returns_none() {
 /// transaction could invoke arbitrary EVM code.
 #[test]
 fn sponsored_whitelist_is_subset_of_exact_routes() {
-    use outbe_primitives::zero_fee::SPONSORED_TARGET_WHITELIST;
+    use outbe_system_common::zero_fee::SPONSORED_TARGET_WHITELIST;
 
     for target in SPONSORED_TARGET_WHITELIST {
         assert!(
@@ -150,7 +150,7 @@ fn sponsored_whitelist_is_subset_of_exact_routes() {
 
 #[test]
 fn sponsored_whitelist_includes_gemfactory_cashout_entrypoint() {
-    use outbe_primitives::zero_fee::SPONSORED_TARGET_WHITELIST;
+    use outbe_system_common::zero_fee::SPONSORED_TARGET_WHITELIST;
 
     assert!(
         SPONSORED_TARGET_WHITELIST.contains(&GEM_FACTORY_ADDRESS),
@@ -160,7 +160,7 @@ fn sponsored_whitelist_includes_gemfactory_cashout_entrypoint() {
 
 #[test]
 fn sponsored_whitelist_excludes_validator_entrypoints() {
-    use outbe_primitives::zero_fee::SPONSORED_TARGET_WHITELIST;
+    use outbe_system_common::zero_fee::SPONSORED_TARGET_WHITELIST;
 
     for forbidden in [
         VALIDATOR_SET_ADDRESS,
