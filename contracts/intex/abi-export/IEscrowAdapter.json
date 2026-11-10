@@ -1,1043 +1,1040 @@
-{
-  "contractName": "IEscrowAdapter",
-  "abi": [
-    {
-      "type": "function",
-      "name": "claimAbandonedCommitBond",
-      "inputs": [
-        {
-          "name": "emissionDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
-      "name": "claimAbandonedRefund",
-      "inputs": [
-        {
-          "name": "emissionDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
-      "name": "currentAssetVersion",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "version",
-          "type": "uint8",
-          "internalType": "uint8"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "dayPaymentToken",
-      "inputs": [
-        {
-          "name": "emissionDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "address",
-          "internalType": "contract IERC20"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "finalizeAuction",
-      "inputs": [
-        {
-          "name": "emissionDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "receiveId",
-          "type": "bytes32",
-          "internalType": "bytes32"
-        },
-        {
-          "name": "winners",
-          "type": "address[]",
-          "internalType": "address[]"
-        },
-        {
-          "name": "partialIndex",
-          "type": "uint16",
-          "internalType": "uint16"
-        },
-        {
-          "name": "partialWon",
-          "type": "uint16",
-          "internalType": "uint16"
-        },
-        {
-          "name": "clearingRate",
-          "type": "uint64",
-          "internalType": "uint64"
-        },
-        {
-          "name": "basis",
-          "type": "uint128",
-          "internalType": "uint128"
-        },
-        {
-          "name": "completesDay",
-          "type": "bool",
-          "internalType": "bool"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "totalPaid",
-          "type": "uint128",
-          "internalType": "uint128"
-        }
-      ],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
-      "name": "getAssetVersion",
-      "inputs": [
-        {
-          "name": "version",
-          "type": "uint8",
-          "internalType": "uint8"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "asset",
-          "type": "tuple",
-          "internalType": "struct IEscrowAdapter.AssetVersion",
-          "components": [
-            {
-              "name": "compact",
-              "type": "address",
-              "internalType": "address"
-            },
-            {
-              "name": "paymentToken",
-              "type": "address",
-              "internalType": "contract IERC20"
-            },
-            {
-              "name": "lockId",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "paymentScale",
-              "type": "uint256",
-              "internalType": "uint256"
-            }
-          ]
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "getAuctionStatus",
-      "inputs": [
-        {
-          "name": "emissionDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "hasLocks",
-          "type": "bool",
-          "internalType": "bool"
-        },
-        {
-          "name": "isFinalized",
-          "type": "bool",
-          "internalType": "bool"
-        },
-        {
-          "name": "totalLocked",
-          "type": "uint128",
-          "internalType": "uint128"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "getBidLock",
-      "inputs": [
-        {
-          "name": "emissionDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "lock",
-          "type": "tuple",
-          "internalType": "struct IEscrowAdapter.BidLock",
-          "components": [
-            {
-              "name": "lockedAmount",
-              "type": "uint128",
-              "internalType": "uint128"
-            },
-            {
-              "name": "lockedAt",
-              "type": "uint32",
-              "internalType": "uint32"
-            },
-            {
-              "name": "status",
-              "type": "uint8",
-              "internalType": "enum IEscrowAdapter.LockStatus"
-            },
-            {
-              "name": "bidRate",
-              "type": "uint32",
-              "internalType": "uint32"
-            },
-            {
-              "name": "quantity",
-              "type": "uint16",
-              "internalType": "uint16"
-            }
-          ]
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "getClaimableRefund",
-      "inputs": [
-        {
-          "name": "emissionDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "amount",
-          "type": "uint128",
-          "internalType": "uint128"
-        },
-        {
-          "name": "claimableAt",
-          "type": "uint32",
-          "internalType": "uint32"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "getCommitBond",
-      "inputs": [
-        {
-          "name": "emissionDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "bond",
-          "type": "tuple",
-          "internalType": "struct IEscrowAdapter.CommitBond",
-          "components": [
-            {
-              "name": "amount",
-              "type": "uint128",
-              "internalType": "uint128"
-            },
-            {
-              "name": "lockedAt",
-              "type": "uint32",
-              "internalType": "uint32"
-            },
-            {
-              "name": "assetVersion",
-              "type": "uint8",
-              "internalType": "uint8"
-            }
-          ]
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "hasOutstandingLocks",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "outstanding",
-          "type": "bool",
-          "internalType": "bool"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "lockCommitBond",
-      "inputs": [
-        {
-          "name": "emissionDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "internalType": "address"
-        },
-        {
-          "name": "amount",
-          "type": "uint128",
-          "internalType": "uint128"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
-      "name": "lockFunds",
-      "inputs": [
-        {
-          "name": "emissionDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "internalType": "address"
-        },
-        {
-          "name": "basis",
-          "type": "uint128",
-          "internalType": "uint128"
-        },
-        {
-          "name": "bidRate",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "quantity",
-          "type": "uint16",
-          "internalType": "uint16"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
-      "name": "paymentToken",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "address",
-          "internalType": "contract IERC20"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "proceedsRecipient",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "redeemWinNote",
-      "inputs": [
-        {
-          "name": "emissionDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "units",
-          "type": "uint16",
-          "internalType": "uint16"
-        }
-      ],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
-      "name": "releaseCommitBond",
-      "inputs": [
-        {
-          "name": "emissionDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
-      "name": "releaseRefund",
-      "inputs": [
-        {
-          "name": "emissionDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "closed",
-          "type": "bool",
-          "internalType": "bool"
-        },
-        {
-          "name": "finalized",
-          "type": "bool",
-          "internalType": "bool"
-        }
-      ],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
-      "name": "setProceedsRecipient",
-      "inputs": [
-        {
-          "name": "recipient",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
-      "name": "wire",
-      "inputs": [
-        {
-          "name": "_intexAuction",
-          "type": "address",
-          "internalType": "address"
-        },
-        {
-          "name": "_compact",
-          "type": "address",
-          "internalType": "address"
-        },
-        {
-          "name": "_paymentToken",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "event",
-      "name": "AssetRetired",
-      "inputs": [
-        {
-          "name": "version",
-          "type": "uint8",
-          "indexed": true,
-          "internalType": "uint8"
-        },
-        {
-          "name": "compact",
-          "type": "address",
-          "indexed": false,
-          "internalType": "address"
-        },
-        {
-          "name": "paymentToken",
-          "type": "address",
-          "indexed": false,
-          "internalType": "address"
-        },
-        {
-          "name": "lockId",
-          "type": "uint256",
-          "indexed": false,
-          "internalType": "uint256"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "AuctionEscrowFinalized",
-      "inputs": [
-        {
-          "name": "receiveId",
-          "type": "bytes32",
-          "indexed": true,
-          "internalType": "bytes32"
-        },
-        {
-          "name": "emissionDay",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "totalRefunded",
-          "type": "uint128",
-          "indexed": false,
-          "internalType": "uint128"
-        },
-        {
-          "name": "totalPaid",
-          "type": "uint128",
-          "indexed": false,
-          "internalType": "uint128"
-        },
-        {
-          "name": "bidsProcessed",
-          "type": "uint32",
-          "indexed": false,
-          "internalType": "uint32"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "BidderRefundFailed",
-      "inputs": [
-        {
-          "name": "receiveId",
-          "type": "bytes32",
-          "indexed": true,
-          "internalType": "bytes32"
-        },
-        {
-          "name": "emissionDay",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "reason",
-          "type": "bytes",
-          "indexed": false,
-          "internalType": "bytes"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "CommitBondLocked",
-      "inputs": [
-        {
-          "name": "emissionDay",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "amount",
-          "type": "uint128",
-          "indexed": false,
-          "internalType": "uint128"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "CommitBondReleased",
-      "inputs": [
-        {
-          "name": "emissionDay",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "amount",
-          "type": "uint128",
-          "indexed": false,
-          "internalType": "uint128"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "FinalizationNoOp",
-      "inputs": [
-        {
-          "name": "emissionDay",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidsProcessed",
-          "type": "uint32",
-          "indexed": false,
-          "internalType": "uint32"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "FundsLocked",
-      "inputs": [
-        {
-          "name": "emissionDay",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "amount",
-          "type": "uint128",
-          "indexed": false,
-          "internalType": "uint128"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "FundsRefunded",
-      "inputs": [
-        {
-          "name": "receiveId",
-          "type": "bytes32",
-          "indexed": true,
-          "internalType": "bytes32"
-        },
-        {
-          "name": "emissionDay",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "amount",
-          "type": "uint128",
-          "indexed": false,
-          "internalType": "uint128"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "ProceedsRecipientSet",
-      "inputs": [
-        {
-          "name": "recipient",
-          "type": "address",
-          "indexed": false,
-          "internalType": "address"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "Wired",
-      "inputs": [
-        {
-          "name": "intexAuctionOld",
-          "type": "address",
-          "indexed": false,
-          "internalType": "address"
-        },
-        {
-          "name": "intexAuctionNew",
-          "type": "address",
-          "indexed": false,
-          "internalType": "address"
-        },
-        {
-          "name": "compactOld",
-          "type": "address",
-          "indexed": false,
-          "internalType": "address"
-        },
-        {
-          "name": "compactNew",
-          "type": "address",
-          "indexed": false,
-          "internalType": "address"
-        },
-        {
-          "name": "paymentTokenOld",
-          "type": "address",
-          "indexed": false,
-          "internalType": "address"
-        },
-        {
-          "name": "paymentTokenNew",
-          "type": "address",
-          "indexed": false,
-          "internalType": "address"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "error",
-      "name": "AlreadyFinalized",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "BidAlreadyLocked",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "ClaimAuthorizationUnsupported",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "ClearingTermsMismatch",
-      "inputs": [
-        {
-          "name": "clearingRate",
-          "type": "uint64",
-          "internalType": "uint64"
-        },
-        {
-          "name": "basis",
-          "type": "uint128",
-          "internalType": "uint128"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "ClearingTermsMissing",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "CommitBondAlreadyLocked",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "CommitBondNotFound",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "CommitBondNotYetAbandoned",
-      "inputs": [
-        {
-          "name": "claimableAt",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "now_",
-          "type": "uint32",
-          "internalType": "uint32"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "DayAssetRetired",
-      "inputs": [
-        {
-          "name": "emissionDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "assetVersion",
-          "type": "uint8",
-          "internalType": "uint8"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "ForcedWithdrawalFailed",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "LockNotActive",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "LocksOutstanding",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "NoDeposits",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "NothingToRefund",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "PartialFillNotPartial",
-      "inputs": [
-        {
-          "name": "won",
-          "type": "uint16",
-          "internalType": "uint16"
-        },
-        {
-          "name": "quantity",
-          "type": "uint16",
-          "internalType": "uint16"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "PartialFillOutsideChunk",
-      "inputs": [
-        {
-          "name": "partialIndex",
-          "type": "uint16",
-          "internalType": "uint16"
-        },
-        {
-          "name": "winners",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "PaymentAmountOverflow",
-      "inputs": [
-        {
-          "name": "amount",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "PaymentExceedsLock",
-      "inputs": [
-        {
-          "name": "locked",
-          "type": "uint128",
-          "internalType": "uint128"
-        },
-        {
-          "name": "paid",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "PaymentTokenDecimals",
-      "inputs": [
-        {
-          "name": "actual",
-          "type": "uint8",
-          "internalType": "uint8"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "ProceedsRecipientNotSet",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "RefundNotYetAbandoned",
-      "inputs": [
-        {
-          "name": "claimableAt",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "now_",
-          "type": "uint32",
-          "internalType": "uint32"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "RefundNotYetClaimable",
-      "inputs": [
-        {
-          "name": "claimableAt",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "now_",
-          "type": "uint32",
-          "internalType": "uint32"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "UnexpectedLockId",
-      "inputs": [
-        {
-          "name": "id",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "ZeroAddress",
-      "inputs": [
-        {
-          "name": "f",
-          "type": "string",
-          "internalType": "string"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "ZeroValue",
-      "inputs": [
-        {
-          "name": "f",
-          "type": "string",
-          "internalType": "string"
-        }
-      ]
-    }
-  ]
-}
+[
+  {
+    "type": "function",
+    "name": "claimAbandonedCommitBond",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "claimAbandonedRefund",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "currentAssetVersion",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "version",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "dayPaymentToken",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IERC20"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "finalizeAuction",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "receiveId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "winners",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "partialIndex",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "partialWon",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "clearingRate",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "basis",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "completesDay",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "totalPaid",
+        "type": "uint128",
+        "internalType": "uint128"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getAssetVersion",
+    "inputs": [
+      {
+        "name": "version",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "asset",
+        "type": "tuple",
+        "internalType": "struct IEscrowAdapter.AssetVersion",
+        "components": [
+          {
+            "name": "compact",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "paymentToken",
+            "type": "address",
+            "internalType": "contract IERC20"
+          },
+          {
+            "name": "lockId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "paymentScale",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getAuctionStatus",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "hasLocks",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "isFinalized",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "totalLocked",
+        "type": "uint128",
+        "internalType": "uint128"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getBidLock",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "lock",
+        "type": "tuple",
+        "internalType": "struct IEscrowAdapter.BidLock",
+        "components": [
+          {
+            "name": "lockedAmount",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "lockedAt",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "status",
+            "type": "uint8",
+            "internalType": "enum IEscrowAdapter.LockStatus"
+          },
+          {
+            "name": "bidRate",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "quantity",
+            "type": "uint16",
+            "internalType": "uint16"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getClaimableRefund",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "amount",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "claimableAt",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getCommitBond",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "bond",
+        "type": "tuple",
+        "internalType": "struct IEscrowAdapter.CommitBond",
+        "components": [
+          {
+            "name": "amount",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "lockedAt",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "assetVersion",
+            "type": "uint8",
+            "internalType": "uint8"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "hasOutstandingLocks",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "outstanding",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "lockCommitBond",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint128",
+        "internalType": "uint128"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "lockFunds",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "basis",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "bidRate",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "quantity",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "paymentToken",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IERC20"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "proceedsRecipient",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "redeemWinNote",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "units",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "releaseCommitBond",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "releaseRefund",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "closed",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "finalized",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setProceedsRecipient",
+    "inputs": [
+      {
+        "name": "recipient",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "wire",
+    "inputs": [
+      {
+        "name": "_intexAuction",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "_compact",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "_paymentToken",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "AssetRetired",
+    "inputs": [
+      {
+        "name": "version",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "compact",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "paymentToken",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "lockId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "AuctionEscrowFinalized",
+    "inputs": [
+      {
+        "name": "receiveId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "totalRefunded",
+        "type": "uint128",
+        "indexed": false,
+        "internalType": "uint128"
+      },
+      {
+        "name": "totalPaid",
+        "type": "uint128",
+        "indexed": false,
+        "internalType": "uint128"
+      },
+      {
+        "name": "bidsProcessed",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "BidderRefundFailed",
+    "inputs": [
+      {
+        "name": "receiveId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "reason",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CommitBondLocked",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint128",
+        "indexed": false,
+        "internalType": "uint128"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CommitBondReleased",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint128",
+        "indexed": false,
+        "internalType": "uint128"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "FinalizationNoOp",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidsProcessed",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "FundsLocked",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint128",
+        "indexed": false,
+        "internalType": "uint128"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "FundsRefunded",
+    "inputs": [
+      {
+        "name": "receiveId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint128",
+        "indexed": false,
+        "internalType": "uint128"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ProceedsRecipientSet",
+    "inputs": [
+      {
+        "name": "recipient",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "Wired",
+    "inputs": [
+      {
+        "name": "intexAuctionOld",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "intexAuctionNew",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "compactOld",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "compactNew",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "paymentTokenOld",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "paymentTokenNew",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AlreadyFinalized",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BidAlreadyLocked",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ClaimAuthorizationUnsupported",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ClearingTermsMismatch",
+    "inputs": [
+      {
+        "name": "clearingRate",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "basis",
+        "type": "uint128",
+        "internalType": "uint128"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ClearingTermsMissing",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CommitBondAlreadyLocked",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CommitBondNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CommitBondNotYetAbandoned",
+    "inputs": [
+      {
+        "name": "claimableAt",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "now_",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DayAssetRetired",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "assetVersion",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ForcedWithdrawalFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LockNotActive",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LocksOutstanding",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoDeposits",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NothingToRefund",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PartialFillNotPartial",
+    "inputs": [
+      {
+        "name": "won",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "quantity",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PartialFillOutsideChunk",
+    "inputs": [
+      {
+        "name": "partialIndex",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "winners",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PaymentAmountOverflow",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PaymentExceedsLock",
+    "inputs": [
+      {
+        "name": "locked",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "paid",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PaymentTokenDecimals",
+    "inputs": [
+      {
+        "name": "actual",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ProceedsRecipientNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RefundNotYetAbandoned",
+    "inputs": [
+      {
+        "name": "claimableAt",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "now_",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RefundNotYetClaimable",
+    "inputs": [
+      {
+        "name": "claimableAt",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "now_",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnexpectedLockId",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ZeroAddress",
+    "inputs": [
+      {
+        "name": "f",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ZeroValue",
+    "inputs": [
+      {
+        "name": "f",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  }
+]

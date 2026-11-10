@@ -40,8 +40,28 @@ description = "Lint Solidity code (forge lint)"
 run = "forge lint"
 
 [tasks.export-abi]
-description = "Compile and extract ABIs"
-run = "yarn compile && yarn cd:extract-abi"
+description = "Export the contract and interface ABIs to ./abi-export"
+depends = ["build"]
+run = '''
+set -eu
+mkdir -p ./abi-export
+rm -f ./abi-export/*.json
+for target in \
+  src/origin/OriginRouter.sol:OriginRouter \
+  src/origin/interfaces/IOriginRouter.sol:IOriginRouter \
+  src/shared/IntexNFT1155.sol:IntexNFT1155 \
+  src/shared/interfaces/IIntexNFT1155.sol:IIntexNFT1155 \
+  src/shared/IntexNFT1155Bridge.sol:IntexNFT1155Bridge \
+  src/shared/interfaces/IIntexNFT1155Bridge.sol:IIntexNFT1155Bridge \
+  src/target/EscrowAdapter.sol:EscrowAdapter \
+  src/target/interfaces/IEscrowAdapter.sol:IEscrowAdapter \
+  src/target/IntexAuction.sol:IntexAuction \
+  src/target/interfaces/IIntexAuction.sol:IIntexAuction \
+  src/target/TargetRouter.sol:TargetRouter \
+  src/target/interfaces/ITargetRouter.sol:ITargetRouter; do
+  forge inspect "$target" abi --json > "./abi-export/${target##*:}.json"
+done
+'''
 
 [tasks.clean]
 description = "Clean up forge artifacts"

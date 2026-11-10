@@ -30,9 +30,7 @@
     "format:check": "forge fmt --check",
     "format:fix": "forge fmt",
     "coverage:foundry": "forge coverage --ir-minimum --report lcov --report-file lcov.info",
-    "fix": "yarn format:fix",
-    "cd:extract-abi": "tsx scripts/cd/extract-abi.ts",
-    "prepublishOnly": "yarn compile && yarn cd:extract-abi"
+    "fix": "yarn format:fix"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-keystore": "^3.0.0",
