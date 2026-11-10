@@ -34,6 +34,8 @@ interface IHyperlaneController {
     error StaleIndex(uint32 index, uint32 submitted);
     error InvalidSignatureLength(uint64 length);
     error UnknownDomain(uint32 domain);
+    error NoGasPrice(uint32 domain);
+    error GasPriceOverflow(uint32 domain);
     error LocalDomainNotAllowed(uint32 domain);
     error InvalidValidatorCount(uint64 count);
     error InvalidThreshold(uint8 threshold, uint64 validators);
@@ -118,4 +120,16 @@ interface IHyperlaneController {
 
     /// Consecutive liveness-window misses of `validator`.
     function missCount(address validator) external view returns (uint32);
+
+    /// The `IGasOracle` view of the Outbe IGP. The Oracle gas price is in
+    /// COEN-wei, so `tokenExchangeRate` is 1e10 (1:1). `gasPrice` is that
+    /// price plus the markup of `gasMarkupBps`. Reverts with `NoGasPrice` when
+    /// the Oracle has no gas price for the domain.
+    function getExchangeRateAndGasPrice(uint32 destinationDomain)
+        external
+        view
+        returns (uint128 tokenExchangeRate, uint128 gasPrice);
+
+    /// Markup on the Oracle gas price in basis points (2000 = +20%).
+    function gasMarkupBps() external view returns (uint32);
 }

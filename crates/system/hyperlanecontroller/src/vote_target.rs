@@ -1,13 +1,14 @@
 //! The vote target of the Hyperlane chains: strict JSON actions that add a
-//! chain to the validator sync or remove it. A chain id is also the Hyperlane
-//! domain of that chain.
+//! chain to the validator sync or remove it, and set the gas data of the IGPs.
+//! A chain id is also the Hyperlane domain of that chain.
 //!
 //! The vote tally runs where sub-calls are not available. So an approved
 //! proposal only stores the hash of its payload. Permissionless
 //! `applyApproved(proposalId, payload)` runs it later. Its writes to the ICA
 //! router and the ISMs are owner calls through `crosschainbridge`.
 
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{aliases::U96, keccak256, Address, B256, U256};
+use alloy_sol_types::SolCall;
 use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
@@ -18,8 +19,11 @@ use outbe_primitives::vote_target::{
 use serde::Deserialize;
 
 use crate::errors::HyperlaneControllerError;
+use crate::gas::TOKEN_EXCHANGE_RATE_SCALE;
 use crate::precompile::IHyperlaneController;
+use crate::runtime::{call, call_local, call_remote};
 use crate::schema::HyperlaneControllerContract;
+use crate::sol_ext::{IInterchainGasPaymaster, IStorageGasOracle};
 
 /// One action, as strict JSON with an `operation` field.
 #[derive(Debug, Deserialize)]
@@ -42,6 +46,22 @@ enum Action {
     },
     /// Stops the validator sync to `chain_id`.
     RemoveHyperlaneChain { chain_id: u32 },
+    /// Makes this controller the gas oracle of `chain_id` in the Outbe IGP
+    /// `igp`, with `gas_overhead` (`igp.setDestinationGasConfigs`).
+    SetGasConfig {
+        igp: Address,
+        chain_id: u32,
+        gas_overhead: u64,
+    },
+    /// Sets the gas price of Outbe in the `StorageGasOracle` `gas_oracle` on
+    /// `chain_id`, at an exchange rate of 1:1 (`setRemoteGasDataConfigs`).
+    SetOutbeGasData {
+        chain_id: u32,
+        gas_oracle: Address,
+        gas_price: U256,
+    },
+    /// Sets the markup on the Oracle gas price, in basis points.
+    SetGasMarkup { markup_bps: u32 },
 }
 
 impl Action {
@@ -59,6 +79,18 @@ impl Action {
                 hook,
             } => remote(chain_id) && ![ica_router, ism, hook].iter().any(|a| a.is_zero()),
             Self::RemoveHyperlaneChain { chain_id } => remote(chain_id),
+            Self::SetGasConfig { igp, chain_id, .. } => remote(chain_id) && !igp.is_zero(),
+            Self::SetOutbeGasData {
+                chain_id,
+                gas_oracle,
+                gas_price,
+            } => {
+                remote(chain_id)
+                    && !gas_oracle.is_zero()
+                    && !gas_price.is_zero()
+                    && *gas_price <= U256::from(u128::MAX)
+            }
+            Self::SetGasMarkup { .. } => true,
         };
         if !valid {
             return Err(VoteTargetError::InvalidPayload.into());
@@ -78,6 +110,40 @@ impl Action {
                 controller.add_domain(*chain_id, *ism, *hook)
             }
             Self::RemoveHyperlaneChain { chain_id } => controller.remove_domain(*chain_id),
+            Self::SetGasConfig {
+                igp,
+                chain_id,
+                gas_overhead,
+            } => {
+                let configs = vec![IInterchainGasPaymaster::GasParam {
+                    remoteDomain: *chain_id,
+                    config: IInterchainGasPaymaster::DomainGasConfig {
+                        gasOracle: HYPERLANE_CONTROLLER_ADDRESS,
+                        gasOverhead: U96::from(*gas_overhead),
+                    },
+                }];
+                let data =
+                    IInterchainGasPaymaster::setDestinationGasConfigsCall { _configs: configs };
+                call_local(&controller.storage, call(*igp, data.abi_encode()))
+            }
+            Self::SetOutbeGasData {
+                chain_id,
+                gas_oracle,
+                gas_price,
+            } => {
+                let configs = vec![IStorageGasOracle::RemoteGasDataConfig {
+                    remoteDomain: controller.local_domain()?,
+                    tokenExchangeRate: TOKEN_EXCHANGE_RATE_SCALE,
+                    gasPrice: gas_price.to::<u128>(),
+                }];
+                let data = IStorageGasOracle::setRemoteGasDataConfigsCall { _configs: configs };
+                call_remote(
+                    &controller.storage,
+                    *chain_id,
+                    vec![call(*gas_oracle, data.abi_encode())],
+                )
+            }
+            Self::SetGasMarkup { markup_bps } => controller.gas_markup_bps.write(*markup_bps),
         }
     }
 }

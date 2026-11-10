@@ -32,6 +32,43 @@
   },
   {
     "type": "function",
+    "name": "gasMarkupBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getExchangeRateAndGasPrice",
+    "inputs": [
+      {
+        "name": "destinationDomain",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "tokenExchangeRate",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "gasPrice",
+        "type": "uint128",
+        "internalType": "uint128"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "hookByDomain",
     "inputs": [
       {
@@ -432,6 +469,17 @@
   },
   {
     "type": "error",
+    "name": "GasPriceOverflow",
+    "inputs": [
+      {
+        "name": "domain",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "HookLengthMismatch",
     "inputs": []
   },
@@ -524,6 +572,17 @@
   {
     "type": "error",
     "name": "LocalDomainNotAllowed",
+    "inputs": [
+      {
+        "name": "domain",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NoGasPrice",
     "inputs": [
       {
         "name": "domain",

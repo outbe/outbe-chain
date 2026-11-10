@@ -43,3 +43,38 @@ interface IStorageMultisigIsm {
 interface IOwnable {
     function owner() external view returns (address);
 }
+
+/// @dev Remote-router table of Hyperlane's `Router`, which the InterchainAccountRouter extends.
+interface IHyperlaneRouter {
+    function routers(uint32 _domain) external view returns (bytes32);
+
+    function enrollRemoteRouter(uint32 _domain, bytes32 _router) external;
+}
+
+/// @dev Owner setter of Hyperlane's `InterchainGasPaymaster`: the gas oracle and the gas overhead
+/// of each destination domain.
+interface IInterchainGasPaymaster {
+    struct DomainGasConfig {
+        address gasOracle;
+        uint96 gasOverhead;
+    }
+
+    struct GasParam {
+        uint32 remoteDomain;
+        DomainGasConfig config;
+    }
+
+    function setDestinationGasConfigs(GasParam[] calldata _configs) external;
+}
+
+/// @dev Owner setter of Hyperlane's `StorageGasOracle`: the exchange rate and the gas price of each
+/// remote domain.
+interface IStorageGasOracle {
+    struct RemoteGasDataConfig {
+        uint32 remoteDomain;
+        uint128 tokenExchangeRate;
+        uint128 gasPrice;
+    }
+
+    function setRemoteGasDataConfigs(RemoteGasDataConfig[] calldata _configs) external;
+}

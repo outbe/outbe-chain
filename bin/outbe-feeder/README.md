@@ -350,6 +350,9 @@ At each vote, for each entry, the feeder:
    of the same vote. Each native token has 18 decimals, as COEN.
 
 The gas prices go in the same `submitVote` transaction as the pair prices.
+The feeder reads the chains in parallel, within 30 seconds, before it checks
+that the vote period did not change. After 30 seconds the vote goes without
+gas prices.
 When a chain fails (no RPC, an RPC that is behind the anchor time, no feed
 round, no COEN/840 price), the feeder logs a warning and sends no gas price for
 that chain. The Oracle keeps the last price.

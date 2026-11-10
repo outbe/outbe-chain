@@ -27,6 +27,8 @@ use outbe_primitives::storage::keys::address_u32_key;
 ///  10: approved_payload - mapping(proposal id => keccak256 of the approved
 ///      action payload). Zero = none or already applied
 ///  11: approved_at - mapping(proposal id => block of the approval)
+///  12: gas_markup_bps - markup on the Oracle gas price that the gas oracle
+///      view gives to the IGP, in basis points (2000 = +20%)
 #[storage_schema]
 #[contract(addr = HYPERLANE_CONTROLLER_ADDRESS)]
 pub struct HyperlaneControllerContract {
@@ -65,6 +67,9 @@ pub struct HyperlaneControllerContract {
 
     #[attribute(order = 11)]
     pub approved_at: outbe_primitives::storage::dsl::Map<U256, u64>,
+
+    #[attribute(order = 12)]
+    pub gas_markup_bps: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 /// Composite key for the per-(validator, domain) checkpoint maps.
