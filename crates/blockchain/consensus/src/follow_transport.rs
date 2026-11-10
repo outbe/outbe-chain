@@ -1,13 +1,8 @@
-//! Engine-layer transport implementations for the follower.
+//! Follower transports over an execution-provider port and upstream RPC.
 //!
-//! `outbe-consensus` defines the transport seam ([`FinalizedSource`],
-//! [`LocalBlockSource`], [`TipSource`]). This module provides the concrete
-//! implementations that the engine layer can build. The engine layer can build
-//! them because they need the reth node handle (local block reads) and an RPC
-//! client (upstream finalized blocks + tip discovery). `outbe-consensus` depends
-//! on neither of them. Both halves
-//! are wired: a follower fetches finalized blocks from a validator's
-//! `outbe_getFinalization` and verifies them against the epoch committee.
+//! Local reads use `ExecutionProviderAccess`, so this module does not depend
+//! on the concrete execution node. Upstream RPC responses remain bounded and
+//! their certificates are re-verified by the marshal against the committee.
 //!
 //! * [`RethLocalBlockSource`] - REAL: reads already-imported blocks from the
 //!   reth execution DB by hash. Used to serve the marshal's `Request::Block`.
@@ -24,17 +19,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::block::ConsensusBlock;
+use crate::execution_port::ExecutionProviderAccess;
+use crate::follow::{CertifiedFinalizedBlock, FinalizedSource, LocalBlockSource, TipSource};
 use alloy_primitives::B256;
 use commonware_codec::Read as _;
 use commonware_consensus::types::Height;
 use jsonrpsee::core::client::{ClientT, Error as ClientError};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use jsonrpsee::rpc_params;
-use outbe_consensus::block::ConsensusBlock;
-use outbe_consensus::follow::{
-    CertifiedFinalizedBlock, FinalizedSource, LocalBlockSource, TipSource,
-};
-use outbe_execution::OutbeFullNode;
 use reth_ethereum::storage::{BlockReader, TransactionVariant};
 use tracing::{debug, warn};
 
@@ -45,26 +38,26 @@ use tracing::{debug, warn};
 /// block is in the EL DB. This is the same lookup the validator path's resolver
 /// performs against peers, but sourced locally.
 #[derive(Clone)]
-pub struct RethLocalBlockSource {
-    node: OutbeFullNode,
+pub struct RethLocalBlockSource<N> {
+    node: N,
 }
 
-impl RethLocalBlockSource {
-    pub fn new(node: OutbeFullNode) -> Self {
+impl<N: ExecutionProviderAccess> RethLocalBlockSource<N> {
+    pub fn new(node: N) -> Self {
         Self { node }
     }
 }
 
-impl LocalBlockSource for RethLocalBlockSource {
+impl<N: ExecutionProviderAccess> LocalBlockSource for RethLocalBlockSource<N> {
     fn get_block_by_digest(
         &self,
-        digest: outbe_consensus::digest::Digest,
+        digest: crate::digest::Digest,
     ) -> impl Future<Output = Option<ConsensusBlock>> + Send {
         let node = self.node.clone();
         async move {
             let hash: B256 = digest.0;
             match node
-                .provider
+                .provider()
                 .recovered_block(hash.into(), TransactionVariant::NoHash)
             {
                 Ok(Some(recovered)) => {
@@ -216,9 +209,9 @@ impl UpstreamRpcClient {
     async fn legacy_finality_proof(
         &self,
         height: Height,
-    ) -> Option<outbe_consensus::follow::upstream::AncestorFinalityProof> {
+    ) -> Option<crate::follow::upstream::AncestorFinalityProof> {
         self.get_finalization(height).await.map(|certified| {
-            outbe_consensus::follow::upstream::AncestorFinalityProof {
+            crate::follow::upstream::AncestorFinalityProof {
                 certified,
                 ancestors: Vec::new(),
             }
@@ -282,10 +275,10 @@ pub(super) fn decode_finalization_proof(
         .inspect_err(|error| debug!(%error, "malformed blockHex from upstream"))
         .ok()?;
 
-    outbe_consensus::follow::decode_public_finalized_block(
+    crate::follow::decode_public_finalized_block(
         &fin_bytes,
         &block_bytes,
-        outbe_consensus::bls::MAX_COMMITTEE_MEMBERS,
+        crate::bls::MAX_COMMITTEE_MEMBERS,
     )
     .inspect_err(|error| debug!(%error, "failed to decode upstream finalized block"))
     .ok()
@@ -295,7 +288,7 @@ impl FinalizedSource for UpstreamRpcClient {
     async fn get_finality_proof(
         &self,
         height: Height,
-    ) -> Option<outbe_consensus::follow::upstream::AncestorFinalityProof> {
+    ) -> Option<crate::follow::upstream::AncestorFinalityProof> {
         if self.methods.finality_proof_missing.load(Ordering::Acquire) {
             return self.legacy_finality_proof(height).await;
         }
@@ -332,7 +325,7 @@ impl FinalizedSource for UpstreamRpcClient {
             }
             ancestors.push(block);
         }
-        let proof = outbe_consensus::follow::upstream::AncestorFinalityProof {
+        let proof = crate::follow::upstream::AncestorFinalityProof {
             certified,
             ancestors,
         };
@@ -410,6 +403,13 @@ impl TipSource for UpstreamRpcClient {
             }
         }
     }
+}
+
+/// Read the offer-key commitment from the selected certified upstream.
+pub async fn read_upstream_tribute_offer_public_key(url: &str) -> eyre::Result<B256> {
+    UpstreamRpcClient::new(url)?
+        .tribute_offer_public_key()
+        .await
 }
 
 #[cfg(test)]

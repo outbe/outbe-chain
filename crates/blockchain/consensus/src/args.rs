@@ -116,7 +116,7 @@ pub struct ConsensusArgs {
 
     // Simplex leader / certification timeouts are NOT CLI flags. They are
     // consensus-critical and must be identical across all validators. Thus the
-    // only sources of truth are the `outbe_consensus::timing` defaults and
+    // only sources of truth are the `crate::timing` defaults and
     // `genesis.json` (`leaderTimeoutMs` / `certificationTimeoutMs`). A per-node
     // CLI override could desync timings and fork the network.
     /// Number of worker threads for the consensus runtime.
@@ -393,7 +393,7 @@ impl ConsensusArgs {
     }
 
     /// Parse the `--bls-key-backend` argument into a [`KeyBackend`].
-    pub fn key_backend(&self) -> eyre::Result<outbe_consensus::bls::KeyBackend> {
+    pub fn key_backend(&self) -> eyre::Result<crate::bls::KeyBackend> {
         parse_key_backend(
             &self.bls_key_backend,
             self.bls_passphrase.clone(),
@@ -403,7 +403,7 @@ impl ConsensusArgs {
     }
 
     /// Parse the `--evm-key-backend` argument into a [`KeyBackend`].
-    pub fn evm_key_backend(&self) -> eyre::Result<outbe_consensus::bls::KeyBackend> {
+    pub fn evm_key_backend(&self) -> eyre::Result<crate::bls::KeyBackend> {
         parse_key_backend(
             &self.evm_key_backend,
             self.evm_passphrase.clone(),
@@ -413,7 +413,7 @@ impl ConsensusArgs {
     }
 
     /// Parse the `--reth-key-backend` argument into a [`KeyBackend`].
-    pub fn reth_key_backend(&self) -> eyre::Result<outbe_consensus::bls::KeyBackend> {
+    pub fn reth_key_backend(&self) -> eyre::Result<crate::bls::KeyBackend> {
         parse_key_backend(
             &self.reth_key_backend,
             self.reth_passphrase.clone(),
@@ -428,8 +428,8 @@ fn parse_key_backend(
     passphrase: Option<String>,
     missing: crate::errors::ArgsError,
     unknown: impl FnOnce(String) -> crate::errors::ArgsError,
-) -> eyre::Result<outbe_consensus::bls::KeyBackend> {
-    use outbe_consensus::bls::{parse_key_backend_name, KeyBackendNameError};
+) -> eyre::Result<crate::bls::KeyBackend> {
+    use crate::bls::{parse_key_backend_name, KeyBackendNameError};
     parse_key_backend_name(backend, passphrase).map_err(|error| match error {
         KeyBackendNameError::MissingPassphrase => missing.into(),
         KeyBackendNameError::Unknown(name) => unknown(name).into(),
@@ -737,20 +737,20 @@ mod tests {
         assert_eq!(args.bls_key_backend, "plaintext");
         assert!(matches!(
             args.key_backend().unwrap(),
-            outbe_consensus::bls::KeyBackend::Plaintext
+            crate::bls::KeyBackend::Plaintext
         ));
 
         args.bls_key_backend = "encrypted".to_string();
         args.bls_passphrase = Some("pass".to_string());
         assert!(matches!(
             args.key_backend().unwrap(),
-            outbe_consensus::bls::KeyBackend::Encrypted(_)
+            crate::bls::KeyBackend::Encrypted(_)
         ));
 
         args.bls_key_backend = "os-level".to_string();
         assert!(matches!(
             args.key_backend().unwrap(),
-            outbe_consensus::bls::KeyBackend::OsLevel
+            crate::bls::KeyBackend::OsLevel
         ));
 
         args.bls_key_backend = "invalid".to_string();
@@ -764,11 +764,11 @@ mod tests {
         assert_eq!(args.reth_key_backend, "plaintext");
         assert!(matches!(
             args.evm_key_backend().unwrap(),
-            outbe_consensus::bls::KeyBackend::Plaintext
+            crate::bls::KeyBackend::Plaintext
         ));
         assert!(matches!(
             args.reth_key_backend().unwrap(),
-            outbe_consensus::bls::KeyBackend::Plaintext
+            crate::bls::KeyBackend::Plaintext
         ));
 
         args.evm_key_backend = "encrypted".to_string();
@@ -777,7 +777,7 @@ mod tests {
         args.evm_passphrase = Some("evm-secret-value".to_string());
         assert!(matches!(
             args.evm_key_backend().unwrap(),
-            outbe_consensus::bls::KeyBackend::Encrypted(_)
+            crate::bls::KeyBackend::Encrypted(_)
         ));
 
         args.reth_key_backend = "encrypted".to_string();
@@ -790,13 +790,13 @@ mod tests {
         assert!(args.validate().is_ok());
         assert!(matches!(
             args.reth_key_backend().unwrap(),
-            outbe_consensus::bls::KeyBackend::Encrypted(_)
+            crate::bls::KeyBackend::Encrypted(_)
         ));
 
         args.reth_key_backend = "os-level".to_string();
         assert!(matches!(
             args.reth_key_backend().unwrap(),
-            outbe_consensus::bls::KeyBackend::OsLevel
+            crate::bls::KeyBackend::OsLevel
         ));
         args.evm_key_backend = "nope".to_string();
         let unknown = args.evm_key_backend().unwrap_err().to_string();

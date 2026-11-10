@@ -36,7 +36,7 @@ impl ApplicationDrain {
 
     /// Run *inside* the retained Commonware supervision task. Catch an inner
     /// panic here, before completing that task aborts its transport descendants.
-    pub(crate) async fn finish(&self, protocol: impl Future<Output = Result<()>>) -> Result<()> {
+    pub async fn finish(&self, protocol: impl Future<Output = Result<()>>) -> Result<()> {
         let result = AssertUnwindSafe(protocol)
             .catch_unwind()
             .await

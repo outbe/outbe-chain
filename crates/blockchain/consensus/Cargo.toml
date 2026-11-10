@@ -21,6 +21,8 @@ test-utils = ["outbe-simplex/test-utils"]
 # Internal
 outbe-primitives.workspace = true
 outbe-simplex.workspace = true
+outbe-tee.workspace = true
+outbe-radicle.workspace = true
 radicle-crypto.workspace = true
 
 # Commonware
@@ -43,9 +45,15 @@ reth-ethereum = { workspace = true, features = ["node", "node-api", "storage-api
 reth-node-builder.workspace = true
 reth-payload-builder.workspace = true
 reth-db.workspace = true
+reth-chainspec.workspace = true
+reth-provider.workspace = true
+reth-chain-state.workspace = true
+reth-storage-api.workspace = true
+reth-stages-types.workspace = true
 
 # Alloy
 alloy-consensus.workspace = true
+alloy-eips.workspace = true
 alloy-primitives.workspace = true
 alloy-rlp.workspace = true
 alloy-rpc-types-engine.workspace = true
@@ -58,6 +66,8 @@ argon2.workspace = true
 keyring.workspace = true
 
 # Utilities
+clap.workspace = true
+jsonrpsee = { version = "0.26", default-features = false, features = ["http-client"] }
 eyre.workspace = true
 futures.workspace = true
 hex.workspace = true
@@ -75,6 +85,9 @@ thiserror.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+reth-provider = { workspace = true, features = ["test-utils"] }
+reth-chain-state = { workspace = true, features = ["test-utils"] }
+reth-primitives-traits.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-consensus = { workspace = true, features = ["test-utils"] }
 commonware-resolver = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.9.0" }

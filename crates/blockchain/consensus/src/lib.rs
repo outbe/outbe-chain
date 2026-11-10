@@ -14,11 +14,18 @@ pub mod dkg_manager;
 pub mod errors;
 pub mod metrics;
 
-/// Re-export of the validator-set data types from `outbe-primitives`. The
-/// canonical definitions live in `outbe_primitives::validators`; this alias
-/// keeps existing `outbe_consensus::validators::*` (and crate-local
-/// `crate::validators::*`) call sites unchanged.
-pub use outbe_primitives::{digest, proof, validators};
+pub mod application_shutdown;
+pub mod args;
+pub mod execution_port;
+pub mod follow_transport;
+pub mod follower_shutdown;
+pub mod marshal_update_reporter;
+pub mod peer_manager;
+pub mod protocol_state;
+pub mod tee_bootstrap;
+pub mod validators;
+pub use follow_transport::read_upstream_tribute_offer_public_key;
+pub use outbe_primitives::{digest, proof};
 
 #[cfg(test)]
 mod marshal_resolver_p2p_tests;

@@ -1,41 +1,27 @@
-//! `outbe-engine` - bridge layer between pure `outbe-consensus`
-//! (Simplex/hybrid/DKG/proof) and the EVM/node side (`outbe-evm`,
-//! `outbe-validatorset`, `outbe-execution`).
+//! Bridge between the consensus stack and concrete execution-node services.
 //!
-//! Owns:
-//! * `stack/` - engine startup, epoch loop, reshare monitoring.
-//! * `validators.rs` - ValidatorSet storage reader (Reth state -> Commonware
-//!   participant set).
-//! * `peer_manager/` - P2P peer registration against `outbe-execution`.
-//! * `args.rs` - `ConsensusArgs` CLI bundle for engine startup.
-//! * `bridge.rs` - re-exports for `ConsensusExecutionBridge` wiring.
+//! The CL stack remains here until its staged relocation is complete. Base
+//! CL modules are re-exported from consensus to preserve existing import paths.
 
-pub mod application_shutdown;
-pub mod args;
 pub mod bridge;
 pub mod errors;
 pub mod finalization;
-pub(crate) mod follow_transport;
-pub mod follower_shutdown;
-pub(crate) mod marshal_update_reporter;
-pub(crate) mod peer_manager;
-pub mod protocol_state;
 pub mod stack;
-pub mod tee_bootstrap;
-pub mod validators;
+
+pub use outbe_consensus::{
+    application_shutdown, args, follower_shutdown, marshal_update_reporter, peer_manager,
+    protocol_state, read_upstream_tribute_offer_public_key, tee_bootstrap, validators,
+};
+
+/// Compatibility adapter until the CL stack is moved to consensus.
+pub mod follow_transport {
+    pub use outbe_consensus::follow_transport::*;
+    pub type RethLocalBlockSource<N = outbe_execution::OutbeFullNode> =
+        outbe_consensus::follow_transport::RethLocalBlockSource<N>;
+}
 
 pub use args::ConsensusArgs;
 pub use stack::{
     run_consensus_stack, ConsensusExecutionServices, ConsensusRadicleServices,
     ConsensusShutdownServices, ConsensusStackServices,
 };
-
-/// Read the exact offer-key commitment from the selected certified upstream.
-/// Full-node startup uses this narrow adapter before launching execution.
-pub async fn read_upstream_tribute_offer_public_key(
-    url: &str,
-) -> eyre::Result<alloy_primitives::B256> {
-    follow_transport::UpstreamRpcClient::new(url)?
-        .tribute_offer_public_key()
-        .await
-}

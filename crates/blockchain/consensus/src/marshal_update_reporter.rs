@@ -1,28 +1,28 @@
+use crate::digest::Digest;
+use crate::executor::Mailbox;
+use crate::marshal_types::MarshalUpdate;
 use commonware_consensus::{types::Height, Reporter};
-use outbe_consensus::digest::Digest;
-use outbe_consensus::executor::Mailbox;
-use outbe_consensus::marshal_types::MarshalUpdate;
 use tokio::sync::watch;
 
 use crate::peer_manager::Mailbox as PeerManagerMailbox;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ConsensusTip {
-    pub(crate) round: commonware_consensus::types::Round,
-    pub(crate) height: Height,
-    pub(crate) digest: Digest,
+pub struct ConsensusTip {
+    pub round: commonware_consensus::types::Round,
+    pub height: Height,
+    pub digest: Digest,
 }
 
 #[derive(Clone)]
-pub(crate) struct MarshalUpdateReporter {
+pub struct MarshalUpdateReporter {
     executor: Mailbox,
     tip_consumers: Vec<watch::Sender<Option<ConsensusTip>>>,
     block_consumers: Vec<PeerManagerMailbox>,
-    publication: Option<outbe_consensus::application::publication::ProposalPublication>,
+    publication: Option<crate::application::publication::ProposalPublication>,
 }
 
 impl MarshalUpdateReporter {
-    pub(crate) fn new(executor: Mailbox) -> Self {
+    pub fn new(executor: Mailbox) -> Self {
         Self {
             executor,
             tip_consumers: Vec::new(),
@@ -31,22 +31,19 @@ impl MarshalUpdateReporter {
         }
     }
 
-    pub(crate) fn add_tip_consumer(
-        mut self,
-        consumer: watch::Sender<Option<ConsensusTip>>,
-    ) -> Self {
+    pub fn add_tip_consumer(mut self, consumer: watch::Sender<Option<ConsensusTip>>) -> Self {
         self.tip_consumers.push(consumer);
         self
     }
 
-    pub(crate) fn add_block_consumer(mut self, consumer: PeerManagerMailbox) -> Self {
+    pub fn add_block_consumer(mut self, consumer: PeerManagerMailbox) -> Self {
         self.block_consumers.push(consumer);
         self
     }
 
-    pub(crate) fn with_publication(
+    pub fn with_publication(
         mut self,
-        publication: outbe_consensus::application::publication::ProposalPublication,
+        publication: crate::application::publication::ProposalPublication,
     ) -> Self {
         self.publication = Some(publication);
         self
@@ -101,15 +98,15 @@ mod tests {
     //! pin both halves of that contract.
 
     use super::*;
+    use crate::block::ConsensusBlock;
+    use crate::executor::ingress::Message as ExecutorMessage;
+    use crate::executor::Mailbox as ExecutorMailbox;
     use alloy_primitives::Bytes;
     use commonware_consensus::marshal::Update;
     use commonware_runtime::{Clock as _, Runner as _};
     use commonware_utils::acknowledgement::{Acknowledgement, Exact};
     use futures::channel::mpsc;
     use futures::StreamExt;
-    use outbe_consensus::block::ConsensusBlock;
-    use outbe_consensus::executor::ingress::Message as ExecutorMessage;
-    use outbe_consensus::executor::Mailbox as ExecutorMailbox;
     use outbe_primitives::OutbeHeader;
     use reth_ethereum::{primitives::SealedBlock, Block};
     use std::time::Duration;

@@ -1,8 +1,8 @@
 //! Typed error definitions for epoch activation, supervision, recovery, and transport.
 
+use crate::digest::Digest;
 use alloy_primitives::{Address, B256};
 use commonware_consensus::types::Epoch;
-use outbe_consensus::digest::Digest;
 use std::time::Duration;
 use thiserror::Error;
 
@@ -443,7 +443,7 @@ pub enum StackEpochError {
         height: u64,
         /// Underlying boundary observation error.
         #[source]
-        source: outbe_consensus::follow::BoundaryObservationError,
+        source: crate::follow::BoundaryObservationError,
     },
 
     /// Indicates that a mandatory TEE chain requires the enclave socket argument.

@@ -4,13 +4,13 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::{executor::Mailbox, marshal_types::MarshalUpdate};
 use commonware_actor::Feedback;
 use commonware_consensus::{marshal::Update, Reporter};
 use commonware_utils::acknowledgement::Exact;
 #[cfg(test)]
 use eyre::eyre;
 use eyre::Result;
-use outbe_consensus::{executor::Mailbox, marshal_types::MarshalUpdate};
 use tokio::sync::oneshot;
 
 /// Result of a fully drained follower phase.
@@ -107,7 +107,7 @@ impl FollowerDrainControl {
 }
 
 impl FollowerDrain {
-    pub(crate) fn install(&self, executor: Mailbox) -> Result<Option<FollowerReporter>> {
+    pub fn install(&self, executor: Mailbox) -> Result<Option<FollowerReporter>> {
         let mut ingress = self
             .ingress
             .lock()
@@ -125,7 +125,7 @@ impl FollowerDrain {
         }))
     }
 
-    pub(crate) async fn await_work(
+    pub async fn await_work(
         &self,
         executor: impl std::future::Future<Output = Result<()>>,
         observer: impl std::future::Future<Output = Result<()>>,
@@ -134,7 +134,7 @@ impl FollowerDrain {
         Ok(())
     }
 
-    pub(crate) fn complete(self) -> Result<FollowStackExit> {
+    pub fn complete(self) -> Result<FollowStackExit> {
         let exit = {
             let mut ingress = self
                 .ingress
@@ -160,8 +160,8 @@ impl FollowerDrain {
         Ok(exit)
     }
 
-    #[cfg(test)]
-    pub(crate) async fn finish(
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn finish(
         self,
         executor: impl std::future::Future<Output = Result<()>>,
         observer: impl std::future::Future<Output = Result<()>>,
@@ -320,8 +320,8 @@ mod tests {
 
     #[tokio::test]
     async fn post_quiesce_delivery_is_neither_executed_nor_falsely_acknowledged() {
+        use crate::block::ConsensusBlock;
         use commonware_utils::acknowledgement::Acknowledgement as _;
-        use outbe_consensus::block::ConsensusBlock;
         use reth_ethereum::{primitives::SealedBlock, Block};
         let (control, drain) = follower_drain_pair();
         let (tx, mut rx) = mpsc::unbounded();
@@ -362,12 +362,12 @@ mod tests {
 }
 
 #[derive(Clone)]
-pub(crate) struct FollowerReporter {
+pub struct FollowerReporter {
     ingress: Arc<Mutex<Ingress>>,
 }
 
 impl FollowerReporter {
-    pub(crate) fn initiate_promotion(&self, finalized_height: u64) -> Result<()> {
+    pub fn initiate_promotion(&self, finalized_height: u64) -> Result<()> {
         let mut ingress = self
             .ingress
             .lock()
@@ -380,7 +380,7 @@ impl FollowerReporter {
         Ok(())
     }
 
-    pub(crate) fn is_quiescing(&self) -> Result<bool> {
+    pub fn is_quiescing(&self) -> Result<bool> {
         Ok(self
             .ingress
             .lock()

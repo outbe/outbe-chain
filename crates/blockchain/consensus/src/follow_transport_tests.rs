@@ -1,9 +1,9 @@
 //! Upstream transport bounds and method fallback, tested against a real HTTP
 //! JSON-RPC endpoint.
 use super::{CallFailure, UpstreamLimits, UpstreamRpcClient, JSONRPC_METHOD_NOT_FOUND};
+use crate::follow::{FinalizedSource as _, TipSource as _};
 use commonware_consensus::types::Height;
 use jsonrpsee::core::client::Error as ClientError;
-use outbe_consensus::follow::{FinalizedSource as _, TipSource as _};
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
@@ -231,8 +231,8 @@ fn proof(finalization_hex: &str, block_hex: &str) -> super::UpstreamFinalization
     }
 }
 
-fn sample_block() -> outbe_consensus::block::ConsensusBlock {
-    use outbe_consensus::block::ConsensusBlock;
+fn sample_block() -> crate::block::ConsensusBlock {
+    use crate::block::ConsensusBlock;
     use outbe_primitives::OutbeHeader;
     use reth_ethereum::primitives::SealedBlock;
     use reth_ethereum::Block;
@@ -248,9 +248,10 @@ fn sample_block() -> outbe_consensus::block::ConsensusBlock {
 fn certified_record() -> (
     Vec<u8>,
     Vec<u8>,
-    outbe_consensus::marshal_types::Finalization,
-    outbe_consensus::block::ConsensusBlock,
+    crate::marshal_types::Finalization,
+    crate::block::ConsensusBlock,
 ) {
+    use crate::hybrid::HybridScheme;
     use commonware_codec::Encode as _;
     use commonware_consensus::simplex::types::{Finalization, Finalize, Proposal};
     use commonware_consensus::types::{Epoch, Round, View};
@@ -258,7 +259,6 @@ fn certified_record() -> (
     use commonware_cryptography::Signer as _;
     use commonware_parallel::Sequential;
     use commonware_utils::TryCollect as _;
-    use outbe_consensus::hybrid::HybridScheme;
 
     let keys: Vec<bls12381::PrivateKey> = (1u64..=4).map(bls12381::PrivateKey::from_seed).collect();
     let participants: commonware_utils::ordered::Set<bls12381::PublicKey> = keys
@@ -266,7 +266,7 @@ fn certified_record() -> (
         .map(|key| key.public_key())
         .try_collect()
         .expect("participant set");
-    let dkg = outbe_consensus::bls::bootstrap_dkg(4).expect("dkg");
+    let dkg = crate::bls::bootstrap_dkg(4).expect("dkg");
     let signers: Vec<HybridScheme<MinSig>> = keys
         .iter()
         .map(|key| {
@@ -275,7 +275,7 @@ fn certified_record() -> (
                 .position(|pk| pk == &key.public_key())
                 .expect("index");
             HybridScheme::signer(
-                &outbe_consensus::config::outbe_app_namespace(),
+                &crate::config::outbe_app_namespace(),
                 participants.clone(),
                 key.clone(),
                 dkg.polynomial.clone(),
@@ -285,7 +285,7 @@ fn certified_record() -> (
         })
         .collect();
     let verifier = HybridScheme::<MinSig>::verifier(
-        &outbe_consensus::config::outbe_app_namespace(),
+        &crate::config::outbe_app_namespace(),
         participants,
         dkg.polynomial.clone(),
     )
@@ -319,15 +319,15 @@ fn certified_record() -> (
 /// The bitmap length is rejected before the signature bytes are read, so the
 /// fixture is the proposal plus that bitmap.
 fn oversized_finalization_bytes() -> Vec<u8> {
+    use crate::digest::Digest;
     use commonware_codec::Encode as _;
     use commonware_consensus::simplex::types::Proposal;
     use commonware_consensus::types::{Epoch, Round, View};
     use commonware_cryptography::certificate::Signers;
     use commonware_utils::Participant;
-    use outbe_consensus::digest::Digest;
 
     let participants =
-        u32::try_from(outbe_consensus::bls::MAX_COMMITTEE_MEMBERS + 1).expect("257 fits in u32");
+        u32::try_from(crate::bls::MAX_COMMITTEE_MEMBERS + 1).expect("257 fits in u32");
     let signers = Signers::new(participants, [Participant::new(0)]).expect("signer bitmap");
     let proposal = Proposal::new(
         Round::new(Epoch::new(1), View::new(1)),
@@ -371,16 +371,13 @@ fn decode_rejects_oversized_upstream_proof() {
         sample_block().encode().to_vec()
     };
     assert_eq!(
-        outbe_consensus::bls::MAX_COMMITTEE_MEMBERS + 1,
+        crate::bls::MAX_COMMITTEE_MEMBERS + 1,
         257,
         "the codec bound under test is 256 participants"
     );
     assert!(matches!(
-        outbe_consensus::follow::decode_public_finalization(
-            &finalization,
-            outbe_consensus::bls::MAX_COMMITTEE_MEMBERS,
-        ),
-        Err(outbe_consensus::follow::PublicFinalizedBlockDecodeError::Finalization(_))
+        crate::follow::decode_public_finalization(&finalization, crate::bls::MAX_COMMITTEE_MEMBERS,),
+        Err(crate::follow::PublicFinalizedBlockDecodeError::Finalization(_))
     ));
     assert!(super::decode_finalization_proof(&proof(
         &hex_bytes(&finalization),

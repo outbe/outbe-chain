@@ -9,9 +9,9 @@ use futures::{channel::mpsc, StreamExt as _};
 use reth_ethereum::provider::BlockHashReader;
 use tracing::{debug, error, instrument, warn, Span};
 
+use crate::execution_port::ExecutionProviderAccess;
 use crate::validators::{read_admitted_non_consensus_at_block, read_consensus_validators_at_block};
-use outbe_consensus::{block::ConsensusBlock, config};
-use outbe_execution::OutbeFullNode;
+use crate::{block::ConsensusBlock, config};
 
 use super::{
     admission::PeerAdmission,
@@ -19,14 +19,14 @@ use super::{
 };
 use crate::validators::ValidatorSet;
 
-pub(crate) struct Config<TOracle> {
-    pub(crate) oracle: TOracle,
-    pub(crate) node: OutbeFullNode,
-    pub(crate) executor: outbe_consensus::executor::Mailbox,
-    pub(crate) bootnode_map: BTreeMap<Vec<u8>, std::net::SocketAddr>,
-    pub(crate) initial_peers: AddressableTrackedPeers<PublicKey>,
-    pub(crate) initial_height: u64,
-    pub(crate) protocol: std::sync::Arc<dyn crate::protocol_state::EngineProtocolState>,
+pub struct Config<TOracle, TNode> {
+    pub oracle: TOracle,
+    pub node: TNode,
+    pub executor: crate::executor::Mailbox,
+    pub bootnode_map: BTreeMap<Vec<u8>, std::net::SocketAddr>,
+    pub initial_peers: AddressableTrackedPeers<PublicKey>,
+    pub initial_height: u64,
+    pub protocol: std::sync::Arc<dyn crate::protocol_state::EngineProtocolState>,
 }
 
 struct FinalizedWaitResult {
@@ -36,14 +36,15 @@ struct FinalizedWaitResult {
 
 type FinalizedWait = Pin<Box<dyn Future<Output = FinalizedWaitResult> + Send>>;
 
-pub(crate) struct Actor<TContext, TOracle>
+pub struct Actor<TContext, TOracle, TNode>
 where
     TOracle: AddressableManager<PublicKey = PublicKey>,
+    TNode: ExecutionProviderAccess,
 {
     context: TContext,
     admission: PeerAdmission<TOracle>,
-    node: OutbeFullNode,
-    executor: outbe_consensus::executor::Mailbox,
+    node: TNode,
+    executor: crate::executor::Mailbox,
     bootnode_map: BTreeMap<Vec<u8>, std::net::SocketAddr>,
     protocol: std::sync::Arc<dyn crate::protocol_state::EngineProtocolState>,
     mailbox: mpsc::UnboundedReceiver<MessageWithCause>,
@@ -52,12 +53,13 @@ where
     finalized_wait: FinalizedWait,
 }
 
-impl<TContext, TOracle> Actor<TContext, TOracle>
+impl<TContext, TOracle, TNode> Actor<TContext, TOracle, TNode>
 where
     TContext: Clock + Spawner + Send + 'static,
     TOracle: AddressableManager<PublicKey = PublicKey> + Send + 'static,
+    TNode: ExecutionProviderAccess,
 {
-    pub(crate) fn new(context: TContext, config: Config<TOracle>) -> (Self, super::Mailbox) {
+    pub fn new(context: TContext, config: Config<TOracle, TNode>) -> (Self, super::Mailbox) {
         let (tx, rx) = mpsc::unbounded();
         let mailbox = super::Mailbox::new(tx);
         let actor = Self {
@@ -79,9 +81,9 @@ where
         (actor, mailbox)
     }
 
-    pub(crate) fn start(self) -> Handle<()> {
+    pub fn start(self) -> Handle<()> {
         // commonware 2026.5.0: `Context` is no longer `Clone`. Derive a scoped
-        // child to spawn on (mirrors `outbe_consensus::executor::actor::start`).
+        // child to spawn on (mirrors `crate::executor::actor::start`).
         let context = self.context.child("peer_manager");
         context.spawn(move |_| self.run())
     }
@@ -192,7 +194,7 @@ where
 
     #[instrument(skip_all, fields(height = block.number(), hash = %block.block_hash()))]
     async fn try_refresh_from_block(&mut self, block: ConsensusBlock) -> eyre::Result<()> {
-        ensure_provider_ready(&self.node.provider, &block)?;
+        ensure_provider_ready(self.node.provider(), &block)?;
         // PRIMARY = current consensus participants (ACTIVE|EXITING with share, the
         // voting committee). SECONDARY = non-voting admitted peers (WaitingForReadiness,
         // Joining, JailRetained, or Jail without an active consensus share). SECONDARY
@@ -203,18 +205,18 @@ where
         // The tiers are disjoint by status.
         let consensus_set = read_consensus_validators_at_block(
             self.protocol.as_ref(),
-            &self.node.provider,
+            self.node.provider(),
             block.block_hash(),
         )
         .wrap_err("failed to read consensus validators for peer manager")?;
         let admitted_set = read_admitted_non_consensus_at_block(
             self.protocol.as_ref(),
-            &self.node.provider,
+            self.node.provider(),
             block.block_hash(),
         )
         .wrap_err("failed to read admitted non-consensus validators for peer manager")?;
-        let primary = crate::stack::build_peer_map(&consensus_set, &self.bootnode_map);
-        let secondary = crate::stack::build_peer_map(&admitted_set, &self.bootnode_map);
+        let primary = crate::validators::build_peer_map(&consensus_set, &self.bootnode_map);
+        let secondary = crate::validators::build_peer_map(&admitted_set, &self.bootnode_map);
         let count = primary.len() + secondary.len();
         debug!(
             height = block.number(),
@@ -226,7 +228,7 @@ where
             block.number(),
             AddressableTrackedPeers::new(primary, secondary),
         )?;
-        outbe_consensus::metrics::record_commonware_p2p_active_peers(count);
+        crate::metrics::record_commonware_p2p_active_peers(count);
         self.pending_refresh = None;
         Ok(())
     }

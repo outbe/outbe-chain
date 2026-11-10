@@ -8,18 +8,18 @@ use commonware_utils::{channel::oneshot, ordered::Map, Acknowledgement as _};
 use futures::channel::mpsc;
 use tracing::{error, Span};
 
-use outbe_consensus::block::ConsensusBlock;
+use crate::block::ConsensusBlock;
 
 pub(crate) type PublicKey = commonware_cryptography::bls12381::PublicKey;
 
 #[derive(Clone, Debug)]
-pub(crate) struct Mailbox {
+pub struct Mailbox {
     inner: mpsc::UnboundedSender<MessageWithCause>,
 }
 
 impl Mailbox {
     /// Wait until the single oracle writer has published the DKG transport set.
-    pub(crate) async fn prepare_dkg(&self, peers: Map<PublicKey, Address>) -> eyre::Result<u64> {
+    pub async fn prepare_dkg(&self, peers: Map<PublicKey, Address>) -> eyre::Result<u64> {
         let (response, receiver) = oneshot::channel();
         self.inner
             .unbounded_send(MessageWithCause::in_current_span(Message::PrepareDkg {

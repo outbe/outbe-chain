@@ -3,6 +3,7 @@
 //! `validators.json` is a tooling/genesis artifact only. Runtime validator
 //! membership is read from the ValidatorSet precompile at specific block heights.
 
+use crate::bls::{self, KeyBackend};
 use crate::errors::{ValidatorsError, ValidatorsPrecompileError};
 use alloy_primitives::{Address, B256, U256};
 use commonware_codec::ReadExt as _;
@@ -10,13 +11,12 @@ use commonware_cryptography::bls12381;
 use commonware_p2p::{Address as CommonwareAddress, Ingress as CommonwareIngress};
 use commonware_utils::Hostname;
 use eyre::{Result, WrapErr};
-use outbe_consensus::bls::{self, KeyBackend};
 use outbe_primitives::consensus_p2p::{decode_versioned, P2pAddress, P2pIngress};
 use outbe_primitives::storage::{
     readonly::{ReadOnlyBlockContext, ReadOnlyStorageProvider, StorageReader},
     StorageHandle,
 };
-pub use outbe_primitives::validators::{ValidatorP2pAddress, ValidatorSet};
+pub use outbe_primitives::validators::*;
 use reth_ethereum::storage::{StateProvider as _, StateProviderBox, StateProviderFactory};
 use std::path::Path;
 use tracing::debug;
@@ -713,11 +713,82 @@ fn read_local_validator_tee_rejection(
     Ok(None)
 }
 
+/// Build a P2P peer map from a validator set and bootnode entries.
+///
+/// Registry/config P2P address takes priority. Bootnodes fill missing gaps.
+/// This function excludes invalid registry entries and never replaces them with
+/// static bootstrap addresses.
+pub fn build_peer_map(
+    validator_set: &ValidatorSet,
+    bootnode_map: &std::collections::BTreeMap<Vec<u8>, std::net::SocketAddr>,
+) -> commonware_utils::ordered::Map<bls12381::PublicKey, CommonwareAddress> {
+    let peer_entries: Vec<(bls12381::PublicKey, CommonwareAddress)> = validator_set
+        .public_keys
+        .iter()
+        .zip(validator_set.p2p_addresses.iter())
+        .filter_map(|(pk, p2p_addr)| {
+            match p2p_addr {
+                ValidatorP2pAddress::Known(addr) => {
+                    return Some((pk.clone(), addr.clone()));
+                }
+                ValidatorP2pAddress::Invalid => return None,
+                ValidatorP2pAddress::Missing => {}
+            }
+            let pk_bytes = commonware_codec::Encode::encode(pk);
+            if let Some(addr) = bootnode_map.get(pk_bytes.as_ref()) {
+                return Some((pk.clone(), CommonwareAddress::Symmetric(*addr)));
+            }
+            None
+        })
+        .collect();
+
+    commonware_utils::ordered::Map::from_iter_dedup(peer_entries)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use commonware_cryptography::{Signer as _, Verifier as _};
     use commonware_math::algebra::Random;
+
+    // The relocated CL peer mapper must not fall back after invalid registry data.
+    #[test]
+    fn peer_map_preserves_registry_precedence_and_fail_closed_admission() {
+        let key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+            rand_commonware::rngs::SysRng,
+        ));
+        let pk = key.public_key();
+        let registered = CommonwareAddress::Symmetric("127.0.0.1:30400".parse().unwrap());
+        let bootstrap = "127.0.0.1:30401".parse().unwrap();
+        let bootnodes = std::collections::BTreeMap::from([(
+            commonware_codec::Encode::encode(&pk).to_vec(),
+            bootstrap,
+        )]);
+        for (registry, fallback, expected) in [
+            (
+                ValidatorP2pAddress::Known(registered.clone()),
+                true,
+                Some(registered),
+            ),
+            (ValidatorP2pAddress::Invalid, true, None),
+            (
+                ValidatorP2pAddress::Missing,
+                true,
+                Some(CommonwareAddress::Symmetric(bootstrap)),
+            ),
+            (ValidatorP2pAddress::Missing, false, None),
+        ] {
+            let validators = ValidatorSet {
+                public_keys: vec![pk.clone()],
+                addresses: vec![Address::with_last_byte(1)],
+                p2p_addresses: vec![registry],
+            };
+            let empty = std::collections::BTreeMap::new();
+            let peers = build_peer_map(&validators, if fallback { &bootnodes } else { &empty });
+            assert_eq!(peers.get_value(&pk), expected.as_ref());
+            assert_eq!(peers.len(), usize::from(expected.is_some()));
+        }
+    }
 
     #[test]
     fn test_load_signing_key_roundtrip() {
@@ -726,15 +797,10 @@ mod tests {
         ));
 
         let tmp = tempfile::NamedTempFile::new().unwrap();
-        outbe_consensus::bls::save_individual_key(
-            tmp.path(),
-            &key,
-            &outbe_consensus::bls::KeyBackend::Plaintext,
-        )
-        .unwrap();
+        crate::bls::save_individual_key(tmp.path(), &key, &crate::bls::KeyBackend::Plaintext)
+            .unwrap();
 
-        let loaded =
-            load_signing_key(tmp.path(), &outbe_consensus::bls::KeyBackend::Plaintext).unwrap();
+        let loaded = load_signing_key(tmp.path(), &crate::bls::KeyBackend::Plaintext).unwrap();
         assert_eq!(key, loaded);
 
         // Verify the loaded key works
