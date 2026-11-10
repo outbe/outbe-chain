@@ -356,7 +356,7 @@ pub(super) fn static_reward_proxy(db: &mut CacheDB<EmptyDB>) -> Address {
 
 /// `price` less the agent discount, the entry of an agent reward Gem.
 pub(super) fn discounted(price: U256) -> U256 {
-    outbe_common::markup::marked_down(price, outbe_agentreward::constants::AGENT_DISCOUNT_PCT)
+    outbe_core_common::markup::marked_down(price, outbe_agentreward::constants::AGENT_DISCOUNT_PCT)
         .unwrap()
 }
 

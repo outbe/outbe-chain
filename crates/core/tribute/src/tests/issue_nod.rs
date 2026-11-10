@@ -26,7 +26,7 @@ fn nod_id_of(tc: &TributeContract<'_>, tribute: &crate::schema::TributeData) -> 
         tribute.reference_currency,
     )
     .unwrap();
-    outbe_common::nod_rules::derive_nod_id(series, tribute.owner)
+    outbe_core_common::nod_rules::derive_nod_id(series, tribute.owner)
 }
 
 fn seed_entry_price(storage: &StorageHandle<'_>, iso: u16, utc_day: u32, vwap: U256) {

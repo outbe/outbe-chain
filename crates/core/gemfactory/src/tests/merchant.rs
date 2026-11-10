@@ -79,7 +79,9 @@ fn sending_every_unit_deletes_the_spent_source_series() {
 
 /// This function returns the closing timestamp of the deadline day that contains `at`.
 fn day_closed(at: u64) -> u64 {
-    outbe_common::deadline_queue::day_end(outbe_common::deadline_queue::deadline_day(at).unwrap())
+    outbe_core_common::deadline_queue::day_end(
+        outbe_core_common::deadline_queue::deadline_day(at).unwrap(),
+    )
 }
 
 /// An expired position reads empty at once, returns its remainder with its hour and is

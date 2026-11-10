@@ -7777,7 +7777,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-ccaregistry",
- "outbe-common",
+ "outbe-core-common",
  "outbe-emission",
  "outbe-gem",
  "outbe-gemfactory",
@@ -7798,7 +7798,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-agentreward",
- "outbe-common",
+ "outbe-core-common",
  "outbe-emission",
  "outbe-gem",
  "outbe-gemfactory",
@@ -7924,20 +7924,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-common"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "alloy-sol-types",
- "base64 0.22.1",
- "outbe-primitives",
- "ring",
- "serde_json",
- "thiserror 2.0.18",
- "tracing",
-]
-
-[[package]]
 name = "outbe-consensus"
 version = "0.1.0"
 dependencies = [
@@ -7992,12 +7978,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-core-common"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "base64 0.22.1",
+ "outbe-primitives",
+ "ring",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "outbe-credis"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "outbe-common",
+ "outbe-core-common",
  "outbe-macros",
  "outbe-primitives",
  "thiserror 2.0.18",
@@ -8012,7 +8012,7 @@ dependencies = [
  "base64 0.22.1",
  "eyre",
  "outbe-ccaregistry",
- "outbe-common",
+ "outbe-core-common",
  "outbe-credis",
  "outbe-fidelity",
  "outbe-gratis",
@@ -8079,7 +8079,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "outbe-common",
+ "outbe-core-common",
  "outbe-intex",
  "outbe-intexfactory",
  "outbe-macros",
@@ -8268,7 +8268,7 @@ dependencies = [
  "alloy-sol-types",
  "base64 0.22.1",
  "hex",
- "outbe-common",
+ "outbe-core-common",
  "outbe-macros",
  "outbe-primitives",
  "serde",
@@ -8284,7 +8284,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "base64 0.22.1",
- "outbe-common",
+ "outbe-core-common",
  "outbe-gem",
  "outbe-intex",
  "outbe-macros",
@@ -8331,7 +8331,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "outbe-common",
+ "outbe-core-common",
  "outbe-macros",
  "outbe-primitives",
  "outbe-tee",
@@ -8345,7 +8345,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "outbe-common",
+ "outbe-core-common",
  "outbe-fidelity",
  "outbe-gratis",
  "outbe-macros",
@@ -8402,7 +8402,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "base64 0.22.1",
- "outbe-common",
+ "outbe-core-common",
  "outbe-macros",
  "outbe-primitives",
  "serde_json",
@@ -8415,7 +8415,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "outbe-common",
+ "outbe-core-common",
  "outbe-intex",
  "outbe-macros",
  "outbe-oracle",
@@ -8490,7 +8490,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "hex",
- "outbe-common",
+ "outbe-core-common",
  "outbe-primitives",
  "serde",
  "serde_json",
@@ -8533,7 +8533,7 @@ dependencies = [
  "num-bigint",
  "outbe-agentreward",
  "outbe-chain-constants",
- "outbe-common",
+ "outbe-core-common",
  "outbe-desis",
  "outbe-emission",
  "outbe-fidelity",
@@ -8560,7 +8560,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "base64 0.22.1",
- "outbe-common",
+ "outbe-core-common",
  "outbe-macros",
  "outbe-nod",
  "outbe-primitives",
@@ -8636,7 +8636,7 @@ dependencies = [
  "alloy-sol-types",
  "base64 0.22.1",
  "hex",
- "outbe-common",
+ "outbe-core-common",
  "outbe-gratis",
  "outbe-gratisfactory",
  "outbe-nod",
@@ -8755,7 +8755,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "outbe-common",
+ "outbe-core-common",
  "outbe-macros",
  "outbe-primitives",
  "outbe-tee",
@@ -8769,7 +8769,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "outbe-common",
+ "outbe-core-common",
  "outbe-fidelity",
  "outbe-gratis",
  "outbe-gratisfactory",
@@ -8804,7 +8804,7 @@ dependencies = [
  "commonware-cryptography",
  "hex",
  "outbe-ccaregistry",
- "outbe-common",
+ "outbe-core-common",
  "outbe-credis",
  "outbe-credisfactory",
  "outbe-fidelity",
@@ -8999,8 +8999,8 @@ dependencies = [
  "outbe-ccaregistry",
  "outbe-chain-constants",
  "outbe-coderegistry",
- "outbe-common",
  "outbe-consensus",
+ "outbe-core-common",
  "outbe-credis",
  "outbe-credisfactory",
  "outbe-crosschainbridge",
@@ -9257,8 +9257,8 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "k256 0.13.4",
- "outbe-common",
  "outbe-consensus",
+ "outbe-core-common",
  "outbe-fidelity-math",
  "outbe-lysis",
  "outbe-primitives",
@@ -9309,7 +9309,7 @@ dependencies = [
  "alloy-consensus",
  "alloy-primitives",
  "alloy-sol-types",
- "outbe-common",
+ "outbe-core-common",
  "outbe-emission",
  "outbe-fidelity",
  "outbe-lysis",
@@ -9450,7 +9450,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-ccaregistry",
  "outbe-chain-constants",
- "outbe-common",
+ "outbe-core-common",
  "outbe-credis",
  "outbe-macros",
  "outbe-oracle",

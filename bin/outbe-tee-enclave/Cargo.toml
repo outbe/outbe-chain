@@ -67,7 +67,7 @@ path = "src/bin/outbe-sgx-sealing-probe.rs"
 required-features = ["sgx-sealing-probe"]
 
 [dependencies]
-outbe-common.workspace = true
+outbe-core-common.workspace = true
 outbe-tee.workspace = true
 outbe-lysis.workspace = true
 postcard.workspace = true

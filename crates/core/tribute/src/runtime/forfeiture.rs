@@ -298,7 +298,7 @@ pub(super) fn issue_nod_from_tribute(
                 day_fractions,
                 terms: outbe_primitives::nod_encryption::NodTermsV1 {
                     chain_id: storage.chain_id()?,
-                    nod_id: outbe_common::nod_rules::derive_nod_id(series_id, record.owner),
+                    nod_id: outbe_core_common::nod_rules::derive_nod_id(series_id, record.owner),
                     owner: record.owner,
                     emission_day: series_id.day(),
                     league_id: raw_league.max(1),

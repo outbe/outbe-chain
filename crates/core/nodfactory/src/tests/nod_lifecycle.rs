@@ -105,7 +105,7 @@ fn nod_item_issued(
             league_id: 4,
             group_key: outbe_nod::identity::group_key(
                 issued_at,
-                outbe_common::markup::marked_up(entry_price_minor, CALL_RATE_PCT).unwrap(),
+                outbe_core_common::markup::marked_up(entry_price_minor, CALL_RATE_PCT).unwrap(),
                 iso,
             )
             .expect("date step"),
@@ -460,7 +460,7 @@ fn an_unset_profile_seals_the_dev_terms_off_mainnet() {
         let mut item = nod_item(Address::repeat_byte(0x11), ISO);
         item.group_key = outbe_nod::identity::group_key(
             item.issued_at,
-            outbe_common::markup::marked_up(entry_price(), dev.call_rate).unwrap(),
+            outbe_core_common::markup::marked_up(entry_price(), dev.call_rate).unwrap(),
             ISO,
         )
         .expect("date step");
@@ -901,8 +901,8 @@ fn the_notice_period_burns_once_the_day_of_its_deadline_closes() {
         let item = call_group(storage, Address::repeat_byte(0x11), at);
         let deadline = at + NOTICE;
 
-        let day_end = outbe_common::deadline_queue::day_end(
-            outbe_common::deadline_queue::deadline_day(deadline).unwrap(),
+        let day_end = outbe_core_common::deadline_queue::day_end(
+            outbe_core_common::deadline_queue::deadline_day(deadline).unwrap(),
         );
         // Exact settlement state is independent of delayed physical deletion.
         for now in [deadline, deadline + 1, day_end - 1] {
@@ -1380,12 +1380,12 @@ fn failing_members_do_not_hold_the_cleanup() {
             3
         );
         assert_eq!(reserve(storage), U256::from(25u64));
-        let (day, _) = outbe_common::deadline_queue::unpack_slot(
+        let (day, _) = outbe_core_common::deadline_queue::unpack_slot(
             nod.cleanup_group_slot.read(&group_key).unwrap(),
         );
         assert_eq!(
             day,
-            outbe_common::deadline_queue::deadline_day(past).unwrap()
+            outbe_core_common::deadline_queue::deadline_day(past).unwrap()
         );
     });
 }
@@ -1532,8 +1532,8 @@ fn mixed_group_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_mined()
         assert_eq!(reserve(storage), U256::MAX);
         limit.checked_take_up_to(U256::MAX).unwrap();
         // The failed group retries at the next UTC midnight.
-        let retry = outbe_common::deadline_queue::day_end(
-            outbe_common::deadline_queue::deadline_day(past).unwrap(),
+        let retry = outbe_core_common::deadline_queue::day_end(
+            outbe_core_common::deadline_queue::deadline_day(past).unwrap(),
         );
         finalize_through(storage, retry);
         assert_eq!(scan(storage, retry), 1);

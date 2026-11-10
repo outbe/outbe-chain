@@ -51,7 +51,7 @@ fn validate_encrypted_tribute(
     let unique_owner = owners.insert(source.owner)
         && outbe_nod::api::get_item(
             &ctx.storage,
-            outbe_common::nod_rules::derive_nod_id(series_id, source.owner),
+            outbe_core_common::nod_rules::derive_nod_id(series_id, source.owner),
         )?
         .is_none();
     if valid_source && unique_owner {

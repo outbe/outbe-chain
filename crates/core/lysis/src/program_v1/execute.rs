@@ -211,7 +211,7 @@ impl ProgramExecutionV1 {
             entry_price_minor,
         });
 
-        if !outbe_common::nod_rules::is_issuable_entry(entry_price_minor) {
+        if !outbe_core_common::nod_rules::is_issuable_entry(entry_price_minor) {
             return Err(
                 crate::errors::LysisArithmeticErrorV1::NodEntryPriceOutOfBounds { ordinal }.into(),
             );
@@ -400,8 +400,9 @@ pub(crate) fn calculate_cost(
     ordinal: usize,
 ) -> Result<U256, ProgramErrorV1> {
     // Use the same minor-unit minimum as Nod reads and settlement.
-    let cost = outbe_common::nod_rules::settlement_cost_minor(entry_price_minor, gratis_load_minor)
-        .map_err(ProgramErrorV1::math)?;
+    let cost =
+        outbe_core_common::nod_rules::settlement_cost_minor(entry_price_minor, gratis_load_minor)
+            .map_err(ProgramErrorV1::math)?;
     if cost.is_zero() {
         return Err(ProgramErrorV1::ZeroCost {
             ordinal,

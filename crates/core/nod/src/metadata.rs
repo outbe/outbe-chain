@@ -1,5 +1,5 @@
 use alloy_primitives::U256;
-use outbe_common::nft_card::{self, Card, Trait, PRICE_PRECISION};
+use outbe_core_common::nft_card::{self, Card, Trait, PRICE_PRECISION};
 use outbe_primitives::error::Result;
 
 use crate::api;

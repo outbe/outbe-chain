@@ -10,8 +10,8 @@ fn nod_pow_binds_owner_and_zero_sequence() {
     assert_ne!(bound, runtime::compute_pow_hash(nod_id, other, nonce));
     assert_ne!(
         bound,
-        outbe_common::pow::compute_mining_pow_hash(
-            outbe_common::pow::MiningDomain::Nod,
+        outbe_core_common::pow::compute_mining_pow_hash(
+            outbe_core_common::pow::MiningDomain::Nod,
             nod_id,
             owner,
             1,
@@ -424,7 +424,7 @@ fn lysis_series_of_one_day_and_reference_share_one_call_group() {
         )
         .unwrap();
         let forfeit_ts = deadline + 86_400;
-        let through_day = outbe_common::deadline_queue::deadline_day(forfeit_ts).unwrap();
+        let through_day = outbe_core_common::deadline_queue::deadline_day(forfeit_ts).unwrap();
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext {
                 block_gas_limit: 0,

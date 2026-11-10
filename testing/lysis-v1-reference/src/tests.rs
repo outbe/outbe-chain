@@ -85,7 +85,7 @@ fn reference_has_no_production_dependency() {
         "outbe-lysis",
         "outbe-primitives",
         "alloy-primitives",
-        "outbe-common",
+        "outbe-core-common",
     ] {
         assert!(
             !manifest

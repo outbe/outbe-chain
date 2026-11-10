@@ -1,4 +1,4 @@
-use outbe_common::nft_card::{self, Card, Trait, PRICE_PRECISION};
+use outbe_core_common::nft_card::{self, Card, Trait, PRICE_PRECISION};
 
 use crate::constants::{SETTLED_TOKEN_DESCRIPTION, SETTLED_TOKEN_NAME};
 use crate::schema::SeriesRecord;

@@ -1,4 +1,4 @@
-use outbe_common::nft_card::{self, Card, Trait, AMOUNT_PRECISION, PRICE_PRECISION};
+use outbe_core_common::nft_card::{self, Card, Trait, AMOUNT_PRECISION, PRICE_PRECISION};
 use outbe_primitives::error::Result;
 
 use crate::constants::{TOKEN_DESCRIPTION, TOKEN_NAME};

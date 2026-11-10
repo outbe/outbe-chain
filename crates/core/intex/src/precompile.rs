@@ -7,7 +7,7 @@
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolInterface;
-use outbe_common::erc::{
+use outbe_core_common::erc::{
     ERC1155_INTERFACE_ID, ERC1155_METADATA_URI_INTERFACE_ID, ERC165_INTERFACE_ID,
 };
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};

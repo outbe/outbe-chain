@@ -3,7 +3,7 @@ use crate::errors::{date_step_error, AgentRewardError};
 use crate::precompile::IAgentReward;
 use crate::schema::{AgentRewardContract, RewardPool};
 use alloy_primitives::{Address, B256, U256};
-use outbe_common::markup::marked_down;
+use outbe_core_common::markup::marked_down;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::StorageHandle;

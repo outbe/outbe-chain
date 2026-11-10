@@ -106,7 +106,7 @@ pub fn execute(
     let mut nods = Vec::with_capacity(result.nod_actions.len());
     for ((action, load), tribute) in result.nod_actions.iter().zip(loads).zip(&request.tributes) {
         let settlement_cost_minor =
-            outbe_common::nod_rules::settlement_cost_minor(action.entry_price_minor, load)
+            outbe_core_common::nod_rules::settlement_cost_minor(action.entry_price_minor, load)
                 .map_err(|_| rejected())?;
         let nod = crate::nod_encryption::encrypt_nod_for_tribute(
             tribute_state_key,
@@ -114,7 +114,7 @@ pub fn execute(
             tribute,
             NodTermsV1 {
                 chain_id: request.chain_id,
-                nod_id: outbe_common::nod_rules::derive_nod_id(
+                nod_id: outbe_core_common::nod_rules::derive_nod_id(
                     outbe_primitives::series_id::SeriesId::for_pair(
                         request.emission_day,
                         action.issuance_currency,
@@ -296,7 +296,7 @@ pub(crate) mod tests {
             assert_eq!(terms.emission_day, request.emission_day);
             assert_eq!(
                 terms.nod_id,
-                outbe_common::nod_rules::derive_nod_id(
+                outbe_core_common::nod_rules::derive_nod_id(
                     outbe_primitives::series_id::SeriesId::for_pair(
                         request.emission_day,
                         terms.issuance_currency,
@@ -308,7 +308,7 @@ pub(crate) mod tests {
             );
             assert_eq!(
                 output.settlement_cost_minor,
-                outbe_common::nod_rules::settlement_cost_minor(
+                outbe_core_common::nod_rules::settlement_cost_minor(
                     output.nod.terms.entry_price_minor,
                     expected_load
                 )
