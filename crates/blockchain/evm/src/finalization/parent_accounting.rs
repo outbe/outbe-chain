@@ -20,8 +20,7 @@ use reth_primitives_traits::Recovered;
 
 use crate::{
     errors::{ExecutorStorageError, ExecutorValidationError},
-    executor::context,
-    sys_tx_precompile::current_preloaded_system_tx_context,
+    executor::{context, current_preloaded_system_tx_context},
     SharedOutbeEvmSigner,
 };
 

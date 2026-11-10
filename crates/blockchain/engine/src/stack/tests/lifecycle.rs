@@ -483,8 +483,6 @@ impl crate::protocol_state::EngineProtocolState for ClosedEngineState {
         &self,
         _: outbe_primitives::storage::StorageHandle<'_>,
     ) -> Result<(), crate::protocol_state::EngineProtocolError> {
-        Err(crate::protocol_state::EngineProtocolError::Compatibility(
-            "engine protocol state is not installed".to_string(),
-        ))
+        Err(crate::protocol_state::EngineProtocolError::NotInstalled)
     }
 }

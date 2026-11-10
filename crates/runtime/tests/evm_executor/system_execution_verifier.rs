@@ -426,7 +426,7 @@ fn begin_block_soft_fail_rolls_back_dirty_storage_writes_and_logs_preserving_ear
     let dirty_val = U256::from(0xCAFE_BABEu64);
     let dirty_topic = keccak256("DirtySoftFailEvent()");
 
-    let gas = outbe_evm::sys_tx_precompile::with_forced_dirty_system_precompile_revert(
+    let gas = outbe_evm::executor::with_forced_dirty_system_precompile_revert(
         dirty_addr,
         dirty_slot,
         dirty_val,

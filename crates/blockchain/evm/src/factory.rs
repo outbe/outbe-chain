@@ -281,15 +281,13 @@ where
                     crate::executor::witness::DetachedTraceTxAction::ReservedSystemCall {
                         data,
                         context,
-                    } => {
-                        crate::sys_tx_precompile::with_preloaded_system_tx_context(*context, || {
-                            self.transact_system_call(
-                                outbe_primitives::addresses::SYSTEM_ADDRESS,
-                                outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
-                                data,
-                            )
-                        })
-                    }
+                    } => crate::executor::with_preloaded_system_tx_context(*context, || {
+                        self.transact_system_call(
+                            outbe_primitives::addresses::SYSTEM_ADDRESS,
+                            outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
+                            data,
+                        )
+                    }),
                     crate::executor::witness::DetachedTraceTxAction::NormalTransact => {
                         let result = self.run_inner_transact_raw(tx)?;
                         crate::executor::witness::record_detached_trace_user_gas(

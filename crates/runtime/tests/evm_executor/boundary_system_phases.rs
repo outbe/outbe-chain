@@ -579,8 +579,8 @@ fn activation_bootstrap(
 
 #[test]
 fn enclave_upgrade_deadline_uses_configured_slash_and_credits_promis_limit_once() {
-    use outbe_evm::sys_tx_precompile::enforce_enclave_upgrade_deadline;
     use outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
+    use outbe_slashindicator::enforce_enclave_upgrade_deadline;
 
     for (configured_percent, expected_percent) in [(0, 8u64), (17, 17)] {
         let validator = Address::repeat_byte(0x73);
@@ -631,7 +631,7 @@ fn enclave_upgrade_deadline_uses_configured_slash_and_credits_promis_limit_once(
                 storage.clone(),
             );
 
-            enforce_enclave_upgrade_deadline(&outbe_runtime::OutbeRuntime::new(), &ctx).unwrap();
+            enforce_enclave_upgrade_deadline(&ctx).unwrap();
             assert_eq!(staking.get_stake(validator).unwrap(), stake - slashed);
             assert_eq!(staking.get_total_staked().unwrap(), stake - slashed);
             assert_eq!(storage.balance(STAKING_ADDRESS).unwrap(), stake - slashed);
@@ -648,7 +648,7 @@ fn enclave_upgrade_deadline_uses_configured_slash_and_credits_promis_limit_once(
             assert_eq!(limit.promis_limit().unwrap(), U256::from(expected_percent));
             assert_eq!(limit.rest_minor().unwrap(), U256::from(expected_percent));
 
-            enforce_enclave_upgrade_deadline(&outbe_runtime::OutbeRuntime::new(), &ctx).unwrap();
+            enforce_enclave_upgrade_deadline(&ctx).unwrap();
             assert_eq!(staking.get_stake(validator).unwrap(), stake - slashed);
             assert_eq!(storage.balance(STAKING_ADDRESS).unwrap(), stake - slashed);
             assert_eq!(limit.promis_limit().unwrap(), U256::from(expected_percent));
@@ -742,11 +742,7 @@ fn update_activates_enclave_upgrade_and_enclave_upgrade_deadline_enforces_it_in_
         );
 
         // 2. OSEU (EnclaveUpgradeDeadline::begin_block) immediately follows OSUP in BeginBlock at height H.
-        outbe_evm::sys_tx_precompile::EnclaveUpgradeDeadline::begin_block(
-            &outbe_runtime::OutbeRuntime::new(),
-            &ctx,
-        )
-        .unwrap();
+        outbe_slashindicator::EnclaveUpgradeDeadline::begin_block(&ctx).unwrap();
         assert!(registry.upgrade_sweep_due_v1().unwrap().is_none());
         assert_eq!(
             staking.get_stake(validator).unwrap(),

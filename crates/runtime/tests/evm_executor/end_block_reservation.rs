@@ -659,9 +659,9 @@ fn end_block_modules_and_detached_trace_observe_exact_mid_block_user_gas_snapsho
             assert_eq!(expected_user_gas, 21_000);
         }
 
-        let _ = outbe_evm::sys_tx_precompile::take_observed_runtime_block_contexts();
+        let _ = outbe_evm::executor::take_observed_runtime_block_contexts();
         executor.apply_end_block_phase().unwrap();
-        let observed = outbe_evm::sys_tx_precompile::take_observed_runtime_block_contexts();
+        let observed = outbe_evm::executor::take_observed_runtime_block_contexts();
         assert_eq!(
             observed.len(),
             5,
@@ -713,7 +713,7 @@ fn end_block_modules_and_detached_trace_observe_exact_mid_block_user_gas_snapsho
             );
             assert_eq!(gas_output.tx_gas_used(), traced_gas.tx_gas_used());
         }
-        let _ = outbe_evm::sys_tx_precompile::take_observed_runtime_block_contexts();
+        let _ = outbe_evm::executor::take_observed_runtime_block_contexts();
         for input in [
             SystemTx::NodFactory,
             SystemTx::GemFactory,
@@ -730,7 +730,7 @@ fn end_block_modules_and_detached_trace_observe_exact_mid_block_user_gas_snapsho
                 .result
                 .is_success());
         }
-        let traced_observed = outbe_evm::sys_tx_precompile::take_observed_runtime_block_contexts();
+        let traced_observed = outbe_evm::executor::take_observed_runtime_block_contexts();
         assert_eq!(traced_observed.len(), 5);
         for ctx in &traced_observed {
             assert_eq!(ctx.block_gas_limit, block_gas_limit);

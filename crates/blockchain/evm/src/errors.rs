@@ -266,7 +266,7 @@ impl SystemTxExpectationError {
 pub enum TeeBootstrapHostError {
     /// Canonical preflight rejected the payload.
     #[error("invalid block-1 OST3 bootstrap payload: {0}")]
-    InvalidPayload(String),
+    InvalidPayload(#[from] outbe_primitives::tee_attestation_v1::CodecError),
     /// The payload policy is not the policy resolved for this block.
     #[error("block-1 OST3 policy does not match the immutable ChainSpec schedule")]
     PolicyScheduleMismatch,

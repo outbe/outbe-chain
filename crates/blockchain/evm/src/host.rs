@@ -201,19 +201,6 @@ pub trait EvmRuntimeHost: std::fmt::Debug + Send + Sync {
         payload: &TeeBootstrapV2,
         expected_policy: &TeePolicyV1,
     ) -> std::result::Result<(), TeeBootstrapHostError>;
-    /// Installs the initial authoritative TEE policy.
-    fn install_initial_tee_policy(
-        &self,
-        storage: StorageHandle<'_>,
-        policy: &TeePolicyV1,
-    ) -> Result<()>;
-    /// Binds a block-1 bootstrap payload and writes the founding record.
-    fn run_tee_bootstrap(
-        &self,
-        ctx: &BlockRuntimeContext<'_>,
-        payload: &TeeBootstrapV2,
-        expected_policy: &TeePolicyV1,
-    ) -> Result<()>;
     /// Metadosis entitlements for one precompile call.
     fn mutation_entitlements(
         &self,
@@ -230,14 +217,6 @@ pub trait EvmRuntimeHost: std::fmt::Debug + Send + Sync {
     ) -> Result<u32>;
     /// Settles this block's burned fees.
     fn settle_block_burned_fees(&self, storage: StorageHandle<'_>, amount: U256) -> Result<()>;
-    /// Syncs the Hyperlane validator set after a boundary.
-    fn sync_hyperlane_validators(&self, ctx: &BlockRuntimeContext<'_>) -> Result<()>;
-    /// Jails validators that missed an enclave upgrade deadline.
-    fn enforce_enclave_upgrade_deadline(&self, ctx: &BlockRuntimeContext<'_>) -> Result<()>;
-    /// Jails validators whose TEE lease expired. Returns how many transitioned.
-    fn enforce_tee_lease_deadlines(&self, ctx: &BlockRuntimeContext<'_>) -> Result<usize>;
-    /// Records the proposer and applies TEE lease deadlines.
-    fn run_validator_liveness(&self, ctx: &BlockRuntimeContext<'_>) -> Result<()>;
     /// Fee policy stored by this host.
     fn user_fee_policy(&self) -> &dyn UserTxFeePolicy;
 }
@@ -273,7 +252,7 @@ impl UserTxFeePolicy for FailClosedFeePolicy {
         _signer: Address,
         _block_timestamp_secs: u64,
     ) -> std::result::Result<SponsorshipAuthorization, ZeroFeePolicyError> {
-        Err(ZeroFeePolicyError::Storage(HOST_MISSING.into()))
+        Err(missing().into())
     }
 
     fn record_sponsorship_use(
@@ -281,7 +260,7 @@ impl UserTxFeePolicy for FailClosedFeePolicy {
         _storage: StorageHandle<'_>,
         _authorization: SponsorshipAuthorization,
     ) -> std::result::Result<u32, ZeroFeePolicyError> {
-        Err(ZeroFeePolicyError::Storage(HOST_MISSING.into()))
+        Err(missing().into())
     }
 
     fn sponsored_gas_exceeds_block_budget(&self, _used: u64, _gas_limit: u64) -> bool {
@@ -293,14 +272,14 @@ impl UserTxFeePolicy for FailClosedFeePolicy {
         _storage: StorageHandle<'_>,
         _candidate: ZeroFeeCandidate,
     ) -> std::result::Result<ZeroFeeAuthorization, ZeroFeePolicyError> {
-        Err(ZeroFeePolicyError::Storage(HOST_MISSING.into()))
+        Err(missing().into())
     }
 
     fn classify_sponsorship(
         &self,
         _tx: &ZeroFeeTransaction<'_>,
     ) -> std::result::Result<(), ZeroFeePolicyError> {
-        Err(ZeroFeePolicyError::Storage(HOST_MISSING.into()))
+        Err(missing().into())
     }
 }
 
@@ -466,23 +445,6 @@ impl EvmRuntimeHost for FailClosedHost {
         Err(TeeBootstrapHostError::HostNotInstalled)
     }
 
-    fn install_initial_tee_policy(
-        &self,
-        _storage: StorageHandle<'_>,
-        _policy: &TeePolicyV1,
-    ) -> Result<()> {
-        Err(missing())
-    }
-
-    fn run_tee_bootstrap(
-        &self,
-        _ctx: &BlockRuntimeContext<'_>,
-        _payload: &TeeBootstrapV2,
-        _expected_policy: &TeePolicyV1,
-    ) -> Result<()> {
-        Err(missing())
-    }
-
     fn mutation_entitlements(
         &self,
         _call: MetadosisMutationCall<'_>,
@@ -509,22 +471,6 @@ impl EvmRuntimeHost for FailClosedHost {
     }
 
     fn settle_block_burned_fees(&self, _storage: StorageHandle<'_>, _amount: U256) -> Result<()> {
-        Err(missing())
-    }
-
-    fn sync_hyperlane_validators(&self, _ctx: &BlockRuntimeContext<'_>) -> Result<()> {
-        Err(missing())
-    }
-
-    fn enforce_enclave_upgrade_deadline(&self, _ctx: &BlockRuntimeContext<'_>) -> Result<()> {
-        Err(missing())
-    }
-
-    fn enforce_tee_lease_deadlines(&self, _ctx: &BlockRuntimeContext<'_>) -> Result<usize> {
-        Err(missing())
-    }
-
-    fn run_validator_liveness(&self, _ctx: &BlockRuntimeContext<'_>) -> Result<()> {
         Err(missing())
     }
 

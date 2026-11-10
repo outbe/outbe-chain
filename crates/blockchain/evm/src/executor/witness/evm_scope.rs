@@ -1,6 +1,6 @@
 //! EVM-level witness scope attachment for direct RPC, prewarm, and historical trace replay.
 
-use crate::sys_tx_precompile::PreloadedSystemTxContext;
+use crate::executor::PreloadedSystemTxContext;
 use alloy_primitives::{Bytes, Log, TxKind};
 use outbe_tee::witness::{
     EnclaveWitnessTapeV1, WitnessExecutionMode, WitnessExecutionScope, WitnessState,

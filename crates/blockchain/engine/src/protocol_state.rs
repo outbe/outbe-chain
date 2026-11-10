@@ -6,7 +6,8 @@
 
 use alloy_primitives::{Address, B256};
 use outbe_primitives::committee_snapshot::CommitteeSnapshot;
-use outbe_primitives::error::Result as PrecompileResult;
+use outbe_primitives::error::{PrecompileError, Result as PrecompileResult};
+use outbe_primitives::protocol_version::{format_protocol_version, ProtocolVersion};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::tee_registry_abi_v1::NodeEnclaveBindingV1;
 use outbe_primitives::validator_dto::ValidatorRecord;
@@ -31,7 +32,7 @@ pub enum EngineValidatorQuery {
 }
 
 /// One registry row plus the raw P2P address read.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct EngineValidatorRow {
     /// Validator record from the set query.
     pub record: ValidatorRecord,
@@ -40,22 +41,37 @@ pub struct EngineValidatorRow {
 }
 
 /// Raw P2P address registry outcome. Decoding stays in the engine.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum EngineP2pRead {
     /// Encoded address at `version`.
     Present { version: u8, encoded: Vec<u8> },
     /// The validator has no P2P address entry.
     Missing,
-    /// The registry read failed. `error` is the source display text.
-    Failed { error: String },
+    /// The registry read failed.
+    Failed { error: PrecompileError },
 }
 
 /// Startup compatibility failure reported by the installed protocol state.
 #[derive(Debug, Error)]
 pub enum EngineProtocolError {
-    /// The installed state rejected the running binary.
+    /// Storage or precompile read failed while checking compatibility.
     #[error("{0}")]
-    Compatibility(String),
+    State(#[from] PrecompileError),
+    /// The running binary is older than the on-chain active protocol version.
+    #[error(
+        "binary protocol version {} is older than on-chain active protocol version {}; please upgrade the binary",
+        format_protocol_version(*.binary),
+        format_protocol_version(*.active)
+    )]
+    BinaryOlderThanActive {
+        /// Running binary protocol version.
+        binary: ProtocolVersion,
+        /// Active on-chain protocol version.
+        active: ProtocolVersion,
+    },
+    /// No engine protocol state is installed.
+    #[error("engine protocol state is not installed")]
+    NotInstalled,
 }
 
 /// Object-safe chain reads used by the engine.

@@ -75,10 +75,6 @@ rand-core-commonware.workspace = true
 
 [features]
 test-utils = []
-# Names stay. The compile-time test-enclave forward is empty until the
-# runtime composition root owns these features.
-production-enclave = []
-e2e-test = []
 # Exposes execution test controls to crates/runtime integration tests.
 # It does not pull a domain crate.
 test-hooks = []

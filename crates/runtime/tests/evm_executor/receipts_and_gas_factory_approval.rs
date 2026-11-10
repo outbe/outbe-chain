@@ -203,8 +203,8 @@ fn execute_vote_system_tx(
     );
     let result = {
         let mut evm = config.evm_with_env(&mut *state, evm_env);
-        outbe_evm::sys_tx_precompile::with_preloaded_system_tx_context(
-            outbe_evm::sys_tx_precompile::PreloadedSystemTxContext {
+        outbe_evm::executor::with_preloaded_system_tx_context(
+            outbe_evm::executor::PreloadedSystemTxContext {
                 proposer,
                 finalized_summary: None,
                 allow_boundary_proposer: false,

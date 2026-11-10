@@ -363,11 +363,13 @@ fn certified_delayed_boundary_atomically_advances_epoch_and_snapshot() {
             activation_block,
         )
         .expect("certified boundary must prepare outgoing counters");
-        outbe_evm::sys_tx_precompile::run_boundary_outcome(
-            &outbe_runtime::OutbeRuntime::new(),
-            &ctx,
+        outbe_validatorset::boundary::apply_boundary_outcome(
+            ctx.storage.clone(),
             &boundary,
+            ctx.block.block_number,
+            ctx.block.timestamp,
         )
+        .and_then(|()| outbe_hyperlanecontroller::lifecycle::sync_validators(&ctx))
         .expect("certified delayed boundary must activate");
 
         let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());

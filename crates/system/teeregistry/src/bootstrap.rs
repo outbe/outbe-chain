@@ -25,17 +25,10 @@ use crate::schema::TeeRegistry;
 pub enum TeeBootstrapBuildError {
     /// Canonical preflight rejected the payload.
     #[error("invalid block-1 OST3 bootstrap payload: {0}")]
-    InvalidBlock1Ost3BootstrapPayload(String),
+    InvalidBlock1Ost3BootstrapPayload(#[from] outbe_primitives::tee_attestation_v1::CodecError),
     /// The payload policy is not the policy the caller resolved for this block.
     #[error("block-1 OST3 policy does not match the immutable ChainSpec schedule")]
     Block1Ost3PolicyScheduleMismatch,
-}
-
-impl TeeBootstrapBuildError {
-    /// Wraps a preflight failure with the block-1 payload message.
-    pub fn invalid_payload(error: impl Display) -> Self {
-        Self::InvalidBlock1Ost3BootstrapPayload(error.to_string())
-    }
 }
 
 /// Begin-block failures of the block-1 DCAP bootstrap.
@@ -127,9 +120,7 @@ pub fn validate_tee_bootstrap_for_build(
     payload: &TeeBootstrapV2,
     expected_policy: &TeePolicyV1,
 ) -> std::result::Result<(), TeeBootstrapBuildError> {
-    payload
-        .preflight()
-        .map_err(TeeBootstrapBuildError::invalid_payload)?;
+    payload.preflight()?;
     if &payload.authority.policy != expected_policy {
         return Err(TeeBootstrapBuildError::Block1Ost3PolicyScheduleMismatch);
     }

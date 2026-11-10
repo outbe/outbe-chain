@@ -44,6 +44,29 @@ pub fn retained_source_binding(
         .map_err(|error| invalid(error.to_string()))
 }
 
+/// Reads the encrypted tribute record, its day index, and expected storage words for `tribute_id`.
+pub fn read_tribute_source_words(
+    storage: StorageHandle<'_>,
+    subject: &outbe_tee::tribute_source::TributeSourceSubject,
+    tribute_id: WwdEntityId,
+) -> Result<(EncryptedTributeV2, u32, Vec<(B256, U256)>)> {
+    let record = crate::state_api::get_retained_record(&storage, tribute_id)?
+        .ok_or_else(|| invalid("Tribute source is missing"))?;
+    let tribute = record
+        .encrypted()
+        .ok_or_else(|| invalid("Tribute source is not encrypted"))?
+        .clone();
+    let contract = TributeContract::new(storage);
+    let position = contract.day_id_position.read(&tribute_id)?;
+    if position == 0 || position > subject.tribute_count {
+        return Err(invalid("Tribute source position mismatch"));
+    }
+    let day_index = position - 1;
+    let node_subject = TributeStateProofSubject::from(*subject);
+    let words = expected_record_words(&contract, &node_subject, day_index, &tribute)?;
+    Ok((tribute, day_index, words))
+}
+
 /// The caller obtains this checkpoint from verified request finality.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TributeStateProofSubject {

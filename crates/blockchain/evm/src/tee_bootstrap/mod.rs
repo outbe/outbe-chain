@@ -7,17 +7,13 @@
 use alloy_consensus::Transaction as _;
 use alloy_primitives::Address;
 use outbe_primitives::{
-    block::{BlockHeightRegime, BlockRuntimeContext},
-    error::Result,
-    system_tx::SystemTx,
-    tee_attestation_v1::TeePolicyV1,
-    tee_bootstrap_v2::TeeBootstrapV2,
+    block::BlockHeightRegime, system_tx::SystemTx, tee_bootstrap_v2::TeeBootstrapV2,
 };
 use reth_ethereum::TransactionSigned;
 use reth_primitives_traits::Recovered;
 
 use crate::{
-    errors::{BeginBlockPrecompileError, SystemTxBuildError, TeeBootstrapHostError},
+    errors::{SystemTxBuildError, TeeBootstrapHostError},
     tee_attestation_activation::TeeAttestationChainSpecStateV1,
 };
 
@@ -86,47 +82,4 @@ pub fn attestation_for_proposer(payload: &TeeBootstrapV2, proposer: Address) -> 
         .iter()
         .find(|participant| Address::from(participant.validator_binding.validator) == proposer)
         .map(|participant| participant.intent.attestation_ed25519)
-}
-
-/// Installs the initial authoritative TEE policy and executes the Block-1 DCAP bootstrap.
-pub fn execute_tee_bootstrap(
-    host: &dyn crate::EvmRuntimeHost,
-    ctx: &BlockRuntimeContext,
-    payload: &TeeBootstrapV2,
-    state: &TeeAttestationChainSpecStateV1,
-) -> Result<()> {
-    let expected_policy = resolve_expected_policy(ctx.block.block_number, payload, state)?;
-    host.install_initial_tee_policy(ctx.storage.clone(), &expected_policy)?;
-    host.run_tee_bootstrap(ctx, payload, &expected_policy)
-}
-
-/// Validates the `ChainSpec` TEE activation schedule and installs the initial policy.
-pub fn prepare_tee_bootstrap(
-    host: &dyn crate::EvmRuntimeHost,
-    ctx: &BlockRuntimeContext,
-    payload: &TeeBootstrapV2,
-    state: &TeeAttestationChainSpecStateV1,
-) -> Result<()> {
-    let expected_policy = resolve_expected_policy(ctx.block.block_number, payload, state)?;
-    host.install_initial_tee_policy(ctx.storage.clone(), &expected_policy)
-}
-
-fn resolve_expected_policy(
-    block_number: u64,
-    payload: &TeeBootstrapV2,
-    state: &TeeAttestationChainSpecStateV1,
-) -> Result<TeePolicyV1> {
-    let activation = state
-        .activation()
-        .map_err(BeginBlockPrecompileError::invalid_tee_chain_spec_authority)?;
-    if block_number < activation.manifest.activation_height {
-        return Err(BeginBlockPrecompileError::Ost3NotActive.into());
-    }
-    let expected_policy = activation
-        .policy_at(block_number)
-        .map_err(BeginBlockPrecompileError::invalid_active_tee_policy)?;
-    if &payload.authority.policy != expected_policy {
-        return Err(BeginBlockPrecompileError::Ost3PolicyScheduleMismatch.into());
-    }
-    Ok(expected_policy.clone())
 }

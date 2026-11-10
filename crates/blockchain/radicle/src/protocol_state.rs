@@ -22,7 +22,7 @@ pub enum RadicleProtocolError {
     State(#[from] PrecompileError),
     /// An approved-proposal log did not decode.
     #[error("{0}")]
-    VoteLog(String),
+    VoteLog(#[from] alloy_sol_types::Error),
 }
 
 /// Object-safe chain reads used by the radicle manager.

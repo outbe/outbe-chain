@@ -96,6 +96,25 @@ pub struct ZeroFeeAuthorization {
     pub subject: Address,
 }
 
+/// Typed precompile storage cause retained by [`ZeroFeePolicyError::Storage`].
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("{0}")]
+pub struct ZeroFeeStorageError(#[source] pub std::sync::Arc<PrecompileError>);
+
+impl PartialEq for ZeroFeeStorageError {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.to_string() == other.0.to_string()
+    }
+}
+
+impl Eq for ZeroFeeStorageError {}
+
+impl From<PrecompileError> for ZeroFeeStorageError {
+    fn from(value: PrecompileError) -> Self {
+        Self(std::sync::Arc::new(value))
+    }
+}
+
 /// Zero-fee policy rejection reason.
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum ZeroFeePolicyError {
@@ -131,7 +150,7 @@ pub enum ZeroFeePolicyError {
     },
     /// The transaction selector matched, but ABI decoding failed.
     #[error("zero-fee oracle vote calldata is malformed: {0}")]
-    MalformedCalldata(String),
+    MalformedCalldata(&'static str),
     /// The signer is not authorized to use this zero-fee policy.
     #[error("zero-fee signer is not authorized for this transaction hook")]
     UnauthorizedSigner,
@@ -140,7 +159,7 @@ pub enum ZeroFeePolicyError {
     AlreadyVoted,
     /// Stateful precompile storage read failed.
     #[error("zero-fee policy storage read failed: {0}")]
-    Storage(String),
+    Storage(#[from] ZeroFeeStorageError),
     /// The signer has already burned today's free-tx quota.
     #[error("free-tx daily quota exhausted: used {used} of {limit}")]
     FreeTxDailyExhausted {
@@ -181,7 +200,7 @@ pub enum ZeroFeePolicyError {
 
 impl From<PrecompileError> for ZeroFeePolicyError {
     fn from(value: PrecompileError) -> Self {
-        Self::Storage(value.to_string())
+        Self::Storage(ZeroFeeStorageError::from(value))
     }
 }
 

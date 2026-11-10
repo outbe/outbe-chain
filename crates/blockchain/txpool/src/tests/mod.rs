@@ -124,7 +124,7 @@ impl TxPoolZeroFeePolicy for ScriptedPolicy {
                     _ => return Ok(None),
                 };
                 if tx.call.input.len() <= 4 {
-                    return Err(ZeroFeePolicyError::MalformedCalldata("short".into()));
+                    return Err(ZeroFeePolicyError::MalformedCalldata("short"));
                 }
                 Ok(Some(ZeroFeeCandidate::new(hook, tx.signer)))
             }

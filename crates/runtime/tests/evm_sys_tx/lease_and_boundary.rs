@@ -1,8 +1,8 @@
 use super::*;
 use alloy_primitives::address;
-use outbe_evm::sys_tx_precompile::enforce_tee_lease_deadlines;
 use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_slashindicator::enforce_tee_lease_deadlines;
 
 /// Same funded base the felony path burns by the admitted 8% (`1_000_000 * 8 / 100`).
 const FUNDED_STAKE: u64 = 1_000_000;
@@ -56,10 +56,7 @@ fn tee_lease_sweep_skips_bootstrap_then_jails_at_exact_deadline_once() {
     let mut bootstrap = configured_storage(1, deadline);
     bootstrap.enter(|storage| {
         let ctx = runtime_ctx(storage.clone());
-        assert_eq!(
-            enforce_tee_lease_deadlines(&outbe_runtime::OutbeRuntime::new(), &ctx).unwrap(),
-            0
-        );
+        assert_eq!(enforce_tee_lease_deadlines(&ctx).unwrap(), 0);
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
         assert_eq!(
             vs.get_validator(VALIDATOR).unwrap().unwrap().status,
@@ -71,10 +68,7 @@ fn tee_lease_sweep_skips_bootstrap_then_jails_at_exact_deadline_once() {
     install_validator_lease(&mut before, deadline);
     before.enter(|storage| {
         let ctx = runtime_ctx(storage.clone());
-        assert_eq!(
-            enforce_tee_lease_deadlines(&outbe_runtime::OutbeRuntime::new(), &ctx).unwrap(),
-            0
-        );
+        assert_eq!(enforce_tee_lease_deadlines(&ctx).unwrap(), 0);
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
         assert_eq!(
             vs.get_validator(VALIDATOR).unwrap().unwrap().status,
@@ -87,10 +81,7 @@ fn tee_lease_sweep_skips_bootstrap_then_jails_at_exact_deadline_once() {
     at_deadline.enter(|storage| {
         fund_staking_escrow(storage.clone(), &[VALIDATOR], FUNDED_STAKE);
         let ctx = runtime_ctx(storage.clone());
-        assert_eq!(
-            enforce_tee_lease_deadlines(&outbe_runtime::OutbeRuntime::new(), &ctx).unwrap(),
-            1
-        );
+        assert_eq!(enforce_tee_lease_deadlines(&ctx).unwrap(), 1);
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         let jailed = vs.get_validator(VALIDATOR).unwrap().unwrap();
         assert_eq!(jailed.status, outbe_validatorset::runtime::status::JAILED);
@@ -111,10 +102,7 @@ fn tee_lease_sweep_skips_bootstrap_then_jails_at_exact_deadline_once() {
             storage.balance(STAKING_ADDRESS).unwrap(),
             U256::from(STAKE_AFTER_EIGHT_PERCENT)
         );
-        assert_eq!(
-            enforce_tee_lease_deadlines(&outbe_runtime::OutbeRuntime::new(), &ctx).unwrap(),
-            0
-        );
+        assert_eq!(enforce_tee_lease_deadlines(&ctx).unwrap(), 0);
         assert_eq!(vs.get_validator(VALIDATOR).unwrap().unwrap(), jailed);
         assert_eq!(limit.rest_minor().unwrap(), U256::from(80_000u64));
         assert_eq!(
@@ -134,10 +122,7 @@ fn tee_lease_sweep_treats_missing_post_bootstrap_binding_as_overdue() {
     provider.enter(|storage| {
         fund_staking_escrow(storage.clone(), &[VALIDATOR], FUNDED_STAKE);
         let ctx = runtime_ctx(storage.clone());
-        assert_eq!(
-            enforce_tee_lease_deadlines(&outbe_runtime::OutbeRuntime::new(), &ctx).unwrap(),
-            1
-        );
+        assert_eq!(enforce_tee_lease_deadlines(&ctx).unwrap(), 1);
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         let jailed = vs.get_validator(VALIDATOR).unwrap().unwrap();
         assert_eq!(jailed.status, outbe_validatorset::runtime::status::JAILED);
@@ -172,7 +157,7 @@ fn tee_lease_sweep_reexecution_and_timestamp_jump_are_deterministic() {
         provider.set_balance(STAKING_ADDRESS, staking_balance);
         let jailed = provider.enter(|storage| {
             let ctx = runtime_ctx(storage);
-            enforce_tee_lease_deadlines(&outbe_runtime::OutbeRuntime::new(), &ctx).unwrap()
+            enforce_tee_lease_deadlines(&ctx).unwrap()
         });
         (jailed, provider.storage)
     };
@@ -203,7 +188,7 @@ fn tee_lease_sweep_later_failure_rolls_back_whole_sweep() {
     let logs_before = provider.get_ordered_events().to_vec();
     let swept = provider.enter(|storage| {
         let ctx = runtime_ctx(storage);
-        enforce_tee_lease_deadlines(&outbe_runtime::OutbeRuntime::new(), &ctx)
+        enforce_tee_lease_deadlines(&ctx)
     });
     assert!(swept.is_err());
     assert_eq!(provider.storage, storage_before);

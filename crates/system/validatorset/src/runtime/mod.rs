@@ -25,7 +25,7 @@
 //!   `crates/blockchain/evm/src/executor/hooks.rs`.
 //! - `jail_validator_for_tee_expiry` is called from
 //!   `enforce_tee_lease_deadlines` in
-//!   `crates/blockchain/evm/src/sys_tx_precompile/cycle.rs`. The call in
+//!   `crates/system/slashindicator/src/liveness.rs`. The call in
 //!   `crates/blockchain/engine/src/validators.rs` is inside `#[cfg(test)]`
 //!   tests.
 //! - `cleanup_inactive_validators` is called from
@@ -33,10 +33,10 @@
 //! - `activate_boundary_atomic`, `advance_epoch`, and `reset_epoch_counters`
 //!   are called from `crates/blockchain/evm/src/executor/boundary.rs`.
 //! - `record_proposer` is called from
-//!   `crates/blockchain/evm/src/sys_tx_precompile/cycle.rs` and
-//!   `crates/blockchain/evm/src/sys_tx_precompile/boundary.rs`.
+//!   `crates/system/slashindicator/src/liveness.rs` and
+//!   `crates/system/validatorset/src/boundary.rs`.
 //! - `record_finalized_participation` is called from
-//!   `crates/blockchain/evm/src/sys_tx_precompile/late_credits.rs`.
+//!   `crates/system/rewards/src/finalization/late_credits.rs`.
 //!
 //! `force_exit_validator`, `record_missed_block`, and `hooks::record_participation`
 //! have no production caller.

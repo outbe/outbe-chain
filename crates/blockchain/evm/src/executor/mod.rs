@@ -47,7 +47,6 @@ use std::sync::Arc;
 use crate::{
     factory::OutbeEvm,
     signer::SharedOutbeEvmSigner,
-    sys_tx_precompile::{with_preloaded_system_tx_context, PreloadedSystemTxContext},
     system_tx::{build_unsigned_system_tx, is_reserved_system_tx, SystemTx},
 };
 use reth_ethereum::chainspec::{ChainSpec, EthereumHardfork, EthereumHardforks};
@@ -65,10 +64,21 @@ mod post_execution;
 mod pre_execution;
 mod receipts;
 mod system_execution;
+mod system_tx_context;
 #[cfg(any(test, feature = "test-hooks"))]
 mod test_hooks;
 pub mod witness;
 mod zero_fee;
+
+pub use system_tx_context::{
+    current_preloaded_system_tx_context, record_observed_runtime_block_context,
+    with_preloaded_system_tx_context, PreloadedSystemTxContext,
+};
+#[cfg(any(test, feature = "test-hooks"))]
+pub use system_tx_context::{
+    forced_dirty_system_precompile_revert, take_observed_runtime_block_contexts,
+    with_forced_dirty_system_precompile_revert,
+};
 
 pub use crate::finalization::{
     validate_finalized_metadata, AccountedParentArtifact, AccountedParentArtifactProvider,

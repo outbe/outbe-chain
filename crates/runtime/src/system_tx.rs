@@ -52,7 +52,7 @@ pub fn dispatch(
 
     #[cfg(feature = "test-hooks")]
     if let Some((dirty_addr, dirty_slot, dirty_val)) =
-        outbe_evm::sys_tx_precompile::forced_dirty_system_precompile_revert()
+        outbe_evm::executor::forced_dirty_system_precompile_revert()
     {
         storage.sstore(dirty_addr, dirty_slot, dirty_val)?;
         storage.emit_event(
@@ -76,7 +76,7 @@ pub fn dispatch(
     match input {
         SystemTx::CertifiedParentAccounting { metadata } => {
             let ctx = block_runtime_context(storage, true)?;
-            let execution = outbe_evm::sys_tx_precompile::current_preloaded_system_tx_context()
+            let execution = outbe_evm::executor::current_preloaded_system_tx_context()
                 .unwrap_or_else(|| {
                     SystemTxExecutionContext::for_end_block(
                         ctx.block.proposer,
@@ -90,7 +90,7 @@ pub fn dispatch(
         }
         SystemTx::LateFinalizeCredits { artifact } => {
             let ctx = block_runtime_context(storage, false)?;
-            let execution = outbe_evm::sys_tx_precompile::current_preloaded_system_tx_context();
+            let execution = outbe_evm::executor::current_preloaded_system_tx_context();
             outbe_rewards::finalization::run_late_finalize_credits(
                 &ctx,
                 &artifact,
@@ -186,7 +186,7 @@ fn block_runtime_context(
     let timestamp = storage.now_secs()?;
     let chain_id = storage.chain_id()?;
     let genesis_hash = storage.genesis_hash()?;
-    let preloaded = outbe_evm::sys_tx_precompile::current_preloaded_system_tx_context();
+    let preloaded = outbe_evm::executor::current_preloaded_system_tx_context();
     let proposer = preloaded
         .as_ref()
         .map(|context| context.proposer)
@@ -200,14 +200,7 @@ fn block_runtime_context(
         .map(|context| context.user_gas_used)
         .unwrap_or(0);
     let validators = if include_validator_snapshot {
-        let mut validators: Vec<Address> =
-            outbe_validatorset::contract::ValidatorSet::new(storage.clone())
-                .get_active_consensus_set()?
-                .into_iter()
-                .map(|record| record.validator_address)
-                .collect();
-        validators.sort();
-        validators
+        crate::wiring::sorted_active_consensus_validators(storage.clone())?
     } else {
         Vec::new()
     };
@@ -223,7 +216,7 @@ fn block_runtime_context(
         validators,
     };
     #[cfg(feature = "test-hooks")]
-    outbe_evm::sys_tx_precompile::record_observed_runtime_block_context(&block);
+    outbe_evm::executor::record_observed_runtime_block_context(&block);
     Ok(BlockRuntimeContext::new(block, storage))
 }
 

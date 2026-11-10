@@ -21,7 +21,6 @@ mod upgrade_monitor;
 mod upgrade_ports;
 mod upgrade_promotion;
 mod wiring;
-mod wiring_state;
 
 #[cfg(test)]
 mod launch_tests;

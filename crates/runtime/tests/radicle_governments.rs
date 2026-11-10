@@ -1,6 +1,6 @@
 //! Actual automatic workers, native sidecars, protected SDK sockets and registry admission.
 //! DKG dealing, canonical finalization and Commonware transport are fixtures, not production E2E.
-#[path = "governments/support.rs"]
+#[path = "radicle_governments/support.rs"]
 mod support;
 
 use alloy_primitives::{Address, B256, U256};
@@ -794,7 +794,7 @@ async fn automatic_bootstrap_vote_review_and_merge_with_one_offline_member_and_r
         write_committee_snapshot(s, 2, &committee).unwrap();
     });
     let genesis: serde_json::Value = serde_json::from_str(include_str!(
-        "../../coderegistry/tests/fixtures/governments-genesis-storage.json"
+        "../../system/coderegistry/tests/fixtures/governments-genesis-storage.json"
     ))
     .unwrap();
     for (slot, value) in genesis["storage"].as_object().unwrap() {

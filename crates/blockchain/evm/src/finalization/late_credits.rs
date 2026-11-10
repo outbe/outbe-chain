@@ -17,8 +17,7 @@ use outbe_primitives::{
 
 use crate::{
     errors::{BeginBlockPrecompileError, ExecutorValidationError},
-    executor::context,
-    sys_tx_precompile::current_preloaded_system_tx_context,
+    executor::{context, current_preloaded_system_tx_context},
 };
 
 #[derive(Debug, Clone, Copy)]
