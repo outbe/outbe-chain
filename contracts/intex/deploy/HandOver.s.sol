@@ -12,7 +12,7 @@ import {BaseScript} from "./BaseScript.s.sol";
 /// @notice Gives `DEFAULT_ADMIN_ROLE` of every intex proxy on this chain to governance,
 ///         removes it from the deployer, and reads the roles back.
 /// @dev Governance is CrosschainBridge on Outbe and its Interchain Account on any other chain. Run it
-///      last: after DeployOrigin or DeployTarget and the CD wiring of the system roles. After it,
+///      last: after DeployOrigin or DeployTarget and ConfigureOrigin or ConfigureTarget. After it,
 ///      an upgrade or a configuration change is an `upgradeContracts` vote of Update.
 ///      The script finds each proxy at its CREATE3 address and skips a proxy that is not deployed
 ///      here: Outbe has the OriginRouter and the target proxies, a remote target has the target
