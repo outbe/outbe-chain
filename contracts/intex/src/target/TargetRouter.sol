@@ -12,6 +12,7 @@ import {IIntexAuction} from "./interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "../shared/interfaces/IIntexNFT1155.sol";
 import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
 import {IERC7786TokenBridge} from "./interfaces/IERC7786TokenBridge.sol";
+import {IOriginRouter} from "../origin/interfaces/IOriginRouter.sol";
 import {ITargetRouter} from "./interfaces/ITargetRouter.sol";
 import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
@@ -409,10 +410,27 @@ contract TargetRouter is
         emit ParkedProceedsResent(idx, p.emissionDay);
     }
 
-    /// @dev Approve the token bridge and route `amount` WCOEN to the OriginRouter with the series
-    ///      id, self-funding the bridge fee from the relay float. The credited WCOEN is unwrapped
-    ///      and distributed on Outbe.
+    /// @dev Route `amount` WCOEN of a chunk to the OriginRouter, which unwraps and distributes it.
     function _doRouteProceeds(uint32 emissionDay, uint16 chunkIndex, uint128 amount) internal {
+        if (OUTBE_CHAIN_ID == block.chainid) _handOverProceeds(emissionDay, amount);
+        else _bridgeProceeds(emissionDay, amount);
+        emit ProceedsRouted(emissionDay, chunkIndex, amount);
+    }
+
+    /// @dev On Outbe itself the OriginRouter sits on this chain and takes the WCOEN in one call.
+    function _handOverProceeds(uint32 emissionDay, uint128 amount) private {
+        TargetRouterStorage storage $ = _ts();
+        IOriginRouter origin = IOriginRouter($.originRouter);
+        IERC20 token = $.escrowAdapter.dayPaymentToken(emissionDay);
+        address wcoen = origin.wcoen();
+        if (address(token) != wcoen) revert ProceedsTokenNotBridged(address(token), wcoen);
+
+        token.forceApprove(address(origin), amount);
+        origin.receiveLocalProceeds(emissionDay, amount);
+    }
+
+    /// @dev The token bridge carries the WCOEN with the day id, and the relay float pays its fee.
+    function _bridgeProceeds(uint32 emissionDay, uint128 amount) private {
         TargetRouterStorage storage $ = _ts();
         address to = $.originRouter;
         bytes memory extraData = abi.encode(emissionDay);
@@ -424,7 +442,6 @@ contract TargetRouter is
         uint256 fee = $.tokenBridge.quoteSend(OUTBE_CHAIN_ID, to, amount, extraData, IntexGas.PROCEEDS_COMPOSE);
         // slither-disable-next-line unused-return,arbitrary-send-eth
         $.tokenBridge.sendAndCall{value: fee}(OUTBE_CHAIN_ID, to, amount, extraData, IntexGas.PROCEEDS_COMPOSE);
-        emit ProceedsRouted(emissionDay, chunkIndex, amount);
     }
 
     /// @inheritdoc ITargetRouter

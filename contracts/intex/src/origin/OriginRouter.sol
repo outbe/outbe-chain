@@ -6,6 +6,9 @@ import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/Reentrancy
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
 import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
 import {IOriginRouter} from "./interfaces/IOriginRouter.sol";
@@ -625,20 +628,31 @@ contract OriginRouter is
         uint256 amount,
         bytes calldata extraData
     ) external nonReentrant returns (bytes4) {
-        OriginRouterStorage storage $ = _os();
-        if (msg.sender != $.tokenBridge) revert UnauthorizedProceedsCaller(msg.sender);
-
+        if (msg.sender != _os().tokenBridge) revert UnauthorizedProceedsCaller(msg.sender);
         uint32 emissionDay = abi.decode(extraData, (uint32));
-        // Source must be in the day's frozen snapshot.
-        if (!_isSeriesTarget(emissionDay, sourceDomain)) revert UnexpectedProceedsSource(sourceDomain);
-        // The bridge is permissionless. Pin the source sender to the registered peer (its
-        // TargetRouter). Otherwise anyone could open a distribution for any series.
-        if (keccak256(from) != keccak256(_remoteMessenger(sourceDomain))) revert UnauthorizedProceedsSender(from);
-
-        IWCOEN($.wcoen).withdraw(amount);
-        _distributeOrPark(emissionDay, sourceDomain, SafeCast.toUint128(amount));
-
+        _checkProceedsSource(emissionDay, sourceDomain, from);
+        _burnProceeds(emissionDay, sourceDomain, amount);
         return IERC7786TokenReceiver.onCrosschainTokensReceived.selector;
+    }
+
+    /// @inheritdoc IOriginRouter
+    function receiveLocalProceeds(uint32 emissionDay, uint256 amount) external nonReentrant {
+        uint32 local = uint32(block.chainid);
+        _checkProceedsSource(emissionDay, local, InteroperableAddress.formatEvmV1(block.chainid, msg.sender));
+        SafeERC20.safeTransferFrom(IERC20(_os().wcoen), msg.sender, address(this), amount);
+        _burnProceeds(emissionDay, local, amount);
+    }
+
+    /// @dev The source must be in the day's frozen snapshot, and the sender must be its registered
+    ///      TargetRouter. Otherwise anyone could open a distribution for any series.
+    function _checkProceedsSource(uint32 emissionDay, uint32 sourceDomain, bytes memory from) private view {
+        if (!_isSeriesTarget(emissionDay, sourceDomain)) revert UnexpectedProceedsSource(sourceDomain);
+        if (keccak256(from) != keccak256(_remoteMessenger(sourceDomain))) revert UnauthorizedProceedsSender(from);
+    }
+
+    function _burnProceeds(uint32 emissionDay, uint32 sourceDomain, uint256 amount) private {
+        IWCOEN(_os().wcoen).withdraw(amount);
+        _distributeOrPark(emissionDay, sourceDomain, SafeCast.toUint128(amount));
     }
 
     /// @inheritdoc IOriginRouter
@@ -652,8 +666,8 @@ contract OriginRouter is
 
     /// @dev Hand native proceeds to the factory precompile. On failure, park them for retry.
     function _distributeOrPark(uint32 emissionDay, uint32 srcChainId, uint128 amount) private {
-        // The sole caller (onCrosschainTokensReceived) is nonReentrant, so the catch-branch park
-        // write is safe.
+        // Both entries (onCrosschainTokensReceived, receiveLocalProceeds) are nonReentrant, so the
+        // catch-branch park write is safe.
         // slither-disable-next-line reentrancy-eth
         try IIntexFactory(_os().intexFactory).distribute{value: amount}(emissionDay, srcChainId) {
             emit ProceedsDistributed(emissionDay, amount);

@@ -327,6 +327,11 @@ interface IOriginRouter {
     function tokenBridge() external view returns (address);
     /// @notice WCOEN token unwrapped to native before distribution.
     function wcoen() external view returns (address);
+    /// @notice Takes the proceeds of a chunk from the target router on this chain, which needs no
+    ///         token bridge. Only that router may call it.
+    /// @param emissionDay Day the proceeds belong to.
+    /// @param amount WCOEN the router approved for this call.
+    function receiveLocalProceeds(uint32 emissionDay, uint256 amount) external;
     /// @notice Parked proceeds awaiting retry, by enqueue index.
     function parkedProceeds(uint256 idx) external view returns (ParkedProceeds memory);
 

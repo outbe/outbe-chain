@@ -383,6 +383,24 @@
     },
     {
       "type": "function",
+      "name": "receiveLocalProceeds",
+      "inputs": [
+        {
+          "name": "emissionDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "receiveMessage",
       "inputs": [
         {
@@ -2043,6 +2061,17 @@
           "name": "value",
           "type": "uint256",
           "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "SafeERC20FailedOperation",
+      "inputs": [
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
         }
       ]
     },

@@ -156,6 +156,24 @@
     },
     {
       "type": "function",
+      "name": "receiveLocalProceeds",
+      "inputs": [
+        {
+          "name": "emissionDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "removeTarget",
       "inputs": [
         {
