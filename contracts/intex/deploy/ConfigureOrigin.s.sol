@@ -16,9 +16,8 @@ import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 ///         DeployTarget, before HandOver. A step that already holds is skipped, so a re-run sends
 ///         nothing.
 /// @dev Env: DEPLOYER_PK, CREATE3_FACTORY_ADDRESS, CONTRACT_SALT (optional), DESIS_ADDRESS,
-///      INTEX_FACTORY_ADDRESS, GEM_FACTORY_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS. Run with
-///      `--skip-simulation`: an on-chain simulation forks without the Desis answer this script
-///      puts on its own fork.
+///      INTEX_FACTORY_ADDRESS, GEM_FACTORY_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS. Needs
+///      `--skip-simulation`: the Desis answer below exists only on this script's fork.
 contract ConfigureOrigin is BaseScript {
     struct Origin {
         address router;
@@ -71,9 +70,8 @@ contract ConfigureOrigin is BaseScript {
         grantRoleIfMissing(o.nft, nft.BURNER_ROLE(), o.gemFactory, deployer);
     }
 
-    /// @dev A fork cannot run the Desis precompile, so the interface check of `OriginRouter.wire`
-    ///      would fail here. The script asks the node and puts its answer on the fork. `virtual`
-    ///      so a test, which has no node, can skip it.
+    /// @dev A fork cannot run the Desis precompile, so `OriginRouter.wire` gets the node's answer to
+    ///      its interface check. `virtual` so a test, which has no node, can skip it.
     function _mirrorDesisInterface(address desis) internal virtual {
         bytes memory data = abi.encodeCall(IERC165.supportsInterface, (type(IDesis).interfaceId));
         string memory params =
