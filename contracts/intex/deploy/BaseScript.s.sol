@@ -25,11 +25,11 @@ abstract contract BaseScript is Script {
         if (!IAccessControl(proxy).hasRole(bytes32(0), deployer)) revert HandedOverToGovernance(proxy);
     }
 
-    /// @notice CREATE3 salt version. `SALT_VERSION` in the env overrides it, so a test run can
+    /// @notice CREATE3 salt version. `CONTRACT_SALT` in the env overrides it, so a test run can
     ///         target a throwaway address set without disturbing the pinned production set. A
     ///         blank or unset value selects production.
     function saltVersion() internal view returns (string memory version) {
-        version = vm.envOr("SALT_VERSION", string(""));
+        version = vm.envOr("CONTRACT_SALT", string(""));
         if (bytes(version).length == 0) version = SALT_VERSION;
     }
 

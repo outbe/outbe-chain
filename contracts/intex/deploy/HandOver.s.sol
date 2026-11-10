@@ -17,14 +17,14 @@ import {BaseScript} from "./BaseScript.s.sol";
 ///      The script finds each proxy at its CREATE3 address and skips a proxy that is not deployed
 ///      here: Outbe has the OriginRouter and the target proxies, a remote target has the target
 ///      proxies only.
-///      Env: DEPLOYER_PRIVATE_KEY (the current admin), CREATE3_FACTORY_ADDRESS, OUTBE_CHAIN_ID, and
+///      Env: DEPLOYER_PK (the current admin), CREATE3_FACTORY_ADDRESS, OUTBE_CHAIN_ID, and
 ///      on another chain OUTBE_RPC_URL (to read the Interchain Account from the Outbe node).
 contract HandOver is BaseScript {
     error DomainTooLarge(uint256 chainId);
     error NotHandedOver(address proxy);
 
     function run() external {
-        uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        uint256 pk = vm.envUint("DEPLOYER_PK");
         address deployer = vm.addr(pk);
         Create3Factory factory = create3Factory();
         // Read before the broadcast: on a chain other than Outbe this asks the Outbe node.

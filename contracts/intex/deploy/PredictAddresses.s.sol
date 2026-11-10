@@ -12,10 +12,10 @@ contract PredictAddresses is BaseScript {
     string[6] internal PREFIXES =
         ["IntexAuction", "EscrowAdapter", "TargetRouter", "OriginRouter", "IntexNFT1155", "IntexNFT1155Bridge"];
 
-    /// @dev Env: DEPLOYER_PRIVATE_KEY, same as the deploy scripts, because the deployer namespaces
+    /// @dev Env: DEPLOYER_PK, same as the deploy scripts, because the deployer namespaces
     ///      the salt.
     function run() external {
-        address deployer = vm.addr(vm.envUint("DEPLOYER_PRIVATE_KEY"));
+        address deployer = vm.addr(vm.envUint("DEPLOYER_PK"));
         Create3Factory factory = create3Factory();
 
         console.log("salt version:", saltVersion());

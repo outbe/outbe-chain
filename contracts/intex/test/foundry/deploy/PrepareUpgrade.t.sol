@@ -43,7 +43,7 @@ contract PrepareUpgradeTest is Test {
         factory = new Create3Factory();
         deployer = vm.addr(PK);
         vm.setEnv("CREATE3_FACTORY_ADDRESS", vm.toString(address(factory)));
-        vm.setEnv("SALT_VERSION", SALT);
+        vm.setEnv("CONTRACT_SALT", SALT);
 
         // A remote target stack: no OriginRouter, EscrowAdapter or IntexAuction here.
         vm.startPrank(deployer);
