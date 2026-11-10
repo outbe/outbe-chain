@@ -367,9 +367,22 @@ fn install_file(source: &Path, destination: &Path, mode: u32) -> Result<()> {
         fs::create_dir_all(parent)?;
         fs::set_permissions(parent, fs::Permissions::from_mode(0o755))?;
     }
-    fs::copy(source, destination)?;
-    fs::set_permissions(destination, fs::Permissions::from_mode(mode))?;
-    process::chown(destination, 0, 0)
+    let file_name = destination
+        .file_name()
+        .ok_or_else(|| eyre::eyre!("install destination has no file name"))?;
+    let temporary = destination.with_file_name(format!(
+        ".{}.tmp.{}",
+        file_name.to_string_lossy(),
+        std::process::id()
+    ));
+    if temporary.exists() {
+        fs::remove_file(&temporary)?;
+    }
+    fs::copy(source, &temporary)?;
+    fs::set_permissions(&temporary, fs::Permissions::from_mode(mode))?;
+    process::chown(&temporary, 0, 0)?;
+    fs::rename(temporary, destination)?;
+    Ok(())
 }
 
 fn create_owned_dir(path: &Path, mode: u32, uid: u32, gid: u32) -> Result<()> {
