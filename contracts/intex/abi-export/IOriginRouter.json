@@ -1171,6 +1171,17 @@
     },
     {
       "type": "error",
+      "name": "TooManyTargets",
+      "inputs": [
+        {
+          "name": "max",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "UnauthorizedProceedsCaller",
       "inputs": [
         {

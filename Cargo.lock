@@ -7993,7 +7993,6 @@ name = "outbe-core-common"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
- "alloy-sol-types",
  "base64 0.22.1",
  "outbe-primitives",
  "ring",
@@ -8476,6 +8475,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-chain-constants",
  "outbe-macros",
+ "outbe-oracle",
  "outbe-primitives",
  "outbe-validatorset",
  "serde",
@@ -8844,7 +8844,6 @@ dependencies = [
  "commonware-cryptography",
  "hex",
  "outbe-ccaregistry",
- "outbe-core-common",
  "outbe-credis",
  "outbe-credisfactory",
  "outbe-enclave",

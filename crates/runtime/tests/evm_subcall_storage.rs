@@ -123,6 +123,26 @@ fn trigger_budget_admission_and_exact_success_do_not_exhaust_parent() {
 }
 
 #[test]
+fn trigger_budget_remaining_reads_the_local_allowance_not_the_parent_meter() {
+    use outbe_primitives::storage::StorageHandle;
+    let mut ctx = context(&[0]);
+    let mut p = provider(&mut ctx, 50_000);
+    StorageHandle::enter(&mut p, |storage| {
+        assert_eq!(storage.trigger_budget_remaining()?, None);
+        storage.with_trigger_budget(5000, || {
+            assert_eq!(storage.trigger_budget_remaining()?, Some(5000));
+            storage.call(TARGET, U256::ZERO, Bytes::new())?;
+            assert_eq!(storage.trigger_budget_remaining()?, Some(2400));
+            assert_eq!(storage.metered_gas_remaining()?, Some(47_400));
+            Ok(())
+        })?;
+        assert_eq!(storage.trigger_budget_remaining()?, None);
+        Ok::<_, PrecompileError>(())
+    })
+    .unwrap();
+}
+
+#[test]
 fn trigger_budget_returns_canonical_unused_allowance_without_double_charging() {
     let mut ctx = context(GAS_WORD);
     let mut p = provider(&mut ctx, 50_000);

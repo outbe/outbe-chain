@@ -302,6 +302,11 @@ impl<'storage> StorageHandle<'storage> {
         self.with_provider(|provider| Ok(provider.metered_gas_remaining()))
     }
 
+    /// Unspent work allowance of the running trigger scope. `None` outside a scope.
+    pub fn trigger_budget_remaining(&self) -> Result<Option<u64>> {
+        self.with_provider(|provider| Ok(provider.trigger_budget_remaining()))
+    }
+
     /// Runs one atomic handler under a gross work allowance. Spent gas is never reverted.
     pub fn with_trigger_budget<R>(
         &self,

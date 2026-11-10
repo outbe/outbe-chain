@@ -218,6 +218,228 @@ fn calibration_live_auction_start() {
     ));
 }
 
+/// A scheduled day at 00:00, in the step that the `auction_advance` run makes for it.
+#[derive(Clone, Copy, Debug)]
+enum DueStep {
+    /// A briefed day starts and sends START to every target chain.
+    Start,
+    /// A day at its commit end moves to `RevealingBids`.
+    CommitEnd,
+    /// A day at its reveal end arms the clearing and sends COLLECTING_BIDS to every target chain.
+    RevealEnd,
+    /// A day that waits for its bids. Nothing is due.
+    Waiting,
+}
+
+impl DueStep {
+    const ALL: [Self; 4] = [Self::Start, Self::CommitEnd, Self::RevealEnd, Self::Waiting];
+
+    fn day(self) -> EmissionDate {
+        EmissionDate::new(match self {
+            Self::Start => 20240101,
+            Self::CommitEnd => 20231231,
+            Self::RevealEnd => 20231230,
+            Self::Waiting => 20231229,
+        })
+    }
+
+    /// The stage after one run.
+    fn advanced(self) -> outbe_desis::AuctionStage {
+        match self {
+            Self::Start => outbe_desis::AuctionStage::CommittingBids,
+            Self::CommitEnd => outbe_desis::AuctionStage::RevealingBids,
+            Self::RevealEnd | Self::Waiting => outbe_desis::AuctionStage::CollectingBids,
+        }
+    }
+
+    /// Put a started day in the schedule. The brief schedules `Start` itself.
+    fn schedule(self, storage: &StorageHandle<'_>, midnight: u64) {
+        let (stage, anchor) = match self {
+            Self::Start => return,
+            Self::CommitEnd => (
+                outbe_desis::AuctionStage::CommittingBids,
+                midnight - SECONDS_PER_DAY,
+            ),
+            Self::RevealEnd => (
+                outbe_desis::AuctionStage::RevealingBids,
+                midnight - 2 * SECONDS_PER_DAY,
+            ),
+            // Started with `RevealEnd`, so it is still inside its last clearing time.
+            Self::Waiting => (
+                outbe_desis::AuctionStage::CollectingBids,
+                midnight - 2 * SECONDS_PER_DAY,
+            ),
+        };
+        let day = self.day();
+        let auction = outbe_desis::DesisContract::new(storage.clone());
+        auction.auction_stage.write(&day, stage as u8).unwrap();
+        auction
+            .auction_at
+            .write(&day, u32::try_from(anchor).unwrap())
+            .unwrap();
+        auction
+            .config_promis_load_minor
+            .write(&day, U256::from(1_000_000))
+            .unwrap();
+        auction
+            .pending_desis_limit_minor
+            .write(&day, U256::from(10_000_000_000_000u64))
+            .unwrap();
+        let count = auction.sched_active_count.read().unwrap();
+        auction.sched_active_at.write(&count, day.value()).unwrap();
+        auction.sched_active_slot.write(&day, count + 1).unwrap();
+        auction.sched_active_count.write(count + 1).unwrap();
+    }
+}
+
+fn max_targets() -> Vec<u32> {
+    (1..=outbe_desis::constants::MAX_TARGET_CHAINS as u32).collect()
+}
+
+/// One `auction_advance` run at 00:00 over `steps`, with the most target chains Desis takes.
+/// Returns the gross gas of the run and the logs of the block.
+fn due_auctions(steps: &[DueStep]) -> (u64, Vec<Log>) {
+    use router_abi::IOriginRouter;
+    let proposer = test_evm_signer().address();
+    let midnight = GENESIS + SECONDS_PER_DAY;
+    let timestamp = midnight + 60;
+    let router = returning_contract(vec![
+        (
+            IOriginRouter::targetsOfCall::SELECTOR,
+            IOriginRouter::targetsOfCall::abi_encode_returns(&max_targets()),
+        ),
+        (
+            IOriginRouter::parkedMessageCountCall::SELECTOR,
+            IOriginRouter::parkedMessageCountCall::abi_encode_returns(&U256::ZERO),
+        ),
+        (
+            IOriginRouter::parkedProceedsCountCall::SELECTOR,
+            IOriginRouter::parkedProceedsCountCall::abi_encode_returns(&U256::ZERO),
+        ),
+    ]);
+    let (_, samples, logs, _) = run_prefix_checked(
+        &format!("due auctions {steps:?} {} chains", max_targets().len()),
+        &[(proposer, dummy_pubkey(0xa2))],
+        (1, timestamp),
+        |storage| {
+            seed_cycle_tick_genesis(storage.clone(), GENESIS, proposer).unwrap();
+            seed_previous_day_vwap(&storage, timestamp, U256::from(1_000_000));
+            seed_previous_day_vwap(&storage, GENESIS, U256::from(1_000_000));
+            outbe_oracle::schema::OracleContract::new(storage.clone())
+                .utc_day_vwap_last_finalized
+                .write(20240101)
+                .unwrap();
+            for step in steps {
+                if matches!(step, DueStep::Start) {
+                    outbe_desis::api::dispatch_auction_brief(
+                        storage.clone(),
+                        outbe_desis::api::AuctionBrief {
+                            emission_day: step.day(),
+                            desis_limit_minor: U256::from(10_000_000_000_000u64),
+                            has_limit: true,
+                        },
+                        outbe_desis::api::BriefOverflowPolicy::ReturnToPromisLimit,
+                    )
+                    .unwrap();
+                }
+                step.schedule(&storage, midnight);
+            }
+            for spec in outbe_cycle::triggers::ACTIVE_TRIGGERS {
+                outbe_cycle::schema::Cycle::new(storage.clone())
+                    .last_executed_at
+                    .write(
+                        &spec.id,
+                        if spec.id == 0 {
+                            timestamp
+                        } else {
+                            GENESIS + 60
+                        },
+                    )
+                    .unwrap();
+            }
+        },
+        vec![
+            (outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS, router),
+            (RELAY, Bytecode::new_legacy(bridge_work(false).into())),
+        ],
+        None,
+        (false, |state: &mut CalibrationState, _: &[Log]| {
+            let read_ctx = BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
+                block_number: 1,
+                timestamp,
+                chain_id: CHAIN_ID,
+                genesis_hash: B256::ZERO,
+                genesis_timestamp: GENESIS,
+                proposer,
+                validators: vec![proposer],
+            };
+            let mut provider =
+                outbe_primitives::storage::direct::DirectStorageProvider::new(state, read_ctx);
+            StorageHandle::enter(&mut provider, |storage| {
+                let auction = outbe_desis::DesisContract::new(storage);
+                for step in steps {
+                    assert_eq!(
+                        auction.auction_stage.read(&step.day()).unwrap(),
+                        step.advanced() as u8,
+                        "{step:?} advances in the same run"
+                    );
+                }
+            });
+        }),
+    );
+    assert!(!logs
+        .iter()
+        .any(|log| outbe_cycle::ICycle::CycleTriggerOverBudget::decode_log(log).is_ok()));
+    let gross = samples
+        .iter()
+        .find(|(id, _)| *id == outbe_cycle::triggers::TriggerId::AuctionAdvance.as_u32())
+        .unwrap()
+        .1;
+    eprintln!("DUE AUCTIONS {steps:?}: advance gross={gross}");
+    (gross, logs)
+}
+
+/// The steps that send nothing stay inside the Desis base bound, and one run moves all four days
+/// that are due at 00:00 inside the `auction_advance` budget.
+#[test]
+fn calibration_four_due_auctions_at_midnight() {
+    use outbe_desis::constants::ADVANCE_DAY_BASE_GAS;
+    for (step, bound) in [
+        (DueStep::CommitEnd, 2 * ADVANCE_DAY_BASE_GAS),
+        (DueStep::Waiting, ADVANCE_DAY_BASE_GAS),
+    ] {
+        let (gross, _) = due_auctions(&[step]);
+        assert!(gross <= bound, "{step:?} gross={gross}, bound={bound}");
+    }
+    let (gross, logs) = due_auctions(&DueStep::ALL);
+    let budget = outbe_cycle::triggers::ACTIVE_TRIGGERS
+        .iter()
+        .find(|spec| spec.id == outbe_cycle::triggers::TriggerId::AuctionAdvance.as_u32())
+        .unwrap()
+        .work_budget_gas();
+    assert!(gross <= budget, "gross={gross}, budget={budget}");
+    let created = logs
+        .iter()
+        .filter(|log| {
+            outbe_desis::precompile::IDesis::IntexAuctionCreated::decode_log(log)
+                .is_ok_and(|event| event.data.emissionDay == DueStep::Start.day().value())
+        })
+        .count();
+    assert_eq!(created, 1, "START goes out in the run of the brief");
+    let collecting = router_abi::IOriginRouter::sendAuctionStageCollectingBidsCall::SELECTOR;
+    assert_eq!(
+        logs.iter()
+            .filter(
+                |log| log.address == outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS
+                    && log.data.data.starts_with(&collecting)
+            )
+            .count(),
+        outbe_desis::constants::MAX_TARGET_CHAINS
+    );
+}
+
 /// Intake uses the real bridge-facing native entry points before exporting the
 /// fixture to EVM storage. Each batch is independently deliverable; there is no
 /// single oversized transaction or repeated batch counted as new demand.
@@ -530,9 +752,11 @@ fn accepted_bid_deadlines_retire_with_reverting_router_within_advance_budget() {
             .iter()
             .any(|log| outbe_cycle::ICycle::CycleTriggerOverBudget::decode_log(log).is_ok()));
         let cost = samples.iter().find(|(id, _)| *id == 2).unwrap().1;
-        assert!(cost <= 638_000);
+        let bound =
+            outbe_desis::constants::ADVANCE_DAY_BASE_GAS + outbe_desis::constants::ADVANCE_FAIL_GAS;
+        assert!(cost <= bound);
         eprintln!(
-            "DEADLINE bids={} advance gross={cost}, limit=638000",
+            "DEADLINE bids={} advance gross={cost}, bound={bound}",
             u32::from(batches) * 64
         );
     }

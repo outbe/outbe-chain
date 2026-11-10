@@ -389,6 +389,10 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         Some(self.gas.remaining())
     }
 
+    fn trigger_budget_remaining(&self) -> Option<u64> {
+        self.trigger_budget.as_ref().map(|budget| budget.remaining)
+    }
+
     fn begin_trigger_budget(&mut self, budget: u64) -> Result<()> {
         self.start_trigger_budget(budget)
     }
