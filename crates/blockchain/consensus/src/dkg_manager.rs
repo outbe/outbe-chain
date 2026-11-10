@@ -10,10 +10,7 @@ use commonware_consensus::types::Epoch;
 use commonware_cryptography::bls12381::{
     self,
     dkg::feldman_desmedt::{Info, Output},
-    primitives::{
-        sharing::{Mode, Sharing},
-        variant::MinSig,
-    },
+    primitives::{sharing::Mode, variant::MinSig},
 };
 use commonware_utils::{ordered::Set, N3f1};
 use eyre::{Result, WrapErr};
@@ -46,9 +43,7 @@ pub use boundary::{
     AncestryReader, BlockLookupFuture, BoundaryRequirement, BoundaryRequirementError,
     BoundaryStatus, CommittedDkgBoundary, BOUNDARY_STATUS_CACHE_SIZE,
 };
-pub use outbe_primitives::proof::{
-    boundary_outcome_polynomial_hash, decode_boundary_outcome, OdkoDecodeError, OdkoOutcome,
-};
+pub use outbe_simplex::bls::odko::*;
 
 #[derive(Clone, Debug)]
 pub struct Mailbox {
@@ -578,19 +573,6 @@ fn hash_target_set(
     alloy_primitives::keccak256(bytes)
 }
 
-pub(crate) fn encode_outcome(
-    epoch: Epoch,
-    output: &Output<MinSig, bls12381::PublicKey>,
-    is_full_dkg: bool,
-) -> Bytes {
-    OdkoOutcome {
-        epoch,
-        is_full_dkg,
-        output: output.clone(),
-    }
-    .encode()
-}
-
 pub fn dkg_output_hash(output: &Output<MinSig, bls12381::PublicKey>) -> B256 {
     alloy_primitives::keccak256(commonware_codec::Encode::encode(output))
 }
@@ -621,10 +603,6 @@ pub fn assert_canonical_output(
         .into());
     }
     Ok(())
-}
-
-pub fn public_polynomial_hash(polynomial: &Sharing<MinSig>) -> B256 {
-    alloy_primitives::keccak256(commonware_codec::Encode::encode(polynomial))
 }
 
 #[cfg(test)]

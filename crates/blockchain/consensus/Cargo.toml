@@ -11,15 +11,16 @@ test-marshal-drop = []
 test-protocol-overrides = []
 # The Byzantine proposal hook is included only in E2E node builds that also
 # enable test-protocol-overrides. Neither feature is enabled by default.
-e2e-byzantine-preannounce = []
+e2e-byzantine-preannounce = ["outbe-simplex/e2e-byzantine-preannounce"]
 # Exposes `test_harness` and other in-crate test scaffolding publicly so the
 # `outbe-engine` crate can reuse the multi-node deterministic Simplex harness
 # for its own stack_tests. Always enabled by `outbe-engine`'s dev-dependencies.
-test-utils = []
+test-utils = ["outbe-simplex/test-utils"]
 
 [dependencies]
 # Internal
 outbe-primitives.workspace = true
+outbe-simplex.workspace = true
 radicle-crypto.workspace = true
 
 # Commonware

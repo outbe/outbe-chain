@@ -1,7 +1,6 @@
 //! Typed errors for `outbe-consensus`.
 
-pub mod core;
 pub mod dkg;
-pub mod follow;
 
-pub use self::{core::*, dkg::*, follow::*};
+pub use self::dkg::*;
+pub use outbe_simplex::errors::{core, follow, *};

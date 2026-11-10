@@ -8,6 +8,7 @@ members = [
     "crates/blockchain/primitives",
     "crates/blockchain/evm",
     "crates/blockchain/consensus",
+    "crates/blockchain/simplex",
     "crates/blockchain/engine",
     "crates/blockchain/rpc",
     "crates/blockchain/txpool",
@@ -92,6 +93,7 @@ default-members = [
     "crates/blockchain/primitives",
     "crates/blockchain/evm",
     "crates/blockchain/consensus",
+    "crates/blockchain/simplex",
     "crates/blockchain/engine",
     "crates/blockchain/rpc",
     "crates/blockchain/txpool",
@@ -193,6 +195,7 @@ outbe-chain-constants = { path = "crates/blockchain/constants" }
 outbe-primitives = { path = "crates/blockchain/primitives" }
 outbe-evm = { path = "crates/blockchain/evm" }
 outbe-consensus = { path = "crates/blockchain/consensus" }
+outbe-simplex = { path = "crates/blockchain/simplex" }
 outbe-engine = { path = "crates/blockchain/engine" }
 outbe-rpc = { path = "crates/blockchain/rpc" }
 outbe-txpool = { path = "crates/blockchain/txpool" }

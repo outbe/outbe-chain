@@ -74,9 +74,7 @@ use crate::epoch_subchannels::{
 };
 use crate::hybrid::HybridScheme;
 
-#[path = "test_harness/dealings.rs"]
-mod dealings;
-pub use dealings::{acknowledge_fixture_dealings, FixtureDealings};
+pub use outbe_simplex::test_harness::{acknowledge_fixture_dealings, FixtureDealings};
 
 #[path = "test_harness/marshal_resolver.rs"]
 mod marshal_resolver;
@@ -90,15 +88,11 @@ pub use fixtures::{
     ResolverVote, SignedResolverProposal,
 };
 
-#[path = "test_harness/vrf_committee.rs"]
-mod vrf_committee;
-pub use vrf_committee::{
+pub use outbe_simplex::test_harness::{
     finalize_messages, vrf_test_committee, CertificateMessages, VrfTestCommittee,
 };
 
-#[path = "test_harness/certified_parent.rs"]
-mod certified_parent;
-pub use certified_parent::{test_fully_signed_metadata, TestFinalizedParent};
+pub use outbe_simplex::test_harness::{test_fully_signed_metadata, TestFinalizedParent};
 
 #[path = "test_harness/send_observer.rs"]
 mod send_observer;
