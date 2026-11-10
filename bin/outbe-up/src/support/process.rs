@@ -3,7 +3,7 @@ use std::{
     io::{self, Write},
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::Path,
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
 };
 
 use eyre::{bail, ensure, Context, Result};
@@ -87,6 +87,8 @@ pub fn capture_in(program: impl AsRef<Path>, args: &[&str], directory: &Path) ->
 pub fn command_succeeds(program: impl AsRef<Path>, args: &[&str]) -> bool {
     Command::new(program.as_ref())
         .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .is_ok_and(|status| status.success())
 }

@@ -58,6 +58,7 @@ pub async fn wait_for_sync(
     remote: &RpcClient,
     progress: &mut Progress,
 ) -> Result<(u64, u64)> {
+    let started = Instant::now();
     let mut eta = CatchupEta::default();
     let mut last = None;
     loop {
@@ -74,19 +75,24 @@ pub async fn wait_for_sync(
                 let detail = last.map_or_else(String::new, |(local, remote)| {
                     format!("; last h={local}/{remote}")
                 });
-                progress.update(&format!("sync RPC busy; node still running{detail}"));
+                progress.update(&format!(
+                    "sync RPC busy; node still running{}; running={}",
+                    detail,
+                    human_duration(started.elapsed().as_secs())
+                ));
                 continue;
             }
         };
         let remaining = remote_block.number.saturating_sub(local_block.number);
         last = Some((local_block.number, remote_block.number));
         progress.update(&format!(
-            "sync h={}/{} left={}{} p2p={}",
+            "sync h={}/{} left={}{} p2p={} running={}",
             local_block.number,
             remote_block.number,
             remaining,
             eta_seconds_field(eta.seconds_remaining(remaining)),
-            peers
+            peers,
+            human_duration(started.elapsed().as_secs())
         ));
         if peers > 0 && local_block.number >= remote_block.number {
             let local_at_remote = local.block_number(remote_block.number).await?;
