@@ -7946,7 +7946,6 @@ name = "outbe-common"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
- "alloy-sol-types",
  "base64 0.22.1",
  "outbe-primitives",
  "ring",
@@ -8900,7 +8899,6 @@ dependencies = [
  "commonware-cryptography",
  "hex",
  "outbe-ccaregistry",
- "outbe-common",
  "outbe-credis",
  "outbe-credisfactory",
  "outbe-fidelity",

@@ -250,7 +250,7 @@ fn publish_randomness_status_preserves_last_finalized_block() {
 #[test]
 fn finalization_drainer_skips_closed_replies_and_answers_live_requests() {
     use outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore;
-    use std::task::{Context, Poll, Waker};
+    use std::task::{Context, Waker};
 
     let directory = tempfile::tempdir().unwrap();
     let proof_dir = directory.path().join("proofs");
@@ -274,15 +274,14 @@ fn finalization_drainer_skips_closed_replies_and_answers_live_requests() {
         let drainer =
             spawn_finalization_drainer(&drainer_ctx, mailbox, bridge.clone(), store, cancel_rx);
 
-        // Enqueue a request and immediately drop the caller future so `reply.is_closed()` is true.
+        // Enqueue a request and drop the caller future so the drainer finds a closed reply.
+        // The drainer runs on another worker thread and can answer before the drop, so the
+        // result of this one poll is not asserted.
         let mut cx = Context::from_waker(Waker::noop());
         {
             let b = bridge.clone();
             let mut cancelled_fut = Box::pin(async move { b.request_finalization(999).await });
-            assert!(matches!(
-                cancelled_fut.as_mut().poll(&mut cx),
-                Poll::Pending
-            ));
+            let _ = cancelled_fut.as_mut().poll(&mut cx);
         }
 
         // Next live request for height 17 must succeed with exact encoded bytes.
