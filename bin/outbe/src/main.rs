@@ -12,7 +12,9 @@ mod process;
 mod progress;
 mod rpc;
 mod snapshot;
+mod status;
 mod validator;
+mod wait;
 
 #[derive(Debug, Parser)]
 #[command(name = "outbe", about = "Outbe node operator CLI")]
@@ -67,7 +69,7 @@ async fn main() -> Result<()> {
             }
             ValidatorCommand::Sync { snapshot } => validator::sync(snapshot.as_deref()).await,
             ValidatorCommand::Promote => validator::promote().await,
-            ValidatorCommand::Status { watch } => validator::status(watch).await,
+            ValidatorCommand::Status { watch } => status::show(watch).await,
         },
     }
 }
