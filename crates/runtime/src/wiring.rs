@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, Log, B256, U256};
-use outbe_engine::protocol_state::{
+use outbe_consensus::protocol_state::{
     EngineProtocolError, EngineProtocolState, EngineValidatorQuery, EngineValidatorRow,
 };
 use outbe_evm::errors::TeeBootstrapHostError;
@@ -583,10 +583,10 @@ impl EngineProtocolState for OutbeRuntime {
         for record in records {
             let p2p = match vs.get_p2p_address(record.validator_address) {
                 Ok(Some((version, encoded))) => {
-                    outbe_engine::protocol_state::EngineP2pRead::Present { version, encoded }
+                    outbe_consensus::protocol_state::EngineP2pRead::Present { version, encoded }
                 }
-                Ok(None) => outbe_engine::protocol_state::EngineP2pRead::Missing,
-                Err(error) => outbe_engine::protocol_state::EngineP2pRead::Failed { error },
+                Ok(None) => outbe_consensus::protocol_state::EngineP2pRead::Missing,
+                Err(error) => outbe_consensus::protocol_state::EngineP2pRead::Failed { error },
             };
             rows.push(EngineValidatorRow { record, p2p });
         }

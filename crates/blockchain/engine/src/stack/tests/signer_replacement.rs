@@ -13,7 +13,7 @@ fn signer_replacement_aborts_engine_after_epoch_select_completes() {
             &context,
             Ok(EpochLoopOutcome::ReplaceSigner),
             &mut engine_handle,
-            &crate::application_shutdown::ApplicationDrain::default(),
+            &outbe_consensus::application_shutdown::ApplicationDrain::default(),
         )
         .await
         .expect("signer replacement must stop the old engine before restarting the epoch");

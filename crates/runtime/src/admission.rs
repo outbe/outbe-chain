@@ -1,6 +1,6 @@
 use crate::errors::LaunchError;
 use crate::*;
-use outbe_engine::protocol_state::EngineProtocolState;
+use outbe_consensus::protocol_state::EngineProtocolState;
 use outbe_execution::tee_remote_session::{
     inspect_local_finalized_successor_status_v1, RegistryChainIdentity,
 };
@@ -57,7 +57,7 @@ impl TeeLeaseGuardGateV1 {
     pub(crate) fn validate_anchor(
         anchor: LocalTeeAdmissionAnchorV1,
         observed_hash: alloy_primitives::B256,
-        admission: outbe_engine::validators::LocalTeeRuntimeAdmissionV1,
+        admission: outbe_consensus::validators::LocalTeeRuntimeAdmissionV1,
     ) -> eyre::Result<()> {
         if observed_hash != anchor.finalized_hash {
             return Err(LaunchError::TeeAdmissionAnchorHashMismatch {
@@ -68,11 +68,11 @@ impl TeeLeaseGuardGateV1 {
             .into());
         }
         match admission {
-            outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready { .. } => Ok(()),
-            outbe_engine::validators::LocalTeeRuntimeAdmissionV1::BootstrapPending => {
+            outbe_consensus::validators::LocalTeeRuntimeAdmissionV1::Ready { .. } => Ok(()),
+            outbe_consensus::validators::LocalTeeRuntimeAdmissionV1::BootstrapPending => {
                 Err(LaunchError::TeeAdmissionAnchorBootstrapPending.into())
             }
-            outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Rejected(reason) => {
+            outbe_consensus::validators::LocalTeeRuntimeAdmissionV1::Rejected(reason) => {
                 Err(LaunchError::TeeAdmissionAnchorRejected {
                     reason: local_tee_rejection_message(reason),
                 }
@@ -85,7 +85,7 @@ impl TeeLeaseGuardGateV1 {
     pub(crate) fn validate_and_arm(
         &mut self,
         observed_hash: alloy_primitives::B256,
-        admission: outbe_engine::validators::LocalTeeRuntimeAdmissionV1,
+        admission: outbe_consensus::validators::LocalTeeRuntimeAdmissionV1,
     ) -> eyre::Result<()> {
         let Self::Pending(anchor) = *self else {
             return Ok(());
@@ -218,7 +218,7 @@ pub(crate) fn validator_admission_anchor_from_durable_v1(
     durable: outbe_tee::FinalizedJoinAdmissionAnchorV1,
     chain_id: u64,
     genesis_hash: alloy_primitives::B256,
-    identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+    identity: outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
 ) -> eyre::Result<LocalTeeAdmissionAnchorV1> {
     use outbe_primitives::tee_attestation_v1::NodeIdV1;
 
@@ -248,9 +248,9 @@ pub(crate) fn validator_admission_anchor_from_durable_v1(
 }
 
 fn local_tee_rejection_message(
-    rejection: outbe_engine::validators::LocalTeeRuntimeRejectionV1,
+    rejection: outbe_consensus::validators::LocalTeeRuntimeRejectionV1,
 ) -> String {
-    use outbe_engine::validators::LocalTeeRuntimeRejectionV1;
+    use outbe_consensus::validators::LocalTeeRuntimeRejectionV1;
 
     match rejection {
         LocalTeeRuntimeRejectionV1::MissingBinding => {
@@ -278,22 +278,22 @@ fn local_tee_rejection_message(
 }
 
 pub(crate) fn tee_lease_admission_rejection(
-    admission: outbe_engine::validators::LocalTeeRuntimeAdmissionV1,
+    admission: outbe_consensus::validators::LocalTeeRuntimeAdmissionV1,
 ) -> Option<String> {
     match admission {
-        outbe_engine::validators::LocalTeeRuntimeAdmissionV1::BootstrapPending
-        | outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready { .. } => None,
-        outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Rejected(reason) => {
+        outbe_consensus::validators::LocalTeeRuntimeAdmissionV1::BootstrapPending
+        | outbe_consensus::validators::LocalTeeRuntimeAdmissionV1::Ready { .. } => None,
+        outbe_consensus::validators::LocalTeeRuntimeAdmissionV1::Rejected(reason) => {
             Some(local_tee_rejection_message(reason))
         }
     }
 }
 
 pub(crate) fn validator_recovery_startup_admission_rejection(
-    admission: outbe_engine::validators::LocalTeeRuntimeAdmissionV1,
+    admission: outbe_consensus::validators::LocalTeeRuntimeAdmissionV1,
 ) -> Option<String> {
     match admission {
-        outbe_engine::validators::LocalTeeRuntimeAdmissionV1::BootstrapPending => Some(
+        outbe_consensus::validators::LocalTeeRuntimeAdmissionV1::BootstrapPending => Some(
             "finalized TEE admission is bootstrap-pending; refusing validator authority startup"
                 .to_owned(),
         ),
@@ -305,11 +305,11 @@ fn read_local_tee_admission_at_height<P>(
     protocol: &dyn EngineProtocolState,
     provider: &P,
     chain: RegistryChainIdentity,
-    identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+    identity: outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
     block_number: u64,
 ) -> eyre::Result<(
     alloy_primitives::B256,
-    outbe_engine::validators::LocalTeeRuntimeAdmissionV1,
+    outbe_consensus::validators::LocalTeeRuntimeAdmissionV1,
 )>
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
@@ -336,9 +336,9 @@ fn validate_local_anchor_at_height<P>(
     protocol: &dyn EngineProtocolState,
     provider: &P,
     chain: RegistryChainIdentity,
-    fullnode_identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+    fullnode_identity: outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
     anchor: LocalTeeAdmissionAnchorV1,
-) -> eyre::Result<outbe_engine::validators::LocalTeeRuntimeAdmissionV1>
+) -> eyre::Result<outbe_consensus::validators::LocalTeeRuntimeAdmissionV1>
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
@@ -401,9 +401,9 @@ fn read_local_tee_admission_at_block<P>(
     protocol: &dyn EngineProtocolState,
     provider: &P,
     chain: RegistryChainIdentity,
-    identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+    identity: outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
     (finalized, timestamp): (alloy_eips::BlockNumHash, u64),
-) -> eyre::Result<outbe_engine::validators::LocalTeeRuntimeAdmissionV1>
+) -> eyre::Result<outbe_consensus::validators::LocalTeeRuntimeAdmissionV1>
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
@@ -416,7 +416,7 @@ where
     let state = provider
         .state_by_block_hash(finalized.hash)
         .wrap_err("read exact state for TEE lease admission")?;
-    outbe_engine::validators::read_local_tee_runtime_admission_from_state(
+    outbe_consensus::validators::read_local_tee_runtime_admission_from_state(
         protocol,
         &state,
         outbe_primitives::storage::readonly::ReadOnlyBlockContext::try_new(
@@ -435,8 +435,8 @@ pub(crate) fn read_finalized_local_tee_admission<P>(
     provider: &P,
     chain_id: u64,
     genesis_hash: alloy_primitives::B256,
-    identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
-) -> eyre::Result<Option<outbe_engine::validators::LocalTeeRuntimeAdmissionV1>>
+    identity: outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
+) -> eyre::Result<Option<outbe_consensus::validators::LocalTeeRuntimeAdmissionV1>>
 where
     P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
@@ -462,9 +462,9 @@ pub(crate) fn read_gated_finalized_local_tee_admission<P>(
     protocol: &dyn EngineProtocolState,
     provider: &P,
     chain: RegistryChainIdentity,
-    identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+    identity: outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
     anchors: &mut TeeLeaseGuardAnchorsV1,
-) -> eyre::Result<Option<outbe_engine::validators::LocalTeeRuntimeAdmissionV1>>
+) -> eyre::Result<Option<outbe_consensus::validators::LocalTeeRuntimeAdmissionV1>>
 where
     P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
@@ -483,15 +483,15 @@ where
 pub(crate) fn read_gated_finalized_local_tee_admission_with_resident_offer<P, F>(
     (protocol, provider): (&dyn EngineProtocolState, &P),
     chain: RegistryChainIdentity,
-    identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+    identity: outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
     anchors: &mut TeeLeaseGuardAnchorsV1,
     read_resident_offer: F,
-) -> eyre::Result<Option<outbe_engine::validators::LocalTeeRuntimeAdmissionV1>>
+) -> eyre::Result<Option<outbe_consensus::validators::LocalTeeRuntimeAdmissionV1>>
 where
     P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
     F: FnOnce() -> eyre::Result<Option<alloy_primitives::B256>>,
 {
-    use outbe_engine::validators::LocalTeeRuntimeAdmissionV1;
+    use outbe_consensus::validators::LocalTeeRuntimeAdmissionV1;
 
     let durable = anchors.durable;
     let gate = &mut anchors.gate;
@@ -509,7 +509,7 @@ where
             .transpose();
     };
 
-    let fullnode_identity = outbe_engine::validators::LocalTeeRuntimeIdentityV1 {
+    let fullnode_identity = outbe_consensus::validators::LocalTeeRuntimeIdentityV1 {
         validator: None,
         ..identity
     };
@@ -555,17 +555,17 @@ fn try_arm_validator_tee_gate<P, F>(
     (protocol, provider): (&dyn EngineProtocolState, &P),
     finalized: alloy_eips::BlockNumHash,
     (fullnode_now, validator_now): (
-        outbe_engine::validators::LocalTeeRuntimeAdmissionV1,
-        outbe_engine::validators::LocalTeeRuntimeAdmissionV1,
+        outbe_consensus::validators::LocalTeeRuntimeAdmissionV1,
+        outbe_consensus::validators::LocalTeeRuntimeAdmissionV1,
     ),
     (gate, anchor): (&mut TeeLeaseGuardGateV1, LocalTeeAdmissionAnchorV1),
     read_resident_offer: F,
-) -> eyre::Result<outbe_engine::validators::LocalTeeRuntimeAdmissionV1>
+) -> eyre::Result<outbe_consensus::validators::LocalTeeRuntimeAdmissionV1>
 where
     P: StateProviderFactory,
     F: FnOnce() -> eyre::Result<Option<alloy_primitives::B256>>,
 {
-    use outbe_engine::validators::{LocalTeeRuntimeAdmissionV1, LocalTeeRuntimeRejectionV1};
+    use outbe_consensus::validators::{LocalTeeRuntimeAdmissionV1, LocalTeeRuntimeRejectionV1};
 
     match validator_now {
         LocalTeeRuntimeAdmissionV1::BootstrapPending
@@ -574,7 +574,7 @@ where
         }
         LocalTeeRuntimeAdmissionV1::Rejected(_) => Ok(validator_now),
         LocalTeeRuntimeAdmissionV1::Ready { .. } => {
-            let on_chain_offer = outbe_engine::validators::read_tee_offer_public_at_block(
+            let on_chain_offer = outbe_consensus::validators::read_tee_offer_public_at_block(
                 protocol,
                 provider,
                 finalized.hash,
@@ -604,7 +604,7 @@ where
 
 pub(crate) async fn require_upstream_fullnode_tee_admission(
     upstream: &str,
-    identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+    identity: outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
 ) -> eyre::Result<LocalTeeAdmissionAnchorV1> {
     let rpc = outbe_operator::rpc::HttpRenewalRpc::new(upstream)?;
     let view = read_finalized_registry_view_v1(
@@ -634,7 +634,7 @@ pub(crate) async fn require_upstream_fullnode_tee_admission(
 
 pub(crate) struct TeeLeaseGuardConfigV1 {
     pub(crate) chain: RegistryChainIdentity,
-    pub(crate) identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+    pub(crate) identity: outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
     /// Initial gate and the durable join anchor that must also validate when
     /// the gate arms.
     pub(crate) anchors: TeeLeaseGuardAnchorsV1,

@@ -2,7 +2,7 @@ use super::admission_provider::*;
 
 #[test]
 fn validator_gate_stays_pending_after_tee_join_until_validator_binding_and_offer_key_exist() {
-    use outbe_engine::validators::LocalTeeRuntimeAdmissionV1;
+    use outbe_consensus::validators::LocalTeeRuntimeAdmissionV1;
 
     let valid_until = 1_800_001_000;
     let offer_key = alloy_primitives::B256::repeat_byte(0xAB);
@@ -108,7 +108,7 @@ fn validator_gate_stays_pending_after_tee_join_until_validator_binding_and_offer
 
 #[tokio::test]
 async fn validator_gate_never_arms_or_signals_armed_on_terminal_rejection_or_offer_mismatch() {
-    use outbe_engine::validators::{LocalTeeRuntimeAdmissionV1, LocalTeeRuntimeRejectionV1};
+    use outbe_consensus::validators::{LocalTeeRuntimeAdmissionV1, LocalTeeRuntimeRejectionV1};
 
     let valid_until = 1_800_001_000;
     let offer_key = alloy_primitives::B256::repeat_byte(0xCD);

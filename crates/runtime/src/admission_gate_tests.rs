@@ -17,7 +17,7 @@ async fn pending_lease_guard_cancellation_is_a_clean_stop() {
                     chain_id: 676,
                     genesis_hash: alloy_primitives::B256::repeat_byte(1),
                 },
-                identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1 {
+                identity: outbe_consensus::validators::LocalTeeRuntimeIdentityV1 {
                     reth_p2p_public: [2; 33],
                     expected_enclave_id: None,
                     validator: None,
@@ -57,7 +57,7 @@ fn full_node_lease_guard_arms_only_on_exact_ready_anchor() {
 
     gate.validate_and_arm(
         anchor.finalized_hash,
-        outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready {
+        outbe_consensus::validators::LocalTeeRuntimeAdmissionV1::Ready {
             valid_until: 1_800_000_000,
         },
     )
@@ -75,7 +75,7 @@ fn full_node_lease_guard_fails_closed_on_anchor_hash_mismatch() {
     let error = gate
         .validate_and_arm(
             alloy_primitives::B256::repeat_byte(0x78),
-            outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready {
+            outbe_consensus::validators::LocalTeeRuntimeAdmissionV1::Ready {
                 valid_until: 1_800_000_000,
             },
         )
@@ -87,7 +87,7 @@ fn full_node_lease_guard_fails_closed_on_anchor_hash_mismatch() {
 
 #[test]
 fn full_node_lease_guard_rejects_every_non_ready_anchor_verdict() {
-    use outbe_engine::validators::{LocalTeeRuntimeAdmissionV1, LocalTeeRuntimeRejectionV1};
+    use outbe_consensus::validators::{LocalTeeRuntimeAdmissionV1, LocalTeeRuntimeRejectionV1};
 
     for admission in [
         LocalTeeRuntimeAdmissionV1::BootstrapPending,
@@ -108,7 +108,7 @@ fn full_node_lease_guard_rejects_every_non_ready_anchor_verdict() {
 
 #[test]
 fn armed_gate_has_no_anchor_and_later_rejections_remain_terminal() {
-    use outbe_engine::validators::{LocalTeeRuntimeAdmissionV1, LocalTeeRuntimeRejectionV1};
+    use outbe_consensus::validators::{LocalTeeRuntimeAdmissionV1, LocalTeeRuntimeRejectionV1};
 
     let gate = super::TeeLeaseGuardGateV1::Armed;
     assert!(gate.is_armed());
@@ -123,7 +123,7 @@ fn armed_gate_has_no_anchor_and_later_rejections_remain_terminal() {
 
 #[test]
 fn validator_current_bootstrap_pending_admission_is_terminal() {
-    use outbe_engine::validators::LocalTeeRuntimeAdmissionV1;
+    use outbe_consensus::validators::LocalTeeRuntimeAdmissionV1;
 
     let reason = super::validator_recovery_startup_admission_rejection(
         LocalTeeRuntimeAdmissionV1::BootstrapPending,
@@ -139,7 +139,7 @@ fn validator_current_bootstrap_pending_admission_is_terminal() {
 
 #[test]
 fn full_node_restart_revalidates_the_new_upstream_anchor() {
-    use outbe_engine::validators::LocalTeeRuntimeAdmissionV1;
+    use outbe_consensus::validators::LocalTeeRuntimeAdmissionV1;
 
     let old_anchor = full_node_admission_anchor();
     let mut before_restart = super::TeeLeaseGuardGateV1::Pending(old_anchor);
@@ -207,7 +207,7 @@ fn validator_below_durable_join_anchor_without_upstream_requires_upstream_bootst
     recovery
         .validate_and_arm(
             anchor.finalized_hash,
-            outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready { valid_until: 200 },
+            outbe_consensus::validators::LocalTeeRuntimeAdmissionV1::Ready { valid_until: 200 },
         )
         .unwrap();
     super::require_validator_tee_recovery_complete_v1(true, false, recovery, data_dir)
@@ -216,7 +216,7 @@ fn validator_below_durable_join_anchor_without_upstream_requires_upstream_bootst
 
 #[test]
 fn three_state_gate_arms_only_from_a_validated_pending_anchor() {
-    use outbe_engine::validators::LocalTeeRuntimeAdmissionV1;
+    use outbe_consensus::validators::LocalTeeRuntimeAdmissionV1;
 
     let mut awaiting = super::TeeLeaseGuardGateV1::AwaitingAnchor;
     assert!(!awaiting.is_armed());
@@ -402,7 +402,7 @@ fn durable_validator_anchor_must_match_the_running_chain_node_and_enclave() {
         finalized_state_root: alloy_primitives::B256::repeat_byte(0x46),
         finalized_consensus_timestamp: 19_000,
     };
-    let identity = outbe_engine::validators::LocalTeeRuntimeIdentityV1 {
+    let identity = outbe_consensus::validators::LocalTeeRuntimeIdentityV1 {
         reth_p2p_public,
         expected_enclave_id: Some(enclave_id),
         validator: Some(alloy_primitives::Address::repeat_byte(0x47)),
@@ -422,7 +422,7 @@ fn durable_validator_anchor_must_match_the_running_chain_node_and_enclave() {
         }
     );
 
-    let wrong_enclave = outbe_engine::validators::LocalTeeRuntimeIdentityV1 {
+    let wrong_enclave = outbe_consensus::validators::LocalTeeRuntimeIdentityV1 {
         expected_enclave_id: Some(alloy_primitives::B256::repeat_byte(0x48)),
         ..identity
     };

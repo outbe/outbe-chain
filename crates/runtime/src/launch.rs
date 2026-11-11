@@ -251,11 +251,6 @@ where
             },
         )));
 
-        let finalized_execution_barrier: Arc<dyn FinalizedExecutionBarrier> =
-            Arc::new(RethFinalizationBarrier::new(Arc::new(
-                RethDurableExecutionState::new(node.provider.clone()),
-            )));
-
         outbe_consensus::validators::check_binary_version_compatibility(
             runtime_for_launcher.as_ref(),
             &node.provider,
@@ -271,7 +266,6 @@ where
             let _ = node_tx.send((
                 node,
                 args,
-                finalized_execution_barrier,
                 finalization_notify,
                 tee_lease_armed_rx,
                 radicle_consensus,

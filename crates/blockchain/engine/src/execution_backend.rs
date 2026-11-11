@@ -34,6 +34,28 @@ impl RethExecutionBackend {
     pub fn into_inner(self) -> OutbeFullNode {
         self.0
     }
+
+    /// Creates the Reth-backed finalization barrier for this execution node.
+    pub fn finalized_execution_barrier(
+        &self,
+    ) -> Arc<dyn outbe_consensus::executor::actor::FinalizedExecutionBarrier> {
+        Arc::new(crate::finalization::RethFinalizationBarrier::new(Arc::new(
+            crate::finalization::RethDurableExecutionState::new(self.0.provider.clone()),
+        )))
+    }
+
+    /// Bundles the execution-side consensus services with this node's finalization barrier.
+    pub fn execution_services(
+        &self,
+        finalization_notify: Arc<tokio::sync::Notify>,
+        tee_lease_armed_rx: tokio::sync::watch::Receiver<bool>,
+    ) -> outbe_consensus::stack::ConsensusExecutionServices {
+        outbe_consensus::stack::ConsensusExecutionServices {
+            finalized_execution_barrier: self.finalized_execution_barrier(),
+            finalization_notify,
+            tee_lease_armed_rx,
+        }
+    }
 }
 
 impl From<OutbeFullNode> for RethExecutionBackend {
@@ -138,7 +160,7 @@ pub fn run_consensus_with_execution<E>(
     args: outbe_consensus::args::ConsensusArgs,
     node: impl Into<RethExecutionBackend>,
     bridge: outbe_primitives::consensus::ConsensusExecutionBridge,
-    services: outbe_consensus::stack::ConsensusStackServices,
+    mut services: outbe_consensus::stack::ConsensusStackServices,
 ) -> impl Future<Output = eyre::Result<()>> + Send
 where
     E: BufferPooler
@@ -153,5 +175,7 @@ where
         + Sync
         + 'static,
 {
-    outbe_consensus::stack::run_consensus_stack(ctx, args, node.into(), bridge, services)
+    let backend = node.into();
+    services.finalized_execution_barrier = backend.finalized_execution_barrier();
+    outbe_consensus::stack::run_consensus_stack(ctx, args, backend, bridge, services)
 }

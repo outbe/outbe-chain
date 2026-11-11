@@ -191,7 +191,7 @@ pub(crate) fn build_tee_admission_mock_provider(
 ) -> (
     FinalizedMockProvider,
     outbe_execution::tee_remote_session::RegistryChainIdentity,
-    outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+    outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
     Vec<(u64, alloy_primitives::B256)>,
 ) {
     use alloy_consensus::Header;
@@ -344,7 +344,7 @@ pub(crate) fn build_tee_admission_mock_provider(
             chain_id,
             genesis_hash,
         },
-        outbe_engine::validators::LocalTeeRuntimeIdentityV1 {
+        outbe_consensus::validators::LocalTeeRuntimeIdentityV1 {
             reth_p2p_public,
             expected_enclave_id: Some(enclave_id),
             validator: Some(validator),

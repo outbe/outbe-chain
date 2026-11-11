@@ -3,7 +3,6 @@ use super::*;
 pub(crate) type ConsensusLaunch = (
     OutbeFullNode,
     ConsensusArgs,
-    Arc<dyn FinalizedExecutionBarrier>,
     Arc<tokio::sync::Notify>,
     tokio::sync::watch::Receiver<bool>,
     Option<(
@@ -26,7 +25,6 @@ pub(crate) fn run(
     let (
         node,
         mut args,
-        finalized_execution_barrier,
         finalization_notify,
         tee_lease_armed_rx,
         radicle,
@@ -123,17 +121,16 @@ pub(crate) fn run(
                 let (follower_drain, follower_shutdown) =
                     outbe_consensus::follower_shutdown::follower_drain_pair();
                 let mut stack_handle = ctx.child("consensus_stack").spawn(move |stack_ctx| {
+                    let backend = RethExecutionBackend::new(node);
+                    let execution_services =
+                        backend.execution_services(finalization_notify, tee_lease_armed_rx);
                     run_consensus_with_execution(
                         stack_ctx,
                         args,
-                        RethExecutionBackend::new(node),
+                        backend,
                         bridge_for_consensus,
                         outbe_consensus::stack::ConsensusStackServices::new(
-                            outbe_consensus::stack::ConsensusExecutionServices {
-                                finalized_execution_barrier,
-                                finalization_notify,
-                                tee_lease_armed_rx,
-                            },
+                            execution_services,
                             outbe_consensus::stack::ConsensusShutdownServices {
                                 application_drain: stack_application_drain,
                                 follower_shutdown: Some(follower_shutdown),

@@ -246,8 +246,8 @@ fn test_pending_dkg_boundary_snapshot_round_trips_and_rejects_corruption() {
 
     let header_len = 8 + 8 + 4;
     let short = decode_pending_dkg_boundary_snapshot(&encoded[..header_len - 1]).unwrap_err();
-    match short.downcast_ref::<crate::errors::StackDkgError>() {
-        Some(crate::errors::StackDkgError::PendingBoundarySnapshotTooShort {
+    match short.downcast_ref::<outbe_consensus::errors::StackDkgError>() {
+        Some(outbe_consensus::errors::StackDkgError::PendingBoundarySnapshotTooShort {
             actual,
             expected,
         }) => {
@@ -260,8 +260,8 @@ fn test_pending_dkg_boundary_snapshot_round_trips_and_rejects_corruption() {
     let mut truncated = encoded.clone();
     truncated.pop();
     let truncated = decode_pending_dkg_boundary_snapshot(&truncated).unwrap_err();
-    match truncated.downcast_ref::<crate::errors::StackDkgError>() {
-        Some(crate::errors::StackDkgError::PendingBoundarySnapshotLengthMismatch {
+    match truncated.downcast_ref::<outbe_consensus::errors::StackDkgError>() {
+        Some(outbe_consensus::errors::StackDkgError::PendingBoundarySnapshotLengthMismatch {
             expected,
             actual,
         }) => {
@@ -274,8 +274,8 @@ fn test_pending_dkg_boundary_snapshot_round_trips_and_rejects_corruption() {
     let mut extended = encoded;
     extended.push(0xAB);
     let extended = decode_pending_dkg_boundary_snapshot(&extended).unwrap_err();
-    match extended.downcast_ref::<crate::errors::StackDkgError>() {
-        Some(crate::errors::StackDkgError::PendingBoundarySnapshotLengthMismatch {
+    match extended.downcast_ref::<outbe_consensus::errors::StackDkgError>() {
+        Some(outbe_consensus::errors::StackDkgError::PendingBoundarySnapshotLengthMismatch {
             expected,
             actual,
         }) => {

@@ -51,9 +51,7 @@ pub(crate) use configuration::{
 pub(crate) use eyre::WrapErr;
 pub(crate) use identity::load_reth_p2p_node_host_signer;
 pub(crate) use outbe_consensus::args::ConsensusArgs;
-pub(crate) use outbe_consensus::executor::actor::FinalizedExecutionBarrier;
 pub(crate) use outbe_engine::bridge::ConsensusExecutionBridge;
-pub(crate) use outbe_engine::finalization::{RethDurableExecutionState, RethFinalizationBarrier};
 pub(crate) use outbe_engine::{run_consensus_with_execution, RethExecutionBackend};
 pub(crate) use outbe_evm::OutbeEvmSigner;
 pub(crate) use outbe_execution::{

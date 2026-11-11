@@ -396,12 +396,13 @@ fn closed<T>() -> outbe_primitives::error::Result<T> {
     ))
 }
 
-impl crate::protocol_state::EngineProtocolState for ClosedEngineState {
+impl outbe_consensus::protocol_state::EngineProtocolState for ClosedEngineState {
     fn validator_rows(
         &self,
         _: outbe_primitives::storage::StorageHandle<'_>,
-        _: crate::protocol_state::EngineValidatorQuery,
-    ) -> outbe_primitives::error::Result<Vec<crate::protocol_state::EngineValidatorRow>> {
+        _: outbe_consensus::protocol_state::EngineValidatorQuery,
+    ) -> outbe_primitives::error::Result<Vec<outbe_consensus::protocol_state::EngineValidatorRow>>
+    {
         closed()
     }
 
@@ -485,7 +486,7 @@ impl crate::protocol_state::EngineProtocolState for ClosedEngineState {
     fn check_binary_compatibility(
         &self,
         _: outbe_primitives::storage::StorageHandle<'_>,
-    ) -> Result<(), crate::protocol_state::EngineProtocolError> {
-        Err(crate::protocol_state::EngineProtocolError::NotInstalled)
+    ) -> Result<(), outbe_consensus::protocol_state::EngineProtocolError> {
+        Err(outbe_consensus::protocol_state::EngineProtocolError::NotInstalled)
     }
 }
