@@ -2,31 +2,27 @@ use std::time::{Duration, Instant};
 
 use eyre::{bail, ensure, Result};
 
-use crate::{
-    support::progress::Progress,
-    validator::rpc::{Block, RpcClient},
-};
+use crate::{support::progress::Progress, validator::rpc::RpcClient};
 
 const SYNC_POLL_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Default)]
-struct CatchupEta {
+pub(super) struct CatchupEta {
     baseline: Option<(u64, Instant)>,
 }
 
 impl CatchupEta {
-    fn seconds_remaining(&mut self, remaining: u64) -> Option<u64> {
+    pub(super) fn seconds_remaining(&mut self, remaining: u64) -> Option<u64> {
         let now = Instant::now();
-        let Some((baseline, started)) = self.baseline else {
+        let Some((baseline, started)) = self.baseline.as_mut() else {
             self.baseline = Some((remaining, now));
             return None;
         };
-        if remaining >= baseline {
-            self.baseline = Some((remaining, now));
-            return None;
+        if remaining > *baseline {
+            *baseline = remaining;
         }
         let elapsed = started.elapsed().as_secs_f64();
-        let caught_up = (baseline - remaining) as f64;
+        let caught_up = baseline.saturating_sub(remaining) as f64;
         (elapsed >= 1.0 && caught_up > 0.0)
             .then(|| (remaining as f64 * elapsed / caught_up).round() as u64)
     }
@@ -149,22 +145,10 @@ pub async fn wait_transaction_finalized(
     }
 }
 
-pub async fn estimate_block_seconds(remote: &RpcClient, head: &Block) -> Option<f64> {
-    let window = head.number.min(120);
-    if window == 0 {
-        return None;
-    }
-    let previous = remote.block_number(head.number - window).await.ok()?;
-    let elapsed = head.timestamp.checked_sub(previous.timestamp)?;
-    (elapsed > 0).then_some(elapsed as f64 / window as f64)
-}
-
-pub fn eta_suffix(blocks: u64, block_seconds: Option<f64>) -> String {
-    let Some(block_seconds) = block_seconds else {
-        return String::new();
-    };
-    let seconds = (blocks as f64 * block_seconds).round() as u64;
-    format!(", ~{}", human_duration(seconds))
+pub(super) fn eta_suffix(seconds: Option<u64>) -> String {
+    seconds.map_or_else(String::new, |seconds| {
+        format!(", ~{}", human_duration(seconds))
+    })
 }
 
 fn eta_seconds_field(seconds: Option<u64>) -> String {

@@ -12,7 +12,7 @@ use crate::{
         journal::Journal,
         rpc::{Block, ConsensusStatus, EpochInfo, RpcClient, ValidatorRecord},
         validator_address,
-        wait::{estimate_block_seconds, eta_suffix, yes_no},
+        wait::{eta_suffix, yes_no, CatchupEta},
     },
 };
 
@@ -33,7 +33,8 @@ struct StatusSnapshot<'a> {
     validator: Option<&'a ValidatorRecord>,
     local_epoch: Option<&'a EpochInfo>,
     remote_epoch: Option<&'a EpochInfo>,
-    block_seconds: Option<f64>,
+    sync_eta_seconds: Option<u64>,
+    dkg_eta_seconds: Option<u64>,
 }
 
 pub async fn show(watch: bool) -> Result<()> {
@@ -43,7 +44,10 @@ pub async fn show(watch: bool) -> Result<()> {
     let remote = RpcClient::new(journal.config.network.certified_rpc.clone())?;
     let validator = validator_address(&Path::new(ROOT).join("keys/evm-key.hex"))?;
     if !watch {
-        println!("{}", status_line(&local, &remote, validator).await);
+        println!(
+            "{}",
+            status_line(&local, &remote, validator, None, None).await
+        );
         return Ok(());
     }
 
@@ -51,10 +55,18 @@ pub async fn show(watch: bool) -> Result<()> {
     tokio::pin!(interrupt);
     let display = WatchDisplay::new();
     let mut last_status = None;
+    let mut sync_eta = CatchupEta::default();
+    let mut dkg_eta = CatchupEta::default();
     loop {
         let (line, refresh_delay) = match tokio::time::timeout(
             STATUS_POLL_TIMEOUT,
-            status_line(&local, &remote, validator),
+            status_line(
+                &local,
+                &remote,
+                validator,
+                Some(&mut sync_eta),
+                Some(&mut dkg_eta),
+            ),
         )
         .await
         {
@@ -85,7 +97,13 @@ pub async fn show(watch: bool) -> Result<()> {
     }
 }
 
-async fn status_line(local: &RpcClient, remote: &RpcClient, validator: Address) -> String {
+async fn status_line(
+    local: &RpcClient,
+    remote: &RpcClient,
+    validator: Address,
+    sync_eta: Option<&mut CatchupEta>,
+    dkg_eta: Option<&mut CatchupEta>,
+) -> String {
     let (remote_block, local_block, execution_peers, consensus, record, local_epoch, remote_epoch) = tokio::join!(
         remote.finalized_block(),
         local.finalized_block(),
@@ -96,26 +114,46 @@ async fn status_line(local: &RpcClient, remote: &RpcClient, validator: Address) 
         remote.epoch_info(),
     );
     let remote_block = remote_block.ok();
-    let block_seconds = match remote_block.as_ref() {
-        Some(block) => estimate_block_seconds(remote, block).await,
-        None => None,
-    };
+    let local_block = local_block.ok();
+    let consensus = consensus.ok();
+    let sync_eta_seconds = sync_eta.and_then(|eta| {
+        let remaining = remote_block
+            .as_ref()?
+            .number
+            .saturating_sub(local_block.as_ref()?.number);
+        eta.seconds_remaining(remaining)
+    });
+    let dkg_eta_seconds = dkg_eta.and_then(|eta| {
+        let status = consensus.as_ref()?;
+        if status.mode == "signer" || status.next_planned_activation_height == 0 {
+            return None;
+        }
+        let finalized = remote_block
+            .as_ref()
+            .map_or(status.last_finalized_block, |block| block.number);
+        eta.seconds_remaining(
+            status
+                .next_planned_activation_height
+                .saturating_sub(finalized),
+        )
+    });
     format_status(StatusSnapshot {
-        local: local_block.as_ref().ok(),
+        local: local_block.as_ref(),
         remote: remote_block.as_ref(),
         execution_peers: execution_peers.ok(),
-        consensus: consensus.as_ref().ok(),
+        consensus: consensus.as_ref(),
         validator: record.as_ref().ok(),
         local_epoch: local_epoch.as_ref().ok(),
         remote_epoch: remote_epoch.as_ref().ok(),
-        block_seconds,
+        sync_eta_seconds,
+        dkg_eta_seconds,
     })
 }
 
 fn format_status(snapshot: StatusSnapshot<'_>) -> String {
     let fullnode = process::systemctl_is_active(FULL_NODE);
     let validator_service = process::systemctl_is_active(VALIDATOR_SERVICE);
-    let chain = chain_status(snapshot.local, snapshot.remote, snapshot.block_seconds);
+    let chain = chain_status(snapshot.local, snapshot.remote, snapshot.sync_eta_seconds);
 
     match (fullnode, validator_service) {
         (true, true) => format!(
@@ -137,7 +175,7 @@ fn format_status(snapshot: StatusSnapshot<'_>) -> String {
             let consensus = validator_consensus_status(
                 snapshot.consensus,
                 snapshot.remote,
-                snapshot.block_seconds,
+                snapshot.dkg_eta_seconds,
             );
             let services = validator_services_status();
             let bls = snapshot
@@ -153,7 +191,7 @@ fn format_status(snapshot: StatusSnapshot<'_>) -> String {
     }
 }
 
-fn chain_status(local: Option<&Block>, remote: Option<&Block>, seconds: Option<f64>) -> String {
+fn chain_status(local: Option<&Block>, remote: Option<&Block>, eta_seconds: Option<u64>) -> String {
     let heights = format!(
         "local {} | remote {}",
         local.map_or_else(|| "?".into(), |block| block.number.to_string()),
@@ -168,7 +206,7 @@ fn chain_status(local: Option<&Block>, remote: Option<&Block>, seconds: Option<f
     } else {
         format!(
             "{heights} | {remaining} blocks behind{}",
-            eta_suffix(remaining, seconds)
+            eta_suffix(eta_seconds)
         )
     }
 }
@@ -194,7 +232,7 @@ fn epoch_status(local: Option<&EpochInfo>, remote: Option<&EpochInfo>) -> String
 fn validator_consensus_status(
     status: Option<&ConsensusStatus>,
     remote: Option<&Block>,
-    seconds: Option<f64>,
+    eta_seconds: Option<u64>,
 ) -> String {
     let Some(status) = status else {
         return "Consensus   unavailable".to_owned();
@@ -213,7 +251,7 @@ fn validator_consensus_status(
         value.push_str(&format!(
             "\nDKG         activation {} | {remaining} blocks remaining{}",
             status.next_planned_activation_height,
-            eta_suffix(remaining, seconds)
+            eta_suffix(eta_seconds)
         ));
     }
     value
