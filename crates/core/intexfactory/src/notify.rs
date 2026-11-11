@@ -87,7 +87,7 @@ fn run_notice_unit(
     }
 }
 
-pub fn send_call_notices(ctx: &BlockRuntimeContext) -> Result<()> {
+pub fn send_called_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     let factory = IntexFactoryContract::new(ctx.storage.clone());
     let head = factory.notify_head.read()?;
     let tail = factory.notify_tail.read()?;

@@ -711,7 +711,7 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
                 .utc_day_vwap_last_finalized
                 .write(expires_day)
                 .unwrap();
-            // Seed IntexFactory call notice queue for OSIX (send_call_notices).
+            // Seed IntexFactory call notice queue for OSIX (send_called_notices).
             let intex_factory = IntexFactoryContract::new(storage.clone());
             intex_factory.notify_head.write(0).unwrap();
             intex_factory.notify_tail.write(1).unwrap();
@@ -865,7 +865,7 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
             assert_eq!(
                 intex_factory.notify_tail.read().unwrap(),
                 0,
-                "OSIX (IntexFactory) must run send_call_notices and drain queued notices"
+                "OSIX (IntexFactory) must run send_called_notices and drain queued notices"
             );
             let credis = CredisContract::new(storage.clone());
             assert_eq!(
