@@ -6,7 +6,6 @@ use outbe_primitives::time::WorldwideDay as WorldwideDayKey;
 /// Lifecycle state of an `EmissionDay` (OIP-00348).
 pub mod emission_day_state {
     pub const PENDING: u8 = 0;
-    pub const SEALED: u8 = 1;
     pub const PROCESSING: u8 = 2;
     pub const COMPLETED: u8 = 3;
 }

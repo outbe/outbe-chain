@@ -184,14 +184,14 @@ pub fn check_conservation(record: &EmissionDay) -> Result<()> {
     Ok(())
 }
 
-/// Records the daily emission allocation for `day` and moves `state` from `Pending`/`Sealed` to `Processing`.
+/// Records the daily emission allocation for `day` and moves `state` from `Pending` to `Processing`.
 pub fn record_day_allocation(
     storage: StorageHandle<'_>,
     day: u32,
     amounts: DayAllocationAmounts,
 ) -> Result<EmissionDay> {
     let mut record = ensure_emission_day_shell(storage.clone(), day)?;
-    if record.state != emission_day_state::PENDING && record.state != emission_day_state::SEALED {
+    if record.state != emission_day_state::PENDING {
         return Err(EmissionError::DayAlreadyAllocated {
             day,
             state: record.state,
@@ -220,7 +220,7 @@ pub fn record_failed_day_allocation(
     emission_limit: U256,
 ) -> Result<EmissionDay> {
     let mut record = ensure_emission_day_shell(storage.clone(), day)?;
-    if record.state != emission_day_state::PENDING && record.state != emission_day_state::SEALED {
+    if record.state != emission_day_state::PENDING {
         return Err(EmissionError::DayAlreadyAllocated {
             day,
             state: record.state,
@@ -567,6 +567,53 @@ mod tests {
     }
 
     #[test]
+    fn gap_ed10_day_emission_limit_states() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let storage = StorageHandle::new(&mut provider);
+        let amounts = DayAllocationAmounts {
+            emission_limit: U256::from(100u64),
+            metadosis_limit: U256::from(84u64),
+            validators: U256::from(4u64),
+            waa: U256::from(4u64),
+            sra: U256::from(4u64),
+            cca: U256::from(4u64),
+            promis_limit: U256::ZERO,
+        };
+
+        let day = 20261001;
+        let shell = ensure_emission_day_shell(storage.clone(), day).unwrap();
+        assert_eq!(shell.state, emission_day_state::PENDING);
+        let allocated = record_day_allocation(storage.clone(), day, amounts).unwrap();
+        assert_eq!(allocated.state, emission_day_state::PROCESSING);
+        record_metadosis_failed(storage.clone(), day).unwrap();
+        let completed = complete_emission_day(storage.clone(), day).unwrap();
+        assert_eq!(completed.state, emission_day_state::COMPLETED);
+
+        let failed_day = 20261002;
+        let failed =
+            record_failed_day_allocation(storage.clone(), failed_day, U256::from(100u64)).unwrap();
+        assert_eq!(failed.state, emission_day_state::COMPLETED);
+        assert_eq!(failed.promis_limit, 100);
+
+        let unknown_state = 20261003;
+        let mut record = EmissionDay::new_pending(unknown_state, WorldwideDay::new(0), 1);
+        record.state = 1;
+        put_emission_day_record(storage.clone(), &record).unwrap();
+        let expected = EmissionError::DayAlreadyAllocated {
+            day: unknown_state,
+            state: 1,
+        };
+        assert_emission_error(
+            record_day_allocation(storage.clone(), unknown_state, amounts).unwrap_err(),
+            expected,
+        );
+        assert_emission_error(
+            record_failed_day_allocation(storage, unknown_state, U256::from(100u64)).unwrap_err(),
+            expected,
+        );
+    }
+
+    #[test]
     fn reward_residue_moves_each_pool_before_or_after_metadosis() {
         for settle_metadosis_first in [false, true] {
             let mut provider = HashMapStorageProvider::new(1);
@@ -642,7 +689,6 @@ mod tests {
 
         for state in [
             emission_day_state::PENDING,
-            emission_day_state::SEALED,
             emission_day_state::COMPLETED,
             u8::MAX,
         ] {
