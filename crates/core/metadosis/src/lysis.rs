@@ -1,24 +1,16 @@
 //! Executes one sealed WorldwideDay linked to a due EmissionDay.
 
-use std::collections::{BTreeMap, BTreeSet};
-
 use outbe_emission::schema::metadosis_state;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
     time::WorldwideDay,
-    tribute_encryption::EncryptedTributeV2,
 };
 use outbe_promislimit::PromisLimitContract;
-use outbe_tee::{
-    lysis::{LysisOutcome, LysisRequest},
-    protocol::{FidelityCohortOp, FidelitySnapshotEntry, FidelitySnapshotRequest},
-};
 use outbe_tribute::TributeContract;
 
 use crate::{
-    constants::METADOSIS_FAILED_STEP_REVERTED,
-    lifecycle::{complete_emission_day, fail_emission_day},
+    lifecycle::complete_emission_day,
     limits::{apply_auction_brief, apply_lysis_limit, LysisLimitInput},
     precompile::IMetadosis,
     schema::{EmissionDay, MetadosisContract},
@@ -33,54 +25,6 @@ struct SettlementCompletion {
     total_nominal_minor: alloy_primitives::U256,
     used: alloy_primitives::U256,
     unused: alloy_primitives::U256,
-}
-
-fn validate_encrypted_tribute(
-    ctx: &BlockRuntimeContext<'_>,
-    owners: &mut BTreeSet<alloy_primitives::Address>,
-    encrypted: &EncryptedTributeV2,
-    emission_day: u32,
-) -> Result<()> {
-    let source = &encrypted.context;
-    let valid_source = source.chain_id == ctx.block.chain_id && encrypted.has_valid_encoding();
-    let series_id = outbe_primitives::series_id::SeriesId::for_pair(
-        emission_day,
-        source.issuance_currency,
-        source.reference_currency,
-    )
-    .map_err(|_| mismatch())?;
-    let unique_owner = owners.insert(source.owner)
-        && outbe_nod::api::get_item(
-            &ctx.storage,
-            outbe_common::nod_rules::derive_nod_id(series_id, source.owner),
-        )?
-        .is_none();
-    if valid_source && unique_owner {
-        Ok(())
-    } else {
-        Err(mismatch())
-    }
-}
-
-fn validate_day_records(
-    ctx: &BlockRuntimeContext<'_>,
-    tribute: &TributeContract<'_>,
-    day: WorldwideDay,
-    emission_day: u32,
-    expected_count: u32,
-) -> Result<Vec<EncryptedTributeV2>> {
-    let records = tribute.state_records_by_day(day)?;
-    if records.len() != expected_count as usize {
-        return Err(mismatch());
-    }
-    let mut owners = BTreeSet::new();
-    let mut tributes = Vec::with_capacity(records.len());
-    for record in records {
-        let encrypted: EncryptedTributeV2 = record.into();
-        validate_encrypted_tribute(ctx, &mut owners, &encrypted, emission_day)?;
-        tributes.push(encrypted);
-    }
-    Ok(tributes)
 }
 
 fn finalize_lysis_settlement(
@@ -184,126 +128,6 @@ fn execute_onchain_fractions(
     )
 }
 
-fn build_enclave_lysis_request(
-    ctx: &BlockRuntimeContext<'_>,
-    emission_day: &EmissionDay,
-    lysis_limit_minor: alloy_primitives::U256,
-    tributes: Vec<EncryptedTributeV2>,
-) -> Result<LysisRequest> {
-    let mut currencies = BTreeMap::new();
-    let mut fidelity = FidelitySnapshotRequest {
-        timestamp: ctx.block.timestamp,
-        first_qualified_start: 0,
-        entries: Vec::with_capacity(tributes.len()),
-    };
-    // Entry price uses the 24h UTC VWAP of `emission_day.day` (e.g. 14/10/2026),
-    // while tribute nominals and S-curve belong to `emission_day.wwd` (e.g. 20/09/2026).
-    for encrypted in &tributes {
-        let source = &encrypted.context;
-        let section = outbe_fidelity::api::cohort_section(
-            ctx.storage.clone(),
-            source.owner,
-            FidelityCohortOp::Probe,
-            ctx.block.timestamp,
-        )?;
-        if !fidelity.entries.is_empty()
-            && fidelity.first_qualified_start != section.first_qualified_start
-        {
-            return Err(mismatch());
-        }
-        fidelity.first_qualified_start = section.first_qualified_start;
-        fidelity.entries.push(FidelitySnapshotEntry {
-            owner: source.owner,
-            cohort_blob: section.current_blob,
-        });
-        if let std::collections::btree_map::Entry::Vacant(entry) =
-            currencies.entry(source.reference_currency)
-        {
-            entry.insert(outbe_oracle::api::get_utc_day_vwap_for_iso(
-                ctx.storage.clone(),
-                emission_day.day,
-                source.reference_currency,
-            )?);
-        }
-    }
-    Ok(LysisRequest {
-        chain_id: ctx.block.chain_id,
-        worldwide_day: emission_day.wwd,
-        emission_day: emission_day.day,
-        timestamp: ctx.block.timestamp,
-        lysis_limit_minor,
-        tributes,
-        fidelity,
-        entry_prices: currencies.into_iter().collect(),
-    })
-}
-
-fn consume_legacy_nods(
-    ctx: &BlockRuntimeContext<'_>,
-    tribute: &mut TributeContract<'_>,
-    day: WorldwideDay,
-    tribute_count: u32,
-    result: &outbe_tee::lysis::VerifiedLysisResult,
-) -> Result<outbe_tribute::runtime::RetirementOutcome> {
-    for nod in &result.nods {
-        outbe_nodfactory::api::issue_lysis_nod(&ctx.storage, nod)?;
-    }
-    let receipt = tribute.consume_and_retire_lysis_partition(
-        day,
-        tribute_count,
-        result.total_nominal_minor,
-    )?;
-    if receipt.source_generation == 0 && receipt.retired_generation == 1 {
-        Ok(receipt.retirement_outcome)
-    } else {
-        Err(mismatch())
-    }
-}
-
-fn execute_legacy_enclave(
-    metadosis: &mut MetadosisContract<'_>,
-    ctx: &BlockRuntimeContext<'_>,
-    emission_day: &EmissionDay,
-    calculation: MetadosisCalculation,
-) -> Result<()> {
-    let wwd = emission_day.wwd;
-    let (mut tribute, totals) = load_ready_tribute(ctx, wwd)?;
-    let tributes =
-        validate_day_records(ctx, &tribute, wwd, emission_day.day, totals.tribute_count)?;
-    let request =
-        build_enclave_lysis_request(ctx, emission_day, calculation.lysis_limit_minor, tributes)?;
-    let outcome = outbe_tee::lysis::execute(request)
-        .map_err(|_| PrecompileError::EnclaveUnavailable("on-chain Lysis request failed".into()))?;
-    let LysisOutcome::Completed(result) = outcome else {
-        return fail_emission_day(metadosis, emission_day.day, METADOSIS_FAILED_STEP_REVERTED);
-    };
-    if result.total_nominal_minor != totals.tribute_nominal_total_minor {
-        return Err(mismatch());
-    }
-    tribute.compute_and_record_metadosis_fractions(
-        wwd,
-        calculation.lysis_limit_minor,
-        ctx.block.timestamp,
-    )?;
-    outbe_fidelity::api::finalize_wwd_max_fidelity(ctx.storage.clone(), wwd, ctx.block.timestamp)?;
-    let used = calculation
-        .lysis_limit_minor
-        .checked_sub(result.unused_lysis_limit_minor)
-        .ok_or_else(mismatch)?;
-    let _ = consume_legacy_nods(ctx, &mut tribute, wwd, totals.tribute_count, &result)?;
-    finalize_lysis_settlement(
-        metadosis,
-        ctx,
-        emission_day,
-        calculation,
-        SettlementCompletion {
-            total_nominal_minor: result.total_nominal_minor,
-            used,
-            unused: result.unused_lysis_limit_minor,
-        },
-    )
-}
-
 pub(crate) fn execute(
     metadosis: &mut MetadosisContract<'_>,
     ctx: &BlockRuntimeContext<'_>,
@@ -311,9 +135,5 @@ pub(crate) fn execute(
     calculation: MetadosisCalculation,
 ) -> Result<()> {
     ctx.storage.require_metadosis_process_ready()?;
-    if outbe_tee::lysis::is_test_transport_installed() {
-        execute_legacy_enclave(metadosis, ctx, emission_day, calculation)
-    } else {
-        execute_onchain_fractions(metadosis, ctx, emission_day, calculation)
-    }
+    execute_onchain_fractions(metadosis, ctx, emission_day, calculation)
 }

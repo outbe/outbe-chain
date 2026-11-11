@@ -31,63 +31,7 @@ pub struct TributeForfeitureReceipt {
     pub retirement_outcome: RetirementOutcome,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TributeLysisReceipt {
-    pub worldwide_day: WorldwideDay,
-    pub consumed_count: u32,
-    pub consumed_nominal: U256,
-    pub source_generation: u64,
-    pub retired_generation: u64,
-    pub retirement_outcome: RetirementOutcome,
-}
-
 impl TributeContract<'_> {
-    fn is_valid_lysis_partition(
-        &self,
-        day: WorldwideDay,
-        totals: &crate::schema::DayTotals,
-        verified_count: u32,
-        verified_nominal: U256,
-    ) -> Result<bool> {
-        if self.retired_days.read(&day)? {
-            return Ok(false);
-        }
-        let ready = totals.initialized && totals.is_sealed && verified_count > 0;
-        let matches = totals.tribute_count == verified_count
-            && totals.tribute_nominal_total_minor == verified_nominal;
-        Ok(ready && matches)
-    }
-
-    pub fn consume_and_retire_lysis_partition(
-        &mut self,
-        day: WorldwideDay,
-        verified_count: u32,
-        verified_nominal: U256,
-    ) -> Result<TributeLysisReceipt> {
-        let storage = self.storage_handle();
-        storage.require_metadosis_process_ready()?;
-        storage.with_checkpoint(|| {
-            let totals = self.get_day_totals(day)?;
-            if !self.is_valid_lysis_partition(day, &totals, verified_count, verified_nominal)? {
-                return Err(TributeError::LysisInputMismatch.into());
-            }
-            self.freeze_day_nominal(&totals)?;
-            self.consume_lysis_partition_inner(day, verified_count, verified_nominal)?;
-            let retirement_outcome = self.retire_completed_partition_inner(day)?;
-            if retirement_outcome != RetirementOutcome::Requested {
-                return Err(TributeError::LysisInputMismatch.into());
-            }
-            Ok(TributeLysisReceipt {
-                worldwide_day: day,
-                consumed_count: verified_count,
-                consumed_nominal: verified_nominal,
-                source_generation: 0,
-                retired_generation: 1,
-                retirement_outcome,
-            })
-        })
-    }
-
     /// Applies ADR-011's one bulk accounting transition after every verified
     /// Tribute in the sealed WWD has produced exactly one Nod.
     pub fn consume_lysis_partition(

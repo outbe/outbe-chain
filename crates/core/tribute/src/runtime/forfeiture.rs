@@ -85,9 +85,6 @@ fn collect_lysis_tributes(
 )> {
     let mut tributes = Vec::new();
     let mut series_meta = SeriesMetaMap::new();
-    if outbe_tee::lysis::is_test_transport_installed() {
-        return Ok((tributes, series_meta));
-    }
     for tribute_id in contract.get_tribute_ids_by_day(day)? {
         let Some(record) = crate::state_api::get_retained_record(storage, tribute_id)? else {
             continue;
