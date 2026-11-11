@@ -224,7 +224,7 @@ fn gap_ed14_failed_metadosis_forfeits_tributes() {
                 storage.clone(),
             );
             if end_state == metadosis_state::FAILED {
-                crate::commands::fail_due_emission_day(&ctx).unwrap();
+                crate::commands::fail_metadosis(&ctx, DAY).unwrap();
             } else {
                 crate::commands::start_metadosis(&ctx).unwrap();
             }

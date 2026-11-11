@@ -524,7 +524,8 @@ fn gap_ed54_wwd_step_runs_once_a_day() {
         let ctx = runtime_context(block, handle);
         account_parent(&ctx, block_no);
         // Settle previous day (A4) consumes the 1 frame; A6 reverts with `PrecompileError::Revert(String)`.
-        crate::handler::run_protocol_cycle(&ctx).expect_err("A7 has 0 frames left after A6");
+        // A7 has 0 frames left and takes its fallback.
+        crate::handler::run_protocol_cycle(&ctx).unwrap();
     });
     let revert_str_event = storage
         .get_events(TRIBUTE_FACTORY_ADDRESS)

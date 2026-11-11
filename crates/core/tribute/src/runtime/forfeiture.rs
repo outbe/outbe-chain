@@ -175,7 +175,7 @@ fn series_of(
         issuance_currency,
         reference_currency,
     )
-    .map_err(|_| PrecompileError::fatal("Tribute currencies spell no series id"))
+    .map_err(|_| TributeError::TributeSeriesInvalid.into())
 }
 
 fn issuable_day_vwap(

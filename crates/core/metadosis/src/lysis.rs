@@ -17,7 +17,7 @@ use crate::{
 };
 
 fn mismatch() -> PrecompileError {
-    PrecompileError::fatal("on-chain Lysis input or result mismatch")
+    crate::errors::MetadosisError::LysisResultMismatch.into()
 }
 
 struct SettlementCompletion {
@@ -51,7 +51,9 @@ fn finalize_lysis_settlement(
     }
     let credit = PromisLimitContract::new(storage.clone()).checked_credit(completion.unused)?;
     if credit.credited != completion.unused {
-        return Err(mismatch());
+        return Err(PrecompileError::fatal(
+            "Promis Limit did not take the unused Lysis limit",
+        ));
     }
     apply_auction_brief(storage, emission_day.day, &split)?;
     let promis_limit_added = emission_day

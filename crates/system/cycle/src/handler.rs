@@ -410,10 +410,6 @@ pub(crate) fn credit_reward_slice(ctx: &BlockRuntimeContext) -> Result<()> {
 }
 
 fn is_recoverable_step_error(err: &PrecompileError) -> bool {
-    matches!(err, PrecompileError::RevertBytes(_))
-}
-
-fn is_recoverable_wwd_advance_error(err: &PrecompileError) -> bool {
     matches!(
         err,
         PrecompileError::RevertBytes(_) | PrecompileError::Revert(_)
@@ -436,7 +432,7 @@ fn run_advance_worldwide_days_step(ctx: &BlockRuntimeContext, block_utc_day: u32
         .with_checkpoint(|| outbe_tributefactory::worldwideday::advance_worldwide_days_command(ctx))
     {
         Ok(()) => Ok(()),
-        Err(err) if is_recoverable_wwd_advance_error(&err) => {
+        Err(err) if is_recoverable_step_error(&err) => {
             let reason = encode_recoverable_step_reason(&err);
             tracing::warn!(
                 target: "outbe::cycle",
@@ -484,7 +480,9 @@ fn record_failed_allocation_fallback(ctx: &BlockRuntimeContext, day: u32) -> Res
     ctx.storage.with_checkpoint(|| {
         let day_num = day_number(ctx, day)?;
         let cap = day_emission_limit(day_num);
-        outbe_rewards::api::seal_votes_and_fees(ctx, day)?;
+        if day > outbe_rewards::api::get_last_sealed_day(&ctx.storage)? {
+            outbe_rewards::api::seal_votes_and_fees(ctx, day)?;
+        }
         outbe_agentreward::api::abandon_day_agent_rewards(ctx, day.into())?;
         if !cap.is_zero() {
             outbe_promislimit::PromisLimitContract::new(ctx.storage.clone()).checked_credit(cap)?;
@@ -502,6 +500,7 @@ fn record_failed_allocation_fallback(ctx: &BlockRuntimeContext, day: u32) -> Res
 }
 
 fn run_metadosis_step(ctx: &BlockRuntimeContext) -> Result<()> {
+    let due_day = outbe_metadosis::commands::find_due_emission_day(ctx)?.map(|record| record.day);
     match ctx
         .storage
         .with_checkpoint(|| outbe_metadosis::commands::start_metadosis(ctx))
@@ -515,15 +514,15 @@ fn run_metadosis_step(ctx: &BlockRuntimeContext) -> Result<()> {
                 error = ?err,
                 "start_metadosis step reverted; routing metadosis limit to PromisLimit"
             );
-            record_failed_metadosis_fallback(ctx)
+            due_day.map_or(Ok(()), |day| record_failed_metadosis_fallback(ctx, day))
         }
         Err(err) => Err(err),
     }
 }
 
-fn record_failed_metadosis_fallback(ctx: &BlockRuntimeContext) -> Result<()> {
+fn record_failed_metadosis_fallback(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
     ctx.storage
-        .with_checkpoint(|| outbe_metadosis::commands::fail_due_emission_day(ctx))
+        .with_checkpoint(|| outbe_metadosis::commands::fail_metadosis(ctx, day))
 }
 
 /// Runs the single hourly protocol orchestration entry point (`OIP-00343`):

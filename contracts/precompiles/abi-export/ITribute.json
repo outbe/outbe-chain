@@ -319,11 +319,6 @@
   },
   {
     "type": "error",
-    "name": "DayResponseScopeMismatch",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InvalidLeague",
     "inputs": [
       {
@@ -403,6 +398,11 @@
   {
     "type": "error",
     "name": "TributeNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TributeSeriesInvalid",
     "inputs": []
   },
   {
