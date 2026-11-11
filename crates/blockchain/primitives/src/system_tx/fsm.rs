@@ -96,9 +96,10 @@ impl BlockSystemPlan {
             };
         }
 
-        let filter_steps = |stage: BlockExecutionStage,
-                            steps: &'static [ProtocolStep]|
+        let collect_active_steps = |stage: BlockExecutionStage,
+                                    steps: &'static [ProtocolStep]|
          -> Vec<PlannedSystemStep> {
+            debug_assert!(u8::try_from(steps.len()).is_ok());
             steps
                 .iter()
                 .enumerate()
@@ -112,10 +113,11 @@ impl BlockSystemPlan {
                 .collect()
         };
 
-        let consensus_steps = filter_steps(BlockExecutionStage::Consensus, order.consensus);
-        let begin_block_steps = filter_steps(BlockExecutionStage::BeginBlock, order.begin_block);
+        let consensus_steps = collect_active_steps(BlockExecutionStage::Consensus, order.consensus);
+        let begin_block_steps =
+            collect_active_steps(BlockExecutionStage::BeginBlock, order.begin_block);
         let end_block_steps = if regime.has_end_block_system_txs() {
-            filter_steps(BlockExecutionStage::EndBlock, order.end_block)
+            collect_active_steps(BlockExecutionStage::EndBlock, order.end_block)
         } else {
             Vec::new()
         };

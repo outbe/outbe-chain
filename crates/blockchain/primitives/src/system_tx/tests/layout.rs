@@ -520,3 +520,44 @@ fn rejected_fsm_input_does_not_advance_and_standalone_end_block_is_height_aware(
         assert_eq!(mid.finish(), Ok(()));
     }
 }
+
+#[test]
+#[cfg(debug_assertions)]
+fn plan_asserts_each_static_step_slice_fits_the_wire_index_bound() {
+    const AT_BOUND: &[crate::block::ProtocolStep] = &[TEST_BLOCK_ORDER.begin_block[0]; 255];
+    const TOO_LONG: &[crate::block::ProtocolStep] = &[TEST_BLOCK_ORDER.begin_block[0]; 256];
+    for stage in [
+        BlockExecutionStage::Consensus,
+        BlockExecutionStage::BeginBlock,
+        BlockExecutionStage::EndBlock,
+    ] {
+        let order = |steps| match stage {
+            BlockExecutionStage::Consensus => BlockOrder {
+                consensus: steps,
+                ..BlockOrder::default()
+            },
+            BlockExecutionStage::BeginBlock => BlockOrder {
+                begin_block: steps,
+                ..BlockOrder::default()
+            },
+            _ => BlockOrder {
+                end_block: steps,
+                ..BlockOrder::default()
+            },
+        };
+        let plan = BlockSystemPlan::for_block(2, BlockSystemFlags::default(), &order(AT_BOUND));
+        assert_eq!(
+            plan.consensus_steps.len() + plan.begin_block_steps.len() + plan.end_block_steps.len(),
+            255
+        );
+        assert!(
+            std::panic::catch_unwind(|| BlockSystemPlan::for_block(
+                2,
+                BlockSystemFlags::default(),
+                &order(TOO_LONG)
+            ))
+            .is_err(),
+            "{stage:?} must reject a slice longer than u8::MAX"
+        );
+    }
+}
