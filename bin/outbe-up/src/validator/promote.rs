@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, time::Duration};
 
 use eyre::{ensure, Result};
 use rand::RngCore;
@@ -14,6 +14,10 @@ use crate::{
         ENCLAVE_SERVICE, FULL_NODE, LOCAL_RPC, RENEW_TIMER, VALIDATOR_SERVICE, VALIDATOR_TARGET,
     },
 };
+
+const TEE_JOIN_ATTEMPTS: usize = 3;
+const TEE_JOIN_RETRY_DELAY: Duration = Duration::from_millis(100);
+const FINALIZED_VIEW_MISMATCH: &str = "finalized schedule and eth finalized block disagree";
 
 pub async fn run() -> Result<()> {
     let _lock = process::LifecycleLock::acquire()?;
@@ -50,7 +54,7 @@ pub async fn run() -> Result<()> {
     progress.stage("starting enclave and completing TEE admission");
     process::systemctl(&["start", ENCLAVE_SERVICE])?;
     ensure_join_identity(&mut journal, &remote).await?;
-    run_tee_join(&journal)?;
+    run_tee_join(&journal).await?;
     journal.tee_join_complete = true;
     journal.save()?;
 
@@ -133,12 +137,12 @@ async fn ensure_join_identity(journal: &mut Journal, remote: &RpcClient) -> Resu
     journal.save()
 }
 
-fn run_tee_join(journal: &Journal) -> Result<()> {
+async fn run_tee_join(journal: &Journal) -> Result<()> {
     let valid_until = journal
         .valid_until
         .expect("valid_until was saved")
         .to_string();
-    run_outbe_cli(&[
+    let args = [
         "tee",
         "join",
         "--enclave-socket",
@@ -155,8 +159,21 @@ fn run_tee_join(journal: &Journal) -> Result<()> {
         &valid_until,
         "--timeout-secs",
         "600",
-    ])?;
-    Ok(())
+    ];
+    for attempt in 1..=TEE_JOIN_ATTEMPTS {
+        match run_outbe_cli(&args) {
+            Ok(_) => return Ok(()),
+            Err(error) if attempt < TEE_JOIN_ATTEMPTS && is_finalized_view_mismatch(&error) => {
+                tokio::time::sleep(TEE_JOIN_RETRY_DELAY).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("TEE join attempts are non-zero")
+}
+
+fn is_finalized_view_mismatch(error: &eyre::Report) -> bool {
+    error.to_string().contains(FINALIZED_VIEW_MISMATCH)
 }
 
 fn run_outbe_cli(args: &[&str]) -> Result<String> {
@@ -199,5 +216,15 @@ mod tests {
             transaction_hash(&format!("Transaction sent: {hash}\n")).unwrap(),
             hash
         );
+    }
+
+    #[test]
+    fn retries_only_the_finalized_view_race() {
+        assert!(is_finalized_view_mismatch(&eyre::eyre!(
+            FINALIZED_VIEW_MISMATCH
+        )));
+        assert!(!is_finalized_view_mismatch(&eyre::eyre!(
+            "TEE admission failed"
+        )));
     }
 }
