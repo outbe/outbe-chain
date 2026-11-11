@@ -83,15 +83,14 @@ impl ApplicationShared {
         &self,
         payload_id: PayloadId,
     ) -> eyre::Result<BuildBlockOutcome> {
-        let payload = self
-            .payload_builder
-            .resolve_kind(
-                payload_id,
-                reth_payload_builder::PayloadKind::WaitForPending,
-            )
-            .await
-            .ok_or(ApplicationError::PayloadResolutionNone)?
-            .map_err(|e| ApplicationError::PayloadResolutionFailed(format!("{e}")))?;
+        let payload = crate::execution_port::PayloadBuilderPort::resolve_kind(
+            &self.payload_builder,
+            payload_id,
+            reth_payload_builder::PayloadKind::WaitForPending,
+        )
+        .await
+        .ok_or(ApplicationError::PayloadResolutionNone)?
+        .map_err(|e| ApplicationError::PayloadResolutionFailed(format!("{e}")))?;
 
         let sealed_block = payload.block().clone();
 

@@ -41,14 +41,9 @@ commonware-macros.workspace = true
 commonware-resolver = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.9.0" }
 
 # Reth
-reth-ethereum = { workspace = true, features = ["node", "node-api", "storage-api", "network"] }
-reth-node-builder.workspace = true
+reth-ethereum = { workspace = true, features = ["node", "node-api", "storage-api", "network", "provider"] }
 reth-payload-builder.workspace = true
-reth-db.workspace = true
 reth-chainspec.workspace = true
-reth-provider.workspace = true
-reth-chain-state.workspace = true
-reth-storage-api.workspace = true
 reth-stages-types.workspace = true
 
 # Alloy
@@ -86,7 +81,6 @@ zeroize.workspace = true
 
 [dev-dependencies]
 reth-provider = { workspace = true, features = ["test-utils"] }
-reth-chain-state = { workspace = true, features = ["test-utils"] }
 reth-primitives-traits.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-consensus = { workspace = true, features = ["test-utils"] }

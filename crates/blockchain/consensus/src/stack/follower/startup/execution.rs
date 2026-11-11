@@ -42,7 +42,7 @@ impl<E: FollowerRuntime, N: StackNodeAccess> ExecutionBootstrap<E, N> {
         let node = &self.node;
         let genesis_hash = self.startup.genesis_hash;
         let recovery_anchor = &self.history.recovery_anchor;
-        let engine_handle: EngineHandle = node.beacon_engine_handle();
+        let engine_handle: EngineHandle = node.beacon_engine_handle().engine_handle();
         let (execution_finalized_height_tx, execution_finalized_height_rx) =
             tokio::sync::mpsc::unbounded_channel::<u64>();
         let (executor_actor, executor_mailbox) = ExecutorActor::new(

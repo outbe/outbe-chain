@@ -509,7 +509,7 @@ fn locally_built_candidate_requires_valid_execution_before_advertising() {
                 panic!("candidate preparation must use new_payload");
             };
             assert_eq!(
-                reth_node_builder::ExecutionPayload::block_hash(&payload),
+                reth_ethereum::node::api::ExecutionPayload::block_hash(&payload),
                 block.block_hash()
             );
             tx.send(Ok(PayloadStatus::new(

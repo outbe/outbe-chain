@@ -93,7 +93,7 @@ struct RecoveredFollowerHistory<E: FollowerRuntime, N: StackNodeAccess> {
     epocher: FollowerEpocher,
     upstream_client: crate::follow_transport::UpstreamRpcClient,
     tip_client: crate::follow_transport::UpstreamRpcClient,
-    local: crate::follow_transport::RethLocalBlockSource<N>,
+    local: N::BlockSource,
 }
 struct HistoryBootstrap<'a, E: FollowerRuntime, N: StackNodeAccess> {
     ctx: &'a E,
@@ -574,7 +574,7 @@ impl<E: FollowerRuntime, N: StackNodeAccess> HistoryBootstrap<'_, E, N> {
         .await?;
         let checkpoint =
             recovered_checkpoint(node, startup, &inspected, initialized.processed_height)?;
-        let local = crate::follow_transport::RethLocalBlockSource::new(node.clone());
+        let local = node.block_source();
         let recovery_anchor = RecoveryAuthority {
             provider: &certificate_scheme_provider,
             upstream: &upstream_client,

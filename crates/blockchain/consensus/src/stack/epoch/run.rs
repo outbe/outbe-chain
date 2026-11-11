@@ -4,7 +4,7 @@ use super::helpers::{
     seed_genesis_validation, startup_ancestry_readiness, ValidatorBootstrapFollowInputs,
 };
 
-pub fn run_consensus_stack<E, N: StackNodeAccess>(
+pub fn run_consensus_stack<E, N: ExecutionNodeBackend>(
     ctx: E,
     args: ConsensusArgs,
     node: N,
@@ -34,7 +34,7 @@ where
     }
 }
 
-async fn run_consensus_stack_inner<E, N: StackNodeAccess>(
+async fn run_consensus_stack_inner<E, N: ExecutionNodeBackend>(
     ctx: E,
     args: ConsensusArgs,
     node: N,
@@ -378,8 +378,8 @@ where
     let ancestry_readiness =
         startup_ancestry_readiness(last_execution_height, ancestry_readiness_target);
     // -- 9. Get beacon engine handle and payload builder handle ----------
-    let engine_handle: EngineHandle = node.beacon_engine_handle();
-    let payload_builder = node.payload_builder_handle();
+    let engine_handle: EngineHandle = node.beacon_engine_handle().engine_handle();
+    let payload_builder = node.payload_builder_handle().payload_builder_handle();
 
     // sus-5: the executor publishes execution-finalized heights here. The
     // supervisor consumes them to drive height-based DKG/VRF rotation. A guard
@@ -619,7 +619,7 @@ where
         ctx.child("recovered_forkchoice"),
         recovery_checkpoint,
         || executor_actor.replay_recovered_forkchoice_once(recovery_checkpoint),
-        move || read_reth_recovery_forkchoice(&fcu_provider_node),
+        move || Ok(fcu_provider_node.recovery_forkchoice()?.into()),
     )
     .await
     .wrap_err("failed to confirm recovered Reth forkchoice before validator startup")?;

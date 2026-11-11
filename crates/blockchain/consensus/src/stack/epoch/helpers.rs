@@ -175,7 +175,7 @@ where
         + 'static,
 {
     use outbe_primitives::consensus::ConsensusOperatingMode;
-    use reth_provider::BlockIdReader as _;
+    use reth_ethereum::storage::BlockIdReader as _;
 
     let local_consensus_key = inputs.signing_key.public_key();
     let bootstrap = super::super::follower::ValidatorBootstrap {

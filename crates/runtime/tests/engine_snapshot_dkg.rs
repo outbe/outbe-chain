@@ -26,7 +26,7 @@ mod copied_native_dkg_prerequisites {
         RestoredPendingDkgActivation, H,
     };
     use outbe_evm::{EvmRuntimeHost, OutbeEvmConfig};
-    use outbe_execution::{OutbeBeaconConsensus, OutbeFullNode, OutbeNode, OutbePoolBuilder};
+    use outbe_execution::{OutbeBeaconConsensus, OutbeNode, OutbePoolBuilder};
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
     use outbe_primitives::OutbeHeader;
     use outbe_txpool::TxPoolZeroFeePolicy;
@@ -158,7 +158,7 @@ mod copied_native_dkg_prerequisites {
     // process.
     fn with_native_components(
         root: &Path,
-        check: impl FnOnce(&OutbeFullNode) -> eyre::Result<()>,
+        check: impl FnOnce(&outbe_engine::RethExecutionBackend) -> eyre::Result<()>,
     ) -> eyre::Result<()> {
         let executor = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -247,7 +247,7 @@ mod copied_native_dkg_prerequisites {
                 ensure!(addons.rpc_server_handles.rpc.http_local_addr().is_none());
                 ensure!(addons.rpc_server_handles.rpc.ws_local_addr().is_none());
                 ensure!(addons.rpc_server_handles.rpc.ipc_endpoint().is_none());
-                let node: OutbeFullNode = FullNode {
+                let node = outbe_engine::RethExecutionBackend::new(FullNode {
                     evm_config: evm,
                     pool,
                     network,
@@ -257,7 +257,7 @@ mod copied_native_dkg_prerequisites {
                     data_dir: config.datadir(),
                     config,
                     add_ons_handle: addons,
-                };
+                });
                 let result = check(&node);
                 drop(node);
                 drop(network_owner);
@@ -477,7 +477,11 @@ mod copied_native_dkg_prerequisites {
             save_pending_dkg_boundary(&own, &self.snapshot).unwrap();
         }
 
-        fn assert_restored(&self, root: &Path, node: &OutbeFullNode) -> eyre::Result<()> {
+        fn assert_restored(
+            &self,
+            root: &Path,
+            node: &outbe_engine::RethExecutionBackend,
+        ) -> eyre::Result<()> {
             let refreshed =
                 refresh_validator_set_at_height(&outbe_runtime::OutbeRuntime::new(), node, FREEZE)?;
             let FrozenValidatorSetRefresh::Ready {
@@ -492,6 +496,7 @@ mod copied_native_dkg_prerequisites {
             ensure!(participants == self.participants);
             ensure!(tee_expired_target_exclusions.is_empty());
             let current_state = node
+                .inner()
                 .provider
                 .state_by_block_hash(self.disk.headers[H as usize].hash_slow())?;
             let current = validators::read_reshare_target_with_empty_tee_exclusions_from_state(
@@ -585,7 +590,7 @@ mod copied_native_dkg_prerequisites {
     }
 
     fn assert_freeze_refresh_rejected(
-        node: &OutbeFullNode,
+        node: &outbe_engine::RethExecutionBackend,
         missing: MissingPrerequisite,
     ) -> eyre::Result<()> {
         match missing {
@@ -626,11 +631,15 @@ mod copied_native_dkg_prerequisites {
     fn assert_missing_prerequisite_rejected(
         fixture: &PendingFixture,
         root: &Path,
-        node: &OutbeFullNode,
+        node: &outbe_engine::RethExecutionBackend,
         missing: MissingPrerequisite,
     ) -> eyre::Result<()> {
-        ensure!(node.provider.block_hash(H)? == Some(fixture.disk.headers[H as usize].hash_slow()));
+        ensure!(
+            node.inner().provider.block_hash(H)?
+                == Some(fixture.disk.headers[H as usize].hash_slow())
+        );
         let current_state = node
+            .inner()
             .provider
             .state_by_block_hash(fixture.disk.headers[H as usize].hash_slow())?;
         let current = validators::read_reshare_target_with_empty_tee_exclusions_from_state(

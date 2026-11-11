@@ -43,7 +43,7 @@ use eyre::{Result, WrapErr};
 use rand_core_commonware::CryptoRng;
 use reth_ethereum::chainspec::EthChainSpec as _;
 use reth_ethereum::provider::{BlockHashReader, StateProviderFactory};
-use reth_provider::HeaderProvider;
+use reth_ethereum::storage::HeaderProvider;
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::net::SocketAddr;
@@ -83,16 +83,17 @@ use crate::{
 };
 use outbe_radicle::integration::{RadicleVotingGate, RadicleVotingGateError};
 
-use crate::execution_port::{ExecutionProviderAccess, ExecutionStateAccess};
+use crate::execution_port::{
+    EngineClient as _, ExecutionNodeBackend, ExecutionProviderAccess, PayloadBuilderPort as _,
+};
 use commonware_p2p::{Receiver as P2pReceiver, Sender as P2pSender};
 use outbe_primitives::{
     consensus::{ConsensusExecutionBridge, DkgBoundaryArtifact},
     projection::ProjectionCheckpoint,
 };
 use outbe_primitives::{OutbeHeader, OutbePayloadTypes};
-use reth_ethereum::network::api::{NetworkInfo, Peers, PeersInfo};
+use reth_ethereum::node::api::ConsensusEngineHandle;
 use reth_ethereum::storage::{BlockNumReader, BlockReader, TransactionVariant};
-use reth_node_builder::ConsensusEngineHandle;
 
 pub mod dkg;
 pub mod epoch;
@@ -163,10 +164,7 @@ use recovery::anchor::{
     unfinalized_head_lead_is_recoverable,
 };
 
-use recovery::forkchoice::{
-    confirm_recovered_forkchoice, read_reth_recovery_forkchoice,
-    recover_application_finalized_round,
-};
+use recovery::forkchoice::{confirm_recovered_forkchoice, recover_application_finalized_round};
 
 use services::EngineHandle;
 
@@ -195,130 +193,10 @@ use recovery::anchor::{
     CertifiedFollowerRecoveryFloors, RecoveredApplicationFinalization,
 };
 
-/// Node capabilities needed by the migrated CL stacks during engine compatibility.
-pub trait StackNodeAccess:
-    ExecutionProviderAccess + crate::execution_port::RecoveryForkchoiceReader
-{
-    fn chain_spec(&self) -> Arc<reth_chainspec::ChainSpec<OutbeHeader>>;
-    fn beacon_engine_handle(&self) -> EngineHandle;
-    fn payload_builder_handle(
-        &self,
-    ) -> reth_payload_builder::PayloadBuilderHandle<OutbePayloadTypes>;
-    fn data_dir(&self) -> std::path::PathBuf;
-    fn p2p_secret_path(&self) -> std::path::PathBuf;
-    fn has_p2p_secret_key_hex(&self) -> bool;
-    fn load_p2p_secret_key(&self, path: std::path::PathBuf) -> Result<[u8; 32]>;
+/// Node capabilities needed by the CL stack, unified with [`ExecutionNodeBackend`].
+pub trait StackNodeAccess: ExecutionNodeBackend {}
 
-    fn collect_genesis_peer_evidence(
-        &self,
-    ) -> impl Future<Output = crate::execution_port::GenesisPeerEvidence> + Send;
-}
-
-impl<Node, AddOns> StackNodeAccess for reth_node_builder::FullNode<Node, AddOns>
-where
-    Node: reth_node_builder::FullNodeComponents<
-        Types: reth_node_builder::NodeTypes<
-            ChainSpec = reth_chainspec::ChainSpec<OutbeHeader>,
-            Payload = OutbePayloadTypes,
-        >,
-        Provider: ExecutionStateAccess + crate::execution_port::RecoveryForkchoiceReader,
-        Network: Peers + PeersInfo + NetworkInfo,
-    >,
-    AddOns: reth_node_builder::rpc::RethRpcAddOns<Node>,
-    Self: Send + Sync + 'static,
-{
-    fn chain_spec(&self) -> Arc<reth_chainspec::ChainSpec<OutbeHeader>> {
-        self.chain_spec()
-    }
-
-    fn beacon_engine_handle(&self) -> EngineHandle {
-        self.add_ons_handle.beacon_engine_handle.clone()
-    }
-
-    fn payload_builder_handle(
-        &self,
-    ) -> reth_payload_builder::PayloadBuilderHandle<OutbePayloadTypes> {
-        self.payload_builder_handle.clone()
-    }
-    fn data_dir(&self) -> std::path::PathBuf {
-        self.config
-            .datadir
-            .clone()
-            .resolve_datadir(self.chain_spec().chain())
-            .data_dir()
-            .to_path_buf()
-    }
-    fn p2p_secret_path(&self) -> std::path::PathBuf {
-        self.data_dir.p2p_secret()
-    }
-    fn has_p2p_secret_key_hex(&self) -> bool {
-        self.config.network.p2p_secret_key_hex.is_some()
-    }
-    fn load_p2p_secret_key(&self, path: std::path::PathBuf) -> Result<[u8; 32]> {
-        Ok(self.config.network.secret_key(path)?.secret_bytes())
-    }
-
-    async fn collect_genesis_peer_evidence(&self) -> crate::execution_port::GenesisPeerEvidence {
-        use crate::execution_port::{GenesisPeerEvidence, GenesisPeerStatus};
-        let peers_result = self.network.get_all_peers().await;
-        let (peer_query_failed, peers) = match peers_result {
-            Ok(peers) => (
-                false,
-                peers
-                    .into_iter()
-                    .map(|peer| GenesisPeerStatus {
-                        genesis: peer.status.genesis,
-                        blockhash: peer.status.blockhash,
-                        latest_block: peer.status.latest_block,
-                    })
-                    .collect(),
-            ),
-            Err(error) => {
-                warn!(
-                    ?error,
-                    "failed to query Reth peers during genesis formation gate"
-                );
-                (true, Vec::new())
-            }
-        };
-        GenesisPeerEvidence {
-            connected_peers: self.network.num_connected_peers(),
-            is_syncing: self.network.is_syncing(),
-            is_initially_syncing: self.network.is_initially_syncing(),
-            peer_query_failed,
-            peers,
-        }
-    }
-}
-
-impl<Node, AddOns> crate::execution_port::RecoveryForkchoiceReader
-    for reth_node_builder::FullNode<Node, AddOns>
-where
-    Node: reth_node_builder::FullNodeComponents<
-        Provider: ExecutionStateAccess + crate::execution_port::RecoveryForkchoiceReader,
-    >,
-    AddOns: reth_node_builder::NodeAddOns<Node>,
-{
-    fn recovery_forkchoice(
-        &self,
-    ) -> Result<crate::execution_port::RecoveryForkchoice, crate::errors::StackRecoveryError> {
-        self.provider.recovery_forkchoice()
-    }
-}
-
-impl<N> crate::execution_port::RecoveryForkchoiceReader
-    for reth_provider::providers::BlockchainProvider<N>
-where
-    N: reth_provider::providers::ProviderNodeTypes<Primitives = outbe_primitives::OutbePrimitives>,
-{
-    fn recovery_forkchoice(
-        &self,
-    ) -> Result<crate::execution_port::RecoveryForkchoice, crate::errors::StackRecoveryError> {
-        crate::execution_port::RecoveryForkchoiceReader::recovery_forkchoice(
-            &self.canonical_in_memory_state(),
-        )
-    }
-}
+impl<T: ExecutionNodeBackend> StackNodeAccess for T {}
 
 #[cfg(test)]
 mod helper_contract_tests {
@@ -351,17 +229,35 @@ mod helper_contract_tests {
         }
     }
 
-    impl StackNodeAccess for GenesisNode {
+    impl crate::follow::LocalBlockSource for GenesisNode {
+        async fn get_block_by_digest(
+            &self,
+            _: crate::digest::Digest,
+        ) -> Option<crate::block::ConsensusBlock> {
+            unreachable!("genesis configuration does not read local blocks")
+        }
+    }
+
+    impl ExecutionNodeBackend for GenesisNode {
+        type EngineHandle = EngineHandle;
+        type PayloadBuilder = reth_payload_builder::PayloadBuilderHandle<OutbePayloadTypes>;
+        type StateAccess = Self::Provider;
+        type BlockSource = Self;
+
         fn chain_spec(&self) -> Arc<reth_chainspec::ChainSpec<OutbeHeader>> {
             self.0.chain_spec.clone()
         }
-        fn beacon_engine_handle(&self) -> EngineHandle {
+        fn beacon_engine_handle(&self) -> Self::EngineHandle {
             unreachable!("genesis configuration does not access the engine")
         }
-        fn payload_builder_handle(
-            &self,
-        ) -> reth_payload_builder::PayloadBuilderHandle<OutbePayloadTypes> {
+        fn payload_builder_handle(&self) -> Self::PayloadBuilder {
             unreachable!("genesis configuration does not access payload building")
+        }
+        fn state_access(&self) -> &Self::StateAccess {
+            &self.0
+        }
+        fn block_source(&self) -> Self::BlockSource {
+            self.clone()
         }
         fn data_dir(&self) -> std::path::PathBuf {
             unreachable!("genesis configuration does not access disk")

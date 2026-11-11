@@ -21,7 +21,7 @@ use commonware_runtime::{Clock, Handle, Metrics, Spawner};
 use commonware_utils::channel::oneshot;
 use futures::StreamExt;
 use outbe_primitives::OutbePayloadTypes;
-use reth_node_builder::ConsensusEngineHandle;
+use reth_ethereum::node::api::ConsensusEngineHandle;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
@@ -66,10 +66,11 @@ where
     /// Create a new executor actor with recovered finalized state.
     pub fn new(
         context: E,
-        engine: EngineHandle,
+        engine: impl crate::execution_port::EngineClient,
         recovered: RecoveredFinalizedState,
         execution_finalized_height_tx: Option<tokio::sync::mpsc::UnboundedSender<u64>>,
     ) -> (Self, Mailbox) {
+        let engine = engine.engine_handle();
         let RecoveredFinalizedState {
             genesis_hash,
             last_finalized_height,

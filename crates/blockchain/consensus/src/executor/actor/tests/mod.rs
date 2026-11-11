@@ -14,9 +14,8 @@ use commonware_runtime::Supervisor as _;
 use commonware_utils::acknowledgement::Acknowledgement;
 use commonware_utils::acknowledgement::Exact;
 use outbe_primitives::{projection::ProjectionCheckpoint, OutbeHeader};
-use reth_ethereum::node::api::{BeaconEngineMessage, OnForkChoiceUpdated};
+use reth_ethereum::node::api::{BeaconEngineMessage, ConsensusEngineHandle, OnForkChoiceUpdated};
 use reth_ethereum::{primitives::SealedBlock, Block};
-use reth_node_builder::ConsensusEngineHandle;
 use std::sync::{Arc, Mutex};
 
 // -----------------------------------------------------------------------

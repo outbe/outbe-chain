@@ -155,35 +155,6 @@ where
     unreachable!("certified follower FCU attempt budget is non-zero")
 }
 
-pub fn read_reth_recovery_forkchoice(
-    state: &impl crate::execution_port::RecoveryForkchoiceReader,
-) -> Result<RecoveredRethForkchoice> {
-    Ok(state.recovery_forkchoice()?.into())
-}
-
-impl crate::execution_port::RecoveryForkchoiceReader
-    for reth_chain_state::CanonicalInMemoryState<outbe_primitives::OutbePrimitives>
-{
-    fn recovery_forkchoice(
-        &self,
-    ) -> Result<crate::execution_port::RecoveryForkchoice, crate::errors::StackRecoveryError> {
-        // Persisted execution progress may remain ahead after a canonical rollback.
-        let head = self.get_canonical_head();
-        if head.hash() == B256::ZERO {
-            return Err(crate::errors::StackRecoveryError::RethZeroCanonicalHead);
-        }
-        let checkpoint = |checkpoint: alloy_eips::BlockNumHash| ProjectionCheckpoint {
-            block_number: checkpoint.number,
-            block_hash: checkpoint.hash,
-        };
-        Ok(crate::execution_port::RecoveryForkchoice {
-            head: checkpoint(head.num_hash()),
-            safe: self.get_safe_num_hash().map(checkpoint),
-            finalized: self.get_finalized_num_hash().map(checkpoint),
-        })
-    }
-}
-
 // ===========================================================================
 // Helper functions
 // ===========================================================================

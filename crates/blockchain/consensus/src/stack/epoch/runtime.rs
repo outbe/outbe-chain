@@ -54,7 +54,7 @@ pub(super) enum EventAction {
     Proceed,
     Outcome(EpochLoopOutcome),
 }
-pub(super) struct EpochSupervisor<E: Clock, N: StackNodeAccess> {
+pub(super) struct EpochSupervisor<E: Clock, N: ExecutionNodeBackend> {
     pub(super) state: EpochState,
     pub(super) rotation: DkgRotation<E>,
     pub(super) channels: EpochChannels<E>,

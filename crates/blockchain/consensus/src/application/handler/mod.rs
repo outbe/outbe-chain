@@ -31,7 +31,7 @@ use futures::StreamExt;
 use outbe_primitives::projection::ExecutionReadBudget;
 use outbe_primitives::OutbePayloadTypes;
 
-use reth_node_builder::ConsensusEngineHandle;
+use reth_ethereum::node::api::ConsensusEngineHandle;
 
 use reth_payload_builder::PayloadBuilderHandle;
 use tracing::debug;

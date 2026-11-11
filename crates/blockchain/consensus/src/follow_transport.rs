@@ -1,11 +1,8 @@
-//! Follower transports over an execution-provider port and upstream RPC.
+//! Follower transports over an upstream JSON-RPC endpoint.
 //!
-//! Local reads use `ExecutionProviderAccess`, so this module does not depend
-//! on the concrete execution node. Upstream RPC responses remain bounded and
-//! their certificates are re-verified by the marshal against the committee.
+//! Upstream RPC responses remain bounded and their certificates are re-verified
+//! by the marshal against the committee.
 //!
-//! * [`RethLocalBlockSource`] - REAL: reads already-imported blocks from the
-//!   reth execution DB by hash. Used to serve the marshal's `Request::Block`.
 //! * [`UpstreamRpcClient`] - the upstream finalized-block + tip transport: a
 //!   jsonrpsee HTTP client. Tip discovery calls `outbe_consensusStatus`.
 //!   Finalized-block fetch calls `outbe_getFinalization(height)` and decodes the
@@ -20,61 +17,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::block::ConsensusBlock;
-use crate::execution_port::ExecutionProviderAccess;
-use crate::follow::{CertifiedFinalizedBlock, FinalizedSource, LocalBlockSource, TipSource};
+use crate::follow::{CertifiedFinalizedBlock, FinalizedSource, TipSource};
 use alloy_primitives::B256;
 use commonware_codec::Read as _;
 use commonware_consensus::types::Height;
 use jsonrpsee::core::client::{ClientT, Error as ClientError};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use jsonrpsee::rpc_params;
-use reth_ethereum::storage::{BlockReader, TransactionVariant};
 use tracing::{debug, warn};
-
-/// Reads already-imported blocks from the local reth execution DB by hash.
-///
-/// The follower imports finalized blocks through the executor (FCU + newPayload).
-/// Thus, by the time the marshal asks to backfill a `Request::Block(digest)`, the
-/// block is in the EL DB. This is the same lookup the validator path's resolver
-/// performs against peers, but sourced locally.
-#[derive(Clone)]
-pub struct RethLocalBlockSource<N> {
-    node: N,
-}
-
-impl<N: ExecutionProviderAccess> RethLocalBlockSource<N> {
-    pub fn new(node: N) -> Self {
-        Self { node }
-    }
-}
-
-impl<N: ExecutionProviderAccess> LocalBlockSource for RethLocalBlockSource<N> {
-    fn get_block_by_digest(
-        &self,
-        digest: crate::digest::Digest,
-    ) -> impl Future<Output = Option<ConsensusBlock>> + Send {
-        let node = self.node.clone();
-        async move {
-            let hash: B256 = digest.0;
-            match node
-                .provider()
-                .recovered_block(hash.into(), TransactionVariant::NoHash)
-            {
-                Ok(Some(recovered)) => {
-                    Some(ConsensusBlock::from_sealed(recovered.into_sealed_block()))
-                }
-                Ok(None) => {
-                    debug!(%hash, "local EL has no block for requested digest");
-                    None
-                }
-                Err(error) => {
-                    debug!(%hash, %error, "failed reading block from local EL");
-                    None
-                }
-            }
-        }
-    }
-}
 
 /// Minimal view of the upstream's `outbe_consensusStatus` response. We only
 /// need the finalized tip for sync progress. Deserializing a subset keeps this

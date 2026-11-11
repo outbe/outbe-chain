@@ -10,6 +10,7 @@ use outbe_primitives::OutbePayloadTypes;
 use reth_node_builder::ConsensusEngineHandle;
 mod marshal;
 pub mod validator_history;
+use crate::execution_backend::read_reth_recovery_forkchoice;
 use crate::finalization::{RethDurableExecutionState, RethFinalizationBarrier};
 use alloy_consensus::Sealable;
 use alloy_primitives::B256;
@@ -38,9 +39,7 @@ use outbe_consensus::{
     hybrid::{HybridScheme, HybridSchemeProvider},
     stack::{
         recovery::anchor::RecoveredApplicationFinalization,
-        recovery::forkchoice::{
-            read_reth_recovery_forkchoice, recover_application_finalized_round,
-        },
+        recovery::forkchoice::recover_application_finalized_round,
     },
 };
 use outbe_primitives::projection::ProjectionCheckpoint;

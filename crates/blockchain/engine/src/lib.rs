@@ -6,4 +6,7 @@ pub mod execution_backend;
 pub mod finalization;
 pub mod stack;
 
-pub use execution_backend::{run_consensus_with_execution, RethExecutionBackend};
+pub use execution_backend::{
+    read_reth_recovery_forkchoice, run_consensus_with_execution, RethExecutionBackend,
+    RethLocalBlockSource, RethStateAccess,
+};

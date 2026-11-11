@@ -1,3 +1,4 @@
+use crate::execution_backend::read_reth_recovery_forkchoice;
 use alloy_primitives::{Address, Bytes, B256};
 use commonware_actor::{Feedback, Unreliable};
 use commonware_codec::Encode as _;
@@ -104,10 +105,8 @@ use outbe_consensus::stack::recovery::anchor::{
 };
 use outbe_consensus::stack::recovery::forkchoice::confirm_recovered_forkchoice;
 use outbe_consensus::stack::recovery::forkchoice::{
-    classify_recovered_fcu_attempt, RecoveredFcuAction, RecoveredRethForkchoice,
-};
-use outbe_consensus::stack::recovery::forkchoice::{
-    read_reth_recovery_forkchoice, recover_application_finalized_round,
+    classify_recovered_fcu_attempt, recover_application_finalized_round, RecoveredFcuAction,
+    RecoveredRethForkchoice,
 };
 use outbe_consensus::stack::shutdown::preserve_stack_result_after_drain;
 use outbe_consensus::stack::shutdown::{

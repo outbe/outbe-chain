@@ -7,19 +7,44 @@ use std::{future::Future, path::PathBuf, sync::Arc};
 
 use alloy_primitives::B256;
 use outbe_primitives::{
-    projection::ProjectionCheckpoint, OutbeBlock, OutbeHeader, OutbePayloadTypes, OutbePrimitives,
+    projection::ProjectionCheckpoint, OutbeBlock, OutbeHeader, OutbePayloadTypes,
 };
-use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::ChainSpec;
-use reth_node_builder::{ConsensusEngineHandle, FullNode, FullNodeComponents, NodeAddOns};
-use reth_payload_builder::PayloadBuilderHandle;
-use reth_provider::{BlockIdReader, BlockReader, HeaderProvider, StateProviderFactory};
+use reth_ethereum::{
+    node::api::{ConsensusEngineHandle, PayloadTypes},
+    storage::{BlockIdReader, BlockReader, HeaderProvider, StateProviderFactory},
+};
+use reth_payload_builder::{PayloadBuilderError, PayloadBuilderHandle, PayloadKind};
 
 pub use crate::follow::LocalBlockSource;
+
+/// Engine handle client used by the executor and application handler.
+pub trait EngineClient: Clone + Send + Sync + 'static {
+    fn engine_handle(&self) -> ConsensusEngineHandle<OutbePayloadTypes>;
+}
+
+impl EngineClient for ConsensusEngineHandle<OutbePayloadTypes> {
+    fn engine_handle(&self) -> ConsensusEngineHandle<OutbePayloadTypes> {
+        self.clone()
+    }
+}
 
 /// Payload service used by `OutbeApplication` to resolve proposed blocks.
 pub trait PayloadBuilderPort: Clone + Send + Sync + 'static {
     fn payload_builder_handle(&self) -> PayloadBuilderHandle<OutbePayloadTypes>;
+
+    fn resolve_kind(
+        &self,
+        id: alloy_rpc_types_engine::PayloadId,
+        kind: PayloadKind,
+    ) -> impl Future<
+        Output = Option<
+            Result<<OutbePayloadTypes as PayloadTypes>::BuiltPayload, PayloadBuilderError>,
+        >,
+    > + Send {
+        let handle = self.payload_builder_handle();
+        async move { handle.resolve_kind(id, kind).await }
+    }
 }
 
 impl PayloadBuilderPort for PayloadBuilderHandle<OutbePayloadTypes> {
@@ -34,7 +59,6 @@ pub trait ExecutionStateAccess:
     + BlockReader<Block = OutbeBlock>
     + BlockIdReader
     + HeaderProvider<Header = OutbeHeader>
-    + CanonStateSubscriptions<Primitives = OutbePrimitives>
     + Clone
     + Send
     + Sync
@@ -47,7 +71,6 @@ impl<T> ExecutionStateAccess for T where
         + BlockReader<Block = OutbeBlock>
         + BlockIdReader
         + HeaderProvider<Header = OutbeHeader>
-        + CanonStateSubscriptions<Primitives = OutbePrimitives>
         + Clone
         + Send
         + Sync
@@ -55,24 +78,11 @@ impl<T> ExecutionStateAccess for T where
 {
 }
 
-/// Narrow provider seam also implemented by existing launched Reth nodes.
+/// Narrow provider seam implemented by the execution node bridge.
 pub trait ExecutionProviderAccess: Clone + Send + Sync + 'static {
     type Provider: ExecutionStateAccess;
 
     fn provider(&self) -> &Self::Provider;
-}
-
-impl<Node, AddOns> ExecutionProviderAccess for FullNode<Node, AddOns>
-where
-    Node: FullNodeComponents<Provider: ExecutionStateAccess>,
-    AddOns: NodeAddOns<Node>,
-    Self: Send + Sync + 'static,
-{
-    type Provider = Node::Provider;
-
-    fn provider(&self) -> &Self::Provider {
-        &self.provider
-    }
 }
 
 /// Canonical in-memory forkchoice, not persisted execution progress.
@@ -107,15 +117,20 @@ pub struct GenesisPeerEvidence {
 }
 
 /// Launched execution-node services required when assembling the CL stack.
-///
-/// The engine bridge implements this port; the provider-only compatibility
-/// implementation above does not opt arbitrary Reth nodes into this contract.
-pub trait ExecutionNodeBackend: ExecutionProviderAccess {
-    fn chain_spec(&self) -> &Arc<ChainSpec<OutbeHeader>>;
-    fn beacon_engine_handle(&self) -> ConsensusEngineHandle<OutbePayloadTypes>;
-    fn payload_builder_handle(&self) -> PayloadBuilderHandle<OutbePayloadTypes>;
+pub trait ExecutionNodeBackend: ExecutionProviderAccess + RecoveryForkchoiceReader {
+    type EngineHandle: EngineClient;
+    type PayloadBuilder: PayloadBuilderPort;
+    type StateAccess: ExecutionStateAccess;
+    type BlockSource: LocalBlockSource;
+
+    fn chain_spec(&self) -> Arc<ChainSpec<OutbeHeader>>;
+    fn beacon_engine_handle(&self) -> Self::EngineHandle;
+    fn payload_builder_handle(&self) -> Self::PayloadBuilder;
+    fn state_access(&self) -> &Self::StateAccess;
+    fn block_source(&self) -> Self::BlockSource;
     fn data_dir(&self) -> PathBuf;
     fn p2p_secret_path(&self) -> PathBuf;
     fn has_p2p_secret_key_hex(&self) -> bool;
+    fn load_p2p_secret_key(&self, path: PathBuf) -> eyre::Result<[u8; 32]>;
     fn collect_genesis_peer_evidence(&self) -> impl Future<Output = GenesisPeerEvidence> + Send;
 }

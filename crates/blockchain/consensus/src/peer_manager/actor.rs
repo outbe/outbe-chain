@@ -269,8 +269,7 @@ mod tests {
     use super::*;
     use alloy_primitives::{Bytes, B256};
     use outbe_primitives::OutbeHeader;
-    use reth_ethereum::{primitives::SealedBlock, Block};
-    use reth_provider::ProviderResult;
+    use reth_ethereum::{primitives::SealedBlock, provider::ProviderResult, Block};
     use std::collections::BTreeMap;
 
     #[derive(Default)]
