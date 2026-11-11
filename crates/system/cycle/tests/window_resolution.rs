@@ -633,3 +633,63 @@ proptest! {
         );
     }
 }
+
+#[test]
+fn cycle_module_entitlements_require_empty_payload_and_active_day() {
+    use outbe_cycle::{call_authority::cycle_tick_entitlements, runtime::CycleModule};
+    use outbe_primitives::{
+        block::{MetadosisEntitlementContext, ProtocolModule},
+        storage::MetadosisMutationEntitlements,
+    };
+    let mut context = MetadosisEntitlementContext {
+        payload: &[],
+        chain_id: CHAIN_ID,
+        block_number: 2,
+        timestamp: 1_704_153_600,
+        cycle_active_utc_day: Some(20240101),
+    };
+    assert!(std::hint::black_box(
+        CycleModule::NEEDS_CYCLE_ACTIVE_UTC_DAY
+    ));
+    assert_eq!(
+        CycleModule::mutation_entitlements(context),
+        cycle_tick_entitlements(CHAIN_ID, 2, context.timestamp, context.cycle_active_utc_day)
+    );
+    context.payload = &[1];
+    assert_eq!(
+        CycleModule::mutation_entitlements(context),
+        MetadosisMutationEntitlements::NONE
+    );
+}
+
+#[test]
+fn cycle_entitlements_preserve_genesis_and_unknown_day_bindings() {
+    use outbe_cycle::call_authority::cycle_tick_entitlements;
+    use outbe_primitives::storage::{
+        metadosis_init_genesis_binding, metadosis_late_settlement_binding,
+        MetadosisMutationEntitlements, MetadosisMutationPurposeTag,
+    };
+    let timestamp = 1_704_067_200;
+    let finality = MetadosisMutationEntitlements::exact(
+        MetadosisMutationPurposeTag::CertifiedFinality,
+        metadosis_late_settlement_binding(CHAIN_ID, 1, timestamp),
+    );
+    assert_eq!(
+        cycle_tick_entitlements(CHAIN_ID, 1, timestamp, None),
+        finality.union(MetadosisMutationEntitlements::exact(
+            MetadosisMutationPurposeTag::CycleLifecycle,
+            metadosis_init_genesis_binding(CHAIN_ID, 1, timestamp)
+        ))
+    );
+    assert_eq!(
+        cycle_tick_entitlements(CHAIN_ID, 2, timestamp, None),
+        MetadosisMutationEntitlements::exact(
+            MetadosisMutationPurposeTag::CertifiedFinality,
+            metadosis_late_settlement_binding(CHAIN_ID, 2, timestamp)
+        )
+    );
+    assert_eq!(
+        cycle_tick_entitlements(CHAIN_ID, 2, timestamp, Some(0)),
+        cycle_tick_entitlements(CHAIN_ID, 2, timestamp, None)
+    );
+}

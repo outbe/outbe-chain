@@ -36,7 +36,7 @@ pub use boundary::prepare_boundary_epoch_counters;
 pub use errors::LivenessError;
 pub use liveness::{
     enforce_enclave_upgrade_deadline, enforce_tee_lease_deadlines, run_validator_liveness,
-    EnclaveUpgradeDeadline,
+    EnclaveUpgradeDeadline, ValidatorLivenessModule,
 };
 
 pub mod contract {

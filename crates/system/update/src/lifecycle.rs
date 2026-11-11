@@ -6,7 +6,7 @@ use outbe_primitives::error::Result;
 use crate::handlers::{self, UpgradeHandlerRegistry};
 use crate::schema::Update;
 
-/// Protocol module for `SystemTxKind::Update` (`OSUP`).
+/// Protocol module for the begin-block update step.
 pub struct UpdateModule;
 
 impl ProtocolModule for UpdateModule {

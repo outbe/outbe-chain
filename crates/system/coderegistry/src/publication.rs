@@ -1,15 +1,20 @@
 //! Current identity attestations authorize exact publication checkpoints, never Git I/O.
 
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{Bytes, B256, U256};
 use commonware_codec::DecodeExt as _;
 use commonware_cryptography::{bls12381, Hasher as _, Sha256, Verifier as _};
 use outbe_primitives::{
-    error::Result,
+    block::{BlockRuntimeContext, ProtocolModule},
+    error::{PrecompileError, Result},
     radicle_publication::{
         PublicationAction, PublicationBatch, PublicationBody, PUBLICATION_BODY_LEN,
         PUBLICATION_NAMESPACE,
     },
     storage::types::StorageKey as _,
+    system_tx_context::{
+        SystemTxBuildContext, SystemTxPayloadBuildError, SystemTxPayloadValidationError,
+        SystemTxValidationContext,
+    },
 };
 use outbe_validatorset::state::CommitteeSnapshot;
 
@@ -26,6 +31,42 @@ use crate::{
 mod validate;
 
 pub use outbe_primitives::code_registry::PublicationReceipt;
+
+/// Applies the publication batch bound to the consensus header.
+pub struct RadiclePublicationModule;
+
+impl ProtocolModule for RadiclePublicationModule {
+    const NAME: &'static str = "radicle_publication";
+
+    fn build_payload(
+        ctx: &SystemTxBuildContext<'_>,
+    ) -> std::result::Result<Bytes, SystemTxPayloadBuildError> {
+        let batch = ctx
+            .artifacts
+            .radicle_publication
+            .as_ref()
+            .ok_or(SystemTxPayloadBuildError::MissingPublicationBatch)?;
+        Ok(Bytes::from(batch.to_bytes()?))
+    }
+
+    fn validate_payload(
+        payload: &[u8],
+        ctx: &SystemTxValidationContext<'_>,
+    ) -> std::result::Result<(), SystemTxPayloadValidationError> {
+        outbe_primitives::system_tx::binding::validate_publication_payload(payload, ctx.artifacts)?;
+        Ok(())
+    }
+
+    fn begin_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+        let sys_ctx = ctx.system_tx()?;
+        let batch = PublicationBatch::from_bytes(sys_ctx.payload.as_ref())?;
+        if batch.to_bytes()?.as_slice() != sys_ctx.payload.as_ref() {
+            return Err(PrecompileError::revert("non-canonical publication payload"));
+        }
+        CodeRegistry::new(ctx.storage.clone()).apply_publication_batch(&batch)?;
+        Ok(())
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PublicationProgress {
@@ -207,5 +248,36 @@ impl CodeRegistry<'_> {
         self.publication_sequence.write(body.sequence)?;
         self.publication_receipt_hash.write(hash)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod protocol_module_tests {
+    use super::*;
+    use outbe_primitives::{block::BlockHeightRegime, reshare_artifact::OutbeBlockArtifacts};
+
+    #[test]
+    fn module_requires_header_batch_and_rejects_invalid_payload() {
+        let artifacts = OutbeBlockArtifacts::default();
+        let build = SystemTxBuildContext {
+            regime: BlockHeightRegime::SteadyState,
+            block_number: 2,
+            parent_hash: B256::ZERO,
+            artifacts: &artifacts,
+            parent_consensus_metadata: None,
+            pending_tee_bootstrap: None,
+            expected_tee_policy: None,
+        };
+        assert!(matches!(
+            RadiclePublicationModule::build_payload(&build),
+            Err(SystemTxPayloadBuildError::MissingPublicationBatch)
+        ));
+        let validation = SystemTxValidationContext {
+            regime: build.regime,
+            block_number: 2,
+            parent_hash: B256::ZERO,
+            artifacts: &artifacts,
+        };
+        assert!(RadiclePublicationModule::validate_payload(&[], &validation).is_err());
     }
 }
