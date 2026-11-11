@@ -50,8 +50,11 @@ use outbe_primitives::reshare_artifact::{
 };
 use outbe_primitives::signer::OutbeEvmSigner;
 use outbe_primitives::system_tx::{
-    build_unsigned_system_tx, SystemTx, BEGIN_BLOCK_ORDER, END_BLOCK_ORDER,
+    build_unsigned_system_tx, BlockSystemPlan, SystemTx,
+    CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+    CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX,
 };
+use outbe_primitives::test_utils::TEST_BLOCK_ORDER;
 use outbe_primitives::OutbeHeader;
 use reth_ethereum::{primitives::SealedBlock, Block};
 
@@ -408,24 +411,22 @@ pub(crate) fn block_with_gas_planned_system_inputs(
             .transactions
             .push(signer.sign_unsigned(unsigned).expect("system tx signs"));
     }
-    if outbe_primitives::block::BlockHeightRegime::for_block(block_number).has_end_zone_system_txs()
-    {
-        for kind in END_BLOCK_ORDER {
-            let input = kind
-                .into_empty_system_tx()
-                .expect("end-zone kind is payload-free");
-            let unsigned = build_unsigned_system_tx(
-                input.nonce_ordinal().expect("end ordinal"),
-                block_number,
-                chain_id,
-                input.encode().expect("end input encodes"),
-            )
-            .expect("end system tx builds");
-            block
-                .body
-                .transactions
-                .push(signer.sign_unsigned(unsigned).expect("end system tx signs"));
-        }
+    let plan = BlockSystemPlan::for_block(block_number, Default::default(), &TEST_BLOCK_ORDER);
+    for planned in plan.end_block_steps {
+        let input = SystemTx::EndBlock {
+            step_index: planned.id.step_index,
+        };
+        let unsigned = build_unsigned_system_tx(
+            input.nonce_ordinal().expect("end ordinal"),
+            block_number,
+            chain_id,
+            input.encode().expect("end input encodes"),
+        )
+        .expect("end system tx builds");
+        block
+            .body
+            .transactions
+            .push(signer.sign_unsigned(unsigned).expect("end system tx signs"));
     }
     let block = block.map_header(OutbeHeader::new);
     ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
@@ -434,20 +435,32 @@ pub(crate) fn block_with_gas_planned_system_inputs(
 /// Steady-state begin zone with no boundary, tee bootstrap, or publication.
 pub(crate) fn steady_begin_inputs(parent_hash: B256) -> Vec<SystemTx> {
     let mut inputs = vec![
-        SystemTx::CertifiedParentAccounting {
-            metadata: finalized_metadata(parent_hash),
+        SystemTx::Consensus {
+            step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+            payload: finalized_metadata(parent_hash)
+                .encode()
+                .expect("parent metadata encodes"),
         },
-        SystemTx::LateFinalizeCredits {
-            artifact: Default::default(),
+        SystemTx::Consensus {
+            step_index: CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX,
+            payload: outbe_primitives::reshare_artifact::encode_late_finalize_credits_artifact(
+                &Default::default(),
+            )
+            .expect("late credits encode"),
         },
-        SystemTx::ValidatorLiveness,
+        SystemTx::Consensus {
+            step_index: CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX,
+            payload: Bytes::new(),
+        },
     ];
-    for kind in BEGIN_BLOCK_ORDER {
-        inputs.push(
-            kind.into_empty_system_tx()
-                .expect("begin-block kind is payload-free"),
-        );
-    }
+    let plan = BlockSystemPlan::for_block(2, Default::default(), &TEST_BLOCK_ORDER);
+    inputs.extend(
+        plan.begin_block_steps
+            .into_iter()
+            .map(|planned| SystemTx::BeginBlock {
+                step_index: planned.id.step_index,
+            }),
+    );
     inputs
 }
 

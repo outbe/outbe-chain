@@ -703,6 +703,7 @@ where
         genesis_hash,
         validators: validator_set.clone(),
         chain_id: node.chain_spec().chain().id(),
+        block_order: protocol.block_order(),
         repository_publication_enabled,
         repository_publication: bridge.repository_publication_mailbox(),
         marshal_mailbox: marshal_mailbox.clone(),

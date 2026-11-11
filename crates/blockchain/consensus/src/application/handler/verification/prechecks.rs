@@ -75,6 +75,7 @@ impl ApplicationShared {
             },
             HeaderArtifactValidationDeps {
                 chain_id: self.chain_id,
+                block_order: self.block_order,
                 certificate_scheme_provider: &self.certificate_scheme_provider,
                 committee_provider: &self.committee_provider,
                 dkg_manager: &self.dkg_manager,
