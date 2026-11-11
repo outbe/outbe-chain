@@ -171,16 +171,6 @@ pub fn metadosis_advance_due_binding(chain_id: u64, block_number: u64, timestamp
     )
 }
 
-#[must_use]
-pub fn metadosis_late_settlement_binding(chain_id: u64, block_number: u64, timestamp: u64) -> B256 {
-    metadosis_block_binding(
-        b"METADOSIS_LATE_SETTLEMENT_HEADROOM_V1",
-        chain_id,
-        block_number,
-        timestamp,
-    )
-}
-
 fn metadosis_block_binding(
     domain: &[u8],
     chain_id: u64,

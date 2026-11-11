@@ -608,7 +608,7 @@ mod metadosis_mutation_frame_tests {
     use super::MetadosisMutationFrameState;
     use alloy_primitives::B256;
     use outbe_primitives::storage::{
-        metadosis_late_settlement_binding, MetadosisMutationEntitlements,
+        metadosis_process_ready_binding, MetadosisMutationEntitlements,
         MetadosisMutationPurposeTag as Purpose,
     };
 
@@ -679,8 +679,8 @@ mod metadosis_mutation_frame_tests {
     #[test]
     fn exact_authority_binding_rejects_mismatch_without_consuming_grant() {
         let purpose = Purpose::CertifiedFinality;
-        let expected = metadosis_late_settlement_binding(7, 11, 12);
-        let wrong = metadosis_late_settlement_binding(7, 11, 13);
+        let expected = metadosis_process_ready_binding(7, 11, 12);
+        let wrong = metadosis_process_ready_binding(7, 11, 13);
         assert_ne!(expected, wrong);
         let mut frame = MetadosisMutationFrameState::new(MetadosisMutationEntitlements::exact(
             purpose, expected,

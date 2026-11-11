@@ -224,23 +224,11 @@ pub fn transfer_block_fees(
     let residue = pending
         .checked_sub(distributed)
         .ok_or(RewardsError::SumOfVoterPortionsExceedsBlockFees)?;
-    let binding = outbe_primitives::storage::metadosis_late_settlement_binding(
-        ctx.block.chain_id,
-        ctx.block.block_number,
-        ctx.block.timestamp,
-    );
-    ctx.storage
-        .with_metadosis_mutation::<outbe_primitives::storage::MetadosisCertifiedFinality, _>(
-            binding,
-            || {
-                outbe_promislimit::PromisLimitContract::new(ctx.storage.clone())
-                    .burn_to_promis_limit(
-                        REWARDS_ADDRESS,
-                        residue,
-                        outbe_promislimit::runtime::BurnSource::BlockFee,
-                    )
-            },
-        )?;
+    outbe_promislimit::PromisLimitContract::new(ctx.storage.clone()).burn_to_promis_limit(
+        REWARDS_ADDRESS,
+        residue,
+        outbe_promislimit::runtime::BurnSource::BlockFee,
+    )?;
 
     // Parity invariant (checked once): sum payout + residue == pending.
     if distributed

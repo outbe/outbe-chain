@@ -2,13 +2,9 @@ use alloy_primitives::U256;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::Result,
-    storage::{
-        metadosis_cycle_allocation_binding, metadosis_late_settlement_binding,
-        MetadosisCertifiedFinality, MetadosisCycleLifecycle,
-    },
+    storage::{metadosis_cycle_allocation_binding, MetadosisCycleLifecycle},
     time::{date_key_to_utc_timestamp, timestamp_to_date_key},
 };
-use outbe_promislimit::PromisLimitContract;
 
 use crate::precompile::IMetadosis;
 use crate::schema::MetadosisContract;
@@ -23,26 +19,6 @@ pub(crate) fn apply(ctx: &BlockRuntimeContext, amount: U256) -> Result<()> {
         ctx.storage.clone(),
         binding,
         |_| apply_day_limit(ctx, amount),
-    )
-}
-
-/// Recycles late-settlement headroom into the Promis Limit.
-pub(crate) fn apply_late_settlement_headroom(
-    ctx: &BlockRuntimeContext,
-    amount: U256,
-) -> Result<U256> {
-    let binding = metadosis_late_settlement_binding(
-        ctx.block.chain_id,
-        ctx.block.block_number,
-        ctx.block.timestamp,
-    );
-    crate::commit::commit_transition::<MetadosisCertifiedFinality, _>(
-        ctx.storage.clone(),
-        binding,
-        |_| {
-            PromisLimitContract::new(ctx.storage.clone()).checked_credit(amount)?;
-            Ok(U256::ZERO)
-        },
     )
 }
 

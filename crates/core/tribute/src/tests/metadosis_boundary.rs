@@ -5,9 +5,8 @@ use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{
     metadosis_advance_due_binding, metadosis_cycle_allocation_binding,
-    metadosis_init_genesis_binding, metadosis_late_settlement_binding,
-    metadosis_process_ready_binding, MetadosisCertifiedFinality, MetadosisCycleLifecycle,
-    MetadosisMutationPurposeTag, StorageHandle,
+    metadosis_init_genesis_binding, metadosis_process_ready_binding, MetadosisCertifiedFinality,
+    MetadosisCycleLifecycle, MetadosisMutationPurposeTag, StorageHandle,
 };
 use outbe_primitives::time::WorldwideDay;
 
@@ -157,18 +156,16 @@ fn certified_finality_rejects_day_mutation_without_writes() {
     provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CertifiedFinality);
     let day = WorldwideDay::new(20260920);
     StorageHandle::enter(&mut provider, |storage| {
-        let binding = metadosis_late_settlement_binding(
-            storage.chain_id().unwrap(),
-            storage.block_number().unwrap(),
-            storage.now_secs().unwrap(),
-        );
         storage
-            .with_metadosis_mutation::<MetadosisCertifiedFinality, _>(binding, || {
-                let mut tc = TributeContract::new(storage.clone());
-                assert_eq!(tc.seal_day(day).unwrap_err().to_string(), MISMATCH);
-                assert!(!tc.is_day_sealed(day)?);
-                Ok(())
-            })
+            .with_metadosis_mutation::<MetadosisCertifiedFinality, _>(
+                B256::repeat_byte(0x33),
+                || {
+                    let mut tc = TributeContract::new(storage.clone());
+                    assert_eq!(tc.seal_day(day).unwrap_err().to_string(), MISMATCH);
+                    assert!(!tc.is_day_sealed(day)?);
+                    Ok(())
+                },
+            )
             .unwrap();
     });
 }
