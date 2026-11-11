@@ -17,17 +17,31 @@ pub fn parent_finalization_from_child(
     child: &ConsensusBlock,
 ) -> Option<Finalization> {
     use alloy_consensus::Transaction as _;
-    use outbe_primitives::{consensus_metadata::ParentParticipationProof, system_tx::SystemTx};
+    use outbe_primitives::{
+        consensus_metadata::{CertifiedParentAccountingMetadata, ParentParticipationProof},
+        system_tx::{SystemTx, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX},
+    };
     if parent.number().checked_add(1)? != child.number() || child.parent_digest() != parent.digest()
     {
         return None;
     }
     for transaction in &child.body().transactions {
-        let Ok(SystemTx::CertifiedParentAccounting { metadata }) =
-            SystemTx::decode(transaction.input().as_ref())
+        let Ok(SystemTx::Consensus {
+            step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+            payload,
+        }) = SystemTx::decode(transaction.input().as_ref())
         else {
             continue;
         };
+        let Ok(metadata) = CertifiedParentAccountingMetadata::decode(payload.as_ref()) else {
+            continue;
+        };
+        let Ok(reencoded) = metadata.encode() else {
+            continue;
+        };
+        if reencoded.as_ref() != payload.as_ref() {
+            continue;
+        }
         if metadata.proof_kind != ParentParticipationProof::Finalization
             || metadata.finalized_block_number != parent.number()
             || metadata.finalized_block_hash != parent.block_hash()
@@ -185,4 +199,104 @@ pub fn decode_public_finalization(
         return Err(PublicFinalizedBlockDecodeError::TrailingFinalization);
     }
     Ok(finalization)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_consensus::SignableTransaction as _;
+    use alloy_primitives::{Bytes, Signature, B256};
+    use commonware_codec::Encode as _;
+    use commonware_consensus::types::Epoch;
+    use outbe_primitives::{
+        consensus_metadata::{CertifiedParentAccountingMetadata, ParentParticipationProof},
+        system_tx::{
+            build_unsigned_system_tx, SystemTx, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+            CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX,
+        },
+        OutbeBlock,
+    };
+    use reth_primitives_traits::SealedBlock;
+
+    fn child_with_payload(
+        parent: &ConsensusBlock,
+        step_index: u8,
+        payload: Bytes,
+    ) -> ConsensusBlock {
+        let calldata = SystemTx::Consensus {
+            step_index,
+            payload,
+        }
+        .encode()
+        .expect("encode");
+        let transaction = build_unsigned_system_tx(0, parent.number() + 1, 1, calldata)
+            .expect("system transaction")
+            .into_signed(Signature::test_signature())
+            .into();
+        let mut block = OutbeBlock::default();
+        block.header.inner.number = parent.number() + 1;
+        block.header.inner.parent_hash = parent.block_hash();
+        block.body.transactions.push(transaction);
+        ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
+    }
+
+    #[test]
+    fn parent_finalization_requires_canonical_accounting_payload() {
+        let fixture = crate::finalized_admission_test_utils::FinalityCommitteeFixture::new(30)
+            .certify_block(Epoch::new(2), 10, 100, B256::ZERO, Vec::new());
+        let parent = decode_public_block(&fixture.block).expect("parent block");
+        let metadata = CertifiedParentAccountingMetadata {
+            finalized_block_number: parent.number(),
+            finalized_block_hash: parent.block_hash(),
+            finalized_epoch: 2,
+            proof: fixture.finalization.into(),
+            ..Default::default()
+        };
+        let payload = metadata.encode().expect("metadata");
+        let child = child_with_payload(
+            &parent,
+            CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+            payload.clone(),
+        );
+        let extracted =
+            parent_finalization_from_child(&parent, &child).expect("parent finalization");
+        assert_eq!(extracted.encode().as_ref(), metadata.proof.as_ref());
+
+        let mut trailing = payload.to_vec();
+        trailing.push(0);
+        let child = child_with_payload(
+            &parent,
+            CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+            trailing.into(),
+        );
+        assert!(parent_finalization_from_child(&parent, &child).is_none());
+
+        let child = child_with_payload(&parent, CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX, payload);
+        assert!(parent_finalization_from_child(&parent, &child).is_none());
+        for invalid in [
+            CertifiedParentAccountingMetadata {
+                proof_kind: ParentParticipationProof::CertifiedNotarization,
+                ..metadata.clone()
+            },
+            CertifiedParentAccountingMetadata {
+                finalized_block_number: 9,
+                ..metadata.clone()
+            },
+            CertifiedParentAccountingMetadata {
+                finalized_block_hash: B256::ZERO,
+                ..metadata.clone()
+            },
+            CertifiedParentAccountingMetadata {
+                finalized_epoch: 3,
+                ..metadata
+            },
+        ] {
+            let child = child_with_payload(
+                &parent,
+                CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+                invalid.encode().expect("metadata"),
+            );
+            assert!(parent_finalization_from_child(&parent, &child).is_none());
+        }
+    }
 }
