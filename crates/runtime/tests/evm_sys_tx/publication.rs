@@ -3,6 +3,7 @@ use commonware_codec::Encode as _;
 use commonware_cryptography::{bls12381, Hasher as _, Sha256, Signer as _};
 use commonware_utils::TryCollect as _;
 use outbe_coderegistry::CodeRegistry;
+use outbe_primitives::system_tx::CONSENSUS_RADICLE_PUBLICATION_STEP_INDEX;
 use outbe_primitives::{
     addresses::CODE_REGISTRY_ADDRESS,
     radicle_publication::{
@@ -175,8 +176,9 @@ fn publication_system_dispatch_requires_system_caller_and_current_quorum_atomica
         ..
     } = publication_fixture(4, false);
     let batch = signed_batch(&keys, &body, 0..keys.len());
-    let input = SystemTx::RadiclePublication {
-        batch: batch.clone(),
+    let input = SystemTx::Consensus {
+        step_index: CONSENSUS_RADICLE_PUBLICATION_STEP_INDEX,
+        payload: Bytes::from(batch.to_bytes().unwrap()),
     }
     .encode()
     .unwrap();
@@ -189,9 +191,12 @@ fn publication_system_dispatch_requires_system_caller_and_current_quorum_atomica
         .is_err());
     let mut invalid = batch;
     invalid.attestations[3].signature = invalid.attestations[0].signature;
-    let invalid = SystemTx::RadiclePublication { batch: invalid }
-        .encode()
-        .unwrap();
+    let invalid = SystemTx::Consensus {
+        step_index: CONSENSUS_RADICLE_PUBLICATION_STEP_INDEX,
+        payload: Bytes::from(invalid.to_bytes().unwrap()),
+    }
+    .encode()
+    .unwrap();
     assert!(provider
         .enter(|s| dispatch(s, &invalid, SYSTEM_ADDRESS, U256::ZERO))
         .is_err());
@@ -218,8 +223,9 @@ fn measure_publication_batch(fixture: &mut PublicationFixture, batch: Publicatio
         state::AccountInfo,
     };
 
-    let input = SystemTx::RadiclePublication {
-        batch: batch.clone(),
+    let input = SystemTx::Consensus {
+        step_index: CONSENSUS_RADICLE_PUBLICATION_STEP_INDEX,
+        payload: Bytes::from(batch.to_bytes().unwrap()),
     }
     .encode()
     .unwrap();

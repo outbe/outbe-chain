@@ -1,4 +1,5 @@
 use super::*;
+use outbe_primitives::system_tx::CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX;
 
 fn metadata_for_parent(parent_number: u64, parent_hash: B256) -> CertifiedParentAccountingMetadata {
     let mut metadata = metadata();
@@ -40,7 +41,6 @@ fn finalized_dispatch_context(
             timestamp: 1_699_999_990,
             state_root: Some(state_root),
         }),
-        allow_boundary_proposer: false,
         canonical_vrf_proof_hash,
         verified_late_credit_signers: None,
         block_gas_limit: 0,
@@ -56,9 +56,12 @@ fn dispatch_phase1(
         outbe_primitives::storage::MetadosisMutationPurposeTag::CertifiedFinality,
     );
     provider.enter(|storage| {
-        let input = SystemTx::CertifiedParentAccounting { metadata }
-            .encode()
-            .unwrap();
+        let input = SystemTx::Consensus {
+            step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+            payload: metadata.encode().unwrap(),
+        }
+        .encode()
+        .unwrap();
         with_preloaded_system_tx_context(
             finalized_dispatch_context(B256::repeat_byte(0x91), B256::repeat_byte(0xEF)),
             || dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO),
@@ -85,7 +88,6 @@ fn dispatch_finalization_uses_preloaded_summary_not_calldata_money() {
             timestamp: parent_timestamp,
             state_root: Some(B256::repeat_byte(0x92)),
         }),
-        allow_boundary_proposer: false,
         canonical_vrf_proof_hash: vrf_hash,
         verified_late_credit_signers: None,
         block_gas_limit: 0,
@@ -99,8 +101,9 @@ fn dispatch_finalization_uses_preloaded_summary_not_calldata_money() {
         storage
             .increase_balance(outbe_primitives::addresses::REWARDS_ADDRESS, preloaded_fee)
             .unwrap();
-        let input = SystemTx::CertifiedParentAccounting {
-            metadata: meta.clone(),
+        let input = SystemTx::Consensus {
+            step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+            payload: meta.encode().unwrap(),
         }
         .encode()
         .unwrap();
@@ -133,8 +136,9 @@ fn dispatch_finalization_uses_preloaded_summary_not_calldata_money() {
         outbe_primitives::storage::MetadosisMutationPurposeTag::CertifiedFinality,
     );
     provider.enter(|storage| {
-        let input = SystemTx::CertifiedParentAccounting {
-            metadata: meta.clone(),
+        let input = SystemTx::Consensus {
+            step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+            payload: meta.encode().unwrap(),
         }
         .encode()
         .unwrap();
@@ -211,9 +215,12 @@ fn dispatch_finalization_counts_duplicate_missed_proposer_events_by_index() {
                 validator: VALIDATOR,
             },
         ];
-        let input = SystemTx::CertifiedParentAccounting { metadata }
-            .encode()
-            .unwrap();
+        let input = SystemTx::Consensus {
+            step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+            payload: metadata.encode().unwrap(),
+        }
+        .encode()
+        .unwrap();
         with_preloaded_system_tx_context(
             finalized_dispatch_context(B256::repeat_byte(0x93), B256::ZERO),
             || dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO),
@@ -228,19 +235,15 @@ fn dispatch_finalization_counts_duplicate_missed_proposer_events_by_index() {
 }
 
 #[test]
-fn finalization_rejects_non_parent_metadata_before_summary_use() {
+fn finalization_rejects_non_parent_metadata_with_preloaded_summary() {
     let mut provider = configured_storage(3, 1_700_000_000);
-    provider.enter(|storage| {
-        let input = SystemTx::CertifiedParentAccounting {
-            metadata: metadata(),
-        }
-        .encode()
-        .unwrap();
-        let err = dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("CertifiedParentAccounting metadata must target immediate parent"));
-    });
+    let err = dispatch_phase1(&mut provider, metadata()).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("CertifiedParentAccounting metadata must target immediate parent"),
+        "{err}"
+    );
+    assert_eq!(read_progress(&mut provider), 0);
 }
 
 #[test]

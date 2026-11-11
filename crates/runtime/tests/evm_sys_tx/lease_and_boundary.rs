@@ -1,6 +1,8 @@
 use super::*;
 use alloy_primitives::address;
 use outbe_primitives::addresses::STAKING_ADDRESS;
+use outbe_primitives::reshare_artifact::encode_boundary_artifact;
+use outbe_primitives::system_tx::CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_slashindicator::enforce_tee_lease_deadlines;
 
@@ -233,7 +235,12 @@ fn boundary_outcome_survives_unavailable_hyperlane_sync() {
         let vs_before = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         assert_eq!(vs_before.epoch_snapshot().unwrap().number, U256::ZERO);
 
-        let input = SystemTx::BoundaryOutcome { artifact }.encode().unwrap();
+        let input = SystemTx::Consensus {
+            step_index: CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX,
+            payload: encode_boundary_artifact(&artifact).unwrap(),
+        }
+        .encode()
+        .unwrap();
         dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO).unwrap();
     });
 

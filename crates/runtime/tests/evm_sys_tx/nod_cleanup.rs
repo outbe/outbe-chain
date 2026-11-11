@@ -50,7 +50,7 @@ fn reserve(storage: &StorageHandle<'_>) -> U256 {
 }
 
 fn run_cleanup(storage: StorageHandle<'_>) {
-    let input = SystemTx::NodFactory.encode().unwrap();
+    let input = SystemTx::EndBlock { step_index: 0 }.encode().unwrap();
     dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO).unwrap();
 }
 
