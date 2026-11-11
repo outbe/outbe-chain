@@ -17,6 +17,8 @@ mod liveness;
 #[allow(dead_code)]
 mod merkle;
 #[allow(dead_code)]
+mod signer;
+#[allow(dead_code)]
 mod store;
 #[allow(dead_code)]
 mod sync;

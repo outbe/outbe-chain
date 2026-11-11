@@ -160,6 +160,39 @@ command.
 | `db checkpoint --domain D --index I` | Prints the stored leaf and the signed root at index `I`. |
 | `db clear-reorg --domain D` | Removes the reorg flag of domain `D`. Do this only after you fix the cause. |
 
+## Signing
+
+The daemon does not run the signing yet. A later step of the validator port
+starts it. Each origin domain has one signing loop and one backfill worker.
+The signer key is `account.private_key` (`H`).
+
+1. The signing loop gets the verified leaves of a sync poll. In one store
+   transaction, it writes all the leaves, the cursor, and the signed
+   checkpoint of the last leaf. Relayers and the liveness check get the
+   newest index at once.
+2. The backfill worker then signs each index that has a leaf but no
+   checkpoint, in index order. It starts at the first unsigned index.
+   On the first start, it signs from index 0. It writes one transaction
+   for each 1,000 leaves.
+
+The daemon never signs a second root for an index that it signed before.
+
+### Reorg flag
+
+The daemon halts a domain when one of these conditions occurs:
+
+- Enough `rpc_urls` agree on a different root at a signed index.
+- A stored signed root differs from the root of the stored leaves.
+
+The daemon logs the roots of each endpoint and the local root. Then it
+writes the reorg flag of the domain to the store. It retries until the
+write succeeds. The signing loop and the backfill worker of that domain
+stop. The other domains continue, and the process does not stop.
+
+At start, a domain with the reorg flag does not sync or sign. To clear
+the flag, find and fix the cause. Then stop the daemon and run
+`db clear-reorg --domain D`.
+
 ## Health
 
 `GET /health` returns 200 while `missCount(validator)` on the controller is zero

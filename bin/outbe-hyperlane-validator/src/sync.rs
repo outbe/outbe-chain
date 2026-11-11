@@ -23,7 +23,7 @@ use alloy_rpc_types::Filter;
 use alloy_sol_types::{SolCall, SolEvent};
 use eyre::{Context, Result};
 use tokio::sync::Notify;
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 use crate::abi::{IHyperlaneController, IMerkleTreeHook, IValidatorAnnounce};
 use crate::client::eth_call;
@@ -208,8 +208,9 @@ fn append(
     Ok(())
 }
 
-/// Leaves that the vote verified. Step 5 signs each leaf root and commits
-/// the leaves, the signatures and `cursor` in one store transaction.
+/// Leaves that the vote verified. The signer commits the leaves, the signed
+/// root of the last leaf and `cursor` in one store transaction. The backfill
+/// signs the other leaves.
 #[derive(Debug, PartialEq, Eq)]
 pub struct VerifiedBatch {
     pub domain: u32,
@@ -435,12 +436,22 @@ impl DomainSync {
             Vote::Reorg {
                 index,
                 local,
-                observed,
-            } => Ok(Tick::Reorg {
-                index,
-                local,
-                observed,
-            }),
+                observed: root,
+            } => {
+                // This replaces the upstream reorg reporter: log only.
+                error!(
+                    domain = self.domain(),
+                    index,
+                    %local,
+                    endpoints = ?observed,
+                    "endpoints agree on a different root at a committed index"
+                );
+                Ok(Tick::Reorg {
+                    index,
+                    local,
+                    observed: root,
+                })
+            }
             Vote::Rewind => {
                 warn!(
                     domain = self.domain(),
@@ -617,7 +628,7 @@ pub async fn wait_next(interval: Duration, wake: Option<&Notify>) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::store::Leaf;
 
@@ -790,7 +801,7 @@ mod tests {
     /// A JSON-RPC server for one hook: leaves at fixed blocks, head at block
     /// 100, `eth_getLogs` rejects ranges above 50 blocks, and
     /// `latestCheckpoint()` returns `root` (or the real root when `None`).
-    async fn mock_rpc(
+    pub(crate) async fn mock_rpc(
         leaves: Vec<(B256, u64)>,
         root: Arc<std::sync::Mutex<Option<B256>>>,
     ) -> String {

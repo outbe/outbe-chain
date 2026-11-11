@@ -58,6 +58,20 @@ pub enum ValidatorError {
     /// A log has no block number (a pending log).
     #[error("InsertedIntoTree log without a block number")]
     LogWithoutBlock,
+    /// A stored signed root differs from the root that the stored leaves
+    /// give at the same index.
+    #[error(
+        "domain {domain} index {index}: signed root {signed} differs from the leaf root {derived}"
+    )]
+    RootConflict {
+        domain: u32,
+        index: u32,
+        signed: alloy_primitives::B256,
+        derived: alloy_primitives::B256,
+    },
+    /// The domain halted after a reorg. It signs nothing more.
+    #[error("domain {0} is halted after a reorg")]
+    Halted(u32),
     /// A `db` command needs `[storage] db_path` in the configuration.
     #[error("storage.db_path is not set in the configuration")]
     NoDbPath,

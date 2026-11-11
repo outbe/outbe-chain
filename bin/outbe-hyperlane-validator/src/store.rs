@@ -253,6 +253,31 @@ impl Store {
         Ok(())
     }
 
+    /// At most `limit` leaves of `domain` from index `from`, in index order,
+    /// each with its signed root if one is stored (backfill).
+    pub fn leaves_from(
+        &self,
+        domain: u32,
+        from: u32,
+        limit: usize,
+    ) -> Result<Vec<(u32, Leaf, Option<SignedRoot>)>> {
+        let tx = self.db.tx()?;
+        let mut out = Vec::new();
+        for row in tx.cursor_read::<Leaves>()?.walk(Some(key(domain, from)))? {
+            let (k, v) = row?;
+            let (d, index) = split(k);
+            if d != domain || out.len() == limit {
+                break;
+            }
+            let signed = tx
+                .get::<Checkpoints>(k)?
+                .map(|v| decode_signed(&v))
+                .transpose()?;
+            out.push((index, decode_leaf(&v)?, signed));
+        }
+        Ok(out)
+    }
+
     /// Lowest index of `domain` that has a leaf but no signed root (backfill).
     pub fn first_unsigned_index(&self, domain: u32) -> Result<Option<u32>> {
         let tx = self.db.tx()?;
