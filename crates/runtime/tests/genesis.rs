@@ -22,17 +22,15 @@
 //!   reads `last_accounted_block_number`.
 
 use alloy_primitives::Address;
-use outbe_evm::system_tx::{
-    expected_begin_block_selectors, BOUNDARY_OUTCOME_SELECTOR,
-    CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR, ENCLAVE_UPGRADE_DEADLINE_SELECTOR,
-    HYPERLANE_SLASH_SELECTOR, ORACLE_SELECTOR, ORACLE_SLASH_SELECTOR, REWARDS_SELECTOR,
-    STAKING_SELECTOR, UPDATE_SELECTOR, VALIDATOR_LIVENESS_SELECTOR, VOTE_SELECTOR,
-};
 use outbe_gem::GemContract;
 use outbe_intex::IntexContract;
 use outbe_primitives::addresses::{GEM_ADDRESS, INTEX_ADDRESS};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::{
+    block::BlockSystemFlags,
+    system_tx::{BlockSystemPlan, SystemTxStepId, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX},
+};
 use outbe_validatorset::contract::ValidatorSet;
 use serde_json::Value;
 use tempfile::TempDir;
@@ -323,7 +321,7 @@ fn genesis_json_does_not_contain_private_dkg_shares() {
 // Runtime begin-zone ordering invariants.
 //
 // These tests pin the V2 system-transaction layout contract surfaced through
-// `outbe_evm::system_tx::expected_begin_block_selectors`. The contract is the
+// `BlockSystemPlan::expected_prefix_steps`. The contract is the
 // single source of truth for which kinds appear in which order at each
 // block height. The executor and the block builder both consume it. Pinning
 // it here keeps the genesis-bootstrap requirements (block 1 BoundaryOutcome
@@ -417,7 +415,13 @@ fn block1_boundary_outcome_writes_epoch0_snapshot_before_block2() {
                 active_set_hash,
             },
         };
-        let input = SystemTx::BoundaryOutcome { artifact }.encode().unwrap();
+        let input = SystemTx::Consensus {
+            step_index: outbe_primitives::system_tx::CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX,
+            payload: outbe_primitives::reshare_artifact::encode_boundary_artifact(&artifact)
+                .unwrap(),
+        }
+        .encode()
+        .unwrap();
         outbe_runtime::OutbeRuntime::new()
             .dispatch_system_tx(
                 storage,
@@ -441,35 +445,45 @@ fn block1_boundary_outcome_writes_epoch0_snapshot_before_block2() {
     });
 }
 
+fn expected_prefix_steps(
+    block_number: u64,
+    has_boundary_outcome: bool,
+    has_publication: bool,
+) -> Vec<SystemTxStepId> {
+    BlockSystemPlan::for_block(
+        block_number,
+        BlockSystemFlags {
+            has_boundary_outcome,
+            has_publication,
+        },
+        &outbe_runtime::BLOCK_ORDER,
+    )
+    .expected_prefix_steps()
+}
+
 /// Begin-zone layout contract for block 1 (genesis DKG `BoundaryOutcome`,
 /// no `CertifiedParentAccounting`) vs block 2 (`CertifiedParentAccounting` first).
 #[test]
 fn runtime_genesis_dkg_boundary_seeds_epoch0_vrf_snapshot_before_block2() {
-    let block1 = expected_begin_block_selectors(1, true, false);
-    let expected_block1 = vec![
-        BOUNDARY_OUTCOME_SELECTOR,
-        VALIDATOR_LIVENESS_SELECTOR,
-        VOTE_SELECTOR,
-        UPDATE_SELECTOR,
-        ENCLAVE_UPGRADE_DEADLINE_SELECTOR,
-        REWARDS_SELECTOR,
-        STAKING_SELECTOR,
-        ORACLE_SELECTOR,
-        ORACLE_SLASH_SELECTOR,
-        HYPERLANE_SLASH_SELECTOR,
-        CYCLE_TICK_SELECTOR,
-    ];
+    let block1 = expected_prefix_steps(1, true, false);
+    let expected_block1 = [2, 3, 4]
+        .into_iter()
+        .map(SystemTxStepId::consensus)
+        .chain((0..9).map(SystemTxStepId::begin_block))
+        .collect::<Vec<_>>();
     assert_eq!(
         block1, expected_block1,
-        "block 1 with a boundary and no tee bootstrap pins to BoundaryOutcome, \
-         ValidatorLiveness, and the nine begin-block selectors; \
+        "block 1 pins to BoundaryOutcome, TeeBootstrap, \
+         ValidatorLiveness, and the nine begin-block steps; \
          CertifiedParentAccounting is absent"
     );
 
-    let block2 = expected_begin_block_selectors(2, false, false);
+    let block2 = expected_prefix_steps(2, false, false);
     assert_eq!(
         block2.first(),
-        Some(&CERTIFIED_PARENT_ACCOUNTING_SELECTOR),
+        Some(&SystemTxStepId::consensus(
+            CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX
+        )),
         "block 2's first begin-zone tx must be CertifiedParentAccounting, the \
          first reader of the snapshot seeded at block 1"
     );
@@ -480,23 +494,29 @@ fn runtime_genesis_dkg_boundary_seeds_epoch0_vrf_snapshot_before_block2() {
 /// replacement for the legacy exact-parent finalization invariant.
 #[test]
 fn block2_requires_v2_parent_accounting() {
-    let block2_without_boundary = expected_begin_block_selectors(2, false, false);
-    let block2_with_boundary = expected_begin_block_selectors(2, true, false);
+    let block2_without_boundary = expected_prefix_steps(2, false, false);
+    let block2_with_boundary = expected_prefix_steps(2, true, false);
     assert_eq!(
         block2_without_boundary.first(),
-        Some(&CERTIFIED_PARENT_ACCOUNTING_SELECTOR)
+        Some(&SystemTxStepId::consensus(
+            CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX
+        ))
     );
     assert_eq!(
         block2_with_boundary.first(),
-        Some(&CERTIFIED_PARENT_ACCOUNTING_SELECTOR)
+        Some(&SystemTxStepId::consensus(
+            CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX
+        ))
     );
 
     // Higher blocks (e.g. 100) keep the same requirement. The V2 contract is
     // not localized to block 2.
-    let block100 = expected_begin_block_selectors(100, false, false);
+    let block100 = expected_prefix_steps(100, false, false);
     assert_eq!(
         block100.first(),
-        Some(&CERTIFIED_PARENT_ACCOUNTING_SELECTOR),
+        Some(&SystemTxStepId::consensus(
+            CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX
+        )),
         "every block N >= 2 must run CertifiedParentAccounting first"
     );
 }
@@ -508,9 +528,9 @@ fn block2_requires_v2_parent_accounting() {
 /// because of this exact invariant.
 #[test]
 fn block0_and_block1_do_not_require_parent_accounting() {
-    let block0_no_boundary = expected_begin_block_selectors(0, false, false);
-    let block0_with_boundary = expected_begin_block_selectors(0, true, false);
-    let block1_with_boundary = expected_begin_block_selectors(1, true, false);
+    let block0_no_boundary = expected_prefix_steps(0, false, false);
+    let block0_with_boundary = expected_prefix_steps(0, true, false);
+    let block1_with_boundary = expected_prefix_steps(1, true, false);
 
     assert!(
         block0_no_boundary.is_empty(),
@@ -522,7 +542,9 @@ fn block0_and_block1_do_not_require_parent_accounting() {
          requires block_number > 0); got {block0_with_boundary:?}"
     );
     assert!(
-        !block1_with_boundary.contains(&CERTIFIED_PARENT_ACCOUNTING_SELECTOR),
+        !block1_with_boundary.contains(&SystemTxStepId::consensus(
+            CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX
+        )),
         "block 1 must not run CertifiedParentAccounting; the V2 contract \
          starts Phase 1 at block N >= 2"
     );

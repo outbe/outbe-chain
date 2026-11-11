@@ -121,8 +121,11 @@ fn transact(db: CacheDB<EmptyDB>, to: Address, data: Bytes, gas: u64) -> Executi
 
 #[test]
 fn user_cycle_bytes_do_not_abort_direct_or_contract_calls() {
-    let data = SystemTx::CycleTick.encode().unwrap();
-    assert_eq!(data.len(), 5);
+    let data = SystemTx::BeginBlock { step_index: 8 }.encode().unwrap();
+    assert_eq!(
+        data.len(),
+        outbe_primitives::system_tx::SYSTEM_CALLDATA_FRAMING_BYTES
+    );
     let intrinsic = 21_000
         + data
             .iter()
@@ -164,7 +167,7 @@ fn user_cycle_bytes_do_not_abort_direct_or_contract_calls() {
 
 #[test]
 fn cycle_probe_requires_both_system_callee_and_system_caller() {
-    let data = SystemTx::CycleTick.encode().unwrap();
+    let data = SystemTx::BeginBlock { step_index: 8 }.encode().unwrap();
     let intrinsic = 21_000
         + data
             .iter()
@@ -198,7 +201,7 @@ fn cycle_probe_requires_both_system_callee_and_system_caller() {
 
 #[test]
 fn system_cycle_probe_out_of_gas_is_an_evm_halt() {
-    let data = SystemTx::CycleTick.encode().unwrap();
+    let data = SystemTx::BeginBlock { step_index: 8 }.encode().unwrap();
     let intrinsic = 21_000
         + data
             .iter()

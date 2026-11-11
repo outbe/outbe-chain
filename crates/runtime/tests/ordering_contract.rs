@@ -59,17 +59,10 @@ fn seed_validator_set(storage: StorageHandle, initial_epoch: u64) {
 /// A block with no certified `BoundaryOutcome` does not reset epoch counters.
 /// Begin-block modules still run and must leave the activated epoch in place.
 fn run_begin_block_without_certified_boundary(ctx: &BlockRuntimeContext) {
-    for kind in [
-        SystemTx::Vote,
-        SystemTx::Update,
-        SystemTx::EnclaveUpgradeDeadline,
-        SystemTx::Rewards,
-        SystemTx::Staking,
-        SystemTx::Oracle,
-        SystemTx::OracleSlash,
-        SystemTx::HyperlaneSlash,
-        SystemTx::CycleTick,
-    ] {
+    for (index, _) in outbe_runtime::BLOCK_ORDER.begin_block.iter().enumerate() {
+        let kind = SystemTx::BeginBlock {
+            step_index: u8::try_from(index).unwrap(),
+        };
         let input = kind.encode().expect("begin-block system tx encodes");
         outbe_runtime::OutbeRuntime::new()
             .dispatch_system_tx(
@@ -187,4 +180,197 @@ fn transition_epoch_does_not_fire_inside_an_epoch() {
             "mid-epoch block must NOT advance epoch_start_block",
         );
     });
+}
+
+#[test]
+fn runtime_order_matches_protocol_contract_and_lower_layer_order() {
+    use outbe_primitives::{block::BlockHeightRegime, test_utils::TEST_BLOCK_ORDER};
+    let expected = [
+        ("certified_parent_accounting", true, true, false),
+        ("late_finalize_credits", true, false, false),
+        ("boundary_outcome", true, true, false),
+        ("tee_bootstrap", true, true, false),
+        ("validator_liveness", true, true, false),
+        ("radicle_publication", true, false, false),
+        ("vote", true, true, false),
+        ("update", true, false, false),
+        ("enclave_upgrade_deadline", true, false, false),
+        ("rewards", true, false, false),
+        ("staking", true, false, false),
+        ("oracle", true, true, false),
+        ("oracle_slash", false, false, false),
+        ("hyperlane_slash", false, false, false),
+        ("cycle_tick", true, true, true),
+        ("nod_factory", false, false, false),
+        ("gem_factory", false, false, false),
+        ("intex_factory", false, false, false),
+        ("credis_factory", false, false, false),
+        ("gem_cleanup", false, false, false),
+    ];
+    let orders = outbe_runtime::BLOCK_ORDER;
+    assert_eq!(
+        (
+            orders.consensus.len(),
+            orders.begin_block.len(),
+            orders.end_block.len()
+        ),
+        (6, 9, 5)
+    );
+    let describe = |step: &outbe_primitives::block::ProtocolStep| {
+        (
+            step.name,
+            step.revert_fails_block,
+            step.include_validator_snapshot,
+            step.needs_cycle_active_utc_day,
+        )
+    };
+    let runtime: Vec<_> = orders
+        .consensus
+        .iter()
+        .chain(orders.begin_block)
+        .chain(orders.end_block)
+        .collect();
+    let lower: Vec<_> = TEST_BLOCK_ORDER
+        .consensus
+        .iter()
+        .chain(TEST_BLOCK_ORDER.begin_block)
+        .chain(TEST_BLOCK_ORDER.end_block)
+        .collect();
+    assert_eq!(
+        runtime
+            .iter()
+            .map(|step| describe(step))
+            .collect::<Vec<_>>(),
+        expected
+    );
+    assert_eq!(
+        lower.iter().map(|step| describe(step)).collect::<Vec<_>>(),
+        expected
+    );
+    for (regime, base) in [
+        (
+            BlockHeightRegime::Genesis,
+            [false, false, false, false, false, false],
+        ),
+        (
+            BlockHeightRegime::GenesisBootstrap,
+            [false, false, true, true, true, false],
+        ),
+        (
+            BlockHeightRegime::SteadyState,
+            [true, true, false, false, true, false],
+        ),
+    ] {
+        for flags in all_flags() {
+            let mut active = base;
+            active[2] |= flags.has_boundary_outcome;
+            active[5] = flags.has_publication;
+            for (index, (step, test_step)) in runtime.iter().zip(&lower).enumerate() {
+                let expected_active = active.get(index).copied().unwrap_or(true);
+                assert_eq!(
+                    (step.is_active)(regime, flags),
+                    expected_active,
+                    "{} {regime:?} {flags:?}",
+                    step.name
+                );
+                assert_eq!(
+                    (test_step.is_active)(regime, flags),
+                    expected_active,
+                    "{} {regime:?} {flags:?}",
+                    step.name
+                );
+            }
+        }
+    }
+}
+
+fn all_flags() -> impl Iterator<Item = outbe_primitives::block::BlockSystemFlags> {
+    [false, true].into_iter().flat_map(|has_boundary_outcome| {
+        [false, true].map(
+            |has_publication| outbe_primitives::block::BlockSystemFlags {
+                has_boundary_outcome,
+                has_publication,
+            },
+        )
+    })
+}
+
+#[test]
+fn runtime_plan_and_fsm_preserve_static_indices_across_filtering() {
+    use outbe_primitives::system_tx::BlockSystemPlan;
+    let order = &outbe_runtime::BLOCK_ORDER;
+    for block in [0, 1, 2] {
+        for flags in all_flags() {
+            let plan = BlockSystemPlan::for_block(block, flags, order);
+            let expected_consensus: Vec<u8> = match block {
+                0 => vec![],
+                1 => vec![2, 3, 4],
+                _ => {
+                    if flags.has_boundary_outcome {
+                        vec![0, 1, 2, 4]
+                    } else {
+                        vec![0, 1, 4]
+                    }
+                }
+            }
+            .into_iter()
+            .chain((block != 0 && flags.has_publication).then_some(5))
+            .collect();
+            assert_eq!(
+                plan.consensus_steps
+                    .iter()
+                    .map(|step| step.id.step_index)
+                    .collect::<Vec<_>>(),
+                expected_consensus
+            );
+            assert_eq!(plan.begin_block_steps.len(), if block == 0 { 0 } else { 9 });
+            assert_eq!(plan.end_block_steps.len(), if block >= 2 { 5 } else { 0 });
+            assert_eq!(plan.allows_user_txs, block >= 2);
+            assert_fsm_reaches_completed(plan);
+        }
+    }
+}
+
+fn assert_fsm_reaches_completed(plan: outbe_primitives::system_tx::BlockSystemPlan) {
+    use outbe_primitives::system_tx::{BlockExecutionFsm, BlockExecutionStage};
+    let block = plan.block_number;
+    let mut fsm = BlockExecutionFsm::new(plan.clone());
+    if block != 0 {
+        assert!(fsm.on_user_tx().is_err());
+    }
+    for (body_index, step) in plan
+        .consensus_steps
+        .iter()
+        .chain(&plan.begin_block_steps)
+        .enumerate()
+    {
+        assert_eq!(fsm.expected_prefix_body_index(), Some(body_index));
+        assert_eq!(fsm.expected_step_id(), Some(step.id));
+        let input = if step.id.stage == BlockExecutionStage::Consensus {
+            SystemTx::Consensus {
+                step_index: step.id.step_index,
+                payload: Default::default(),
+            }
+        } else {
+            SystemTx::BeginBlock {
+                step_index: step.id.step_index,
+            }
+        };
+        fsm.on_system_tx(&input).unwrap();
+    }
+    if block >= 2 {
+        assert_eq!(fsm.stage(), BlockExecutionStage::MidBlock);
+        assert!(fsm.finish().is_err());
+        fsm.on_user_tx().unwrap();
+        fsm.enter_end_block(block).unwrap();
+    }
+    for step in &plan.end_block_steps {
+        assert_eq!(fsm.expected_ordinal(), Some(24 + step.id.step_index));
+        fsm.on_system_tx(&SystemTx::EndBlock {
+            step_index: step.id.step_index,
+        })
+        .unwrap();
+    }
+    assert_eq!(fsm.stage(), BlockExecutionStage::Completed);
+    fsm.finish().unwrap();
 }

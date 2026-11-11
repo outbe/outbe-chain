@@ -72,20 +72,22 @@ where
     // Thread 1 (main): Reth execution layer.
     let bridge_for_evm = bridge.clone();
     let runtime_for_evm = Arc::clone(&runtime_for_launcher);
-    let components =
-        move |spec: Arc<ChainSpec<OutbeHeader>>| {
-            let evm = outbe_evm::OutbeEvmConfig::new_with_bridge(
-                spec.clone(),
-                bridge_for_evm.clone(),
-                Arc::clone(&runtime_for_evm) as Arc<dyn EvmRuntimeHost>,
-            );
-            (
-                evm,
-                Arc::new(OutbeBeaconConsensus::new(spec).with_max_extra_data_size(
-                    outbe_execution::consensus::OUTBE_MAX_EXTRA_DATA_SIZE,
-                )),
-            )
-        };
+    let components = move |spec: Arc<ChainSpec<OutbeHeader>>| {
+        let evm = outbe_evm::OutbeEvmConfig::new_with_bridge(
+            spec.clone(),
+            bridge_for_evm.clone(),
+            Arc::clone(&runtime_for_evm) as Arc<dyn EvmRuntimeHost>,
+        );
+        (
+            evm,
+            Arc::new(
+                OutbeBeaconConsensus::new(spec, crate::system_tx::BLOCK_ORDER)
+                    .with_max_extra_data_size(
+                        outbe_execution::consensus::OUTBE_MAX_EXTRA_DATA_SIZE,
+                    ),
+            ),
+        )
+    };
 
     // This owner outlives cancellation of the launcher and Reth runtime teardown.
     let process_shutdown = outbe_execution::shutdown::NodeShutdown::default();

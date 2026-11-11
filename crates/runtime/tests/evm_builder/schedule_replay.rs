@@ -171,11 +171,11 @@ fn builder_keeps_preexecuted_phase1_witness_in_block_body() {
             .expect("remaining begin phase executes");
     }
     let end_inputs = [
-        outbe_evm::system_tx::SystemTx::NodFactory,
-        outbe_evm::system_tx::SystemTx::GemFactory,
-        outbe_evm::system_tx::SystemTx::IntexFactory,
-        outbe_evm::system_tx::SystemTx::CredisFactory,
-        outbe_evm::system_tx::SystemTx::GemCleanup,
+        outbe_evm::system_tx::SystemTx::EndBlock { step_index: 0 },
+        outbe_evm::system_tx::SystemTx::EndBlock { step_index: 1 },
+        outbe_evm::system_tx::SystemTx::EndBlock { step_index: 2 },
+        outbe_evm::system_tx::SystemTx::EndBlock { step_index: 3 },
+        outbe_evm::system_tx::SystemTx::EndBlock { step_index: 4 },
     ];
     let end_len = end_inputs.len();
     for input in end_inputs {

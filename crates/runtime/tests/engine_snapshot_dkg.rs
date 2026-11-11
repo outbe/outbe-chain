@@ -222,7 +222,10 @@ mod copied_native_dkg_prerequisites {
                     components: Components {
                         transaction_pool: pool.clone(),
                         evm_config: evm.clone(),
-                        consensus: Arc::new(OutbeBeaconConsensus::new(chain)),
+                        consensus: Arc::new(OutbeBeaconConsensus::new(
+                            chain,
+                            outbe_runtime::BLOCK_ORDER,
+                        )),
                         network: network.clone(),
                         payload_builder_handle: payload.clone(),
                     },

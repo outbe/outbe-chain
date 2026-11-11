@@ -30,6 +30,7 @@ pub use configuration::{
 };
 pub use launch::run_node;
 pub(crate) use launch::LaunchConfig;
+pub use system_tx::BLOCK_ORDER;
 pub use wiring::OutbeRuntime;
 
 #[cfg(test)]

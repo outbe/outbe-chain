@@ -13,12 +13,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{address, keccak256, Bytes, Signature, TxKind, B256, U256};
 use alloy_rpc_types_engine::PayloadId;
 use outbe_evm::{
-    system_tx::{
-        split_system_layout, BOUNDARY_OUTCOME_SELECTOR, CYCLE_TICK_SELECTOR,
-        ENCLAVE_UPGRADE_DEADLINE_SELECTOR, HYPERLANE_SLASH_SELECTOR, ORACLE_SELECTOR,
-        ORACLE_SLASH_SELECTOR, REWARDS_SELECTOR, STAKING_SELECTOR, TEE_BOOTSTRAP_SELECTOR,
-        UPDATE_SELECTOR, VALIDATOR_LIVENESS_SELECTOR, VOTE_SELECTOR,
-    },
+    system_tx::{split_system_layout, SystemTxStepId},
     OutbeEvmConfig, OutbeEvmSigner,
 };
 use outbe_execution::OutbePayloadBuilder;
@@ -424,21 +419,12 @@ fn bootstrap_payload_builder_ignores_nonempty_pool_and_replays_exactly() {
     let layout = split_system_layout(body).expect("built payload has canonical system layout");
 
     assert_eq!(
-        layout.begin_block_selectors().expect("begin inputs decode"),
-        vec![
-            BOUNDARY_OUTCOME_SELECTOR,
-            TEE_BOOTSTRAP_SELECTOR,
-            VALIDATOR_LIVENESS_SELECTOR,
-            VOTE_SELECTOR,
-            UPDATE_SELECTOR,
-            ENCLAVE_UPGRADE_DEADLINE_SELECTOR,
-            REWARDS_SELECTOR,
-            STAKING_SELECTOR,
-            ORACLE_SELECTOR,
-            ORACLE_SLASH_SELECTOR,
-            HYPERLANE_SLASH_SELECTOR,
-            CYCLE_TICK_SELECTOR,
-        ]
+        layout.prefix_steps().expect("begin inputs decode"),
+        [2, 3, 4]
+            .into_iter()
+            .map(SystemTxStepId::consensus)
+            .chain((0..9).map(SystemTxStepId::begin_block))
+            .collect::<Vec<_>>()
     );
     assert!(layout.user.is_empty());
     assert!(layout.end.is_empty());
@@ -507,21 +493,12 @@ fn bootstrap_payload_survives_repeated_block_one_proposal_attempts() {
     assert_eq!(
         split_system_layout(retry_body)
             .expect("retry payload has canonical system layout")
-            .begin_block_selectors()
+            .prefix_steps()
             .expect("retry begin inputs decode"),
-        vec![
-            BOUNDARY_OUTCOME_SELECTOR,
-            TEE_BOOTSTRAP_SELECTOR,
-            VALIDATOR_LIVENESS_SELECTOR,
-            VOTE_SELECTOR,
-            UPDATE_SELECTOR,
-            ENCLAVE_UPGRADE_DEADLINE_SELECTOR,
-            REWARDS_SELECTOR,
-            STAKING_SELECTOR,
-            ORACLE_SELECTOR,
-            ORACLE_SLASH_SELECTOR,
-            HYPERLANE_SLASH_SELECTOR,
-            CYCLE_TICK_SELECTOR,
-        ]
+        [2, 3, 4]
+            .into_iter()
+            .map(SystemTxStepId::consensus)
+            .chain((0..9).map(SystemTxStepId::begin_block))
+            .collect::<Vec<_>>()
     );
 }
