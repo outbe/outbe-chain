@@ -13,6 +13,8 @@ pub struct ValidatorConfig {
     #[serde(default)]
     pub hyperlane: HyperlaneConfig,
     pub health: Option<HealthConfig>,
+    /// Local MDBX store. Only the `db` commands use it for now.
+    pub storage: Option<StorageConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -55,6 +57,13 @@ impl Default for HyperlaneConfig {
             gasless: false,
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StorageConfig {
+    /// Directory of the validator's own MDBX store. Never the node database.
+    pub db_path: std::path::PathBuf,
 }
 
 #[derive(Debug, Deserialize)]
@@ -119,6 +128,11 @@ validator_address = "0x1111111111111111111111111111111111111111"
         assert_eq!(cfg.hyperlane.poll_interval_secs, 30);
         assert!(!cfg.hyperlane.gasless);
         assert!(cfg.health.is_none());
+        assert!(cfg.storage.is_none());
+
+        let cfg: ValidatorConfig =
+            toml::from_str(&format!("{MINIMAL}\n[storage]\ndb_path = \"/tmp/db\"\n")).unwrap();
+        assert_eq!(cfg.storage.unwrap().db_path.to_str(), Some("/tmp/db"));
     }
 
     #[test]

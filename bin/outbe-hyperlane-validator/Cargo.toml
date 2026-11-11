@@ -19,6 +19,8 @@ alloy-signer-local.workspace = true
 alloy-network.workspace = true
 alloy-rpc-types.workspace = true
 
+reth-db.workspace = true
+
 tokio.workspace = true
 reqwest.workspace = true
 
@@ -31,6 +33,9 @@ thiserror.workspace = true
 
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

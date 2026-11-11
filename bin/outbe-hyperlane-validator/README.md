@@ -60,6 +60,9 @@ gasless = true            # optional, default false: ZeroFee txpool policy
 [health]
 enabled = true            # optional, default true
 bind_address = "0.0.0.0:9003"
+
+[storage]                 # optional, only the db commands use it now
+db_path = "/var/lib/outbe-hyperlane-validator/db"
 ```
 
 The configuration has no bucket settings. On every poll, the daemon:
@@ -84,6 +87,23 @@ controller is initialized (`domains()` is empty), the daemon does nothing.
 `HyperlaneSubmitCheckpointHook` waives the fee for active validators and their
 Hyperlane delegates. An explicit Hyperlane delegate replaces the validator
 key for this authorization.
+
+## Local store
+
+`[storage] db_path` sets the directory of the validator's own MDBX store.
+Do not use the node database directory. The daemon does not use the store
+yet. Later steps of the validator port write leaves and signed checkpoints
+to it.
+
+The store opens in MDBX exclusive mode. While one process holds the store,
+a second process cannot open it. Stop the daemon before you run a `db`
+command.
+
+| Command | What it does |
+|---|---|
+| `db status` | For each domain: leaf count, latest signed index, cursor, reorg flag. |
+| `db checkpoint --domain D --index I` | Prints the stored leaf and the signed root at index `I`. |
+| `db clear-reorg --domain D` | Removes the reorg flag of domain `D`. Do this only after you fix the cause. |
 
 ## Health
 
