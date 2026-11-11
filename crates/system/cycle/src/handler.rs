@@ -9,9 +9,9 @@
 use alloy_primitives::U256;
 use outbe_agentreward::api::{allocate_day_agent_rewards, process_agent_rewards, DayAgentPools};
 use outbe_emission::{
-    allocation::{allocate_emission, EmissionSinkId},
+    allocation::{allocate_day_emission_limit, EmissionSinkId},
     api::DayAllocationAmounts,
-    day_emission::day_emission_limit,
+    day_emission::emission_limit_of_day,
     schema::emission_day_state,
 };
 use outbe_metadosis::commands::dispatch_terminal_remainder_at;
@@ -197,14 +197,14 @@ fn settle_emission_day_inner(ctx: &BlockRuntimeContext, prev_day: u32) -> Result
     tracing::debug!(target: "outbe::cycle::gas", gas_used = g0, prev_day, block_ts = ctx.block.timestamp, "entry");
 
     let day_number = day_number(ctx, prev_day)?;
-    let cap = day_emission_limit(day_number);
+    let cap = emission_limit_of_day(day_number);
     if cap.is_zero() {
         return Ok(());
     }
     let shares = EmissionShares::allocate(cap)?;
 
     let g1 = gas(ctx);
-    tracing::debug!(target: "outbe::cycle::gas", step_gas = gas_sample_delta(g1, g0), cumulative = g1, "after allocate_emission");
+    tracing::debug!(target: "outbe::cycle::gas", step_gas = gas_sample_delta(g1, g0), cumulative = g1, "after allocate_day_emission_limit");
 
     wrap(
         "seal_votes_and_fees",
@@ -351,7 +351,7 @@ impl EmissionShares {
     /// Splits `cap` with the EmissionLimit allocation table. A sink without an
     /// allocation row gets zero.
     fn allocate(cap: U256) -> Result<Self> {
-        let allocations = allocate_emission(cap)?;
+        let allocations = allocate_day_emission_limit(cap)?;
         let amount_for = |id: EmissionSinkId| -> U256 {
             allocations
                 .iter()
@@ -463,7 +463,7 @@ fn run_allocate_emission_day_step(ctx: &BlockRuntimeContext, day: u32) -> Result
 fn record_failed_allocation_fallback(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
     ctx.storage.with_checkpoint(|| {
         let day_num = day_number(ctx, day)?;
-        let cap = day_emission_limit(day_num);
+        let cap = emission_limit_of_day(day_num);
         outbe_rewards::api::seal_votes_and_fees(ctx, day)?;
         outbe_agentreward::api::abandon_day_agent_rewards(ctx, day.into())?;
         if !cap.is_zero() {

@@ -258,9 +258,9 @@ pub(super) fn dispatch_at(
 
 /// Day-0 emission allocation of `sink`.
 pub(super) fn day_zero_allocation(sink: outbe_emission::allocation::EmissionSinkId) -> U256 {
-    outbe_emission::allocation::allocate_emission(outbe_emission::day_emission::day_emission_limit(
-        0,
-    ))
+    outbe_emission::allocation::allocate_day_emission_limit(
+        outbe_emission::day_emission::emission_limit_of_day(0),
+    )
     .unwrap()
     .iter()
     .find(|allocation| allocation.id == sink)

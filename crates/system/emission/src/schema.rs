@@ -129,12 +129,6 @@ impl EmissionDay {
         }
     }
 
-    /// Returns `emission_limit` widened to `U256` in six-decimal minor units.
-    #[inline]
-    pub fn emission_limit_minor(&self) -> U256 {
-        U256::from(self.metadosis_limit.max(self.emission_limit))
-    }
-
     /// Returns `metadosis_limit` widened to `U256` in six-decimal minor units.
     #[inline]
     pub fn metadosis_limit_minor(&self) -> U256 {

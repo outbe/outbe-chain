@@ -1,7 +1,7 @@
 //! OIP-00343 proof tests for `ED01`, `ED03`, and `ED54`.
 
 use alloy_primitives::U256;
-use outbe_emission::day_emission::day_emission_limit;
+use outbe_emission::day_emission::emission_limit_of_day;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
     address_pair::AddressPair,
@@ -85,11 +85,11 @@ fn gap_ed01_every_utc_day_is_an_emission_day() {
                 .unwrap()
                 .unwrap_or_else(|| panic!("missing EmissionDay record for {day}"));
             assert_eq!(record.wwd, expected_wwd, "unexpected wwd for day {day}");
-            let limit = day_emission_limit(day_index);
+            let limit = emission_limit_of_day(day_index);
             assert_eq!(
                 U256::from(record.emission_limit),
                 limit,
-                "day {day} must receive day_emission_limit({day_index})"
+                "day {day} must receive emission_limit_of_day({day_index})"
             );
             assert_eq!(
                 record.state,
@@ -109,7 +109,7 @@ fn gap_ed01_every_utc_day_is_an_emission_day() {
                 + U256::from(record.promis_limit);
             assert_eq!(
                 distributed_and_promis, limit,
-                "distributed pools + PromisLimit must conserve day_emission_limit({day_index}) on day {day}"
+                "distributed pools + PromisLimit must conserve emission_limit_of_day({day_index}) on day {day}"
             );
             expected_promis_total += U256::from(record.promis_limit);
         }
@@ -202,7 +202,7 @@ fn gap_ed03_start_date_comes_from_genesis_block() {
         let record = outbe_emission::api::get_emission_day_record(handle, 20_240_101)
             .unwrap()
             .expect("genesis day must be allocated");
-        assert_eq!(U256::from(record.emission_limit), day_emission_limit(0));
+        assert_eq!(U256::from(record.emission_limit), emission_limit_of_day(0));
     });
 }
 

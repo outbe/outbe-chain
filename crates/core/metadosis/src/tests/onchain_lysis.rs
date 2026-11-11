@@ -305,7 +305,7 @@ fn native_completion_credits_the_unused_lysis_limit_once() {
             .get(DAY)
             .unwrap()
             .unwrap()
-            .emission_limit_minor();
+            .metadosis_limit_minor();
         let desis = outbe_desis::schema::DesisContract::new(storage.clone())
             .pending_desis_limit_minor
             .read(&outbe_primitives::time::EmissionDate::new(DAY))
