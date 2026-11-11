@@ -26,9 +26,6 @@ pub struct OperatorConfig {
 #[serde(deny_unknown_fields)]
 pub struct NetworkConfig {
     pub chain_id: u64,
-    /// Genesis block hash, lowercase without a 0x prefix.
-    pub genesis_block_hash: String,
-    pub genesis_file_sha256: String,
     pub certified_rpc: String,
     pub external_ip: Ipv4Addr,
     pub bootnodes: Vec<String>,
@@ -167,14 +164,6 @@ impl OperatorConfig {
             "network.chain_id must be positive"
         );
         ensure!(
-            is_sha256(&self.network.genesis_block_hash),
-            "network.genesis_block_hash must be 64 lowercase hex characters"
-        );
-        ensure!(
-            is_sha256(&self.network.genesis_file_sha256),
-            "network.genesis_file_sha256 must be 64 lowercase hex characters"
-        );
-        ensure!(
             self.network.certified_rpc.starts_with("http://")
                 || self.network.certified_rpc.starts_with("https://"),
             "network.certified_rpc must be an HTTP(S) URL"
@@ -230,13 +219,6 @@ pub fn sha256(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 
-fn is_sha256(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-}
-
 fn valid_consensus_peer(value: &str) -> bool {
     let Some((key, address)) = value.split_once('@') else {
         return false;
@@ -261,8 +243,6 @@ mod tests {
 version: 1
 network:
   chain_id: 424242
-  genesis_block_hash: {}
-  genesis_file_sha256: {}
   certified_rpc: https://rpc.example
   external_ip: 192.0.2.10
   bootnodes: ["enode://abc@192.0.2.1:30303"]
@@ -276,8 +256,6 @@ feeder:
     [oracle]
     sources = "local"
 "#,
-            "a".repeat(64),
-            "b".repeat(64),
             "c".repeat(96),
         ))
         .unwrap();
