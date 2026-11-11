@@ -1,6 +1,7 @@
 //! READY EmissionDay classification and local settlement paths.
 
 use alloy_primitives::U256;
+use outbe_emission::schema::metadosis_state;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
@@ -9,7 +10,7 @@ use crate::{
     constants::{METADOSIS_CANCELED_NO_LIMIT, SYMBOLIC_RATE},
     lifecycle::{cancel_emission_day, complete_emission_day},
     precompile::IMetadosis,
-    schema::{emission_day_state, EmissionDay, MetadosisContract},
+    schema::{EmissionDay, MetadosisContract},
 };
 
 /// Split of one EmissionDay in six-decimal protocol COEN minor units.
@@ -129,7 +130,7 @@ fn settle_empty_day(
         metadosis.storage.clone(),
         emission_day.day,
     )?;
-    complete_emission_day(metadosis, &updated, emission_day_state::SUCCEEDED)?;
+    complete_emission_day(metadosis, &updated, metadosis_state::COMPLETED)?;
     if wwd.value() != 0 {
         TributeContract::new(metadosis.storage.clone()).retire_completed_partition(wwd)?;
     }
@@ -182,7 +183,7 @@ fn settle_zero_allocation(
             promis_limit_added: day_limit,
         },
     )?;
-    complete_emission_day(metadosis, &updated, emission_day_state::SUCCEEDED)?;
+    complete_emission_day(metadosis, &updated, metadosis_state::COMPLETED)?;
     TributeContract::new(metadosis.storage.clone()).forfeit_sealed_partition(wwd)?;
     metadosis.emit(IMetadosis::MetadosisCompleted {
         emissionDay: emission_day.day,

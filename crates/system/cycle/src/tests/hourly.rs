@@ -17,7 +17,7 @@ fn hourly_protocol_cycle_executes_due_emission_day_at_metadosis_start() {
             .unwrap()
             .unwrap();
         assert_eq!(ed.wwd, wwd);
-        assert_eq!(ed.state, outbe_metadosis::emission_day_state::NONE);
+        assert_eq!(ed.state, outbe_emission::schema::metadosis_state::PENDING);
         (ed, ed.metadosis_start.div_ceil(3_600) * 3_600)
     });
 
@@ -37,7 +37,7 @@ fn hourly_protocol_cycle_executes_due_emission_day_at_metadosis_start() {
             .unwrap();
         assert_eq!(
             updated.state,
-            outbe_metadosis::emission_day_state::SUCCEEDED
+            outbe_emission::schema::metadosis_state::COMPLETED
         );
         assert!(
             outbe_agentreward::distribution::has_pending_accruals_for_day(

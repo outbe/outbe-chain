@@ -3,14 +3,6 @@ use outbe_primitives::addresses::METADOSIS_ADDRESS;
 
 pub use outbe_emission::schema::{EmissionContract, EmissionDay};
 
-/// Metadosis execution state aliases mapped to [`outbe_emission::schema::metadosis_state`].
-pub mod emission_day_state {
-    pub const NONE: u8 = outbe_emission::schema::metadosis_state::PENDING;
-    pub const SUCCEEDED: u8 = outbe_emission::schema::metadosis_state::COMPLETED;
-    pub const CANCELLED: u8 = outbe_emission::schema::metadosis_state::CANCELLED;
-    pub const FAILED: u8 = outbe_emission::schema::metadosis_state::FAILED;
-}
-
 /// Native Metadosis event-emitting contract handle at `METADOSIS_ADDRESS`.
 ///
 /// `EmissionDay` storage lives in [`outbe_emission::EmissionContract`] at `EMISSION_ADDRESS`.

@@ -188,7 +188,7 @@ fn fixture_with_amounts(limit: u64, amounts: &[u64]) -> HashMapStorageProvider {
                         WWD,
                         50,
                         u128::from(limit),
-                        emission_day_state::NONE,
+                        metadosis_state::PENDING,
                     );
                     ed.state = outbe_emission::schema::emission_day_state::PROCESSING;
                     metadosis.emission_days().create(&ed)?;
@@ -265,7 +265,7 @@ fn native_fraction_completion_keeps_tributes_for_owner_issue_nod() {
                 .unwrap()
                 .unwrap()
                 .metadosis_state,
-            emission_day_state::SUCCEEDED
+            metadosis_state::COMPLETED
         );
 
         let tribute = TributeContract::new(storage.clone());
@@ -341,6 +341,77 @@ fn native_completion_briefs_the_emission_day() {
 }
 
 #[test]
+fn gap_ed14_failed_metadosis_forfeits_tributes() {
+    let amounts = [NOMINAL + 1, NOMINAL + 2, NOMINAL + 3];
+    for (limit, end_state) in [
+        (LIMIT, metadosis_state::FAILED),
+        (0, metadosis_state::CANCELLED),
+    ] {
+        let mut provider = fixture_with_amounts(limit, &amounts);
+        StorageHandle::enter(&mut provider, |storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
+                    block_number: 10,
+                    timestamp: CLOCK,
+                    chain_id: CHAIN_ID,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: u64::max(CLOCK, 1),
+                    proposer: alloy_primitives::Address::ZERO,
+                    validators: Vec::new(),
+                },
+                storage.clone(),
+            );
+            if end_state == metadosis_state::FAILED {
+                crate::commands::fail_due_emission_day(&ctx).unwrap();
+            } else {
+                crate::commands::start_metadosis(&ctx).unwrap();
+            }
+            let closed = MetadosisContract::new(storage.clone())
+                .emission_days()
+                .get(DAY)
+                .unwrap()
+                .unwrap();
+            assert_eq!(closed.metadosis_state, end_state);
+
+            let mut tribute = TributeContract::new(storage.clone());
+            for byte in 1..=3u8 {
+                tribute
+                    .clean(outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(
+                        Address::repeat_byte(byte),
+                        WWD,
+                    ))
+                    .unwrap();
+            }
+            assert!(tribute.state_records_by_day(WWD).unwrap().is_empty());
+
+            let completed = outbe_emission::api::MetadosisCompletedAmounts {
+                lysis_limit: U256::ZERO,
+                desis_limit: U256::ZERO,
+                nods: U256::ZERO,
+                promis_limit_added: U256::ZERO,
+            };
+            assert!(outbe_emission::api::record_metadosis_completed(
+                storage.clone(),
+                DAY,
+                completed
+            )
+            .is_err());
+            assert!(outbe_emission::api::record_metadosis_failed(storage.clone(), DAY).is_err());
+            assert!(outbe_emission::api::record_metadosis_canceled(storage.clone(), DAY).is_err());
+            assert_eq!(
+                MetadosisContract::new(storage)
+                    .emission_days()
+                    .get(DAY)
+                    .unwrap(),
+                Some(closed)
+            );
+        });
+    }
+}
+
+#[test]
 fn production_command_issues_encrypted_nods_and_completes_without_worker() {
     let _transport = outbe_tee::lysis::test_transport::scope(exchange);
     // Issuing a Lysis Nod reads its Gratis load for the group's unpaid total.
@@ -356,7 +427,7 @@ fn production_command_issues_encrypted_nods_and_completes_without_worker() {
                 .unwrap()
                 .unwrap()
                 .metadosis_state,
-            emission_day_state::SUCCEEDED
+            metadosis_state::COMPLETED
         );
         let tribute = TributeContract::new(storage.clone());
         assert!(tribute.retired_days.read(&WWD).unwrap());
@@ -475,7 +546,7 @@ fn calculation_rejection_only_fails_the_day_and_preserves_all_economic_state() {
         StorageHandle::enter(&mut provider, |storage| {
             let metadosis = MetadosisContract::new(storage.clone());
             let record = metadosis.emission_days().get(DAY).unwrap().unwrap();
-            assert_eq!(record.metadosis_state, emission_day_state::FAILED);
+            assert_eq!(record.metadosis_state, metadosis_state::FAILED);
             assert_eq!(
                 record.state,
                 outbe_emission::schema::emission_day_state::COMPLETED

@@ -65,7 +65,7 @@ fn init_genesis_day_creates_7_day_lookahead_with_bidirectional_links_and_closed_
             ed_24.metadosis_start,
             date_key_to_utc_timestamp(next_date_key(20260924).expect("date step")).unwrap() + 1
         );
-        assert_eq!(ed_24.state, emission_day_state::NONE);
+        assert_eq!(ed_24.state, metadosis_state::PENDING);
         assert_eq!(ed_24.emission_limit_minor, U256::ZERO);
 
         let wwd_25 = api::worldwide_day(storage.clone(), WorldwideDay::new(20260925))
@@ -246,7 +246,7 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
             .unwrap();
         assert_eq!(completed.day, 20260905);
         assert_eq!(completed.wwd, wwd_sep_01);
-        assert_eq!(completed.state, emission_day_state::SUCCEEDED);
+        assert_eq!(completed.state, metadosis_state::COMPLETED);
         let desis = outbe_desis::schema::DesisContract::new(storage);
         let briefed = outbe_primitives::time::EmissionDate::new(20260905);
         assert_eq!(
@@ -335,7 +335,7 @@ fn first_wwd_for_genesis_splits_3_or_4_empty_emission_days_across_noon_utc() {
         crate::commands::start_metadosis(&empty_due_ctx).unwrap();
         let settled_empty = api::emission_day(storage, 20261001).unwrap().unwrap();
         assert_eq!(settled_empty.wwd, WorldwideDay::new(0));
-        assert_eq!(settled_empty.state, emission_day_state::SUCCEEDED);
+        assert_eq!(settled_empty.state, metadosis_state::COMPLETED);
     });
 
     // Genesis on 2026-10-01 at 12:01 UTC -> first_wwd = 20261001 (G),
@@ -477,7 +477,7 @@ fn gap_ed05_wwd_without_price_runs_as_empty_day() {
             .unwrap()
             .unwrap();
         assert_eq!(linked.wwd, wwd);
-        assert_eq!(linked.state, emission_day_state::NONE);
+        assert_eq!(linked.state, metadosis_state::PENDING);
 
         let snapshot_ts = proj.forming_end + 12 * 3_600;
         advance_at(&storage, snapshot_ts, genesis_ts);
@@ -489,7 +489,7 @@ fn gap_ed05_wwd_without_price_runs_as_empty_day() {
                 .unwrap()
                 .unwrap()
                 .state,
-            emission_day_state::NONE
+            metadosis_state::PENDING
         );
 
         storage
@@ -544,7 +544,7 @@ fn gap_ed05_wwd_without_price_runs_as_empty_day() {
         let settled = api::emission_day(storage.clone(), emission_day)
             .unwrap()
             .unwrap();
-        assert_eq!(settled.state, emission_day_state::SUCCEEDED);
+        assert_eq!(settled.state, metadosis_state::COMPLETED);
         assert_eq!(settled.wwd, wwd);
         assert_eq!(
             TributeContract::new(storage.clone())

@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 
 use alloy_primitives::U256;
+use outbe_emission::schema::metadosis_state;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::Result,
@@ -18,7 +19,7 @@ use outbe_tributefactory::TributeFactoryContract;
 use crate::{
     errors::{MetadosisCallerError, MetadosisStorageCorruptionError},
     precompile::IMetadosis,
-    schema::{emission_day_state, EmissionDay, MetadosisContract},
+    schema::{EmissionDay, MetadosisContract},
 };
 
 const MAX_DUE_SCAN_DAYS: u32 = 64;
@@ -65,7 +66,7 @@ pub(crate) fn ensure_emission_day_with_limit(
         WorldwideDay::new(0),
         metadosis_start,
         limit,
-        emission_day_state::NONE,
+        metadosis_state::PENDING,
     );
     record.state = outbe_emission::schema::emission_day_state::PROCESSING;
     emission_days.create(&record)?;
@@ -86,7 +87,7 @@ pub(crate) fn find_due_emission_day(
         };
         verify_record_wwd_backlink(&factory, &record)?;
         if record.state == outbe_emission::schema::emission_day_state::PROCESSING
-            && record.metadosis_state == emission_day_state::NONE
+            && record.metadosis_state == metadosis_state::PENDING
             && now >= record.metadosis_start
         {
             if record.wwd.value() != 0
@@ -175,7 +176,7 @@ pub(crate) fn complete_emission_day(
     emission_day: &EmissionDay,
     state: u8,
 ) -> Result<()> {
-    if state == emission_day_state::SUCCEEDED {
+    if state == metadosis_state::COMPLETED {
         if !outbe_agentreward::distribution::has_pending_accruals_for_day(
             &metadosis.storage,
             emission_day.day,

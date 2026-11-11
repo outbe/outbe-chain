@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use outbe_emission::schema::metadosis_state;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
@@ -20,7 +21,7 @@ use crate::{
     lifecycle::{complete_emission_day, fail_emission_day},
     limits::{apply_auction_brief, apply_lysis_limit, LysisLimitInput},
     precompile::IMetadosis,
-    schema::{emission_day_state, EmissionDay, MetadosisContract},
+    schema::{EmissionDay, MetadosisContract},
     settlement::MetadosisCalculation,
 };
 
@@ -124,7 +125,7 @@ fn finalize_lysis_settlement(
             promis_limit_added,
         },
     )?;
-    complete_emission_day(metadosis, &updated, emission_day_state::SUCCEEDED)?;
+    complete_emission_day(metadosis, &updated, metadosis_state::COMPLETED)?;
     metadosis.emit(IMetadosis::MetadosisCompleted {
         emissionDay: emission_day.day,
         tributeNominalTotalMinor: completion.total_nominal_minor,

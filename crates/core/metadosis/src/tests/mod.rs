@@ -5,7 +5,8 @@ use outbe_primitives::storage::{MetadosisMutationPurposeTag, StorageHandle};
 use outbe_tribute::TributeContract;
 
 use crate::precompile::IMetadosis;
-use crate::schema::{emission_day_state, MetadosisContract};
+use crate::schema::MetadosisContract;
+use outbe_emission::schema::metadosis_state;
 use outbe_tributefactory::{
     precompile::{dispatch as tribute_factory_dispatch, ITributeFactory},
     TributeFactoryContract,
