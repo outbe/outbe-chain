@@ -1,301 +1,227 @@
-//! Safety verification for the Phase 1 cursor refactor.
-//!
-//! This file ships the safety checklist mandated for consensus-carrying
-//! refactors:
-//!
-//! - deterministic-output property tests (`proptest`): any permutation of
-//!   inputs to `SystemTxPhase::advance_after_commit` yields byte-identical
-//!   cursor sequences across N invocations.
-//! - explicit internal lifecycle: the `SystemTxPhase` variant set includes
-//!   the begin phases, user phase, and terminal empty end phase.
-//!
-//! The proptest output determinism property is the key consensus-safety
-//! guard for the cursor refactor. Suppose `advance_after_commit` were
-//! non-deterministic (e.g., via accidental `HashMap` iteration or
-//! `SystemTime`-derived state). Then proposer and validator paths would
-//! diverge on the per-block cursor sequence, and the block hash would split.
+//! Consensus-safety checks for the unified FSM: deterministic traces,
+//! monotonic body positions, atomic rejection, and terminal completion.
 
-use outbe_primitives::system_tx::*;
+use alloy_primitives::Bytes;
+use outbe_primitives::{system_tx::*, test_utils::TEST_BLOCK_ORDER};
 use proptest::prelude::*;
 
-/// The internal lifecycle includes the opt-in publication and terminal end phases.
-#[test]
-fn system_tx_phase_variant_set_includes_terminal_end_phase() {
-    // Construct one of each variant. If someone adds a new variant without
-    // updating this test, the compiler match below becomes non-exhaustive
-    // and the test will fail to compile. That is the intended contract.
-    let variants = [
-        SystemTxPhase::Phase1Preexecuted {
-            body_index: 0,
-            tx_hash: alloy_primitives::B256::ZERO,
-            receipt_index: 0,
+fn input_for_step(id: SystemTxStepId) -> SystemTx {
+    match id.stage {
+        BlockExecutionStage::Consensus => SystemTx::Consensus {
+            step_index: id.step_index,
+            payload: Bytes::new(),
         },
-        SystemTxPhase::LateFinalizeCredits { body_index: 0 },
-        SystemTxPhase::BoundaryOutcomeOptional { body_index: 0 },
-        SystemTxPhase::TeeBootstrapOptional { body_index: 0 },
-        SystemTxPhase::ValidatorLiveness { body_index: 0 },
-        SystemTxPhase::RadiclePublication { body_index: 0 },
-        SystemTxPhase::Vote { body_index: 0 },
-        SystemTxPhase::Update { body_index: 0 },
-        SystemTxPhase::EnclaveUpgradeDeadline { body_index: 0 },
-        SystemTxPhase::Rewards { body_index: 0 },
-        SystemTxPhase::Staking { body_index: 0 },
-        SystemTxPhase::Oracle { body_index: 0 },
-        SystemTxPhase::OracleSlash { body_index: 0 },
-        SystemTxPhase::HyperlaneSlash { body_index: 0 },
-        SystemTxPhase::CycleTick { body_index: 0 },
-        SystemTxPhase::UserTxs,
-        SystemTxPhase::EndBlockNodFactory,
-        SystemTxPhase::EndBlockGemFactory,
-        SystemTxPhase::EndBlockIntexFactory,
-        SystemTxPhase::EndBlockCredisFactory,
-        SystemTxPhase::EndBlockGemCleanup,
-        SystemTxPhase::EndBlock,
+        BlockExecutionStage::BeginBlock => SystemTx::BeginBlock {
+            step_index: id.step_index,
+        },
+        BlockExecutionStage::EndBlock => SystemTx::EndBlock {
+            step_index: id.step_index,
+        },
+        _ => panic!("not a system step"),
+    }
+}
+
+#[test]
+fn execution_stage_set_includes_completed() {
+    let stages = [
+        BlockExecutionStage::Consensus,
+        BlockExecutionStage::BeginBlock,
+        BlockExecutionStage::MidBlock,
+        BlockExecutionStage::EndBlock,
+        BlockExecutionStage::Completed,
     ];
-    for variant in &variants {
-        match variant {
-            SystemTxPhase::Phase1Preexecuted { .. } => {}
-            SystemTxPhase::LateFinalizeCredits { .. } => {}
-            SystemTxPhase::BoundaryOutcomeOptional { .. } => {}
-            SystemTxPhase::TeeBootstrapOptional { .. } => {}
-            SystemTxPhase::ValidatorLiveness { .. } => {}
-            SystemTxPhase::RadiclePublication { .. } => {}
-            SystemTxPhase::Vote { .. } => {}
-            SystemTxPhase::Update { .. } => {}
-            SystemTxPhase::EnclaveUpgradeDeadline { .. } => {}
-            SystemTxPhase::Rewards { .. } => {}
-            SystemTxPhase::Staking { .. } => {}
-            SystemTxPhase::Oracle { .. } => {}
-            SystemTxPhase::OracleSlash { .. } => {}
-            SystemTxPhase::HyperlaneSlash { .. } => {}
-            SystemTxPhase::CycleTick { .. } => {}
-            SystemTxPhase::UserTxs => {}
-            SystemTxPhase::EndBlockNodFactory => {}
-            SystemTxPhase::EndBlockGemFactory => {}
-            SystemTxPhase::EndBlockIntexFactory => {}
-            SystemTxPhase::EndBlockCredisFactory => {}
-            SystemTxPhase::EndBlockGemCleanup => {}
-            SystemTxPhase::EndBlock => {}
+    for stage in stages {
+        match stage {
+            BlockExecutionStage::Consensus
+            | BlockExecutionStage::BeginBlock
+            | BlockExecutionStage::MidBlock
+            | BlockExecutionStage::EndBlock
+            | BlockExecutionStage::Completed => {}
         }
     }
-    assert_eq!(
-        variants.len(),
-        22,
-        "internal SystemTxPhase contract: 22 variants"
-    );
+    assert_eq!(stages.len(), 5);
 }
 
 #[test]
-fn completed_end_phase_has_no_envelope_and_cannot_advance_to_users() {
-    let cursor = SystemTxPhase::EndBlock;
-    assert_eq!(cursor.expected_selector(), None);
-    assert_eq!(cursor.body_index(), None);
-    for has_boundary in [false, true] {
-        for has_bootstrap in [false, true] {
-            for has_publication in [false, true] {
-                assert_eq!(
-                    cursor.advance_after_commit_with_publication(
-                        has_boundary,
-                        has_bootstrap,
-                        has_publication,
-                    ),
-                    cursor,
-                );
+fn completed_stage_has_no_envelope_and_cannot_advance_to_users() {
+    for has_boundary_outcome in [false, true] {
+        for has_publication in [false, true] {
+            let flags = BlockSystemFlags {
+                has_boundary_outcome,
+                has_publication,
+            };
+            let mut fsm = BlockExecutionFsm::for_block(1, flags, &TEST_BLOCK_ORDER);
+            for id in fsm.plan().expected_prefix_steps() {
+                fsm.on_system_tx(&input_for_step(id)).unwrap();
             }
+            assert_eq!(fsm.stage(), BlockExecutionStage::Completed);
+            assert_eq!(fsm.expected_step_id(), None);
+            assert_eq!(fsm.expected_prefix_body_index(), None);
+            assert_eq!(fsm.expected_ordinal(), None);
+            let completed = fsm.clone();
+            assert!(fsm.on_user_tx().is_err());
+            assert!(fsm
+                .on_system_tx(&SystemTx::EndBlock { step_index: 0 })
+                .is_err());
+            assert_eq!(
+                fsm.enter_end_block(1).unwrap(),
+                BlockExecutionStage::Completed
+            );
+            assert_eq!(fsm, completed);
+            fsm.finish().unwrap();
         }
     }
 }
 
-/// Block 0 is the genesis block: no begin-zone system txs. The cursor must
-/// start after the empty begin zone without ever entering Phase 1.
 #[test]
-fn cross_version_genesis_block_cursor_initialisation() {
-    let cursor = SystemTxPhase::initial_for_block(0, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
-    assert_eq!(cursor, SystemTxPhase::UserTxs);
-    assert!(!matches!(cursor, SystemTxPhase::Phase1Preexecuted { .. }));
+fn genesis_block_starts_completed_without_phase1() {
+    let fsm = BlockExecutionFsm::for_block(0, BlockSystemFlags::default(), &TEST_BLOCK_ORDER);
+    assert_eq!(fsm.stage(), BlockExecutionStage::Completed);
+    assert!(fsm.plan().expected_prefix_steps().is_empty());
+    assert!(fsm.plan().expected_end_block_steps().is_empty());
+    fsm.finish().unwrap();
 }
 
-// Deterministic-output property tests: `SystemTxPhase::advance_after_commit`
-// must produce byte-identical cursor sequences across N invocations, for any
-// sequence of `has_boundary_outcome` flags. This is the consensus safety
-// guard for the Phase 1 reorder.
 proptest! {
-    #![proptest_config(ProptestConfig {
-        cases: 256,
-        ..ProptestConfig::default()
-    })]
+    #![proptest_config(ProptestConfig { cases: 256, ..ProptestConfig::default() })]
 
     #[test]
-    fn proptest_advance_after_commit_is_deterministic(
+    fn proptest_system_tx_transitions_are_deterministic(
         block_number in 0u64..1000,
-        boundary_flags in proptest::collection::vec(any::<bool>(), 0..16),
+        has_boundary_outcome in any::<bool>(),
+        has_publication in any::<bool>(),
+        inputs in proptest::collection::vec((0u8..3, 0u8..10), 0..32),
     ) {
-        let initial = SystemTxPhase::initial_for_block(block_number, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
-        let walk = |start: SystemTxPhase| -> Vec<SystemTxPhase> {
-            let mut cursor = start;
-            let mut out = vec![cursor];
-            for &flag in &boundary_flags {
-                cursor = cursor.advance_after_commit(flag, false);
-                out.push(cursor);
+        let flags = BlockSystemFlags { has_boundary_outcome, has_publication };
+        let walk = || {
+            let mut fsm = BlockExecutionFsm::for_block(block_number, flags, &TEST_BLOCK_ORDER);
+            let mut trace = Vec::new();
+            for &(stage, step_index) in &inputs {
+                let tx = match stage {
+                    0 => SystemTx::Consensus { step_index, payload: Bytes::new() },
+                    1 => SystemTx::BeginBlock { step_index },
+                    _ => SystemTx::EndBlock { step_index },
+                };
+                let before = fsm.clone();
+                let result = fsm.on_system_tx(&tx);
+                if result.is_err() { assert_eq!(fsm, before); }
+                trace.push((result, fsm.clone()));
             }
-            out
+            trace
         };
-        let trace_a = walk(initial);
-        let trace_b = walk(initial);
-        let trace_c = walk(initial);
-        prop_assert_eq!(&trace_a, &trace_b);
-        prop_assert_eq!(&trace_b, &trace_c);
+        prop_assert_eq!(walk(), walk());
+        prop_assert_eq!(walk(), walk());
     }
 
-    /// `initial_for_block` is purely a function of (block_number,
-    /// genesis_bootstrap). Identical inputs MUST produce identical cursors.
     #[test]
-    fn proptest_initial_for_block_is_deterministic(
+    fn proptest_for_block_is_deterministic(
         block_number in 0u64..1_000_000,
+        has_boundary_outcome in any::<bool>(),
+        has_publication in any::<bool>(),
     ) {
-        let a = SystemTxPhase::initial_for_block(block_number, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
-        let b = SystemTxPhase::initial_for_block(block_number, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
+        let flags = BlockSystemFlags { has_boundary_outcome, has_publication };
+        let a = BlockExecutionFsm::for_block(block_number, flags, &TEST_BLOCK_ORDER);
+        let b = BlockExecutionFsm::for_block(block_number, flags, &TEST_BLOCK_ORDER);
         prop_assert_eq!(a, b);
     }
 
-    /// Cursor's `expected_selector` is uniquely determined by the variant across
-    /// the entire reachable phase walk, including optional boundary,
-    /// bootstrap, and publication branches.
     #[test]
-    fn proptest_expected_selector_is_stable_per_variant(
+    fn proptest_expected_step_is_stable_across_the_full_walk(
         block_number in 0u64..1000,
         has_boundary_outcome in any::<bool>(),
-        has_tee_bootstrap in any::<bool>(),
-        has_publication_batch in any::<bool>(),
+        has_publication in any::<bool>(),
     ) {
-        let mut cursor = SystemTxPhase::initial_for_block(block_number, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
-        for _ in 0..16 {
-            let a = cursor.expected_selector();
-            let b = cursor.expected_selector();
-            prop_assert_eq!(a, b);
-            let expected_for_variant = match cursor {
-                SystemTxPhase::Phase1Preexecuted { .. } => Some(CERTIFIED_PARENT_ACCOUNTING_SELECTOR),
-                SystemTxPhase::LateFinalizeCredits { .. } => Some(LATE_FINALIZE_CREDITS_SELECTOR),
-                SystemTxPhase::BoundaryOutcomeOptional { .. } => Some(BOUNDARY_OUTCOME_SELECTOR),
-                SystemTxPhase::TeeBootstrapOptional { .. } => Some(TEE_BOOTSTRAP_SELECTOR),
-                SystemTxPhase::ValidatorLiveness { .. } => Some(VALIDATOR_LIVENESS_SELECTOR),
-                SystemTxPhase::RadiclePublication { .. } => Some(RADICLE_PUBLICATION_SELECTOR),
-                SystemTxPhase::Vote { .. } => Some(VOTE_SELECTOR),
-                SystemTxPhase::Update { .. } => Some(UPDATE_SELECTOR),
-                SystemTxPhase::EnclaveUpgradeDeadline { .. } => Some(ENCLAVE_UPGRADE_DEADLINE_SELECTOR),
-                SystemTxPhase::Rewards { .. } => Some(REWARDS_SELECTOR),
-                SystemTxPhase::Staking { .. } => Some(STAKING_SELECTOR),
-                SystemTxPhase::Oracle { .. } => Some(ORACLE_SELECTOR),
-                SystemTxPhase::OracleSlash { .. } => Some(ORACLE_SLASH_SELECTOR),
-                SystemTxPhase::HyperlaneSlash { .. } => Some(HYPERLANE_SLASH_SELECTOR),
-                SystemTxPhase::CycleTick { .. } => Some(CYCLE_TICK_SELECTOR),
-                SystemTxPhase::EndBlockNodFactory => Some(NOD_FACTORY_SELECTOR),
-                SystemTxPhase::EndBlockGemFactory => Some(GEM_FACTORY_SELECTOR),
-                SystemTxPhase::EndBlockIntexFactory => Some(INTEX_FACTORY_SELECTOR),
-                SystemTxPhase::EndBlockCredisFactory => Some(CREDIS_FACTORY_SELECTOR),
-                SystemTxPhase::EndBlockGemCleanup => Some(GEM_CLEANUP_SELECTOR),
-                SystemTxPhase::UserTxs | SystemTxPhase::EndBlock => None,
-            };
-            prop_assert_eq!(a, expected_for_variant);
-            if matches!(cursor, SystemTxPhase::UserTxs) {
-                break;
-            }
-            cursor = cursor.advance_after_commit_with_publication(
-                has_boundary_outcome,
-                has_tee_bootstrap,
-                has_publication_batch,
-            );
+        let flags = BlockSystemFlags { has_boundary_outcome, has_publication };
+        let mut fsm = BlockExecutionFsm::for_block(block_number, flags, &TEST_BLOCK_ORDER);
+        let plan = fsm.plan().clone();
+        for id in plan.expected_prefix_steps().into_iter().chain(plan.expected_end_block_steps()) {
+            prop_assert_eq!(fsm.expected_step_id(), Some(id));
+            let expected = fsm.expected_step().unwrap();
+            prop_assert_eq!(Some(expected), fsm.expected_step());
+            let input = input_for_step(id);
+            prop_assert!(expected.matches_tx(&input));
+            prop_assert_eq!(input.selector(), expected.selector());
+            fsm.on_system_tx(&input).unwrap();
         }
-        prop_assert_eq!(cursor, SystemTxPhase::UserTxs);
-        prop_assert_eq!(cursor.expected_selector(), None);
+        prop_assert_eq!(fsm.stage(), BlockExecutionStage::Completed);
+        prop_assert_eq!(fsm.expected_step_id(), None);
+        prop_assert_eq!(fsm.expected_ordinal(), None);
+        prop_assert!(fsm.finish().is_ok());
     }
 }
 
-/// Body index monotonicity: each `advance_after_commit` either advances
-/// body_index by exactly 1 or transitions to `UserTxs` (None). The cursor
-/// must never regress.
 #[test]
-fn body_index_monotonic_across_advance() {
+fn body_index_monotonic_across_prefix_consumption() {
     for block in [1u64, 2, 7, 42, 1000] {
-        let mut cursor = SystemTxPhase::initial_for_block(block, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
-        let mut prev_idx = cursor.body_index();
-        for _ in 0..16 {
-            let next = cursor.advance_after_commit(true, false);
-            let next_idx = next.body_index();
-            match (prev_idx, next_idx) {
-                (Some(p), Some(n)) => {
-                    assert_eq!(n, p + 1, "advance must add exactly 1 to body_index");
-                }
-                (Some(_), None) => {
-                    // Transition to UserTxs is allowed.
-                }
-                (None, None) => {
-                    // UserTxs is idempotent.
-                }
-                (None, Some(_)) => panic!("cursor must not regress from UserTxs to a system phase"),
-            }
-            prev_idx = next_idx;
-            cursor = next;
+        let flags = BlockSystemFlags {
+            has_boundary_outcome: true,
+            has_publication: true,
+        };
+        let mut fsm = BlockExecutionFsm::for_block(block, flags, &TEST_BLOCK_ORDER);
+        let steps = fsm.plan().expected_prefix_steps();
+        for (index, id) in steps.iter().copied().enumerate() {
+            assert_eq!(fsm.expected_prefix_body_index(), Some(index));
+            fsm.on_system_tx(&input_for_step(id)).unwrap();
+            let next = (index + 1 < steps.len()).then_some(index + 1);
+            assert_eq!(fsm.expected_prefix_body_index(), next);
         }
+        assert_eq!(fsm.expected_prefix_body_index(), None);
     }
 }
 
-/// End-block phases are a separate chain. UserTxs does not enter it.
 #[test]
-fn end_block_phase_chain_is_separate_from_user_txs() {
+fn end_block_chain_follows_user_transactions_at_reserved_ordinals() {
+    let mut fsm = BlockExecutionFsm::for_mid_block(&TEST_BLOCK_ORDER);
+    fsm.on_user_tx().unwrap();
+    assert_eq!(fsm.stage(), BlockExecutionStage::MidBlock);
     assert_eq!(
-        SystemTxPhase::UserTxs.advance_after_commit(true, true),
-        SystemTxPhase::UserTxs
+        fsm.enter_end_block(2).unwrap(),
+        BlockExecutionStage::EndBlock
     );
-    let chain = [
-        SystemTxPhase::EndBlockNodFactory,
-        SystemTxPhase::EndBlockGemFactory,
-        SystemTxPhase::EndBlockIntexFactory,
-        SystemTxPhase::EndBlockCredisFactory,
-        SystemTxPhase::EndBlockGemCleanup,
-        SystemTxPhase::EndBlock,
-    ];
-    let selectors = [
-        Some(NOD_FACTORY_SELECTOR),
-        Some(GEM_FACTORY_SELECTOR),
-        Some(INTEX_FACTORY_SELECTOR),
-        Some(CREDIS_FACTORY_SELECTOR),
-        Some(GEM_CLEANUP_SELECTOR),
-        None,
-    ];
-    let ordinals = [
-        Some(NOD_FACTORY_ORDINAL),
-        Some(GEM_FACTORY_ORDINAL),
-        Some(INTEX_FACTORY_ORDINAL),
-        Some(CREDIS_FACTORY_ORDINAL),
-        Some(GEM_CLEANUP_ORDINAL),
-        None,
-    ];
-    let mut cursor = SystemTxPhase::EndBlockNodFactory;
-    for ((expected, selector), ordinal) in chain.into_iter().zip(selectors).zip(ordinals) {
-        assert_eq!(cursor, expected);
-        assert_eq!(cursor.expected_selector(), selector);
-        assert_eq!(cursor.body_index(), ordinal);
-        cursor = cursor.advance_after_commit(false, false);
+    for step_index in 0..5 {
+        assert_eq!(
+            fsm.expected_step_id(),
+            Some(SystemTxStepId::end_block(step_index))
+        );
+        assert_eq!(fsm.expected_ordinal(), end_block_nonce_ordinal(step_index));
+        assert_eq!(fsm.expected_ordinal(), Some(24 + step_index));
+        assert_eq!(fsm.expected_prefix_body_index(), None);
+        fsm.on_system_tx(&SystemTx::EndBlock { step_index })
+            .unwrap();
     }
-    assert_eq!(cursor, SystemTxPhase::EndBlock);
+    assert_eq!(fsm.stage(), BlockExecutionStage::Completed);
+    fsm.finish().unwrap();
 }
 
 #[test]
-fn block_execution_fsm_finish_requires_the_scheduled_zones() {
-    let mut fsm = BlockExecutionFsm::for_block(2, false, false, false);
-    assert_eq!(fsm.stage(), BlockExecutionStage::ConsensusStage);
+fn block_execution_fsm_finish_requires_the_scheduled_stages() {
+    let mut fsm = BlockExecutionFsm::for_block(2, BlockSystemFlags::default(), &TEST_BLOCK_ORDER);
+    assert_eq!(fsm.stage(), BlockExecutionStage::Consensus);
     assert!(matches!(
         fsm.finish(),
         Err(SystemTxError::IncompleteBlockExecution {
-            stage: BlockExecutionStage::ConsensusStage,
+            stage: BlockExecutionStage::Consensus,
             ..
         })
     ));
     assert!(matches!(
         fsm.on_user_tx(),
         Err(SystemTxError::UnexpectedUserTx {
-            stage: BlockExecutionStage::ConsensusStage
+            stage: BlockExecutionStage::Consensus
         })
     ));
+    for id in fsm.plan().expected_prefix_steps() {
+        fsm.on_system_tx(&input_for_step(id)).unwrap();
+    }
+    assert!(fsm.finish().is_err());
+    fsm.on_user_tx().unwrap();
+    assert!(fsm.finish().is_err());
+    fsm.on_system_tx(&SystemTx::EndBlock { step_index: 0 })
+        .unwrap();
+    assert!(fsm.finish().is_err());
+    for step_index in 1..5 {
+        fsm.on_system_tx(&SystemTx::EndBlock { step_index })
+            .unwrap();
+    }
+    fsm.finish().unwrap();
 }

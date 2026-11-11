@@ -1,13 +1,9 @@
-//! V2 begin-zone system-tx layout invariants.
-//!
-//! Covers AC1/AC3/AC4 + the block-1 mandatory BoundaryOutcome rule + the
-//! block-0 prohibition of begin-zone system txs. The tests check codec-level
-//! rejection of V1 input bytes at every legacy selector + version combination.
+//! V3 stage-framed system transaction layout invariants.
 
 use alloy_consensus::{SignableTransaction as _, TxLegacy};
 use alloy_primitives::{address, Bytes, Signature, TxKind, U256};
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
-use outbe_primitives::system_tx::*;
+use outbe_primitives::{block::BlockOrder, system_tx::*, test_utils::TEST_BLOCK_ORDER};
 use reth_ethereum::TransactionSigned;
 
 /// Empty layout - used by the block-1 / block-0 layout tests that only need to
@@ -25,32 +21,57 @@ const TEST_CHAIN_ID: u64 = 2026;
 
 fn system_inputs() -> Vec<SystemTx> {
     vec![
-        SystemTx::CertifiedParentAccounting {
-            metadata: CertifiedParentAccountingMetadata::default(),
+        SystemTx::Consensus {
+            step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+            payload: CertifiedParentAccountingMetadata::default()
+                .encode()
+                .unwrap(),
         },
-        SystemTx::LateFinalizeCredits {
-            artifact: Default::default(),
+        SystemTx::Consensus {
+            step_index: CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX,
+            payload: outbe_primitives::reshare_artifact::encode_late_finalize_credits_artifact(
+                &Default::default(),
+            )
+            .unwrap(),
         },
-        SystemTx::ValidatorLiveness,
-        SystemTx::Vote,
-        SystemTx::Update,
-        SystemTx::EnclaveUpgradeDeadline,
-        SystemTx::Rewards,
-        SystemTx::Staking,
-        SystemTx::Oracle,
-        SystemTx::OracleSlash,
-        SystemTx::HyperlaneSlash,
-        SystemTx::CycleTick,
+        SystemTx::Consensus {
+            step_index: CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX,
+            payload: Bytes::new(),
+        },
+        SystemTx::BeginBlock { step_index: 0 },
+        SystemTx::BeginBlock { step_index: 1 },
+        SystemTx::BeginBlock { step_index: 2 },
+        SystemTx::BeginBlock { step_index: 3 },
+        SystemTx::BeginBlock { step_index: 4 },
+        SystemTx::BeginBlock { step_index: 5 },
+        SystemTx::BeginBlock { step_index: 6 },
+        SystemTx::BeginBlock { step_index: 7 },
+        SystemTx::BeginBlock { step_index: 8 },
     ]
 }
 
 fn end_block_inputs() -> [(SystemTx, u8); 5] {
     [
-        (SystemTx::NodFactory, NOD_FACTORY_ORDINAL),
-        (SystemTx::GemFactory, GEM_FACTORY_ORDINAL),
-        (SystemTx::IntexFactory, INTEX_FACTORY_ORDINAL),
-        (SystemTx::CredisFactory, CREDIS_FACTORY_ORDINAL),
-        (SystemTx::GemCleanup, GEM_CLEANUP_ORDINAL),
+        (
+            SystemTx::EndBlock { step_index: 0 },
+            end_block_nonce_ordinal(0).unwrap(),
+        ),
+        (
+            SystemTx::EndBlock { step_index: 1 },
+            end_block_nonce_ordinal(1).unwrap(),
+        ),
+        (
+            SystemTx::EndBlock { step_index: 2 },
+            end_block_nonce_ordinal(2).unwrap(),
+        ),
+        (
+            SystemTx::EndBlock { step_index: 3 },
+            end_block_nonce_ordinal(3).unwrap(),
+        ),
+        (
+            SystemTx::EndBlock { step_index: 4 },
+            end_block_nonce_ordinal(4).unwrap(),
+        ),
     ]
 }
 
@@ -80,135 +101,93 @@ fn user_tx() -> TransactionSigned {
     .into()
 }
 
-/// AC4: active selectors are present and have their fork-specific byte
-/// sequences.
 #[test]
-fn active_selectors_have_expected_byte_sequence() {
-    assert_eq!(
-        CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
-        [0x4f, 0x53, 0x41, 0x33]
-    ); // "OSA3"
-    assert_eq!(CYCLE_TICK_SELECTOR, [0x4f, 0x53, 0x43, 0x32]); // "OSC2"
-    assert_eq!(BOUNDARY_OUTCOME_SELECTOR, [0x4f, 0x53, 0x42, 0x32]); // "OSB2"
-    assert_eq!(ORACLE_SLASH_SELECTOR, [0x4f, 0x53, 0x4f, 0x53]); // "OSOS"
-    assert_eq!(SYSTEM_TX_INPUT_VERSION, 2);
+fn active_stage_selectors_have_expected_byte_sequence() {
+    assert_eq!(CONSENSUS_STAGE_SELECTOR, *b"OSCN");
+    assert_eq!(BEGIN_BLOCK_STAGE_SELECTOR, *b"OSBB");
+    assert_eq!(END_BLOCK_STAGE_SELECTOR, *b"OSEB");
+    assert_eq!(SYSTEM_TX_INPUT_VERSION, 3);
+    assert_eq!(SYSTEM_CALLDATA_FRAMING_BYTES, 6);
 }
 
-/// AC4 + INV1: V2 selectors must differ from V1 byte sequences.
 #[test]
-fn v2_selectors_differ_from_legacy_v1_selectors() {
-    let v1_selectors: [SysTxSelector; 4] = [
-        *b"OSF1", // legacy FinalizationAndSlashing
-        *b"OSC1", // legacy CycleTick
-        *b"OSB1", // legacy BoundaryOutcome
-        *b"OSO1", // legacy OracleSlash v1
-    ];
-    let v2_selectors: [SysTxSelector; 4] = [
-        CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
-        CYCLE_TICK_SELECTOR,
-        BOUNDARY_OUTCOME_SELECTOR,
-        ORACLE_SLASH_SELECTOR,
-    ];
-    for v1 in v1_selectors {
-        assert!(
-            !v2_selectors.contains(&v1),
-            "V2 selector set must not contain any V1 selector bytes: {v1:?}"
+fn legacy_selectors_and_versions_are_rejected() {
+    for selector in [
+        *b"OSF1", *b"OSC1", *b"OSB1", *b"OSO1", *b"OSA3", *b"OSL2", *b"OSB2", *b"OST3", *b"OSC2",
+    ] {
+        let mut bytes = selector.to_vec();
+        bytes.extend([2, 0]);
+        assert_eq!(
+            SystemTx::decode(&bytes),
+            Err(SystemTxError::UnknownSelector(selector))
+        );
+    }
+    for version in [1, 2] {
+        let mut bytes = BEGIN_BLOCK_STAGE_SELECTOR.to_vec();
+        bytes.extend([version, 8]);
+        assert_eq!(
+            SystemTx::decode(&bytes),
+            Err(SystemTxError::UnsupportedVersion(version))
         );
     }
 }
 
-/// The decoder rejects legacy V1 system-tx input bytes at every height.
-///
-/// This test proves two failure modes:
-/// - (a) The V2 selector parser does not know the V1 selector bytes (`OSF1` /
-///   `OSC1` / `OSB1` / `OSO1`).
-/// - (b) Even if a caller padded an unknown body with version byte `1`, the
-///   decoder rejects it because `SYSTEM_TX_INPUT_VERSION == 2`.
 #[test]
-fn legacy_v1_system_tx_rejected_at_all_heights() {
-    let v1_selectors_and_bodies: [(&SysTxSelector, &[u8]); 4] = [
-        (b"OSF1", b""), // FinalizationAndSlashing carried metadata; selector alone suffices for rejection.
-        (b"OSC1", b""),
-        (b"OSB1", b""),
-        (b"OSO1", b""),
-    ];
-    for (selector, body) in v1_selectors_and_bodies {
-        let mut bytes = Vec::with_capacity(5 + body.len());
-        bytes.extend_from_slice(selector);
-        bytes.push(1); // V1 version
-        bytes.extend_from_slice(body);
-        let err = SystemTx::decode(&bytes).expect_err("V1 selector must be rejected");
-        match err {
-            SystemTxError::UnknownSelector(actual) => {
-                assert_eq!(
-                    actual, *selector,
-                    "decoder must surface the unknown V1 selector"
-                );
-            }
-            other => panic!("expected UnknownSelector, got {other:?}"),
-        }
-    }
-
-    // Also assert: a V2 selector with the legacy version byte `1` is rejected.
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(&CYCLE_TICK_SELECTOR);
-    bytes.push(1); // wrong (legacy) version
-    let err = SystemTx::decode(&bytes)
-        .expect_err("V1 version byte must be rejected even under a V2 selector");
-    assert!(
-        matches!(err, SystemTxError::UnsupportedVersion(1)),
-        "{err:?}"
-    );
-}
-
-/// Block 1 under V2 must carry a BoundaryOutcome system tx (genesis bootstrap).
-#[test]
-fn block_1_layout_requires_boundary_outcome_for_v2() {
-    let err = validate_active_system_tx_set(&empty_layout(), 1, false, false)
-        .expect_err("block 1 without BoundaryOutcome must be rejected under V2");
-    assert!(
-        matches!(err, SystemTxError::V2Block1MissingBoundaryOutcome),
-        "{err:?}",
-    );
-
-    let missing_tee = validate_active_system_tx_set(&empty_layout(), 1, true, false)
-        .expect_err("block 1 without TeeBootstrap must be rejected under V2");
-    assert!(
-        matches!(missing_tee, SystemTxError::V2Block1MissingTeeBootstrap),
-        "{missing_tee:?}",
-    );
-
-    let expected = expected_begin_block_selectors(1, true, true);
+fn block_1_layout_requires_boundary_outcome_and_tee_bootstrap() {
     assert_eq!(
-        expected,
-        vec![
-            *b"OSB2", *b"OST3", *b"OSVL", *b"OSVT", *b"OSUP", *b"OSEU", *b"OSRW", *b"OSST",
-            *b"OSOR", *b"OSOS", *b"OSHL", *b"OSC2",
-        ],
+        validate_system_tx_set_for_publication(
+            &TEST_BLOCK_ORDER,
+            &empty_layout(),
+            1,
+            BlockSystemFlags::default()
+        ),
+        Err(SystemTxError::V2Block1MissingBoundaryOutcome)
     );
-    assert!(expected_end_block_selectors(1).is_empty());
+    let flags = BlockSystemFlags {
+        has_boundary_outcome: true,
+        has_publication: false,
+    };
+    assert_eq!(
+        validate_system_tx_set_for_publication(&TEST_BLOCK_ORDER, &empty_layout(), 1, flags),
+        Err(SystemTxError::V2Block1MissingTeeBootstrap)
+    );
+    let plan = BlockSystemPlan::for_block(1, flags, &TEST_BLOCK_ORDER);
+    let mut expected = vec![
+        SystemTxStepId::consensus(CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX),
+        SystemTxStepId::consensus(CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX),
+        SystemTxStepId::consensus(CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX),
+    ];
+    expected.extend((0..9).map(SystemTxStepId::begin_block));
+    assert_eq!(plan.expected_prefix_steps(), expected);
+    assert!(plan.expected_end_block_steps().is_empty());
 }
 
-/// Block 0 must not carry any begin-zone system tx under V2.
 #[test]
-fn block_0_has_no_begin_zone_system_txs_under_v2() {
-    // Membership check accepts an empty layout at block 0 regardless of
-    // `has_boundary_outcome` (genesis cannot be a boundary parent of itself).
-    validate_active_system_tx_set(&empty_layout(), 0, false, false)
-        .expect("empty layout at block 0 must be accepted under V2");
-    validate_active_system_tx_set(&empty_layout(), 0, true, false)
-        .expect("empty layout at block 0 must be accepted even if has_boundary_outcome is true");
+fn empty_block_order_fails_closed_at_block_1() {
+    let flags = BlockSystemFlags {
+        has_boundary_outcome: true,
+        has_publication: false,
+    };
+    let layout = empty_layout();
+    assert_eq!(
+        validate_system_tx_set_for_publication(&BlockOrder::default(), &layout, 1, flags),
+        Err(SystemTxError::EmptyBlockOrder { block_number: 1 })
+    );
+}
 
-    let expected = expected_begin_block_selectors(0, false, false);
-    assert!(
-        expected.is_empty(),
-        "block 0 must have no expected begin-zone system tx kinds; got {expected:?}",
-    );
-    let expected_with_bo = expected_begin_block_selectors(0, true, false);
-    assert!(
-        expected_with_bo.is_empty(),
-        "block 0 must have no expected begin-zone system tx kinds even with has_boundary_outcome=true; got {expected_with_bo:?}",
-    );
+#[test]
+fn block_0_has_no_system_transactions() {
+    for has_boundary_outcome in [false, true] {
+        let flags = BlockSystemFlags {
+            has_boundary_outcome,
+            has_publication: false,
+        };
+        validate_system_tx_set_for_publication(&TEST_BLOCK_ORDER, &empty_layout(), 0, flags)
+            .unwrap();
+        let plan = BlockSystemPlan::for_block(0, flags, &TEST_BLOCK_ORDER);
+        assert!(plan.expected_prefix_steps().is_empty());
+        assert!(plan.expected_end_block_steps().is_empty());
+    }
 }
 
 fn canonical_transactions() -> Vec<TransactionSigned> {
@@ -229,16 +208,24 @@ fn canonical_transactions() -> Vec<TransactionSigned> {
 fn native_layout_separates_begin_prefix_and_user_transactions() {
     let txs = canonical_transactions();
     let layout = split_system_layout(&txs).unwrap();
-    validate_active_system_tx_set(&layout, TEST_BLOCK, false, false).unwrap();
+    validate_system_tx_set_for_publication(
+        &TEST_BLOCK_ORDER,
+        &layout,
+        TEST_BLOCK,
+        BlockSystemFlags::default(),
+    )
+    .unwrap();
     assert_eq!(
-        layout.begin_block_selectors().unwrap(),
-        expected_begin_block_selectors(TEST_BLOCK, false, false)
+        layout.prefix_steps().unwrap(),
+        BlockSystemPlan::for_block(TEST_BLOCK, BlockSystemFlags::default(), &TEST_BLOCK_ORDER)
+            .expected_prefix_steps()
     );
     assert_eq!(layout.user.len(), 1);
     assert_eq!(layout.end.len(), 5);
     assert_eq!(
-        layout.end_block_selectors().unwrap(),
-        expected_end_block_selectors(TEST_BLOCK)
+        layout.end_block_steps().unwrap(),
+        BlockSystemPlan::for_block(TEST_BLOCK, BlockSystemFlags::default(), &TEST_BLOCK_ORDER)
+            .expected_end_block_steps()
     );
 }
 
@@ -251,47 +238,51 @@ fn native_layout_accepts_an_empty_user_zone() {
         .expect("user tx");
     txs.remove(user_index);
     let layout = split_system_layout(&txs).unwrap();
-    validate_active_system_tx_set(&layout, TEST_BLOCK, false, false).unwrap();
+    validate_system_tx_set_for_publication(
+        &TEST_BLOCK_ORDER,
+        &layout,
+        TEST_BLOCK,
+        BlockSystemFlags::default(),
+    )
+    .unwrap();
     assert!(layout.user.is_empty());
     assert_eq!(layout.end.len(), 5);
 }
 
-/// Steady-state begin zone is the 12-kind schedule without TeeBootstrap.
-/// BoundaryOutcome inserts OSB2 after OSL2. End zone is ordinals 24..=28.
+/// Filtering retains static step indices; prefix nonces still use body positions.
 #[test]
-fn v2_begin_zone_ordering_is_canonical() {
-    let expected = expected_begin_block_selectors(2, false, false);
-    assert_eq!(
-        expected,
-        vec![
-            *b"OSA3", *b"OSL2", *b"OSVL", *b"OSVT", *b"OSUP", *b"OSEU", *b"OSRW", *b"OSST",
-            *b"OSOR", *b"OSOS", *b"OSHL", *b"OSC2",
-        ],
-    );
-
-    let expected = expected_begin_block_selectors(42, true, false);
-    assert_eq!(
-        expected,
-        vec![
-            *b"OSA3", *b"OSL2", *b"OSB2", *b"OSVL", *b"OSVT", *b"OSUP", *b"OSEU", *b"OSRW",
-            *b"OSST", *b"OSOR", *b"OSOS", *b"OSHL", *b"OSC2",
-        ],
-    );
-    let end = expected_end_block_selectors(42);
-    assert_eq!(end, vec![*b"OSND", *b"OSGM", *b"OSIX", *b"OSCR", *b"OSGC"]);
+fn stage_ordering_is_canonical() {
+    for has_boundary_outcome in [false, true] {
+        let flags = BlockSystemFlags {
+            has_boundary_outcome,
+            has_publication: false,
+        };
+        let mut expected = vec![
+            SystemTxStepId::consensus(CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX),
+            SystemTxStepId::consensus(CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX),
+        ];
+        if has_boundary_outcome {
+            expected.push(SystemTxStepId::consensus(
+                CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX,
+            ));
+        }
+        expected.push(SystemTxStepId::consensus(
+            CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX,
+        ));
+        expected.extend((0..9).map(SystemTxStepId::begin_block));
+        let plan = BlockSystemPlan::for_block(42, flags, &TEST_BLOCK_ORDER);
+        assert_eq!(plan.expected_prefix_steps(), expected);
+        assert_eq!(
+            plan.expected_end_block_steps(),
+            (0..5).map(SystemTxStepId::end_block).collect::<Vec<_>>()
+        );
+    }
     assert_eq!(
         end_block_inputs().map(|(_, ordinal)| ordinal),
         [24, 25, 26, 27, 28]
     );
-
-    // All begin-zone kinds resolve to BeginBlock body zone.
-    let mut inputs = system_inputs();
-    inputs.push(SystemTx::BoundaryOutcome {
-        artifact: outbe_primitives::test_utils::sample_system_tx_boundary(TEST_BLOCK),
-    });
-    for kind in inputs {
-        assert_eq!(kind.body_zone(), BodyZone::BeginBlock);
-        assert!(kind.begin_order().is_some());
-        assert!(kind.end_order().is_none());
+    for input in system_inputs() {
+        assert_eq!(input.body_zone(), BodyZone::BeginBlock);
+        assert!(input.nonce_ordinal().is_none());
     }
 }
