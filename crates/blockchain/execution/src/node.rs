@@ -161,6 +161,11 @@ where
             Some(host) => executor.with_runtime_host(host),
             None => executor,
         };
+        let block_order = self
+            .runtime_host
+            .as_ref()
+            .map(|host| host.block_order())
+            .unwrap_or_default();
         let pool = OutbePoolBuilder::new(Arc::clone(&self.pool_policy));
         ComponentsBuilder::default()
             .node_types::<N>()
@@ -168,7 +173,7 @@ where
             .executor(executor)
             .payload(OutbePayloadServiceBuilder::new(self.shutdown.clone()))
             .network(EthereumNetworkBuilder::default())
-            .consensus(OutbeConsensusBuilder::default())
+            .consensus(OutbeConsensusBuilder::new(block_order))
     }
 
     fn add_ons(&self) -> Self::AddOns {

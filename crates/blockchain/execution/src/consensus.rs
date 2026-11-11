@@ -9,15 +9,15 @@
 //! delegates the remaining stock Ethereum checks and replaces those two parent
 //! relations with their deterministic Outbe protocol rules.
 //!
-//! # V2 stateless layout / version / fork checks
+//! # Stateless layout / version / fork checks
 //!
 //! Beyond the timestamp adapter, `OutbeBeaconConsensus` runs the **stateless**
-//! V2 system-transaction layout validator on every block:
+//! six-byte system-transaction layout validator on every block:
 //!
 //! - reject legacy V1 selectors (`OSF1` / `OSC1` / `OSB1` / `OSO1`) at any
 //!   height. The validator does not silently drop V1 `FinalizationAndSlashing`.
 //!   It surfaces a typed error.
-//! - reject malformed V2 envelopes: wrong `SYSTEM_TX_INPUT_VERSION` byte,
+//! - reject malformed six-byte envelopes: wrong `SYSTEM_TX_INPUT_VERSION` byte,
 //!   unknown selector, missing body index 0 (`CertifiedParentAccounting`)
 //!   for `block_number >= 2`, missing `BoundaryOutcome` for
 //!   `block_number == 1`, any system tx in `block_number == 0`.
@@ -36,8 +36,8 @@
 //! `crates/blockchain/execution/tests/consensus_stateless.rs`.
 
 use outbe_primitives::{
-    addresses::REWARDS_ADDRESS, OutbeBlock, OutbeBlockBody, OutbeHeader, OutbePrimitives,
-    OutbeReceipt,
+    addresses::REWARDS_ADDRESS, block::BlockOrder, OutbeBlock, OutbeBlockBody, OutbeHeader,
+    OutbePrimitives, OutbeReceipt,
 };
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_ethereum::consensus::{
@@ -87,13 +87,10 @@ where
     ChainSpec: EthChainSpec<Header = OutbeHeader> + EthereumHardforks,
 {
     /// Create a new Outbe consensus adapter.
-    pub fn new(chain_spec: Arc<ChainSpec>) -> Self {
+    pub fn new(chain_spec: Arc<ChainSpec>, block_order: BlockOrder) -> Self {
         Self {
             inner: EthBeaconConsensus::new(chain_spec.clone()),
-            policy: OutbeConsensusPolicy {
-                chain_spec,
-                skip_gas_limit_ramp_check: false,
-            },
+            policy: OutbeConsensusPolicy::new(chain_spec, true, block_order),
         }
     }
 
@@ -215,7 +212,7 @@ where
     }
 }
 
-/// Stateless V2 system-transaction layout / version / fork validator.
+/// Stateless six-byte system-transaction layout / version / fork validator.
 ///
 /// Drives the `OutbeBeaconConsensus::validate_block_pre_execution` path and is
 /// also exposed for integration coverage in
@@ -224,14 +221,24 @@ where
 pub fn validate_system_tx_consensus_boundary(
     body: &OutbeBlockBody,
     header: &OutbeHeader,
+    block_order: &BlockOrder,
 ) -> Result<(), ConsensusError> {
-    policy::validate_system_transactions(body, header)
+    policy::validate_system_transactions(body, header, block_order)
 }
 
 /// Consensus builder that produces `OutbeBeaconConsensus` with increased extra_data limit.
 #[derive(Debug, Default, Clone, Copy)]
 #[non_exhaustive]
-pub struct OutbeConsensusBuilder;
+pub struct OutbeConsensusBuilder {
+    block_order: BlockOrder,
+}
+
+impl OutbeConsensusBuilder {
+    /// Creates a builder using the runtime's protocol order.
+    pub const fn new(block_order: BlockOrder) -> Self {
+        Self { block_order }
+    }
+}
 
 impl<Node> ConsensusBuilder<Node> for OutbeConsensusBuilder
 where
@@ -246,7 +253,7 @@ where
 
     async fn build_consensus(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::Consensus> {
         Ok(Arc::new(
-            OutbeBeaconConsensus::new(ctx.chain_spec())
+            OutbeBeaconConsensus::new(ctx.chain_spec(), self.block_order)
                 .with_max_extra_data_size(OUTBE_MAX_EXTRA_DATA_SIZE),
         ))
     }
@@ -262,6 +269,14 @@ mod tests {
     use alloy_primitives::{Address, Bloom, B256, B64, U256};
     use outbe_primitives::consensus::{
         MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS, MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS, OUTBE_MAX_BLOCK_SIZE,
+    };
+    use outbe_primitives::{
+        system_tx::{
+            SystemTx, CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX,
+            CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX, CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX,
+            END_BLOCK_BASE_ORDINAL,
+        },
+        test_utils::TEST_BLOCK_ORDER,
     };
     use reth_chainspec::{ChainSpec, MAINNET};
     use reth_primitives_traits::Block as _;
@@ -403,7 +418,7 @@ mod tests {
                 &outbe_evm::OutbeEvmSigner::from_secret_bytes([4u8; 32]).unwrap(),
                 0,
                 1,
-                outbe_evm::system_tx::SystemTx::CycleTick,
+                SystemTx::BeginBlock { step_index: 8 },
             )],
             ommers: Vec::new(),
             withdrawals: None,
@@ -412,7 +427,8 @@ mod tests {
             .header()
             .clone();
 
-        let err = validate_system_tx_consensus_boundary(&body, &header).unwrap_err();
+        let err =
+            validate_system_tx_consensus_boundary(&body, &header, &TEST_BLOCK_ORDER).unwrap_err();
 
         assert!(matches!(
             err,
@@ -422,7 +438,7 @@ mod tests {
 
     #[test]
     fn body_validation_rejects_non_empty_withdrawals() {
-        let consensus = OutbeBeaconConsensus::new(test_chain_spec());
+        let consensus = OutbeBeaconConsensus::new(test_chain_spec(), TEST_BLOCK_ORDER);
         let body = body_with_withdrawal(1_000);
         let header = header(0, 100, 0, B256::ZERO);
 
@@ -439,7 +455,7 @@ mod tests {
 
     #[test]
     fn pre_execution_rejects_non_empty_withdrawals() {
-        let consensus = OutbeBeaconConsensus::new(test_chain_spec());
+        let consensus = OutbeBeaconConsensus::new(test_chain_spec(), TEST_BLOCK_ORDER);
         let sealed_header = header(0, 100, 0, B256::ZERO);
         let block = OutbeBlock {
             header: sealed_header.header().clone(),
@@ -460,7 +476,7 @@ mod tests {
 
     #[test]
     fn pre_execution_with_tx_root_rejects_non_empty_withdrawals() {
-        let consensus = OutbeBeaconConsensus::new(test_chain_spec());
+        let consensus = OutbeBeaconConsensus::new(test_chain_spec(), TEST_BLOCK_ORDER);
         let sealed_header = header(0, 100, 0, B256::ZERO);
         let block = OutbeBlock {
             header: sealed_header.header().clone(),
@@ -485,29 +501,37 @@ mod tests {
         let parent_hash = B256::with_last_byte(0xAA);
         let wrong_parent_hash = B256::with_last_byte(0xBB);
         let begin_inputs = [
-            outbe_evm::system_tx::SystemTx::CertifiedParentAccounting {
-                metadata: phase1_metadata(1, wrong_parent_hash),
+            SystemTx::Consensus {
+                step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+                payload: phase1_metadata(1, wrong_parent_hash).encode().unwrap(),
             },
-            outbe_evm::system_tx::SystemTx::LateFinalizeCredits {
-                artifact: Default::default(),
+            SystemTx::Consensus {
+                step_index: CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX,
+                payload: outbe_primitives::reshare_artifact::encode_late_finalize_credits_artifact(
+                    &Default::default(),
+                )
+                .unwrap(),
             },
-            outbe_evm::system_tx::SystemTx::ValidatorLiveness,
-            outbe_evm::system_tx::SystemTx::Vote,
-            outbe_evm::system_tx::SystemTx::Update,
-            outbe_evm::system_tx::SystemTx::EnclaveUpgradeDeadline,
-            outbe_evm::system_tx::SystemTx::Rewards,
-            outbe_evm::system_tx::SystemTx::Staking,
-            outbe_evm::system_tx::SystemTx::Oracle,
-            outbe_evm::system_tx::SystemTx::OracleSlash,
-            outbe_evm::system_tx::SystemTx::HyperlaneSlash,
-            outbe_evm::system_tx::SystemTx::CycleTick,
+            SystemTx::Consensus {
+                step_index: CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX,
+                payload: Default::default(),
+            },
+            SystemTx::BeginBlock { step_index: 0 },
+            SystemTx::BeginBlock { step_index: 1 },
+            SystemTx::BeginBlock { step_index: 2 },
+            SystemTx::BeginBlock { step_index: 3 },
+            SystemTx::BeginBlock { step_index: 4 },
+            SystemTx::BeginBlock { step_index: 5 },
+            SystemTx::BeginBlock { step_index: 6 },
+            SystemTx::BeginBlock { step_index: 7 },
+            SystemTx::BeginBlock { step_index: 8 },
         ];
         let end_inputs = [
-            outbe_evm::system_tx::SystemTx::NodFactory,
-            outbe_evm::system_tx::SystemTx::GemFactory,
-            outbe_evm::system_tx::SystemTx::IntexFactory,
-            outbe_evm::system_tx::SystemTx::CredisFactory,
-            outbe_evm::system_tx::SystemTx::GemCleanup,
+            SystemTx::EndBlock { step_index: 0 },
+            SystemTx::EndBlock { step_index: 1 },
+            SystemTx::EndBlock { step_index: 2 },
+            SystemTx::EndBlock { step_index: 3 },
+            SystemTx::EndBlock { step_index: 4 },
         ];
         let mut transactions = begin_inputs
             .into_iter()
@@ -515,12 +539,7 @@ mod tests {
             .map(|(ordinal, input)| signed_system_tx(&signer, ordinal as u8, 2, input))
             .collect::<Vec<_>>();
         transactions.extend(end_inputs.into_iter().enumerate().map(|(offset, input)| {
-            signed_system_tx(
-                &signer,
-                outbe_primitives::system_tx::NOD_FACTORY_ORDINAL + offset as u8,
-                2,
-                input,
-            )
+            signed_system_tx(&signer, END_BLOCK_BASE_ORDINAL + offset as u8, 2, input)
         }));
         let body = OutbeBlockBody {
             transactions,
@@ -529,7 +548,8 @@ mod tests {
         };
         let header = header(2, 100, 0, parent_hash).header().clone();
 
-        let err = validate_system_tx_consensus_boundary(&body, &header).unwrap_err();
+        let err =
+            validate_system_tx_consensus_boundary(&body, &header, &TEST_BLOCK_ORDER).unwrap_err();
 
         assert!(
             matches!(err, ConsensusError::Other(message) if message.to_string().contains("CertifiedParentAccounting metadata hash must match block parent"))
@@ -546,7 +566,7 @@ mod tests {
         // any real parent, the same-second child is below the 1000 ms minimum, and
         // the validator correctly rejects it (see
         // `rejects_child_below_min_advance_timestamp_freeze`).
-        let consensus = OutbeBeaconConsensus::new(test_chain_spec());
+        let consensus = OutbeBeaconConsensus::new(test_chain_spec(), TEST_BLOCK_ORDER);
         let parent = header(0, 100, 900, B256::ZERO);
         let child = header(1, 100, 901, parent.hash());
 
@@ -559,7 +579,7 @@ mod tests {
     fn accepts_protocol_bootstrap_gas_limit_expansion_and_contraction() {
         use outbe_primitives::system_tx::STEADY_BLOCK_GAS_LIMIT;
 
-        let consensus = OutbeBeaconConsensus::new(test_chain_spec());
+        let consensus = OutbeBeaconConsensus::new(test_chain_spec(), TEST_BLOCK_ORDER);
         let genesis = header_with_beneficiary_and_gas_limit(
             0,
             (100, 0),
@@ -600,7 +620,7 @@ mod tests {
     fn rejects_gas_limit_not_selected_by_protocol_height() {
         use outbe_primitives::system_tx::STEADY_BLOCK_GAS_LIMIT;
 
-        let consensus = OutbeBeaconConsensus::new(test_chain_spec());
+        let consensus = OutbeBeaconConsensus::new(test_chain_spec(), TEST_BLOCK_ORDER);
         let genesis = header_with_beneficiary_and_gas_limit(
             0,
             (100, 0),
@@ -630,7 +650,7 @@ mod tests {
 
     #[test]
     fn rejects_child_when_millis_does_not_increase() {
-        let consensus = OutbeBeaconConsensus::new(test_chain_spec());
+        let consensus = OutbeBeaconConsensus::new(test_chain_spec(), TEST_BLOCK_ORDER);
         let parent = header(1, 100, 900, B256::ZERO);
         let child = header(2, 100, 900, parent.hash());
 
@@ -654,7 +674,7 @@ mod tests {
         // 1001 ms, at or above the 1000 ms minimum. Exercises the
         // seconds + millis_part combine across a second boundary on the normal
         // (non-genesis) validation path.
-        let consensus = OutbeBeaconConsensus::new(test_chain_spec());
+        let consensus = OutbeBeaconConsensus::new(test_chain_spec(), TEST_BLOCK_ORDER);
         let parent = header(1, 100, 999, B256::ZERO);
         let child = header(2, 102, 0, parent.hash());
 
@@ -697,7 +717,7 @@ mod tests {
         // (`MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS`, 1h) far above any paced interval. So
         // a paced (delayed-emission) block always validates, and proposer pacing
         // stays invisible to header validation.
-        let consensus = OutbeBeaconConsensus::new(test_chain_spec());
+        let consensus = OutbeBeaconConsensus::new(test_chain_spec(), TEST_BLOCK_ORDER);
         let parent = header(1, 100, 0, B256::ZERO);
         // +2000 ms relative to the parent (the default 2s floor), as +2 seconds.
         let child = header(2, 102, 0, parent.hash());
@@ -709,7 +729,7 @@ mod tests {
 
     #[test]
     fn rejects_header_with_invalid_millis_part() {
-        let consensus = OutbeBeaconConsensus::new(test_chain_spec());
+        let consensus = OutbeBeaconConsensus::new(test_chain_spec(), TEST_BLOCK_ORDER);
         let header = header(1, 100, 1000, B256::ZERO);
 
         let err = consensus.validate_header(&header).unwrap_err();
@@ -729,7 +749,7 @@ mod tests {
             child.header().timestamp_millis() - parent.header().timestamp_millis(),
             MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS
         );
-        OutbeBeaconConsensus::new(test_chain_spec())
+        OutbeBeaconConsensus::new(test_chain_spec(), TEST_BLOCK_ORDER)
             .validate_header_against_parent(&child, &parent)
             .unwrap();
     }
@@ -743,7 +763,7 @@ mod tests {
             child.header().timestamp_millis() - parent.header().timestamp_millis(),
             MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS + 1
         );
-        let err = OutbeBeaconConsensus::new(test_chain_spec())
+        let err = OutbeBeaconConsensus::new(test_chain_spec(), TEST_BLOCK_ORDER)
             .validate_header_against_parent(&child, &parent)
             .unwrap_err();
         assert!(matches!(
@@ -761,7 +781,7 @@ mod tests {
         let parent = header(10, 1_000_000, 0, B256::ZERO);
         let twenty_one_days_s = 21 * outbe_primitives::time::SECONDS_PER_DAY;
         let child = header(11, 1_000_000 + twenty_one_days_s, 0, parent.hash());
-        let err = OutbeBeaconConsensus::new(test_chain_spec())
+        let err = OutbeBeaconConsensus::new(test_chain_spec(), TEST_BLOCK_ORDER)
             .validate_header_against_parent(&child, &parent)
             .unwrap_err();
         assert!(matches!(
@@ -780,7 +800,7 @@ mod tests {
             child.header().timestamp_millis() - parent.header().timestamp_millis(),
             MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS
         );
-        OutbeBeaconConsensus::new(test_chain_spec())
+        OutbeBeaconConsensus::new(test_chain_spec(), TEST_BLOCK_ORDER)
             .validate_header_against_parent(&child, &parent)
             .unwrap();
     }
@@ -798,7 +818,7 @@ mod tests {
             child.header().timestamp_millis() - parent.header().timestamp_millis(),
             MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS - 1
         );
-        let err = OutbeBeaconConsensus::new(test_chain_spec())
+        let err = OutbeBeaconConsensus::new(test_chain_spec(), TEST_BLOCK_ORDER)
             .validate_header_against_parent(&child, &parent)
             .unwrap_err();
         assert!(matches!(
@@ -819,7 +839,7 @@ mod tests {
             block_one.header().timestamp_millis() - genesis.header().timestamp_millis()
                 < MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS
         );
-        OutbeBeaconConsensus::new(test_chain_spec())
+        OutbeBeaconConsensus::new(test_chain_spec(), TEST_BLOCK_ORDER)
             .validate_header_against_parent(&block_one, &genesis)
             .unwrap();
     }

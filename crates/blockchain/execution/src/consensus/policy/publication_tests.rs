@@ -37,10 +37,11 @@ fn policy(enabled: bool) -> OutbeConsensusPolicy<ChainSpec<OutbeHeader>> {
                 descriptor.hash().unwrap(),
             );
     }
-    OutbeConsensusPolicy {
-        chain_spec: Arc::new(spec),
-        skip_gas_limit_ramp_check: true,
-    }
+    OutbeConsensusPolicy::new(
+        Arc::new(spec),
+        false,
+        outbe_primitives::test_utils::TEST_BLOCK_ORDER,
+    )
 }
 
 fn header(enabled: bool) -> OutbeHeader {

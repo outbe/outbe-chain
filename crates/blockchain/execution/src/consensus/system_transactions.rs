@@ -1,8 +1,15 @@
 //! Stateless system-transaction header and body bindings, in rejection order.
-use super::{consensus_other, ConsensusError, OutbeBlockBody, OutbeHeader, REWARDS_ADDRESS};
+use super::{ConsensusError, OutbeBlockBody, OutbeHeader, REWARDS_ADDRESS};
 use alloy_consensus::BlockHeader as _;
-use outbe_primitives::system_tx::binding::{self, ParentAccountingBindingError};
-use outbe_primitives::{reshare_artifact::OutbeBlockArtifacts, system_tx::SystemTxLayout};
+use outbe_primitives::{
+    block::BlockOrder,
+    reshare_artifact::ConsensusHeaderArtifact,
+    system_tx::{
+        binding::{self, BoundaryBindingError, PublicationBindingError},
+        CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX, CONSENSUS_RADICLE_PUBLICATION_STEP_INDEX,
+    },
+};
+use std::sync::Arc;
 
 pub(super) fn validate_beneficiary(header: &OutbeHeader) -> Result<(), ConsensusError> {
     let regime = outbe_primitives::block::BlockHeightRegime::for_block(header.number());
@@ -19,41 +26,30 @@ pub(super) fn validate_beneficiary(header: &OutbeHeader) -> Result<(), Consensus
     Ok(())
 }
 
-pub(super) fn validate_layout<'a>(
-    body: &'a OutbeBlockBody,
+pub(super) fn validate_layout(
+    body: &OutbeBlockBody,
     header: &OutbeHeader,
-) -> Result<(SystemTxLayout<'a>, OutbeBlockArtifacts), ConsensusError> {
-    binding::validate_system_layout(body, header).map_err(crate::errors::consensus_display_error)
-}
-
-pub(super) fn validate_parent_accounting(
-    layout: &SystemTxLayout<'_>,
-    header: &OutbeHeader,
+    block_order: &BlockOrder,
 ) -> Result<(), ConsensusError> {
-    binding::validate_parent_accounting_binding(layout, header).map_err(|error| {
-        consensus_other(match error {
-            ParentAccountingBindingError::Missing { block_number } => {
-                format!("missing CertifiedParentAccounting system tx for block {block_number}")
-            }
-            error => error.to_string(),
-        })
-    })
-}
-
-pub(super) fn validate_boundary_outcome(
-    layout: &SystemTxLayout<'_>,
-    artifacts: &OutbeBlockArtifacts,
-) -> Result<(), ConsensusError> {
-    binding::validate_boundary_outcome_binding(layout, artifacts)
-        .map_err(crate::errors::consensus_display_error)
-}
-
-pub(super) fn validate_late_credits(
-    layout: &SystemTxLayout<'_>,
-    artifacts: &OutbeBlockArtifacts,
-) -> Result<(), ConsensusError> {
-    binding::validate_late_credits_binding(layout, artifacts)
-        .map_err(crate::errors::consensus_display_error)
+    let (layout, artifacts) = binding::validate_system_layout(body, header, block_order)
+        .map_err(|error| ConsensusError::Other(Arc::new(error)))?;
+    if matches!(
+        artifacts.consensus_header_artifact,
+        Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
+    ) && !layout.has_consensus_step(CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX)
+    {
+        return Err(ConsensusError::Other(Arc::new(
+            BoundaryBindingError::Missing,
+        )));
+    }
+    if artifacts.radicle_publication.is_some()
+        && !layout.has_consensus_step(CONSENSUS_RADICLE_PUBLICATION_STEP_INDEX)
+    {
+        return Err(ConsensusError::Other(Arc::new(
+            PublicationBindingError::Missing,
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

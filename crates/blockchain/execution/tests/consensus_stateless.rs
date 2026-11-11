@@ -1,10 +1,10 @@
-//! Stateless V2 layout / version / fork validator integration tests.
+//! Stateless V3 layout / version / fork validator integration tests.
 //!
 //! Pins the contract that `crates/blockchain/execution/src/consensus.rs::OutbeBeaconConsensus`
-//! is a **stateless** V2 validator. It rejects these envelopes **without**
+//! is a **stateless** V3 validator. It rejects these envelopes **without**
 //! running any stateful BLS / VRF / accounting verification:
 //! - legacy V1 envelopes, at every height.
-//! - malformed V2 envelopes (wrong version byte, unknown selector, missing
+//! - malformed V3 envelopes (wrong version byte, unknown selector, missing
 //!   body-index 0 for block N >= 2, missing `BoundaryOutcome` for block 1, any
 //!   system tx for block 0).
 //!
@@ -12,26 +12,25 @@
 //! `OutbeBlockExecutor::apply_pre_execution_changes`.
 //!
 //! Most tests drive the public stateless entry point
-//! `outbe_execution::consensus::validate_system_tx_consensus_boundary(body, header)`
+//! `outbe_execution::consensus::validate_system_tx_consensus_boundary(body, header, &TEST_BLOCK_ORDER)`
 //! directly. Regression tests that depend on upstream Reth validation drive
 //! `OutbeBeaconConsensus::validate_block_pre_execution` with a sealed block.
 
 use alloy_consensus::{Block as AlloyBlock, Header, Transaction as _, TxLegacy};
 use alloy_primitives::{Address, Bloom, Bytes, TxKind, B256, B64, U256};
-use outbe_evm::system_tx::{
-    build_unsigned_system_tx, SystemTx, BOUNDARY_OUTCOME_SELECTOR,
-    CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR, ORACLE_SLASH_SELECTOR,
-    SYSTEM_TX_ARTIFACT_GAS_LIMIT, SYSTEM_TX_INPUT_VERSION,
-};
 use outbe_evm::OutbeEvmSigner;
 use outbe_execution::consensus::{validate_system_tx_consensus_boundary, OutbeBeaconConsensus};
 use outbe_primitives::addresses::{OUTBE_SYSTEM_TX_ADDRESS, REWARDS_ADDRESS};
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use outbe_primitives::reshare_artifact::{encode_outbe_block_artifacts, OutbeBlockArtifacts};
+use outbe_primitives::system_tx::SysTxSelector;
 use outbe_primitives::system_tx::{
-    SysTxSelector, CREDIS_FACTORY_ORDINAL, GEM_CLEANUP_ORDINAL, GEM_FACTORY_ORDINAL,
-    INTEX_FACTORY_ORDINAL, NOD_FACTORY_ORDINAL,
+    build_unsigned_system_tx, SystemTx, BEGIN_BLOCK_STAGE_SELECTOR,
+    CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+    CONSENSUS_STAGE_SELECTOR, CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX, END_BLOCK_BASE_ORDINAL,
+    END_BLOCK_STAGE_SELECTOR, SYSTEM_TX_ARTIFACT_GAS_LIMIT, SYSTEM_TX_INPUT_VERSION,
 };
+use outbe_primitives::test_utils::TEST_BLOCK_ORDER;
 use outbe_primitives::{OutbeBlockBody, OutbeHeader};
 use reth_chainspec::ChainSpecBuilder;
 use reth_ethereum::{consensus::Consensus, TransactionSigned};
@@ -141,10 +140,10 @@ fn signed_with_raw_input(signer: &OutbeEvmSigner, nonce: u64, input: Vec<u8>) ->
     signer.sign_unsigned(tx).expect("sign raw system tx")
 }
 
-/// Build a properly-formed V2 system tx via the canonical helper. Used by the
+/// Build a properly-formed V3 system tx via the canonical helper. Used by the
 /// happy-path baselines and by the unknown-body / wrong-body-index tests where
 /// only the layout - not the calldata - is exercised.
-fn signed_v2(
+fn signed_system_tx(
     signer: &OutbeEvmSigner,
     ordinal: u8,
     block_number: u64,
@@ -154,10 +153,10 @@ fn signed_v2(
         ordinal,
         block_number,
         TEST_CHAIN_ID,
-        input.encode().expect("encode V2 input"),
+        input.encode().expect("encode V3 input"),
     )
-    .expect("build V2 unsigned");
-    signer.sign_unsigned(unsigned).expect("sign V2 system tx")
+    .expect("build V3 unsigned");
+    signer.sign_unsigned(unsigned).expect("sign V3 system tx")
 }
 
 fn phase1_metadata(block_number: u64, block_hash: B256) -> CertifiedParentAccountingMetadata {
@@ -201,7 +200,7 @@ fn gas_04_osaka_user_tx_cap_accepts_visible_outbe_system_tx_envelopes() {
             .build()
             .map_header(OutbeHeader::new),
     );
-    let consensus = OutbeBeaconConsensus::new(chain_spec);
+    let consensus = OutbeBeaconConsensus::new(chain_spec, TEST_BLOCK_ORDER);
 
     let result = consensus.validate_block_pre_execution(&block);
     assert!(
@@ -227,16 +226,17 @@ fn legacy_v1_system_tx_rejected_at_all_heights() {
 
     for height in heights {
         for selector in v1_selectors {
-            let mut input = Vec::with_capacity(5);
+            let mut input = Vec::with_capacity(6);
             input.extend_from_slice(selector);
             input.push(1); // V1 version byte
+            input.push(0);
             let tx = signed_with_raw_input(&signer, 0, input);
             let body = body(vec![tx]);
             let header = header_for(height, B256::ZERO);
 
-            let err = validate_system_tx_consensus_boundary(&body, &header)
+            let err = validate_system_tx_consensus_boundary(&body, &header, &TEST_BLOCK_ORDER)
                 .expect_err("legacy V1 envelope must be rejected at every height (no silent drop)");
-            let msg = format!("{err:?}");
+            let msg = err.to_string();
             assert!(
                 msg.contains("system tx layout") || msg.contains("UnknownSelector"),
                 "rejection must reference the system tx layout path; got: {msg}"
@@ -246,21 +246,21 @@ fn legacy_v1_system_tx_rejected_at_all_heights() {
 }
 
 // ---------------------------------------------------------------------------
-// Block 0 has no begin-zone system txs under V2.
+// Block 0 has no begin-zone system txs under V3.
 // ---------------------------------------------------------------------------
 
 /// block 0 must contain zero system transactions. The layout validator
-/// rejects any begin-zone V2 system tx in block 0.
+/// rejects any begin-zone V3 system tx in block 0.
 #[test]
-fn block_0_has_no_begin_zone_system_txs_under_v2() {
+fn block_0_has_no_begin_zone_system_txs_under_v3() {
     let signer = signer();
-    let tx = signed_v2(&signer, 0, 0, SystemTx::CycleTick);
+    let tx = signed_system_tx(&signer, 0, 0, SystemTx::BeginBlock { step_index: 8 });
     let body = body(vec![tx]);
     let header = header_for(0, B256::ZERO);
 
-    let err = validate_system_tx_consensus_boundary(&body, &header)
+    let err = validate_system_tx_consensus_boundary(&body, &header, &TEST_BLOCK_ORDER)
         .expect_err("block 0 with a begin-zone system tx must be rejected");
-    let msg = format!("{err:?}");
+    let msg = err.to_string();
     assert!(
         msg.contains("system tx set") || msg.contains("ActiveSystemTxSetMismatch"),
         "rejection must reference the active system tx set check; got: {msg}"
@@ -268,26 +268,26 @@ fn block_0_has_no_begin_zone_system_txs_under_v2() {
 }
 
 // ---------------------------------------------------------------------------
-// Block 1 layout requires `BoundaryOutcome` under V2.
+// Block 1 layout requires `BoundaryOutcome` under V3.
 // ---------------------------------------------------------------------------
 
 /// a block-1 body that omits `BoundaryOutcome` is rejected
-/// (V2 genesis-bootstrap rule). The error path is
+/// (V3 genesis-bootstrap rule). The error path is
 /// `SystemTxError::V2Block1MissingBoundaryOutcome`.
 #[test]
 fn block_1_layout_requires_boundary_outcome_for_v2() {
     let signer = signer();
-    let oracle = signed_v2(&signer, 0, 1, SystemTx::OracleSlash);
-    let cycle = signed_v2(&signer, 1, 1, SystemTx::CycleTick);
+    let oracle = signed_system_tx(&signer, 0, 1, SystemTx::BeginBlock { step_index: 6 });
+    let cycle = signed_system_tx(&signer, 1, 1, SystemTx::BeginBlock { step_index: 8 });
     let body = body(vec![oracle, cycle]);
     let header = header_for(1, B256::ZERO);
 
-    let err = validate_system_tx_consensus_boundary(&body, &header)
-        .expect_err("block 1 without BoundaryOutcome must be rejected under V2");
-    let msg = format!("{err:?}");
+    let err = validate_system_tx_consensus_boundary(&body, &header, &TEST_BLOCK_ORDER)
+        .expect_err("block 1 without BoundaryOutcome must be rejected under V3");
+    let msg = err.to_string();
     assert!(
         msg.contains("V2Block1MissingBoundaryOutcome") || msg.contains("BoundaryOutcome"),
-        "rejection must surface the V2 block-1 missing-boundary contract; got: {msg}"
+        "rejection must surface the V3 block-1 missing-boundary contract; got: {msg}"
     );
 }
 
@@ -303,13 +303,17 @@ fn block_b_ge_2_layout_requires_certified_parent_accounting_body0() {
     let signer = signer();
 
     // (a) block 2 with only OracleSlash + CycleTick - no CertifiedParentAccounting.
-    let oracle = signed_v2(&signer, 0, 2, SystemTx::OracleSlash);
-    let cycle = signed_v2(&signer, 1, 2, SystemTx::CycleTick);
+    let oracle = signed_system_tx(&signer, 0, 2, SystemTx::BeginBlock { step_index: 6 });
+    let cycle = signed_system_tx(&signer, 1, 2, SystemTx::BeginBlock { step_index: 8 });
     let body_missing_phase1 = body(vec![oracle, cycle]);
     let header_missing = header_for(2, B256::ZERO);
-    let err_missing = validate_system_tx_consensus_boundary(&body_missing_phase1, &header_missing)
-        .expect_err("block 2 without CertifiedParentAccounting at body[0] must be rejected");
-    let msg_missing = format!("{err_missing:?}");
+    let err_missing = validate_system_tx_consensus_boundary(
+        &body_missing_phase1,
+        &header_missing,
+        &TEST_BLOCK_ORDER,
+    )
+    .expect_err("block 2 without CertifiedParentAccounting at body[0] must be rejected");
+    let msg_missing = err_missing.to_string();
     assert!(
         msg_missing.contains("system tx set")
             || msg_missing.contains("ActiveSystemTxSetMismatch")
@@ -324,11 +328,11 @@ fn block_b_ge_2_layout_requires_certified_parent_accounting_body0() {
     let transactions = system_txs_block2(&signer, wrong_parent, Default::default());
     let body_bad_hash = body(transactions);
     let header_bad_hash = header_for(2, parent_hash);
-    let err_bad_hash = validate_system_tx_consensus_boundary(&body_bad_hash, &header_bad_hash)
+    let err_bad_hash = validate_system_tx_consensus_boundary(&body_bad_hash, &header_bad_hash, &TEST_BLOCK_ORDER)
         .expect_err(
             "block 2 with CertifiedParentAccounting metadata pointing at the wrong parent_hash must be rejected",
         );
-    let msg_bad_hash = format!("{err_bad_hash:?}");
+    let msg_bad_hash = err_bad_hash.to_string();
     assert!(
         msg_bad_hash.contains("CertifiedParentAccounting metadata hash must match block parent"),
         "rejection must call out the parent_hash mismatch; got: {msg_bad_hash}"
@@ -336,29 +340,30 @@ fn block_b_ge_2_layout_requires_certified_parent_accounting_body0() {
 }
 
 // ---------------------------------------------------------------------------
-// V2 envelope with wrong version byte is rejected.
+// V3 envelope with wrong version byte is rejected.
 // ---------------------------------------------------------------------------
 
-/// the decoder rejects an input whose selector is a V2 selector but whose
+/// the decoder rejects an input whose selector is a V3 selector but whose
 /// version byte is not `SYSTEM_TX_INPUT_VERSION` (e.g. legacy `0x01`) before
 /// any execution.
 #[test]
-fn v2_envelope_with_wrong_version_byte_rejects() {
+fn v3_envelope_with_wrong_version_byte_rejects() {
     assert_eq!(
-        SYSTEM_TX_INPUT_VERSION, 2,
-        "this test assumes V2 = version 2"
+        SYSTEM_TX_INPUT_VERSION, 3,
+        "this test assumes six-byte framing uses version 3"
     );
     let signer = signer();
-    let mut input = Vec::with_capacity(5);
-    input.extend_from_slice(&CYCLE_TICK_SELECTOR);
+    let mut input = Vec::with_capacity(6);
+    input.extend_from_slice(&BEGIN_BLOCK_STAGE_SELECTOR);
     input.push(1); // wrong version byte
+    input.push(0);
     let tx = signed_with_raw_input(&signer, 0, input);
     let body = body(vec![tx]);
     let header = header_for(1, B256::ZERO);
 
-    let err = validate_system_tx_consensus_boundary(&body, &header)
-        .expect_err("V2 selector with V1 version byte must be rejected by the stateless validator");
-    let msg = format!("{err:?}");
+    let err = validate_system_tx_consensus_boundary(&body, &header, &TEST_BLOCK_ORDER)
+        .expect_err("V3 selector with V1 version byte must be rejected by the stateless validator");
+    let msg = err.to_string();
     assert!(
         msg.contains("UnsupportedVersion") || msg.contains("system tx layout"),
         "rejection must reference the unsupported-version path; got: {msg}"
@@ -381,11 +386,12 @@ fn v2_envelope_with_wrong_version_byte_rejects() {
 #[test]
 fn malformed_block_rejected_via_v2_with_tx_root_entrypoint() {
     let signer = signer();
-    // A V2 selector carrying a V1 version byte -> UnsupportedVersion at the
+    // A V3 selector carrying a V1 version byte -> UnsupportedVersion at the
     // boundary check (runs before any tx-root delegation).
-    let mut input = Vec::with_capacity(5);
-    input.extend_from_slice(&CYCLE_TICK_SELECTOR);
+    let mut input = Vec::with_capacity(6);
+    input.extend_from_slice(&BEGIN_BLOCK_STAGE_SELECTOR);
     input.push(1);
+    input.push(0);
     let tx = signed_with_raw_input(&signer, 0, input);
     let transactions = vec![tx];
     let header = header_for_transactions(1, B256::ZERO, &transactions);
@@ -397,7 +403,7 @@ fn malformed_block_rejected_via_v2_with_tx_root_entrypoint() {
             .build()
             .map_header(OutbeHeader::new),
     );
-    let consensus = OutbeBeaconConsensus::new(chain_spec);
+    let consensus = OutbeBeaconConsensus::new(chain_spec, TEST_BLOCK_ORDER);
 
     // The v2.2 PRIMARY entrypoint must reject it. The boundary check runs before
     // the tx-root delegation, so `None` is fine - it errors first.
@@ -435,7 +441,7 @@ fn with_tx_root_forwards_transaction_root_on_wellformed_block() {
             .build()
             .map_header(OutbeHeader::new),
     );
-    let consensus = OutbeBeaconConsensus::new(chain_spec);
+    let consensus = OutbeBeaconConsensus::new(chain_spec, TEST_BLOCK_ORDER);
 
     // Sanity: this block is fully valid for pre-execution (boundary check passes).
     assert!(
@@ -464,33 +470,31 @@ fn with_tx_root_forwards_transaction_root_on_wellformed_block() {
 }
 
 // ---------------------------------------------------------------------------
-// V2 envelope with unknown selector is rejected.
+// V3 envelope with unknown selector is rejected.
 // ---------------------------------------------------------------------------
 
 /// an input whose selector is not any active selector
-/// (`OSA3` / `OSC2` / `OSB2` / `OSO2`) is rejected. The selector byte
+/// (`OSCN` / `OSBB` / `OSEB`) is rejected. The selector byte
 /// constants live in `outbe_evm::system_tx` so a future selector reshuffle
 /// fails here too, not just at the unit-test layer.
 #[test]
-fn v2_envelope_with_unknown_selector_rejects() {
-    // Sanity-pin the V2 selector quartet so a refactor that drops a selector
-    // bytes definition trips this test, not just the layout path.
-    assert_eq!(CERTIFIED_PARENT_ACCOUNTING_SELECTOR, *b"OSA3");
-    assert_eq!(CYCLE_TICK_SELECTOR, *b"OSC2");
-    assert_eq!(BOUNDARY_OUTCOME_SELECTOR, *b"OSB2");
-    assert_eq!(ORACLE_SLASH_SELECTOR, *b"OSOS");
+fn v3_envelope_with_unknown_selector_rejects() {
+    assert_eq!(CONSENSUS_STAGE_SELECTOR, *b"OSCN");
+    assert_eq!(BEGIN_BLOCK_STAGE_SELECTOR, *b"OSBB");
+    assert_eq!(END_BLOCK_STAGE_SELECTOR, *b"OSEB");
 
     let signer = signer();
-    let mut input = Vec::with_capacity(5);
+    let mut input = Vec::with_capacity(6);
     input.extend_from_slice(b"ZZZZ"); // unknown 4-byte selector
     input.push(SYSTEM_TX_INPUT_VERSION);
+    input.push(0);
     let tx = signed_with_raw_input(&signer, 0, input);
     let body = body(vec![tx]);
     let header = header_for(1, B256::ZERO);
 
-    let err = validate_system_tx_consensus_boundary(&body, &header)
-        .expect_err("V2 envelope with an unknown selector must be rejected");
-    let msg = format!("{err:?}");
+    let err = validate_system_tx_consensus_boundary(&body, &header, &TEST_BLOCK_ORDER)
+        .expect_err("V3 envelope with an unknown selector must be rejected");
+    let msg = err.to_string();
     assert!(
         msg.contains("UnknownSelector") || msg.contains("system tx layout"),
         "rejection must reference the unknown-selector path; got: {msg}"
@@ -510,27 +514,35 @@ fn system_txs_block2(
     late_artifact: outbe_primitives::reshare_artifact::LateFinalizeCreditsArtifact,
 ) -> Vec<TransactionSigned> {
     let begin_inputs = [
-        SystemTx::CertifiedParentAccounting {
-            metadata: phase1_metadata(1, parent_hash),
+        SystemTx::Consensus {
+            step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+            payload: phase1_metadata(1, parent_hash).encode().unwrap(),
         },
-        SystemTx::LateFinalizeCredits {
-            artifact: late_artifact,
+        SystemTx::Consensus {
+            step_index: CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX,
+            payload: outbe_primitives::reshare_artifact::encode_late_finalize_credits_artifact(
+                &(late_artifact),
+            )
+            .unwrap(),
         },
-        SystemTx::ValidatorLiveness,
-        SystemTx::Vote,
-        SystemTx::Update,
-        SystemTx::EnclaveUpgradeDeadline,
-        SystemTx::Rewards,
-        SystemTx::Staking,
-        SystemTx::Oracle,
-        SystemTx::OracleSlash,
-        SystemTx::HyperlaneSlash,
-        SystemTx::CycleTick,
+        SystemTx::Consensus {
+            step_index: CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX,
+            payload: Default::default(),
+        },
+        SystemTx::BeginBlock { step_index: 0 },
+        SystemTx::BeginBlock { step_index: 1 },
+        SystemTx::BeginBlock { step_index: 2 },
+        SystemTx::BeginBlock { step_index: 3 },
+        SystemTx::BeginBlock { step_index: 4 },
+        SystemTx::BeginBlock { step_index: 5 },
+        SystemTx::BeginBlock { step_index: 6 },
+        SystemTx::BeginBlock { step_index: 7 },
+        SystemTx::BeginBlock { step_index: 8 },
     ];
     let mut transactions = begin_inputs
         .into_iter()
         .enumerate()
-        .map(|(ordinal, input)| signed_v2(signer, ordinal as u8, 2, input))
+        .map(|(ordinal, input)| signed_system_tx(signer, ordinal as u8, 2, input))
         .collect::<Vec<_>>();
     transactions.extend(end_zone_txs_block2(signer));
     transactions
@@ -538,11 +550,36 @@ fn system_txs_block2(
 
 fn end_zone_txs_block2(signer: &OutbeEvmSigner) -> [TransactionSigned; 5] {
     [
-        signed_v2(signer, NOD_FACTORY_ORDINAL, 2, SystemTx::NodFactory),
-        signed_v2(signer, GEM_FACTORY_ORDINAL, 2, SystemTx::GemFactory),
-        signed_v2(signer, INTEX_FACTORY_ORDINAL, 2, SystemTx::IntexFactory),
-        signed_v2(signer, CREDIS_FACTORY_ORDINAL, 2, SystemTx::CredisFactory),
-        signed_v2(signer, GEM_CLEANUP_ORDINAL, 2, SystemTx::GemCleanup),
+        signed_system_tx(
+            signer,
+            END_BLOCK_BASE_ORDINAL,
+            2,
+            SystemTx::EndBlock { step_index: 0 },
+        ),
+        signed_system_tx(
+            signer,
+            END_BLOCK_BASE_ORDINAL + 1,
+            2,
+            SystemTx::EndBlock { step_index: 1 },
+        ),
+        signed_system_tx(
+            signer,
+            END_BLOCK_BASE_ORDINAL + 2,
+            2,
+            SystemTx::EndBlock { step_index: 2 },
+        ),
+        signed_system_tx(
+            signer,
+            END_BLOCK_BASE_ORDINAL + 3,
+            2,
+            SystemTx::EndBlock { step_index: 3 },
+        ),
+        signed_system_tx(
+            signer,
+            END_BLOCK_BASE_ORDINAL + 4,
+            2,
+            SystemTx::EndBlock { step_index: 4 },
+        ),
     ]
 }
 
@@ -573,17 +610,18 @@ fn late_finalize_header_body_calldata_mismatch_fatal() {
     // Body carries non-empty credits; the header (default) commits to none.
     let txs = system_txs_block2(&signer, parent_hash, nonempty);
     let header = header_for_transactions(2, parent_hash, &txs);
-    let err = validate_system_tx_consensus_boundary(&body(txs), &header)
+    let err = validate_system_tx_consensus_boundary(&body(txs), &header, &TEST_BLOCK_ORDER)
         .expect_err("header/body late_finalize_credits mismatch must be rejected");
     assert!(
-        format!("{err:?}").contains("does not match header late_finalize_credits"),
+        err.to_string()
+            .contains("does not match header late_finalize_credits"),
         "rejection must reference the parity check; got: {err:?}"
     );
 
     // Sanity: matching empty header/body passes the parity check (no false positive).
     let txs_ok = system_txs_block2(&signer, parent_hash, LateFinalizeCreditsArtifact::default());
     let header_ok = header_for_transactions(2, parent_hash, &txs_ok);
-    validate_system_tx_consensus_boundary(&body(txs_ok), &header_ok)
+    validate_system_tx_consensus_boundary(&body(txs_ok), &header_ok, &TEST_BLOCK_ORDER)
         .expect("matching empty header/body must pass");
 }
 
@@ -601,9 +639,9 @@ fn mandatory_late_phase_cannot_be_skipped() {
     // the 9 BEGIN_BLOCK_ORDER transactions, and the 5 END_BLOCK_ORDER transactions.
     txs.remove(1);
     let header = header_for_transactions(2, parent_hash, &txs);
-    let err = validate_system_tx_consensus_boundary(&body(txs), &header)
+    let err = validate_system_tx_consensus_boundary(&body(txs), &header, &TEST_BLOCK_ORDER)
         .expect_err("block >= 2 without LateFinalizeCredits must be rejected");
-    let msg = format!("{err:?}");
+    let msg = err.to_string();
     assert!(
         msg.contains("system tx set") || msg.to_lowercase().contains("latefinalize"),
         "rejection must reference the missing mandatory phase; got: {msg}"
@@ -638,12 +676,116 @@ fn block_exceeding_p2p_transport_cap_is_rejected() {
             .build()
             .map_header(OutbeHeader::new),
     );
-    let consensus = OutbeBeaconConsensus::new(chain_spec);
+    let consensus = OutbeBeaconConsensus::new(chain_spec, TEST_BLOCK_ORDER);
     let err = consensus
         .validate_block_pre_execution(&block)
         .expect_err("a block over the P2P transport cap must be rejected at verify");
     assert!(
-        format!("{err:?}").contains("transport cap"),
+        err.to_string().contains("transport cap"),
         "rejection must reference the transport cap; got: {err:?}"
     );
+}
+
+#[test]
+fn explicit_order_controls_public_boundary_and_consensus_adapter() {
+    use outbe_primitives::block::BlockOrder;
+    use reth_primitives_traits::SealedHeader;
+
+    let signer = signer();
+    let parent_hash = B256::repeat_byte(0xA4);
+    let mut transactions = system_txs_block2(&signer, parent_hash, Default::default());
+    transactions.truncate(transactions.len() - TEST_BLOCK_ORDER.end_block.len());
+    let header = header_for_transactions(2, parent_hash, &transactions);
+    let block = AlloyBlock::new(header.clone(), body(transactions)).seal_slow();
+    let order = BlockOrder {
+        end_block: &[],
+        ..TEST_BLOCK_ORDER
+    };
+    validate_system_tx_consensus_boundary(block.body(), &header, &order).unwrap();
+    assert!(
+        validate_system_tx_consensus_boundary(block.body(), &header, &TEST_BLOCK_ORDER).is_err()
+    );
+    let chain_spec = Arc::new(
+        ChainSpecBuilder::mainnet()
+            .with_osaka_at(0)
+            .build()
+            .map_header(OutbeHeader::new),
+    );
+    for injected in [order, BlockOrder::default()] {
+        let consensus = OutbeBeaconConsensus::new(chain_spec.clone(), injected);
+        let sealed_header = SealedHeader::seal_slow(header.clone());
+        let accepted = !injected.consensus.is_empty();
+        assert_eq!(
+            consensus
+                .validate_body_against_header(block.body(), &sealed_header)
+                .is_ok(),
+            accepted
+        );
+        assert_eq!(
+            consensus.validate_block_pre_execution(&block).is_ok(),
+            accepted
+        );
+        assert_eq!(
+            consensus
+                .validate_block_pre_execution_with_tx_root(
+                    &block,
+                    Some(header.inner.transactions_root)
+                )
+                .is_ok(),
+            accepted
+        );
+    }
+}
+
+#[test]
+fn header_committed_steps_cannot_be_omitted_from_injected_order() {
+    use outbe_primitives::{
+        block::BlockOrder,
+        reshare_artifact::ConsensusHeaderArtifact,
+        system_tx::binding::{BoundaryBindingError, PublicationBindingError},
+        test_utils::{sample_radicle_publication_batch, sample_system_tx_boundary},
+    };
+    use reth_ethereum::consensus::ConsensusError;
+
+    let parent_hash = B256::repeat_byte(0xA4);
+    let mut transactions = system_txs_block2(&signer(), parent_hash, Default::default());
+    transactions.remove(2); // The custom plan contains only parent accounting and late credits.
+    let order = BlockOrder {
+        consensus: &TEST_BLOCK_ORDER.consensus[..2],
+        ..TEST_BLOCK_ORDER
+    };
+    let mut header = header_for_transactions(2, parent_hash, &transactions);
+    let body = body(transactions);
+    validate_system_tx_consensus_boundary(&body, &header, &order).unwrap();
+    for artifacts in [
+        OutbeBlockArtifacts {
+            consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(
+                sample_system_tx_boundary(2),
+            )),
+            ..Default::default()
+        },
+        OutbeBlockArtifacts {
+            radicle_publication_enabled: true,
+            radicle_publication: Some(sample_radicle_publication_batch(1)),
+            ..Default::default()
+        },
+    ] {
+        header.inner.extra_data = encode_outbe_block_artifacts(&artifacts).unwrap();
+        let ConsensusError::Other(error) =
+            validate_system_tx_consensus_boundary(&body, &header, &order).unwrap_err()
+        else {
+            panic!("expected missing consensus step")
+        };
+        if artifacts.radicle_publication.is_some() {
+            assert!(matches!(
+                error.downcast_ref::<PublicationBindingError>(),
+                Some(PublicationBindingError::Missing)
+            ));
+        } else {
+            assert!(matches!(
+                error.downcast_ref::<BoundaryBindingError>(),
+                Some(BoundaryBindingError::Missing)
+            ));
+        }
+    }
 }

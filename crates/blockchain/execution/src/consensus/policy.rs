@@ -6,7 +6,7 @@ use outbe_primitives::consensus::{
     MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS, OUTBE_MAX_BLOCK_SIZE,
 };
 use outbe_primitives::{
-    payload::validate_outbe_withdrawals, OutbeBlock, OutbeBlockBody, OutbeHeader,
+    block::BlockOrder, payload::validate_outbe_withdrawals, OutbeBlock, OutbeBlockBody, OutbeHeader,
 };
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_consensus_common::validation::{
@@ -26,12 +26,25 @@ mod publication_tests;
 pub(super) struct OutbeConsensusPolicy<ChainSpec> {
     pub(super) chain_spec: Arc<ChainSpec>,
     pub(super) skip_gas_limit_ramp_check: bool,
+    block_order: BlockOrder,
 }
 
 impl<ChainSpec> OutbeConsensusPolicy<ChainSpec>
 where
     ChainSpec: EthChainSpec<Header = OutbeHeader> + EthereumHardforks,
 {
+    pub(super) fn new(
+        chain_spec: Arc<ChainSpec>,
+        enforce_gas_limit: bool,
+        block_order: BlockOrder,
+    ) -> Self {
+        Self {
+            chain_spec,
+            skip_gas_limit_ramp_check: !enforce_gas_limit,
+            block_order,
+        }
+    }
+
     fn validate_repository_publication_mode(
         &self,
         header: &OutbeHeader,
@@ -120,7 +133,7 @@ where
     ) -> Result<(), ConsensusError> {
         self.validate_repository_publication_mode(header)?;
         validate_outbe_body_withdrawals(body)?;
-        validate_system_transactions(body, header)
+        validate_system_transactions(body, header, &self.block_order)
     }
 
     pub(super) fn validate_block_pre_execution(
@@ -130,19 +143,17 @@ where
         self.validate_repository_publication_mode(block.header())?;
         validate_outbe_body_withdrawals(block.body())?;
         validate_block_transport_size(block)?;
-        validate_system_transactions(block.body(), block.header())
+        validate_system_transactions(block.body(), block.header(), &self.block_order)
     }
 }
 
 pub(super) fn validate_system_transactions(
     body: &OutbeBlockBody,
     header: &OutbeHeader,
+    block_order: &BlockOrder,
 ) -> Result<(), ConsensusError> {
     system_transactions::validate_beneficiary(header)?;
-    let (layout, artifacts) = system_transactions::validate_layout(body, header)?;
-    system_transactions::validate_parent_accounting(&layout, header)?;
-    system_transactions::validate_boundary_outcome(&layout, &artifacts)?;
-    system_transactions::validate_late_credits(&layout, &artifacts)
+    system_transactions::validate_layout(body, header, block_order)
 }
 
 /// Enforce the genesis-fixed Outbe gas schedule by height.

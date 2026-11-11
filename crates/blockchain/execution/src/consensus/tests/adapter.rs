@@ -63,7 +63,7 @@ fn chain_from(activate: fn(ChainSpecBuilder) -> ChainSpecBuilder) -> Arc<ChainSp
 
 #[test]
 fn gas_schedule_skip_is_reversible_and_does_not_skip_timestamp_rules() {
-    let strict = OutbeBeaconConsensus::new(test_chain_spec());
+    let strict = OutbeBeaconConsensus::new(test_chain_spec(), TEST_BLOCK_ORDER);
     let permissive = strict.clone().with_skip_gas_limit_ramp_check(true);
     let parent = header(0, 100, 0, B256::ZERO);
     let child = header_with_beneficiary_and_gas_limit(
@@ -101,7 +101,7 @@ fn gas_schedule_skip_is_reversible_and_does_not_skip_timestamp_rules() {
 
 #[test]
 fn header_millis_error_precedes_gas_and_stock_errors() {
-    let consensus = OutbeBeaconConsensus::new(test_chain_spec());
+    let consensus = OutbeBeaconConsensus::new(test_chain_spec(), TEST_BLOCK_ORDER);
     let mut invalid = header(1, 100, 1000, B256::ZERO).header().clone();
     invalid.inner.gas_limit = 1;
     invalid.inner.gas_used = 2;
@@ -116,7 +116,7 @@ fn header_millis_error_precedes_gas_and_stock_errors() {
 
 #[test]
 fn header_protocol_gas_error_precedes_stock_checks() {
-    let consensus = OutbeBeaconConsensus::new(test_chain_spec());
+    let consensus = OutbeBeaconConsensus::new(test_chain_spec(), TEST_BLOCK_ORDER);
     let mut invalid = empty_header(1);
     invalid.inner.gas_limit = 1;
     invalid.inner.gas_used = 2;
@@ -131,7 +131,7 @@ fn header_protocol_gas_error_precedes_stock_checks() {
 
 #[test]
 fn parent_hash_error_precedes_timestamp_and_gas_errors() {
-    let consensus = OutbeBeaconConsensus::new(test_chain_spec());
+    let consensus = OutbeBeaconConsensus::new(test_chain_spec(), TEST_BLOCK_ORDER);
     let parent = header(0, 100, 0, B256::ZERO);
     let child = header(1, 100, 0, B256::repeat_byte(0x21));
     assert!(matches!(
@@ -142,7 +142,7 @@ fn parent_hash_error_precedes_timestamp_and_gas_errors() {
 
 #[test]
 fn parent_timestamp_error_precedes_protocol_gas_error() {
-    let consensus = OutbeBeaconConsensus::new(test_chain_spec());
+    let consensus = OutbeBeaconConsensus::new(test_chain_spec(), TEST_BLOCK_ORDER);
     let parent = header(0, 100, 0, B256::ZERO);
     let mut child = header(1, 100, 0, parent.hash()).header().clone();
     child.inner.gas_limit = 1;
@@ -158,7 +158,7 @@ fn parent_timestamp_error_precedes_protocol_gas_error() {
 #[test]
 fn parent_base_fee_error_precedes_blob_checks() {
     let chain = chain_from(ChainSpecBuilder::cancun_activated);
-    let consensus = OutbeBeaconConsensus::new(chain);
+    let consensus = OutbeBeaconConsensus::new(chain, TEST_BLOCK_ORDER);
     let parent = header(0, 100, 0, B256::ZERO);
     let child = header(1, 101, 0, parent.hash());
     assert!(matches!(
@@ -169,7 +169,7 @@ fn parent_base_fee_error_precedes_blob_checks() {
 
 #[test]
 fn withdrawals_error_precedes_beneficiary_layout_and_root_errors() {
-    let consensus = OutbeBeaconConsensus::new(test_chain_spec());
+    let consensus = OutbeBeaconConsensus::new(test_chain_spec(), TEST_BLOCK_ORDER);
     let invalid = header_with_beneficiary(1, (100, 0), B256::ZERO, Address::ZERO);
     let block = OutbeBlock {
         header: invalid.header().clone(),
@@ -217,7 +217,7 @@ fn transport_size_error_precedes_system_layout_for_both_preexecution_paths() {
         },
     }
     .seal_slow();
-    let consensus = OutbeBeaconConsensus::new(test_chain_spec());
+    let consensus = OutbeBeaconConsensus::new(test_chain_spec(), TEST_BLOCK_ORDER);
     let error = consensus.validate_block_pre_execution(&block).unwrap_err();
     assert!(error.to_string().contains("P2P transport cap"));
     assert_eq!(
@@ -231,7 +231,7 @@ fn transport_size_error_precedes_system_layout_for_both_preexecution_paths() {
 
 #[test]
 fn beneficiary_error_precedes_stock_root_errors() {
-    let consensus = OutbeBeaconConsensus::new(test_chain_spec());
+    let consensus = OutbeBeaconConsensus::new(test_chain_spec(), TEST_BLOCK_ORDER);
     let mut invalid = empty_header(1);
     invalid.inner.beneficiary = Address::ZERO;
     invalid.inner.transactions_root = B256::ZERO;
@@ -259,7 +259,7 @@ fn beneficiary_error_precedes_stock_root_errors() {
 
 #[test]
 fn stock_transaction_root_check_and_supplied_root_are_preserved() {
-    let consensus = OutbeBeaconConsensus::new(test_chain_spec());
+    let consensus = OutbeBeaconConsensus::new(test_chain_spec(), TEST_BLOCK_ORDER);
     let block = empty_block(empty_header(0));
     let sealed = SealedHeader::seal_slow(block.header().clone());
     consensus
@@ -285,8 +285,8 @@ fn stock_transaction_root_check_and_supplied_root_are_preserved() {
 #[test]
 fn max_extra_data_setting_is_preserved_by_clone_and_reconfiguration() {
     let spec = test_chain_spec();
-    let consensus =
-        OutbeBeaconConsensus::new(spec.clone()).with_max_extra_data_size(OUTBE_MAX_EXTRA_DATA_SIZE);
+    let consensus = OutbeBeaconConsensus::new(spec.clone(), TEST_BLOCK_ORDER)
+        .with_max_extra_data_size(OUTBE_MAX_EXTRA_DATA_SIZE);
     assert!(Arc::ptr_eq(consensus.chain_spec(), &spec));
     let cloned = consensus.clone();
     assert!(Arc::ptr_eq(cloned.chain_spec(), &spec));
@@ -304,8 +304,8 @@ fn max_extra_data_setting_is_preserved_by_clone_and_reconfiguration() {
 #[test]
 fn blob_gas_skip_is_reversible_and_does_not_skip_base_fee_checks() {
     let spec = chain_from(ChainSpecBuilder::cancun_activated);
-    let consensus =
-        OutbeBeaconConsensus::new(spec).with_max_extra_data_size(OUTBE_MAX_EXTRA_DATA_SIZE);
+    let consensus = OutbeBeaconConsensus::new(spec, TEST_BLOCK_ORDER)
+        .with_max_extra_data_size(OUTBE_MAX_EXTRA_DATA_SIZE);
     let mut value = empty_header(0);
     value.inner.base_fee_per_gas = Some(7);
     value.inner.withdrawals_root = Some(EMPTY_ROOT_HASH);
@@ -333,7 +333,7 @@ fn blob_gas_skip_is_reversible_and_does_not_skip_base_fee_checks() {
 #[test]
 fn postexecution_checks_gas_before_receipts() {
     let spec = chain_from(ChainSpecBuilder::byzantium_activated);
-    let consensus = OutbeBeaconConsensus::new(spec);
+    let consensus = OutbeBeaconConsensus::new(spec, TEST_BLOCK_ORDER);
     let mut value = empty_header(0);
     value.inner.gas_used = 1;
     value.inner.receipts_root = B256::ZERO;
@@ -346,7 +346,7 @@ fn postexecution_checks_gas_before_receipts() {
 #[test]
 fn postexecution_preserves_computed_and_supplied_receipts_and_bloom() {
     let spec = chain_from(ChainSpecBuilder::byzantium_activated);
-    let consensus = OutbeBeaconConsensus::new(spec);
+    let consensus = OutbeBeaconConsensus::new(spec, TEST_BLOCK_ORDER);
     let value = empty_header(0);
     check_empty_execution(&consensus, &value, None, None).unwrap();
     check_empty_execution(
@@ -374,7 +374,7 @@ fn postexecution_preserves_computed_and_supplied_receipts_and_bloom() {
 #[test]
 fn requests_hash_skip_is_reversible_and_keeps_receipt_checks() {
     let spec = chain_from(ChainSpecBuilder::prague_activated);
-    let consensus = OutbeBeaconConsensus::new(spec);
+    let consensus = OutbeBeaconConsensus::new(spec, TEST_BLOCK_ORDER);
     let mut value = empty_header(0);
     value.inner.requests_hash = Some(B256::ZERO);
     assert!(matches!(
@@ -398,7 +398,7 @@ fn requests_hash_skip_is_reversible_and_keeps_receipt_checks() {
 #[test]
 fn postexecution_forwards_access_list_hash_without_skipping_validation() {
     let spec = chain_from(ChainSpecBuilder::amsterdam_activated);
-    let consensus = OutbeBeaconConsensus::new(spec);
+    let consensus = OutbeBeaconConsensus::new(spec, TEST_BLOCK_ORDER);
     let result = empty_execution();
     let mut value = empty_header(0);
     value.inner.requests_hash = Some(result.requests.requests_hash());
