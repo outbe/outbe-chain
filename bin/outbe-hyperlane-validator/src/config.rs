@@ -15,6 +15,71 @@ pub struct ValidatorConfig {
     pub health: Option<HealthConfig>,
     /// Local MDBX store. Only the `db` commands use it for now.
     pub storage: Option<StorageConfig>,
+    /// Origin chains whose MerkleTreeHook this validator signs. The daemon
+    /// does not use them yet.
+    #[serde(default)]
+    pub origin: Vec<OriginConfig>,
+}
+
+/// One origin chain. Contract addresses come from the HyperlaneController
+/// and the chain itself, not from this file.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OriginConfig {
+    pub domain: u32,
+    /// JSON-RPC endpoints (HTTP). Each one has one vote on the hook root.
+    pub rpc_urls: Vec<String>,
+    #[serde(default)]
+    pub rpc_consensus: RpcConsensus,
+    pub reorg_period: ReorgPeriod,
+    /// Poll interval without WebSocket, and the fallback poll with it.
+    #[serde(default = "default_origin_interval")]
+    pub interval_secs: u64,
+    /// Optional WebSocket endpoint. Its events only wake the poll earlier.
+    pub ws_url: Option<String>,
+    /// First block to read. Default: `deployedBlock()` of the hook.
+    pub index_from: Option<u64>,
+}
+
+/// Number of `rpc_urls` that must return the same root before the validator
+/// signs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RpcConsensus {
+    /// N - floor(N/3): at least 2/3.
+    #[default]
+    Majority,
+    /// ceil(N/2): at least 1/2.
+    Quorum,
+    /// One endpoint is sufficient. No vote.
+    Single,
+}
+
+impl RpcConsensus {
+    /// Agreeing endpoints that a pool of `endpoints` needs.
+    pub fn required(self, endpoints: usize) -> usize {
+        match self {
+            Self::Majority => endpoints - endpoints / 3,
+            Self::Quorum => endpoints.div_ceil(2),
+            Self::Single => 1,
+        }
+    }
+}
+
+/// How far behind the chain head a block is final.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
+pub enum ReorgPeriod {
+    /// `latest - n`.
+    Blocks(u64),
+    /// The `finalized` block tag of the chain.
+    Tag(FinalityTag),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FinalityTag {
+    Finalized,
 }
 
 #[derive(Debug, Deserialize)]
@@ -84,6 +149,9 @@ fn default_health_bind() -> String {
 fn default_poll_interval() -> u64 {
     30
 }
+fn default_origin_interval() -> u64 {
+    15
+}
 
 impl ValidatorConfig {
     pub fn load(path: &str) -> Result<Self> {
@@ -102,6 +170,18 @@ impl ValidatorConfig {
         }
         if self.hyperlane.poll_interval_secs == 0 {
             return Err(ValidatorError::ZeroPollInterval.into());
+        }
+        let mut domains = std::collections::HashSet::new();
+        for origin in &self.origin {
+            if !domains.insert(origin.domain) {
+                return Err(ValidatorError::DuplicateOrigin(origin.domain).into());
+            }
+            if origin.rpc_urls.is_empty() {
+                return Err(ValidatorError::NoOriginRpc(origin.domain).into());
+            }
+            if origin.interval_secs == 0 {
+                return Err(ValidatorError::ZeroOriginInterval(origin.domain).into());
+            }
         }
         Ok(())
     }
@@ -149,5 +229,62 @@ validator_address = "0x1111111111111111111111111111111111111111"
             "{MINIMAL}\n[hyperlane]\ns3_endpoint = \"x\"\n"
         ))
         .is_err());
+    }
+
+    const ORIGINS: &str = r#"
+[[origin]]
+domain = 54322345
+rpc_urls = ["https://a", "https://b", "https://c"]
+reorg_period = 0
+
+[[origin]]
+domain = 11155111
+rpc_urls = ["https://d"]
+rpc_consensus = "single"
+reorg_period = "finalized"
+interval_secs = 5
+ws_url = "wss://d"
+index_from = 7
+"#;
+
+    #[test]
+    fn origins_parse_with_defaults() {
+        let cfg: ValidatorConfig = toml::from_str(&format!("{MINIMAL}{ORIGINS}")).unwrap();
+        cfg.validate().unwrap();
+        assert!(toml::from_str::<ValidatorConfig>(MINIMAL)
+            .unwrap()
+            .origin
+            .is_empty());
+        let [outbe, sepolia] = cfg.origin.as_slice() else {
+            panic!("two origins")
+        };
+        assert_eq!(outbe.rpc_consensus, RpcConsensus::Majority);
+        assert_eq!(outbe.reorg_period, ReorgPeriod::Blocks(0));
+        assert_eq!(outbe.interval_secs, 15);
+        assert_eq!(outbe.ws_url, None);
+        assert_eq!(sepolia.rpc_consensus, RpcConsensus::Single);
+        assert_eq!(
+            sepolia.reorg_period,
+            ReorgPeriod::Tag(FinalityTag::Finalized)
+        );
+        assert_eq!(sepolia.index_from, Some(7));
+
+        let bad_tag = ORIGINS.replace("\"finalized\"", "\"safe\"");
+        assert!(toml::from_str::<ValidatorConfig>(&format!("{MINIMAL}{bad_tag}")).is_err());
+        let duplicate = format!("{MINIMAL}{ORIGINS}{ORIGINS}");
+        let cfg: ValidatorConfig = toml::from_str(&duplicate).unwrap();
+        assert!(cfg.validate().is_err());
+        let no_rpc = ORIGINS.replace("[\"https://d\"]", "[]");
+        let cfg: ValidatorConfig = toml::from_str(&format!("{MINIMAL}{no_rpc}")).unwrap();
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn consensus_thresholds_match_upstream() {
+        for (n, majority, quorum) in [(1, 1, 1), (2, 2, 1), (3, 2, 2), (4, 3, 2), (6, 4, 3)] {
+            assert_eq!(RpcConsensus::Majority.required(n), majority, "majority {n}");
+            assert_eq!(RpcConsensus::Quorum.required(n), quorum, "quorum {n}");
+            assert_eq!(RpcConsensus::Single.required(n), 1);
+        }
     }
 }

@@ -11,5 +11,15 @@ sol! {
             external
             view
             returns (string[][] memory);
+        function mailbox() external view returns (address);
+        function localDomain() external view returns (uint32);
+    }
+
+    /// Hyperlane MerkleTreeHook: the tree of dispatched message ids.
+    interface IMerkleTreeHook {
+        event InsertedIntoTree(bytes32 messageId, uint32 index);
+        function latestCheckpoint() external view returns (bytes32 root, uint32 index);
+        function mailbox() external view returns (address);
+        function deployedBlock() external view returns (uint256);
     }
 }

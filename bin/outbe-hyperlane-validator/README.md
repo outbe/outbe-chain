@@ -88,6 +88,61 @@ controller is initialized (`domains()` is empty), the daemon does nothing.
 Hyperlane delegates. An explicit Hyperlane delegate replaces the validator
 key for this authorization.
 
+## Origin chains
+
+Each `[[origin]]` block configures one origin chain. The daemon does not use
+these blocks yet. A later step of the validator port starts the sync.
+
+```toml
+[[origin]]
+domain = 54322345
+rpc_urls = ["https://rpc.testnet.outbe.net"]
+# Number of rpc_urls that must return the same root before the validator signs:
+#   "majority" - N - floor(N/3), at least 2/3 (default)
+#   "quorum"   - ceil(N/2), at least 1/2
+#   "single"   - the first RPC that answers, no vote
+rpc_consensus = "majority"
+reorg_period = 0                          # Blocks, or "finalized".
+interval_secs = 15                        # Poll interval without WebSocket, or the fallback poll with it.
+# ws_url = "wss://…"                      # Optional. Enable after the Outbe RPC nodes serve WebSocket.
+# index_from = 4782                       # Optional. Default: deployedBlock() of the hook.
+
+[[origin]]
+domain = 97
+rpc_urls = ["https://data-seed-prebsc-1-s1.bnbchain.org:8545", "https://data-seed-prebsc-1-s2.bnbchain.org:8545", "https://data-seed-prebsc-2-s1.bnbchain.org:8545"]
+rpc_consensus = "majority"                # majority (default) | quorum | single
+reorg_period = 9
+interval_secs = 15
+ws_url = "wss://…"
+```
+
+The configuration has no contract addresses. The daemon reads them from the
+chains:
+
+| Value | Source |
+|---|---|
+| Domains | `HyperlaneController.domains()` |
+| MerkleTreeHook | `HyperlaneController.hookByDomain(domain)` |
+| ValidatorAnnounce | `HyperlaneController.validatorAnnounceByDomain(domain)` |
+| Mailbox | `ValidatorAnnounce.mailbox()` on the origin chain |
+| First block | `index_from`, else `MerkleTreeHook.deployedBlock()` |
+
+While `icaRouter()` is zero, the controller is not initialized and the daemon
+waits. Before it uses a domain, the daemon checks these conditions:
+
+1. `ValidatorAnnounce.localDomain()` is equal to the domain.
+2. `MerkleTreeHook.mailbox()` is equal to `ValidatorAnnounce.mailbox()`.
+
+A domain of the controller without an `[[origin]]` block is an error of that
+domain only. The other domains continue.
+
+The sync reads `InsertedIntoTree` logs only up to the finalized block, in
+ranges of at most 100,000 blocks. The Outbe RPC rejects larger ranges. A new
+leaf becomes verified only when enough `rpc_urls` return the same
+`latestCheckpoint()` as the local tree. One `rpc_urls` entry has one vote.
+The daemon removes duplicate URLs. A WebSocket event only starts the next
+poll earlier. The event does not verify a leaf.
+
 ## Local store
 
 `[storage] db_path` sets the directory of the validator's own MDBX store.

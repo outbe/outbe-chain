@@ -18,6 +18,8 @@ mod liveness;
 mod merkle;
 #[allow(dead_code)]
 mod store;
+#[allow(dead_code)]
+mod sync;
 
 use std::sync::Arc;
 
