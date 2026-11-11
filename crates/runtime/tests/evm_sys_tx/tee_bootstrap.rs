@@ -2,6 +2,10 @@ use super::*;
 
 // ---- Phase 3b: TeeBootstrap handler verification ----
 
+use outbe_primitives::system_tx::{
+    CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX, SYSTEM_CALLDATA_FRAMING_BYTES,
+};
+use outbe_primitives::tee_bootstrap_v2::codec::encode_canonical;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::{
     tee_attestation_v1::{
@@ -265,7 +269,12 @@ fn run_bootstrap_v1(provider: &mut HashMapStorageProvider, payload: TeeBootstrap
         ),
     );
     provider.enter(|storage| {
-        let input = SystemTx::TeeBootstrap { payload }.encode().unwrap();
+        let input = SystemTx::Consensus {
+            step_index: CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX,
+            payload: encode_canonical(&payload).unwrap(),
+        }
+        .encode()
+        .unwrap();
         outbe_runtime::OutbeRuntime::new()
             .dispatch_system_tx(storage, &input, SYSTEM_ADDRESS, U256::ZERO, &activation)
             .map(|_| ())
@@ -309,10 +318,19 @@ fn tee_bootstrap_v1_routes_canonical_invalid_evidence_and_writes_nothing() {
     let policy = tee_policy_v1();
     let payload = tee_payload_v1(1, &all_keys, policy, snapshot_hash);
 
-    assert!(SystemTx::TeeBootstrap {
-        payload: payload.clone()
-    }
-    .revert_fails_block());
+    let tx = SystemTx::Consensus {
+        step_index: CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX,
+        payload: encode_canonical(&payload).unwrap(),
+    };
+    let input = tx.encode().unwrap();
+    assert_eq!(&input[..SYSTEM_CALLDATA_FRAMING_BYTES], b"OSCN\x03\x03");
+    assert_eq!(SystemTx::decode(&input).unwrap(), tx);
+    assert!(
+        outbe_runtime::BLOCK_ORDER
+            .step_for_tx(&tx)
+            .unwrap()
+            .revert_fails_block
+    );
     run_bootstrap_v1(&mut provider, payload)
         .expect_err("synthetic quote must reach and fail the public DCAP verifier");
     assert!(!is_bootstrapped(&mut provider));
