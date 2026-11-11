@@ -142,7 +142,7 @@ fn apply_pre_execution_changes_executes_cycle_tick_system_tx_receipt() {
         .receipts()
         .iter()
         .all(|receipt| receipt.tx_type == reth_ethereum::TxType::Legacy));
-    assert_eq!(executor.receipts()[10].cumulative_gas_used, 0);
+    assert_eq!(executor.receipts()[11].cumulative_gas_used, 0);
 
     assert_eq!(system_txs.len(), 12);
     assert_eq!(Address::from(*system_txs[0].signer()), proposer);
