@@ -1,5 +1,10 @@
 //! V3 stage-framed system transaction layout invariants.
 
+#[path = "system_tx_helpers/end_block_inputs.rs"]
+mod end_block_inputs;
+
+use end_block_inputs::end_block_inputs;
+
 use alloy_consensus::{SignableTransaction as _, TxLegacy};
 use alloy_primitives::{address, Bytes, Signature, TxKind, U256};
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
@@ -47,31 +52,6 @@ fn system_inputs() -> Vec<SystemTx> {
         SystemTx::BeginBlock { step_index: 6 },
         SystemTx::BeginBlock { step_index: 7 },
         SystemTx::BeginBlock { step_index: 8 },
-    ]
-}
-
-fn end_block_inputs() -> [(SystemTx, u8); 5] {
-    [
-        (
-            SystemTx::EndBlock { step_index: 0 },
-            end_block_nonce_ordinal(0).unwrap(),
-        ),
-        (
-            SystemTx::EndBlock { step_index: 1 },
-            end_block_nonce_ordinal(1).unwrap(),
-        ),
-        (
-            SystemTx::EndBlock { step_index: 2 },
-            end_block_nonce_ordinal(2).unwrap(),
-        ),
-        (
-            SystemTx::EndBlock { step_index: 3 },
-            end_block_nonce_ordinal(3).unwrap(),
-        ),
-        (
-            SystemTx::EndBlock { step_index: 4 },
-            end_block_nonce_ordinal(4).unwrap(),
-        ),
     ]
 }
 

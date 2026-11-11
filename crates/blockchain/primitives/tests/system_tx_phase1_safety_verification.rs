@@ -1,25 +1,14 @@
 //! Consensus-safety checks for the unified FSM: deterministic traces,
 //! monotonic body positions, atomic rejection, and terminal completion.
 
+#[path = "system_tx_helpers/input_for_step.rs"]
+mod input_for_step;
+
+use input_for_step::input_for_step;
+
 use alloy_primitives::Bytes;
 use outbe_primitives::{system_tx::*, test_utils::TEST_BLOCK_ORDER};
 use proptest::prelude::*;
-
-fn input_for_step(id: SystemTxStepId) -> SystemTx {
-    match id.stage {
-        BlockExecutionStage::Consensus => SystemTx::Consensus {
-            step_index: id.step_index,
-            payload: Bytes::new(),
-        },
-        BlockExecutionStage::BeginBlock => SystemTx::BeginBlock {
-            step_index: id.step_index,
-        },
-        BlockExecutionStage::EndBlock => SystemTx::EndBlock {
-            step_index: id.step_index,
-        },
-        _ => panic!("not a system step"),
-    }
-}
 
 #[test]
 fn execution_stage_set_includes_completed() {

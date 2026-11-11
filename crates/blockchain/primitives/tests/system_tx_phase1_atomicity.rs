@@ -1,26 +1,15 @@
 //! Atomic prefix consumption and the unified block execution FSM.
 
+#[path = "system_tx_helpers/input_for_step.rs"]
+mod input_for_step;
+
+use input_for_step::input_for_step;
+
 use alloy_primitives::Bytes;
 use outbe_primitives::{system_tx::*, test_utils::TEST_BLOCK_ORDER};
 
 const BLOCK_1: u64 = 1;
 const BLOCK_2: u64 = 2;
-
-fn input_for_step(id: SystemTxStepId) -> SystemTx {
-    match id.stage {
-        BlockExecutionStage::Consensus => SystemTx::Consensus {
-            step_index: id.step_index,
-            payload: Bytes::new(),
-        },
-        BlockExecutionStage::BeginBlock => SystemTx::BeginBlock {
-            step_index: id.step_index,
-        },
-        BlockExecutionStage::EndBlock => SystemTx::EndBlock {
-            step_index: id.step_index,
-        },
-        _ => panic!("not a system step"),
-    }
-}
 
 fn walk_prefix(block_number: u64, flags: BlockSystemFlags) -> BlockExecutionFsm {
     let mut fsm = BlockExecutionFsm::for_block(block_number, flags, &TEST_BLOCK_ORDER);
