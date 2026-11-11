@@ -86,7 +86,6 @@ pub const CANCELED_NO_LIMIT: u8 = 1;
 pub const CANCELED_UNPRICED: u8 = 2;
 pub const CANCELED_BELOW_ONE_UNIT: u8 = 3;
 pub const CANCELED_LATE_START: u8 = 4;
-pub const CANCELED_LIMIT_OVERFLOW: u8 = 5;
 
 /// Entries one cross-chain payload array carries: bids per PROCESS_BIDS_BATCH and winners per
 /// REFUND_INSTRUCTIONS; clearing sizes its gas in chunks of the same length. Mirrors

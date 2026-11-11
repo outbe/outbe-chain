@@ -16,7 +16,6 @@ use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, EmissionD
 #[cfg(not(feature = "e2e-test"))]
 use outbe_primitives::units::SCALE_1E6_U128;
 
-use crate::api::{AuctionBriefReceipt, AuctionBriefRejectionReason};
 #[cfg(not(feature = "e2e-test"))]
 use crate::constants::{IGNORED_CONFLICT, IGNORED_OBSOLETE};
 use crate::constants::{IGNORED_NOT_FOUND, ORIGIN_ROUTER_ADDRESS};
@@ -274,19 +273,15 @@ fn brief_at_rate_from(s: &StorageHandle, brief: RateBrief) {
         .start_timestamp()
         .expect("date timestamp");
     seed_rate(s, start, brief.rate);
-    assert_eq!(
-        crate::api::dispatch_auction_brief(
-            s.clone(),
-            crate::api::AuctionBrief {
-                emission_day: brief.emission_day,
-                desis_limit_minor: U256::from(brief.desis_limit_minor),
-                has_limit: brief.has_limit,
-            },
-            crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
-        )
-        .unwrap(),
-        AuctionBriefReceipt::Accepted
-    );
+    crate::api::dispatch_auction_brief(
+        s.clone(),
+        crate::api::AuctionBrief {
+            emission_day: brief.emission_day,
+            desis_limit_minor: U256::from(brief.desis_limit_minor),
+            has_limit: brief.has_limit,
+        },
+    )
+    .unwrap();
 }
 
 fn brief(s: &StorageHandle, has_limit: bool) {
@@ -462,17 +457,15 @@ fn chain_done_after_one_batch(s: &StorageHandle, arrived: u8, marked_total: u32)
 #[test]
 fn dispatch_auction_brief_records_the_brief() {
     with_storage(|s| {
-        let receipt = crate::api::dispatch_auction_brief(
+        crate::api::dispatch_auction_brief(
             s.clone(),
             crate::api::AuctionBrief {
                 emission_day: EMISSION_DAY,
                 desis_limit_minor: U256::from(10 * PROMIS_LOAD_MINOR),
                 has_limit: true,
             },
-            crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
         )
         .unwrap();
-        assert_eq!(receipt, AuctionBriefReceipt::Accepted);
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
@@ -514,7 +507,6 @@ fn dispatch_auction_brief_records_a_brief_with_no_limit() {
                 desis_limit_minor: U256::ZERO,
                 has_limit: false,
             },
-            crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
         )
         .is_err());
         assert!(crate::api::dispatch_auction_brief(
@@ -524,21 +516,18 @@ fn dispatch_auction_brief_records_a_brief_with_no_limit() {
                 desis_limit_minor: U256::from(PROMIS_LOAD_MINOR),
                 has_limit: true,
             },
-            crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
         )
         .is_err());
 
-        let receipt = crate::api::dispatch_auction_brief(
+        crate::api::dispatch_auction_brief(
             s.clone(),
             crate::api::AuctionBrief {
                 emission_day: EMISSION_DAY,
                 desis_limit_minor: U256::from(PROMIS_LOAD_MINOR),
                 has_limit: false,
             },
-            crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
         )
         .unwrap();
-        assert_eq!(receipt, AuctionBriefReceipt::Accepted);
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
@@ -548,17 +537,10 @@ fn dispatch_auction_brief_records_a_brief_with_no_limit() {
     });
 }
 
-fn strict_auction_brief(
-    storage: StorageHandle<'_>,
-    brief: crate::api::AuctionBrief,
-) -> outbe_primitives::error::Result<crate::api::AuctionBriefReceipt> {
-    crate::api::dispatch_auction_brief(storage, brief, crate::api::BriefOverflowPolicy::Reject)
-}
-
 #[test]
 fn strict_request_desis_limit_commits_the_exact_live_brief() {
     with_storage(|s| {
-        let receipt = strict_auction_brief(
+        crate::api::dispatch_auction_brief(
             s.clone(),
             crate::api::AuctionBrief {
                 emission_day: EMISSION_DAY,
@@ -567,8 +549,6 @@ fn strict_request_desis_limit_commits_the_exact_live_brief() {
             },
         )
         .expect("strict request brief");
-
-        assert_eq!(receipt, AuctionBriefReceipt::Accepted);
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
@@ -594,7 +574,7 @@ fn strict_request_desis_limit_commits_the_exact_live_brief() {
 #[test]
 fn strict_request_desis_limit_propagates_duplicate_refusal_without_overwrite() {
     with_storage(|s| {
-        strict_auction_brief(
+        crate::api::dispatch_auction_brief(
             s.clone(),
             crate::api::AuctionBrief {
                 emission_day: EMISSION_DAY,
@@ -604,7 +584,7 @@ fn strict_request_desis_limit_propagates_duplicate_refusal_without_overwrite() {
         )
         .unwrap();
 
-        assert!(strict_auction_brief(
+        assert!(crate::api::dispatch_auction_brief(
             s.clone(),
             crate::api::AuctionBrief {
                 emission_day: EMISSION_DAY,
@@ -629,7 +609,7 @@ fn strict_request_desis_limit_propagates_duplicate_refusal_without_overwrite() {
 #[test]
 fn strict_request_desis_limit_rejects_an_oversized_limit_without_state() {
     with_storage(|s| {
-        assert!(strict_auction_brief(
+        assert!(crate::api::dispatch_auction_brief(
             s.clone(),
             crate::api::AuctionBrief {
                 emission_day: EMISSION_DAY,
@@ -685,7 +665,7 @@ fn strict_request_desis_limit_rolls_back_every_partial_write_boundary() {
     let mutation_count = {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         let result = StorageHandle::enter(&mut provider, |storage| {
-            strict_auction_brief(
+            crate::api::dispatch_auction_brief(
                 storage,
                 crate::api::AuctionBrief {
                     emission_day: EMISSION_DAY,
@@ -706,7 +686,7 @@ fn strict_request_desis_limit_rolls_back_every_partial_write_boundary() {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         provider.fail_after_mutation_at(operation);
         let result = StorageHandle::enter(&mut provider, |storage| {
-            strict_auction_brief(
+            crate::api::dispatch_auction_brief(
                 storage,
                 crate::api::AuctionBrief {
                     emission_day: EMISSION_DAY,
@@ -730,7 +710,7 @@ fn strict_request_desis_limit_rolls_back_every_partial_write_boundary() {
 #[test]
 fn strict_request_desis_limit_never_tops_up_a_live_auction() {
     with_storage(|storage| {
-        strict_auction_brief(
+        crate::api::dispatch_auction_brief(
             storage.clone(),
             crate::api::AuctionBrief {
                 emission_day: EMISSION_DAY,
@@ -749,7 +729,7 @@ fn strict_request_desis_limit_never_tops_up_a_live_auction() {
         let config = before.read_auction_config(EMISSION_DAY).unwrap();
         let anchor = before.auction_at.read(&EMISSION_DAY).unwrap();
 
-        assert!(strict_auction_brief(
+        assert!(crate::api::dispatch_auction_brief(
             storage.clone(),
             crate::api::AuctionBrief {
                 emission_day: EMISSION_DAY,
@@ -790,19 +770,15 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
         Bytes::from(vec![0u8; 32]),
     );
     StorageHandle::enter(&mut storage, |s| {
-        assert_eq!(
-            crate::api::dispatch_auction_brief(
-                s.clone(),
-                crate::api::AuctionBrief {
-                    emission_day: EMISSION_DAY,
-                    desis_limit_minor: U256::from(10 * PROMIS_LOAD_MINOR),
-                    has_limit: true
-                },
-                crate::api::BriefOverflowPolicy::ReturnToPromisLimit
-            )
-            .unwrap(),
-            AuctionBriefReceipt::Accepted
-        );
+        crate::api::dispatch_auction_brief(
+            s.clone(),
+            crate::api::AuctionBrief {
+                emission_day: EMISSION_DAY,
+                desis_limit_minor: U256::from(10 * PROMIS_LOAD_MINOR),
+                has_limit: true,
+            },
+        )
+        .unwrap();
         assert!(crate::api::dispatch_auction_brief(
             s.clone(),
             crate::api::AuctionBrief {
@@ -810,7 +786,6 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
                 desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
                 has_limit: true
             },
-            crate::api::BriefOverflowPolicy::ReturnToPromisLimit
         )
         .is_err());
         let contract = s.contract::<DesisContract>();
@@ -831,109 +806,34 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
 }
 
 #[test]
-fn dispatch_auction_brief_oversized_limit_returns_typed_rejection() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    StorageHandle::enter(&mut storage, |s| {
-        assert_eq!(
-            crate::api::dispatch_auction_brief(
-                s.clone(),
-                crate::api::AuctionBrief {
-                    emission_day: EMISSION_DAY,
-                    desis_limit_minor: U256::MAX,
-                    has_limit: true
-                },
-                crate::api::BriefOverflowPolicy::ReturnToPromisLimit
-            )
-            .unwrap(),
-            AuctionBriefReceipt::ReturnedToPromisLimit {
-                reason: AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
-                desis_limit_minor: U256::MAX,
-                max_accepted: U256::from(u128::MAX),
-            }
-        );
-        let contract = s.contract::<DesisContract>();
-        assert_eq!(
-            contract.read_stage(EMISSION_DAY).unwrap(),
-            AuctionStage::Cancelled
-        );
-        assert_eq!(contract.sched_active_count.read().unwrap(), 0);
-        assert_eq!(
-            contract
-                .pending_desis_limit_minor
-                .read(&EMISSION_DAY)
-                .unwrap(),
-            U256::ZERO
-        );
-    });
-
-    let logs = storage.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
-    assert_eq!(
-        overflow_limit_events(logs),
-        vec![
-            U256::MAX,
-            U256::from(crate::constants::CANCELED_LIMIT_OVERFLOW),
-            U256::ZERO,
-            U256::MAX,
-        ]
-    );
-}
-
-#[test]
 fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
     with_storage(|storage| {
-        assert_eq!(
-            crate::api::dispatch_auction_brief(
-                storage.clone(),
-                crate::api::AuctionBrief {
-                    emission_day: EMISSION_DAY,
-                    desis_limit_minor: U256::from(u128::MAX),
-                    has_limit: true
-                },
-                crate::api::BriefOverflowPolicy::ReturnToPromisLimit
-            )
-            .unwrap(),
-            AuctionBriefReceipt::Accepted
-        );
+        crate::api::dispatch_auction_brief(
+            storage.clone(),
+            crate::api::AuctionBrief {
+                emission_day: EMISSION_DAY,
+                desis_limit_minor: U256::from(u128::MAX),
+                has_limit: true,
+            },
+        )
+        .unwrap();
     });
 
     let supply = U256::from(u128::MAX).checked_add(U256::from(1_u8)).unwrap();
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut provider, |storage| {
-        assert_eq!(
-            crate::api::dispatch_auction_brief(
-                storage.clone(),
-                crate::api::AuctionBrief {
-                    emission_day: EMISSION_DAY,
-                    desis_limit_minor: supply,
-                    has_limit: true
-                },
-                crate::api::BriefOverflowPolicy::ReturnToPromisLimit
-            )
-            .unwrap(),
-            AuctionBriefReceipt::ReturnedToPromisLimit {
-                reason: AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
+        assert!(crate::api::dispatch_auction_brief(
+            storage.clone(),
+            crate::api::AuctionBrief {
+                emission_day: EMISSION_DAY,
                 desis_limit_minor: supply,
-                max_accepted: U256::from(u128::MAX),
-            }
-        );
-        assert_eq!(
-            storage
-                .contract::<DesisContract>()
-                .read_stage(EMISSION_DAY)
-                .unwrap(),
-            AuctionStage::Cancelled
-        );
+                has_limit: true
+            },
+        )
+        .is_err());
+        assert_no_request_brief_state(&storage);
     });
-    let logs = provider.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
-    assert_eq!(
-        overflow_limit_events(logs),
-        vec![
-            supply,
-            U256::from(crate::constants::CANCELED_LIMIT_OVERFLOW),
-            U256::ZERO,
-            supply,
-        ]
-    );
+    assert!(provider.get_ordered_events().is_empty());
 }
 
 #[test]
@@ -947,7 +847,6 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
                 desis_limit_minor: U256::MAX,
                 has_limit: true
             },
-            crate::api::BriefOverflowPolicy::ReturnToPromisLimit
         )
         .is_err());
 
@@ -959,7 +858,6 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
                 desis_limit_minor: U256::MAX,
                 has_limit: true
             },
-            crate::api::BriefOverflowPolicy::ReturnToPromisLimit
         )
         .is_err());
 
@@ -971,7 +869,6 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
                 desis_limit_minor: U256::MAX,
                 has_limit: true
             },
-            crate::api::BriefOverflowPolicy::ReturnToPromisLimit
         )
         .is_err());
     });
@@ -992,10 +889,9 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
                     desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
                     has_limit: true,
                 },
-                crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
             )
         });
-        assert_eq!(result.unwrap(), AuctionBriefReceipt::Accepted);
+        result.unwrap();
         provider.clear_mutation_failure()
     };
     assert!(mutation_count > 1);
@@ -1011,7 +907,6 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
                     desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
                     has_limit: true,
                 },
-                crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
             )
         });
         assert!(result.is_err(), "mutation {operation} must propagate");
@@ -1021,26 +916,6 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
         });
         assert!(provider.get_ordered_events().is_empty());
     }
-
-    let mut rejection_provider = HashMapStorageProvider::new(CHAIN_ID);
-    rejection_provider.fail_after_mutation_at(0);
-    let result = StorageHandle::enter(&mut rejection_provider, |storage| {
-        crate::api::dispatch_auction_brief(
-            storage,
-            crate::api::AuctionBrief {
-                emission_day: EMISSION_DAY,
-                desis_limit_minor: U256::MAX,
-                has_limit: true,
-            },
-            crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
-        )
-    });
-    assert!(result.is_err());
-    assert_eq!(rejection_provider.clear_mutation_failure(), 1);
-    assert!(rejection_provider.get_ordered_events().is_empty());
-    StorageHandle::enter(&mut rejection_provider, |storage| {
-        assert_no_request_brief_state(&storage)
-    });
 }
 
 // --- Late start ---
@@ -1048,19 +923,15 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
 #[test]
 fn a_brief_anchors_at_the_midnight_after_its_emission_day() {
     with_storage(|s| {
-        assert_eq!(
-            crate::api::dispatch_auction_brief(
-                s.clone(),
-                crate::api::AuctionBrief {
-                    emission_day: EMISSION_DAY,
-                    desis_limit_minor: U256::from(LOAD_MINOR),
-                    has_limit: true
-                },
-                crate::api::BriefOverflowPolicy::ReturnToPromisLimit
-            )
-            .unwrap(),
-            AuctionBriefReceipt::Accepted
-        );
+        crate::api::dispatch_auction_brief(
+            s.clone(),
+            crate::api::AuctionBrief {
+                emission_day: EMISSION_DAY,
+                desis_limit_minor: U256::from(LOAD_MINOR),
+                has_limit: true,
+            },
+        )
+        .unwrap();
         let anchor = s
             .contract::<DesisContract>()
             .auction_at
@@ -1219,7 +1090,7 @@ fn a_late_day_is_cancelled_only_once_its_cancelled_start_is_sent() {
 
 #[cfg(not(feature = "e2e-test"))]
 fn native_brief_at_now(s: &StorageHandle) {
-    strict_auction_brief(
+    crate::api::dispatch_auction_brief(
         s.clone(),
         crate::api::AuctionBrief {
             emission_day: EMISSION_DAY,
@@ -2149,23 +2020,6 @@ fn allocation_records(
 fn is_desis_limit_set(log: &alloy_primitives::LogData) -> bool {
     use alloy_sol_types::SolEvent;
     crate::precompile::IDesis::DesisLimitSet::decode_log_data(log).is_ok()
-}
-
-/// `DesisLimitSet.amount`, cancel reason, `DesisLimitAllocated.amount`, `DesisLimitReturned.amount`.
-fn overflow_limit_events(logs: &[alloy_primitives::LogData]) -> Vec<U256> {
-    use crate::precompile::IDesis;
-    use alloy_sol_types::SolEvent;
-    assert_eq!(logs.len(), 4);
-    let set = IDesis::DesisLimitSet::decode_log_data(&logs[0]).unwrap();
-    let canceled = IDesis::IntexAuctionCanceled::decode_log_data(&logs[1]).unwrap();
-    let allocated = IDesis::DesisLimitAllocated::decode_log_data(&logs[2]).unwrap();
-    let returned = IDesis::DesisLimitReturned::decode_log_data(&logs[3]).unwrap();
-    vec![
-        set.amountMinor,
-        U256::from(canceled.reason),
-        allocated.amountMinor,
-        returned.amountMinor,
-    ]
 }
 
 fn limit_amounts(
@@ -3312,7 +3166,7 @@ fn a_repeated_marker_is_a_no_op_and_a_differing_one_is_reported() {
 }
 
 #[test]
-fn dispatch_auction_brief_oversized_limit_rejects_under_the_reject_policy() {
+fn dispatch_auction_brief_rejects_an_oversized_limit() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |s| {
         let error = crate::api::dispatch_auction_brief(
@@ -3322,7 +3176,6 @@ fn dispatch_auction_brief_oversized_limit_rejects_under_the_reject_policy() {
                 desis_limit_minor: U256::MAX,
                 has_limit: true,
             },
-            crate::api::BriefOverflowPolicy::Reject,
         )
         .unwrap_err();
         assert_eq!(

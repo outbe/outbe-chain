@@ -19,18 +19,6 @@ pub enum RetirementOutcome {
     Requested,
 }
 
-/// Constant-size owner receipt for a sealed Tribute partition forfeited by
-/// Metadosis retained-cap policy.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TributeForfeitureReceipt {
-    pub worldwide_day: WorldwideDay,
-    pub forfeited_count: u32,
-    pub forfeited_nominal: U256,
-    pub source_generation: u64,
-    pub retired_generation: u64,
-    pub retirement_outcome: RetirementOutcome,
-}
-
 impl TributeContract<'_> {
     /// Applies ADR-011's one bulk accounting transition after every verified
     /// Tribute in the sealed WWD has produced exactly one Nod.
@@ -89,17 +77,6 @@ impl TributeContract<'_> {
             }
             self.retire_completed_partition_inner(day)
         })
-    }
-
-    /// Forfeits one sealed partition from its frozen state aggregates.
-    /// The operation retains all ciphertext records and indexes.
-    pub fn forfeit_sealed_partition(
-        &mut self,
-        day: WorldwideDay,
-    ) -> Result<TributeForfeitureReceipt> {
-        let storage = self.storage_handle();
-        storage.require_metadosis_process_ready()?;
-        storage.with_checkpoint(|| forfeiture::apply(self, day))
     }
 
     pub(crate) fn retire_completed_partition_inner(

@@ -128,9 +128,7 @@ pub(crate) fn apply_auction_brief(
                 desis_limit_minor: split.desis_limit_minor,
                 has_limit: is_active,
             },
-            outbe_desis::api::BriefOverflowPolicy::Reject,
         )
-        .map(|_| ())
     })
 }
 

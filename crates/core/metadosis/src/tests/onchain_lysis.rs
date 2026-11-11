@@ -314,3 +314,46 @@ fn failed_owner_writes_roll_back_nods_tribute_and_economics() {
         assert_eq!(provider.get_ordered_events(), events);
     }
 }
+
+#[test]
+fn gap_ed17_one_rule_for_metadosis_limit() {
+    for amounts in [&[][..], &[1, 2], &[NOMINAL + 1, NOMINAL + 2, NOMINAL + 3]] {
+        let mut provider = fixture_with_amounts(LIMIT, amounts);
+        let before = StorageHandle::enter(&mut provider, |storage| {
+            outbe_promislimit::PromisLimitContract::new(storage)
+                .promis_limit()
+                .unwrap()
+        });
+
+        run(&mut provider).unwrap();
+
+        let completed = provider
+            .get_ordered_events()
+            .iter()
+            .filter_map(|event| IMetadosis::MetadosisCompleted::decode_log(event).ok())
+            .map(|event| event.data)
+            .collect::<Vec<_>>();
+        assert_eq!(completed.len(), 1, "amounts {amounts:?}");
+        StorageHandle::enter(&mut provider, |storage| {
+            let record = outbe_emission::api::get_emission_day_record(storage.clone(), DAY)
+                .unwrap()
+                .unwrap();
+            assert_eq!(record.metadosis_state, metadosis_state::COMPLETED);
+            let desis = outbe_desis::schema::DesisContract::new(storage.clone())
+                .pending_desis_limit_minor
+                .read(&outbe_primitives::time::EmissionDate::new(DAY))
+                .unwrap();
+            let after = outbe_promislimit::PromisLimitContract::new(storage)
+                .promis_limit()
+                .unwrap();
+            assert_eq!(U256::from(record.desis_limit), desis);
+            assert_eq!(U256::from(record.nods), completed[0].lysisAllocationMinor);
+            assert_eq!(U256::from(record.lysis_limit), completed[0].lysisLimitMinor);
+            assert_eq!(
+                after + desis + U256::from(record.nods),
+                before + U256::from(LIMIT),
+                "amounts {amounts:?}"
+            );
+        });
+    }
+}

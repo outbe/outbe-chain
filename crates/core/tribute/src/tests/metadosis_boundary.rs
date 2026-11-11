@@ -54,10 +54,6 @@ fn day_mutators_reject_a_missing_lease_without_writes() {
             MISMATCH
         );
         assert_eq!(
-            tc.forfeit_sealed_partition(day).unwrap_err().to_string(),
-            MISMATCH
-        );
-        assert_eq!(
             tc.consume_lysis_partition(
                 day,
                 totals.tribute_count,

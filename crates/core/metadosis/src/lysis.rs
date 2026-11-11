@@ -1,6 +1,5 @@
 //! Executes one sealed WorldwideDay linked to a due EmissionDay.
 
-use outbe_emission::schema::metadosis_state;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
@@ -69,7 +68,7 @@ fn finalize_lysis_settlement(
             promis_limit_added,
         },
     )?;
-    complete_emission_day(metadosis, &updated, metadosis_state::COMPLETED)?;
+    complete_emission_day(metadosis, &updated)?;
     metadosis.emit(IMetadosis::MetadosisCompleted {
         emissionDay: emission_day.day,
         tributeNominalTotalMinor: completion.total_nominal_minor,
@@ -84,48 +83,42 @@ fn finalize_lysis_settlement(
     })
 }
 
-fn load_ready_tribute<'a>(
-    ctx: &BlockRuntimeContext<'a>,
-    day: WorldwideDay,
-) -> Result<(TributeContract<'a>, outbe_tribute::schema::DayTotals)> {
-    let tribute = TributeContract::new(ctx.storage.clone());
-    let totals = tribute.get_day_totals(day)?;
-    if totals.is_sealed && totals.initialized && totals.tribute_count > 0 {
-        Ok((tribute, totals))
-    } else {
-        Err(mismatch())
-    }
-}
-
-fn execute_onchain_fractions(
-    metadosis: &mut MetadosisContract<'_>,
+fn settle_partition(
     ctx: &BlockRuntimeContext<'_>,
-    emission_day: &EmissionDay,
-    calculation: MetadosisCalculation,
-) -> Result<()> {
-    let wwd = emission_day.wwd;
-    let (mut tribute, totals) = load_ready_tribute(ctx, wwd)?;
+    wwd: WorldwideDay,
+    lysis_limit_minor: alloy_primitives::U256,
+) -> Result<SettlementCompletion> {
+    let mut tribute = TributeContract::new(ctx.storage.clone());
+    let totals = match wwd.value() {
+        0 => None,
+        _ => Some(tribute.get_day_totals(wwd)?),
+    };
+    let Some(totals) = totals.filter(|totals| totals.tribute_count > 0) else {
+        if wwd.value() != 0 {
+            tribute.retire_completed_partition(wwd)?;
+        }
+        return Ok(SettlementCompletion {
+            total_nominal_minor: alloy_primitives::U256::ZERO,
+            used: alloy_primitives::U256::ZERO,
+            unused: lysis_limit_minor,
+        });
+    };
+    if !totals.is_sealed || !totals.initialized {
+        return Err(mismatch());
+    }
     tribute.freeze_day_nominal(&totals)?;
     let (_, onchain_allocated_minor) = tribute.compute_and_record_metadosis_fractions(
         wwd,
-        calculation.lysis_limit_minor,
+        lysis_limit_minor,
         ctx.block.timestamp,
     )?;
     outbe_fidelity::api::finalize_wwd_max_fidelity(ctx.storage.clone(), wwd, ctx.block.timestamp)?;
-
-    let used = onchain_allocated_minor.min(calculation.lysis_limit_minor);
-    let unused = calculation.lysis_limit_minor.saturating_sub(used);
-    finalize_lysis_settlement(
-        metadosis,
-        ctx,
-        emission_day,
-        calculation,
-        SettlementCompletion {
-            total_nominal_minor: totals.tribute_nominal_total_minor,
-            used,
-            unused,
-        },
-    )
+    let used = onchain_allocated_minor.min(lysis_limit_minor);
+    Ok(SettlementCompletion {
+        total_nominal_minor: totals.tribute_nominal_total_minor,
+        used,
+        unused: lysis_limit_minor.saturating_sub(used),
+    })
 }
 
 pub(crate) fn execute(
@@ -135,5 +128,6 @@ pub(crate) fn execute(
     calculation: MetadosisCalculation,
 ) -> Result<()> {
     ctx.storage.require_metadosis_process_ready()?;
-    execute_onchain_fractions(metadosis, ctx, emission_day, calculation)
+    let completion = settle_partition(ctx, emission_day.wwd, calculation.lysis_limit_minor)?;
+    finalize_lysis_settlement(metadosis, ctx, emission_day, calculation, completion)
 }

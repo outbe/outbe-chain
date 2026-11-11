@@ -247,37 +247,6 @@ pub fn record_failed_day_allocation(
     Ok(record)
 }
 
-/// Marks Metadosis of `day` as `Completed` for an empty day (`wwd == 0` or `tribute_count == 0`),
-/// routing `metadosis_limit` into `promis_limit`.
-pub fn record_empty_day_metadosis_completed(
-    storage: StorageHandle<'_>,
-    day: u32,
-) -> Result<EmissionDay> {
-    let contract = EmissionContract::new(storage);
-    let mut record = contract
-        .emission_days
-        .get(day)?
-        .ok_or(EmissionError::EmissionDayNotFound)?;
-    if record.metadosis_state != metadosis_state::PENDING {
-        return Err(EmissionError::InvalidMetadosisStateTransition {
-            day,
-            from_state: record.metadosis_state,
-            to_state: metadosis_state::COMPLETED,
-        }
-        .into());
-    }
-    record.lysis_limit = 0;
-    record.desis_limit = 0;
-    record.nods = 0;
-    record.promis_limit = record
-        .promis_limit
-        .checked_add(record.metadosis_limit)
-        .ok_or(EmissionError::AmountOverflow)?;
-    record.metadosis_state = metadosis_state::COMPLETED;
-    contract.emission_days.update(&record)?;
-    Ok(record)
-}
-
 /// Settlement amounts produced when Metadosis completes Lysis and Desis for an `EmissionDay`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MetadosisCompletedAmounts {
@@ -558,7 +527,17 @@ mod tests {
         assert!(complete_emission_day(storage.clone(), day).is_err());
 
         // Complete empty-day metadosis (routes 840 -> promis_limit):
-        record_empty_day_metadosis_completed(storage.clone(), day).unwrap();
+        record_metadosis_completed(
+            storage.clone(),
+            day,
+            MetadosisCompletedAmounts {
+                lysis_limit: U256::ZERO,
+                desis_limit: U256::ZERO,
+                nods: U256::ZERO,
+                promis_limit_added: U256::from(840u64),
+            },
+        )
+        .unwrap();
 
         // Conservation holds: 40+40+40+40+0+840 == 1000
         let completed = complete_emission_day(storage.clone(), day).unwrap();
@@ -587,7 +566,17 @@ mod tests {
             )
             .unwrap();
             if settle_metadosis_first {
-                record_empty_day_metadosis_completed(storage.clone(), day).unwrap();
+                record_metadosis_completed(
+                    storage.clone(),
+                    day,
+                    MetadosisCompletedAmounts {
+                        lysis_limit: U256::ZERO,
+                        desis_limit: U256::ZERO,
+                        nods: U256::ZERO,
+                        promis_limit_added: U256::from(60u64),
+                    },
+                )
+                .unwrap();
             }
             for (index, pool) in [
                 RewardPool::Validator,

@@ -74,12 +74,6 @@ pub enum TributeError {
         found: WwdEntityId,
     },
 
-    #[error("CapacityForfeiture requires a sealed Tribute partition")]
-    CapacityForfeitureRequiresSealedPartition,
-
-    #[error("CapacityForfeiture requires an unretired Tribute partition")]
-    CapacityForfeitureRequiresUnretiredPartition,
-
     #[error("invalid league: {0}")]
     InvalidLeague(u16),
 
@@ -151,8 +145,6 @@ impl From<TributeError> for PrecompileError {
             | TributeError::DayMetadataDiffersFromEncryptedAmount
             | TributeError::SealedDayMetadataDiffersFromEncryptedAmount
             | TributeError::DayCountOverflowOrUnderflow
-            | TributeError::CapacityForfeitureRequiresSealedPartition
-            | TributeError::CapacityForfeitureRequiresUnretiredPartition
             | TributeError::DayAmountCodec(_) => PrecompileError::BodyReadCorruption(message),
             TributeError::TributeNotFound => revert_with(I::TributeNotFound {}),
             TributeError::TributeAlreadyExists => revert_with(I::TributeAlreadyExists {}),
