@@ -608,6 +608,27 @@
   },
   {
     "type": "error",
+    "name": "TooManyTargets",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "count",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "max",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "UnauthorizedOrigin",
     "inputs": [
       {

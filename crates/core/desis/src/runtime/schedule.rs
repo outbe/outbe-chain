@@ -1,9 +1,13 @@
 use super::clearing::{clearing_round_gas, fetch_targets};
 use super::*;
 use outbe_primitives::error::PrecompileError;
+use sweep::Sweep;
 
-/// Cycle `auction_advance` trigger: poll one scheduled auction in fair rotation.
-/// Each day runs in its own checkpoint; ordinary failures are retried on a later pass.
+mod sweep;
+
+/// Cycle `auction_advance` trigger: advance every scheduled day that has a due step.
+/// Each day runs in its own checkpoint. A day that reverts is retried on a later pass.
+/// The sweep stops before a day whose due steps the rest of the trigger budget cannot pay for.
 pub fn tick_schedule(ctx: &BlockRuntimeContext) -> Result<()> {
     schedule_tick(&ctx.storage, ctx.block.timestamp)
 }
@@ -18,25 +22,94 @@ fn poll_schedule(storage: &StorageHandle<'_>, now: u64) -> Result<()> {
     if count == 0 {
         return Ok(());
     }
-    let index = contract.sched_poll_cursor.read()? % count;
-    let day = contract.sched_active_at.read(&index)?.into();
-    match storage.with_checkpoint(|| advance_day(storage, day, now)) {
-        Ok(()) => {}
-        Err(e @ (PrecompileError::Revert(_) | PrecompileError::RevertBytes(_))) => {
-            tracing::warn!(target: "outbe::desis", %day, error = ?e, "schedule tick: skipping day");
+    let cursor = contract.sched_poll_cursor.read()?;
+    let mut sweep = Sweep::new(cursor % count, count);
+    let mut next = 0;
+    while let Some(index) = sweep.next() {
+        let day = contract.sched_active_at.read(&index)?.into();
+        if !budget_pays_for(storage, due_work_gas(&contract, day, now)?)? {
+            // The next run starts with the days that this run did not reach.
+            next = index;
+            break;
         }
-        Err(e) => return Err(e),
+        match storage.with_checkpoint(|| advance_day(storage, day, now)) {
+            Ok(()) => {}
+            Err(e @ (PrecompileError::Revert(_) | PrecompileError::RevertBytes(_))) => {
+                tracing::warn!(target: "outbe::desis", %day, error = ?e, "schedule tick: skipping day");
+            }
+            Err(e) => return Err(e),
+        }
+        if contract.sched_active_slot.read(&day)? == 0 {
+            sweep.removed(contract.sched_active_count.read()?);
+        } else {
+            sweep.kept();
+        }
     }
-    let remaining = contract.sched_active_count.read()?;
-    let next = if remaining == 0 {
-        0
-    } else if contract.sched_active_slot.read(&day)? == 0 {
-        // Swap-remove moved the tail into this slot; poll that day next.
-        index % remaining
+    if next != cursor {
+        contract.sched_poll_cursor.write(next)?;
+    }
+    Ok(())
+}
+
+/// Whether the rest of the trigger budget pays for `gas`. A run outside a trigger scope has no budget.
+fn budget_pays_for(storage: &StorageHandle<'_>, gas: u64) -> Result<bool> {
+    Ok(storage
+        .trigger_budget_remaining()?
+        .is_none_or(|remaining| remaining >= gas))
+}
+
+/// The anchor and the windows that `advance_day` reads for a day at `stage`.
+#[cfg_attr(not(feature = "e2e-test"), allow(unused_variables))]
+fn day_windows(
+    contract: &DesisContract<'_>,
+    emission_day: EmissionDate,
+    stage: AuctionStage,
+    now: u64,
+) -> Result<(u64, Windows)> {
+    let stored_anchor = u64::from(contract.auction_at.read(&emission_day)?);
+    // An e2e day never reaches its production anchor, so a briefed day starts
+    // from the tick that observes the brief.
+    #[cfg(feature = "e2e-test")]
+    let anchor = if stage == AuctionStage::Briefed {
+        now
     } else {
-        (index + 1) % remaining
+        stored_anchor
     };
-    contract.sched_poll_cursor.write(next)
+    #[cfg(not(feature = "e2e-test"))]
+    let anchor = stored_anchor;
+    Ok((anchor, Windows::from_anchor(anchor)))
+}
+
+/// Upper bound of the work `advance_day` does for a day at `now`, over every step that is due.
+fn due_work_gas(contract: &DesisContract<'_>, emission_day: EmissionDate, now: u64) -> Result<u64> {
+    let mut stage = contract.read_stage(emission_day)?;
+    let (anchor, windows) = day_windows(contract, emission_day, stage, now)?;
+    let mut gas = ADVANCE_DAY_BASE_GAS;
+    loop {
+        match stage {
+            AuctionStage::Completed | AuctionStage::Cancelled | AuctionStage::Failed => {
+                return Ok(gas)
+            }
+            _ if windows.unfinished_past_deadline(stage, now) => {
+                let end = if stage == AuctionStage::Briefed {
+                    ADVANCE_START_GAS
+                } else {
+                    ADVANCE_FAIL_GAS
+                };
+                return Ok(gas + end);
+            }
+            // A start leaves at least `MIN_COMMIT_WINDOW_SECONDS` of commit, or cancels the day.
+            AuctionStage::Briefed if now >= anchor => return Ok(gas + ADVANCE_START_GAS),
+            AuctionStage::CommittingBids if now >= windows.commit_end => {
+                gas += ADVANCE_DAY_BASE_GAS;
+                stage = AuctionStage::RevealingBids;
+            }
+            AuctionStage::RevealingBids if now >= windows.reveal_end => {
+                return Ok(gas + ADVANCE_REVEAL_END_GAS);
+            }
+            _ => return Ok(gas),
+        }
+    }
 }
 
 /// Walk one day's schedule: start at the anchor, move to `RevealingBids` at commit end, collect
@@ -45,18 +118,7 @@ fn advance_day(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u64
     loop {
         let mut contract = storage.contract::<DesisContract>();
         let stage = contract.read_stage(emission_day)?;
-        let stored_anchor = u64::from(contract.auction_at.read(&emission_day)?);
-        // An e2e day never reaches its production anchor, so a briefed day starts
-        // from the tick that observes the brief.
-        #[cfg(feature = "e2e-test")]
-        let anchor = if stage == AuctionStage::Briefed {
-            now
-        } else {
-            stored_anchor
-        };
-        #[cfg(not(feature = "e2e-test"))]
-        let anchor = stored_anchor;
-        let windows = Windows::from_anchor(anchor);
+        let (anchor, windows) = day_windows(&contract, emission_day, stage, now)?;
         match stage {
             AuctionStage::Completed | AuctionStage::Cancelled | AuctionStage::Failed => {
                 return contract.remove_sched_active(emission_day);
@@ -336,9 +398,16 @@ fn arm_clearing(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u6
 
     // Per chain, each in its own checkpoint. A chain whose send fails takes neither the day's
     // arming nor the other chains' rounds with it. The fan-in deadline covers the one left behind.
-    for chain_id in fetch_targets(storage, emission_day)? {
+    let targets = fetch_targets(storage, emission_day)?;
+    if targets.len() > MAX_TARGET_CHAINS {
+        return Err(DesisError::TooManyTargets(emission_day, targets.len()).into());
+    }
+    for chain_id in targets {
         let sent = storage.with_checkpoint(|| {
-            let gas = clearing_round_gas(storage, emission_day, chain_id)?;
+            let mut gas = clearing_round_gas(storage, emission_day, chain_id)?;
+            if u64::from(chain_id) == storage.chain_id()? {
+                gas = gas.min(OWN_CHAIN_ROUND_GAS);
+            }
             storage.call(
                 ORIGIN_ROUTER_ADDRESS,
                 U256::ZERO,

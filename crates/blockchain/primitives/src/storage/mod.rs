@@ -372,6 +372,11 @@ pub trait PrecompileStorageProvider {
         None
     }
 
+    /// Unspent work allowance of the active trigger scope. `None` outside a scope.
+    fn trigger_budget_remaining(&self) -> Option<u64> {
+        None
+    }
+
     fn begin_trigger_budget(&mut self, _budget: u64) -> Result<()> {
         Err(gas::TriggerScopeError::Unsupported.into())
     }
