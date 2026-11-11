@@ -7,6 +7,7 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
+import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
 import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
@@ -156,6 +157,8 @@ contract OwnChainRelayRoundTest is Test {
     ///      the rounds carry the day without a park or a push.
     function test_AnUnfinishedOwnChainDaySendsItsNextRound() public {
         stub.setCount(1_536);
+        vm.expectCall(desis, abi.encodeWithSelector(IDesis.processBidsBatch.selector, DAY, self), 24);
+        vm.expectCall(desis, abi.encodeCall(IDesis.processBidsDone, (DAY, self, 24, 1_536)), 1);
 
         vm.prank(desis);
         origin.sendAuctionStageCollectingBids(DAY, self, IntexGas.AUCTION_STAGE_COLLECTING_BIDS);
@@ -166,6 +169,19 @@ contract OwnChainRelayRoundTest is Test {
         assertGt(rounds, 1, "one round cannot carry the day");
         assertTrue(done, "the rounds carried the day");
         assertEq(nextBatch, totalBatches, "every chunk left");
+        assertEq(origin.parkedMessageCount(), 0, "no round parks");
+    }
+
+    /// @dev Every page of a 130-bid day on Outbe reaches Desis, with no push from outside.
+    function test_EveryPageOfAnOwnChainDayReachesDesis() public {
+        stub.setCount(130);
+        vm.expectCall(desis, abi.encodeWithSelector(IDesis.processBidsBatch.selector, DAY, self), 3);
+        vm.expectCall(desis, abi.encodeCall(IDesis.processBidsDone, (DAY, self, 3, 130)), 1);
+
+        vm.prank(desis);
+        origin.sendAuctionStageCollectingBids(DAY, self, IntexGas.AUCTION_STAGE_COLLECTING_BIDS);
+        _relayAll();
+
         assertEq(origin.parkedMessageCount(), 0, "no round parks");
     }
 
