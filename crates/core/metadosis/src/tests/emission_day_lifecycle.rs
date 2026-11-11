@@ -149,7 +149,7 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
 
         // Nested process-ready checks recompute the lease from the provider clock
         // and block. Allocate day 20260905 into Processing so find_due_emission_day selects it.
-        crate::commands::dispatch_terminal_remainder_at(
+        crate::commands::set_metadosis_limit(
             &ctx,
             U256::from(1_000_000u64),
             date_key_to_utc_timestamp(20260905).unwrap(),
@@ -308,7 +308,7 @@ fn first_wwd_for_genesis_splits_3_or_4_empty_emission_days_across_noon_utc() {
         }
         assert_eq!(empty_count, 3);
 
-        crate::commands::dispatch_terminal_remainder_at(
+        crate::commands::set_metadosis_limit(
             &ctx,
             U256::from(1_000_000u64),
             date_key_to_utc_timestamp(20261001).unwrap(),
@@ -529,7 +529,7 @@ fn gap_ed05_wwd_without_price_runs_as_empty_day() {
             },
             storage.clone(),
         );
-        crate::commands::dispatch_terminal_remainder_at(
+        crate::commands::set_metadosis_limit(
             &ctx_06,
             expected_limit,
             date_key_to_utc_timestamp(emission_day).unwrap(),

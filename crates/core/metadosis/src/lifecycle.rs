@@ -156,7 +156,7 @@ fn verify_record_wwd_backlink(
     Ok(())
 }
 
-pub(crate) fn complete_emission_day(
+pub(crate) fn complete_metadosis(
     metadosis: &mut MetadosisContract<'_>,
     emission_day: &EmissionDay,
 ) -> Result<()> {
@@ -190,7 +190,7 @@ pub(crate) fn cancel_emission_day(
     })
 }
 
-pub(crate) fn fail_emission_day(
+pub(crate) fn fail_metadosis(
     metadosis: &mut MetadosisContract<'_>,
     day: u32,
     reason: u8,

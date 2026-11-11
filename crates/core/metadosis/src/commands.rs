@@ -27,7 +27,7 @@ pub fn apply_cycle_day_limit(ctx: &BlockRuntimeContext<'_>, amount: U256) -> Res
 
 /// Sends the daily Cycle terminal allocation to the Metadosis sink, anchored at
 /// `timestamp`.
-pub fn dispatch_terminal_remainder_at(
+pub fn set_metadosis_limit(
     ctx: &BlockRuntimeContext<'_>,
     amount: U256,
     timestamp: u64,
@@ -55,7 +55,7 @@ pub fn find_due_emission_day(
 /// once and emitting `IMetadosis.MetadosisFailed(day, 1)`).
 pub fn fail_metadosis(ctx: &BlockRuntimeContext<'_>, day: u32) -> Result<()> {
     let mut metadosis = crate::schema::MetadosisContract::new(ctx.storage.clone());
-    crate::lifecycle::fail_emission_day(
+    crate::lifecycle::fail_metadosis(
         &mut metadosis,
         day,
         crate::constants::METADOSIS_FAILED_STEP_REVERTED,

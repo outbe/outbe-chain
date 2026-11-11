@@ -9,8 +9,8 @@ use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
 
 use crate::{
-    lifecycle::complete_emission_day,
-    limits::{apply_auction_brief, apply_lysis_limit, LysisLimitInput},
+    lifecycle::complete_metadosis,
+    limits::{allocate_day_metadosis_limit, apply_auction_brief, LysisLimitInput},
     precompile::IMetadosis,
     schema::{EmissionDay, MetadosisContract},
     settlement::MetadosisCalculation,
@@ -34,7 +34,7 @@ fn finalize_lysis_settlement(
     completion: SettlementCompletion,
 ) -> Result<()> {
     let storage = ctx.storage.clone();
-    let split = apply_lysis_limit(
+    let split = allocate_day_metadosis_limit(
         storage.clone(),
         LysisLimitInput {
             base_limit: emission_day.metadosis_limit_minor(),
@@ -70,7 +70,7 @@ fn finalize_lysis_settlement(
             promis_limit_added,
         },
     )?;
-    complete_emission_day(metadosis, &updated)?;
+    complete_metadosis(metadosis, &updated)?;
     metadosis.emit(IMetadosis::MetadosisCompleted {
         emissionDay: emission_day.day,
         tributeNominalTotalMinor: completion.total_nominal_minor,

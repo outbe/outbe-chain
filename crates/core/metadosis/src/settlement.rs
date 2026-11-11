@@ -29,7 +29,7 @@ impl MetadosisContract<'_> {
     /// At rate 32 every `U256` nominal succeeds, including `U256::MAX`.
     /// `FullPrecisionDemandOverflow` stays as a defensive guard.
     /// This comment records the source contract. It is not a runtime certificate.
-    pub(crate) fn calculate_metadosis(
+    pub(crate) fn lysis_limit_of_day(
         &self,
         tribute_nominal_total: U256,
         emission_limit_minor: U256,
@@ -89,7 +89,7 @@ pub(crate) fn process_ready_candidate(
         }
         nominal_total = totals.tribute_nominal_total_minor;
     }
-    let calculation = metadosis.calculate_metadosis(nominal_total, limit_amount)?;
+    let calculation = metadosis.lysis_limit_of_day(nominal_total, limit_amount)?;
     crate::lysis::execute(metadosis, ctx, emission_day, calculation)
 }
 
@@ -127,7 +127,7 @@ mod tests {
             let expected = wide_floor_demand(nominal);
             let mut seen = None;
             for cap in [U256::ZERO, U256::ONE, expected, U256::MAX] {
-                let calc = contract.calculate_metadosis(nominal, cap).unwrap();
+                let calc = contract.lysis_limit_of_day(nominal, cap).unwrap();
                 assert_eq!(calc.gratis_demand, expected, "nominal {nominal}");
                 assert!(calc.gratis_demand <= nominal, "nominal {nominal}");
                 assert_eq!(calc.day_gratis_limit_minor, cap, "nominal {nominal}");

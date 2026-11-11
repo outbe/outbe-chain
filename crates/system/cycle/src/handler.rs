@@ -16,7 +16,7 @@ use outbe_emission::{
     day_emission::day_emission_limit,
     schema::emission_day_state,
 };
-use outbe_metadosis::commands::dispatch_terminal_remainder_at;
+use outbe_metadosis::commands::set_metadosis_limit;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
@@ -389,8 +389,8 @@ fn dispatch_terminal_remainder(
 ) -> Result<()> {
     let prev_day_ts = date_key_to_utc_timestamp(prev_day).map_err(calendar_step_error)?;
     wrap(
-        "dispatch_terminal_remainder_at",
-        dispatch_terminal_remainder_at(ctx, metadosis_total, prev_day_ts),
+        "set_metadosis_limit",
+        set_metadosis_limit(ctx, metadosis_total, prev_day_ts),
     )?;
     let emission_day = outbe_emission::api::get_emission_day_record(ctx.storage.clone(), prev_day)?
         .ok_or(CycleError::AllocationWithoutMetadosisReceipt)?;

@@ -83,7 +83,7 @@ pub(crate) struct LysisLimitInput {
 }
 
 /// Reserve the successful day's allocation within the owning command checkpoint.
-pub(crate) fn apply_lysis_limit(
+pub(crate) fn allocate_day_metadosis_limit(
     storage: StorageHandle<'_>,
     input: LysisLimitInput,
 ) -> Result<LimitSplit> {
@@ -153,7 +153,7 @@ mod tests {
                 PromisLimitContract::new(storage.clone())
                     .checked_credit(U256::from(carry as u64))
                     .unwrap();
-                let split = apply_lysis_limit(
+                let split = allocate_day_metadosis_limit(
                     storage.clone(),
                     LysisLimitInput {
                         base_limit: U256::from(base as u64),
@@ -210,7 +210,7 @@ mod tests {
             let events = provider.get_ordered_events().to_vec();
             let result = StorageHandle::enter(&mut provider, |storage| {
                 storage.with_checkpoint(|| {
-                    let split = apply_lysis_limit(
+                    let split = allocate_day_metadosis_limit(
                         storage.clone(),
                         LysisLimitInput {
                             base_limit: base,
