@@ -484,6 +484,9 @@ mod tests {
             (PrecompileError::RevertBytes(actual), PrecompileError::RevertBytes(expected)) => {
                 assert_eq!(actual, expected);
             }
+            (PrecompileError::Fatal(actual), PrecompileError::Fatal(expected)) => {
+                assert_eq!(actual, expected);
+            }
             (actual, expected) => panic!("expected {expected:?}, got {actual:?}"),
         }
     }
@@ -610,6 +613,53 @@ mod tests {
         assert_emission_error(
             record_failed_day_allocation(storage, unknown_state, U256::from(100u64)).unwrap_err(),
             expected,
+        );
+    }
+
+    #[test]
+    fn gap_ed09_day_emission_limit_rule_holds() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let storage = StorageHandle::new(&mut provider);
+        let amounts = DayAllocationAmounts {
+            emission_limit: U256::from(100u64),
+            metadosis_limit: U256::from(84u64),
+            validators: U256::from(4u64),
+            waa: U256::from(4u64),
+            sra: U256::from(4u64),
+            cca: U256::from(4u64),
+            promis_limit: U256::ZERO,
+        };
+
+        let day = 20261001;
+        record_day_allocation(storage.clone(), day, amounts).unwrap();
+        record_metadosis_failed(storage.clone(), day).unwrap();
+        let completed = complete_emission_day(storage.clone(), day).unwrap();
+        assert_eq!(completed.landed_sum(), Some(completed.emission_limit));
+
+        let broken = 20261002;
+        record_day_allocation(storage.clone(), broken, amounts).unwrap();
+        record_metadosis_failed(storage.clone(), broken).unwrap();
+        let mut record = get_emission_day_record(storage.clone(), broken)
+            .unwrap()
+            .unwrap();
+        record.validators += 1;
+        put_emission_day_record(storage.clone(), &record).unwrap();
+        let mismatch = EmissionError::ConservationInvariantViolated {
+            day: broken,
+            expected_limit: 100,
+            landed_sum: 101,
+        };
+
+        let error = complete_emission_day(storage.clone(), broken).unwrap_err();
+        assert!(matches!(error, PrecompileError::Fatal(_)));
+        assert_emission_error(error, mismatch);
+        let error =
+            record_reward_pool_residue(storage.clone(), broken, RewardPool::Waa, U256::from(1))
+                .unwrap_err();
+        assert_emission_error(error, mismatch);
+        assert_eq!(
+            get_emission_day_record(storage, broken).unwrap(),
+            Some(record)
         );
     }
 
