@@ -1581,6 +1581,88 @@ fn a_failed_day_queues_its_bids_for_bounded_deletion() {
 
 #[test]
 #[cfg(not(feature = "e2e-test"))]
+fn gap_ed20_failed_auction_needs_no_message() {
+    use crate::constants::{
+        BIDS_FANIN_TIMEOUT_SECS, INTEX_ISSUANCE_WINDOW_SECONDS, REVEAL_WINDOW_SECONDS,
+        TARGET_UNFINALIZED_REFUND_DELAY_SECONDS,
+    };
+    assert_eq!(BIDS_FANIN_TIMEOUT_SECS, 8 * 3600);
+    assert_eq!(TARGET_UNFINALIZED_REFUND_DELAY_SECONDS, 48 * 3600);
+    assert_eq!(
+        REVEAL_WINDOW_SECONDS + INTEX_ISSUANCE_WINDOW_SECONDS,
+        TARGET_UNFINALIZED_REFUND_DELAY_SECONDS
+    );
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(NOW));
+    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+    storage.stub_sub_call_at(
+        outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
+        Bytes::from(vec![0u8; 32]),
+    );
+    StorageHandle::enter(&mut storage, |s| {
+        brief(&s, true);
+        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::schedule_tick(&s, LAST_CLEARING - 1).unwrap();
+        assert_eq!(
+            s.contract::<DesisContract>()
+                .read_stage(EMISSION_DAY)
+                .unwrap(),
+            AuctionStage::CollectingBids
+        );
+    });
+    let sends = |storage: &HashMapStorageProvider| {
+        use crate::sol_ext::IOriginRouter::targetsOfCall;
+        storage
+            .sub_call_inputs()
+            .iter()
+            .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
+            .filter(|input| !input.calldata.starts_with(&targetsOfCall::SELECTOR))
+            .count()
+    };
+    let sends_before = sends(&storage);
+    StorageHandle::enter(&mut storage, |s| {
+        runtime::schedule_tick(&s, LAST_CLEARING).unwrap();
+        assert_eq!(
+            s.contract::<DesisContract>()
+                .read_stage(EMISSION_DAY)
+                .unwrap(),
+            AuctionStage::Failed
+        );
+    });
+    assert_eq!(sends(&storage), sends_before);
+}
+
+#[test]
+#[cfg(not(feature = "e2e-test"))]
+fn gap_ed24_desis_deletes_bids_of_closed_auction() {
+    for (completes, end_stage) in [
+        (true, AuctionStage::Completed),
+        (false, AuctionStage::Failed),
+    ] {
+        with_storage(|s| {
+            open_clearing(&s, 100);
+            relay_bids(&s, SRC_CHAIN, 3, 200);
+            if completes {
+                clear(&s);
+            } else {
+                runtime::schedule_tick(&s, last_clearing_for(&s)).unwrap();
+            }
+            assert_eq!(
+                s.contract::<DesisContract>()
+                    .read_stage(EMISSION_DAY)
+                    .unwrap(),
+                end_stage
+            );
+            assert!(holds_bids(&s, SRC_CHAIN, 3));
+            crate::process_cleanup(s.clone()).unwrap();
+            assert!(!holds_bids(&s, SRC_CHAIN, 3));
+        });
+    }
+}
+
+#[test]
+#[cfg(not(feature = "e2e-test"))]
 fn a_day_fails_even_when_the_router_cannot_name_its_chains() {
     use crate::sol_ext::IOriginRouter::targetsOfCall;
     use alloy_sol_types::SolCall;
