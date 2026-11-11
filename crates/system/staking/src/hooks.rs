@@ -6,7 +6,7 @@ use outbe_primitives::{
 
 use crate::contract::Staking;
 
-/// Protocol module for `SystemTxKind::Staking` (`OSST`).
+/// Protocol module for the begin-block staking step.
 pub struct StakingModule;
 
 impl ProtocolModule for StakingModule {
@@ -51,7 +51,7 @@ mod tests {
                 },
                 storage,
             );
-            <StakingModule as ProtocolModule>::begin_block(&ctx).unwrap();
+            StakingModule::begin_block(&ctx).unwrap();
         });
     }
 }

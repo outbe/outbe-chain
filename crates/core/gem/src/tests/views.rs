@@ -204,7 +204,7 @@ fn transfer_logs_announce_mint_and_burn() {
 
 #[test]
 fn supported_interfaces_match_the_implemented_selectors() {
-    use outbe_common::erc::{
+    use outbe_core_common::erc::{
         ERC165_INTERFACE_ID, ERC20_INTERFACE_ID, ERC4906_INTERFACE_ID,
         ERC721_ENUMERABLE_INTERFACE_ID, ERC721_INTERFACE_ID, ERC721_METADATA_INTERFACE_ID,
     };
@@ -309,7 +309,7 @@ fn token_uri_renders_the_gem_card() {
         let gem_id = add(storage, sample_params(ALICE));
         let (json, svg) = token_uri_parts(storage, gem_id);
 
-        let id = outbe_common::nft_card::short_id(gem_id);
+        let id = outbe_core_common::nft_card::short_id(gem_id);
         assert_eq!(json["name"], format!("Gem {id}"));
         assert_eq!(json["description"], crate::constants::TOKEN_DESCRIPTION);
         assert!(!json.to_string().contains("https://"));
@@ -403,7 +403,7 @@ fn a_gem_reads_forfeited_past_the_call_deadline() {
         assert_eq!(trait_value(&json, "Called At").unwrap(), T_NOW);
         assert_eq!(trait_value(&json, "Call Deadline").unwrap(), deadline);
         assert!(svg.contains(">CALLED</text>"));
-        assert!(svg.contains(&outbe_common::nft_card::timestamp_utc(deadline)));
+        assert!(svg.contains(&outbe_core_common::nft_card::timestamp_utc(deadline)));
         assert_eq!(status(&storage, gem_id).state, GemState::Called as u8);
     });
 

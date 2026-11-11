@@ -35,10 +35,23 @@ pub(super) fn finalized_parent_attestation_from_phase1_system_tx(
         .ok_or_else(|| ParentProofError::MissingPhase1SystemTx(block.number()))?;
     let input = outbe_primitives::system_tx::SystemTx::decode(phase1.input().as_ref())
         .map_err(ParentProofError::DecodePhase1Input)?;
-    let outbe_primitives::system_tx::SystemTx::CertifiedParentAccounting { metadata } = input
+    let outbe_primitives::system_tx::SystemTx::Consensus {
+        step_index: outbe_primitives::system_tx::CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+        payload,
+    } = input
     else {
         return Err(ParentProofError::UnexpectedBeginOrdinal0.into());
     };
+
+    let metadata = outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata::decode(
+        payload.as_ref(),
+    )?;
+    let reencoded = metadata.encode()?;
+    if reencoded.as_ref() != payload.as_ref() {
+        return Err(
+            outbe_primitives::system_tx::binding::ParentAccountingBindingError::NonCanonical.into(),
+        );
+    }
 
     Ok(Some(FinalizedParentAttestation {
         finalized_block_number: metadata.finalized_block_number,
@@ -208,6 +221,75 @@ impl ApplicationShared {
                     }
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::finalized_parent_attestation_from_phase1_system_tx as extract;
+    use crate::test_fixtures::{block_with_system_inputs, finalized_metadata, SystemBlockFixture};
+    use alloy_primitives::{Bytes, B256};
+    use outbe_primitives::{
+        signer::OutbeEvmSigner,
+        system_tx::{
+            SystemTx, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+            CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX,
+        },
+    };
+
+    #[test]
+    fn parent_attestation_requires_canonical_parent_accounting_payload() {
+        let signer = OutbeEvmSigner::from_secret_bytes([7; 32]).unwrap();
+        let parent_hash = B256::repeat_byte(0x41);
+        let metadata = finalized_metadata(parent_hash);
+        let canonical = metadata.encode().unwrap();
+        let block = |number, step_index, payload| {
+            block_with_system_inputs(
+                &signer,
+                SystemBlockFixture {
+                    block_number: number,
+                    parent_hash,
+                    extra_data: Bytes::new(),
+                    inputs: vec![SystemTx::Consensus {
+                        step_index,
+                        payload,
+                    }],
+                    chain_id: outbe_primitives::chain::CHAIN_ID,
+                },
+            )
+        };
+        let valid = block(2, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX, canonical.clone());
+        let recovered = extract(&valid).unwrap().unwrap();
+        assert_eq!(
+            recovered.finalized_block_number,
+            metadata.finalized_block_number
+        );
+        assert_eq!(
+            recovered.finalized_block_hash,
+            metadata.finalized_block_hash
+        );
+        assert_eq!(recovered.finalized_epoch, metadata.finalized_epoch);
+        assert_eq!(recovered.finalized_view, metadata.finalized_view);
+        assert_eq!(recovered.parent_view, metadata.parent_view);
+        assert_eq!(recovered.ordered_committee, metadata.ordered_committee);
+        assert_eq!(recovered.signer_bitmap, metadata.signer_bitmap);
+        assert_eq!(recovered.certificate, metadata.proof);
+        assert!(extract(&block(
+            1,
+            CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+            canonical.clone()
+        ))
+        .unwrap()
+        .is_none());
+        let mut trailing = canonical.to_vec();
+        trailing.push(0);
+        for (step_index, payload) in [
+            (CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX, Bytes::new()),
+            (CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX, trailing.into()),
+            (CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX, canonical),
+        ] {
+            assert!(extract(&block(2, step_index, payload)).is_err());
         }
     }
 }

@@ -350,10 +350,11 @@ mod tests {
         let inner = EthTransactionValidatorBuilder::new(provider.clone(), EthEvmConfig::mainnet())
             .set_block_gas_limit(30_000_000)
             .build(blob_store.clone());
-        let validator = crate::OutbeTransactionValidator::new(inner);
+        let validator =
+            crate::OutbeTransactionValidator::new(inner, crate::policy::normal_policy());
         let pool = Pool::new(
             validator,
-            crate::OutbeTransactionOrdering::default(),
+            crate::OutbeTransactionOrdering::new(crate::policy::normal_policy()),
             blob_store,
             Default::default(),
         );

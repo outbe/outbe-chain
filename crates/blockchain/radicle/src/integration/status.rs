@@ -7,7 +7,7 @@ use crate::{
     manager::{FinalizedSnapshot, ManagerPhase, ManagerStatus, PhaseError},
 };
 use alloy_primitives::Address;
-use outbe_coderegistry::RepoId;
+use outbe_primitives::code_registry::RepoId;
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
 

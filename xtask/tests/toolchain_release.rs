@@ -100,7 +100,7 @@ fn consumer_version_drift_and_incomplete_package_pin_fail_closed() {
     let dir = tempdir().expect("tempdir");
     for relative in [
         "Dockerfile.project-toolchain",
-        "crates/system/tee/build.rs",
+        "crates/blockchain/tee/build.rs",
         "rust-toolchain.toml",
         "release/apt/ubuntu.sources",
         "release/dcap-native-qvl-v1.json",

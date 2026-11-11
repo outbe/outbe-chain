@@ -165,9 +165,9 @@ fn durable_headers_wait_for_executed_state_and_partial_trie_progress() {
     use reth_stages_types::{FinishCheckpoint, StageCheckpoint};
     use reth_storage_api::StageCheckpointWriter;
 
-    let factory = create_test_provider_factory_with_node_types::<outbe_node::OutbeNode>(Arc::new(
-        ChainSpec::<OutbeHeader>::default(),
-    ));
+    let factory = create_test_provider_factory_with_node_types::<outbe_execution::OutbeNode>(
+        Arc::new(ChainSpec::<OutbeHeader>::default()),
+    );
     let writer = factory.provider_rw().unwrap();
     let mut parent_hash = B256::ZERO;
     let blocks: Vec<_> = (0..3)

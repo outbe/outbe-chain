@@ -131,7 +131,7 @@ impl MaterialFixture {
             obtain_threshold_material(
                 clock,
                 &bls::KeyBackend::Plaintext,
-                super::super::dkg::startup::ThresholdMaterialRequest {
+                outbe_consensus::stack::dkg::startup::ThresholdMaterialRequest {
                     args,
                     signing_key: self.keys[0].clone(),
                     validator_set: &self.validators,

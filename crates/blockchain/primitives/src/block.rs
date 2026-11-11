@@ -1,4 +1,13 @@
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, Bytes, B256};
+
+use crate::{
+    reshare_artifact::{ConsensusHeaderArtifact, OutbeBlockArtifacts},
+    storage::MetadosisMutationEntitlements,
+    system_tx_context::{
+        SystemTxBuildContext, SystemTxContext, SystemTxPayloadBuildError,
+        SystemTxPayloadValidationError, SystemTxValidationContext,
+    },
+};
 
 use crate::{
     error::{PrecompileError, Result},
@@ -24,17 +33,17 @@ impl From<ZeroGenesisTimestamp> for PrecompileError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum BlockHeightRegime {
     /// Block 0: Canonical genesis block.
-    /// Carries no transactions, no begin-zone system txs, and no execution witness.
+    /// Carries no transactions, no prefix system txs, and no execution witness.
     Genesis,
     /// Block 1: One-time network bootstrap block.
-    /// Carries begin-zone system txs (mandatory epoch-0 `BoundaryOutcome`, mandatory
+    /// Carries prefix system txs (mandatory epoch-0 `BoundaryOutcome`, mandatory
     /// `TeeBootstrap`, `ValidatorLiveness`, optional `RadiclePublication`, and the
     /// 9 `BEGIN_BLOCK_ORDER` modules), no parent finalization accounting
     /// (`CertifiedParentAccounting` / `LateFinalizeCredits`), and no user transactions.
     GenesisBootstrap,
     /// Block `>= 2`: Steady-state execution regime.
     /// Begins with mandatory `CertifiedParentAccounting` (ordinal 0) and
-    /// `LateFinalizeCredits` (ordinal 1), followed by the remaining begin-zone
+    /// `LateFinalizeCredits` (ordinal 1), followed by the remaining prefix
     /// system txs and user transactions.
     SteadyState,
 }
@@ -65,7 +74,7 @@ impl BlockHeightRegime {
     }
 
     #[must_use]
-    pub const fn has_begin_zone_system_txs(self) -> bool {
+    pub const fn has_system_tx_prefix(self) -> bool {
         !matches!(self, Self::Genesis)
     }
 
@@ -85,7 +94,7 @@ impl BlockHeightRegime {
     }
 
     #[must_use]
-    pub const fn has_end_zone_system_txs(self) -> bool {
+    pub const fn has_end_block_system_txs(self) -> bool {
         matches!(self, Self::SteadyState)
     }
 
@@ -127,11 +136,28 @@ impl BlockContext {
 pub struct BlockRuntimeContext<'storage> {
     pub block: BlockContext,
     pub storage: StorageHandle<'storage>,
+    pub system_tx: Option<SystemTxContext>,
 }
 
 impl<'storage> BlockRuntimeContext<'storage> {
     pub fn new(block: BlockContext, storage: StorageHandle<'storage>) -> Self {
-        Self { block, storage }
+        Self {
+            block,
+            storage,
+            system_tx: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_system_tx(mut self, ctx: SystemTxContext) -> Self {
+        self.system_tx = Some(ctx);
+        self
+    }
+
+    pub fn system_tx(&self) -> Result<&SystemTxContext> {
+        self.system_tx
+            .as_ref()
+            .ok_or_else(|| MissingSystemTxContext.into())
     }
 
     pub fn contract<C: StorageBacked<'storage>>(&self) -> C {
@@ -147,19 +173,79 @@ impl<'storage> BlockRuntimeContext<'storage> {
     }
 }
 
-/// Unified block lifecycle interface for protocol modules.
-pub trait ProtocolModule {
-    /// Unique module identifier for diagnostics and tracing.
-    const NAME: &'static str;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("missing system_tx context")]
+pub struct MissingSystemTxContext;
 
-    /// Executed during the `BeginBlock` stage.
+impl From<MissingSystemTxContext> for PrecompileError {
+    fn from(error: MissingSystemTxContext) -> Self {
+        Self::Revert(error.to_string())
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct MetadosisEntitlementContext<'a> {
+    pub payload: &'a [u8],
+    pub chain_id: u64,
+    pub block_number: u64,
+    pub timestamp: u64,
+    pub cycle_active_utc_day: Option<u32>,
+}
+
+/// Unified payload and execution contract for a protocol step.
+pub trait ProtocolModule {
+    const NAME: &'static str;
+    const NEEDS_CYCLE_ACTIVE_UTC_DAY: bool = false;
+
+    fn build_payload(
+        _ctx: &SystemTxBuildContext<'_>,
+    ) -> std::result::Result<Bytes, SystemTxPayloadBuildError> {
+        Ok(Bytes::new())
+    }
+
+    fn validate_payload(
+        payload: &[u8],
+        _ctx: &SystemTxValidationContext<'_>,
+    ) -> std::result::Result<(), SystemTxPayloadValidationError> {
+        if !payload.is_empty() {
+            return Err(SystemTxPayloadValidationError::UnexpectedNonEmptyPayload {
+                module: Self::NAME,
+                len: payload.len(),
+            });
+        }
+        Ok(())
+    }
+
+    fn mutation_entitlements(
+        _ctx: MetadosisEntitlementContext<'_>,
+    ) -> MetadosisMutationEntitlements {
+        MetadosisMutationEntitlements::NONE
+    }
+
     fn begin_block(_ctx: &BlockRuntimeContext<'_>) -> Result<()> {
         Ok(())
     }
 
-    /// Executed during the `EndBlock` stage.
     fn end_block(_ctx: &BlockRuntimeContext<'_>) -> Result<()> {
         Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BlockSystemFlags {
+    pub has_boundary_outcome: bool,
+    pub has_publication: bool,
+}
+
+impl BlockSystemFlags {
+    pub fn from_artifacts(artifacts: &OutbeBlockArtifacts) -> Self {
+        Self {
+            has_boundary_outcome: matches!(
+                &artifacts.consensus_header_artifact,
+                Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
+            ),
+            has_publication: artifacts.radicle_publication.is_some(),
+        }
     }
 }
 
@@ -174,22 +260,22 @@ mod tests {
         assert!(g.is_genesis());
         assert!(!g.is_genesis_bootstrap());
         assert!(!g.is_steady_state());
-        assert!(!g.has_begin_zone_system_txs());
+        assert!(!g.has_system_tx_prefix());
         assert!(!g.has_parent_finalization_accounting());
         assert!(!g.requires_genesis_bootstrap_txs());
         assert!(!g.allows_user_transactions());
-        assert!(!g.has_end_zone_system_txs());
+        assert!(!g.has_end_block_system_txs());
         assert!(!g.requires_rewards_beneficiary());
 
         let b = BlockHeightRegime::for_block(1);
         assert!(!b.is_genesis());
         assert!(b.is_genesis_bootstrap());
         assert!(!b.is_steady_state());
-        assert!(b.has_begin_zone_system_txs());
+        assert!(b.has_system_tx_prefix());
         assert!(!b.has_parent_finalization_accounting());
         assert!(b.requires_genesis_bootstrap_txs());
         assert!(!b.allows_user_transactions());
-        assert!(!b.has_end_zone_system_txs());
+        assert!(!b.has_end_block_system_txs());
         assert!(b.requires_rewards_beneficiary());
 
         for height in [2, 3, 100, u64::MAX] {
@@ -197,11 +283,11 @@ mod tests {
             assert!(!s.is_genesis());
             assert!(!s.is_genesis_bootstrap());
             assert!(s.is_steady_state());
-            assert!(s.has_begin_zone_system_txs());
+            assert!(s.has_system_tx_prefix());
             assert!(s.has_parent_finalization_accounting());
             assert!(!s.requires_genesis_bootstrap_txs());
             assert!(s.allows_user_transactions());
-            assert!(s.has_end_zone_system_txs());
+            assert!(s.has_end_block_system_txs());
             assert!(s.requires_rewards_beneficiary());
         }
     }
@@ -243,5 +329,51 @@ mod tests {
         assert_eq!(gas_context(100, 100).remaining_block_gas(), 0);
         assert_eq!(gas_context(100, 101).remaining_block_gas(), 0);
         assert_eq!(gas_context(0, u64::MAX).remaining_block_gas(), 0);
+    }
+    #[test]
+    fn system_context_is_explicit_and_execution_bridge_preserves_verified_facts() {
+        use crate::system_tx_context::{AccountedParentArtifact, SystemTxExecutionContext};
+        use std::sync::Arc;
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let block = gas_context(100, 40);
+            let ctx = BlockRuntimeContext::new(block.clone(), storage);
+            assert!(
+                matches!(ctx.system_tx(), Err(PrecompileError::Revert(message)) if message == "missing system_tx context")
+            );
+            let summary = AccountedParentArtifact {
+                summary: crate::reshare_artifact::ExecutionSummaryArtifact::default(),
+                timestamp: 9,
+                state_root: Some(B256::repeat_byte(7)),
+            };
+            let signers = Arc::new(vec![vec![1, 3]]);
+            let preloaded = SystemTxExecutionContext {
+                proposer: Address::repeat_byte(8),
+                finalized_summary: Some(summary),
+                canonical_vrf_proof_hash: B256::repeat_byte(6),
+                verified_late_credit_signers: Some(signers.clone()),
+                block_gas_limit: 200,
+                user_gas_used: 80,
+            };
+            let sys = SystemTxContext::from_preloaded(
+                Bytes::from_static(b"payload"),
+                Some(preloaded),
+                None,
+            );
+            let execution = sys.to_execution_context(&block);
+            assert_eq!(execution.proposer, block.proposer);
+            assert_eq!(execution.block_gas_limit, 100);
+            assert_eq!(execution.user_gas_used, 40);
+            assert_eq!(execution.finalized_summary, Some(summary));
+            assert_eq!(execution.canonical_vrf_proof_hash, B256::repeat_byte(6));
+            assert!(Arc::ptr_eq(
+                execution.verified_late_credit_signers.as_ref().unwrap(),
+                &signers
+            ));
+            let ctx = ctx.with_system_tx(sys.clone());
+            assert_eq!(ctx.system_tx().unwrap(), &sys);
+            let empty = SystemTxContext::from_preloaded(Bytes::new(), None, None);
+            assert_eq!(empty, SystemTxContext::default());
+        });
     }
 }

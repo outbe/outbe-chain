@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+outbe-macros.workspace = true
 alloy-trie = { workspace = true, optional = true }
 alloy-consensus.workspace = true
 alloy-eips.workspace = true
@@ -29,6 +30,11 @@ reth-rpc-traits.workspace = true
 reth-trie.workspace = true
 revm.workspace = true
 ring.workspace = true
+commonware-math.workspace = true
+rand-core-commonware.workspace = true
+commonware-codec.workspace = true
+commonware-consensus.workspace = true
+commonware-utils.workspace = true
 # Validator-set data types (ValidatorSet / ValidatorP2pAddress) live here so
 # both `outbe-consensus` and `outbe-engine` see the same canonical types
 # without `outbe-consensus` having to depend on `outbe-engine` and without
@@ -52,6 +58,7 @@ zeroize.workspace = true
 hex.workspace = true
 
 [dev-dependencies]
+rand-commonware.workspace = true
 outbe-primitives = { path = ".", features = ["test-utils", "tee-attestation-v1", "bench-utils"] }
 alloy-primitives = { workspace = true, features = ["rand"] }
 ed25519-dalek.workspace = true

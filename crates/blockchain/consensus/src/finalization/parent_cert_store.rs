@@ -45,7 +45,7 @@ use commonware_consensus::types::{Epoch, Round, View};
 use outbe_primitives::consensus_metadata::{
     CertifiedParentAccountingMetadata, ParentParticipationProof,
 };
-use reth_db::{
+use reth_ethereum::provider::db::{
     cursor::DbCursorRO,
     database::Database,
     mdbx::{create_db, DatabaseArguments},
@@ -102,7 +102,7 @@ impl CertifiedParentProofKey {
 
 mod tables {
     use alloy_primitives::B256;
-    use reth_db::{
+    use reth_ethereum::provider::db::{
         table::{Table, TableInfo},
         TableSet,
     };

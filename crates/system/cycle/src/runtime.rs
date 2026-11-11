@@ -6,8 +6,9 @@
 //! and fires any trigger whose next slot has been reached.
 
 use outbe_primitives::{
-    block::{BlockRuntimeContext, ProtocolModule},
+    block::{BlockRuntimeContext, MetadosisEntitlementContext, ProtocolModule},
     error::{PrecompileError, Result},
+    storage::MetadosisMutationEntitlements,
     system_tx::GENESIS_BOOTSTRAP_BLOCK_NUMBER,
 };
 
@@ -18,11 +19,26 @@ use crate::state::{accounting_gate_blocks, EvmAccountingProgress};
 use crate::triggers::{active_triggers, last_fire_at, next_fire_at, TriggerId, TriggerSpec};
 use crate::ICycle;
 
-/// Protocol module for `SystemTxKind::CycleTick` (`OSC2`).
+/// Protocol module for the begin-block cycle step.
 pub struct CycleModule;
 
 impl ProtocolModule for CycleModule {
     const NAME: &'static str = "cycle_tick";
+    const NEEDS_CYCLE_ACTIVE_UTC_DAY: bool = true;
+
+    fn mutation_entitlements(
+        ctx: MetadosisEntitlementContext<'_>,
+    ) -> MetadosisMutationEntitlements {
+        if !ctx.payload.is_empty() {
+            return MetadosisMutationEntitlements::NONE;
+        }
+        crate::call_authority::cycle_tick_entitlements(
+            ctx.chain_id,
+            ctx.block_number,
+            ctx.timestamp,
+            ctx.cycle_active_utc_day,
+        )
+    }
 
     fn begin_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
         handle_cycle_tick(ctx, GENESIS_BOOTSTRAP_BLOCK_NUMBER)

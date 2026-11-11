@@ -391,7 +391,7 @@ fn quote_settlement_dispatch() {
         .unwrap();
     let ret = INodFactory::quoteSettlementCall::abi_decode_returns(&out).unwrap();
     assert_eq!(ret.settlementCurrency, 978);
-    let view_key = outbe_tee_enclave::nod_encryption::derive_view_key(
+    let view_key = outbe_enclave::nod_encryption::derive_view_key(
         &outbe_nod::test_support::NETWORK_SECRET,
         input.owner,
     )

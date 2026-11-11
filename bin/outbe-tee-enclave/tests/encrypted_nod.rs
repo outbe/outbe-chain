@@ -37,7 +37,7 @@ fn self_contained_nod_rederives_keys_and_separates_divergent_amounts() {
     .unwrap();
     let terms = NodTermsV1 {
         chain_id: 54322345,
-        nod_id: outbe_common::nod_rules::derive_nod_id(
+        nod_id: outbe_core_common::nod_rules::derive_nod_id(
             outbe_primitives::series_id::SeriesId::for_pair(day.value(), 840, 978).unwrap(),
             owner_address,
         ),
@@ -53,11 +53,11 @@ fn self_contained_nod_rederives_keys_and_separates_divergent_amounts() {
             outbe_primitives::wwd_entity_id::derive_poseidon_digest(owner_address, day).0,
         ),
         outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(owner_address, day).to_u256(),
-        outbe_common::nod_rules::derive_nod_id(
+        outbe_core_common::nod_rules::derive_nod_id(
             outbe_primitives::series_id::SeriesId::for_pair(day.value(), 840, 978).unwrap(),
             Address::repeat_byte(9),
         ),
-        outbe_common::nod_rules::derive_nod_id(
+        outbe_core_common::nod_rules::derive_nod_id(
             outbe_primitives::series_id::SeriesId::for_pair(20250116, 840, 978).unwrap(),
             owner_address,
         ),

@@ -203,7 +203,7 @@ fn mcp_opens_the_nod_amount_the_enclave_encrypts() {
     let nod_state_key = word(&v["nodStateKey"]);
     let terms = NodTermsV1 {
         chain_id: v["chainId"].as_str().unwrap().parse().unwrap(),
-        nod_id: outbe_common::nod_rules::derive_nod_id(
+        nod_id: outbe_core_common::nod_rules::derive_nod_id(
             outbe_primitives::series_id::SeriesId::for_pair(
                 v["emissionDay"].as_u64().unwrap() as u32,
                 v["issuanceCurrency"].as_u64().unwrap() as u16,

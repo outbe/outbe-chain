@@ -95,7 +95,7 @@ fn write_network_descriptor(genesis: &Path, output: &Path) -> eyre::Result<()> {
         NetworkBindingV1, TeePolicyScheduleV1, TrustedNetworkDescriptorV1,
     };
     let seeded =
-        outbe_evm::tee_attestation_activation::DcapSeededChainSpecBindingV1::from_genesis_path(
+        outbe_tee::tee_attestation_activation::DcapSeededChainSpecBindingV1::from_genesis_path(
             genesis,
         )
         .map_err(|details| TeeGenesisError::ChainSpecBinding {
@@ -273,7 +273,7 @@ fn validate_output(
     }
     crate::validate_outbe_chain_spec(&parsed)?;
     let activation =
-        outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
+        outbe_tee::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
             &parsed,
         );
     let mode = activation

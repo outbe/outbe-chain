@@ -1,32 +1,26 @@
 //! Phase 1 (`CertifiedParentAccounting`) verification, witness resolution, and settlement.
 
-use std::collections::BTreeSet;
-
 use alloy_consensus::Transaction as _;
 use alloy_evm::{
     block::{BlockExecutionError, StateDB},
     RecoveredTx,
 };
 use alloy_primitives::{Address, Bytes, B256};
-use outbe_consensus::proof::verify_v2_proof;
+use outbe_primitives::committee_snapshot::committee_snapshot_key;
+use outbe_primitives::proof::verify_v2_proof;
 use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     consensus_metadata::CertifiedParentAccountingMetadata,
     error::Result as OutbeResult,
-    reshare_artifact::ExecutionSummaryArtifact,
     storage::StorageHandle,
     system_tx::{build_unsigned_system_tx, validate_phase1_witness_against},
 };
-use outbe_validatorset::state::committee_snapshot_key;
 use reth_ethereum::TransactionSigned;
 use reth_primitives_traits::Recovered;
 
 use crate::{
-    errors::{
-        BeginBlockPrecompileError, ExecutorHookError, ExecutorStorageError, ExecutorValidationError,
-    },
-    executor::context,
-    sys_tx_precompile::{current_preloaded_system_tx_context, read_preloaded_finalized_summary},
+    errors::{ExecutorStorageError, ExecutorValidationError},
+    executor::{context, current_preloaded_system_tx_context},
     SharedOutbeEvmSigner,
 };
 
@@ -44,65 +38,14 @@ use crate::{
 /// - every `missed_proposer` is a member of `metadata.ordered_committee`
 /// - bitmap entries are 0 or 1 only
 pub fn validate_finalized_metadata(
+    host: &dyn crate::EvmRuntimeHost,
     storage: StorageHandle,
     metadata: &CertifiedParentAccountingMetadata,
 ) -> OutbeResult<()> {
-    if metadata.signer_bitmap.len() != metadata.ordered_committee.len() {
-        return Err(ExecutorHookError::SignerBitmapLengthMismatch.into());
-    }
-
-    let committee_set: BTreeSet<Address> = metadata.ordered_committee.iter().copied().collect();
-    if committee_set.len() != metadata.ordered_committee.len() {
-        return Err(ExecutorHookError::DuplicateCommitteeAddresses.into());
-    }
-
-    validate_committee_and_missed_proposers(storage, metadata, &committee_set)?;
-    validate_binary_signer_bitmap(&metadata.signer_bitmap)
+    host.validate_finalized_metadata(storage, metadata)
 }
 
-fn validate_committee_and_missed_proposers(
-    storage: StorageHandle,
-    metadata: &CertifiedParentAccountingMetadata,
-    committee_set: &BTreeSet<Address>,
-) -> OutbeResult<()> {
-    let vs_check = outbe_validatorset::contract::ValidatorSet::new(storage);
-    for addr in &metadata.ordered_committee {
-        if !vs_check.is_validator(*addr)? {
-            return Err(ExecutorHookError::UnregisteredCommitteeMember { address: *addr }.into());
-        }
-    }
-
-    for missed in &metadata.missed_proposers {
-        if !committee_set.contains(&missed.validator) {
-            return Err(ExecutorHookError::MissedProposerNotInCommittee {
-                validator: missed.validator,
-                view: missed.view,
-            }
-            .into());
-        }
-    }
-
-    Ok(())
-}
-
-fn validate_binary_signer_bitmap(signer_bitmap: &[u8]) -> OutbeResult<()> {
-    for entry in signer_bitmap {
-        if *entry > 1 {
-            return Err(ExecutorHookError::NonBinarySignerBitmapEntry.into());
-        }
-    }
-    Ok(())
-}
-
-/// Parent-block execution artifact (`ExecutionSummaryArtifact`
-/// from `header.extra_data`) paired with the parent block's timestamp.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AccountedParentArtifact {
-    pub summary: ExecutionSummaryArtifact,
-    pub timestamp: u64,
-    /// State root committed by the same exact parent header.
-    pub state_root: Option<B256>,
-}
+pub use outbe_primitives::system_tx_context::AccountedParentArtifact;
 
 /// Exact-hash-first lookup of an accounted-parent's [`ExecutionSummaryArtifact`].
 pub trait AccountedParentArtifactProvider: Send + Sync {
@@ -116,146 +59,18 @@ pub trait AccountedParentArtifactProvider: Send + Sync {
 /// `CertifiedParentAccounting` system tx body: apply the immediate parent's
 /// finalization facts, participation, fee settlement, and deterministic slashing.
 pub fn run_finalization_and_slashing(
+    host: &dyn crate::EvmRuntimeHost,
     ctx: &BlockRuntimeContext,
     metadata: &CertifiedParentAccountingMetadata,
 ) -> OutbeResult<()> {
-    let expected_parent_number = validate_accounting_parent(ctx, metadata)?;
-    validate_finalized_metadata(ctx.storage.clone(), metadata)?;
-
-    let finalized = read_preloaded_finalized_summary(&ctx.storage)?.ok_or(
-        BeginBlockPrecompileError::MissingPreloadedExecutionSummary {
-            block_number: metadata.finalized_block_number,
-            block_hash: metadata.finalized_block_hash,
-        },
-    )?;
-
-    let is_fresh = verify_metadata_progress_and_fingerprint(
-        ctx,
-        metadata,
-        &finalized,
-        expected_parent_number,
-    )?;
-    if !is_fresh {
-        return Ok(());
-    }
-
-    let voters = collect_signing_voters(metadata);
-    outbe_rewards::finalized_metadata_hook::record_votes_and_fees(
-        ctx,
-        metadata,
-        finalized.summary.validator_fee_sum,
-        finalized.timestamp,
-        &voters,
-    )?;
-
-    let missed_validators: Vec<Address> = metadata
-        .missed_proposers
-        .iter()
-        .map(|m| m.validator)
-        .collect();
-    outbe_slashindicator::hooks::slash_window_proposers(
-        ctx.storage.clone(),
-        metadata.finalized_block_hash,
-        &missed_validators,
-    )?;
-    outbe_slashindicator::hooks::prune_slash_guards(
-        ctx.storage.clone(),
-        metadata.finalized_block_hash,
-    )?;
-    outbe_cycle::record_phase1_progress(ctx, expected_parent_number)?;
-
-    Ok(())
-}
-
-fn verify_metadata_progress_and_fingerprint(
-    ctx: &BlockRuntimeContext,
-    metadata: &CertifiedParentAccountingMetadata,
-    finalized: &AccountedParentArtifact,
-    expected_parent_number: u64,
-) -> OutbeResult<bool> {
-    let canonical_vrf_proof_hash = current_preloaded_system_tx_context()
-        .map(|context| context.canonical_vrf_proof_hash)
-        .unwrap_or(B256::ZERO);
-
-    let last_accounted = outbe_cycle::read_last_accounted_block_number(ctx)?;
-    match outbe_rewards::runtime::check_and_record_metadata_fingerprint(
-        ctx,
-        metadata,
-        finalized.summary.validator_fee_sum,
-        canonical_vrf_proof_hash,
-    )? {
-        outbe_rewards::runtime::MetadataFingerprintOutcome::IdenticalReplay => {
-            if last_accounted != expected_parent_number {
-                return Err(
-                    BeginBlockPrecompileError::IdenticalReplayUnexpectedProgress {
-                        last_accounted,
-                        expected: expected_parent_number,
-                    }
-                    .into(),
-                );
-            }
-            tracing::warn!(
-                target: "outbe::system_tx",
-                block_number = ctx.block.block_number,
-                parent_block_number = expected_parent_number,
-                "CertifiedParentAccounting identical replay accepted",
-            );
-            Ok(false)
-        }
-        outbe_rewards::runtime::MetadataFingerprintOutcome::Fresh => {
-            let required_previous = expected_parent_number.saturating_sub(1);
-            if last_accounted != required_previous {
-                return Err(BeginBlockPrecompileError::ProgressGap {
-                    last_accounted,
-                    expected_previous: required_previous,
-                    accounting_parent: expected_parent_number,
-                }
-                .into());
-            }
-            Ok(true)
-        }
-    }
-}
-
-fn collect_signing_voters(metadata: &CertifiedParentAccountingMetadata) -> Vec<Address> {
-    let mut voters = Vec::new();
-    for (addr, did_sign) in metadata
-        .ordered_committee
-        .iter()
-        .copied()
-        .zip(metadata.signer_bitmap.iter().copied())
-    {
-        if did_sign == 1 {
-            voters.push(addr);
-        }
-    }
-    voters
-}
-
-fn validate_accounting_parent(
-    ctx: &BlockRuntimeContext,
-    metadata: &CertifiedParentAccountingMetadata,
-) -> OutbeResult<u64> {
-    if !ctx.block.regime().has_parent_finalization_accounting() {
-        return Err(BeginBlockPrecompileError::RequiresBlockNumberAtLeastTwo.into());
-    }
-    let expected_parent_number = ctx
-        .block
-        .block_number
-        .checked_sub(1)
-        .ok_or(BeginBlockPrecompileError::BlockNumberUnderflow)?;
-    if metadata.finalized_block_number != expected_parent_number {
-        return Err(BeginBlockPrecompileError::TargetImmediateParentMismatch {
-            expected: expected_parent_number,
-            actual: metadata.finalized_block_number,
-        }
-        .into());
-    }
-    if metadata.finalized_block_hash.is_zero() {
-        return Err(BeginBlockPrecompileError::ZeroFinalizedBlockHash.into());
-    }
-
-    Ok(expected_parent_number)
+    let execution = current_preloaded_system_tx_context().unwrap_or_else(|| {
+        outbe_primitives::system_tx_context::SystemTxExecutionContext::for_end_block(
+            ctx.block.proposer,
+            ctx.block.block_gas_limit,
+            ctx.block.user_gas_used,
+        )
+    });
+    host.run_finalization_and_slashing(ctx, metadata, &execution)
 }
 
 /// Input parameters for resolving the accounted-parent execution summary.
@@ -330,6 +145,7 @@ pub(crate) struct Phase1VerifyInput<'a> {
 /// historical committee snapshot and block `prevrandao`, returning the verified
 /// canonical VRF proof hash.
 pub(crate) fn verify_phase1_certificate<DB>(
+    host: &dyn crate::EvmRuntimeHost,
     db: &mut DB,
     input: Phase1VerifyInput<'_>,
 ) -> Result<B256, BlockExecutionError>
@@ -346,13 +162,14 @@ where
     let block_number = block_context.block_number;
     let snapshot_key =
         committee_snapshot_key(metadata.finalized_epoch, metadata.committee_set_hash);
-    let snapshot = context::read_committee_snapshot(db, block_context, snapshot_key, |error| {
-        ExecutorValidationError::phase1_read_committee_snapshot(
-            metadata.finalized_epoch,
-            snapshot_key,
-            error,
-        )
-    })?;
+    let snapshot =
+        context::read_committee_snapshot(host, db, block_context, snapshot_key, |error| {
+            ExecutorValidationError::phase1_read_committee_snapshot(
+                metadata.finalized_epoch,
+                snapshot_key,
+                error,
+            )
+        })?;
     let snapshot = snapshot.ok_or(ExecutorValidationError::Phase1MissingCommitteeSnapshot {
         epoch: metadata.finalized_epoch,
         snapshot_key,

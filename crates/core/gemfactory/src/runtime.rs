@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_common::markup::marked_up;
+use outbe_core_common::markup::marked_up;
 use outbe_gem::{api as gem_api, CallTerms, GemAddParams, GemParams, GemView};
 use outbe_intex::{IntexState, SeriesId};
 use outbe_oracle::api::get_utc_day_vwap_for_iso;
@@ -10,7 +10,7 @@ use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
-use outbe_common::pow;
+use outbe_core_common::pow;
 
 use crate::errors::{date_step_error, GemFactoryError};
 use crate::precompile::IGemFactory::{GemIssued, GemPositionCreated, GemSeriesOpened, GemSettled};
@@ -416,8 +416,12 @@ pub(crate) fn settlement_units(
     rate: Option<(U256, U256)>,
     asset_decimals: u8,
 ) -> Result<U256> {
-    outbe_common::settlement::settlement_cost_units(&settlement_cost(gem), rate, asset_decimals)
-        .map_err(|e| settlement::SettlementError::Rounding(e).into())
+    outbe_core_common::settlement::settlement_cost_units(
+        &settlement_cost(gem),
+        rate,
+        asset_decimals,
+    )
+    .map_err(|e| settlement::SettlementError::Rounding(e).into())
 }
 
 /// What settlement charges in a six-decimal reference-currency asset.

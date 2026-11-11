@@ -1,67 +1,11 @@
 //! Exact, bounded Vote subject; Git existence and signatures are checked after finality.
 
-use outbe_primitives::error::Result;
-use serde::{Deserialize, Serialize};
-
-use crate::{errors::CodeRegistryError, RepoId};
-
-pub const MAX_PATCH_VOTE_PAYLOAD_BYTES: usize = 512;
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct PatchVotePayloadV1 {
-    version: u8,
-    pub repo_id: RepoId,
-    pub patch_id: RepoId,
-    pub revision_id: RepoId,
-    action: String,
-    target_branch: String,
-    pub expected_target_head: RepoId,
-}
-
-impl PatchVotePayloadV1 {
-    pub fn accept(repo: RepoId, patch: RepoId, revision: RepoId, target: RepoId) -> Self {
-        Self {
-            version: 1,
-            repo_id: repo,
-            patch_id: patch,
-            revision_id: revision,
-            action: "accept".into(),
-            target_branch: "main".into(),
-            expected_target_head: target,
-        }
-    }
-
-    pub fn decode(payload: &[u8]) -> Result<Self> {
-        if payload.len() > MAX_PATCH_VOTE_PAYLOAD_BYTES {
-            return Err(CodeRegistryError::InvalidPatchPayload.into());
-        }
-        let decoded: Self =
-            serde_json::from_slice(payload).map_err(|_| CodeRegistryError::InvalidPatchPayload)?;
-        // One byte representation excludes alternate field orders, escapes and OID encodings.
-        if decoded.encode()? != payload {
-            return Err(CodeRegistryError::InvalidPatchPayload.into());
-        }
-        Ok(decoded)
-    }
-
-    pub fn encode(&self) -> Result<Vec<u8>> {
-        if self.version != 1 || self.action != "accept" || self.target_branch != "main" {
-            return Err(CodeRegistryError::InvalidPatchPayload.into());
-        }
-        if self.repo_id.is_zero() || self.patch_id.is_zero() {
-            return Err(CodeRegistryError::InvalidPatchPayload.into());
-        }
-        if self.revision_id.is_zero() || self.expected_target_head.is_zero() {
-            return Err(CodeRegistryError::InvalidPatchPayload.into());
-        }
-        serde_json::to_vec(self).map_err(|_| CodeRegistryError::InvalidPatchPayload.into())
-    }
-}
+pub use outbe_primitives::code_registry::{PatchVotePayloadV1, MAX_PATCH_VOTE_PAYLOAD_BYTES};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::RepoId;
 
     #[test]
     fn exact_subject_roundtrip_and_noncanonical_inputs_are_rejected() {

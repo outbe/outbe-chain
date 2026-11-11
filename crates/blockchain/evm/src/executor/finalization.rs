@@ -10,7 +10,7 @@ use crate::{
             ParentArtifactLookup, Phase1VerifyInput, Phase1WitnessLookup,
         },
     },
-    system_tx::SystemTxPhase,
+    system_tx::CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
 };
 
 #[allow(private_bounds)]
@@ -23,7 +23,7 @@ where
     E::Error: std::fmt::Display,
 {
     /// Resolves the accounted-parent artifact for the given Phase 1 metadata.
-    pub(crate) fn accounted_parent_artifact_for_metadata(
+    pub fn accounted_parent_artifact_for_metadata(
         &self,
         metadata: &CertifiedParentAccountingMetadata,
     ) -> Result<AccountedParentArtifact, BlockExecutionError> {
@@ -41,7 +41,7 @@ where
     /// parent execution summary once per block so `verify_phase1_in_preexec`,
     /// `apply_phase1_commit_in_preexec`, and `begin_block_system_tx_inputs`
     /// never duplicate the parent DB lookup.
-    pub(in crate::executor) fn ensure_phase1_input(
+    pub fn ensure_phase1_input(
         &mut self,
     ) -> Result<(SystemTx, AccountedParentArtifact), BlockExecutionError> {
         if let Some(cached) = self.cached_phase1_input.as_ref() {
@@ -58,7 +58,7 @@ where
     /// the BLS aggregate proof once, caching the verified signer indices so
     /// [`crate::finalization::late_credits::run_late_finalize_credits`] does not
     /// repeat the BLS pairing.
-    pub(in crate::executor) fn verify_late_finalize_credits_in_preexec(
+    pub fn verify_late_finalize_credits_in_preexec(
         &mut self,
         block_number: u64,
         block_artifacts: &OutbeBlockArtifacts,
@@ -80,8 +80,13 @@ where
             .begin_zone_proposer(block_number)?
             .unwrap_or_else(|| self.inner.evm.block().beneficiary());
         let ctx = self.block_context(block_number, timestamp, proposer);
-        let verified_batches =
-            verify_late_finalize_credits_batches(self.inner.evm.db_mut(), ctx, artifact)?;
+        let host = std::sync::Arc::clone(&self.runtime_host);
+        let verified_batches = verify_late_finalize_credits_batches(
+            host.as_ref(),
+            self.inner.evm.db_mut(),
+            ctx,
+            artifact,
+        )?;
         self.verified_late_credit_signers = Some(Arc::new(verified_batches));
         Ok(())
     }
@@ -97,7 +102,7 @@ where
     E::Error: std::fmt::Display,
 {
     /// V2 Phase 1 preflight for `BlockHeightRegime::SteadyState` (`block_number >= 2`).
-    pub(crate) fn verify_phase1_in_preexec(
+    pub fn verify_phase1_in_preexec(
         &mut self,
         block_number: u64,
         _block_artifacts: &OutbeBlockArtifacts,
@@ -111,19 +116,25 @@ where
             }
             return Ok(());
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         if crate::executor::PHASE1_VERIFY_DISABLED.with(|cell| cell.get()) {
             return Ok(());
         }
 
         let (input, _summary) = self.ensure_phase1_input()?;
-        let SystemTx::CertifiedParentAccounting { metadata } = &input else {
+        let SystemTx::Consensus {
+            step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+            payload,
+        } = &input
+        else {
             return Err(
                 ExecutorValidationError::Phase1VerifierExpectedCertifiedParentAccountingInput
                     .into(),
             );
         };
 
+        let metadata = CertifiedParentAccountingMetadata::decode(payload.as_ref())
+            .map_err(ExecutorValidationError::block_artifacts)?;
         let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
             .map_err(ExecutorValidationError::from)?;
         let proposer = self
@@ -133,13 +144,15 @@ where
         let prevrandao = self.inner.evm.block().prevrandao();
         let parent_hash = self.parent_hash;
 
+        let host = std::sync::Arc::clone(&self.runtime_host);
         let vrf_proof_hash = verify_phase1_certificate(
+            host.as_ref(),
             self.inner.evm.db_mut(),
             Phase1VerifyInput {
                 block_context,
                 parent_hash,
                 prevrandao,
-                metadata,
+                metadata: &metadata,
             },
         )?;
         self.verified_phase1_vrf_proof_hash = Some(vrf_proof_hash);
@@ -148,24 +161,31 @@ where
 
     /// Executes and commits the Phase 1 (`CertifiedParentAccounting`) system tx
     /// in pre-execution so subsequent `BeginBlock` system transactions observe post-Phase-1 state.
-    pub(crate) fn apply_phase1_commit_in_preexec(
+    pub fn apply_phase1_commit_in_preexec(
         &mut self,
         block_number: u64,
-        block_artifacts: &OutbeBlockArtifacts,
+        _block_artifacts: &OutbeBlockArtifacts,
     ) -> Result<(), BlockExecutionError> {
         if !BlockHeightRegime::for_block(block_number).has_parent_finalization_accounting() {
             return Ok(());
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         if crate::executor::PHASE1_VERIFY_DISABLED.with(|cell| cell.get()) {
             return Ok(());
         }
 
         let (input, finalized_summary) = self.ensure_phase1_input()?;
-        if !matches!(input, SystemTx::CertifiedParentAccounting { .. }) {
-            return Err(
-                ExecutorValidationError::Phase1CommitUnexpectedKind { kind: input.name() }.into(),
-            );
+        if !matches!(
+            input,
+            SystemTx::Consensus {
+                step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+                ..
+            }
+        ) {
+            return Err(ExecutorValidationError::Phase1CommitUnexpectedKind {
+                kind: self.block_order.step_name_or_stage(&input),
+            }
+            .into());
         }
         let calldata = input
             .encode()
@@ -191,7 +211,6 @@ where
         let phase_context = PreloadedSystemTxContext {
             proposer,
             finalized_summary: Some(finalized_summary),
-            allow_boundary_proposer: self.boundary_allows_proposer(block_artifacts, proposer),
             canonical_vrf_proof_hash: self.verified_phase1_vrf_proof_hash.unwrap_or(B256::ZERO),
             verified_late_credit_signers: None,
             block_gas_limit: self.inner.evm.block().gas_limit(),
@@ -199,11 +218,7 @@ where
         };
         let output = self.execute_preexec_phase1_call(phase_context, calldata)?;
         self.commit_system_transaction(output)?;
-        self.system_tx_phase_cursor = SystemTxPhase::Phase1Preexecuted {
-            body_index: 0,
-            tx_hash: cached_tx_hash,
-            receipt_index: 0,
-        };
+        self.preexecuted_phase1_tx_hash = Some(cached_tx_hash);
         Ok(())
     }
 

@@ -20,7 +20,7 @@ impl ApplicationShared {
         // forces each block to advance chain time. This denies a colluding leader
         // majority the `parent + 1 ms` timestamp freeze that stalls emission and
         // unbonding maturity. The upper bound (C-01) mirrors the validator check
-        // in `outbe-node`'s `validate_against_parent_timestamp_millis`. Thus an
+        // in `outbe-execution`'s `validate_against_parent_timestamp_millis`. Thus an
         // honest proposer never emits a block that validators would reject as
         // over-drifted. Both bounds match the validator rule exactly. Thus the
         // clamp only ever shifts the timestamp into the accepted band, never out

@@ -99,7 +99,7 @@ pub fn dispatch(
                     )
                 }),
                 powDifficulty(_) => metadata::<IIntexFactory::powDifficultyCall>(|| {
-                    Ok(outbe_common::pow::POW_DIFFICULTY)
+                    Ok(outbe_core_common::pow::POW_DIFFICULTY)
                 }),
                 // The only payable selector: burns auction proceeds (msg.value)
                 // into the Promis limit pool.

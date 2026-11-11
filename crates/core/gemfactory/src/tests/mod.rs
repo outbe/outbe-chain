@@ -1,5 +1,8 @@
 use alloy_primitives::{address, Address, B256, U256};
 use alloy_sol_types::SolEvent;
+use outbe_enclave::promis::{
+    decrypt_balance, derive_modify_key, derive_view_key, modify_mac, ModifyOperation,
+};
 use outbe_gem::{api as gem_api, GemContract, GemItemState, GemState, GemView};
 use outbe_intex::SeriesId;
 use outbe_oracle::schema::OracleContract;
@@ -9,9 +12,6 @@ use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, EmissionDate};
 use outbe_promisfactory::api::ModifyAuth;
 use outbe_tee::protocol::PromisOp;
-use outbe_tee_enclave::promis::{
-    decrypt_balance, derive_modify_key, derive_view_key, modify_mac, ModifyOperation,
-};
 use outbe_vaultrouter::settlement::SettlementPayment;
 
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};

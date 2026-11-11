@@ -19,7 +19,7 @@ use crate::{
     manager::{FinalizedPatchApproval, FinalizedPatchSigningState, FinalizedPublicationReceipt},
 };
 use commonware_cryptography::{Hasher as _, Sha256};
-use outbe_coderegistry::{payload::PatchVotePayloadV1, PatchApprovalRecord};
+use outbe_primitives::code_registry::{PatchApprovalRecord, PatchVotePayloadV1};
 use outbe_primitives::radicle_publication::{PublicationAction, PublicationBody};
 use radicle::{
     crypto::{BlsEnvelope, RepositorySubject},

@@ -63,7 +63,7 @@ pub struct SlashIndicator {
 
     // Dedup guard for `submitInvalidVrfProofEvidence`. Key is the
     // canonical evidence hash
-    // `outbe_consensus::proof::invalid_vrf_evidence_hash_v2(child_hash, phase1_tx_hash)`.
+    // `outbe_primitives::proof::invalid_vrf_evidence_hash_v2(child_hash, phase1_tx_hash)`.
     // A child block has exactly one Phase 1 system transaction. Thus this
     // pair encodes "one slash per (child, phase1)". A second submission of the
     // same evidence reverts with "evidence already processed". This matches

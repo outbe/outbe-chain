@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, B256, U256};
-use outbe_common::entity_codec::{
+use outbe_core_common::entity_codec::{
     decode_stored_nod_group_v1, decode_stored_nod_item_v1, encode_nod_group_v1, encode_nod_item_v1,
     StoredBody,
 };
@@ -35,7 +35,7 @@ fn group(group_id: WwdEntityId) -> NodGroupState {
 
 fn stored_nod(body: &NodItemState) -> Vec<u8> {
     StoredBody::new(
-        outbe_common::entity_codec::NOD_BODY_SCHEMA_V1,
+        outbe_core_common::entity_codec::NOD_BODY_SCHEMA_V1,
         encode_nod_item_v1(&canonical_item(body)).unwrap(),
     )
     .unwrap()
@@ -44,7 +44,7 @@ fn stored_nod(body: &NodItemState) -> Vec<u8> {
 
 fn stored_group(body: &NodGroupState) -> Vec<u8> {
     StoredBody::new(
-        outbe_common::entity_codec::BODY_SCHEMA_V1,
+        outbe_core_common::entity_codec::BODY_SCHEMA_V1,
         encode_nod_group_v1(&canonical_group(body)).unwrap(),
     )
     .unwrap()
@@ -152,7 +152,7 @@ fn nod_body_is_self_contained_and_carries_only_encrypted_amounts() {
         reference_currency: 978,
     };
     let encrypted = outbe_nod::test_support::encrypted_fixture(&params, 7);
-    let body = outbe_common::entity_codec::NodItemBodyV1 {
+    let body = outbe_core_common::entity_codec::NodItemBodyV1 {
         encrypted: encrypted.clone(),
         group_key: B256::repeat_byte(0x74),
         issued_at: 99,
@@ -162,13 +162,13 @@ fn nod_body_is_self_contained_and_carries_only_encrypted_amounts() {
     assert!(!payload
         .windows(32)
         .any(|bytes| bytes == amount.to_be_bytes::<32>()));
-    let stored = outbe_common::entity_codec::StoredBody::new(
-        outbe_common::entity_codec::NOD_BODY_SCHEMA_V1,
+    let stored = outbe_core_common::entity_codec::StoredBody::new(
+        outbe_core_common::entity_codec::NOD_BODY_SCHEMA_V1,
         payload,
     )
     .unwrap();
     let decoded = from_canonical_item(
-        outbe_common::entity_codec::decode_stored_nod_item_v1(&stored.encode()).unwrap(),
+        outbe_core_common::entity_codec::decode_stored_nod_item_v1(&stored.encode()).unwrap(),
     );
     assert_eq!(decoded.encrypted, encrypted);
     assert_eq!(
@@ -179,6 +179,9 @@ fn nod_body_is_self_contained_and_carries_only_encrypted_amounts() {
     corrupted.encrypted.encrypted_gratis_amount.truncate(55);
     assert!(encode_nod_item_v1(&corrupted).is_err());
     let unsupported =
-        outbe_common::entity_codec::StoredBody::new(2, encode_nod_item_v1(&body).unwrap()).unwrap();
-    assert!(outbe_common::entity_codec::decode_stored_nod_item_v1(&unsupported.encode()).is_err());
+        outbe_core_common::entity_codec::StoredBody::new(2, encode_nod_item_v1(&body).unwrap())
+            .unwrap();
+    assert!(
+        outbe_core_common::entity_codec::decode_stored_nod_item_v1(&unsupported.encode()).is_err()
+    );
 }

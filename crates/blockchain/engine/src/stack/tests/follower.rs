@@ -87,7 +87,7 @@ fn follower_shutdown_keeps_certificate_available_until_observer_drains() {
             .unwrap();
         // Use the NodeHost pre-stop handshake. An accepted notification must
         // still be able to obtain its exact proof after a shutdown request.
-        let (control, drain) = crate::follower_shutdown::follower_drain_pair();
+        let (control, drain) = outbe_consensus::follower_shutdown::follower_drain_pair();
         let (tx, mut deliveries) = futures::channel::mpsc::unbounded();
         let _reporter = drain
             .install(outbe_consensus::executor::Mailbox::from_sender(tx))
@@ -161,7 +161,7 @@ fn follower_shutdown_drains_real_delivery_and_reopens_exact_persisted_proof() {
             B256::ZERO,
         )
         .unwrap();
-        let (control, drain) = crate::follower_shutdown::follower_drain_pair();
+        let (control, drain) = outbe_consensus::follower_shutdown::follower_drain_pair();
         let (tx, mut deliveries) = futures::channel::mpsc::unbounded();
         let reporter = drain
             .install(outbe_consensus::executor::Mailbox::from_sender(tx))

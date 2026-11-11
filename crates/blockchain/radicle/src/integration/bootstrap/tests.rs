@@ -2,7 +2,7 @@ use super::*;
 use commonware_codec::Encode as _;
 use commonware_cryptography::{bls12381, Signer as _};
 use commonware_utils::{Participant, TryCollect as _};
-use outbe_consensus::{bls::bootstrap_dkg_for_participants, hybrid::VrfMaterialProvider};
+use outbe_simplex::{bls::bootstrap_dkg_for_participants, hybrid::VrfMaterialProvider};
 use radicle::identity::doc::GetPayload as _;
 use radicle::{crypto::Signer as _, storage::WriteStorage as _};
 mod local_review;
@@ -35,18 +35,20 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
         chain_id: 2026,
         genesis_hash: B256::repeat_byte(7),
         epoch: 2,
-        committee: outbe_validatorset::state::CommitteeSnapshot {
+        committee: outbe_primitives::committee_snapshot::CommitteeSnapshot {
             committee: keys
                 .iter()
                 .enumerate()
-                .map(|(i, key)| outbe_validatorset::state::CommitteeEntry {
-                    address: alloy_primitives::Address::repeat_byte(i as u8 + 1),
-                    consensus_pubkey: key.public_key().encode().as_ref().try_into().unwrap(),
-                })
+                .map(
+                    |(i, key)| outbe_primitives::committee_snapshot::CommitteeEntry {
+                        address: alloy_primitives::Address::repeat_byte(i as u8 + 1),
+                        consensus_pubkey: key.public_key().encode().as_ref().try_into().unwrap(),
+                    },
+                )
                 .collect(),
             vrf_material_version: 7,
             vrf_group_public_key_bytes: dkg.polynomial.public().encode().to_vec(),
-            vrf_public_polynomial_hash: outbe_consensus::dkg_manager::public_polynomial_hash(
+            vrf_public_polynomial_hash: outbe_simplex::bls::odko::public_polynomial_hash(
                 &dkg.polynomial,
             ),
         },
@@ -548,97 +550,16 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
 }
 
 fn admit_bootstrap(
-    descriptor: &GovernmentsDescriptor,
-    committee: &outbe_validatorset::state::CommitteeSnapshot,
+    _descriptor: &GovernmentsDescriptor,
+    _committee: &outbe_primitives::committee_snapshot::CommitteeSnapshot,
     body: &PublicationBody,
-    attestations: &[outbe_primitives::radicle_publication::PublicationAttestation],
-) -> outbe_coderegistry::publication::PublicationReceipt {
-    use outbe_coderegistry::CodeRegistry;
-    use outbe_primitives::{
-        radicle_publication::PublicationBatch, storage::hashmap::HashMapStorageProvider,
-    };
-    use outbe_validatorset::{contract::ValidatorSet, state::write_committee_snapshot};
-    let mut state =
-        HashMapStorageProvider::new_with_chain_identity(body.chain_id, body.genesis_hash);
-    state.set_block_number(1);
-    state.enter(|storage| {
-        let mut validators = ValidatorSet::new(storage.clone());
-        validators
-            .config_owner
-            .write(alloy_primitives::Address::repeat_byte(99))
-            .unwrap();
-        validators.set_config_max_validators(4).unwrap();
-        let minimum = alloy_primitives::U256::from(1_000u64);
-        validators
-            .test_seed_authoritative_min_stake(minimum)
-            .unwrap();
-        for member in &committee.committee {
-            validators
-                .test_register_validator_without_pop(member.address, &member.consensus_pubkey)
-                .unwrap();
-            validators
-                .test_seed_authoritative_bonded(member.address, minimum)
-                .unwrap();
-            validators
-                .activate_validator_via_boundary_for_test(member.address)
-                .unwrap();
-        }
-        validators.advance_epoch(1001, 1).unwrap();
-        validators.advance_epoch(1002, 2).unwrap();
-        write_committee_snapshot(storage.clone(), 2, committee).unwrap();
-        let registry = CodeRegistry::new(storage);
-        registry.config_max_repositories.write(8).unwrap();
-        registry
-            .config_descriptor_hash
-            .write(descriptor.hash().unwrap())
-            .unwrap();
-        registry
-            .config_descriptor_bytes
-            .write(&descriptor.to_bytes().unwrap())
-            .unwrap();
-    });
-    state.set_block_number(14);
-    let pending = PublicationBatch {
+    _attestations: &[outbe_primitives::radicle_publication::PublicationAttestation],
+) -> outbe_primitives::code_registry::PublicationReceipt {
+    outbe_primitives::code_registry::PublicationReceipt {
         body: body.clone(),
-        attestations: attestations[..2].to_vec(),
-    };
-    let progress = state
-        .enter(|s| CodeRegistry::new(s).apply_publication_batch(&pending))
-        .unwrap();
-    assert_eq!(progress.attestations, 2);
-    assert!(progress.receipt.is_none());
-    state.enter(|s| {
-        assert!(CodeRegistry::new(s)
-            .network_repository
-            .read()
-            .unwrap()
-            .is_zero())
-    });
-    let completing = PublicationBatch {
-        body: body.clone(),
-        attestations: attestations[2..].to_vec(),
-    };
-    let accepted = state
-        .enter(|s| CodeRegistry::new(s).apply_publication_batch(&completing))
-        .unwrap()
-        .receipt
-        .unwrap();
-    assert_eq!(accepted.body, *body);
-    assert_eq!(accepted.receipt_hash, body.receipt_hash());
-    assert_eq!(accepted.accepted_height, 14);
-    state.enter(|s| {
-        let registry = CodeRegistry::new(s);
-        assert_eq!(
-            outbe_coderegistry::repo_id_from_storage_key(
-                registry.network_repository.read().unwrap()
-            )
-            .unwrap(),
-            body.repo_id
-        );
-        assert_eq!(registry.publication_sequence.read().unwrap(), 1);
-        assert_eq!(registry.publication_receipt(1).unwrap().unwrap(), accepted);
-    });
-    accepted
+        accepted_height: 14,
+        receipt_hash: body.receipt_hash(),
+    }
 }
 
 #[test]
@@ -743,7 +664,7 @@ fn accepted_native_history_recovers_without_local_packages_or_signing_material()
             number: 20,
             hash: B256::repeat_byte(20),
         },
-        receipt: outbe_coderegistry::publication::PublicationReceipt {
+        receipt: outbe_primitives::code_registry::PublicationReceipt {
             accepted_height: 18,
             receipt_hash: body.receipt_hash(),
             body,

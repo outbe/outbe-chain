@@ -49,6 +49,7 @@ sol!(
     "../../../contracts/precompiles/src/ICycle.sol"
 );
 
+pub mod call_authority;
 pub mod errors;
 pub mod handler;
 pub mod runtime;
@@ -56,6 +57,7 @@ pub mod schema;
 pub mod state;
 pub mod triggers;
 
+pub use outbe_rewards::accounting::AccountingProgressError;
 pub use runtime::CycleModule;
 pub use schema::Accounting;
 pub use state::{read_last_accounted_block_number, record_phase1_progress};

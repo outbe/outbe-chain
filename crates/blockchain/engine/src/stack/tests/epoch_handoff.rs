@@ -204,7 +204,7 @@ fn startup_pending_dkg_epoch_plan_keeps_future_epoch_separate_before_activation(
         startup_pending_dkg_epoch_plan(
             current_epoch,
             pending_epoch,
-            crate::stack::dkg::handoff::StartupPendingDkgHandoff {
+            outbe_consensus::stack::dkg::handoff::StartupPendingDkgHandoff {
                 finalized_height: 299,
                 planned_activation_height: 300,
                 activation_grace_blocks: 30,
@@ -228,7 +228,7 @@ fn startup_pending_dkg_epoch_plan_restores_activated_epoch_before_boundary_commi
         startup_pending_dkg_epoch_plan(
             previous_epoch,
             pending_epoch,
-            crate::stack::dkg::handoff::StartupPendingDkgHandoff {
+            outbe_consensus::stack::dkg::handoff::StartupPendingDkgHandoff {
                 finalized_height: 300,
                 planned_activation_height: 300,
                 activation_grace_blocks: 30,
@@ -251,7 +251,7 @@ fn startup_pending_dkg_epoch_plan_fails_closed_on_invalid_or_expired_handoff() {
     let wrong_epoch = startup_pending_dkg_epoch_plan(
         current_epoch,
         Epoch::new(6),
-        crate::stack::dkg::handoff::StartupPendingDkgHandoff {
+        outbe_consensus::stack::dkg::handoff::StartupPendingDkgHandoff {
             finalized_height: 500,
             planned_activation_height: 500,
             activation_grace_blocks: 30,
@@ -265,7 +265,7 @@ fn startup_pending_dkg_epoch_plan_fails_closed_on_invalid_or_expired_handoff() {
     let expired = startup_pending_dkg_epoch_plan(
         current_epoch,
         Epoch::new(5),
-        crate::stack::dkg::handoff::StartupPendingDkgHandoff {
+        outbe_consensus::stack::dkg::handoff::StartupPendingDkgHandoff {
             finalized_height: 530,
             planned_activation_height: 500,
             activation_grace_blocks: 30,
@@ -397,7 +397,7 @@ fn dkg_retry_replays_to_verified_tip_not_stale_scheduling_height() {
         Some(ConsensusHeaderArtifact::DealerLog(logs[2].clone())),
     );
     let tip_hash = provider.block_hash(98).unwrap().unwrap();
-    let verified_tip = crate::marshal_update_reporter::ConsensusTip {
+    let verified_tip = outbe_consensus::marshal_update_reporter::ConsensusTip {
         round: Round::new(Epoch::new(0), View::new(98)),
         height: Height::new(98),
         digest: outbe_consensus::digest::Digest(tip_hash),
@@ -480,7 +480,7 @@ fn live_finalized_dkg_log_cannot_overtake_retry_replay_prefix() {
     provider.block_sealed_header_at(96, entered.clone(), release.clone());
     let control_provider = provider.without_sealed_header_barrier();
     let tip_hash = provider.block_hash(99).unwrap().unwrap();
-    let verified_tip = crate::marshal_update_reporter::ConsensusTip {
+    let verified_tip = outbe_consensus::marshal_update_reporter::ConsensusTip {
         round: Round::new(Epoch::new(0), View::new(99)),
         height: Height::new(99),
         digest: outbe_consensus::digest::Digest(tip_hash),
@@ -578,7 +578,7 @@ fn dkg_recovery_provider_gap_preserves_existing_ceremony() {
         }
     }
     let tip_hash = provider.block_hash(98).unwrap().unwrap();
-    let verified_tip = crate::marshal_update_reporter::ConsensusTip {
+    let verified_tip = outbe_consensus::marshal_update_reporter::ConsensusTip {
         round: Round::new(Epoch::new(0), View::new(98)),
         height: Height::new(98),
         digest: outbe_consensus::digest::Digest(tip_hash),

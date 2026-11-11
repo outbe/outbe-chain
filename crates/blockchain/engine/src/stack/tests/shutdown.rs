@@ -128,16 +128,17 @@ fn application_drain_retains_transport_on_terminal_startup_and_panic_paths() {
                 let drain_owner = endpoint_owner.clone();
                 let drain_resolver = resolver.clone();
                 let (draining_tx, draining_rx) = tokio::sync::oneshot::channel();
-                let application = crate::application_shutdown::ApplicationDrain::new(async move {
-                    draining_tx.send(()).unwrap();
-                    shutdown_bounded(
-                        Duration::from_secs(5),
-                        manager,
-                        drain_owner.shutdown(&drain_resolver),
-                    )
-                    .await
-                    .map_err(Into::into)
-                });
+                let application =
+                    outbe_consensus::application_shutdown::ApplicationDrain::new(async move {
+                        draining_tx.send(()).unwrap();
+                        shutdown_bounded(
+                            Duration::from_secs(5),
+                            manager,
+                            drain_owner.shutdown(&drain_resolver),
+                        )
+                        .await
+                        .map_err(Into::into)
+                    });
                 let owner_drain = application.clone();
                 let inner_drain = application.clone();
                 let (network_tx, network_rx) = tokio::sync::oneshot::channel();
@@ -409,7 +410,7 @@ fn global_stop_completes_with_a_stopping_sibling_and_real_voter() {
                         &owner,
                         Ok(EpochLoopOutcome::GlobalStop),
                         &mut engine_handle,
-                        &crate::application_shutdown::ApplicationDrain::default(),
+                        &outbe_consensus::application_shutdown::ApplicationDrain::default(),
                     )
                     .await
                     .expect("simplex engine must stop successfully");
@@ -517,7 +518,7 @@ fn fatal_stack_exit_preserves_error_and_voter_journal_can_resume() {
                     &owner,
                     Err(eyre::eyre!("synthetic fatal stack cause")),
                     &mut engine_handle,
-                    &crate::application_shutdown::ApplicationDrain::default(),
+                    &outbe_consensus::application_shutdown::ApplicationDrain::default(),
                 )
                 .await
             });
@@ -631,7 +632,7 @@ fn completed_engine_outcome_is_not_polled_twice() {
             &context,
             Ok(EpochLoopOutcome::EngineExit(Ok(()))),
             &mut engine_handle,
-            &crate::application_shutdown::ApplicationDrain::default(),
+            &outbe_consensus::application_shutdown::ApplicationDrain::default(),
         )
         .await
         .expect("an already observed engine exit must stop the stack without repolling the handle");
@@ -680,7 +681,7 @@ impl BlockHashReader for MockBlockHashProvider {
 #[test]
 fn provider_matches_consensus_tip_checks_height_and_hash() {
     let digest = outbe_consensus::digest::Digest(B256::repeat_byte(0x11));
-    let tip = crate::marshal_update_reporter::ConsensusTip {
+    let tip = outbe_consensus::marshal_update_reporter::ConsensusTip {
         round: Round::new(Epoch::new(0), View::new(7)),
         height: Height::new(42),
         digest,

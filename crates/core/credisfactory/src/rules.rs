@@ -90,7 +90,7 @@ pub struct Forfeit {
 
 /// The anchor marked up by `rate_pct` percentage points.
 pub fn calc_call_price(price: U256, rate_pct: u16) -> Result<U256> {
-    outbe_common::markup::marked_up(price, rate_pct)
+    outbe_core_common::markup::marked_up(price, rate_pct)
         .ok_or_else(|| CredisError::ArithmeticOverflow.into())
 }
 

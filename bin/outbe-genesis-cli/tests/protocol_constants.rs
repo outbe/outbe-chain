@@ -72,7 +72,7 @@ fn oracle_seed_rejects_pairs_whose_assets_resolve_to_the_same_address() {
 fn checked_in_genesis_fixtures_use_scale18_native_balances() {
     let root = repo_root();
     let node_fixture: Value = serde_json::from_str(
-        &fs::read_to_string(root.join("crates/blockchain/node/tests/assets/genesis.json"))
+        &fs::read_to_string(root.join("crates/blockchain/execution/tests/assets/genesis.json"))
             .expect("read node genesis"),
     )
     .expect("parse node genesis");

@@ -1,7 +1,7 @@
 //! Position expiry: an hour of positions returns the capacity they never issued in one
 //! credit, and the cleanup then deletes them.
 
-use outbe_common::deadline_queue::{self, DeadlineHandler, Due};
+use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PassFailure, PrecompileError, Result},

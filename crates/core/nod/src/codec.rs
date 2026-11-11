@@ -1,7 +1,7 @@
 //! Canonical entity payload conversion, independent of the storage backend.
 
 use crate::{NodGroupState, NodItemState};
-use outbe_common::entity_codec::{NodGroupBodyV1, NodItemBodyV1};
+use outbe_core_common::entity_codec::{NodGroupBodyV1, NodItemBodyV1};
 
 /// Converts one runtime Nod item into its normative encrypted v1 payload model.
 pub fn canonical_item(body: &NodItemState) -> NodItemBodyV1 {

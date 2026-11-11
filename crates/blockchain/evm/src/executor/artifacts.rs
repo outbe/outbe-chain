@@ -1,6 +1,6 @@
 use super::*;
 
-pub(in crate::executor) fn validate_execution_summary_artifact(
+pub fn validate_execution_summary_artifact(
     enabled: bool,
     block_number: u64,
     header_summary: Option<ExecutionSummaryArtifact>,
@@ -24,7 +24,7 @@ pub(in crate::executor) fn validate_execution_summary_artifact(
     Ok(())
 }
 
-pub(in crate::executor) fn validate_finish_artifacts(
+pub fn validate_finish_artifacts(
     executor: &OutbeBlockExecutor<'_, impl Sized>,
     block_number: u64,
     current_summary: ExecutionSummaryArtifact,

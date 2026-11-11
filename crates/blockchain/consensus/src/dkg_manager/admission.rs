@@ -54,37 +54,7 @@ impl From<BoundaryRequirementError> for ProposalForfeit {
     }
 }
 
-/// Why a carried header artifact was not admitted.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ArtifactAdmissionError {
-    /// Parent ancestry could not be read. The verifier does not vote.
-    Unavailable(String),
-    /// The carried artifact violates the admission table. The verifier votes no.
-    Rejected(String),
-}
-
-impl ArtifactAdmissionError {
-    pub fn is_unavailable(&self) -> bool {
-        matches!(self, Self::Unavailable(_))
-    }
-}
-
-impl fmt::Display for ArtifactAdmissionError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Unavailable(message) | Self::Rejected(message) => f.write_str(message),
-        }
-    }
-}
-
-impl From<BoundaryRequirementError> for ArtifactAdmissionError {
-    fn from(error: BoundaryRequirementError) -> Self {
-        match error {
-            BoundaryRequirementError::Unavailable(message) => Self::Unavailable(message),
-            BoundaryRequirementError::Conflict(message) => Self::Rejected(message),
-        }
-    }
-}
+pub use outbe_simplex::errors::core::ArtifactAdmissionError;
 
 /// The boundary requirement with the pending artifact carried where it is
 /// required, so `MustEmit` without an artifact cannot be represented.

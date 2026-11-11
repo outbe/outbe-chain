@@ -9,7 +9,7 @@
 //!   the same absent address against two distinct `fb_hash` values
 //!   that represent the two proof types. Then it asserts identical
 //!   per-validator counters.
-//!   (e2e guard): `outbe_consensus::proof::verify_v2_proof` rejects
+//!   (e2e guard): `outbe_simplex::proof::verify_v2_proof` rejects
 //!   non-empty `missed_proposers` in V2 metadata BEFORE the Phase 1
 //!   commit reaches the slashindicator entry. Verified structurally
 //!   because constructing a full executor in this test crate is

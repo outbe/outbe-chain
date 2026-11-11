@@ -388,7 +388,7 @@ fn live_executor_retries_execution_while_candidate_storage_remains_independent()
                         panic!("candidate verification must not send forkchoice updates");
                     };
                     assert_eq!(
-                        reth_node_builder::ExecutionPayload::block_hash(&payload),
+                        reth_ethereum::node::api::ExecutionPayload::block_hash(&payload),
                         block.block_hash()
                     );
                     if status == PayloadStatusEnum::Valid {

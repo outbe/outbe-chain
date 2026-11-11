@@ -50,7 +50,7 @@ impl<E: EvmTr<Frame = EthFrame>> EvmTr for NativeDelegationEvm<E> {
                 // A direct native call keeps its normal ABI dispatch. The route
                 // namespace includes the reserved stablecoin class, independent
                 // of whether an individual token has been issued.
-                if crate::precompile_routes::resolve(&inputs.bytecode_address).is_none() {
+                if crate::precompiles::routes::resolve(&inputs.bytecode_address).is_none() {
                     // Inspect the original account, not resolved bytecode or
                     // target_address (which differs for CALLCODE/DELEGATECALL).
                     let delegate = {
@@ -67,7 +67,7 @@ impl<E: EvmTr<Frame = EthFrame>> EvmTr for NativeDelegationEvm<E> {
                             .and_then(Bytecode::eip7702_address)
                     };
                     if delegate.is_some_and(|address| {
-                        crate::precompile_routes::resolve(&address).is_some()
+                        crate::precompiles::routes::resolve(&address).is_some()
                     }) {
                         // Follow exactly one designator. Revm still owns value
                         // transfer, checkpoints, gas and the empty-code result.

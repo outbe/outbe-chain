@@ -35,7 +35,7 @@ outbe-zk.workspace = true
 outbe-promis = { workspace = true, features = ["test-enclave"] }
 outbe-promisfactory.workspace = true
 outbe-tee.workspace = true
-outbe-tee-enclave.workspace = true
+outbe-enclave.workspace = true
 outbe-tribute.workspace = true
 outbe-tributefactory = { workspace = true, features = ["bench-utils"] }
 outbe-vaultrouter = { workspace = true, features = ["test-utils"] }

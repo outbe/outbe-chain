@@ -2,7 +2,9 @@ use super::*;
 
 #[test]
 fn build_unsigned_system_tx_sets_deterministic_zero_gas_fields() {
-    let input = SystemTx::CycleTick.encode().expect("input encodes");
+    let input = SystemTx::BeginBlock { step_index: 8 }
+        .encode()
+        .expect("input encodes");
     let tx = build_unsigned_system_tx(0, 1, CHAIN_ID, input.clone()).expect("tx builds");
     assert_eq!(tx.chain_id, Some(CHAIN_ID));
     assert_eq!(tx.nonce, u64::from(MAX_SYSTEM_TXS_PER_BLOCK));
@@ -19,7 +21,9 @@ fn build_unsigned_system_tx_sets_deterministic_zero_gas_fields() {
 
 #[test]
 fn signature_hash_is_deterministic_for_identical_inputs() {
-    let input = SystemTx::CycleTick.encode().expect("input encodes");
+    let input = SystemTx::BeginBlock { step_index: 8 }
+        .encode()
+        .expect("input encodes");
     let a = build_unsigned_system_tx(0, 42, CHAIN_ID, input.clone()).expect("tx builds");
     let b = build_unsigned_system_tx(0, 42, CHAIN_ID, input).expect("tx builds");
     assert_eq!(a.signature_hash(), b.signature_hash());
@@ -28,7 +32,9 @@ fn signature_hash_is_deterministic_for_identical_inputs() {
         0,
         43,
         CHAIN_ID,
-        SystemTx::CycleTick.encode().expect("input encodes"),
+        SystemTx::BeginBlock { step_index: 8 }
+            .encode()
+            .expect("input encodes"),
     )
     .expect("tx builds");
     assert_ne!(a.signature_hash(), different_block.signature_hash());
@@ -36,11 +42,11 @@ fn signature_hash_is_deterministic_for_identical_inputs() {
 
 #[test]
 fn envelope_boundaries_fully_decode_calldata_and_require_zero_gas_limit() {
-    let malformed = Bytes::from_static(b"OSC2\x02\x00");
+    let malformed = Bytes::from_static(b"OSBB\x03\x08\x00");
     assert_eq!(
         build_unsigned_system_tx(0, 1, CHAIN_ID, malformed.clone()),
-        Err(SystemTxError::UnexpectedBody {
-            kind: "CycleTick",
+        Err(SystemTxError::NonEmptyStagePayload {
+            stage: BlockExecutionStage::BeginBlock,
             len: 1
         })
     );
@@ -52,12 +58,12 @@ fn envelope_boundaries_fully_decode_calldata_and_require_zero_gas_limit() {
             calldata: malformed,
             gas_limit: 0,
         }),
-        Err(SystemTxError::UnexpectedBody {
-            kind: "CycleTick",
+        Err(SystemTxError::NonEmptyStagePayload {
+            stage: BlockExecutionStage::BeginBlock,
             len: 1
         })
     );
-    let calldata = SystemTx::CycleTick.encode().unwrap();
+    let calldata = SystemTx::BeginBlock { step_index: 8 }.encode().unwrap();
     assert_eq!(
         build_unsigned_system_tx_with_gas_limit(SystemTxEnvelopeInput {
             ordinal: 0,
@@ -75,8 +81,8 @@ fn nonce_is_block_number_times_max_plus_ordinal() {
     assert_eq!(MAX_SYSTEM_TXS_PER_BLOCK, 32);
     assert_eq!(system_tx_nonce(1, 0).expect("nonce"), 32);
     assert_eq!(system_tx_nonce(200_600, 2).expect("nonce"), 6_419_202);
-    assert_eq!(system_tx_nonce(2, NOD_FACTORY_ORDINAL).expect("nonce"), 88);
-    assert_eq!(system_tx_nonce(2, GEM_CLEANUP_ORDINAL).expect("nonce"), 92);
+    assert_eq!(system_tx_nonce(2, 24).expect("nonce"), 88);
+    assert_eq!(system_tx_nonce(2, 28).expect("nonce"), 92);
     assert_eq!(
         system_tx_nonce(1, MAX_SYSTEM_TXS_PER_BLOCK),
         Err(SystemTxError::OrdinalTooLarge {

@@ -1,28 +1,14 @@
-use alloy_primitives::{Address, FixedBytes, B256, U256};
+use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 
 use crate::{errors::CodeRegistryError, precompile::ICodeRegistry, schema::CodeRegistry};
 
-pub type RepoId = FixedBytes<20>;
+pub use outbe_primitives::code_registry::{repo_id_from_storage_key, repo_id_storage_key, RepoId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RepositoryRegistration {
     pub index: u32,
     pub generation: u64,
-}
-
-#[must_use]
-pub fn repo_id_storage_key(repo_id: RepoId) -> B256 {
-    let mut word = [0_u8; 32];
-    word[..20].copy_from_slice(repo_id.as_slice());
-    B256::from(word)
-}
-
-pub fn repo_id_from_storage_key(key: B256) -> Result<RepoId> {
-    if key.as_slice()[20..] != [0_u8; 12] {
-        return Err(CodeRegistryError::NonZeroStorageKeyTail.into());
-    }
-    Ok(RepoId::from_slice(&key.as_slice()[..20]))
 }
 
 impl CodeRegistry<'_> {

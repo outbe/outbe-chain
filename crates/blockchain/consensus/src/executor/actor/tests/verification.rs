@@ -75,7 +75,7 @@ async fn probe(
             panic!("verification may only deliver a payload, never select HEAD");
         };
         assert_eq!(
-            reth_node_builder::ExecutionPayload::block_hash(&payload),
+            reth_ethereum::node::api::ExecutionPayload::block_hash(&payload),
             script.0 .0
         );
         tx.send(Ok(PayloadStatus::from_status(script.1))).unwrap();

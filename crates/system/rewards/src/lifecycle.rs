@@ -1,6 +1,6 @@
 //! Block lifecycle hook for the Rewards module.
 //!
-//! `RewardsModule` implements [`ProtocolModule`] for `SystemTxKind::Rewards` (`OSRW`).
+//! `RewardsModule` implements [`ProtocolModule`] for the begin-block rewards step.
 //! `begin_block` and `end_block` are no-ops. The start date is
 //! the UTC date of the genesis timestamp on the block context.
 //!
@@ -11,7 +11,7 @@
 
 use outbe_primitives::block::ProtocolModule;
 
-/// Protocol module for `SystemTxKind::Rewards` (`OSRW`).
+/// Protocol module for the begin-block rewards step.
 pub struct RewardsModule;
 
 impl ProtocolModule for RewardsModule {

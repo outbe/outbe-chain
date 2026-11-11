@@ -3,7 +3,7 @@
 //! A validator that identity-signs two DIFFERENT `bls_seed_partial`s for the
 //! same `(round, vrf_material_version)` has equivocated on its VRF
 //! contribution. A rider signature binds each partial to the validator's MinPk
-//! identity key (see `outbe_consensus::proof::seed_partial`). Thus the two
+//! identity key (see `outbe_primitives::proof::seed_partial`). Thus the two
 //! identity signatures alone self-authenticate the offense. No committee
 //! polynomial is needed. This mirrors the existing double-sign /
 //! conflicting-vote evidence. An honest validator produces exactly one partial

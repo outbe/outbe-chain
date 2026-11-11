@@ -848,7 +848,7 @@ fn encrypted_retirement_preserves_frozen_nominal_after_live_total_is_zero() {
             tribute_price_minor: plain.tribute_price_minor,
             offer_input_hash: B256::repeat_byte(0x78),
         };
-        let encrypted = outbe_tee_enclave::tribute_encryption::encrypt_tribute(
+        let encrypted = outbe_enclave::tribute_encryption::encrypt_tribute(
             &crate::enclave_client::test_enclave::NETWORK_SECRET,
             context,
             &outbe_primitives::tribute_encryption::TributeAmountsV2 {

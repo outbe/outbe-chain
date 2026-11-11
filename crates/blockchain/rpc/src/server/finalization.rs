@@ -214,7 +214,11 @@ mod tests {
         let bridge = ConsensusExecutionBridge::new();
         bridge.set_last_finalized_block_number(50);
         let mut rx = bridge.set_finalization_fetcher();
-        let handler = OutbeApiHandler::with_bridge(Arc::new(()), bridge.clone());
+        let handler = OutbeApiHandler::with_bridge(
+            Arc::new(()),
+            bridge.clone(),
+            std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
+        );
 
         assert_all_three_fail(
             &handler,
@@ -253,7 +257,11 @@ mod tests {
         // 1. NotServing when no fetcher is installed or receiver is dropped.
         let unserved_bridge = ConsensusExecutionBridge::new();
         unserved_bridge.set_last_finalized_block_number(20);
-        let unserved_handler = OutbeApiHandler::with_bridge(Arc::new(()), unserved_bridge);
+        let unserved_handler = OutbeApiHandler::with_bridge(
+            Arc::new(()),
+            unserved_bridge,
+            std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
+        );
         let err = unserved_handler
             .get_finalization_for_height(5)
             .await
@@ -286,7 +294,11 @@ mod tests {
             assert!(matches!(fut.as_mut().poll(&mut cx), Poll::Pending));
             in_flight.push(fut);
         }
-        let busy_handler = OutbeApiHandler::with_bridge(Arc::new(()), busy_bridge);
+        let busy_handler = OutbeApiHandler::with_bridge(
+            Arc::new(()),
+            busy_bridge,
+            std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
+        );
         assert_all_three_fail(
             &busy_handler,
             10,
@@ -300,7 +312,11 @@ mod tests {
         let timeout_bridge = ConsensusExecutionBridge::new();
         timeout_bridge.set_last_finalized_block_number(20);
         let _timeout_rx = timeout_bridge.set_finalization_fetcher();
-        let timeout_handler = OutbeApiHandler::with_bridge(Arc::new(()), timeout_bridge);
+        let timeout_handler = OutbeApiHandler::with_bridge(
+            Arc::new(()),
+            timeout_bridge,
+            std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
+        );
 
         assert_all_three_fail(
             &timeout_handler,
@@ -319,7 +335,11 @@ mod tests {
                 let _ = reply.send(None);
             }
         });
-        let none_handler = OutbeApiHandler::with_bridge(Arc::new(()), none_bridge);
+        let none_handler = OutbeApiHandler::with_bridge(
+            Arc::new(()),
+            none_bridge,
+            std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
+        );
 
         let err = none_handler
             .get_finalization_for_height(9)
@@ -367,7 +387,11 @@ mod tests {
                 let _ = reply.send(response);
             }
         });
-        let handler = OutbeApiHandler::with_bridge(Arc::new(()), bridge);
+        let handler = OutbeApiHandler::with_bridge(
+            Arc::new(()),
+            bridge,
+            std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
+        );
 
         // Height 10 has an empty direct certificate: rejected by get_finalization,
         // accepted by get_consensus_block, and walked past by finality_proof_for_height.
@@ -414,7 +438,11 @@ mod tests {
                 let _ = reply.send(response);
             }
         });
-        let handler = OutbeApiHandler::with_bridge(Arc::new(()), bridge);
+        let handler = OutbeApiHandler::with_bridge(
+            Arc::new(()),
+            bridge,
+            std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
+        );
 
         let proof = handler.finality_proof_for_height(20).await.unwrap();
         assert_eq!(proof.ancestor_blocks_hex, vec!["0x20"]);
@@ -443,7 +471,11 @@ mod tests {
             }
         });
 
-        let handler = OutbeApiHandler::with_bridge(Arc::new(()), bridge);
+        let handler = OutbeApiHandler::with_bridge(
+            Arc::new(()),
+            bridge,
+            std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
+        );
         let err = handler.finality_proof_for_height(100).await.unwrap_err();
         assert_eq!(err.code(), RESOURCE_EXHAUSTED_ERROR_CODE);
         assert_eq!(err.message(), "finalization request timed out");

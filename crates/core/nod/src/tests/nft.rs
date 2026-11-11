@@ -141,7 +141,7 @@ fn tokens_by_owner_lists_the_owners_live_nods() {
 fn supported_interfaces_match_the_implemented_selectors() {
     use crate::precompile::{dispatch, INod};
     use alloy_sol_types::SolCall;
-    use outbe_common::erc::{
+    use outbe_core_common::erc::{
         ERC165_INTERFACE_ID, ERC20_INTERFACE_ID, ERC4906_INTERFACE_ID,
         ERC721_ENUMERABLE_INTERFACE_ID, ERC721_INTERFACE_ID, ERC721_METADATA_INTERFACE_ID,
     };

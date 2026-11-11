@@ -33,11 +33,10 @@ use crate::errors::{ActivationError, ValidatorSetError};
 use crate::schema::ValidatorSet;
 
 // Canonical V2 committee types and pure-function hashers live in
-// `outbe_consensus::proof`. They are re-exported here so
-// existing `outbe_validatorset::state::{...}` callers keep compiling, and
-// internal storage helpers (`write/read_committee_snapshot`,
-// `snapshot_identity`) reference them through the canonical crate.
-pub use outbe_consensus::proof::{
+// `outbe-primitives`. They are re-exported here so existing
+// `outbe_validatorset::state::{...}` callers keep compiling, and internal
+// storage helpers reference the same types.
+pub use outbe_primitives::committee_snapshot::{
     committee_set_hash_v2, committee_snapshot_key, CommitteeEntry, CommitteeSnapshot,
     OUTBE_COMMITTEE_SET_HASH_V2_DOMAIN, OUTBE_COMMITTEE_SNAPSHOT_KEY_V2_DOMAIN,
     VRF_MATERIAL_VERSION_GENESIS,
@@ -52,9 +51,8 @@ pub use outbe_consensus::proof::{
 /// value. A capped value would let two distinct DKG outputs share a version
 /// and break the V2 metadata binding.
 pub fn next_vrf_material_version(previous: u64) -> std::result::Result<u64, ActivationError> {
-    previous
-        .checked_add(1)
-        .ok_or(ActivationError::VrfVersionOverflow)
+    outbe_primitives::validator_dto::next_vrf_material_version(previous)
+        .map_err(ActivationError::from)
 }
 
 /// Splits the 48-byte BLS MinPk pubkey into the schema's `lo`/`hi` halves.

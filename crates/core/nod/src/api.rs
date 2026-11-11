@@ -14,8 +14,8 @@ pub fn effective_state(
     deadline: u64,
     now: U256,
 ) -> EffectiveState {
-    use outbe_common::settlement::RightState;
-    match outbe_common::settlement::effective_state(
+    use outbe_core_common::settlement::RightState;
+    match outbe_core_common::settlement::effective_state(
         item.is_settled,
         called_at,
         deadline,
@@ -35,7 +35,7 @@ pub fn effective_state(
 ///
 /// The cost is derived rather than stored from the entry price and the load the
 /// Nod carries. Lysis mints the Nod from exactly this formula.
-pub use outbe_common::nod_rules::settlement_cost_minor;
+pub use outbe_core_common::nod_rules::settlement_cost_minor;
 
 /// Timestamp by which a called group must be settled, or `0` while it is not
 /// called at all.
@@ -52,7 +52,7 @@ pub fn settlement_deadline(storage: &StorageHandle<'_>, group_key: B256) -> Resu
     Ok(settlement_deadline_of(called_at, notice))
 }
 
-pub use outbe_common::settlement::settlement_deadline_of;
+pub use outbe_core_common::settlement::settlement_deadline_of;
 
 /// The Nod's state as of this block, as `getNod` reports it: an unpaid Nod of a
 /// forfeited group reads Forfeited.

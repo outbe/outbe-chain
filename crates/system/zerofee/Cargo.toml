@@ -13,12 +13,9 @@ outbe-hyperlanecontroller.workspace = true
 outbe-validatorset.workspace = true
 outbe-macros.workspace = true
 
-alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 alloy-eips = { workspace = true, features = ["k256"] }
 alloy-sol-types.workspace = true
-
-thiserror.workspace = true
 
 [dev-dependencies]
 outbe-zerofee = { path = ".", features = ["test-utils"] }

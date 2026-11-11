@@ -1,8 +1,4 @@
-use core::fmt;
-
-use alloy_primitives::{Address, B256};
-use outbe_primitives::transaction_call::TransactionCallFields;
-use outbe_primitives::{error::PrecompileError, storage::StorageHandle};
+use outbe_primitives::storage::StorageHandle;
 
 use outbe_hyperlanecontroller::precompile::IHyperlaneController;
 use outbe_oracle::precompile::IOracle;
@@ -12,196 +8,14 @@ use crate::envelope::{active_validator_for_role, ValidatorCallHook};
 use crate::renewal::RenewEnclaveHook;
 use crate::{hyperlane, oracle};
 
-/// A minimal, execution-layer independent transaction view for zero-fee hooks.
-#[derive(Clone, Copy)]
-pub struct ZeroFeeTransaction<'a> {
-    /// Recovered signer of the signed EVM transaction.
-    pub signer: Address,
-    /// Call fields of the signed EVM transaction.
-    pub call: TransactionCallFields<'a>,
-}
-
-/// The text form keeps the call fields flat, as before they moved to `call`.
-impl fmt::Debug for ZeroFeeTransaction<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut out = f.debug_struct("ZeroFeeTransaction");
-        out.field("signer", &self.signer);
-        self.call.debug_fields(&mut out);
-        out.finish()
-    }
-}
-
-/// Stable identifier for a registered zero-fee hook.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ZeroFeeHookId {
-    /// `Oracle.submitVote(ExchangeRateTuple[],GasTuple[])`.
-    OracleSubmitVote,
-    /// `HyperlaneController.submitCheckpoint(uint32,bytes32,uint32,bytes32,bytes)`.
-    HyperlaneSubmitCheckpoint,
-    /// Own-lease `TeeRegistry.renewEnclave`.
-    RenewEnclave,
-}
-
-/// A transaction that matched a hook's stateless zero-fee envelope.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ZeroFeeCandidate {
-    /// Matching hook.
-    pub hook: ZeroFeeHookId,
-    /// Recovered transaction signer.
-    pub signer: Address,
-    /// Canonical node hash carried by an own-lease renewal. Other hooks leave this zero.
-    pub node_id_hash: B256,
-}
-
-impl ZeroFeeCandidate {
-    /// Creates a zero-fee candidate for a matching hook.
-    pub const fn new(hook: ZeroFeeHookId, signer: Address) -> Self {
-        Self {
-            hook,
-            signer,
-            node_id_hash: B256::ZERO,
-        }
-    }
-}
-
-/// Stateful authorization outcome for a fee waiver.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ZeroFeeAuthorization {
-    /// Hook that authorized the fee waiver.
-    pub hook: ZeroFeeHookId,
-    /// Hook-specific account represented by the signer.
-    ///
-    /// For oracle votes this is the validator address, not necessarily the
-    /// feeder address that signed the transaction.
-    pub subject: Address,
-}
-
-/// Zero-fee policy rejection reason.
-#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
-pub enum ZeroFeePolicyError {
-    /// The zero-fee envelope targets an unknown hook.
-    #[error("unknown zero-fee hook: {0:?}")]
-    UnknownHook(ZeroFeeHookId),
-    /// The transaction targets a zero-fee method but carries native value.
-    #[error("zero-fee transaction must not transfer native value")]
-    NonZeroValue,
-    /// The transaction calldata exceeds the policy limit.
-    #[error("zero-fee calldata size {size} exceeds limit {limit}")]
-    CalldataTooLarge {
-        /// Actual calldata size.
-        size: usize,
-        /// Maximum accepted calldata size.
-        limit: usize,
-    },
-    /// The transaction gas limit exceeds the policy limit.
-    #[error("zero-fee gas limit {gas_limit} exceeds limit {limit}")]
-    GasLimitTooHigh {
-        /// Actual gas limit.
-        gas_limit: u64,
-        /// Maximum accepted gas limit.
-        limit: u64,
-    },
-    /// The transaction's fee cap is below the public txpool protocol minimum.
-    #[error("zero-fee max_fee_per_gas {max_fee_per_gas} is below protocol minimum {minimum}")]
-    FeeCapTooLow {
-        /// Transaction max fee cap.
-        max_fee_per_gas: u128,
-        /// Minimum accepted fee cap.
-        minimum: u128,
-    },
-    /// The transaction selector matched, but ABI decoding failed.
-    #[error("zero-fee oracle vote calldata is malformed: {0}")]
-    MalformedCalldata(String),
-    /// The signer is not authorized to use this zero-fee policy.
-    #[error("zero-fee signer is not authorized for this transaction hook")]
-    UnauthorizedSigner,
-    /// The represented validator already submitted an oracle vote this period.
-    #[error("zero-fee oracle vote already exists for validator")]
-    AlreadyVoted,
-    /// Stateful precompile storage read failed.
-    #[error("zero-fee policy storage read failed: {0}")]
-    Storage(String),
-    /// The signer has already burned today's free-tx quota.
-    #[error("free-tx daily quota exhausted: used {used} of {limit}")]
-    FreeTxDailyExhausted {
-        /// Effective count already recorded for today.
-        used: u32,
-        /// Daily limit.
-        limit: u32,
-    },
-    /// Contract creation is not allowed through the free-tx path.
-    #[error("free-tx must not be a contract creation")]
-    FreeTxDailyContractCreationForbidden,
-    /// The sponsored tx envelope carries non-zero native value. Mirrors
-    /// the generic 102 `NonZeroValue` but gives off-chain integrators a
-    /// free-tx-specific code so wallets can present a clearer error.
-    #[error("free-tx must not transfer native value")]
-    FreeTxDailyValueNotZero,
-    /// The sponsored tx envelope exceeds its `(target, selector)` gas ceiling.
-    #[error("free-tx gas limit {gas_limit} exceeds free-tx limit {limit}")]
-    FreeTxDailyGasLimitExceeded {
-        /// Actual gas limit on the tx.
-        gas_limit: u64,
-        /// Selected sponsored-path maximum, default or operation-specific.
-        limit: u64,
-    },
-    /// The sponsored tx envelope exceeds the free-tx calldata cap.
-    #[error("free-tx calldata size {size} exceeds free-tx limit {limit}")]
-    FreeTxDailyCalldataTooLarge {
-        /// Actual calldata size.
-        size: usize,
-        /// Sponsored-path maximum from `FREE_TX_DAILY_CALLDATA_BYTES`.
-        limit: usize,
-    },
-    /// The transaction target is not in the protocol-defined whitelist
-    /// of outbe precompile addresses.
-    #[error("free-tx target {to:?} is not a whitelisted precompile address")]
-    FreeTxDailyTargetNotWhitelisted {
-        /// Attempted call target.
-        to: Address,
-    },
-}
-
-impl From<PrecompileError> for ZeroFeePolicyError {
-    fn from(value: PrecompileError) -> Self {
-        Self::Storage(value.to_string())
-    }
-}
-
-impl ZeroFeePolicyError {
-    /// Stable numeric code emitted in the `OutbeFailure(code, reason)` log
-    /// when the executor converts a zero-fee policy rejection into a
-    /// `status=0` receipt. Codes occupy the `100..=199` band reserved for
-    /// `outbe-zerofee` failure reasons
-    /// (`outbe_primitives::addresses::ZERO_FEE_POLICY_LOG_ADDRESS`).
-    ///
-    /// The values are part of the on-chain encoding and must not be
-    /// reordered or reused after they ship. The match is exhaustive, so a
-    /// new variant is a compile error until it gets a code.
-    pub const fn code(&self) -> u16 {
-        match self {
-            Self::UnknownHook(_) => 101,
-            Self::NonZeroValue => 102,
-            Self::CalldataTooLarge { .. } => 103,
-            Self::GasLimitTooHigh { .. } => 104,
-            Self::FeeCapTooLow { .. } => 105,
-            Self::MalformedCalldata(_) => 106,
-            Self::UnauthorizedSigner => 107,
-            Self::AlreadyVoted => 108,
-            Self::Storage(_) => 109,
-            Self::FreeTxDailyExhausted { .. } => 110,
-            Self::FreeTxDailyContractCreationForbidden => 112,
-            Self::FreeTxDailyValueNotZero => 113,
-            Self::FreeTxDailyGasLimitExceeded { .. } => 114,
-            Self::FreeTxDailyCalldataTooLarge { .. } => 115,
-            Self::FreeTxDailyTargetNotWhitelisted { .. } => 116,
-        }
-    }
-}
+pub use outbe_primitives::zero_fee_types::{
+    ZeroFeeAuthorization, ZeroFeeCandidate, ZeroFeeHookId, ZeroFeePolicyError, ZeroFeeTransaction,
+};
 
 #[cfg(test)]
 mod failure_code_tests {
     use super::*;
+    use alloy_primitives::Address;
 
     fn all_variants() -> Vec<ZeroFeePolicyError> {
         vec![
@@ -216,10 +30,12 @@ mod failure_code_tests {
                 max_fee_per_gas: 0,
                 minimum: 0,
             },
-            ZeroFeePolicyError::MalformedCalldata(String::new()),
+            ZeroFeePolicyError::MalformedCalldata(""),
             ZeroFeePolicyError::UnauthorizedSigner,
             ZeroFeePolicyError::AlreadyVoted,
-            ZeroFeePolicyError::Storage(String::new()),
+            ZeroFeePolicyError::from(outbe_primitives::error::PrecompileError::Storage(
+                String::new(),
+            )),
             ZeroFeePolicyError::FreeTxDailyExhausted { used: 0, limit: 0 },
             ZeroFeePolicyError::FreeTxDailyContractCreationForbidden,
             ZeroFeePolicyError::FreeTxDailyValueNotZero,
