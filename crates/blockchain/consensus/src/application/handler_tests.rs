@@ -453,7 +453,7 @@ fn finalizer_test_shared(
             p2p_addresses: Vec::new(),
         },
         chain_id: outbe_primitives::chain::CHAIN_ID,
-        block_order: outbe_primitives::test_utils::TEST_BLOCK_ORDER,
+        leader_policy: crate::test_fixtures::test_leader_policy(),
         repository_publication_enabled: false,
         repository_publication: Default::default(),
         marshal_mailbox,

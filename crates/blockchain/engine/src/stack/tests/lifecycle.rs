@@ -397,8 +397,10 @@ fn closed<T>() -> outbe_primitives::error::Result<T> {
 }
 
 impl outbe_consensus::protocol_state::EngineProtocolState for ClosedEngineState {
-    fn block_order(&self) -> outbe_primitives::block::BlockOrder {
-        outbe_primitives::block::BlockOrder::default()
+    fn system_tx_leader_policy(
+        &self,
+    ) -> outbe_primitives::system_tx::binding::SystemTxLeaderPolicy {
+        Default::default()
     }
 
     fn validator_rows(

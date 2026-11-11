@@ -78,7 +78,7 @@ pub(super) fn validate_envelopes(
     layout: &SystemTxLayout<'_>,
     header: &OutbeHeader,
     chain_id: u64,
-    block_order: &outbe_primitives::block::BlockOrder,
+    leader_policy: &outbe_primitives::system_tx::binding::SystemTxLeaderPolicy,
 ) -> Result<(), BlockValidationError> {
     for (index, tx) in layout.begin.iter().enumerate() {
         let tx = *tx;
@@ -96,7 +96,7 @@ pub(super) fn validate_envelopes(
         .map_err(BlockValidationError::BuildUnsignedSystemTx)?;
         if tx.signature_hash() != unsigned.signature_hash() {
             return Err(BlockValidationError::SignatureHashMismatch {
-                kind: block_order.step_name_or_stage(&input),
+                kind: (leader_policy.step_name_or_stage)(&input),
                 ordinal,
             });
         }
@@ -117,7 +117,7 @@ pub(super) fn validate_envelopes(
         .map_err(BlockValidationError::BuildUnsignedSystemTx)?;
         if tx.signature_hash() != unsigned.signature_hash() {
             return Err(BlockValidationError::SignatureHashMismatch {
-                kind: block_order.step_name_or_stage(&input),
+                kind: (leader_policy.step_name_or_stage)(&input),
                 ordinal,
             });
         }
@@ -145,10 +145,9 @@ pub(super) fn validate_signers(
 pub(super) fn validate_layout<'a>(
     body: &'a OutbeBlockBody,
     header: &OutbeHeader,
-    block_order: &outbe_primitives::block::BlockOrder,
+    leader_policy: &outbe_primitives::system_tx::binding::SystemTxLeaderPolicy,
 ) -> Result<(SystemTxLayout<'a>, OutbeBlockArtifacts), BlockValidationError> {
-    binding::validate_system_layout(body, header, block_order)
-        .map_err(BlockValidationError::from_layout_binding)
+    (leader_policy.validate_layout)(body, header).map_err(BlockValidationError::from_layout_binding)
 }
 
 #[cfg(test)]

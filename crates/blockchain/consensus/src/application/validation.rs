@@ -24,7 +24,7 @@ pub(crate) struct SystemTxLeaderValidationContext<'a> {
     pub(crate) round: Round,
     pub(crate) proposer: &'a PublicKey,
     pub(crate) chain_id: u64,
-    pub(crate) block_order: outbe_primitives::block::BlockOrder,
+    pub(crate) leader_policy: outbe_primitives::system_tx::binding::SystemTxLeaderPolicy,
     pub(crate) certificate_scheme_provider: &'a HybridSchemeProvider<MinSig>,
     pub(crate) committee_provider: &'a CommitteeProvider,
 }
@@ -98,7 +98,7 @@ pub(crate) fn validate_system_tx_leader_binding_for_activation(
     let raw_block = block.clone().into_inner().into_block();
     leader::validate_gas_limit(&raw_block.header)?;
     let (layout, artifacts) =
-        leader::validate_layout(&raw_block.body, &raw_block.header, &context.block_order)?;
+        leader::validate_layout(&raw_block.body, &raw_block.header, &context.leader_policy)?;
     if layout.system_tx_count() == 0 {
         return Ok(());
     }
@@ -108,7 +108,7 @@ pub(crate) fn validate_system_tx_leader_binding_for_activation(
         &layout,
         &raw_block.header,
         context.chain_id,
-        &context.block_order,
+        &context.leader_policy,
     )?;
     let expected = leader::consensus_leader_evm_address(&context)?;
     leader::validate_signers(&layout, expected)
@@ -146,14 +146,14 @@ mod tests {
             round,
             proposer,
             chain_id: outbe_primitives::chain::CHAIN_ID,
-            block_order: outbe_primitives::test_utils::TEST_BLOCK_ORDER,
+            leader_policy: crate::test_fixtures::test_leader_policy(),
             certificate_scheme_provider: providers.0,
             committee_provider: providers.1,
         }
     }
 
     #[test]
-    fn system_tx_validation_uses_context_block_order() {
+    fn system_tx_validation_uses_context_leader_policy() {
         let (keys, _) = participants();
         let signer = OutbeEvmSigner::from_secret_bytes([7; 32]).unwrap();
         let (scheme_provider, committee_provider) =
@@ -161,7 +161,7 @@ mod tests {
         let block = block_with_system_tx(&signer);
         let proposer = keys[0].public_key();
         let context = SystemTxLeaderValidationContext {
-            block_order: Default::default(),
+            leader_policy: Default::default(),
             ..leader_context(
                 Round::new(Epoch::new(0), View::new(1)),
                 &proposer,

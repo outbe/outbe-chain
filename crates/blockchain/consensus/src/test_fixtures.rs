@@ -50,11 +50,9 @@ use outbe_primitives::reshare_artifact::{
 };
 use outbe_primitives::signer::OutbeEvmSigner;
 use outbe_primitives::system_tx::{
-    build_unsigned_system_tx, BlockSystemPlan, SystemTx,
-    CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
-    CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX,
+    build_unsigned_system_tx, SystemTx, CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX,
+    CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX, CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX,
 };
-use outbe_primitives::test_utils::TEST_BLOCK_ORDER;
 use outbe_primitives::OutbeHeader;
 use reth_ethereum::{primitives::SealedBlock, Block};
 
@@ -411,11 +409,11 @@ pub(crate) fn block_with_gas_planned_system_inputs(
             .transactions
             .push(signer.sign_unsigned(unsigned).expect("system tx signs"));
     }
-    let plan = BlockSystemPlan::for_block(block_number, Default::default(), &TEST_BLOCK_ORDER);
-    for planned in plan.end_block_steps {
-        let input = SystemTx::EndBlock {
-            step_index: planned.id.step_index,
-        };
+    let end_inputs = (0..5).map(|step_index| SystemTx::EndBlock { step_index });
+    for input in end_inputs.filter(|_| {
+        outbe_primitives::block::BlockHeightRegime::for_block(block_number)
+            .has_end_block_system_txs()
+    }) {
         let unsigned = build_unsigned_system_tx(
             input.nonce_ordinal().expect("end ordinal"),
             block_number,
@@ -430,6 +428,150 @@ pub(crate) fn block_with_gas_planned_system_inputs(
     }
     let block = block.map_header(OutbeHeader::new);
     ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
+}
+
+/// Consensus fixtures validate wire membership and payloads without an execution schedule.
+pub(crate) fn test_leader_policy() -> outbe_primitives::system_tx::binding::SystemTxLeaderPolicy {
+    outbe_primitives::system_tx::binding::SystemTxLeaderPolicy {
+        validate_layout: validate_fixture_layout,
+        step_name_or_stage: SystemTx::stage_name,
+    }
+}
+
+fn validate_fixture_layout<'a>(
+    body: &'a outbe_primitives::OutbeBlockBody,
+    header: &OutbeHeader,
+) -> Result<
+    (
+        outbe_primitives::system_tx::SystemTxLayout<'a>,
+        outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
+    ),
+    outbe_primitives::system_tx::binding::LayoutBindingError,
+> {
+    use alloy_consensus::{BlockHeader as _, Transaction as _};
+    use outbe_primitives::{
+        block::{BlockHeightRegime, BlockSystemFlags},
+        system_tx::{
+            binding::LayoutBindingError, split_system_layout, SystemTxError, SystemTxStepId,
+        },
+    };
+    let artifacts =
+        outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(header.extra_data())
+            .map_err(LayoutBindingError::Artifacts)?;
+    let layout = split_system_layout(&body.transactions).map_err(LayoutBindingError::Layout)?;
+    let regime = BlockHeightRegime::for_block(header.number());
+    let flags = BlockSystemFlags::from_artifacts(&artifacts);
+    if regime.requires_genesis_bootstrap_txs() && !flags.has_boundary_outcome {
+        return Err(LayoutBindingError::Set(
+            SystemTxError::V2Block1MissingBoundaryOutcome,
+        ));
+    }
+    if !regime.allows_user_transactions()
+        && regime.has_system_tx_prefix()
+        && !layout.user.is_empty()
+    {
+        return Err(LayoutBindingError::Set(
+            SystemTxError::V2Block1ContainsUserTransactions {
+                actual: layout.user.len(),
+            },
+        ));
+    }
+    let expected_begin = fixture_prefix_steps(regime, flags);
+    let expected_end = if regime.has_end_block_system_txs() {
+        (0..5).map(SystemTxStepId::end_block).collect()
+    } else {
+        Vec::new()
+    };
+    let actual_begin = layout.prefix_steps().map_err(LayoutBindingError::Layout)?;
+    let actual_end = layout
+        .end_block_steps()
+        .map_err(LayoutBindingError::Layout)?;
+    if actual_begin != expected_begin || actual_end != expected_end {
+        return Err(LayoutBindingError::Set(
+            SystemTxError::ActiveSystemTxSetMismatch {
+                expected_begin,
+                expected_end,
+                actual_begin,
+                actual_end,
+            },
+        ));
+    }
+    for tx in layout.begin.iter().chain(&layout.end) {
+        let input = SystemTx::decode((*tx).input()).map_err(LayoutBindingError::Layout)?;
+        validate_fixture_payload(&input, header, &artifacts)?;
+    }
+    Ok((layout, artifacts))
+}
+
+fn fixture_prefix_steps(
+    regime: outbe_primitives::block::BlockHeightRegime,
+    flags: outbe_primitives::block::BlockSystemFlags,
+) -> Vec<outbe_primitives::system_tx::SystemTxStepId> {
+    use outbe_primitives::system_tx::SystemTxStepId;
+    if !regime.has_system_tx_prefix() {
+        return Vec::new();
+    }
+    let consensus = [
+        (0, regime.has_parent_finalization_accounting()),
+        (1, regime.has_parent_finalization_accounting()),
+        (
+            2,
+            regime.requires_genesis_bootstrap_txs() || flags.has_boundary_outcome,
+        ),
+        (3, regime.requires_genesis_bootstrap_txs()),
+        (4, true),
+        (5, flags.has_publication),
+    ];
+    consensus
+        .into_iter()
+        .filter(|(_, active)| *active)
+        .map(|(index, _)| SystemTxStepId::consensus(index))
+        .chain((0..9).map(SystemTxStepId::begin_block))
+        .collect()
+}
+
+fn validate_fixture_payload(
+    input: &SystemTx,
+    header: &OutbeHeader,
+    artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
+) -> Result<(), outbe_primitives::system_tx::binding::LayoutBindingError> {
+    use alloy_consensus::BlockHeader as _;
+    use outbe_primitives::system_tx::binding::{self, LayoutBindingError};
+    if let SystemTx::Consensus {
+        step_index,
+        payload,
+    } = input
+    {
+        match step_index {
+            0 => {
+                binding::validate_parent_accounting_payload(payload, header.parent_hash())
+                    .map_err(LayoutBindingError::ParentAccounting)?;
+            }
+            1 => {
+                binding::validate_late_finalize_credits_payload(payload, artifacts)
+                    .map_err(LayoutBindingError::LateCredits)?;
+            }
+            2 => {
+                binding::validate_boundary_outcome_payload(payload, artifacts)
+                    .map_err(LayoutBindingError::Boundary)?;
+            }
+            3 => {
+                binding::validate_tee_bootstrap_payload(payload, header.number())?;
+            }
+            5 => {
+                binding::validate_publication_payload(payload, artifacts)
+                    .map_err(LayoutBindingError::Publication)?;
+            }
+            _ if !payload.is_empty() => {
+                return Err(LayoutBindingError::UnexpectedNonEmptyPayload {
+                    module: "validator_liveness",
+                    len: payload.len(),
+                })
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// Steady-state begin zone with no boundary, tee bootstrap, or publication.
@@ -453,14 +595,7 @@ pub(crate) fn steady_begin_inputs(parent_hash: B256) -> Vec<SystemTx> {
             payload: Bytes::new(),
         },
     ];
-    let plan = BlockSystemPlan::for_block(2, Default::default(), &TEST_BLOCK_ORDER);
-    inputs.extend(
-        plan.begin_block_steps
-            .into_iter()
-            .map(|planned| SystemTx::BeginBlock {
-                step_index: planned.id.step_index,
-            }),
-    );
+    inputs.extend((0..9).map(|step_index| SystemTx::BeginBlock { step_index }));
     inputs
 }
 

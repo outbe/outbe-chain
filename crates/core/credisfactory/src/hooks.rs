@@ -21,14 +21,12 @@ impl ProtocolModule for CredisFactoryModule {
 mod tests {
     use super::*;
     use outbe_primitives::{
-        block::{end_step, BlockHeightRegime},
-        reshare_artifact::OutbeBlockArtifacts,
+        block::BlockHeightRegime, reshare_artifact::OutbeBlockArtifacts,
         system_tx_context::SystemTxBuildContext,
     };
 
     #[test]
     fn credis_factory_step_builds_an_empty_end_block_payload() {
-        let step = end_step::<CredisFactoryModule>();
         let artifacts = OutbeBlockArtifacts::default();
         let ctx = SystemTxBuildContext {
             regime: BlockHeightRegime::SteadyState,
@@ -39,8 +37,7 @@ mod tests {
             pending_tee_bootstrap: None,
             expected_tee_policy: None,
         };
-        assert_eq!(step.name, "credis_factory");
-        assert!(!step.revert_fails_block);
-        assert!((step.build_payload)(&ctx).unwrap().is_empty());
+        assert_eq!(CredisFactoryModule::NAME, "credis_factory");
+        assert!(CredisFactoryModule::build_payload(&ctx).unwrap().is_empty());
     }
 }

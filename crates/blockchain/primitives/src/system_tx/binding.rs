@@ -29,6 +29,53 @@ use crate::{
 use alloy_consensus::{BlockHeader as _, Transaction as _};
 use alloy_primitives::B256;
 
+/// Runtime-supplied layout validation without an execution-schedule dependency.
+pub type ValidateSystemLayoutFn =
+    for<'a> fn(
+        &'a OutbeBlockBody,
+        &OutbeHeader,
+    ) -> Result<(SystemTxLayout<'a>, OutbeBlockArtifacts), LayoutBindingError>;
+
+#[derive(Clone, Copy, Debug)]
+pub struct SystemTxLeaderPolicy {
+    pub validate_layout: ValidateSystemLayoutFn,
+    pub step_name_or_stage: fn(&SystemTx) -> &'static str,
+}
+
+impl Default for SystemTxLeaderPolicy {
+    fn default() -> Self {
+        Self {
+            validate_layout: |body, header| {
+                let artifacts = decode_outbe_block_artifacts(header.extra_data().as_ref())
+                    .map_err(LayoutBindingError::Artifacts)?;
+                let layout =
+                    split_system_layout(&body.transactions).map_err(LayoutBindingError::Layout)?;
+                if BlockHeightRegime::for_block(header.number()).has_system_tx_prefix() {
+                    return Err(LayoutBindingError::Set(SystemTxError::EmptyBlockOrder {
+                        block_number: header.number(),
+                    }));
+                }
+                if layout.system_tx_count() > 0 {
+                    return Err(LayoutBindingError::Set(
+                        SystemTxError::ActiveSystemTxSetMismatch {
+                            expected_begin: Vec::new(),
+                            expected_end: Vec::new(),
+                            actual_begin: layout
+                                .prefix_steps()
+                                .map_err(LayoutBindingError::Layout)?,
+                            actual_end: layout
+                                .end_block_steps()
+                                .map_err(LayoutBindingError::Layout)?,
+                        },
+                    ));
+                }
+                Ok((layout, artifacts))
+            },
+            step_name_or_stage: SystemTx::stage_name,
+        }
+    }
+}
+
 /// Failure stage while decoding artifacts and validating the system zones.
 #[derive(Debug, thiserror::Error)]
 pub enum LayoutBindingError {

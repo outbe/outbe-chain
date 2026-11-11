@@ -538,8 +538,19 @@ impl OutbeRpcStateReader for OutbeRuntime {
 }
 
 impl EngineProtocolState for OutbeRuntime {
-    fn block_order(&self) -> BlockOrder {
-        crate::system_tx::BLOCK_ORDER
+    fn system_tx_leader_policy(
+        &self,
+    ) -> outbe_primitives::system_tx::binding::SystemTxLeaderPolicy {
+        outbe_primitives::system_tx::binding::SystemTxLeaderPolicy {
+            validate_layout: |body, header| {
+                outbe_primitives::system_tx::binding::validate_system_layout(
+                    body,
+                    header,
+                    &crate::system_tx::BLOCK_ORDER,
+                )
+            },
+            step_name_or_stage: |tx| crate::system_tx::BLOCK_ORDER.step_name_or_stage(tx),
+        }
     }
 
     fn validator_rows(

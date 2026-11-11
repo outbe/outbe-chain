@@ -103,7 +103,9 @@ impl AccountingProgressView for StubProgress {
 //     `fsm_consensus_before_begin_block_at_block_1`) asserts that Phase 1
 //     consensus steps precede begin-block steps (including `CycleTick`) via the
 //     unified `BlockExecutionFsm` / `BlockOrder` contract that drives the
-//     executor.
+//     executor. Cycle declares its gate dependency through
+//     `ProtocolModule::NEEDS_CYCLE_ACTIVE_UTC_DAY`; execution reads it through
+//     `outbe_evm::system_tx::ProtocolStep::needs_cycle_active_utc_day`.
 //   * Gate DEPENDENCY - the behavioral tests below prove that the Cycle gate
 //     reads `last_accounted_block_number` and runs only after the parent is
 //     accounted. `*_boundary_cycle_runs_after_parent_accounted` covers the

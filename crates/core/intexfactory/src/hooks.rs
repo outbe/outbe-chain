@@ -26,14 +26,13 @@ impl ProtocolModule for IntexFactoryModule {
 mod tests {
     use super::*;
     use outbe_primitives::{
-        block::{end_step, BlockHeightRegime},
+        block::BlockHeightRegime,
         reshare_artifact::OutbeBlockArtifacts,
         system_tx_context::{SystemTxPayloadValidationError, SystemTxValidationContext},
     };
 
     #[test]
     fn intex_factory_step_rejects_unexpected_payload() {
-        let step = end_step::<IntexFactoryModule>();
         let artifacts = OutbeBlockArtifacts::default();
         let ctx = SystemTxValidationContext {
             regime: BlockHeightRegime::SteadyState,
@@ -42,7 +41,7 @@ mod tests {
             artifacts: &artifacts,
         };
         assert!(matches!(
-            (step.validate_payload)(&[1], &ctx),
+            IntexFactoryModule::validate_payload(&[1], &ctx),
             Err(SystemTxPayloadValidationError::UnexpectedNonEmptyPayload {
                 module: "intex_factory",
                 len: 1,

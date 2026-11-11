@@ -86,7 +86,7 @@ pub(super) struct HeaderArtifactRequest<'a> {
 /// Existing chain policy and read-only admission dependencies, borrowed for the request.
 pub(super) struct HeaderArtifactValidationDeps<'a, A: AncestryReader> {
     pub(super) chain_id: u64,
-    pub(super) block_order: outbe_primitives::block::BlockOrder,
+    pub(super) leader_policy: outbe_primitives::system_tx::binding::SystemTxLeaderPolicy,
     pub(super) certificate_scheme_provider: &'a HybridSchemeProvider<MinSig>,
     pub(super) committee_provider: &'a CommitteeProvider,
     pub(super) dkg_manager: &'a crate::dkg_manager::Mailbox,
@@ -106,7 +106,7 @@ pub(super) async fn validate_header_consensus_artifacts_for_activation(
     } = request;
     let HeaderArtifactValidationDeps {
         chain_id,
-        block_order,
+        leader_policy,
         certificate_scheme_provider,
         committee_provider,
         dkg_manager,
@@ -132,7 +132,7 @@ pub(super) async fn validate_header_consensus_artifacts_for_activation(
             round,
             proposer,
             chain_id,
-            block_order,
+            leader_policy,
             certificate_scheme_provider,
             committee_provider,
         },

@@ -1,17 +1,19 @@
 use alloy_primitives::B256;
 use outbe_primitives::{
-    block::BlockOrder, test_utils::TEST_BLOCK_ORDER, OutbeBlockBody, OutbeHeader,
+    system_tx::binding::{LayoutBindingError, SystemTxLeaderPolicy},
+    OutbeBlockBody, OutbeHeader,
 };
 
 #[test]
-fn layout_uses_injected_order_and_rejects_empty_order_after_genesis() {
+fn layout_uses_injected_policy_and_fails_closed_by_default() {
     let body = OutbeBlockBody::default();
     let mut header = OutbeHeader::default();
-    super::validate_layout(&body, &header, &BlockOrder::default()).expect("genesis needs no order");
+    super::validate_layout(&body, &header, &SystemTxLeaderPolicy::default())
+        .expect("genesis needs no policy");
     for number in [1, 2] {
         header.inner.number = number;
-        let error = super::validate_layout(&body, &header, &BlockOrder::default())
-            .expect_err("post-genesis validation must fail closed with no order");
+        let error = super::validate_layout(&body, &header, &SystemTxLeaderPolicy::default())
+            .expect_err("post-genesis validation must fail closed with no policy");
         assert!(
             matches!(error, crate::errors::BlockValidationError::LayoutBinding(
             outbe_primitives::system_tx::binding::LayoutBindingError::Set(
@@ -24,13 +26,61 @@ fn layout_uses_injected_order_and_rejects_empty_order_after_genesis() {
     let block = crate::test_fixtures::block_with_system_tx(&signer)
         .into_inner()
         .into_block();
-    super::validate_layout(&block.body, &block.header, &TEST_BLOCK_ORDER)
-        .expect("the injected test order accepts its complete fixture");
-    let missing_begin = BlockOrder {
-        begin_block: &[],
-        ..TEST_BLOCK_ORDER
+    super::validate_layout(
+        &block.body,
+        &block.header,
+        &crate::test_fixtures::test_leader_policy(),
+    )
+    .expect("the injected test policy accepts its complete fixture");
+    let rejecting_policy = SystemTxLeaderPolicy {
+        validate_layout: |_, _| {
+            Err(LayoutBindingError::Set(
+                outbe_primitives::system_tx::SystemTxError::V2Block1MissingBoundaryOutcome,
+            ))
+        },
+        ..crate::test_fixtures::test_leader_policy()
     };
-    assert!(super::validate_layout(&block.body, &block.header, &missing_begin).is_err());
+    assert!(matches!(
+        super::validate_layout(&block.body, &block.header, &rejecting_policy),
+        Err(crate::errors::BlockValidationError::LayoutBinding(
+            LayoutBindingError::Set(
+                outbe_primitives::system_tx::SystemTxError::V2Block1MissingBoundaryOutcome
+            )
+        ))
+    ));
+    let (layout, _) = super::validate_layout(
+        &block.body,
+        &block.header,
+        &crate::test_fixtures::test_leader_policy(),
+    )
+    .unwrap();
+    let named_policy = SystemTxLeaderPolicy {
+        step_name_or_stage: |_| "injected_step_name",
+        ..crate::test_fixtures::test_leader_policy()
+    };
+    assert!(matches!(
+        super::validate_envelopes(
+            &layout,
+            &block.header,
+            outbe_primitives::chain::CHAIN_ID + 1,
+            &named_policy
+        ),
+        Err(crate::errors::BlockValidationError::SignatureHashMismatch {
+            kind: "injected_step_name",
+            ordinal: 0,
+        })
+    ));
+    let mut genesis_body = block.body;
+    genesis_body.transactions.truncate(1);
+    header.inner.number = 0;
+    assert!(matches!(
+        super::validate_layout(&genesis_body, &header, &SystemTxLeaderPolicy::default()),
+        Err(crate::errors::BlockValidationError::LayoutBinding(
+            LayoutBindingError::Set(
+                outbe_primitives::system_tx::SystemTxError::ActiveSystemTxSetMismatch { .. }
+            )
+        ))
+    ));
 }
 
 #[test]
@@ -62,13 +112,22 @@ fn layout_rejects_malformed_parent_payload_and_preserves_parent_binding() {
         )
         .into_inner()
         .into_block();
-        assert!(super::validate_layout(&block.body, &block.header, &TEST_BLOCK_ORDER).is_err());
+        assert!(super::validate_layout(
+            &block.body,
+            &block.header,
+            &crate::test_fixtures::test_leader_policy()
+        )
+        .is_err());
     }
     let block = crate::test_fixtures::block_with_system_tx(&signer)
         .into_inner()
         .into_block();
-    let (layout, artifacts) =
-        super::validate_layout(&block.body, &block.header, &TEST_BLOCK_ORDER).unwrap();
+    let (layout, artifacts) = super::validate_layout(
+        &block.body,
+        &block.header,
+        &crate::test_fixtures::test_leader_policy(),
+    )
+    .unwrap();
     super::validate_parent_accounting(&layout, &block.header).unwrap();
     super::validate_boundary_outcome(&layout, &artifacts).unwrap();
     let mut wrong_parent = block.header;

@@ -76,8 +76,9 @@ pub enum EngineProtocolError {
 
 /// Object-safe chain reads used by the engine.
 pub trait EngineProtocolState: Send + Sync + 'static {
-    /// Runtime-defined ordering of active protocol modules.
-    fn block_order(&self) -> outbe_primitives::block::BlockOrder;
+    /// Runtime-defined system-transaction layout and step-name policy for leader validation.
+    fn system_tx_leader_policy(&self)
+        -> outbe_primitives::system_tx::binding::SystemTxLeaderPolicy;
 
     /// Validator rows for `query`, including each row's raw P2P address.
     fn validator_rows(
