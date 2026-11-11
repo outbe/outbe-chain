@@ -51,8 +51,6 @@ pub struct ConsensusStatus {
     #[serde(default)]
     pub connected_peers: u64,
     #[serde(default)]
-    pub is_active: bool,
-    #[serde(default)]
     pub has_threshold_shares: bool,
     #[serde(default)]
     pub last_finalized_block: u64,
@@ -62,17 +60,6 @@ pub struct ConsensusStatus {
     pub is_validator: bool,
     #[serde(default)]
     pub mode: String,
-    #[serde(default)]
-    pub enclave: Option<EnclaveStatus>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EnclaveStatus {
-    #[serde(default)]
-    pub ready: bool,
-    #[serde(default)]
-    pub offer_key_ready: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -80,24 +67,6 @@ pub struct ValidatorRecord {
     pub registered: bool,
     pub status: u8,
     pub has_bls_share: bool,
-}
-
-impl ConsensusStatus {
-    pub fn is_ready_signer(&self, record: &ValidatorRecord) -> bool {
-        if self.mode != "signer" || !self.is_active {
-            return false;
-        }
-        if !self.has_threshold_shares || self.connected_peers == 0 {
-            return false;
-        }
-        let Some(enclave) = self.enclave.as_ref() else {
-            return false;
-        };
-        if !enclave.ready || !enclave.offer_key_ready {
-            return false;
-        }
-        record.status == 2 && record.has_bls_share
-    }
 }
 
 #[derive(Serialize)]

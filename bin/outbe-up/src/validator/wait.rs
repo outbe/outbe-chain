@@ -1,6 +1,5 @@
 use std::time::{Duration, Instant};
 
-use alloy_primitives::Address;
 use eyre::{bail, ensure, Result};
 
 use crate::{
@@ -129,37 +128,6 @@ pub async fn wait_for_verifier(
     }
 }
 
-pub async fn wait_for_signer(
-    local: &RpcClient,
-    remote: &RpcClient,
-    validator: Address,
-    progress: &mut Progress,
-) -> Result<u64> {
-    loop {
-        let status = local.consensus_status().await?;
-        let record = remote.validator(validator).await?;
-        let remote_block = remote.finalized_block().await?;
-        let remaining = status
-            .next_planned_activation_height
-            .saturating_sub(remote_block.number);
-        let block_seconds = estimate_block_seconds(remote, &remote_block).await;
-        progress.update(&format!(
-            "DKG mode={} shares={} signers={} activation={} left={}{}",
-            status.mode,
-            yes_no(status.has_threshold_shares),
-            status.connected_peers,
-            status.next_planned_activation_height,
-            remaining,
-            eta_field(remaining, block_seconds)
-        ));
-        if status.is_ready_signer(&record) {
-            wait_for_sync(local, remote, progress).await?;
-            return Ok(status.next_planned_activation_height);
-        }
-        tokio::time::sleep(Duration::from_secs(5)).await;
-    }
-}
-
 pub async fn wait_transaction_finalized(
     remote: &RpcClient,
     hash: &str,
@@ -197,14 +165,6 @@ pub fn eta_suffix(blocks: u64, block_seconds: Option<f64>) -> String {
     };
     let seconds = (blocks as f64 * block_seconds).round() as u64;
     format!(", ~{}", human_duration(seconds))
-}
-
-fn eta_field(blocks: u64, block_seconds: Option<f64>) -> String {
-    let Some(block_seconds) = block_seconds else {
-        return String::new();
-    };
-    let seconds = (blocks as f64 * block_seconds).round() as u64;
-    format!(" eta=~{}", human_duration(seconds))
 }
 
 fn eta_seconds_field(seconds: Option<u64>) -> String {

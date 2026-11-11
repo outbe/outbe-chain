@@ -188,9 +188,7 @@ fn validate_runtime(root: &Path, environment: &BTreeMap<String, String>) -> Resu
 }
 
 fn validate_bundle(root: &Path) -> Result<()> {
-    for name in ["genesis.json", "SHA256SUMS"] {
-        required_file(&root.join(name))?;
-    }
+    required_file(&root.join("genesis.json"))?;
     for name in [
         "outbe-up",
         "outbe-chain",
@@ -202,8 +200,6 @@ fn validate_bundle(root: &Path) -> Result<()> {
     ] {
         required_executable(&root.join(name))?;
     }
-    process::capture_in("sha256sum", &["-c", "--quiet", "SHA256SUMS"], root)
-        .wrap_err("bundle checksum verification failed")?;
     Ok(())
 }
 

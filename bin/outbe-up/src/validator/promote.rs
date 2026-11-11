@@ -10,10 +10,7 @@ use crate::{
         path_text,
         rpc::RpcClient,
         validator_address,
-        wait::{
-            wait_for_rpc_chain, wait_for_signer, wait_for_sync, wait_for_verifier,
-            wait_transaction_finalized,
-        },
+        wait::{wait_for_rpc_chain, wait_for_sync, wait_for_verifier, wait_transaction_finalized},
         ENCLAVE_SERVICE, FULL_NODE, LOCAL_RPC, RENEW_TIMER, VALIDATOR_SERVICE, VALIDATOR_TARGET,
     },
 };
@@ -104,10 +101,8 @@ pub async fn run() -> Result<()> {
         wait_transaction_finalized(&remote, hash, &mut progress).await?;
     }
 
-    progress.stage("waiting for DKG signer activation");
-    let activation = wait_for_signer(&local, &remote, validator, &mut progress).await?;
     progress.done(&format!(
-        "validator {validator:#x} is active signer; DKG activation height {activation}"
+        "validator {validator:#x} is promoted; DKG activation continues in the background"
     ));
     Ok(())
 }

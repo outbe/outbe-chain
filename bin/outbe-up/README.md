@@ -17,8 +17,8 @@ binary version.
 `prepare` verifies the config, network, manifest, every bundled file, and the bootstrap binary. It
 then creates host-local identities and installs services without starting them. `sync` optionally
 restores a verified snapshot and synchronizes a keyless full node. `promote` performs TEE admission,
-bonds the network minimum stake, switches the same data directory to validator mode, and waits for
-DKG signer activation.
+bonds the network minimum stake, switches the same data directory to validator mode, and submits
+validator readiness. DKG activation continues in the background and is visible through `status`.
 
 The editable configuration example lives at
 `templates/validator/operator-config.example.yaml`. Systemd templates are embedded at build time

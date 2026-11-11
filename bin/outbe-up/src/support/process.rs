@@ -74,16 +74,6 @@ pub fn capture(program: impl AsRef<Path>, args: &[&str]) -> Result<String> {
     output_text(program, output)
 }
 
-pub fn capture_in(program: impl AsRef<Path>, args: &[&str], directory: &Path) -> Result<String> {
-    let program = program.as_ref();
-    let output = Command::new(program)
-        .args(args)
-        .current_dir(directory)
-        .output()
-        .wrap_err_with(|| format!("failed to execute {}", program.display()))?;
-    output_text(program, output)
-}
-
 pub fn command_succeeds(program: impl AsRef<Path>, args: &[&str]) -> bool {
     Command::new(program.as_ref())
         .args(args)
