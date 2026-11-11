@@ -16,7 +16,7 @@ pub mod v1_precompile;
 
 pub use bootstrap::{
     run_tee_bootstrap_v1, validate_tee_bootstrap_for_build, TeeBootstrapBuildError,
-    TeeBootstrapError,
+    TeeBootstrapError, TeeBootstrapModule,
 };
 pub use runtime::TeeBootstrapData;
 pub use schema::TeeRegistry;

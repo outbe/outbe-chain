@@ -7,9 +7,13 @@
 use std::collections::BTreeSet;
 use std::fmt::Display;
 
-use alloy_primitives::{Address, B256};
-use outbe_primitives::block::BlockRuntimeContext;
+use alloy_primitives::{Address, Bytes, B256};
+use outbe_primitives::block::{BlockRuntimeContext, ProtocolModule};
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::system_tx_context::{
+    SystemTxBuildContext, SystemTxPayloadBuildError, SystemTxPayloadValidationError,
+    SystemTxValidationContext,
+};
 use outbe_primitives::tee_attestation_v1::TeePolicyV1;
 use outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2;
 use outbe_primitives::tee_signatures::recover_signer;
@@ -17,6 +21,64 @@ use thiserror::Error;
 
 use crate::runtime::TeeBootstrapData;
 use crate::schema::TeeRegistry;
+
+/// Installs the authoritative block-1 policy and founding enclave bindings.
+pub struct TeeBootstrapModule;
+
+impl ProtocolModule for TeeBootstrapModule {
+    const NAME: &'static str = "tee_bootstrap";
+
+    fn build_payload(
+        ctx: &SystemTxBuildContext<'_>,
+    ) -> std::result::Result<Bytes, SystemTxPayloadBuildError> {
+        let payload = ctx
+            .pending_tee_bootstrap
+            .ok_or(SystemTxPayloadBuildError::MissingBlock1TeeBootstrapPayload)?;
+        if let Some(expected_policy) = ctx.expected_tee_policy {
+            validate_tee_bootstrap_for_build(payload, expected_policy).map_err(
+                |error| match error {
+                    TeeBootstrapBuildError::Block1Ost3PolicyScheduleMismatch => {
+                        SystemTxPayloadBuildError::Block1TeeBootstrapPolicyScheduleMismatch
+                    }
+                    TeeBootstrapBuildError::InvalidBlock1Ost3BootstrapPayload(error) => {
+                        SystemTxPayloadBuildError::InvalidBlock1TeeBootstrapPayload(error)
+                    }
+                },
+            )?;
+        } else {
+            payload.preflight()?;
+        }
+        Ok(outbe_primitives::tee_bootstrap_v2::codec::encode_canonical(
+            payload,
+        )?)
+    }
+
+    fn validate_payload(
+        payload: &[u8],
+        ctx: &SystemTxValidationContext<'_>,
+    ) -> std::result::Result<(), SystemTxPayloadValidationError> {
+        outbe_primitives::system_tx::binding::validate_tee_bootstrap_payload(
+            payload,
+            ctx.block_number,
+        )?;
+        Ok(())
+    }
+
+    fn begin_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+        let sys_ctx = ctx.system_tx()?;
+        let payload =
+            outbe_primitives::tee_bootstrap_v2::codec::decode_canonical(sys_ctx.payload.as_ref())
+                .map_err(|error| {
+                crate::errors::TeeRegistryError::codec_revert("TeeBootstrapV2", error)
+            })?;
+        let expected_policy = sys_ctx
+            .chain_spec_tee_policy
+            .as_ref()
+            .ok_or(TeeBootstrapError::TeePayloadPolicyNotAuthoritative)?;
+        TeeRegistry::new(ctx.storage.clone()).install_initial_policy_v1(expected_policy)?;
+        run_tee_bootstrap_v1(ctx, &payload, expected_policy)
+    }
+}
 
 /// Payload failures found while a block-1 system transaction is being built.
 ///
@@ -263,4 +325,73 @@ fn register_bootstrap_participants(
 ) -> Result<()> {
     let _ = (registry, payload);
     Err(TeeBootstrapError::RegistrationRequiresTeeAttestationV1.into())
+}
+
+#[cfg(test)]
+mod protocol_module_tests {
+    use super::*;
+    use outbe_primitives::{
+        block::{BlockContext, BlockHeightRegime},
+        reshare_artifact::OutbeBlockArtifacts,
+        storage::hashmap::HashMapStorageProvider,
+        system_tx_context::SystemTxContext,
+    };
+
+    #[test]
+    fn module_requires_bootstrap_payload_and_rejects_invalid_bytes() {
+        let artifacts = OutbeBlockArtifacts::default();
+        let build = SystemTxBuildContext {
+            regime: BlockHeightRegime::GenesisBootstrap,
+            block_number: 1,
+            parent_hash: B256::ZERO,
+            artifacts: &artifacts,
+            parent_consensus_metadata: None,
+            pending_tee_bootstrap: None,
+            expected_tee_policy: None,
+        };
+        assert!(matches!(
+            TeeBootstrapModule::build_payload(&build),
+            Err(SystemTxPayloadBuildError::MissingBlock1TeeBootstrapPayload)
+        ));
+        let validation = SystemTxValidationContext {
+            regime: build.regime,
+            block_number: 1,
+            parent_hash: B256::ZERO,
+            artifacts: &artifacts,
+        };
+        assert!(matches!(
+            TeeBootstrapModule::validate_payload(&[], &validation),
+            Err(SystemTxPayloadValidationError::TeeBootstrap {
+                block_number: 1,
+                ..
+            })
+        ));
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.enter(|storage| {
+            let mut ctx = BlockRuntimeContext::new(
+                BlockContext {
+                    block_number: 1,
+                    timestamp: 1,
+                    chain_id: 1,
+                    genesis_hash: B256::ZERO,
+                    genesis_timestamp: 1,
+                    proposer: Address::ZERO,
+                    validators: vec![],
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
+                },
+                storage,
+            );
+            assert!(TeeBootstrapModule::begin_block(&ctx).is_err());
+            ctx.system_tx = Some(SystemTxContext {
+                payload: Bytes::from_static(&[0xff]),
+                ..Default::default()
+            });
+            assert!(TeeBootstrapModule::begin_block(&ctx).is_err());
+            assert!(!TeeRegistry::new(ctx.storage.clone())
+                .is_bootstrapped()
+                .unwrap());
+        });
+        assert!(provider.storage.is_empty());
+    }
 }

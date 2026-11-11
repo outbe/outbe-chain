@@ -35,7 +35,7 @@ pub use accounting::{
 pub use errors::FinalizationError;
 pub use finalization::{
     authenticate_late_credit, run_finalization_and_slashing, run_late_finalize_credits,
-    validate_finalized_metadata,
+    validate_finalized_metadata, LateFinalizeCreditsModule, ParentAccountingModule,
 };
 pub use lifecycle::RewardsModule;
 

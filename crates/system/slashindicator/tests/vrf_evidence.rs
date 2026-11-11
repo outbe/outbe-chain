@@ -48,7 +48,9 @@ use outbe_primitives::consensus_metadata::{
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::protocol_schedule::OutbeProtocolSchedule;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
-use outbe_primitives::system_tx::{build_unsigned_system_tx, SystemTx};
+use outbe_primitives::system_tx::{
+    build_unsigned_system_tx, SystemTx, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+};
 use outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
 use outbe_promislimit::PromisLimitContract;
 use outbe_simplex::hybrid::HybridScheme;
@@ -240,8 +242,9 @@ fn sign_phase1_metadata_tx(
     signer: &PrivateKeySigner,
     metadata: &CertifiedParentAccountingMetadata,
 ) -> Vec<u8> {
-    let input = SystemTx::CertifiedParentAccounting {
-        metadata: metadata.clone(),
+    let input = SystemTx::Consensus {
+        step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+        payload: metadata.encode().unwrap(),
     }
     .encode()
     .unwrap();

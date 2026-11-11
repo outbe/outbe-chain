@@ -8,7 +8,7 @@ use outbe_primitives::{
 /// Deletes the spent series of the expired groups.
 pub use crate::cleanup::cleanup;
 
-/// Protocol module for `SystemTxKind::IntexFactory` (`OSIX`).
+/// Protocol module for the end-block Intex factory step.
 pub struct IntexFactoryModule;
 
 impl ProtocolModule for IntexFactoryModule {

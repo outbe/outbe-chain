@@ -5,7 +5,7 @@ use outbe_primitives::{
     error::Result,
 };
 
-/// Protocol module for `SystemTxKind::CredisFactory` (`OSCR`).
+/// Protocol module for the end-block Credis factory step.
 pub struct CredisFactoryModule;
 
 impl ProtocolModule for CredisFactoryModule {

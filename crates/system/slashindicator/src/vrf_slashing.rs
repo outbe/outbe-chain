@@ -9,7 +9,9 @@ use outbe_primitives::proof::{
     verify_seed_partial_attest_bytes, verify_v2_proof, CommitteeSnapshot, SeedPartialAttestation,
 };
 use outbe_primitives::protocol_schedule::OutbeProtocolSchedule;
-use outbe_primitives::system_tx::{recover_phase1_proposer, SystemTx};
+use outbe_primitives::system_tx::{
+    recover_phase1_proposer, SystemTx, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+};
 use outbe_primitives::time::iso8601_now;
 use outbe_system_common::slashing_journal::{record as journal_record, JournalRecord};
 use outbe_validatorset::contract::ValidatorSet;
@@ -242,11 +244,26 @@ impl SlashIndicator<'_> {
         let metadata = match SystemTx::decode(calldata.as_ref())
             .map_err(SlashIndicatorError::phase1_calldata_decode_failed)?
         {
-            SystemTx::CertifiedParentAccounting { metadata } => metadata,
+            SystemTx::Consensus {
+                step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+                payload,
+            } => {
+                let metadata = CertifiedParentAccountingMetadata::decode(payload.as_ref())
+                    .map_err(SlashIndicatorError::phase1_calldata_decode_failed)?;
+                let reencoded = metadata
+                    .encode()
+                    .map_err(SlashIndicatorError::phase1_calldata_decode_failed)?;
+                if reencoded.as_ref() != payload.as_ref() {
+                    return Err(SlashIndicatorError::phase1_calldata_decode_failed(
+                        "non-canonical parent accounting payload",
+                    ));
+                }
+                metadata
+            }
             other => {
                 return Err(
                     SlashIndicatorError::Phase1CalldataNotCertifiedParentAccounting {
-                        kind: other.name(),
+                        kind: other.stage_name(),
                     }
                     .into(),
                 );

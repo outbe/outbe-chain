@@ -20,6 +20,17 @@ impl ProtocolModule for EnclaveUpgradeDeadline {
     }
 }
 
+/// Runs the validator-liveness consensus step.
+pub struct ValidatorLivenessModule;
+
+impl ProtocolModule for ValidatorLivenessModule {
+    const NAME: &'static str = "validator_liveness";
+
+    fn begin_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+        run_validator_liveness(ctx)
+    }
+}
+
 /// Records the block proposer, then jails validators whose TEE lease has ended.
 pub fn run_validator_liveness(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     record_cycle_proposer(ctx)?;

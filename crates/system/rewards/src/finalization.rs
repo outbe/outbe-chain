@@ -6,15 +6,24 @@
 use std::collections::BTreeSet;
 use std::fmt::Display;
 
-use alloy_primitives::{Address, B256};
-use outbe_primitives::block::BlockRuntimeContext;
+use alloy_primitives::{Address, Bytes, B256};
+use outbe_primitives::block::{BlockRuntimeContext, MetadosisEntitlementContext, ProtocolModule};
 use outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K;
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::proof::verify_late_finalize_proof;
-use outbe_primitives::reshare_artifact::{LateFinalizeCreditsArtifact, PerBlockCredit};
-use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::system_tx_context::SystemTxExecutionContext;
+use outbe_primitives::reshare_artifact::{
+    decode_late_finalize_credits_artifact, encode_late_finalize_credits_artifact,
+    LateFinalizeCreditsArtifact, PerBlockCredit,
+};
+use outbe_primitives::storage::{
+    metadosis_late_settlement_binding, MetadosisMutationEntitlements, MetadosisMutationPurposeTag,
+    StorageHandle,
+};
+use outbe_primitives::system_tx_context::{
+    SystemTxBuildContext, SystemTxExecutionContext, SystemTxPayloadBuildError,
+    SystemTxPayloadValidationError, SystemTxValidationContext,
+};
 use outbe_validatorset::state::{committee_snapshot_key, read_committee_snapshot};
 
 use crate::accounting::record_phase1_progress;
@@ -22,6 +31,118 @@ use crate::block_fees::{self, WindowCloseInfo};
 use crate::errors::FinalizationError;
 use crate::runtime::{self, MetadataFingerprintOutcome};
 use crate::schema::Rewards;
+
+/// Applies certified parent accounting from the consensus payload.
+pub struct ParentAccountingModule;
+
+impl ProtocolModule for ParentAccountingModule {
+    const NAME: &'static str = "certified_parent_accounting";
+
+    fn build_payload(
+        ctx: &SystemTxBuildContext<'_>,
+    ) -> std::result::Result<Bytes, SystemTxPayloadBuildError> {
+        let metadata = ctx.parent_consensus_metadata.ok_or(
+            SystemTxPayloadBuildError::MissingParentConsensusMetadata {
+                block_number: ctx.block_number,
+            },
+        )?;
+        if metadata.finalized_block_hash != ctx.parent_hash {
+            return Err(
+                SystemTxPayloadBuildError::CertifiedParentAccountingHashMismatch {
+                    parent_hash: ctx.parent_hash,
+                    metadata_hash: metadata.finalized_block_hash,
+                },
+            );
+        }
+        Ok(metadata.encode()?)
+    }
+
+    fn validate_payload(
+        payload: &[u8],
+        ctx: &SystemTxValidationContext<'_>,
+    ) -> std::result::Result<(), SystemTxPayloadValidationError> {
+        outbe_primitives::system_tx::binding::validate_parent_accounting_payload(
+            payload,
+            ctx.parent_hash,
+        )?;
+        Ok(())
+    }
+
+    fn begin_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+        let sys_ctx = ctx.system_tx()?;
+        let metadata = CertifiedParentAccountingMetadata::decode(sys_ctx.payload.as_ref())?;
+        if metadata.encode()?.as_ref() != sys_ctx.payload.as_ref() {
+            return Err(PrecompileError::revert(
+                "non-canonical parent accounting payload",
+            ));
+        }
+        run_finalization_and_slashing(ctx, &metadata, &sys_ctx.to_execution_context(&ctx.block))
+    }
+}
+
+/// Applies canonical late-finality credits under their exact mutation binding.
+pub struct LateFinalizeCreditsModule;
+
+impl ProtocolModule for LateFinalizeCreditsModule {
+    const NAME: &'static str = "late_finalize_credits";
+
+    fn build_payload(
+        ctx: &SystemTxBuildContext<'_>,
+    ) -> std::result::Result<Bytes, SystemTxPayloadBuildError> {
+        Ok(encode_late_finalize_credits_artifact(
+            &ctx.artifacts
+                .late_finalize_credits
+                .clone()
+                .unwrap_or_default(),
+        )?)
+    }
+
+    fn validate_payload(
+        payload: &[u8],
+        ctx: &SystemTxValidationContext<'_>,
+    ) -> std::result::Result<(), SystemTxPayloadValidationError> {
+        outbe_primitives::system_tx::binding::validate_late_finalize_credits_payload(
+            payload,
+            ctx.artifacts,
+        )?;
+        Ok(())
+    }
+
+    fn mutation_entitlements(
+        ctx: MetadosisEntitlementContext<'_>,
+    ) -> MetadosisMutationEntitlements {
+        let Ok(artifact) = decode_late_finalize_credits_artifact(ctx.payload) else {
+            return MetadosisMutationEntitlements::NONE;
+        };
+        let Ok(reencoded) = encode_late_finalize_credits_artifact(&artifact.unwrap_or_default())
+        else {
+            return MetadosisMutationEntitlements::NONE;
+        };
+        if reencoded.as_ref() != ctx.payload {
+            return MetadosisMutationEntitlements::NONE;
+        }
+        MetadosisMutationEntitlements::exact(
+            MetadosisMutationPurposeTag::CertifiedFinality,
+            metadosis_late_settlement_binding(ctx.chain_id, ctx.block_number, ctx.timestamp),
+        )
+    }
+
+    fn begin_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+        let sys_ctx = ctx.system_tx()?;
+        let artifact =
+            decode_late_finalize_credits_artifact(sys_ctx.payload.as_ref())?.unwrap_or_default();
+        if encode_late_finalize_credits_artifact(&artifact)?.as_ref() != sys_ctx.payload.as_ref() {
+            return Err(PrecompileError::revert(
+                "non-canonical late-finalize credits payload",
+            ));
+        }
+        run_late_finalize_credits(
+            ctx,
+            &artifact,
+            Some(&sys_ctx.to_execution_context(&ctx.block)),
+        )
+    }
+}
 
 /// Checks committee shape, registration, missed proposers, and the signer bitmap.
 pub fn validate_finalized_metadata(
@@ -413,4 +534,150 @@ fn absentees_for_window(
         }
     }
     Ok(Some(absentees))
+}
+
+#[cfg(test)]
+mod protocol_module_tests {
+    use super::*;
+    use outbe_primitives::{
+        block::{BlockHeightRegime, MetadosisEntitlementContext, ProtocolModule},
+        reshare_artifact::{encode_late_finalize_credits_artifact, OutbeBlockArtifacts},
+        storage::{
+            metadosis_late_settlement_binding, MetadosisMutationEntitlements,
+            MetadosisMutationPurposeTag,
+        },
+        system_tx_context::{
+            SystemTxBuildContext, SystemTxPayloadBuildError, SystemTxValidationContext,
+        },
+    };
+
+    #[test]
+    fn parent_module_binds_payload_to_parent() {
+        let artifacts = OutbeBlockArtifacts::default();
+        let metadata = crate::test_support::meta_with_hash(B256::repeat_byte(1), 1);
+        let mut build = SystemTxBuildContext {
+            regime: BlockHeightRegime::SteadyState,
+            block_number: 2,
+            parent_hash: metadata.finalized_block_hash,
+            artifacts: &artifacts,
+            parent_consensus_metadata: None,
+            pending_tee_bootstrap: None,
+            expected_tee_policy: None,
+        };
+        assert!(matches!(
+            ParentAccountingModule::build_payload(&build),
+            Err(SystemTxPayloadBuildError::MissingParentConsensusMetadata { block_number: 2 })
+        ));
+        build.parent_consensus_metadata = Some(&metadata);
+        let payload = ParentAccountingModule::build_payload(&build).unwrap();
+        let mut validation = SystemTxValidationContext {
+            regime: build.regime,
+            block_number: 2,
+            parent_hash: build.parent_hash,
+            artifacts: &artifacts,
+        };
+        ParentAccountingModule::validate_payload(&payload, &validation).unwrap();
+        validation.parent_hash = B256::ZERO;
+        assert!(ParentAccountingModule::validate_payload(&payload, &validation).is_err());
+        build.parent_hash = B256::ZERO;
+        assert!(matches!(
+            ParentAccountingModule::build_payload(&build),
+            Err(SystemTxPayloadBuildError::CertifiedParentAccountingHashMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn late_module_grants_only_canonical_payload_entitlements() {
+        let payload =
+            encode_late_finalize_credits_artifact(&LateFinalizeCreditsArtifact::default()).unwrap();
+        let mut context = MetadosisEntitlementContext {
+            payload: &payload,
+            chain_id: 1,
+            block_number: 2,
+            timestamp: 100,
+            cycle_active_utc_day: None,
+        };
+        assert_eq!(
+            LateFinalizeCreditsModule::mutation_entitlements(context),
+            MetadosisMutationEntitlements::exact(
+                MetadosisMutationPurposeTag::CertifiedFinality,
+                metadosis_late_settlement_binding(1, 2, 100)
+            )
+        );
+        context.payload = &[0xff];
+        assert_eq!(
+            LateFinalizeCreditsModule::mutation_entitlements(context),
+            MetadosisMutationEntitlements::NONE
+        );
+    }
+
+    #[test]
+    fn late_module_rejects_unrelated_canonical_artifact_records() {
+        let artifacts = OutbeBlockArtifacts {
+            radicle_publication_enabled: true,
+            ..Default::default()
+        };
+        let payload =
+            outbe_primitives::reshare_artifact::encode_outbe_block_artifacts(&artifacts).unwrap();
+        assert!(
+            outbe_primitives::reshare_artifact::decode_late_finalize_credits_artifact(&payload)
+                .unwrap()
+                .is_none()
+        );
+        let context = MetadosisEntitlementContext {
+            payload: &payload,
+            chain_id: 1,
+            block_number: 2,
+            timestamp: 100,
+            cycle_active_utc_day: None,
+        };
+        assert_eq!(
+            LateFinalizeCreditsModule::mutation_entitlements(context),
+            MetadosisMutationEntitlements::NONE
+        );
+        crate::test_support::with_block(2, crate::test_support::GENESIS_TS + 60, |mut ctx| {
+            ctx.system_tx = Some(outbe_primitives::system_tx_context::SystemTxContext {
+                payload,
+                ..Default::default()
+            });
+            assert!(LateFinalizeCreditsModule::begin_block(&ctx).is_err());
+        });
+    }
+
+    #[test]
+    fn late_module_builds_and_validates_empty_default() {
+        let artifacts = OutbeBlockArtifacts::default();
+        let build = SystemTxBuildContext {
+            regime: BlockHeightRegime::SteadyState,
+            block_number: 2,
+            parent_hash: B256::ZERO,
+            artifacts: &artifacts,
+            parent_consensus_metadata: None,
+            pending_tee_bootstrap: None,
+            expected_tee_policy: None,
+        };
+        let payload = LateFinalizeCreditsModule::build_payload(&build).unwrap();
+        let validation = SystemTxValidationContext {
+            regime: build.regime,
+            block_number: build.block_number,
+            parent_hash: build.parent_hash,
+            artifacts: &artifacts,
+        };
+        LateFinalizeCreditsModule::validate_payload(&payload, &validation).unwrap();
+        assert!(LateFinalizeCreditsModule::validate_payload(&[0xff], &validation).is_err());
+    }
+
+    #[test]
+    fn modules_reject_missing_context_and_malformed_execution_payloads() {
+        crate::test_support::with_block(2, crate::test_support::GENESIS_TS + 60, |mut ctx| {
+            assert!(ParentAccountingModule::begin_block(&ctx).is_err());
+            assert!(LateFinalizeCreditsModule::begin_block(&ctx).is_err());
+            ctx.system_tx = Some(outbe_primitives::system_tx_context::SystemTxContext {
+                payload: vec![0xff].into(),
+                ..Default::default()
+            });
+            assert!(ParentAccountingModule::begin_block(&ctx).is_err());
+            assert!(LateFinalizeCreditsModule::begin_block(&ctx).is_err());
+        });
+    }
 }
