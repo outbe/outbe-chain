@@ -7,8 +7,6 @@
 //! `outbe-rewards -> outbe-emissionlimit` re-export.
 
 use alloy_primitives::U256;
-use alloy_sol_types::SolError;
-
 use outbe_agentreward::api::{allocate_day_agent_rewards, process_agent_rewards, DayAgentPools};
 use outbe_emission::{
     allocation::{allocate_emission, EmissionSinkId},
@@ -420,16 +418,6 @@ fn is_recoverable_wwd_advance_error(err: &PrecompileError) -> bool {
     )
 }
 
-fn encode_recoverable_step_reason(err: &PrecompileError) -> alloy_primitives::Bytes {
-    match err {
-        PrecompileError::RevertBytes(bytes) => bytes.clone(),
-        PrecompileError::Revert(msg) => {
-            alloy_primitives::Bytes::from(alloy_sol_types::Revert::from(msg.as_str()).abi_encode())
-        }
-        _ => alloy_primitives::Bytes::new(),
-    }
-}
-
 fn run_advance_worldwide_days_step(ctx: &BlockRuntimeContext, block_utc_day: u32) -> Result<()> {
     match ctx
         .storage
@@ -437,7 +425,6 @@ fn run_advance_worldwide_days_step(ctx: &BlockRuntimeContext, block_utc_day: u32
     {
         Ok(()) => Ok(()),
         Err(err) if is_recoverable_wwd_advance_error(&err) => {
-            let reason = encode_recoverable_step_reason(&err);
             tracing::warn!(
                 target: "outbe::cycle",
                 block_number = ctx.block.block_number,
@@ -446,13 +433,6 @@ fn run_advance_worldwide_days_step(ctx: &BlockRuntimeContext, block_utc_day: u32
                 error = ?err,
                 "advance_worldwide_days step reverted; inner checkpoint rolled back"
             );
-            outbe_tributefactory::TributeFactoryContract::new(ctx.storage.clone()).emit(
-                outbe_tributefactory::precompile::ITributeFactory::WorldwideDayAdvanceFailed {
-                    utcDay: block_utc_day,
-                    blockTimestamp: ctx.block.timestamp,
-                    reason,
-                },
-            )?;
             Ok(())
         }
         Err(err) => Err(err),
@@ -530,7 +510,7 @@ fn record_failed_metadosis_fallback(ctx: &BlockRuntimeContext) -> Result<()> {
 /// 1. `settle_emission_day` (step A4) for the oldest unallocated day `E_next` in its own
 ///    checkpoint with fallback to `record_failed_day_allocation` + `PromisLimit`.
 /// 2. `advance_worldwide_days` (step A6) once per UTC day at 00:00 UTC in its own checkpoint,
-///    emitting `WorldwideDayAdvanceFailed` and retrying on the next hour if it reverts.
+///    logging the cause and retrying on the next hour if it reverts.
 /// 3. `start_metadosis` (step A7) for the oldest `state == PROCESSING` day in its own checkpoint
 ///    with fallback to `record_metadosis_failed` + `PromisLimit`.
 pub fn run_protocol_cycle(ctx: &BlockRuntimeContext) -> Result<()> {

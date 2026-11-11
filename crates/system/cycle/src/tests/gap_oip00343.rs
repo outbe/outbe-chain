@@ -1,7 +1,6 @@
 //! OIP-00343 proof tests for `ED01`, `ED03`, and `ED54`.
 
 use alloy_primitives::U256;
-use alloy_sol_types::{SolError, SolEvent};
 use outbe_emission::day_emission::day_emission_limit;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
@@ -14,7 +13,7 @@ use outbe_primitives::{
         SECONDS_PER_DAY,
     },
 };
-use outbe_tributefactory::{precompile::ITributeFactory, TributeFactoryContract};
+use outbe_tributefactory::TributeFactoryContract;
 
 use super::*;
 
@@ -387,13 +386,14 @@ fn gap_ed54_wwd_step_runs_once_a_day() {
     // Verify:
     // - Step A4 (`settle_emission_day(20240105)`) still commits (`state == PROCESSING`).
     // - Step A6 rolls back its inner checkpoint (`last_wwd_advance_day` stays 20240105, WWD 20240101
-    //   remains unsealed in `pipeline_wwd`) and emits `WorldwideDayAdvanceFailed` with non-empty reason.
+    //   remains unsealed in `pipeline_wwd`) and emits no event.
     // - Step A7 (`start_metadosis`) runs cleanly and defers EmissionDay 20240105 because WWD 20240101
     //   is not yet sealed (`metadosis_state == PENDING`).
     storage.enter(|handle| {
         outbe_emission::api::link_wwd(handle, 20_240_111, WorldwideDay::new(20_240_120)).unwrap();
     });
     let ts_day6_00h = GENESIS_TS + 5 * SECONDS_PER_DAY;
+    let factory_events_before_failed_a6 = storage.get_events(TRIBUTE_FACTORY_ADDRESS).len();
     storage.set_block_number(block_no);
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 8);
     storage.enter(|handle| {
@@ -427,16 +427,10 @@ fn gap_ed54_wwd_step_runs_once_a_day() {
             "A7 must defer 20240105 while WWD 20240101 is unsealed"
         );
     });
-    let failed_event = storage
-        .get_events(TRIBUTE_FACTORY_ADDRESS)
-        .iter()
-        .find_map(|log| ITributeFactory::WorldwideDayAdvanceFailed::decode_log_data(log).ok())
-        .expect("WorldwideDayAdvanceFailed must be emitted when A6 reverts");
-    assert_eq!(failed_event.utcDay, 20_240_106);
-    assert_eq!(failed_event.blockTimestamp, ts_day6_00h);
-    assert!(
-        !failed_event.reason.is_empty(),
-        "WorldwideDayAdvanceFailed.reason must carry the revert payload"
+    assert_eq!(
+        storage.get_events(TRIBUTE_FACTORY_ADDRESS).len(),
+        factory_events_before_failed_a6,
+        "a reverted A6 must emit no TributeFactory event"
     );
     block_no += 1;
 
@@ -501,12 +495,12 @@ fn gap_ed54_wwd_step_runs_once_a_day() {
         );
     });
 
-    // Also verify end-to-end that `PrecompileError::Revert(String)` inside A6 is caught,
-    // rolled back, and ABI-encoded as Solidity `Error(string)` in `WorldwideDayAdvanceFailed.reason`.
+    // Also verify that `PrecompileError::Revert(String)` inside A6 is caught and emits no event.
     // At 2024-01-07 00:00 UTC, grant 1 mutation frame so A4 (`dispatch_terminal_remainder_at`)
     // succeeds and A6 (`advance_worldwide_days_command`) hits `PrecompileError::Revert(String)`.
     block_no += 1;
     let ts_day7_00h = GENESIS_TS + 6 * SECONDS_PER_DAY;
+    let factory_events_before_text_revert = storage.get_events(TRIBUTE_FACTORY_ADDRESS).len();
     storage.set_block_number(block_no);
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 1);
     storage.enter(|handle| {
@@ -526,17 +520,9 @@ fn gap_ed54_wwd_step_runs_once_a_day() {
         // Settle previous day (A4) consumes the 1 frame; A6 reverts with `PrecompileError::Revert(String)`.
         crate::handler::run_protocol_cycle(&ctx).expect_err("A7 has 0 frames left after A6");
     });
-    let revert_str_event = storage
-        .get_events(TRIBUTE_FACTORY_ADDRESS)
-        .iter()
-        .filter_map(|log| ITributeFactory::WorldwideDayAdvanceFailed::decode_log_data(log).ok())
-        .find(|ev| ev.utcDay == 20_240_107)
-        .expect("WorldwideDayAdvanceFailed must be emitted when A6 reverts with Revert(String)");
-    let decoded = alloy_sol_types::Revert::abi_decode(&revert_str_event.reason)
-        .expect("Revert(String) reason must be ABI-encoded as Error(string)");
     assert_eq!(
-        decoded.reason, "test provider has no matching Metadosis mutation lease",
-        "unexpected decoded Error(string): {}",
-        decoded.reason
+        storage.get_events(TRIBUTE_FACTORY_ADDRESS).len(),
+        factory_events_before_text_revert,
+        "a text revert of A6 must emit no TributeFactory event"
     );
 }
