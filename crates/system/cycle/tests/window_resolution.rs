@@ -99,10 +99,10 @@ impl AccountingProgressView for StubProgress {
 // Cycle dispatcher" invariant REALLY (no source-text scanning):
 //
 //   * Phase ORDER - `crates/blockchain/primitives/tests/system_tx_phase1_reorder.rs`
-//     (`phase1_receipt_index_0_before_cycle_tick`,
-//     `phase1_reordering_preserves_body_receipt_order`) asserts that Phase 1
-//     owns body_index 0 and CycleTick owns body_index 1. It uses the real
-//     `expected_begin_block_selectors` / `SystemTxPhase` routing API that drives the
+//     (`phase1_reordering_preserves_body_receipt_order`,
+//     `fsm_consensus_before_begin_block_at_block_1`) asserts that Phase 1
+//     consensus steps precede begin-block steps (including `CycleTick`) via the
+//     unified `BlockExecutionFsm` / `BlockOrder` contract that drives the
 //     executor.
 //   * Gate DEPENDENCY - the behavioral tests below prove that the Cycle gate
 //     reads `last_accounted_block_number` and runs only after the parent is
