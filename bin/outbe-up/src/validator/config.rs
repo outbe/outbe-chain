@@ -27,8 +27,8 @@ pub struct OperatorConfig {
 pub struct NetworkConfig {
     pub chain_id: u64,
     /// Genesis block hash, lowercase without a 0x prefix.
-    pub genesis_hash: String,
-    pub genesis_sha256: String,
+    pub genesis_block_hash: String,
+    pub genesis_file_sha256: String,
     pub certified_rpc: String,
     pub external_ip: Ipv4Addr,
     pub bootnodes: Vec<String>,
@@ -167,12 +167,12 @@ impl OperatorConfig {
             "network.chain_id must be positive"
         );
         ensure!(
-            is_sha256(&self.network.genesis_hash),
-            "network.genesis_hash must be 64 lowercase hex characters"
+            is_sha256(&self.network.genesis_block_hash),
+            "network.genesis_block_hash must be 64 lowercase hex characters"
         );
         ensure!(
-            is_sha256(&self.network.genesis_sha256),
-            "network.genesis_sha256 must be 64 lowercase hex characters"
+            is_sha256(&self.network.genesis_file_sha256),
+            "network.genesis_file_sha256 must be 64 lowercase hex characters"
         );
         ensure!(
             self.network.certified_rpc.starts_with("http://")
@@ -261,8 +261,8 @@ mod tests {
 version: 1
 network:
   chain_id: 424242
-  genesis_hash: {}
-  genesis_sha256: {}
+  genesis_block_hash: {}
+  genesis_file_sha256: {}
   certified_rpc: https://rpc.example
   external_ip: 192.0.2.10
   bootnodes: ["enode://abc@192.0.2.1:30303"]

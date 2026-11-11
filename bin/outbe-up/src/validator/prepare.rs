@@ -28,7 +28,8 @@ pub async fn run(bundle_path: &Path, config_path: &Path) -> Result<()> {
     );
     let remote_genesis = remote.block_number(0).await?.hash;
     ensure!(
-        remote_genesis.strip_prefix("0x").unwrap_or(&remote_genesis) == config.network.genesis_hash,
+        remote_genesis.strip_prefix("0x").unwrap_or(&remote_genesis)
+            == config.network.genesis_block_hash,
         "certified RPC genesis hash does not match operator config"
     );
     let minimum_stake = remote.min_stake().await?;
@@ -113,7 +114,7 @@ fn verify_bootstrap_binary(root: &Path) -> Result<()> {
 fn verify_bundle_network(root: &Path, config: &OperatorConfig) -> Result<()> {
     let genesis = root.join("genesis.json");
     ensure!(
-        bundle::digest_file(&genesis)? == config.network.genesis_sha256,
+        bundle::digest_file(&genesis)? == config.network.genesis_file_sha256,
         "genesis.json checksum does not match operator config"
     );
     let value: serde_json::Value = serde_json::from_slice(&fs::read(&genesis)?)?;

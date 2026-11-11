@@ -21,7 +21,7 @@ pub fn restore(path: &Path, config: &OperatorConfig, resume: bool) -> Result<u64
         config.network.chain_id
     );
     ensure!(
-        index.manifest.genesis_hash == config.network.genesis_hash,
+        index.manifest.genesis_hash == config.network.genesis_block_hash,
         "snapshot genesis hash does not match operator config"
     );
     if resume {
