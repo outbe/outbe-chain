@@ -1,5 +1,5 @@
 use super::*;
-use outbe_primitives::system_tx::SystemTxPhase;
+use outbe_primitives::system_tx::BlockExecutionStage;
 
 #[test]
 fn begin_block_system_tx_rejection_preserves_logs_and_begin_receipt_accounting() {
@@ -28,18 +28,27 @@ fn begin_block_system_tx_rejection_preserves_logs_and_begin_receipt_accounting()
         },
     );
     let cycle_tx = begin.last().unwrap().clone();
-    let ordinal = u8::try_from(begin.len() - 1).unwrap();
+    let ordinal = begin.len() - 1;
     let mut state = state_with_active_proposer(proposer);
     let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
     let mut ctx = execution_ctx(None, Bytes::new());
     ctx.inner.parent_hash = parent;
     ctx.proposer_evm_address = Some(proposer);
     ctx.parent_consensus_metadata = Some(metadata);
-    ctx.expected_begin_system_txs = begin;
+    ctx.expected_begin_system_txs = begin.clone();
     let mut executor = config.create_executor(evm, ctx);
-    executor.system_tx_phase_cursor = SystemTxPhase::CycleTick {
-        body_index: ordinal,
-    };
+    executor.fsm = outbe_primitives::system_tx::BlockExecutionFsm::for_block(
+        2,
+        Default::default(),
+        &outbe_runtime::BLOCK_ORDER,
+    );
+    for tx in begin.iter().take(ordinal) {
+        executor
+            .fsm
+            .on_system_tx(&SystemTx::decode(tx.tx().input()).unwrap())
+            .unwrap();
+    }
+    let fsm_before = executor.fsm.clone();
     let block_gas_limit = executor.inner.evm.block().gas_limit();
     executor.inner.cumulative_tx_gas_used = block_gas_limit;
     assert!(
@@ -49,12 +58,7 @@ fn begin_block_system_tx_rejection_preserves_logs_and_begin_receipt_accounting()
         .is_err()
     );
     assert!(executor.receipts().is_empty());
-    assert_eq!(
-        executor.system_tx_phase_cursor,
-        SystemTxPhase::CycleTick {
-            body_index: ordinal
-        }
-    );
+    assert_eq!(executor.fsm, fsm_before);
     assert_eq!(executor.inner.cumulative_tx_gas_used, block_gas_limit);
     assert_eq!(executor.system_tx_execution_gas, 0);
 }
@@ -78,11 +82,11 @@ fn end_block_soft_failure_receipt_preserves_cleanup_budget_and_continues_block()
     // Force a revert on all 5 END_BLOCK_ORDER kinds in turn (0 visible gas, emits a
     // soft-failure receipt with status = false, advances cursor, and continues block).
     for (idx, (input, expected_cursor)) in [
-        (SystemTx::NodFactory, SystemTxPhase::EndBlockGemFactory),
-        (SystemTx::GemFactory, SystemTxPhase::EndBlockIntexFactory),
-        (SystemTx::IntexFactory, SystemTxPhase::EndBlockCredisFactory),
-        (SystemTx::CredisFactory, SystemTxPhase::EndBlockGemCleanup),
-        (SystemTx::GemCleanup, SystemTxPhase::EndBlock),
+        (SystemTx::EndBlock { step_index: 0 }, 1),
+        (SystemTx::EndBlock { step_index: 1 }, 2),
+        (SystemTx::EndBlock { step_index: 2 }, 3),
+        (SystemTx::EndBlock { step_index: 3 }, 4),
+        (SystemTx::EndBlock { step_index: 4 }, 5),
     ]
     .into_iter()
     .enumerate()
@@ -99,11 +103,19 @@ fn end_block_soft_failure_receipt_preserves_cleanup_budget_and_continues_block()
         assert_eq!(executor.receipts().len(), idx + 1);
         assert!(!executor.receipts()[idx].success);
         assert_eq!(executor.receipts()[idx].cumulative_gas_used, 0);
-        assert_eq!(executor.system_tx_phase_cursor, expected_cursor);
+        assert_eq!(executor.fsm.end_cursor(), expected_cursor);
+        assert_eq!(
+            executor.fsm.stage(),
+            if expected_cursor == 5 {
+                BlockExecutionStage::Completed
+            } else {
+                BlockExecutionStage::EndBlock
+            }
+        );
     }
     assert_eq!(executor.receipts().len(), 5);
     assert!(executor.receipts().iter().all(|r| !r.success));
-    assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::EndBlock);
+    assert_eq!(executor.fsm.stage(), BlockExecutionStage::Completed);
     executor.prepare_final_header_artifacts(0).unwrap();
     let (_, result) = executor.finish().unwrap();
     assert_eq!(result.receipts.len(), 5);
@@ -121,8 +133,8 @@ fn all_soft_fail_kinds_abort_block_on_fatal_system_call_error() {
 
     // 1. BeginBlock soft-fail kinds (OracleSlash, HyperlaneSlash) abort block on Fatal/system error.
     for target_kind in [
-        outbe_primitives::system_tx::SystemTxKind::OracleSlash,
-        outbe_primitives::system_tx::SystemTxKind::HyperlaneSlash,
+        SystemTx::BeginBlock { step_index: 6 },
+        SystemTx::BeginBlock { step_index: 7 },
     ] {
         let mut state = state_with_active_proposer_and_funded_account(proposer, Address::ZERO);
         let parent_hash = B256::with_last_byte(0x41);
@@ -144,7 +156,7 @@ fn all_soft_fail_kinds_abort_block_on_fatal_system_call_error() {
             },
         ) {
             let decoded = SystemTx::decode(tx.tx().input().as_ref()).unwrap();
-            if decoded.kind() == target_kind {
+            if decoded == target_kind {
                 let receipts_before = executor.receipts().len();
                 let res = outbe_evm::factory::with_forced_outbe_system_call_error(|| {
                     executor.execute_transaction(tx)
@@ -166,11 +178,11 @@ fn all_soft_fail_kinds_abort_block_on_fatal_system_call_error() {
 
     // 2. EndBlock soft-fail kinds (OSND..OSGC) abort block on Fatal/system error.
     let end_inputs = [
-        SystemTx::NodFactory,
-        SystemTx::GemFactory,
-        SystemTx::IntexFactory,
-        SystemTx::CredisFactory,
-        SystemTx::GemCleanup,
+        SystemTx::EndBlock { step_index: 0 },
+        SystemTx::EndBlock { step_index: 1 },
+        SystemTx::EndBlock { step_index: 2 },
+        SystemTx::EndBlock { step_index: 3 },
+        SystemTx::EndBlock { step_index: 4 },
     ];
     for target_idx in 0..end_inputs.len() {
         let mut state = state_with_active_proposer(proposer);
@@ -229,13 +241,13 @@ fn end_block_soft_fail_rolls_back_dirty_storage_writes_and_logs_preserving_earli
 
     // 1. OSND succeeds.
     let nod_tx = config
-        .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::NodFactory)
+        .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::EndBlock { step_index: 0 })
         .unwrap();
     executor.execute_transaction(nod_tx).unwrap();
 
     // 2. OSGM writes dirty storage + emits dirty log, then reverts (soft-fail).
     let gem_tx = config
-        .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::GemFactory)
+        .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::EndBlock { step_index: 1 })
         .unwrap();
     let dirty_addr = outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
     let dirty_slot = U256::from(0xDEAD_BEEFu64);
@@ -266,16 +278,16 @@ fn end_block_soft_fail_rolls_back_dirty_storage_writes_and_logs_preserving_earli
 
     // 3. Remaining EndBlock system txs (OSIX, OSCR, OSGC) continue and succeed.
     for input in [
-        SystemTx::IntexFactory,
-        SystemTx::CredisFactory,
-        SystemTx::GemCleanup,
+        SystemTx::EndBlock { step_index: 2 },
+        SystemTx::EndBlock { step_index: 3 },
+        SystemTx::EndBlock { step_index: 4 },
     ] {
         let tx = config
             .build_end_system_tx(2, CHAIN_ID, proposer, input)
             .unwrap();
         executor.execute_transaction(tx).unwrap();
     }
-    assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::EndBlock);
+    assert_eq!(executor.fsm.stage(), BlockExecutionStage::Completed);
     assert_eq!(executor.receipts().len(), 5);
     assert!(executor.receipts()[0].success);
     assert!(!executor.receipts()[1].success);
@@ -320,11 +332,11 @@ fn end_block_out_of_gas_emits_zero_gas_failure_receipts_and_continues_block() {
     executor.inner.block_regular_gas_used = user_gas_before;
 
     for input in [
-        SystemTx::NodFactory,
-        SystemTx::GemFactory,
-        SystemTx::IntexFactory,
-        SystemTx::CredisFactory,
-        SystemTx::GemCleanup,
+        SystemTx::EndBlock { step_index: 0 },
+        SystemTx::EndBlock { step_index: 1 },
+        SystemTx::EndBlock { step_index: 2 },
+        SystemTx::EndBlock { step_index: 3 },
+        SystemTx::EndBlock { step_index: 4 },
     ] {
         let tx = config
             .build_end_system_tx(2, CHAIN_ID, proposer, input)
@@ -337,7 +349,7 @@ fn end_block_out_of_gas_emits_zero_gas_failure_receipts_and_continues_block() {
         assert_eq!(gas, 0);
     }
 
-    assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::EndBlock);
+    assert_eq!(executor.fsm.stage(), BlockExecutionStage::Completed);
     assert_eq!(executor.receipts().len(), 5);
     for receipt in executor.receipts() {
         assert!(

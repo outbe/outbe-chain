@@ -1,5 +1,5 @@
 use super::*;
-use outbe_primitives::system_tx::SysTxSelector;
+use outbe_primitives::system_tx::SystemTxStepId;
 pub(super) fn state_with_active_and_registered_candidate(
     active: Address,
     candidate: Address,
@@ -98,14 +98,14 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
         .build()
 }
 
-pub(super) fn begin_system_tx_selectors(
+pub(super) fn begin_system_tx_steps(
     txs: &[reth_primitives_traits::Recovered<reth_ethereum::TransactionSigned>],
-) -> Vec<SysTxSelector> {
+) -> Vec<SystemTxStepId> {
     txs.iter()
         .map(|tx| {
             SystemTx::decode(tx.tx().input().as_ref())
                 .expect("begin-zone calldata decodes")
-                .selector()
+                .step_id()
         })
         .collect()
 }

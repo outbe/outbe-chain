@@ -90,7 +90,8 @@ fn base_fee_is_burned_tip_reaches_rewards_and_promis_limit_receives_burned_fee()
         },
     };
     let evm = config.evm_with_env(&mut state, evm_env);
-    let ctx = execution_ctx(Some(1), Bytes::new());
+    let mut ctx = execution_ctx(Some(1), Bytes::new());
+    ctx.execute_outbe_block_hooks = false;
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
         fixtures::executor_inputs_from_ctx(&ctx, None, false),
@@ -328,7 +329,8 @@ fn scenario_a_paid_reverted_and_declined_txs_settle_burned_base_fees() {
         },
     };
     let evm = config.evm_with_env(&mut state, evm_env);
-    let ctx = execution_ctx(Some(4), Bytes::new());
+    let mut ctx = execution_ctx(Some(4), Bytes::new());
+    ctx.execute_outbe_block_hooks = false;
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
         fixtures::executor_inputs_from_ctx(&ctx, None, false),
@@ -525,7 +527,8 @@ fn scenario_b_eip4844_blob_tx_settles_base_and_blob_fees() {
         },
     };
     let evm = config.evm_with_env(&mut state, evm_env);
-    let ctx = execution_ctx(Some(1), Bytes::new());
+    let mut ctx = execution_ctx(Some(1), Bytes::new());
+    ctx.execute_outbe_block_hooks = false;
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
         fixtures::executor_inputs_from_ctx(&ctx, None, false),
@@ -646,7 +649,8 @@ fn scenario_c_protocol_fee_waiver_burns_zero_under_nonzero_basefee() {
         },
     };
     let evm = config.evm_with_env(&mut state, evm_env);
-    let ctx = execution_ctx(Some(1), Bytes::new());
+    let mut ctx = execution_ctx(Some(1), Bytes::new());
+    ctx.execute_outbe_block_hooks = false;
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
         fixtures::executor_inputs_from_ctx(&ctx, None, false),
@@ -740,7 +744,8 @@ fn scenario_d_promis_limit_overflow_fails_block_validation_with_typed_error() {
         },
     };
     let evm = config.evm_with_env(&mut state, evm_env);
-    let ctx = execution_ctx(Some(1), Bytes::new());
+    let mut ctx = execution_ctx(Some(1), Bytes::new());
+    ctx.execute_outbe_block_hooks = false;
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
         fixtures::executor_inputs_from_ctx(&ctx, None, false),
@@ -878,7 +883,8 @@ fn scenario_e_proposer_state_hook_pre_freeze_idempotence_and_validator_parity() 
 
     let proposer_result = {
         let evm = config.evm_with_env(&mut proposer_state, make_env());
-        let ctx = execution_ctx(Some(1), Bytes::new());
+        let mut ctx = execution_ctx(Some(1), Bytes::new());
+        ctx.execute_outbe_block_hooks = false;
         let mut proposer_executor = OutbeBlockExecutor::new(
             EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
             fixtures::executor_inputs_from_ctx(&ctx, None, false),
@@ -920,7 +926,8 @@ fn scenario_e_proposer_state_hook_pre_freeze_idempotence_and_validator_parity() 
     let mut validator_state = make_state();
     let validator_result = {
         let evm = config.evm_with_env(&mut validator_state, make_env());
-        let ctx = execution_ctx(Some(1), Bytes::new());
+        let mut ctx = execution_ctx(Some(1), Bytes::new());
+        ctx.execute_outbe_block_hooks = false;
         let mut validator_executor = OutbeBlockExecutor::new(
             EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
             fixtures::executor_inputs_from_ctx(&ctx, None, false),

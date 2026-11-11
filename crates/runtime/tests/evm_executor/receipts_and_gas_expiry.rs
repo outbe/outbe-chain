@@ -120,7 +120,7 @@ pub(super) fn run() {
             assert!(gross >= net, "refunds cannot increase gross work");
             eprintln!(
                 "TEE expiry calibration: phase={}, active={ACTIVE_COUNT}, gross={gross}, net={net}, visible={}",
-                phase.name(),
+                outbe_runtime::BLOCK_ORDER.step_name_or_stage(&phase),
                 output.tx_gas_used()
             );
             fixtures::CycleObservation {
@@ -215,7 +215,7 @@ fn hyperlane_liveness_gross_work_grows_with_domain_population() {
         for tx in txs {
             let is_hyperlane = matches!(
                 SystemTx::decode(tx.tx().input().as_ref()).expect("system phase"),
-                SystemTx::HyperlaneSlash
+                SystemTx::BeginBlock { step_index: 7 }
             );
             let before = executor.system_tx_gross_gas;
             executor.execute_transaction(tx).expect("begin phase");

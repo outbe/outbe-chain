@@ -1,8 +1,8 @@
 use super::*;
 use outbe_primitives::reshare_artifact::{LateFinalizeCreditsArtifact, PerBlockCredit};
 use outbe_primitives::system_tx::{
-    CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR, LATE_FINALIZE_CREDITS_SELECTOR,
-    TEE_BOOTSTRAP_SELECTOR,
+    SystemTxStepId, CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX,
+    CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX, CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX,
 };
 use outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2;
 use reth_primitives_traits::Recovered;
@@ -31,14 +31,32 @@ fn publication_begin_inputs_match_signed_proposer_and_verifier_after_hooks() {
         assert_signed_begin_body(&scenario, &proposer, &body);
         let pub_idx = proposer
             .iter()
-            .position(|(tx, _)| matches!(tx, SystemTx::RadiclePublication { .. }))
+            .position(|(tx, _)| {
+                matches!(
+                    tx,
+                    SystemTx::Consensus {
+                        step_index:
+                            outbe_primitives::system_tx::CONSENSUS_RADICLE_PUBLICATION_STEP_INDEX,
+                        ..
+                    }
+                )
+            })
             .expect("RadiclePublication must be present in CONSENSUS_ORDER");
         assert!(matches!(
             proposer[pub_idx - 1].0,
-            SystemTx::ValidatorLiveness
+            SystemTx::Consensus {
+                step_index: outbe_primitives::system_tx::CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX,
+                ..
+            }
         ));
-        assert!(matches!(proposer[pub_idx + 1].0, SystemTx::Vote));
-        assert!(matches!(proposer.last().unwrap().0, SystemTx::CycleTick));
+        assert!(matches!(
+            proposer[pub_idx + 1].0,
+            SystemTx::BeginBlock { step_index: 0 }
+        ));
+        assert!(matches!(
+            proposer.last().unwrap().0,
+            SystemTx::BeginBlock { step_index: 8 }
+        ));
         scenario.body = body;
         let verifier = scenario.resolve().unwrap();
         assert_eq!(proposer, verifier);
@@ -55,7 +73,11 @@ impl Scenario {
         });
         Self {
             height,
-            artifacts: OutbeBlockArtifacts::default(),
+            artifacts: if height == 1 {
+                decode_outbe_block_artifacts(&fixtures::block_one_artifacts(Bytes::new())).unwrap()
+            } else {
+                OutbeBlockArtifacts::default()
+            },
             body: Vec::new(),
             pending: (height == 1).then(|| sample_tee_bootstrap_payload(1)),
             metadata,
@@ -220,7 +242,13 @@ fn assert_signed_begin_body(
         assert_eq!(&input.encode().unwrap(), tx.tx().input());
         assert_eq!(
             *summary,
-            if matches!(input, SystemTx::CertifiedParentAccounting { .. }) {
+            if matches!(
+                input,
+                SystemTx::Consensus {
+                    step_index: outbe_primitives::system_tx::CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+                    ..
+                }
+            ) {
                 scenario.hint
             } else {
                 None
@@ -234,16 +262,21 @@ fn assert_begin_phase_order(proposer: &BeginInputs, height: u64) {
         assert!(proposer.is_empty());
         return;
     }
-    let selectors: Vec<_> = proposer.iter().map(|(input, _)| input.selector()).collect();
-    assert_eq!(selectors.last(), Some(&CYCLE_TICK_SELECTOR));
-    assert_eq!(selectors.contains(&TEE_BOOTSTRAP_SELECTOR), height == 1);
-    assert!(selectors.contains(&CYCLE_TICK_SELECTOR));
+    let steps: Vec<_> = proposer.iter().map(|(input, _)| input.step_id()).collect();
+    assert_eq!(steps.last(), Some(&SystemTxStepId::begin_block(8)));
+    assert_eq!(
+        steps.contains(&SystemTxStepId::consensus(
+            CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX
+        )),
+        height == 1
+    );
+    assert!(steps.contains(&SystemTxStepId::begin_block(8)));
     if height >= 2 {
         assert_eq!(
-            &selectors[..2],
+            &steps[..2],
             &[
-                CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
-                LATE_FINALIZE_CREDITS_SELECTOR
+                SystemTxStepId::consensus(CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX),
+                SystemTxStepId::consensus(CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX)
             ]
         );
     }
@@ -263,7 +296,7 @@ fn begin_inputs_match_signed_proposer_body_and_verifier_across_phase_matrix() {
 }
 
 #[test]
-fn verifier_reports_bad_inputs_and_defers_simple_phase_order_to_layout() {
+fn verifier_rejects_bad_inputs_and_out_of_order_steps() {
     for height in [1, 2] {
         let mut scenario = Scenario::new(height).with_boundary();
         let canonical = scenario.signed_body();
@@ -293,22 +326,10 @@ fn verifier_reports_bad_inputs_and_defers_simple_phase_order_to_layout() {
             let body: Vec<_> = scenario.body.iter().map(|tx| tx.tx().clone()).collect();
             assert!(outbe_evm::system_tx::split_system_layout(&body).is_err());
             let input = SystemTx::decode(canonical[ordinal].tx().input()).unwrap();
-            let expected = if matches!(input, SystemTx::TeeBootstrap { .. }) {
-                format!("expected mandatory OST3 system tx at ordinal {ordinal}")
-            } else if matches!(
-                input,
-                SystemTx::CertifiedParentAccounting { .. } | SystemTx::BoundaryOutcome { .. }
-            ) {
-                format!("expected {} system tx at ordinal {ordinal}", input.name())
-            } else {
-                // Simple phases decode body inputs; structural validation owns their order.
-                let resolved = scenario.resolve().expect("simple input resolves");
-                assert_eq!(
-                    resolved[ordinal].0,
-                    SystemTx::decode(scenario.body[ordinal].tx().input()).unwrap()
-                );
-                continue;
-            };
+            let expected = format!(
+                "expected {}",
+                outbe_runtime::BLOCK_ORDER.step_name_or_stage(&input)
+            );
             let error = scenario.resolve().unwrap_err().to_string();
             assert!(error.contains(&expected), "{error}");
         }
@@ -334,18 +355,26 @@ fn genesis_ignores_stale_inputs_and_block_one_requires_bootstrap_from_its_active
         .to_string()
         .contains("missing mandatory block-1 OST3 bootstrap payload"));
     first.body = body;
-    assert!(first
-        .resolve()
-        .unwrap()
-        .iter()
-        .any(|(input, _)| matches!(input, SystemTx::TeeBootstrap { .. })));
+    assert!(first.resolve().unwrap().iter().any(|(input, _)| matches!(
+        input,
+        SystemTx::Consensus {
+            step_index: outbe_primitives::system_tx::CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX,
+            ..
+        }
+    )));
 }
 
 #[test]
-fn forbidden_late_bootstrap_is_checked_after_cpa_and_boundary_but_before_oracle_decode() {
+fn forbidden_late_bootstrap_precedes_cpa_and_body_validation() {
     let mut scenario = Scenario::new(2).with_boundary();
     let canonical = scenario.signed_body();
     scenario.pending = Some(sample_tee_bootstrap_payload(1));
+    assert!(scenario
+        .resolve()
+        .unwrap_err()
+        .to_string()
+        .contains("OST3 bootstrap payload is forbidden at block 2"));
+    scenario.pending = None;
     let metadata = scenario.metadata.take().unwrap();
     assert!(scenario
         .resolve()
@@ -369,7 +398,10 @@ fn forbidden_late_bootstrap_is_checked_after_cpa_and_boundary_but_before_oracle_
         .position(|tx| {
             matches!(
                 SystemTx::decode(tx.tx().input()).unwrap(),
-                SystemTx::BoundaryOutcome { .. }
+                SystemTx::Consensus {
+                    step_index: outbe_primitives::system_tx::CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX,
+                    ..
+                }
             )
         })
         .unwrap();
@@ -383,7 +415,15 @@ fn forbidden_late_bootstrap_is_checked_after_cpa_and_boundary_but_before_oracle_
     };
     artifact.dkg_cycle += 1;
     let original_boundary = scenario.body[boundary].clone();
-    scenario.body[boundary] = signed_input(SystemTx::BoundaryOutcome { artifact }, 2, boundary);
+    scenario.body[boundary] = signed_input(
+        SystemTx::Consensus {
+            step_index: outbe_primitives::system_tx::CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX,
+            payload: outbe_primitives::reshare_artifact::encode_boundary_artifact(&artifact)
+                .unwrap(),
+        },
+        2,
+        boundary,
+    );
     assert!(scenario
         .resolve()
         .unwrap_err()
@@ -396,10 +436,11 @@ fn forbidden_late_bootstrap_is_checked_after_cpa_and_boundary_but_before_oracle_
         .position(|tx| {
             matches!(
                 SystemTx::decode(tx.tx().input()).unwrap(),
-                SystemTx::OracleSlash
+                SystemTx::BeginBlock { step_index: 6 }
             )
         })
         .unwrap();
+    scenario.pending = Some(sample_tee_bootstrap_payload(1));
     scenario.body[oracle] =
         Recovered::new_unchecked(test_regular_tx(), test_evm_signer().address());
     assert!(scenario
@@ -410,11 +451,17 @@ fn forbidden_late_bootstrap_is_checked_after_cpa_and_boundary_but_before_oracle_
 }
 
 #[test]
-fn cpa_artifact_resolution_fails_before_later_body_inputs_are_decoded() {
+fn all_prefix_inputs_are_validated_before_cpa_artifact_resolution() {
     let mut scenario = Scenario::new(2);
     scenario.body = scenario.signed_body();
     scenario.body[1] = Recovered::new_unchecked(test_regular_tx(), test_evm_signer().address());
     scenario.hint = None;
+    assert!(scenario
+        .resolve()
+        .unwrap_err()
+        .to_string()
+        .contains("decode expected begin system tx input:"));
+    scenario.body = scenario.signed_body();
     assert!(scenario
         .resolve()
         .unwrap_err()

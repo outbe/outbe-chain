@@ -105,7 +105,7 @@ fn execute_nod_block(
     for tx in system_txs {
         let is_cycle = matches!(
             SystemTx::decode(tx.tx().input().as_ref()).unwrap(),
-            SystemTx::CycleTick
+            SystemTx::BeginBlock { step_index: 8 }
         );
         let internal_before = executor.system_tx_execution_gas;
         let result = executor.execute_transaction(tx);
@@ -118,8 +118,13 @@ fn execute_nod_block(
         result?;
         if is_cycle {
             let internal_gas = executor.system_tx_execution_gas - internal_before;
-            let intrinsic =
-                system_tx_intrinsic_gas(SystemTx::CycleTick.encode().unwrap().as_ref()).unwrap();
+            let intrinsic = system_tx_intrinsic_gas(
+                SystemTx::BeginBlock { step_index: 8 }
+                    .encode()
+                    .unwrap()
+                    .as_ref(),
+            )
+            .unwrap();
             assert!(
                 internal_gas > intrinsic,
                 "CycleTick storage work must consume internal gas beyond intrinsic gas"

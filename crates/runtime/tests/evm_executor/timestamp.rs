@@ -27,14 +27,14 @@ fn wide_timestamp_rejects_pre_execution_before_any_mutation_with_or_without_hook
             ctx.execute_outbe_block_hooks = hooks;
             let mut executor = config.create_executor(evm, ctx);
             assert_eq!(
-                executor.system_tx_phase_cursor,
-                outbe_evm::system_tx::SystemTxPhase::UserTxs
+                executor.fsm.stage(),
+                outbe_evm::system_tx::BlockExecutionStage::MidBlock
             );
 
             assert_timestamp_validation(executor.apply_pre_execution_changes().unwrap_err());
             assert_eq!(
-                executor.system_tx_phase_cursor,
-                outbe_evm::system_tx::SystemTxPhase::UserTxs
+                executor.fsm.stage(),
+                outbe_evm::system_tx::BlockExecutionStage::MidBlock
             );
             assert!(executor.receipts().is_empty());
             assert!(executor.ethereum_post_execution_requests.is_none());
@@ -89,8 +89,8 @@ fn wide_timestamp_rejects_standalone_transaction_routes_before_receipts_or_state
             assert_eq!(executor.zero_fee_soft_failures, 0);
             assert_eq!(executor.current_block_validator_fees, U256::ZERO);
             assert_eq!(
-                executor.system_tx_phase_cursor,
-                outbe_evm::system_tx::SystemTxPhase::UserTxs
+                executor.fsm.stage(),
+                outbe_evm::system_tx::BlockExecutionStage::MidBlock
             );
             drop(executor);
             assert!(state.cache.accounts.is_empty());

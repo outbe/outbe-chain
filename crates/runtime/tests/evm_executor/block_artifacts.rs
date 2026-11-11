@@ -261,7 +261,8 @@ fn finish_uses_final_extra_data_setter_for_summary_validation() {
         },
     };
     let evm = config.evm_with_env(&mut state, evm_env);
-    let ctx = execution_ctx(Some(0), Bytes::new());
+    let mut ctx = execution_ctx(Some(0), Bytes::new());
+    ctx.execute_outbe_block_hooks = false;
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
         fixtures::executor_inputs_from_ctx(&ctx, None, true),
@@ -346,7 +347,8 @@ fn finish_without_final_extra_data_setter_rejects_missing_summary() {
         },
     };
     let evm = config.evm_with_env(&mut state, evm_env.clone());
-    let ctx = execution_ctx(Some(0), Bytes::new());
+    let mut ctx = execution_ctx(Some(0), Bytes::new());
+    ctx.execute_outbe_block_hooks = false;
     let executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
         fixtures::executor_inputs_from_ctx(&ctx, None, true),
@@ -431,6 +433,7 @@ fn finish_rejects_non_artifact_header_before_post_execution() {
     };
     let evm = config.evm_with_env(&mut state, evm_env);
     let mut ctx = execution_ctx(Some(0), Bytes::from_static(b"reth/vtest/macos"));
+    ctx.execute_outbe_block_hooks = false;
     // Invalid withdrawals must not mask the earlier header-artifact error.
     ctx.inner.withdrawals = Some(std::borrow::Cow::Owned(vec![Default::default()]));
     let executor = config.create_executor(evm, ctx);

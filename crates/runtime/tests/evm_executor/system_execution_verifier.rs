@@ -30,8 +30,10 @@ fn verifier_rejects_boundary_outcome_system_tx_artifact_mismatch() {
         0,
         1,
         CHAIN_ID,
-        SystemTx::BoundaryOutcome {
-            artifact: tx_artifact,
+        SystemTx::Consensus {
+            step_index: outbe_primitives::system_tx::CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX,
+            payload: outbe_primitives::reshare_artifact::encode_boundary_artifact(&tx_artifact)
+                .unwrap(),
         }
         .encode()
         .unwrap(),
@@ -90,7 +92,7 @@ fn verifier_rejects_begin_system_tx_signer_mismatch() {
         reth_primitives_traits::Recovered::new_unchecked(wrong_signed, wrong_signer.address());
     let mut expected = vec![wrong_recovered.clone()];
     expected.extend(canonical.into_iter().skip(1));
-    let mut ctx = execution_ctx(Some(1), Bytes::new());
+    let mut ctx = execution_ctx(Some(1), fixtures::block_one_artifacts(Bytes::new()));
     ctx.expected_begin_system_txs = expected;
     ctx.proposer_evm_address = Some(proposer);
 
@@ -410,8 +412,8 @@ fn begin_block_soft_fail_rolls_back_dirty_storage_writes_and_logs_preserving_ear
     )
     .into_iter();
 
-    // Execute mandatory prefix (0..8) before OracleSlash (OSOS at index 8).
-    for _ in 0..8 {
+    // Execute mandatory prefix (0..9) before OracleSlash (BeginBlock step 6 at index 9).
+    for _ in 0..9 {
         let tx = system_txs.next().expect("prefix tx before OracleSlash");
         let gas = executor
             .execute_transaction(tx)
@@ -635,7 +637,7 @@ fn verifier_rejects_begin_system_tx_signature_hash_mismatch() {
     let wrong_recovered = reth_primitives_traits::Recovered::new_unchecked(wrong_signed, proposer);
     let mut expected = vec![wrong_recovered.clone()];
     expected.extend(canonical.into_iter().skip(1));
-    let mut ctx = execution_ctx(Some(1), Bytes::new());
+    let mut ctx = execution_ctx(Some(1), fixtures::block_one_artifacts(Bytes::new()));
     ctx.expected_begin_system_txs = expected;
 
     let mut executor = config.create_executor(evm, ctx);

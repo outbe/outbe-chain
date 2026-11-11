@@ -7,61 +7,16 @@ fn calibration_supported_committee_and_unbonding_envelope() {
     let validators = committee(test_evm_signer().address());
     for full_exit in [false, true] {
         run_prefix(
-            if full_exit {
-                "256 validators x64 claims Oracle slash"
-            } else {
-                "256 active x63 claims TEE expiry"
-            },
-            &validators,
-            (150, GENESIS + 120),
-            |storage| {
-                let mut staking = outbe_staking::contract::Staking::new(storage.clone());
-                staking
-                    .config_unbonding_period
-                    .write(SECONDS_PER_DAY)
-                    .unwrap();
-                for (address, _) in &validators {
-                    staking
-                        .topup(*address, *address, U256::from(63_000))
-                        .unwrap();
-                    storage
-                        .increase_balance(STAKING_ADDRESS, U256::from(63_000))
-                        .unwrap();
-                    for _ in 0..63 {
-                        staking.unstake(*address, U256::from(1_000)).unwrap();
-                    }
-                    if full_exit {
-                        staking.unstake(*address, U256::from(1_000)).unwrap();
-                    }
-                    assert_eq!(
-                        staking.per_val_unbonding_len.read(address).unwrap(),
-                        if full_exit { 64 } else { 63 }
-                    );
-                }
+            (
                 if full_exit {
-                    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-                    oracle.config_is_initialized.write(true).unwrap();
-                    oracle.config_slash_window.write(150).unwrap();
-                    oracle
-                        .config_min_valid_per_window
-                        .write(outbe_oracle::schema::SCALE_1E18)
-                        .unwrap();
-                    oracle
-                        .config_slash_fraction
-                        .write(outbe_oracle::schema::SCALE_1E18 / U256::from(20))
-                        .unwrap();
-                    for (address, _) in &validators {
-                        oracle.penalty_miss_count.write(address, 1).unwrap();
-                    }
+                    "256 validators x64 claims Oracle slash"
                 } else {
-                    seed_expiring_tee_nodes(
-                        storage,
-                        &validators.iter().map(|v| v.0).collect::<Vec<_>>(),
-                        GENESIS + 120,
-                    )
-                    .unwrap();
-                }
-            },
+                    "256 active x63 claims TEE expiry"
+                },
+                &validators,
+                (150, GENESIS + 120),
+            ),
+            |storage| seed_committee_unbonding(storage, &validators, full_exit),
             Vec::new(),
             None,
             false,
@@ -74,9 +29,11 @@ fn calibration_supported_liveness_overlap() {
     let validators = committee(test_evm_signer().address());
     for active_count in [255, 256] {
         run_prefix(
-            &format!("{active_count} active x256 newcomer domains"),
-            &validators[..active_count],
-            (150, GENESIS + 120),
+            (
+                &format!("{active_count} active x256 newcomer domains"),
+                &validators[..active_count],
+                (150, GENESIS + 120),
+            ),
             |storage| {
                 let controller =
                     outbe_hyperlanecontroller::schema::HyperlaneControllerContract::new(storage);
@@ -110,9 +67,11 @@ fn calibrated_canonical_envelope_fits_artifact_limit() {
 fn calibration_bootstrap_and_dense_cleanup_overlap() {
     let proposer = test_evm_signer().address();
     run_prefix(
-        "bootstrap +256 accrual +3x256 cleanup +248 bid GC",
-        &[(proposer, dummy_pubkey(0xa2))],
-        (1, GENESIS + SECONDS_PER_DAY + 60),
+        (
+            "bootstrap +256 accrual +3x256 cleanup +248 bid GC",
+            &[(proposer, dummy_pubkey(0xa2))],
+            (1, GENESIS + SECONDS_PER_DAY + 60),
+        ),
         |storage| {
             let day = 20231231;
             let agent = outbe_agentreward::AgentRewardContract::new(storage.clone());
@@ -222,9 +181,11 @@ fn calibration_boundary_with_nested_ism_calls() {
     ];
     let boundary = boundary_with_epoch(1, true, validators.to_vec());
     let (phases, _, logs, _) = run_prefix(
-        "boundary255 validators x256 domains nested ISM",
-        validators,
-        (150, GENESIS + 120),
+        (
+            "boundary255 validators x256 domains nested ISM",
+            validators,
+            (150, GENESIS + 120),
+        ),
         |storage| {
             let controller =
                 outbe_hyperlanecontroller::schema::HyperlaneControllerContract::new(storage);
@@ -241,7 +202,7 @@ fn calibration_boundary_with_nested_ism_calls() {
         Some(boundary),
         false,
     );
-    assert!(phases.iter().any(|(phase, _)| phase == "BoundaryOutcome"));
+    assert!(phases.iter().any(|(phase, _)| phase == "boundary_outcome"));
     assert!(logs.iter().any(|log| log.data.topics().first()
         == Some(&keccak256("ValidatorsAndThresholdApplied(uint8,uint256)"))));
     assert_eq!(
@@ -258,9 +219,11 @@ fn calibration_noop_and_calendar_horizon() {
     let proposer = test_evm_signer().address();
     for elapsed_days in [0, 1, 65] {
         let (_, handlers, logs, _) = run_prefix(
-            &format!("calendar elapsed_days={elapsed_days}"),
-            &[(proposer, dummy_pubkey(0xa2))],
-            (1, GENESIS + elapsed_days * SECONDS_PER_DAY + 60),
+            (
+                &format!("calendar elapsed_days={elapsed_days}"),
+                &[(proposer, dummy_pubkey(0xa2))],
+                (1, GENESIS + elapsed_days * SECONDS_PER_DAY + 60),
+            ),
             |storage| {
                 seed_cycle_tick_genesis(storage.clone(), GENESIS, proposer).unwrap();
                 for spec in outbe_cycle::triggers::ACTIVE_TRIGGERS {
@@ -298,5 +261,58 @@ fn calibration_noop_and_calendar_horizon() {
                     )));
             }
         }
+    }
+}
+
+fn seed_committee_unbonding(
+    storage: StorageHandle<'_>,
+    validators: &[(Address, [u8; 48])],
+    full_exit: bool,
+) {
+    let mut staking = outbe_staking::contract::Staking::new(storage.clone());
+    staking
+        .config_unbonding_period
+        .write(SECONDS_PER_DAY)
+        .unwrap();
+    for (address, _) in validators {
+        staking
+            .topup(*address, *address, U256::from(63_000))
+            .unwrap();
+        storage
+            .increase_balance(STAKING_ADDRESS, U256::from(63_000))
+            .unwrap();
+        for _ in 0..63 {
+            staking.unstake(*address, U256::from(1_000)).unwrap();
+        }
+        if full_exit {
+            staking.unstake(*address, U256::from(1_000)).unwrap();
+        }
+        assert_eq!(
+            staking.per_val_unbonding_len.read(address).unwrap(),
+            if full_exit { 64 } else { 63 }
+        );
+    }
+    if full_exit {
+        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        oracle.config_is_initialized.write(true).unwrap();
+        oracle.config_slash_window.write(150).unwrap();
+        oracle
+            .config_min_valid_per_window
+            .write(outbe_oracle::schema::SCALE_1E18)
+            .unwrap();
+        oracle
+            .config_slash_fraction
+            .write(outbe_oracle::schema::SCALE_1E18 / U256::from(20))
+            .unwrap();
+        for (address, _) in validators {
+            oracle.penalty_miss_count.write(address, 1).unwrap();
+        }
+    } else {
+        seed_expiring_tee_nodes(
+            storage,
+            &validators.iter().map(|v| v.0).collect::<Vec<_>>(),
+            GENESIS + 120,
+        )
+        .unwrap();
     }
 }

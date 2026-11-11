@@ -260,19 +260,18 @@ pub(super) fn committee(proposer: Address) -> Vec<(Address, [u8; 48])> {
         .collect()
 }
 
+type PrefixScenario<'a> = (&'a str, &'a [(Address, [u8; 48])], (u64, u64));
+
 pub(super) fn run_prefix(
-    label: &str,
-    validators: &[(Address, [u8; 48])],
-    clock: (u64, u64),
+    scenario: PrefixScenario<'_>,
     seed: impl FnOnce(StorageHandle<'_>),
     contracts: Vec<(Address, Bytecode)>,
     boundary: Option<outbe_primitives::consensus::DkgBoundaryArtifact>,
     verify_deferred: bool,
 ) -> Calibration {
+    let (label, validators, clock) = scenario;
     run_prefix_checked(
-        label,
-        validators,
-        clock,
+        (label, validators, clock),
         seed,
         contracts,
         boundary,
@@ -281,14 +280,13 @@ pub(super) fn run_prefix(
 }
 
 pub(super) fn run_prefix_checked(
-    label: &str,
-    validators: &[(Address, [u8; 48])],
-    clock: (u64, u64),
+    scenario: PrefixScenario<'_>,
     seed: impl FnOnce(StorageHandle<'_>),
     contracts: Vec<(Address, Bytecode)>,
     boundary: Option<outbe_primitives::consensus::DkgBoundaryArtifact>,
     verification: (bool, impl FnOnce(&mut CalibrationState, &[Log])),
 ) -> Calibration {
+    let (label, validators, clock) = scenario;
     let (verify_deferred, verify_state) = verification;
     let (block, timestamp) = clock;
     outbe_cycle::runtime::take_trigger_gas_samples();
@@ -382,6 +380,11 @@ pub(super) fn run_prefix_checked(
         enclave_witness: None,
     })
     .unwrap();
+    let extra = if block == 1 {
+        fixtures::block_one_artifacts(extra)
+    } else {
+        extra
+    };
     execution.inner.extra_data = extra.clone();
     let evm = config.evm_with_env(&mut state, env);
     let mut executor = config.create_executor(evm, execution);
@@ -415,10 +418,12 @@ pub(super) fn run_prefix_checked(
         assert!(
             executor.receipts().last().unwrap().success,
             "{label}: {}",
-            phase.name()
+            outbe_runtime::BLOCK_ORDER.step_name_or_stage(&phase)
         );
         phases.push((
-            phase.name().to_owned(),
+            outbe_runtime::BLOCK_ORDER
+                .step_name_or_stage(&phase)
+                .to_owned(),
             executor.system_tx_gross_gas - before,
         ));
     }
@@ -440,40 +445,7 @@ pub(super) fn run_prefix_checked(
         .flat_map(|receipt| receipt.logs.clone())
         .collect();
     if verify_deferred {
-        let over: Vec<_> = logs
-            .iter()
-            .filter_map(|log| outbe_cycle::ICycle::CycleTriggerOverBudget::decode_log(log).ok())
-            .collect();
-        assert_eq!(over.len(), 1);
-        let over = &over[0].data;
-        assert_eq!(over.id, 4);
-        assert_eq!(over.blockNumber, block);
-        let budget = outbe_cycle::triggers::ACTIVE_TRIGGERS
-            .iter()
-            .find(|spec| spec.id == 4)
-            .unwrap()
-            .work_budget_gas();
-        assert_eq!(over.budgetGas, budget);
-        assert_eq!(
-            samples.iter().find(|(id, _)| *id == 4).unwrap().1,
-            over.consumedGas
-        );
-        assert!(over.consumedGas > budget / 2 && over.consumedGas <= budget);
-        assert!(executor.system_tx_gross_gas > over.consumedGas);
-        assert!(!logs.iter().any(
-            |log| outbe_cycle::ICycle::CycleTriggerExecuted::decode_log(log)
-                .is_ok_and(|event| event.data.id == 4)
-                || outbe_cycle::ICycle::CycleTriggerFailed::decode_log(log)
-                    .is_ok_and(|event| event.data.id == 4)
-        ));
-        for id in [5, 6] {
-            assert!(logs
-                .iter()
-                .any(
-                    |log| outbe_cycle::ICycle::CycleTriggerExecuted::decode_log(log)
-                        .is_ok_and(|event| event.data.id == id)
-                ));
-        }
+        assert_deferred_trigger_logs(&logs, &samples, block, executor.system_tx_gross_gas);
         let receipts_before = executor.receipts().len();
         let gross_before = executor.system_tx_gross_gas;
         executor
@@ -497,72 +469,7 @@ pub(super) fn run_prefix_checked(
             proposer,
             validators: vec![proposer],
         };
-        let mut provider =
-            outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
-        StorageHandle::enter(&mut provider, |storage| {
-            let cycle = outbe_cycle::schema::Cycle::new(storage.clone());
-            assert_eq!(cycle.last_executed_at.read(&4).unwrap(), GENESIS + 60);
-            assert_eq!(cycle.last_executed_block_number.read(&4).unwrap(), 0);
-            for id in [5, 6] {
-                let scheduled = logs
-                    .iter()
-                    .filter_map(|log| {
-                        outbe_cycle::ICycle::CycleTriggerExecuted::decode_log(log).ok()
-                    })
-                    .find(|event| event.data.id == id)
-                    .unwrap()
-                    .data
-                    .scheduledAt;
-                assert_eq!(cycle.last_executed_at.read(&id).unwrap(), scheduled);
-                assert_eq!(cycle.last_executed_block_number.read(&id).unwrap(), block);
-            }
-            let first_result = router_abi::IOriginRouter::sendAuctionResultCall {
-                dstChainId: 1,
-                emissionDay: 20240101,
-                issuedUnits: 0,
-                auctionClearingRate: 0,
-                wonBidsCount: 0,
-            }
-            .abi_encode();
-            let counter = U256::from_be_bytes(keccak256(first_result).0);
-            for address in [outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS, RELAY] {
-                assert_eq!(
-                    storage.sload(address, counter).unwrap(),
-                    U256::ZERO,
-                    "rolled-back child economic state must not survive"
-                );
-            }
-            let auction = outbe_desis::DesisContract::new(storage);
-            let day = EmissionDate::new(20240101);
-            assert_eq!(
-                auction.auction_stage.read(&day).unwrap(),
-                outbe_desis::AuctionStage::CollectingBids as u8
-            );
-            assert_eq!(auction.day_bid_count.read(&day).unwrap(), 256);
-            assert_eq!(auction.gate_active_count.read().unwrap(), 1);
-            for chain in 1..=128 {
-                assert_eq!(
-                    auction
-                        .chain_bid_count
-                        .read(&outbe_desis::DesisContract::chain_key(day, chain))
-                        .unwrap(),
-                    2
-                );
-                for index in 0..2 {
-                    let key = outbe_desis::DesisContract::bid_key(day, chain, index);
-                    assert_eq!(
-                        auction.bid_bidder.read(&key).unwrap(),
-                        numbered_test_address(0xa1, u64::from(chain * 2 + index))
-                    );
-                    let packed = U256::from(1_000_000u64)
-                        | (U256::from((840u64 << 48) | (1 << 32)) << 64)
-                        | (U256::from(840u64) << 128);
-                    assert_eq!(auction.bid_packed.read(&key).unwrap(), packed);
-                }
-            }
-        });
-        state.merge_transitions(BundleRetention::Reverts);
-        Some(fixtures::post_state_root(&state.bundle_state))
+        Some(assert_deferred_state(&mut state, &logs, read_ctx))
     } else {
         None
     };
@@ -707,4 +614,116 @@ pub(crate) fn queue_accepted_cleanup(storage: StorageHandle<'_>, chains: u32) {
         .write(&day, outbe_desis::AuctionStage::Completed as u8)
         .unwrap();
     auction.queue_intake_cleanup(day).unwrap();
+}
+
+fn assert_deferred_trigger_logs(
+    logs: &[Log],
+    samples: &[(u32, u64)],
+    block: u64,
+    system_gross_gas: u64,
+) {
+    let over: Vec<_> = logs
+        .iter()
+        .filter_map(|log| outbe_cycle::ICycle::CycleTriggerOverBudget::decode_log(log).ok())
+        .collect();
+    assert_eq!(over.len(), 1);
+    let over = &over[0].data;
+    assert_eq!(over.id, 4);
+    assert_eq!(over.blockNumber, block);
+    let budget = outbe_cycle::triggers::ACTIVE_TRIGGERS
+        .iter()
+        .find(|spec| spec.id == 4)
+        .unwrap()
+        .work_budget_gas();
+    assert_eq!(over.budgetGas, budget);
+    assert_eq!(
+        samples.iter().find(|(id, _)| *id == 4).unwrap().1,
+        over.consumedGas
+    );
+    assert!(over.consumedGas > budget / 2 && over.consumedGas <= budget);
+    assert!(system_gross_gas > over.consumedGas);
+    assert!(!logs.iter().any(
+        |log| outbe_cycle::ICycle::CycleTriggerExecuted::decode_log(log)
+            .is_ok_and(|event| event.data.id == 4)
+            || outbe_cycle::ICycle::CycleTriggerFailed::decode_log(log)
+                .is_ok_and(|event| event.data.id == 4)
+    ));
+    for id in [5, 6] {
+        assert!(logs.iter().any(
+            |log| outbe_cycle::ICycle::CycleTriggerExecuted::decode_log(log)
+                .is_ok_and(|event| event.data.id == id)
+        ));
+    }
+}
+
+fn assert_deferred_state(
+    state: &mut CalibrationState,
+    logs: &[Log],
+    read_ctx: BlockContext,
+) -> B256 {
+    let block = read_ctx.block_number;
+    let mut provider =
+        outbe_primitives::storage::direct::DirectStorageProvider::new(state, read_ctx);
+    StorageHandle::enter(&mut provider, |storage| {
+        let cycle = outbe_cycle::schema::Cycle::new(storage.clone());
+        assert_eq!(cycle.last_executed_at.read(&4).unwrap(), GENESIS + 60);
+        assert_eq!(cycle.last_executed_block_number.read(&4).unwrap(), 0);
+        for id in [5, 6] {
+            let scheduled = logs
+                .iter()
+                .filter_map(|log| outbe_cycle::ICycle::CycleTriggerExecuted::decode_log(log).ok())
+                .find(|event| event.data.id == id)
+                .unwrap()
+                .data
+                .scheduledAt;
+            assert_eq!(cycle.last_executed_at.read(&id).unwrap(), scheduled);
+            assert_eq!(cycle.last_executed_block_number.read(&id).unwrap(), block);
+        }
+        let first_result = router_abi::IOriginRouter::sendAuctionResultCall {
+            dstChainId: 1,
+            emissionDay: 20240101,
+            issuedUnits: 0,
+            auctionClearingRate: 0,
+            wonBidsCount: 0,
+        }
+        .abi_encode();
+        let counter = U256::from_be_bytes(keccak256(first_result).0);
+        for address in [outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS, RELAY] {
+            assert_eq!(
+                storage.sload(address, counter).unwrap(),
+                U256::ZERO,
+                "rolled-back child economic state must not survive"
+            );
+        }
+        let auction = outbe_desis::DesisContract::new(storage);
+        let day = EmissionDate::new(20240101);
+        assert_eq!(
+            auction.auction_stage.read(&day).unwrap(),
+            outbe_desis::AuctionStage::CollectingBids as u8
+        );
+        assert_eq!(auction.day_bid_count.read(&day).unwrap(), 256);
+        assert_eq!(auction.gate_active_count.read().unwrap(), 1);
+        for chain in 1..=128 {
+            assert_eq!(
+                auction
+                    .chain_bid_count
+                    .read(&outbe_desis::DesisContract::chain_key(day, chain))
+                    .unwrap(),
+                2
+            );
+            for index in 0..2 {
+                let key = outbe_desis::DesisContract::bid_key(day, chain, index);
+                assert_eq!(
+                    auction.bid_bidder.read(&key).unwrap(),
+                    numbered_test_address(0xa1, u64::from(chain * 2 + index))
+                );
+                let packed = U256::from(1_000_000u64)
+                    | (U256::from((840u64 << 48) | (1 << 32)) << 64)
+                    | (U256::from(840u64) << 128);
+                assert_eq!(auction.bid_packed.read(&key).unwrap(), packed);
+            }
+        }
+    });
+    state.merge_transitions(BundleRetention::Reverts);
+    fixtures::post_state_root(&state.bundle_state)
 }

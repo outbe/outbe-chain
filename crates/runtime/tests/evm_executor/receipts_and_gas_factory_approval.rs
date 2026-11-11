@@ -207,7 +207,6 @@ fn execute_vote_system_tx(
             outbe_evm::executor::PreloadedSystemTxContext {
                 proposer,
                 finalized_summary: None,
-                allow_boundary_proposer: false,
                 canonical_vrf_proof_hash: B256::ZERO,
                 verified_late_credit_signers: None,
                 block_gas_limit: 0,
@@ -217,7 +216,7 @@ fn execute_vote_system_tx(
                 evm.transact_system_call(
                     outbe_primitives::addresses::SYSTEM_ADDRESS,
                     OUTBE_SYSTEM_TX_ADDRESS,
-                    SystemTx::Vote.encode().unwrap(),
+                    SystemTx::BeginBlock { step_index: 0 }.encode().unwrap(),
                 )
             },
         )

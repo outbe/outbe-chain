@@ -111,6 +111,7 @@ mod oracle_soft_failure;
 mod receipts_and_gas;
 mod receipts_and_gas_begin_block_events;
 mod receipts_and_gas_calibration_auction;
+mod receipts_and_gas_calibration_cleanup;
 mod receipts_and_gas_calibration_envelope;
 mod receipts_and_gas_expiry;
 mod receipts_and_gas_factory_approval;

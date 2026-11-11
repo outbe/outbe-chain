@@ -265,7 +265,7 @@ fn update_system_receipt_carries_update_activation_log() {
         ACTIVATION_BLOCK,
         ACTIVATION_BLOCK,
         proposer,
-        SystemTx::Update,
+        SystemTx::BeginBlock { step_index: 1 },
     );
     let upgrade_activated = IUpdate::UpgradeActivated::SIGNATURE_HASH;
     assert!(
@@ -497,7 +497,7 @@ fn automatic_retirement_unbonding_started_is_published_in_staking_system_receipt
         HOOK_BLOCK,
         TIMESTAMP,
         proposer,
-        SystemTx::Staking,
+        SystemTx::BeginBlock { step_index: 4 },
     );
 
     let started: Vec<_> = receipt
@@ -600,7 +600,6 @@ fn execute_begin_block_system_tx(
             outbe_evm::executor::PreloadedSystemTxContext {
                 proposer,
                 finalized_summary: None,
-                allow_boundary_proposer: false,
                 canonical_vrf_proof_hash: B256::ZERO,
                 verified_late_credit_signers: None,
                 block_gas_limit: 0,
