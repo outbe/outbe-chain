@@ -29,21 +29,12 @@ where
         self.cached_phase1_input = None;
         self.resolved_begin_zone = None;
         self.verified_late_credit_signers = None;
+        self.preexecuted_phase1_tx_hash = None;
         self.fsm = outbe_primitives::system_tx::BlockExecutionFsm::for_block(
             block_number,
-            false,
-            false,
-            false,
+            outbe_primitives::block::BlockSystemFlags::default(),
+            &self.block_order,
         );
-
-        // Initialise the begin-zone phase cursor for this block
-        // BEFORE any pre-exec mutation that could affect routing. Block 1
-        // Genesis bootstrap skips Phase 1 and starts at BoundaryOutcome.
-        // Block `n` with `n > GENESIS_BOOTSTRAP_BLOCK_NUMBER` enters Phase 1
-        // with a zero placeholder tx_hash. The Phase 1 preflight overwrites it
-        // once `verify_v2_proof` returns Ok and the system tx is committed in
-        // pre-execution.
-        self.system_tx_phase_cursor = crate::system_tx::SystemTxPhase::initial_for_regime(regime);
         crate::genesis::validate_block_beneficiary(regime, beneficiary)?;
         if let Some(error) = &self.system_layout_error {
             return Err(ExecutorValidationError::invalid_system_tx_layout(error).into());
@@ -60,7 +51,7 @@ where
 
         // Pending-block RPC executes against its isolated EVM state.
         if !self.execute_outbe_block_hooks {
-            if regime.has_begin_zone_system_txs() {
+            if regime.has_system_tx_prefix() {
                 self.init_rpc_direct_witness_state();
                 self.inner.evm.set_witness_state(self.witness_state.clone());
                 crate::executor::witness::install_detached_trace_witness_with_meta(
@@ -78,33 +69,17 @@ where
         let block_artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
             .map_err(ExecutorValidationError::block_artifacts)?;
         self.decoded_block_artifacts = Some(block_artifacts.clone());
-        let has_boundary_outcome = matches!(
-            block_artifacts.consensus_header_artifact,
-            Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
-        );
-        let has_tee_bootstrap = self.block_has_tee_bootstrap();
-        let has_publication = block_artifacts.radicle_publication.is_some();
         self.fsm = outbe_primitives::system_tx::BlockExecutionFsm::for_block(
             block_number,
-            has_boundary_outcome,
-            has_tee_bootstrap,
-            has_publication,
+            outbe_primitives::block::BlockSystemFlags::from_artifacts(&block_artifacts),
+            &self.block_order,
         );
-        if regime.is_genesis_bootstrap() {
-            self.system_tx_phase_cursor = if has_boundary_outcome {
-                crate::system_tx::SystemTxPhase::BoundaryOutcomeOptional { body_index: 0 }
-            } else if has_tee_bootstrap {
-                crate::system_tx::SystemTxPhase::TeeBootstrapOptional { body_index: 0 }
-            } else {
-                crate::system_tx::SystemTxPhase::ValidatorLiveness { body_index: 0 }
-            };
-        }
         let proposer = self
             .begin_zone_proposer(block_number)?
             .unwrap_or_else(|| self.inner.evm.block().beneficiary());
         let allow_boundary_proposer = self.boundary_allows_proposer(&block_artifacts, proposer);
         crate::genesis::validate_genesis_enclave_witness(regime, &block_artifacts)?;
-        if regime.has_begin_zone_system_txs() {
+        if regime.has_system_tx_prefix() {
             self.validate_proposer_identity(proposer, allow_boundary_proposer)?;
             self.init_block_witness_state(block_number, proposer, &block_artifacts)?;
         }
@@ -167,10 +142,7 @@ where
         preexec_outcome?;
         // Provider dropped here - mutable DB borrow released.
 
-        let phase1_preexecuted = matches!(
-            self.system_tx_phase_cursor,
-            crate::system_tx::SystemTxPhase::Phase1Preexecuted { tx_hash, .. } if !tx_hash.is_zero()
-        );
+        let phase1_preexecuted = self.preexecuted_phase1_tx_hash.is_some();
         crate::executor::witness::install_detached_trace_witness_with_meta(
             self.chain_id,
             block_number,
@@ -195,7 +167,6 @@ where
                     } else {
                         self.ensure_phase1_input().ok().map(|(_, summary)| summary)
                     },
-                    allow_boundary_proposer,
                     canonical_vrf_proof_hash: self
                         .verified_phase1_vrf_proof_hash
                         .unwrap_or(B256::ZERO),

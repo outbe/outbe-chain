@@ -13,7 +13,7 @@
 //! A revert or halt in the other system-tx phases (for example
 //! `CertifiedParentAccounting`, `LateFinalizeCredits`, `CycleTick`,
 //! `BoundaryOutcome`, `TeeBootstrap`) fails the block. See
-//! `SystemTx::revert_fails_block`.
+//! `ProtocolStep::revert_fails_block`.
 //!
 //! Instead, it pushes a synthetic receipt with `success=0` and exactly one
 //! log. The log carries a stable `code` plus a free-form `reason` string.
@@ -70,7 +70,11 @@ pub fn build_outbe_failure_log(log_address: Address, code: u16, reason: String) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{address, keccak256};
+    use alloy_primitives::{address, keccak256, Bytes};
+    use outbe_primitives::{
+        system_tx::{SystemTx, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX},
+        test_utils::TEST_BLOCK_ORDER,
+    };
 
     #[test]
     fn topic0_matches_signature() {
@@ -173,11 +177,16 @@ mod tests {
     /// what a begin_block phase precompile revert looks like on-chain.
     #[test]
     fn snapshot_phase_precompile_revert_201() {
-        let reason = "system tx CertifiedParentAccounting did not succeed at body_index=0: Revert { gas: ..., logs: [], output: 0x }";
+        let input = SystemTx::Consensus {
+            step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+            payload: Bytes::new(),
+        };
+        let phase = TEST_BLOCK_ORDER.step_name_or_stage(&input);
+        let reason = format!("system tx {phase} did not succeed at body_index=0: Revert {{ gas: ..., logs: [], output: 0x }}");
         let log = build_outbe_failure_log(
             address!("0xff00000000000000000000000000000000000001"),
             201,
-            reason.to_string(),
+            reason.clone(),
         );
         assert_eq!(
             log.address,
@@ -186,7 +195,7 @@ mod tests {
         assert_eq!(log.data.topics()[1].as_slice(), expected_topic1_for(201));
         assert_eq!(
             log.data.data.as_ref(),
-            abi_encoded_string_data(reason).as_slice()
+            abi_encoded_string_data(&reason).as_slice()
         );
     }
 

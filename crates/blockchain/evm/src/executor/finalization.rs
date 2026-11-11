@@ -10,7 +10,7 @@ use crate::{
             ParentArtifactLookup, Phase1VerifyInput, Phase1WitnessLookup,
         },
     },
-    system_tx::SystemTxPhase,
+    system_tx::CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
 };
 
 #[allow(private_bounds)]
@@ -122,13 +122,19 @@ where
         }
 
         let (input, _summary) = self.ensure_phase1_input()?;
-        let SystemTx::CertifiedParentAccounting { metadata } = &input else {
+        let SystemTx::Consensus {
+            step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+            payload,
+        } = &input
+        else {
             return Err(
                 ExecutorValidationError::Phase1VerifierExpectedCertifiedParentAccountingInput
                     .into(),
             );
         };
 
+        let metadata = CertifiedParentAccountingMetadata::decode(payload.as_ref())
+            .map_err(ExecutorValidationError::block_artifacts)?;
         let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
             .map_err(ExecutorValidationError::from)?;
         let proposer = self
@@ -146,7 +152,7 @@ where
                 block_context,
                 parent_hash,
                 prevrandao,
-                metadata,
+                metadata: &metadata,
             },
         )?;
         self.verified_phase1_vrf_proof_hash = Some(vrf_proof_hash);
@@ -158,7 +164,7 @@ where
     pub fn apply_phase1_commit_in_preexec(
         &mut self,
         block_number: u64,
-        block_artifacts: &OutbeBlockArtifacts,
+        _block_artifacts: &OutbeBlockArtifacts,
     ) -> Result<(), BlockExecutionError> {
         if !BlockHeightRegime::for_block(block_number).has_parent_finalization_accounting() {
             return Ok(());
@@ -169,10 +175,17 @@ where
         }
 
         let (input, finalized_summary) = self.ensure_phase1_input()?;
-        if !matches!(input, SystemTx::CertifiedParentAccounting { .. }) {
-            return Err(
-                ExecutorValidationError::Phase1CommitUnexpectedKind { kind: input.name() }.into(),
-            );
+        if !matches!(
+            input,
+            SystemTx::Consensus {
+                step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+                ..
+            }
+        ) {
+            return Err(ExecutorValidationError::Phase1CommitUnexpectedKind {
+                kind: self.block_order.step_name_or_stage(&input),
+            }
+            .into());
         }
         let calldata = input
             .encode()
@@ -198,7 +211,6 @@ where
         let phase_context = PreloadedSystemTxContext {
             proposer,
             finalized_summary: Some(finalized_summary),
-            allow_boundary_proposer: self.boundary_allows_proposer(block_artifacts, proposer),
             canonical_vrf_proof_hash: self.verified_phase1_vrf_proof_hash.unwrap_or(B256::ZERO),
             verified_late_credit_signers: None,
             block_gas_limit: self.inner.evm.block().gas_limit(),
@@ -206,11 +218,7 @@ where
         };
         let output = self.execute_preexec_phase1_call(phase_context, calldata)?;
         self.commit_system_transaction(output)?;
-        self.system_tx_phase_cursor = SystemTxPhase::Phase1Preexecuted {
-            body_index: 0,
-            tx_hash: cached_tx_hash,
-            receipt_index: 0,
-        };
+        self.preexecuted_phase1_tx_hash = Some(cached_tx_hash);
         Ok(())
     }
 

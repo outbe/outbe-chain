@@ -15,6 +15,15 @@ struct ReservedSystemReceiptContext {
     block_number: u64,
 }
 
+impl<E> OutbeBlockExecutor<'_, E> {
+    pub fn advance_system_tx_step(&mut self, input: &SystemTx) -> Result<(), BlockExecutionError> {
+        self.fsm
+            .on_system_tx(input)
+            .map_err(crate::errors::ExecutorValidationError::from)?;
+        Ok(())
+    }
+}
+
 #[allow(private_bounds)]
 impl<DB, E> OutbeBlockExecutor<'_, E>
 where
@@ -42,7 +51,7 @@ where
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
         let block_artifacts = self.ensure_decoded_block_artifacts()?;
 
-        if self.consume_preexecuted_phase1_witness(tx, &block_artifacts)? {
+        if self.consume_preexecuted_phase1_witness(tx)? {
             return Ok(None);
         }
 
@@ -56,14 +65,17 @@ where
         let phase_context = PreloadedSystemTxContext {
             proposer,
             finalized_summary,
-            allow_boundary_proposer: self.boundary_allows_proposer(&block_artifacts, proposer),
             canonical_vrf_proof_hash: self.verified_phase1_vrf_proof_hash.unwrap_or(B256::ZERO),
             verified_late_credit_signers: self.verified_late_credit_signers.clone(),
             block_gas_limit: self.inner.evm.block().gas_limit(),
             user_gas_used: 0,
         };
-        let output =
-            self.invoke_reserved_system_call(tx, body_index, input.name(), phase_context)?;
+        let output = self.invoke_reserved_system_call(
+            tx,
+            body_index,
+            self.block_order.step_name_or_stage(&input),
+            phase_context,
+        )?;
         let receipt_context = ReservedSystemReceiptContext {
             body_index,
             input,
@@ -79,11 +91,9 @@ where
                 tx,
                 &output.result.result,
                 receipt_context,
-                &block_artifacts,
             );
         }
-        let kind = receipt_context.input.kind();
-        self.commit_reserved_success_receipt(output, kind, &block_artifacts, f)
+        self.commit_reserved_success_receipt(output, &receipt_context.input, f)
     }
 
     fn ensure_decoded_block_artifacts(
@@ -131,8 +141,7 @@ where
     fn commit_reserved_success_receipt<F>(
         &mut self,
         output: EthTxResult<E::HaltReason, reth_ethereum::TxType>,
-        kind: outbe_primitives::system_tx::SystemTxKind,
-        block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
+        input: &SystemTx,
         f: F,
     ) -> Result<Option<GasOutput>, BlockExecutionError>
     where
@@ -142,7 +151,7 @@ where
             return Ok(None);
         }
         let gas_output = self.commit_system_transaction(output)?;
-        self.advance_system_tx_phase_cursor(kind, block_artifacts)?;
+        self.advance_system_tx_step(input)?;
         Ok(Some(gas_output))
     }
 
@@ -151,14 +160,13 @@ where
         tx: &TransactionSigned,
         result: &ExecutionResult<HaltReason>,
         context: ReservedSystemReceiptContext,
-        block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
     ) -> Result<Option<GasOutput>, BlockExecutionError> {
         let ReservedSystemReceiptContext {
             body_index,
             input,
             block_number,
         } = context;
-        let expected_phase = input.name();
+        let expected_phase = self.block_order.step_name_or_stage(&input);
         tracing::error!(
             target: "outbe::executor",
             expected_phase,
@@ -170,7 +178,11 @@ where
             "system tx failed"
         );
         let code = system_tx_failure_code_for_result(result);
-        if input.revert_fails_block() {
+        if self
+            .block_order
+            .step_for_tx(&input)
+            .is_none_or(|step| step.revert_fails_block)
+        {
             let err = crate::errors::ExecutorValidationError::critical_system_tx_did_not_succeed(
                 expected_phase,
                 body_index,
@@ -193,38 +205,31 @@ where
             internal_gas_used: result.tx_gas_used(),
             internal_gross_gas_used: result.gas().total_gas_spent(),
         })?;
-        self.advance_system_tx_phase_cursor(input.kind(), block_artifacts)?;
+        self.advance_system_tx_step(&input)?;
         Ok(Some(gas_output))
     }
 
     fn consume_preexecuted_phase1_witness(
         &mut self,
         tx: &TransactionSigned,
-        block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
     ) -> Result<bool, BlockExecutionError> {
-        if let crate::system_tx::SystemTxPhase::Phase1Preexecuted {
-            tx_hash: cached_hash,
-            ..
-        } = self.system_tx_phase_cursor
-        {
-            if !cached_hash.is_zero() {
-                if tx.signature_hash() != cached_hash {
-                    return Err(
-                        crate::errors::ExecutorValidationError::Phase1WitnessSignatureHashMismatch {
-                            expected: cached_hash,
-                            actual: tx.signature_hash(),
-                        }
-                        .into(),
-                    );
+        let Some(cached_hash) = self.preexecuted_phase1_tx_hash else {
+            return Ok(false);
+        };
+        if tx.signature_hash() != cached_hash {
+            return Err(
+                crate::errors::ExecutorValidationError::Phase1WitnessSignatureHashMismatch {
+                    expected: cached_hash,
+                    actual: tx.signature_hash(),
                 }
-                self.advance_system_tx_phase_cursor(
-                    outbe_primitives::system_tx::SystemTxKind::CertifiedParentAccounting,
-                    block_artifacts,
-                )?;
-                return Ok(true);
-            }
+                .into(),
+            );
         }
-        Ok(false)
+        let input =
+            SystemTx::decode(tx.input()).map_err(crate::errors::ExecutorValidationError::from)?;
+        self.advance_system_tx_step(&input)?;
+        self.preexecuted_phase1_tx_hash = None;
+        Ok(true)
     }
 
     fn validate_reserved_system_tx(
@@ -236,11 +241,14 @@ where
         let (tx, signer) = transaction;
         let (body_index, expected_input, finalized_summary) =
             self.expected_system_tx_for_cursor(block_number, block_artifacts)?;
-        validate_reserved_system_input(tx, body_index, &expected_input)?;
+        validate_reserved_system_input(tx, body_index, &expected_input, &self.block_order)?;
 
         self.validate_reserved_system_envelope(
             tx,
-            (body_index, expected_input.name()),
+            (
+                body_index,
+                self.block_order.step_name_or_stage(&expected_input),
+            ),
             block_number,
         )?;
 
@@ -251,7 +259,7 @@ where
             return Err(
                 crate::errors::ExecutorValidationError::SystemTxSignerMismatch {
                     body_index,
-                    expected_phase: expected_input.name(),
+                    expected_phase: self.block_order.step_name_or_stage(&expected_input),
                     proposer,
                     signer,
                 }
@@ -303,16 +311,17 @@ fn validate_reserved_system_input(
     tx: &TransactionSigned,
     body_index: usize,
     expected_input: &SystemTx,
+    order: &outbe_primitives::block::BlockOrder,
 ) -> Result<(), BlockExecutionError> {
     use crate::errors::ExecutorValidationError;
 
-    let expected_phase = expected_input.name();
+    let expected_phase = order.step_name_or_stage(expected_input);
     let actual_input =
         SystemTx::decode(tx.input().as_ref()).map_err(|error| -> BlockExecutionError {
             ExecutorValidationError::decode_system_tx_at_body_index(body_index, error).into()
         })?;
-    let actual_phase = actual_input.name();
-    if actual_input.selector() != expected_input.selector() {
+    let actual_phase = order.step_name_or_stage(&actual_input);
+    if actual_input.step_id() != expected_input.step_id() {
         return Err(ExecutorValidationError::SystemTxPhaseMismatch {
             body_index,
             expected_phase,

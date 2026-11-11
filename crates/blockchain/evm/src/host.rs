@@ -3,7 +3,6 @@
 #[cfg(any(test, feature = "test-utils"))]
 use std::sync::Arc;
 
-use crate::errors::TeeBootstrapHostError;
 use crate::precompiles::MetadosisMutationCall;
 use crate::tee_attestation_activation::TeeAttestationChainSpecStateV1;
 use alloy_primitives::{Address, Bytes, B256, U256};
@@ -20,8 +19,6 @@ use outbe_primitives::{
     reshare_artifact::{LateFinalizeCreditsArtifact, PerBlockCredit},
     storage::{MetadosisMutationEntitlements, StorageHandle},
     system_tx_context::SystemTxExecutionContext,
-    tee_attestation_v1::TeePolicyV1,
-    tee_bootstrap_v2::TeeBootstrapV2,
     zero_fee_types::{
         BootstrapAccountView, BootstrapCandidate, BootstrapTransactionView,
         SponsorshipAuthorization, ZeroFeeAuthorization, ZeroFeeCandidate, ZeroFeePolicyError,
@@ -95,6 +92,8 @@ pub trait UserTxFeePolicy: std::fmt::Debug + Send + Sync {
 
 /// Domain operations the EVM calls without naming a domain crate.
 pub trait EvmRuntimeHost: std::fmt::Debug + Send + Sync {
+    /// Protocol step order supplied by the runtime.
+    fn block_order(&self) -> outbe_primitives::block::BlockOrder;
     /// EIP-161 marker addresses preserved at the start of every block.
     fn marker_addresses(&self) -> &'static [Address];
     /// Whether an exact route may be credited native value.
@@ -195,12 +194,6 @@ pub trait EvmRuntimeHost: std::fmt::Debug + Send + Sync {
         storage: StorageHandle<'_>,
         proposer: Address,
     ) -> Result<Option<[u8; 32]>>;
-    /// Preflights a block-1 bootstrap payload against the resolved policy.
-    fn validate_tee_bootstrap_for_build(
-        &self,
-        payload: &TeeBootstrapV2,
-        expected_policy: &TeePolicyV1,
-    ) -> std::result::Result<(), TeeBootstrapHostError>;
     /// Metadosis entitlements for one precompile call.
     fn mutation_entitlements(
         &self,
@@ -289,6 +282,10 @@ struct FailClosedHost;
 
 #[cfg(any(test, feature = "test-utils"))]
 impl EvmRuntimeHost for FailClosedHost {
+    fn block_order(&self) -> outbe_primitives::block::BlockOrder {
+        outbe_primitives::block::BlockOrder::default()
+    }
+
     fn marker_addresses(&self) -> &'static [Address] {
         &crate::executor::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES
     }
@@ -437,14 +434,6 @@ impl EvmRuntimeHost for FailClosedHost {
         Err(missing())
     }
 
-    fn validate_tee_bootstrap_for_build(
-        &self,
-        _payload: &TeeBootstrapV2,
-        _expected_policy: &TeePolicyV1,
-    ) -> std::result::Result<(), TeeBootstrapHostError> {
-        Err(TeeBootstrapHostError::HostNotInstalled)
-    }
-
     fn mutation_entitlements(
         &self,
         _call: MetadosisMutationCall<'_>,
@@ -452,13 +441,8 @@ impl EvmRuntimeHost for FailClosedHost {
         MetadosisMutationEntitlements::NONE
     }
 
-    fn is_protocol_cycle_call(&self, address: Address, caller: Address, data: &[u8]) -> bool {
-        address == outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS
-            && caller == outbe_primitives::addresses::SYSTEM_ADDRESS
-            && matches!(
-                outbe_primitives::system_tx::SystemTx::decode(data),
-                Ok(outbe_primitives::system_tx::SystemTx::CycleTick)
-            )
+    fn is_protocol_cycle_call(&self, _address: Address, _caller: Address, _data: &[u8]) -> bool {
+        false
     }
 
     fn derive_active_utc_day(
