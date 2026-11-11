@@ -33,6 +33,8 @@ der = { version = "0.7.10", optional = true }
 pem = { version = "3.0.6", optional = true }
 sha2.workspace = true
 time = { workspace = true, features = ["parsing"], optional = true }
+# SEV-SNP report parsing and signature checks. Exact pin: consensus path.
+sev = { version = "=8.0.0", default-features = false, features = ["snp", "crypto_nossl"], optional = true }
 
 [features]
 # Scoped real-engine callbacks for downstream test fixtures; absent from release.
@@ -49,6 +51,8 @@ native-dcap = [
     "dep:pem",
     "dep:time",
 ]
+# Verification of AMD SEV-SNP attestation reports.
+sev-snp = ["dep:sev"]
 # Test-only syscall-boundary markers around native QVL calls. The production
 # enclave crate does not forward this feature.
 native-dcap-test-trace = ["native-dcap"]

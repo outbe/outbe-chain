@@ -10,23 +10,26 @@ mod signed_collateral;
 
 use alloy_primitives::B256;
 use outbe_primitives::tee_attestation_v1::{
-    AttestationEvidenceV1, DcapEvidenceV1, PlatformTcbStatusSetV1, QvlTcbStatusV1, TeePolicyV1,
+    AttestationEvidenceV1, AttestationMode, DcapEvidenceV1, PlatformTcbStatusSetV1, QvlTcbStatusV1,
+    TeePolicyV1, TDX_RULE_PRODUCT_ID_V1, TDX_RULE_SVN_V1,
 };
 
 pub use crate::dcap_protocol::{
     DcapPckCaV1, DcapPlatformTcbStatusV1, DcapRejectCodeV1, DcapVerdictV1,
 };
 use crate::native_qvl::{
-    verify_quote_native, NativeDcapCollateral, NativeQvlError, NativeQvlStatus,
-    NativeQvlSupplemental, NativeQvlVerdict,
+    verify_quote_native, verify_tdx_quote_native, NativeDcapCollateral, NativeQvlError,
+    NativeQvlStatus, NativeQvlSupplemental, NativeQvlVerdict,
 };
 use crate::quote::ReportMeasurements;
+pub use crate::tdx_report::{parse_tdx_quote_measurements, TdReportMeasurements};
 use pck_certificate::{
     parse_pck_identity, pck_root_der_hash, validate_canonical_certificate_chain,
     validate_canonical_der_crl, validate_canonical_pck_certificate_chain, PckIdentity,
 };
 use quote_layout::{
-    parse_quote_authentication_data, validate_quote_outer_length, validate_quote_profile,
+    parse_quote_authentication_data, parse_tdx_quote_authentication_data,
+    validate_quote_outer_length, validate_quote_profile, validate_tdx_quote_outer_length,
 };
 use signed_collateral::{
     parse_signed_qe_identity, parse_signed_tcb_info, QeIdentityMetadata, TcbInfoMetadata,
@@ -38,20 +41,140 @@ pub fn verify_dcap_evidence(
     policy: &TeePolicyV1,
     block_timestamp: u64,
 ) -> Result<DcapVerdictV1, DcapRejectCodeV1> {
-    validate_evidence_context(evidence, policy, block_timestamp)?;
+    validate_evidence_context(
+        AttestationEvidenceV1::Dcap(evidence.clone()),
+        policy,
+        block_timestamp,
+    )?;
     let measurements = validate_quote_binding(evidence, policy)?;
     validate_canonical_collateral(evidence, policy)?;
     let signed = validate_signed_collateral(evidence, policy, block_timestamp)?;
     validate_measurement_rule(&measurements, policy)?;
-    verify_native_quote_and_build_verdict(evidence, policy, block_timestamp, measurements, signed)
+    let identity = RuleIdentity {
+        mrenclave: B256::from(measurements.mrenclave),
+        mrsigner: B256::from(measurements.mrsigner),
+        isv_prod_id: measurements.isv_prod_id,
+        isv_svn: measurements.isv_svn,
+    };
+    verify_native_quote_and_build_verdict(
+        QuoteTee::Sgx,
+        evidence,
+        policy,
+        block_timestamp,
+        identity,
+        signed,
+    )
 }
 
-fn validate_evidence_context(
+/// Verify one canonical Intel TDX evidence value using only consensus inputs.
+///
+/// The steps are those of [`verify_dcap_evidence`] with the TDX profile: quote
+/// version 4, the TD report body as the source of the identity, and the TDX
+/// entry point of the native QVL. The verdict carries the projections of the
+/// image measurements and of `MRCONFIGID` in the SGX-named fields.
+pub fn verify_tdx_evidence(
     evidence: &DcapEvidenceV1,
     policy: &TeePolicyV1,
     block_timestamp: u64,
+) -> Result<DcapVerdictV1, DcapRejectCodeV1> {
+    if policy.attestation_mode != AttestationMode::TdxRequired {
+        return Err(DcapRejectCodeV1::PolicyBindingMismatch);
+    }
+    validate_evidence_context(
+        AttestationEvidenceV1::Tdx(evidence.clone()),
+        policy,
+        block_timestamp,
+    )?;
+    let measurements = validate_tdx_quote_binding(evidence, policy)?;
+    validate_canonical_collateral(evidence, policy)?;
+    let signed = validate_signed_collateral(evidence, policy, block_timestamp)?;
+    let identity = validate_tdx_measurement_rule(&measurements, policy)?;
+    verify_native_quote_and_build_verdict(
+        QuoteTee::Tdx,
+        evidence,
+        policy,
+        block_timestamp,
+        identity,
+        signed,
+    )
+}
+
+/// TEE that produced the quote of an evidence value.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum QuoteTee {
+    Sgx,
+    Tdx,
+}
+
+/// Identity that a verdict reports and that a measurement rule matches.
+struct RuleIdentity {
+    mrenclave: B256,
+    mrsigner: B256,
+    isv_prod_id: u16,
+    isv_svn: u16,
+}
+
+fn validate_tdx_quote_binding(
+    evidence: &DcapEvidenceV1,
+    policy: &TeePolicyV1,
+) -> Result<TdReportMeasurements, DcapRejectCodeV1> {
+    validate_tdx_quote_outer_length(&evidence.quote)?;
+    validate_quote_profile(&evidence.quote, policy)?;
+    let quote_authentication = parse_tdx_quote_authentication_data(&evidence.quote)?;
+    let submitted_pck_chain = evidence
+        .components
+        .first()
+        .ok_or(DcapRejectCodeV1::EvidenceNonCanonical)?;
+    if quote_authentication.certification_data_type != policy.certification_data_type
+        || quote_authentication.certification_data != submitted_pck_chain.bytes
+    {
+        return Err(DcapRejectCodeV1::QuoteCertificationDataMismatch);
+    }
+    let measurements = parse_tdx_quote_measurements(&evidence.quote)?;
+    let expected_report_data = evidence
+        .intent
+        .report_data()
+        .map_err(|_| DcapRejectCodeV1::EvidenceNonCanonical)?;
+    if measurements.report_data != expected_report_data {
+        return Err(DcapRejectCodeV1::ReportDataMismatch);
+    }
+    Ok(measurements)
+}
+
+fn validate_tdx_measurement_rule(
+    measurements: &TdReportMeasurements,
+    policy: &TeePolicyV1,
+) -> Result<RuleIdentity, DcapRejectCodeV1> {
+    // A debug TD is never accepted. The `sgx-noattest` escape of the SGX path
+    // does not apply to a confidential VM.
+    if measurements.is_debug() {
+        return Err(DcapRejectCodeV1::DebugEnclaveRejected);
+    }
+    let identity = RuleIdentity {
+        mrenclave: measurements.image_rule_value(),
+        mrsigner: measurements.mrconfigid_rule_value(),
+        isv_prod_id: TDX_RULE_PRODUCT_ID_V1,
+        isv_svn: TDX_RULE_SVN_V1,
+    };
+    let measurement_accepted = policy.measurement_rules.iter().any(|rule| {
+        rule.mrenclave == identity.mrenclave
+            && rule.mrsigner == identity.mrsigner
+            && rule.isv_prod_id == identity.isv_prod_id
+            && identity.isv_svn >= rule.minimum_isv_svn
+    });
+    if !measurement_accepted {
+        return Err(DcapRejectCodeV1::MeasurementRejected);
+    }
+    Ok(identity)
+}
+
+fn validate_evidence_context(
+    evidence: AttestationEvidenceV1,
+    policy: &TeePolicyV1,
+    block_timestamp: u64,
 ) -> Result<(), DcapRejectCodeV1> {
-    AttestationEvidenceV1::Dcap(evidence.clone())
+    let intent = evidence.intent();
+    evidence
         .encode_canonical()
         .map_err(|_| DcapRejectCodeV1::EvidenceNonCanonical)?;
     policy
@@ -60,9 +183,9 @@ fn validate_evidence_context(
     let policy_hash = policy
         .policy_hash()
         .map_err(|_| DcapRejectCodeV1::PolicyNonCanonical)?;
-    if evidence.intent.chain_id != policy.chain_id
-        || evidence.intent.genesis_hash != policy.genesis_hash
-        || evidence.intent.policy_hash != policy_hash
+    if intent.chain_id != policy.chain_id
+        || intent.genesis_hash != policy.genesis_hash
+        || intent.policy_hash != policy_hash
     {
         return Err(DcapRejectCodeV1::PolicyBindingMismatch);
     }
@@ -185,10 +308,11 @@ const fn validate_debug_attribute(
 }
 
 fn verify_native_quote_and_build_verdict(
+    tee: QuoteTee,
     evidence: &DcapEvidenceV1,
     policy: &TeePolicyV1,
     block_timestamp: u64,
-    measurements: ReportMeasurements,
+    measurements: RuleIdentity,
     signed: ValidatedDcapClaims,
 ) -> Result<DcapVerdictV1, DcapRejectCodeV1> {
     let ValidatedDcapClaims {
@@ -198,12 +322,15 @@ fn verify_native_quote_and_build_verdict(
         issue_floor,
         expiration_ceiling,
     } = signed;
-    let native_verdict = verify_native_quote(evidence, block_timestamp)?;
+    let native_verdict = verify_native_quote(tee, evidence, block_timestamp)?;
     let signed_pce_id = u16::from_be_bytes(tcb_info.pce_id);
     let collateral_window = reconcile_native_supplemental(
         &native_verdict.supplemental,
         SignedCollateralClaims {
-            tee_type: policy.tee_type,
+            tee_type: match tee {
+                QuoteTee::Sgx => policy.tee_type,
+                QuoteTee::Tdx => TDX_QVL_SUPPLEMENTAL_TEE_TYPE,
+            },
             pce_id: signed_pce_id,
             issue_floor,
             expiration_ceiling,
@@ -228,8 +355,8 @@ fn verify_native_quote_and_build_verdict(
     )?;
 
     Ok(DcapVerdictV1 {
-        mrenclave: B256::from(measurements.mrenclave),
-        mrsigner: B256::from(measurements.mrsigner),
+        mrenclave: measurements.mrenclave,
+        mrsigner: measurements.mrsigner,
         isv_prod_id: measurements.isv_prod_id,
         isv_svn: measurements.isv_svn,
         pck_ca: pck_identity.ca,
@@ -243,7 +370,13 @@ fn verify_native_quote_and_build_verdict(
     })
 }
 
+/// `tee_type` of the supplemental data that the pinned Intel QVL 1.26 returns
+/// for a TDX quote. The library leaves the field zero. The TEE type of the
+/// quote is fixed by the header profile check and by the TDX entry point.
+const TDX_QVL_SUPPLEMENTAL_TEE_TYPE: u32 = 0;
+
 fn verify_native_quote(
+    tee: QuoteTee,
     evidence: &DcapEvidenceV1,
     block_timestamp: u64,
 ) -> Result<NativeQvlVerdict, DcapRejectCodeV1> {
@@ -256,7 +389,11 @@ fn verify_native_quote(
         qe_identity_issuer_chain: component(evidence, 7)?,
         qe_identity: component(evidence, 6)?,
     };
-    verify_quote_native(
+    let verify = match tee {
+        QuoteTee::Sgx => verify_quote_native,
+        QuoteTee::Tdx => verify_tdx_quote_native,
+    };
+    verify(
         &evidence.quote,
         &native_collateral,
         i64::try_from(block_timestamp).map_err(|_| DcapRejectCodeV1::TimestampInvalid)?,
@@ -386,6 +523,9 @@ fn component(evidence: &DcapEvidenceV1, index: usize) -> Result<&[u8], DcapRejec
         .map(|component| component.bytes.as_slice())
         .ok_or(DcapRejectCodeV1::EvidenceNonCanonical)
 }
+
+#[cfg(all(test, native_qvl_linked))]
+mod tdx_tests;
 
 #[cfg(test)]
 mod tests {

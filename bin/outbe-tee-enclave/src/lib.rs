@@ -21,9 +21,13 @@
 
 pub mod compute;
 pub mod confidential;
+#[cfg(feature = "sev-snp")]
+pub mod confidential_vm;
 pub mod crypto;
 pub mod dcap_verifier;
 pub mod dkg;
+#[cfg(feature = "sev-snp")]
+pub mod dstack_guest_agent;
 pub mod encrypted_tribute_offer;
 pub mod errors;
 pub mod fidelity;
@@ -41,11 +45,13 @@ pub mod nod_encryption;
 pub mod nod_mine;
 mod onboarding_upload;
 pub mod payload;
+pub mod platform_attestation;
 pub mod process;
 pub mod promis;
 pub mod promis_cipher;
 pub mod run;
 pub mod seal;
+pub mod sev_snp_probe;
 #[cfg(not(feature = "sgx-sealing-probe"))]
 mod sgx_sealing;
 #[cfg(feature = "sgx-sealing-probe")]
@@ -56,6 +62,7 @@ pub mod test_utils;
 pub mod transport;
 pub mod tribute_day;
 pub mod tribute_encryption;
+pub mod tsm;
 pub mod zk_claim;
 
 /// Fixed dev identity for the in-process test-enclave stand-ins (NOT production).

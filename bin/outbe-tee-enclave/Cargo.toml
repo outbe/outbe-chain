@@ -19,6 +19,9 @@ sgx-sealing-probe = []
 # Production DCAP verifier feasibility path. This forwards the exact-pinned
 # native QVL feature into the enclave crate without enabling it in dev builds.
 native-dcap = ["outbe-tee/native-dcap"]
+# Verifier of AMD SEV-SNP attestation reports, for a service that runs in a
+# confidential VM.
+sev-snp = ["outbe-tee/sev-snp", "dep:sev"]
 # Release-only profile: the measured network descriptor is mandatory and the
 # process refuses every runtime except real DCAP before any protocol command.
 production-dcap-release = ["native-dcap"]
@@ -89,6 +92,9 @@ thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 hex.workspace = true
+# Guest requests to the AMD secure processor (sealing key). Same exact version
+# as in `outbe-tee`.
+sev = { version = "=8.0.0", default-features = false, features = ["snp", "crypto_nossl"], optional = true }
 
 # RCFI decay math (`RcfiAccumulator`, `t_dec`, `league_from_rcfi`) for the
 # in-enclave Fidelity cohort engine - the same arithmetic the chain uses, so the

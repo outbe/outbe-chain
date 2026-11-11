@@ -51,6 +51,12 @@ pub enum AttestationType {
     Other(String),
     /// Not running under Gramine at all (`/dev/attestation` absent).
     Unavailable,
+    /// AMD SEV-SNP confidential VM. The service does not run under Gramine. The
+    /// processor signs its attestation reports and derives its sealing key.
+    SevSnp,
+    /// Intel TDX confidential VM. The service does not run under Gramine. The
+    /// TDX module signs its quotes.
+    Tdx,
 }
 
 impl AttestationType {
@@ -82,6 +88,8 @@ impl AttestationType {
             AttestationType::Epid => "epid (gramine-sgx)".to_string(),
             AttestationType::Other(s) => format!("other:{s}"),
             AttestationType::Unavailable => "unavailable (not under Gramine)".to_string(),
+            AttestationType::SevSnp => "sev-snp (confidential VM)".to_string(),
+            AttestationType::Tdx => "tdx (confidential VM)".to_string(),
         }
     }
 }
@@ -114,6 +122,14 @@ fn classify_none(egetkey_available: bool) -> AttestationType {
 /// `keys/_sgx_mrsigner`). Real SGX -> [`AttestationType::SgxNoAttest`],
 /// gramine-direct -> [`AttestationType::None`]. See [`classify_none`].
 pub fn attestation_type() -> AttestationType {
+    #[cfg(feature = "sev-snp")]
+    match crate::confidential_vm::platform() {
+        Some(crate::confidential_vm::ConfidentialPlatform::SevSnp) => {
+            return AttestationType::SevSnp;
+        }
+        Some(crate::confidential_vm::ConfidentialPlatform::Tdx) => return AttestationType::Tdx,
+        None => {}
+    }
     if let Ok(s) = fs::read_to_string(format!("{ATTEST_DIR}/attestation_type")) {
         return match s.trim() {
             "dcap" => AttestationType::Dcap,
@@ -211,6 +227,10 @@ pub fn capture_dcap_quote_to_file(intent_path: &str, quote_path: &str) -> Enclav
 /// `gramine-direct`/bare (no `/dev/attestation/report`). There the caller uses
 /// zero (unmeasured) as the fallback, never fabricated values.
 pub fn local_report_measurements(report_data: &[u8; 64]) -> EnclaveResult<ReportMeasurements> {
+    #[cfg(feature = "sev-snp")]
+    if crate::confidential_vm::configured() {
+        return crate::confidential_vm::measurements(report_data);
+    }
     let mti = format!("{ATTEST_DIR}/my_target_info");
     let ti = format!("{ATTEST_DIR}/target_info");
     let my_target_info = fs::read(&mti).map_err(|e| GramineError::read_path(&mti, e))?;

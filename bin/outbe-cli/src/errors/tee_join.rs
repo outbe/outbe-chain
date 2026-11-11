@@ -232,6 +232,18 @@ pub(crate) enum TeeJoinError {
     /// The enclave returned an unexpected response to `GetPublicKeys`.
     #[error("expected enclave PublicKeys, got {0:?}")]
     UnexpectedPublicKeysResponse(Box<outbe_tee::protocol::EnclaveResponse>),
+    /// `SevSnpRequired` mode requires `--node-data-dir`.
+    #[error("SevSnpRequired tee join requires --node-data-dir")]
+    SevSnpRequiresNodeDataDir,
+    /// The AMD certificates for the SEV-SNP report could not be collected.
+    #[error("collect AMD certificates for the SEV-SNP report: {0}")]
+    AcquireSevSnpCertificates(outbe_tee::sev_snp_host::SevSnpHostError),
+    /// `TdxRequired` mode requires `--node-data-dir`.
+    #[error("TdxRequired tee join requires --node-data-dir")]
+    TdxRequiresNodeDataDir,
+    /// The Intel collateral for the TDX quote could not be collected.
+    #[error("collect Intel collateral for the TDX quote: {0}")]
+    AcquireTdxCollateral(outbe_tee::tdx_host::TdxHostError),
     /// `DcapRequired` mode requires `--node-data-dir`.
     #[error("DcapRequired tee join requires --node-data-dir")]
     DcapRequiresNodeDataDir,

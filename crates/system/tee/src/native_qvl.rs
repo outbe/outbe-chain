@@ -184,6 +184,7 @@ struct RawResult {
     )
 )]
 struct NativeQvlCall<'a> {
+    tee: NativeQuoteTee,
     quote: &'a [u8],
     quote_size: u32,
     collateral: &'a RawCollateral,
@@ -250,11 +251,44 @@ unsafe extern "C" {
         expiration_check_date: i64,
         output: *mut RawResult,
     ) -> c_int;
+    fn outbe_qvl_verify_tdx_quote_v1(
+        quote: *const u8,
+        quote_size: u32,
+        collateral: *const RawCollateral,
+        expiration_check_date: i64,
+        output: *mut RawResult,
+    ) -> c_int;
+}
+
+/// TEE that produced a quote. It selects the Intel QVL entry point.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NativeQuoteTee {
+    Sgx,
+    Tdx,
 }
 
 /// Verify a real SGX quote using only caller-supplied canonical collateral and
 /// an explicit consensus timestamp.
 pub fn verify_quote_native(
+    quote: &[u8],
+    collateral: &NativeDcapCollateral<'_>,
+    block_timestamp: i64,
+) -> Result<NativeQvlVerdict, NativeQvlError> {
+    verify_quote_native_for(NativeQuoteTee::Sgx, quote, collateral, block_timestamp)
+}
+
+/// Verify a real Intel TDX quote with the same contract as
+/// [`verify_quote_native`].
+pub fn verify_tdx_quote_native(
+    quote: &[u8],
+    collateral: &NativeDcapCollateral<'_>,
+    block_timestamp: i64,
+) -> Result<NativeQvlVerdict, NativeQvlError> {
+    verify_quote_native_for(NativeQuoteTee::Tdx, quote, collateral, block_timestamp)
+}
+
+fn verify_quote_native_for(
+    tee: NativeQuoteTee,
     quote: &[u8],
     collateral: &NativeDcapCollateral<'_>,
     block_timestamp: i64,
@@ -287,6 +321,7 @@ pub fn verify_quote_native(
     let mut output = RawResult::default();
 
     let wrapper_status = call_native(NativeQvlCall {
+        tee,
         quote,
         quote_size,
         collateral: &raw,
@@ -317,7 +352,11 @@ fn call_native(call: NativeQvlCall<'_>) -> c_int {
     // call. The C wrapper is compiled against the pinned Intel headers and
     // writes only the fixed-size `RawResult` structure.
     unsafe {
-        outbe_qvl_verify_quote_v1(
+        let verify = match call.tee {
+            NativeQuoteTee::Sgx => outbe_qvl_verify_quote_v1,
+            NativeQuoteTee::Tdx => outbe_qvl_verify_tdx_quote_v1,
+        };
+        verify(
             call.quote.as_ptr(),
             call.quote_size,
             call.collateral,
@@ -626,6 +665,7 @@ mod wrapper_contract {
 
     fn call(quote_size: u32, collateral: &RawCollateral, output: &mut RawResult) -> c_int {
         call_native(NativeQvlCall {
+            tee: NativeQuoteTee::Sgx,
             quote: QUOTE,
             quote_size,
             collateral,

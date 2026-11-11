@@ -48,13 +48,22 @@ pub const SEED_SECTIONS: [&str; 16] = [
     "hyperlane_controller",
 ];
 
-pub const TEE_KEYS: [&str; 6] = [
+pub const TEE_KEYS: [&str; 15] = [
     "mode",
     "mrenclave",
     "mrsigner",
     "isv_prod_id",
     "minimum_isv_svn",
     "minimum_tcb_evaluation_data_number",
+    "snp_measurement",
+    "snp_host_data",
+    "snp_ark_sha256",
+    "tdx_mrtd",
+    "tdx_rtmr0",
+    "tdx_rtmr1",
+    "tdx_rtmr2",
+    "tdx_mrconfigid",
+    "tdx_minimum_tcb_evaluation_data_number",
 ];
 
 const STATIC_TOP_LEVEL_KEYS: [&str; 39] = [
@@ -246,8 +255,16 @@ fn validate_tee_mode(
             Ok(())
         }
         "dcap-required" => validate_dcap_mode(obj, chain_id),
+        "sev-snp-required" | "tdx-required" => {
+            if chain_id != DEVNET_CHAIN_ID && chain_id != TESTNET_CHAIN_ID {
+                return Err(GenesisError::validation(format!(
+                    "tee.mode {mode} requires the devnet or testnet chain id ({DEVNET_CHAIN_ID} or {TESTNET_CHAIN_ID}), not {chain_id}"
+                )));
+            }
+            Ok(())
+        }
         _ => Err(GenesisError::validation(
-            "tee.mode must be gramine-direct-dev or dcap-required",
+            "tee.mode must be gramine-direct-dev, dcap-required, sev-snp-required or tdx-required",
         )),
     }
 }

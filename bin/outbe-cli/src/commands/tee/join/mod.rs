@@ -15,8 +15,8 @@ use eyre::{Result, WrapErr};
 use outbe_operator::tee::{read_finalized_registry_view_v1, NodeBindingSelectorV1};
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapEvidenceV1,
-    GramineDirectEvidenceV1, NodeIdV1, RegistrationIntentV1, RegistryMutatorV1, TeePolicyV1,
-    TeeRegistryGasScheduleV1,
+    GramineDirectEvidenceV1, NodeIdV1, RegistrationIntentV1, RegistryMutatorV1, SevSnpEvidenceV1,
+    TeePolicyV1, TeeRegistryGasScheduleV1,
 };
 use outbe_tee::protocol::EnclaveRequest;
 use outbe_tee::{
@@ -433,10 +433,7 @@ fn prepare_join_evidence(
     {
         let evidence = AttestationEvidenceV1::decode_canonical(durable.evidence())
             .map_err(TeeJoinError::DecodeDurableEvidence)?;
-        let durable_intent = match &evidence {
-            AttestationEvidenceV1::Dcap(value) => &value.intent,
-            AttestationEvidenceV1::GramineDirectDev(value) => &value.intent,
-        };
+        let durable_intent = evidence.intent();
         if durable_intent != ctx.intent || durable.node_signature() != ctx.fresh_node_signature {
             return Err(TeeJoinError::DurableRegistrationConflict.into());
         }
@@ -497,6 +494,43 @@ fn generate_fresh_evidence(
                 signature,
             ))
         }
+        AttestationMode::SevSnpRequired => {
+            // The service returns its attestation report in the quote field.
+            let generated = enclave.generate_dcap_quote(intent)?;
+            let certificates = outbe_tee::sev_snp_host::acquire_sev_snp_certificates_v1(
+                &generated.quote_body,
+                &policy.intel_root_der_hash,
+            )
+            .map_err(TeeJoinError::AcquireSevSnpCertificates)?;
+            let signature = generated.enclave_signature;
+            Ok((
+                AttestationEvidenceV1::SevSnp(SevSnpEvidenceV1 {
+                    intent: intent.clone(),
+                    report: generated.quote_body,
+                    ark_der: certificates.ark_der,
+                    ask_der: certificates.ask_der,
+                    vcek_der: certificates.vcek_der,
+                    transition_key_ready_proof: generated.transition_key_ready_proof,
+                }),
+                signature,
+            ))
+        }
+        AttestationMode::TdxRequired => {
+            // The service returns its TDX quote in the quote field.
+            let generated = enclave.generate_dcap_quote(intent)?;
+            let assembled = outbe_tee::tdx_host::acquire_tdx_collateral_v1(&generated.quote_body)
+                .map_err(TeeJoinError::AcquireTdxCollateral)?;
+            let signature = generated.enclave_signature;
+            Ok((
+                AttestationEvidenceV1::Tdx(DcapEvidenceV1 {
+                    intent: intent.clone(),
+                    quote: assembled.quote,
+                    components: assembled.components,
+                    transition_key_ready_proof: generated.transition_key_ready_proof,
+                }),
+                signature,
+            ))
+        }
     }
 }
 
@@ -535,14 +569,12 @@ fn persist_fresh_submission_if_needed(
 }
 
 fn decode_evidence_node_id_hash(evidence: &[u8]) -> Result<B256> {
-    match AttestationEvidenceV1::decode_canonical(evidence)
+    AttestationEvidenceV1::decode_canonical(evidence)
         .map_err(TeeJoinError::RedecodeEvidence)?
-    {
-        AttestationEvidenceV1::Dcap(value) => value.intent.node_id,
-        AttestationEvidenceV1::GramineDirectDev(value) => value.intent.node_id,
-    }
-    .node_id_hash()
-    .map_err(|error| TeeJoinError::HashNodeIdentity(error).into())
+        .intent()
+        .node_id
+        .node_id_hash()
+        .map_err(|error| TeeJoinError::HashNodeIdentity(error).into())
 }
 
 fn persist_admission_anchor_if_authorized<'a>(

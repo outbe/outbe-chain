@@ -6,6 +6,7 @@
 pub mod attestation;
 pub mod compute;
 pub mod init;
+pub mod platform;
 pub mod transport;
 
 use std::fmt;
@@ -16,6 +17,7 @@ pub use compute::{
     ProcessError, PromisRejectReason, TributeDayRejectReason,
 };
 pub use init::{InitError, OnboardingUploadError, RunError, SgxSealingError};
+pub use platform::{ConfidentialVmError, TsmError};
 pub use transport::{
     transport_handshake, transport_noise, transport_noise_debug, RemoteSessionHandshakeError,
     TransportDispatchError,
@@ -207,6 +209,12 @@ pub enum EnclaveError {
     /// Gramine pseudo-filesystem or enclave key derivation error.
     #[error(transparent)]
     Gramine(#[from] GramineError),
+    /// Kernel TSM report interface or platform attestation source error.
+    #[error(transparent)]
+    Tsm(#[from] TsmError),
+    /// Confidential VM backend error.
+    #[error(transparent)]
+    ConfidentialVm(#[from] ConfidentialVmError),
     /// Enclave initialization or remote session admission error.
     #[error(transparent)]
     Init(#[from] InitError),

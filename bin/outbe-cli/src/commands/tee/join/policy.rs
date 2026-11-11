@@ -153,8 +153,13 @@ pub(in super::super) fn select_join_transport(
     has_node_data_dir: bool,
 ) -> Result<JoinTransport> {
     match (attestation_mode, has_node_data_dir) {
-        (AttestationMode::DcapRequired, true) | (AttestationMode::GramineDirectDev, true) => {
-            Ok(JoinTransport::AuthorizedNodeHost)
+        (AttestationMode::DcapRequired, true)
+        | (AttestationMode::GramineDirectDev, true)
+        | (AttestationMode::SevSnpRequired, true)
+        | (AttestationMode::TdxRequired, true) => Ok(JoinTransport::AuthorizedNodeHost),
+        (AttestationMode::TdxRequired, false) => Err(TeeJoinError::TdxRequiresNodeDataDir.into()),
+        (AttestationMode::SevSnpRequired, false) => {
+            Err(TeeJoinError::SevSnpRequiresNodeDataDir.into())
         }
         (AttestationMode::DcapRequired, false) => Err(TeeJoinError::DcapRequiresNodeDataDir.into()),
         (AttestationMode::GramineDirectDev, false) => Ok(JoinTransport::Development),

@@ -134,6 +134,18 @@ pub enum TeeBootstrapError {
     /// Indicates that a DcapRequired genesis policy cannot use a development enclave session.
     #[error("DcapRequired genesis policy cannot use a development enclave session")]
     DcapRequiredCannotUseDevelopmentSession,
+    /// Indicates that a SevSnpRequired genesis policy cannot use a development enclave session.
+    #[error("SevSnpRequired genesis policy cannot use a development enclave session")]
+    SevSnpRequiredCannotUseDevelopmentSession,
+    /// The AMD certificates for the SEV-SNP report could not be collected.
+    #[error("collect AMD certificates for the SEV-SNP report: {0}")]
+    SevSnpCertificateAcquisitionFailed(String),
+    /// Indicates that a TdxRequired genesis policy cannot use a development enclave session.
+    #[error("TdxRequired genesis policy cannot use a development enclave session")]
+    TdxRequiredCannotUseDevelopmentSession,
+    /// The Intel collateral for the TDX quote could not be collected.
+    #[error("collect Intel collateral for the TDX quote: {0}")]
+    TdxCollateralAcquisitionFailed(String),
     /// Indicates that the OST3 node identity is invalid.
     #[error("invalid OST3 node identity: {0}")]
     InvalidNodeIdentity(String),

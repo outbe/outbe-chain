@@ -1,0 +1,12 @@
+[Unit]
+Description=Outbe validator node
+Requires=outbe-provision.service
+Wants=outbe-enclave.service outbe-radicle.service
+After=outbe-provision.service outbe-enclave.service outbe-radicle.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/lib/outbe/run-role.sh node
+Restart=always
+RestartSec=5
+LimitNOFILE=1048576

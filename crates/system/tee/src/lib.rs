@@ -43,6 +43,12 @@ pub mod release_dcap_artifacts;
 pub mod remote_session;
 pub mod response_auth;
 pub mod session;
+#[cfg(feature = "sev-snp")]
+pub mod sev_snp_host;
+#[cfg(feature = "sev-snp")]
+pub mod sev_snp_v1;
+pub mod tdx_host;
+pub mod tdx_report;
 pub mod tee_dkg;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

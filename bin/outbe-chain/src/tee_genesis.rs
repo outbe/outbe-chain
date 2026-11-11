@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use eyre::WrapErr as _;
 use outbe_primitives::tee_genesis_v1::{
     initial_tee_policy_v1, tee_attestation_v1_genesis_field, InitialTeeProfileV1,
-    ProductionSgxMeasurementV1,
+    ProductionSgxMeasurementV1, SevSnpLaunchIdentityV1, TdxLaunchIdentityV1,
 };
 use reth_ethereum::chainspec::EthChainSpec as _;
 
@@ -27,7 +27,7 @@ pub(crate) struct TeeCli {
 #[derive(Debug, Subcommand)]
 enum TeeCommand {
     /// Bind a seeded genesis to one canonical block-1 TEE policy.
-    Genesis(TeeGenesisArgs),
+    Genesis(Box<TeeGenesisArgs>),
     /// Derive the release-measured finality trust root from an existing genesis.
     NetworkDescriptor {
         #[arg(long)]
@@ -41,6 +41,8 @@ enum TeeCommand {
 enum TeeGenesisMode {
     DcapRequired,
     GramineDirectDev,
+    SevSnpRequired,
+    TdxRequired,
 }
 
 #[derive(Debug, clap::Args)]
@@ -76,6 +78,76 @@ struct TeeGenesisArgs {
     /// Minimum Intel TCB evaluation data number. Required only for DcapRequired.
     #[arg(long)]
     minimum_tcb_evaluation_data_number: Option<u32>,
+
+    /// Launch measurement of the VM image (48-byte hex). Required only for
+    /// SevSnpRequired.
+    #[arg(long)]
+    snp_measurement: Option<String>,
+
+    /// Host data that the VMM binds at launch (32-byte hex). Required only for
+    /// SevSnpRequired.
+    #[arg(long)]
+    snp_host_data: Option<String>,
+
+    /// SHA-256 of the DER certificate of the AMD root key (32-byte hex).
+    /// Required only for SevSnpRequired.
+    #[arg(long)]
+    snp_ark_sha256: Option<String>,
+
+    /// Build-time measurement MRTD of the trust domain (48-byte hex). Required
+    /// only for TdxRequired.
+    #[arg(long)]
+    tdx_mrtd: Option<String>,
+
+    /// Runtime measurement register 0 (48-byte hex). Required only for
+    /// TdxRequired.
+    #[arg(long)]
+    tdx_rtmr0: Option<String>,
+
+    /// Runtime measurement register 1 (48-byte hex). Required only for
+    /// TdxRequired.
+    #[arg(long)]
+    tdx_rtmr1: Option<String>,
+
+    /// Runtime measurement register 2 (48-byte hex). Required only for
+    /// TdxRequired.
+    #[arg(long)]
+    tdx_rtmr2: Option<String>,
+
+    /// MRCONFIGID that the VMM binds at launch (48-byte hex). Required only for
+    /// TdxRequired.
+    #[arg(long)]
+    tdx_mrconfigid: Option<String>,
+
+    /// Lowest accepted TCB evaluation data number of the Intel collateral.
+    /// Required only for TdxRequired.
+    #[arg(long)]
+    tdx_minimum_tcb_evaluation_data_number: Option<u32>,
+}
+
+impl TeeGenesisArgs {
+    fn has_dcap_arguments(&self) -> bool {
+        self.mrenclave.is_some()
+            || self.mrsigner.is_some()
+            || self.isv_prod_id.is_some()
+            || self.minimum_isv_svn.is_some()
+            || self.minimum_tcb_evaluation_data_number.is_some()
+    }
+
+    fn has_tdx_arguments(&self) -> bool {
+        self.tdx_mrtd.is_some()
+            || self.tdx_rtmr0.is_some()
+            || self.tdx_rtmr1.is_some()
+            || self.tdx_rtmr2.is_some()
+            || self.tdx_mrconfigid.is_some()
+            || self.tdx_minimum_tcb_evaluation_data_number.is_some()
+    }
+
+    fn has_sev_snp_arguments(&self) -> bool {
+        self.snp_measurement.is_some()
+            || self.snp_host_data.is_some()
+            || self.snp_ark_sha256.is_some()
+    }
 }
 
 pub(crate) fn run(arguments: &[String]) -> eyre::Result<()> {
@@ -169,7 +241,52 @@ fn generate_genesis(args: &TeeGenesisArgs) -> eyre::Result<()> {
     let chain_id = base.chain().id();
     let genesis_hash = base.genesis_hash();
 
+    crate::errors::require(
+        args.mode == TeeGenesisMode::SevSnpRequired || !args.has_sev_snp_arguments(),
+        TeeGenesisError::SevSnpArgsForbiddenInOtherMode,
+    )?;
+    crate::errors::require(
+        args.mode == TeeGenesisMode::TdxRequired || !args.has_tdx_arguments(),
+        TeeGenesisError::TdxArgsForbiddenInOtherMode,
+    )?;
     let profile = match args.mode {
+        TeeGenesisMode::TdxRequired => {
+            crate::errors::require(
+                !args.has_dcap_arguments(),
+                TeeGenesisError::DcapArgsForbiddenInTdxMode,
+            )?;
+            InitialTeeProfileV1::TdxRequired(TdxLaunchIdentityV1 {
+                mrtd: parse_hex48(required_tdx(&args.tdx_mrtd, "--tdx-mrtd")?)?,
+                rtmrs: [
+                    parse_hex48(required_tdx(&args.tdx_rtmr0, "--tdx-rtmr0")?)?,
+                    parse_hex48(required_tdx(&args.tdx_rtmr1, "--tdx-rtmr1")?)?,
+                    parse_hex48(required_tdx(&args.tdx_rtmr2, "--tdx-rtmr2")?)?,
+                ],
+                mr_config_id: parse_hex48(required_tdx(&args.tdx_mrconfigid, "--tdx-mrconfigid")?)?,
+                minimum_tcb_evaluation_data_number: args
+                    .tdx_minimum_tcb_evaluation_data_number
+                    .ok_or(TeeGenesisError::MissingTdxArgument {
+                        name: "--tdx-minimum-tcb-evaluation-data-number".to_owned(),
+                    })?,
+            })
+        }
+        TeeGenesisMode::SevSnpRequired => {
+            crate::errors::require(
+                !args.has_dcap_arguments(),
+                TeeGenesisError::DcapArgsForbiddenInSevSnpMode,
+            )?;
+            InitialTeeProfileV1::SevSnpRequired(SevSnpLaunchIdentityV1 {
+                measurement: parse_hex48(required_sev_snp(
+                    &args.snp_measurement,
+                    "--snp-measurement",
+                )?)?,
+                host_data: parse_hex32(required_sev_snp(&args.snp_host_data, "--snp-host-data")?)?,
+                ark_der_sha256: parse_hex32(required_sev_snp(
+                    &args.snp_ark_sha256,
+                    "--snp-ark-sha256",
+                )?)?,
+            })
+        }
         TeeGenesisMode::DcapRequired => {
             InitialTeeProfileV1::DcapRequired(ProductionSgxMeasurementV1 {
                 mrenclave: parse_hex32(required(&args.mrenclave, "--mrenclave")?)?,
@@ -298,6 +415,35 @@ fn required<'a>(value: &'a Option<String>, name: &str) -> eyre::Result<&'a str> 
     })
 }
 
+fn required_sev_snp<'a>(value: &'a Option<String>, name: &str) -> eyre::Result<&'a str> {
+    value.as_deref().ok_or_else(|| {
+        TeeGenesisError::MissingSevSnpArgument {
+            name: name.to_owned(),
+        }
+        .into()
+    })
+}
+
+fn required_tdx<'a>(value: &'a Option<String>, name: &str) -> eyre::Result<&'a str> {
+    value.as_deref().ok_or_else(|| {
+        TeeGenesisError::MissingTdxArgument {
+            name: name.to_owned(),
+        }
+        .into()
+    })
+}
+
+fn parse_hex48(value: &str) -> eyre::Result<[u8; 48]> {
+    let encoded = value.strip_prefix("0x").unwrap_or(value);
+    if encoded.len() != 96 || !encoded.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(TeeGenesisError::InvalidHex48Bytes.into());
+    }
+    hex::decode(encoded)
+        .wrap_err("decode 48-byte hexadecimal value")?
+        .try_into()
+        .map_err(|_| TeeGenesisError::InvalidHex48Bytes.into())
+}
+
 fn parse_hex32(value: &str) -> eyre::Result<B256> {
     let encoded = value.strip_prefix("0x").unwrap_or(value);
     if encoded.len() != 64 || !encoded.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -337,7 +483,188 @@ mod tests {
             isv_prod_id: None,
             minimum_isv_svn: None,
             minimum_tcb_evaluation_data_number: None,
+            snp_measurement: None,
+            snp_host_data: None,
+            snp_ark_sha256: None,
+            tdx_mrtd: None,
+            tdx_rtmr0: None,
+            tdx_rtmr1: None,
+            tdx_rtmr2: None,
+            tdx_mrconfigid: None,
+            tdx_minimum_tcb_evaluation_data_number: None,
         }
+    }
+
+    fn tdx_args(input: PathBuf, output: PathBuf) -> TeeGenesisArgs {
+        TeeGenesisArgs {
+            tdx_mrtd: Some("41".repeat(48)),
+            tdx_rtmr0: Some("42".repeat(48)),
+            tdx_rtmr1: Some("43".repeat(48)),
+            tdx_rtmr2: Some(format!("0x{}", "44".repeat(48))),
+            tdx_mrconfigid: Some("45".repeat(48)),
+            tdx_minimum_tcb_evaluation_data_number: Some(17),
+            ..args(input, output, TeeGenesisMode::TdxRequired)
+        }
+    }
+
+    #[test]
+    fn tdx_genesis_binds_the_td_identity_and_keeps_the_header_hash() {
+        use outbe_primitives::tee_attestation_v1::{
+            tdx_image_rule_value, tdx_mrconfigid_rule_value, AttestationMode,
+        };
+
+        let root = tempfile::tempdir().unwrap();
+        let input = root.path().join("base.json");
+        let output = root.path().join("tdx.json");
+        write_base_genesis(&input, TESTNET_CHAIN_ID).unwrap();
+        let before = reth_ethereum::cli::chainspec::chain_value_parser(input.to_str().unwrap())
+            .unwrap()
+            .genesis_hash();
+
+        generate_genesis(&tdx_args(input, output.clone())).unwrap();
+
+        let after = parse_generated(&output);
+        assert_eq!(after.genesis_hash(), before);
+        let activation =
+            outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
+                &after,
+            );
+        let policy = activation.activation().unwrap().policy_at(1).unwrap();
+        assert_eq!(policy.attestation_mode, AttestationMode::TdxRequired);
+        assert_eq!((policy.quote_version, policy.tee_type), (4, 0x81));
+        assert_eq!(policy.minimum_tcb_evaluation_data_number, 17);
+        assert_eq!(
+            policy.measurement_rules[0].mrenclave,
+            tdx_image_rule_value(&[0x41; 48], &[[0x42; 48], [0x43; 48], [0x44; 48]])
+        );
+        assert_eq!(
+            policy.measurement_rules[0].mrsigner,
+            tdx_mrconfigid_rule_value(&[0x45; 48])
+        );
+    }
+
+    #[test]
+    fn tdx_genesis_rejects_missing_malformed_and_foreign_arguments() {
+        let root = tempfile::tempdir().unwrap();
+        let input = root.path().join("base.json");
+        write_base_genesis(&input, TESTNET_CHAIN_ID).unwrap();
+        let output = root.path().join("tdx.json");
+
+        let mut missing = tdx_args(input.clone(), output.clone());
+        missing.tdx_rtmr1 = None;
+        let mut no_evaluation_number = tdx_args(input.clone(), output.clone());
+        no_evaluation_number.tdx_minimum_tcb_evaluation_data_number = None;
+        let mut short_measurement = tdx_args(input.clone(), output.clone());
+        short_measurement.tdx_mrtd = Some("41".repeat(32));
+        let mut with_dcap = tdx_args(input.clone(), output.clone());
+        with_dcap.mrenclave = Some("11".repeat(32));
+        let mut with_sev_snp = tdx_args(input.clone(), output.clone());
+        with_sev_snp.snp_host_data = Some("5a".repeat(32));
+        let mut dev_with_tdx = args(
+            input.clone(),
+            output.clone(),
+            TeeGenesisMode::GramineDirectDev,
+        );
+        dev_with_tdx.tdx_mrconfigid = Some("45".repeat(48));
+
+        for arguments in [
+            missing,
+            no_evaluation_number,
+            short_measurement,
+            with_dcap,
+            with_sev_snp,
+            dev_with_tdx,
+        ] {
+            assert!(generate_genesis(&arguments).is_err());
+            assert!(!output.exists());
+        }
+    }
+
+    #[test]
+    fn tdx_genesis_is_rejected_on_mainnet_without_output() {
+        let root = tempfile::tempdir().unwrap();
+        let input = root.path().join("base.json");
+        let output = root.path().join("tdx.json");
+        write_base_genesis(&input, MAINNET_CHAIN_ID).unwrap();
+
+        assert!(generate_genesis(&tdx_args(input, output.clone())).is_err());
+        assert!(!output.exists());
+    }
+
+    fn sev_snp_args(input: PathBuf, output: PathBuf) -> TeeGenesisArgs {
+        TeeGenesisArgs {
+            snp_measurement: Some("33".repeat(48)),
+            snp_host_data: Some("5a".repeat(32)),
+            snp_ark_sha256: Some(format!("0x{}", "69".repeat(32))),
+            ..args(input, output, TeeGenesisMode::SevSnpRequired)
+        }
+    }
+
+    #[test]
+    fn sev_snp_genesis_binds_the_launch_identity_and_keeps_the_header_hash() {
+        let root = tempfile::tempdir().unwrap();
+        let input = root.path().join("base.json");
+        let output = root.path().join("snp.json");
+        write_base_genesis(&input, TESTNET_CHAIN_ID).unwrap();
+        let before = reth_ethereum::cli::chainspec::chain_value_parser(input.to_str().unwrap())
+            .unwrap()
+            .genesis_hash();
+
+        generate_genesis(&sev_snp_args(input, output.clone())).unwrap();
+
+        let after = parse_generated(&output);
+        assert_eq!(after.genesis_hash(), before);
+        let activation =
+            outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
+                &after,
+            );
+        let policy = activation.activation().unwrap().policy_at(1).unwrap();
+        assert_eq!(
+            policy.attestation_mode,
+            outbe_primitives::tee_attestation_v1::AttestationMode::SevSnpRequired
+        );
+        assert_eq!(policy.intel_root_der_hash, B256::repeat_byte(0x69));
+        assert_eq!(
+            policy.measurement_rules[0].mrsigner,
+            B256::repeat_byte(0x5a)
+        );
+    }
+
+    #[test]
+    fn sev_snp_genesis_rejects_missing_malformed_and_foreign_arguments() {
+        let root = tempfile::tempdir().unwrap();
+        let input = root.path().join("base.json");
+        write_base_genesis(&input, TESTNET_CHAIN_ID).unwrap();
+        let output = root.path().join("snp.json");
+
+        let mut missing = sev_snp_args(input.clone(), output.clone());
+        missing.snp_host_data = None;
+        let mut short_measurement = sev_snp_args(input.clone(), output.clone());
+        short_measurement.snp_measurement = Some("33".repeat(32));
+        let mut with_dcap = sev_snp_args(input.clone(), output.clone());
+        with_dcap.mrenclave = Some("11".repeat(32));
+        let mut dev_with_sev_snp = args(
+            input.clone(),
+            output.clone(),
+            TeeGenesisMode::GramineDirectDev,
+        );
+        dev_with_sev_snp.snp_host_data = Some("5a".repeat(32));
+
+        for arguments in [missing, short_measurement, with_dcap, dev_with_sev_snp] {
+            assert!(generate_genesis(&arguments).is_err());
+            assert!(!output.exists());
+        }
+    }
+
+    #[test]
+    fn sev_snp_genesis_is_rejected_on_mainnet_without_output() {
+        let root = tempfile::tempdir().unwrap();
+        let input = root.path().join("base.json");
+        let output = root.path().join("snp.json");
+        write_base_genesis(&input, MAINNET_CHAIN_ID).unwrap();
+
+        assert!(generate_genesis(&sev_snp_args(input, output.clone())).is_err());
+        assert!(!output.exists());
     }
 
     fn parse_generated(

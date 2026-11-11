@@ -329,14 +329,19 @@ impl TeeRegistry<'_> {
         } = verification;
         let enclave_signature = request.enclave_signature;
         match decoded {
-            AttestationEvidenceV1::Dcap(dcap) => {
+            // SEV-SNP and TDX evidence take the DCAP path: the enclave service
+            // selects the verifier by the mode of the evidence and returns a
+            // verdict of the same shape.
+            AttestationEvidenceV1::Dcap(_)
+            | AttestationEvidenceV1::SevSnp(_)
+            | AttestationEvidenceV1::Tdx(_) => {
                 let verified = self.verify_dcap_claims_v1(
                     expected_operation,
                     request,
                     policy,
                     issue_onboarding_artifact,
                 )?;
-                Ok((dcap.intent.clone(), verified))
+                Ok((decoded.intent().clone(), verified))
             }
             AttestationEvidenceV1::GramineDirectDev(dev) => {
                 let (claims, evidence_hash) = self.verify_dev_claims_v1(

@@ -81,7 +81,9 @@ fn validate_authority_shape(payload: &TeeBootstrapV2) -> Result<(), CodecError> 
         ));
     }
     match payload.authority.policy.attestation_mode {
-        AttestationMode::DcapRequired if payload.collateral_pool.is_empty() => {
+        AttestationMode::DcapRequired | AttestationMode::TdxRequired
+            if payload.collateral_pool.is_empty() =>
+        {
             return Err(CodecError::NonCanonical(
                 "DCAP TEE bootstrap collateral pool is empty",
             ));
@@ -166,7 +168,11 @@ fn validate_participant_evidence(
         TeeBootstrapParticipantEvidenceV2::Dcap {
             quote,
             collateral_component_indices,
-        } if payload.authority.policy.attestation_mode == AttestationMode::DcapRequired => {
+        } if matches!(
+            payload.authority.policy.attestation_mode,
+            AttestationMode::DcapRequired | AttestationMode::TdxRequired
+        ) =>
+        {
             validate_dcap_evidence(
                 payload,
                 quote,
@@ -184,6 +190,24 @@ fn validate_participant_evidence(
             {
                 return Err(CodecError::NonCanonical(
                     "GramineDirectDev evidence does not prove the intent attestation key",
+                ));
+            }
+        }
+        TeeBootstrapParticipantEvidenceV2::SevSnp {
+            report,
+            ark_der,
+            ask_der,
+            vcek_der,
+        } if payload.authority.policy.attestation_mode == AttestationMode::SevSnpRequired => {
+            // The signature and the certificate chain are verified at
+            // execution. This check covers the canonical shape only.
+            if report.len() != SEV_SNP_REPORT_BYTES
+                || [ark_der, ask_der, vcek_der].iter().any(|certificate| {
+                    certificate.is_empty() || certificate.len() > MAX_SEV_SNP_CERTIFICATE_BYTES
+                })
+            {
+                return Err(CodecError::NonCanonical(
+                    "SEV-SNP bootstrap evidence has a non-canonical shape",
                 ));
             }
         }

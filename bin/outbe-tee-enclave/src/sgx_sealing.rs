@@ -123,6 +123,10 @@ pub(crate) fn seal_payload(
     if crate::local_e2e::configured() {
         return crate::local_e2e::seal(secret, extra, binding, header);
     }
+    #[cfg(feature = "sev-snp")]
+    if crate::confidential_vm::configured() {
+        return crate::confidential_vm::seal(secret, extra, binding, header);
+    }
     #[cfg(any(test, feature = "mock"))]
     if !crate::gramine::attestation_type().sgx_present() {
         let mut header = *header;
@@ -155,6 +159,10 @@ pub(crate) fn unseal_payload(
     #[cfg(feature = "local-e2e")]
     if crate::local_e2e::configured() {
         return crate::local_e2e::unseal(blob, running_svn);
+    }
+    #[cfg(feature = "sev-snp")]
+    if crate::confidential_vm::configured() {
+        return crate::confidential_vm::unseal(blob, running_svn);
     }
     if blob.starts_with(MAGIC) {
         if blob.len() < MAGIC.len() + REQUEST_LEN {

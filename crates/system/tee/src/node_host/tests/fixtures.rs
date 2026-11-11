@@ -163,6 +163,12 @@ pub(super) fn replacement_fixture_for_mode(
             components: crate::test_utils::canonical_dcap_collateral_fixture(),
             transition_key_ready_proof,
         }),
+        AttestationMode::TdxRequired => AttestationEvidenceV1::Tdx(DcapEvidenceV1 {
+            intent,
+            quote: vec![0x51],
+            components: crate::test_utils::canonical_dcap_collateral_fixture(),
+            transition_key_ready_proof,
+        }),
         AttestationMode::GramineDirectDev => AttestationEvidenceV1::GramineDirectDev(
             outbe_primitives::tee_attestation_v1::GramineDirectEvidenceV1 {
                 transition_key_ready_proof: None,
@@ -171,6 +177,16 @@ pub(super) fn replacement_fixture_for_mode(
                 dev_signature: enclave_signature,
             },
         ),
+        AttestationMode::SevSnpRequired => {
+            AttestationEvidenceV1::SevSnp(outbe_primitives::tee_attestation_v1::SevSnpEvidenceV1 {
+                intent,
+                report: vec![0x51; outbe_primitives::tee_attestation_v1::SEV_SNP_REPORT_BYTES],
+                ark_der: vec![0x52],
+                ask_der: vec![0x53],
+                vcek_der: vec![0x54],
+                transition_key_ready_proof,
+            })
+        }
     };
     persist_replacement_candidate_submission(
         &node_data_dir,

@@ -31,7 +31,11 @@ fn dcap_evidence_roundtrips_and_rejects_duplicate_unknown_and_trailing_component
 
     let mut duplicate = match evidence.clone() {
         AttestationEvidenceV1::Dcap(value) => value,
-        AttestationEvidenceV1::GramineDirectDev(_) => unreachable!(),
+        AttestationEvidenceV1::GramineDirectDev(_)
+        | AttestationEvidenceV1::SevSnp(_)
+        | AttestationEvidenceV1::Tdx(_) => {
+            unreachable!()
+        }
     };
     duplicate.components[7].kind = DcapCollateralKind::QeIdentity;
     assert_eq!(
@@ -118,7 +122,11 @@ fn dcap_evidence_requires_transition_proof_only_for_transition() {
     let attestation = ed25519_dalek::SigningKey::from_bytes(&[0x77; 32]);
     let mut transition = match dcap_evidence_with_component_bytes(1) {
         AttestationEvidenceV1::Dcap(value) => value,
-        AttestationEvidenceV1::GramineDirectDev(_) => unreachable!(),
+        AttestationEvidenceV1::GramineDirectDev(_)
+        | AttestationEvidenceV1::SevSnp(_)
+        | AttestationEvidenceV1::Tdx(_) => {
+            unreachable!()
+        }
     };
     transition.intent.chain_id = [0x10; 32];
     transition.intent.operation = AttestationOperationV1::TransitionEnclaveMeasurement;
@@ -239,4 +247,194 @@ fn evidence_codec_checks_declared_caps_before_payload_allocation() {
             ..
         })
     ));
+}
+
+fn sev_snp_evidence() -> SevSnpEvidenceV1 {
+    let mut intent = validator_intent(B256::repeat_byte(0x11));
+    intent.attestation_mode = AttestationMode::SevSnpRequired;
+    SevSnpEvidenceV1 {
+        intent,
+        report: vec![0x61; SEV_SNP_REPORT_BYTES],
+        ark_der: vec![0x01; 3],
+        ask_der: vec![0x02; 2],
+        vcek_der: vec![0x03; 1],
+        transition_key_ready_proof: None,
+    }
+}
+
+#[test]
+fn sev_snp_evidence_roundtrips_with_the_mode_byte_in_the_frame() {
+    let evidence = AttestationEvidenceV1::SevSnp(sev_snp_evidence());
+
+    let encoded = evidence.encode_canonical().unwrap();
+
+    assert_eq!(encoded[..2], [1, 0x03]);
+    assert_eq!(evidence.mode(), AttestationMode::SevSnpRequired);
+    assert_eq!(
+        AttestationEvidenceV1::decode_canonical(&encoded).unwrap(),
+        evidence
+    );
+}
+
+#[test]
+fn sev_snp_evidence_rejects_a_wrong_report_length_and_bad_certificates() {
+    for len in [0, SEV_SNP_REPORT_BYTES - 1, SEV_SNP_REPORT_BYTES + 1] {
+        let mut value = sev_snp_evidence();
+        value.report = vec![0x61; len];
+        assert_eq!(
+            AttestationEvidenceV1::SevSnp(value)
+                .encode_canonical()
+                .unwrap_err(),
+            CodecError::NonCanonical("SEV-SNP report length")
+        );
+    }
+
+    let mut empty = sev_snp_evidence();
+    empty.ask_der.clear();
+    assert_eq!(
+        AttestationEvidenceV1::SevSnp(empty)
+            .encode_canonical()
+            .unwrap_err(),
+        CodecError::NonCanonical("empty SEV-SNP certificate")
+    );
+
+    let mut at_cap = sev_snp_evidence();
+    at_cap.vcek_der = vec![0x03; MAX_SEV_SNP_CERTIFICATE_BYTES];
+    let at_cap = AttestationEvidenceV1::SevSnp(at_cap);
+    let encoded = at_cap.encode_canonical().unwrap();
+    assert_eq!(
+        AttestationEvidenceV1::decode_canonical(&encoded).unwrap(),
+        at_cap
+    );
+
+    let mut over_cap = sev_snp_evidence();
+    over_cap.vcek_der = vec![0x03; MAX_SEV_SNP_CERTIFICATE_BYTES + 1];
+    assert!(AttestationEvidenceV1::SevSnp(over_cap)
+        .encode_canonical()
+        .is_err());
+}
+
+#[test]
+fn sev_snp_evidence_rejects_another_mode_an_empty_certificate_and_trailing_bytes() {
+    let mut other_mode = sev_snp_evidence();
+    other_mode.intent.attestation_mode = AttestationMode::DcapRequired;
+    assert_eq!(
+        AttestationEvidenceV1::SevSnp(other_mode)
+            .encode_canonical()
+            .unwrap_err(),
+        CodecError::NonCanonical("SEV-SNP evidence intent mode mismatch")
+    );
+
+    let evidence = sev_snp_evidence();
+    let encoded = AttestationEvidenceV1::SevSnp(evidence.clone())
+        .encode_canonical()
+        .unwrap();
+
+    // The frame of another mode with this payload does not decode.
+    let mut as_dcap = encoded.clone();
+    as_dcap[1] = 0x01;
+    assert!(AttestationEvidenceV1::decode_canonical(&as_dcap).is_err());
+
+    // A zero length of the last certificate. The presence flag follows it.
+    let mut zero_vcek = encoded.clone();
+    let vcek_len_at = zero_vcek.len() - 1 - evidence.vcek_der.len() - 2;
+    zero_vcek.drain(vcek_len_at + 2..vcek_len_at + 2 + evidence.vcek_der.len());
+    zero_vcek[vcek_len_at..vcek_len_at + 2].copy_from_slice(&0_u16.to_be_bytes());
+    let payload_len = u32::from_be_bytes(zero_vcek[2..6].try_into().unwrap()) - 1;
+    zero_vcek[2..6].copy_from_slice(&payload_len.to_be_bytes());
+    assert_eq!(
+        AttestationEvidenceV1::decode_canonical(&zero_vcek).unwrap_err(),
+        CodecError::NonCanonical("empty SEV-SNP certificate")
+    );
+
+    let mut trailing = encoded;
+    trailing.push(0);
+    assert!(AttestationEvidenceV1::decode_canonical(&trailing).is_err());
+}
+
+#[test]
+fn sev_snp_evidence_requires_a_transition_proof_only_for_a_transition() {
+    let mut value = sev_snp_evidence();
+    value.intent.operation = AttestationOperationV1::TransitionEnclaveMeasurement;
+
+    assert_eq!(
+        AttestationEvidenceV1::SevSnp(value)
+            .encode_canonical()
+            .unwrap_err(),
+        CodecError::NonCanonical("transition key-ready proof presence does not match operation")
+    );
+}
+
+fn tdx_evidence() -> DcapEvidenceV1 {
+    let mut intent = validator_intent(B256::repeat_byte(0x11));
+    intent.attestation_mode = AttestationMode::TdxRequired;
+    DcapEvidenceV1 {
+        intent,
+        quote: vec![0x61; 64],
+        components: (1u8..=8)
+            .map(|value| DcapCollateralComponentV1 {
+                kind: DcapCollateralKind::try_from(value).unwrap(),
+                bytes: vec![value],
+            })
+            .collect(),
+        transition_key_ready_proof: None,
+    }
+}
+
+#[test]
+fn tdx_evidence_roundtrips_with_its_own_mode_byte() {
+    let evidence = AttestationEvidenceV1::Tdx(tdx_evidence());
+    let encoded = evidence.encode_canonical().unwrap();
+
+    // Frame: version, then the attestation mode.
+    assert_eq!(encoded[1], 0x04);
+    assert_eq!(evidence.mode(), AttestationMode::TdxRequired);
+    assert_eq!(
+        AttestationEvidenceV1::decode_canonical(&encoded).unwrap(),
+        evidence
+    );
+}
+
+#[test]
+fn tdx_and_dcap_evidence_do_not_decode_as_each_other() {
+    // The payload layout is the same. The mode byte of the frame and the mode
+    // of the intent keep the two apart.
+    let tdx = AttestationEvidenceV1::Tdx(tdx_evidence())
+        .encode_canonical()
+        .unwrap();
+    let mut as_dcap = tdx.clone();
+    as_dcap[1] = AttestationMode::DcapRequired as u8;
+    assert!(AttestationEvidenceV1::decode_canonical(&as_dcap).is_err());
+
+    let dcap = dcap_evidence_with_component_bytes(1)
+        .encode_canonical()
+        .unwrap();
+    let mut as_tdx = dcap;
+    as_tdx[1] = AttestationMode::TdxRequired as u8;
+    assert!(AttestationEvidenceV1::decode_canonical(&as_tdx).is_err());
+
+    // The intent mode must be the mode of the variant.
+    let mut dcap_intent = tdx_evidence();
+    dcap_intent.intent.attestation_mode = AttestationMode::DcapRequired;
+    assert!(AttestationEvidenceV1::Tdx(dcap_intent)
+        .encode_canonical()
+        .is_err());
+    assert!(AttestationEvidenceV1::Dcap(tdx_evidence())
+        .encode_canonical()
+        .is_err());
+}
+
+#[test]
+fn tdx_evidence_keeps_the_dcap_component_rules() {
+    let mut seven = tdx_evidence();
+    seven.components.pop();
+    assert!(AttestationEvidenceV1::Tdx(seven)
+        .encode_canonical()
+        .is_err());
+
+    let mut empty_quote = tdx_evidence();
+    empty_quote.quote.clear();
+    assert!(AttestationEvidenceV1::Tdx(empty_quote)
+        .encode_canonical()
+        .is_err());
 }

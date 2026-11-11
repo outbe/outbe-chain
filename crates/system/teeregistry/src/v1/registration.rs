@@ -70,11 +70,7 @@ impl TeeRegistry<'_> {
     ) -> Result<()> {
         let decoded = AttestationEvidenceV1::decode_canonical(evidence)
             .map_err(|error| revert_codec("attestation evidence is not canonical", error))?;
-        let intent = match &decoded {
-            AttestationEvidenceV1::Dcap(value) => &value.intent,
-            AttestationEvidenceV1::GramineDirectDev(value) => &value.intent,
-        };
-        Self::require_initial_binding_target_v1(intent, binding)
+        Self::require_initial_binding_target_v1(decoded.intent(), binding)
     }
 
     /// Writes the independently authorized address-to-NodeHost association as

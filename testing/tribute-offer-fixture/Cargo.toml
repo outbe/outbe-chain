@@ -1,0 +1,29 @@
+[package]
+name = "outbe-tribute-offer-fixture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "outbe-tribute-offer-fixture"
+path = "src/main.rs"
+
+[dependencies]
+alloy-primitives.workspace = true
+ark-bn254.workspace = true
+ark-ff.workspace = true
+clap.workspace = true
+commonware-codec.workspace = true
+commonware-cryptography.workspace = true
+eyre.workspace = true
+hex.workspace = true
+outbe-l2registry.workspace = true
+outbe-zk.workspace = true
+outbe-zk-backend.workspace = true
+rand.workspace = true
+rand-commonware.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

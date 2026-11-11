@@ -81,7 +81,7 @@ pub fn serve_connection_with<S: EnclaveTransportStream>(
             boot,
             initialization,
             chain_id,
-            quote_generator: crate::gramine::dcap_quote,
+            quote_generator: crate::platform_attestation::registration_evidence,
         },
     )
 }

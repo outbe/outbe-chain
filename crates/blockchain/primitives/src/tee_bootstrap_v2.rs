@@ -18,10 +18,10 @@ use crate::system_tx::{
 use crate::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, CodecError,
     DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1, GramineDirectEvidenceV1,
-    RegistrationIntentV1, SystemGasScheduleV1, TeeBootstrapGasInputV1, TeePolicyV1,
-    TeeRegistryGasScheduleV1, ValidatorNodeBindingV1, MAX_ATTESTATION_EVIDENCE_BYTES,
+    RegistrationIntentV1, SevSnpEvidenceV1, SystemGasScheduleV1, TeeBootstrapGasInputV1,
+    TeePolicyV1, TeeRegistryGasScheduleV1, ValidatorNodeBindingV1, MAX_ATTESTATION_EVIDENCE_BYTES,
     MAX_COLLATERAL_COMPONENT_BYTES, MAX_EVIDENCE_CALL_FRAMING_BYTES, MAX_QUOTE_BYTES,
-    MAX_TEE_BOOTSTRAP_BYTES,
+    MAX_SEV_SNP_CERTIFICATE_BYTES, MAX_TEE_BOOTSTRAP_BYTES, SEV_SNP_REPORT_BYTES,
 };
 
 const MAGIC: &[u8; 4] = b"TTB2";
@@ -33,6 +33,7 @@ const MAX_GROUP_PUBLIC_KEY_BYTES: usize = 32 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TeeBootstrapParticipantEvidenceV2 {
+    /// SGX DCAP quote, or a TDX quote when the intent mode is `TdxRequired`.
     Dcap {
         quote: Vec<u8>,
         collateral_component_indices: [u16; 8],
@@ -40,6 +41,13 @@ pub enum TeeBootstrapParticipantEvidenceV2 {
     GramineDirectDev {
         dev_attestation_public: [u8; 32],
         dev_signature: [u8; 64],
+    },
+    /// AMD SEV-SNP report with the ARK, ASK and VCEK certificates in DER.
+    SevSnp {
+        report: Vec<u8>,
+        ark_der: Vec<u8>,
+        ask_der: Vec<u8>,
+        vcek_der: Vec<u8>,
     },
 }
 
@@ -155,12 +163,12 @@ impl TeeBootstrapV2 {
             );
         }
         let collateral_component_count = match self.authority.policy.attestation_mode {
-            AttestationMode::DcapRequired => self
+            AttestationMode::DcapRequired | AttestationMode::TdxRequired => self
                 .participants
                 .len()
                 .checked_mul(8)
                 .ok_or(CodecError::ArithmeticOverflow)?,
-            AttestationMode::GramineDirectDev => 0,
+            AttestationMode::GramineDirectDev | AttestationMode::SevSnpRequired => 0,
         };
         system_schedule.tee_bootstrap_precharge(
             tee_registry_schedule,
@@ -210,6 +218,17 @@ impl TeeBootstrapV2 {
                 }
                 TeeBootstrapParticipantEvidenceV2::GramineDirectDev { .. } => {
                     checked_add_len(&mut len, 32 + 64)?;
+                }
+                TeeBootstrapParticipantEvidenceV2::SevSnp {
+                    report,
+                    ark_der,
+                    ask_der,
+                    vcek_der,
+                } => {
+                    for bytes in [report, ark_der, ask_der, vcek_der] {
+                        checked_add_len(&mut len, 4)?;
+                        checked_add_len(&mut len, bytes.len())?;
+                    }
                 }
             }
             checked_add_len(&mut len, 65 + 64)?;

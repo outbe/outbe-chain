@@ -102,6 +102,12 @@ fn ingest_evidence(
             quote,
             components,
             transition_key_ready_proof: _,
+        })
+        | AttestationEvidenceV1::Tdx(DcapEvidenceV1 {
+            intent,
+            quote,
+            components,
+            transition_key_ready_proof: _,
         }) => {
             let indices = insert_components(components, component_indices)?;
             Ok((
@@ -124,9 +130,25 @@ fn ingest_evidence(
                 dev_signature,
             },
         )),
-        AttestationEvidenceV1::GramineDirectDev(_) => Err(CodecError::NonCanonical(
-            "bootstrap cannot carry transition evidence",
+        AttestationEvidenceV1::SevSnp(SevSnpEvidenceV1 {
+            intent,
+            report,
+            ark_der,
+            ask_der,
+            vcek_der,
+            transition_key_ready_proof: None,
+        }) => Ok((
+            intent,
+            TeeBootstrapParticipantEvidenceV2::SevSnp {
+                report,
+                ark_der,
+                ask_der,
+                vcek_der,
+            },
         )),
+        AttestationEvidenceV1::GramineDirectDev(_) | AttestationEvidenceV1::SevSnp(_) => Err(
+            CodecError::NonCanonical("bootstrap cannot carry transition evidence"),
+        ),
     }
 }
 

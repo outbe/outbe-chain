@@ -31,6 +31,12 @@ pub enum ArgsError {
     /// Indicates that DcapRequired policy rejects the development enclave session.
     #[error("DcapRequired forbids the development enclave session")]
     DcapRequiredForbidsDevSession,
+    /// Indicates that SevSnpRequired policy rejects the development enclave session.
+    #[error("SevSnpRequired forbids the development enclave session")]
+    SevSnpRequiredForbidsDevSession,
+    /// Indicates that TdxRequired policy rejects the development enclave session.
+    #[error("TdxRequired forbids the development enclave session")]
+    TdxRequiredForbidsDevSession,
     /// Indicates that the pending staleness duration is zero.
     #[error("--txpool.outbe.pending-staleness-secs must be greater than zero")]
     PendingStalenessSecsZero,

@@ -27,8 +27,12 @@ pub fn production(
         _ => None,
     };
     #[cfg(feature = "mock")]
-    let trusted_network_descriptor = None;
-    #[cfg(not(feature = "mock"))]
+    let trusted_network_descriptor: Option<TrustedNetworkDescriptorV1> = None;
+    // A confidential VM has no measured file. The descriptor comes from the
+    // file that `--network-descriptor` names.
+    #[cfg(feature = "sev-snp")]
+    let trusted_network_descriptor =
+        crate::confidential_vm::network_descriptor().or(trusted_network_descriptor);
     if let Some(descriptor) = trusted_network_descriptor.as_ref() {
         let chain_id = u64::try_from(alloy_primitives::U256::from_be_bytes(
             descriptor.network_binding.chain_id,

@@ -18,6 +18,11 @@ pub(in crate::transport) fn validate_generated_quote_binding(
     expected_report_data: [u8; 64],
     quote: Vec<u8>,
 ) -> EnclaveResult<Vec<u8>> {
+    #[cfg(feature = "sev-snp")]
+    if crate::confidential_vm::configured() {
+        crate::confidential_vm::validate_registration_report(&quote, &expected_report_data)?;
+        return Ok(quote);
+    }
     let parsed = outbe_tee::quote::parse_quote_measurements(&quote)
         .map_err(TransportDispatchError::detail)?;
     if parsed.report_data != expected_report_data {

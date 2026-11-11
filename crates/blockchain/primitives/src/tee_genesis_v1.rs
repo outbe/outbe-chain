@@ -15,9 +15,11 @@ use crate::{
     chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID},
     errors::TeeGenesisPolicyError,
     tee_attestation_v1::{
+        sev_snp_measurement_rule_value, tdx_image_rule_value, tdx_mrconfigid_rule_value,
         AttestationMode, PlatformTcbStatusSetV1, QvlTcbStatusV1, ResourceScheduleV1,
         TeeMeasurementRuleV1, TeePolicyScheduleEntryV1, TeePolicyScheduleV1, TeePolicyV1,
-        INTEL_QE_VENDOR_ID,
+        INTEL_QE_VENDOR_ID, SEV_SNP_RULE_PRODUCT_ID_V1, SEV_SNP_RULE_SVN_V1, TDX_QUOTE_VERSION_V1,
+        TDX_RULE_PRODUCT_ID_V1, TDX_RULE_SVN_V1, TDX_TEE_TYPE_V1,
     },
 };
 
@@ -36,6 +38,16 @@ pub const fn is_dcap_required_chain_id(chain_id: u64) -> bool {
     chain_id == DEVNET_CHAIN_ID || chain_id == TESTNET_CHAIN_ID || chain_id == MAINNET_CHAIN_ID
 }
 
+/// Returns whether the chain may require AMD SEV-SNP attestation.
+pub const fn is_sev_snp_required_chain_id(chain_id: u64) -> bool {
+    chain_id == DEVNET_CHAIN_ID || chain_id == TESTNET_CHAIN_ID
+}
+
+/// Returns whether the chain may require Intel TDX attestation.
+pub const fn is_tdx_required_chain_id(chain_id: u64) -> bool {
+    chain_id == DEVNET_CHAIN_ID || chain_id == TESTNET_CHAIN_ID
+}
+
 /// Returns whether a product network may select this explicit attestation
 /// mode at genesis. The selected mode is subsequently fixed for the life of
 /// the chain by TeeRegistry successor-policy validation.
@@ -46,6 +58,8 @@ pub const fn is_attestation_mode_allowed_for_chain_id(
     match mode {
         AttestationMode::DcapRequired => is_dcap_required_chain_id(chain_id),
         AttestationMode::GramineDirectDev => is_gramine_direct_dev_chain_id(chain_id),
+        AttestationMode::SevSnpRequired => is_sev_snp_required_chain_id(chain_id),
+        AttestationMode::TdxRequired => is_tdx_required_chain_id(chain_id),
     }
 }
 
@@ -67,10 +81,40 @@ pub struct ProductionSgxMeasurementV1 {
     pub minimum_tcb_evaluation_data_number: u32,
 }
 
+/// Identity of the confidential VM that an SEV-SNP network admits at genesis.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SevSnpLaunchIdentityV1 {
+    /// Launch measurement of the VM image for one VM shape.
+    pub measurement: [u8; 48],
+    /// Host data that the VMM binds at launch. It commits to the application
+    /// manifest of the VM.
+    pub host_data: B256,
+    /// SHA-256 of the DER certificate of the AMD root key (ARK). One processor
+    /// generation has one root.
+    pub ark_der_sha256: B256,
+}
+
+/// Identity of the trust domain that a TDX network admits at genesis.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TdxLaunchIdentityV1 {
+    /// Build-time measurement of the TD.
+    pub mrtd: [u8; 48],
+    /// Runtime measurement registers 0, 1 and 2. `RTMR0` depends on the VM
+    /// shape, so one VM shape has one identity.
+    pub rtmrs: [[u8; 48]; 3],
+    /// Configuration identity that the VMM binds at launch. It commits to the
+    /// application manifest of the VM.
+    pub mr_config_id: [u8; 48],
+    /// Lowest accepted TCB evaluation data number of the Intel collateral.
+    pub minimum_tcb_evaluation_data_number: u32,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InitialTeeProfileV1 {
     DcapRequired(ProductionSgxMeasurementV1),
     GramineDirectDev,
+    SevSnpRequired(SevSnpLaunchIdentityV1),
+    TdxRequired(TdxLaunchIdentityV1),
 }
 
 impl InitialTeeProfileV1 {
@@ -78,6 +122,8 @@ impl InitialTeeProfileV1 {
         match self {
             Self::DcapRequired(_) => AttestationMode::DcapRequired,
             Self::GramineDirectDev => AttestationMode::GramineDirectDev,
+            Self::SevSnpRequired(_) => AttestationMode::SevSnpRequired,
+            Self::TdxRequired(_) => AttestationMode::TdxRequired,
         }
     }
 }
@@ -114,6 +160,28 @@ pub fn initial_tee_policy_v1(
             ) =>
         {
             return Err(TeeGenesisPolicyError::InvalidGramineDirectDevChainId {
+                devnet: DEVNET_CHAIN_ID,
+                testnet: TESTNET_CHAIN_ID,
+            });
+        }
+        AttestationMode::SevSnpRequired
+            if !is_attestation_mode_allowed_for_chain_id(
+                chain_id,
+                AttestationMode::SevSnpRequired,
+            ) =>
+        {
+            return Err(TeeGenesisPolicyError::InvalidSevSnpChainId {
+                devnet: DEVNET_CHAIN_ID,
+                testnet: TESTNET_CHAIN_ID,
+            });
+        }
+        AttestationMode::TdxRequired
+            if !is_attestation_mode_allowed_for_chain_id(
+                chain_id,
+                AttestationMode::TdxRequired,
+            ) =>
+        {
+            return Err(TeeGenesisPolicyError::InvalidTdxChainId {
                 devnet: DEVNET_CHAIN_ID,
                 testnet: TESTNET_CHAIN_ID,
             });
@@ -156,6 +224,61 @@ pub fn initial_tee_policy_v1(
             };
             (1, rule)
         }
+        InitialTeeProfileV1::SevSnpRequired(identity) => {
+            if identity.measurement == [0; 48]
+                || identity.host_data.is_zero()
+                || identity.ark_der_sha256.is_zero()
+            {
+                return Err(TeeGenesisPolicyError::ZeroSevSnpIdentity);
+            }
+            // The rule keeps the SGX field names. `mrenclave` holds the
+            // projection of the launch measurement, `mrsigner` the host data.
+            let rule = TeeMeasurementRuleV1 {
+                mrenclave: sev_snp_measurement_rule_value(&identity.measurement),
+                mrsigner: identity.host_data,
+                isv_prod_id: SEV_SNP_RULE_PRODUCT_ID_V1,
+                minimum_isv_svn: SEV_SNP_RULE_SVN_V1,
+                admit_from_height: 1,
+                admit_until_height_exclusive: u64::MAX,
+            };
+            (1, rule)
+        }
+        InitialTeeProfileV1::TdxRequired(identity) => {
+            if identity.mrtd == [0; 48] || identity.mr_config_id == [0; 48] {
+                return Err(TeeGenesisPolicyError::ZeroTdxIdentity);
+            }
+            if identity.minimum_tcb_evaluation_data_number == 0 {
+                return Err(TeeGenesisPolicyError::ZeroMinimumTcbEvaluationDataNumber);
+            }
+            // The rule keeps the SGX field names. `mrenclave` holds the
+            // projection of the image measurements, `mrsigner` the projection
+            // of `MRCONFIGID`.
+            let rule = TeeMeasurementRuleV1 {
+                mrenclave: tdx_image_rule_value(&identity.mrtd, &identity.rtmrs),
+                mrsigner: tdx_mrconfigid_rule_value(&identity.mr_config_id),
+                isv_prod_id: TDX_RULE_PRODUCT_ID_V1,
+                minimum_isv_svn: TDX_RULE_SVN_V1,
+                admit_from_height: 1,
+                admit_until_height_exclusive: u64::MAX,
+            };
+            (identity.minimum_tcb_evaluation_data_number, rule)
+        }
+    };
+    // The policy has one field for the hash of the root certificate. An SEV-SNP
+    // policy stores the AMD root there. The Intel collateral fields below keep
+    // their DCAP constants and are not read in the SEV-SNP mode.
+    let root_der_hash = match profile {
+        InitialTeeProfileV1::SevSnpRequired(identity) => identity.ark_der_sha256,
+        // A TDX quote chains to the same Intel SGX root as an SGX quote.
+        InitialTeeProfileV1::DcapRequired(_)
+        | InitialTeeProfileV1::GramineDirectDev
+        | InitialTeeProfileV1::TdxRequired(_) => B256::from(INTEL_SGX_ROOT_CA_DER_SHA256),
+    };
+    let (quote_version, tee_type) = match profile {
+        InitialTeeProfileV1::TdxRequired(_) => (TDX_QUOTE_VERSION_V1, TDX_TEE_TYPE_V1),
+        InitialTeeProfileV1::DcapRequired(_)
+        | InitialTeeProfileV1::GramineDirectDev
+        | InitialTeeProfileV1::SevSnpRequired(_) => (3, 0),
     };
 
     let policy = TeePolicyV1 {
@@ -165,9 +288,9 @@ pub fn initial_tee_policy_v1(
         activation_height: 1,
         predecessor_policy_hash: B256::ZERO,
         attestation_mode: profile.attestation_mode(),
-        intel_root_der_hash: B256::from(INTEL_SGX_ROOT_CA_DER_SHA256),
-        quote_version: 3,
-        tee_type: 0,
+        intel_root_der_hash: root_der_hash,
+        quote_version,
+        tee_type,
         attestation_key_type: 2,
         qe_vendor_id: INTEL_QE_VENDOR_ID,
         certification_data_type: 5,
@@ -227,6 +350,214 @@ mod tests {
             isv_prod_id: 7,
             minimum_isv_svn: 3,
             minimum_tcb_evaluation_data_number: 17,
+        }
+    }
+
+    fn tdx_identity() -> TdxLaunchIdentityV1 {
+        TdxLaunchIdentityV1 {
+            mrtd: [0x41; 48],
+            rtmrs: [[0x42; 48], [0x43; 48], [0x44; 48]],
+            mr_config_id: [0x45; 48],
+            minimum_tcb_evaluation_data_number: 17,
+        }
+    }
+
+    #[test]
+    fn tdx_policy_projects_the_td_identity_and_takes_the_tdx_quote_profile() {
+        let policy = initial_tee_policy_v1(
+            InitialTeeProfileV1::TdxRequired(tdx_identity()),
+            TESTNET_CHAIN_ID,
+            B256::repeat_byte(0x77),
+        )
+        .unwrap();
+
+        assert_eq!(policy.attestation_mode, AttestationMode::TdxRequired);
+        assert_eq!(policy.quote_version, 4);
+        assert_eq!(policy.tee_type, 0x81);
+        assert_eq!(policy.certification_data_type, 5);
+        // A TDX quote chains to the Intel SGX root.
+        assert_eq!(
+            policy.intel_root_der_hash,
+            B256::from(INTEL_SGX_ROOT_CA_DER_SHA256)
+        );
+        assert_eq!(policy.minimum_tcb_evaluation_data_number, 17);
+        let rule = &policy.measurement_rules[0];
+        assert_eq!(
+            rule.mrenclave,
+            tdx_image_rule_value(&[0x41; 48], &[[0x42; 48], [0x43; 48], [0x44; 48]])
+        );
+        assert_eq!(rule.mrsigner, tdx_mrconfigid_rule_value(&[0x45; 48]));
+        assert_eq!(rule.isv_prod_id, TDX_RULE_PRODUCT_ID_V1);
+        assert_eq!(rule.minimum_isv_svn, TDX_RULE_SVN_V1);
+        // The policy round-trips: the TDX profile is canonical in this mode.
+        let encoded = policy.encode_canonical().unwrap();
+        assert_eq!(TeePolicyV1::decode_canonical(&encoded).unwrap(), policy);
+    }
+
+    #[test]
+    fn quote_profile_belongs_to_its_attestation_mode() {
+        let tdx = initial_tee_policy_v1(
+            InitialTeeProfileV1::TdxRequired(tdx_identity()),
+            TESTNET_CHAIN_ID,
+            B256::repeat_byte(0x77),
+        )
+        .unwrap();
+        // The SGX profile in a TDX policy is not canonical.
+        let mut sgx_profile = tdx.clone();
+        sgx_profile.quote_version = 3;
+        sgx_profile.tee_type = 0;
+        assert!(sgx_profile.encode_canonical().is_err());
+        // The TDX profile in a DCAP policy is not canonical.
+        let mut dcap_mode = tdx;
+        dcap_mode.attestation_mode = AttestationMode::DcapRequired;
+        assert!(dcap_mode.encode_canonical().is_err());
+    }
+
+    #[test]
+    fn each_rtmr_and_the_mrconfigid_change_the_rule() {
+        let base = tdx_identity();
+        let rule = |identity: TdxLaunchIdentityV1| {
+            initial_tee_policy_v1(
+                InitialTeeProfileV1::TdxRequired(identity),
+                TESTNET_CHAIN_ID,
+                B256::repeat_byte(0x77),
+            )
+            .unwrap()
+            .measurement_rules[0]
+                .clone()
+        };
+        let base_rule = rule(base);
+        for index in 0..3 {
+            let mut other = base;
+            other.rtmrs[index][0] ^= 1;
+            assert_ne!(rule(other).mrenclave, base_rule.mrenclave);
+            assert_eq!(rule(other).mrsigner, base_rule.mrsigner);
+        }
+        let mut other_mrtd = base;
+        other_mrtd.mrtd[0] ^= 1;
+        assert_ne!(rule(other_mrtd).mrenclave, base_rule.mrenclave);
+        let mut other_manifest = base;
+        other_manifest.mr_config_id[0] ^= 1;
+        assert_ne!(rule(other_manifest).mrsigner, base_rule.mrsigner);
+        assert_eq!(rule(other_manifest).mrenclave, base_rule.mrenclave);
+    }
+
+    #[test]
+    fn tdx_policy_is_allowed_on_devnet_and_testnet_only() {
+        let profile = InitialTeeProfileV1::TdxRequired(tdx_identity());
+        for chain_id in [DEVNET_CHAIN_ID, TESTNET_CHAIN_ID] {
+            assert!(initial_tee_policy_v1(profile, chain_id, B256::repeat_byte(0x77)).is_ok());
+        }
+        assert!(matches!(
+            initial_tee_policy_v1(profile, MAINNET_CHAIN_ID, B256::repeat_byte(0x77)),
+            Err(TeeGenesisPolicyError::InvalidTdxChainId { .. })
+        ));
+    }
+
+    #[test]
+    fn tdx_policy_rejects_a_zero_identity_value() {
+        let zero_mrtd = TdxLaunchIdentityV1 {
+            mrtd: [0; 48],
+            ..tdx_identity()
+        };
+        let zero_manifest = TdxLaunchIdentityV1 {
+            mr_config_id: [0; 48],
+            ..tdx_identity()
+        };
+        for identity in [zero_mrtd, zero_manifest] {
+            assert!(matches!(
+                initial_tee_policy_v1(
+                    InitialTeeProfileV1::TdxRequired(identity),
+                    TESTNET_CHAIN_ID,
+                    B256::repeat_byte(0x77),
+                ),
+                Err(TeeGenesisPolicyError::ZeroTdxIdentity)
+            ));
+        }
+        let zero_number = TdxLaunchIdentityV1 {
+            minimum_tcb_evaluation_data_number: 0,
+            ..tdx_identity()
+        };
+        assert!(matches!(
+            initial_tee_policy_v1(
+                InitialTeeProfileV1::TdxRequired(zero_number),
+                TESTNET_CHAIN_ID,
+                B256::repeat_byte(0x77),
+            ),
+            Err(TeeGenesisPolicyError::ZeroMinimumTcbEvaluationDataNumber)
+        ));
+    }
+
+    fn sev_snp_identity() -> SevSnpLaunchIdentityV1 {
+        SevSnpLaunchIdentityV1 {
+            measurement: [0x33; 48],
+            host_data: B256::repeat_byte(0x5a),
+            ark_der_sha256: B256::repeat_byte(0x69),
+        }
+    }
+
+    #[test]
+    fn sev_snp_policy_projects_the_launch_identity_into_one_rule() {
+        let policy = initial_tee_policy_v1(
+            InitialTeeProfileV1::SevSnpRequired(sev_snp_identity()),
+            TESTNET_CHAIN_ID,
+            B256::repeat_byte(0x33),
+        )
+        .unwrap();
+
+        assert_eq!(policy.attestation_mode, AttestationMode::SevSnpRequired);
+        assert_eq!(policy.intel_root_der_hash, B256::repeat_byte(0x69));
+        let [rule] = policy.measurement_rules.as_slice() else {
+            panic!("the policy must hold exactly one rule");
+        };
+        let mut preimage = b"outbe/tee/sev-snp/measurement/v1".to_vec();
+        preimage.extend_from_slice(&[0x33; 48]);
+        assert_eq!(rule.mrenclave, keccak256(preimage));
+        assert_eq!(rule.mrsigner, B256::repeat_byte(0x5a));
+        assert_eq!((rule.isv_prod_id, rule.minimum_isv_svn), (1, 1));
+        assert_eq!(
+            (rule.admit_from_height, rule.admit_until_height_exclusive),
+            (1, u64::MAX)
+        );
+    }
+
+    #[test]
+    fn sev_snp_policy_is_allowed_on_devnet_and_testnet_only() {
+        let profile = InitialTeeProfileV1::SevSnpRequired(sev_snp_identity());
+        let genesis_hash = B256::repeat_byte(0x33);
+
+        assert!(initial_tee_policy_v1(profile, DEVNET_CHAIN_ID, genesis_hash).is_ok());
+        assert!(initial_tee_policy_v1(profile, TESTNET_CHAIN_ID, genesis_hash).is_ok());
+        assert!(matches!(
+            initial_tee_policy_v1(profile, MAINNET_CHAIN_ID, genesis_hash),
+            Err(TeeGenesisPolicyError::InvalidSevSnpChainId { .. })
+        ));
+    }
+
+    #[test]
+    fn sev_snp_policy_rejects_a_zero_identity_value() {
+        let zero_measurement = SevSnpLaunchIdentityV1 {
+            measurement: [0; 48],
+            ..sev_snp_identity()
+        };
+        let zero_host_data = SevSnpLaunchIdentityV1 {
+            host_data: B256::ZERO,
+            ..sev_snp_identity()
+        };
+        let zero_root = SevSnpLaunchIdentityV1 {
+            ark_der_sha256: B256::ZERO,
+            ..sev_snp_identity()
+        };
+
+        for identity in [zero_measurement, zero_host_data, zero_root] {
+            assert!(matches!(
+                initial_tee_policy_v1(
+                    InitialTeeProfileV1::SevSnpRequired(identity),
+                    TESTNET_CHAIN_ID,
+                    B256::repeat_byte(0x33),
+                ),
+                Err(TeeGenesisPolicyError::ZeroSevSnpIdentity)
+            ));
         }
     }
 

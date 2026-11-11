@@ -79,6 +79,16 @@ fn encode_evidence(
             out.extend_from_slice(dev_attestation_public);
             out.extend_from_slice(dev_signature);
         }
+        TeeBootstrapParticipantEvidenceV2::SevSnp {
+            report,
+            ark_der,
+            ask_der,
+            vcek_der,
+        } => {
+            for bytes in [report, ark_der, ask_der, vcek_der] {
+                put_bytes_u32(out, bytes)?;
+            }
+        }
     }
     Ok(())
 }
@@ -183,7 +193,7 @@ fn decode_evidence(
 ) -> Result<TeeBootstrapParticipantEvidenceV2, CodecError> {
     let mode = AttestationMode::decode(decoder.u8()?)?;
     match mode {
-        AttestationMode::DcapRequired => {
+        AttestationMode::DcapRequired | AttestationMode::TdxRequired => {
             let quote = decoder
                 .bounded_bytes("SGX quote", MAX_QUOTE_BYTES)?
                 .to_vec();
@@ -200,6 +210,22 @@ fn decode_evidence(
             Ok(TeeBootstrapParticipantEvidenceV2::GramineDirectDev {
                 dev_attestation_public: decoder.array()?,
                 dev_signature: decoder.array()?,
+            })
+        }
+        AttestationMode::SevSnpRequired => {
+            let report = decoder
+                .bounded_bytes("SEV-SNP report", SEV_SNP_REPORT_BYTES)?
+                .to_vec();
+            let mut certificate = || {
+                decoder
+                    .bounded_bytes("SEV-SNP certificate", MAX_SEV_SNP_CERTIFICATE_BYTES)
+                    .map(<[u8]>::to_vec)
+            };
+            Ok(TeeBootstrapParticipantEvidenceV2::SevSnp {
+                report,
+                ark_der: certificate()?,
+                ask_der: certificate()?,
+                vcek_der: certificate()?,
             })
         }
     }
@@ -240,12 +266,19 @@ pub(super) fn logical_evidence(
         } => {
             let components =
                 reconstruct_collateral(&payload.collateral_pool, collateral_component_indices)?;
-            AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
+            let evidence = DcapEvidenceV1 {
                 intent: participant.intent.clone(),
                 quote: quote.clone(),
                 components,
                 transition_key_ready_proof: None,
-            })
+            };
+            // TDX evidence has the DCAP layout. The intent mode selects the
+            // logical variant.
+            if participant.intent.attestation_mode == AttestationMode::TdxRequired {
+                AttestationEvidenceV1::Tdx(evidence)
+            } else {
+                AttestationEvidenceV1::Dcap(evidence)
+            }
         }
         TeeBootstrapParticipantEvidenceV2::GramineDirectDev {
             dev_attestation_public,
@@ -255,6 +288,19 @@ pub(super) fn logical_evidence(
             intent: participant.intent.clone(),
             dev_attestation_public: *dev_attestation_public,
             dev_signature: *dev_signature,
+        }),
+        TeeBootstrapParticipantEvidenceV2::SevSnp {
+            report,
+            ark_der,
+            ask_der,
+            vcek_der,
+        } => AttestationEvidenceV1::SevSnp(SevSnpEvidenceV1 {
+            intent: participant.intent.clone(),
+            report: report.clone(),
+            ark_der: ark_der.clone(),
+            ask_der: ask_der.clone(),
+            vcek_der: vcek_der.clone(),
+            transition_key_ready_proof: None,
         }),
     };
     evidence.encode_canonical()?;

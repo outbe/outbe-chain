@@ -33,13 +33,24 @@ impl TeeSessionMode {
         policy: AttestationMode,
     ) -> Result<ResolvedTeeSession, crate::errors::ArgsError> {
         match (self, policy) {
-            (Self::PolicyDefault, AttestationMode::DcapRequired)
+            (
+                Self::PolicyDefault,
+                AttestationMode::DcapRequired
+                | AttestationMode::SevSnpRequired
+                | AttestationMode::TdxRequired,
+            )
             | (Self::ProductionNodeHost, _) => Ok(ResolvedTeeSession::ProductionNodeHost),
             (Self::PolicyDefault | Self::Development, AttestationMode::GramineDirectDev) => {
                 Ok(ResolvedTeeSession::Development)
             }
             (Self::Development, AttestationMode::DcapRequired) => {
                 Err(crate::errors::ArgsError::DcapRequiredForbidsDevSession)
+            }
+            (Self::Development, AttestationMode::SevSnpRequired) => {
+                Err(crate::errors::ArgsError::SevSnpRequiredForbidsDevSession)
+            }
+            (Self::Development, AttestationMode::TdxRequired) => {
+                Err(crate::errors::ArgsError::TdxRequiredForbidsDevSession)
             }
         }
     }

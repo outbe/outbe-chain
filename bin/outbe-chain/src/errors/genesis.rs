@@ -56,6 +56,33 @@ pub(crate) enum TeeGenesisError {
         "GramineDirectDev uses fixed non-hardware projections; DCAP measurement arguments are forbidden"
     )]
     DcapArgsForbiddenInDevMode,
+    /// Indicates a missing required SEV-SNP argument.
+    #[error("SevSnpRequired requires {name}")]
+    MissingSevSnpArgument {
+        /// Missing CLI argument name.
+        name: String,
+    },
+    /// Indicates that SEV-SNP identity arguments were passed in another mode.
+    #[error("the SEV-SNP identity arguments are allowed only in the SevSnpRequired mode")]
+    SevSnpArgsForbiddenInOtherMode,
+    /// Indicates that DCAP measurement arguments were passed in `SevSnpRequired` mode.
+    #[error("SevSnpRequired takes the SEV-SNP identity; DCAP measurement arguments are forbidden")]
+    DcapArgsForbiddenInSevSnpMode,
+    /// Indicates a missing required TDX argument.
+    #[error("TdxRequired requires {name}")]
+    MissingTdxArgument {
+        /// Missing CLI argument name.
+        name: String,
+    },
+    /// Indicates that TDX identity arguments were passed in another mode.
+    #[error("the TDX identity arguments are allowed only in the TdxRequired mode")]
+    TdxArgsForbiddenInOtherMode,
+    /// Indicates that DCAP measurement arguments were passed in `TdxRequired` mode.
+    #[error("TdxRequired takes the TDX identity; DCAP measurement arguments are forbidden")]
+    DcapArgsForbiddenInTdxMode,
+    /// Indicates that a launch measurement is not 48 bytes of hexadecimal.
+    #[error("a 48-byte measurement must be hexadecimal text of 96 digits")]
+    InvalidHex48Bytes,
     /// Indicates that the input genesis `config` field is not a JSON object.
     #[error("input genesis config must be a JSON object")]
     InputGenesisConfigNotObject,

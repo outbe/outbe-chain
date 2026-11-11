@@ -132,7 +132,7 @@ fn spawn_connection_worker<S>(
                 boot: boot.as_deref(),
                 initialization: &initialization,
                 chain_id,
-                quote_generator: crate::gramine::dcap_quote,
+                quote_generator: crate::platform_attestation::registration_evidence,
             },
             handshake_timeout,
         ) {

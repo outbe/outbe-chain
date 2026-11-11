@@ -5,10 +5,7 @@ fn finalized_join_anchor(fixture: &ReplacementFixture) -> FinalizedJoinAdmission
         .unwrap()
         .unwrap();
     let evidence = AttestationEvidenceV1::decode_canonical(submission.evidence()).unwrap();
-    let intent = match evidence {
-        AttestationEvidenceV1::Dcap(value) => value.intent,
-        AttestationEvidenceV1::GramineDirectDev(value) => value.intent,
-    };
+    let intent = evidence.intent().clone();
     FinalizedJoinAdmissionAnchorV1 {
         chain_id: intent.chain_id,
         genesis_hash: intent.genesis_hash,
@@ -242,10 +239,7 @@ fn committed_join_cleanup_requires_the_exact_intent_and_is_idempotent() {
         node_signature,
         enclave_signature,
     } = direct_dev_registration();
-    let intent_hash = match &evidence {
-        AttestationEvidenceV1::Dcap(value) => value.intent.intent_hash().unwrap(),
-        AttestationEvidenceV1::GramineDirectDev(value) => value.intent.intent_hash().unwrap(),
-    };
+    let intent_hash = evidence.intent().intent_hash().unwrap();
     promote_and_persist_join_submission(&fixture, &evidence, &node_signature, &enclave_signature);
     persist_committed_join_relay(
         &fixture.node_data_dir,

@@ -3,11 +3,14 @@ use super::*;
 use alloy_sol_types::SolError;
 use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1;
 
-/// The other attestation mode.
+/// Another attestation mode.
 fn other_mode(mode: AttestationMode) -> AttestationMode {
     match mode {
         AttestationMode::DcapRequired => AttestationMode::GramineDirectDev,
         AttestationMode::GramineDirectDev => AttestationMode::DcapRequired,
+        AttestationMode::SevSnpRequired | AttestationMode::TdxRequired => {
+            AttestationMode::DcapRequired
+        }
     }
 }
 

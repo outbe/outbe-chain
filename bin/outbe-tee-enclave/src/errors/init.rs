@@ -43,8 +43,8 @@ pub enum InitError {
     /// The registration intent failed canonical decoding.
     #[error("registration intent is not canonical: {0}")]
     IntentNotCanonical(String),
-    /// Production quote generation requires DcapRequired mode.
-    #[error("production quote generation requires DcapRequired attestation mode")]
+    /// Evidence generation requires a hardware attestation mode.
+    #[error("production quote generation requires DcapRequired attestation mode or a confidential VM mode")]
     QuoteRequiresDcapRequired,
     /// Remote session authorization requires initialized production state.
     #[error("remote session authorization requires initialized production state")]

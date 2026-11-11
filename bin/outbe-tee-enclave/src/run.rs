@@ -74,6 +74,7 @@ fn run_with_args(opts: RunOpts, args: &[String]) -> Result<(), i32> {
     // Run under `gramine-direct`/`gramine-sgx` to observe what hardware exposes.
     if args.iter().any(|a| a == "--probe-attestation") {
         crate::gramine::probe_to_stderr();
+        crate::platform_attestation::probe_tsm_to_stderr();
         return Ok(());
     }
 
@@ -102,6 +103,11 @@ fn run_with_args(opts: RunOpts, args: &[String]) -> Result<(), i32> {
                 2
             },
         )?;
+
+    select_platform(args).map_err(|error| {
+        eprintln!("outbe-tee-enclave: platform selection failed: {error}");
+        2
+    })?;
 
     let attest = crate::gramine::attestation_type();
     log_attestation_banner(&attest);
@@ -141,10 +147,45 @@ fn run_with_args(opts: RunOpts, args: &[String]) -> Result<(), i32> {
     serve_endpoint(&socket, &attest, identity_id, server_ctx)
 }
 
+/// Select the platform backend that `--platform` names.
+///
+/// Without the flag the service uses the Gramine surface. `--platform sev-snp`
+/// and `--platform tdx` select the confidential VM backend and require
+/// `--network-descriptor`.
+fn select_platform(args: &[String]) -> EnclaveResult<()> {
+    let Some(platform) = arg_value(args, "--platform") else {
+        return Ok(());
+    };
+    #[cfg(feature = "sev-snp")]
+    {
+        use crate::confidential_vm::ConfidentialPlatform;
+        let selected = match platform.as_str() {
+            "sev-snp" => Some(ConfidentialPlatform::SevSnp),
+            "tdx" => Some(ConfidentialPlatform::Tdx),
+            _ => None,
+        };
+        if let Some(selected) = selected {
+            let descriptor = arg_value(args, "--network-descriptor")
+                .ok_or(crate::errors::ConfidentialVmError::MissingNetworkDescriptorArgument)?;
+            return crate::confidential_vm::configure(selected, std::path::Path::new(&descriptor));
+        }
+    }
+    Err(crate::errors::ConfidentialVmError::UnsupportedPlatform(platform).into())
+}
+
 fn log_attestation_banner(attest: &crate::gramine::AttestationType) {
     // Detect the real attestation environment up front so the startup banner
     // tells the truth (hardware-attested vs unattested) instead of claiming SGX.
-    if attest.is_hardware() {
+    if matches!(
+        attest,
+        crate::gramine::AttestationType::SevSnp | crate::gramine::AttestationType::Tdx
+    ) {
+        eprintln!(
+            "outbe-tee-enclave: MODE = confidential VM - hardware attestation ENABLED ({}); \
+             the network descriptor is NOT measured",
+            attest.label()
+        );
+    } else if attest.is_hardware() {
         eprintln!(
             "outbe-tee-enclave: MODE = gramine-sgx - hardware attestation ENABLED ({})",
             attest.label()

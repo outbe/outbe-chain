@@ -30,7 +30,7 @@ outbe-operator.workspace = true
 outbe-zerofee.workspace = true
 outbe-zk.workspace = true
 # TEE enclave client + wire protocol (the `tee join` offer-key registration).
-outbe-tee.workspace = true
+outbe-tee = { workspace = true, features = ["sev-snp"] }
 outbe-update.workspace = true
 
 # CLI

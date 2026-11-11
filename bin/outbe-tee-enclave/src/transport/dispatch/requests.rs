@@ -19,7 +19,7 @@ pub fn dispatch(
             chain_id,
             boot: None,
             initialization: None,
-            quote_generator: crate::gramine::dcap_quote,
+            quote_generator: crate::platform_attestation::registration_evidence,
         },
     )
 }

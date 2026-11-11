@@ -96,6 +96,14 @@ pub enum TeeGenesisPolicyError {
     },
     #[error("GramineDirectDev requires devnet or testnet chain ID ({devnet} or {testnet})")]
     InvalidGramineDirectDevChainId { devnet: u64, testnet: u64 },
+    #[error("SevSnpRequired requires devnet or testnet chain ID ({devnet} or {testnet})")]
+    InvalidSevSnpChainId { devnet: u64, testnet: u64 },
+    #[error("SevSnpRequired launch measurement, host data and AMD root hash must be non-zero")]
+    ZeroSevSnpIdentity,
+    #[error("TdxRequired requires devnet or testnet chain ID ({devnet} or {testnet})")]
+    InvalidTdxChainId { devnet: u64, testnet: u64 },
+    #[error("TdxRequired image measurement and MRCONFIGID must be non-zero")]
+    ZeroTdxIdentity,
     #[error("derive normative resource schedule: {0}")]
     DeriveNormativeResourceSchedule(String),
     #[error("DcapRequired measurements must be non-zero")]

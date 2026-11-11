@@ -451,10 +451,7 @@ impl ActivePolicyMutator {
 fn registration_onboarding_target(evidence: &[u8]) -> Result<(B256, [u8; 32])> {
     let decoded = AttestationEvidenceV1::decode_canonical(evidence)
         .map_err(TeeRegistryError::attestation_evidence_not_canonical)?;
-    let intent = match decoded {
-        AttestationEvidenceV1::Dcap(value) => value.intent,
-        AttestationEvidenceV1::GramineDirectDev(value) => value.intent,
-    };
+    let intent = decoded.intent();
     let node_id_hash = intent
         .node_id
         .node_id_hash()

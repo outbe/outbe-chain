@@ -1,0 +1,15 @@
+{
+  "manifest_version": 2,
+  "name": "outbe-validator",
+  "runner": "bash",
+  "key_provider": "none",
+  "gateway_enabled": false,
+  "kms_enabled": false,
+  "public_logs": true,
+  "public_sysinfo": true,
+  "secure_time": false,
+  "no_instance_id": true,
+  "allowed_envs": [],
+  "storage_fs": "ext4",
+  "bash_script": "systemctl start --no-block outbe-node.service\n"
+}

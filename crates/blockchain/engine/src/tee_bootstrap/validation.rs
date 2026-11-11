@@ -1,16 +1,15 @@
 use super::*;
 
 pub(super) fn evidence_intent(evidence: &AttestationEvidenceV1) -> &RegistrationIntentV1 {
-    match evidence {
-        AttestationEvidenceV1::Dcap(value) => &value.intent,
-        AttestationEvidenceV1::GramineDirectDev(value) => &value.intent,
-    }
+    evidence.intent()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum BootstrapEvidenceKind {
     Dcap,
     GramineDirectDev,
+    SevSnp,
+    Tdx,
 }
 
 pub(super) fn bootstrap_evidence_kind(
@@ -23,6 +22,14 @@ pub(super) fn bootstrap_evidence_kind(
             Err(crate::errors::TeeBootstrapError::DcapRequiredCannotUseDevelopmentSession.into())
         }
         (AttestationMode::GramineDirectDev, _) => Ok(BootstrapEvidenceKind::GramineDirectDev),
+        (AttestationMode::SevSnpRequired, true) => Ok(BootstrapEvidenceKind::SevSnp),
+        (AttestationMode::SevSnpRequired, false) => {
+            Err(crate::errors::TeeBootstrapError::SevSnpRequiredCannotUseDevelopmentSession.into())
+        }
+        (AttestationMode::TdxRequired, true) => Ok(BootstrapEvidenceKind::Tdx),
+        (AttestationMode::TdxRequired, false) => {
+            Err(crate::errors::TeeBootstrapError::TdxRequiredCannotUseDevelopmentSession.into())
+        }
     }
 }
 
@@ -205,8 +212,11 @@ mod validation_regression {
         submission: &mut TeeBootstrapParticipantSubmissionV2,
     ) -> &mut RegistrationIntentV1 {
         match &mut submission.evidence {
-            AttestationEvidenceV1::Dcap(value) => &mut value.intent,
+            AttestationEvidenceV1::Dcap(value) | AttestationEvidenceV1::Tdx(value) => {
+                &mut value.intent
+            }
             AttestationEvidenceV1::GramineDirectDev(value) => &mut value.intent,
+            AttestationEvidenceV1::SevSnp(value) => &mut value.intent,
         }
     }
 

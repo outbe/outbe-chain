@@ -98,7 +98,7 @@ fn committed_join_intent(
     enclave_signature: &[u8; 64],
 ) -> Result<RegistrationIntentV1, TransportError> {
     match evidence {
-        AttestationEvidenceV1::Dcap(value)
+        AttestationEvidenceV1::Dcap(value) | AttestationEvidenceV1::Tdx(value)
             if value.intent.operation == AttestationOperationV1::RegisterEnclave =>
         {
             Ok(value.intent)
@@ -109,11 +109,17 @@ fn committed_join_intent(
         {
             Ok(value.intent)
         }
-        AttestationEvidenceV1::Dcap(_) | AttestationEvidenceV1::GramineDirectDev(_) => {
-            Err(TransportError::Codec(
-                "committed join submission is not RegisterEnclave evidence".into(),
-            ))
+        AttestationEvidenceV1::SevSnp(value)
+            if value.intent.operation == AttestationOperationV1::RegisterEnclave =>
+        {
+            Ok(value.intent)
         }
+        AttestationEvidenceV1::Dcap(_)
+        | AttestationEvidenceV1::GramineDirectDev(_)
+        | AttestationEvidenceV1::SevSnp(_)
+        | AttestationEvidenceV1::Tdx(_) => Err(TransportError::Codec(
+            "committed join submission is not RegisterEnclave evidence".into(),
+        )),
     }
 }
 
@@ -144,8 +150,21 @@ pub(super) fn candidate_promotion_intent<'a>(
             }
             Ok(&value.intent)
         }
-        AttestationEvidenceV1::Dcap(_) | AttestationEvidenceV1::GramineDirectDev(_) => {
-            Err(TransportError::Codec(disallowed_operation.into()))
+        // SEV-SNP and TDX support registration only. Replacement and
+        // measurement transition are outside the first scope of these modes.
+        AttestationEvidenceV1::SevSnp(value)
+            if value.intent.operation == AttestationOperationV1::RegisterEnclave =>
+        {
+            Ok(&value.intent)
         }
+        AttestationEvidenceV1::Tdx(value)
+            if value.intent.operation == AttestationOperationV1::RegisterEnclave =>
+        {
+            Ok(&value.intent)
+        }
+        AttestationEvidenceV1::Dcap(_)
+        | AttestationEvidenceV1::GramineDirectDev(_)
+        | AttestationEvidenceV1::SevSnp(_)
+        | AttestationEvidenceV1::Tdx(_) => Err(TransportError::Codec(disallowed_operation.into())),
     }
 }

@@ -104,6 +104,11 @@ pub enum KeyPolicy {
     MrEnclaveStrict = 2,
     /// Direct EGETKEY bound to both measurements. Parameters live in TSGX1.
     MrEnclaveAndSigner = 3,
+    /// Key that an AMD SEV-SNP processor derives for one launch measurement.
+    SevSnpDerived = 4,
+    /// Key that the dstack guest agent of an Intel TDX VM derives from the
+    /// application keys of the VM.
+    TdxGuestAgent = 5,
 }
 
 impl KeyPolicy {
@@ -113,6 +118,8 @@ impl KeyPolicy {
             1 => Ok(KeyPolicy::MrSigner),
             2 => Ok(KeyPolicy::MrEnclaveStrict),
             3 => Ok(KeyPolicy::MrEnclaveAndSigner),
+            4 => Ok(KeyPolicy::SevSnpDerived),
+            5 => Ok(KeyPolicy::TdxGuestAgent),
             other => Err(TeeError::SealedBlobBadKeyPolicy(other)),
         }
     }

@@ -33,6 +33,59 @@ pub const MAX_NODE_HOST_AUTHORIZATION_WITNESS_BYTES: usize = 136;
 pub const REPORT_POLICY_DOMAIN_V1: &[u8] = b"outbe/tee/report-policy/v1";
 
 pub const MAX_QUOTE_BYTES: usize = 16 * 1024;
+/// Exact length of an AMD SEV-SNP attestation report.
+pub const SEV_SNP_REPORT_BYTES: usize = 1184;
+/// Largest DER certificate of the AMD key hierarchy in SEV-SNP evidence.
+pub const MAX_SEV_SNP_CERTIFICATE_BYTES: usize = 4 * 1024;
+/// Domain of the SEV-SNP launch measurement projection into a rule field.
+pub const SEV_SNP_MEASUREMENT_DOMAIN_V1: &[u8] = b"outbe/tee/sev-snp/measurement/v1";
+/// `isv_prod_id` of a measurement rule and of a verdict in the SEV-SNP mode.
+pub const SEV_SNP_RULE_PRODUCT_ID_V1: u16 = 1;
+/// `isv_svn` of a verdict and `minimum_isv_svn` of a rule in the SEV-SNP mode.
+pub const SEV_SNP_RULE_SVN_V1: u16 = 1;
+
+/// Project a 48-byte SEV-SNP launch measurement into the 32-byte `mrenclave`
+/// field of a measurement rule.
+pub fn sev_snp_measurement_rule_value(measurement: &[u8; 48]) -> B256 {
+    let mut preimage = Vec::with_capacity(SEV_SNP_MEASUREMENT_DOMAIN_V1.len() + measurement.len());
+    preimage.extend_from_slice(SEV_SNP_MEASUREMENT_DOMAIN_V1);
+    preimage.extend_from_slice(measurement);
+    keccak256(preimage)
+}
+/// Domain of the TDX image measurement projection into a rule field.
+pub const TDX_IMAGE_DOMAIN_V1: &[u8] = b"outbe/tee/tdx/image/v1";
+/// Domain of the TDX `MRCONFIGID` projection into a rule field.
+pub const TDX_MRCONFIGID_DOMAIN_V1: &[u8] = b"outbe/tee/tdx/mrconfigid/v1";
+/// `isv_prod_id` of a measurement rule and of a verdict in the TDX mode.
+pub const TDX_RULE_PRODUCT_ID_V1: u16 = 1;
+/// `isv_svn` of a verdict and `minimum_isv_svn` of a rule in the TDX mode.
+pub const TDX_RULE_SVN_V1: u16 = 1;
+/// Quote header version of the TDX policy profile.
+pub const TDX_QUOTE_VERSION_V1: u16 = 4;
+/// TEE type of a TDX quote header.
+pub const TDX_TEE_TYPE_V1: u32 = 0x81;
+
+/// Project the build-time measurement `MRTD` and the runtime registers
+/// `RTMR0`, `RTMR1` and `RTMR2` of a TD into the 32-byte `mrenclave` field of
+/// a measurement rule. `RTMR3` is not part of the image identity.
+pub fn tdx_image_rule_value(mrtd: &[u8; 48], rtmrs: &[[u8; 48]; 3]) -> B256 {
+    let mut preimage = Vec::with_capacity(TDX_IMAGE_DOMAIN_V1.len() + 4 * 48);
+    preimage.extend_from_slice(TDX_IMAGE_DOMAIN_V1);
+    preimage.extend_from_slice(mrtd);
+    for rtmr in rtmrs {
+        preimage.extend_from_slice(rtmr);
+    }
+    keccak256(preimage)
+}
+
+/// Project the 48-byte `MRCONFIGID` of a TD into the 32-byte `mrsigner` field
+/// of a measurement rule.
+pub fn tdx_mrconfigid_rule_value(mr_config_id: &[u8; 48]) -> B256 {
+    let mut preimage = Vec::with_capacity(TDX_MRCONFIGID_DOMAIN_V1.len() + mr_config_id.len());
+    preimage.extend_from_slice(TDX_MRCONFIGID_DOMAIN_V1);
+    preimage.extend_from_slice(mr_config_id);
+    keccak256(preimage)
+}
 pub const MAX_COLLATERAL_COMPONENT_BYTES: usize = 896 * 1024;
 pub const MAX_ATTESTATION_EVIDENCE_BYTES: usize = 896 * 1024;
 pub const MAX_EVIDENCE_CALL_FRAMING_BYTES: usize = 16 * 1024;
@@ -234,7 +287,7 @@ mod transition;
 
 pub use evidence::{
     AttestationEvidenceV1, DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1,
-    GramineDirectEvidenceV1,
+    GramineDirectEvidenceV1, SevSnpEvidenceV1,
 };
 pub use gas::{
     RegistryMutatorV1, ResourceScheduleV1, SystemGasScheduleV1, TeeBootstrapGasInputV1,

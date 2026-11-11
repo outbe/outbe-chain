@@ -78,6 +78,10 @@ pub(crate) use offer_key::write_once_0600;
 
 /// Select the hardware sealing key, or the fixed development key in mock runs.
 pub(crate) fn sealing_key() -> Option<([u8; 32], KeyPolicy)> {
+    #[cfg(feature = "sev-snp")]
+    if let Some(key_and_policy) = crate::confidential_vm::sealing_key() {
+        return Some(key_and_policy);
+    }
     if let Ok(key) = crate::gramine::sealing_key_256(true) {
         return Some((key, KeyPolicy::MrSigner));
     }

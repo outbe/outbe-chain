@@ -8,6 +8,10 @@ use thiserror::Error;
 /// Errors from the manual TEE renewal reducer.
 #[derive(Debug, Error)]
 pub enum RenewalError {
+    /// Renewal of an SEV-SNP binding is outside the first scope of that mode.
+    #[error("renewal is not supported in the SEV-SNP and TDX attestation modes")]
+    SevSnpRenewalUnsupported,
+
     /// The renewal enclave does not sign `GramineDirectDev` intents.
     #[error("renewal enclave does not support GramineDirectDev intent signing")]
     DirectDevSigningUnsupported,
@@ -252,6 +256,11 @@ pub enum RenewalJournalError {
     /// The decoder rejected the journaled evidence.
     #[error("decode renewal journal evidence: {0}")]
     DecodeEvidence(CodecError),
+
+    /// A renewal journal cannot hold SEV-SNP evidence: renewal is outside the
+    /// first scope of that mode.
+    #[error("renewal journal holds SEV-SNP or TDX evidence, which renewal does not support")]
+    SevSnpEvidenceUnsupported,
 
     /// The evidence variant disagrees with the intent mode.
     #[error("renewal journal evidence variant does not match intent mode")]

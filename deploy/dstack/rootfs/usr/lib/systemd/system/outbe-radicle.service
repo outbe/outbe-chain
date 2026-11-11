@@ -1,0 +1,11 @@
+[Unit]
+Description=Outbe validator radicle
+Requires=outbe-provision.service
+After=outbe-provision.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/lib/outbe/run-role.sh radicle
+Restart=always
+RestartSec=5
+LimitNOFILE=1048576

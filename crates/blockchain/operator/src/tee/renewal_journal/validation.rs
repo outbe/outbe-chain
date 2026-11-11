@@ -137,6 +137,9 @@ impl PreparedRenewalV1 {
                     .evidence_hash()
                     .map_err(RenewalJournalError::HashEvidence)?
             }
+            AttestationEvidenceV1::SevSnp(_) | AttestationEvidenceV1::Tdx(_) => {
+                return Err(RenewalJournalError::SevSnpEvidenceUnsupported.into());
+            }
         };
         Ok(EvidenceCommitment {
             evidence,
@@ -200,6 +203,9 @@ impl PreparedRenewalV1 {
                 if self.collateral_valid_until != u64::MAX || self.collateral_margin != 0 {
                     return Err(RenewalJournalError::NonCanonicalDirectDevCollateral.into());
                 }
+            }
+            AttestationEvidenceV1::SevSnp(_) | AttestationEvidenceV1::Tdx(_) => {
+                return Err(RenewalJournalError::SevSnpEvidenceUnsupported.into());
             }
         }
         Ok(())

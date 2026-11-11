@@ -391,6 +391,18 @@ fn validate_activation(
                     testnet: TESTNET_CHAIN_ID,
                 }
             }
+            AttestationMode::SevSnpRequired => {
+                TeeAttestationActivationError::SevSnpRequiredChainIdDisallowed {
+                    devnet: GRAMINE_DIRECT_DEV_CHAIN_ID,
+                    testnet: TESTNET_CHAIN_ID,
+                }
+            }
+            AttestationMode::TdxRequired => {
+                TeeAttestationActivationError::TdxRequiredChainIdDisallowed {
+                    devnet: GRAMINE_DIRECT_DEV_CHAIN_ID,
+                    testnet: TESTNET_CHAIN_ID,
+                }
+            }
         });
     }
     if initial_policy.resource_schedule_hash != raw.resource_schedule_hash {

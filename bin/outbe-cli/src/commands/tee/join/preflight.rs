@@ -118,10 +118,7 @@ fn load_node_dir_submission(node_data_dir: &Path) -> Result<Option<DurableJoinSu
 fn decode_submission_intent(submission: &DurableJoinSubmissionV1) -> Result<RegistrationIntentV1> {
     let evidence = AttestationEvidenceV1::decode_canonical(submission.evidence())
         .map_err(TeeJoinError::DecodeDurableCheckpoint)?;
-    Ok(match evidence {
-        AttestationEvidenceV1::Dcap(value) => value.intent,
-        AttestationEvidenceV1::GramineDirectDev(value) => value.intent,
-    })
+    Ok(evidence.intent().clone())
 }
 
 pub(super) enum PreflightOutcome {

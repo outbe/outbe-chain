@@ -1,7 +1,11 @@
-//! SGX quote v3 layout checks for DCAP V1.
+//! SGX quote v3 and TDX quote v4 layout checks for DCAP V1.
 //!
 //! This module checks the outer length, the header profile and the
 //! authentication data layout of a quote. It does not verify signatures.
+//!
+//! A TDX quote v4 has the same 48-byte header, then a 584-byte TD report body
+//! in place of the 384-byte SGX report body. Its QE report and its PCK
+//! certificate chain are nested in certification data of type 6.
 
 use outbe_primitives::tee_attestation_v1::TeePolicyV1;
 
@@ -14,7 +18,6 @@ const QUOTE_SIGNATURE_BYTES: usize = 64;
 const ATTESTATION_PUBLIC_KEY_BYTES: usize = 64;
 const QE_REPORT_BYTES: usize = 384;
 const QE_REPORT_SIGNATURE_BYTES: usize = 64;
-
 pub(super) fn validate_quote_outer_length(quote: &[u8]) -> Result<(), DcapRejectCodeV1> {
     let declared = quote
         .get(
@@ -31,6 +34,25 @@ pub(super) fn validate_quote_outer_length(quote: &[u8]) -> Result<(), DcapReject
         return Err(DcapRejectCodeV1::QuoteMalformed);
     }
     Ok(())
+}
+
+pub(super) fn validate_tdx_quote_outer_length(quote: &[u8]) -> Result<(), DcapRejectCodeV1> {
+    if crate::tdx_report::tdx_quote_canonical_len(quote)? != quote.len() {
+        return Err(DcapRejectCodeV1::QuoteMalformed);
+    }
+    Ok(())
+}
+
+/// Read the PCK certification data of a TDX quote v4.
+pub(super) fn parse_tdx_quote_authentication_data(
+    quote: &[u8],
+) -> Result<QuoteAuthenticationData<'_>, DcapRejectCodeV1> {
+    let (certification_data_type, certification_data) =
+        crate::tdx_report::tdx_quote_pck_certification_data(quote)?;
+    Ok(QuoteAuthenticationData {
+        certification_data_type,
+        certification_data,
+    })
 }
 
 pub(super) fn validate_quote_profile(

@@ -294,7 +294,11 @@ impl TeeRegistry<'_> {
                 return Err(TeeRegistryError::RequestedLeaseOutsideBounds.into());
             }
         }
-        if policy.attestation_mode == AttestationMode::DcapRequired {
+        // A TDX quote has Intel collateral with an expiration, as an SGX quote.
+        if matches!(
+            policy.attestation_mode,
+            AttestationMode::DcapRequired | AttestationMode::TdxRequired
+        ) {
             let collateral_limit = claims
                 .collateral_valid_until
                 .checked_sub(policy.collateral_margin)

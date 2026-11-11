@@ -5,6 +5,12 @@ use super::*;
 pub enum AttestationMode {
     DcapRequired = 0x01,
     GramineDirectDev = 0x02,
+    /// AMD SEV-SNP confidential VM. The evidence is an attestation report
+    /// with the AMD certificate chain.
+    SevSnpRequired = 0x03,
+    /// Intel TDX confidential VM. The evidence is a TDX quote with the Intel
+    /// collateral, in the same layout as DCAP evidence.
+    TdxRequired = 0x04,
 }
 
 impl AttestationMode {
@@ -12,6 +18,8 @@ impl AttestationMode {
         match value {
             0x01 => Ok(Self::DcapRequired),
             0x02 => Ok(Self::GramineDirectDev),
+            0x03 => Ok(Self::SevSnpRequired),
+            0x04 => Ok(Self::TdxRequired),
             value => Err(CodecError::UnknownDiscriminant {
                 field: "attestation mode",
                 value,

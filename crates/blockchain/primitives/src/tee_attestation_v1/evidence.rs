@@ -49,8 +49,10 @@ pub struct DcapEvidenceV1 {
 }
 
 impl DcapEvidenceV1 {
-    pub(super) fn encode_payload(&self) -> Result<Vec<u8>, CodecError> {
-        if self.intent.attestation_mode != AttestationMode::DcapRequired {
+    /// Encode the payload of SGX DCAP evidence, or of TDX evidence when
+    /// `mode` is [`AttestationMode::TdxRequired`]. The layout is the same.
+    pub(super) fn encode_payload(&self, mode: AttestationMode) -> Result<Vec<u8>, CodecError> {
+        if self.intent.attestation_mode != mode {
             return Err(CodecError::NonCanonical(
                 "DCAP evidence intent mode mismatch",
             ));
@@ -115,7 +117,7 @@ impl DcapEvidenceV1 {
         Ok(out)
     }
 
-    pub(super) fn decode_payload(input: &[u8]) -> Result<Self, CodecError> {
+    pub(super) fn decode_payload(input: &[u8], mode: AttestationMode) -> Result<Self, CodecError> {
         enforce_limit(
             "attestation evidence payload",
             MAX_ATTESTATION_EVIDENCE_BYTES,
@@ -126,7 +128,7 @@ impl DcapEvidenceV1 {
         let intent_len =
             decoder.declared_len("registration intent", MAX_EVIDENCE_CALL_FRAMING_BYTES)?;
         let intent = RegistrationIntentV1::decode_canonical(decoder.take(intent_len)?)?;
-        if intent.attestation_mode != AttestationMode::DcapRequired {
+        if intent.attestation_mode != mode {
             return Err(CodecError::NonCanonical(
                 "DCAP evidence intent mode mismatch",
             ));
@@ -324,10 +326,144 @@ impl GramineDirectEvidenceV1 {
     }
 }
 
+/// Evidence of an AMD SEV-SNP confidential VM.
+///
+/// Payload: `[version][u32 len][intent][report, 1184 bytes]`, then the ARK,
+/// ASK and VCEK certificates in DER, each as `[u16 len][bytes]`, then the
+/// transition proof with the same encoding as in DCAP evidence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SevSnpEvidenceV1 {
+    pub intent: RegistrationIntentV1,
+    /// Attestation report, exactly [`SEV_SNP_REPORT_BYTES`] long.
+    pub report: Vec<u8>,
+    /// AMD root key certificate, DER.
+    pub ark_der: Vec<u8>,
+    /// AMD SEV signing key certificate, DER.
+    pub ask_der: Vec<u8>,
+    /// Versioned chip endorsement key certificate, DER.
+    pub vcek_der: Vec<u8>,
+    pub transition_key_ready_proof: Option<TransitionKeyReadyProofV1>,
+}
+
+impl SevSnpEvidenceV1 {
+    fn certificates(&self) -> [&[u8]; 3] {
+        [&self.ark_der, &self.ask_der, &self.vcek_der]
+    }
+
+    fn validate(&self) -> Result<(), CodecError> {
+        if self.intent.attestation_mode != AttestationMode::SevSnpRequired {
+            return Err(CodecError::NonCanonical(
+                "SEV-SNP evidence intent mode mismatch",
+            ));
+        }
+        if self.report.len() != SEV_SNP_REPORT_BYTES {
+            return Err(CodecError::NonCanonical("SEV-SNP report length"));
+        }
+        for certificate in self.certificates() {
+            enforce_limit(
+                "SEV-SNP certificate",
+                MAX_SEV_SNP_CERTIFICATE_BYTES,
+                certificate.len(),
+            )?;
+            if certificate.is_empty() {
+                return Err(CodecError::NonCanonical("empty SEV-SNP certificate"));
+            }
+        }
+        let is_transition =
+            self.intent.operation == AttestationOperationV1::TransitionEnclaveMeasurement;
+        if is_transition != self.transition_key_ready_proof.is_some() {
+            return Err(CodecError::NonCanonical(
+                "transition key-ready proof presence does not match operation",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn encode_payload(&self) -> Result<Vec<u8>, CodecError> {
+        self.validate()?;
+        let intent = self.intent.encode_canonical()?;
+        let mut out = Vec::new();
+        out.push(PROTOCOL_VERSION_V1);
+        put_len_u32(&mut out, intent.len())?;
+        out.extend_from_slice(&intent);
+        out.extend_from_slice(&self.report);
+        for certificate in self.certificates() {
+            put_u16(
+                &mut out,
+                u16::try_from(certificate.len()).map_err(|_| CodecError::ArithmeticOverflow)?,
+            );
+            out.extend_from_slice(certificate);
+        }
+        match &self.transition_key_ready_proof {
+            None => out.push(0),
+            Some(proof) => {
+                let proof = proof.encode_canonical()?;
+                out.push(1);
+                put_u16(
+                    &mut out,
+                    u16::try_from(proof.len()).map_err(|_| CodecError::ArithmeticOverflow)?,
+                );
+                out.extend_from_slice(&proof);
+            }
+        }
+        Ok(out)
+    }
+
+    pub(super) fn decode_payload(input: &[u8]) -> Result<Self, CodecError> {
+        let mut decoder = Decoder::new(input);
+        decoder.version("SevSnpEvidenceV1")?;
+        let intent_len =
+            decoder.declared_len("registration intent", MAX_EVIDENCE_CALL_FRAMING_BYTES)?;
+        let intent = RegistrationIntentV1::decode_canonical(decoder.take(intent_len)?)?;
+        let report = decoder.take(SEV_SNP_REPORT_BYTES)?.to_vec();
+        let mut certificates = [const { Vec::new() }; 3];
+        for certificate in &mut certificates {
+            let len = usize::from(decoder.u16()?);
+            enforce_limit("SEV-SNP certificate", MAX_SEV_SNP_CERTIFICATE_BYTES, len)?;
+            *certificate = decoder.take(len)?.to_vec();
+        }
+        let [ark_der, ask_der, vcek_der] = certificates;
+        let transition_key_ready_proof = match decoder.u8()? {
+            0 => None,
+            1 => {
+                let proof_len = usize::from(decoder.u16()?);
+                if proof_len != TransitionKeyReadyProofV1::CANONICAL_LEN {
+                    return Err(CodecError::NonCanonical(
+                        "transition key-ready proof length",
+                    ));
+                }
+                Some(TransitionKeyReadyProofV1::decode_canonical(
+                    decoder.take(proof_len)?,
+                )?)
+            }
+            _ => {
+                return Err(CodecError::NonCanonical(
+                    "transition key-ready proof presence flag",
+                ))
+            }
+        };
+        decoder.finish()?;
+        let value = Self {
+            intent,
+            report,
+            ark_der,
+            ask_der,
+            vcek_der,
+            transition_key_ready_proof,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AttestationEvidenceV1 {
     Dcap(DcapEvidenceV1),
     GramineDirectDev(GramineDirectEvidenceV1),
+    SevSnp(SevSnpEvidenceV1),
+    /// Intel TDX quote with the Intel collateral. The content has the layout
+    /// of DCAP evidence. The intent mode is [`AttestationMode::TdxRequired`].
+    Tdx(DcapEvidenceV1),
 }
 
 impl AttestationEvidenceV1 {
@@ -335,20 +471,32 @@ impl AttestationEvidenceV1 {
         match self {
             Self::Dcap(v) => &v.intent,
             Self::GramineDirectDev(v) => &v.intent,
+            Self::SevSnp(v) => &v.intent,
+            Self::Tdx(v) => &v.intent,
         }
     }
     pub fn transition_key_ready_proof(&self) -> Option<&TransitionKeyReadyProofV1> {
         match self {
             Self::Dcap(v) => v.transition_key_ready_proof.as_ref(),
             Self::GramineDirectDev(v) => v.transition_key_ready_proof.as_ref(),
+            Self::SevSnp(v) => v.transition_key_ready_proof.as_ref(),
+            Self::Tdx(v) => v.transition_key_ready_proof.as_ref(),
         }
     }
     pub fn encode_canonical(&self) -> Result<Vec<u8>, CodecError> {
         let (mode, payload) = match self {
-            Self::Dcap(value) => (AttestationMode::DcapRequired, value.encode_payload()?),
+            Self::Dcap(value) => (
+                AttestationMode::DcapRequired,
+                value.encode_payload(AttestationMode::DcapRequired)?,
+            ),
             Self::GramineDirectDev(value) => {
                 (AttestationMode::GramineDirectDev, value.encode_payload()?)
             }
+            Self::SevSnp(value) => (AttestationMode::SevSnpRequired, value.encode_payload()?),
+            Self::Tdx(value) => (
+                AttestationMode::TdxRequired,
+                value.encode_payload(AttestationMode::TdxRequired)?,
+            ),
         };
         let mut out = Vec::new();
         out.push(PROTOCOL_VERSION_V1);
@@ -378,10 +526,20 @@ impl AttestationEvidenceV1 {
         )?;
         let payload = decoder.take(payload_len)?;
         let value = match mode {
-            AttestationMode::DcapRequired => Self::Dcap(DcapEvidenceV1::decode_payload(payload)?),
+            AttestationMode::DcapRequired => Self::Dcap(DcapEvidenceV1::decode_payload(
+                payload,
+                AttestationMode::DcapRequired,
+            )?),
             AttestationMode::GramineDirectDev => {
                 Self::GramineDirectDev(GramineDirectEvidenceV1::decode_payload(payload)?)
             }
+            AttestationMode::SevSnpRequired => {
+                Self::SevSnp(SevSnpEvidenceV1::decode_payload(payload)?)
+            }
+            AttestationMode::TdxRequired => Self::Tdx(DcapEvidenceV1::decode_payload(
+                payload,
+                AttestationMode::TdxRequired,
+            )?),
         };
         decoder.finish()?;
         Ok(value)
@@ -398,6 +556,8 @@ impl AttestationEvidenceV1 {
         match self {
             Self::Dcap(_) => AttestationMode::DcapRequired,
             Self::GramineDirectDev(_) => AttestationMode::GramineDirectDev,
+            Self::SevSnp(_) => AttestationMode::SevSnpRequired,
+            Self::Tdx(_) => AttestationMode::TdxRequired,
         }
     }
 }

@@ -244,8 +244,15 @@ impl InitializationState {
         let manifest = self.manifest()?.ok_or(InitError::NotInitialized)?;
         let intent = RegistrationIntentV1::decode_canonical(intent_bytes)
             .map_err(InitError::registration_intent_not_canonical)?;
-        if intent.attestation_mode != AttestationMode::DcapRequired {
-            return Err(InitError::QuoteRequiresDcapRequired.into());
+        // Every hardware mode binds the intent in its evidence. The
+        // development mode signs the intent and has no evidence to bind.
+        match intent.attestation_mode {
+            AttestationMode::DcapRequired
+            | AttestationMode::SevSnpRequired
+            | AttestationMode::TdxRequired => {}
+            AttestationMode::GramineDirectDev => {
+                return Err(InitError::QuoteRequiresDcapRequired.into());
+            }
         }
         manifest
             .validate_intent_binding(&intent)
@@ -457,6 +464,12 @@ impl InitializationState {
             ) | (
                 crate::gramine::AttestationType::SgxNoAttest,
                 AttestationMode::GramineDirectDev
+            ) | (
+                crate::gramine::AttestationType::SevSnp,
+                AttestationMode::SevSnpRequired
+            ) | (
+                crate::gramine::AttestationType::Tdx,
+                AttestationMode::TdxRequired
             )
         );
         if !runtime_matches {

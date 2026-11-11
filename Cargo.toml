@@ -73,6 +73,7 @@ members = [
     # testing
     "testing/lysis-v1-reference",
     "testing/protocol-benchmarks",
+    "testing/tribute-offer-fixture",
     "crates/zk/poseidon",
     "crates/zk/outbe-zk",
     "crates/zk/outbe-zk-backend",

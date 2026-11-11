@@ -6,7 +6,7 @@
 
 use std::{collections::BTreeSet, fmt};
 
-use outbe_primitives::tee_attestation_v1::TeePolicyV1;
+use outbe_primitives::tee_attestation_v1::{TeePolicyV1, TDX_TEE_TYPE_V1};
 use serde::{
     de::{DeserializeSeed, MapAccess, SeqAccess, Visitor},
     Deserialize,
@@ -53,6 +53,28 @@ struct QeIdentityBody<'a> {
     tcb_evaluation_data_number: u32,
 }
 
+/// `id` values of the signed Intel documents for one TEE type.
+struct CollateralIds {
+    tcb_info: &'static str,
+    qe_identity: &'static str,
+}
+
+/// A TDX policy takes the TDX TCB info and the identity of the TD quoting
+/// enclave. Every other policy takes the SGX documents.
+const fn collateral_ids(policy: &TeePolicyV1) -> CollateralIds {
+    if policy.tee_type == TDX_TEE_TYPE_V1 {
+        CollateralIds {
+            tcb_info: "TDX",
+            qe_identity: "TD_QE",
+        }
+    } else {
+        CollateralIds {
+            tcb_info: "SGX",
+            qe_identity: "QE",
+        }
+    }
+}
+
 pub(super) struct TcbInfoMetadata {
     pub(super) issue_date: u64,
     pub(super) next_update: u64,
@@ -76,7 +98,8 @@ pub(super) fn parse_signed_tcb_info(
     validate_signed_json_wrapper(bytes, "tcbInfo", signed.body, signed.signature)?;
     let body: TcbInfoBody<'_> = serde_json::from_str(signed.body.get())
         .map_err(|_| DcapRejectCodeV1::CollateralNonCanonical)?;
-    if body.id != "SGX" || body.version != policy.tcb_info_schema_version {
+    if body.id != collateral_ids(policy).tcb_info || body.version != policy.tcb_info_schema_version
+    {
         return Err(DcapRejectCodeV1::PlatformIdentityMismatch);
     }
     let issue_date = parse_canonical_timestamp(body.issue_date)?;
@@ -102,7 +125,9 @@ pub(super) fn parse_signed_qe_identity(
     validate_signed_json_wrapper(bytes, "enclaveIdentity", signed.body, signed.signature)?;
     let body: QeIdentityBody<'_> = serde_json::from_str(signed.body.get())
         .map_err(|_| DcapRejectCodeV1::CollateralNonCanonical)?;
-    if body.id != "QE" || body.version != policy.qe_identity_schema_version {
+    if body.id != collateral_ids(policy).qe_identity
+        || body.version != policy.qe_identity_schema_version
+    {
         return Err(DcapRejectCodeV1::QeTcbRejected);
     }
     let issue_date = parse_canonical_timestamp(body.issue_date)?;

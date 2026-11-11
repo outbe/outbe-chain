@@ -112,8 +112,11 @@ fn with_operation(
     operation: AttestationOperationV1,
 ) -> AttestationEvidenceV1 {
     match &mut evidence {
-        AttestationEvidenceV1::Dcap(value) => value.intent.operation = operation,
+        AttestationEvidenceV1::Dcap(value) | AttestationEvidenceV1::Tdx(value) => {
+            value.intent.operation = operation;
+        }
         AttestationEvidenceV1::GramineDirectDev(value) => value.intent.operation = operation,
+        AttestationEvidenceV1::SevSnp(value) => value.intent.operation = operation,
     }
     evidence
 }

@@ -24,7 +24,7 @@ outbe-primitives.workspace = true
 outbe-radicle.workspace = true
 outbe-validatorset.workspace = true
 outbe-teeregistry.workspace = true
-outbe-tee.workspace = true
+outbe-tee = { workspace = true, features = ["sev-snp"] }
 outbe-update.workspace = true
 
 # Commonware

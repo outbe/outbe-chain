@@ -121,6 +121,10 @@ pub enum TeeAttestationActivationError {
     },
     #[error("GramineDirectDev requires devnet or testnet chain ID ({devnet} or {testnet})")]
     GramineDirectDevChainIdDisallowed { devnet: u64, testnet: u64 },
+    #[error("SevSnpRequired requires devnet or testnet chain ID ({devnet} or {testnet})")]
+    SevSnpRequiredChainIdDisallowed { devnet: u64, testnet: u64 },
+    #[error("TdxRequired requires devnet or testnet chain ID ({devnet} or {testnet})")]
+    TdxRequiredChainIdDisallowed { devnet: u64, testnet: u64 },
     #[error("initial TEE policy does not bind the manifest resource schedule")]
     InitialPolicyResourceScheduleMismatch,
     #[error("TEE policy schedule does not match ChainSpec identity")]

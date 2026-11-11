@@ -1,0 +1,12 @@
+diff --git a/os/image/kernel-cmdline.sh b/os/image/kernel-cmdline.sh
+index c900899b..c0a2d58f 100644
+--- a/os/image/kernel-cmdline.sh
++++ b/os/image/kernel-cmdline.sh
+@@ -39,5 +39,6 @@ dstack_kernel_cmdline() {
+     echo "console=ttyS0 init=/init panic=1 net.ifnames=0 biosdevname=0" \
+          "mce=off oops=panic pci=noearly random.trust_cpu=y" \
+          "random.trust_bootloader=n tsc=reliable no-kvmclock" \
+-         "dstack.rootfs_hash=$root_hash dstack.rootfs_size=$data_size"
++         "dstack.rootfs_hash=$root_hash dstack.rootfs_size=$data_size" \
++         "dstack.storage_encrypted=false dstack.storage_fs=ext4"
+ }

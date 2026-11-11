@@ -159,13 +159,19 @@ static int32_t validate_arguments(
     return OUTBE_QVL_WRAPPER_OK;
 }
 
-/* The Intel QVE collateral view (version 3.1, SGX) of the Outbe collateral.
- * It borrows the caller's buffers. */
-static sgx_ql_qve_collateral_t intel_collateral(const struct outbe_qvl_collateral_v1 *input) {
+/* TEE type of an SGX quote and of a TDX quote in the Intel collateral. */
+#define OUTBE_QVL_TEE_TYPE_SGX 0x00000000u
+#define OUTBE_QVL_TEE_TYPE_TDX 0x00000081u
+
+/* The Intel QVE collateral view (version 3.1) of the Outbe collateral for one
+ * TEE type. It borrows the caller's buffers. */
+static sgx_ql_qve_collateral_t intel_collateral(
+    const struct outbe_qvl_collateral_v1 *input,
+    uint32_t tee_type) {
     sgx_ql_qve_collateral_t collateral = {
         .major_version = 3,
         .minor_version = 1,
-        .tee_type = 0,
+        .tee_type = tee_type,
         .pck_crl_issuer_chain = (char *)input->pck_crl_issuer_chain,
         .pck_crl_issuer_chain_size = input->pck_crl_issuer_chain_size,
         .root_ca_crl = (char *)input->root_ca_crl,
@@ -215,9 +221,12 @@ static int32_t verify_with_qvl(
     const sgx_ql_qve_collateral_t *collateral,
     int64_t expiration_check_date,
     struct outbe_qvl_result_v1 *output) {
+    const int is_tdx = collateral->tee_type == OUTBE_QVL_TEE_TYPE_TDX;
     uint32_t supplemental_size = 0;
     TEST_TRACE_MARKER("OUTBE_QVL_BEGIN\n");
-    quote3_error_t qvl_error = sgx_qv_get_quote_supplemental_data_size(&supplemental_size);
+    quote3_error_t qvl_error = is_tdx
+        ? tdx_qv_get_quote_supplemental_data_size(&supplemental_size)
+        : sgx_qv_get_quote_supplemental_data_size(&supplemental_size);
     if (qvl_error != SGX_QL_SUCCESS) {
         TEST_TRACE_MARKER("OUTBE_QVL_END\n");
         return OUTBE_QVL_WRAPPER_QVL_ERROR;
@@ -232,16 +241,29 @@ static int32_t verify_with_qvl(
     sgx_ql_qv_result_t aggregate_status = SGX_QL_QV_RESULT_UNSPECIFIED;
     uint32_t collateral_expiration_status = UINT32_MAX;
 
-    qvl_error = sgx_qv_verify_quote(
-        quote,
-        quote_size,
-        collateral,
-        (time_t)expiration_check_date,
-        &collateral_expiration_status,
-        &aggregate_status,
-        NULL,
-        supplemental_size,
-        (uint8_t *)&supplemental);
+    if (is_tdx) {
+        qvl_error = tdx_qv_verify_quote(
+            quote,
+            quote_size,
+            collateral,
+            (time_t)expiration_check_date,
+            &collateral_expiration_status,
+            &aggregate_status,
+            NULL,
+            supplemental_size,
+            (uint8_t *)&supplemental);
+    } else {
+        qvl_error = sgx_qv_verify_quote(
+            quote,
+            quote_size,
+            collateral,
+            (time_t)expiration_check_date,
+            &collateral_expiration_status,
+            &aggregate_status,
+            NULL,
+            supplemental_size,
+            (uint8_t *)&supplemental);
+    }
     TEST_TRACE_MARKER("OUTBE_QVL_END\n");
 
     output->aggregate_status = (uint32_t)aggregate_status;
@@ -253,18 +275,40 @@ static int32_t verify_with_qvl(
     return OUTBE_QVL_WRAPPER_OK;
 }
 
-int32_t outbe_qvl_verify_quote_v1(
+static int32_t verify_quote_of_tee_type(
     const uint8_t *quote,
     uint32_t quote_size,
     const struct outbe_qvl_collateral_v1 *input,
     int64_t expiration_check_date,
-    struct outbe_qvl_result_v1 *output) {
+    struct outbe_qvl_result_v1 *output,
+    uint32_t tee_type) {
     int32_t status = validate_arguments(quote, quote_size, input, output);
     if (status != OUTBE_QVL_WRAPPER_OK) {
         return status;
     }
 
     memset(output, 0, sizeof(*output));
-    sgx_ql_qve_collateral_t collateral = intel_collateral(input);
+    sgx_ql_qve_collateral_t collateral = intel_collateral(input, tee_type);
     return verify_with_qvl(quote, quote_size, &collateral, expiration_check_date, output);
+}
+
+int32_t outbe_qvl_verify_quote_v1(
+    const uint8_t *quote,
+    uint32_t quote_size,
+    const struct outbe_qvl_collateral_v1 *input,
+    int64_t expiration_check_date,
+    struct outbe_qvl_result_v1 *output) {
+    return verify_quote_of_tee_type(
+        quote, quote_size, input, expiration_check_date, output, OUTBE_QVL_TEE_TYPE_SGX);
+}
+
+/* Same contract as outbe_qvl_verify_quote_v1, for an Intel TDX quote. */
+int32_t outbe_qvl_verify_tdx_quote_v1(
+    const uint8_t *quote,
+    uint32_t quote_size,
+    const struct outbe_qvl_collateral_v1 *input,
+    int64_t expiration_check_date,
+    struct outbe_qvl_result_v1 *output) {
+    return verify_quote_of_tee_type(
+        quote, quote_size, input, expiration_check_date, output, OUTBE_QVL_TEE_TYPE_TDX);
 }

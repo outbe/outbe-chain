@@ -293,13 +293,23 @@ impl TeePolicyV1 {
     }
 
     fn validate_dcap_profile(&self) -> Result<(), CodecError> {
+        // A TDX policy fixes quote version 4 and the TDX TEE type. Every other
+        // mode keeps the SGX constants. `certification_data_type` names the
+        // PCK certificate chain: in a TDX quote it is nested in the QE report
+        // certification data.
+        let (quote_version, tee_type) = match self.attestation_mode {
+            AttestationMode::TdxRequired => (TDX_QUOTE_VERSION_V1, TDX_TEE_TYPE_V1),
+            AttestationMode::DcapRequired
+            | AttestationMode::GramineDirectDev
+            | AttestationMode::SevSnpRequired => (3, 0),
+        };
         if (
             self.quote_version,
             self.tee_type,
             self.attestation_key_type,
             self.qe_vendor_id,
             self.certification_data_type,
-        ) != (3, 0, 2, INTEL_QE_VENDOR_ID, 5)
+        ) != (quote_version, tee_type, 2, INTEL_QE_VENDOR_ID, 5)
             || self.tcb_info_schema_version != 3
             || self.qe_identity_schema_version != 2
         {

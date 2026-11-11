@@ -75,7 +75,11 @@ pub(super) async fn ingest_onboarding_offer_key(
         artifact.len()
     );
     match ctx.policy.attestation_mode {
-        AttestationMode::DcapRequired => {
+        // SEV-SNP and TDX use the hardware-attested path of DCAP: the artifact
+        // is bound to a finalized admission anchor of the NodeHost.
+        AttestationMode::DcapRequired
+        | AttestationMode::SevSnpRequired
+        | AttestationMode::TdxRequired => {
             let anchor_outcome = load_finalized_admission_anchor_v1(
                 client,
                 ctx.genesis,
@@ -85,7 +89,7 @@ pub(super) async fn ingest_onboarding_offer_key(
             .await?;
             let node_data_dir = ctx
                 .authorized_node_data_dir
-                .expect("DcapRequired join has a durable NodeHost admission anchor");
+                .expect("a hardware-attested join has a durable NodeHost admission anchor");
             let mut recovery = CliFinalizedAdmissionIoV1 {
                 rpc: client,
                 finalized_height: finalized.finalized_height,

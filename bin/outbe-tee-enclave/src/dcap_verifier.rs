@@ -260,13 +260,7 @@ pub(crate) fn complete_verification_response(
     resident_offer_key: Option<&DerivedTributeOfferKey>,
     source_manifest: Option<&outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1>,
 ) -> EnclaveResponse {
-    #[cfg(feature = "native-dcap")]
-    let outcome = verify_complete_request(&request);
-    #[cfg(not(feature = "native-dcap"))]
-    let outcome: EnclaveResult<DcapVerificationOutcomeV1> =
-        Err(DcapVerifyError::MissingNativeDcapVerifier.into());
-
-    outcome
+    verify_complete_request(&request)
         .and_then(|outcome| {
             prepare_verification_response(
                 &request,
@@ -491,15 +485,17 @@ fn build_onboarding_artifact(
             return Ok(None);
         }
     };
-    let intent = &evidence.intent;
+    let intent = evidence.intent();
     let source_manifest = source_manifest.ok_or(DcapVerifyError::OnboardingSourceNotInitialized)?;
     let resident_offer_key =
         resident_offer_key.ok_or(DcapVerifyError::OnboardingSourceOfferKeyNotReady)?;
     let DcapVerificationOutcomeV1::Accepted(verdict) = outcome else {
         unreachable!("non-accepted outcomes return before onboarding construction")
     };
-    if source_manifest.attestation_mode
-        != outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired
+    // The source hands the offer key only to a node with its own attestation
+    // mode and its own code identity. In the SEV-SNP mode the code identity is
+    // the launch measurement and the host data of the VM.
+    if source_manifest.attestation_mode != evidence.mode()
         || (
             verdict.mrenclave,
             verdict.mrsigner,
@@ -552,13 +548,17 @@ fn validate_onboarding_registration(
     bytes: &[u8],
     node_signature: &[u8; 65],
     enclave_signature: &[u8; 64],
-) -> Result<outbe_primitives::tee_attestation_v1::DcapEvidenceV1, DcapRejectCodeV1> {
+) -> Result<outbe_primitives::tee_attestation_v1::AttestationEvidenceV1, DcapRejectCodeV1> {
     use outbe_primitives::tee_attestation_v1::{AttestationEvidenceV1, AttestationOperationV1};
     let evidence = match AttestationEvidenceV1::decode_canonical(bytes) {
-        Ok(AttestationEvidenceV1::Dcap(evidence)) => evidence,
+        Ok(
+            evidence @ (AttestationEvidenceV1::Dcap(_)
+            | AttestationEvidenceV1::SevSnp(_)
+            | AttestationEvidenceV1::Tdx(_)),
+        ) => evidence,
         _ => return Err(DcapRejectCodeV1::EvidenceNonCanonical),
     };
-    let intent = &evidence.intent;
+    let intent = evidence.intent();
     if intent.operation != AttestationOperationV1::RegisterEnclave {
         return Err(DcapRejectCodeV1::OperationMismatch);
     }
@@ -595,19 +595,39 @@ fn onboarding_context_matches(
     }
 }
 
-#[cfg(feature = "native-dcap")]
+/// Verify hardware evidence with the verifier of its attestation mode.
+///
+/// The outcomes for the evidence that existed before the SEV-SNP mode do not
+/// change. A binary with no hardware verifier gives an error for every
+/// request. A binary with the DCAP verifier only rejects SEV-SNP evidence as
+/// non-canonical, as a binary that does not know the mode does. TDX evidence
+/// uses the DCAP verifier: a binary without it rejects TDX evidence as
+/// non-canonical.
 fn verify_complete_request(
     request: &CompleteDcapVerificationV1,
 ) -> EnclaveResult<DcapVerificationOutcomeV1> {
     use outbe_primitives::tee_attestation_v1::{AttestationEvidenceV1, TeePolicyV1};
 
+    if cfg!(not(any(feature = "native-dcap", feature = "sev-snp"))) {
+        return Err(DcapVerifyError::MissingNativeDcapVerifier.into());
+    }
+
     let evidence = match AttestationEvidenceV1::decode_canonical(&request.evidence) {
-        Ok(AttestationEvidenceV1::Dcap(evidence)) => evidence,
+        Ok(
+            evidence @ (AttestationEvidenceV1::Dcap(_)
+            | AttestationEvidenceV1::SevSnp(_)
+            | AttestationEvidenceV1::Tdx(_)),
+        ) => evidence,
         Ok(AttestationEvidenceV1::GramineDirectDev(_)) | Err(_) => {
             return Ok(DcapVerificationOutcomeV1::Rejected(
                 DcapRejectCodeV1::EvidenceNonCanonical,
             ));
         }
+    };
+    let verify = match &evidence {
+        AttestationEvidenceV1::Dcap(_) => verify_dcap,
+        AttestationEvidenceV1::Tdx(_) => verify_tdx,
+        _ => verify_sev_snp,
     };
     let policy = match TeePolicyV1::decode_canonical(&request.policy) {
         Ok(policy) => policy,
@@ -617,13 +637,86 @@ fn verify_complete_request(
             ));
         }
     };
-    Ok(
-        match outbe_tee::dcap_v1::verify_dcap_evidence(&evidence, &policy, request.block_timestamp)
-        {
-            Ok(verdict) => DcapVerificationOutcomeV1::Accepted(verdict),
-            Err(code) => DcapVerificationOutcomeV1::Rejected(code),
-        },
-    )
+    Ok(match verify(&evidence, &policy, request.block_timestamp)? {
+        Ok(verdict) => DcapVerificationOutcomeV1::Accepted(verdict),
+        Err(code) => DcapVerificationOutcomeV1::Rejected(code),
+    })
+}
+
+type VerifierResult =
+    EnclaveResult<Result<outbe_tee::dcap_protocol::DcapVerdictV1, DcapRejectCodeV1>>;
+
+fn verify_dcap(
+    evidence: &outbe_primitives::tee_attestation_v1::AttestationEvidenceV1,
+    policy: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
+    block_timestamp: u64,
+) -> VerifierResult {
+    #[cfg(feature = "native-dcap")]
+    {
+        let outbe_primitives::tee_attestation_v1::AttestationEvidenceV1::Dcap(evidence) = evidence
+        else {
+            return Ok(Err(DcapRejectCodeV1::EvidenceNonCanonical));
+        };
+        Ok(outbe_tee::dcap_v1::verify_dcap_evidence(
+            evidence,
+            policy,
+            block_timestamp,
+        ))
+    }
+    #[cfg(not(feature = "native-dcap"))]
+    {
+        let _ = (evidence, policy, block_timestamp);
+        Err(DcapVerifyError::MissingNativeDcapVerifier.into())
+    }
+}
+
+fn verify_tdx(
+    evidence: &outbe_primitives::tee_attestation_v1::AttestationEvidenceV1,
+    policy: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
+    block_timestamp: u64,
+) -> VerifierResult {
+    #[cfg(feature = "native-dcap")]
+    {
+        let outbe_primitives::tee_attestation_v1::AttestationEvidenceV1::Tdx(evidence) = evidence
+        else {
+            return Ok(Err(DcapRejectCodeV1::EvidenceNonCanonical));
+        };
+        Ok(outbe_tee::dcap_v1::verify_tdx_evidence(
+            evidence,
+            policy,
+            block_timestamp,
+        ))
+    }
+    #[cfg(not(feature = "native-dcap"))]
+    {
+        let _ = (evidence, policy, block_timestamp);
+        Ok(Err(DcapRejectCodeV1::EvidenceNonCanonical))
+    }
+}
+
+fn verify_sev_snp(
+    evidence: &outbe_primitives::tee_attestation_v1::AttestationEvidenceV1,
+    policy: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
+    block_timestamp: u64,
+) -> VerifierResult {
+    #[cfg(feature = "sev-snp")]
+    {
+        let outbe_primitives::tee_attestation_v1::AttestationEvidenceV1::SevSnp(evidence) =
+            evidence
+        else {
+            return Ok(Err(DcapRejectCodeV1::EvidenceNonCanonical));
+        };
+        Ok(outbe_tee::sev_snp_v1::verify_sev_snp_evidence(
+            evidence,
+            policy,
+            block_timestamp,
+        ))
+    }
+    #[cfg(not(feature = "sev-snp"))]
+    {
+        let _ = (evidence, policy, block_timestamp);
+        Ok(Err(DcapRejectCodeV1::EvidenceNonCanonical))
+    }
 }
 
 #[cfg(test)]
@@ -705,6 +798,142 @@ mod tests {
             },
         };
         (request, manifest, resident)
+    }
+
+    /// SEV-SNP evidence built from a report of a real Milan processor. The
+    /// report binds the report data of AMD, not of this intent.
+    #[cfg(feature = "sev-snp")]
+    fn sev_snp_request_with_a_report_for_another_intent() -> CompleteDcapVerificationV1 {
+        use outbe_primitives::tee_attestation_v1::{
+            PlatformTcbStatusSetV1, QvlTcbStatusV1, SevSnpEvidenceV1, TeeMeasurementRuleV1,
+            TeePolicyV1,
+        };
+
+        const REPORT: &[u8] =
+            include_bytes!("../../../crates/system/tee/tests/fixtures/sev_snp/milan-report.bin");
+        const ARK: &[u8] =
+            include_bytes!("../../../crates/system/tee/tests/fixtures/sev_snp/milan-ark.der");
+        const ASK: &[u8] =
+            include_bytes!("../../../crates/system/tee/tests/fixtures/sev_snp/milan-ask.der");
+        const VCEK: &[u8] =
+            include_bytes!("../../../crates/system/tee/tests/fixtures/sev_snp/milan-vcek.der");
+
+        let policy = TeePolicyV1 {
+            policy_version: 1,
+            chain_id: [0x11; 32],
+            genesis_hash: B256::repeat_byte(0x22),
+            activation_height: 1,
+            predecessor_policy_hash: B256::ZERO,
+            attestation_mode: AttestationMode::SevSnpRequired,
+            // SHA-256 of the AMD Milan root certificate in `milan-ark.der`.
+            intel_root_der_hash: alloy_primitives::b256!(
+                "69d063b45344d26a2e94e1f4210de49ef555308287d4c174445c95639a540bcd"
+            ),
+            quote_version: 3,
+            tee_type: 0,
+            attestation_key_type: 2,
+            qe_vendor_id: outbe_primitives::tee_attestation_v1::INTEL_QE_VENDOR_ID,
+            certification_data_type: 5,
+            tcb_info_schema_version: 3,
+            qe_identity_schema_version: 2,
+            minimum_tcb_evaluation_data_number: 1,
+            accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
+            accepted_qe_tcb_status: QvlTcbStatusV1::UpToDate,
+            minimum_lease: 3_600,
+            maximum_lease: 14 * 86_400,
+            collateral_margin: 3_600,
+            resource_schedule_hash: B256::repeat_byte(0x44),
+            measurement_rules: vec![TeeMeasurementRuleV1 {
+                mrenclave: B256::repeat_byte(0x61),
+                mrsigner: B256::repeat_byte(0x62),
+                isv_prod_id: 1,
+                minimum_isv_svn: 1,
+                admit_from_height: 1,
+                admit_until_height_exclusive: u64::MAX,
+            }],
+        };
+        let node_public: [u8; 33] = k256::ecdsa::SigningKey::from_bytes((&[0x77; 32]).into())
+            .unwrap()
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .try_into()
+            .unwrap();
+        let evidence = AttestationEvidenceV1::SevSnp(SevSnpEvidenceV1 {
+            intent: RegistrationIntentV1 {
+                chain_id: policy.chain_id,
+                genesis_hash: policy.genesis_hash,
+                operation: AttestationOperationV1::RegisterEnclave,
+                attestation_mode: AttestationMode::SevSnpRequired,
+                policy_hash: policy.policy_hash().unwrap(),
+                node_id: NodeIdV1 {
+                    reth_p2p_public: node_public,
+                },
+                enclave_id: B256::repeat_byte(0x99),
+                binding_id: B256::repeat_byte(0xaa),
+                binding_version: 1,
+                registration_version: 1,
+                renewal_nonce: 0,
+                transition_nonce: 0,
+                requested_valid_until: 7_200,
+                recipient_x25519: [0xbb; 32],
+                attestation_ed25519: [0xcc; 32],
+                noise_responder_x25519: [0xdd; 32],
+                node_host_authorization_hash: B256::repeat_byte(0xee),
+            },
+            report: REPORT.to_vec(),
+            ark_der: ARK.to_vec(),
+            ask_der: ASK.to_vec(),
+            vcek_der: VCEK.to_vec(),
+            transition_key_ready_proof: None,
+        });
+        CompleteDcapVerificationV1 {
+            request_hash: B256::repeat_byte(0x8c),
+            evidence: evidence.encode_canonical().unwrap(),
+            policy: policy.encode_canonical().unwrap(),
+            block_timestamp: 1_000,
+            purpose: VerificationPurposeV1::Generic,
+        }
+    }
+
+    /// The certificate chain and the report signature are valid, so the SEV-SNP
+    /// verifier reaches the report data comparison. The DCAP verifier would
+    /// not get that far with this evidence.
+    #[cfg(feature = "sev-snp")]
+    #[test]
+    fn sev_snp_evidence_is_verified_by_the_sev_snp_verifier() {
+        let request = sev_snp_request_with_a_report_for_another_intent();
+
+        let outcome = verify_complete_request(&request).unwrap();
+
+        assert_eq!(
+            outcome,
+            DcapVerificationOutcomeV1::Rejected(DcapRejectCodeV1::ReportDataMismatch)
+        );
+    }
+
+    #[cfg(feature = "sev-snp")]
+    #[test]
+    fn sev_snp_evidence_with_a_non_canonical_policy_is_rejected() {
+        let mut request = sev_snp_request_with_a_report_for_another_intent();
+        request.policy = vec![0x8d];
+
+        let outcome = verify_complete_request(&request).unwrap();
+
+        assert_eq!(
+            outcome,
+            DcapVerificationOutcomeV1::Rejected(DcapRejectCodeV1::PolicyNonCanonical)
+        );
+    }
+
+    /// A binary with no hardware verifier gives an error for every request, as
+    /// before the SEV-SNP mode existed.
+    #[cfg(not(any(feature = "native-dcap", feature = "sev-snp")))]
+    #[test]
+    fn a_binary_without_hardware_verifiers_gives_an_error() {
+        let (request, _, _) = signed_onboarding_fixture();
+
+        assert!(verify_complete_request(&request).is_err());
     }
 
     fn accepted_outcome() -> DcapVerificationOutcomeV1 {

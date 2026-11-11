@@ -106,8 +106,10 @@ impl TeeRegistry<'_> {
                     || status
                         == DcapPlatformTcbStatusV1::ConfigurationAndSWHardeningNeeded as u8
         );
-        if policy.attestation_mode == AttestationMode::DcapRequired
-            && platform_requires_advisory_policy
+        if matches!(
+            policy.attestation_mode,
+            AttestationMode::DcapRequired | AttestationMode::TdxRequired
+        ) && platform_requires_advisory_policy
             && policy.accepted_platform_tcb_statuses
                 != PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded
         {
