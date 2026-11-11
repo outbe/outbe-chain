@@ -1,12 +1,14 @@
+use crate::block::{BlockOrder, BlockSystemFlags};
 use alloy_consensus::Transaction as _;
 use reth_ethereum::TransactionSigned;
 
 use super::{
     is_reserved_system_tx, BlockExecutionStage, BlockHeightRegime, BlockSystemPlan, BodyZone,
-    SysTxSelector, SystemTx, SystemTxError, MAX_SYSTEM_TXS_PER_BLOCK,
+    SystemTx, SystemTxError, SystemTxStepId, CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX,
+    MAX_END_BLOCK_SYSTEM_TXS, MAX_PREFIX_SYSTEM_TXS, MAX_SYSTEM_TXS_PER_BLOCK,
 };
 
-/// Structural split of block transactions into system begin-prefix (`ConsensusStage` + `BeginBlock`),
+/// Structural split of block transactions into system begin-prefix (`Consensus` + `BeginBlock`),
 /// user middle (`MidBlock`), and system end-suffix (`EndBlock`).
 #[derive(Debug, Clone)]
 pub struct SystemTxLayout<'a> {
@@ -24,17 +26,17 @@ impl<'a> SystemTxLayout<'a> {
         self.begin.len() + self.end.len()
     }
 
-    pub fn begin_block_selectors(&self) -> Result<Vec<SysTxSelector>, SystemTxError> {
+    pub fn prefix_steps(&self) -> Result<Vec<SystemTxStepId>, SystemTxError> {
         self.begin
             .iter()
-            .map(|tx| SystemTx::decode((*tx).input()).map(|input| input.selector()))
+            .map(|tx| SystemTx::decode((*tx).input()).map(|input| input.step_id()))
             .collect()
     }
 
-    pub fn end_block_selectors(&self) -> Result<Vec<SysTxSelector>, SystemTxError> {
+    pub fn end_block_steps(&self) -> Result<Vec<SystemTxStepId>, SystemTxError> {
         self.end
             .iter()
-            .map(|tx| SystemTx::decode((*tx).input()).map(|input| input.selector()))
+            .map(|tx| SystemTx::decode((*tx).input()).map(|input| input.step_id()))
             .collect()
     }
 
@@ -42,7 +44,7 @@ impl<'a> SystemTxLayout<'a> {
         let mut out = Vec::new();
         for tx in &self.begin {
             let decoded = SystemTx::decode((*tx).input())?;
-            if decoded.stage() == BlockExecutionStage::ConsensusStage {
+            if decoded.stage() == BlockExecutionStage::Consensus {
                 out.push(*tx);
             }
         }
@@ -60,10 +62,9 @@ impl<'a> SystemTxLayout<'a> {
         Ok(out)
     }
 
-    /// True if the fully decoded begin zone contains a system tx with `selector`.
-    pub fn has_begin_selector(&self, selector: SysTxSelector) -> bool {
-        self.begin_block_selectors()
-            .map(|selectors| selectors.contains(&selector))
+    pub fn has_consensus_step(&self, step_index: u8) -> bool {
+        self.prefix_steps()
+            .map(|steps| steps.contains(&SystemTxStepId::consensus(step_index)))
             .unwrap_or(false)
     }
 }
@@ -123,93 +124,32 @@ pub fn split_system_layout<'a>(
     })
 }
 
-pub fn expected_begin_block_selectors(
-    block_number: u64,
-    has_boundary_outcome: bool,
-    has_tee_bootstrap: bool,
-) -> Vec<SysTxSelector> {
-    expected_begin_block_selectors_for_publication(
-        block_number,
-        has_boundary_outcome,
-        has_tee_bootstrap,
-        false,
-    )
-}
-
-pub fn expected_begin_block_selectors_for_publication(
-    block_number: u64,
-    has_boundary_outcome: bool,
-    has_tee_bootstrap: bool,
-    has_publication: bool,
-) -> Vec<SysTxSelector> {
-    BlockSystemPlan::for_block(
-        block_number,
-        has_boundary_outcome,
-        has_tee_bootstrap,
-        has_publication,
-    )
-    .begin_zone_selectors()
-}
-
-pub fn expected_end_block_selectors(block_number: u64) -> Vec<SysTxSelector> {
-    BlockSystemPlan::for_block(block_number, false, false, false).end_zone_selectors()
-}
-
-pub fn validate_active_system_tx_set(
-    layout: &SystemTxLayout<'_>,
-    block_number: u64,
-    has_boundary_outcome: bool,
-    has_tee_bootstrap: bool,
-) -> Result<(), SystemTxError> {
-    validate_system_tx_set_for_publication(
-        layout,
-        block_number,
-        has_boundary_outcome,
-        has_tee_bootstrap,
-        false,
-    )
-}
-
 pub fn validate_system_tx_set_for_publication(
+    order: &BlockOrder,
     layout: &SystemTxLayout<'_>,
     block_number: u64,
-    has_boundary_outcome: bool,
-    has_tee_bootstrap: bool,
-    has_publication: bool,
+    flags: BlockSystemFlags,
 ) -> Result<(), SystemTxError> {
+    let regime = BlockHeightRegime::for_block(block_number);
+    if regime.has_system_tx_prefix() && order.consensus.is_empty() {
+        return Err(SystemTxError::EmptyBlockOrder { block_number });
+    }
     let actual = layout.system_tx_count();
-    if actual > usize::from(MAX_SYSTEM_TXS_PER_BLOCK) {
+    if actual > usize::from(MAX_SYSTEM_TXS_PER_BLOCK)
+        || layout.begin.len() > MAX_PREFIX_SYSTEM_TXS
+        || layout.end.len() > MAX_END_BLOCK_SYSTEM_TXS
+    {
         return Err(SystemTxError::TooManySystemTxs {
             actual,
             max: MAX_SYSTEM_TXS_PER_BLOCK,
         });
     }
-
-    let regime = BlockHeightRegime::for_block(block_number);
-    if regime.requires_genesis_bootstrap_txs() && !has_boundary_outcome {
-        return Err(SystemTxError::V2Block1MissingBoundaryOutcome);
-    }
-    if regime.requires_genesis_bootstrap_txs() && !has_tee_bootstrap {
-        return Err(SystemTxError::V2Block1MissingTeeBootstrap);
-    }
-    if !regime.requires_genesis_bootstrap_txs() && has_tee_bootstrap {
-        return Err(SystemTxError::TeeBootstrapWrongHeight { block_number });
-    }
-    if !regime.allows_user_transactions() && !regime.is_genesis() && !layout.user.is_empty() {
-        return Err(SystemTxError::V2Block1ContainsUserTransactions {
-            actual: layout.user.len(),
-        });
-    }
-
-    let expected_begin = expected_begin_block_selectors_for_publication(
-        block_number,
-        has_boundary_outcome,
-        has_tee_bootstrap,
-        has_publication,
-    );
-    let expected_end = expected_end_block_selectors(block_number);
-    let actual_begin = layout.begin_block_selectors()?;
-    let actual_end = layout.end_block_selectors()?;
+    validate_bootstrap_membership(layout, regime, block_number, flags)?;
+    let plan = BlockSystemPlan::for_block(block_number, flags, order);
+    let expected_begin = plan.expected_prefix_steps();
+    let expected_end = plan.expected_end_block_steps();
+    let actual_begin = layout.prefix_steps()?;
+    let actual_end = layout.end_block_steps()?;
     if actual_begin != expected_begin || actual_end != expected_end {
         Err(SystemTxError::ActiveSystemTxSetMismatch {
             expected_begin,
@@ -222,11 +162,35 @@ pub fn validate_system_tx_set_for_publication(
     }
 }
 
+fn validate_bootstrap_membership(
+    layout: &SystemTxLayout<'_>,
+    regime: BlockHeightRegime,
+    block_number: u64,
+    flags: BlockSystemFlags,
+) -> Result<(), SystemTxError> {
+    let has_tee_bootstrap = layout.has_consensus_step(CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX);
+    if regime.requires_genesis_bootstrap_txs() && !flags.has_boundary_outcome {
+        return Err(SystemTxError::V2Block1MissingBoundaryOutcome);
+    }
+    if regime.requires_genesis_bootstrap_txs() && !has_tee_bootstrap {
+        return Err(SystemTxError::V2Block1MissingTeeBootstrap);
+    }
+    if !regime.requires_genesis_bootstrap_txs() && has_tee_bootstrap {
+        return Err(SystemTxError::TeeBootstrapWrongHeight { block_number });
+    }
+    if regime.requires_genesis_bootstrap_txs() && !layout.user.is_empty() {
+        return Err(SystemTxError::V2Block1ContainsUserTransactions {
+            actual: layout.user.len(),
+        });
+    }
+    Ok(())
+}
+
 fn ensure_system_tx_in_zone(input: &SystemTx, actual: BodyZone) -> Result<(), SystemTxError> {
     let expected = input.body_zone();
     if expected != actual {
         return Err(SystemTxError::SystemTxInWrongZone {
-            kind: input.name(),
+            step: input.step_id(),
             expected,
             actual,
         });
@@ -236,24 +200,19 @@ fn ensure_system_tx_in_zone(input: &SystemTx, actual: BodyZone) -> Result<(), Sy
 
 fn ensure_monotonic(
     zone: BodyZone,
-    previous: Option<(u8, &'static str)>,
+    previous: Option<SystemTxStepId>,
     current: &SystemTx,
-) -> Result<(u8, &'static str), SystemTxError> {
-    let current_order = current
-        .order_in(zone)
-        .ok_or(SystemTxError::SystemTxInWrongZone {
-            kind: current.name(),
-            expected: current.body_zone(),
-            actual: zone,
-        })?;
-    if let Some((previous_order, previous)) = previous {
-        if current_order <= previous_order {
+) -> Result<SystemTxStepId, SystemTxError> {
+    ensure_system_tx_in_zone(current, zone)?;
+    let current = current.step_id();
+    if let Some(previous) = previous {
+        if current <= previous {
             return Err(SystemTxError::OutOfOrder {
                 zone,
                 previous,
-                current: current.name(),
+                current,
             });
         }
     }
-    Ok((current_order, current.name()))
+    Ok(current)
 }

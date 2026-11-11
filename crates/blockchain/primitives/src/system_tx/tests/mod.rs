@@ -22,9 +22,12 @@ mod gas;
 
 mod layout;
 
-mod phase;
-
 mod witness;
 
 mod binding;
 mod publication;
+
+use crate::{
+    block::{BlockOrder, BlockSystemFlags},
+    test_utils::TEST_BLOCK_ORDER,
+};

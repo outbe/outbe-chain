@@ -1,136 +1,155 @@
 use super::{
-    BlockHeightRegime, SysTxSelector, SystemTxError, SystemTxKind, BEGIN_BLOCK_ORDER,
-    END_BLOCK_ORDER,
+    end_block_nonce_ordinal, SysTxSelector, SystemTx, SystemTxError, SystemTxStepId,
+    BEGIN_BLOCK_STAGE_SELECTOR, CONSENSUS_STAGE_SELECTOR, END_BLOCK_STAGE_SELECTOR,
 };
+use crate::block::{BlockHeightRegime, BlockOrder, BlockSystemFlags, ProtocolStep};
 
-/// 4-Stage Block Execution FSM stage (`ConsensusStage -> BeginBlock -> MidBlock -> EndBlock -> Completed`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// 4-Stage Block Execution FSM stage (`Consensus -> BeginBlock -> MidBlock -> EndBlock -> Completed`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BlockExecutionStage {
-    ConsensusStage,
+    Consensus,
     BeginBlock,
     MidBlock,
     EndBlock,
     Completed,
 }
 
-/// Optional consensus-stage flags derived from block height and header artifacts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct BlockSystemFlags {
-    pub has_boundary_outcome: bool,
-    pub has_tee_bootstrap: bool,
-    pub has_publication: bool,
+/// Concrete step descriptor in a per-block `BlockSystemPlan`.
+/// Retains the static `SystemTxStepId` (`stage` + `step_index`) in `BlockOrder` across active-step filtering.
+#[derive(Debug, Clone, Copy)]
+pub struct PlannedSystemStep {
+    pub id: SystemTxStepId,
+    pub step: ProtocolStep,
 }
 
-/// Deterministic per-block schedule of `ConsensusStage`, `BeginBlock`, `MidBlock`, and `EndBlock` work.
+impl PartialEq for PlannedSystemStep {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.step.name == other.step.name
+            && self.step.revert_fails_block == other.step.revert_fails_block
+            && self.step.include_validator_snapshot == other.step.include_validator_snapshot
+    }
+}
+impl Eq for PlannedSystemStep {}
+
+impl PlannedSystemStep {
+    pub const fn from_protocol_step(
+        stage: BlockExecutionStage,
+        step_index: u8,
+        step: &ProtocolStep,
+    ) -> Self {
+        Self {
+            id: SystemTxStepId { stage, step_index },
+            step: *step,
+        }
+    }
+
+    pub const fn selector(&self) -> SysTxSelector {
+        match self.id.stage {
+            BlockExecutionStage::Consensus => CONSENSUS_STAGE_SELECTOR,
+            BlockExecutionStage::BeginBlock => BEGIN_BLOCK_STAGE_SELECTOR,
+            BlockExecutionStage::EndBlock => END_BLOCK_STAGE_SELECTOR,
+            BlockExecutionStage::MidBlock | BlockExecutionStage::Completed => [0u8; 4],
+        }
+    }
+
+    pub const fn matches_tx(&self, tx: &SystemTx) -> bool {
+        match (self.id.stage, tx) {
+            (BlockExecutionStage::Consensus, SystemTx::Consensus { step_index, .. })
+            | (BlockExecutionStage::BeginBlock, SystemTx::BeginBlock { step_index })
+            | (BlockExecutionStage::EndBlock, SystemTx::EndBlock { step_index }) => {
+                self.id.step_index == *step_index
+            }
+            _ => false,
+        }
+    }
+
+    pub const fn end_nonce_ordinal(&self) -> Option<u8> {
+        if matches!(self.id.stage, BlockExecutionStage::EndBlock) {
+            end_block_nonce_ordinal(self.id.step_index)
+        } else {
+            None
+        }
+    }
+}
+
+/// Deterministic per-block schedule of `Consensus`, `BeginBlock`, `MidBlock`, and `EndBlock` work.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockSystemPlan {
     pub block_number: u64,
-    pub consensus_kinds: Vec<SystemTxKind>,
-    pub begin_block_kinds: Vec<SystemTxKind>,
-    pub end_block_kinds: Vec<SystemTxKind>,
+    pub consensus_steps: Vec<PlannedSystemStep>,
+    pub begin_block_steps: Vec<PlannedSystemStep>,
+    pub end_block_steps: Vec<PlannedSystemStep>,
     pub allows_user_txs: bool,
 }
 
 impl BlockSystemPlan {
-    pub fn for_block(
-        block_number: u64,
-        has_boundary_outcome: bool,
-        has_tee_bootstrap: bool,
-        has_publication: bool,
-    ) -> Self {
-        Self::for_block_flags(
-            block_number,
-            BlockSystemFlags {
-                has_boundary_outcome,
-                has_tee_bootstrap,
-                has_publication,
-            },
-        )
-    }
-
-    pub fn for_block_flags(block_number: u64, flags: BlockSystemFlags) -> Self {
+    pub fn for_block(block_number: u64, flags: BlockSystemFlags, order: &BlockOrder) -> Self {
         let regime = BlockHeightRegime::for_block(block_number);
-        if !regime.has_begin_zone_system_txs() {
+        if !regime.has_system_tx_prefix() {
             return Self {
                 block_number,
-                consensus_kinds: Vec::new(),
-                begin_block_kinds: Vec::new(),
-                end_block_kinds: Vec::new(),
+                consensus_steps: Vec::new(),
+                begin_block_steps: Vec::new(),
+                end_block_steps: Vec::new(),
                 allows_user_txs: false,
             };
         }
 
-        let consensus_kinds = Self::build_consensus_kinds(regime, flags);
-        let begin_block_kinds = BEGIN_BLOCK_ORDER.to_vec();
-        let end_block_kinds = if regime.has_end_zone_system_txs() {
-            END_BLOCK_ORDER.to_vec()
+        let filter_steps = |stage: BlockExecutionStage,
+                            steps: &'static [ProtocolStep]|
+         -> Vec<PlannedSystemStep> {
+            steps
+                .iter()
+                .enumerate()
+                .filter(|(_, step)| (step.is_active)(regime, flags))
+                .filter_map(|(idx, step)| {
+                    let step_index = u8::try_from(idx).ok()?;
+                    Some(PlannedSystemStep::from_protocol_step(
+                        stage, step_index, step,
+                    ))
+                })
+                .collect()
+        };
+
+        let consensus_steps = filter_steps(BlockExecutionStage::Consensus, order.consensus);
+        let begin_block_steps = filter_steps(BlockExecutionStage::BeginBlock, order.begin_block);
+        let end_block_steps = if regime.has_end_block_system_txs() {
+            filter_steps(BlockExecutionStage::EndBlock, order.end_block)
         } else {
             Vec::new()
         };
 
         Self {
             block_number,
-            consensus_kinds,
-            begin_block_kinds,
-            end_block_kinds,
+            consensus_steps,
+            begin_block_steps,
+            end_block_steps,
             allows_user_txs: regime.allows_user_transactions(),
         }
     }
 
-    fn build_consensus_kinds(
-        regime: BlockHeightRegime,
-        flags: BlockSystemFlags,
-    ) -> Vec<SystemTxKind> {
-        let mut consensus_kinds = Vec::with_capacity(6);
-        if regime.has_parent_finalization_accounting() {
-            consensus_kinds.push(SystemTxKind::CertifiedParentAccounting);
-            consensus_kinds.push(SystemTxKind::LateFinalizeCredits);
-        }
-        if flags.has_boundary_outcome {
-            consensus_kinds.push(SystemTxKind::BoundaryOutcome);
-        }
-        if flags.has_tee_bootstrap {
-            consensus_kinds.push(SystemTxKind::TeeBootstrap);
-        }
-        consensus_kinds.push(SystemTxKind::ValidatorLiveness);
-        if flags.has_publication {
-            consensus_kinds.push(SystemTxKind::RadiclePublication);
-        }
-        consensus_kinds
-    }
-
-    pub fn begin_zone_kinds(&self) -> Vec<SystemTxKind> {
-        let mut out = Vec::with_capacity(self.consensus_kinds.len() + self.begin_block_kinds.len());
-        out.extend_from_slice(&self.consensus_kinds);
-        out.extend_from_slice(&self.begin_block_kinds);
+    pub fn expected_prefix_steps(&self) -> Vec<SystemTxStepId> {
+        let mut out = Vec::with_capacity(self.consensus_steps.len() + self.begin_block_steps.len());
+        out.extend(self.consensus_steps.iter().map(|s| s.id));
+        out.extend(self.begin_block_steps.iter().map(|s| s.id));
         out
     }
 
-    pub fn begin_zone_selectors(&self) -> Vec<SysTxSelector> {
-        self.begin_zone_kinds()
-            .into_iter()
-            .map(SystemTxKind::selector)
-            .collect()
-    }
-
-    pub fn end_zone_selectors(&self) -> Vec<SysTxSelector> {
-        self.end_block_kinds
-            .iter()
-            .copied()
-            .map(SystemTxKind::selector)
-            .collect()
+    pub fn expected_end_block_steps(&self) -> Vec<SystemTxStepId> {
+        self.end_block_steps.iter().map(|s| s.id).collect()
     }
 
     pub const fn initial_stage(&self) -> BlockExecutionStage {
-        if !self.consensus_kinds.is_empty() {
-            BlockExecutionStage::ConsensusStage
+        if !self.consensus_steps.is_empty() {
+            BlockExecutionStage::Consensus
         } else {
             self.stage_after_consensus()
         }
     }
 
     pub const fn stage_after_consensus(&self) -> BlockExecutionStage {
-        if !self.begin_block_kinds.is_empty() {
+        if !self.begin_block_steps.is_empty() {
             BlockExecutionStage::BeginBlock
         } else {
             self.stage_after_begin()
@@ -140,7 +159,7 @@ impl BlockSystemPlan {
     pub const fn stage_after_begin(&self) -> BlockExecutionStage {
         if self.allows_user_txs {
             BlockExecutionStage::MidBlock
-        } else if !self.end_block_kinds.is_empty() {
+        } else if !self.end_block_steps.is_empty() {
             BlockExecutionStage::EndBlock
         } else {
             BlockExecutionStage::Completed
@@ -148,8 +167,6 @@ impl BlockSystemPlan {
     }
 }
 
-/// Deterministic 4-Stage Block Execution Finite State Machine
-/// (`ConsensusStage -> BeginBlock -> MidBlock -> EndBlock -> Completed`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockExecutionFsm {
     plan: BlockSystemPlan,
@@ -173,18 +190,39 @@ impl BlockExecutionFsm {
         }
     }
 
-    pub fn for_block(
-        block_number: u64,
-        has_boundary_outcome: bool,
-        has_tee_bootstrap: bool,
-        has_publication: bool,
-    ) -> Self {
-        Self::new(BlockSystemPlan::for_block(
-            block_number,
-            has_boundary_outcome,
-            has_tee_bootstrap,
-            has_publication,
-        ))
+    pub fn for_block(block_number: u64, flags: BlockSystemFlags, order: &BlockOrder) -> Self {
+        Self::new(BlockSystemPlan::for_block(block_number, flags, order))
+    }
+
+    /// Standalone execution starts in MidBlock without running protocol pre-execution.
+    pub fn for_mid_block(order: &BlockOrder) -> Self {
+        let end_block_steps = order
+            .end_block
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, step)| {
+                let step_index = u8::try_from(idx).ok()?;
+                Some(PlannedSystemStep::from_protocol_step(
+                    BlockExecutionStage::EndBlock,
+                    step_index,
+                    step,
+                ))
+            })
+            .collect();
+        Self {
+            plan: BlockSystemPlan {
+                block_number: 0,
+                consensus_steps: Vec::new(),
+                begin_block_steps: Vec::new(),
+                end_block_steps,
+                allows_user_txs: true,
+            },
+            stage: BlockExecutionStage::MidBlock,
+            consensus_cursor: 0,
+            begin_cursor: 0,
+            end_cursor: 0,
+            user_txs_executed: 0,
+        }
     }
 
     pub const fn stage(&self) -> BlockExecutionStage {
@@ -195,61 +233,107 @@ impl BlockExecutionFsm {
         &self.plan
     }
 
+    pub const fn end_cursor(&self) -> usize {
+        self.end_cursor
+    }
+
     pub const fn user_txs_executed(&self) -> usize {
         self.user_txs_executed
     }
 
-    pub fn expected_system_tx_kind(&self) -> Option<SystemTxKind> {
+    /// Returns the 0-based index into the active system-tx prefix (`Consensus` + `BeginBlock`)
+    /// transaction list when the FSM is in `Consensus` or `BeginBlock`.
+    pub const fn expected_prefix_body_index(&self) -> Option<usize> {
         match self.stage {
-            BlockExecutionStage::ConsensusStage => self
+            BlockExecutionStage::Consensus => Some(self.consensus_cursor),
+            BlockExecutionStage::BeginBlock => {
+                Some(self.plan.consensus_steps.len() + self.begin_cursor)
+            }
+            BlockExecutionStage::MidBlock
+            | BlockExecutionStage::EndBlock
+            | BlockExecutionStage::Completed => None,
+        }
+    }
+
+    pub fn expected_step(&self) -> Option<PlannedSystemStep> {
+        match self.stage {
+            BlockExecutionStage::Consensus => self
                 .plan
-                .consensus_kinds
+                .consensus_steps
                 .get(self.consensus_cursor)
                 .copied(),
             BlockExecutionStage::BeginBlock => {
-                self.plan.begin_block_kinds.get(self.begin_cursor).copied()
+                self.plan.begin_block_steps.get(self.begin_cursor).copied()
             }
-            BlockExecutionStage::MidBlock => self.plan.end_block_kinds.first().copied(),
+            BlockExecutionStage::MidBlock => self.plan.end_block_steps.first().copied(),
             BlockExecutionStage::EndBlock => {
-                self.plan.end_block_kinds.get(self.end_cursor).copied()
+                self.plan.end_block_steps.get(self.end_cursor).copied()
             }
             BlockExecutionStage::Completed => None,
         }
     }
 
-    pub fn expected_selector(&self) -> Option<SysTxSelector> {
-        self.expected_system_tx_kind().map(SystemTxKind::selector)
+    pub fn expected_step_id(&self) -> Option<SystemTxStepId> {
+        self.expected_step().map(|step| step.id)
     }
 
     pub fn expected_ordinal(&self) -> Option<u8> {
         match self.stage {
-            BlockExecutionStage::ConsensusStage => u8::try_from(self.consensus_cursor).ok(),
+            BlockExecutionStage::Consensus => u8::try_from(self.consensus_cursor).ok(),
             BlockExecutionStage::BeginBlock => {
-                u8::try_from(self.plan.consensus_kinds.len() + self.begin_cursor).ok()
+                u8::try_from(self.plan.consensus_steps.len() + self.begin_cursor).ok()
             }
             BlockExecutionStage::MidBlock | BlockExecutionStage::EndBlock => self
-                .expected_system_tx_kind()
-                .and_then(|kind| kind.nonce_ordinal()),
+                .expected_step()
+                .and_then(|step| step.end_nonce_ordinal()),
             BlockExecutionStage::Completed => None,
         }
     }
 
-    pub fn on_system_tx(
+    /// Transitions `MidBlock -> EndBlock` (or `MidBlock -> Completed` when `block_number`
+    /// has no `end_block` system transactions). Idempotent if already in `EndBlock` or `Completed`.
+    /// Replaces `OutbeBlockExecutor::enter_end_block_phase_if_needed`.
+    pub fn enter_end_block(
         &mut self,
-        kind: SystemTxKind,
+        block_number: u64,
     ) -> Result<BlockExecutionStage, SystemTxError> {
-        let Some(expected) = self.expected_system_tx_kind() else {
+        match self.stage {
+            BlockExecutionStage::EndBlock | BlockExecutionStage::Completed => Ok(self.stage),
+            BlockExecutionStage::MidBlock => {
+                if !BlockHeightRegime::for_block(block_number).has_end_block_system_txs()
+                    || self.plan.end_block_steps.is_empty()
+                {
+                    self.plan.end_block_steps.clear();
+                    self.stage = BlockExecutionStage::Completed;
+                } else {
+                    self.stage = BlockExecutionStage::EndBlock;
+                    self.end_cursor = 0;
+                }
+                Ok(self.stage)
+            }
+            BlockExecutionStage::Consensus | BlockExecutionStage::BeginBlock => {
+                Err(SystemTxError::UnexpectedSystemTx {
+                    stage: self.stage,
+                    expected: self.expected_step().map(|s| s.step.name),
+                    actual: "EndBlock",
+                })
+            }
+        }
+    }
+
+    pub fn on_system_tx(&mut self, tx: &SystemTx) -> Result<BlockExecutionStage, SystemTxError> {
+        let Some(expected) = self.expected_step() else {
             return Err(SystemTxError::UnexpectedSystemTx {
                 stage: self.stage,
                 expected: None,
-                actual: kind.name(),
+                actual: tx.stage_name(),
             });
         };
-        if kind != expected {
+        if !expected.matches_tx(tx) {
             return Err(SystemTxError::UnexpectedSystemTx {
                 stage: self.stage,
-                expected: Some(expected.name()),
-                actual: kind.name(),
+                expected: Some(expected.step.name),
+                actual: tx.stage_name(),
             });
         }
         self.advance_after_expected_system_tx();
@@ -258,21 +342,21 @@ impl BlockExecutionFsm {
 
     fn advance_after_expected_system_tx(&mut self) {
         match self.stage {
-            BlockExecutionStage::ConsensusStage => {
+            BlockExecutionStage::Consensus => {
                 self.consensus_cursor += 1;
-                if self.consensus_cursor == self.plan.consensus_kinds.len() {
+                if self.consensus_cursor == self.plan.consensus_steps.len() {
                     self.stage = self.plan.stage_after_consensus();
                 }
             }
             BlockExecutionStage::BeginBlock => {
                 self.begin_cursor += 1;
-                if self.begin_cursor == self.plan.begin_block_kinds.len() {
+                if self.begin_cursor == self.plan.begin_block_steps.len() {
                     self.stage = self.plan.stage_after_begin();
                 }
             }
             BlockExecutionStage::MidBlock => {
                 self.end_cursor = 1;
-                self.stage = if self.end_cursor == self.plan.end_block_kinds.len() {
+                self.stage = if self.end_cursor == self.plan.end_block_steps.len() {
                     BlockExecutionStage::Completed
                 } else {
                     BlockExecutionStage::EndBlock
@@ -280,7 +364,7 @@ impl BlockExecutionFsm {
             }
             BlockExecutionStage::EndBlock => {
                 self.end_cursor += 1;
-                if self.end_cursor == self.plan.end_block_kinds.len() {
+                if self.end_cursor == self.plan.end_block_steps.len() {
                     self.stage = BlockExecutionStage::Completed;
                 }
             }
@@ -302,7 +386,7 @@ impl BlockExecutionFsm {
         } else {
             Err(SystemTxError::IncompleteBlockExecution {
                 stage: self.stage,
-                expected_next: self.expected_system_tx_kind().map(SystemTxKind::name),
+                expected_next: self.expected_step().map(|step| step.step.name),
             })
         }
     }

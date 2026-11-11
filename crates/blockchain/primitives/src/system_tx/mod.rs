@@ -1,4 +1,4 @@
-//! Deterministic 4-stage system-transaction primitives (`ConsensusStage -> BeginBlock -> MidBlock -> EndBlock -> Completed`).
+//! Deterministic 4-stage system-transaction primitives (`Consensus -> BeginBlock -> MidBlock -> EndBlock -> Completed`).
 //!
 //! Outbe represents runtime system transactions as ordinary signed Ethereum
 //! legacy transaction artifacts (`gas_limit = 0`, `gas_price = 0`, `value = 0`)
@@ -19,12 +19,9 @@ mod fsm;
 mod gas;
 mod input;
 mod layout;
-mod phase;
 mod witness;
 
-pub use input::{
-    SystemTx, SystemTxKind, ALL_KINDS, BEGIN_BLOCK_ORDER, CONSENSUS_ORDER, END_BLOCK_ORDER,
-};
+pub use input::{assemble_prefix_system_txs, SystemTx, SystemTxStepId};
 
 /// Four-byte kind selector for a system transaction.
 pub type SysTxSelector = [u8; 4];
@@ -47,15 +44,9 @@ pub fn is_reserved_system_tx<T: alloy_consensus::Transaction + ?Sized>(tx: &T) -
     tx.to() == Some(OUTBE_SYSTEM_TX_ADDRESS)
 }
 
-pub use phase::{
-    BlockExecutionFsm, BlockExecutionStage, BlockSystemFlags, BlockSystemPlan, SystemTxPhase,
-};
-
-pub use layout::{
-    expected_begin_block_selectors, expected_begin_block_selectors_for_publication,
-    expected_end_block_selectors, split_system_layout, validate_active_system_tx_set,
-    validate_system_tx_set_for_publication, SystemTxLayout,
-};
+pub use crate::block::BlockSystemFlags;
+pub use fsm::{BlockExecutionFsm, BlockExecutionStage, BlockSystemPlan, PlannedSystemStep};
+pub use layout::{split_system_layout, validate_system_tx_set_for_publication, SystemTxLayout};
 
 pub use gas::{system_tx_intrinsic_gas, system_tx_visible_gas_limit};
 
@@ -66,71 +57,33 @@ pub use envelope::{
 
 pub use witness::{recover_phase1_proposer, validate_phase1_witness_against};
 
-/// Version byte immediately after the 4-byte kind selector in system-tx input.
-pub const SYSTEM_TX_INPUT_VERSION: u8 = 2;
-
-// ----- Stage 1: CONSENSUS_ORDER selectors -----
-
-/// Selector for [`SystemTx::CertifiedParentAccounting`] (V2 OSA3).
-pub const CERTIFIED_PARENT_ACCOUNTING_SELECTOR: SysTxSelector = *b"OSA3";
-/// Selector for [`SystemTx::LateFinalizeCredits`] (V2 OSL2).
-pub const LATE_FINALIZE_CREDITS_SELECTOR: SysTxSelector = *b"OSL2";
-/// Selector for [`SystemTx::BoundaryOutcome`] (V2 OSB2).
-pub const BOUNDARY_OUTCOME_SELECTOR: SysTxSelector = *b"OSB2";
-/// Selector for [`SystemTx::TeeBootstrap`] (V2 OST3).
-pub const TEE_BOOTSTRAP_SELECTOR: SysTxSelector = *b"OST3";
-/// Selector for [`SystemTx::ValidatorLiveness`] (V2 OSVL).
-pub const VALIDATOR_LIVENESS_SELECTOR: SysTxSelector = *b"OSVL";
-/// Selector for [`SystemTx::RadiclePublication`] (V2 OSP2).
-pub const RADICLE_PUBLICATION_SELECTOR: SysTxSelector = *b"OSP2";
-
-// ----- Stage 2: BEGIN_BLOCK_ORDER selectors -----
-
-/// Selector for [`SystemTx::Vote`] (OSVT).
-pub const VOTE_SELECTOR: SysTxSelector = *b"OSVT";
-/// Selector for [`SystemTx::Update`] (OSUP).
-pub const UPDATE_SELECTOR: SysTxSelector = *b"OSUP";
-/// Selector for [`SystemTx::EnclaveUpgradeDeadline`] (OSEU).
-pub const ENCLAVE_UPGRADE_DEADLINE_SELECTOR: SysTxSelector = *b"OSEU";
-/// Selector for [`SystemTx::Rewards`] (OSRW).
-pub const REWARDS_SELECTOR: SysTxSelector = *b"OSRW";
-/// Selector for [`SystemTx::Staking`] (OSST).
-pub const STAKING_SELECTOR: SysTxSelector = *b"OSST";
-/// Selector for [`SystemTx::Oracle`] (OSOR).
-pub const ORACLE_SELECTOR: SysTxSelector = *b"OSOR";
-/// Selector for [`SystemTx::OracleSlash`] (OSOS).
-pub const ORACLE_SLASH_SELECTOR: SysTxSelector = *b"OSOS";
-/// Selector for [`SystemTx::HyperlaneSlash`] (OSHL).
-pub const HYPERLANE_SLASH_SELECTOR: SysTxSelector = *b"OSHL";
-/// Selector for [`SystemTx::CycleTick`] (V2 OSC2).
-pub const CYCLE_TICK_SELECTOR: SysTxSelector = *b"OSC2";
-
-// ----- Stage 4: END_BLOCK_ORDER selectors & ordinals -----
-
-/// Selector for [`SystemTx::NodFactory`] (OSND).
-pub const NOD_FACTORY_SELECTOR: SysTxSelector = *b"OSND";
-/// Selector for [`SystemTx::GemFactory`] (OSGM).
-pub const GEM_FACTORY_SELECTOR: SysTxSelector = *b"OSGM";
-/// Selector for [`SystemTx::IntexFactory`] (OSIX).
-pub const INTEX_FACTORY_SELECTOR: SysTxSelector = *b"OSIX";
-/// Selector for [`SystemTx::CredisFactory`] (OSCR).
-pub const CREDIS_FACTORY_SELECTOR: SysTxSelector = *b"OSCR";
-/// Selector for [`SystemTx::GemCleanup`] (OSGC).
-pub const GEM_CLEANUP_SELECTOR: SysTxSelector = *b"OSGC";
-
-/// Stable nonce ordinal for [`SystemTx::NodFactory`].
-pub const NOD_FACTORY_ORDINAL: u8 = 24;
-/// Stable nonce ordinal for [`SystemTx::GemFactory`].
-pub const GEM_FACTORY_ORDINAL: u8 = 25;
-/// Stable nonce ordinal for [`SystemTx::IntexFactory`].
-pub const INTEX_FACTORY_ORDINAL: u8 = 26;
-/// Stable nonce ordinal for [`SystemTx::CredisFactory`].
-pub const CREDIS_FACTORY_ORDINAL: u8 = 27;
-/// Stable nonce ordinal for [`SystemTx::GemCleanup`].
-pub const GEM_CLEANUP_ORDINAL: u8 = 28;
-
-/// Hard cap on system transactions emitted in a block.
+/// Stage selector(4), version(1), static step index(1).
+pub const SYSTEM_TX_INPUT_VERSION: u8 = 3;
+pub const SYSTEM_CALLDATA_FRAMING_BYTES: usize = 6;
+pub const CONSENSUS_STAGE_SELECTOR: SysTxSelector = *b"OSCN";
+pub const BEGIN_BLOCK_STAGE_SELECTOR: SysTxSelector = *b"OSBB";
+pub const END_BLOCK_STAGE_SELECTOR: SysTxSelector = *b"OSEB";
+pub const END_BLOCK_BASE_ORDINAL: u8 = 24;
 pub const MAX_SYSTEM_TXS_PER_BLOCK: u8 = 32;
+pub const MAX_PREFIX_SYSTEM_TXS: usize = 24;
+pub const MAX_END_BLOCK_SYSTEM_TXS: usize = 8;
+pub const CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX: u8 = 0;
+pub const CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX: u8 = 1;
+pub const CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX: u8 = 2;
+pub const CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX: u8 = 3;
+pub const CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX: u8 = 4;
+pub const CONSENSUS_RADICLE_PUBLICATION_STEP_INDEX: u8 = 5;
+
+pub const fn end_block_nonce_ordinal(step_index: u8) -> Option<u8> {
+    let Some(ordinal) = END_BLOCK_BASE_ORDINAL.checked_add(step_index) else {
+        return None;
+    };
+    if ordinal < MAX_SYSTEM_TXS_PER_BLOCK {
+        Some(ordinal)
+    } else {
+        None
+    }
+}
 
 /// Highest block number that bootstraps the chain without Phase 1
 /// (`CertifiedParentAccounting`). Block `n` runs Phase 1 in pre-execution iff
@@ -162,8 +115,13 @@ pub enum SystemTxError {
     UnknownSelector(SysTxSelector),
     #[error("unsupported system tx input version: {0}")]
     UnsupportedVersion(u8),
-    #[error("unexpected body for {kind}: {len} bytes")]
-    UnexpectedBody { kind: &'static str, len: usize },
+    #[error("non-empty {stage:?} payload: {len} bytes")]
+    NonEmptyStagePayload {
+        stage: BlockExecutionStage,
+        len: usize,
+    },
+    #[error("empty block order for block {block_number}")]
+    EmptyBlockOrder { block_number: u64 },
     #[error("missing boundary outcome body")]
     MissingBoundaryOutcomeBody,
     #[error("system tx codec error: {0}")]
@@ -181,17 +139,19 @@ pub enum SystemTxError {
     NonZeroGasLimit { actual: u64 },
     #[error("system tx must carry gas_price == 0, got {actual}")]
     NonZeroGasPrice { actual: u128 },
-    #[error("system tx kind {kind} is in {actual:?} zone, expected {expected:?}")]
+    #[error("system tx step {step:?} is in {actual:?} zone, expected {expected:?}")]
     SystemTxInWrongZone {
-        kind: &'static str,
+        step: SystemTxStepId,
         expected: BodyZone,
         actual: BodyZone,
     },
-    #[error("system tx kind order violation in {zone:?}: previous {previous}, current {current}")]
+    #[error(
+        "system tx kind order violation in {zone:?}: previous {previous:?}, current {current:?}"
+    )]
     OutOfOrder {
         zone: BodyZone,
-        previous: &'static str,
-        current: &'static str,
+        previous: SystemTxStepId,
+        current: SystemTxStepId,
     },
     #[error("reserved system tx found in user zone at transaction index {index}")]
     MidBlockSystemTx { index: usize },
@@ -201,10 +161,10 @@ pub enum SystemTxError {
         "active system tx set mismatch: expected begin {expected_begin:?}, expected end {expected_end:?}, actual begin {actual_begin:?}, actual end {actual_end:?}"
     )]
     ActiveSystemTxSetMismatch {
-        expected_begin: Vec<SysTxSelector>,
-        expected_end: Vec<SysTxSelector>,
-        actual_begin: Vec<SysTxSelector>,
-        actual_end: Vec<SysTxSelector>,
+        expected_begin: Vec<SystemTxStepId>,
+        expected_end: Vec<SystemTxStepId>,
+        actual_begin: Vec<SystemTxStepId>,
+        actual_end: Vec<SystemTxStepId>,
     },
     #[error("unexpected system tx {actual} in stage {stage:?} (expected {expected:?})")]
     UnexpectedSystemTx {
@@ -253,11 +213,7 @@ pub enum SystemTxError {
 }
 
 impl SystemTxError {
-    fn from_precompile(error: PrecompileError) -> Self {
-        Self::Codec(error.to_string())
-    }
-
-    pub(crate) fn codec(error: impl std::fmt::Display) -> Self {
+    pub(crate) fn from_precompile(error: PrecompileError) -> Self {
         Self::Codec(error.to_string())
     }
 

@@ -151,9 +151,12 @@ fn phase1_witness_validation_rejects_wrong_calldata_or_kind() {
 
     let mut altered = sample_metadata();
     altered.finalized_block_hash = B256::repeat_byte(0x99);
-    let altered_calldata = SystemTx::CertifiedParentAccounting { metadata: altered }
-        .encode()
-        .expect("altered phase1 input encodes");
+    let altered_calldata = SystemTx::Consensus {
+        step_index: 0,
+        payload: (altered).encode().unwrap(),
+    }
+    .encode()
+    .expect("altered phase1 input encodes");
     assert!(matches!(
         validate_phase1_witness_against(
             &signed,
@@ -165,7 +168,9 @@ fn phase1_witness_validation_rejects_wrong_calldata_or_kind() {
         Err(SystemTxError::Phase1CalldataMismatch)
     ));
 
-    let cycle_calldata = SystemTx::CycleTick.encode().expect("cycle input encodes");
+    let cycle_calldata = SystemTx::BeginBlock { step_index: 8 }
+        .encode()
+        .expect("cycle input encodes");
     let cycle_unsigned =
         build_unsigned_system_tx(0, 42, CHAIN_ID, cycle_calldata.clone()).expect("cycle tx builds");
     let signed_cycle = signer.sign_unsigned(cycle_unsigned).expect("cycle signs");
@@ -179,7 +184,7 @@ fn phase1_witness_validation_rejects_wrong_calldata_or_kind() {
         ),
         Err(SystemTxError::CalldataKindMismatch {
             expected: "CertifiedParentAccounting",
-            actual: "CycleTick",
+            actual: "BeginBlock",
         })
     ));
 }
@@ -188,16 +193,18 @@ fn phase1_witness_validation_rejects_wrong_calldata_or_kind() {
 fn canonical_phase1_calldata_changes_signature_hash() {
     let mut left_meta = sample_metadata();
     left_meta.finalized_block_hash = B256::repeat_byte(0x11);
-    let left = SystemTx::CertifiedParentAccounting {
-        metadata: left_meta,
+    let left = SystemTx::Consensus {
+        step_index: 0,
+        payload: (left_meta).encode().unwrap(),
     }
     .encode()
     .expect("left input encodes");
 
     let mut right_meta = sample_metadata();
     right_meta.finalized_block_hash = B256::repeat_byte(0x22);
-    let right = SystemTx::CertifiedParentAccounting {
-        metadata: right_meta,
+    let right = SystemTx::Consensus {
+        step_index: 0,
+        payload: (right_meta).encode().unwrap(),
     }
     .encode()
     .expect("right input encodes");

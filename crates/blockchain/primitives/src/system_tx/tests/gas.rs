@@ -12,14 +12,14 @@ fn tempo_zero_gas_model_returns_zero_for_all_valid_system_txs() {
 #[test]
 fn gas_helpers_reject_malformed_system_tx_calldata() {
     assert_eq!(
-        system_tx_intrinsic_gas(b"OSC2\x02\x00"),
-        Err(SystemTxError::UnexpectedBody {
-            kind: "CycleTick",
+        system_tx_intrinsic_gas(b"OSBB\x03\x08\x00"),
+        Err(SystemTxError::NonEmptyStagePayload {
+            stage: BlockExecutionStage::BeginBlock,
             len: 1,
         })
     );
     assert_eq!(
-        system_tx_visible_gas_limit(b"NOPE\x02"),
+        system_tx_visible_gas_limit(b"NOPE\x03\x00"),
         Err(SystemTxError::UnknownSelector(*b"NOPE"))
     );
 }

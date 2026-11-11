@@ -160,81 +160,66 @@ fn sample_tee_bootstrap() -> crate::tee_bootstrap_v2::TeeBootstrapV2 {
     }
 }
 
+pub(super) fn consensus(step_index: u8, payload: Bytes) -> SystemTx {
+    SystemTx::Consensus {
+        step_index,
+        payload,
+    }
+}
 pub(super) fn accounting() -> SystemTx {
-    SystemTx::CertifiedParentAccounting {
-        metadata: sample_metadata(),
-    }
+    consensus(0, sample_metadata().encode().unwrap())
 }
-
 pub(super) fn late_credits() -> SystemTx {
-    SystemTx::LateFinalizeCredits {
-        artifact: LateFinalizeCreditsArtifact::default(),
-    }
+    consensus(
+        1,
+        crate::reshare_artifact::encode_late_finalize_credits_artifact(
+            &LateFinalizeCreditsArtifact::default(),
+        )
+        .unwrap(),
+    )
 }
-
 pub(super) fn boundary() -> SystemTx {
-    SystemTx::BoundaryOutcome {
-        artifact: sample_boundary(),
-    }
+    consensus(
+        2,
+        crate::reshare_artifact::encode_boundary_artifact(&sample_boundary()).unwrap(),
+    )
 }
-
 pub(super) fn bootstrap() -> SystemTx {
-    SystemTx::TeeBootstrap {
-        payload: sample_tee_bootstrap(),
-    }
+    consensus(
+        3,
+        crate::tee_bootstrap_v2::codec::encode_canonical(&sample_tee_bootstrap()).unwrap(),
+    )
 }
-
 pub(super) fn publication() -> SystemTx {
-    SystemTx::RadiclePublication {
-        batch: crate::test_utils::sample_radicle_publication_batch(1),
-    }
+    consensus(
+        5,
+        Bytes::from(
+            crate::test_utils::sample_radicle_publication_batch(1)
+                .to_bytes()
+                .unwrap(),
+        ),
+    )
 }
-
 pub(super) fn begin_stage_inputs() -> [SystemTx; 9] {
-    [
-        SystemTx::Vote,
-        SystemTx::Update,
-        SystemTx::EnclaveUpgradeDeadline,
-        SystemTx::Rewards,
-        SystemTx::Staking,
-        SystemTx::Oracle,
-        SystemTx::OracleSlash,
-        SystemTx::HyperlaneSlash,
-        SystemTx::CycleTick,
-    ]
+    std::array::from_fn(|index| SystemTx::BeginBlock {
+        step_index: u8::try_from(index).unwrap(),
+    })
 }
-
 pub(super) fn end_stage_inputs() -> [SystemTx; 5] {
-    [
-        SystemTx::NodFactory,
-        SystemTx::GemFactory,
-        SystemTx::IntexFactory,
-        SystemTx::CredisFactory,
-        SystemTx::GemCleanup,
-    ]
+    std::array::from_fn(|index| SystemTx::EndBlock {
+        step_index: u8::try_from(index).unwrap(),
+    })
 }
-
-pub(super) fn inputs() -> [SystemTx; 20] {
-    [
+pub(super) fn inputs() -> Vec<SystemTx> {
+    let mut inputs = vec![
         accounting(),
         late_credits(),
         boundary(),
         bootstrap(),
-        SystemTx::ValidatorLiveness,
+        consensus(4, Bytes::new()),
         publication(),
-        SystemTx::Vote,
-        SystemTx::Update,
-        SystemTx::EnclaveUpgradeDeadline,
-        SystemTx::Rewards,
-        SystemTx::Staking,
-        SystemTx::Oracle,
-        SystemTx::OracleSlash,
-        SystemTx::HyperlaneSlash,
-        SystemTx::CycleTick,
-        SystemTx::NodFactory,
-        SystemTx::GemFactory,
-        SystemTx::IntexFactory,
-        SystemTx::CredisFactory,
-        SystemTx::GemCleanup,
-    ]
+    ];
+    inputs.extend(begin_stage_inputs());
+    inputs.extend(end_stage_inputs());
+    inputs
 }
