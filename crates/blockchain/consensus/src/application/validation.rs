@@ -24,6 +24,7 @@ pub(crate) struct SystemTxLeaderValidationContext<'a> {
     pub(crate) round: Round,
     pub(crate) proposer: &'a PublicKey,
     pub(crate) chain_id: u64,
+    pub(crate) block_order: outbe_primitives::block::BlockOrder,
     pub(crate) certificate_scheme_provider: &'a HybridSchemeProvider<MinSig>,
     pub(crate) committee_provider: &'a CommitteeProvider,
 }
@@ -96,13 +97,19 @@ pub(crate) fn validate_system_tx_leader_binding_for_activation(
 ) -> Result<(), BlockValidationError> {
     let raw_block = block.clone().into_inner().into_block();
     leader::validate_gas_limit(&raw_block.header)?;
-    let (layout, artifacts) = leader::validate_layout(&raw_block.body, &raw_block.header)?;
+    let (layout, artifacts) =
+        leader::validate_layout(&raw_block.body, &raw_block.header, &context.block_order)?;
     if layout.system_tx_count() == 0 {
         return Ok(());
     }
     leader::validate_parent_accounting(&layout, &raw_block.header)?;
     leader::validate_boundary_outcome(&layout, &artifacts)?;
-    leader::validate_envelopes(&layout, &raw_block.header, context.chain_id)?;
+    leader::validate_envelopes(
+        &layout,
+        &raw_block.header,
+        context.chain_id,
+        &context.block_order,
+    )?;
     let expected = leader::consensus_leader_evm_address(&context)?;
     leader::validate_signers(&layout, expected)
 }
@@ -139,9 +146,38 @@ mod tests {
             round,
             proposer,
             chain_id: outbe_primitives::chain::CHAIN_ID,
+            block_order: outbe_primitives::test_utils::TEST_BLOCK_ORDER,
             certificate_scheme_provider: providers.0,
             committee_provider: providers.1,
         }
+    }
+
+    #[test]
+    fn system_tx_validation_uses_context_block_order() {
+        let (keys, _) = participants();
+        let signer = OutbeEvmSigner::from_secret_bytes([7; 32]).unwrap();
+        let (scheme_provider, committee_provider) =
+            leader_binding_providers(Epoch::new(0), &validator_set_from_keys(&keys));
+        let block = block_with_system_tx(&signer);
+        let proposer = keys[0].public_key();
+        let context = SystemTxLeaderValidationContext {
+            block_order: Default::default(),
+            ..leader_context(
+                Round::new(Epoch::new(0), View::new(1)),
+                &proposer,
+                (&scheme_provider, &committee_provider),
+            )
+        };
+        let error = validate_system_tx_leader_binding_for_activation(&block, context)
+            .expect_err("validation must honor the injected empty order");
+        assert!(matches!(
+            error,
+            crate::errors::BlockValidationError::LayoutBinding(
+                outbe_primitives::system_tx::binding::LayoutBindingError::Set(
+                    outbe_primitives::system_tx::SystemTxError::EmptyBlockOrder { block_number: 2 }
+                )
+            )
+        ));
     }
 
     #[test]
@@ -444,8 +480,13 @@ mod tests {
                     let mut inputs = steady_begin_inputs(parent_hash);
                     inputs.insert(
                         2,
-                        SystemTx::BoundaryOutcome {
-                            artifact: tx_artifact,
+                        SystemTx::Consensus {
+                            step_index:
+                                outbe_primitives::system_tx::CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX,
+                            payload: outbe_primitives::reshare_artifact::encode_boundary_artifact(
+                                &tx_artifact,
+                            )
+                            .unwrap(),
                         },
                     );
                     inputs

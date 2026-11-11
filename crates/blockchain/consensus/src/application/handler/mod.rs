@@ -89,6 +89,7 @@ pub(crate) struct ApplicationShared {
     /// Active EVM chain id used to rebuild deterministic system-tx envelopes
     /// during consensus prechecks before Engine status is trusted.
     chain_id: u64,
+    block_order: outbe_primitives::block::BlockOrder,
 
     repository_publication_enabled: bool,
     repository_publication: outbe_primitives::radicle_publication::RepositoryPublicationMailbox,
@@ -187,6 +188,7 @@ pub struct ApplicationDeps {
     pub genesis_hash: B256,
     pub validators: ValidatorSet,
     pub chain_id: u64,
+    pub block_order: outbe_primitives::block::BlockOrder,
     pub repository_publication_enabled: bool,
     pub repository_publication: outbe_primitives::radicle_publication::RepositoryPublicationMailbox,
     pub marshal_mailbox: crate::marshal_types::MarshalMailbox,
@@ -228,6 +230,7 @@ impl ApplicationHandler {
             genesis_hash,
             validators,
             chain_id,
+            block_order,
             repository_publication_enabled,
             repository_publication,
             marshal_mailbox,
@@ -258,6 +261,7 @@ impl ApplicationHandler {
                 genesis_hash,
                 validators,
                 chain_id,
+                block_order,
                 repository_publication_enabled,
                 repository_publication,
                 marshal_mailbox,
