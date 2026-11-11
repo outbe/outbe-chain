@@ -7,7 +7,7 @@ use serde_json::json;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 
-pub struct AttesterHealth {
+pub struct ValidatorHealth {
     pub submitted: AtomicU64,
     pub failed: AtomicU64,
     pub last_submit_time: AtomicU64,
@@ -15,7 +15,7 @@ pub struct AttesterHealth {
     pub miss_count: AtomicU64,
 }
 
-impl AttesterHealth {
+impl ValidatorHealth {
     pub fn new() -> Self {
         Self {
             submitted: AtomicU64::new(0),
@@ -62,7 +62,10 @@ fn unix_now() -> u64 {
         .as_secs()
 }
 
-pub async fn start_health_server(bind_addr: &str, health: Arc<AttesterHealth>) -> eyre::Result<()> {
+pub async fn start_health_server(
+    bind_addr: &str,
+    health: Arc<ValidatorHealth>,
+) -> eyre::Result<()> {
     let listener = TcpListener::bind(bind_addr).await?;
     tracing::info!(addr = bind_addr, "health server listening");
     tokio::spawn(async move {
@@ -117,7 +120,7 @@ mod tests {
 
     #[test]
     fn miss_count_drives_health() {
-        let health = AttesterHealth::new();
+        let health = ValidatorHealth::new();
         assert!(health.is_healthy());
         health.set_miss_count(1);
         assert!(!health.is_healthy());

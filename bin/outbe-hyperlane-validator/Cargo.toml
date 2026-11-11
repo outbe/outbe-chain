@@ -1,12 +1,12 @@
 [package]
-name = "outbe-hyperlane-attester"
+name = "outbe-hyperlane-validator"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
 [[bin]]
-name = "outbe-hyperlane-attester"
+name = "outbe-hyperlane-validator"
 path = "src/main.rs"
 
 [dependencies]

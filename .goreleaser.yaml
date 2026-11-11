@@ -67,14 +67,14 @@ builds:
     targets:
       - x86_64-unknown-linux-gnu
   - builder: rust
-    id: outbe-hyperlane-attester
-    binary: outbe-hyperlane-attester
+    id: outbe-hyperlane-validator
+    binary: outbe-hyperlane-validator
     tool: cargo
     command: build
     flags:
       - --release
       - --locked
-      - --package=outbe-hyperlane-attester
+      - --package=outbe-hyperlane-validator
     targets:
       - x86_64-unknown-linux-gnu
   # Production TEE enclave binary (built WITHOUT the `mock` feature, so it links

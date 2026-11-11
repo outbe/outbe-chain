@@ -1,13 +1,13 @@
-//! TOML configuration for the Hyperlane attester daemon.
+//! TOML configuration for the Hyperlane validator daemon.
 
 use eyre::{Context, Result};
 use serde::Deserialize;
 
-use crate::errors::AttesterError;
+use crate::errors::ValidatorError;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct AttesterConfig {
+pub struct ValidatorConfig {
     pub chain: ChainConfig,
     pub account: AccountConfig,
     #[serde(default)]
@@ -29,11 +29,11 @@ pub struct AccountConfig {
     /// Hex-encoded private key of the validator's Hyperlane delegate.
     /// The validator key is accepted when no Hyperlane delegate is assigned.
     pub private_key: String,
-    /// Validator that this attester acts for. It is also the checkpoint bucket name.
+    /// Validator that this daemon acts for. It is also the checkpoint bucket name.
     pub validator_address: String,
 }
 
-/// Checkpoint submission settings. The attester reads this validator's own
+/// Checkpoint submission settings. The daemon reads this validator's own
 /// public-read bucket (the location it announced on-chain, `<bucket>/<domain>/`)
 /// for every domain that the HyperlaneController knows. It submits the latest
 /// signed checkpoint of each domain.
@@ -76,23 +76,23 @@ fn default_poll_interval() -> u64 {
     30
 }
 
-impl AttesterConfig {
+impl ValidatorConfig {
     pub fn load(path: &str) -> Result<Self> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read config file: {path}"))?;
-        toml::from_str(&content).with_context(|| "failed to parse hyperlane attester config")
+        toml::from_str(&content).with_context(|| "failed to parse hyperlane validator config")
     }
 
     pub fn validate(&self) -> Result<()> {
         let addr = self.account.validator_address.trim_start_matches("0x");
         if addr.len() != 40 || addr.chars().any(|c| !c.is_ascii_hexdigit()) {
-            return Err(AttesterError::InvalidValidatorAddress(
+            return Err(ValidatorError::InvalidValidatorAddress(
                 self.account.validator_address.clone(),
             )
             .into());
         }
         if self.hyperlane.poll_interval_secs == 0 {
-            return Err(AttesterError::ZeroPollInterval.into());
+            return Err(ValidatorError::ZeroPollInterval.into());
         }
         Ok(())
     }
@@ -114,7 +114,7 @@ validator_address = "0x1111111111111111111111111111111111111111"
 
     #[test]
     fn minimal_config_uses_defaults() {
-        let cfg: AttesterConfig = toml::from_str(MINIMAL).unwrap();
+        let cfg: ValidatorConfig = toml::from_str(MINIMAL).unwrap();
         cfg.validate().unwrap();
         assert_eq!(cfg.hyperlane.poll_interval_secs, 30);
         assert!(!cfg.hyperlane.gasless);
@@ -123,15 +123,15 @@ validator_address = "0x1111111111111111111111111111111111111111"
 
     #[test]
     fn validation_rejects_bad_values() {
-        let mut cfg: AttesterConfig = toml::from_str(MINIMAL).unwrap();
+        let mut cfg: ValidatorConfig = toml::from_str(MINIMAL).unwrap();
         cfg.hyperlane.poll_interval_secs = 0;
         assert!(cfg.validate().is_err());
 
-        let mut cfg: AttesterConfig = toml::from_str(MINIMAL).unwrap();
+        let mut cfg: ValidatorConfig = toml::from_str(MINIMAL).unwrap();
         cfg.account.validator_address = "not-an-address".to_string();
         assert!(cfg.validate().is_err());
 
-        assert!(toml::from_str::<AttesterConfig>(&format!(
+        assert!(toml::from_str::<ValidatorConfig>(&format!(
             "{MINIMAL}\n[hyperlane]\ns3_endpoint = \"x\"\n"
         ))
         .is_err());

@@ -1,16 +1,16 @@
-//! Outbe Hyperlane attester daemon.
+//! Outbe Hyperlane validator daemon.
 //!
 //! Proves that this validator's Hyperlane agent keeps signing. The daemon reads
 //! the latest signed checkpoint per domain from the validator's own bucket. It
 //! submits that checkpoint to the HyperlaneController precompile (see
-//! `attester.rs`).
+//! `liveness.rs`).
 
 mod abi;
-mod attester;
 mod client;
 mod config;
 mod errors;
 mod health;
+mod liveness;
 
 use std::sync::Arc;
 
@@ -18,17 +18,17 @@ use clap::Parser;
 use eyre::Result;
 use tracing::{info, warn};
 
-use crate::config::AttesterConfig;
-use crate::health::AttesterHealth;
+use crate::config::ValidatorConfig;
+use crate::health::ValidatorHealth;
 
 #[derive(Parser)]
 #[command(
-    name = "outbe-hyperlane-attester",
-    about = "Outbe Hyperlane checkpoint attester daemon"
+    name = "outbe-hyperlane-validator",
+    about = "Outbe Hyperlane validator daemon"
 )]
 struct Cli {
     /// Path to the TOML configuration file.
-    #[arg(short, long, default_value = "hyperlane-attester.toml")]
+    #[arg(short, long, default_value = "hyperlane-validator.toml")]
     config: String,
 }
 
@@ -37,17 +37,17 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "outbe_hyperlane_attester=info".into()),
+                .unwrap_or_else(|_| "outbe_hyperlane_validator=info".into()),
         )
         .init();
 
     let cli = Cli::parse();
-    let config = AttesterConfig::load(&cli.config)?;
+    let config = ValidatorConfig::load(&cli.config)?;
     config.validate()?;
     warn!("private key loaded from plaintext config - use an encrypted keystore in production");
 
     let wallet = client::create_wallet(&config.account)?;
-    let health = Arc::new(AttesterHealth::new());
+    let health = Arc::new(ValidatorHealth::new());
     if config.health.as_ref().is_none_or(|h| h.enabled) {
         let bind = config
             .health
@@ -60,9 +60,9 @@ async fn main() -> Result<()> {
     info!(
         rpc = %config.chain.rpc_endpoint,
         validator = %config.account.validator_address,
-        "starting outbe-hyperlane-attester"
+        "starting outbe-hyperlane-validator"
     );
-    let attester = attester::Attester::new(
+    let liveness = liveness::Liveness::new(
         config.hyperlane,
         config.chain,
         wallet,
@@ -70,7 +70,7 @@ async fn main() -> Result<()> {
         health,
     );
     tokio::select! {
-        _ = attester.run() => {}
+        _ = liveness.run() => {}
         _ = tokio::signal::ctrl_c() => info!("shutdown signal received, exiting"),
     }
     Ok(())

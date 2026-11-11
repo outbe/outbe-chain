@@ -1,8 +1,8 @@
-//! Typed errors for `outbe-hyperlane-attester`.
+//! Typed errors for `outbe-hyperlane-validator`.
 
-/// Errors that the Hyperlane attester daemon returns.
+/// Errors that the Hyperlane validator daemon returns.
 #[derive(Debug, thiserror::Error)]
-pub enum AttesterError {
+pub enum ValidatorError {
     /// The storage location does not start with `s3+`.
     #[error("unsupported storage location '{0}'")]
     UnsupportedStorageLocation(String),

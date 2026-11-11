@@ -1,4 +1,4 @@
-# outbe-hyperlane-attester
+# outbe-hyperlane-validator
 
 Proves on-chain that this validator's Hyperlane agent keeps signing. It reads the
 latest signed checkpoint per domain from the validator's own checkpoint bucket and
@@ -18,9 +18,9 @@ Use three distinct addresses for each validator:
 |---|---|---|
 | `V` | Validator, stake and TEE renewal | Existing validator identity |
 | `P` | Price-feeder transactions | `V` calls `ValidatorSet.setDelegate(1, P)` |
-| `H` | Hyperlane agent and attester | `V` calls `ValidatorSet.setDelegate(2, H)` |
+| `H` | Hyperlane agent and `outbe-hyperlane-validator` | `V` calls `ValidatorSet.setDelegate(2, H)` |
 
-The attester uses `H` as its transaction sender and sets `validator_address`
+`outbe-hyperlane-validator` uses `H` as its transaction sender and sets `validator_address`
 to `V`. Register the agent's checkpoint signing key with
 `HyperlaneController.setHyperlaneSigner(H)` from the Hyperlane delegate.
 That mapping selects the checkpoint signature key. Delegation authorizes
@@ -33,13 +33,13 @@ checkpoints or change the checkpoint signer. `V` can rotate or revoke `H`
 through ValidatorSet. Without an explicit Hyperlane delegate, the active
 validator key remains accepted for Hyperlane calls.
 
-Coordinate agent announcements and attester transactions that use `H`.
+Coordinate agent announcements and `outbe-hyperlane-validator` transactions that use `H`.
 
 ## Quick Start
 
 ```bash
-cargo build -p outbe-hyperlane-attester
-./target/debug/outbe-hyperlane-attester --config hyperlane-attester.toml
+cargo build -p outbe-hyperlane-validator
+./target/debug/outbe-hyperlane-validator --config hyperlane-validator.toml
 ```
 
 ## Configuration
@@ -62,18 +62,22 @@ enabled = true            # optional, default true
 bind_address = "0.0.0.0:9003"
 ```
 
-Nothing about the bucket is configured: every poll the attester reads
-`HyperlaneController.domains()` and `validatorAnnounce()`, then the validator's
-latest announced location from `ValidatorAnnounce.getAnnouncedStorageLocations`
-(`s3+http://host:port/<validator>/<folder>`), and fetches
-`<bucket>/<domain>/checkpoint_latest_index.json` plus
-`checkpoint_<index>_with_id.json`. The Hyperlane validator must therefore run with
-`--checkpointSyncer.folder=<domain id>`. A host move needs no attester change: the
-agent re-announces, the attester follows, like the relayer.
+The configuration has no bucket settings. On every poll, the daemon:
 
-A checkpoint is submitted only when its index is higher than
-`submittedIndex(validator, domain)`; index 0 is never submitted. Until the
-controller is initialized (`domains()` empty) the attester idles.
+1. Reads `HyperlaneController.domains()` and `validatorAnnounce()`.
+2. Reads the latest announced location of the validator from
+   `ValidatorAnnounce.getAnnouncedStorageLocations`
+   (`s3+http://host:port/<validator>/<folder>`).
+3. Fetches `<bucket>/<domain>/checkpoint_latest_index.json` and
+   `checkpoint_<index>_with_id.json`.
+
+The Hyperlane agent must run with `--checkpointSyncer.folder=<domain id>`.
+A host move needs no change in this daemon. The agent announces the new
+location, and the daemon reads it on the next poll, as the relayer does.
+
+The daemon submits a checkpoint only when its index is higher than
+`submittedIndex(validator, domain)`. It never submits index 0. Until the
+controller is initialized (`domains()` is empty), the daemon does nothing.
 
 `gasless = true` sends `submitCheckpoint` with zero priority fee; the node's
 `HyperlaneSubmitCheckpointHook` waives the fee for active validators and their

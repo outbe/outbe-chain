@@ -1,4 +1,4 @@
-//! Contract ABI surface used by the Hyperlane attester.
+//! Contract ABI surface used by the Hyperlane validator.
 
 use alloy_sol_types::sol;
 

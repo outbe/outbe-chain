@@ -22,8 +22,8 @@ use tracing::{debug, info, warn};
 use crate::abi::{IHyperlaneController, IValidatorAnnounce};
 use crate::client::{self, TxSender};
 use crate::config::{ChainConfig, HyperlaneConfig};
-use crate::errors::AttesterError;
-use crate::health::AttesterHealth;
+use crate::errors::ValidatorError;
+use crate::health::ValidatorHealth;
 
 /// HyperlaneController precompile address (0xEE14).
 pub const HYPERLANE_CONTROLLER_ADDRESS: Address =
@@ -47,23 +47,23 @@ struct CheckpointBody {
     index: u32,
 }
 
-pub struct Attester {
+pub struct Liveness {
     config: HyperlaneConfig,
     rpc_endpoint: String,
     chain_id: u64,
     wallet: EthereumWallet,
     validator: Address,
     client: reqwest::Client,
-    health: Arc<AttesterHealth>,
+    health: Arc<ValidatorHealth>,
 }
 
-impl Attester {
+impl Liveness {
     pub fn new(
         config: HyperlaneConfig,
         chain: ChainConfig,
         wallet: EthereumWallet,
         validator: Address,
-        health: Arc<AttesterHealth>,
+        health: Arc<ValidatorHealth>,
     ) -> Self {
         Self {
             config,
@@ -79,13 +79,10 @@ impl Attester {
     /// Polls the bucket forever. It logs every error and retries on the next tick.
     pub async fn run(self) {
         let interval = Duration::from_secs(self.config.poll_interval_secs);
-        info!(
-            poll_secs = interval.as_secs(),
-            "hyperlane checkpoint attester started"
-        );
+        info!(poll_secs = interval.as_secs(), "hyperlane liveness started");
         loop {
             if let Err(error) = self.tick().await {
-                warn!(%error, "hyperlane attester tick failed");
+                warn!(%error, "hyperlane liveness tick failed");
             }
             tokio::time::sleep(interval).await;
         }
@@ -281,13 +278,13 @@ impl Attester {
 fn bucket_base(location: &str) -> Result<String> {
     let rest = location
         .strip_prefix("s3+")
-        .ok_or_else(|| AttesterError::UnsupportedStorageLocation(location.to_string()))?;
+        .ok_or_else(|| ValidatorError::UnsupportedStorageLocation(location.to_string()))?;
     let (scheme, path) = rest
         .split_once("://")
-        .ok_or_else(|| AttesterError::MalformedStorageLocation(location.to_string()))?;
+        .ok_or_else(|| ValidatorError::MalformedStorageLocation(location.to_string()))?;
     let mut segments = path.split('/').filter(|s| !s.is_empty());
     let (Some(host), Some(bucket)) = (segments.next(), segments.next()) else {
-        return Err(AttesterError::StorageLocationMissingBucket(location.to_string()).into());
+        return Err(ValidatorError::StorageLocationMissingBucket(location.to_string()).into());
     };
     Ok(format!("{scheme}://{host}/{bucket}"))
 }
