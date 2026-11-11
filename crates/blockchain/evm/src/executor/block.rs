@@ -60,16 +60,14 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     pub parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
     pub proposer_evm_address: Option<Address>,
     pub execute_outbe_block_hooks: bool,
-    /// Cursor that drives begin-zone phase routing inside
-    /// `execute_transaction_with_commit_condition` instead of
-    /// `self.inner.receipts.len()`. The executor sets it to the per-block
-    /// initial value when it enters `apply_pre_execution_changes`. The executor
-    /// advances it once per consumed begin-zone system tx.
-    pub system_tx_phase_cursor: crate::system_tx::SystemTxPhase,
+    /// Runtime-injected protocol step registry.
+    pub block_order: outbe_primitives::block::BlockOrder,
+    /// Signature hash committed in pre-execution; cleared only after FSM admission.
+    pub preexecuted_phase1_tx_hash: Option<B256>,
     /// Proposer-side prebuilt Phase 1 body[0] tx. The payload builder sets it
     /// before `apply_pre_execution_changes`. `apply_phase1_commit_in_preexec`
     /// consumes it as the canonical witness whose `signature_hash` is cached in
-    /// the phase cursor. It is `None` on the validator path (the witness comes
+    /// `preexecuted_phase1_tx_hash`. It is `None` on the validator path (the witness comes
     /// from `expected_begin_system_txs.first()`) and for
     /// `block_number <= GENESIS_BOOTSTRAP_BLOCK_NUMBER`.
     pub prebuilt_phase1_tx: Option<Recovered<TransactionSigned>>,
@@ -166,6 +164,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
                     runtime_host,
                 },
         } = inputs;
+        let block_order = runtime_host.block_order();
         let chain_id = inner.spec.chain.id();
         let genesis_hash = inner.spec.genesis_hash();
         let genesis_timestamp = inner.spec.genesis_timestamp();
@@ -194,17 +193,15 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             parent_consensus_metadata,
             proposer_evm_address,
             execute_outbe_block_hooks,
-            // Placeholder. `apply_pre_execution_changes` computes the real
-            // initial value once `block_number` is known and the Phase 1
-            // preflight ran (or did not run).
-            system_tx_phase_cursor: crate::system_tx::SystemTxPhase::UserTxs,
+            block_order,
+            preexecuted_phase1_tx_hash: None,
             prebuilt_phase1_tx,
             parent_artifact_hint,
             // `verify_phase1_in_preexec` populates this on a real
             // verify. It remains `None` for skip paths.
             verified_phase1_vrf_proof_hash: None,
             pending_tee_bootstrap,
-            fsm: outbe_primitives::system_tx::BlockExecutionFsm::for_block(0, false, false, false),
+            fsm: outbe_primitives::system_tx::BlockExecutionFsm::for_mid_block(&block_order),
             zero_fee_soft_failures: 0,
             sponsored_gas_used: 0,
             witness_state: None,
@@ -417,14 +414,14 @@ where
 
     fn finish(mut self) -> Result<(Self::Evm, BlockExecutionResult<Receipt>), BlockExecutionError> {
         crate::executor::witness::clear_detached_trace_witness();
+        let block_timestamp =
+            outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
+                .map_err(crate::errors::ExecutorValidationError::from)?;
         if self.execute_outbe_block_hooks {
             self.fsm
                 .finish()
                 .map_err(crate::errors::ExecutorValidationError::from)?;
         }
-        let block_timestamp =
-            outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
-                .map_err(crate::errors::ExecutorValidationError::from)?;
         let current_summary = self.current_execution_summary();
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
         let block_artifacts =
@@ -494,8 +491,7 @@ where
 
 fn is_end_block_system_tx(tx: &TransactionSigned) -> bool {
     is_reserved_system_tx(tx)
-        && crate::system_tx::SystemTx::decode(tx.input().as_ref())
-            .is_ok_and(|input| input.body_zone() == crate::system_tx::BodyZone::EndBlock)
+        && matches!(SystemTx::decode(tx.input()), Ok(SystemTx::EndBlock { .. }))
 }
 
 fn clear_uncommitted_witness_on_decline(

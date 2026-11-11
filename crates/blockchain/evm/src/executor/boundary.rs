@@ -115,7 +115,7 @@ where
         &self,
         block_number: u64,
     ) -> Result<Option<Address>, BlockExecutionError> {
-        if !BlockHeightRegime::for_block(block_number).has_begin_zone_system_txs() {
+        if !BlockHeightRegime::for_block(block_number).has_system_tx_prefix() {
             return Ok(None);
         }
         self.proposer_evm_address
