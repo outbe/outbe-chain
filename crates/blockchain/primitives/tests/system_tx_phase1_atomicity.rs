@@ -1,146 +1,129 @@
-//! Phase 1 atomicity, cursor semantics, and the 4-stage block FSM.
-//!
-//! The `SystemTxPhase` cursor walks the begin zone and stops at `UserTxs`.
-//! `BlockExecutionFsm` is the machine that also consumes the end zone.
+//! Atomic prefix consumption and the unified block execution FSM.
 
-use outbe_primitives::system_tx::{
-    BlockExecutionFsm, BlockExecutionStage, SystemTxError, SystemTxKind, SystemTxPhase,
-    CERTIFIED_PARENT_ACCOUNTING_SELECTOR, GENESIS_BOOTSTRAP_BLOCK_NUMBER,
-    LATE_FINALIZE_CREDITS_SELECTOR,
-};
+use alloy_primitives::Bytes;
+use outbe_primitives::{system_tx::*, test_utils::TEST_BLOCK_ORDER};
 
 const BLOCK_1: u64 = 1;
 const BLOCK_2: u64 = 2;
 
-fn walk_begin(
-    block_number: u64,
-    has_boundary_outcome: bool,
-    has_tee_bootstrap: bool,
-) -> SystemTxPhase {
-    let selectors = outbe_primitives::system_tx::expected_begin_block_selectors(
-        block_number,
-        has_boundary_outcome,
-        has_tee_bootstrap,
-    );
-    let mut cursor = SystemTxPhase::initial_for_block(block_number, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
-    for (index, selector) in selectors.iter().enumerate() {
-        assert_eq!(cursor.expected_selector(), Some(*selector));
-        assert_eq!(cursor.body_index(), Some(u8::try_from(index).unwrap()));
-        cursor = cursor.advance_after_commit(has_boundary_outcome, has_tee_bootstrap);
+fn input_for_step(id: SystemTxStepId) -> SystemTx {
+    match id.stage {
+        BlockExecutionStage::Consensus => SystemTx::Consensus {
+            step_index: id.step_index,
+            payload: Bytes::new(),
+        },
+        BlockExecutionStage::BeginBlock => SystemTx::BeginBlock {
+            step_index: id.step_index,
+        },
+        BlockExecutionStage::EndBlock => SystemTx::EndBlock {
+            step_index: id.step_index,
+        },
+        _ => panic!("not a system step"),
     }
-    assert_eq!(cursor, SystemTxPhase::UserTxs);
-    cursor
 }
 
-/// Block 1 starts at BoundaryOutcome and walks the 12-tx bootstrap schedule.
+fn walk_prefix(block_number: u64, flags: BlockSystemFlags) -> BlockExecutionFsm {
+    let mut fsm = BlockExecutionFsm::for_block(block_number, flags, &TEST_BLOCK_ORDER);
+    for (index, id) in fsm.plan().expected_prefix_steps().into_iter().enumerate() {
+        assert_eq!(fsm.expected_step_id(), Some(id));
+        assert_eq!(fsm.expected_prefix_body_index(), Some(index));
+        assert_eq!(fsm.expected_ordinal(), Some(u8::try_from(index).unwrap()));
+        fsm.on_system_tx(&input_for_step(id)).unwrap();
+    }
+    assert_eq!(fsm.expected_prefix_body_index(), None);
+    fsm
+}
+
 #[test]
 fn block_1_body_index_map_starts_at_boundary_outcome() {
-    let cursor = SystemTxPhase::initial_for_block(BLOCK_1, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
+    let flags = BlockSystemFlags {
+        has_boundary_outcome: true,
+        has_publication: false,
+    };
+    let fsm = BlockExecutionFsm::for_block(BLOCK_1, flags, &TEST_BLOCK_ORDER);
+    assert_eq!(fsm.stage(), BlockExecutionStage::Consensus);
+    assert_eq!(fsm.expected_prefix_body_index(), Some(0));
     assert_eq!(
-        cursor,
-        SystemTxPhase::BoundaryOutcomeOptional { body_index: 0 }
+        fsm.expected_step_id(),
+        Some(SystemTxStepId::consensus(
+            CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX
+        ))
     );
+    assert_eq!(fsm.plan().expected_prefix_steps().len(), 12);
     assert_eq!(
-        cursor.expected_selector(),
-        Some(outbe_primitives::system_tx::BOUNDARY_OUTCOME_SELECTOR)
+        walk_prefix(BLOCK_1, flags).stage(),
+        BlockExecutionStage::Completed
     );
-    assert!(!matches!(cursor, SystemTxPhase::Phase1Preexecuted { .. }));
-    walk_begin(BLOCK_1, true, true);
 }
 
-/// OracleSlash follows the optional boundary by one body index.
 #[test]
 fn oracle_slash_body_index_follows_optional_boundary_outcome() {
-    let with_boundary =
-        outbe_primitives::system_tx::expected_begin_block_selectors(BLOCK_2, true, false);
-    let without =
-        outbe_primitives::system_tx::expected_begin_block_selectors(BLOCK_2, false, false);
-    let slash_with = with_boundary
-        .iter()
-        .position(|selector| *selector == outbe_primitives::system_tx::ORACLE_SLASH_SELECTOR)
-        .unwrap();
-    let slash_without = without
-        .iter()
-        .position(|selector| *selector == outbe_primitives::system_tx::ORACLE_SLASH_SELECTOR)
-        .unwrap();
-    assert_eq!(slash_with, slash_without + 1);
-
-    let mut cursor = SystemTxPhase::initial_for_block(BLOCK_2, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
-    for _ in 0..slash_with {
-        cursor = cursor.advance_after_commit(true, false);
-    }
-    assert_eq!(
-        cursor,
-        SystemTxPhase::OracleSlash {
-            body_index: u8::try_from(slash_with).unwrap()
+    let slash = SystemTxStepId::begin_block(6);
+    let slash_index = |has_boundary_outcome| {
+        let flags = BlockSystemFlags {
+            has_boundary_outcome,
+            has_publication: false,
+        };
+        let mut fsm = BlockExecutionFsm::for_block(BLOCK_2, flags, &TEST_BLOCK_ORDER);
+        for id in fsm.plan().expected_prefix_steps() {
+            if id == slash {
+                assert_eq!(fsm.expected_step_id(), Some(slash));
+                return fsm.expected_prefix_body_index().unwrap();
+            }
+            fsm.on_system_tx(&input_for_step(id)).unwrap();
         }
-    );
-
-    let mut cursor = SystemTxPhase::initial_for_block(BLOCK_2, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
-    for _ in 0..slash_without {
-        cursor = cursor.advance_after_commit(false, false);
-    }
-    assert_eq!(
-        cursor,
-        SystemTxPhase::OracleSlash {
-            body_index: u8::try_from(slash_without).unwrap()
-        }
-    );
+        panic!("OracleSlash must be scheduled")
+    };
+    assert_eq!(slash_index(true), slash_index(false) + 1);
 }
 
-/// Block 1 never enters Phase 1. UserTxs does not advance into the end zone.
 #[test]
-fn debug_assert_system_tx_phase_cursor_after_preexec_for_block1_and_phase1() {
-    let cursor = SystemTxPhase::initial_for_block(BLOCK_1, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
-    assert!(matches!(
-        cursor,
-        SystemTxPhase::BoundaryOutcomeOptional { body_index: 0 }
-    ));
-    assert!(!matches!(cursor, SystemTxPhase::Phase1Preexecuted { .. }));
-    let cursor2 = SystemTxPhase::initial_for_block(BLOCK_2, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
-    assert!(matches!(cursor2, SystemTxPhase::Phase1Preexecuted { .. }));
-    let user = SystemTxPhase::UserTxs;
-    assert_eq!(
-        user.advance_after_commit(true, false),
-        SystemTxPhase::UserTxs
-    );
-    assert_eq!(
-        user.advance_after_commit(false, false),
-        SystemTxPhase::UserTxs
-    );
-    assert_eq!(user.body_index(), None);
-    assert_eq!(user.expected_selector(), None);
-}
-
-/// Phase 1 names CertifiedParentAccounting, then LateFinalizeCredits.
-#[test]
-fn preexecuted_phase1_body_tx_is_validated_but_not_reexecuted() {
-    let cursor = SystemTxPhase::initial_for_block(BLOCK_2, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
-    assert_eq!(
-        cursor.expected_selector(),
-        Some(CERTIFIED_PARENT_ACCOUNTING_SELECTOR),
-    );
-    let after = cursor.advance_after_commit(true, false);
-    assert_eq!(
-        after.expected_selector(),
-        Some(LATE_FINALIZE_CREDITS_SELECTOR)
-    );
-}
-
-fn drive_fsm(
-    block_number: u64,
-    has_boundary_outcome: bool,
-    has_tee_bootstrap: bool,
-    user_txs: usize,
-) -> BlockExecutionFsm {
+fn rejected_phase1_input_does_not_advance_the_fsm() {
     let mut fsm =
-        BlockExecutionFsm::for_block(block_number, has_boundary_outcome, has_tee_bootstrap, false);
-    let begin_kinds = fsm.plan().begin_zone_kinds();
-    let end_kinds = fsm.plan().end_block_kinds.clone();
-    for kind in begin_kinds {
-        assert_eq!(fsm.expected_system_tx_kind(), Some(kind));
-        fsm.on_system_tx(kind).unwrap();
-    }
+        BlockExecutionFsm::for_block(BLOCK_2, BlockSystemFlags::default(), &TEST_BLOCK_ORDER);
+    let before = fsm.clone();
+    let wrong = input_for_step(SystemTxStepId::consensus(
+        CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX,
+    ));
+    assert!(matches!(
+        fsm.on_system_tx(&wrong),
+        Err(SystemTxError::UnexpectedSystemTx {
+            stage: BlockExecutionStage::Consensus,
+            ..
+        })
+    ));
+    assert_eq!(fsm, before);
+}
+
+/// The witness consumes the parent-accounting step once; replay cannot advance it again.
+#[test]
+fn preexecuted_phase1_body_tx_is_consumed_once() {
+    let mut fsm =
+        BlockExecutionFsm::for_block(BLOCK_2, BlockSystemFlags::default(), &TEST_BLOCK_ORDER);
+    let input = SystemTx::Consensus {
+        step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+        payload: Bytes::new(),
+    };
+    assert_eq!(fsm.expected_step_id(), Some(input.step_id()));
+    fsm.on_system_tx(&input).unwrap();
+    assert_eq!(
+        fsm.expected_step_id(),
+        Some(SystemTxStepId::consensus(
+            CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX
+        ))
+    );
+    assert_eq!(fsm.expected_prefix_body_index(), Some(1));
+    let after = fsm.clone();
+    assert!(fsm.on_system_tx(&input).is_err());
+    assert_eq!(fsm, after);
+}
+
+fn drive_fsm(block_number: u64, user_txs: usize) -> BlockExecutionFsm {
+    let flags = BlockSystemFlags {
+        has_boundary_outcome: true,
+        has_publication: false,
+    };
+    let mut fsm = walk_prefix(block_number, flags);
     if user_txs == 0 {
         assert_ne!(fsm.stage(), BlockExecutionStage::MidBlock);
     } else {
@@ -150,10 +133,11 @@ fn drive_fsm(
         }
         assert_eq!(fsm.user_txs_executed(), user_txs);
     }
-    for kind in end_kinds {
-        assert_eq!(fsm.expected_system_tx_kind(), Some(kind));
-        assert_eq!(fsm.expected_ordinal(), kind.nonce_ordinal());
-        fsm.on_system_tx(kind).unwrap();
+    for id in fsm.plan().expected_end_block_steps() {
+        let input = input_for_step(id);
+        assert_eq!(fsm.expected_step_id(), Some(id));
+        assert_eq!(fsm.expected_ordinal(), input.nonce_ordinal());
+        fsm.on_system_tx(&input).unwrap();
     }
     assert_eq!(fsm.stage(), BlockExecutionStage::Completed);
     fsm.finish().unwrap();
@@ -162,8 +146,7 @@ fn drive_fsm(
 
 #[test]
 fn block_execution_fsm_completes_block1_without_user_or_end_zone() {
-    let mut fsm = drive_fsm(BLOCK_1, true, true, 0);
-    assert_eq!(fsm.stage(), BlockExecutionStage::Completed);
+    let mut fsm = drive_fsm(BLOCK_1, 0);
     assert!(matches!(
         fsm.on_user_tx(),
         Err(SystemTxError::UnexpectedUserTx {
@@ -171,7 +154,7 @@ fn block_execution_fsm_completes_block1_without_user_or_end_zone() {
         })
     ));
     assert!(matches!(
-        fsm.on_system_tx(SystemTxKind::NodFactory),
+        fsm.on_system_tx(&SystemTx::EndBlock { step_index: 0 }),
         Err(SystemTxError::UnexpectedSystemTx {
             stage: BlockExecutionStage::Completed,
             ..
@@ -181,8 +164,7 @@ fn block_execution_fsm_completes_block1_without_user_or_end_zone() {
 
 #[test]
 fn block_execution_fsm_completes_steady_block_through_end_zone() {
-    let fsm = drive_fsm(BLOCK_2, true, false, 1);
-    assert_eq!(fsm.stage(), BlockExecutionStage::Completed);
+    let fsm = drive_fsm(BLOCK_2, 1);
     assert_eq!(fsm.user_txs_executed(), 1);
-    assert_eq!(fsm.plan().end_block_kinds.len(), 5);
+    assert_eq!(fsm.plan().end_block_steps.len(), 5);
 }

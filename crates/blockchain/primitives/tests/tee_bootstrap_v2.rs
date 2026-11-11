@@ -9,9 +9,11 @@ use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::{
     consensus::{DkgBoundaryArtifact, ReshareResult},
     system_tx::{
-        build_unsigned_system_tx, expected_begin_block_selectors, expected_end_block_selectors,
-        protocol_block_gas_limit, split_system_layout, system_tx_visible_gas_limit,
-        validate_active_system_tx_set, SystemTx, STEADY_BLOCK_GAS_LIMIT, TEE_BOOTSTRAP_SELECTOR,
+        build_unsigned_system_tx, protocol_block_gas_limit, split_system_layout,
+        system_tx_visible_gas_limit, validate_system_tx_set_for_publication, BlockSystemFlags,
+        BlockSystemPlan, SystemTx, CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX,
+        CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX, CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX,
+        STEADY_BLOCK_GAS_LIMIT, SYSTEM_CALLDATA_FRAMING_BYTES, SYSTEM_TX_INPUT_VERSION,
     },
     tee_attestation_v1::{
         AttestationEvidenceV1, AttestationMode, AttestationOperationV1, CodecError,
@@ -25,6 +27,7 @@ use outbe_primitives::{
         TeeBootstrapParticipantEvidenceV2, TeeBootstrapParticipantSubmissionV2,
         TeeBootstrapParticipantV2, TeeBootstrapV2,
     },
+    test_utils::TEST_BLOCK_ORDER,
 };
 use reth_ethereum::TransactionSigned;
 
@@ -297,7 +300,7 @@ fn signing_hash_binds_the_complete_body_but_not_committee_signature_bytes() {
 fn gas_charges_each_logical_evidence_despite_collateral_deduplication() {
     let payload = fixture();
     let encoded = codec::encode_canonical(&payload).unwrap();
-    let full_calldata_len = encoded.len() + 5;
+    let full_calldata_len = encoded.len() + SYSTEM_CALLDATA_FRAMING_BYTES;
     let registry = TeeRegistryGasScheduleV1::normative();
     let evidence_lengths = (0..payload.participants.len())
         .map(|index| {
@@ -328,35 +331,54 @@ fn gas_charges_each_logical_evidence_despite_collateral_deduplication() {
 }
 
 #[test]
-fn ost3_system_calldata_roundtrips_the_canonical_bootstrap() {
+fn consensus_system_calldata_roundtrips_the_canonical_bootstrap() {
     let payload = fixture();
-    let calldata = SystemTx::TeeBootstrap {
-        payload: payload.clone(),
+    let calldata = SystemTx::Consensus {
+        step_index: CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX,
+        payload: codec::encode_canonical(&payload).unwrap(),
     }
     .encode()
     .unwrap();
-    assert_eq!(&calldata[..4], b"OST3");
-    assert_eq!(TEE_BOOTSTRAP_SELECTOR, *b"OST3");
+    assert_eq!(&calldata[..4], b"OSCN");
+    assert_eq!(calldata[4], SYSTEM_TX_INPUT_VERSION);
+    assert_eq!(calldata[5], CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX);
+    assert_eq!(
+        &calldata[SYSTEM_CALLDATA_FRAMING_BYTES..],
+        codec::encode_canonical(&payload).unwrap().as_ref()
+    );
     assert_eq!(
         SystemTx::decode(&calldata).unwrap(),
-        SystemTx::TeeBootstrap { payload }
+        SystemTx::Consensus {
+            step_index: CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX,
+            payload: codec::encode_canonical(&payload).unwrap()
+        }
     );
 }
 
 fn block1_system_inputs(payload: TeeBootstrapV2, artifact: DkgBoundaryArtifact) -> Vec<SystemTx> {
     vec![
-        SystemTx::BoundaryOutcome { artifact },
-        SystemTx::TeeBootstrap { payload },
-        SystemTx::ValidatorLiveness,
-        SystemTx::Vote,
-        SystemTx::Update,
-        SystemTx::EnclaveUpgradeDeadline,
-        SystemTx::Rewards,
-        SystemTx::Staking,
-        SystemTx::Oracle,
-        SystemTx::OracleSlash,
-        SystemTx::HyperlaneSlash,
-        SystemTx::CycleTick,
+        SystemTx::Consensus {
+            step_index: CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX,
+            payload: outbe_primitives::reshare_artifact::encode_boundary_artifact(&artifact)
+                .unwrap(),
+        },
+        SystemTx::Consensus {
+            step_index: CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX,
+            payload: codec::encode_canonical(&payload).unwrap(),
+        },
+        SystemTx::Consensus {
+            step_index: CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX,
+            payload: Bytes::new(),
+        },
+        SystemTx::BeginBlock { step_index: 0 },
+        SystemTx::BeginBlock { step_index: 1 },
+        SystemTx::BeginBlock { step_index: 2 },
+        SystemTx::BeginBlock { step_index: 3 },
+        SystemTx::BeginBlock { step_index: 4 },
+        SystemTx::BeginBlock { step_index: 5 },
+        SystemTx::BeginBlock { step_index: 6 },
+        SystemTx::BeginBlock { step_index: 7 },
+        SystemTx::BeginBlock { step_index: 8 },
     ]
 }
 
@@ -385,14 +407,34 @@ fn assert_block1_zero_gas_layout(transactions: &[TransactionSigned]) {
         assert_eq!(system_tx_visible_gas_limit(transaction.input()).unwrap(), 0);
     }
     let layout = split_system_layout(transactions).expect("block-1 layout splits");
-    validate_active_system_tx_set(&layout, 1, true, true)
-        .expect("block-1 bootstrap layout validates");
+    validate_system_tx_set_for_publication(
+        &TEST_BLOCK_ORDER,
+        &layout,
+        1,
+        BlockSystemFlags {
+            has_boundary_outcome: true,
+            has_publication: false,
+        },
+    )
+    .expect("block-1 bootstrap layout validates");
     assert_eq!(
-        layout.begin_block_selectors().unwrap(),
-        expected_begin_block_selectors(1, true, true)
+        layout.prefix_steps().unwrap(),
+        BlockSystemPlan::for_block(
+            1,
+            BlockSystemFlags {
+                has_boundary_outcome: true,
+                has_publication: false
+            },
+            &TEST_BLOCK_ORDER
+        )
+        .expected_prefix_steps()
     );
     assert!(layout.end.is_empty());
-    assert!(expected_end_block_selectors(1).is_empty());
+    assert!(
+        BlockSystemPlan::for_block(1, BlockSystemFlags::default(), &TEST_BLOCK_ORDER)
+            .expected_end_block_steps()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -455,7 +497,7 @@ fn canonical_bootstrap_rejects_noncanonical_pool_and_authority_shapes() {
 
 #[test]
 fn decoder_rejects_full_calldata_cap_plus_one_before_parsing() {
-    let oversized_body = vec![0_u8; MAX_TEE_BOOTSTRAP_BYTES - 4];
+    let oversized_body = vec![0_u8; MAX_TEE_BOOTSTRAP_BYTES - SYSTEM_CALLDATA_FRAMING_BYTES + 1];
     assert!(matches!(
         codec::decode_canonical(&oversized_body),
         Err(CodecError::LimitExceeded {
@@ -619,8 +661,9 @@ fn assembly_rejects_logical_work_over_bootstrap_gas_cap() {
 fn canonical_bootstrap_protocol_fingerprint_is_stable() {
     let payload = fixture();
     let encoded = codec::encode_canonical(&payload).unwrap();
-    let calldata = SystemTx::TeeBootstrap {
-        payload: payload.clone(),
+    let calldata = SystemTx::Consensus {
+        step_index: CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX,
+        payload: codec::encode_canonical(&payload).unwrap(),
     }
     .encode()
     .unwrap();
@@ -643,13 +686,13 @@ fn canonical_bootstrap_protocol_fingerprint_is_stable() {
             "0x9aed9070b21466562e37910bf1d82c7e0d624c83e4137bc35216925d1086461b"
         ),
     );
-    assert_eq!(calldata.len(), 2448);
+    assert_eq!(calldata.len(), 2449);
     assert_eq!(
         alloy_primitives::keccak256(&calldata),
         alloy_primitives::b256!(
-            "0x8247a1fbdb85bb249246bc247a7a0d38224e4069c61142e3962533f929fc2946"
+            "0x4873c28c49740cc7ddaedb0db62f844eeec27509758edabc0000107796297615"
         ),
     );
-    assert_eq!(gas, 7308436);
+    assert_eq!(gas, 7308437);
     assert_eq!(&encoded[..4], b"TTB2");
 }

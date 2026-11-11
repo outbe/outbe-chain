@@ -1,17 +1,10 @@
 use alloy_consensus::{SignableTransaction as _, Transaction as _, TxLegacy};
 use alloy_primitives::{address, Address, Bytes, Signature, TxKind, B256, U256};
-use outbe_primitives::system_tx::{
-    build_unsigned_system_tx, expected_end_block_selectors, split_system_layout,
-    system_tx_visible_gas_limit, validate_active_system_tx_set, SysTxSelector, SystemTx,
-    CREDIS_FACTORY_ORDINAL, CREDIS_FACTORY_SELECTOR, GEM_CLEANUP_ORDINAL, GEM_CLEANUP_SELECTOR,
-    GEM_FACTORY_ORDINAL, GEM_FACTORY_SELECTOR, INTEX_FACTORY_ORDINAL, INTEX_FACTORY_SELECTOR,
-    MAX_SYSTEM_TXS_PER_BLOCK, NOD_FACTORY_ORDINAL, NOD_FACTORY_SELECTOR,
-    SYSTEM_TX_ARTIFACT_GAS_LIMIT,
-};
 use outbe_primitives::{
     consensus::{DkgBoundaryArtifact, OUTBE_MAX_EXTRA_DATA_SIZE},
     consensus_metadata::{CertifiedParentAccountingMetadata, ParentParticipationProof},
 };
+use outbe_primitives::{system_tx::*, test_utils::TEST_BLOCK_ORDER};
 use reth_ethereum::TransactionSigned;
 
 const CHAIN_ID: u64 = 2026;
@@ -72,20 +65,27 @@ fn large_boundary() -> DkgBoundaryArtifact {
 }
 
 fn accounting() -> SystemTx {
-    SystemTx::CertifiedParentAccounting {
-        metadata: sample_metadata(),
+    SystemTx::Consensus {
+        step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+        payload: sample_metadata().encode().unwrap(),
     }
 }
 
 fn late_credits() -> SystemTx {
-    SystemTx::LateFinalizeCredits {
-        artifact: Default::default(),
+    SystemTx::Consensus {
+        step_index: CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX,
+        payload: outbe_primitives::reshare_artifact::encode_late_finalize_credits_artifact(
+            &Default::default(),
+        )
+        .unwrap(),
     }
 }
 
 fn boundary() -> SystemTx {
-    SystemTx::BoundaryOutcome {
-        artifact: sample_boundary(),
+    SystemTx::Consensus {
+        step_index: CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX,
+        payload: outbe_primitives::reshare_artifact::encode_boundary_artifact(&sample_boundary())
+            .unwrap(),
     }
 }
 
@@ -94,26 +94,44 @@ fn canonical_inputs() -> Vec<SystemTx> {
         accounting(),
         late_credits(),
         boundary(),
-        SystemTx::ValidatorLiveness,
-        SystemTx::Vote,
-        SystemTx::Update,
-        SystemTx::EnclaveUpgradeDeadline,
-        SystemTx::Rewards,
-        SystemTx::Staking,
-        SystemTx::Oracle,
-        SystemTx::OracleSlash,
-        SystemTx::HyperlaneSlash,
-        SystemTx::CycleTick,
+        SystemTx::Consensus {
+            step_index: CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX,
+            payload: Bytes::new(),
+        },
+        SystemTx::BeginBlock { step_index: 0 },
+        SystemTx::BeginBlock { step_index: 1 },
+        SystemTx::BeginBlock { step_index: 2 },
+        SystemTx::BeginBlock { step_index: 3 },
+        SystemTx::BeginBlock { step_index: 4 },
+        SystemTx::BeginBlock { step_index: 5 },
+        SystemTx::BeginBlock { step_index: 6 },
+        SystemTx::BeginBlock { step_index: 7 },
+        SystemTx::BeginBlock { step_index: 8 },
     ]
 }
 
 fn end_block_inputs() -> [(SystemTx, u8); 5] {
     [
-        (SystemTx::NodFactory, NOD_FACTORY_ORDINAL),
-        (SystemTx::GemFactory, GEM_FACTORY_ORDINAL),
-        (SystemTx::IntexFactory, INTEX_FACTORY_ORDINAL),
-        (SystemTx::CredisFactory, CREDIS_FACTORY_ORDINAL),
-        (SystemTx::GemCleanup, GEM_CLEANUP_ORDINAL),
+        (
+            SystemTx::EndBlock { step_index: 0 },
+            end_block_nonce_ordinal(0).unwrap(),
+        ),
+        (
+            SystemTx::EndBlock { step_index: 1 },
+            end_block_nonce_ordinal(1).unwrap(),
+        ),
+        (
+            SystemTx::EndBlock { step_index: 2 },
+            end_block_nonce_ordinal(2).unwrap(),
+        ),
+        (
+            SystemTx::EndBlock { step_index: 3 },
+            end_block_nonce_ordinal(3).unwrap(),
+        ),
+        (
+            SystemTx::EndBlock { step_index: 4 },
+            end_block_nonce_ordinal(4).unwrap(),
+        ),
     ]
 }
 
@@ -157,16 +175,22 @@ fn full_begin_system_prefix_validates_before_user_transactions() {
     txs.extend(end_block_txs());
 
     let layout = split_system_layout(&txs).expect("layout splits");
-    validate_active_system_tx_set(&layout, BLOCK_NUMBER, true, false)
-        .expect("full system tx set validates");
+    validate_system_tx_set_for_publication(
+        &TEST_BLOCK_ORDER,
+        &layout,
+        BLOCK_NUMBER,
+        BlockSystemFlags {
+            has_boundary_outcome: true,
+            has_publication: false,
+        },
+    )
+    .expect("full system tx set validates");
 
     assert_eq!(
-        layout
-            .begin_block_selectors()
-            .expect("begin_block kinds decode"),
+        layout.prefix_steps().expect("begin_block kinds decode"),
         canonical_inputs()
             .iter()
-            .map(SystemTx::selector)
+            .map(SystemTx::step_id)
             .collect::<Vec<_>>()
     );
     assert_eq!(layout.user.len(), 1);
@@ -174,21 +198,16 @@ fn full_begin_system_prefix_validates_before_user_transactions() {
         end_block_inputs().map(|(_, ordinal)| ordinal),
         [24, 25, 26, 27, 28]
     );
-    assert_eq!(NOD_FACTORY_ORDINAL, 24);
-    assert_eq!(GEM_CLEANUP_ORDINAL, 28);
+    assert_eq!(end_block_nonce_ordinal(0).unwrap(), 24);
+    assert_eq!(end_block_nonce_ordinal(4).unwrap(), 28);
     assert_eq!(
-        layout.end_block_selectors().expect("end selectors"),
-        vec![
-            NOD_FACTORY_SELECTOR,
-            GEM_FACTORY_SELECTOR,
-            INTEX_FACTORY_SELECTOR,
-            CREDIS_FACTORY_SELECTOR,
-            GEM_CLEANUP_SELECTOR,
-        ]
+        layout.end_block_steps().expect("end selectors"),
+        (0..5).map(SystemTxStepId::end_block).collect::<Vec<_>>()
     );
     assert_eq!(
-        layout.end_block_selectors().unwrap(),
-        expected_end_block_selectors(BLOCK_NUMBER)
+        layout.end_block_steps().unwrap(),
+        BlockSystemPlan::for_block(BLOCK_NUMBER, BlockSystemFlags::default(), &TEST_BLOCK_ORDER)
+            .expected_end_block_steps()
     );
 }
 
@@ -199,7 +218,7 @@ fn missing_or_extra_receipt_visible_system_txs_are_rejected() {
     let canonical_with_boundary = canonical_inputs();
     let missing_oracle_inputs: Vec<SystemTx> = canonical_inputs()
         .into_iter()
-        .filter(|input| !matches!(input, SystemTx::OracleSlash))
+        .filter(|input| !matches!(input, SystemTx::BeginBlock { step_index: 6 }))
         .collect();
     let missing_oracle: Vec<TransactionSigned> = missing_oracle_inputs
         .iter()
@@ -209,25 +228,46 @@ fn missing_or_extra_receipt_visible_system_txs_are_rejected() {
         .collect();
     let layout = split_system_layout(&missing_oracle).expect("layout splits");
     assert_eq!(
-        validate_active_system_tx_set(&layout, BLOCK_NUMBER, true, false),
+        validate_system_tx_set_for_publication(
+            &TEST_BLOCK_ORDER,
+            &layout,
+            BLOCK_NUMBER,
+            BlockSystemFlags {
+                has_boundary_outcome: true,
+                has_publication: false
+            }
+        ),
         Err(SystemTxError::ActiveSystemTxSetMismatch {
             expected_begin: canonical_with_boundary
                 .iter()
-                .map(SystemTx::selector)
+                .map(SystemTx::step_id)
                 .collect(),
-            expected_end: expected_end_block_selectors(BLOCK_NUMBER),
+            expected_end: BlockSystemPlan::for_block(
+                BLOCK_NUMBER,
+                BlockSystemFlags::default(),
+                &TEST_BLOCK_ORDER
+            )
+            .expected_end_block_steps(),
             actual_begin: missing_oracle_inputs
                 .iter()
-                .map(SystemTx::selector)
+                .map(SystemTx::step_id)
                 .collect(),
             actual_end: Vec::new(),
         })
     );
 
-    let canonical_without_boundary: Vec<SysTxSelector> = canonical_with_boundary
+    let canonical_without_boundary: Vec<SystemTxStepId> = canonical_with_boundary
         .iter()
-        .filter(|input| !matches!(input, SystemTx::BoundaryOutcome { .. }))
-        .map(SystemTx::selector)
+        .filter(|input| {
+            !matches!(
+                input,
+                SystemTx::Consensus {
+                    step_index: CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX,
+                    ..
+                }
+            )
+        })
+        .map(SystemTx::step_id)
         .collect();
     let unexpected_boundary: Vec<TransactionSigned> = canonical_with_boundary
         .iter()
@@ -237,13 +277,23 @@ fn missing_or_extra_receipt_visible_system_txs_are_rejected() {
         .collect();
     let layout = split_system_layout(&unexpected_boundary).expect("layout splits");
     assert_eq!(
-        validate_active_system_tx_set(&layout, BLOCK_NUMBER, false, false),
+        validate_system_tx_set_for_publication(
+            &TEST_BLOCK_ORDER,
+            &layout,
+            BLOCK_NUMBER,
+            BlockSystemFlags::default()
+        ),
         Err(SystemTxError::ActiveSystemTxSetMismatch {
             expected_begin: canonical_without_boundary,
-            expected_end: expected_end_block_selectors(BLOCK_NUMBER),
+            expected_end: BlockSystemPlan::for_block(
+                BLOCK_NUMBER,
+                BlockSystemFlags::default(),
+                &TEST_BLOCK_ORDER
+            )
+            .expected_end_block_steps(),
             actual_begin: canonical_with_boundary
                 .iter()
-                .map(SystemTx::selector)
+                .map(SystemTx::step_id)
                 .collect(),
             actual_end: Vec::new(),
         })
@@ -276,25 +326,36 @@ fn system_tx_wire_limits_leave_runtime_gas_headroom() {
 #[test]
 fn gas_12_system_prefix_aggregate_visible_gas_must_fit_block_cap() {
     let inputs = vec![
-        SystemTx::CertifiedParentAccounting {
-            metadata: large_metadata(),
+        SystemTx::Consensus {
+            step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+            payload: large_metadata().encode().unwrap(),
         },
-        SystemTx::LateFinalizeCredits {
-            artifact: Default::default(),
+        SystemTx::Consensus {
+            step_index: CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX,
+            payload: outbe_primitives::reshare_artifact::encode_late_finalize_credits_artifact(
+                &Default::default(),
+            )
+            .unwrap(),
         },
-        SystemTx::BoundaryOutcome {
-            artifact: large_boundary(),
+        SystemTx::Consensus {
+            step_index: CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX,
+            payload:
+                outbe_primitives::reshare_artifact::encode_boundary_artifact(&large_boundary())
+                    .unwrap(),
         },
-        SystemTx::ValidatorLiveness,
-        SystemTx::Vote,
-        SystemTx::Update,
-        SystemTx::EnclaveUpgradeDeadline,
-        SystemTx::Rewards,
-        SystemTx::Staking,
-        SystemTx::Oracle,
-        SystemTx::OracleSlash,
-        SystemTx::HyperlaneSlash,
-        SystemTx::CycleTick,
+        SystemTx::Consensus {
+            step_index: CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX,
+            payload: Bytes::new(),
+        },
+        SystemTx::BeginBlock { step_index: 0 },
+        SystemTx::BeginBlock { step_index: 1 },
+        SystemTx::BeginBlock { step_index: 2 },
+        SystemTx::BeginBlock { step_index: 3 },
+        SystemTx::BeginBlock { step_index: 4 },
+        SystemTx::BeginBlock { step_index: 5 },
+        SystemTx::BeginBlock { step_index: 6 },
+        SystemTx::BeginBlock { step_index: 7 },
+        SystemTx::BeginBlock { step_index: 8 },
     ];
     let txs: Vec<TransactionSigned> = inputs
         .into_iter()
@@ -304,8 +365,16 @@ fn gas_12_system_prefix_aggregate_visible_gas_must_fit_block_cap() {
     let mut layout_txs = txs.clone();
     layout_txs.extend(end_block_txs());
     let layout = split_system_layout(&layout_txs).expect("worst-case system prefix layout splits");
-    validate_active_system_tx_set(&layout, BLOCK_NUMBER, true, false)
-        .expect("worst-case active system tx set validates");
+    validate_system_tx_set_for_publication(
+        &TEST_BLOCK_ORDER,
+        &layout,
+        BLOCK_NUMBER,
+        BlockSystemFlags {
+            has_boundary_outcome: true,
+            has_publication: false,
+        },
+    )
+    .expect("worst-case active system tx set validates");
     assert_eq!(txs.len(), canonical_inputs().len());
     assert!(txs.len() <= usize::from(MAX_SYSTEM_TXS_PER_BLOCK));
 
@@ -324,9 +393,59 @@ fn gas_12_system_prefix_aggregate_visible_gas_must_fit_block_cap() {
 
 #[test]
 fn gas_15_visible_system_tx_gas_must_not_exceed_visible_block_gas_limit_for_generic_replay() {
-    let cycle = system_tx(SystemTx::CycleTick, 1);
+    let cycle = system_tx(SystemTx::BeginBlock { step_index: 8 }, 1);
 
     assert_eq!(cycle.gas_limit(), 0);
     assert_eq!(system_tx_visible_gas_limit(cycle.input()).unwrap(), 0);
     assert!(cycle.gas_limit() <= USER_BLOCK_GAS_LIMIT);
+}
+
+#[test]
+fn stage_framing_roundtrips_exact_header_and_payload_bytes() {
+    assert_eq!(SYSTEM_CALLDATA_FRAMING_BYTES, 6);
+    assert_eq!(SYSTEM_TX_INPUT_VERSION, 3);
+    for (input, expected) in [
+        (
+            SystemTx::Consensus {
+                step_index: CONSENSUS_RADICLE_PUBLICATION_STEP_INDEX,
+                payload: Bytes::from_static(b"payload"),
+            },
+            b"OSCN\x03\x05payload".as_slice(),
+        ),
+        (
+            SystemTx::BeginBlock { step_index: 8 },
+            b"OSBB\x03\x08".as_slice(),
+        ),
+        (
+            SystemTx::EndBlock { step_index: 4 },
+            b"OSEB\x03\x04".as_slice(),
+        ),
+    ] {
+        assert_eq!(input.encode().unwrap().as_ref(), expected);
+        assert_eq!(SystemTx::decode(expected).unwrap(), input);
+    }
+}
+
+#[test]
+fn stage_framing_rejects_truncation_and_nonempty_lifecycle_payloads() {
+    for len in 0..SYSTEM_CALLDATA_FRAMING_BYTES {
+        assert_eq!(
+            SystemTx::decode(&b"OSCN\x03\x00"[..len]),
+            Err(SystemTxError::InputTooShort { len })
+        );
+    }
+    for input in [
+        SystemTx::BeginBlock { step_index: 0 },
+        SystemTx::EndBlock { step_index: 0 },
+    ] {
+        let mut bytes = input.encode().unwrap().to_vec();
+        bytes.push(0);
+        assert_eq!(
+            SystemTx::decode(&bytes),
+            Err(SystemTxError::NonEmptyStagePayload {
+                stage: input.stage(),
+                len: 1
+            })
+        );
+    }
 }
