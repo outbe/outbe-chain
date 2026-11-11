@@ -143,3 +143,44 @@ fn assembler_uses_only_active_builders_and_preserves_payloads() {
         Err(SystemTxPayloadBuildError::CertifiedParentAccountingHashMismatch { .. })
     ));
 }
+
+#[test]
+fn assembler_discards_begin_block_builder_bytes() {
+    use crate::{
+        block::{begin_step, ProtocolModule, ProtocolStep},
+        reshare_artifact::OutbeBlockArtifacts,
+        system_tx_context::{SystemTxBuildContext, SystemTxPayloadBuildError},
+    };
+    struct NonEmpty;
+    impl ProtocolModule for NonEmpty {
+        const NAME: &'static str = "non_empty";
+        fn build_payload(_: &SystemTxBuildContext<'_>) -> Result<Bytes, SystemTxPayloadBuildError> {
+            Ok(Bytes::from_static(b"discarded"))
+        }
+    }
+    const BEGIN: &[ProtocolStep] = &[begin_step::<NonEmpty>()];
+    let order = BlockOrder {
+        begin_block: BEGIN,
+        ..TEST_BLOCK_ORDER
+    };
+    let artifacts = OutbeBlockArtifacts::default();
+    let metadata = sample_metadata();
+    let ctx = SystemTxBuildContext {
+        regime: BlockHeightRegime::SteadyState,
+        block_number: 2,
+        parent_hash: metadata.finalized_block_hash,
+        artifacts: &artifacts,
+        parent_consensus_metadata: Some(&metadata),
+        pending_tee_bootstrap: None,
+        expected_tee_policy: None,
+    };
+    assert_eq!(
+        assemble_prefix_system_txs(&order, &ctx).unwrap(),
+        vec![
+            accounting(),
+            late_credits(),
+            fixtures::consensus(4, Bytes::new()),
+            SystemTx::BeginBlock { step_index: 0 }
+        ]
+    );
+}

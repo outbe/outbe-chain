@@ -173,8 +173,7 @@ pub fn assemble_prefix_system_txs(
         });
     }
     for planned in &plan.begin_block_steps {
-        let payload = (planned.step.build_payload)(ctx)?;
-        debug_assert!(payload.is_empty());
+        let _ = (planned.step.build_payload)(ctx)?;
         out.push(SystemTx::BeginBlock {
             step_index: planned.id.step_index,
         });

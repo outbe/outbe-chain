@@ -127,10 +127,12 @@ fn boundary_rejects_the_first_failure_in_system_transaction_order() {
 fn payload_validators_reject_trailing_bytes_and_cross_artifact_envelopes() {
     use super::{fixtures, TEST_BLOCK_ORDER};
     use crate::{
+        error::PrecompileError,
         reshare_artifact::{
             encode_outbe_block_artifacts, ConsensusHeaderArtifact, OutbeBlockArtifacts,
         },
-        system_tx_context::SystemTxValidationContext,
+        system_tx_context::{SystemTxPayloadValidationError, SystemTxValidationContext},
+        tee_attestation_v1::CodecError,
     };
     use alloy_primitives::Bytes;
     let boundary = fixtures::boundary();
@@ -165,7 +167,41 @@ fn payload_validators_reject_trailing_bytes_and_cross_artifact_envelopes() {
         validator(tx.payload(), &ctx).unwrap();
         let mut trailing = tx.payload().to_vec();
         trailing.push(0);
-        assert!(validator(&trailing, &ctx).is_err(), "{:?}", tx.step_id());
+        let result = validator(&trailing, &ctx);
+        match tx.step_index() {
+            0 => assert!(matches!(
+                result,
+                Err(SystemTxPayloadValidationError::ParentAccounting(
+                    ParentAccountingBindingError::PayloadDecode(PrecompileError::Revert(_))
+                ))
+            )),
+            1 => assert!(matches!(
+                result,
+                Err(SystemTxPayloadValidationError::LateCredits(
+                    LateCreditsBindingError::PayloadDecode(PrecompileError::Revert(_))
+                ))
+            )),
+            2 => assert!(matches!(
+                result,
+                Err(SystemTxPayloadValidationError::Boundary(
+                    BoundaryBindingError::PayloadDecode(PrecompileError::Revert(_))
+                ))
+            )),
+            3 => assert!(matches!(
+                result,
+                Err(SystemTxPayloadValidationError::TeeBootstrap {
+                    block_number: 2,
+                    source: CodecError::TrailingBytes(1)
+                })
+            )),
+            5 => assert!(matches!(
+                result,
+                Err(SystemTxPayloadValidationError::Publication(
+                    PublicationBindingError::PayloadDecode(PrecompileError::Revert(_))
+                ))
+            )),
+            _ => unreachable!("fixture must exercise one of the five payload validators"),
+        }
     }
     let contaminated = encode_outbe_block_artifacts(&artifacts).unwrap();
     assert!(matches!(
@@ -176,7 +212,12 @@ fn payload_validators_reject_trailing_bytes_and_cross_artifact_envelopes() {
         validate_late_finalize_credits_payload(&contaminated, &artifacts),
         Err(LateCreditsBindingError::NonCanonical)
     ));
-    assert!(validate_parent_accounting_payload(&Bytes::new(), ctx.parent_hash).is_err());
+    assert!(matches!(
+        validate_parent_accounting_payload(&Bytes::new(), ctx.parent_hash),
+        Err(ParentAccountingBindingError::PayloadDecode(
+            PrecompileError::Revert(_)
+        ))
+    ));
 }
 
 #[test]

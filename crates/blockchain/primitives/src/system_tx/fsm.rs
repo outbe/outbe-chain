@@ -99,7 +99,6 @@ impl BlockSystemPlan {
         let collect_active_steps = |stage: BlockExecutionStage,
                                     steps: &'static [ProtocolStep]|
          -> Vec<PlannedSystemStep> {
-            debug_assert!(u8::try_from(steps.len()).is_ok());
             steps
                 .iter()
                 .enumerate()
@@ -294,7 +293,6 @@ impl BlockExecutionFsm {
 
     /// Transitions `MidBlock -> EndBlock` (or `MidBlock -> Completed` when `block_number`
     /// has no `end_block` system transactions). Idempotent if already in `EndBlock` or `Completed`.
-    /// Replaces `OutbeBlockExecutor::enter_end_block_phase_if_needed`.
     pub fn enter_end_block(
         &mut self,
         block_number: u64,

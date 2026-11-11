@@ -23,7 +23,7 @@ mod witness;
 
 pub use input::{assemble_prefix_system_txs, SystemTx, SystemTxStepId};
 
-/// Four-byte kind selector for a system transaction.
+/// Four-byte stage selector for a system transaction.
 pub type SysTxSelector = [u8; 4];
 
 /// Body-zone position of a system transaction.
@@ -126,7 +126,7 @@ pub enum SystemTxError {
     MissingBoundaryOutcomeBody,
     #[error("system tx codec error: {0}")]
     Codec(String),
-    #[error("calldata kind mismatch: expected {expected}, actual {actual}")]
+    #[error("calldata step mismatch: expected {expected}, actual {actual}")]
     CalldataKindMismatch {
         expected: &'static str,
         actual: &'static str,
@@ -146,7 +146,7 @@ pub enum SystemTxError {
         actual: BodyZone,
     },
     #[error(
-        "system tx kind order violation in {zone:?}: previous {previous:?}, current {current:?}"
+        "system tx step order violation in {zone:?}: previous {previous:?}, current {current:?}"
     )]
     OutOfOrder {
         zone: BodyZone,

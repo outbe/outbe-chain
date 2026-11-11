@@ -36,17 +36,17 @@ impl From<ZeroGenesisTimestamp> for PrecompileError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum BlockHeightRegime {
     /// Block 0: Canonical genesis block.
-    /// Carries no transactions, no begin-zone system txs, and no execution witness.
+    /// Carries no transactions, no prefix system txs, and no execution witness.
     Genesis,
     /// Block 1: One-time network bootstrap block.
-    /// Carries begin-zone system txs (mandatory epoch-0 `BoundaryOutcome`, mandatory
+    /// Carries prefix system txs (mandatory epoch-0 `BoundaryOutcome`, mandatory
     /// `TeeBootstrap`, `ValidatorLiveness`, optional `RadiclePublication`, and the
     /// 9 `BEGIN_BLOCK_ORDER` modules), no parent finalization accounting
     /// (`CertifiedParentAccounting` / `LateFinalizeCredits`), and no user transactions.
     GenesisBootstrap,
     /// Block `>= 2`: Steady-state execution regime.
     /// Begins with mandatory `CertifiedParentAccounting` (ordinal 0) and
-    /// `LateFinalizeCredits` (ordinal 1), followed by the remaining begin-zone
+    /// `LateFinalizeCredits` (ordinal 1), followed by the remaining prefix
     /// system txs and user transactions.
     SteadyState,
 }
