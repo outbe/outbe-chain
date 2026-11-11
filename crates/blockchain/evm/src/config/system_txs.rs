@@ -246,7 +246,8 @@ impl OutbeEvmConfig {
         parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
         proposer_evm_address: Option<Address>,
     ) -> Result<Option<Recovered<TransactionSigned>>, BlockExecutionError> {
-        if !BlockHeightRegime::for_block(block_number).has_parent_finalization_accounting() {
+        let regime = BlockHeightRegime::for_block(block_number);
+        if !regime.has_parent_finalization_accounting() {
             return Ok(None);
         }
 
@@ -263,21 +264,38 @@ impl OutbeEvmConfig {
             .into());
         }
 
-        let metadata =
-            parent_consensus_metadata.ok_or(SystemTxBuildError::MissingPhase1PrebuildMetadata)?;
-        if metadata.finalized_block_hash != parent_hash {
-            return Err(SystemTxBuildError::Phase1PrebuildMetadataHashMismatch {
-                expected: parent_hash,
-                actual: metadata.finalized_block_hash,
+        let block_order = self.runtime_host.block_order();
+        let step = block_order
+            .consensus
+            .get(usize::from(CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX))
+            .ok_or(SystemTxBuildError::MissingPhase1PrebuildMetadata)?;
+        let empty_artifacts = OutbeBlockArtifacts::default();
+        let build_ctx = SystemTxBuildContext {
+            regime,
+            block_number,
+            parent_hash,
+            artifacts: &empty_artifacts,
+            parent_consensus_metadata: parent_consensus_metadata.as_ref(),
+            pending_tee_bootstrap: None,
+            expected_tee_policy: None,
+        };
+        let payload = (step.build_payload)(&build_ctx).map_err(|error| match error {
+            outbe_primitives::system_tx_context::SystemTxPayloadBuildError::MissingParentConsensusMetadata { .. } => {
+                SystemTxBuildError::MissingPhase1PrebuildMetadata
             }
-            .into());
-        }
+            outbe_primitives::system_tx_context::SystemTxPayloadBuildError::CertifiedParentAccountingHashMismatch {
+                parent_hash,
+                metadata_hash,
+            } => SystemTxBuildError::Phase1PrebuildMetadataHashMismatch {
+                expected: parent_hash,
+                actual: metadata_hash,
+            },
+            other => SystemTxBuildError::from(other),
+        })?;
 
         let input = SystemTx::Consensus {
             step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
-            payload: metadata
-                .encode()
-                .map_err(SystemTxBuildError::phase1_prebuild_encode_input)?,
+            payload,
         };
         let calldata = input
             .encode()

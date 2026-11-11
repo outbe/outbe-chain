@@ -16,6 +16,9 @@ pub struct AccountedParentArtifact {
     pub state_root: Option<B256>,
 }
 
+/// Pre-verified signer indices per late-finalize batch.
+pub type VerifiedLateCreditSigners = Vec<Vec<usize>>;
+
 /// Execution context supplied beside system-transaction calldata.
 ///
 /// Money fields stay out of signed calldata. The executor installs this value
@@ -29,7 +32,7 @@ pub struct SystemTxExecutionContext {
     /// `B256::ZERO` when that preflight did not run.
     pub canonical_vrf_proof_hash: B256,
     /// Pre-verified signer indices per late-finalize batch.
-    pub verified_late_credit_signers: Option<Arc<Vec<Vec<usize>>>>,
+    pub verified_late_credit_signers: Option<Arc<VerifiedLateCreditSigners>>,
     /// Block gas limit for user transactions.
     pub block_gas_limit: u64,
     /// Cumulative gas consumed by user transactions before end-block.
@@ -73,7 +76,7 @@ pub struct SystemTxContext {
     pub payload: Bytes,
     pub finalized_summary: Option<AccountedParentArtifact>,
     pub canonical_vrf_proof_hash: B256,
-    pub verified_late_credit_signers: Option<Arc<Vec<Vec<usize>>>>,
+    pub verified_late_credit_signers: Option<Arc<VerifiedLateCreditSigners>>,
     pub chain_spec_tee_policy: Option<TeePolicyV1>,
 }
 

@@ -51,6 +51,30 @@ fn evm_config_binds_factory_to_canonical_chain_spec_genesis() {
             .genesis_timestamp(),
         chain_spec.genesis_timestamp()
     );
+
+    let signer = std::sync::Arc::new(
+        crate::OutbeEvmSigner::from_secret_bytes([1u8; 32]).expect("test proposer key"),
+    );
+    let metadata = outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata {
+        finalized_block_number: 1,
+        finalized_block_hash: expected,
+        ..Default::default()
+    };
+    let err = config
+        .with_evm_signer(signer)
+        .build_signed_phase1_tx(
+            2,
+            GRAMINE_DIRECT_DEV_CHAIN_ID,
+            expected,
+            Some(metadata),
+            None,
+        )
+        .expect_err("stub_host empty BlockOrder must fail closed in build_signed_phase1_tx");
+    assert!(
+        err.to_string()
+            .contains("missing parent consensus metadata for Phase 1 prebuild"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]
