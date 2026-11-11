@@ -41,20 +41,18 @@ impl ProtocolModule for ParentAccountingModule {
     fn build_payload(
         ctx: &SystemTxBuildContext<'_>,
     ) -> std::result::Result<Bytes, SystemTxPayloadBuildError> {
-        let metadata = ctx.parent_consensus_metadata.ok_or(
-            SystemTxPayloadBuildError::MissingParentConsensusMetadata {
+        match ctx.parent_consensus_metadata {
+            None => Err(SystemTxPayloadBuildError::MissingParentConsensusMetadata {
                 block_number: ctx.block_number,
-            },
-        )?;
-        if metadata.finalized_block_hash != ctx.parent_hash {
-            return Err(
+            }),
+            Some(metadata) if metadata.finalized_block_hash != ctx.parent_hash => Err(
                 SystemTxPayloadBuildError::CertifiedParentAccountingHashMismatch {
                     parent_hash: ctx.parent_hash,
                     metadata_hash: metadata.finalized_block_hash,
                 },
-            );
+            ),
+            Some(metadata) => Ok(metadata.encode()?),
         }
-        Ok(metadata.encode()?)
     }
 
     fn validate_payload(

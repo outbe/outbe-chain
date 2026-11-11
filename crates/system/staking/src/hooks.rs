@@ -30,7 +30,7 @@ pub fn process_unbonding(storage: StorageHandle, timestamp: u64) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use outbe_primitives::block::BlockContext;
+    use outbe_primitives::block::{begin_step, BlockContext};
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 
     #[test]
@@ -51,7 +51,7 @@ mod tests {
                 },
                 storage,
             );
-            <StakingModule as ProtocolModule>::begin_block(&ctx).unwrap();
+            (begin_step::<StakingModule>().run)(&ctx).unwrap();
         });
     }
 }
