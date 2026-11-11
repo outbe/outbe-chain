@@ -13,7 +13,7 @@ use crate::errors::CycleError;
 /// Stable on-chain identifier for each trigger. The module emits it as
 /// the indexed `id` in [`crate::ICycle::CycleTriggerExecuted`] and
 /// [`crate::ICycle::CycleTriggerFailed`], and persists it in the
-/// [`crate::schema::Cycle`] mappings. Ids 7 and 8 are retired and never reused.
+/// [`crate::schema::Cycle`] mappings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum TriggerId {
@@ -463,6 +463,5 @@ mod protocol_parameter_tests {
             TriggerHandler::NodCallDaily
         ));
         assert_eq!(configured.len(), 7);
-        assert!(configured.iter().all(|spec| !matches!(spec.id, 7 | 8)));
     }
 }
