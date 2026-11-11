@@ -6,11 +6,16 @@
 //! `liveness.rs`).
 
 mod abi;
+// The validator port uses these modules. The submit loop wires them in.
+#[allow(dead_code)]
+mod checkpoint;
 mod client;
 mod config;
 mod errors;
 mod health;
 mod liveness;
+#[allow(dead_code)]
+mod merkle;
 
 use std::sync::Arc;
 
