@@ -9,7 +9,7 @@ build = "build.rs"
 [features]
 default = []
 production-enclave = ["outbe-runtime/production-enclave"]
-snapshot-integration = ["outbe-engine/snapshot-integration"]
+snapshot-integration = ["outbe-runtime/snapshot-integration"]
 test-marshal-drop = ["outbe-consensus/test-marshal-drop"]
 e2e-test = ["outbe-runtime/e2e-test", "outbe-consensus/e2e-byzantine-preannounce"]
 test-protocol-overrides = [
@@ -22,12 +22,10 @@ name = "outbe-chain"
 path = "src/main.rs"
 
 [dependencies]
-outbe-system-common.workspace = true
 outbe-chain-constants.workspace = true
 outbe-runtime.workspace = true
 outbe-snapshot.workspace = true
 outbe-consensus.workspace = true
-outbe-engine.workspace = true
 outbe-primitives.workspace = true
 outbe-tee.workspace = true
 

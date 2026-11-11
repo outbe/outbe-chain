@@ -7828,12 +7828,10 @@ dependencies = [
  "k256 0.13.4",
  "outbe-chain-constants",
  "outbe-consensus",
- "outbe-engine",
  "outbe-nodfactory",
  "outbe-primitives",
  "outbe-runtime",
  "outbe-snapshot",
- "outbe-system-common",
  "outbe-tee",
  "outbe-teeregistry",
  "outbe-validatorset",
@@ -7917,7 +7915,6 @@ dependencies = [
  "outbe-simplex",
  "outbe-validatorset",
  "outbe-vote",
- "serde",
  "serde_json",
  "thiserror 2.0.18",
 ]
@@ -7927,11 +7924,8 @@ name = "outbe-consensus"
 version = "0.1.0"
 dependencies = [
  "alloy-consensus",
- "alloy-eips",
  "alloy-primitives",
- "alloy-rlp",
  "alloy-rpc-types-engine",
- "argon2",
  "bytes",
  "clap",
  "commonware-actor",
@@ -7952,7 +7946,6 @@ dependencies = [
  "hex",
  "jsonrpsee",
  "k256 0.13.4",
- "keyring",
  "metrics",
  "metrics-util",
  "outbe-consensus",
@@ -7964,7 +7957,6 @@ dependencies = [
  "proptest",
  "radicle-crypto",
  "rand 0.10.2",
- "rand 0.8.6",
  "rand_core 0.10.1",
  "rand_core 0.6.4",
  "reth-chainspec",
@@ -7972,8 +7964,6 @@ dependencies = [
  "reth-payload-builder",
  "reth-primitives-traits",
  "reth-provider",
- "reth-stages-types",
- "ring",
  "serde",
  "serde_json",
  "tempfile",
@@ -8147,7 +8137,6 @@ dependencies = [
  "bytes",
  "clap",
  "commonware-actor",
- "commonware-broadcast",
  "commonware-codec",
  "commonware-consensus",
  "commonware-cryptography",
@@ -8162,8 +8151,6 @@ dependencies = [
  "eyre",
  "futures",
  "hex",
- "jsonrpsee",
- "k256 0.13.4",
  "metrics",
  "metrics-util",
  "outbe-consensus",
@@ -8182,7 +8169,6 @@ dependencies = [
  "reth-provider",
  "reth-stages-types",
  "reth-storage-api",
- "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
@@ -8228,7 +8214,6 @@ dependencies = [
  "reth-rpc-eth-api",
  "reth-trie",
  "revm",
- "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
@@ -9140,7 +9125,6 @@ dependencies = [
  "commonware-codec",
  "commonware-consensus",
  "commonware-cryptography",
- "commonware-macros",
  "commonware-math",
  "commonware-p2p",
  "commonware-parallel",
@@ -9149,9 +9133,7 @@ dependencies = [
  "commonware-storage",
  "commonware-utils",
  "eyre",
- "futures",
  "hex",
- "k256 0.13.4",
  "keyring",
  "metrics",
  "metrics-util",
@@ -9169,10 +9151,8 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
- "tokio",
  "tracing",
  "tracing-subscriber",
- "zeroize",
 ]
 
 [[package]]
@@ -9332,8 +9312,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "alloy-trie",
- "ark-bn254",
- "ark-ff 0.6.0",
  "commonware-codec",
  "commonware-consensus",
  "commonware-cryptography",
@@ -9346,13 +9324,10 @@ dependencies = [
  "k256 0.13.4",
  "outbe-core-common",
  "outbe-enclave",
- "outbe-fidelity-math",
- "outbe-lysis",
  "outbe-primitives",
  "outbe-simplex",
  "outbe-tee",
  "outbe-tribute",
- "outbe-zk",
  "postcard",
  "proptest",
  "rand 0.10.2",
@@ -9362,7 +9337,6 @@ dependencies = [
  "reth-primitives-traits",
  "reth-trie",
  "ring",
- "serde",
  "serde_json",
  "snow",
  "tempfile",
@@ -9579,7 +9553,6 @@ dependencies = [
 name = "outbe-zerofee"
 version = "0.1.0"
 dependencies = [
- "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
  "alloy-sol-types",
@@ -9592,7 +9565,6 @@ dependencies = [
  "outbe-zerofee",
  "proptest",
  "revm",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -14401,9 +14373,9 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "1.1.4"
+version = "1.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190"
+checksum = "e5e76742e5294153d4dde1207dbec5bdd81eef6fabdc0d2118babadabfd858aa"
 dependencies = [
  "bitflags 2.13.2",
  "errno",
@@ -17657,7 +17629,6 @@ dependencies = [
  "filetime",
  "hex",
  "libc",
- "outbe-evm",
  "outbe-genesis-cli",
  "outbe-primitives",
  "outbe-simplex",

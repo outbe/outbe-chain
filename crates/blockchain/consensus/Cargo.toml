@@ -44,21 +44,15 @@ commonware-resolver = { git = "https://github.com/commonwarexyz/monorepo", tag =
 reth-ethereum = { workspace = true, features = ["node", "node-api", "storage-api", "network", "provider"] }
 reth-payload-builder.workspace = true
 reth-chainspec.workspace = true
-reth-stages-types.workspace = true
 
 # Alloy
 alloy-consensus.workspace = true
-alloy-eips.workspace = true
 alloy-primitives.workspace = true
-alloy-rlp.workspace = true
 alloy-rpc-types-engine.workspace = true
 bytes.workspace = true
 
 # Crypto (key encryption + EVM key generation)
-ring.workspace = true
 k256.workspace = true
-argon2.workspace = true
-keyring.workspace = true
 
 # Utilities
 clap.workspace = true
@@ -66,7 +60,6 @@ jsonrpsee = { version = "0.26", default-features = false, features = ["http-clie
 eyre.workspace = true
 futures.workspace = true
 hex.workspace = true
-rand.workspace = true
 rand-commonware.workspace = true
 rand-core-commonware.workspace = true
 serde.workspace = true
