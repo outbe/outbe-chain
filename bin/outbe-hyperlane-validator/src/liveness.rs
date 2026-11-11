@@ -184,16 +184,23 @@ impl Liveness {
         if signer == Address::ZERO {
             signer = self.validator;
         }
+        // The Outbe domain is the Outbe chain id.
+        let outbe_domain = u32::try_from(self.chain_id)
+            .with_context(|| format!("chain_id {} is not a Hyperlane domain", self.chain_id))?;
         let output = client::eth_call(
             provider,
             HYPERLANE_CONTROLLER_ADDRESS,
-            IHyperlaneController::validatorAnnounceCall {}.abi_encode(),
+            IHyperlaneController::validatorAnnounceByDomainCall {
+                domain: outbe_domain,
+            }
+            .abi_encode(),
             BlockId::latest(),
         )
         .await
-        .with_context(|| "hyperlane validatorAnnounce() failed")?;
-        let announce = IHyperlaneController::validatorAnnounceCall::abi_decode_returns(&output)
-            .with_context(|| "hyperlane validatorAnnounce() decode failed")?;
+        .with_context(|| "hyperlane validatorAnnounceByDomain() failed")?;
+        let announce =
+            IHyperlaneController::validatorAnnounceByDomainCall::abi_decode_returns(&output)
+                .with_context(|| "hyperlane validatorAnnounceByDomain() decode failed")?;
         let output = client::eth_call(
             provider,
             announce,

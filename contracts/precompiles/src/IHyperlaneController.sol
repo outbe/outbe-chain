@@ -27,6 +27,7 @@ interface IHyperlaneController {
     error InvalidDomain();
     error IsmLengthMismatch();
     error HookLengthMismatch();
+    error ValidatorAnnounceLengthMismatch();
     error UnknownHook(uint32 domain);
     error NotActiveValidator(address caller);
     error SignerMismatch(address validator, address expected, address recovered);
@@ -56,20 +57,21 @@ interface IHyperlaneController {
     event ApprovedActionApplied(uint256 indexed proposalId);
     event ApprovedActionExpired(uint256 indexed proposalId);
 
-    /// One-shot bootstrap. `domains[i] -> (isms[i], hooks[i])` must include the
-    /// Outbe domain (= chain id). `hooks` are the MerkleTreeHook addresses whose
-    /// checkpoints the validators sign. `validatorAnnounce` is the Outbe
-    /// ValidatorAnnounce where validators publish their checkpoint bucket.
+    /// One-shot bootstrap. `domains[i] -> (isms[i], hooks[i], validatorAnnounces[i])`
+    /// must include the Outbe domain (= chain id). `hooks` are the MerkleTreeHook
+    /// addresses whose checkpoints the validators sign. `validatorAnnounces` are
+    /// the ValidatorAnnounce contracts where validators publish the location of
+    /// their signed checkpoints for that domain.
     /// Caller must be the bootstrap admin and the current owner of the Outbe
     /// ISM (the deployer that staged `transferOwnership` to `CROSSCHAIN_BRIDGE`).
     /// `CROSSCHAIN_BRIDGE` accepts that pending ownership, and must already own
     /// `icaRouter`.
     function initialize(
         address icaRouter,
-        address validatorAnnounce,
         uint32[] calldata domains,
         address[] calldata isms,
-        address[] calldata hooks
+        address[] calldata hooks,
+        address[] calldata validatorAnnounces
     ) external;
 
     /// Registers the key this validator signs Hyperlane checkpoints with, when
@@ -101,14 +103,14 @@ interface IHyperlaneController {
     /// InterchainAccountRouter on Outbe.
     function icaRouter() external view returns (address);
 
-    /// ValidatorAnnounce on Outbe.
-    function validatorAnnounce() external view returns (address);
-
     /// ISM for `domain`, or zero when not configured.
     function ismByDomain(uint32 domain) external view returns (address);
 
     /// MerkleTreeHook for `domain`, or zero when not configured.
     function hookByDomain(uint32 domain) external view returns (address);
+
+    /// ValidatorAnnounce on the chain of `domain`, or zero when not configured.
+    function validatorAnnounceByDomain(uint32 domain) external view returns (address);
 
     function domains() external view returns (uint32[] memory);
 

@@ -64,7 +64,8 @@ bind_address = "0.0.0.0:9003"
 
 The configuration has no bucket settings. On every poll, the daemon:
 
-1. Reads `HyperlaneController.domains()` and `validatorAnnounce()`.
+1. Reads `HyperlaneController.domains()` and
+   `validatorAnnounceByDomain(<Outbe chain id>)`.
 2. Reads the latest announced location of the validator from
    `ValidatorAnnounce.getAnnouncedStorageLocations`
    (`s3+http://host:port/<validator>/<folder>`).

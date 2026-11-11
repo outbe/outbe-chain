@@ -128,11 +128,6 @@
         "internalType": "address"
       },
       {
-        "name": "validatorAnnounce",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
         "name": "domains",
         "type": "uint32[]",
         "internalType": "uint32[]"
@@ -144,6 +139,11 @@
       },
       {
         "name": "hooks",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "validatorAnnounces",
         "type": "address[]",
         "internalType": "address[]"
       }
@@ -274,8 +274,14 @@
   },
   {
     "type": "function",
-    "name": "validatorAnnounce",
-    "inputs": [],
+    "name": "validatorAnnounceByDomain",
+    "inputs": [
+      {
+        "name": "domain",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
     "outputs": [
       {
         "name": "",
@@ -767,5 +773,10 @@
         "internalType": "uint32"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "ValidatorAnnounceLengthMismatch",
+    "inputs": []
   }
 ]

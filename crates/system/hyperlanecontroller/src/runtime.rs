@@ -13,24 +13,24 @@ use crate::sol_ext::{ICrosschainBridge, IOwnable, IStorageMultisigIsm};
 /// Hyperlane's multisig threshold is a `uint8`.
 const MAX_VALIDATORS: usize = u8::MAX as usize;
 
-/// The one-shot `initialize` input: the ICA router, the validator announce
-/// contract, and the `domain -> (ISM, hook)` table as parallel lists.
+/// The one-shot `initialize` input: the ICA router and the
+/// `domain -> (ISM, hook, ValidatorAnnounce)` table as parallel lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ControllerBootstrap<'a> {
     /// Interchain Account router that the controller must already own.
     pub ica_router: Address,
-    /// Hyperlane validator announce contract.
-    pub validator_announce: Address,
     /// Domains of the table. The local domain must be one of them.
     pub domains: &'a [u32],
     /// ISM of each domain, in the order of `domains`.
     pub isms: &'a [Address],
     /// Post-dispatch hook of each domain, in the order of `domains`.
     pub hooks: &'a [Address],
+    /// ValidatorAnnounce of each domain, in the order of `domains`.
+    pub validator_announces: &'a [Address],
 }
 
 impl ControllerBootstrap<'_> {
-    /// Checks the table shape and the announce address.
+    /// Checks the table shape.
     fn check_shape(&self) -> Result<()> {
         if self.domains.len() != self.isms.len() {
             return Err(HyperlaneControllerError::IsmLengthMismatch.into());
@@ -38,8 +38,8 @@ impl ControllerBootstrap<'_> {
         if self.domains.len() != self.hooks.len() {
             return Err(HyperlaneControllerError::HookLengthMismatch.into());
         }
-        if self.validator_announce == Address::ZERO {
-            return Err(HyperlaneControllerError::InvalidAddress.into());
+        if self.domains.len() != self.validator_announces.len() {
+            return Err(HyperlaneControllerError::ValidatorAnnounceLengthMismatch.into());
         }
         Ok(())
     }
@@ -170,16 +170,15 @@ impl HyperlaneControllerContract<'_> {
             ),
         )?;
         self.ica_router.write(bootstrap.ica_router)?;
-        self.validator_announce
-            .write(bootstrap.validator_announce)?;
         self.gas_markup_bps.write(crate::gas::GAS_MARKUP_BPS)?;
         let table = bootstrap
             .domains
             .iter()
             .zip(bootstrap.isms)
-            .zip(bootstrap.hooks);
-        for ((domain, ism), hook) in table {
-            self.write_domain(*domain, *ism, *hook)?;
+            .zip(bootstrap.hooks)
+            .zip(bootstrap.validator_announces);
+        for (((domain, ism), hook), validator_announce) in table {
+            self.write_domain(*domain, *ism, *hook, *validator_announce)?;
             if *domain != local {
                 accept_remote_ism(&self.storage, *domain, *ism)?;
             }
