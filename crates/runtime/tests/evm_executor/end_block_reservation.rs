@@ -1,7 +1,7 @@
 // Unconditional reservation, phase cursor, pass ordering, and mid-block gas snapshot tests.
 
 use super::*;
-use outbe_primitives::system_tx::{BlockExecutionStage, SystemTxPhase};
+use outbe_primitives::system_tx::BlockExecutionStage;
 
 #[test]
 fn header_preparation_does_not_run_post_execution_or_enter_end_block_phase() {
@@ -12,9 +12,9 @@ fn header_preparation_does_not_run_post_execution_or_enter_end_block_phase() {
     let mut state = state_with_active_proposer(OWNER);
     let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
     let mut executor = config.create_executor(evm, execution_ctx(None, Bytes::new()));
-    assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::UserTxs);
+    assert_eq!(executor.fsm.stage(), BlockExecutionStage::MidBlock);
     executor.prepare_final_header_artifacts(0).unwrap();
-    assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::UserTxs);
+    assert_eq!(executor.fsm.stage(), BlockExecutionStage::MidBlock);
     assert!(executor.ethereum_post_execution_requests.is_none());
     assert!(executor.receipts().is_empty());
 }
@@ -31,10 +31,9 @@ fn genesis_with_hooks_completes_empty_begin_and_end_phases() {
     ctx.execute_outbe_block_hooks = true;
     let mut executor = config.create_executor(evm, ctx);
     executor.apply_pre_execution_changes().unwrap();
-    assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::UserTxs);
+    assert_eq!(executor.fsm.stage(), BlockExecutionStage::Completed);
     executor.apply_end_block_phase().unwrap();
     executor.prepare_final_header_artifacts(0).unwrap();
-    assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::EndBlock);
     assert_eq!(executor.fsm.stage(), BlockExecutionStage::Completed);
     assert!(executor.receipts().is_empty());
     executor.prepare_final_header_artifacts(0).unwrap();
@@ -137,7 +136,7 @@ fn exact_capacity_commits_actual_gas_then_captures_end_phase_capacity() {
         let body_index = executor.body_tx_index;
         executor.apply_end_block_phase().unwrap();
         assert_eq!(executor.receipts().len(), receipts + 5);
-        assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::EndBlock);
+        assert_eq!(executor.fsm.stage(), BlockExecutionStage::Completed);
         executor.apply_end_block_phase().unwrap();
         assert_eq!(executor.receipts().len(), receipts + 5);
         assert_eq!(executor.body_tx_index, body_index);
@@ -145,7 +144,7 @@ fn exact_capacity_commits_actual_gas_then_captures_end_phase_capacity() {
 }
 
 #[test]
-fn end_phase_uses_authoritative_counters_without_rechecking_begin_cursor() {
+fn end_phase_uses_authoritative_counters_from_standalone_mid_block() {
     for hooks in [true, false] {
         let signer = test_evm_signer();
         let config = OutbeEvmConfig::new(
@@ -162,20 +161,10 @@ fn end_phase_uses_authoritative_counters_without_rechecking_begin_cursor() {
         ctx.execute_outbe_block_hooks = hooks;
         ctx.proposer_evm_address = Some(signer.address());
         let mut executor = config.create_executor(evm, ctx);
-        executor.system_tx_phase_cursor = SystemTxPhase::UserTxs;
-        if hooks {
-            executor.fsm =
-                outbe_primitives::system_tx::BlockExecutionFsm::for_block(2, false, false, false);
-            for kind in
-                outbe_primitives::system_tx::BlockSystemPlan::for_block(2, false, false, false)
-                    .begin_zone_kinds()
-            {
-                executor.fsm.on_system_tx(kind).unwrap();
-            }
-        }
+        assert_eq!(executor.fsm.stage(), BlockExecutionStage::MidBlock);
         executor.inner.cumulative_tx_gas_used = 18_000_000;
         executor.apply_end_block_phase().unwrap();
-        assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::EndBlock);
+        assert_eq!(executor.fsm.stage(), BlockExecutionStage::Completed);
         assert_eq!(executor.receipts().len(), 5);
         executor.inner.cumulative_tx_gas_used = executor.inner.evm.block().gas_limit() + 1;
         assert!(executor.finish().is_err());
@@ -207,7 +196,7 @@ fn eip8037_reservation_preserves_regular_cap_and_full_state_admission() {
     executor.inner.block_state_gas_used = 18_000_000;
     assert_eq!(executor.accounted_block_gas(), 18_000_000);
     executor.apply_end_block_phase().unwrap();
-    assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::EndBlock);
+    assert_eq!(executor.fsm.stage(), BlockExecutionStage::Completed);
 }
 
 #[test]
@@ -232,16 +221,29 @@ fn end_block_parity_proposer_vs_verifier_across_regimes() {
         let mut proposer_exec = config.create_executor(proposer_evm, proposer_ctx);
         proposer_exec.apply_end_block_phase().unwrap();
         let staged = proposer_exec.take_staged_end_block_txs();
+        for (step_index, tx) in staged.iter().enumerate() {
+            let ordinal = outbe_primitives::system_tx::end_block_nonce_ordinal(
+                u8::try_from(step_index).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                tx.tx().nonce(),
+                outbe_primitives::system_tx::system_tx_nonce(block_number, ordinal).unwrap()
+            );
+            assert_eq!(
+                SystemTx::decode(tx.tx().input()).unwrap(),
+                SystemTx::EndBlock {
+                    step_index: u8::try_from(step_index).unwrap()
+                }
+            );
+        }
 
         if block_number < 2 {
             assert!(staged.is_empty());
-            assert_eq!(
-                proposer_exec.system_tx_phase_cursor,
-                SystemTxPhase::EndBlock
-            );
+            assert_eq!(proposer_exec.fsm.stage(), BlockExecutionStage::Completed);
             // Any end-block system tx submitted at Genesis or GenesisBootstrap must be rejected.
             let fake_call = config
-                .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::NodFactory)
+                .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::EndBlock { step_index: 0 })
                 .unwrap();
             let mut verifier_state = state_with_active_proposer(proposer);
             let verifier_evm = config.evm_with_env(
@@ -272,10 +274,7 @@ fn end_block_parity_proposer_vs_verifier_across_regimes() {
                 verifier_exec.inner.cumulative_tx_gas_used,
                 proposer_exec.inner.cumulative_tx_gas_used
             );
-            assert_eq!(
-                verifier_exec.system_tx_phase_cursor,
-                proposer_exec.system_tx_phase_cursor
-            );
+            assert_eq!(verifier_exec.fsm.stage(), proposer_exec.fsm.stage());
         }
     }
 }
@@ -298,17 +297,17 @@ fn end_block_cursor_rejects_wrong_order_duplicate_or_mismatched_gas_limit() {
 
     // 1. GemFactory before NodFactory must fail with SystemTxPhaseMismatch.
     let premature_gem = config
-        .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::GemFactory)
+        .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::EndBlock { step_index: 1 })
         .unwrap();
     let err = executor.execute_transaction(premature_gem).unwrap_err();
-    assert!(err.to_string().contains("NodFactory"));
+    assert!(err.to_string().contains("nod_factory"));
 
     // 2. NodFactory with non-zero gas_limit must fail with EndBlockGasLimitMismatch.
     let mut bad_unsigned = outbe_primitives::system_tx::build_unsigned_system_tx(
-        outbe_primitives::system_tx::NOD_FACTORY_ORDINAL,
+        outbe_primitives::system_tx::end_block_nonce_ordinal(0).unwrap(),
         2,
         CHAIN_ID,
-        SystemTx::NodFactory.encode().unwrap(),
+        SystemTx::EndBlock { step_index: 0 }.encode().unwrap(),
     )
     .unwrap();
     bad_unsigned.gas_limit = 1;
@@ -317,32 +316,29 @@ fn end_block_cursor_rejects_wrong_order_duplicate_or_mismatched_gas_limit() {
         proposer,
     );
     let err = executor.execute_transaction(bad_limit_nod).unwrap_err();
-    assert!(err.to_string().contains("NodFactory"));
+    assert!(err.to_string().contains("nod_factory"));
 
     // 3. Valid NodFactory transitions cursor to EndBlockGemFactory.
     let valid_nod = config
-        .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::NodFactory)
+        .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::EndBlock { step_index: 0 })
         .unwrap();
     let nod_gas = executor
         .execute_transaction(valid_nod.clone())
         .unwrap()
         .tx_gas_used();
     assert_eq!(nod_gas, 0);
-    assert_eq!(
-        executor.system_tx_phase_cursor,
-        SystemTxPhase::EndBlockGemFactory
-    );
+    assert_eq!(executor.fsm.end_cursor(), 1);
 
     // 4. Duplicate NodFactory when cursor is EndBlockGemFactory must fail.
     let err = executor.execute_transaction(valid_nod).unwrap_err();
-    assert!(err.to_string().contains("GemFactory"));
+    assert!(err.to_string().contains("gem_factory"));
 
     // 5. Remaining 4 EndBlock system txs transition cursor to EndBlock, and a duplicate is rejected.
     for (input, expected_cursor) in [
-        (SystemTx::GemFactory, SystemTxPhase::EndBlockIntexFactory),
-        (SystemTx::IntexFactory, SystemTxPhase::EndBlockCredisFactory),
-        (SystemTx::CredisFactory, SystemTxPhase::EndBlockGemCleanup),
-        (SystemTx::GemCleanup, SystemTxPhase::EndBlock),
+        (SystemTx::EndBlock { step_index: 1 }, 2),
+        (SystemTx::EndBlock { step_index: 2 }, 3),
+        (SystemTx::EndBlock { step_index: 3 }, 4),
+        (SystemTx::EndBlock { step_index: 4 }, 5),
     ] {
         let tx = config
             .build_end_system_tx(2, CHAIN_ID, proposer, input)
@@ -352,8 +348,16 @@ fn end_block_cursor_rejects_wrong_order_duplicate_or_mismatched_gas_limit() {
             .unwrap()
             .tx_gas_used();
         assert_eq!(gas, 0);
-        assert_eq!(executor.system_tx_phase_cursor, expected_cursor);
-        if matches!(expected_cursor, SystemTxPhase::EndBlock) {
+        assert_eq!(executor.fsm.end_cursor(), expected_cursor);
+        assert_eq!(
+            executor.fsm.stage(),
+            if expected_cursor == 5 {
+                BlockExecutionStage::Completed
+            } else {
+                BlockExecutionStage::EndBlock
+            }
+        );
+        if expected_cursor == 5 {
             assert!(executor.execute_transaction(tx).is_err());
         }
     }
@@ -482,7 +486,7 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
 
     // 1. OSND (NodFactory) executes first; GemFactory expired hour is not yet swept.
     let nod_tx = config
-        .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::NodFactory)
+        .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::EndBlock { step_index: 0 })
         .unwrap();
     executor.execute_transaction(nod_tx).unwrap();
     {
@@ -506,13 +510,10 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
 
     // 2. OSGM (GemFactory) executes second and runs phase 2 expire_through BEFORE OSIX and OSCR.
     let gem_tx = config
-        .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::GemFactory)
+        .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::EndBlock { step_index: 1 })
         .unwrap();
     executor.execute_transaction(gem_tx).unwrap();
-    assert_eq!(
-        executor.system_tx_phase_cursor,
-        SystemTxPhase::EndBlockIntexFactory
-    );
+    assert_eq!(executor.fsm.end_cursor(), 2);
     {
         let mut provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
             executor.inner.evm.db_mut(),
@@ -539,16 +540,16 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
 
     // 3. OSIX (IntexFactory), OSCR (CredisFactory), and OSGC (GemCleanup) execute in order.
     for input in [
-        SystemTx::IntexFactory,
-        SystemTx::CredisFactory,
-        SystemTx::GemCleanup,
+        SystemTx::EndBlock { step_index: 2 },
+        SystemTx::EndBlock { step_index: 3 },
+        SystemTx::EndBlock { step_index: 4 },
     ] {
         let tx = config
             .build_end_system_tx(2, CHAIN_ID, proposer, input)
             .unwrap();
         executor.execute_transaction(tx).unwrap();
     }
-    assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::EndBlock);
+    assert_eq!(executor.fsm.stage(), BlockExecutionStage::Completed);
     assert_eq!(executor.receipts().len(), 5);
     assert!(executor
         .receipts()
@@ -667,14 +668,7 @@ fn end_block_modules_and_detached_trace_observe_exact_mid_block_user_gas_snapsho
             5,
             "all 5 EndBlock modules must build a BlockRuntimeContext"
         );
-        for ctx in &observed {
-            assert_eq!(ctx.block_gas_limit, block_gas_limit);
-            assert_eq!(ctx.user_gas_used, expected_user_gas);
-            assert_eq!(
-                ctx.remaining_block_gas(),
-                block_gas_limit.saturating_sub(expected_user_gas)
-            );
-        }
+        assert_end_block_contexts(&observed, block_gas_limit, expected_user_gas);
         drop(executor);
 
         // Also verify detached TxTracer replay freezes MidBlock user_gas_used across EndBlock txs.
@@ -715,11 +709,11 @@ fn end_block_modules_and_detached_trace_observe_exact_mid_block_user_gas_snapsho
         }
         let _ = outbe_evm::executor::take_observed_runtime_block_contexts();
         for input in [
-            SystemTx::NodFactory,
-            SystemTx::GemFactory,
-            SystemTx::IntexFactory,
-            SystemTx::CredisFactory,
-            SystemTx::GemCleanup,
+            SystemTx::EndBlock { step_index: 0 },
+            SystemTx::EndBlock { step_index: 1 },
+            SystemTx::EndBlock { step_index: 2 },
+            SystemTx::EndBlock { step_index: 3 },
+            SystemTx::EndBlock { step_index: 4 },
         ] {
             let end_tx = config
                 .build_end_system_tx(2, CHAIN_ID, proposer, input)
@@ -732,14 +726,22 @@ fn end_block_modules_and_detached_trace_observe_exact_mid_block_user_gas_snapsho
         }
         let traced_observed = outbe_evm::executor::take_observed_runtime_block_contexts();
         assert_eq!(traced_observed.len(), 5);
-        for ctx in &traced_observed {
-            assert_eq!(ctx.block_gas_limit, block_gas_limit);
-            assert_eq!(ctx.user_gas_used, expected_user_gas);
-            assert_eq!(
-                ctx.remaining_block_gas(),
-                block_gas_limit.saturating_sub(expected_user_gas)
-            );
-        }
+        assert_end_block_contexts(&traced_observed, block_gas_limit, expected_user_gas);
         outbe_evm::executor::witness::clear_detached_trace_witness();
+    }
+}
+
+fn assert_end_block_contexts(
+    observed: &[BlockContext],
+    block_gas_limit: u64,
+    expected_user_gas: u64,
+) {
+    for ctx in observed {
+        assert_eq!(ctx.block_gas_limit, block_gas_limit);
+        assert_eq!(ctx.user_gas_used, expected_user_gas);
+        assert_eq!(
+            ctx.remaining_block_gas(),
+            block_gas_limit.saturating_sub(expected_user_gas)
+        );
     }
 }

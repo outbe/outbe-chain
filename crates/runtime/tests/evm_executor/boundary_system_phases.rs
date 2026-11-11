@@ -3,9 +3,8 @@ use super::*;
 #[test]
 fn proposer_injects_tee_bootstrap_after_boundary_when_payload_pending() {
     use outbe_evm::system_tx::{
-        CYCLE_TICK_SELECTOR, ENCLAVE_UPGRADE_DEADLINE_SELECTOR, HYPERLANE_SLASH_SELECTOR,
-        ORACLE_SELECTOR, ORACLE_SLASH_SELECTOR, REWARDS_SELECTOR, STAKING_SELECTOR,
-        TEE_BOOTSTRAP_SELECTOR, UPDATE_SELECTOR, VALIDATOR_LIVENESS_SELECTOR, VOTE_SELECTOR,
+        SystemTxStepId, CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX, CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX,
+        CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX,
     };
     let signer = test_evm_signer();
     let proposer = signer.address();
@@ -27,19 +26,20 @@ fn proposer_injects_tee_bootstrap_after_boundary_when_payload_pending() {
         },
     );
     assert_eq!(
-        begin_system_tx_selectors(&with_bootstrap),
+        begin_system_tx_steps(&with_bootstrap),
         vec![
-            TEE_BOOTSTRAP_SELECTOR,
-            VALIDATOR_LIVENESS_SELECTOR,
-            VOTE_SELECTOR,
-            UPDATE_SELECTOR,
-            ENCLAVE_UPGRADE_DEADLINE_SELECTOR,
-            REWARDS_SELECTOR,
-            STAKING_SELECTOR,
-            ORACLE_SELECTOR,
-            ORACLE_SLASH_SELECTOR,
-            HYPERLANE_SLASH_SELECTOR,
-            CYCLE_TICK_SELECTOR,
+            SystemTxStepId::consensus(CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX),
+            SystemTxStepId::consensus(CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX),
+            SystemTxStepId::consensus(CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX),
+            SystemTxStepId::begin_block(0),
+            SystemTxStepId::begin_block(1),
+            SystemTxStepId::begin_block(2),
+            SystemTxStepId::begin_block(3),
+            SystemTxStepId::begin_block(4),
+            SystemTxStepId::begin_block(5),
+            SystemTxStepId::begin_block(6),
+            SystemTxStepId::begin_block(7),
+            SystemTxStepId::begin_block(8),
         ],
         "proposer must inject TeeBootstrap in CONSENSUS_ORDER before ValidatorLiveness and BEGIN_BLOCK_ORDER",
     );
@@ -51,7 +51,7 @@ fn proposer_injects_tee_bootstrap_after_boundary_when_payload_pending() {
             CHAIN_ID,
             outbe_primitives::system_tx::protocol_block_gas_limit(1),
             B256::ZERO,
-            &Bytes::new(),
+            &fixtures::block_one_artifacts(Bytes::new()),
             None,
             Some(proposer),
             None,

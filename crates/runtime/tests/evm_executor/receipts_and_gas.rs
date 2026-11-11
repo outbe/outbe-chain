@@ -124,7 +124,7 @@ fn apply_pre_execution_changes_executes_cycle_tick_system_tx_receipt() {
         );
     }
 
-    assert_eq!(executor.receipts().len(), 11);
+    assert_eq!(executor.receipts().len(), 12);
     assert!(executor.receipts().iter().all(|receipt| receipt.success));
     assert!(
         executor.system_tx_execution_gas > 0,
@@ -144,7 +144,7 @@ fn apply_pre_execution_changes_executes_cycle_tick_system_tx_receipt() {
         .all(|receipt| receipt.tx_type == reth_ethereum::TxType::Legacy));
     assert_eq!(executor.receipts()[10].cumulative_gas_used, 0);
 
-    assert_eq!(system_txs.len(), 11);
+    assert_eq!(system_txs.len(), 12);
     assert_eq!(Address::from(*system_txs[0].signer()), proposer);
     assert_eq!(system_txs[0].tx().chain_id(), Some(CHAIN_ID));
     assert_eq!(system_txs[0].tx().tx_type(), reth_ethereum::TxType::Legacy);
@@ -155,24 +155,30 @@ fn apply_pre_execution_changes_executes_cycle_tick_system_tx_receipt() {
         "legacy transaction body must RLP-encode as a list, not a typed envelope"
     );
     assert!(matches!(
-        SystemTx::decode(system_txs[0].tx().input().as_ref()).unwrap(),
-        SystemTx::TeeBootstrap { .. }
-    ));
-    assert!(matches!(
         SystemTx::decode(system_txs[1].tx().input().as_ref()).unwrap(),
-        SystemTx::ValidatorLiveness
+        SystemTx::Consensus {
+            step_index: outbe_primitives::system_tx::CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX,
+            ..
+        }
     ));
     assert!(matches!(
-        SystemTx::decode(system_txs[8].tx().input().as_ref()).unwrap(),
-        SystemTx::OracleSlash
+        SystemTx::decode(system_txs[2].tx().input().as_ref()).unwrap(),
+        SystemTx::Consensus {
+            step_index: outbe_primitives::system_tx::CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX,
+            ..
+        }
     ));
     assert!(matches!(
         SystemTx::decode(system_txs[9].tx().input().as_ref()).unwrap(),
-        SystemTx::HyperlaneSlash
+        SystemTx::BeginBlock { step_index: 6 }
     ));
     assert!(matches!(
         SystemTx::decode(system_txs[10].tx().input().as_ref()).unwrap(),
-        SystemTx::CycleTick
+        SystemTx::BeginBlock { step_index: 7 }
+    ));
+    assert!(matches!(
+        SystemTx::decode(system_txs[11].tx().input().as_ref()).unwrap(),
+        SystemTx::BeginBlock { step_index: 8 }
     ));
     drop(executor);
 
@@ -340,7 +346,7 @@ fn cycle_tick_utc_boundary_gas_usage() {
     for tx in system_txs {
         let is_cycle = matches!(
             SystemTx::decode(tx.tx().input().as_ref()).unwrap(),
-            SystemTx::CycleTick
+            SystemTx::BeginBlock { step_index: 8 }
         );
         let gas_output = executor
             .execute_transaction(tx)
@@ -350,9 +356,9 @@ fn cycle_tick_utc_boundary_gas_usage() {
         }
     }
 
-    assert_eq!(executor.receipts().len(), 11);
+    assert_eq!(executor.receipts().len(), 12);
     let visible_gas = cycle_tick_visible_gas.expect("CycleTick visible gas must be captured");
-    let cycle_tick_receipt = &executor.receipts()[10];
+    let cycle_tick_receipt = &executor.receipts()[11];
     assert!(
         cycle_tick_receipt.success,
         "CycleTick must succeed, not OOG"
@@ -575,7 +581,7 @@ fn gas_09_noncritical_system_oog_emits_zero_gas_failure_receipt_and_continues_bl
         },
     )
     .into_iter();
-    for _ in 0..8 {
+    for _ in 0..9 {
         let tx = system_txs
             .next()
             .expect("mandatory prefix system tx before OracleSlash");
@@ -587,7 +593,7 @@ fn gas_09_noncritical_system_oog_emits_zero_gas_failure_receipt_and_continues_bl
     }
     let oracle_tx = system_txs
         .next()
-        .expect("OracleSlash system tx should be present at index 8");
+        .expect("OracleSlash system tx should be present at index 9");
 
     let receipts_before = executor.receipts().len();
     let cumulative_visible_gas_before = executor.inner.cumulative_tx_gas_used;

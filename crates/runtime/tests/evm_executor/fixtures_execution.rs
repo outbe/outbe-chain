@@ -72,7 +72,7 @@ pub(super) fn execution_ctx_with_tee_bootstrap<'a>(
     extra_data: Bytes,
     tee_bootstrap: outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2,
 ) -> OutbeBlockExecutionCtx<'a> {
-    let mut ctx = execution_ctx(tx_count_hint, extra_data);
+    let mut ctx = execution_ctx(tx_count_hint, block_one_artifacts(extra_data));
     ctx.pending_tee_bootstrap = Some(tee_bootstrap);
     ctx
 }
@@ -122,13 +122,18 @@ pub fn begin_system_txs_for_test(
         BootstrapFixture::Payload(payload) => Some(*payload),
         BootstrapFixture::Absent => None,
     };
+    let extra_data = if block_number == 1 {
+        block_one_artifacts(extra_data.clone())
+    } else {
+        extra_data.clone()
+    };
     config
         .build_begin_system_txs(
             block_number,
             CHAIN_ID,
             outbe_primitives::system_tx::protocol_block_gas_limit(block_number),
             parent_hash,
-            extra_data,
+            &extra_data,
             parent_consensus_metadata,
             Some(proposer),
             None,
@@ -363,7 +368,7 @@ pub(crate) fn executor_inputs_from_ctx(
     let parent_artifact_hint = ctx.parent_artifact_hint;
     BlockExecutorInputs {
         identity: BlockExecutionIdentity {
-            block_extra_data: Bytes::new(),
+            block_extra_data: ctx.inner.extra_data.clone(),
             validate_execution_summary,
             block_hash: None,
             block_state_root: None,
@@ -415,7 +420,7 @@ pub(crate) fn observe_cycle_tick(
     for tx in system_txs {
         let input = SystemTx::decode(tx.tx().input().as_ref()).expect(decode_message);
         let observation = execute(tx);
-        if matches!(input, SystemTx::CycleTick) {
+        if matches!(input, SystemTx::BeginBlock { step_index: 8 }) {
             return Some(observation);
         }
     }
@@ -474,4 +479,17 @@ where
         }
     }
     visible_system_gas_used
+}
+
+/// Successful block-one fixtures include the mandatory boundary as well as OST3.
+pub(crate) fn block_one_artifacts(extra_data: Bytes) -> Bytes {
+    let mut artifacts = decode_outbe_block_artifacts(&extra_data).unwrap();
+    if artifacts.consensus_header_artifact.is_none() {
+        artifacts.consensus_header_artifact =
+            Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary_with(
+                true,
+                vec![(test_evm_signer().address(), dummy_pubkey(0xA2))],
+            )));
+    }
+    encode_outbe_block_artifacts(&artifacts).unwrap()
 }

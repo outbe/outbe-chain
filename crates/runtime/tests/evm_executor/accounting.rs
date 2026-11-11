@@ -87,13 +87,21 @@ fn verifier_rejects_finalization_parent_hash_mismatch() {
         0,
         2,
         CHAIN_ID,
-        SystemTx::CertifiedParentAccounting { metadata }
-            .encode()
-            .unwrap(),
+        SystemTx::Consensus {
+            step_index: outbe_primitives::system_tx::CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+            payload: metadata.encode().unwrap(),
+        }
+        .encode()
+        .unwrap(),
     )
     .unwrap();
-    let cycle_unsigned =
-        build_unsigned_system_tx(1, 2, CHAIN_ID, SystemTx::CycleTick.encode().unwrap()).unwrap();
+    let cycle_unsigned = build_unsigned_system_tx(
+        1,
+        2,
+        CHAIN_ID,
+        SystemTx::BeginBlock { step_index: 8 }.encode().unwrap(),
+    )
+    .unwrap();
     let phase1_signed = signer.sign_unsigned(phase1_unsigned).unwrap();
     let cycle_signed = signer.sign_unsigned(cycle_unsigned).unwrap();
     let phase1_recovered =

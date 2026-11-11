@@ -70,7 +70,7 @@ fn delayed_first_cycle_tick_starts_all_fresh_passes_at_chainspec_genesis() {
     for tx in begin {
         let is_cycle = matches!(
             SystemTx::decode(tx.tx().input().as_ref()).unwrap(),
-            SystemTx::CycleTick
+            SystemTx::BeginBlock { step_index: 8 }
         );
         executor.execute_transaction(tx).unwrap();
         if is_cycle {
@@ -248,9 +248,10 @@ fn gas_02_phase1_preexec_failure_must_consume_body0_or_abort() {
             inputs
         },
     );
-    executor.system_tx_phase_cursor = outbe_evm::system_tx::SystemTxPhase::initial_for_block(
+    executor.fsm = outbe_evm::system_tx::BlockExecutionFsm::for_block(
         2,
-        outbe_evm::system_tx::GENESIS_BOOTSTRAP_BLOCK_NUMBER,
+        Default::default(),
+        &outbe_runtime::BLOCK_ORDER,
     );
 
     let block_artifacts = OutbeBlockArtifacts::default();
@@ -437,7 +438,7 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
         "GAS-11: system revert soft-failure receipt must use OutbeFailure code 201"
     );
     let expected_reason = concat!(
-        "system tx OracleSlash did not succeed at body_index=9: ",
+        "system tx oracle_slash did not succeed at body_index=9: ",
         "Revert { gas: ResultGas { total_gas_spent: 42000, state_gas_spent: 0, ",
         "refunded: 0, floor_gas: 0 }, logs: [], output: ",
         "0x666f72636564204f757462652073797374656d2d63616c6c20726576657274 }"
@@ -551,7 +552,7 @@ fn critical_cycle_tick_revert_fails_block() {
     let err = result.expect_err("a revert in the critical CycleTick phase must fail the block");
     assert!(
         err.to_string()
-            .contains("critical system tx CycleTick did not succeed"),
+            .contains("critical system tx cycle_tick did not succeed"),
         "unexpected error: {err}"
     );
     assert!(
@@ -748,7 +749,7 @@ fn critical_cycle_tick_oog_fails_block() {
     let err = result.expect_err("an OOG halt in the critical CycleTick phase must fail the block");
     assert!(
         err.to_string()
-            .contains("critical system tx CycleTick did not succeed"),
+            .contains("critical system tx cycle_tick did not succeed"),
         "unexpected error: {err}"
     );
     assert!(

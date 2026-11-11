@@ -240,40 +240,17 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
     let late_tx = system_txs.next().unwrap();
     assert!(matches!(
         SystemTx::decode(late_tx.tx().input()).unwrap(),
-        SystemTx::LateFinalizeCredits { .. }
+        SystemTx::Consensus {
+            step_index: outbe_primitives::system_tx::CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX,
+            ..
+        }
     ));
     if invalid_slash_percent || fail_shared_burn {
-        use alloy_sol_types::SolError;
-        use outbe_slashindicator::precompile::ISlashIndicator;
-
         let before_late = executor.receipts().to_vec();
         let error = executor
             .execute_transaction(late_tx)
             .expect_err("invalid configuration must reject mandatory LateFinalizeCredits");
-        assert!(matches!(
-            &error,
-            alloy_evm::block::BlockExecutionError::Validation(_)
-        ));
-        let message = error.to_string();
-        assert!(
-            message.contains("critical system tx LateFinalizeCredits did not succeed"),
-            "{message}"
-        );
-        assert!(message.contains("Revert"), "{message}");
-        let expected = Bytes::from(
-            ISlashIndicator::SlashConfigPercentAbove100 {
-                field: "slash_amount_percent".into(),
-                value: 101,
-            }
-            .abi_encode(),
-        );
-        if invalid_slash_percent {
-            assert!(message.contains(&format!("{expected:?}")), "{message}");
-        } else {
-            let overflow =
-                Bytes::from(outbe_promislimit::precompile::IPromisLimit::Overflow {}.abi_encode());
-            assert!(message.contains(&format!("{overflow:?}")), "{message}");
-        }
+        assert_late_credit_revert(&error, invalid_slash_percent);
         assert_eq!(executor.receipts(), before_late.as_slice());
         drop(executor);
 
@@ -303,13 +280,12 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
                 .expect("absentee remains registered");
             assert_eq!(record.status, outbe_validatorset::logic::status::ACTIVE);
             assert_eq!(record.slash_count, 0);
-            if invalid_slash_percent {
-                let staking = outbe_staking::contract::Staking::new(storage.clone());
-                let total = U256::from(validators.len() * 1_000);
-                assert_eq!(staking.get_stake(absent)?, U256::from(1_000));
-                assert_eq!(staking.total_staked.read()?, total);
-                assert_eq!(storage.balance(STAKING_ADDRESS)?, total);
-            }
+            assert_unchanged_staking(
+                storage.clone(),
+                absent,
+                validators.len(),
+                invalid_slash_percent,
+            )?;
             let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
             assert_eq!(rewards.pending_fees.read(&settled_hash)?, matured_fee);
             assert!(!rewards.fees_transferred.read(&settled_hash)?);
@@ -480,4 +456,49 @@ fn assert_rewards_bloom(receipt: &Receipt, log: &Log) {
     for topic in log.data.topics() {
         assert!(bloom.contains_input(BloomInput::Raw(topic.as_slice())));
     }
+}
+
+fn assert_late_credit_revert(error: &BlockExecutionError, invalid_slash_percent: bool) {
+    use alloy_sol_types::SolError;
+    use outbe_slashindicator::precompile::ISlashIndicator;
+    assert!(matches!(
+        error,
+        alloy_evm::block::BlockExecutionError::Validation(_)
+    ));
+    let message = error.to_string();
+    assert!(
+        message.contains("critical system tx late_finalize_credits did not succeed"),
+        "{message}"
+    );
+    assert!(message.contains("Revert"), "{message}");
+    let expected = Bytes::from(
+        ISlashIndicator::SlashConfigPercentAbove100 {
+            field: "slash_amount_percent".into(),
+            value: 101,
+        }
+        .abi_encode(),
+    );
+    if invalid_slash_percent {
+        assert!(message.contains(&format!("{expected:?}")), "{message}");
+    } else {
+        let overflow =
+            Bytes::from(outbe_promislimit::precompile::IPromisLimit::Overflow {}.abi_encode());
+        assert!(message.contains(&format!("{overflow:?}")), "{message}");
+    }
+}
+
+fn assert_unchanged_staking(
+    storage: StorageHandle<'_>,
+    absent: Address,
+    validator_count: usize,
+    invalid_slash_percent: bool,
+) -> outbe_primitives::error::Result<()> {
+    if invalid_slash_percent {
+        let staking = outbe_staking::contract::Staking::new(storage.clone());
+        let total = U256::from(validator_count * 1_000);
+        assert_eq!(staking.get_stake(absent)?, U256::from(1_000));
+        assert_eq!(staking.total_staked.read()?, total);
+        assert_eq!(storage.balance(STAKING_ADDRESS)?, total);
+    }
+    Ok(())
 }
