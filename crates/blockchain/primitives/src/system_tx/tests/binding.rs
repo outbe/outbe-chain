@@ -12,65 +12,6 @@ fn fixture(name: &str) -> cases::Case {
 }
 
 #[test]
-fn shared_binding_cases_preserve_acceptance_and_rejection() {
-    for case in cases::cases() {
-        let layout = case.layout();
-        let result = match case.check {
-            cases::Check::Layout => validate_system_layout(
-                &case.body,
-                &case.header,
-                &crate::test_utils::TEST_BLOCK_ORDER,
-            )
-            .map(|_| ())
-            .map_err(|error| error.to_string()),
-            cases::Check::Parent => validate_parent_accounting_binding(&layout, &case.header)
-                .map_err(|error| error.to_string()),
-            cases::Check::Boundary => validate_boundary_outcome_binding(&layout, &case.artifacts)
-                .map_err(|error| error.to_string()),
-        };
-        let accepted = matches!(
-            case.name,
-            "genesis_empty"
-                | "steady_disabled"
-                | "genesis_skips_parent"
-                | "block1_skips_parent"
-                | "parent_matches"
-                | "maximum_height_parent_matches"
-                | "no_boundary_skips_malformed_inputs"
-                | "boundary_matches"
-        );
-        assert_eq!(result.is_ok(), accepted, "{}: {result:?}", case.name);
-    }
-}
-
-#[test]
-fn layout_failures_identify_the_rejected_stage() {
-    let artifacts = fixture("artifacts_before_layout");
-    assert!(matches!(
-        validate_system_layout(
-            &artifacts.body,
-            &artifacts.header,
-            &crate::test_utils::TEST_BLOCK_ORDER
-        ),
-        Err(LayoutBindingError::Artifacts(_))
-    ));
-    let order = fixture("wrong_order");
-    assert!(matches!(
-        validate_system_layout(
-            &order.body,
-            &order.header,
-            &crate::test_utils::TEST_BLOCK_ORDER
-        ),
-        Err(LayoutBindingError::Layout(_))
-    ));
-    let set = fixture("block1_requires_boundary");
-    assert!(matches!(
-        validate_system_layout(&set.body, &set.header, &crate::test_utils::TEST_BLOCK_ORDER),
-        Err(LayoutBindingError::Set(_))
-    ));
-}
-
-#[test]
 fn parent_errors_carry_block_height_and_both_hashes() {
     let missing = fixture("parent_missing");
     assert!(matches!(
@@ -125,7 +66,7 @@ fn boundary_rejects_the_first_failure_in_system_transaction_order() {
 
 #[test]
 fn payload_validators_reject_trailing_bytes_and_cross_artifact_envelopes() {
-    use super::{fixtures, TEST_BLOCK_ORDER};
+    use super::fixtures;
     use crate::{
         error::PrecompileError,
         reshare_artifact::{
@@ -163,7 +104,29 @@ fn payload_validators_reject_trailing_bytes_and_cross_artifact_envelopes() {
         fixtures::bootstrap(),
         publication,
     ] {
-        let validator = TEST_BLOCK_ORDER.step_for_tx(&tx).unwrap().validate_payload;
+        let validator = |payload: &[u8],
+                         ctx: &SystemTxValidationContext<'_>|
+         -> Result<(), SystemTxPayloadValidationError> {
+            match tx.step_index() {
+                0 => {
+                    validate_parent_accounting_payload(payload, ctx.parent_hash)?;
+                }
+                1 => {
+                    validate_late_finalize_credits_payload(payload, ctx.artifacts)?;
+                }
+                2 => {
+                    validate_boundary_outcome_payload(payload, ctx.artifacts)?;
+                }
+                3 => {
+                    validate_tee_bootstrap_payload(payload, ctx.block_number)?;
+                }
+                5 => {
+                    validate_publication_payload(payload, ctx.artifacts)?;
+                }
+                _ => unreachable!("fixture must exercise one of the five payload validators"),
+            }
+            Ok(())
+        };
         validator(tx.payload(), &ctx).unwrap();
         let mut trailing = tx.payload().to_vec();
         trailing.push(0);
@@ -216,61 +179,6 @@ fn payload_validators_reject_trailing_bytes_and_cross_artifact_envelopes() {
         validate_parent_accounting_payload(&Bytes::new(), ctx.parent_hash),
         Err(ParentAccountingBindingError::PayloadDecode(
             PrecompileError::Revert(_)
-        ))
-    ));
-}
-
-#[test]
-fn injected_payload_validation_runs_on_begin_and_end_steps() {
-    use crate::{
-        block::{begin_step, end_step, BlockOrder, ProtocolModule},
-        system_tx_context::{SystemTxPayloadValidationError, SystemTxValidationContext},
-    };
-    struct Reject;
-    impl ProtocolModule for Reject {
-        const NAME: &'static str = "reject";
-        fn validate_payload(
-            _: &[u8],
-            _: &SystemTxValidationContext<'_>,
-        ) -> Result<(), SystemTxPayloadValidationError> {
-            Err(SystemTxPayloadValidationError::UnexpectedNonEmptyPayload {
-                module: Self::NAME,
-                len: 7,
-            })
-        }
-    }
-    const REJECT_BEGIN: &[crate::block::ProtocolStep] = &[begin_step::<Reject>(); 9];
-    const REJECT_END: &[crate::block::ProtocolStep] = &[end_step::<Reject>(); 5];
-    let mut case = fixture("steady_disabled");
-    for end in [false, true] {
-        let order = if end {
-            BlockOrder {
-                end_block: REJECT_END,
-                ..crate::test_utils::TEST_BLOCK_ORDER
-            }
-        } else {
-            BlockOrder {
-                begin_block: REJECT_BEGIN,
-                ..crate::test_utils::TEST_BLOCK_ORDER
-            }
-        };
-        assert!(matches!(
-            validate_system_layout(&case.body, &case.header, &order),
-            Err(LayoutBindingError::UnexpectedNonEmptyPayload {
-                module: "reject",
-                len: 7
-            })
-        ));
-    }
-    case.header.inner.parent_hash = B256::repeat_byte(99);
-    assert!(matches!(
-        validate_system_layout(
-            &case.body,
-            &case.header,
-            &crate::test_utils::TEST_BLOCK_ORDER
-        ),
-        Err(LayoutBindingError::ParentAccounting(
-            ParentAccountingBindingError::HashMismatch { .. }
         ))
     ));
 }

@@ -8211,6 +8211,7 @@ dependencies = [
  "hex",
  "k256 0.13.4",
  "outbe-chain-constants",
+ "outbe-evm",
  "outbe-genesis-cli",
  "outbe-primitives",
  "outbe-tee",

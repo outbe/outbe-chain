@@ -45,6 +45,7 @@ parking_lot.workspace = true
 postcard.workspace = true
 
 [dev-dependencies]
+outbe-evm = { workspace = true, features = ["test-utils"] }
 outbe-genesis-cli.workspace = true
 outbe-tee = { workspace = true, features = ["test-utils"] }
 outbe-chain-constants.workspace = true
@@ -70,7 +71,7 @@ rand-commonware.workspace = true
 rand-core-commonware.workspace = true
 
 [features]
-test-utils = []
+test-utils = ["outbe-primitives/test-utils"]
 # Exposes execution test controls to crates/runtime integration tests.
 # It does not pull a domain crate.
 test-hooks = []

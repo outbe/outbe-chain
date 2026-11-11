@@ -78,181 +78,138 @@ pub fn sample_radicle_publication_batch(count: usize) -> PublicationBatch {
     }
 }
 
-use crate::{
-    block::{begin_step, consensus_step, end_step, BlockOrder, ProtocolModule},
-    reshare_artifact::{
-        encode_boundary_artifact, encode_late_finalize_credits_artifact, ConsensusHeaderArtifact,
-    },
-    system_tx::binding::{
-        validate_boundary_outcome_payload, validate_late_finalize_credits_payload,
-        validate_parent_accounting_payload, validate_publication_payload,
-        validate_tee_bootstrap_payload,
-    },
-    system_tx_context::{
-        SystemTxBuildContext, SystemTxPayloadBuildError, SystemTxPayloadValidationError,
-        SystemTxValidationContext,
-    },
-};
+pub fn sample_system_tx_tee_bootstrap() -> crate::tee_bootstrap_v2::TeeBootstrapV2 {
+    use crate::{
+        tee_attestation_v1::{
+            AttestationMode, AttestationOperationV1, DcapCollateralComponentV1, DcapCollateralKind,
+            NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1, RegistrationIntentV1,
+            ResourceScheduleV1, TeeMeasurementRuleV1, TeePolicyV1, ValidatorNodeBindingV1,
+        },
+        tee_bootstrap_v2::{
+            TeeBootstrapCommitteeSignatureV2, TeeBootstrapParticipantEvidenceV2,
+            TeeBootstrapParticipantV2, TeeBootstrapV2,
+        },
+    };
 
-struct ParentAccounting;
-impl ProtocolModule for ParentAccounting {
-    const NAME: &'static str = "certified_parent_accounting";
-    fn build_payload(ctx: &SystemTxBuildContext<'_>) -> Result<Bytes, SystemTxPayloadBuildError> {
-        let metadata = ctx.parent_consensus_metadata.ok_or(
-            SystemTxPayloadBuildError::MissingParentConsensusMetadata {
-                block_number: ctx.block_number,
+    use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+    let validator_signer =
+        crate::signer::OutbeEvmSigner::from_secret_bytes([0x22; 32]).expect("validator signer");
+    let validator = validator_signer.address();
+    let node_signer =
+        k256::ecdsa::SigningKey::from_bytes((&[0x23; 32]).into()).expect("NodeHost signer");
+    let reth_p2p_public = node_signer
+        .verifying_key()
+        .to_encoded_point(true)
+        .as_bytes()
+        .try_into()
+        .expect("SEC1-33 NodeHost public key");
+    let policy = TeePolicyV1 {
+        policy_version: 1,
+        chain_id: [0x10; 32],
+        genesis_hash: B256::repeat_byte(0x11),
+        activation_height: 1,
+        predecessor_policy_hash: B256::ZERO,
+        attestation_mode: AttestationMode::DcapRequired,
+        intel_root_der_hash: B256::repeat_byte(0x72),
+        quote_version: 3,
+        tee_type: 0,
+        attestation_key_type: 2,
+        qe_vendor_id: [
+            0x93, 0x9a, 0x72, 0x33, 0xf7, 0x9c, 0x4c, 0xa9, 0x94, 0x0a, 0x0d, 0xb3, 0x95, 0x7f,
+            0x06, 0x07,
+        ],
+        certification_data_type: 5,
+        tcb_info_schema_version: 3,
+        qe_identity_schema_version: 2,
+        minimum_tcb_evaluation_data_number: 1,
+        accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
+        accepted_qe_tcb_status: QvlTcbStatusV1::UpToDate,
+        minimum_lease: 3_600,
+        maximum_lease: 7 * crate::time::SECONDS_PER_DAY,
+        collateral_margin: 3_600,
+        resource_schedule_hash: ResourceScheduleV1::normative()
+            .expect("normative resource schedule")
+            .schedule_hash()
+            .expect("resource schedule hashes"),
+        measurement_rules: vec![TeeMeasurementRuleV1 {
+            mrenclave: B256::repeat_byte(0x81),
+            mrsigner: B256::repeat_byte(0x82),
+            isv_prod_id: 1,
+            minimum_isv_svn: 2,
+            admit_from_height: 1,
+            admit_until_height_exclusive: 1_000,
+        }],
+    };
+    let policy_hash = policy.policy_hash().expect("policy hashes");
+    let intent = RegistrationIntentV1 {
+        chain_id: policy.chain_id,
+        genesis_hash: B256::repeat_byte(0x11),
+        operation: AttestationOperationV1::RegisterEnclave,
+        attestation_mode: AttestationMode::DcapRequired,
+        policy_hash,
+        node_id: NodeIdV1 { reth_p2p_public },
+        enclave_id: B256::repeat_byte(0x32),
+        binding_id: B256::repeat_byte(0x33),
+        binding_version: 1,
+        registration_version: 0,
+        renewal_nonce: 0,
+        transition_nonce: 0,
+        requested_valid_until: 7_200,
+        recipient_x25519: [0x34; 32],
+        attestation_ed25519: [0x35; 32],
+        noise_responder_x25519: [0x36; 32],
+        node_host_authorization_hash: B256::repeat_byte(0x37),
+    };
+
+    let validator_binding = ValidatorNodeBindingV1 {
+        chain_id: intent.chain_id,
+        genesis_hash: intent.genesis_hash,
+        validator: validator.into_array(),
+        node_id_hash: intent.node_id.node_id_hash().expect("NodeHost hash"),
+    };
+    let binding_hash = validator_binding.binding_hash().expect("binding hash");
+    let validator_signature = validator_signer
+        .sign_hash(&binding_hash)
+        .expect("validator binding signature");
+    let (node_signature_body, node_recovery) = node_signer
+        .sign_prehash(binding_hash.as_slice())
+        .expect("NodeHost binding signature");
+    let mut node_binding_signature = [0_u8; 65];
+    node_binding_signature[..64].copy_from_slice(node_signature_body.to_bytes().as_slice());
+    node_binding_signature[64] = node_recovery.to_byte();
+
+    TeeBootstrapV2 {
+        authority: crate::tee_bootstrap_v2::TeeBootstrapAuthorityV2 {
+            policy,
+            committee_snapshot_hash: B256::repeat_byte(0xB2),
+            committee_snapshot_block: 1,
+            key_epoch: 1,
+            tribute_offer_epoch: 1,
+            dkg_transcript_hash: B256::repeat_byte(0xB3),
+            tribute_offer_public_key: B256::repeat_byte(0xB4),
+            tribute_offer_group_public_key: Bytes::from(vec![0xB5; 96]),
+        },
+        collateral_pool: (1_u8..=8)
+            .map(|kind| DcapCollateralComponentV1 {
+                kind: DcapCollateralKind::try_from(kind).expect("known collateral kind"),
+                bytes: vec![kind],
+            })
+            .collect(),
+        participants: vec![TeeBootstrapParticipantV2 {
+            intent,
+            validator_binding,
+            validator_signature,
+            node_binding_signature,
+            evidence: TeeBootstrapParticipantEvidenceV2::Dcap {
+                quote: vec![0x41; 64],
+                collateral_component_indices: [0, 1, 2, 3, 4, 5, 6, 7],
             },
-        )?;
-        if metadata.finalized_block_hash != ctx.parent_hash {
-            return Err(
-                SystemTxPayloadBuildError::CertifiedParentAccountingHashMismatch {
-                    parent_hash: ctx.parent_hash,
-                    metadata_hash: metadata.finalized_block_hash,
-                },
-            );
-        }
-        Ok(metadata.encode()?)
-    }
-    fn validate_payload(
-        payload: &[u8],
-        ctx: &SystemTxValidationContext<'_>,
-    ) -> Result<(), SystemTxPayloadValidationError> {
-        validate_parent_accounting_payload(payload, ctx.parent_hash)?;
-        Ok(())
+            node_signature: [0x42; 65],
+            enclave_signature: [0x43; 64],
+        }],
+        committee_signatures: vec![TeeBootstrapCommitteeSignatureV2 {
+            validator,
+            signature: [0x44; 65],
+        }],
     }
 }
-struct LateCredits;
-impl ProtocolModule for LateCredits {
-    const NAME: &'static str = "late_finalize_credits";
-    fn build_payload(ctx: &SystemTxBuildContext<'_>) -> Result<Bytes, SystemTxPayloadBuildError> {
-        Ok(encode_late_finalize_credits_artifact(
-            &ctx.artifacts
-                .late_finalize_credits
-                .clone()
-                .unwrap_or_default(),
-        )?)
-    }
-    fn validate_payload(
-        payload: &[u8],
-        ctx: &SystemTxValidationContext<'_>,
-    ) -> Result<(), SystemTxPayloadValidationError> {
-        validate_late_finalize_credits_payload(payload, ctx.artifacts)?;
-        Ok(())
-    }
-}
-struct BoundaryOutcome;
-impl ProtocolModule for BoundaryOutcome {
-    const NAME: &'static str = "boundary_outcome";
-    fn build_payload(ctx: &SystemTxBuildContext<'_>) -> Result<Bytes, SystemTxPayloadBuildError> {
-        let Some(ConsensusHeaderArtifact::BoundaryOutcome(artifact)) =
-            &ctx.artifacts.consensus_header_artifact
-        else {
-            return Err(SystemTxPayloadBuildError::MissingBlock1BoundaryOutcome);
-        };
-        Ok(encode_boundary_artifact(artifact)?)
-    }
-    fn validate_payload(
-        payload: &[u8],
-        ctx: &SystemTxValidationContext<'_>,
-    ) -> Result<(), SystemTxPayloadValidationError> {
-        validate_boundary_outcome_payload(payload, ctx.artifacts)?;
-        Ok(())
-    }
-}
-struct TeeBootstrap;
-impl ProtocolModule for TeeBootstrap {
-    const NAME: &'static str = "tee_bootstrap";
-    fn build_payload(ctx: &SystemTxBuildContext<'_>) -> Result<Bytes, SystemTxPayloadBuildError> {
-        let payload = ctx
-            .pending_tee_bootstrap
-            .ok_or(SystemTxPayloadBuildError::MissingBlock1TeeBootstrapPayload)?;
-        if ctx
-            .expected_tee_policy
-            .is_some_and(|expected| expected != &payload.authority.policy)
-        {
-            return Err(SystemTxPayloadBuildError::Block1TeeBootstrapPolicyScheduleMismatch);
-        }
-        payload.preflight()?;
-        Ok(crate::tee_bootstrap_v2::codec::encode_canonical(payload)?)
-    }
-    fn validate_payload(
-        payload: &[u8],
-        ctx: &SystemTxValidationContext<'_>,
-    ) -> Result<(), SystemTxPayloadValidationError> {
-        validate_tee_bootstrap_payload(payload, ctx.block_number)?;
-        Ok(())
-    }
-}
-struct RadiclePublication;
-impl ProtocolModule for RadiclePublication {
-    const NAME: &'static str = "radicle_publication";
-    fn build_payload(ctx: &SystemTxBuildContext<'_>) -> Result<Bytes, SystemTxPayloadBuildError> {
-        let batch = ctx
-            .artifacts
-            .radicle_publication
-            .as_ref()
-            .ok_or(SystemTxPayloadBuildError::MissingPublicationBatch)?;
-        Ok(Bytes::from(batch.to_bytes()?))
-    }
-    fn validate_payload(
-        payload: &[u8],
-        ctx: &SystemTxValidationContext<'_>,
-    ) -> Result<(), SystemTxPayloadValidationError> {
-        validate_publication_payload(payload, ctx.artifacts)?;
-        Ok(())
-    }
-}
-
-macro_rules! empty_module {
-    ($($module:ident => $name:literal),* $(,)?) => { $(
-        struct $module;
-        impl ProtocolModule for $module { const NAME: &'static str = $name; }
-    )* };
-}
-empty_module!(ValidatorLiveness => "validator_liveness", Vote => "vote", Update => "update", EnclaveUpgradeDeadline => "enclave_upgrade_deadline", Rewards => "rewards", Staking => "staking", Oracle => "oracle", OracleSlash => "oracle_slash", HyperlaneSlash => "hyperlane_slash", NodFactory => "nod_factory", GemFactory => "gem_factory", IntexFactory => "intex_factory", CredisFactory => "credis_factory", GemCleanup => "gem_cleanup");
-struct CycleTick;
-impl ProtocolModule for CycleTick {
-    const NAME: &'static str = "cycle_tick";
-    const NEEDS_CYCLE_ACTIVE_UTC_DAY: bool = true;
-}
-
-/// Isolated lower-layer tests use real payload codecs and header/body binding checks.
-pub const TEST_BLOCK_ORDER: BlockOrder = BlockOrder {
-    consensus: &[
-        consensus_step::<ParentAccounting>()
-            .with_validators()
-            .active_when(|regime, _| regime.has_parent_finalization_accounting()),
-        consensus_step::<LateCredits>()
-            .active_when(|regime, _| regime.has_parent_finalization_accounting()),
-        consensus_step::<BoundaryOutcome>()
-            .with_validators()
-            .active_when(|regime, flags| {
-                regime.requires_genesis_bootstrap_txs() || flags.has_boundary_outcome
-            }),
-        consensus_step::<TeeBootstrap>()
-            .with_validators()
-            .active_when(|regime, _| regime.requires_genesis_bootstrap_txs()),
-        consensus_step::<ValidatorLiveness>()
-            .with_validators()
-            .active_when(|regime, _| regime.has_system_tx_prefix()),
-        consensus_step::<RadiclePublication>().active_when(|_, flags| flags.has_publication),
-    ],
-    begin_block: &[
-        begin_step::<Vote>().with_validators(),
-        begin_step::<Update>(),
-        begin_step::<EnclaveUpgradeDeadline>(),
-        begin_step::<Rewards>(),
-        begin_step::<Staking>(),
-        begin_step::<Oracle>().with_validators(),
-        begin_step::<OracleSlash>().soft_fail(),
-        begin_step::<HyperlaneSlash>().soft_fail(),
-        begin_step::<CycleTick>().with_validators(),
-    ],
-    end_block: &[
-        end_step::<NodFactory>().with_process_ready_entitlements(),
-        end_step::<GemFactory>().with_process_ready_entitlements(),
-        end_step::<IntexFactory>().with_process_ready_entitlements(),
-        end_step::<CredisFactory>().with_process_ready_entitlements(),
-        end_step::<GemCleanup>().with_process_ready_entitlements(),
-    ],
-};

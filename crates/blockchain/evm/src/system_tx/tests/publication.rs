@@ -1,9 +1,11 @@
 use super::*;
-use crate::{
-    reshare_artifact::{encode_outbe_block_artifacts, OutbeBlockArtifacts},
-    system_tx::binding::validate_system_layout,
-    test_utils::sample_radicle_publication_batch as batch,
-    OutbeBlockBody, OutbeHeader,
+use {
+    crate::system_tx::validate_system_layout,
+    outbe_primitives::{
+        reshare_artifact::{encode_outbe_block_artifacts, OutbeBlockArtifacts},
+        test_utils::sample_radicle_publication_batch as batch,
+        OutbeBlockBody, OutbeHeader,
+    },
 };
 
 #[test]

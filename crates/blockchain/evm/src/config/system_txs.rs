@@ -8,15 +8,18 @@ use alloy_evm::RecoveredTx;
 
 use alloy_primitives::{Address, Bytes, B256};
 
-use outbe_primitives::{
-    block::{BlockHeightRegime, BlockOrder, BlockSystemFlags},
-    consensus_metadata::CertifiedParentAccountingMetadata,
-    reshare_artifact::{
-        decode_outbe_block_artifacts, ConsensusHeaderArtifact, OutbeBlockArtifacts,
+use {
+    crate::system_tx::{assemble_prefix_system_txs, BlockOrder},
+    outbe_primitives::{
+        block::{BlockHeightRegime, BlockSystemFlags},
+        consensus_metadata::CertifiedParentAccountingMetadata,
+        reshare_artifact::{
+            decode_outbe_block_artifacts, ConsensusHeaderArtifact, OutbeBlockArtifacts,
+        },
+        system_tx::CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+        system_tx_context::SystemTxBuildContext,
+        OutbeBlock,
     },
-    system_tx::{assemble_prefix_system_txs, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX},
-    system_tx_context::SystemTxBuildContext,
-    OutbeBlock,
 };
 
 use reth_ethereum::TransactionSigned;

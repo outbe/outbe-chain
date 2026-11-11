@@ -61,7 +61,7 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     pub proposer_evm_address: Option<Address>,
     pub execute_outbe_block_hooks: bool,
     /// Runtime-injected protocol step registry.
-    pub block_order: outbe_primitives::block::BlockOrder,
+    pub block_order: crate::system_tx::BlockOrder,
     /// Signature hash committed in pre-execution; cleared only after FSM admission.
     pub preexecuted_phase1_tx_hash: Option<B256>,
     /// Proposer-side prebuilt Phase 1 body[0] tx. The payload builder sets it
@@ -94,7 +94,7 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// bootstrap producer supplies a payload.
     pub pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>,
     /// Explicit 4-stage block execution state machine (`ConsensusStage -> BeginBlock -> MidBlock -> EndBlock -> Completed`).
-    pub fsm: outbe_primitives::system_tx::BlockExecutionFsm,
+    pub fsm: crate::system_tx::BlockExecutionFsm,
     /// Number of zero-fee soft-failure receipts emitted in THIS
     /// block. Bounds block-stuffing by zero-cost 21k soft-failures (see
     /// [`Self::record_zero_fee_soft_failure`]). The executor is constructed
@@ -201,7 +201,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             // verify. It remains `None` for skip paths.
             verified_phase1_vrf_proof_hash: None,
             pending_tee_bootstrap,
-            fsm: outbe_primitives::system_tx::BlockExecutionFsm::for_mid_block(&block_order),
+            fsm: crate::system_tx::BlockExecutionFsm::for_mid_block(&block_order),
             zero_fee_soft_failures: 0,
             sponsored_gas_used: 0,
             witness_state: None,

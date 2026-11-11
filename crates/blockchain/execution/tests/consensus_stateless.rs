@@ -18,6 +18,7 @@
 
 use alloy_consensus::{Block as AlloyBlock, Header, Transaction as _, TxLegacy};
 use alloy_primitives::{Address, Bloom, Bytes, TxKind, B256, B64, U256};
+use outbe_evm::system_tx::TEST_BLOCK_ORDER;
 use outbe_evm::OutbeEvmSigner;
 use outbe_execution::consensus::{validate_system_tx_consensus_boundary, OutbeBeaconConsensus};
 use outbe_primitives::addresses::{OUTBE_SYSTEM_TX_ADDRESS, REWARDS_ADDRESS};
@@ -30,7 +31,6 @@ use outbe_primitives::system_tx::{
     CONSENSUS_STAGE_SELECTOR, CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX, END_BLOCK_BASE_ORDINAL,
     END_BLOCK_STAGE_SELECTOR, SYSTEM_TX_ARTIFACT_GAS_LIMIT, SYSTEM_TX_INPUT_VERSION,
 };
-use outbe_primitives::test_utils::TEST_BLOCK_ORDER;
 use outbe_primitives::{OutbeBlockBody, OutbeHeader};
 use reth_chainspec::ChainSpecBuilder;
 use reth_ethereum::{consensus::Consensus, TransactionSigned};
@@ -688,7 +688,7 @@ fn block_exceeding_p2p_transport_cap_is_rejected() {
 
 #[test]
 fn explicit_order_controls_public_boundary_and_consensus_adapter() {
-    use outbe_primitives::block::BlockOrder;
+    use outbe_evm::system_tx::BlockOrder;
     use reth_primitives_traits::SealedHeader;
 
     let signer = signer();
@@ -739,13 +739,15 @@ fn explicit_order_controls_public_boundary_and_consensus_adapter() {
 
 #[test]
 fn header_committed_steps_cannot_be_omitted_from_injected_order() {
-    use outbe_primitives::{
-        block::BlockOrder,
-        reshare_artifact::ConsensusHeaderArtifact,
-        system_tx::binding::{BoundaryBindingError, PublicationBindingError},
-        test_utils::{sample_radicle_publication_batch, sample_system_tx_boundary},
-    };
     use reth_ethereum::consensus::ConsensusError;
+    use {
+        outbe_evm::system_tx::BlockOrder,
+        outbe_primitives::{
+            reshare_artifact::ConsensusHeaderArtifact,
+            system_tx::binding::{BoundaryBindingError, PublicationBindingError},
+            test_utils::{sample_radicle_publication_batch, sample_system_tx_boundary},
+        },
+    };
 
     let parent_hash = B256::repeat_byte(0xA4);
     let mut transactions = system_txs_block2(&signer(), parent_hash, Default::default());

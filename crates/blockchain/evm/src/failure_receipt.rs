@@ -71,9 +71,9 @@ pub fn build_outbe_failure_log(log_address: Address, code: u16, reason: String) 
 mod tests {
     use super::*;
     use alloy_primitives::{address, keccak256, Bytes};
-    use outbe_primitives::{
-        system_tx::{SystemTx, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX},
-        test_utils::TEST_BLOCK_ORDER,
+    use {
+        crate::system_tx::TEST_BLOCK_ORDER,
+        outbe_primitives::system_tx::{SystemTx, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX},
     };
 
     #[test]

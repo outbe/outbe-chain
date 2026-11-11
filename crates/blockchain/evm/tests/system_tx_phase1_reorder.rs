@@ -1,7 +1,7 @@
 //! Phase 1 ordering uses static step identities and contiguous body ordinals.
 
 use alloy_primitives::Bytes;
-use outbe_primitives::{system_tx::*, test_utils::TEST_BLOCK_ORDER};
+use outbe_evm::system_tx::{TEST_BLOCK_ORDER, *};
 
 fn prefix_input(id: SystemTxStepId) -> SystemTx {
     match id.stage {

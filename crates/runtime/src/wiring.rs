@@ -9,7 +9,6 @@ use outbe_consensus::protocol_state::{
 use outbe_evm::precompiles::MetadosisMutationCall;
 use outbe_evm::{EvmRuntimeHost, UserTxFeePolicy};
 use outbe_execution::tee_remote_session::TeeSessionStateReader;
-use outbe_primitives::block::{BlockHeightRegime, BlockOrder, BlockRuntimeContext};
 use outbe_primitives::code_registry::{PatchApprovalRecord, PublicationReceipt, RepoId};
 use outbe_primitives::committee_snapshot::CommitteeSnapshot;
 use outbe_primitives::consensus::{DkgBoundaryArtifact, GenesisValidators};
@@ -38,6 +37,10 @@ use outbe_tee::dcap_protocol::DcapOnboardingContextV1;
 use outbe_tee::tee_attestation_activation::TeeAttestationChainSpecStateV1;
 use outbe_tee::tribute_source::TributeSourceSubject;
 use outbe_txpool::TxPoolZeroFeePolicy;
+use {
+    outbe_evm::system_tx::BlockOrder,
+    outbe_primitives::block::{BlockHeightRegime, BlockRuntimeContext},
+};
 
 /// Composition root. One value implements every infrastructure seam.
 #[derive(Debug, Default)]
@@ -543,7 +546,7 @@ impl EngineProtocolState for OutbeRuntime {
     ) -> outbe_primitives::system_tx::binding::SystemTxLeaderPolicy {
         outbe_primitives::system_tx::binding::SystemTxLeaderPolicy {
             validate_layout: |body, header| {
-                outbe_primitives::system_tx::binding::validate_system_layout(
+                outbe_evm::system_tx::validate_system_layout(
                     body,
                     header,
                     &crate::system_tx::BLOCK_ORDER,

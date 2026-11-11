@@ -1,8 +1,8 @@
 use super::*;
 use alloy_consensus::Header;
-use outbe_primitives::{
-    system_tx::{binding::LayoutBindingError, SystemTxError},
-    test_utils::TEST_BLOCK_ORDER,
+use {
+    outbe_evm::system_tx::TEST_BLOCK_ORDER,
+    outbe_primitives::system_tx::{binding::LayoutBindingError, SystemTxError},
 };
 
 #[test]
@@ -36,13 +36,16 @@ fn empty_order_fails_closed_after_genesis() {
 fn injected_payload_validator_runs_once_without_legacy_revalidation() {
     use alloy_consensus::{SignableTransaction as _, TxLegacy};
     use alloy_primitives::{Bytes, Signature, TxKind};
-    use outbe_primitives::{
-        addresses::OUTBE_SYSTEM_TX_ADDRESS,
-        block::{consensus_step, ProtocolModule},
-        system_tx::SystemTx,
-        system_tx_context::{SystemTxPayloadValidationError, SystemTxValidationContext},
-    };
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use {
+        outbe_evm::system_tx::consensus_step,
+        outbe_primitives::{
+            addresses::OUTBE_SYSTEM_TX_ADDRESS,
+            block::ProtocolModule,
+            system_tx::SystemTx,
+            system_tx_context::{SystemTxPayloadValidationError, SystemTxValidationContext},
+        },
+    };
 
     static CALLS: AtomicUsize = AtomicUsize::new(0);
     struct Payload;

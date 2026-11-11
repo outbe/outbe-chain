@@ -93,7 +93,7 @@ pub trait UserTxFeePolicy: std::fmt::Debug + Send + Sync {
 /// Domain operations the EVM calls without naming a domain crate.
 pub trait EvmRuntimeHost: std::fmt::Debug + Send + Sync {
     /// Protocol step order supplied by the runtime.
-    fn block_order(&self) -> outbe_primitives::block::BlockOrder;
+    fn block_order(&self) -> crate::system_tx::BlockOrder;
     /// EIP-161 marker addresses preserved at the start of every block.
     fn marker_addresses(&self) -> &'static [Address];
     /// Whether an exact route may be credited native value.
@@ -282,8 +282,8 @@ struct FailClosedHost;
 
 #[cfg(any(test, feature = "test-utils"))]
 impl EvmRuntimeHost for FailClosedHost {
-    fn block_order(&self) -> outbe_primitives::block::BlockOrder {
-        outbe_primitives::block::BlockOrder::default()
+    fn block_order(&self) -> crate::system_tx::BlockOrder {
+        crate::system_tx::BlockOrder::default()
     }
 
     fn marker_addresses(&self) -> &'static [Address] {

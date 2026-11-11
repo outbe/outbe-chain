@@ -35,10 +35,6 @@
 //! The integration-level pin for this stateless contract is
 //! `crates/blockchain/execution/tests/consensus_stateless.rs`.
 
-use outbe_primitives::{
-    addresses::REWARDS_ADDRESS, block::BlockOrder, OutbeBlock, OutbeBlockBody, OutbeHeader,
-    OutbePrimitives, OutbeReceipt,
-};
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_ethereum::consensus::{
     Consensus, ConsensusError, EthBeaconConsensus, FullConsensus, HeaderValidator,
@@ -52,6 +48,13 @@ use reth_node_builder::{
 };
 use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader};
 use std::{fmt::Debug, sync::Arc};
+use {
+    outbe_evm::system_tx::BlockOrder,
+    outbe_primitives::{
+        addresses::REWARDS_ADDRESS, OutbeBlock, OutbeBlockBody, OutbeHeader, OutbePrimitives,
+        OutbeReceipt,
+    },
+};
 
 pub use outbe_primitives::consensus::OUTBE_MAX_EXTRA_DATA_SIZE;
 
@@ -270,16 +273,16 @@ mod tests {
     use outbe_primitives::consensus::{
         MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS, MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS, OUTBE_MAX_BLOCK_SIZE,
     };
-    use outbe_primitives::{
-        system_tx::{
+    use reth_chainspec::{ChainSpec, MAINNET};
+    use reth_primitives_traits::Block as _;
+    use {
+        outbe_evm::system_tx::TEST_BLOCK_ORDER,
+        outbe_primitives::system_tx::{
             SystemTx, CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX,
             CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX, CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX,
             END_BLOCK_BASE_ORDINAL,
         },
-        test_utils::TEST_BLOCK_ORDER,
     };
-    use reth_chainspec::{ChainSpec, MAINNET};
-    use reth_primitives_traits::Block as _;
 
     fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
         MAINNET.as_ref().clone().map_header(OutbeHeader::new).into()

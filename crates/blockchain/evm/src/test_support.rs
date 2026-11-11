@@ -179,3 +179,6 @@ fn decode_success<C: SolCall>(out: &SubCallOutput) -> C::Return {
     );
     C::abi_decode_returns(&out.returndata).expect("decode call return")
 }
+
+#[cfg(any(test, feature = "test-utils"))]
+pub use crate::system_tx::TEST_BLOCK_ORDER;

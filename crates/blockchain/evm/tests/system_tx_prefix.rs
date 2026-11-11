@@ -4,11 +4,11 @@ mod end_block_inputs;
 use alloy_consensus::{SignableTransaction as _, Transaction as _, TxLegacy};
 use alloy_primitives::{address, Address, Bytes, Signature, TxKind, B256, U256};
 use end_block_inputs::end_block_inputs;
+use outbe_evm::system_tx::{TEST_BLOCK_ORDER, *};
 use outbe_primitives::{
     consensus::{DkgBoundaryArtifact, OUTBE_MAX_EXTRA_DATA_SIZE},
     consensus_metadata::{CertifiedParentAccountingMetadata, ParentParticipationProof},
 };
-use outbe_primitives::{system_tx::*, test_utils::TEST_BLOCK_ORDER};
 use reth_ethereum::TransactionSigned;
 
 const CHAIN_ID: u64 = 2026;

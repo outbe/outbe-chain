@@ -311,7 +311,7 @@ fn validate_reserved_system_input(
     tx: &TransactionSigned,
     body_index: usize,
     expected_input: &SystemTx,
-    order: &outbe_primitives::block::BlockOrder,
+    order: &crate::system_tx::BlockOrder,
 ) -> Result<(), BlockExecutionError> {
     use crate::errors::ExecutorValidationError;
 

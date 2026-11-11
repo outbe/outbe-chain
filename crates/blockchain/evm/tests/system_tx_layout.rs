@@ -7,8 +7,8 @@ use end_block_inputs::end_block_inputs;
 
 use alloy_consensus::{SignableTransaction as _, TxLegacy};
 use alloy_primitives::{address, Bytes, Signature, TxKind, U256};
+use outbe_evm::system_tx::{BlockOrder, TEST_BLOCK_ORDER, *};
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
-use outbe_primitives::{block::BlockOrder, system_tx::*, test_utils::TEST_BLOCK_ORDER};
 use reth_ethereum::TransactionSigned;
 
 /// Empty layout - used by the block-1 / block-0 layout tests that only need to

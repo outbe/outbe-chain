@@ -30,13 +30,6 @@ mod tests {
     use crate::executor::*;
     use alloy_evm::{eth::EthBlockExecutionCtx, EvmEnv, EvmFactory};
     use alloy_primitives::{Bytes, U256};
-    use outbe_primitives::{
-        block::{BlockOrder, BlockSystemFlags},
-        signer::OutbeEvmSigner,
-        system_tx::{build_unsigned_system_tx, BlockExecutionFsm, BlockExecutionStage, SystemTx},
-        test_utils::TEST_BLOCK_ORDER,
-        OutbeHeader,
-    };
     use reth_ethereum::evm::RethReceiptBuilder;
     use reth_primitives_traits::Recovered;
     use revm::{
@@ -46,6 +39,15 @@ mod tests {
         primitives::hardfork::SpecId,
     };
     use std::sync::Arc;
+    use {
+        crate::system_tx::{BlockExecutionFsm, BlockOrder, TEST_BLOCK_ORDER},
+        outbe_primitives::{
+            block::BlockSystemFlags,
+            signer::OutbeEvmSigner,
+            system_tx::{build_unsigned_system_tx, BlockExecutionStage, SystemTx},
+            OutbeHeader,
+        },
+    };
 
     type TestEvm = <crate::OutbeEvmFactory as EvmFactory>::Evm<State<EmptyDB>, NoOpInspector>;
 

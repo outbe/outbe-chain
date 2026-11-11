@@ -7,7 +7,7 @@ mod input_for_step;
 use input_for_step::input_for_step;
 
 use alloy_primitives::Bytes;
-use outbe_primitives::{system_tx::*, test_utils::TEST_BLOCK_ORDER};
+use outbe_evm::system_tx::{TEST_BLOCK_ORDER, *};
 use proptest::prelude::*;
 
 #[test]

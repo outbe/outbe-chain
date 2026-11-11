@@ -1,12 +1,15 @@
 use super::super::*;
 use crate::errors::ExecutorValidationError;
-use outbe_primitives::{
-    block::BlockSystemFlags,
-    system_tx::{
-        assemble_prefix_system_txs, BlockSystemPlan, SystemTxStepId,
-        CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX, CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX,
+use {
+    crate::system_tx::{assemble_prefix_system_txs, BlockSystemPlan},
+    outbe_primitives::{
+        block::BlockSystemFlags,
+        system_tx::{
+            SystemTxStepId, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+            CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX,
+        },
+        system_tx_context::{SystemTxBuildContext, SystemTxValidationContext},
     },
-    system_tx_context::{SystemTxBuildContext, SystemTxValidationContext},
 };
 
 type BeginSystemTransaction = (SystemTx, Option<AccountedParentArtifact>);

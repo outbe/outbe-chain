@@ -3,10 +3,11 @@
 use super::*;
 use crate::config::system_txs::sign_end_system_tx;
 use crate::errors::ExecutorValidationError;
-use outbe_primitives::system_tx::{
-    build_unsigned_system_tx, BlockExecutionStage, PlannedSystemStep, SystemTx,
-};
 use reth_primitives_traits::Recovered;
+use {
+    crate::system_tx::PlannedSystemStep,
+    outbe_primitives::system_tx::{build_unsigned_system_tx, BlockExecutionStage, SystemTx},
+};
 
 struct AdmittedEndTx {
     input: SystemTx,
@@ -16,7 +17,7 @@ struct AdmittedEndTx {
 struct EndTxCheck {
     block_number: u64,
     expected: PlannedSystemStep,
-    order: outbe_primitives::block::BlockOrder,
+    order: crate::system_tx::BlockOrder,
     chain_id: u64,
     proposer: Address,
 }

@@ -2,17 +2,8 @@ use super::{
     end_block_nonce_ordinal, SysTxSelector, SystemTx, SystemTxError, SystemTxStepId,
     BEGIN_BLOCK_STAGE_SELECTOR, CONSENSUS_STAGE_SELECTOR, END_BLOCK_STAGE_SELECTOR,
 };
-use crate::block::{BlockHeightRegime, BlockOrder, BlockSystemFlags, ProtocolStep};
-
-/// 4-Stage Block Execution FSM stage (`Consensus -> BeginBlock -> MidBlock -> EndBlock -> Completed`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum BlockExecutionStage {
-    Consensus,
-    BeginBlock,
-    MidBlock,
-    EndBlock,
-    Completed,
-}
+use super::{BlockExecutionStage, BlockOrder, ProtocolStep};
+use outbe_primitives::block::{BlockHeightRegime, BlockSystemFlags};
 
 /// Concrete step descriptor in a per-block `BlockSystemPlan`.
 /// Retains the static `SystemTxStepId` (`stage` + `step_index`) in `BlockOrder` across active-step filtering.

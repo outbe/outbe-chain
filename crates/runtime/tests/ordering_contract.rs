@@ -184,7 +184,7 @@ fn transition_epoch_does_not_fire_inside_an_epoch() {
 
 #[test]
 fn runtime_order_matches_protocol_contract_and_lower_layer_order() {
-    use outbe_primitives::{block::BlockHeightRegime, test_utils::TEST_BLOCK_ORDER};
+    use {outbe_evm::system_tx::TEST_BLOCK_ORDER, outbe_primitives::block::BlockHeightRegime};
     let expected = [
         ("certified_parent_accounting", true, true, false),
         ("late_finalize_credits", true, false, false),
@@ -207,6 +207,26 @@ fn runtime_order_matches_protocol_contract_and_lower_layer_order() {
         ("credis_factory", false, false, false),
         ("gem_cleanup", false, false, false),
     ];
+    let policy = <outbe_runtime::OutbeRuntime as outbe_consensus::protocol_state::EngineProtocolState>::system_tx_leader_policy(&outbe_runtime::OutbeRuntime::new());
+    assert_eq!(
+        (policy.step_name_or_stage)(&SystemTx::BeginBlock { step_index: 8 }),
+        "cycle_tick"
+    );
+    let body = outbe_primitives::OutbeBlockBody::default();
+    let header = outbe_primitives::OutbeHeader::default();
+    let (layout, _) =
+        (policy.validate_layout)(&body, &header).expect("runtime policy accepts empty genesis");
+    assert!(layout.is_empty());
+    let header = outbe_primitives::OutbeHeader::new(alloy_consensus::Header {
+        number: 2,
+        ..Default::default()
+    });
+    assert!(matches!(
+        (policy.validate_layout)(&body, &header),
+        Err(outbe_evm::system_tx::binding::LayoutBindingError::Set(
+            outbe_evm::system_tx::SystemTxError::ActiveSystemTxSetMismatch { .. }
+        ))
+    ));
     let orders = outbe_runtime::BLOCK_ORDER;
     assert_eq!(
         (
@@ -216,7 +236,7 @@ fn runtime_order_matches_protocol_contract_and_lower_layer_order() {
         ),
         (6, 9, 5)
     );
-    let describe = |step: &outbe_primitives::block::ProtocolStep| {
+    let describe = |step: &outbe_evm::system_tx::ProtocolStep| {
         (
             step.name,
             step.revert_fails_block,
@@ -297,7 +317,7 @@ fn all_flags() -> impl Iterator<Item = outbe_primitives::block::BlockSystemFlags
 
 #[test]
 fn runtime_plan_and_fsm_preserve_static_indices_across_filtering() {
-    use outbe_primitives::system_tx::BlockSystemPlan;
+    use outbe_evm::system_tx::BlockSystemPlan;
     let order = &outbe_runtime::BLOCK_ORDER;
     for block in [0, 1, 2] {
         for flags in all_flags() {
@@ -331,8 +351,10 @@ fn runtime_plan_and_fsm_preserve_static_indices_across_filtering() {
     }
 }
 
-fn assert_fsm_reaches_completed(plan: outbe_primitives::system_tx::BlockSystemPlan) {
-    use outbe_primitives::system_tx::{BlockExecutionFsm, BlockExecutionStage};
+fn assert_fsm_reaches_completed(plan: outbe_evm::system_tx::BlockSystemPlan) {
+    use {
+        outbe_evm::system_tx::BlockExecutionFsm, outbe_primitives::system_tx::BlockExecutionStage,
+    };
     let block = plan.block_number;
     let mut fsm = BlockExecutionFsm::new(plan.clone());
     if block != 0 {

@@ -37,7 +37,7 @@ fn begin_block_system_tx_rejection_preserves_logs_and_begin_receipt_accounting()
     ctx.parent_consensus_metadata = Some(metadata);
     ctx.expected_begin_system_txs = begin.clone();
     let mut executor = config.create_executor(evm, ctx);
-    executor.fsm = outbe_primitives::system_tx::BlockExecutionFsm::for_block(
+    executor.fsm = outbe_evm::system_tx::BlockExecutionFsm::for_block(
         2,
         Default::default(),
         &outbe_runtime::BLOCK_ORDER,

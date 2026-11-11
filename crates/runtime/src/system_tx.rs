@@ -4,10 +4,6 @@ use alloy_primitives::{Address, Bytes, U256};
 use outbe_evm::errors::BeginBlockPrecompileError;
 use outbe_evm::precompiles::MetadosisMutationCall;
 use outbe_primitives::addresses::{OUTBE_SYSTEM_TX_ADDRESS, SYSTEM_ADDRESS};
-use outbe_primitives::block::{
-    begin_step, consensus_step, end_step, BlockContext, BlockOrder, BlockRuntimeContext,
-    MetadosisEntitlementContext, ProtocolModule, ProtocolStep,
-};
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::reshare_artifact::{
@@ -26,6 +22,12 @@ use outbe_primitives::system_tx_context::{
 };
 use outbe_primitives::tee_attestation_v1::TeePolicyV1;
 use outbe_tee::tee_attestation_activation::TeeAttestationChainSpecStateV1;
+use {
+    outbe_evm::system_tx::{begin_step, consensus_step, end_step, BlockOrder, ProtocolStep},
+    outbe_primitives::block::{
+        BlockContext, BlockRuntimeContext, MetadosisEntitlementContext, ProtocolModule,
+    },
+};
 
 /// Applies the certified validator boundary before begin-block work.
 pub struct BoundaryOutcomeModule;

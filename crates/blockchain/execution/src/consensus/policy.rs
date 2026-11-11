@@ -5,9 +5,6 @@ use outbe_primitives::consensus::{
     classify_timestamp_advance, TimestampAdvance, MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
     MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS, OUTBE_MAX_BLOCK_SIZE,
 };
-use outbe_primitives::{
-    block::BlockOrder, payload::validate_outbe_withdrawals, OutbeBlock, OutbeBlockBody, OutbeHeader,
-};
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_consensus_common::validation::{
     validate_against_parent_4844, validate_against_parent_eip1559_base_fee,
@@ -16,6 +13,12 @@ use reth_consensus_common::validation::{
 use reth_ethereum::consensus::ConsensusError;
 use reth_primitives_traits::{SealedBlock, SealedHeader};
 use std::sync::Arc;
+use {
+    outbe_evm::system_tx::BlockOrder,
+    outbe_primitives::{
+        payload::validate_outbe_withdrawals, OutbeBlock, OutbeBlockBody, OutbeHeader,
+    },
+};
 
 const MILLIS_PER_SECOND: u64 = 1000;
 

@@ -153,7 +153,7 @@ outbe-vaultrouter = { workspace = true, features = ["test-utils"] }
 revm.workspace = true
 outbe-teeregistry.workspace = true
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
-outbe-evm = { workspace = true, features = ["test-hooks"] }
+outbe-evm = { workspace = true, features = ["test-hooks", "test-utils"] }
 outbe-stablecoin.workspace = true
 outbe-genesis-cli.workspace = true
 outbe-cycle = { workspace = true, features = ["test-utils"] }

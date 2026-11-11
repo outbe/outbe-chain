@@ -40,7 +40,7 @@ fn policy(enabled: bool) -> OutbeConsensusPolicy<ChainSpec<OutbeHeader>> {
     OutbeConsensusPolicy::new(
         Arc::new(spec),
         false,
-        outbe_primitives::test_utils::TEST_BLOCK_ORDER,
+        outbe_evm::system_tx::TEST_BLOCK_ORDER,
     )
 }
 

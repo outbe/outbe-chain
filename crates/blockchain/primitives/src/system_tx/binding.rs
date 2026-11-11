@@ -1,12 +1,10 @@
 //! Pure system-transaction layout and header/body bindings.
 use super::{
-    split_system_layout, validate_system_tx_set_for_publication, BlockHeightRegime, SystemTx,
-    SystemTxError, SystemTxLayout, CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX,
-    CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
-    CONSENSUS_RADICLE_PUBLICATION_STEP_INDEX,
+    split_system_layout, BlockHeightRegime, SystemTx, SystemTxError, SystemTxLayout,
+    CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX, CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX,
+    CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX, CONSENSUS_RADICLE_PUBLICATION_STEP_INDEX,
 };
 use crate::{
-    block::{BlockOrder, BlockSystemFlags},
     consensus::DkgBoundaryArtifact,
     consensus_metadata::CertifiedParentAccountingMetadata,
     error::PrecompileError,
@@ -18,7 +16,7 @@ use crate::{
     reshare_artifact::{
         decode_outbe_block_artifacts, ConsensusHeaderArtifact, OutbeBlockArtifacts,
     },
-    system_tx_context::{SystemTxPayloadValidationError, SystemTxValidationContext},
+    system_tx_context::SystemTxPayloadValidationError,
     tee_attestation_v1::CodecError,
     tee_bootstrap_v2::{
         codec::{decode_canonical, encode_canonical},
@@ -166,43 +164,6 @@ pub enum LateCreditsBindingError {
     Mismatch,
     #[error("header carries late_finalize_credits but block has no LateFinalizeCredits system tx")]
     Missing,
-}
-
-/// Decode header artifacts before validating the layout and active membership.
-/// Envelope, signer and execution checks belong to the caller.
-pub fn validate_system_layout<'a>(
-    body: &'a OutbeBlockBody,
-    header: &OutbeHeader,
-    order: &BlockOrder,
-) -> Result<(SystemTxLayout<'a>, OutbeBlockArtifacts), LayoutBindingError> {
-    let artifacts = decode_outbe_block_artifacts(header.extra_data().as_ref())
-        .map_err(LayoutBindingError::Artifacts)?;
-    let layout = split_system_layout(&body.transactions).map_err(LayoutBindingError::Layout)?;
-    validate_system_tx_set_for_publication(
-        order,
-        &layout,
-        header.number(),
-        BlockSystemFlags::from_artifacts(&artifacts),
-    )
-    .map_err(LayoutBindingError::Set)?;
-    let ctx = SystemTxValidationContext {
-        regime: BlockHeightRegime::for_block(header.number()),
-        block_number: header.number(),
-        parent_hash: header.parent_hash(),
-        artifacts: &artifacts,
-    };
-    for tx in layout.begin.iter().chain(&layout.end) {
-        let input = SystemTx::decode((*tx).input()).map_err(LayoutBindingError::Layout)?;
-        let step = order.step_for_tx(&input).ok_or_else(|| {
-            LayoutBindingError::Set(SystemTxError::UnexpectedSystemTx {
-                stage: input.stage(),
-                expected: None,
-                actual: input.stage_name(),
-            })
-        })?;
-        (step.validate_payload)(input.payload(), &ctx)?;
-    }
-    Ok((layout, artifacts))
 }
 
 impl From<SystemTxPayloadValidationError> for LayoutBindingError {

@@ -14,15 +14,8 @@ use alloy_consensus::{Header, SignableTransaction, TxLegacy};
 use alloy_primitives::{Address, Bytes, Signature, TxKind, B256, U256};
 use reth_ethereum::TransactionSigned;
 
-pub(super) enum Check {
-    Layout,
-    Parent,
-    Boundary,
-}
-
 pub(super) struct Case {
     pub name: &'static str,
-    pub check: Check,
     pub header: OutbeHeader,
     pub body: OutbeBlockBody,
     pub artifacts: OutbeBlockArtifacts,
@@ -37,10 +30,9 @@ impl Case {
         }
     }
 
-    fn new(name: &'static str, check: Check, height: u64, inputs: Vec<Bytes>) -> Self {
+    fn new(name: &'static str, height: u64, inputs: Vec<Bytes>) -> Self {
         Self {
             name,
-            check,
             header: OutbeHeader::new(Header {
                 number: height,
                 parent_hash: B256::repeat_byte(0x41),
@@ -148,62 +140,34 @@ pub(super) fn cases() -> Vec<Case> {
     let cycle = encoded(SystemTx::BeginBlock { step_index: 8 });
     let malformed = Bytes::from_static(b"OSCN\x03\x00");
     let mut cases = vec![
-        Case::new("genesis_empty", Check::Layout, 0, vec![]),
-        Case::new("block1_requires_boundary", Check::Layout, 1, vec![]),
-        Case::new("steady_disabled", Check::Layout, 2, steady_inputs()),
+        Case::new("genesis_empty", 0, vec![]),
+        Case::new("block1_requires_boundary", 1, vec![]),
+        Case::new("steady_disabled", 2, steady_inputs()),
         Case::new(
             "wrong_order",
-            Check::Layout,
             2,
             vec![cycle.clone(), parent(B256::repeat_byte(0x41))],
         ),
-        Case::new("malformed_layout", Check::Layout, 2, vec![Bytes::new()]),
-        Case::new(
-            "genesis_skips_parent",
-            Check::Parent,
-            0,
-            vec![malformed.clone()],
-        ),
-        Case::new(
-            "block1_skips_parent",
-            Check::Parent,
-            1,
-            vec![malformed.clone()],
-        ),
-        Case::new("parent_missing", Check::Parent, 2, vec![]),
-        Case::new("parent_wrong_kind", Check::Parent, 2, vec![cycle.clone()]),
-        Case::new("parent_malformed", Check::Parent, 2, vec![malformed]),
+        Case::new("malformed_layout", 2, vec![Bytes::new()]),
+        Case::new("genesis_skips_parent", 0, vec![malformed.clone()]),
+        Case::new("block1_skips_parent", 1, vec![malformed.clone()]),
+        Case::new("parent_missing", 2, vec![]),
+        Case::new("parent_wrong_kind", 2, vec![cycle.clone()]),
+        Case::new("parent_malformed", 2, vec![malformed]),
         Case::new(
             "parent_hash_mismatch",
-            Check::Parent,
             2,
             vec![parent(B256::repeat_byte(0x42))],
         ),
-        Case::new(
-            "parent_matches",
-            Check::Parent,
-            2,
-            vec![parent(B256::repeat_byte(0x41))],
-        ),
+        Case::new("parent_matches", 2, vec![parent(B256::repeat_byte(0x41))]),
         Case::new(
             "maximum_height_parent_matches",
-            Check::Parent,
             u64::MAX,
             vec![parent(B256::repeat_byte(0x41))],
         ),
-        Case::new(
-            "no_boundary_skips_malformed_inputs",
-            Check::Boundary,
-            2,
-            vec![Bytes::new()],
-        ),
+        Case::new("no_boundary_skips_malformed_inputs", 2, vec![Bytes::new()]),
     ];
-    let mut bad_artifacts = Case::new(
-        "artifacts_before_layout",
-        Check::Layout,
-        2,
-        vec![Bytes::new()],
-    );
+    let mut bad_artifacts = Case::new("artifacts_before_layout", 2, vec![Bytes::new()]);
     bad_artifacts.header.inner.extra_data = Bytes::from_static(b"bad artifacts");
     cases.push(bad_artifacts);
     let artifact = boundary();
@@ -232,17 +196,12 @@ pub(super) fn cases() -> Vec<Case> {
             vec![Bytes::new(), matching],
         ),
     ] {
-        let mut case = Case::new(name, Check::Boundary, 2, inputs);
+        let mut case = Case::new(name, 2, inputs);
         case.artifacts.consensus_header_artifact =
             Some(ConsensusHeaderArtifact::BoundaryOutcome(artifact.clone()));
         cases.push(case);
     }
-    let mut layout_mismatch = Case::new(
-        "boundary_header_missing_body",
-        Check::Layout,
-        2,
-        steady_inputs(),
-    );
+    let mut layout_mismatch = Case::new("boundary_header_missing_body", 2, steady_inputs());
     layout_mismatch.artifacts.consensus_header_artifact =
         Some(ConsensusHeaderArtifact::BoundaryOutcome(artifact));
     layout_mismatch.header.inner.extra_data =

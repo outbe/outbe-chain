@@ -27,13 +27,16 @@ use outbe_intex::IntexContract;
 use outbe_primitives::addresses::{GEM_ADDRESS, INTEX_ADDRESS};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::{
-    block::BlockSystemFlags,
-    system_tx::{BlockSystemPlan, SystemTxStepId, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX},
-};
 use outbe_validatorset::contract::ValidatorSet;
 use serde_json::Value;
 use tempfile::TempDir;
+use {
+    outbe_evm::system_tx::BlockSystemPlan,
+    outbe_primitives::{
+        block::BlockSystemFlags,
+        system_tx::{SystemTxStepId, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX},
+    },
+};
 
 const ACCOUNTING_PROGRESS_ADDRESS_HEX: &str = "000000000000000000000000000000000000ee04";
 const VALIDATOR_SET_ADDRESS_HEX: &str = "000000000000000000000000000000000000ee00";

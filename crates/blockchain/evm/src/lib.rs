@@ -21,12 +21,11 @@ pub mod test_support;
 /// belongs with the other primitives. The `outbe_evm::signer` path stays, so the
 /// existing `pub use` re-exports below continue to work.
 pub use outbe_primitives::signer;
-/// Re-export of the system-tx codec, which now physically lives in
-/// `outbe-primitives::system_tx`. The codec is wire/data-only (no EVM
-/// runtime), so it belongs with the rest of the consensus primitives.
-/// The path `outbe_evm::system_tx` continues to work, so ~50 call sites in
-/// executor / payload builder / tests need no change.
-pub use outbe_primitives::system_tx;
+/// Execution-layer system-transaction schedule, FSM, prefix assembler, and
+/// layout validation (`BlockOrder`, `ProtocolStep`, `BlockSystemPlan`,
+/// `BlockExecutionFsm`, `assemble_prefix_system_txs`, `validate_system_layout`),
+/// plus re-exports of the wire codec from `outbe_primitives::system_tx`.
+pub mod system_tx;
 
 pub use config::{
     OutbeBlockAssembler, OutbeBlockExecutionCtx, OutbeEvmConfig, OutbeExecutorBuilder,

@@ -15,13 +15,12 @@ pub use crate::block::BlockHeightRegime;
 pub mod binding;
 
 mod envelope;
-mod fsm;
 mod gas;
 mod input;
 mod layout;
 mod witness;
 
-pub use input::{assemble_prefix_system_txs, SystemTx, SystemTxStepId};
+pub use input::{SystemTx, SystemTxStepId};
 
 /// Four-byte stage selector for a system transaction.
 pub type SysTxSelector = [u8; 4];
@@ -45,8 +44,17 @@ pub fn is_reserved_system_tx<T: alloy_consensus::Transaction + ?Sized>(tx: &T) -
 }
 
 pub use crate::block::BlockSystemFlags;
-pub use fsm::{BlockExecutionFsm, BlockExecutionStage, BlockSystemPlan, PlannedSystemStep};
-pub use layout::{split_system_layout, validate_system_tx_set_for_publication, SystemTxLayout};
+/// 4-Stage Block Execution FSM stage (`Consensus -> BeginBlock -> MidBlock -> EndBlock -> Completed`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BlockExecutionStage {
+    Consensus,
+    BeginBlock,
+    MidBlock,
+    EndBlock,
+    Completed,
+}
+
+pub use layout::{split_system_layout, SystemTxLayout};
 
 pub use gas::{system_tx_intrinsic_gas, system_tx_visible_gas_limit};
 

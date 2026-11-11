@@ -10,10 +10,10 @@ use outbe_primitives::{
     consensus::{DkgBoundaryArtifact, ReshareResult},
     system_tx::{
         build_unsigned_system_tx, protocol_block_gas_limit, split_system_layout,
-        system_tx_visible_gas_limit, validate_system_tx_set_for_publication, BlockSystemFlags,
-        BlockSystemPlan, SystemTx, CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX,
-        CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX, CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX,
-        STEADY_BLOCK_GAS_LIMIT, SYSTEM_CALLDATA_FRAMING_BYTES, SYSTEM_TX_INPUT_VERSION,
+        system_tx_visible_gas_limit, SystemTx, SystemTxStepId,
+        CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX, CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX,
+        CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX, STEADY_BLOCK_GAS_LIMIT,
+        SYSTEM_CALLDATA_FRAMING_BYTES, SYSTEM_TX_INPUT_VERSION,
     },
     tee_attestation_v1::{
         AttestationEvidenceV1, AttestationMode, AttestationOperationV1, CodecError,
@@ -27,7 +27,6 @@ use outbe_primitives::{
         TeeBootstrapParticipantEvidenceV2, TeeBootstrapParticipantSubmissionV2,
         TeeBootstrapParticipantV2, TeeBootstrapV2,
     },
-    test_utils::TEST_BLOCK_ORDER,
 };
 use reth_ethereum::TransactionSigned;
 
@@ -407,34 +406,15 @@ fn assert_block1_zero_gas_layout(transactions: &[TransactionSigned]) {
         assert_eq!(system_tx_visible_gas_limit(transaction.input()).unwrap(), 0);
     }
     let layout = split_system_layout(transactions).expect("block-1 layout splits");
-    validate_system_tx_set_for_publication(
-        &TEST_BLOCK_ORDER,
-        &layout,
-        1,
-        BlockSystemFlags {
-            has_boundary_outcome: true,
-            has_publication: false,
-        },
-    )
-    .expect("block-1 bootstrap layout validates");
-    assert_eq!(
-        layout.prefix_steps().unwrap(),
-        BlockSystemPlan::for_block(
-            1,
-            BlockSystemFlags {
-                has_boundary_outcome: true,
-                has_publication: false
-            },
-            &TEST_BLOCK_ORDER
-        )
-        .expected_prefix_steps()
-    );
+    let mut expected = vec![
+        SystemTxStepId::consensus(2),
+        SystemTxStepId::consensus(3),
+        SystemTxStepId::consensus(4),
+    ];
+    expected.extend((0..9).map(SystemTxStepId::begin_block));
+    assert_eq!(layout.prefix_steps().unwrap(), expected);
+    assert!(layout.user.is_empty());
     assert!(layout.end.is_empty());
-    assert!(
-        BlockSystemPlan::for_block(1, BlockSystemFlags::default(), &TEST_BLOCK_ORDER)
-            .expected_end_block_steps()
-            .is_empty()
-    );
 }
 
 #[test]

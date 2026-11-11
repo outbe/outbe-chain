@@ -30,7 +30,7 @@ where
         self.resolved_begin_zone = None;
         self.verified_late_credit_signers = None;
         self.preexecuted_phase1_tx_hash = None;
-        self.fsm = outbe_primitives::system_tx::BlockExecutionFsm::for_block(
+        self.fsm = crate::system_tx::BlockExecutionFsm::for_block(
             block_number,
             outbe_primitives::block::BlockSystemFlags::default(),
             &self.block_order,
@@ -69,7 +69,7 @@ where
         let block_artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
             .map_err(ExecutorValidationError::block_artifacts)?;
         self.decoded_block_artifacts = Some(block_artifacts.clone());
-        self.fsm = outbe_primitives::system_tx::BlockExecutionFsm::for_block(
+        self.fsm = crate::system_tx::BlockExecutionFsm::for_block(
             block_number,
             outbe_primitives::block::BlockSystemFlags::from_artifacts(&block_artifacts),
             &self.block_order,
