@@ -1,21 +1,19 @@
 # Aggregate mise config for the contracts monorepo.
-# Fans out to each sub-project. Forge projects use forge/soldeer; intex is a Hardhat hybrid.
+# Fans out to each sub-project; every one uses forge and soldeer.
 # Per-project tasks live in each sub-project's mise.toml (e.g. `mise run export-abi` inside intent,
 # or `mise run -C intent deploy-escrow`).
 
 [env]
 # Self-contained Forge sub-projects (soldeer deps, forge toolchain).
-FORGE_PROJECTS = "intent tokens crosschain precompiles"
-# Sub-projects that export ABIs (intex uses yarn, handled separately).
-# crosschain is absent: it has no export-abi task.
-ABI_PROJECTS = "intent precompiles tokens"
+FORGE_PROJECTS = "intent intex tokens crosschain precompiles"
+# Sub-projects that export ABIs. crosschain is absent: it has no export-abi task.
+ABI_PROJECTS = "intent intex precompiles tokens"
 
 [tasks.install]
 description = "Install dependencies using soldeer"
 run = '''
 set -e
 for p in $FORGE_PROJECTS; do echo "==> $p (soldeer)"; (cd "$p" && forge soldeer install); done
-echo "==> intex"; (cd intex && mise run install)
 '''
 
 [tasks.build]
@@ -23,7 +21,6 @@ description = "Build every sub-project"
 run = '''
 set -e
 for p in $FORGE_PROJECTS; do echo "==> build $p"; (cd "$p" && forge build); done
-echo "==> build intex"; (cd intex && mise run build)
 '''
 
 [tasks.test]
@@ -31,7 +28,6 @@ description = "Test every sub-project"
 run = '''
 set -e
 for p in $FORGE_PROJECTS; do echo "==> test $p"; (cd "$p" && forge test); done
-echo "==> test intex"; (cd intex && mise run test)
 '''
 
 [tasks.export-abi]
@@ -39,33 +35,32 @@ description = "Export ABIs in every sub-project that produces them"
 run = '''
 set -e
 for p in $ABI_PROJECTS; do echo "==> export-abi $p"; (cd "$p" && mise run export-abi); done
-echo "==> export-abi intex"; (cd intex && mise run export-abi)
 '''
 
 [tasks.fmt]
 description = "Format every sub-project (forge fmt)"
 run = '''
 set -e
-for p in $FORGE_PROJECTS intex; do echo "==> fmt $p"; (cd "$p" && forge fmt); done
+for p in $FORGE_PROJECTS; do echo "==> fmt $p"; (cd "$p" && forge fmt); done
 '''
 
 [tasks.lint]
 description = "Lint every Forge sub-project (forge lint)"
 run = '''
 set -e
-for p in $FORGE_PROJECTS intex; do echo "==> lint $p"; (cd "$p" && forge lint); done
+for p in $FORGE_PROJECTS; do echo "==> lint $p"; (cd "$p" && forge lint); done
 '''
 
 [tasks.clean]
 description = "Clean forge artifacts in every sub-project"
 run = '''
 set -e
-for p in $FORGE_PROJECTS intex; do echo "==> clean $p"; (cd "$p" && forge clean); done
+for p in $FORGE_PROJECTS; do echo "==> clean $p"; (cd "$p" && forge clean); done
 '''
 
 [tasks.clean-all]
 description = "Deep-clean every sub-project (artifacts, caches, and deps)"
 run = '''
 set -e
-for p in $FORGE_PROJECTS intex; do echo "==> clean-all $p"; (cd "$p" && mise run clean-all); done
+for p in $FORGE_PROJECTS; do echo "==> clean-all $p"; (cd "$p" && mise run clean-all); done
 '''

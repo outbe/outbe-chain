@@ -17,7 +17,7 @@ import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 /// @notice Prepares an upgrade of every intex proxy on every chain of the stack (see
 ///         UpgradeProposal). Each implementation gets the immutables of the live proxy: the
 ///         bridge hub, the bridged NFT and the Outbe chain id.
-/// @dev Env: the UpgradeProposal ones, CREATE3_FACTORY_ADDRESS and SALT_VERSION (optional). The
+/// @dev Env: the UpgradeProposal ones, CREATE3_FACTORY_ADDRESS and CONTRACT_SALT (optional). The
 ///      upgrade authority is DEFAULT_ADMIN_ROLE.
 contract PrepareUpgrade is BaseScript, UpgradeProposal {
     function _proxies(address deployer) internal view override returns (address[] memory proxies) {

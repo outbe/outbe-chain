@@ -12,14 +12,14 @@ import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 /// @notice Deploy the origin-side intex engine (OriginRouter) and register every auction target
 ///         from `TARGET_CHAIN_IDS`. The NFT collection + bridge and the auction stack are a target
 ///         concern (see DeployTarget). The origin engine needs neither.
-/// @dev Env: DEPLOYER_PRIVATE_KEY, BRIDGE_ADDRESS (the ERC-7786 bridge all clients speak to),
+/// @dev Env: DEPLOYER_PK, BRIDGE_ADDRESS (the ERC-7786 bridge all clients speak to),
 ///      TARGET_CHAIN_IDS (comma-separated auction target chainIds), optional OUTBE_WCOEN_BRIDGE +
 ///      OUTBE_WCOEN_TOKEN (proceeds unwrap). The deployer is admin + delegate.
 ///      Target peers are CREATE3-deterministic, so they are predictable before those chains are
 ///      deployed.
 contract DeployOrigin is BaseScript {
     function run() external {
-        uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        uint256 pk = vm.envUint("DEPLOYER_PK");
         address deployer = vm.addr(pk);
         address delegate = deployer;
         address bridge = vm.envAddress("BRIDGE_ADDRESS");
