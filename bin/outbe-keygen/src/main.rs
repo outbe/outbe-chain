@@ -15,8 +15,8 @@ use commonware_cryptography::{bls12381, Signer as _};
 use commonware_math::algebra::Random;
 use eyre::{Result, WrapErr};
 use k256::ecdsa::SigningKey;
-use outbe_consensus::bls::{self, KeyBackend};
 use outbe_primitives::validators::{validator_registration_message, VALIDATOR_REGISTRATION_DST};
+use outbe_simplex::bls::{self, KeyBackend};
 
 use crate::errors::KeygenError;
 

@@ -23,6 +23,9 @@ use serde::{Deserialize, Serialize};
 
 pub const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
 
+#[cfg(any(test, feature = "test-utils"))]
+pub mod fixture;
+
 #[cfg(test)]
 pub(crate) mod tests;
 

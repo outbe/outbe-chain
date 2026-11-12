@@ -72,7 +72,6 @@ pub mod runtime;
 pub mod schema;
 #[cfg(test)]
 mod test_support;
-mod transaction;
 
 pub use constants::{
     FREE_TX_BOOTSTRAP_GAS_LIMIT, FREE_TX_DAILY_CALLDATA_BYTES, FREE_TX_DAILY_GAS_LIMIT,

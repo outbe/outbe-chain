@@ -11,6 +11,7 @@ fn header_fixture_deps<'a, A: crate::dkg_manager::AncestryReader>(
 ) -> HeaderArtifactValidationDeps<'a, A> {
     HeaderArtifactValidationDeps {
         chain_id: outbe_primitives::chain::CHAIN_ID,
+        leader_policy: crate::test_fixtures::test_leader_policy(),
         certificate_scheme_provider,
         committee_provider,
         dkg_manager,

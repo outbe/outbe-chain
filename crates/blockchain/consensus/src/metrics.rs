@@ -5,6 +5,7 @@
 //! Prometheus exporter.
 
 use metrics::{counter, gauge, histogram};
+pub use outbe_simplex::metrics::*;
 use std::time::Duration;
 use tracing::debug;
 
@@ -211,12 +212,6 @@ pub fn record_dkg_status(status: u8) {
     gauge!("outbe_dkg_status").set(status as f64);
 }
 
-/// Record a fail-closed VRF expiry event.
-pub fn record_vrf_randomness_expired() {
-    counter!("outbe_vrf_randomness_expired_total").increment(1);
-    record_dkg_status(3);
-}
-
 /// Record a DKG reshare completion event.
 pub fn record_reshare_completed() {
     counter!("outbe_reshares_completed_total").increment(1);
@@ -238,11 +233,6 @@ pub fn record_reshare_completed() {
 pub fn record_dkg_revealed_shares(count: usize) {
     gauge!("outbe_dkg_revealed_shares").set(count as f64);
     counter!("outbe_dkg_revealed_shares_total").increment(count as u64);
-}
-
-/// Record deterministic degraded leader election due to missing or invalid VRF.
-pub fn record_vrf_degraded_leader_selection() {
-    counter!("outbe_vrf_degraded_leader_selection_total").increment(1);
 }
 
 /// The closed set of byzantine-equivocation kinds. Each carries its own telemetry
@@ -357,35 +347,6 @@ impl DkgBoundaryUnavailableReason {
             Self::AncestryUnavailable => "ancestry_unavailable",
         }
     }
-}
-
-/// Record an invalid threshold-VRF seed partial that attestation verification
-/// excluded from recovery AND that is identity-attributable to its author (the
-/// rider identity signature verified). A non-zero value means a committee member
-/// deliberately emitted a garbage `bls_seed_partial` on the expected material
-/// version (byzantine). The verifier dropped the complete attestation so it
-/// cannot poison `recover_proof`. The verifier also buffered slashable evidence
-/// for an external watcher to submit.
-pub fn record_invalid_vrf_partial() {
-    counter!("outbe_invalid_vrf_partial_total").increment(1);
-}
-
-/// Record an invalid threshold-VRF seed partial whose rider identity signature
-/// did NOT verify, so it cannot be attributed to the claimed signer. It is a
-/// probable in-transit relay forgery. Its complete attestation is dropped before
-/// quorum admission but never slashed.
-pub fn record_forged_seed_partial() {
-    counter!("outbe_forged_seed_partial_total").increment(1);
-}
-
-/// Record a complete vote+partial pair dropped before quorum admission.
-pub fn record_vrf_partial_drop(verdict: &'static str, signer: u32) {
-    counter!(
-        "outbe_vrf_partial_dropped_total",
-        "verdict" => verdict,
-        "signer" => signer.to_string(),
-    )
-    .increment(1);
 }
 
 /// Record a finalized certificate whose embedded threshold-VRF proof did not
@@ -510,13 +471,6 @@ pub fn record_dkg_boundary_duplicate_rejected() {
 /// because the DKG boundary artifact for epoch 0 is not ready.
 pub fn record_genesis_dkg_boundary_not_ready_forfeit() {
     record_proposer_forfeit(crate::forfeit::ProposerForfeitReason::GenesisDkgBoundaryNotReady);
-}
-
-/// `HybridScheme::recover_proof`
-/// returned `None` while quorum was met. The proposer forfeits the slot instead
-/// of stalling Simplex or emitting proof-less metadata.
-pub fn record_vrf_recover_failed_under_quorum() {
-    record_proposer_forfeit(crate::forfeit::ProposerForfeitReason::VrfRecoverFailedUnderQuorum);
 }
 
 /// Real build + marshal cost of a proposal (elapsed since the proposer's

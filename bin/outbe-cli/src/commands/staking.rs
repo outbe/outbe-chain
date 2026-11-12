@@ -15,7 +15,7 @@ use super::{parse_amount, parse_amount_allow_zero};
 use crate::abi::{self, IStaking, IValidatorSet};
 use crate::errors::StakingError;
 use crate::rpc::Rpc;
-use outbe_consensus::bls::{self, KeyBackend, KeyBackendNameError};
+use outbe_simplex::bls::{self, KeyBackend, KeyBackendNameError};
 
 #[derive(Subcommand)]
 pub enum StakingCmd {

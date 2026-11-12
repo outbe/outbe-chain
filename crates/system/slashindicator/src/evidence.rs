@@ -17,7 +17,7 @@ use crate::errors::SlashIndicatorError;
 /// epoch's on-chain `CommitteeSnapshot`. The namespaces thus bind both the chain
 /// (`outbe_app_namespace()`) and the committee. As a result, a vote from another chain
 /// OR another committee can no longer be replayed here as fabricated double-sign
-/// evidence. The committee-bound namespaces come from `outbe_consensus::proof`. That
+/// evidence. The committee-bound namespaces come from `outbe_primitives::proof`. That
 /// module is the single source of truth, and the signer uses it too.
 pub(crate) type EvidenceCommittee = Set<bls12381::PublicKey>;
 
@@ -58,19 +58,19 @@ impl EvidenceBlock {
     /// Verifies the BLS MinPk signature against the Simplex notarize payload,
     /// committee-bound to `committee`.
     pub fn verify_notarize_signature(&self, committee: &EvidenceCommittee) -> Result<()> {
-        self.verify_bls_signature(&outbe_consensus::proof::notarize_namespace(committee))
+        self.verify_bls_signature(&outbe_primitives::proof::notarize_namespace(committee))
     }
 
     /// Verifies the BLS MinPk signature against the Simplex nullify payload,
     /// committee-bound to `committee`.
     pub fn verify_nullify_signature(&self, committee: &EvidenceCommittee) -> Result<()> {
-        self.verify_bls_signature(&outbe_consensus::proof::nullify_namespace(committee))
+        self.verify_bls_signature(&outbe_primitives::proof::nullify_namespace(committee))
     }
 
     /// Verifies the BLS MinPk signature against the Simplex finalize payload,
     /// committee-bound to `committee`.
     pub fn verify_finalize_signature(&self, committee: &EvidenceCommittee) -> Result<()> {
-        self.verify_bls_signature(&outbe_consensus::proof::finalize_namespace(committee))
+        self.verify_bls_signature(&outbe_primitives::proof::finalize_namespace(committee))
     }
 
     /// Common BLS MinPk signature verification against a given namespace.
@@ -125,7 +125,7 @@ fn build_signed_payload_with_ns(namespace: &[u8], payload_bytes: &[u8]) -> Vec<u
 }
 
 // Vote namespaces (notarize/nullify/finalize) come from
-// `outbe_consensus::proof::*_namespace(committee)`. That is the single committee-bound
+// `outbe_primitives::proof::*_namespace(committee)`. That is the single committee-bound
 // derivation, and the signer uses it too. No local namespace builders remain,
 // so the signer and the evidence verifier cannot drift.
 
@@ -271,7 +271,7 @@ mod tests {
         // leb128(len(ns)) || ns || proposal, where `ns` is the committee-bound
         // notarize namespace.
         let proposal = vec![1, 2, 3, 4];
-        let ns = outbe_consensus::proof::notarize_namespace(&test_signing::committee());
+        let ns = outbe_primitives::proof::notarize_namespace(&test_signing::committee());
         let payload = build_signed_payload_with_ns(&ns, &proposal);
 
         let nlen = ns.len();
@@ -289,7 +289,7 @@ mod tests {
         // Nullify payload: epoch 5 + view 10, signed with the
         // committee-bound nullify namespace.
         let committee = test_signing::committee();
-        let ns = outbe_consensus::proof::nullify_namespace(&committee);
+        let ns = outbe_primitives::proof::nullify_namespace(&committee);
         let block = signed_block(&sk, &pk, &ns, &test_signing::nullify_payload(5, 10));
         block.verify_nullify_signature(&committee).unwrap();
 
@@ -311,7 +311,7 @@ mod tests {
         let (sk, pk) = test_signing::keypair(77).unwrap();
 
         let committee = test_signing::committee();
-        let ns = outbe_consensus::proof::finalize_namespace(&committee);
+        let ns = outbe_primitives::proof::finalize_namespace(&committee);
         // Chain-bound: no longer the bare b"outbe_FINALIZE".
         assert_ne!(ns.as_slice(), b"outbe_FINALIZE");
         let block = signed_block(&sk, &pk, &ns, &test_signing::proposal(4, 8, 7, [9u8; 32]));
@@ -329,7 +329,7 @@ mod tests {
         // A fake proposal (epoch=1, view=2, parent=0, digest=zeros), signed
         // with BLS under the committee-bound namespace.
         let committee = test_signing::committee();
-        let ns = outbe_consensus::proof::notarize_namespace(&committee);
+        let ns = outbe_primitives::proof::notarize_namespace(&committee);
         let block = signed_block(&sk, &pk, &ns, &test_signing::proposal(1, 2, 0, [0u8; 32]));
         block.verify_notarize_signature(&committee).unwrap();
 

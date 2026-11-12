@@ -1,7 +1,7 @@
 //! Fidelity crate tests over the confidential (enclave-backed) path.
 //!
 //! The enclave engine pins the deep RCFI/cohort math
-//! (`outbe-tee-enclave`'s `fidelity` module: LIFO split, golden decay.py
+//! (`outbe-enclave`'s `fidelity` module: LIFO split, golden decay.py
 //! replay, blob padding). Here we test the on-chain orchestration:
 //! - cohort ops persist encrypted blobs
 //! - the global anchor is set once

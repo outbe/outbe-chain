@@ -11,7 +11,7 @@ use outbe_primitives::addresses::NOD_FACTORY_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-use outbe_common::pow;
+use outbe_core_common::pow;
 use outbe_nod::api as nod_api;
 use outbe_nod::api::{LoadedNodGroup, LoadedNodItem};
 use outbe_nod::schema::{CallTerms, NodItemState};
@@ -261,7 +261,7 @@ pub(crate) fn settlement_units(
     asset_decimals: u8,
 ) -> Result<U256> {
     let cost = nod_cost(entry_price_minor, gratis_load_minor);
-    outbe_common::settlement::settlement_cost_units(&cost, rate, asset_decimals)
+    outbe_core_common::settlement::settlement_cost_units(&cost, rate, asset_decimals)
         .map_err(|e| settlement::SettlementError::Rounding(e).into())
 }
 
@@ -303,7 +303,7 @@ pub(crate) fn call_terms(
         return Ok(None);
     }
     let params = outbe_nod::config::read(storage)?;
-    let call_price = outbe_common::markup::marked_up(entry_price_minor, params.call_rate)
+    let call_price = outbe_core_common::markup::marked_up(entry_price_minor, params.call_rate)
         .ok_or(crate::errors::NodFactoryError::CallPriceOverflow)?;
     Ok(Some(CallTerms {
         call_price_minor: call_price,

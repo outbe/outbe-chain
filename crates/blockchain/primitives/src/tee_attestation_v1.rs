@@ -10,6 +10,11 @@ use alloy_primitives::{keccak256, B256};
 
 pub const PROTOCOL_VERSION_V1: u8 = 1;
 
+/// Block height at which the V1 TEE attestation schedule becomes active.
+///
+/// Block 1 is the bootstrap block. Lease sweeps start on the following block.
+pub const TEE_ATTESTATION_V1_ACTIVATION_HEIGHT: u64 = 1;
+
 pub const POLICY_DOMAIN_V1: &[u8] = b"outbe/tee/policy/v1";
 pub const POLICY_SCHEDULE_DOMAIN_V1: &[u8] = b"outbe/tee/policy-schedule/v1";
 pub const TEE_REGISTRY_GAS_SCHEDULE_DOMAIN_V1: &[u8] = b"outbe/tee-registry-gas-schedule/v1";

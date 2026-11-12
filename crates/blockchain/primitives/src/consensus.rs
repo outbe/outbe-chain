@@ -76,7 +76,7 @@ pub const OUTBE_MAX_BLOCK_SIZE: usize = 2 * 1024 * 1024 - 128 * 1024;
 /// - Every validator rejects a block whose delta exceeds `this`.
 ///
 /// See the validator check `validate_against_parent_timestamp_millis` in the
-/// `outbe-node` consensus policy, and the proposer clamp
+/// `outbe-execution` consensus policy, and the proposer clamp
 /// (`proposal_timestamp_millis`) in the `outbe-consensus` proposal handler.
 ///
 /// 1 hour is >400x the certification timeout. Thus honest operation, including

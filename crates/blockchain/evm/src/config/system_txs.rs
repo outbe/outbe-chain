@@ -8,13 +8,18 @@ use alloy_evm::RecoveredTx;
 
 use alloy_primitives::{Address, Bytes, B256};
 
-use outbe_primitives::{
-    block::BlockHeightRegime,
-    consensus_metadata::CertifiedParentAccountingMetadata,
-    reshare_artifact::{
-        decode_outbe_block_artifacts, ConsensusHeaderArtifact, OutbeBlockArtifacts,
+use {
+    crate::system_tx::{assemble_prefix_system_txs, BlockOrder},
+    outbe_primitives::{
+        block::{BlockHeightRegime, BlockSystemFlags},
+        consensus_metadata::CertifiedParentAccountingMetadata,
+        reshare_artifact::{
+            decode_outbe_block_artifacts, ConsensusHeaderArtifact, OutbeBlockArtifacts,
+        },
+        system_tx::CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+        system_tx_context::SystemTxBuildContext,
+        OutbeBlock,
     },
-    OutbeBlock,
 };
 
 use reth_ethereum::TransactionSigned;
@@ -46,6 +51,7 @@ struct ProposerSignContext<'a> {
 
 pub(super) fn system_tx_expectations_for_block(
     block: &SealedBlock<OutbeBlock>,
+    order: &BlockOrder,
 ) -> SystemTxExpectations {
     let (has_boundary_outcome, has_publication) =
         match decode_outbe_block_artifacts(block.header().extra_data().as_ref()) {
@@ -76,13 +82,14 @@ pub(super) fn system_tx_expectations_for_block(
         }
     };
 
-    let has_tee_bootstrap = layout.has_begin_selector(crate::system_tx::TEE_BOOTSTRAP_SELECTOR);
     if let Err(error) = validate_system_tx_set_for_publication(
+        order,
         &layout,
         block.header().number(),
-        has_boundary_outcome,
-        has_tee_bootstrap,
-        has_publication,
+        BlockSystemFlags {
+            has_boundary_outcome,
+            has_publication,
+        },
     ) {
         return (
             Vec::new(),
@@ -185,55 +192,40 @@ impl OutbeEvmConfig {
         parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
         pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>,
     ) -> Result<Vec<SystemTx>, BlockExecutionError> {
-        let mut inputs = Vec::new();
-        if regime.has_parent_finalization_accounting() {
-            let metadata = parent_consensus_metadata
-                .ok_or(SystemTxBuildError::MissingParentConsensusMetadata)?;
-            if metadata.finalized_block_hash != parent_hash {
-                return Err(SystemTxBuildError::CertifiedParentAccountingHashMismatch {
-                    expected: parent_hash,
-                    actual: metadata.finalized_block_hash,
-                }
-                .into());
+        if regime.is_genesis() {
+            if pending_tee_bootstrap.is_some() {
+                return Err(SystemTxBuildError::Ost3BootstrapInvalidAtGenesis.into());
             }
-            inputs.push(SystemTx::CertifiedParentAccounting { metadata });
-            inputs.push(SystemTx::LateFinalizeCredits {
-                artifact: artifacts.late_finalize_credits.unwrap_or_default(),
-            });
+            return Ok(Vec::new());
         }
-        if let Some(ConsensusHeaderArtifact::BoundaryOutcome(artifact)) =
-            artifacts.consensus_header_artifact
-        {
-            inputs.push(SystemTx::BoundaryOutcome { artifact });
-        }
-        if regime.requires_genesis_bootstrap_txs() {
-            let payload = pending_tee_bootstrap
-                .ok_or(SystemTxBuildError::MissingBlock1Ost3BootstrapPayload)?;
-            crate::tee_bootstrap::validate_tee_bootstrap_for_build(
-                block_number,
-                &payload,
-                &self.tee_attestation_v1,
-            )?;
-            inputs.push(SystemTx::TeeBootstrap { payload });
-        } else if pending_tee_bootstrap.is_some() {
+        if !regime.requires_genesis_bootstrap_txs() && pending_tee_bootstrap.is_some() {
             return Err(SystemTxBuildError::Ost3BootstrapForbiddenAtBlock { block_number }.into());
         }
-        inputs.push(SystemTx::ValidatorLiveness);
-        if let Some(batch) = artifacts.radicle_publication {
-            inputs.push(SystemTx::RadiclePublication { batch });
-        }
-        inputs.extend([
-            SystemTx::Vote,
-            SystemTx::Update,
-            SystemTx::EnclaveUpgradeDeadline,
-            SystemTx::Rewards,
-            SystemTx::Staking,
-            SystemTx::Oracle,
-            SystemTx::OracleSlash,
-            SystemTx::HyperlaneSlash,
-            SystemTx::CycleTick,
-        ]);
-        Ok(inputs)
+        let expected_tee_policy = if regime.requires_genesis_bootstrap_txs() {
+            let activation = self
+                .tee_attestation_v1
+                .activation()
+                .map_err(SystemTxBuildError::invalid_mandatory_tee_chain_spec_authority)?;
+            Some(
+                activation
+                    .policy_at(block_number)
+                    .map_err(SystemTxBuildError::from)?,
+            )
+        } else {
+            None
+        };
+        let build_ctx = SystemTxBuildContext {
+            regime,
+            block_number,
+            parent_hash,
+            artifacts: &artifacts,
+            parent_consensus_metadata: parent_consensus_metadata.as_ref(),
+            pending_tee_bootstrap: pending_tee_bootstrap.as_ref(),
+            expected_tee_policy,
+        };
+        assemble_prefix_system_txs(&self.runtime_host.block_order(), &build_ctx)
+            .map_err(SystemTxBuildError::from)
+            .map_err(Into::into)
     }
 
     /// build and sign a single Phase 1 (`CertifiedParentAccounting`)
@@ -254,7 +246,8 @@ impl OutbeEvmConfig {
         parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
         proposer_evm_address: Option<Address>,
     ) -> Result<Option<Recovered<TransactionSigned>>, BlockExecutionError> {
-        if !BlockHeightRegime::for_block(block_number).has_parent_finalization_accounting() {
+        let regime = BlockHeightRegime::for_block(block_number);
+        if !regime.has_parent_finalization_accounting() {
             return Ok(None);
         }
 
@@ -271,17 +264,39 @@ impl OutbeEvmConfig {
             .into());
         }
 
-        let metadata =
-            parent_consensus_metadata.ok_or(SystemTxBuildError::MissingPhase1PrebuildMetadata)?;
-        if metadata.finalized_block_hash != parent_hash {
-            return Err(SystemTxBuildError::Phase1PrebuildMetadataHashMismatch {
-                expected: parent_hash,
-                actual: metadata.finalized_block_hash,
+        let block_order = self.runtime_host.block_order();
+        let step = block_order
+            .consensus
+            .get(usize::from(CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX))
+            .ok_or(SystemTxBuildError::MissingPhase1PrebuildMetadata)?;
+        let empty_artifacts = OutbeBlockArtifacts::default();
+        let build_ctx = SystemTxBuildContext {
+            regime,
+            block_number,
+            parent_hash,
+            artifacts: &empty_artifacts,
+            parent_consensus_metadata: parent_consensus_metadata.as_ref(),
+            pending_tee_bootstrap: None,
+            expected_tee_policy: None,
+        };
+        let payload = (step.build_payload)(&build_ctx).map_err(|error| match error {
+            outbe_primitives::system_tx_context::SystemTxPayloadBuildError::MissingParentConsensusMetadata { .. } => {
+                SystemTxBuildError::MissingPhase1PrebuildMetadata
             }
-            .into());
-        }
+            outbe_primitives::system_tx_context::SystemTxPayloadBuildError::CertifiedParentAccountingHashMismatch {
+                parent_hash,
+                metadata_hash,
+            } => SystemTxBuildError::Phase1PrebuildMetadataHashMismatch {
+                expected: parent_hash,
+                actual: metadata_hash,
+            },
+            other => SystemTxBuildError::from(other),
+        })?;
 
-        let input = SystemTx::CertifiedParentAccounting { metadata };
+        let input = SystemTx::Consensus {
+            step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+            payload,
+        };
         let calldata = input
             .encode()
             .map_err(SystemTxBuildError::phase1_prebuild_encode_input)?;
@@ -306,6 +321,7 @@ impl OutbeEvmConfig {
             block_number,
             chain_id,
             input,
+            &self.runtime_host.block_order(),
         )
     }
 }
@@ -316,12 +332,13 @@ pub(crate) fn sign_end_system_tx(
     block_number: u64,
     chain_id: u64,
     input: SystemTx,
+    order: &BlockOrder,
 ) -> Result<Recovered<TransactionSigned>, BlockExecutionError> {
     let evm_signer = evm_signer.ok_or(ExecutorValidationError::MissingBeginZoneProposerAddress)?;
     if evm_signer.address() != proposer {
         return Err(ExecutorValidationError::SystemTxSignerMismatch {
             body_index: usize::from(input.nonce_ordinal().unwrap_or(0)),
-            expected_phase: input.name(),
+            expected_phase: order.step_name_or_stage(&input),
             proposer,
             signer: evm_signer.address(),
         }

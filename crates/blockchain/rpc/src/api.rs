@@ -586,7 +586,10 @@ mod tests {
         use std::sync::Arc;
 
         // Plain EL full node (no consensus bridge): reports not syncing and consensus_active = false.
-        let full_node = crate::server::OutbeApiHandler::new(Arc::new(()));
+        let full_node = crate::server::OutbeApiHandler::new(
+            Arc::new(()),
+            std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
+        );
         let full_node_status = full_node.sync_status_info();
         assert!(!full_node_status.is_syncing);
         assert!(!full_node_status.consensus_active);
@@ -596,8 +599,11 @@ mod tests {
 
         // Bridge-backed node before first finalization (inactive consensus): is_syncing = true, consensus_active = false.
         let inactive_bridge = ConsensusExecutionBridge::new();
-        let syncing_node =
-            crate::server::OutbeApiHandler::with_bridge(Arc::new(()), inactive_bridge);
+        let syncing_node = crate::server::OutbeApiHandler::with_bridge(
+            Arc::new(()),
+            inactive_bridge,
+            std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
+        );
         let syncing_status = syncing_node.sync_status_info();
         assert!(syncing_status.is_syncing);
         assert!(!syncing_status.consensus_active);
@@ -611,7 +617,11 @@ mod tests {
             randomness_status: RandomnessStatus::Healthy,
             ..Default::default()
         });
-        let active_node = crate::server::OutbeApiHandler::with_bridge(Arc::new(()), active_bridge);
+        let active_node = crate::server::OutbeApiHandler::with_bridge(
+            Arc::new(()),
+            active_bridge,
+            std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
+        );
         let active_status = active_node.sync_status_info();
         let json = serde_json::to_string(&active_status).unwrap();
         let deserialized: SyncStatusInfo = serde_json::from_str(&json).unwrap();

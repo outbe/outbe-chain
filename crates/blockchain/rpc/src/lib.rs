@@ -6,9 +6,13 @@
 mod api;
 pub mod errors;
 mod server;
+pub mod state_reader;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 
-pub use api::OutbeApiServer;
+pub use api::{
+    EpochInfo, OutbeApiServer, ParticipationInfo, SlashConfig, SlashInfo, ValidatorDetailInfo,
+    ValidatorInfo,
+};
 pub use errors::{RpcError, RpcValidatorStateError};
 pub use server::OutbeApiHandler;

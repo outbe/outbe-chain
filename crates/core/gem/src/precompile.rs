@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
-use outbe_common::erc::{
+use outbe_core_common::erc::{
     ERC165_INTERFACE_ID, ERC4906_INTERFACE_ID, ERC721_INTERFACE_ID, ERC721_METADATA_INTERFACE_ID,
 };
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};

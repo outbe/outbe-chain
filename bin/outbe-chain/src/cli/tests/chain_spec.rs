@@ -5,7 +5,7 @@ fn chain_help_keeps_dev_without_advertising_ethereum_networks() {
     install_cli_defaults_for_test();
     type OutbeCli = reth_ethereum::cli::interface::Cli<
         super::OutbeChainSpecParser,
-        outbe_engine::args::ConsensusArgs,
+        outbe_consensus::args::ConsensusArgs,
         super::OutbeRpcModuleValidator,
     >;
 
@@ -36,7 +36,7 @@ fn rejected_chain_diagnostics_do_not_suggest_ethereum_networks() {
     install_cli_defaults_for_test();
     type OutbeCli = reth_ethereum::cli::interface::Cli<
         super::OutbeChainSpecParser,
-        outbe_engine::args::ConsensusArgs,
+        outbe_consensus::args::ConsensusArgs,
         super::OutbeRpcModuleValidator,
     >;
 
@@ -82,7 +82,7 @@ fn database_cli_requires_an_explicit_chain_instead_of_parsing_mainnet() {
     install_cli_defaults_for_test();
     type OutbeCli = reth_ethereum::cli::interface::Cli<
         super::OutbeChainSpecParser,
-        outbe_engine::args::ConsensusArgs,
+        outbe_consensus::args::ConsensusArgs,
         super::OutbeRpcModuleValidator,
     >;
 
@@ -104,7 +104,7 @@ fn node_cli_also_requires_an_explicit_chain() {
     install_cli_defaults_for_test();
     type OutbeCli = reth_ethereum::cli::interface::Cli<
         super::OutbeChainSpecParser,
-        outbe_engine::args::ConsensusArgs,
+        outbe_consensus::args::ConsensusArgs,
         super::OutbeRpcModuleValidator,
     >;
 
@@ -123,7 +123,7 @@ fn reth_mainnet_alias_is_not_outbe_mainnet_676() {
     install_cli_defaults_for_test();
     type OutbeCli = reth_ethereum::cli::interface::Cli<
         super::OutbeChainSpecParser,
-        outbe_engine::args::ConsensusArgs,
+        outbe_consensus::args::ConsensusArgs,
         super::OutbeRpcModuleValidator,
     >;
 

@@ -1,4 +1,4 @@
-//! In-memory EVM that drives calls through [`sub_call::run`], for integration tests.
+//! In-memory EVM that drives calls through [`sub_call::run_with_host`], for integration tests.
 
 use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, Bytes, Log, U256};
@@ -98,14 +98,16 @@ pub fn seed_storage<R>(
 
 pub struct EvmWorld {
     pub ctx: EvmCtx,
+    host: std::sync::Arc<dyn crate::EvmRuntimeHost>,
 }
 
 impl EvmWorld {
-    pub fn new(db: CacheDB<EmptyDB>) -> Self {
+    pub fn new(db: CacheDB<EmptyDB>, host: std::sync::Arc<dyn crate::EvmRuntimeHost>) -> Self {
         Self {
             ctx: Context::mainnet()
                 .with_db(db)
                 .modify_cfg_chained(|cfg| cfg.chain_id = CHAIN_ID),
+            host,
         }
     }
 
@@ -124,7 +126,12 @@ impl EvmWorld {
             outer_is_static: false,
             spec: SpecId::PRAGUE,
         };
-        sub_call::run(&mut self.ctx, environment, input)
+        sub_call::run_with_host(
+            &mut self.ctx,
+            environment,
+            input,
+            std::sync::Arc::clone(&self.host),
+        )
     }
 
     pub fn call(
@@ -172,3 +179,6 @@ fn decode_success<C: SolCall>(out: &SubCallOutput) -> C::Return {
     );
     C::abi_decode_returns(&out.returndata).expect("decode call return")
 }
+
+#[cfg(any(test, feature = "test-utils"))]
+pub use crate::system_tx::TEST_BLOCK_ORDER;

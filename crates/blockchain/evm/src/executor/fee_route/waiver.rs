@@ -3,18 +3,21 @@
 use super::*;
 use revm::state::AccountInfo;
 
-pub(super) fn bootstrap_fee_waiver_authorized(
+pub fn bootstrap_fee_waiver_authorized(
+    policy: &dyn crate::UserTxFeePolicy,
     tx: &TransactionSigned,
     signer: Address,
     chain_id: u64,
     account: &AccountInfo,
 ) -> bool {
+    use outbe_primitives::zero_fee_types::BootstrapAccountView;
+
     let candidate = BootstrapTransactionView::from_transaction(tx, signer, chain_id)
-        .and_then(|view| outbe_zerofee::classify_bootstrap(&view));
+        .and_then(|view| policy.classify_bootstrap(&view));
     candidate.is_some_and(|candidate| {
-        outbe_zerofee::authorize_bootstrap(
+        policy.authorize_bootstrap(
             candidate,
-            outbe_zerofee::BootstrapAccountView {
+            BootstrapAccountView {
                 balance: account.balance,
                 nonce: account.nonce,
                 code_empty: account.is_empty_code_hash(),
@@ -32,9 +35,9 @@ where
     E::Spec: Into<revm::primitives::hardfork::SpecId>,
     E::Error: std::fmt::Display,
 {
-    pub(super) fn execute_protocol_fee_waiver<R, F>(
+    pub fn execute_protocol_fee_waiver<R, F>(
         &mut self,
-        candidate: outbe_zerofee::ZeroFeeCandidate,
+        candidate: outbe_primitives::zero_fee_types::ZeroFeeCandidate,
         tx_env: TxEnv,
         recovered: R,
         f: F,
@@ -45,11 +48,12 @@ where
     {
         // Release the storage borrow before mutating receipt/cap state.
         let ctx = self.fee_route_context()?;
+        let host = self.runtime_host.clone();
         let authorize_outcome = {
             let db = self.inner.evm.db_mut();
             let mut provider = DirectStorageProvider::new(db, ctx);
             let storage = StorageHandle::new(&mut provider);
-            outbe_zerofee::registry()
+            host.user_fee_policy()
                 .authorize_fee_waiver(storage, candidate)
                 .map(|_| ())
         };
@@ -61,7 +65,7 @@ where
 
     /// Restore the exact previous configuration after every ordinary Result
     /// exit, including an execution error or a declined commit.
-    pub(super) fn execute_without_user_fee<R, F>(
+    pub fn execute_without_user_fee<R, F>(
         &mut self,
         mut tx_env: TxEnv,
         recovered: R,
@@ -85,7 +89,7 @@ where
         result
     }
 
-    pub(super) fn read_fee_route_account(
+    pub fn read_fee_route_account(
         &mut self,
         signer: Address,
         ctx: BlockContext,
@@ -105,7 +109,7 @@ where
             })
     }
 
-    pub(super) fn fee_route_delegation(
+    pub fn fee_route_delegation(
         &mut self,
         account: AccountInfo,
     ) -> Result<Option<Address>, BlockExecutionError> {

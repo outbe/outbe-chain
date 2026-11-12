@@ -89,9 +89,17 @@ impl From<ExecutorStorageError> for PrecompileError {
 }
 
 /// Internal errors that occur when the proposer constructs or signs system transactions.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum SystemTxBuildError {
+    #[error("missing mandatory block-1 boundary outcome")]
+    MissingBlock1BoundaryOutcome,
+    #[error("missing expected block-1 TEE policy")]
+    MissingBlock1ExpectedTeePolicy,
+    #[error("missing publication batch for active publication step")]
+    MissingPublicationBatch,
+    #[error("encode system tx payload: {0}")]
+    PayloadEncode(#[source] PrecompileError),
     #[error("OST3 bootstrap payload is invalid at genesis")]
     Ost3BootstrapInvalidAtGenesis,
     #[error("missing EVM signer for proposer system tx")]
@@ -107,13 +115,16 @@ pub enum SystemTxBuildError {
     #[error("missing mandatory block-1 OST3 bootstrap payload")]
     MissingBlock1Ost3BootstrapPayload,
     #[error("invalid block-1 OST3 bootstrap payload: {0}")]
-    InvalidBlock1Ost3BootstrapPayload(String),
+    InvalidBlock1Ost3BootstrapPayload(outbe_primitives::tee_attestation_v1::CodecError),
     #[error("invalid mandatory TEE ChainSpec authority: {0}")]
     InvalidMandatoryTeeChainSpecAuthority(String),
     #[error(transparent)]
     ActiveTeePolicy(#[from] TeeAttestationActivationError),
     #[error("block-1 OST3 policy does not match the immutable ChainSpec schedule")]
     Block1Ost3PolicyScheduleMismatch,
+    /// The block builder has no runtime host, so it cannot check the bootstrap.
+    #[error("evm runtime host is not installed")]
+    RuntimeHostNotInstalled,
     #[error("OST3 bootstrap payload is forbidden at block {block_number}")]
     Ost3BootstrapForbiddenAtBlock { block_number: u64 },
     #[error("encode system tx input: {0}")]
@@ -145,10 +156,6 @@ pub enum SystemTxBuildError {
 }
 
 impl SystemTxBuildError {
-    pub(crate) fn invalid_block1_ost3_bootstrap_payload(error: impl Display) -> Self {
-        Self::InvalidBlock1Ost3BootstrapPayload(error.to_string())
-    }
-
     pub(crate) fn invalid_mandatory_tee_chain_spec_authority(error: impl Display) -> Self {
         Self::InvalidMandatoryTeeChainSpecAuthority(error.to_string())
     }
@@ -185,9 +192,37 @@ impl From<SystemTxBuildError> for BlockExecutionError {
 }
 
 /// Deterministic block validation errors emitted by the Outbe block executor and builder.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ExecutorValidationError {
+    #[error("missing mandatory block-1 boundary outcome")]
+    MissingBlock1BoundaryOutcome,
+    #[error("missing expected block-1 TEE policy")]
+    MissingBlock1ExpectedTeePolicy,
+    #[error("block-1 TEE policy does not match the ChainSpec schedule")]
+    Block1Ost3PolicyScheduleMismatch,
+    #[error("invalid block-1 TEE bootstrap payload: {0}")]
+    InvalidBlock1Ost3BootstrapPayload(#[source] outbe_primitives::tee_attestation_v1::CodecError),
+    #[error("missing publication batch for active publication step")]
+    MissingPublicationBatch,
+    #[error("encode system tx payload: {0}")]
+    PayloadEncode(#[source] PrecompileError),
+    #[error("unexpected non-empty system tx payload for {module} ({len} bytes)")]
+    UnexpectedNonEmptyPayload { module: &'static str, len: usize },
+    #[error(transparent)]
+    ParentAccounting(#[from] outbe_primitives::system_tx::binding::ParentAccountingBindingError),
+    #[error(transparent)]
+    LateCredits(#[from] outbe_primitives::system_tx::binding::LateCreditsBindingError),
+    #[error(transparent)]
+    Boundary(#[from] outbe_primitives::system_tx::binding::BoundaryBindingError),
+    #[error(transparent)]
+    Publication(#[from] outbe_primitives::system_tx::binding::PublicationBindingError),
+    #[error("invalid TeeBootstrap payload at block {block_number}: {source}")]
+    TeeBootstrap {
+        block_number: u64,
+        #[source]
+        source: outbe_primitives::tee_attestation_v1::CodecError,
+    },
     #[error(transparent)]
     SystemTx(#[from] outbe_primitives::system_tx::SystemTxError),
     #[error(transparent)]
@@ -610,5 +645,105 @@ impl From<BurnedFeeSettlementError> for BlockExecutionError {
                 Self::other(error)
             }
         }
+    }
+}
+
+// Both EL error boundaries preserve the same typed payload failures.
+macro_rules! impl_payload_build_error {
+    ($target:ty) => {
+        impl From<outbe_primitives::system_tx_context::SystemTxPayloadBuildError> for $target {
+            fn from(error: outbe_primitives::system_tx_context::SystemTxPayloadBuildError) -> Self {
+                use outbe_primitives::system_tx_context::SystemTxPayloadBuildError as E;
+                match error {
+                    E::MissingParentConsensusMetadata { .. } => {
+                        Self::MissingParentConsensusMetadata
+                    }
+                    E::CertifiedParentAccountingHashMismatch {
+                        parent_hash,
+                        metadata_hash,
+                    } => Self::CertifiedParentAccountingHashMismatch {
+                        expected: parent_hash,
+                        actual: metadata_hash,
+                    },
+                    E::MissingBlock1BoundaryOutcome => Self::MissingBlock1BoundaryOutcome,
+                    E::MissingBlock1TeeBootstrapPayload => Self::MissingBlock1Ost3BootstrapPayload,
+                    E::MissingBlock1ExpectedTeePolicy => Self::MissingBlock1ExpectedTeePolicy,
+                    E::Block1TeeBootstrapPolicyScheduleMismatch => {
+                        Self::Block1Ost3PolicyScheduleMismatch
+                    }
+                    E::InvalidBlock1TeeBootstrapPayload(source) => {
+                        Self::InvalidBlock1Ost3BootstrapPayload(source)
+                    }
+                    E::TeeBootstrapForbiddenAtBlock { block_number } => {
+                        Self::Ost3BootstrapForbiddenAtBlock { block_number }
+                    }
+                    E::MissingPublicationBatch => Self::MissingPublicationBatch,
+                    E::Encode(source) => Self::PayloadEncode(source),
+                }
+            }
+        }
+    };
+}
+impl_payload_build_error!(SystemTxBuildError);
+impl_payload_build_error!(ExecutorValidationError);
+
+impl From<outbe_primitives::system_tx_context::SystemTxPayloadValidationError>
+    for ExecutorValidationError
+{
+    fn from(error: outbe_primitives::system_tx_context::SystemTxPayloadValidationError) -> Self {
+        use outbe_primitives::system_tx_context::SystemTxPayloadValidationError as E;
+        match error {
+            E::UnexpectedNonEmptyPayload { module, len } => {
+                Self::UnexpectedNonEmptyPayload { module, len }
+            }
+            E::ParentAccounting(source) => Self::ParentAccounting(source),
+            E::LateCredits(source) => Self::LateCredits(source),
+            E::Boundary(source) => Self::Boundary(source),
+            E::Publication(source) => Self::Publication(source),
+            E::TeeBootstrap {
+                block_number,
+                source,
+            } => Self::TeeBootstrap {
+                block_number,
+                source,
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod payload_conversion_tests {
+    use super::*;
+    use outbe_primitives::{
+        system_tx::binding::ParentAccountingBindingError,
+        system_tx_context::{SystemTxPayloadBuildError, SystemTxPayloadValidationError},
+    };
+
+    #[test]
+    fn payload_conversions_keep_typed_causes_at_both_el_boundaries() {
+        let build = SystemTxBuildError::from(SystemTxPayloadBuildError::Encode(
+            PrecompileError::WriteProtection,
+        ));
+        assert!(matches!(
+            build,
+            SystemTxBuildError::PayloadEncode(PrecompileError::WriteProtection)
+        ));
+        let validation = ExecutorValidationError::from(SystemTxPayloadBuildError::Encode(
+            PrecompileError::WriteProtection,
+        ));
+        assert!(matches!(
+            validation,
+            ExecutorValidationError::PayloadEncode(PrecompileError::WriteProtection)
+        ));
+        let validation =
+            ExecutorValidationError::from(SystemTxPayloadValidationError::ParentAccounting(
+                ParentAccountingBindingError::PayloadDecode(PrecompileError::WriteProtection),
+            ));
+        assert!(matches!(
+            validation,
+            ExecutorValidationError::ParentAccounting(ParentAccountingBindingError::PayloadDecode(
+                PrecompileError::WriteProtection
+            ),)
+        ));
     }
 }

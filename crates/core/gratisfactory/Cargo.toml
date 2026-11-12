@@ -6,7 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-outbe-common.workspace = true
+outbe-core-common.workspace = true
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-gratis.workspace = true
@@ -21,7 +21,7 @@ thiserror.workspace = true
 outbe-gratis = { workspace = true, features = ["test-enclave"] }
 outbe-fidelity = { workspace = true, features = ["test-enclave"] }
 outbe-tee.workspace = true
-outbe-tee-enclave.workspace = true
+outbe-enclave.workspace = true
 
 [features]
 default = []

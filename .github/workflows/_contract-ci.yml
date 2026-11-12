@@ -156,12 +156,6 @@ jobs:
         with:
           working-directory: contracts/${{ inputs.project }}
 
-      - name: Setup Node.js and Yarn
-        if: ${{ hashFiles(format('contracts/{0}/package.json', inputs.project)) != '' }}
-        uses: ./.github/actions/setup-node-yarn
-        with:
-          working-directory: contracts/${{ inputs.project }}
-
       - name: Export ABI
         run: mise run export-abi
 

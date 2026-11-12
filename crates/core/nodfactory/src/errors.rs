@@ -2,7 +2,7 @@ use crate::precompile::INodFactory;
 use alloy_primitives::U256;
 use alloy_primitives::{Bytes, B256};
 use alloy_sol_types::SolError;
-use outbe_common::pow::PowError;
+use outbe_core_common::pow::PowError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 

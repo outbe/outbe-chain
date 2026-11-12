@@ -9,7 +9,6 @@ mod admission;
 mod boundary;
 mod dealer_log;
 mod finalized;
-mod odko;
 
 use alloy_primitives::{address, B256, U256};
 use commonware_codec::{Encode as _, Read as _};

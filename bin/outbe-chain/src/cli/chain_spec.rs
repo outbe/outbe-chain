@@ -67,7 +67,7 @@ pub(crate) fn validate_outbe_chain_spec(chain_spec: &ChainSpec<OutbeHeader>) -> 
     if outbe_primitives::chain::network_for_chain_id(chain_id).is_none() {
         return Err(CliError::UnknownOutbeChainId { chain_id }.into());
     }
-    outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
+    outbe_tee::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
         chain_spec,
     )
     .activation()

@@ -191,7 +191,7 @@ fn claimed_envelope_rejections_follow_the_fixed_check_order() {
             ),
             (
                 malformed,
-                ZeroFeePolicyError::MalformedCalldata(case.malformed_reason.to_string()),
+                ZeroFeePolicyError::MalformedCalldata(case.malformed_reason),
             ),
         ];
         for (tx, error) in expected {

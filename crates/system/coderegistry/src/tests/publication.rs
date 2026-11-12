@@ -48,7 +48,7 @@ impl Fixture {
             .map(|key| key.public_key())
             .try_collect()
             .unwrap();
-        let dkg = outbe_consensus::bls::bootstrap_dkg_for_participants(players).unwrap();
+        let dkg = outbe_simplex::bls::bootstrap_dkg_for_participants(players).unwrap();
         let committee = CommitteeSnapshot {
             committee: keys
                 .iter()
@@ -62,7 +62,7 @@ impl Fixture {
                 .collect(),
             vrf_material_version: 1,
             vrf_group_public_key_bytes: dkg.polynomial.public().encode().to_vec(),
-            vrf_public_polynomial_hash: outbe_consensus::dkg_manager::public_polynomial_hash(
+            vrf_public_polynomial_hash: outbe_simplex::bls::odko::public_polynomial_hash(
                 &dkg.polynomial,
             ),
         };
@@ -353,7 +353,7 @@ fn publication_maximum_committee_reaches_quorum_with_six_bounded_batches() {
     use outbe_primitives::{
         radicle_publication::MAX_PUBLICATION_ATTESTATIONS, system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT,
     };
-    let mut fixture = Fixture::new(outbe_consensus::bls::MAX_VALIDATORS as usize);
+    let mut fixture = Fixture::new(outbe_simplex::bls::MAX_VALIDATORS as usize);
     let body = fixture.body.clone();
     let required = fixture.keys.len() - (fixture.keys.len() - 1) / 3;
     fixture.provider.enable_production_storage_gas_metering();

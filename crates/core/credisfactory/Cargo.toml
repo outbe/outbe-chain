@@ -6,7 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-outbe-common.workspace = true
+outbe-core-common.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-ccaregistry.workspace = true
 outbe-credis.workspace = true
@@ -27,10 +27,9 @@ outbe-primitives = { workspace = true, features = ["bench-utils"] }
 outbe-gratis = { workspace = true, features = ["test-enclave", "test-utils"] }
 outbe-fidelity = { workspace = true, features = ["test-enclave"] }
 outbe-tee.workspace = true
-outbe-tee-enclave.workspace = true
+outbe-enclave.workspace = true
 base64.workspace = true
 serde_json.workspace = true
-outbe-evm = { workspace = true, features = ["test-utils"] }
 outbe-vaultrouter = { workspace = true, features = ["test-utils"] }
 outbe-oracle = { workspace = true, features = ["test-utils"] }
 outbe-ccaregistry.workspace = true

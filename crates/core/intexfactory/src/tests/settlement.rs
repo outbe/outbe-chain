@@ -47,7 +47,7 @@ fn a_minimum_the_payment_asset_cannot_express_is_refused() {
         err.to_string(),
         outbe_primitives::error::PrecompileError::from(
             outbe_vaultrouter::settlement::SettlementError::Rounding(
-                outbe_common::settlement::RoundingError::RoundsToZero,
+                outbe_core_common::settlement::RoundingError::RoundsToZero,
             ),
         )
         .to_string(),
@@ -84,7 +84,7 @@ fn the_purchase_minimum_precedes_asset_and_currency_conversion() {
         err.to_string(),
         outbe_primitives::error::PrecompileError::from(
             outbe_vaultrouter::settlement::SettlementError::Rounding(
-                outbe_common::settlement::RoundingError::RoundsToZero,
+                outbe_core_common::settlement::RoundingError::RoundsToZero,
             ),
         )
         .to_string(),
@@ -164,7 +164,7 @@ fn cost_amount_rejects_unsupported_payment_decimals() {
         err.to_string(),
         outbe_primitives::error::PrecompileError::from(
             outbe_vaultrouter::settlement::SettlementError::Rounding(
-                outbe_common::settlement::RoundingError::UnsupportedDecimals(19),
+                outbe_core_common::settlement::RoundingError::UnsupportedDecimals(19),
             ),
         )
         .to_string(),
@@ -179,7 +179,7 @@ fn cost_amount_rejects_scaling_overflow() {
         err.to_string(),
         outbe_primitives::error::PrecompileError::from(
             outbe_vaultrouter::settlement::SettlementError::Rounding(
-                outbe_common::settlement::RoundingError::Overflow,
+                outbe_core_common::settlement::RoundingError::Overflow,
             ),
         )
         .to_string(),
@@ -581,7 +581,7 @@ fn compute_pow_hash_matches_the_shared_client_vectors() {
         serde_json::from_str(include_str!("fixtures/pow.vectors.json")).unwrap();
     assert_eq!(
         fixture["difficulty_bytes"].as_u64(),
-        Some(outbe_common::pow::POW_DIFFICULTY as u64)
+        Some(outbe_core_common::pow::POW_DIFFICULTY as u64)
     );
     let vectors = fixture["vectors"].as_array().unwrap();
     assert!(!vectors.is_empty());

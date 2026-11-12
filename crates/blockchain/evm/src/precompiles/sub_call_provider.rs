@@ -36,6 +36,7 @@ pub(crate) struct OutbeSubCallPrecompiles<DB> {
     tee_attestation_v1: TeeAttestationChainSpecStateV1,
 
     abort_bridge: super::ExecutionAbortBridge,
+    host: std::sync::Arc<dyn crate::EvmRuntimeHost>,
 
     _db: PhantomData<fn() -> DB>,
 }
@@ -44,6 +45,7 @@ impl<DB> OutbeSubCallPrecompiles<DB> {
     pub(crate) fn new(
         execution_context: OutbePrecompileExecutionContext,
         runtime: OutbePrecompileRuntime,
+        host: std::sync::Arc<dyn crate::EvmRuntimeHost>,
     ) -> Self {
         let OutbePrecompileExecutionContext {
             spec,
@@ -59,6 +61,7 @@ impl<DB> OutbeSubCallPrecompiles<DB> {
             genesis_timestamp,
             tee_attestation_v1,
             abort_bridge,
+            host,
             _db: PhantomData,
         }
     }
@@ -96,6 +99,7 @@ where
                 genesis_hash: self.genesis_hash,
                 genesis_timestamp: self.genesis_timestamp,
                 tee_attestation_v1: &self.tee_attestation_v1,
+                host: std::sync::Arc::clone(&self.host),
             },
         )
         .map_err(String::from)?

@@ -1,16 +1,18 @@
 [workspace]
 members = [
     "xtask",
+    "crates/runtime",
     # blockchain
     "crates/blockchain/macros",
     "crates/blockchain/constants",
     "crates/blockchain/primitives",
     "crates/blockchain/evm",
     "crates/blockchain/consensus",
+    "crates/blockchain/simplex",
     "crates/blockchain/engine",
     "crates/blockchain/rpc",
     "crates/blockchain/txpool",
-    "crates/blockchain/node",
+    "crates/blockchain/execution",
     "crates/blockchain/operator",
     "crates/blockchain/radicle",
     "crates/blockchain/snapshot",
@@ -24,7 +26,7 @@ members = [
     "crates/system/zerofee",
     "crates/system/emission",
     "crates/system/cycle",
-    "crates/system/tee",
+    "crates/blockchain/tee",
     "crates/system/teeregistry",
     "crates/system/l2registry",
     "crates/system/coderegistry",
@@ -61,6 +63,7 @@ members = [
     "crates/core/stablecoin",
     "crates/core/stablecoinfactory",
     "crates/core/common",
+    "crates/core/enclave",
     # binaries
     "bin/outbe-chain",
     "bin/outbe-genesis-cli",
@@ -83,16 +86,18 @@ members = [
 # select them for `clippy`, `nextest`, and benchmark runs.
 default-members = [
     "xtask",
+    "crates/runtime",
     # blockchain
     "crates/blockchain/macros",
     "crates/blockchain/constants",
     "crates/blockchain/primitives",
     "crates/blockchain/evm",
     "crates/blockchain/consensus",
+    "crates/blockchain/simplex",
     "crates/blockchain/engine",
     "crates/blockchain/rpc",
     "crates/blockchain/txpool",
-    "crates/blockchain/node",
+    "crates/blockchain/execution",
     "crates/blockchain/operator",
     "crates/blockchain/radicle",
     "crates/blockchain/snapshot",
@@ -106,7 +111,7 @@ default-members = [
     "crates/system/zerofee",
     "crates/system/emission",
     "crates/system/cycle",
-    "crates/system/tee",
+    "crates/blockchain/tee",
     "crates/system/teeregistry",
     "crates/system/l2registry",
     "crates/system/coderegistry",
@@ -190,10 +195,12 @@ outbe-chain-constants = { path = "crates/blockchain/constants" }
 outbe-primitives = { path = "crates/blockchain/primitives" }
 outbe-evm = { path = "crates/blockchain/evm" }
 outbe-consensus = { path = "crates/blockchain/consensus" }
+outbe-simplex = { path = "crates/blockchain/simplex" }
 outbe-engine = { path = "crates/blockchain/engine" }
 outbe-rpc = { path = "crates/blockchain/rpc" }
 outbe-txpool = { path = "crates/blockchain/txpool" }
-outbe-node = { path = "crates/blockchain/node" }
+outbe-execution = { path = "crates/blockchain/execution" }
+outbe-runtime = { path = "crates/runtime" }
 outbe-operator = { path = "crates/blockchain/operator" }
 outbe-radicle = { path = "crates/blockchain/radicle" }
 outbe-snapshot = { path = "crates/blockchain/snapshot" }
@@ -207,7 +214,7 @@ outbe-oracle = { path = "crates/system/oracle" }
 outbe-zerofee = { path = "crates/system/zerofee" }
 outbe-emission = { path = "crates/system/emission" }
 outbe-cycle = { path = "crates/system/cycle" }
-outbe-tee = { path = "crates/system/tee", default-features = false }
+outbe-tee = { path = "crates/blockchain/tee", default-features = false }
 outbe-tee-enclave = { path = "bin/outbe-tee-enclave" }
 outbe-teeregistry = { path = "crates/system/teeregistry" }
 outbe-l2registry = { path = "crates/system/l2registry" }
@@ -224,6 +231,7 @@ radicle-log = { path = "vendor/heartwood/crates/radicle-log" }
 radicle-node = { path = "vendor/heartwood/crates/radicle-node", default-features = false, features = ["socket2"] }
 radicle-signals = { path = "vendor/heartwood/crates/radicle-signals" }
 # Core - outbe
+outbe-enclave = { path = "crates/core/enclave" }
 outbe-gratis = { path = "crates/core/gratis" }
 outbe-promis = { path = "crates/core/promis" }
 outbe-promisfactory = { path = "crates/core/promisfactory" }
@@ -250,7 +258,7 @@ outbe-gratisfactory = { path = "crates/core/gratisfactory" }
 outbe-stablecoinpolicy = { path = "crates/core/stablecoinpolicy" }
 outbe-stablecoin = { path = "crates/core/stablecoin" }
 outbe-stablecoinfactory = { path = "crates/core/stablecoinfactory" }
-outbe-common = { path = "crates/core/common" }
+outbe-core-common = { path = "crates/core/common" }
 outbe-genesis-cli = { path = "bin/outbe-genesis-cli" }
 
 # Alloy - core (alloy-rs/core): stays on 1.x
@@ -397,7 +405,7 @@ thiserror = "2"
 eyre = "0.6"
 hex = "0.4"
 libc = "0.2"
-rustix = { version = "1.1.4", features = ["fs", "process"] }
+rustix = { version = "1.1.6", features = ["fs", "process"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 parking_lot = "0.12"

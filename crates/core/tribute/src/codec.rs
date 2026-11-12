@@ -1,7 +1,7 @@
 //! Canonical entity payload conversion, independent of the storage backend.
 
 use crate::TributeData;
-use outbe_common::entity_codec::TributeBodyV1;
+use outbe_core_common::entity_codec::TributeBodyV1;
 
 /// Converts the runtime body into its normative v1 payload model.
 pub fn canonical_body(body: &TributeData) -> TributeBodyV1 {

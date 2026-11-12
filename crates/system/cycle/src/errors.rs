@@ -4,7 +4,22 @@ use crate::ICycle;
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
+use outbe_rewards::accounting::AccountingProgressError;
 use thiserror::Error;
+
+impl From<AccountingProgressError> for CycleError {
+    fn from(error: AccountingProgressError) -> Self {
+        match error {
+            AccountingProgressError::ZeroBlockNumber => Self::ZeroAccountingProgress,
+            AccountingProgressError::BlockNumberRegression { current, attempted } => {
+                Self::BlockNumberRegression { current, attempted }
+            }
+            AccountingProgressError::BlockNumberGap { current, attempted } => {
+                Self::AccountingProgressGap { current, attempted }
+            }
+        }
+    }
+}
 
 /// Represents errors returned by the ProtocolCycle runtime.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -320,5 +335,45 @@ mod tests {
         let decoded = ICycle::AccountingProgressGap::abi_decode(&gap).expect("gap payload");
         assert_eq!(decoded.current, 4);
         assert_eq!(decoded.attempted, 9);
+    }
+
+    #[test]
+    fn accounting_progress_errors_encode_icycle_selectors() {
+        let cases = [
+            (
+                AccountingProgressError::BlockNumberRegression {
+                    current: 10,
+                    attempted: 9,
+                },
+                ICycle::BlockNumberRegression {
+                    current: 10,
+                    attempted: 9,
+                }
+                .abi_encode(),
+            ),
+            (
+                AccountingProgressError::ZeroBlockNumber,
+                ICycle::ZeroAccountingProgress {}.abi_encode(),
+            ),
+            (
+                AccountingProgressError::BlockNumberGap {
+                    current: 4,
+                    attempted: 9,
+                },
+                ICycle::AccountingProgressGap {
+                    current: 4,
+                    attempted: 9,
+                }
+                .abi_encode(),
+            ),
+        ];
+        for (err, encoded) in cases {
+            match PrecompileError::from(err) {
+                PrecompileError::RevertBytes(bytes) => {
+                    assert_eq!(bytes.as_ref(), encoded.as_slice())
+                }
+                other => panic!("expected typed revert bytes, got {other:?}"),
+            }
+        }
     }
 }

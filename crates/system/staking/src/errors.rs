@@ -136,6 +136,76 @@ impl From<StakingError> for PrecompileError {
     }
 }
 
+/// Failures of the genesis staking and validator-set cross-check.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum GenesisValidationError {
+    /// Sum of member stakes overflowed.
+    #[error("genesis total stake overflow")]
+    GenesisTotalStakeOverflow,
+    /// Stored `total_staked` does not equal the sum of member stakes.
+    #[error("genesis total_staked mismatch: state={state}, expected={expected}")]
+    GenesisTotalStakedMismatch {
+        /// Stored total.
+        state: U256,
+        /// Sum of member stakes.
+        expected: U256,
+    },
+    /// `min_stake` was not written at genesis.
+    #[error("Staking min_stake must be initialized in genesis")]
+    StakingMinStakeUninitialized,
+    /// Validator-set config slot is empty.
+    #[error("ValidatorSet must be initialized in genesis; executor genesis backfill is disabled")]
+    ValidatorSetUninitializedInGenesis,
+    /// Stored epoch length does not match the genesis document.
+    #[error("genesis ValidatorSet epoch_length_blocks mismatch: state={state}, genesis={genesis}")]
+    GenesisEpochLengthMismatch {
+        /// Stored epoch length.
+        state: u32,
+        /// Genesis document epoch length.
+        genesis: u32,
+    },
+    /// Active consensus count does not match the genesis validator list.
+    #[error(
+        "genesis active consensus set size mismatch: state={state}, genesis validators={genesis}"
+    )]
+    GenesisActiveConsensusCountMismatch {
+        /// Stored active consensus count.
+        state: u32,
+        /// Genesis validator count.
+        genesis: usize,
+    },
+    /// A genesis validator has no validator-set record.
+    #[error("genesis validator {address} is missing from ValidatorSet")]
+    MissingGenesisValidator {
+        /// Missing validator.
+        address: Address,
+    },
+    /// Stored consensus key does not match the genesis document.
+    #[error("genesis validator {address} consensus pubkey mismatch")]
+    GenesisConsensusPubkeyMismatch {
+        /// Validator whose key differs.
+        address: Address,
+    },
+    /// Genesis validator is not in the active lifecycle.
+    #[error("genesis validator {address} must be active with a BLS share")]
+    GenesisValidatorNotActive {
+        /// Validator that is not active.
+        address: Address,
+    },
+    /// Bonded stake is below `min_stake`.
+    #[error("genesis validator {address} stake below min_stake")]
+    GenesisValidatorStakeBelowMinimum {
+        /// Validator below the minimum.
+        address: Address,
+    },
+}
+
+impl From<GenesisValidationError> for PrecompileError {
+    fn from(error: GenesisValidationError) -> Self {
+        PrecompileError::Fatal(error.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

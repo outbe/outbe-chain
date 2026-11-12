@@ -4,6 +4,7 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{sol, SolCall};
 use outbe_credis::CredisContract;
 use outbe_credisfactory::precompile::ICredisFactory;
+use outbe_enclave::gratis::{decrypt_pledged, derive_modify_key, derive_view_key, modify_mac};
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_gratis::enclave_client::test_enclave as gratis_enclave;
 use outbe_oracle::schema::OracleContract;
@@ -15,7 +16,6 @@ use outbe_primitives::{
     units::{checked_protocol_to_native, SCALE_1E6_U256},
 };
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
-use outbe_tee_enclave::gratis::{decrypt_pledged, derive_modify_key, derive_view_key, modify_mac};
 use outbe_vaultrouter::{LiquidityReservation, VaultRouterContract};
 
 use super::support::{capture_execution, elapsed_ns};
@@ -83,7 +83,7 @@ fn auth(op: GratisOp, amount: U256, nonce: u64) -> ModifyAuth {
     ModifyAuth {
         mac: modify_mac(
             &modify_key,
-            &outbe_tee_enclave::gratis::ModifyOperation {
+            &outbe_enclave::gratis::ModifyOperation {
                 account: ALICE,
                 op,
                 amount,

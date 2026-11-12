@@ -106,7 +106,11 @@ impl BlockExecutorFactory for OutbeEvmConfig {
                         parent_consensus_metadata,
                         parent_artifact_hint,
                     },
-                    dependencies: BlockExecutionDependencies { bridge, evm_signer },
+                    dependencies: BlockExecutionDependencies {
+                        bridge,
+                        evm_signer,
+                        runtime_host: std::sync::Arc::clone(&self.runtime_host),
+                    },
                 },
             )
         }

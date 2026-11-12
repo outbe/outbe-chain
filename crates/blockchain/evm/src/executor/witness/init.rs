@@ -9,9 +9,7 @@ use outbe_tee::witness::{
 use std::sync::{Arc, Mutex};
 
 impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
-    pub(crate) fn final_enclave_witness_bytes(
-        &mut self,
-    ) -> Result<Option<Bytes>, BlockExecutionError> {
+    pub fn final_enclave_witness_bytes(&mut self) -> Result<Option<Bytes>, BlockExecutionError> {
         if let Some(cached) = self.frozen_enclave_witness.as_ref() {
             return Ok(Some(cached.clone()));
         }
@@ -59,7 +57,7 @@ where
     E: Evm<DB = DB, Tx = TxEnv> + ZeroFeeCfgAccess,
     E::Error: std::fmt::Display,
 {
-    pub(in crate::executor) fn resolve_leader_attestation_pub(
+    pub fn resolve_leader_attestation_pub(
         &mut self,
         block_number: u64,
         proposer: Address,
@@ -85,7 +83,7 @@ where
         Ok(None)
     }
 
-    pub(in crate::executor) fn init_block_witness_state(
+    pub fn init_block_witness_state(
         &mut self,
         block_number: u64,
         proposer: Address,
@@ -113,14 +111,12 @@ where
         let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
             .map_err(crate::errors::ExecutorValidationError::from)?;
         let ctx = self.block_context(block_number, timestamp, proposer);
+        let host = self.runtime_host.clone();
         let db = self.inner.evm.db_mut();
         let mut provider = DirectStorageProvider::new(db, ctx);
         let storage = StorageHandle::new(&mut provider);
-        let registry = outbe_teeregistry::TeeRegistry::new(storage);
-        Ok(registry
-            .validator_enclave_binding_v1(proposer)
-            .map_err(binding_lookup_error)?
-            .map(|binding| binding.attestation_ed25519.0))
+        host.proposer_attestation(storage, proposer)
+            .map_err(binding_lookup_error)
     }
 
     fn block_one_bootstrap_attestation(

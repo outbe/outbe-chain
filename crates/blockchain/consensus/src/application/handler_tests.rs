@@ -453,6 +453,7 @@ fn finalizer_test_shared(
             p2p_addresses: Vec::new(),
         },
         chain_id: outbe_primitives::chain::CHAIN_ID,
+        leader_policy: crate::test_fixtures::test_leader_policy(),
         repository_publication_enabled: false,
         repository_publication: Default::default(),
         marshal_mailbox,
@@ -509,7 +510,7 @@ fn locally_built_candidate_requires_valid_execution_before_advertising() {
                 panic!("candidate preparation must use new_payload");
             };
             assert_eq!(
-                reth_node_builder::ExecutionPayload::block_hash(&payload),
+                reth_ethereum::node::api::ExecutionPayload::block_hash(&payload),
                 block.block_hash()
             );
             tx.send(Ok(PayloadStatus::new(

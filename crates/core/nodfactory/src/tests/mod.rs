@@ -1,5 +1,6 @@
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
+use outbe_enclave::gratis::{derive_modify_key, modify_mac};
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratisfactory::api::ModifyAuth;
 use outbe_nod::{
@@ -13,7 +14,6 @@ use outbe_primitives::{
     units::SCALE_1E6_U64,
 };
 use outbe_tee::protocol::GratisOp;
-use outbe_tee_enclave::gratis::{derive_modify_key, modify_mac};
 use outbe_vaultrouter::settlement::SettlementPayment;
 
 use crate::{
@@ -39,7 +39,7 @@ fn mine_auth(owner: Address, amount: U256) -> ModifyAuth {
     ModifyAuth {
         mac: modify_mac(
             &modify_key,
-            &outbe_tee_enclave::gratis::ModifyOperation {
+            &outbe_enclave::gratis::ModifyOperation {
                 account: owner,
                 op: GratisOp::Mint,
                 amount,
@@ -52,8 +52,7 @@ fn mine_auth(owner: Address, amount: U256) -> ModifyAuth {
 }
 
 fn decrypt_gratis(owner: Address, encrypted: &[u8]) -> U256 {
-    let key =
-        outbe_tee_enclave::gratis::derive_view_key(&test_enclave::state_key(), owner).unwrap();
+    let key = outbe_enclave::gratis::derive_view_key(&test_enclave::state_key(), owner).unwrap();
     outbe_tee::gratis_decrypt::decrypt_gratis_balance(&key, owner, encrypted).unwrap()
 }
 
@@ -346,7 +345,7 @@ fn quote_settlement_decrypted(
         .owner;
     let (settlement_currency, encrypted, snapshot_id) =
         api::quote_settlement(storage, owner, nod_id, asset)?;
-    let view_key = outbe_tee_enclave::nod_encryption::derive_view_key(
+    let view_key = outbe_enclave::nod_encryption::derive_view_key(
         &outbe_nod::test_support::NETWORK_SECRET,
         owner,
     )

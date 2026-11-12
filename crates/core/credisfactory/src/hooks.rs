@@ -5,7 +5,7 @@ use outbe_primitives::{
     error::Result,
 };
 
-/// Protocol module for `SystemTxKind::CredisFactory` (`OSCR`).
+/// Protocol module for the end-block Credis factory step.
 pub struct CredisFactoryModule;
 
 impl ProtocolModule for CredisFactoryModule {
@@ -20,28 +20,24 @@ impl ProtocolModule for CredisFactoryModule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use outbe_primitives::block::BlockContext;
-    use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+    use outbe_primitives::{
+        block::BlockHeightRegime, reshare_artifact::OutbeBlockArtifacts,
+        system_tx_context::SystemTxBuildContext,
+    };
 
     #[test]
-    fn credis_factory_module_end_block_runs_call_pass() {
-        let mut provider = HashMapStorageProvider::new(1);
-        StorageHandle::enter(&mut provider, |storage| {
-            let ctx = BlockRuntimeContext::new(
-                BlockContext {
-                    block_gas_limit: 0,
-                    user_gas_used: 0,
-                    block_number: 2,
-                    timestamp: 1_700_000_000,
-                    chain_id: 1,
-                    genesis_hash: alloy_primitives::B256::ZERO,
-                    genesis_timestamp: 1_700_000_000,
-                    proposer: alloy_primitives::Address::ZERO,
-                    validators: Vec::new(),
-                },
-                storage,
-            );
-            <CredisFactoryModule as ProtocolModule>::end_block(&ctx).unwrap();
-        });
+    fn credis_factory_step_builds_an_empty_end_block_payload() {
+        let artifacts = OutbeBlockArtifacts::default();
+        let ctx = SystemTxBuildContext {
+            regime: BlockHeightRegime::SteadyState,
+            block_number: 2,
+            parent_hash: alloy_primitives::B256::ZERO,
+            artifacts: &artifacts,
+            parent_consensus_metadata: None,
+            pending_tee_bootstrap: None,
+            expected_tee_policy: None,
+        };
+        assert_eq!(CredisFactoryModule::NAME, "credis_factory");
+        assert!(CredisFactoryModule::build_payload(&ctx).unwrap().is_empty());
     }
 }

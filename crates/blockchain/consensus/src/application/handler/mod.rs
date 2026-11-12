@@ -31,7 +31,7 @@ use futures::StreamExt;
 use outbe_primitives::projection::ExecutionReadBudget;
 use outbe_primitives::OutbePayloadTypes;
 
-use reth_node_builder::ConsensusEngineHandle;
+use reth_ethereum::node::api::ConsensusEngineHandle;
 
 use reth_payload_builder::PayloadBuilderHandle;
 use tracing::debug;
@@ -89,6 +89,7 @@ pub(crate) struct ApplicationShared {
     /// Active EVM chain id used to rebuild deterministic system-tx envelopes
     /// during consensus prechecks before Engine status is trusted.
     chain_id: u64,
+    leader_policy: outbe_primitives::system_tx::binding::SystemTxLeaderPolicy,
 
     repository_publication_enabled: bool,
     repository_publication: outbe_primitives::radicle_publication::RepositoryPublicationMailbox,
@@ -187,6 +188,7 @@ pub struct ApplicationDeps {
     pub genesis_hash: B256,
     pub validators: ValidatorSet,
     pub chain_id: u64,
+    pub leader_policy: outbe_primitives::system_tx::binding::SystemTxLeaderPolicy,
     pub repository_publication_enabled: bool,
     pub repository_publication: outbe_primitives::radicle_publication::RepositoryPublicationMailbox,
     pub marshal_mailbox: crate::marshal_types::MarshalMailbox,
@@ -228,6 +230,7 @@ impl ApplicationHandler {
             genesis_hash,
             validators,
             chain_id,
+            leader_policy,
             repository_publication_enabled,
             repository_publication,
             marshal_mailbox,
@@ -258,6 +261,7 @@ impl ApplicationHandler {
                 genesis_hash,
                 validators,
                 chain_id,
+                leader_policy,
                 repository_publication_enabled,
                 repository_publication,
                 marshal_mailbox,

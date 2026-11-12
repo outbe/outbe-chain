@@ -1,0 +1,731 @@
+#[cfg(test)]
+use commonware_runtime::Spawner as _;
+#[cfg(test)]
+use outbe_consensus::{
+    executor::actor::ExecutorActor, stack::recovery::anchor::reconcile_recovered_execution_head,
+};
+#[cfg(test)]
+use outbe_primitives::OutbePayloadTypes;
+#[cfg(test)]
+use reth_node_builder::ConsensusEngineHandle;
+mod marshal;
+pub mod validator_history;
+use crate::execution_backend::read_reth_recovery_forkchoice;
+use crate::finalization::{RethDurableExecutionState, RethFinalizationBarrier};
+use alloy_consensus::Sealable;
+use alloy_primitives::B256;
+use alloy_primitives::U256;
+use commonware_actor::Feedback;
+use commonware_consensus::types::{Epoch, Height, Round};
+use commonware_consensus::{
+    marshal::Update,
+    simplex::types::{Activity, Finalization, Finalize, Proposal},
+    types::View,
+    Reporter,
+};
+use commonware_cryptography::{bls12381, bls12381::primitives::variant::MinSig, Signer as _};
+use commonware_parallel::Sequential;
+use commonware_runtime::{tokio as commonware_tokio, Runner as _, Supervisor as _};
+use commonware_utils::TryCollect as _;
+use commonware_utils::{
+    acknowledgement::Acknowledgement as _,
+    ordered::{Quorum as _, Set},
+};
+use outbe_consensus::executor::actor::FinalizedExecutionBarrier;
+use outbe_consensus::{block::ConsensusBlock, bls::bootstrap_dkg};
+use outbe_consensus::{
+    config,
+    digest::Digest,
+    hybrid::{HybridScheme, HybridSchemeProvider},
+    stack::{
+        recovery::anchor::RecoveredApplicationFinalization,
+        recovery::forkchoice::recover_application_finalized_round,
+    },
+};
+use outbe_primitives::projection::ProjectionCheckpoint;
+use outbe_primitives::OutbeHeader;
+use reth_ethereum::{
+    chainspec::ChainSpec,
+    node::api::NodeTypesWithDBAdapter,
+    provider::db::{
+        database::Database,
+        init_db,
+        mdbx::DatabaseArguments,
+        table::Table,
+        tables::{self, ChainStateKey},
+        transaction::{DbTx, DbTxMut},
+        DatabaseEnv,
+    },
+    tasks::Runtime,
+};
+use reth_ethereum::{
+    primitives::{Header, SealedBlock, SealedHeader},
+    Block,
+};
+use reth_provider::{
+    providers::{BlockchainProvider, RocksDBProvider, StaticFileProvider},
+    static_file::StaticFileSegment,
+    ProviderFactory, StaticFileProviderBuilder, StaticFileWriter, StorageSettings,
+    StorageSettingsCache,
+};
+use std::sync::Mutex as StdMutex;
+use std::{fs, path::Path};
+use std::{sync::Arc, time::Duration};
+
+mod disk;
+use disk::copy_tree;
+pub use disk::inventory;
+pub use outbe_consensus::stack::dkg::handoff::{
+    refresh_validator_set_at_height, FrozenDkgTarget, FrozenValidatorSetRefresh,
+    PendingDkgActivation, RestoredPendingDkgActivation,
+};
+pub use outbe_consensus::stack::dkg::persistence::{
+    load_pending_dkg_boundary, restore_pending_dkg_activation, save_pending_dkg_boundary,
+    save_pending_dkg_state, DkgStateMaterial, DkgStateStore, PendingDkgBoundarySnapshot,
+};
+
+type Nodes = NodeTypesWithDBAdapter<outbe_execution::OutbeNode, DatabaseEnv>;
+type Provider = BlockchainProvider<Nodes>;
+type Stage = <tables::StageCheckpoints as Table>::Value;
+type Certificate = outbe_consensus::marshal_types::Finalization;
+const PREFIX: &str = "copied-native-recovery";
+pub const H: u64 = 3;
+const K: u64 = 5;
+
+pub struct DiskFixture {
+    pub root: tempfile::TempDir,
+    pub headers: Vec<OutbeHeader>,
+    blocks: Vec<ConsensusBlock>,
+    certificates: Vec<Certificate>,
+    provider: HybridSchemeProvider<MinSig>,
+}
+
+fn genesis_header() -> OutbeHeader {
+    OutbeHeader::new(Header::default())
+}
+
+fn genesis_block() -> ConsensusBlock {
+    ConsensusBlock::from_sealed(SealedBlock::seal_slow(
+        Block::default().map_header(|_| genesis_header()),
+    ))
+}
+
+pub fn open_static_headers(root: &Path) -> StaticFileProvider<outbe_primitives::OutbePrimitives> {
+    StaticFileProviderBuilder::read_write(root.join("static_files"))
+        .with_blocks_per_file_for_segment(StaticFileSegment::Headers, 1)
+        .build()
+        .unwrap()
+}
+
+pub fn remove_native_header(root: &Path, height: u64) {
+    // Header and canonical-hash columns share this one-block native jar.
+    // MDBX Headers/CanonicalHeaders are not authoritative for these reads.
+    open_static_headers(root)
+        .delete_jar(StaticFileSegment::Headers, height)
+        .unwrap();
+}
+
+pub fn replace_native_header(root: &Path, height: u64, header: &OutbeHeader, hash: B256) {
+    use reth_provider::HeaderProvider as _;
+    let files = open_static_headers(root);
+    let last = files
+        .get_highest_static_file_block(StaticFileSegment::Headers)
+        .unwrap();
+    let headers: Vec<_> = (0..=last)
+        .map(|number| {
+            let sealed = files.sealed_header(number).unwrap().unwrap();
+            if number == height {
+                (header.clone(), hash)
+            } else {
+                (sealed.header().clone(), sealed.hash())
+            }
+        })
+        .collect();
+    // The native writer chooses a range from its current index. Rebuilding
+    // this tiny segment avoids asking it to write into an interior gap.
+    files.delete_segment(StaticFileSegment::Headers).unwrap();
+    let mut writer = files.latest_writer(StaticFileSegment::Headers).unwrap();
+    for (number, (header, hash)) in headers.into_iter().enumerate() {
+        writer.increment_block(number as u64).unwrap();
+        writer
+            .append_header_direct(&header, U256::ZERO, &hash)
+            .unwrap();
+    }
+    writer.commit().unwrap();
+}
+
+pub fn open_native(root: &Path) -> Provider {
+    let db = init_db(root.join("db"), DatabaseArguments::test()).unwrap();
+    let chain = Arc::new(ChainSpec::<OutbeHeader> {
+        // Match the already-bound unit-test Marshal namespace. Production
+        // installs its real network domain before either component is built.
+        chain: outbe_consensus::proof::consensus_chain_id().into(),
+        genesis_header: SealedHeader::seal_slow(genesis_header()),
+        ..Default::default()
+    });
+    let factory = ProviderFactory::<Nodes>::new(
+        db,
+        chain,
+        open_static_headers(root),
+        RocksDBProvider::new(root.join("rocksdb")).unwrap(),
+        Runtime::test(),
+    )
+    .unwrap();
+    assert_eq!(factory.cached_storage_settings(), StorageSettings::v1());
+    BlockchainProvider::new(factory).unwrap()
+}
+
+pub fn recover_native(
+    root: &Path,
+    processed: u64,
+    target: u64,
+) -> eyre::Result<ProjectionCheckpoint> {
+    eyre::ensure!(
+        processed <= target,
+        "processed floor exceeds the recovery anchor"
+    );
+    let provider = open_native(root);
+    let forkchoice = read_reth_recovery_forkchoice(&provider.canonical_in_memory_state())?;
+    eyre::ensure!(
+        forkchoice.head.block_number == target,
+        "native recovery head does not match target"
+    );
+    eyre::ensure!(
+        forkchoice.safe.unwrap().block_number == target,
+        "native recovery safe block does not match target"
+    );
+    eyre::ensure!(
+        forkchoice.finalized.unwrap().block_number == target,
+        "native recovery finalized block does not match target"
+    );
+    let checkpoint = ProjectionCheckpoint {
+        block_number: target,
+        block_hash: forkchoice.finalized.unwrap().block_hash,
+    };
+    RethFinalizationBarrier::new(Arc::new(RethDurableExecutionState::new(provider)))
+        .verify_checkpoint(checkpoint)?;
+    Ok(checkpoint)
+}
+
+fn persist_fixture_headers(
+    tx: &impl DbTxMut,
+    headers: &[OutbeHeader],
+    through: u64,
+) -> eyre::Result<()> {
+    // This fixture deliberately uses supported v1 routing: native MDBX
+    // state, history and receipt tables. Never rely on an implicit default.
+    tx.put::<tables::Metadata>(
+        "storage_settings".into(),
+        serde_json::to_vec(&StorageSettings::v1())?,
+    )?;
+    for header in &headers[..=through as usize] {
+        tx.put::<tables::CanonicalHeaders>(header.inner.number, header.hash_slow())?;
+        tx.put::<tables::HeaderNumbers>(header.hash_slow(), header.inner.number)?;
+        tx.put::<tables::Headers<OutbeHeader>>(header.inner.number, header.clone())?;
+        tx.put::<tables::BlockBodyIndices>(
+            header.inner.number,
+            reth_ethereum::provider::db::models::StoredBlockBodyIndices {
+                first_tx_num: 0,
+                tx_count: 0,
+            },
+        )?;
+    }
+    Ok(())
+}
+
+fn seed_reth(root: &Path, headers: &[OutbeHeader], through: u64) {
+    let db = init_db(root.join("db"), DatabaseArguments::test()).unwrap();
+    let tx = db.tx_mut().unwrap();
+    persist_fixture_headers(&tx, headers, through).expect("native fixture headers");
+    for stage in ["Execution", "Finish"] {
+        tx.put::<tables::StageCheckpoints>(stage.into(), Stage::new(through))
+            .unwrap();
+    }
+    tx.put::<tables::ChainState>(ChainStateKey::LastFinalizedBlock, through)
+        .unwrap();
+    tx.put::<tables::ChainState>(ChainStateKey::LastSafeBlock, through)
+        .unwrap();
+    tx.commit().unwrap();
+    fs::create_dir_all(root.join("static_files")).unwrap();
+    let files = open_static_headers(root);
+    let first = files
+        .get_highest_static_file_block(StaticFileSegment::Headers)
+        .map_or(0, |height| height + 1);
+    if first <= through {
+        let mut writer = files.latest_writer(StaticFileSegment::Headers).unwrap();
+        for header in &headers[first as usize..=through as usize] {
+            writer.append_header(header, &header.hash_slow()).unwrap();
+        }
+        writer.commit().unwrap();
+    }
+}
+
+fn certificates(blocks: &[ConsensusBlock]) -> (HybridSchemeProvider<MinSig>, Vec<Certificate>) {
+    let keys: Vec<_> = (1u64..=3).map(bls12381::PrivateKey::from_seed).collect();
+    let participants: Set<bls12381::PublicKey> = keys
+        .iter()
+        .map(|key| key.public_key())
+        .try_collect()
+        .unwrap();
+    let dkg = bootstrap_dkg(3).unwrap();
+    let signers: Vec<_> = keys
+        .iter()
+        .map(|key| {
+            let index = participants.index(&key.public_key()).unwrap();
+            HybridScheme::signer(
+                &config::outbe_app_namespace(),
+                participants.clone(),
+                key.clone(),
+                dkg.polynomial.clone(),
+                dkg.shares[index.get() as usize].clone(),
+            )
+            .unwrap()
+        })
+        .collect();
+    let verifier = HybridScheme::<MinSig>::verifier(
+        &config::outbe_app_namespace(),
+        participants,
+        dkg.polynomial,
+    )
+    .unwrap();
+    let certificates = blocks
+        .iter()
+        .skip(1)
+        .map(|block| {
+            let round = Round::new(Epoch::new(0), View::new(block.number()));
+            let proposal = Proposal::new(round, round.view().previous().unwrap(), block.digest());
+            let signatures: Vec<_> = signers
+                .iter()
+                .map(|signer| Finalize::sign(signer, proposal.clone()).unwrap())
+                .collect();
+            Finalization::from_finalizes(
+                &verifier,
+                commonware_utils::iter::NonEmpty::try_new(signatures.iter()).unwrap(),
+                &Sequential,
+            )
+            .unwrap()
+        })
+        .collect();
+    let provider = HybridSchemeProvider::new();
+    let _ = provider.register(Epoch::new(0), verifier);
+    (provider, certificates)
+}
+
+#[derive(Clone)]
+struct LimitedAck {
+    through: u64,
+    held: Arc<StdMutex<Vec<commonware_utils::acknowledgement::Exact>>>,
+    delivered: Arc<StdMutex<Vec<u64>>>,
+}
+impl Reporter for LimitedAck {
+    type Activity = outbe_consensus::marshal_types::MarshalUpdate;
+    fn report(&mut self, update: Self::Activity) -> Feedback {
+        if let Update::Block(block, ack) = update {
+            self.delivered.lock().unwrap().push(block.number());
+            if block.number() <= self.through {
+                ack.acknowledge();
+            } else {
+                self.held.lock().unwrap().push(ack);
+            }
+        }
+        Feedback::Ok
+    }
+}
+
+pub struct Observation {
+    pub processed: u64,
+    pub hash: B256,
+    #[allow(dead_code)]
+    pub(in crate::stack) recovered: RecoveredApplicationFinalization,
+    #[allow(dead_code)]
+    delivered: Vec<u64>,
+}
+
+#[cfg(test)]
+async fn assert_heartbeat_only(
+    engine_rx: &mut tokio::sync::mpsc::UnboundedReceiver<
+        reth_ethereum::node::api::BeaconEngineMessage<OutbePayloadTypes>,
+    >,
+    hash: B256,
+) {
+    use alloy_rpc_types_engine::{PayloadStatus, PayloadStatusEnum};
+    use reth_ethereum::node::api::{BeaconEngineMessage, OnForkChoiceUpdated};
+    while let Some(message) = engine_rx.recv().await {
+        let BeaconEngineMessage::ForkchoiceUpdated {
+            state,
+            payload_attrs,
+            tx,
+            ..
+        } = message
+        else {
+            panic!("exact recovered H caused payload execution");
+        };
+        assert!(
+            payload_attrs.is_none(),
+            "exact recovered H requested a payload build"
+        );
+        assert_eq!(state.head_block_hash, hash);
+        assert_eq!(state.safe_block_hash, hash);
+        assert_eq!(state.finalized_block_hash, hash);
+        tx.send(Ok(OnForkChoiceUpdated::valid(PayloadStatus::from_status(
+            PayloadStatusEnum::Valid,
+        ))))
+        .unwrap();
+    }
+}
+
+async fn archive_stage_reached(
+    mailbox: &mut outbe_consensus::marshal_types::MarshalMailbox,
+    reporter: &LimitedAck,
+    acknowledge_through: u64,
+    target: u64,
+) -> bool {
+    if mailbox
+        .get_processed_height()
+        .await
+        .map(|height| height.get())
+        != Some(acknowledge_through)
+    {
+        return false;
+    }
+    if mailbox.get_block(Height::new(target)).await.is_none() {
+        return false;
+    }
+    if mailbox
+        .get_finalization(Height::new(target))
+        .await
+        .is_none()
+    {
+        return false;
+    }
+    acknowledge_through == target || reporter.delivered.lock().unwrap().contains(&target)
+}
+
+async fn wait_for_archive_stage(
+    mailbox: &mut outbe_consensus::marshal_types::MarshalMailbox,
+    reporter: &LimitedAck,
+    acknowledge_through: u64,
+    target: u64,
+) {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if archive_stage_reached(mailbox, reporter, acknowledge_through, target).await {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("native archive/ACK progress did not reach the requested fixture stage");
+}
+
+impl DiskFixture {
+    pub fn new(processed: u64) -> Self {
+        let root = tempfile::tempdir().unwrap();
+        let genesis = genesis_header();
+        assert_eq!(genesis.hash_slow(), genesis_block().block_hash());
+        let headers = outbe_consensus::test_harness::linked_headers(genesis, K);
+        let blocks: Vec<_> = headers
+            .iter()
+            .map(|header| {
+                ConsensusBlock::from_sealed(SealedBlock::seal_slow(
+                    Block::default().map_header(|_| header.clone()),
+                ))
+            })
+            .collect();
+        let (provider, certificates) = certificates(&blocks);
+        seed_reth(root.path(), &headers, H);
+        fs::create_dir_all(root.path().join("recipient-identity")).unwrap();
+        fs::write(
+            root.path().join("recipient-identity/key"),
+            b"donor-local-key-never-copied",
+        )
+        .unwrap();
+        let fixture = Self {
+            root,
+            headers,
+            blocks,
+            certificates,
+            provider,
+        };
+        let observed = fixture.phase(fixture.root.path(), 1, H, processed);
+        assert_eq!(observed.processed, processed);
+        fixture
+    }
+
+    pub fn copy_to(&self, destination: &Path) {
+        for name in ["marshal", "db", "static_files"] {
+            copy_tree(&self.root.path().join(name), &destination.join(name));
+        }
+        assert!(destination.join("db/mdbx.dat").is_file());
+        let disk = inventory(&destination.join("marshal"));
+        for required in ["finalizations", "blocks", "application-metadata"] {
+            assert!(
+                disk.iter().any(|(path, (directory, _, length, _))| path
+                    .to_string_lossy()
+                    .contains(required)
+                    && !directory
+                    && *length > 0),
+                "missing copied {required}: {disk:?}"
+            );
+        }
+        assert!(!destination.join("recipient-identity").exists());
+        fs::create_dir_all(destination.join("recipient-identity")).unwrap();
+        fs::write(
+            destination.join("recipient-identity/key"),
+            b"recipient-own-key",
+        )
+        .unwrap();
+    }
+
+    #[cfg(test)]
+    pub fn ack_with_executor(&self, root: &Path, target: u64) {
+        let config = commonware_tokio::Config::default()
+            .with_worker_threads(1)
+            .with_max_blocking_threads(1)
+            .with_catch_panics(true)
+            .with_storage_directory(root.join("marshal"));
+        let provider = self.provider.clone();
+        let genesis = self.headers[0].hash_slow();
+        let hash = self.headers[target as usize].hash_slow();
+        commonware_tokio::Runner::new(config).start(move |context| async move {
+            let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
+            // The live actor may send its ordinary periodic heartbeat while
+            // Marshal opens its archives. Reply to that readjustment of the
+            // same forkchoice, but reject any payload execution/build request.
+            let engine = context
+                .child("heartbeat_receiver")
+                .spawn(move |_| async move {
+                    assert_heartbeat_only(&mut engine_rx, hash).await;
+                });
+            let (executor, executor_mailbox) = ExecutorActor::new(
+                context.child("copied_executor"),
+                ConsensusEngineHandle::new(engine_tx),
+                outbe_consensus::executor::actor::RecoveredFinalizedState {
+                    genesis_hash: genesis,
+                    last_finalized_height: target,
+                    last_finalized_hash: hash,
+                },
+                None,
+            );
+            let (mailbox, resolver, marshal) = marshal::start_recovery_marshal_in_partition(
+                context,
+                provider,
+                executor_mailbox,
+                PREFIX.into(),
+                genesis_block(),
+            )
+            .await;
+            let executor = executor.start(mailbox.clone(), Height::new(target));
+            tokio::time::timeout(Duration::from_secs(10), async {
+                while mailbox
+                    .get_processed_height()
+                    .await
+                    .map(|height| height.get())
+                    != Some(target)
+                {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("ordinary executor did not acknowledge copied exact H");
+            drop(resolver);
+            tokio::time::timeout(Duration::from_secs(10), marshal)
+                .await
+                .unwrap()
+                .unwrap();
+            // Marshal owns the only executor reporter. Normal shutdown closes it,
+            // so executor exits through its ordinary mailbox-closed branch.
+            tokio::time::timeout(Duration::from_secs(10), executor)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            drop(mailbox);
+            tokio::time::timeout(Duration::from_secs(10), engine)
+                .await
+                .unwrap()
+                .unwrap();
+        });
+    }
+
+    pub fn missing_archive_error(&self, root: &Path) -> String {
+        let config = commonware_tokio::Config::default()
+            .with_worker_threads(1)
+            .with_max_blocking_threads(1)
+            .with_catch_panics(true)
+            .with_storage_directory(root.join("marshal"));
+        let provider = self.provider.clone();
+        commonware_tokio::Runner::new(config).start(move |context| async move {
+            let reporter = LimitedAck {
+                through: 0,
+                held: Arc::new(StdMutex::new(vec![])),
+                delivered: Arc::new(StdMutex::new(vec![])),
+            };
+            let (mailbox, resolver, actor) = marshal::start_recovery_marshal_in_partition(
+                context.child("marshal_fixture"),
+                provider,
+                reporter,
+                PREFIX.into(),
+                genesis_block(),
+            )
+            .await;
+            let error = recover_application_finalized_round(context, mailbox.clone(), H)
+                .await
+                .unwrap_err()
+                .to_string();
+            drop(resolver);
+            tokio::time::timeout(Duration::from_secs(10), actor)
+                .await
+                .unwrap()
+                .unwrap();
+            drop(mailbox);
+            error
+        })
+    }
+
+    pub fn phase(
+        &self,
+        root: &Path,
+        first_new: u64,
+        target: u64,
+        acknowledge_through: u64,
+    ) -> Observation {
+        let path = root.join("marshal");
+        let config = commonware_tokio::Config::default()
+            .with_worker_threads(1)
+            .with_max_blocking_threads(1)
+            .with_catch_panics(true)
+            .with_storage_directory(&path);
+        let provider = self.provider.clone();
+        let entries: Vec<_> = (first_new..=target)
+            .map(|height| {
+                (
+                    self.blocks[height as usize].clone(),
+                    self.certificates[(height - 1) as usize].clone(),
+                )
+            })
+            .collect();
+        let expected_hash = self.blocks[target as usize].block_hash();
+        commonware_tokio::Runner::new(config).start(move |context| async move {
+            let reporter = LimitedAck {
+                through: acknowledge_through,
+                held: Arc::new(StdMutex::new(vec![])),
+                delivered: Arc::new(StdMutex::new(vec![])),
+            };
+            let reporter_keepalive = reporter.clone();
+            let (mut mailbox, resolver, actor) = marshal::start_recovery_marshal_in_partition(
+                context.child("marshal_fixture"),
+                provider,
+                reporter,
+                PREFIX.into(),
+                genesis_block(),
+            )
+            .await;
+            for (block, certificate) in entries {
+                assert!(mailbox.verified(certificate.proposal.round, block).await);
+                let _ = mailbox.report(Activity::Finalization(certificate));
+            }
+            wait_for_archive_stage(
+                &mut mailbox,
+                &reporter_keepalive,
+                acknowledge_through,
+                target,
+            )
+            .await;
+            let recovered = recover_application_finalized_round(
+                context.child("recovered"),
+                mailbox.clone(),
+                target,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            let archived_hash = mailbox
+                .get_block(Height::new(target))
+                .await
+                .unwrap()
+                .block_hash();
+            assert_eq!(archived_hash, expected_hash);
+            assert_eq!(recovered.digest, Digest(archived_hash));
+            let observation = Observation {
+                processed: mailbox.get_processed_height().await.unwrap().get(),
+                hash: archived_hash,
+                recovered,
+                delivered: reporter_keepalive.delivered.lock().unwrap().clone(),
+            };
+            // Resolver closure is the ordinary actor exit path. Await it before
+            // dropping held ACKs or copying files. Never abort the donor actor.
+            drop(resolver);
+            tokio::time::timeout(Duration::from_secs(10), actor)
+                .await
+                .unwrap()
+                .unwrap();
+            drop(mailbox);
+            drop(reporter_keepalive);
+            observation
+        })
+    }
+}
+
+#[test]
+fn copied_marshal_archives_processed_forkchoice_and_native_state_reopen_at_h_then_k() {
+    for processed in [H - 1, H] {
+        let fixture = DiskFixture::new(processed);
+        let recipient = tempfile::tempdir().unwrap();
+        fixture.copy_to(recipient.path());
+        let donor_before = inventory(fixture.root.path());
+        let key_before = fs::read(recipient.path().join("recipient-identity/key")).unwrap();
+        let copied = fixture.phase(recipient.path(), H + 1, H, processed);
+        assert_eq!(copied.processed, processed);
+        let native_head = {
+            let provider = open_native(recipient.path());
+            read_reth_recovery_forkchoice(&provider.canonical_in_memory_state())
+                .unwrap()
+                .head
+        };
+        assert_eq!(native_head.block_hash, copied.hash);
+        let (height, hash, _) = reconcile_recovered_execution_head(
+            native_head.block_number,
+            native_head.block_hash,
+            Some(copied.recovered),
+        )
+        .unwrap();
+        assert_eq!(height, H);
+        assert_eq!(hash, fixture.headers[H as usize].hash_slow());
+        assert_eq!(
+            recover_native(recipient.path(), processed, height)
+                .unwrap()
+                .block_number,
+            H
+        );
+        fixture.ack_with_executor(recipient.path(), H);
+        let acknowledged = fixture.phase(recipient.path(), H + 1, H, H);
+        assert_eq!(acknowledged.processed, H);
+        // Persist native fixture state, then use real Marshal finalization and ACK.
+        // This test does not execute an EVM block or start a node process.
+        seed_reth(recipient.path(), &fixture.headers, K);
+        let advanced = fixture.phase(recipient.path(), H + 1, K, K);
+        assert_eq!(advanced.processed, K);
+        assert_eq!(
+            advanced.delivered,
+            vec![H + 1, K],
+            "first ordinary successor must be H+1"
+        );
+        let reopened = fixture.phase(recipient.path(), K + 1, K, K);
+        assert_eq!(reopened.hash, fixture.headers[K as usize].hash_slow());
+        assert!(
+            reopened.delivered.is_empty(),
+            "K restart redelivered acknowledged history"
+        );
+        assert_eq!(
+            recover_native(recipient.path(), K, K).unwrap().block_number,
+            K
+        );
+        assert_eq!(
+            fs::read(recipient.path().join("recipient-identity/key")).unwrap(),
+            key_before
+        );
+        assert_eq!(inventory(fixture.root.path()), donor_before);
+    }
+}

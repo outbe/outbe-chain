@@ -34,7 +34,7 @@ pub fn production(
             descriptor.network_binding.chain_id,
         ))
         .map_err(|_| InitError::MeasuredChainIdOverflow)?;
-        outbe_consensus::config::init_consensus_chain_id(chain_id)
+        outbe_simplex::config::init_consensus_chain_id(chain_id)
             .map_err(InitError::bind_measured_chain_id)?;
     }
     production_with_challenge_and_attestation_inner(

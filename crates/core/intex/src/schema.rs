@@ -54,8 +54,13 @@ impl CallStamp {
     /// The state as of `now`: derived, because no transaction arrives at the transit close
     /// to write it.
     pub const fn state(&self, now: u64) -> IntexState {
-        use outbe_common::settlement::RightState;
-        match outbe_common::settlement::effective_state(false, self.called_at, self.close_at, now) {
+        use outbe_core_common::settlement::RightState;
+        match outbe_core_common::settlement::effective_state(
+            false,
+            self.called_at,
+            self.close_at,
+            now,
+        ) {
             RightState::Issued | RightState::Settled => IntexState::Issued,
             RightState::Called => IntexState::Called,
             RightState::Forfeited => IntexState::Forfeited,

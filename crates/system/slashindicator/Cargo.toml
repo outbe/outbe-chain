@@ -11,7 +11,7 @@ outbe-macros.workspace = true
 outbe-primitives.workspace = true
 outbe-validatorset = { path = "../validatorset" }
 outbe-staking = { path = "../staking" }
-outbe-consensus.workspace = true
+outbe-teeregistry = { workspace = true }
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 
@@ -23,7 +23,7 @@ tracing.workspace = true
 metrics.workspace = true
 # the evidence verifier builds the committee-bound vote namespaces from the
 # ordered committee `Set<bls12381::PublicKey>`, sharing the single derivation in
-# `outbe_consensus::proof` - so these are runtime (not just test) dependencies.
+# `outbe_primitives::proof` - so these are runtime (not just test) dependencies.
 commonware-codec.workspace = true
 commonware-cryptography.workspace = true
 commonware-utils.workspace = true
@@ -39,7 +39,7 @@ commonware-consensus.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-validatorset = { path = "../validatorset", features = ["test-utils"] }
 # Test only: the shared committee-entry fixture in `test_harness`.
-outbe-consensus = { workspace = true, features = ["test-utils"] }
+outbe-simplex = { workspace = true, features = ["test-utils"] }
 outbe-promislimit.workspace = true
 rand.workspace = true
 rand-commonware.workspace = true

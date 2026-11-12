@@ -141,6 +141,7 @@ impl<DB: Database + Debug> CtxStorageProvider<'_, DB> {
                 .with_genesis_timestamp(self.genesis_timestamp),
                 runtime: crate::precompiles::OutbePrecompileRuntime::new()
                     .with_abort_bridge(self.abort_bridge.clone()),
+                host: std::sync::Arc::clone(&self.host),
             },
             input,
             Some(loaded),

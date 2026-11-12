@@ -7,7 +7,7 @@ use outbe_primitives::radicle_publication::{PublicationBatch, PublicationBody};
 pub(crate) const MAGIC: &[u8; 4] = b"OSIG";
 pub const MAX_REPOSITORY_GOSSIP_BYTES: usize =
     6 + outbe_primitives::radicle_publication::PUBLICATION_BODY_LEN + 1 + 100;
-pub const MAX_REPOSITORY_GOSSIP_MESSAGES: usize = 4 * outbe_consensus::bls::MAX_VALIDATORS as usize;
+pub const MAX_REPOSITORY_GOSSIP_MESSAGES: usize = 4 * outbe_simplex::bls::MAX_VALIDATORS as usize;
 
 #[derive(Clone)]
 pub enum RepositoryGossipMessage {
@@ -220,7 +220,7 @@ mod tests {
         },
         manager::{FinalizedPatchSigningState, FinalizedRepositoryAuthority},
     };
-    use outbe_consensus::hybrid::VrfMaterialProvider;
+    use outbe_simplex::hybrid::VrfMaterialProvider;
 
     struct Reader(std::sync::Mutex<FinalizedRepositoryAuthority>);
     impl RepositoryAuthorityReader for Reader {

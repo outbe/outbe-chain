@@ -405,7 +405,7 @@ impl PublicationPolicy for AcceptedRepositoryPolicy {
 mod tests {
     use super::*;
     use crate::manager::{FinalizedBlock, FinalizedPublicationReceipt};
-    use outbe_coderegistry::publication::PublicationReceipt;
+    use outbe_primitives::code_registry::PublicationReceipt;
 
     #[test]
     fn trusted_bootstrap_without_package_pins_owner_but_grants_no_entries() {

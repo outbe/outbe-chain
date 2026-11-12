@@ -10,7 +10,7 @@ name = "outbe-keygen"
 path = "src/main.rs"
 
 [dependencies]
-outbe-consensus.workspace = true
+outbe-simplex.workspace = true
 outbe-primitives.workspace = true
 commonware-cryptography.workspace = true
 commonware-codec.workspace = true

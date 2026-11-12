@@ -94,7 +94,7 @@ impl ConfigureEvm for OutbeEvmConfig {
         block: &'a SealedBlock<OutbeBlock>,
     ) -> Result<OutbeBlockExecutionCtx<'a>, Self::Error> {
         let (expected_begin_system_txs, system_layout_error, recovered_proposer) =
-            system_tx_expectations_for_block(block);
+            system_tx_expectations_for_block(block, &self.runtime_host.block_order());
 
         Ok(OutbeBlockExecutionCtx {
             inner: EthBlockExecutionCtx {
@@ -240,7 +240,11 @@ impl ConfigureEvm for OutbeEvmConfig {
                             parent_consensus_metadata,
                             parent_artifact_hint,
                         },
-                        dependencies: BlockExecutionDependencies { bridge, evm_signer },
+                        dependencies: BlockExecutionDependencies {
+                            bridge,
+                            evm_signer,
+                            runtime_host: std::sync::Arc::clone(&self.runtime_host),
+                        },
                     },
                 )
             },

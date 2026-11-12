@@ -10,7 +10,7 @@ use super::{
 };
 use crate::endpoint::{EndpointAddress, VerifiedEndpoint};
 use alloy_primitives::Address;
-use outbe_coderegistry::RepoId;
+use outbe_primitives::code_registry::RepoId;
 use std::{
     collections::{BTreeMap, BTreeSet},
     ops::Range,

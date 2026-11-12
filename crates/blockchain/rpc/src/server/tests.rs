@@ -1,27 +1,31 @@
+use super::{radicle_peer_info, radicle_status_info};
 use alloy_primitives::{Address, Bytes, B256};
 use commonware_cryptography::{bls12381, Signer as _};
-use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_radicle::{
     endpoint::{sign_response, EndpointAddress, EndpointFrame, EndpointResponseBody, PeerId},
     integration::{RadicleStatusChannel, SignedEndpointEvidence},
 };
-use outbe_slashindicator::constants::{
-    DEFAULT_EVIDENCE_REWARD_PERCENT, DEFAULT_PROPOSER_FELONY_THRESHOLD,
-    DEFAULT_PROPOSER_MISDEMEANOR_THRESHOLD, DEFAULT_SLASH_AMOUNT_PERCENT,
-    DEFAULT_VOTER_FELONY_THRESHOLD, DEFAULT_VOTER_MISDEMEANOR_THRESHOLD,
-};
-
-use super::{radicle_peer_info, radicle_status_info, read_effective_slash_config};
 
 #[test]
 fn a_follower_bridge_does_not_make_the_handler_a_validator() {
     use outbe_primitives::consensus::{ConsensusExecutionBridge, ConsensusOperatingMode};
     let provider = std::sync::Arc::new(());
-    let plain = super::OutbeApiHandler::new(provider.clone());
+    let plain = super::OutbeApiHandler::new(
+        provider.clone(),
+        std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
+    );
     let validator_bridge = ConsensusExecutionBridge::new();
     validator_bridge.set_operating_mode(ConsensusOperatingMode::Signer);
-    let validator = super::OutbeApiHandler::with_bridge(provider.clone(), validator_bridge);
-    let follower = super::OutbeApiHandler::with_bridge(provider, ConsensusExecutionBridge::new());
+    let validator = super::OutbeApiHandler::with_bridge(
+        provider.clone(),
+        validator_bridge,
+        std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
+    );
+    let follower = super::OutbeApiHandler::with_bridge(
+        provider,
+        ConsensusExecutionBridge::new(),
+        std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
+    );
     assert!(plain.bridge.is_none());
     assert!(validator
         .bridge
@@ -35,36 +39,6 @@ fn a_follower_bridge_does_not_make_the_handler_a_validator() {
         .unwrap()
         .operating_mode()
         .is_validator());
-}
-
-#[test]
-fn slash_config_rpc_reports_runtime_defaults_for_zero_storage() {
-    let mut provider = HashMapStorageProvider::new(1);
-    let config = StorageHandle::enter(&mut provider, |storage| {
-        read_effective_slash_config(storage).expect("read effective slash config")
-    });
-
-    assert_eq!(
-        config.proposer_misdemeanor_threshold,
-        DEFAULT_PROPOSER_MISDEMEANOR_THRESHOLD
-    );
-    assert_eq!(
-        config.proposer_felony_threshold,
-        DEFAULT_PROPOSER_FELONY_THRESHOLD
-    );
-    assert_eq!(
-        config.voter_misdemeanor_threshold,
-        DEFAULT_VOTER_MISDEMEANOR_THRESHOLD
-    );
-    assert_eq!(
-        config.voter_felony_threshold,
-        DEFAULT_VOTER_FELONY_THRESHOLD
-    );
-    assert_eq!(config.slash_amount_percent, DEFAULT_SLASH_AMOUNT_PERCENT);
-    assert_eq!(
-        config.evidence_reward_percent,
-        DEFAULT_EVIDENCE_REWARD_PERCENT
-    );
 }
 
 #[test]
@@ -197,7 +171,10 @@ fn sample_recoverable_sig(prehash: &B256, exclude: Option<Address>) -> ([u8; 65]
 
 #[tokio::test]
 async fn derive_keys_and_gratis_alias_reject_invalid_and_mismatched_signatures() {
-    let handler = super::OutbeApiHandler::new(std::sync::Arc::new(()));
+    let handler = super::OutbeApiHandler::new(
+        std::sync::Arc::new(()),
+        std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
+    );
     let account = Address::repeat_byte(0x11);
     let ephemeral_pubkey = B256::repeat_byte(0x22);
 
@@ -287,7 +264,10 @@ async fn derive_keys_rejects_cross_domain_signature_replay() {
     use outbe_primitives::signer::OutbeEvmSigner;
     use outbe_tee::protocol::{derive_account_keys_message, eip191_hash, Ledger};
 
-    let handler = super::OutbeApiHandler::new(std::sync::Arc::new(()));
+    let handler = super::OutbeApiHandler::new(
+        std::sync::Arc::new(()),
+        std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
+    );
     let signer = OutbeEvmSigner::from_secret_bytes([0x42; 32]).expect("signer");
     let owner = signer.address();
     let ephemeral_pubkey = B256::repeat_byte(0x22);
@@ -369,7 +349,10 @@ async fn derive_keys_rejects_cross_domain_signature_replay() {
 async fn get_finality_proof_enforces_bridge_overflow_window_and_byte_limits() {
     use outbe_primitives::consensus::{ConsensusExecutionBridge, FinalizedBlockBytes};
 
-    let no_bridge = super::OutbeApiHandler::new(std::sync::Arc::new(()));
+    let no_bridge = super::OutbeApiHandler::new(
+        std::sync::Arc::new(()),
+        std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
+    );
     let err = no_bridge.finality_proof_for_height(1).await.unwrap_err();
     assert_eq!(err.code(), jsonrpsee::types::error::INTERNAL_ERROR_CODE);
     assert_eq!(err.message(), "node is not serving consensus finalizations");
@@ -387,8 +370,11 @@ async fn get_finality_proof_enforces_bridge_overflow_window_and_byte_limits() {
             }));
         }
     });
-    let overflow_handler =
-        super::OutbeApiHandler::with_bridge(std::sync::Arc::new(()), overflow_bridge);
+    let overflow_handler = super::OutbeApiHandler::with_bridge(
+        std::sync::Arc::new(()),
+        overflow_bridge,
+        std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
+    );
     let err = overflow_handler
         .finality_proof_for_height(u64::MAX)
         .await
@@ -407,8 +393,11 @@ async fn get_finality_proof_enforces_bridge_overflow_window_and_byte_limits() {
             }));
         }
     });
-    let oversize_handler =
-        super::OutbeApiHandler::with_bridge(std::sync::Arc::new(()), oversize_bridge);
+    let oversize_handler = super::OutbeApiHandler::with_bridge(
+        std::sync::Arc::new(()),
+        oversize_bridge,
+        std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
+    );
     let err = oversize_handler
         .finality_proof_for_height(10)
         .await
@@ -427,8 +416,11 @@ async fn get_finality_proof_enforces_bridge_overflow_window_and_byte_limits() {
             }));
         }
     });
-    let window_handler =
-        super::OutbeApiHandler::with_bridge(std::sync::Arc::new(()), window_bridge);
+    let window_handler = super::OutbeApiHandler::with_bridge(
+        std::sync::Arc::new(()),
+        window_bridge,
+        std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
+    );
     let err = window_handler
         .finality_proof_for_height(100)
         .await

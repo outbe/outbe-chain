@@ -21,7 +21,7 @@ impl PoolTransactionError for OutbeReservedSystemTxPoolError {
 
 #[derive(Debug, Error)]
 #[error("zero-fee policy rejected transaction: {0}")]
-pub(crate) struct OutbeZeroFeePoolError(pub(crate) String);
+pub struct OutbeZeroFeePoolError(pub(crate) String);
 
 impl OutbeZeroFeePoolError {
     pub(crate) fn from_display(error: impl std::fmt::Display) -> Self {

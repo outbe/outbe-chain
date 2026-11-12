@@ -18,7 +18,6 @@ use alloy_signer::SignerSync as _;
 use alloy_signer_local::PrivateKeySigner;
 use clap::{Parser, ValueEnum};
 use eyre::{bail, ensure, eyre, Result, WrapErr as _};
-use outbe_evm::tee_attestation_activation::DcapChainSpecBindingV1;
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
     DcapEvidenceV1, NodeIdV1, RegistrationIntentV1,
@@ -31,6 +30,7 @@ use outbe_tee::node_host::{
 use outbe_tee::release_dcap_artifacts::{
     ReleaseDcapArtifactSetV1, DCAP_COLLATERAL_COMPONENT_FILES,
 };
+use outbe_tee::tee_attestation_activation::DcapChainSpecBindingV1;
 use rand_core::{OsRng, RngCore as _};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

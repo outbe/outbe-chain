@@ -2,7 +2,7 @@
 //! block must emit, already committed, or has no pending DKG `BoundaryOutcome`,
 //! plus its process-local boundary-status cache.
 
-use std::{fmt, future::Future, pin::Pin};
+use std::{future::Future, pin::Pin};
 
 use alloy_primitives::{keccak256, B256};
 use eyre::Result;
@@ -44,32 +44,7 @@ pub enum BoundaryRequirement {
     MustEmit,
 }
 
-/// Failure modes of [`Mailbox::resolve_boundary`]. `Unavailable` means the
-/// ancestry could not be read (retry/forfeit). `Conflict` means the ancestry
-/// carries a contradictory boundary (deterministic reject).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BoundaryRequirementError {
-    Unavailable(String),
-    Conflict(String),
-}
-
-impl BoundaryRequirementError {
-    pub fn is_unavailable(&self) -> bool {
-        matches!(self, Self::Unavailable(_))
-    }
-
-    pub(crate) fn unavailable(message: impl fmt::Display) -> Self {
-        Self::Unavailable(message.to_string())
-    }
-}
-
-impl fmt::Display for BoundaryRequirementError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Unavailable(message) | Self::Conflict(message) => f.write_str(message),
-        }
-    }
-}
+pub use outbe_simplex::errors::core::BoundaryRequirementError;
 
 fn boundary_scan_floor(pending: &DkgBoundaryArtifact) -> u64 {
     if pending.freeze_height <= pending.planned_activation_height {

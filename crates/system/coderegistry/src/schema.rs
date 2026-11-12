@@ -1,39 +1,13 @@
 use alloy_primitives::{Address, B256, U256};
-use outbe_macros::{contract, storage_record, storage_schema};
+use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::CODE_REGISTRY_ADDRESS;
 use outbe_primitives::storage::types::StorageBytes;
 
-/// Approved decision awaits its separate offchain execution.
-pub const PATCH_EXECUTION_PENDING: u8 = 1;
-pub const PATCH_EXECUTION_REVIEWED: u8 = 2;
-pub const PATCH_EXECUTION_MERGED: u8 = 3;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[storage_record(exists_field = accepted_height)]
-pub struct PublicationReceiptRecord {
-    #[key]
-    pub sequence: u64,
-    #[attribute(order = 0)]
-    pub body: Vec<u8>,
-    #[attribute(order = 1)]
-    pub accepted_height: u64,
-    #[attribute(order = 2)]
-    pub receipt_hash: B256,
-}
-
-/// Immutable decision. Execution and merge progress are stored separately.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[storage_record(exists_field = approved_height)]
-pub struct PatchApprovalRecord {
-    #[key]
-    pub proposal_id: U256,
-    #[attribute(order = 0)]
-    pub payload: String,
-    #[attribute(order = 1)]
-    pub approved_height: u64,
-    #[attribute(order = 2)]
-    pub approved_timestamp: u64,
-}
+pub use outbe_primitives::code_registry::{
+    PatchApprovalRecord, PatchApprovalRecordEntryExt, PublicationReceiptRecord,
+    PublicationReceiptRecordEntryExt, PATCH_EXECUTION_MERGED, PATCH_EXECUTION_PENDING,
+    PATCH_EXECUTION_REVIEWED,
+};
 
 /// Consensus storage layout for the V1 CodeRegistry.
 ///

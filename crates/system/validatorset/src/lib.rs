@@ -9,6 +9,7 @@
 //!
 //! `pub use` re-exports below preserve the old `contract` / `logic`
 //! paths for external callers. Migrate them opportunistically.
+pub mod boundary;
 pub mod delegation;
 pub mod errors;
 pub mod hooks;
@@ -33,7 +34,11 @@ pub mod logic {
     pub use crate::runtime::*;
 }
 
-pub use errors::ActivationError;
+pub use boundary::{
+    apply_boundary_outcome, committee_snapshot_from_boundary, hash_boundary_active_set,
+    is_consensus_participant, is_validator, validate_boundary_epoch_transition,
+};
+pub use errors::{ActivationError, BoundaryError};
 pub use runtime::{EpochSnapshot, ValidatorParticipation, ValidatorRecord};
 pub use state::{
     clear_committee_snapshot, committee_set_hash_v2, committee_snapshot_key,

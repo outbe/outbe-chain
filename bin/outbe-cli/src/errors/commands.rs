@@ -216,7 +216,7 @@ pub(crate) enum StakingError {
     /// `--bls-key-backend encrypted` was supplied without a non-empty passphrase.
     #[error("--bls-key-backend encrypted requires --bls-passphrase or BLS_PASSPHRASE")]
     EncryptedKeyRequiresPassphrase,
-    /// `--bls-key-backend` was not recognized by `outbe_consensus::bls`.
+    /// `--bls-key-backend` was not recognized by `outbe_simplex::bls`.
     #[error("unsupported --bls-key-backend {0:?}")]
     UnknownKeyBackend(String),
 }

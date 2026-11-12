@@ -134,10 +134,7 @@ pub(crate) struct VerifiedIntentV1<'a> {
     pub(crate) capability: PostVerifierDcapCapabilityV1,
 }
 
-outbe_primitives::define_tee_registry_binding_v1! {
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NodeEnclaveBindingV1
-}
+pub use outbe_primitives::tee_registry_abi_v1::NodeEnclaveBindingV1;
 
 #[cfg(feature = "tee-attestation-v1")]
 fn ensure_continuous_binding(

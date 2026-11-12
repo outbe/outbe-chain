@@ -7,16 +7,14 @@ use crate::manager::{
 use alloy_primitives::{Address, B256, U256};
 use commonware_codec::DecodeExt as _;
 use commonware_cryptography::bls12381;
-use outbe_coderegistry::{
-    payload::{PatchVotePayloadV1, MAX_PATCH_VOTE_PAYLOAD_BYTES},
-    publication::PublicationReceipt,
-    schema::{PATCH_EXECUTION_MERGED, PATCH_EXECUTION_PENDING, PATCH_EXECUTION_REVIEWED},
-    PatchApprovalRecord,
+use outbe_primitives::code_registry::{
+    PatchApprovalRecord, PatchVotePayloadV1, PublicationReceipt, MAX_PATCH_VOTE_PAYLOAD_BYTES,
+    PATCH_EXECUTION_MERGED, PATCH_EXECUTION_PENDING, PATCH_EXECUTION_REVIEWED,
 };
+use outbe_primitives::committee_snapshot::{CommitteeEntry, CommitteeSnapshot};
 use outbe_primitives::radicle_publication::{
     players_commitment, PublicationAction, PublicationBody, PUBLICATION_BODY_LEN,
 };
-use outbe_validatorset::state::{CommitteeEntry, CommitteeSnapshot};
 
 pub(super) const MAGIC: &[u8; 4] = b"OCS1";
 // Fixed fields + existing protocol maxima for committee and canonical Vote payload.
@@ -29,7 +27,7 @@ pub(super) const MAX_FRAME: usize = 5
     + 32
     + 96
     + 2
-    + 68 * outbe_consensus::bls::MAX_VALIDATORS as usize
+    + 68 * outbe_simplex::bls::MAX_VALIDATORS as usize
     + 32
     + 8
     + 8
@@ -44,7 +42,7 @@ pub(super) fn encode(state: &FinalizedPatchSigningState) -> Result<Vec<u8>, Erro
     let committee = authority.committee();
     let approval = &state.approval().approval;
     if committee.committee.is_empty()
-        || committee.committee.len() > outbe_consensus::bls::MAX_VALIDATORS as usize
+        || committee.committee.len() > outbe_simplex::bls::MAX_VALIDATORS as usize
         || committee.vrf_group_public_key_bytes.len() != 96
         || approval.payload.len() > MAX_PATCH_VOTE_PAYLOAD_BYTES
     {
@@ -69,12 +67,12 @@ pub(super) fn encode(state: &FinalizedPatchSigningState) -> Result<Vec<u8>, Erro
 }
 
 pub(super) const MAX_AUTHORITY_BYTES: usize =
-    40 + 8 + 32 + 8 + 8 + 32 + 96 + 2 + 68 * outbe_consensus::bls::MAX_VALIDATORS as usize;
+    40 + 8 + 32 + 8 + 8 + 32 + 96 + 2 + 68 * outbe_simplex::bls::MAX_VALIDATORS as usize;
 
 pub(super) fn encode_authority(authority: &FinalizedRepositoryAuthority) -> Result<Vec<u8>, Error> {
     let committee = authority.committee();
     if committee.committee.is_empty()
-        || committee.committee.len() > outbe_consensus::bls::MAX_VALIDATORS as usize
+        || committee.committee.len() > outbe_simplex::bls::MAX_VALIDATORS as usize
         || committee.vrf_group_public_key_bytes.len() != 96
     {
         return Err(Error::Protocol);
@@ -232,7 +230,7 @@ pub(super) fn decode_authority(
     let group = input.array::<96>()?;
     radicle::crypto::repository::BlsPublicKey::from_bytes(group).map_err(|_| Error::Protocol)?;
     let count = u16::from_be_bytes(input.array()?) as usize;
-    if count == 0 || count > outbe_consensus::bls::MAX_VALIDATORS as usize {
+    if count == 0 || count > outbe_simplex::bls::MAX_VALIDATORS as usize {
         return Err(Error::Protocol);
     }
     let mut committee = Vec::with_capacity(count);

@@ -1,0 +1,889 @@
+use super::super::*;
+use super::helpers::{
+    maybe_run_validator_bootstrap_follow, reconcile_recovered_vrf_material, recovery_anchor_hash,
+    seed_genesis_validation, startup_ancestry_readiness, ValidatorBootstrapFollowInputs,
+};
+
+pub fn run_consensus_stack<E, N: ExecutionNodeBackend>(
+    ctx: E,
+    args: ConsensusArgs,
+    node: N,
+    bridge: ConsensusExecutionBridge,
+    services: ConsensusStackServices,
+) -> impl Future<Output = Result<()>> + Send
+where
+    E: BufferPooler
+        + Clock
+        + CryptoRng
+        + Network
+        + Resolver
+        + Spawner
+        + Storage
+        + Metrics
+        + Send
+        + Sync
+        + 'static,
+{
+    let application = services.application_drain.clone();
+    async move {
+        // Do not spawn the fallible body in a child supervision task: completing
+        // that task would abort its network before the application can drain.
+        application
+            .finish(run_consensus_stack_inner(ctx, args, node, bridge, services))
+            .await
+    }
+}
+
+async fn run_consensus_stack_inner<E, N: ExecutionNodeBackend>(
+    ctx: E,
+    args: ConsensusArgs,
+    node: N,
+    bridge: ConsensusExecutionBridge,
+    services: ConsensusStackServices,
+) -> Result<()>
+where
+    E: BufferPooler
+        + Clock
+        + CryptoRng
+        + Network
+        + Resolver
+        + Spawner
+        + Storage
+        + Metrics
+        + Send
+        + Sync
+        + 'static,
+{
+    let ConsensusStackServices {
+        application_drain,
+        follower_shutdown,
+        finalized_execution_barrier,
+        finalization_notify,
+        tee_lease_armed_rx,
+        radicle_status,
+        mut radicle_endpoint,
+        protocol,
+    } = services;
+    let radicle_updates = radicle_status.subscribe();
+
+    // Validate network-scoped flags before any mode-specific early return. A
+    // follower must fail closed too, even when it does not currently consume
+    // these options.
+    let chain_id = node.chain_spec().chain().id();
+    let repository_publication_enabled =
+        super::super::startup::repository_publication_enabled_from_genesis(&node)?;
+    let repository_material_publisher = if repository_publication_enabled {
+        radicle_endpoint
+            .as_mut()
+            .and_then(|(endpoint, _, _)| endpoint.take_repository_material_publisher())
+    } else {
+        None
+    };
+    let epoch_length_blocks = epoch_length_blocks_from_genesis(&node)?;
+    let dkg_rotation_params = DkgRotationParams::from_genesis(&node, epoch_length_blocks);
+    if repository_publication_enabled {
+        outbe_primitives::radicle_genesis::validate_publication_window(
+            dkg_rotation_params.epoch_length_blocks,
+            dkg_rotation_params.prepare_window_blocks,
+        )
+        .map_err(|error| {
+            crate::errors::StackStartupError::InvalidGovernmentsGenesis(error.to_string())
+        })?;
+    }
+    validate_testnet_only_flags(
+        args.trust_el_head,
+        args.testnet_unix_time_offset_secs,
+        chain_id,
+    )?;
+
+    let parent_cert_dir = args
+        .storage_dir
+        .as_ref()
+        .ok_or(crate::errors::StackEpochError::ConsensusStorageDirRequired)?
+        .join("finalized_parent_certs");
+    let finalized_parent_cert_store =
+        crate::finalization::parent_cert_store::FinalizedParentCertStore::open(&parent_cert_dir)
+            .wrap_err("failed to open finalized parent certificate store")?;
+    use outbe_primitives::consensus::ConsensusOperatingMode;
+    if !args.is_validator {
+        bridge.set_operating_mode(ConsensusOperatingMode::Follower);
+        let upstream = args
+            .upstream
+            .clone()
+            .ok_or(crate::errors::StackEpochError::ValidatorBootstrapRequiresUpstream)?;
+        run_follow_stack(
+            ctx,
+            args,
+            services::FollowerConnection {
+                node,
+                bridge,
+                upstream,
+            },
+            services::FollowerStackServices {
+                finalized_execution_barrier,
+                follower_shutdown: follower_shutdown
+                    .ok_or(crate::errors::StackEpochError::FollowerPreStopHandshakeNotInstalled)?,
+                parent_cert_store: finalized_parent_cert_store,
+                bootstrap: None,
+                finalization_notify,
+                protocol: protocol.clone(),
+            },
+        )
+        .await?;
+        return Ok(());
+    }
+
+    // -- 1. Load signing key ---------------------------------------------
+    let signing_key_path = args
+        .signing_key
+        .as_ref()
+        .ok_or(crate::errors::StackEpochError::SigningKeyRequired)?;
+    let key_backend = args.key_backend().wrap_err("invalid BLS key backend")?;
+    let signing_key = validators::load_signing_key(signing_key_path, &key_backend)
+        .wrap_err("failed to load signing key")?;
+
+    let genesis_hash = genesis_hash(&node)?;
+    if maybe_run_validator_bootstrap_follow(
+        ctx.child("bootstrap_follow"),
+        ValidatorBootstrapFollowInputs {
+            args: &args,
+            node: &node,
+            bridge: &bridge,
+            signing_key: &signing_key,
+            genesis_hash,
+            dkg_rotation_params,
+            tee_lease_armed_rx,
+            finalized_execution_barrier: &finalized_execution_barrier,
+            follower_shutdown,
+            finalized_parent_cert_store: &finalized_parent_cert_store,
+            finalization_notify: &finalization_notify,
+            protocol: protocol.clone(),
+        },
+    )
+    .await?
+    {
+        return Ok(());
+    }
+    bridge.set_operating_mode(outbe_primitives::consensus::ConsensusOperatingMode::Verifier);
+    let ctx = ctx.child("validator_epoch");
+
+    // -- 2. Load validator set -------------------------------------------
+    // Chain state is the only runtime source of validator membership. For a
+    // fresh network this is the genesis ValidatorSet storage. For restart/join
+    // this is the synced canonical state.
+    let initial_peer_height = node
+        .provider()
+        .last_block_number()
+        .wrap_err("failed to read startup P2P admission height")?;
+    let initial_peer_hash = node
+        .provider()
+        .block_hash(initial_peer_height)?
+        .ok_or(crate::errors::StackEpochError::StartupP2pAdmissionBlockMissing)?;
+    let validator_set = validators::read_consensus_validators_at_block(
+        protocol.as_ref(),
+        node.provider(),
+        initial_peer_hash,
+    )
+    .wrap_err("failed to load consensus validator set at startup")?;
+
+    info!(
+        count = validator_set.public_keys.len(),
+        "loaded validator set"
+    );
+
+    let Some(transport) = super::transport::start_transport(
+        &ctx,
+        &args,
+        &node,
+        super::transport::TransportAdmission {
+            protocol: protocol.as_ref(),
+            signing_key: &signing_key,
+            validator_set: &validator_set,
+            initial_peer_hash,
+        },
+        radicle_endpoint,
+    )
+    .await?
+    else {
+        return Ok(());
+    };
+    let super::transport::StartupTransport {
+        network_handle,
+        oracle,
+        bootnode_map,
+        initial_peers,
+        broadcast_channel,
+        marshal_channel,
+        vote_mux,
+        cert_mux,
+        res_mux,
+        mut dkg_mux,
+        tee_dkg_round0,
+        tee_bootstrap_round0,
+        tee_dkg_mux: _tee_dkg_mux,
+        tee_bootstrap_mux: _tee_bootstrap_mux,
+        vote_backup_rx,
+    } = transport;
+    // Startup chain-state sources must exist before threshold material selection:
+    // DKG round 0 is allowed only when both execution and marshal prove genesis
+    // formation. Local execution height 0 alone is not sufficient for a fresh
+    // datadir joining an already-running network.
+    // -- 5b. Pre-compute page cache (shared across marshal + epochs) -----
+    let page_cache = CacheRef::from_pooler(
+        &ctx,
+        nonzero_u16(4096, "page cache page size")?,
+        nonzero_usize(config::PAGE_CACHE_SIZE / 4096, "PAGE_CACHE_SIZE / 4096")?,
+    );
+
+    // -- 5c. Initialize marshal actor before threshold material selection -
+    //
+    // Marshal init exposes persisted consensus finalized height. That height is
+    // part of the genesis-formation proof. Without it, a crash-restart with
+    // execution height 0 could incorrectly start DKG round 0.
+    use commonware_consensus::marshal;
+
+    let certificate_scheme_provider = HybridSchemeProvider::<MinSig>::new();
+    let elector_config_provider = HybridElectorConfigProvider::<MinSig>::new();
+    let committee_provider = CommitteeProvider::new();
+
+    let super::marshal_recovery::RecoveredMarshal {
+        actor: marshal_actor,
+        mailbox: marshal_mailbox,
+        processed_height: last_consensus_finalized,
+        epocher,
+    } = super::marshal_recovery::recover_marshal(
+        &ctx,
+        &page_cache,
+        &node,
+        &certificate_scheme_provider,
+        &args,
+    )
+    .await?;
+
+    let super::threshold_recovery::RecoveredThreshold {
+        local_consensus_key,
+        last_execution_height,
+        last_execution_hash,
+        recovered_boundary,
+        recovered_pending_boundary,
+        signing_share,
+        mut polynomial,
+        mut last_dkg_output,
+        coordinate_genesis_bootstrap,
+        mut genesis_dkg_boundary_artifact,
+        participants,
+        proposer_evm_address,
+    } = super::threshold_recovery::recover_threshold(
+        &ctx,
+        super::threshold_recovery::ThresholdRecovery {
+            args: &args,
+            node: &node,
+            key_backend: &key_backend,
+            signing_key: &signing_key,
+            validator_set: &validator_set,
+            genesis_hash,
+            dkg_rotation_params,
+            last_consensus_finalized,
+            dkg_mux: &mut dkg_mux,
+            protocol: protocol.as_ref(),
+        },
+    )
+    .await?;
+    let shareless_verifier = signing_share.is_none();
+    super::tee_bootstrap::prepare_tee(
+        &ctx,
+        super::tee_bootstrap::TeeStartup {
+            args: &args,
+            node: &node,
+            bridge: &bridge,
+            participants: &participants,
+            validator_set: &validator_set,
+            local_consensus_key: &local_consensus_key,
+            proposer_evm_address,
+            coordinate_genesis_bootstrap,
+            shareless_verifier,
+            genesis_dkg_boundary_artifact: &genesis_dkg_boundary_artifact,
+            protocol: protocol.as_ref(),
+            tee_dkg_round0,
+            tee_bootstrap_round0,
+        },
+    )
+    .await?;
+
+    // -- 8. Recover execution finalized state ------------------------------
+    let active_boundary = recovered_boundary.clone();
+
+    let recovered_boundary_artifact = active_boundary.as_ref().map(|(_, artifact)| artifact);
+    let vrf_material_version = recovered_boundary_artifact
+        .map(|artifact| artifact.vrf_material_version)
+        .unwrap_or(0);
+    reconcile_recovered_vrf_material(
+        &mut polynomial,
+        &mut last_dkg_output,
+        signing_share.is_some(),
+        recovered_boundary_artifact,
+    )?;
+    let vrf_materials = VrfMaterialProvider::new(
+        vrf_material_version,
+        polynomial.clone(),
+        signing_share.clone(),
+    );
+    if let Some(publisher) = &repository_material_publisher {
+        publisher.install_local_signer(vrf_materials.clone());
+    }
+    bridge.set_local_threshold_share_present(signing_share.is_some());
+    // The active boundary tuple height is the ACTIVATION ANCHOR (the height the
+    // live committee anchored its rotation schedule on). It is NOT the commit
+    // height of the artifact-carrying block. Finalized BoundaryOutcome recovery
+    // normalizes commit -> anchor (commit - 1, since the artifact rides the first
+    // new-epoch block). The supervisor restores a node-local pending snapshot
+    // separately. That snapshot never changes this active anchor until its exact
+    // outgoing-finalized preannounce authorizes the normal runtime activation path.
+    let last_dkg_activation_height = active_boundary
+        .as_ref()
+        .map(|(height, _)| *height)
+        .unwrap_or(last_execution_height);
+    let dkg_cycle = recovered_boundary_artifact
+        .map(|artifact| artifact.dkg_cycle.saturating_add(1))
+        .unwrap_or(1);
+    let recovered_epoch = recovered_boundary_artifact
+        .map(|artifact| artifact.epoch)
+        .unwrap_or(0);
+    let vrf_safety = VrfSafetyGate::new(
+        vrf_material_version,
+        last_dkg_activation_height,
+        dkg_rotation_params.planned_activation_height(last_dkg_activation_height),
+        dkg_rotation_params.activation_grace_blocks,
+    );
+    info!(
+        vrf_material_version,
+        vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
+        last_dkg_activation_height,
+        next_planned_activation_height = dkg_rotation_params
+            .planned_activation_height(last_dkg_activation_height),
+        vrf_expiry_height = dkg_rotation_params
+            .planned_activation_height(last_dkg_activation_height)
+            .saturating_add(dkg_rotation_params.activation_grace_blocks),
+        "VRF material active"
+    );
+    vrf_safety.apply_optional_revealed_output(last_dkg_output.as_ref());
+    publish_randomness_status(&bridge, &vrf_safety);
+
+    // `is_fresh_bootstrap` is determined AFTER marshal init (below),
+    // using both execution height and consensus processed height.
+    // This prevents false fresh-bootstrap on crash restart (SIGKILL/OOM)
+    // where Reth lost in-memory state but consensus is durable.
+    let dkg_manager = DkgManagerMailbox::new();
+    let ancestry_readiness_target = last_consensus_finalized.get();
+    let ancestry_readiness =
+        startup_ancestry_readiness(last_execution_height, ancestry_readiness_target);
+    // -- 9. Get beacon engine handle and payload builder handle ----------
+    let engine_handle: EngineHandle = node.beacon_engine_handle().engine_handle();
+    let payload_builder = node.payload_builder_handle().payload_builder_handle();
+
+    // sus-5: the executor publishes execution-finalized heights here. The
+    // supervisor consumes them to drive height-based DKG/VRF rotation. A guard
+    // (`if !reshare_in_progress`) disables the consumer arm while a reshare is
+    // in progress, so heights accumulate during a reshare. The reshare duration
+    // BOUNDS the backlog (one height per finalized block for the length of a
+    // reshare). The supervisor drains the backlog in order afterwards. We
+    // deliberately keep an ordered (unbounded) mpsc rather than a latest-only
+    // `watch`. The drain feeds per-height rotation-threshold logic
+    // (freeze/activation heights). Thus the supervisor processes heights in
+    // sequence and does not coalesce them to the latest.
+    let (executor_finalized_height_tx, mut executor_finalized_height_rx) =
+        tokio::sync::mpsc::unbounded_channel::<u64>();
+    let (execution_finalized_height_tx, execution_finalized_height_rx) =
+        tokio::sync::mpsc::unbounded_channel::<u64>();
+    let (consensus_tip_tx, consensus_tip_rx) =
+        tokio::sync::watch::channel::<Option<crate::marshal_update_reporter::ConsensusTip>>(None);
+
+    // Reth may have one or more speculative canonical blocks above marshal's
+    // durable certified tip when the process stops. Those blocks remain useful
+    // as local payload data, but they are not a finalization authority. Seed the
+    // executor and FinalizationView at the highest height that both stores
+    // confirm. Then, if a different block wins at the first unfinalized height,
+    // the node can import it and forkchoice can select it after restart.
+    let recovery_anchor_height =
+        durable_recovery_anchor_height(last_execution_height, last_consensus_finalized.get());
+    let recovery_anchor_hash = recovery_anchor_hash(
+        node.provider(),
+        recovery_anchor_height,
+        (last_execution_height, last_execution_hash),
+        genesis_hash,
+    )?;
+
+    // -- 10. Create executor actor (state-aware init) --------------------
+    let (mut executor_actor, executor_mailbox) = ExecutorActor::new(
+        ctx.child("executor"),
+        engine_handle.clone(),
+        crate::executor::actor::RecoveredFinalizedState {
+            genesis_hash,
+            last_finalized_height: recovery_anchor_height,
+            last_finalized_hash: recovery_anchor_hash,
+        },
+        Some(executor_finalized_height_tx),
+    );
+
+    // -- 12. Create application actor and handler ------------------------
+    let (application, application_rx) = OutbeApplication::new(
+        ctx.child("application"),
+        config::ENGINE_MAILBOX_SIZE,
+        marshal_mailbox.clone(),
+    );
+
+    // -- 12d. Conditional bootstrap validation data ---------------------
+    // Determined AFTER marshal init so we can use both execution height
+    // and consensus processed height. Prevents false fresh-bootstrap on
+    // crash restart where Reth lost in-memory state (SIGKILL/OOM) but
+    // consensus layer persisted progress durably.
+    // Reuse the same proven-founding decision that gated the canonical genesis
+    // boundary and TEE OST3 ceremony. A verifier joining a running chain can have
+    // both local heights at zero and must not seed genesis state.
+    let is_fresh_bootstrap = coordinate_genesis_bootstrap;
+
+    if last_execution_height == 0 && last_consensus_finalized.get() > 0 {
+        info!(
+            consensus_height = last_consensus_finalized.get(),
+            "crash recovery detected - execution lost but consensus durable, will backfill"
+        );
+    }
+
+    if is_fresh_bootstrap {
+        let bootstrap_artifact = seed_genesis_validation(
+            &bridge,
+            &validator_set,
+            epoch_length_blocks,
+            &mut genesis_dkg_boundary_artifact,
+            vrf_material_version,
+        )?;
+        dkg_manager.note_bootstrap_outcome(bootstrap_artifact);
+        info!("fresh bootstrap - genesis validators validation data queued");
+    } else {
+        info!(
+            last_execution_height,
+            last_consensus_finalized = last_consensus_finalized.get(),
+            "ordinary restart - skipping genesis seeding"
+        );
+    }
+
+    // Create broadcast engine for block dissemination.
+    let (broadcast_engine, broadcast_mailbox) = commonware_broadcast::buffered::Engine::new(
+        ctx.child("broadcast"),
+        commonware_broadcast::buffered::Config {
+            public_key: signing_key.public_key(),
+            mailbox_size: nonzero_usize(config::ENGINE_MAILBOX_SIZE, "ENGINE_MAILBOX_SIZE")?,
+            deque_size: config::BROADCAST_DEQUE_SIZE,
+            peer_provider: oracle.clone(),
+            priority: true,
+            codec_config: (),
+        },
+    );
+
+    // Initialize resolver for marshal.
+    let resolver = marshal::resolver::p2p::init(
+        ctx.child("marshal_resolver"),
+        marshal::resolver::p2p::Config {
+            public_key: signing_key.public_key(),
+            peer_provider: oracle.clone(),
+            blocker: oracle.clone(),
+            mailbox_size: nonzero_usize(config::ENGINE_MAILBOX_SIZE, "ENGINE_MAILBOX_SIZE")?,
+            timeout: std::time::Duration::from_secs(2),
+            fetch_retry_timeout: std::time::Duration::from_millis(100),
+            priority_requests: false,
+            priority_responses: false,
+        },
+        marshal_channel,
+    );
+
+    // Start the marshal actor with a composite reporter.
+    // Marshal delivers finalized blocks to executor via Reporter trait and
+    // publishes finalized tips to provider-readiness/watchdog consumers.
+    // Executor acknowledges after successful EL processing, which gates
+    // marshal's processed height - the recovery truth on restart.
+    let (peer_manager_actor, peer_manager_mailbox) = crate::peer_manager::Actor::new(
+        ctx.child("peer_manager"),
+        crate::peer_manager::Config {
+            oracle: oracle.clone(),
+            node: node.clone(),
+            executor: executor_mailbox.clone(),
+            bootnode_map: bootnode_map.clone(),
+            initial_peers,
+            initial_height: initial_peer_height,
+            protocol: protocol.clone(),
+        },
+    );
+    let peer_manager_handle_task = peer_manager_actor.start();
+
+    let marshal_reporter =
+        crate::marshal_update_reporter::MarshalUpdateReporter::new(executor_mailbox.clone())
+            .with_publication(application.publication())
+            .add_tip_consumer(consensus_tip_tx.clone())
+            .add_block_consumer(peer_manager_mailbox.clone());
+    let marshal_handle = marshal_actor.start(marshal_reporter, broadcast_mailbox.clone(), resolver);
+
+    // Serve `outbe_getFinalization` from the marshal so `--upstream` followers
+    // can backfill + verify finalized blocks from this validator.
+
+    let (recovery_anchor_height, recovery_anchor_hash, recovered_finalized_round) =
+        match recover_application_finalized_round(
+            ctx.child("recover_application_finalized_round"),
+            marshal_mailbox.clone(),
+            last_execution_height,
+        )
+        .await
+        {
+            Ok(recovered) => reconcile_recovered_execution_head(
+                last_execution_height,
+                last_execution_hash,
+                recovered,
+            )?,
+            Err(error) if args.trust_el_head => {
+                warn!(
+                    %error,
+                    last_execution_height,
+                    "marshal archive lacks finalized-round history; trusting the execution boundary"
+                );
+                (recovery_anchor_height, recovery_anchor_hash, None)
+            }
+            Err(head_error) => {
+                // reth's canonical head can lead consensus finalization by the
+                // in-flight block. That is a block this node proposed and applied
+                // as its head but had not finalized when it stopped. In steady
+                // state, head_height = finalized_height + 1. On a plain restart in that
+                // window, the head's finalization legitimately does not exist yet.
+                // This is a normal unfinalized head, NOT archive corruption.
+                // 1. Confirm the marshal still holds its own finalized tip's record
+                //    (a gap *there* is genuine corruption).
+                // 2. Confirm the head leads by a bounded amount.
+                // 3. Continue from marshal's durable finalized boundary.
+                // The speculative Reth head remains available locally, but neither
+                // ExecutorActor nor FinalizationView may call it finalized. The
+                // network re-finalizes forward. If a different block wins the first
+                // unfinalized height, Reth reorgs via forkchoice.
+                let finalized_tip = last_consensus_finalized.get();
+                if !unfinalized_head_lead_is_recoverable(last_execution_height, finalized_tip) {
+                    return Err(head_error);
+                }
+                let Ok(recovered_finalization) = recover_application_finalized_round(
+                    ctx.child("recover_application_finalized_tip"),
+                    marshal_mailbox.clone(),
+                    finalized_tip,
+                )
+                .await
+                else {
+                    return Err(head_error);
+                };
+                let (certified_height, certified_hash, recovered_round) =
+                    reconcile_recovered_execution_head(
+                        finalized_tip,
+                        recovery_anchor_hash,
+                        recovered_finalization,
+                    )
+                    .wrap_err(
+                        "marshal finalized-tip record disagrees with canonical execution history",
+                    )?;
+                warn!(
+                    last_execution_height,
+                    finalized_tip,
+                    head_lead = last_execution_height.saturating_sub(finalized_tip),
+                    recovery_anchor_hash = %recovery_anchor_hash,
+                    "execution head leads the marshal finalized tip on restart; anchoring \
+                     recovery at certified finality (unfinalized head re-finalized forward)"
+                );
+                (certified_height, certified_hash, recovered_round)
+            }
+        };
+
+    finalized_execution_barrier
+        .verify_checkpoint(ProjectionCheckpoint {
+            block_number: recovery_anchor_height,
+            block_hash: recovery_anchor_hash,
+        })
+        .wrap_err("native execution is not durable at the certified recovery anchor")?;
+
+    executor_actor = executor_actor.with_recovered_finalized_state(
+        genesis_hash,
+        recovery_anchor_height,
+        recovery_anchor_hash,
+    );
+
+    // Restore certified provider finality before a queued payload can wait for
+    // projection. The executor heartbeat cannot run while that wait is active.
+    let recovery_checkpoint = ProjectionCheckpoint {
+        block_number: recovery_anchor_height,
+        block_hash: recovery_anchor_hash,
+    };
+    let fcu_provider_node = node.clone();
+    confirm_recovered_forkchoice(
+        ctx.child("recovered_forkchoice"),
+        recovery_checkpoint,
+        || executor_actor.replay_recovered_forkchoice_once(recovery_checkpoint),
+        move || Ok(fcu_provider_node.recovery_forkchoice()?.into()),
+    )
+    .await
+    .wrap_err("failed to confirm recovered Reth forkchoice before validator startup")?;
+
+    // Start broadcast engine with P2P channel.
+    let _broadcast_handle = broadcast_engine.start(broadcast_channel);
+
+    let application_epoch_fence = ApplicationEpochFence::new(Epoch::new(recovered_epoch));
+
+    // -- Half B step 21: build the shared finalization view + block
+    // cache BEFORE constructing the application handler. Two owners hold
+    // the same `Arc`s:
+    // - the application handler. `build_block` reads `prev_randao` /
+    //   `last_timestamp_millis`, and the proposer inserts into `block_cache`.
+    // - the FinalizationActor. It is the sole writer for the view, and it
+    //   evicts entries below the new finalized height from `block_cache`.
+    // This code seeds the recovery state into the view here.
+    let finalization_view = new_finalization_view(
+        recovery_anchor_hash,
+        recovery_anchor_height,
+        recovered_finalized_round,
+    );
+    let finalization_block_cache = BlockCache::new();
+
+    // Defensive startup hygiene: a crash between persisting a finalization parent
+    // record and advancing the finalization view can leave an ahead-of-view
+    // record on disk. Drop any finalization record above the recovered finalized
+    // height so the store never retains a height the view has not reached.
+    let pruned_ahead = finalized_parent_cert_store
+        .prune_above_height(recovery_anchor_height)
+        .wrap_err("failed to prune ahead-of-view finalized parent certificate records")?;
+    if pruned_ahead > 0 {
+        tracing::info!(
+            pruned_ahead,
+            recovered_finalized_height = recovery_anchor_height,
+            "dropped ahead-of-recovered-view finalization parent records at startup"
+        );
+    }
+
+    // Publish the confirmed recovery anchor height before starting the
+    // finalization drainer so a restarted validator advertises its recovered
+    // finalized height and serves historical finalizations immediately.
+    bridge.set_last_finalized_block_number(recovery_anchor_height);
+
+    let (_validator_drainer_cancel, validator_drainer_cancel_rx) =
+        tokio::sync::watch::channel(false);
+    let _finalization_drainer = spawn_finalization_drainer(
+        &ctx,
+        marshal_mailbox.clone(),
+        bridge.clone(),
+        finalized_parent_cert_store.clone(),
+        validator_drainer_cancel_rx,
+    );
+
+    // Resolve consensus-sync block timings from genesis (timing.rs fallbacks,
+    // no CLI override) once, before the handler ctor and the epoch loop.
+    let bt = block_timing_from_genesis(&node)?;
+
+    // one process-local late-finalize signature store. These users share it:
+    // - the application handler (packs the proposer artifact)
+    // - the FinalizationActor (resolves views -> block numbers)
+    // - every per-epoch OutbeReporter (records observed individual finalize votes).
+    // Best-effort, never consensus state. Every node re-verifies the resulting
+    // artifact pre-exec.
+    let late_sig_store = crate::finalization::late_sig_store::shared(
+        outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K,
+    );
+
+    // Create application handler with marshal mailbox and shared finalization state.
+    let application_handler = ApplicationHandler::new(ApplicationDeps {
+        unix_time_source: match args.testnet_unix_time_offset_secs {
+            Some(offset_secs) => {
+                Arc::new(crate::application::OffsetUnixTimeSource::new(offset_secs))
+            }
+            None => Arc::new(crate::application::SystemUnixTimeSource),
+        },
+        rx: application_rx,
+        engine: engine_handle,
+        payload_builder,
+        executor_mailbox,
+        genesis_hash,
+        validators: validator_set.clone(),
+        chain_id: node.chain_spec().chain().id(),
+        leader_policy: protocol.system_tx_leader_policy(),
+        repository_publication_enabled,
+        repository_publication: bridge.repository_publication_mailbox(),
+        marshal_mailbox: marshal_mailbox.clone(),
+        publication: application.publication(),
+        certificate_scheme_provider: certificate_scheme_provider.clone(),
+        elector_config_provider: elector_config_provider.clone(),
+        committee_provider: committee_provider.clone(),
+        dkg_manager: dkg_manager.clone(),
+        vrf_safety: vrf_safety.clone(),
+        epoch_fence: application_epoch_fence.clone(),
+        ancestry_readiness: ancestry_readiness.clone(),
+        finalization_view: finalization_view.clone(),
+        block_cache: finalization_block_cache.clone(),
+        finalization_selector: crate::finalization::selection::ParentProofSelector::new(
+            finalized_parent_cert_store.clone(),
+            bt.leader_timeout,
+        ),
+        payload_resolve_time: std::time::Duration::from_millis(args.payload_resolve_time_ms),
+        min_block_time: bt.min_block_time,
+        proposer_evm_address,
+        trust_el_head: args.trust_el_head,
+        late_sig_store: late_sig_store.clone(),
+    });
+
+    info!(
+        last_execution_height,
+        last_consensus_finalized = last_consensus_finalized.get(),
+        "starting executor with recovery state"
+    );
+
+    // -- 13. Spawn persistent actors (survive engine restarts) -----------
+
+    let execution_height_fanout = execution_finalized_height_tx.clone();
+    let _execution_finality_worker =
+        ctx.child("execution_finality")
+            .spawn(move |_ctx| async move {
+                while let Some(height) = executor_finalized_height_rx.recv().await {
+                    let _ = execution_height_fanout.send(height);
+                }
+            });
+
+    // Half B step 21: construct FinalizationActor + matching mailbox.
+    // After step 21 the actor IS the production finalization path: the
+    // OutbeReporter (constructed below per-epoch) sends finalizations
+    // through `finalization_mailbox.notify_finalized` and the actor
+    // owns all bridge / DKG / view-update side effects.
+    //
+    // Hand a clone of the exact-parent certificate store to the actor. The actor
+    // is the only writer. The application handler reads hash-exact records via
+    // the `ParentProofSelector` constructed above.
+    let (finalization_actor, finalization_mailbox) =
+        FinalizationActor::new(FinalizationActorDeps {
+            view: finalization_view.clone(),
+            block_cache: finalization_block_cache.clone(),
+            marshal_mailbox: Some(marshal_mailbox.clone()),
+            bridge: Some(bridge.clone()),
+            dkg_manager: dkg_manager.clone(),
+            vrf_safety: vrf_safety.clone(),
+            parent_cert_store: finalized_parent_cert_store.clone(),
+            certificate_scheme_provider: certificate_scheme_provider.clone(),
+            late_sig_store: late_sig_store.clone(),
+        })
+        .with_epocher(epocher.clone())
+        .with_finalization_notify(finalization_notify);
+    let finalization_handle = ctx
+        .child("finalization")
+        .spawn(move |ctx| finalization_actor.run(ctx));
+
+    // persistent off-thread finalize-vote verifier. Each per-epoch
+    // OutbeReporter enqueues raw finalize votes here instead of verifying
+    // O(committee) BLS pairings inline on the Simplex voter task. The actor
+    // resolves each vote's committee scheme by epoch through the shared
+    // `certificate_scheme_provider`. It admits only verified votes to
+    // `late_sig_store`.
+    let (finalize_verify_actor, finalize_verify_mailbox) =
+        crate::finalization::finalize_verify::FinalizeVerifyActor::new(
+            certificate_scheme_provider.clone(),
+            late_sig_store.clone(),
+        );
+    // Best-effort actor: its exit is non-fatal. Consensus continues, and only
+    // late credits stop. So this code holds it for the engine's lifetime but
+    // does not poll it in the fatal-exit select below. The named `_`-binding
+    // keeps the task alive (a bare `_` would drop and abort it immediately).
+    let _finalize_verify_handle = ctx
+        .child("finalize_verify")
+        .spawn(move |_ctx| finalize_verify_actor.run());
+
+    let executor_handle_task = executor_actor
+        .with_ancestry_readiness(ancestry_readiness.clone())
+        .with_finalized_execution_barrier(finalized_execution_barrier)
+        .start(marshal_mailbox.clone(), last_consensus_finalized);
+    let handler_handle = ctx
+        .child("application")
+        .spawn(move |ctx| application_handler.run(ctx));
+
+    info!("consensus actors and marshal block availability started");
+
+    use super::runtime::{
+        DkgRotation, EpochChannels, EpochState, EpochSupervisor, PersistentActors,
+    };
+    let (dkg_result_tx, dkg_result_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (dkg_progress_tx, dkg_progress_rx) = tokio::sync::mpsc::unbounded_channel();
+    EpochSupervisor {
+        state: EpochState {
+            current_epoch: Epoch::new(recovered_epoch),
+            validator_set,
+            participants,
+            signing_share,
+            polynomial,
+            last_dkg_output,
+            vrf_material_version,
+            last_dkg_activation_height,
+            dkg_cycle,
+        },
+        rotation: DkgRotation {
+            reshare_in_progress: false,
+            frozen_dkg_target: None,
+            pending_dkg_activation: None,
+            dealer_only_dkg_activation: None,
+            deferred_startup_pending_epoch: None,
+            retry_frozen_dkg: false,
+            dkg_mux,
+            dkg_result_tx,
+            dkg_result_rx,
+            dkg_progress_tx,
+            dkg_progress_rx,
+        },
+        channels: EpochChannels {
+            vote_mux,
+            cert_mux,
+            res_mux,
+            next_epoch_subchannels: None,
+            replacement_epoch_subchannels: None,
+        },
+        actors: PersistentActors {
+            network_handle,
+            executor_handle_task,
+            handler_handle,
+            finalization_handle,
+            peer_manager_handle_task,
+            marshal_handle,
+        },
+        args,
+        node,
+        bridge,
+        signing_key,
+        key_backend,
+        dkg_rotation_params,
+        dkg_manager,
+        vrf_materials,
+        repository_material_publisher,
+        vrf_safety,
+        application_epoch_fence,
+        certificate_scheme_provider,
+        elector_config_provider,
+        committee_provider,
+        peer_manager_mailbox,
+        bootnode_map,
+        oracle,
+        recovered_boundary_artifact: recovered_boundary_artifact.cloned(),
+        reporter_continuity: ReporterContinuity::default(),
+        genesis_hash,
+        bt,
+        page_cache,
+        application,
+        marshal_mailbox,
+        finalization_mailbox,
+        finalization_view,
+        finalized_parent_cert_store,
+        finalize_verify_mailbox,
+        application_drain,
+        radicle_status,
+        radicle_updates,
+        execution_finalized_height_rx,
+        execution_finalized_height_tx,
+        consensus_tip_rx,
+        epocher,
+        vote_backup_rx,
+        protocol,
+    }
+    .run(ctx, recovered_pending_boundary, recovery_anchor_height)
+    .await
+}

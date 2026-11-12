@@ -15,7 +15,7 @@ use crate::{
     manager::{FinalizedPatchApproval, FinalizedPatchSigningState, FinalizedPublicationReceipt},
 };
 use commonware_cryptography::{Hasher as _, Sha256};
-use outbe_coderegistry::{payload::PatchVotePayloadV1, PatchApprovalRecord};
+use outbe_primitives::code_registry::{PatchApprovalRecord, PatchVotePayloadV1};
 use outbe_primitives::radicle_publication::{PublicationAction, PublicationBody};
 use radicle::{
     cob::patch,
@@ -223,8 +223,8 @@ pub(super) fn patch_body(
     action: PublicationAction,
 ) -> Result<PublicationBody, Error> {
     let stage = match action {
-        PublicationAction::Review => outbe_coderegistry::schema::PATCH_EXECUTION_PENDING,
-        PublicationAction::Merge => outbe_coderegistry::schema::PATCH_EXECUTION_REVIEWED,
+        PublicationAction::Review => outbe_primitives::code_registry::PATCH_EXECUTION_PENDING,
+        PublicationAction::Merge => outbe_primitives::code_registry::PATCH_EXECUTION_REVIEWED,
         _ => return Err(Error::Context),
     };
     let context = material.review_context(previous.receipt().receipt_hash.0);

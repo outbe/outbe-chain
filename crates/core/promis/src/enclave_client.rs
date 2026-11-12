@@ -111,7 +111,7 @@ pub(crate) fn mine_gratis_from_promis(
 
 /// In-process enclave stand-in for tests (this crate's tests and any downstream
 /// crate that enables the `test-enclave` feature). It runs the **real**
-/// `outbe_tee_enclave::promis::apply_op` engine against a fixed dev state key, so
+/// `outbe_enclave::promis::apply_op` engine against a fixed dev state key, so
 /// tests exercise the full confidential path without an SGX sidecar. This path
 /// does not check attestation. The crate root rejects
 /// `all(feature = "test-enclave", feature = "production-enclave")` at compile
@@ -136,7 +136,7 @@ pub mod test_enclave {
     /// Install the in-process enclave for the current thread.
     pub fn install() {
         let key =
-            outbe_tee_enclave::promis::derive_promis_state_key(DEV_GROUP_SIG, DEV_CHAIN, DEV_EPOCH)
+            outbe_enclave::promis::derive_promis_state_key(DEV_GROUP_SIG, DEV_CHAIN, DEV_EPOCH)
                 .expect("derive dev promis state key");
         STATE_KEY.with(|k| *k.borrow_mut() = Some(*key));
     }
@@ -153,7 +153,7 @@ pub mod test_enclave {
         amount: alloy_primitives::U256,
         nonce: u64,
     ) -> outbe_tee::protocol::ModifyAuth {
-        use outbe_tee_enclave::promis::{derive_modify_key, modify_mac, ModifyOperation};
+        use outbe_enclave::promis::{derive_modify_key, modify_mac, ModifyOperation};
         let mk = derive_modify_key(&state_key(), account).unwrap();
         outbe_tee::protocol::ModifyAuth {
             mac: modify_mac(
@@ -177,7 +177,7 @@ pub mod test_enclave {
         amount: alloy_primitives::U256,
     ) -> Vec<u8> {
         outbe_tee::offer_encrypt::encrypt_tee_amount(
-            &outbe_tee_enclave::dev::offer_public_key(),
+            &outbe_enclave::dev::offer_public_key(),
             B256::from(alloy_primitives::U256::from(1u64)),
             account,
             amount,
@@ -197,7 +197,7 @@ pub mod test_enclave {
     pub(crate) fn try_apply(req: &PromisOpRequest) -> Option<PromisOpResult> {
         STATE_KEY.with(|k| {
             k.borrow()
-                .map(|key| outbe_tee_enclave::promis::apply_op(&key, req))
+                .map(|key| outbe_enclave::promis::apply_op(&key, req))
         })
     }
 
@@ -206,25 +206,25 @@ pub mod test_enclave {
     ) -> Option<MineGratisFromPromisResultV1> {
         STATE_KEY.with(|k| {
             k.borrow().map(|promis_state_key| {
-                let gratis_state_key = outbe_tee_enclave::gratis::derive_gratis_state_key(
-                    outbe_tee_enclave::dev::GRATIS_GROUP_SIG,
-                    outbe_tee_enclave::dev::GRATIS_CHAIN,
+                let gratis_state_key = outbe_enclave::gratis::derive_gratis_state_key(
+                    outbe_enclave::dev::GRATIS_GROUP_SIG,
+                    outbe_enclave::dev::GRATIS_CHAIN,
                     DEV_EPOCH,
                 )
                 .expect("derive dev gratis state key");
-                let fidelity_state_key = outbe_tee_enclave::fidelity::derive_fidelity_state_key(
-                    outbe_tee_enclave::dev::FIDELITY_GROUP_SIG,
-                    outbe_tee_enclave::dev::fidelity_chain(),
+                let fidelity_state_key = outbe_enclave::fidelity::derive_fidelity_state_key(
+                    outbe_enclave::dev::FIDELITY_GROUP_SIG,
+                    outbe_enclave::dev::fidelity_chain(),
                     DEV_EPOCH,
                 )
                 .expect("derive dev fidelity state key");
-                let keys = outbe_tee_enclave::promis::MineGratisKeys {
-                    offer_secret: &outbe_tee_enclave::dev::OFFER_SECRET_KEY,
+                let keys = outbe_enclave::promis::MineGratisKeys {
+                    offer_secret: &outbe_enclave::dev::OFFER_SECRET_KEY,
                     promis_state_key: &promis_state_key,
                     gratis_state_key: &gratis_state_key,
                     fidelity_state_key: &fidelity_state_key,
                 };
-                outbe_tee_enclave::promis::apply_mine_gratis(keys, req)
+                outbe_enclave::promis::apply_mine_gratis(keys, req)
             })
         })
     }

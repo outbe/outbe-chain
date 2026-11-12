@@ -1,0 +1,223 @@
+//! Shared inputs and original-code diagnostics for the binding regression tests.
+#![cfg(test)]
+use super::primitives::{
+    addresses::{OUTBE_SYSTEM_TX_ADDRESS, REWARDS_ADDRESS},
+    consensus::DkgBoundaryArtifact,
+    reshare_artifact::{
+        encode_outbe_block_artifacts, ConsensusHeaderArtifact, OutbeBlockArtifacts,
+    },
+    system_tx::{SystemTx, SystemTxLayout},
+    OutbeBlockBody, OutbeHeader,
+};
+use alloy_consensus::{Header, SignableTransaction, TxLegacy};
+use alloy_primitives::{Bytes, Signature, TxKind, B256, U256};
+use reth_ethereum::TransactionSigned;
+
+pub(super) enum Check {
+    Layout,
+    Parent,
+    Boundary,
+}
+
+pub(super) struct Case {
+    pub name: &'static str,
+    pub check: Check,
+    pub header: OutbeHeader,
+    pub body: OutbeBlockBody,
+    pub artifacts: OutbeBlockArtifacts,
+}
+
+impl Case {
+    pub fn layout(&self) -> SystemTxLayout<'_> {
+        SystemTxLayout {
+            begin: self.body.transactions.iter().collect(),
+            user: vec![],
+            end: vec![],
+        }
+    }
+
+    fn new(name: &'static str, check: Check, height: u64, inputs: Vec<Bytes>) -> Self {
+        Self {
+            name,
+            check,
+            header: OutbeHeader::new(Header {
+                number: height,
+                parent_hash: B256::repeat_byte(0x41),
+                beneficiary: REWARDS_ADDRESS,
+                ..Default::default()
+            }),
+            body: OutbeBlockBody {
+                transactions: inputs.into_iter().map(transaction).collect(),
+                ..Default::default()
+            },
+            artifacts: OutbeBlockArtifacts::default(),
+        }
+    }
+}
+
+fn transaction(input: Bytes) -> TransactionSigned {
+    TxLegacy {
+        chain_id: Some(2026),
+        nonce: 0,
+        gas_price: 0,
+        gas_limit: 0,
+        to: TxKind::Call(OUTBE_SYSTEM_TX_ADDRESS),
+        value: U256::ZERO,
+        input,
+    }
+    .into_signed(Signature::test_signature())
+    .into()
+}
+
+fn encoded(input: SystemTx) -> Bytes {
+    input.encode().expect("valid binding fixture encodes")
+}
+
+fn parent(hash: B256) -> Bytes {
+    let mut metadata = super::super::fixtures::sample_metadata();
+    metadata.finalized_block_hash = hash;
+    encoded(SystemTx::Consensus {
+        step_index: 0,
+        payload: metadata.encode().unwrap(),
+    })
+}
+
+fn boundary() -> DkgBoundaryArtifact {
+    outbe_primitives::test_utils::sample_system_tx_boundary(42)
+}
+
+fn steady_inputs() -> Vec<Bytes> {
+    let mut inputs = vec![
+        parent(B256::repeat_byte(0x41)),
+        encoded(SystemTx::Consensus {
+            step_index: 1,
+            payload: outbe_primitives::reshare_artifact::encode_late_finalize_credits_artifact(
+                &(Default::default()),
+            )
+            .unwrap(),
+        }),
+        encoded(SystemTx::Consensus {
+            step_index: 4,
+            payload: Bytes::new(),
+        }),
+    ];
+    for input in super::super::fixtures::begin_stage_inputs()
+        .into_iter()
+        .chain(super::super::fixtures::end_stage_inputs())
+    {
+        inputs.push(encoded(input));
+    }
+    inputs
+}
+
+pub(super) fn cases() -> Vec<Case> {
+    let cycle = encoded(SystemTx::BeginBlock { step_index: 8 });
+    let malformed = Bytes::from_static(b"OSCN\x03\x00");
+    let mut cases = vec![
+        Case::new("genesis_empty", Check::Layout, 0, vec![]),
+        Case::new("block1_requires_boundary", Check::Layout, 1, vec![]),
+        Case::new("steady_disabled", Check::Layout, 2, steady_inputs()),
+        Case::new(
+            "wrong_order",
+            Check::Layout,
+            2,
+            vec![cycle.clone(), parent(B256::repeat_byte(0x41))],
+        ),
+        Case::new("malformed_layout", Check::Layout, 2, vec![Bytes::new()]),
+        Case::new(
+            "genesis_skips_parent",
+            Check::Parent,
+            0,
+            vec![malformed.clone()],
+        ),
+        Case::new(
+            "block1_skips_parent",
+            Check::Parent,
+            1,
+            vec![malformed.clone()],
+        ),
+        Case::new("parent_missing", Check::Parent, 2, vec![]),
+        Case::new("parent_wrong_kind", Check::Parent, 2, vec![cycle.clone()]),
+        Case::new("parent_malformed", Check::Parent, 2, vec![malformed]),
+        Case::new(
+            "parent_hash_mismatch",
+            Check::Parent,
+            2,
+            vec![parent(B256::repeat_byte(0x42))],
+        ),
+        Case::new(
+            "parent_matches",
+            Check::Parent,
+            2,
+            vec![parent(B256::repeat_byte(0x41))],
+        ),
+        Case::new(
+            "maximum_height_parent_matches",
+            Check::Parent,
+            u64::MAX,
+            vec![parent(B256::repeat_byte(0x41))],
+        ),
+        Case::new(
+            "no_boundary_skips_malformed_inputs",
+            Check::Boundary,
+            2,
+            vec![Bytes::new()],
+        ),
+    ];
+    let mut bad_artifacts = Case::new(
+        "artifacts_before_layout",
+        Check::Layout,
+        2,
+        vec![Bytes::new()],
+    );
+    bad_artifacts.header.inner.extra_data = Bytes::from_static(b"bad artifacts");
+    cases.push(bad_artifacts);
+    let artifact = boundary();
+    let matching = encoded(SystemTx::Consensus {
+        step_index: 2,
+        payload: outbe_primitives::reshare_artifact::encode_boundary_artifact(&(artifact.clone()))
+            .unwrap(),
+    });
+    let mut mismatched = artifact.clone();
+    mismatched.epoch += 1;
+    for (name, inputs) in [
+        ("boundary_missing", vec![cycle]),
+        ("boundary_matches", vec![matching.clone()]),
+        (
+            "boundary_mismatch",
+            vec![encoded(SystemTx::Consensus {
+                step_index: 2,
+                payload: outbe_primitives::reshare_artifact::encode_boundary_artifact(
+                    &(mismatched),
+                )
+                .unwrap(),
+            })],
+        ),
+        (
+            "boundary_match_then_bad_input",
+            vec![matching.clone(), Bytes::new()],
+        ),
+        (
+            "bad_input_before_boundary_match",
+            vec![Bytes::new(), matching],
+        ),
+    ] {
+        let mut case = Case::new(name, Check::Boundary, 2, inputs);
+        case.artifacts.consensus_header_artifact =
+            Some(ConsensusHeaderArtifact::BoundaryOutcome(artifact.clone()));
+        cases.push(case);
+    }
+    let mut layout_mismatch = Case::new(
+        "boundary_header_missing_body",
+        Check::Layout,
+        2,
+        steady_inputs(),
+    );
+    layout_mismatch.artifacts.consensus_header_artifact =
+        Some(ConsensusHeaderArtifact::BoundaryOutcome(artifact));
+    layout_mismatch.header.inner.extra_data =
+        encode_outbe_block_artifacts(&layout_mismatch.artifacts)
+            .expect("valid binding header fixture encodes");
+    cases.push(layout_mismatch);
+    cases
+}

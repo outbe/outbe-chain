@@ -10,10 +10,7 @@ use commonware_consensus::types::Epoch;
 use commonware_cryptography::bls12381::{
     self,
     dkg::feldman_desmedt::{Info, Output},
-    primitives::{
-        sharing::{Mode, Sharing},
-        variant::MinSig,
-    },
+    primitives::{sharing::Mode, variant::MinSig},
 };
 use commonware_utils::{ordered::Set, N3f1};
 use eyre::{Result, WrapErr};
@@ -41,14 +38,12 @@ mod boundary;
 mod finalized;
 pub use finalized::{CeremonyReplayRequest, RevealedSetRecord};
 
-/// The ODKO boundary-outcome record codec.
-mod odko;
 use boundary::BoundaryStatusCacheEntry;
 pub use boundary::{
     AncestryReader, BlockLookupFuture, BoundaryRequirement, BoundaryRequirementError,
     BoundaryStatus, CommittedDkgBoundary, BOUNDARY_STATUS_CACHE_SIZE,
 };
-pub use odko::{OdkoDecodeError, OdkoOutcome};
+pub use outbe_simplex::bls::odko::*;
 
 #[derive(Clone, Debug)]
 pub struct Mailbox {
@@ -578,19 +573,6 @@ fn hash_target_set(
     alloy_primitives::keccak256(bytes)
 }
 
-pub(crate) fn encode_outcome(
-    epoch: Epoch,
-    output: &Output<MinSig, bls12381::PublicKey>,
-    is_full_dkg: bool,
-) -> Bytes {
-    OdkoOutcome {
-        epoch,
-        is_full_dkg,
-        output: output.clone(),
-    }
-    .encode()
-}
-
 pub fn dkg_output_hash(output: &Output<MinSig, bls12381::PublicKey>) -> B256 {
     alloy_primitives::keccak256(commonware_codec::Encode::encode(output))
 }
@@ -621,39 +603,6 @@ pub fn assert_canonical_output(
         .into());
     }
     Ok(())
-}
-
-pub fn public_polynomial_hash(polynomial: &Sharing<MinSig>) -> B256 {
-    alloy_primitives::keccak256(commonware_codec::Encode::encode(polynomial))
-}
-
-/// Decode the ODKO-wrapped boundary `outcome` and return
-/// `keccak256(Encode(full public polynomial))` of the carried DKG output.
-///
-/// Returns `B256::ZERO` when the outcome is not a decodable full-output ODKO
-/// record (e.g. a group-key-only bootstrap outcome). In that case the
-/// committee's "invalid seed partial" slash offense is unavailable for
-/// that epoch. Deterministic and panic-free. Safe to call in the executor over
-/// the already-consensus-validated boundary `outcome`.
-pub fn boundary_outcome_polynomial_hash(outcome: &[u8]) -> B256 {
-    match decode_boundary_outcome(outcome) {
-        Some(output) => public_polynomial_hash(output.public()),
-        None => B256::ZERO,
-    }
-}
-
-/// Decode the ODKO-wrapped boundary `outcome` into the full DKG [`Output`]
-/// (public polynomial + players). Returns `None` when the outcome is not a
-/// decodable full-output ODKO record (e.g. a group-key-only bootstrap outcome).
-///
-/// This is the public-data path a `follow`-mode node uses to reconstruct an
-/// epoch's committee (`output.players()`) and verifier polynomial
-/// (`output.public()`) from a finalized boundary block. The path works without
-/// the node ever running the DKG ceremony. Deterministic and panic-free.
-pub fn decode_boundary_outcome(outcome: &[u8]) -> Option<Output<MinSig, bls12381::PublicKey>> {
-    OdkoOutcome::decode(outcome)
-        .ok()
-        .map(|decoded| decoded.output)
 }
 
 #[cfg(test)]

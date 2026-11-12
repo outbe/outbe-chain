@@ -168,7 +168,7 @@ fn the_settlement_minimum_precedes_asset_and_currency_conversion() {
                     .to_string(),
                 outbe_primitives::error::PrecompileError::from(
                     outbe_vaultrouter::settlement::SettlementError::Rounding(
-                        outbe_common::settlement::RoundingError::RoundsToZero
+                        outbe_core_common::settlement::RoundingError::RoundsToZero
                     )
                 )
                 .to_string()

@@ -85,10 +85,12 @@ pub(crate) fn date_step_error(
     }
 }
 
-impl From<outbe_common::pow::PowError> for IntexFactoryError {
-    fn from(value: outbe_common::pow::PowError) -> Self {
+impl From<outbe_core_common::pow::PowError> for IntexFactoryError {
+    fn from(value: outbe_core_common::pow::PowError) -> Self {
         match value {
-            outbe_common::pow::PowError::InsufficientProofOfWork => Self::InsufficientProofOfWork,
+            outbe_core_common::pow::PowError::InsufficientProofOfWork => {
+                Self::InsufficientProofOfWork
+            }
         }
     }
 }
