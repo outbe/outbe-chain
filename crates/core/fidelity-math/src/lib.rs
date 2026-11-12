@@ -11,7 +11,7 @@
 //! Validated against the PDF reference `decay.py` (errors ~1e-15 vs float64).
 
 use alloy_primitives::U256;
-use outbe_primitives::units::SCALE_1E18;
+use outbe_system_common::units::SCALE_1E18;
 
 pub mod errors;
 

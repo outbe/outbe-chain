@@ -237,7 +237,7 @@ fn sum_allocated_gratis_from_groups(
         if count == 0 || nominal_sum.is_zero() || fraction.is_zero() {
             continue;
         }
-        let league_raw = outbe_primitives::math::scaled_math::checked_mul_div_floor(
+        let league_raw = outbe_system_common::math::scaled_math::checked_mul_div_floor(
             nominal_sum,
             fraction,
             scale,
@@ -308,7 +308,7 @@ fn evaluate_tributes_for_lysis(
             .get(&input.league.max(1))
             .copied()
             .unwrap_or(U256::ZERO);
-        let load = outbe_primitives::math::scaled_math::checked_mul_div_floor(
+        let load = outbe_system_common::math::scaled_math::checked_mul_div_floor(
             amounts.nominal_amount_minor,
             fraction,
             scale,

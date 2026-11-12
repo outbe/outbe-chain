@@ -6,8 +6,8 @@ use outbe_lysis::program_v1::{
     ProgramInputV1, ProgramResultV1, SemanticObservationV1, TributeInputV1,
 };
 use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::units::SCALE_1E6_U256;
 use outbe_primitives::wwd_entity_id::{derive_poseidon_entity_id, WwdEntityId};
+use outbe_system_common::units::SCALE_1E6_U256;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
