@@ -35,9 +35,6 @@ pub enum EmissionLimitError {
     /// Indicates that the terminal emission sink returned an unused amount.
     #[error("terminal emission sink returned unused amount")]
     TerminalSinkReturnedUnusedAmount,
-    /// Indicates that the late-settlement terminal sink returned an unused amount.
-    #[error("late-settlement terminal sink returned unused amount")]
-    LateSettlementSinkReturnedUnusedAmount,
 }
 
 impl From<EmissionLimitError> for PrecompileError {

@@ -103,12 +103,6 @@ fn protocol_cycle_keeps_midnight_slot_pending_until_late_reward_window_closes() 
     });
     for height in 11..=13 {
         storage.set_block_number(height);
-        if height == 13 {
-            storage.enable_metadosis_mutation_frames(
-                MetadosisMutationPurposeTag::CertifiedFinality,
-                1,
-            );
-        }
         storage.enter(|handle| {
             let ctx = runtime_context(
                 block_ctx(height, GENESIS_TS + SECONDS_PER_DAY + height - 11),
@@ -487,6 +481,26 @@ fn failed_terminal_dispatch_after(
     storage
 }
 
+/// Writes an unknown state into the record of `day`, so the allocation fallback fails too.
+fn corrupt_emission_day(ctx: &BlockRuntimeContext<'_>, day: u32) {
+    let emission = outbe_emission::schema::EmissionContract::new(ctx.storage.clone());
+    match emission.emission_days.get(day).unwrap() {
+        Some(mut record) => {
+            record.state = 7;
+            emission.emission_days.update(&record).unwrap();
+        }
+        None => {
+            let mut record = outbe_emission::schema::EmissionDay::new_pending(
+                day,
+                outbe_primitives::time::WorldwideDay::new(0),
+                1,
+            );
+            record.state = 7;
+            emission.emission_days.create(&record).unwrap();
+        }
+    }
+}
+
 fn cycle_failure(
     storage: &HashMapStorageProvider,
     id: u32,
@@ -520,35 +534,39 @@ fn topup_voters_claimable(ctx: &BlockRuntimeContext<'_>) -> U256 {
 }
 
 #[test]
-fn failed_terminal_dispatch_rolls_back_validator_topup() {
+fn failed_terminal_dispatch_takes_the_allocation_fallback() {
     let mut storage = failed_terminal_dispatch();
     let recorded_at = topup_slot(TriggerId::ProtocolCycle);
-    assert_eq!(recorded_at, GENESIS_TS + SECONDS_PER_DAY);
-    let failed = cycle_failure(&storage, EMISSION_LIMIT_1_ID).expect("protocol failure receipt");
-    assert_eq!(failed.scheduledAt, recorded_at);
-    assert_eq!(failed.blockTimestamp, TOPUP_FIRE_TS);
-    assert_eq!(failed.blockNumber, 2);
-    assert!(cycle_executed(&storage, EMISSION_LIMIT_1_ID).is_none());
     for id in [
+        EMISSION_LIMIT_1_ID,
         TriggerId::AuctionAdvance.as_u32(),
         TriggerId::AuctionClearing.as_u32(),
+        TriggerId::IntexCallDaily.as_u32(),
     ] {
         assert!(cycle_failure(&storage, id).is_none());
-        assert!(cycle_executed(&storage, id).is_none());
+        assert!(cycle_executed(&storage, id).is_some());
     }
-    let independent = cycle_executed(&storage, TriggerId::IntexCallDaily.as_u32())
-        .expect("an independent trigger still runs");
-    assert_eq!(
-        independent.scheduledAt,
-        topup_slot(TriggerId::IntexCallDaily)
-    );
+    let failed = storage
+        .get_events(CYCLE_ADDRESS)
+        .iter()
+        .find_map(|log| crate::ICycle::DayEmissionLimitAllocationFailed::decode_log_data(log).ok())
+        .expect("allocation failure event");
+    assert_eq!(failed.emissionDay, 20_240_101);
     storage.enter(|handle| {
         let fire = runtime_context(block_ctx(2, TOPUP_FIRE_TS), handle);
-        assert!(!is_day_settled(&fire, 20_240_101));
+        assert!(is_day_settled(&fire, 20_240_101));
+        let record = outbe_emission::api::get_emission_day_record(fire.storage.clone(), 20_240_101)
+            .unwrap()
+            .unwrap();
         assert_eq!(
-            outbe_rewards::api::get_last_sealed_day(&fire.storage).unwrap(),
-            0
+            record.state,
+            outbe_emission::schema::emission_day_state::COMPLETED
         );
+        assert_eq!(
+            record.metadosis_state,
+            outbe_emission::schema::metadosis_state::CANCELLED
+        );
+        assert_eq!(U256::from(record.promis_limit), failed.emissionLimitMinor);
         assert_eq!(
             topup_voters_claimable(&fire),
             U256::ZERO,
@@ -582,77 +600,39 @@ fn failed_terminal_dispatch_rolls_back_validator_topup() {
                 topup_slot(id)
             );
         }
-        assert_eq!(active_utc_day(&fire), 20_240_101);
     });
 }
 
 #[test]
-fn retry_after_failed_terminal_dispatch_settles_once() {
+fn failed_terminal_dispatch_is_not_retried() {
     let mut storage = failed_terminal_dispatch();
-    storage.set_block_number(3);
-    storage.enter(|handle| {
-        let same_window = runtime_context(block_ctx(3, TOPUP_FIRE_TS), handle);
-        account_parent(&same_window, 3);
-        dispatch_triggers(&same_window).unwrap();
-        assert!(!is_day_settled(&same_window, 20_240_101));
-        assert_eq!(last_executed_at(&same_window), GENESIS_TS + SECONDS_PER_DAY);
+    let settled = storage.enter(|handle| {
+        outbe_emission::api::get_emission_day_record(handle, 20_240_101)
+            .unwrap()
+            .unwrap()
     });
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
     let next_window = GENESIS_TS + SECONDS_PER_DAY + crate::triggers::PROTOCOL_CYCLE_PERIOD_SECONDS;
-    storage.set_block_number(4);
+    storage.set_block_number(3);
     storage.enter(|handle| {
-        let retry = runtime_context(block_ctx(4, next_window), handle);
-        account_parent(&retry, 4);
+        let retry = runtime_context(block_ctx(3, next_window), handle);
+        account_parent(&retry, 3);
         dispatch_triggers(&retry).unwrap();
-        crate::handler::credit_reward_slice(&retry).unwrap();
-
-        assert!(is_day_settled(&retry, 20_240_101));
         assert_eq!(
-            outbe_rewards::api::get_last_sealed_day(&retry.storage).unwrap(),
-            20_240_101
-        );
-
-        let validator_amount = day_zero_allocation(EmissionSinkId::Validator);
-        let expected_promis_load = validator_amount / U256::from(TOPUP_VOTERS.len());
-        let cca_pool = day_zero_allocation(EmissionSinkId::Cca);
-        assert_eq!(
-            retry
-                .storage
-                .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
+            outbe_emission::api::get_emission_day_record(retry.storage.clone(), 20_240_101)
+                .unwrap()
                 .unwrap(),
-            outbe_ccaregistry::constants::BOND_REQUIREMENT,
-            "CCA custody holds only the bond"
+            settled
         );
-        assert_eq!(
-            outbe_agentreward::AgentRewardContract::new(retry.storage.clone())
-                .get_pool_claimable_reward(
-                    outbe_agentreward::schema::RewardPool::Cca,
-                    Address::repeat_byte(0xc1)
-                )
-                .unwrap(),
-            cca_pool,
-            "retry must credit the CCA pool exactly once"
-        );
-        for owner in TOPUP_VOTERS.into_iter().chain([Address::repeat_byte(0xc1)]) {
-            assert_eq!(
-                outbe_gem::api::balance_of(&retry.storage, owner).unwrap(),
-                0,
-                "Cycle credits claims; validators mint their own Gems"
-            );
-        }
-        assert_eq!(
-            topup_voters_claimable(&retry),
-            expected_promis_load * U256::from(TOPUP_VOTERS.len()),
-            "retry must credit the validator pool exactly once"
-        );
+        assert_eq!(topup_voters_claimable(&retry), U256::ZERO);
         assert_eq!(last_executed_at(&retry), next_window);
     });
-    assert!(
-        storage
-            .get_events(outbe_primitives::addresses::GEM_ADDRESS)
-            .is_empty(),
-        "Cycle credits claims; validators mint their own Gems"
-    );
+    let failures = storage
+        .get_events(CYCLE_ADDRESS)
+        .iter()
+        .filter(|log| crate::ICycle::DayEmissionLimitAllocationFailed::decode_log_data(log).is_ok())
+        .count();
+    assert_eq!(failures, 1);
 }
 
 #[test]
@@ -664,6 +644,7 @@ fn a_dependency_that_is_not_due_keeps_its_watermark() {
             .last_executed_at
             .write(&TriggerId::AuctionAdvance.as_u32(), held_at)
             .unwrap();
+        corrupt_emission_day(fire, 20_240_101);
     });
     let recorded_at = topup_slot(TriggerId::AuctionClearing);
     assert!(cycle_failure(&storage, EMISSION_LIMIT_1_ID).is_some());

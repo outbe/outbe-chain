@@ -6,7 +6,6 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-outbe-core-common.workspace = true
 outbe-agentreward.workspace = true
 outbe-chain-constants.workspace = true
 outbe-macros.workspace = true
@@ -17,18 +16,13 @@ outbe-fidelity.workspace = true
 outbe-tribute.workspace = true
 outbe-tributefactory.workspace = true
 outbe-nod.workspace = true
-outbe-nodfactory.workspace = true
 outbe-promislimit.workspace = true
-outbe-tee.workspace = true
 outbe-oracle.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
-outbe-tee = { workspace = true, features = ["test-utils"] }
-outbe-enclave.workspace = true
 outbe-nod = { workspace = true, features = ["test-enclave"] }
 outbe-tribute = { workspace = true, features = ["test-enclave", "test-utils"] }
 outbe-tributefactory = { workspace = true, features = ["test-utils"] }

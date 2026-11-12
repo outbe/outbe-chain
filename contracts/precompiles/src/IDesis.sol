@@ -16,7 +16,6 @@ interface IDesis {
     error UnspellableBidCurrency(uint16 issuance, uint16 referenceCurrency);
     error BidBatchTooLarge(uint64 count, uint64 max);
     error DesisAllocationExceedsLimit(uint32 emissionDay, uint256 allocation, uint256 limit);
-    error AuctionBriefLimitExceedsDomain();
     error BatchArrayLengthMismatch();
     error BriefAnchorExceedsU32();
     error MinBidQuantityScalingOverflow();

@@ -224,23 +224,11 @@ pub fn transfer_block_fees(
     let residue = pending
         .checked_sub(distributed)
         .ok_or(RewardsError::SumOfVoterPortionsExceedsBlockFees)?;
-    let binding = outbe_primitives::storage::metadosis_late_settlement_binding(
-        ctx.block.chain_id,
-        ctx.block.block_number,
-        ctx.block.timestamp,
-    );
-    ctx.storage
-        .with_metadosis_mutation::<outbe_primitives::storage::MetadosisCertifiedFinality, _>(
-            binding,
-            || {
-                outbe_promislimit::PromisLimitContract::new(ctx.storage.clone())
-                    .burn_to_promis_limit(
-                        REWARDS_ADDRESS,
-                        residue,
-                        outbe_promislimit::runtime::BurnSource::BlockFee,
-                    )
-            },
-        )?;
+    outbe_promislimit::PromisLimitContract::new(ctx.storage.clone()).burn_to_promis_limit(
+        REWARDS_ADDRESS,
+        residue,
+        outbe_promislimit::runtime::BurnSource::BlockFee,
+    )?;
 
     // Parity invariant (checked once): sum payout + residue == pending.
     if distributed
@@ -442,8 +430,6 @@ mod tests {
         let mut storage = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, GENESIS_HASH);
         storage.set_block_number(156);
         seed_native_runtime(&mut storage);
-        // The shared-carry fixture transfers two distinct windows in this context.
-        storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CertifiedFinality, 2);
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(
                 BlockContext {
@@ -843,7 +829,6 @@ mod tests {
         storage.set_timestamp(U256::from(timestamp));
         let expected_residue = U256::from(1_000);
         let unit = outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
-        storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CertifiedFinality);
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(
                 BlockContext {

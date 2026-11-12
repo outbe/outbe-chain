@@ -503,7 +503,7 @@ fn gap_ed54_wwd_step_runs_once_a_day() {
 
     // Also verify end-to-end that `PrecompileError::Revert(String)` inside A6 is caught,
     // rolled back, and ABI-encoded as Solidity `Error(string)` in `WorldwideDayAdvanceFailed.reason`.
-    // At 2024-01-07 00:00 UTC, grant 1 mutation frame so A4 (`dispatch_terminal_remainder_at`)
+    // At 2024-01-07 00:00 UTC, grant 1 mutation frame so A4 (`set_metadosis_limit`)
     // succeeds and A6 (`advance_worldwide_days_command`) hits `PrecompileError::Revert(String)`.
     block_no += 1;
     let ts_day7_00h = GENESIS_TS + 6 * SECONDS_PER_DAY;
@@ -524,7 +524,8 @@ fn gap_ed54_wwd_step_runs_once_a_day() {
         let ctx = runtime_context(block, handle);
         account_parent(&ctx, block_no);
         // Settle previous day (A4) consumes the 1 frame; A6 reverts with `PrecompileError::Revert(String)`.
-        crate::handler::run_protocol_cycle(&ctx).expect_err("A7 has 0 frames left after A6");
+        // A7 has 0 frames left and takes its fallback.
+        crate::handler::run_protocol_cycle(&ctx).unwrap();
     });
     let revert_str_event = storage
         .get_events(TRIBUTE_FACTORY_ADDRESS)

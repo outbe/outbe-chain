@@ -85,7 +85,7 @@ fn worldwide_day_and_emission_day_abi_preserve_bidirectional_link() {
             ed.state,
             outbe_emission::schema::emission_day_state::PENDING
         );
-        assert_eq!(ed.metadosisState, emission_day_state::NONE);
+        assert_eq!(ed.metadosisState, metadosis_state::PENDING);
     });
 }
 
@@ -132,7 +132,7 @@ pub(super) fn seed_offering_day(storage: StorageHandle<'_>) {
             wwd,
             50,
             100,
-            emission_day_state::NONE,
+            metadosis_state::PENDING,
         ))
         .unwrap();
 }

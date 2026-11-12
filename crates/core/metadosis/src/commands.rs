@@ -25,14 +25,9 @@ pub fn apply_cycle_day_limit(ctx: &BlockRuntimeContext<'_>, amount: U256) -> Res
     Ok(U256::ZERO)
 }
 
-/// Purpose-bound late-settlement adapter. Late residue is a Promis Limit credit only.
-pub fn apply_late_settlement_headroom(ctx: &BlockRuntimeContext<'_>, amount: U256) -> Result<U256> {
-    crate::emission_sink::apply_late_settlement_headroom(ctx, amount)
-}
-
 /// Sends the daily Cycle terminal allocation to the Metadosis sink, anchored at
 /// `timestamp`.
-pub fn dispatch_terminal_remainder_at(
+pub fn set_metadosis_limit(
     ctx: &BlockRuntimeContext<'_>,
     amount: U256,
     timestamp: u64,
@@ -49,30 +44,6 @@ pub fn dispatch_terminal_remainder_at(
     Ok(())
 }
 
-/// Recycles a late residue, from fee settlement or from a finished WAA or SRA
-/// reward pool, into terminal Metadosis headroom.
-pub fn dispatch_late_settlement_residue_at(
-    ctx: &BlockRuntimeContext<'_>,
-    amount: U256,
-    timestamp: u64,
-) -> Result<()> {
-    if amount.is_zero() {
-        return Ok(());
-    }
-
-    let mut terminal_block = ctx.block.clone();
-    terminal_block.timestamp = timestamp;
-    let terminal_ctx = BlockRuntimeContext::new(terminal_block, ctx.storage.clone());
-    let unused = apply_late_settlement_headroom(&terminal_ctx, amount)?;
-    if !unused.is_zero() {
-        return Err(
-            outbe_emission::errors::EmissionLimitError::LateSettlementSinkReturnedUnusedAmount
-                .into(),
-        );
-    }
-    Ok(())
-}
-
 pub fn find_due_emission_day(
     ctx: &BlockRuntimeContext<'_>,
 ) -> Result<Option<crate::schema::EmissionDay>> {
@@ -80,18 +51,15 @@ pub fn find_due_emission_day(
     crate::lifecycle::find_due_emission_day(&metadosis, ctx)
 }
 
-/// Marks the currently due `EmissionDay` as `Failed` (returning its Metadosis limit
-/// to `PromisLimit` once and emitting `IMetadosis.MetadosisFailed(E, 1)`).
-pub fn fail_due_emission_day(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+/// Marks Metadosis of `day` as `Failed` (returning its Metadosis limit to `PromisLimit`
+/// once and emitting `IMetadosis.MetadosisFailed(day, 1)`).
+pub fn fail_metadosis(ctx: &BlockRuntimeContext<'_>, day: u32) -> Result<()> {
     let mut metadosis = crate::schema::MetadosisContract::new(ctx.storage.clone());
-    if let Some(due_day) = crate::lifecycle::find_due_emission_day(&metadosis, ctx)? {
-        crate::lifecycle::fail_emission_day(
-            &mut metadosis,
-            due_day.day,
-            crate::constants::METADOSIS_FAILED_STEP_REVERTED,
-        )?;
-    }
-    Ok(())
+    crate::lifecycle::fail_metadosis(
+        &mut metadosis,
+        day,
+        crate::constants::METADOSIS_FAILED_STEP_REVERTED,
+    )
 }
 
 /// Emits `IMetadosis.MetadosisCanceled(day, 1)` after daily emission limit allocation reverts.

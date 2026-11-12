@@ -610,26 +610,16 @@ mod metadosis_mutation_frame_tests {
     use super::MetadosisMutationFrameState;
     use alloy_primitives::B256;
     use outbe_primitives::storage::{
-        metadosis_late_settlement_binding, MetadosisMutationEntitlements,
+        metadosis_process_ready_binding, MetadosisMutationEntitlements,
         MetadosisMutationPurposeTag as Purpose,
     };
 
     #[test]
-    fn denied_or_wrong_purpose_cannot_open_frame() {
+    fn denied_route_cannot_open_frame() {
         let mut denied = MetadosisMutationFrameState::new(MetadosisMutationEntitlements::NONE);
         assert!(denied
             .begin(Purpose::CycleLifecycle, B256::repeat_byte(1), 1, 2)
             .is_err());
-
-        let mut wrong = MetadosisMutationFrameState::new(MetadosisMutationEntitlements::only(
-            Purpose::CertifiedFinality,
-        ));
-        assert!(wrong
-            .begin(Purpose::CycleLifecycle, B256::repeat_byte(1), 1, 2)
-            .is_err());
-        wrong
-            .begin(Purpose::CertifiedFinality, B256::repeat_byte(2), 1, 2)
-            .unwrap();
     }
 
     #[test]
@@ -637,21 +627,15 @@ mod metadosis_mutation_frame_tests {
         let purpose = Purpose::CycleLifecycle;
         let binding = B256::repeat_byte(3);
         let mut frame =
-            MetadosisMutationFrameState::new(MetadosisMutationEntitlements::only(purpose).union(
-                MetadosisMutationEntitlements::only(Purpose::CertifiedFinality),
-            ));
+            MetadosisMutationFrameState::new(MetadosisMutationEntitlements::repeated(purpose, 2));
         frame.begin(purpose, binding, 7, 11).unwrap();
 
-        assert!(frame
-            .begin(Purpose::CertifiedFinality, B256::repeat_byte(4), 7, 11,)
-            .is_err());
+        assert!(frame.begin(purpose, B256::repeat_byte(4), 7, 11).is_err());
         assert!(frame.finish(purpose, B256::repeat_byte(5)).is_err());
         frame.finish(purpose, binding).unwrap();
 
         // A rejected nested attempt did not consume the other entitlement.
-        frame
-            .begin(Purpose::CertifiedFinality, B256::repeat_byte(6), 7, 11)
-            .unwrap();
+        frame.begin(purpose, B256::repeat_byte(6), 7, 11).unwrap();
     }
 
     #[test]
@@ -680,9 +664,9 @@ mod metadosis_mutation_frame_tests {
 
     #[test]
     fn exact_authority_binding_rejects_mismatch_without_consuming_grant() {
-        let purpose = Purpose::CertifiedFinality;
-        let expected = metadosis_late_settlement_binding(7, 11, 12);
-        let wrong = metadosis_late_settlement_binding(7, 11, 13);
+        let purpose = Purpose::CycleLifecycle;
+        let expected = metadosis_process_ready_binding(7, 11, 12);
+        let wrong = metadosis_process_ready_binding(7, 11, 13);
         assert_ne!(expected, wrong);
         let mut frame = MetadosisMutationFrameState::new(MetadosisMutationEntitlements::exact(
             purpose, expected,

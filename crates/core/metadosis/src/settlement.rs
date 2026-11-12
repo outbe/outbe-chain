@@ -1,15 +1,13 @@
-//! READY EmissionDay classification and local settlement paths.
+//! READY EmissionDay classification and the Metadosis calculation.
 
 use alloy_primitives::U256;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
-use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
 
 use crate::{
     constants::{METADOSIS_CANCELED_NO_LIMIT, SYMBOLIC_RATE},
-    lifecycle::{cancel_emission_day, complete_emission_day},
-    precompile::IMetadosis,
-    schema::{emission_day_state, EmissionDay, MetadosisContract},
+    lifecycle::cancel_emission_day,
+    schema::{EmissionDay, MetadosisContract},
 };
 
 /// Split of one EmissionDay in six-decimal protocol COEN minor units.
@@ -31,7 +29,7 @@ impl MetadosisContract<'_> {
     /// At rate 32 every `U256` nominal succeeds, including `U256::MAX`.
     /// `FullPrecisionDemandOverflow` stays as a defensive guard.
     /// This comment records the source contract. It is not a runtime certificate.
-    pub(crate) fn calculate_metadosis(
+    pub(crate) fn lysis_limit_of_day(
         &self,
         tribute_nominal_total: U256,
         emission_limit_minor: U256,
@@ -78,169 +76,21 @@ pub(crate) fn process_ready_candidate(
     ctx: &BlockRuntimeContext<'_>,
     emission_day: &EmissionDay,
 ) -> Result<()> {
-    let wwd = emission_day.wwd;
     let limit_amount = emission_day.metadosis_limit_minor();
     if limit_amount.is_zero() {
         return cancel_emission_day(metadosis, emission_day.day, METADOSIS_CANCELED_NO_LIMIT);
     }
-
-    if wwd.value() == 0 {
-        return settle_empty_day(metadosis, ctx, emission_day);
-    }
-
-    let tribute = TributeContract::new(metadosis.storage.clone());
-    let tribute_totals = tribute.get_day_totals(wwd)?;
-    if !tribute_totals.is_sealed {
-        return Ok(());
-    }
-
-    if tribute_totals.tribute_count == 0 {
-        return settle_empty_day(metadosis, ctx, emission_day);
-    }
-
-    let calculation =
-        metadosis.calculate_metadosis(tribute_totals.tribute_nominal_total_minor, limit_amount)?;
-    if calculation.lysis_limit_minor.is_zero() {
-        return settle_zero_allocation(
-            metadosis,
-            ctx,
-            emission_day,
-            tribute_totals.tribute_nominal_total_minor,
-            calculation,
-        );
-    }
-
-    crate::lysis::execute(metadosis, ctx, emission_day, calculation)
-}
-
-fn settle_empty_day(
-    metadosis: &mut MetadosisContract,
-    ctx: &BlockRuntimeContext,
-    emission_day: &EmissionDay,
-) -> Result<()> {
     let wwd = emission_day.wwd;
-    let day_limit = emission_day.metadosis_limit_minor();
-    let mut promis_limit = PromisLimitContract::new(ctx.storage.clone());
-    let to_promis = dispatch_brief(ctx, emission_day.day, U256::ZERO)?;
-    let returned = to_promis
-        .checked_add(day_limit)
-        .ok_or(crate::errors::MetadosisStorageCorruptionError::DayLimitReturnOverflow)?;
-    let updated = outbe_emission::api::record_empty_day_metadosis_completed(
-        metadosis.storage.clone(),
-        emission_day.day,
-    )?;
-    complete_emission_day(metadosis, &updated, emission_day_state::SUCCEEDED)?;
+    let mut nominal_total = U256::ZERO;
     if wwd.value() != 0 {
-        TributeContract::new(metadosis.storage.clone()).retire_completed_partition(wwd)?;
-    }
-    metadosis.emit(IMetadosis::MetadosisCompleted {
-        emissionDay: emission_day.day,
-        tributeNominalTotalMinor: U256::ZERO,
-        gratisDemandMinor: U256::ZERO,
-        dayGratisLimitMinor: U256::ZERO,
-        lysisLimitMinor: U256::ZERO,
-        unusedLysisLimitMinor: U256::ZERO,
-        lysisAllocationMinor: U256::ZERO,
-        promisLimitReturnedMinor: returned,
-        status: "COMPLETED".into(),
-        blockNumber: ctx.block.block_number,
-    })?;
-    promis_limit.checked_credit(returned).map(|_| ())
-}
-
-fn settle_zero_allocation(
-    metadosis: &mut MetadosisContract,
-    ctx: &BlockRuntimeContext,
-    emission_day: &EmissionDay,
-    tribute_nominal_total: U256,
-    calculation: MetadosisCalculation,
-) -> Result<()> {
-    let wwd = emission_day.wwd;
-    let day_limit = emission_day.metadosis_limit_minor();
-    let mut promis_limit = PromisLimitContract::new(ctx.storage.clone());
-    let desis_limit_minor = desis_limit(
-        tribute_nominal_total,
-        calculation.lysis_limit_minor,
-        day_limit,
-        U256::ZERO,
-    )
-    .ok_or(crate::errors::MetadosisStorageCorruptionError::LysisLimitExceedsDayNominal)?;
-    let to_promis = dispatch_brief(ctx, emission_day.day, desis_limit_minor)?;
-    let returned = day_limit
-        .checked_sub(calculation.lysis_limit_minor)
-        .and_then(|rest| rest.checked_sub(desis_limit_minor))
-        .and_then(|headroom| headroom.checked_add(to_promis))
-        .ok_or(crate::errors::MetadosisStorageCorruptionError::SplitExceedsDayLimit)?;
-    promis_limit.checked_credit(returned)?;
-    let updated = outbe_emission::api::record_metadosis_completed(
-        metadosis.storage.clone(),
-        emission_day.day,
-        outbe_emission::api::MetadosisCompletedAmounts {
-            lysis_limit: U256::ZERO,
-            desis_limit: desis_limit_minor,
-            nods: U256::ZERO,
-            promis_limit_added: day_limit,
-        },
-    )?;
-    complete_emission_day(metadosis, &updated, emission_day_state::SUCCEEDED)?;
-    TributeContract::new(metadosis.storage.clone()).forfeit_sealed_partition(wwd)?;
-    metadosis.emit(IMetadosis::MetadosisCompleted {
-        emissionDay: emission_day.day,
-        tributeNominalTotalMinor: tribute_nominal_total,
-        gratisDemandMinor: calculation.gratis_demand,
-        dayGratisLimitMinor: calculation.day_gratis_limit_minor,
-        lysisLimitMinor: U256::ZERO,
-        unusedLysisLimitMinor: U256::ZERO,
-        lysisAllocationMinor: U256::ZERO,
-        promisLimitReturnedMinor: returned,
-        status: "COMPLETED".into(),
-        blockNumber: ctx.block.block_number,
-    })
-}
-
-fn dispatch_brief(
-    ctx: &BlockRuntimeContext,
-    emission_day: u32,
-    desis_limit_minor: U256,
-) -> Result<U256> {
-    let is_active = !desis_limit_minor.is_zero();
-    let briefed_desis_limit_minor = if is_active {
-        desis_limit_minor
-    } else {
-        U256::ZERO
-    };
-    let receipt = outbe_desis::api::dispatch_auction_brief(
-        ctx.storage.clone(),
-        outbe_desis::api::AuctionBrief {
-            emission_day: emission_day.into(),
-            desis_limit_minor: briefed_desis_limit_minor,
-            has_limit: is_active,
-        },
-        outbe_desis::api::BriefOverflowPolicy::ReturnToPromisLimit,
-    )?;
-    match receipt {
-        outbe_desis::api::AuctionBriefReceipt::Accepted => desis_limit_minor
-            .checked_sub(briefed_desis_limit_minor)
-            .ok_or_else(|| {
-                crate::errors::MetadosisStorageCorruptionError::AcceptedDesisBriefExceedsRoutingLimit
-                    .into()
-            }),
-        outbe_desis::api::AuctionBriefReceipt::ReturnedToPromisLimit {
-            reason: outbe_desis::api::AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
-            desis_limit_minor: rejected_desis_limit_minor,
-            max_accepted,
-        } => {
-            if rejected_desis_limit_minor != briefed_desis_limit_minor
-                || rejected_desis_limit_minor <= max_accepted
-            {
-                return Err(
-                    crate::errors::MetadosisStorageCorruptionError::DesisRejectionReceiptMismatchDispatchedLimit
-                        .into(),
-                );
-            }
-            Ok(rejected_desis_limit_minor)
+        let totals = TributeContract::new(metadosis.storage.clone()).get_day_totals(wwd)?;
+        if !totals.is_sealed {
+            return Ok(());
         }
+        nominal_total = totals.tribute_nominal_total_minor;
     }
+    let calculation = metadosis.lysis_limit_of_day(nominal_total, limit_amount)?;
+    crate::lysis::execute(metadosis, ctx, emission_day, calculation)
 }
 
 #[cfg(test)]
@@ -277,7 +127,7 @@ mod tests {
             let expected = wide_floor_demand(nominal);
             let mut seen = None;
             for cap in [U256::ZERO, U256::ONE, expected, U256::MAX] {
-                let calc = contract.calculate_metadosis(nominal, cap).unwrap();
+                let calc = contract.lysis_limit_of_day(nominal, cap).unwrap();
                 assert_eq!(calc.gratis_demand, expected, "nominal {nominal}");
                 assert!(calc.gratis_demand <= nominal, "nominal {nominal}");
                 assert_eq!(calc.day_gratis_limit_minor, cap, "nominal {nominal}");

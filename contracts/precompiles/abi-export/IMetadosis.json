@@ -204,7 +204,7 @@
   },
   {
     "type": "error",
-    "name": "LysisLimitCreditMismatch",
+    "name": "LysisResultMismatch",
     "inputs": []
   },
   {
@@ -225,11 +225,6 @@
   {
     "type": "error",
     "name": "VwapMustBeNonZero",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "WaitingWindowOverflow",
     "inputs": []
   }
 ]

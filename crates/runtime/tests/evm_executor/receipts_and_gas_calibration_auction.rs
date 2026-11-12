@@ -92,7 +92,6 @@ fn populated_auction(chain_count: u32) -> Calibration {
                     desis_limit_minor: U256::ZERO,
                     has_limit: false,
                 },
-                outbe_desis::api::BriefOverflowPolicy::ReturnToPromisLimit,
             )
             .unwrap();
             seed_previous_day_vwap(&storage, timestamp, U256::from(1_000_000));
@@ -146,7 +145,6 @@ fn calibration_live_auction_start() {
                     desis_limit_minor: U256::from(10_000_000_000_000u64),
                     has_limit: true,
                 },
-                outbe_desis::api::BriefOverflowPolicy::ReturnToPromisLimit,
             )
             .unwrap();
             for spec in outbe_cycle::triggers::ACTIVE_TRIGGERS {
@@ -289,7 +287,6 @@ fn due_auctions(steps: &[DueStep]) -> (u64, Vec<Log>) {
                             desis_limit_minor: U256::from(10_000_000_000_000u64),
                             has_limit: true,
                         },
-                        outbe_desis::api::BriefOverflowPolicy::ReturnToPromisLimit,
                     )
                     .unwrap();
                 }

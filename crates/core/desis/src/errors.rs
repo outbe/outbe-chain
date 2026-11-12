@@ -44,9 +44,6 @@ pub enum DesisError {
         limit: U256,
     },
 
-    #[error("auction brief limit exceeds Desis u128 domain")]
-    AuctionBriefLimitExceedsDomain,
-
     #[error("processBidsBatch: array length mismatch")]
     BatchArrayLengthMismatch,
 
@@ -133,9 +130,6 @@ impl From<DesisError> for PrecompileError {
                 allocation,
                 limit,
             }),
-            DesisError::AuctionBriefLimitExceedsDomain => {
-                revert_with(I::AuctionBriefLimitExceedsDomain {})
-            }
             DesisError::BatchArrayLengthMismatch => revert_with(I::BatchArrayLengthMismatch {}),
             DesisError::BriefAnchorExceedsU32 => revert_with(I::BriefAnchorExceedsU32 {}),
             DesisError::MinBidQuantityScalingOverflow => {

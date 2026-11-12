@@ -30,14 +30,6 @@ impl AuctionBriefRejectionReason {
     }
 }
 
-/// How callers handle an oversized auction limit. Settlement can return it to
-/// the Promis Limit. Native Lysis requires the prepared brief to succeed.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum BriefOverflowPolicy {
-    ReturnToPromisLimit,
-    Reject,
-}
-
 /// Semantic result of one auction-brief formation attempt.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AuctionBriefReceipt {
@@ -64,7 +56,6 @@ pub struct AuctionBrief {
 pub fn dispatch_auction_brief(
     storage: StorageHandle<'_>,
     brief: AuctionBrief,
-    overflow: BriefOverflowPolicy,
 ) -> Result<AuctionBriefReceipt> {
     let AuctionBrief {
         emission_day,
@@ -76,9 +67,6 @@ pub fn dispatch_auction_brief(
         let Ok(desis_limit_u128) = u128::try_from(desis_limit_minor) else {
             let max_accepted = U256::from(u128::MAX);
             let reason = AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain;
-            if matches!(overflow, BriefOverflowPolicy::Reject) {
-                return Err(crate::errors::DesisError::AuctionBriefLimitExceedsDomain.into());
-            }
             let mut contract = storage.contract::<DesisContract>();
             contract.write_stage(emission_day, AuctionStage::Cancelled)?;
             contract.emit(IDesis::DesisLimitSet {

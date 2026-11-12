@@ -25,9 +25,6 @@ pub enum MetadosisCallerError {
     #[error("Metadosis offering window overflow")]
     OfferingWindowOverflow,
 
-    #[error("Metadosis waiting window overflow")]
-    WaitingWindowOverflow,
-
     #[error("Metadosis {label} duration overflow")]
     DurationOverflow { label: &'static str },
 
@@ -62,7 +59,6 @@ impl From<MetadosisCallerError> for PrecompileError {
             MetadosisCallerError::OfferingWindowOverflow => {
                 revert_with(I::OfferingWindowOverflow {})
             }
-            MetadosisCallerError::WaitingWindowOverflow => revert_with(I::WaitingWindowOverflow {}),
             MetadosisCallerError::DurationOverflow { label } => revert_with(I::DurationOverflow {
                 label: label.to_string(),
             }),

@@ -3,12 +3,13 @@
 use std::collections::BTreeSet;
 
 use alloy_primitives::U256;
+use outbe_emission::schema::metadosis_state;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::Result,
     time::{
-        date_key_to_utc_timestamp, next_date_key, previous_date_key, timestamp_to_date_key,
-        WorldwideDay, SECONDS_PER_DAY,
+        date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key, WorldwideDay,
+        SECONDS_PER_DAY,
     },
 };
 use outbe_promislimit::PromisLimitContract;
@@ -18,7 +19,7 @@ use outbe_tributefactory::TributeFactoryContract;
 use crate::{
     errors::{MetadosisCallerError, MetadosisStorageCorruptionError},
     precompile::IMetadosis,
-    schema::{emission_day_state, EmissionDay, MetadosisContract},
+    schema::{EmissionDay, MetadosisContract},
 };
 
 const MAX_DUE_SCAN_DAYS: u32 = 64;
@@ -44,32 +45,17 @@ pub(crate) fn ensure_emission_day_with_limit(
 ) -> Result<()> {
     let limit = outbe_emission::api::to_u128_checked(emission_limit_minor)?;
     let emission_days = metadosis.emission_days();
-    if let Some(mut existing) = emission_days.get(day)? {
-        existing.emission_limit = existing.emission_limit.max(limit);
-        existing.metadosis_limit = limit;
-        if existing.state == outbe_emission::schema::emission_day_state::PENDING
-            || existing.state == outbe_emission::schema::emission_day_state::SEALED
-        {
-            existing.state = outbe_emission::schema::emission_day_state::PROCESSING;
-        }
-        emission_days.update(&existing)?;
-        return Ok(());
+    let Some(mut existing) = emission_days.get(day)? else {
+        return Err(outbe_emission::errors::EmissionError::EmissionDayNotFound.into());
+    };
+    existing.emission_limit = existing.emission_limit.max(limit);
+    existing.metadosis_limit = limit;
+    if existing.state == outbe_emission::schema::emission_day_state::PENDING
+        || existing.state == outbe_emission::schema::emission_day_state::SEALED
+    {
+        existing.state = outbe_emission::schema::emission_day_state::PROCESSING;
     }
-    let next_day = next_date_key(day).map_err(date_step_error)?;
-    let metadosis_start = date_key_to_utc_timestamp(next_day)
-        .map_err(date_step_error)?
-        .checked_add(1)
-        .ok_or(MetadosisCallerError::WaitingWindowOverflow)?;
-    let mut record = EmissionDay::new_with_limit(
-        day,
-        WorldwideDay::new(0),
-        metadosis_start,
-        limit,
-        emission_day_state::NONE,
-    );
-    record.state = outbe_emission::schema::emission_day_state::PROCESSING;
-    emission_days.create(&record)?;
-    Ok(())
+    emission_days.update(&existing)
 }
 
 pub(crate) fn find_due_emission_day(
@@ -86,7 +72,7 @@ pub(crate) fn find_due_emission_day(
         };
         verify_record_wwd_backlink(&factory, &record)?;
         if record.state == outbe_emission::schema::emission_day_state::PROCESSING
-            && record.metadosis_state == emission_day_state::NONE
+            && record.metadosis_state == metadosis_state::PENDING
             && now >= record.metadosis_start
         {
             if record.wwd.value() != 0
@@ -170,25 +156,15 @@ fn verify_record_wwd_backlink(
     Ok(())
 }
 
-pub(crate) fn complete_emission_day(
+pub(crate) fn complete_metadosis(
     metadosis: &mut MetadosisContract<'_>,
     emission_day: &EmissionDay,
-    state: u8,
 ) -> Result<()> {
-    if state == emission_day_state::SUCCEEDED {
-        if !outbe_agentreward::distribution::has_pending_accruals_for_day(
-            &metadosis.storage,
-            emission_day.day,
-        )? {
-            outbe_emission::api::complete_emission_day(
-                metadosis.storage.clone(),
-                emission_day.day,
-            )?;
-        }
-    } else {
-        let mut updated = *emission_day;
-        updated.metadosis_state = state;
-        metadosis.emission_days().update(&updated)?;
+    if !outbe_agentreward::distribution::has_pending_accruals_for_day(
+        &metadosis.storage,
+        emission_day.day,
+    )? {
+        outbe_emission::api::complete_emission_day(metadosis.storage.clone(), emission_day.day)?;
     }
     Ok(())
 }
@@ -214,7 +190,7 @@ pub(crate) fn cancel_emission_day(
     })
 }
 
-pub(crate) fn fail_emission_day(
+pub(crate) fn fail_metadosis(
     metadosis: &mut MetadosisContract<'_>,
     day: u32,
     reason: u8,

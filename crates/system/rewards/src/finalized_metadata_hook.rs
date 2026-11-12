@@ -265,9 +265,6 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         provider.set_block_number(14);
         provider.set_timestamp(U256::from(GENESIS_TS + SECONDS_PER_DAY));
-        provider.enable_metadosis_mutation_frame(
-            outbe_primitives::storage::MetadosisMutationPurposeTag::CertifiedFinality,
-        );
         provider.enter(|storage| {
             let ctx =
                 BlockRuntimeContext::new(block_ctx(14, GENESIS_TS + SECONDS_PER_DAY), storage);
