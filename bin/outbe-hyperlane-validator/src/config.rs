@@ -3,7 +3,7 @@
 use eyre::{Context, Result};
 use serde::Deserialize;
 
-use crate::errors::ValidatorError;
+use crate::errors::ConfigError;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -54,17 +54,6 @@ pub enum RpcConsensus {
     Quorum,
     /// One endpoint is sufficient. No vote.
     Single,
-}
-
-impl RpcConsensus {
-    /// Agreeing endpoints that a pool of `endpoints` needs.
-    pub fn required(self, endpoints: usize) -> usize {
-        match self {
-            Self::Majority => endpoints - endpoints / 3,
-            Self::Quorum => endpoints.div_ceil(2),
-            Self::Single => 1,
-        }
-    }
 }
 
 /// How far behind the chain head a block is final.
@@ -144,7 +133,7 @@ pub struct ServerConfig {
 impl ServerConfig {
     /// `s3+http(s)://host[:port]`: the announced location without the bucket.
     pub fn location_base(&self) -> Result<String> {
-        let invalid = || ValidatorError::InvalidPublicUrl(self.public_url.clone());
+        let invalid = || ConfigError::InvalidPublicUrl(self.public_url.clone());
         let url: reqwest::Url = self.public_url.parse().map_err(|_| invalid())?;
         let host = url.host_str().ok_or_else(invalid)?;
         if !matches!(url.scheme(), "http" | "https")
@@ -194,31 +183,31 @@ impl ValidatorConfig {
     pub fn validate(&self) -> Result<()> {
         let addr = self.account.validator_address.trim_start_matches("0x");
         if addr.len() != 40 || addr.chars().any(|c| !c.is_ascii_hexdigit()) {
-            return Err(ValidatorError::InvalidValidatorAddress(
+            return Err(ConfigError::InvalidValidatorAddress(
                 self.account.validator_address.clone(),
             )
             .into());
         }
         if self.hyperlane.poll_interval_secs == 0 {
-            return Err(ValidatorError::ZeroPollInterval.into());
+            return Err(ConfigError::ZeroPollInterval.into());
         }
         if self.storage.is_none() {
-            return Err(ValidatorError::NoDbPath.into());
+            return Err(ConfigError::NoDbPath.into());
         }
         self.server
             .as_ref()
-            .ok_or(ValidatorError::NoServer)?
+            .ok_or(ConfigError::NoServer)?
             .location_base()?;
         let mut domains = std::collections::HashSet::new();
         for origin in &self.origin {
             if !domains.insert(origin.domain) {
-                return Err(ValidatorError::DuplicateOrigin(origin.domain).into());
+                return Err(ConfigError::DuplicateOrigin(origin.domain).into());
             }
             if origin.rpc_urls.is_empty() {
-                return Err(ValidatorError::NoOriginRpc(origin.domain).into());
+                return Err(ConfigError::NoOriginRpc(origin.domain).into());
             }
             if origin.interval_secs == 0 {
-                return Err(ValidatorError::ZeroOriginInterval(origin.domain).into());
+                return Err(ConfigError::ZeroOriginInterval(origin.domain).into());
             }
         }
         Ok(())
@@ -347,14 +336,5 @@ index_from = 7
         let no_rpc = ORIGINS.replace("[\"https://d\"]", "[]");
         let cfg: ValidatorConfig = toml::from_str(&format!("{MINIMAL}{no_rpc}")).unwrap();
         assert!(cfg.validate().is_err());
-    }
-
-    #[test]
-    fn consensus_thresholds_match_upstream() {
-        for (n, majority, quorum) in [(1, 1, 1), (2, 2, 1), (3, 2, 2), (4, 3, 2), (6, 4, 3)] {
-            assert_eq!(RpcConsensus::Majority.required(n), majority, "majority {n}");
-            assert_eq!(RpcConsensus::Quorum.required(n), quorum, "quorum {n}");
-            assert_eq!(RpcConsensus::Single.required(n), 1);
-        }
     }
 }

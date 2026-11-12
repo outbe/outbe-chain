@@ -7,7 +7,7 @@ use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
 use eyre::{Context, Result};
 
-use crate::errors::ValidatorError;
+use crate::errors::LivenessError;
 
 pub async fn eth_call<P: Provider>(
     provider: &P,
@@ -61,6 +61,6 @@ pub async fn send_tx(sender: &TxSender<'_>, to: Address, calldata: &[u8]) -> Res
     let pending = provider
         .send_transaction(tx)
         .await
-        .map_err(|e| ValidatorError::TransactionFailed(format!("{e:#}")))?;
+        .map_err(|e| LivenessError::TransactionFailed(format!("{e:#}")))?;
     Ok(*pending.tx_hash())
 }

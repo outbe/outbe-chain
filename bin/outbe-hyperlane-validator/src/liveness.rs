@@ -20,7 +20,7 @@ use tracing::{info, warn};
 use crate::abi::{IHyperlaneController, IValidatorSet};
 use crate::client::{self, TxSender};
 use crate::config::{ChainConfig, HyperlaneConfig};
-use crate::health::ValidatorHealth;
+use crate::http::health::ValidatorHealth;
 use crate::signer::DomainSigner;
 
 /// HyperlaneController precompile address (0xEE14).

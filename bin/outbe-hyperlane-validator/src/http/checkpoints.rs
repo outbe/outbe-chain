@@ -1,3 +1,5 @@
+//! S3-compatible read endpoint for relayers.
+//!
 //! S3-compatible anonymous read of the signed checkpoints, path-style:
 //! `GET /<bucket>/<domain>/<key>`. The relayer reads it with its S3 client.
 //!
@@ -23,7 +25,7 @@ use axum::Router;
 use eyre::Result;
 use tracing::{info, warn};
 
-use crate::errors::ValidatorError;
+use crate::errors::StoreError;
 use crate::signer::stored_checkpoint;
 use crate::store::{Meta, Store};
 
@@ -98,8 +100,7 @@ fn read(bucket: &Bucket, domain: &str, key: &str) -> Result<Option<Vec<u8>>> {
     let Some(hook) = store.meta(domain, Meta::Hook)? else {
         return Ok(None);
     };
-    let hook =
-        Address::try_from(hook.as_slice()).map_err(|_| ValidatorError::CorruptRecord("hook"))?;
+    let hook = Address::try_from(hook.as_slice()).map_err(|_| StoreError::CorruptRecord("hook"))?;
     if key == "checkpoint_latest_index.json" {
         return Ok(store
             .latest_checkpoint_index(domain)?

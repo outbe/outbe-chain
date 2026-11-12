@@ -5,15 +5,15 @@
 //! on each origin chain, and proves liveness to the HyperlaneController.
 
 mod abi;
+mod announce;
 mod checkpoint;
 mod client;
 mod config;
 mod daemon;
 mod errors;
-mod health;
+mod http;
 mod liveness;
 mod merkle;
-mod server;
 mod signer;
 mod store;
 mod sync;
@@ -28,8 +28,8 @@ use eyre::{Context, Result};
 use tracing::{info, warn};
 
 use crate::config::ValidatorConfig;
-use crate::errors::ValidatorError;
-use crate::health::ValidatorHealth;
+use crate::errors::ConfigError;
+use crate::http::health::ValidatorHealth;
 use crate::store::{Meta, Store};
 
 #[derive(Parser)]
@@ -76,7 +76,7 @@ fn run_db(config: &ValidatorConfig, command: DbCommand) -> Result<()> {
     let path = &config
         .storage
         .as_ref()
-        .ok_or(ValidatorError::NoDbPath)?
+        .ok_or(ConfigError::NoDbPath)?
         .db_path;
     let store = Store::open(path)?;
     match command {
@@ -135,11 +135,11 @@ async fn main() -> Result<()> {
         .parse()
         .with_context(|| "invalid private key")?;
     let validator = config.account.validator_address.parse()?;
-    let server = config.server.as_ref().ok_or(ValidatorError::NoServer)?;
+    let server = config.server.as_ref().ok_or(ConfigError::NoServer)?;
     let db_path = &config
         .storage
         .as_ref()
-        .ok_or(ValidatorError::NoDbPath)?
+        .ok_or(ConfigError::NoDbPath)?
         .db_path;
     let bucket = format!("{:#x}", key.address());
     let outbe = sync::connect(&config.chain.rpc_endpoint)?;
@@ -152,12 +152,12 @@ async fn main() -> Result<()> {
             .as_ref()
             .map(|h| h.bind_address.clone())
             .unwrap_or_else(|| "0.0.0.0:9003".to_string());
-        health::start_health_server(&bind, health.clone()).await?;
+        http::health::start_health_server(&bind, health.clone()).await?;
     }
     let location = format!("{}/{bucket}", server.location_base()?);
-    server::start(
+    http::checkpoints::start(
         &server.bind_address,
-        server::Bucket {
+        http::checkpoints::Bucket {
             name: bucket,
             store: store.clone(),
         },

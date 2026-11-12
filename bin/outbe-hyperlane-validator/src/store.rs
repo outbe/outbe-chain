@@ -24,7 +24,7 @@ use reth_db::{
     ClientVersion, DatabaseEnv, TableSet,
 };
 
-use crate::errors::ValidatorError;
+use crate::errors::StoreError;
 
 macro_rules! table {
     ($name:ident, $key:ty) => {
@@ -119,7 +119,7 @@ fn encode_leaf(leaf: &Leaf) -> Vec<u8> {
 fn decode_leaf(v: &[u8]) -> Result<Leaf> {
     let v: &[u8; 40] = v
         .try_into()
-        .map_err(|_| ValidatorError::CorruptRecord("leaf"))?;
+        .map_err(|_| StoreError::CorruptRecord("leaf"))?;
     Ok(Leaf {
         message_id: B256::from_slice(&v[..32]),
         block: u64::from_be_bytes(v[32..].try_into().expect("8 bytes")),
@@ -136,7 +136,7 @@ fn encode_signed(signed: &SignedRoot) -> Vec<u8> {
 fn decode_signed(v: &[u8]) -> Result<SignedRoot> {
     let v: &[u8; 97] = v
         .try_into()
-        .map_err(|_| ValidatorError::CorruptRecord("checkpoint"))?;
+        .map_err(|_| StoreError::CorruptRecord("checkpoint"))?;
     Ok(SignedRoot {
         root: B256::from_slice(&v[..32]),
         signature: v[32..].try_into().expect("65 bytes"),
@@ -181,7 +181,7 @@ impl Store {
         let mut next = leaf_count(&tx, domain)?;
         for (index, leaf) in leaves {
             if *index != next {
-                return Err(ValidatorError::LeafGap {
+                return Err(StoreError::LeafGap {
                     domain,
                     expected: next,
                     got: *index,
@@ -218,7 +218,7 @@ impl Store {
                     tx.put::<Checkpoints>(k, encode_signed(value))?
                 }
                 _ => {
-                    return Err(ValidatorError::CheckpointConflict {
+                    return Err(StoreError::CheckpointConflict {
                         domain,
                         index: *index,
                     }
@@ -262,7 +262,7 @@ impl Store {
                 let bytes: [u8; 8] = v
                     .as_slice()
                     .try_into()
-                    .map_err(|_| ValidatorError::CorruptRecord("cursor"))?;
+                    .map_err(|_| StoreError::CorruptRecord("cursor"))?;
                 Ok(u64::from_be_bytes(bytes))
             })
             .transpose()
@@ -388,7 +388,7 @@ fn put_signed(
 ) -> Result<()> {
     for (index, value) in signed {
         if *index >= leaf_count {
-            return Err(ValidatorError::CheckpointWithoutLeaf {
+            return Err(StoreError::CheckpointWithoutLeaf {
                 domain,
                 index: *index,
             }
@@ -398,7 +398,7 @@ fn put_signed(
         match tx.get::<Checkpoints>(k)? {
             Some(stored) if decode_signed(&stored)? == *value => {}
             Some(_) => {
-                return Err(ValidatorError::CheckpointConflict {
+                return Err(StoreError::CheckpointConflict {
                     domain,
                     index: *index,
                 }

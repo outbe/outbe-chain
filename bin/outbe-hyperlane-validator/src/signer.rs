@@ -8,7 +8,7 @@
 //! of `unless_reorg`, and the "never sign a second value" check of
 //! `sign_and_submit_checkpoint`. Changes: the store replaces the checkpoint
 //! syncer, a halt stops one domain and the process continues, the reorg
-//! reporter is a log line in `sync.rs`.
+//! reporter is a log line in `sync/mod.rs`.
 //!
 //! Order: the live loop commits all leaves of a verified batch, the cursor
 //! and the signed checkpoint of the last leaf in one transaction. The backfill
@@ -36,7 +36,7 @@ use crate::abi::IHyperlaneController;
 use crate::checkpoint::{Checkpoint, CheckpointWithMessageId, Signed};
 use crate::client::eth_call;
 use crate::config::OriginConfig;
-use crate::errors::ValidatorError;
+use crate::errors::{SignerError, StoreError};
 use crate::liveness::HYPERLANE_CONTROLLER_ADDRESS;
 use crate::merkle::IncrementalMerkle;
 use crate::store::{Leaf, Meta, SignedRoot, Store};
@@ -170,7 +170,7 @@ impl DomainSigner {
     /// backfill for the other leaves.
     pub async fn commit(&self, batch: &VerifiedBatch) -> Result<()> {
         if self.halted() {
-            return Err(ValidatorError::Halted(self.domain()).into());
+            return Err(SignerError::Halted(self.domain()).into());
         }
         let leaves: Vec<(u32, Leaf)> = batch
             .leaves
@@ -282,7 +282,7 @@ impl DomainSigner {
                 Some(stored) if stored.root == root => {}
                 // Never sign a second value for a signed index.
                 Some(stored) => {
-                    return Err(ValidatorError::RootConflict {
+                    return Err(SignerError::RootConflict {
                         domain,
                         index: *index,
                         signed: stored.root,
@@ -314,14 +314,18 @@ impl DomainSigner {
         Ok(more)
     }
 
+    /// Halts on a conflict of the store (`CheckpointConflict`) or of the
+    /// backfill (`RootConflict`). Other errors do not halt.
     async fn halt_on_conflict(&self, error: &eyre::Report) {
-        if let Some(
-            conflict @ (ValidatorError::CheckpointConflict { .. }
-            | ValidatorError::RootConflict { .. }),
-        ) = error.downcast_ref::<ValidatorError>()
-        {
-            self.halt(conflict.to_string()).await;
-        }
+        let conflict = match (
+            error.downcast_ref::<StoreError>(),
+            error.downcast_ref::<SignerError>(),
+        ) {
+            (Some(conflict @ StoreError::CheckpointConflict { .. }), _) => conflict.to_string(),
+            (_, Some(conflict @ SignerError::RootConflict { .. })) => conflict.to_string(),
+            _ => return,
+        };
+        self.halt(conflict).await;
     }
 
     /// Stops signing and backfill of this domain, then writes the reorg flag.
@@ -629,7 +633,10 @@ mod tests {
             .await
             .expect("backfill stops");
         assert!(signer.halted());
-        assert!(store.meta(domain, Meta::ReorgFlag).unwrap().is_some());
+        let flag = store.meta(domain, Meta::ReorgFlag).unwrap().unwrap();
+        assert!(String::from_utf8(flag)
+            .unwrap()
+            .contains("differs from the leaf root"));
         assert_eq!(store.checkpoint(domain, 0).unwrap(), None);
         assert_eq!(store.checkpoint(domain, 2).unwrap(), Some(wrong));
 
@@ -644,6 +651,23 @@ mod tests {
         // A restart keeps the domain halted.
         let signer = DomainSigner::new(origin(domain, hook), store.clone(), key()).unwrap();
         assert!(signer.halted());
+
+        // A conflict that the store returns also halts. Another store error
+        // does not.
+        let other = DomainSigner::new(origin(9, hook), store.clone(), key()).unwrap();
+        store.commit_batch(9, &leaves, &[(2, wrong)], 1).unwrap();
+        let gap = store.commit_batch(9, &leaves[..1], &[], 1).unwrap_err();
+        other.halt_on_conflict(&gap).await;
+        assert!(!other.halted());
+        let second = SignedRoot {
+            signature: [2; 65],
+            ..wrong
+        };
+        let conflict = store.put_checkpoints(9, &[(2, second)]).unwrap_err();
+        other.halt_on_conflict(&conflict).await;
+        assert!(other.halted());
+        let flag = store.meta(9, Meta::ReorgFlag).unwrap().unwrap();
+        assert!(String::from_utf8(flag).unwrap().contains("different root"));
     }
 
     #[tokio::test]
