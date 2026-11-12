@@ -10,7 +10,7 @@ pub fn group_key(
     call_price_minor: U256,
     reference_currency: u16,
 ) -> std::result::Result<B256, TimeError> {
-    Ok(outbe_primitives::call_breach::group_key(
+    Ok(outbe_system_common::call_breach::group_key(
         outbe_primitives::time::first_full_day(issued_at)?,
         call_price_minor,
         reference_currency,

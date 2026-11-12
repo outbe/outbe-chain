@@ -1,7 +1,8 @@
 //! Pure NOD price bounds and call-price bins.
 use alloy_primitives::U256;
-use outbe_primitives::call_bins::BIN_STEP_BP;
-use outbe_primitives::{error::Result, math::reference_price};
+use outbe_primitives::error::Result;
+use outbe_system_common::call_bins::BIN_STEP_BP;
+use outbe_system_common::math::reference_price;
 
 /// Whether the call price at any `u16` call rate fits `U256` for this entry.
 pub use outbe_core_common::nod_rules::is_issuable_entry;

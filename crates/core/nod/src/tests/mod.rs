@@ -8,11 +8,9 @@ mod nft;
 mod views;
 
 use alloy_primitives::{Address, B256, U256};
+use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::{
-    math::{constants::MAX_BIN_ID, tree_math},
-    storage::{hashmap::HashMapStorageProvider, StorageHandle},
-};
+use outbe_system_common::math::{constants::MAX_BIN_ID, tree_math};
 
 use crate::{api, state::CallBins, NodContract, NodItemState};
 

@@ -1,8 +1,8 @@
 use alloy_primitives::{B256, U256};
 use outbe_core_common::deadline_queue;
-use outbe_primitives::call_bins;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::series_id::SeriesId;
+use outbe_system_common::call_bins;
 
 use crate::{
     errors::NodError,
@@ -17,7 +17,7 @@ impl NodContract<'_> {
     /// Parks a new group in the bin of its sealed call price.
     pub fn insert_call_bin(&mut self, group_key: B256) -> Result<()> {
         let iso = self.group_currency.read(&group_key)?;
-        let bin = outbe_primitives::call_bins::price_to_bin(
+        let bin = outbe_system_common::call_bins::price_to_bin(
             self.group_call_price_minor.read(&group_key)?,
         )?;
         call_bins::insert(&CallBins(self, iso), group_key, bin)
@@ -104,7 +104,7 @@ impl NodContract<'_> {
             .write(&group_key, terms.call_threshold_seconds)?;
         self.group_call_notice_period_seconds
             .write(&group_key, terms.call_notice_period_seconds)?;
-        outbe_primitives::call_breach::widen_scan_terms(
+        outbe_system_common::call_breach::widen_scan_terms(
             &self.max_call_window_seconds,
             &self.min_call_threshold_seconds,
             terms.reference_currency,
@@ -603,7 +603,7 @@ outbe_core_common::impl_deadline_queue!(CleanupQueue<B256> {
 /// One currency's call-price trie, like `outbe_gem::state::CallBins`.
 pub struct CallBins<'a, 'storage>(pub &'a NodContract<'storage>, pub u16);
 
-outbe_primitives::impl_call_bins!(CallBins<B256> {
+outbe_system_common::impl_call_bins!(CallBins<B256> {
     root: call_bin_tree_root,
     mid: call_bin_tree_mid,
     leaf: call_bin_tree_leaf,
