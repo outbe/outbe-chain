@@ -179,7 +179,7 @@ mod tests {
     use super::*;
 
     fn vector() -> Value {
-        serde_json::from_str(include_str!("../testdata/outbe-testnet-checkpoints.json")).unwrap()
+        serde_json::from_str(crate::test_vectors::OUTBE_TESTNET_CHECKPOINTS).unwrap()
     }
 
     fn signed<T>(value: T, signature: &Value) -> Signed<T> {

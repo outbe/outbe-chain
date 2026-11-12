@@ -453,8 +453,7 @@ mod tests {
     /// The Outbe testnet vector: domain, hook and 43 leaves.
     fn testnet() -> (u32, Address, Vec<B256>, serde_json::Value) {
         let v: serde_json::Value =
-            serde_json::from_str(include_str!("../testdata/outbe-testnet-checkpoints.json"))
-                .unwrap();
+            serde_json::from_str(crate::test_vectors::OUTBE_TESTNET_CHECKPOINTS).unwrap();
         let domain = v["domain"].as_u64().unwrap() as u32;
         let hook = serde_json::from_value(v["merkle_tree_hook"].clone()).unwrap();
         let leaves = serde_json::from_value(v["leaves"].clone()).unwrap();

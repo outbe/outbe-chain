@@ -1,4 +1,9 @@
-{
+//! Outbe testnet data for tests: MerkleTreeHook `InsertedIntoTree` leaves,
+//! `submitCheckpoint` signatures that the HyperlaneController accepted, and
+//! one `announce` signature. The signatures are public calldata.
+
+/// JSON with `leaves`, `checkpoints` and `announcement`.
+pub(crate) const OUTBE_TESTNET_CHECKPOINTS: &str = r#"{
   "source": "Outbe testnet (chain 54322345), block <= 81576: MerkleTreeHook InsertedIntoTree logs, HyperlaneController submitCheckpoint and ValidatorAnnounce announce calldata",
   "domain": 54322345,
   "merkle_tree_hook": "0x1f4DB1C0405361288843CD4B0861A8D687554708",
@@ -76,4 +81,4 @@
     "storage_location": "s3+http://15.235.13.144:9000/0xbf663d6c0f5da824fe7857a78e58b4e53ec53af5/54322345",
     "signature": "0xee7f354ea9ccfb2206366fa207695c7ed92e4a585737abc5f6d7db23932b0eb74494d6e39111c24da601a75394eef263d8a2e7c86e744735db248ef72e8087d91c"
   }
-}
+}"#;

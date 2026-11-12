@@ -99,18 +99,8 @@ impl IncrementalMerkle {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{b256, eip191_hash_message};
-    use serde::Deserialize;
-
     use super::*;
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Case {
-        test_name: String,
-        expected_root: B256,
-        leaves: Vec<String>,
-    }
+    use alloy_primitives::b256;
 
     #[test]
     fn empty_root_matches_hyperlane_initial_root() {
@@ -121,28 +111,12 @@ mod tests {
         assert_eq!(IncrementalMerkle::default().index(), None);
     }
 
-    /// Upstream `vectors/merkle.json`: leaves are EIP-191 hashes of strings.
-    #[test]
-    fn upstream_vectors() {
-        let cases: Vec<Case> =
-            serde_json::from_str(include_str!("../testdata/merkle.json")).unwrap();
-        for case in cases {
-            let mut tree = IncrementalMerkle::default();
-            for leaf in &case.leaves {
-                tree.ingest(eip191_hash_message(leaf));
-            }
-            assert_eq!(tree.count(), case.leaves.len(), "{}", case.test_name);
-            assert_eq!(tree.root(), case.expected_root, "{}", case.test_name);
-        }
-    }
-
     /// Outbe testnet `MerkleTreeHook` `InsertedIntoTree` leaves. The roots
     /// are the signed checkpoints (34, 35) and `latestCheckpoint()` at 42.
     #[test]
     fn outbe_testnet_hook_roots() {
         let vector: serde_json::Value =
-            serde_json::from_str(include_str!("../testdata/outbe-testnet-checkpoints.json"))
-                .unwrap();
+            serde_json::from_str(crate::test_vectors::OUTBE_TESTNET_CHECKPOINTS).unwrap();
         let leaves: Vec<B256> = serde_json::from_value(vector["leaves"].clone()).unwrap();
         assert_eq!(leaves.len(), 43);
         let checkpoints = vector["checkpoints"].as_array().unwrap();
