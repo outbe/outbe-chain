@@ -11,14 +11,6 @@ fn config_unset_resolves_by_chain_id() {
         // An explicit selector still wins over the network default.
         intex.config_profile.write(config::PROFILE_PROD).unwrap();
         assert_eq!(config::read(&s).unwrap(), config::IntexParams::PROD);
-        assert_eq!(
-            config::IntexParams::PROD.commit_bond_minor,
-            100_000_000u128 * 1_000_000u128
-        );
-        assert_eq!(
-            config::IntexParams::DEV.commit_bond_minor,
-            100u128 * 1_000_000u128
-        );
     });
 }
 

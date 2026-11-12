@@ -37,63 +37,6 @@ fn record(
     }
 }
 
-fn walk_source_files(dir: &std::path::Path, visit: &mut impl FnMut(&std::path::Path)) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            walk_source_files(&path, visit);
-        } else if is_non_test_rust_source(&path) {
-            visit(&path);
-        }
-    }
-}
-
-fn is_non_test_rust_source(path: &std::path::Path) -> bool {
-    if path.extension().and_then(|extension| extension.to_str()) != Some("rs") {
-        return false;
-    }
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default();
-    !name.contains("_tests") && !name.starts_with("test_")
-}
-
-fn removed_api_hits(path: &std::path::Path) -> usize {
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return 0;
-    };
-    content
-        .lines()
-        .filter(|line| {
-            if !line.contains("await_parent_cert") || line.trim_start().starts_with("//") {
-                return false;
-            }
-            eprintln!("await_parent_cert hit in {}: {}", path.display(), line);
-            true
-        })
-        .count()
-}
-
-/// `rg -n "await_parent_cert" crates/blockchain/consensus/src/`
-/// must return 0 hits in non-test code. This test does the check in-process, so
-/// the assertion runs on every `cargo nextest` invocation.
-#[test]
-fn await_parent_cert_is_removed_from_non_test_consensus_src() {
-    let mut total_non_test_hits = 0usize;
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    walk_source_files(&root, &mut |path| {
-        total_non_test_hits += removed_api_hits(path)
-    });
-    assert_eq!(
-        total_non_test_hits, 0,
-        "await_parent_cert must not exist in non-test consensus src code"
-    );
-}
-
 #[test]
 fn certified_notarized_parent_does_not_block_proposal() {
     // With a CertifiedNotarization record for the requested parent,

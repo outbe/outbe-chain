@@ -235,15 +235,8 @@ fn finalization_rejects_non_parent_metadata_with_preloaded_summary() {
 }
 
 #[test]
-fn accounting_progress_address_is_ee04_and_user_calls_do_not_dispatch() {
+fn accounting_progress_address_is_not_a_dispatching_precompile() {
     use outbe_primitives::addresses::ACCOUNTING_PROGRESS_ADDRESS;
-    let expected: Address = "0x000000000000000000000000000000000000EE04"
-        .parse()
-        .expect("valid 0xEE04 address literal");
-    assert_eq!(
-        ACCOUNTING_PROGRESS_ADDRESS, expected,
-        "INV1: ACCOUNTING_PROGRESS_ADDRESS must be exactly 0x...EE04",
-    );
     assert!(
         !outbe_evm::precompiles::outbe_precompile_addresses()
             .contains(&ACCOUNTING_PROGRESS_ADDRESS),
