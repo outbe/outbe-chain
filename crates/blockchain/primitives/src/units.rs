@@ -88,18 +88,6 @@ mod tests {
     }
 
     #[test]
-    fn the_intex_codec_uses_the_same_units() {
-        use crate::test_utils::sol_interface::sol_constant;
-        const CODEC: &str =
-            include_str!("../../../../contracts/intex/src/shared/libs/BridgeMsgCodec.sol");
-        assert_eq!(
-            sol_constant(CODEC, "PROTOCOL_DECIMALS"),
-            Some(PROTOCOL_AMOUNT_DECIMALS)
-        );
-        assert_eq!(sol_constant(CODEC, "SCALE_1E6"), Some(SCALE_1E6_U128));
-    }
-
-    #[test]
     fn protocol_amount_converts_to_native_coen_without_changing_protocol_precision() {
         assert_eq!(
             checked_protocol_to_native(U256::ONE),

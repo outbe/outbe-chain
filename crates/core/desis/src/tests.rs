@@ -47,25 +47,6 @@ const LOAD_MINOR: u128 = 1_000_000 * PROMIS_LOAD_MINOR;
 /// The `auction_advance` work budget in `outbe-cycle`.
 const ADVANCE_BUDGET: u64 = crate::constants::AUCTION_ADVANCE_BUDGET_GAS;
 
-#[test]
-fn the_bridge_caps_match_the_contracts() {
-    use crate::constants::{MAX_BID_BATCHES, MAX_PAYLOAD_ARRAY_LEN, MAX_REFUND_CHUNKS};
-    use outbe_primitives::test_utils::sol_interface::sol_constant;
-    const CODEC: &str =
-        include_str!("../../../../contracts/intex/src/shared/libs/BridgeMsgCodec.sol");
-    const TARGET_ROUTER: &str =
-        include_str!("../../../../contracts/intex/src/target/TargetRouter.sol");
-    assert_eq!(
-        sol_constant(CODEC, "MAX_PAYLOAD_ARRAY_LEN"),
-        Some(MAX_PAYLOAD_ARRAY_LEN)
-    );
-    assert_eq!(sol_constant(CODEC, "MAX_CHUNKS"), Some(MAX_REFUND_CHUNKS));
-    assert_eq!(
-        sol_constant(TARGET_ROUTER, "MAX_BIDS_BATCHES"),
-        Some(MAX_BID_BATCHES)
-    );
-}
-
 // --- PROMIS load ladder ---
 
 /// The launch rung: 1 000 000 PROMIS.

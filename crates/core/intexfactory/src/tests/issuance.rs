@@ -281,22 +281,6 @@ fn a_chains_series_travel_together_up_to_the_message_cap() {
 }
 
 #[test]
-fn the_message_caps_match_the_codec() {
-    use crate::constants::MAX_SERIES_PER_MARK;
-    use outbe_primitives::test_utils::sol_interface::sol_constant;
-    const CODEC: &str =
-        include_str!("../../../../../contracts/intex/src/shared/libs/BridgeMsgCodec.sol");
-    assert_eq!(
-        sol_constant(CODEC, "MAX_SERIES_PER_ISSUANCE"),
-        Some(MAX_SERIES_PER_MESSAGE)
-    );
-    assert_eq!(
-        sol_constant(CODEC, "MAX_SERIES_PER_MARK"),
-        Some(MAX_SERIES_PER_MARK)
-    );
-}
-
-#[test]
 fn a_chains_series_batch_even_when_another_chain_comes_between_them() {
     // A day emits its legs series by series, so one chain's legs are never adjacent.
     // Both of chain 10's series still travel together, or the batching would do

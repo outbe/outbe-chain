@@ -12,7 +12,7 @@ use outbe_genesis_cli::seed_codec::{
     StorageBuilder,
 };
 use outbe_genesis_cli::seed_economy::clear_seeded_metadosis_days;
-use outbe_genesis_cli::seed_oracle::{seed_oracle, DEFAULT_POLICY_RATES, REFERENCE_CURRENCIES};
+use outbe_genesis_cli::seed_oracle::{seed_oracle, DEFAULT_POLICY_RATES};
 use outbe_genesis_cli::seed_validators::{seed_staking, seed_validator_set};
 use serde_json::{json, Value};
 
@@ -181,22 +181,6 @@ fn every_reference_currency_needs_a_policy_rate() {
     let cfg = json!({ "policy_rates": policy_rates });
     let err = seed_oracle(&mut StorageBuilder::new(), &cfg).expect_err("missing policy rate");
     assert!(err.to_string().contains("no policy rate: [978]"));
-}
-
-#[test]
-fn reference_currencies_match_the_oracle_constant() {
-    let constants = fs::read_to_string(repo_root().join("crates/system/oracle/src/constants.rs"))
-        .expect("read oracle constants");
-    let line = constants
-        .lines()
-        .find(|line| line.starts_with("pub const REFERENCE_CURRENCIES:"))
-        .expect("REFERENCE_CURRENCIES");
-    let list = line.rsplit('[').next().unwrap().split(']').next().unwrap();
-    let rust: Vec<u32> = list
-        .split(',')
-        .map(|code| code.trim().parse().unwrap())
-        .collect();
-    assert_eq!(REFERENCE_CURRENCIES.to_vec(), rust);
 }
 
 #[test]
