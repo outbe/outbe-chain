@@ -3,6 +3,7 @@ mod abi;
 mod config;
 pub(crate) mod math;
 mod pool;
+mod twap;
 mod worker;
 
 pub(crate) use config::{collect_markets, validate_config, DexProviderConfig};

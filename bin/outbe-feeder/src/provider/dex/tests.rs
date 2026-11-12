@@ -754,7 +754,7 @@ async fn live_dex_twap() {
     let decimals = market.read_decimals(&rpc, &block).await.unwrap();
     let spot = market.read_rate(&rpc, &block, decimals).await.unwrap();
     // WETH is token1: the pool tick gives WETH-wei for each USDC unit.
-    let window = super::worker::TWAP_WINDOW_SECS as u32;
+    let window = super::twap::TWAP_WINDOW_SECS as u32;
     let observed = rpc
         .call(
             pool,
