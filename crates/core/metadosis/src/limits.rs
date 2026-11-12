@@ -95,11 +95,7 @@ pub(crate) fn allocate_day_metadosis_limit(
         carry_before,
     )?;
     if !split.promis_limit_credit.is_zero() {
-        let delta =
-            PromisLimitContract::new(storage.clone()).checked_credit(split.promis_limit_credit)?;
-        if delta.credited != split.promis_limit_credit {
-            return Err(MetadosisError::LysisLimitCreditMismatch.into());
-        }
+        PromisLimitContract::new(storage.clone()).checked_credit(split.promis_limit_credit)?;
     }
     if !split.desis_limit_minor.is_zero() {
         let mut promis = PromisLimitContract::new(storage);

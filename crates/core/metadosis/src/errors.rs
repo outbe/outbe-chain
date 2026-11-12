@@ -27,9 +27,6 @@ pub enum MetadosisError {
         lysis_limit_minor: U256,
     },
 
-    #[error("Lysis Promis Limit credit does not match the immutable day split")]
-    LysisLimitCreditMismatch,
-
     #[error("on-chain Lysis input or result mismatch")]
     LysisResultMismatch,
 
@@ -58,7 +55,6 @@ impl From<MetadosisError> for PrecompileError {
                 dayLimit: day_limit,
                 lysisLimitMinor: lysis_limit_minor,
             }),
-            MetadosisError::LysisLimitCreditMismatch => revert_with(I::LysisLimitCreditMismatch {}),
             MetadosisError::LysisResultMismatch => revert_with(I::LysisResultMismatch {}),
             MetadosisError::DesisLimitUnavailable {
                 desis_limit_minor,
