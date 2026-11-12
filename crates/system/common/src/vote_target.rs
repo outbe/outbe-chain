@@ -3,12 +3,12 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolError};
 
-use crate::addresses::VOTE_ADDRESS;
-use crate::block::BlockRuntimeContext;
-use crate::error::{PrecompileError, Result};
-use crate::storage::dsl::{Map, RecordEntry, StorageRecord};
-use crate::storage::types::{Mapping, Slot, Storable, StorableType, StorageBytes};
-use crate::storage::StorageHandle;
+use outbe_primitives::addresses::VOTE_ADDRESS;
+use outbe_primitives::block::BlockRuntimeContext;
+use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::storage::dsl::{Map, RecordEntry, StorageRecord};
+use outbe_primitives::storage::types::{Mapping, Slot, Storable, StorableType, StorageBytes};
+use outbe_primitives::storage::StorageHandle;
 
 sol! {
     error InvalidProposalStatus();
@@ -217,14 +217,18 @@ impl StorageRecord for ProposalRecord {
 
     fn create(entry: &RecordEntry<'_, Self::Key, Self>, value: &Self) -> Result<()> {
         if Self::exists(entry)? {
-            return Err(crate::storage::dsl::existing_record_err("ProposalRecord"));
+            return Err(outbe_primitives::storage::dsl::existing_record_err(
+                "ProposalRecord",
+            ));
         }
         Self::write_fields(entry, value)
     }
 
     fn update(entry: &RecordEntry<'_, Self::Key, Self>, value: &Self) -> Result<()> {
         if !Self::exists(entry)? {
-            return Err(crate::storage::dsl::missing_record_err("ProposalRecord"));
+            return Err(outbe_primitives::storage::dsl::missing_record_err(
+                "ProposalRecord",
+            ));
         }
         Self::write_fields(entry, value)
     }
@@ -597,7 +601,7 @@ impl VoteTargetRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::hashmap::HashMapStorageProvider;
+    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 
     #[test]
     fn proposal_status_discriminants_and_terminal_flags_are_preserved() {

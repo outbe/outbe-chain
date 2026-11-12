@@ -227,7 +227,7 @@ fn unrelated_caller_can_apply_add_then_remove_once() {
 #[test]
 fn apply_uses_live_metadata_not_informational_proposal_declarations() {
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
-    use outbe_primitives::vote_target::{TargetExecutionOutcome, VoteTarget, VoteTargetContext};
+    use outbe_system_common::vote_target::{TargetExecutionOutcome, VoteTarget, VoteTargetContext};
 
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     stub_vault(&mut provider);

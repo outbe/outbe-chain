@@ -1,13 +1,13 @@
 //! Network decisions on exact patch revisions; no Git, signing or network I/O.
 
 use alloy_primitives::{Address, U256};
-use outbe_primitives::vote_target::{
-    read_vote_proposal, ProposalStatus, TargetElectorate, TargetExecutionOutcome, VoteTarget,
-    VoteTargetContext,
-};
 use outbe_primitives::{
     addresses::CODE_REGISTRY_ADDRESS, block::BlockRuntimeContext, error::Result,
     storage::StorageHandle,
+};
+use outbe_system_common::vote_target::{
+    read_vote_proposal, ProposalStatus, TargetElectorate, TargetExecutionOutcome, VoteTarget,
+    VoteTargetContext,
 };
 
 use crate::{

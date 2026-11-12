@@ -5,7 +5,7 @@ use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::stablecoin::validate_currency_code;
-use outbe_primitives::vote_target::{
+use outbe_system_common::vote_target::{
     decode_proposal_payload, decode_stored_proposal_payload, TargetExecutionOutcome, VoteTarget,
     VoteTargetContext, VoteTargetError,
 };

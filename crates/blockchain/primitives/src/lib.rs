@@ -38,7 +38,6 @@ pub mod radicle_genesis;
 pub mod radicle_publication;
 pub mod reshare_artifact;
 pub mod runtime_audit_v1;
-pub mod scheduled_update;
 pub mod series_id;
 pub mod signer;
 pub mod stablecoin;
@@ -63,7 +62,6 @@ pub mod tribute_encryption;
 pub mod units;
 pub mod validator_dto;
 pub mod validators;
-pub mod vote_target;
 pub mod wwd_entity_id;
 pub mod zero_fee_types;
 

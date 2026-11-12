@@ -2,7 +2,7 @@
 
 use alloy_primitives::U256;
 
-use crate::protocol_version::ProtocolVersion;
+use outbe_primitives::protocol_version::ProtocolVersion;
 
 /// `status` byte is not a known scheduled-update lifecycle value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

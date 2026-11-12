@@ -5,7 +5,7 @@ use outbe_primitives::addresses::CROSSCHAIN_BRIDGE_ADDRESS;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::vote_target::{TargetExecutionOutcome, VoteTarget, VoteTargetContext};
+use outbe_system_common::vote_target::{TargetExecutionOutcome, VoteTarget, VoteTargetContext};
 
 use crate::precompile::{dispatch, IUpdate};
 use crate::sol_ext::{ICrosschainBridge, IUUPSUpgradeable};

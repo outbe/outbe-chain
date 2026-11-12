@@ -1055,7 +1055,7 @@ mod vote_target {
     use crate::sol_ext::IHyperlaneRouter;
     use crate::HyperlaneVoteTarget;
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
-    use outbe_primitives::vote_target::{TargetExecutionOutcome, VoteTarget, VoteTargetContext};
+    use outbe_system_common::vote_target::{TargetExecutionOutcome, VoteTarget, VoteTargetContext};
 
     const APPROVED_AT: u64 = 30;
     const ARBITRUM: u32 = 42_161;

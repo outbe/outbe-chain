@@ -7,7 +7,7 @@ use outbe_stablecoinfactory::StablecoinFactoryVoteTarget;
 use outbe_update::vote_target::UpdateVoteTarget;
 use outbe_vaultrouter::VaultRouterVoteTarget;
 
-pub use outbe_primitives::vote_target::{
+pub use outbe_system_common::vote_target::{
     decode_proposal_payload, decode_stored_proposal_payload, TargetAdmission, TargetElectorate,
     TargetExecutionOutcome, VoteTarget, VoteTargetContext, VoteTargetError, VoteTargetHandlers,
     VoteTargetRegistry,

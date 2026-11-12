@@ -7,7 +7,7 @@ use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::stablecoin::{decode_canonical_stablecoin_create, predict_stablecoin};
 use outbe_primitives::stablecoin_fork::STABLECOIN_CREATE_BOND;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::vote_target::{
+use outbe_system_common::vote_target::{
     ProposalStatus, TargetAdmission, TargetExecutionOutcome, VoteTarget, VoteTargetContext,
 };
 

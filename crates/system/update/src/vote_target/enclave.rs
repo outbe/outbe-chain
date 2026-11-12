@@ -3,7 +3,7 @@
 use alloy_primitives::{B256, U256};
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
-use outbe_primitives::vote_target::TargetExecutionOutcome;
+use outbe_system_common::vote_target::TargetExecutionOutcome;
 use outbe_teeregistry::TeeRegistry;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
