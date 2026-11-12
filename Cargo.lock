@@ -8324,7 +8324,6 @@ dependencies = [
  "eyre",
  "flate2",
  "futures",
- "outbe-primitives",
  "outbe-system-common",
  "prost",
  "reqwest 0.12.28",
@@ -8350,7 +8349,6 @@ dependencies = [
  "outbe-fidelity-math",
  "outbe-macros",
  "outbe-primitives",
- "outbe-system-common",
  "outbe-tee",
  "serde_json",
  "thiserror 2.0.18",
@@ -8361,7 +8359,6 @@ name = "outbe-fidelity-math"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
- "outbe-primitives",
  "outbe-system-common",
  "thiserror 2.0.18",
 ]

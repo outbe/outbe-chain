@@ -12,7 +12,6 @@ publish.workspace = true
 [dependencies]
 outbe-system-common.workspace = true
 alloy-primitives.workspace = true
-outbe-primitives.workspace = true
 thiserror.workspace = true
 
 [lints]

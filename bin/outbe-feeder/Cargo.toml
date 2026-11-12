@@ -10,9 +10,8 @@ name = "outbe-feeder"
 path = "src/main.rs"
 
 [dependencies]
-outbe-system-common.workspace = true
 # Internal
-outbe-primitives.workspace = true
+outbe-system-common.workspace = true
 
 # Alloy (Ethereum client)
 alloy-primitives = { workspace = true, features = ["std"] }
