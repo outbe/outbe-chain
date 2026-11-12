@@ -10,7 +10,7 @@ use tokio::sync::OwnedSemaphorePermit;
 
 pub(super) const MAGIC: &[u8; 4] = b"OCL1";
 pub(super) const MAX_FRAME: usize =
-    5 + 40 + 32 + 2 + 4 * outbe_consensus::bls::MAX_VALIDATORS as usize;
+    5 + 40 + 32 + 2 + 4 * outbe_simplex::bls::MAX_VALIDATORS as usize;
 
 impl LocalReceiptClient {
     pub async fn read_publication_progress(
@@ -130,7 +130,7 @@ fn decode_attesters(
     };
     let body_hash = alloy_primitives::B256::from(input.array::<32>()?);
     let count = usize::from(u16::from_be_bytes(input.array()?));
-    if count > outbe_consensus::bls::MAX_VALIDATORS as usize
+    if count > outbe_simplex::bls::MAX_VALIDATORS as usize
         || body_hash != body.receipt_hash()
         || block.hash.is_zero()
     {
@@ -152,10 +152,10 @@ fn decode_attesters(
 }
 
 fn validate_indices(indices: &[u32]) -> Result<(), Error> {
-    if indices.len() > outbe_consensus::bls::MAX_VALIDATORS as usize
+    if indices.len() > outbe_simplex::bls::MAX_VALIDATORS as usize
         || indices
             .iter()
-            .any(|&i| i >= outbe_consensus::bls::MAX_VALIDATORS)
+            .any(|&i| i >= outbe_simplex::bls::MAX_VALIDATORS)
         || indices.windows(2).any(|pair| pair[0] >= pair[1])
     {
         return Err(Error::Protocol);

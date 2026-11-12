@@ -41,14 +41,6 @@ use commonware_cryptography::{
     bls12381::primitives::{ops::keypair, variant::MinSig},
     sha256::Digest as Sha256Digest,
 };
-use outbe_consensus::hybrid::HybridScheme;
-use outbe_consensus::proof::{
-    constants::finalize_namespace, invalid_vrf_evidence_hash_v2, HybridCertificate, V2VerifyError,
-};
-use outbe_consensus::test_harness::{
-    finalize_messages, test_fully_signed_metadata, vrf_test_committee, CertificateMessages,
-    TestFinalizedParent, VrfTestCommittee,
-};
 use outbe_primitives::addresses::{PROMIS_LIMIT_ADDRESS, STAKING_ADDRESS};
 use outbe_primitives::consensus_metadata::{
     CertifiedParentAccountingMetadata, ParentParticipationProof,
@@ -56,9 +48,19 @@ use outbe_primitives::consensus_metadata::{
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::protocol_schedule::OutbeProtocolSchedule;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
-use outbe_primitives::system_tx::{build_unsigned_system_tx, SystemTx};
+use outbe_primitives::system_tx::{
+    build_unsigned_system_tx, SystemTx, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+};
 use outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
 use outbe_promislimit::PromisLimitContract;
+use outbe_simplex::hybrid::HybridScheme;
+use outbe_simplex::proof::{
+    constants::finalize_namespace, invalid_vrf_evidence_hash_v2, HybridCertificate, V2VerifyError,
+};
+use outbe_simplex::test_harness::{
+    finalize_messages, test_fully_signed_metadata, vrf_test_committee, CertificateMessages,
+    TestFinalizedParent, VrfTestCommittee,
+};
 use outbe_slashindicator::precompile::ISlashIndicator as Isi;
 use outbe_slashindicator::runtime::classify_vrf_failure;
 use outbe_slashindicator::schema::SlashIndicator;
@@ -240,8 +242,9 @@ fn sign_phase1_metadata_tx(
     signer: &PrivateKeySigner,
     metadata: &CertifiedParentAccountingMetadata,
 ) -> Vec<u8> {
-    let input = SystemTx::CertifiedParentAccounting {
-        metadata: metadata.clone(),
+    let input = SystemTx::Consensus {
+        step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+        payload: metadata.encode().unwrap(),
     }
     .encode()
     .unwrap();
@@ -1242,8 +1245,8 @@ fn slashindicator_dedup_retains_invalid_vrf_evidence_seen_hash() {
 //     different dispatcher). So the canonical revert text is a
 //     behavioural marker for "this ran through the user-tx precompile
 //     dispatch and was gated by the ACL".
-// The begin-zone path lives in a different crate (`outbe-evm`) that
-// `outbe-slashindicator` cannot depend on without cycle. So the type
+// The begin-zone path lives in the execution crate, which this crate
+// cannot depend on without a cycle. So the type
 // system enforces the structural "begin-zone does NOT host this selector"
 // claim. `outbe_evm::system_tx::SystemTx` is a closed enum with
 // 8 named variants. None of them reference `submitInvalidVrfProofEvidence`.

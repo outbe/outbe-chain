@@ -9,13 +9,13 @@ publish.workspace = true
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-validatorset = { path = "../validatorset" }
-outbe-consensus.workspace = true
 outbe-emission.workspace = true
 outbe-promislimit.workspace = true
 outbe-slashindicator.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 
 [package.metadata.cargo-machete]
 # Used only through sol!-generated code in schema.rs; cargo-machete cannot see
@@ -23,7 +23,7 @@ thiserror.workspace = true
 ignored = ["alloy-sol-types"]
 
 [dev-dependencies]
-outbe-consensus = { workspace = true, features = ["test-utils"] }
+outbe-simplex = { workspace = true, features = ["test-utils"] }
 outbe-validatorset = { path = "../validatorset", features = ["test-utils"] }
 outbe-promislimit.workspace = true
 tempfile.workspace = true

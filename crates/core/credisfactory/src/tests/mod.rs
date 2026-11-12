@@ -17,6 +17,9 @@ use outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS;
 
 use alloy_sol_types::SolCall;
 use outbe_credis::CredisContract;
+use outbe_enclave::gratis::{
+    decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
+};
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_oracle::schema::OracleContract;
@@ -27,9 +30,6 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 use outbe_primitives::units::{checked_protocol_to_native, SCALE_1E6_U256};
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
-use outbe_tee_enclave::gratis::{
-    decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
-};
 use outbe_vaultrouter::{LiquidityReservation, VaultRouterContract};
 
 use crate::runtime;
@@ -400,11 +400,11 @@ pub fn queued_for_forfeit(
 ) -> outbe_primitives::error::Result<u32> {
     let credis = CredisContract::new(storage.clone());
     let Some(mut day) =
-        outbe_common::deadline_queue::first_day(&outbe_credis::ForfeitQueue(&credis))?
+        outbe_core_common::deadline_queue::first_day(&outbe_credis::ForfeitQueue(&credis))?
     else {
         return Ok(0);
     };
-    let last = outbe_common::deadline_queue::deadline_day(timestamp)?;
+    let last = outbe_core_common::deadline_queue::deadline_day(timestamp)?;
     let mut live = 0;
     while day <= last {
         live += credis.forfeit_day_live.read(&day)?;
@@ -460,10 +460,12 @@ pub fn forfeited_by(
     let credis = CredisContract::new(storage.clone());
     let queue = outbe_credis::ForfeitQueue(&credis);
     let mut due = Vec::new();
-    if let Some(first) = outbe_common::deadline_queue::first_day(&queue)? {
-        for day in first..=outbe_common::deadline_queue::deadline_day(timestamp)? {
+    if let Some(first) = outbe_core_common::deadline_queue::first_day(&queue)? {
+        for day in first..=outbe_core_common::deadline_queue::deadline_day(timestamp)? {
             for slot in 0..credis.forfeit_day_len.read(&day)? {
-                if let Some(series) = outbe_common::deadline_queue::entry_at(&queue, day, slot)? {
+                if let Some(series) =
+                    outbe_core_common::deadline_queue::entry_at(&queue, day, slot)?
+                {
                     if credis.series_member_count(series)? != 0 {
                         due.push(series);
                     }
@@ -604,7 +606,7 @@ pub fn auth(op: GratisOp, owner: Address, amount: U256, op_nonce: u64) -> Modify
     ModifyAuth {
         mac: modify_mac(
             &mk,
-            &outbe_tee_enclave::gratis::ModifyOperation {
+            &outbe_enclave::gratis::ModifyOperation {
                 account: owner,
                 op,
                 amount,

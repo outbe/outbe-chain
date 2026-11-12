@@ -8,30 +8,19 @@ use crate::schema::{ScheduledUpdateRecord, Update};
 use crate::ProtocolVersion;
 
 pub use crate::schema::ScheduledUpdateStatus;
+pub use outbe_primitives::scheduled_update::ScheduledUpdateInfo;
 
-/// Materialized scheduled update read from storage.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ScheduledUpdateInfo {
-    pub proposal_id: U256,
-    pub version: ProtocolVersion,
-    pub activation_height: u64,
-    pub info: String,
-    pub status: ScheduledUpdateStatus,
-}
-
-impl TryFrom<ScheduledUpdateRecord> for ScheduledUpdateInfo {
-    type Error = UpdateError;
-
-    fn try_from(record: ScheduledUpdateRecord) -> std::result::Result<Self, Self::Error> {
-        let status = record.scheduled_update_status()?;
-        Ok(Self {
-            proposal_id: record.proposal_id,
-            version: record.version,
-            activation_height: record.activation_height,
-            info: record.info,
-            status,
-        })
-    }
+fn scheduled_update_info(
+    record: ScheduledUpdateRecord,
+) -> std::result::Result<ScheduledUpdateInfo, UpdateError> {
+    let status = record.scheduled_update_status()?;
+    Ok(ScheduledUpdateInfo {
+        proposal_id: record.proposal_id,
+        version: record.version,
+        activation_height: record.activation_height,
+        info: record.info,
+        status,
+    })
 }
 
 /// Returns the major part of an encoded protocol version.
@@ -50,7 +39,7 @@ impl Update<'_> {
         Ok(self
             .scheduled_updates
             .get(proposal_id)?
-            .map(ScheduledUpdateInfo::try_from)
+            .map(scheduled_update_info)
             .transpose()?)
     }
 

@@ -4,8 +4,8 @@ use crate::precompile::ISlashIndicator;
 use alloy_primitives::Bytes;
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolError;
-use outbe_consensus::proof::V2VerifyError;
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::proof::V2VerifyError;
 use thiserror::Error;
 
 /// A stored or genesis percent word is not admitted.
@@ -778,6 +778,23 @@ impl From<SlashIndicatorError> for PrecompileError {
                 ))
             }
         }
+    }
+}
+
+/// Proposer recorded by validator liveness is not in the active consensus set.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum LivenessError {
+    /// `block.proposer` is not a current consensus participant.
+    #[error("proposer is not a current consensus participant: {proposer}")]
+    ProposerNotConsensusParticipant {
+        /// Rejected proposer.
+        proposer: Address,
+    },
+}
+
+impl From<LivenessError> for PrecompileError {
+    fn from(error: LivenessError) -> Self {
+        PrecompileError::Revert(error.to_string())
     }
 }
 

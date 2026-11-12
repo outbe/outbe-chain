@@ -6,29 +6,7 @@ use outbe_primitives::storage::types::Mapping;
 use crate::errors::UpdateError;
 use crate::ProtocolVersion;
 
-/// Lifecycle status of a scheduled update (`IUpdate.ScheduledUpdateStatus`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum ScheduledUpdateStatus {
-    Scheduled = 0,
-    Activated = 1,
-    Canceled = 2,
-}
-
-impl ScheduledUpdateStatus {
-    pub fn from_u8(value: u8) -> std::result::Result<Self, UpdateError> {
-        match value {
-            0 => Ok(Self::Scheduled),
-            1 => Ok(Self::Activated),
-            2 => Ok(Self::Canceled),
-            _ => Err(UpdateError::InvalidScheduledUpdateStatus),
-        }
-    }
-
-    pub fn to_u8(self) -> u8 {
-        self as u8
-    }
-}
+pub use outbe_primitives::scheduled_update::ScheduledUpdateStatus;
 
 /// Scheduled update record keyed by vote `proposal_id`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,6 +33,7 @@ impl ScheduledUpdateRecord {
         &self,
     ) -> std::result::Result<ScheduledUpdateStatus, UpdateError> {
         ScheduledUpdateStatus::from_u8(self.status)
+            .map_err(|_| UpdateError::InvalidScheduledUpdateStatus)
     }
 
     pub fn set_scheduled_update_status(&mut self, status: ScheduledUpdateStatus) {

@@ -3,7 +3,7 @@
 use crate::precompile::IGemFactory;
 use alloy_primitives::{Bytes, B256, U256};
 use alloy_sol_types::SolError;
-use outbe_common::pow::PowError;
+use outbe_core_common::pow::PowError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 

@@ -1,4 +1,5 @@
 use crate::signer::SharedOutbeEvmSigner;
+use crate::EvmRuntimeHost;
 
 use outbe_primitives::{consensus::ConsensusExecutionBridge, OutbeHeader, OutbePrimitives};
 use reth_ethereum::{
@@ -25,6 +26,8 @@ pub struct OutbeExecutorBuilder {
     pub bridge: Option<ConsensusExecutionBridge>,
     /// Optional validator EVM signer, injected by the node binary in validator mode.
     pub evm_signer: Option<SharedOutbeEvmSigner>,
+    /// Host installed before the config constructors run. `None` does not install.
+    pub runtime_host: Option<Arc<dyn EvmRuntimeHost>>,
 }
 
 impl std::fmt::Debug for OutbeExecutorBuilder {
@@ -35,6 +38,7 @@ impl std::fmt::Debug for OutbeExecutorBuilder {
                 "evm_signer",
                 &self.evm_signer.as_ref().map(|signer| signer.address()),
             )
+            .field("runtime_host", &self.runtime_host.is_some())
             .finish()
     }
 }
@@ -45,7 +49,15 @@ impl OutbeExecutorBuilder {
         Self {
             bridge: Some(bridge),
             evm_signer: None,
+            runtime_host: None,
         }
+    }
+
+    /// Remembers `host` so [`Self::build_evm`] installs it before config construction.
+    #[must_use]
+    pub fn with_runtime_host(mut self, host: Arc<dyn EvmRuntimeHost>) -> Self {
+        self.runtime_host = Some(host);
+        self
     }
 
     pub fn with_evm_signer(mut self, signer: SharedOutbeEvmSigner) -> Self {
@@ -74,6 +86,9 @@ where
         // `AccountedParentArtifactProvider` so the executor can resolve the
         // parent artifact in both bridge mode (cache + provider) and full-node
         // mode (provider only).
+        let runtime_host = self
+            .runtime_host
+            .ok_or_else(|| eyre::eyre!("EVM runtime host is required"))?;
         let config = match self.bridge {
             Some(bridge) => {
                 let summary_cache = bridge.clone();
@@ -84,6 +99,7 @@ where
                         ctx.provider().clone(),
                         Some(summary_cache),
                     )),
+                    Arc::clone(&runtime_host),
                 )
             }
             None => OutbeEvmConfig::new_with_provider_only(
@@ -92,12 +108,14 @@ where
                     ctx.provider().clone(),
                     None,
                 )),
+                runtime_host,
             ),
         };
 
-        Ok(match self.evm_signer {
+        let config = match self.evm_signer {
             Some(signer) => config.with_evm_signer(signer),
             None => config,
-        })
+        };
+        Ok(config)
     }
 }

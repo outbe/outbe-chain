@@ -37,12 +37,12 @@ use crate::{
     tee_attestation_activation::TeeAttestationChainSpecStateV1,
 };
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use reth_ethereum::evm::revm::context_interface::result::{
     ExecutionResult, OutOfGasError, ResultGas,
 };
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     static FORCE_OUTBE_SYSTEM_CALL_ERROR: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
@@ -52,8 +52,8 @@ thread_local! {
         const { std::cell::Cell::new(false) };
 }
 
-#[cfg(test)]
-pub(crate) fn with_forced_outbe_system_call_error<R>(f: impl FnOnce() -> R) -> R {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn with_forced_outbe_system_call_error<R>(f: impl FnOnce() -> R) -> R {
     struct ResetForcedOutbeSystemCallError;
 
     impl Drop for ResetForcedOutbeSystemCallError {
@@ -67,8 +67,8 @@ pub(crate) fn with_forced_outbe_system_call_error<R>(f: impl FnOnce() -> R) -> R
     f()
 }
 
-#[cfg(test)]
-pub(crate) fn with_forced_outbe_system_call_oog_halt<R>(f: impl FnOnce() -> R) -> R {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn with_forced_outbe_system_call_oog_halt<R>(f: impl FnOnce() -> R) -> R {
     struct ResetForcedOutbeSystemCallOogHalt;
 
     impl Drop for ResetForcedOutbeSystemCallOogHalt {
@@ -82,8 +82,8 @@ pub(crate) fn with_forced_outbe_system_call_oog_halt<R>(f: impl FnOnce() -> R) -
     f()
 }
 
-#[cfg(test)]
-pub(crate) fn with_forced_outbe_system_call_revert<R>(f: impl FnOnce() -> R) -> R {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn with_forced_outbe_system_call_revert<R>(f: impl FnOnce() -> R) -> R {
     struct ResetForcedOutbeSystemCallRevert;
 
     impl Drop for ResetForcedOutbeSystemCallRevert {
@@ -281,15 +281,13 @@ where
                     crate::executor::witness::DetachedTraceTxAction::ReservedSystemCall {
                         data,
                         context,
-                    } => {
-                        crate::sys_tx_precompile::with_preloaded_system_tx_context(*context, || {
-                            self.transact_system_call(
-                                outbe_primitives::addresses::SYSTEM_ADDRESS,
-                                outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
-                                data,
-                            )
-                        })
-                    }
+                    } => crate::executor::with_preloaded_system_tx_context(*context, || {
+                        self.transact_system_call(
+                            outbe_primitives::addresses::SYSTEM_ADDRESS,
+                            outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
+                            data,
+                        )
+                    }),
                     crate::executor::witness::DetachedTraceTxAction::NormalTransact => {
                         let result = self.run_inner_transact_raw(tx)?;
                         crate::executor::witness::record_detached_trace_user_gas(
@@ -322,13 +320,13 @@ where
             return Ok(ResultAndState::new(result, self.inner.finalize()));
         }
 
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         if FORCE_OUTBE_SYSTEM_CALL_ERROR.with(|cell| cell.get()) {
             return Err(EVMError::Custom(
                 "forced Outbe system-call error for regression test".into(),
             ));
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         if FORCE_OUTBE_SYSTEM_CALL_OOG_HALT.with(|cell| cell.get()) {
             return Ok(ResultAndState::new(
                 ExecutionResult::Halt {
@@ -344,7 +342,7 @@ where
                 Default::default(),
             ));
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         if FORCE_OUTBE_SYSTEM_CALL_REVERT.with(|cell| cell.get()) {
             return Ok(ResultAndState::new(
                 ExecutionResult::Revert {
@@ -413,12 +411,14 @@ where
 }
 
 /// Custom EVM factory that registers Outbe stateful precompiles.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct OutbeEvmFactory {
     /// Immutable chain identity installed by `OutbeEvmConfig`.
     genesis_hash: B256,
     genesis_timestamp: u64,
     tee_attestation_v1: TeeAttestationChainSpecStateV1,
+    /// Host installed for every EVM this factory creates.
+    runtime_host: std::sync::Arc<dyn crate::EvmRuntimeHost>,
 }
 
 impl core::fmt::Debug for OutbeEvmFactory {
@@ -428,11 +428,23 @@ impl core::fmt::Debug for OutbeEvmFactory {
             .field("genesis_hash", &self.genesis_hash)
             .field("genesis_timestamp", &self.genesis_timestamp)
             .field("tee_attestation_v1", &self.tee_attestation_v1)
+            .field("runtime_host", &"installed")
             .finish()
     }
 }
 
 impl OutbeEvmFactory {
+    /// Creates a factory that installs `host` on every EVM it builds.
+    #[must_use]
+    pub fn new(runtime_host: std::sync::Arc<dyn crate::EvmRuntimeHost>) -> Self {
+        Self {
+            genesis_hash: B256::ZERO,
+            genesis_timestamp: 0,
+            tee_attestation_v1: TeeAttestationChainSpecStateV1::default(),
+            runtime_host,
+        }
+    }
+
     /// Binds every EVM/precompile context created by this factory to the
     /// canonical genesis hash from ChainSpec.
     #[must_use]
@@ -447,13 +459,20 @@ impl OutbeEvmFactory {
         self.genesis_hash
     }
 
-    pub const fn with_genesis_timestamp(mut self, genesis_timestamp: u64) -> Self {
+    pub fn with_genesis_timestamp(mut self, genesis_timestamp: u64) -> Self {
         self.genesis_timestamp = genesis_timestamp;
         self
     }
 
-    pub const fn genesis_timestamp(&self) -> u64 {
+    pub fn genesis_timestamp(&self) -> u64 {
         self.genesis_timestamp
+    }
+
+    /// Stores `host` for every EVM this factory creates.
+    #[must_use]
+    pub fn with_runtime_host(mut self, host: std::sync::Arc<dyn crate::EvmRuntimeHost>) -> Self {
+        self.runtime_host = host;
+        self
     }
 
     #[must_use]
@@ -486,6 +505,7 @@ impl EvmFactory for OutbeEvmFactory {
                 .with_tee_attestation_v1(self.tee_attestation_v1.clone()),
             crate::precompiles::OutbePrecompileRuntime::new()
                 .with_abort_bridge(abort_bridge.clone()),
+            std::sync::Arc::clone(&self.runtime_host),
         );
 
         let mut evm = Context::mainnet()
@@ -544,7 +564,7 @@ mod tests {
 
     #[test]
     fn outbe_system_call_uses_artifact_gas_limit_without_changing_block_limit() {
-        let factory = OutbeEvmFactory::default();
+        let factory = OutbeEvmFactory::new(crate::host::stub_host());
         let mut evm = factory.create_evm(EmptyDB::default(), test_env());
 
         let caller = outbe_primitives::addresses::SYSTEM_ADDRESS;
@@ -575,7 +595,7 @@ mod tests {
 
     #[test]
     fn non_outbe_system_call_keeps_upstream_gas_limit() {
-        let factory = OutbeEvmFactory::default();
+        let factory = OutbeEvmFactory::new(crate::host::stub_host());
         let mut evm = factory.create_evm(EmptyDB::default(), test_env());
 
         let _ = evm.transact_system_call(

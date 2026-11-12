@@ -5,7 +5,7 @@ use crate::manager::FinalizedRepositoryAuthority;
 use commonware_cryptography::bls12381::{
     self, dkg::feldman_desmedt::Output, primitives::variant::MinSig,
 };
-use outbe_consensus::hybrid::VrfMaterialProvider;
+use outbe_simplex::hybrid::VrfMaterialProvider;
 use radicle::crypto::BlsPublicKey;
 use std::sync::Arc;
 use tokio::sync::watch;

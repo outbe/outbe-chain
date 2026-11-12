@@ -6,7 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-outbe-common.workspace = true
+outbe-core-common.workspace = true
 outbe-emission.workspace = true
 outbe-fidelity.workspace = true
 outbe-lysis.workspace = true
@@ -23,14 +23,14 @@ serde_json.workspace = true
 postcard.workspace = true
 thiserror.workspace = true
 
-outbe-tee-enclave = { workspace = true, optional = true }
+outbe-enclave = { workspace = true, optional = true }
 
 [dev-dependencies]
 alloy-consensus.workspace = true
 outbe-nodfactory = { workspace = true, features = ["test-utils"] }
 outbe-promislimit.workspace = true
 outbe-tribute = { path = ".", features = ["test-enclave", "test-utils"] }
-outbe-tee-enclave.workspace = true
+outbe-enclave.workspace = true
 alloy-primitives = { workspace = true, features = ["rand"] }
 proptest.workspace = true
 revm.workspace = true
@@ -42,7 +42,7 @@ bench-utils = []
 # Enabled by the node binary in release builds. Asserts, at compile time, that
 # the attestation-skipping in-process stand-in is not in this build.
 production-enclave = []
-test-enclave = ["dep:outbe-tee-enclave", "outbe-nod/test-enclave"]
+test-enclave = ["dep:outbe-enclave", "outbe-nod/test-enclave"]
 test-utils = ["outbe-primitives/test-utils"]
 
 [lints]

@@ -1,0 +1,811 @@
+//! Validator configuration read from chain state.
+//!
+//! `validators.json` is a tooling/genesis artifact only. Runtime validator
+//! membership is read from the ValidatorSet precompile at specific block heights.
+
+use crate::bls::{self, KeyBackend};
+use crate::errors::{ValidatorsError, ValidatorsPrecompileError};
+use alloy_primitives::{Address, B256, U256};
+use commonware_codec::ReadExt as _;
+use commonware_cryptography::bls12381;
+use commonware_p2p::{Address as CommonwareAddress, Ingress as CommonwareIngress};
+use commonware_utils::Hostname;
+use eyre::{Result, WrapErr};
+use outbe_primitives::consensus_p2p::{decode_versioned, P2pAddress, P2pIngress};
+use outbe_primitives::storage::{
+    readonly::{ReadOnlyBlockContext, ReadOnlyStorageProvider, StorageReader},
+    StorageHandle,
+};
+pub use outbe_primitives::validators::*;
+use reth_ethereum::storage::{StateProvider as _, StateProviderBox, StateProviderFactory};
+use std::path::Path;
+use tracing::debug;
+
+/// Load the BLS individual signing key from a file.
+///
+/// Supports all key backends: plaintext hex, AES-256-GCM encrypted, and OS keychain.
+/// The backend determines how the raw key bytes are read from disk.
+pub fn load_signing_key(path: &Path, backend: &KeyBackend) -> Result<bls12381::PrivateKey> {
+    bls::load_individual_key(path, backend)
+        .wrap_err_with(|| format!("failed to load signing key: {}", path.display()))
+}
+
+/// Load the BLS individual signing key's public key from a file.
+pub fn load_signing_public_key(path: &Path, backend: &KeyBackend) -> Result<bls12381::PublicKey> {
+    use commonware_cryptography::Signer as _;
+    Ok(load_signing_key(path, backend)?.public_key())
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2: Dynamic reading from EVM state
+// ---------------------------------------------------------------------------
+
+/// Wrapper that implements [`StorageReader`] for Reth's `StateProvider` (boxed).
+///
+/// Bridges the Reth storage API (`fn storage(Address, B256) -> Option<U256>`)
+/// with the outbe primitives `StorageReader` trait.
+struct RethStateReader<'a> {
+    state: &'a dyn RethStateAccess,
+}
+
+/// Trait object interface for Reth state storage reads.
+///
+/// Implemented for [`StateProviderBox`] below, bridging the Reth storage API
+/// with the outbe precompile storage layer.
+pub trait RethStateAccess {
+    /// Read a storage slot value. Returns `None` if the slot doesn't exist.
+    fn storage_read(&self, address: Address, key: B256) -> Result<Option<U256>>;
+}
+
+impl RethStateAccess for StateProviderBox {
+    fn storage_read(&self, address: Address, key: B256) -> Result<Option<U256>> {
+        self.storage(address, key)
+            .map_err(|e| ValidatorsError::RethStorageRead(format!("{e}")).into())
+    }
+}
+
+impl<'a> StorageReader for RethStateReader<'a> {
+    fn read_storage(&self, address: Address, key: B256) -> outbe_primitives::error::Result<U256> {
+        self.state
+            .storage_read(address, key)
+            .map(|opt| opt.unwrap_or(U256::ZERO))
+            .map_err(|e| ValidatorsPrecompileError::StateReadFailed(e.to_string()).into())
+    }
+}
+
+/// Read the active validator set from on-chain state.
+///
+/// Queries the ValidatorSet precompile at the state referenced by `state_access`,
+/// returning the active validators with their BLS MinPk public keys.
+///
+/// No production path calls this function. Consensus startup reads the
+/// consensus participant set through [`read_consensus_validators_at_block`].
+pub fn read_validators_from_state(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    state_access: &dyn RethStateAccess,
+) -> Result<ValidatorSet> {
+    read_validator_set_from_state(protocol, state_access, ValidatorSetKind::ActiveValidators)
+}
+
+/// Read the current consensus participant set from on-chain state.
+///
+/// This includes ACTIVE, EXITING, and `JailRetained` validators that still have
+/// BLS shares. It is the correct set for Simplex startup/restart because EXITING
+/// and `JailRetained` validators remain accountable until a finalized DKG
+/// boundary removes their share.
+pub fn read_consensus_validators_from_state(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    state_access: &dyn RethStateAccess,
+) -> Result<ValidatorSet> {
+    read_validator_set_from_state(
+        protocol,
+        state_access,
+        ValidatorSetKind::ConsensusParticipants,
+    )
+}
+
+/// Read the DKG reshare TARGET set (ACTIVE plus readiness-confirmed `Joining`)
+/// from on-chain state. This is `next_players`: the committee the upcoming
+/// reshare grants shares to. The set includes only PENDING joiners whose
+/// readiness is confirmed (so the ceremony activates them). It excludes
+/// `WaitingForReadiness`, EXITING, and both jailed phases (the reshare removes
+/// them). Distinct from [`read_validators_from_state`] (ACTIVE-only set).
+pub fn read_reshare_target_from_state(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    state_access: &dyn RethStateAccess,
+) -> Result<ValidatorSet> {
+    read_validator_set_from_state(protocol, state_access, ValidatorSetKind::ReshareTarget)
+}
+
+/// One exact freeze-height reshare target after the consensus `CycleTick` lease
+/// gate, together with the legacy compatibility exclusion list.
+#[derive(Clone, Debug)]
+pub struct FrozenReshareTarget {
+    pub validator_set: ValidatorSet,
+    pub tee_expired_target_exclusions: Vec<Address>,
+}
+
+/// Exact local identity evaluated against one canonical finalized state view.
+/// `expected_enclave_id` is present for the production NodeHost session and
+/// binds startup to its committed manifest. Development transport may omit it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LocalTeeRuntimeIdentityV1 {
+    pub reth_p2p_public: [u8; 33],
+    pub expected_enclave_id: Option<B256>,
+    pub validator: Option<Address>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LocalTeeRuntimeRejectionV1 {
+    MissingBinding,
+    EnclaveIdentityMismatch,
+    ValidatorBindingMismatch,
+    ValidatorJailed,
+    RetiredEnclave,
+    Expired { valid_until: u64 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LocalTeeRuntimeAdmissionV1 {
+    /// Founder registration is created later in the same fixed block-1 system
+    /// zone. This never applies to a FullNode or to any later block.
+    BootstrapPending,
+    Ready {
+        valid_until: u64,
+    },
+    Rejected(LocalTeeRuntimeRejectionV1),
+}
+
+/// Evaluates one local node against an exact finalized Registry + ValidatorSet
+/// snapshot. The caller owns finality/header selection. This reducer never
+/// consults wall clock, latest state, receipts, or a local renewal journal.
+pub fn read_local_tee_runtime_admission_from_state(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    state_access: &dyn RethStateAccess,
+    context: ReadOnlyBlockContext,
+    identity: LocalTeeRuntimeIdentityV1,
+) -> Result<LocalTeeRuntimeAdmissionV1> {
+    if !context.is_complete() {
+        return Err(ValidatorsError::TeeRuntimeAdmissionIncompleteContext.into());
+    }
+    let reader = RethStateReader {
+        state: state_access,
+    };
+    let mut provider = ReadOnlyStorageProvider::new_with_block_context(reader, context);
+    let storage = StorageHandle::new(&mut provider);
+    let Some(node_binding) = protocol
+        .node_host_binding(storage.clone(), identity.reth_p2p_public)
+        .map_err(|error| ValidatorsError::ReadLocalNodeHostTeeBinding(format!("{error}")))?
+    else {
+        return Ok(
+            if context.block_number
+                == outbe_tee::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT
+                && identity.validator.is_some()
+            {
+                LocalTeeRuntimeAdmissionV1::BootstrapPending
+            } else {
+                LocalTeeRuntimeAdmissionV1::Rejected(LocalTeeRuntimeRejectionV1::MissingBinding)
+            },
+        );
+    };
+
+    if identity
+        .expected_enclave_id
+        .is_some_and(|expected| expected != node_binding.enclave_id)
+    {
+        return Ok(LocalTeeRuntimeAdmissionV1::Rejected(
+            LocalTeeRuntimeRejectionV1::EnclaveIdentityMismatch,
+        ));
+    }
+
+    if let Some(validator) = identity.validator {
+        if let Some(rejection) =
+            read_local_validator_tee_rejection(protocol, storage.clone(), &node_binding, validator)?
+        {
+            return Ok(LocalTeeRuntimeAdmissionV1::Rejected(rejection));
+        }
+    }
+
+    if !protocol.binding_code_admitted(storage, &node_binding, context.block_number)? {
+        Ok(LocalTeeRuntimeAdmissionV1::Rejected(
+            LocalTeeRuntimeRejectionV1::RetiredEnclave,
+        ))
+    } else if node_binding.valid_until <= context.timestamp {
+        Ok(LocalTeeRuntimeAdmissionV1::Rejected(
+            LocalTeeRuntimeRejectionV1::Expired {
+                valid_until: node_binding.valid_until,
+            },
+        ))
+    } else {
+        Ok(LocalTeeRuntimeAdmissionV1::Ready {
+            valid_until: node_binding.valid_until,
+        })
+    }
+}
+
+/// Reads the ordinary ValidatorSet reshare target after `CycleTick` has already
+/// applied any TEE deadline jail visible in this exact state. New boundary
+/// artifacts retain the legacy compatibility fields but always carry an empty
+/// expiry list. ValidatorSet lifecycle is the sole production membership gate.
+pub fn read_reshare_target_with_empty_tee_exclusions_from_state(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    state_access: &dyn RethStateAccess,
+) -> Result<FrozenReshareTarget> {
+    Ok(FrozenReshareTarget {
+        validator_set: read_reshare_target_from_state(protocol, state_access)?,
+        tee_expired_target_exclusions: Vec::new(),
+    })
+}
+
+/// Read PENDING validators (`status == PENDING`) from on-chain state - staked
+/// joiners admitted to the set but not yet share-holders. Used to admit them to
+/// consensus P2P as SECONDARY peers so they sync before their activating reshare.
+pub fn read_pending_validators_from_state(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    state_access: &dyn RethStateAccess,
+) -> Result<ValidatorSet> {
+    read_validator_set_from_state(protocol, state_access, ValidatorSetKind::PendingValidators)
+}
+
+/// Read peers admitted to consensus P2P as SECONDARY from on-chain state:
+/// both pending phases (`WaitingForReadiness`, `Joining`) and both jailed
+/// phases (`JailRetained`, `Jail`). Used as the secondary-tier P2P admission
+/// source so these peers sync + execute offer blocks. Admission grants no vote.
+pub fn read_admitted_non_consensus_from_state(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    state_access: &dyn RethStateAccess,
+) -> Result<ValidatorSet> {
+    read_validator_set_from_state(
+        protocol,
+        state_access,
+        ValidatorSetKind::AdmittedNonConsensus,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum ValidatorSetKind {
+    ActiveValidators,
+    ConsensusParticipants,
+    /// DKG reshare target / `next_players`: ACTIVE plus readiness-confirmed
+    /// `Joining`. Those PENDING joiners must be in the target so the ceremony
+    /// grants them a share and they are promoted PENDING->ACTIVE.
+    ReshareTarget,
+    /// PENDING joiners only - admitted to consensus P2P as SECONDARY peers so they
+    /// sync to head before the reshare that makes them signers.
+    PendingValidators,
+    /// Peers admitted to consensus P2P as SECONDARY so they sync + execute
+    /// offer blocks: both pending phases (`WaitingForReadiness`, `Joining`) and
+    /// both jailed phases (`JailRetained`, `Jail`). Voting still needs
+    /// `has_bls_share`, so this cannot affect consensus. Distinct from `ReshareTarget`.
+    AdmittedNonConsensus,
+}
+
+fn read_validator_set_from_state(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    state_access: &dyn RethStateAccess,
+    kind: ValidatorSetKind,
+) -> Result<ValidatorSet> {
+    let reader = RethStateReader {
+        state: state_access,
+    };
+    let mut provider = ReadOnlyStorageProvider::new(reader);
+    let storage = StorageHandle::new(&mut provider);
+    let query = match kind {
+        ValidatorSetKind::ActiveValidators => {
+            crate::protocol_state::EngineValidatorQuery::ActiveValidators
+        }
+        ValidatorSetKind::ConsensusParticipants => {
+            crate::protocol_state::EngineValidatorQuery::ConsensusParticipants
+        }
+        ValidatorSetKind::ReshareTarget => {
+            crate::protocol_state::EngineValidatorQuery::ReshareTarget
+        }
+        ValidatorSetKind::PendingValidators => {
+            crate::protocol_state::EngineValidatorQuery::PendingValidators
+        }
+        ValidatorSetKind::AdmittedNonConsensus => {
+            crate::protocol_state::EngineValidatorQuery::AdmittedNonConsensus
+        }
+    };
+    let records = protocol
+        .validator_rows(storage, query)
+        .map_err(|error| match kind {
+            ValidatorSetKind::ActiveValidators => {
+                ValidatorsError::ReadActiveValidators(format!("{error}"))
+            }
+            ValidatorSetKind::ConsensusParticipants => {
+                ValidatorsError::ReadActiveConsensusSet(format!("{error}"))
+            }
+            ValidatorSetKind::ReshareTarget => {
+                ValidatorsError::ReadReshareTargetSet(format!("{error}"))
+            }
+            ValidatorSetKind::PendingValidators => {
+                ValidatorsError::ReadPendingValidators(format!("{error}"))
+            }
+            ValidatorSetKind::AdmittedNonConsensus => {
+                ValidatorsError::ReadAdmittedNonConsensusValidators(format!("{error}"))
+            }
+        })?;
+
+    let mut public_keys = Vec::with_capacity(records.len());
+    let mut addresses = Vec::with_capacity(records.len());
+    let mut p2p_addresses = Vec::with_capacity(records.len());
+
+    for row in &records {
+        let record = &row.record;
+        // Read full 48-byte BLS MinPk pubkey (stored across two slots by ValidatorSet).
+        let pk =
+            bls12381::PublicKey::read(&mut record.consensus_pubkey.as_slice()).map_err(|e| {
+                ValidatorsError::InvalidBlsPubkey {
+                    validator: record.validator_address,
+                    error: format!("{e}"),
+                }
+            })?;
+
+        public_keys.push(pk);
+        addresses.push(record.validator_address);
+        let p2p_address = match &row.p2p {
+            crate::protocol_state::EngineP2pRead::Present { version, encoded } => {
+                match decode_versioned(*version, encoded) {
+                    Ok(decoded) => match outbe_p2p_to_commonware(decoded) {
+                        Ok(addr) => ValidatorP2pAddress::Known(addr),
+                        Err(err) => {
+                            tracing::warn!(
+                                validator = %record.validator_address,
+                                version,
+                                error = %err,
+                                "invalid validator p2p address registry entry; excluding peer"
+                            );
+                            ValidatorP2pAddress::Invalid
+                        }
+                    },
+                    Err(err) => {
+                        tracing::warn!(
+                            validator = %record.validator_address,
+                            version,
+                            error = %err,
+                            "invalid validator p2p address registry entry; excluding peer"
+                        );
+                        ValidatorP2pAddress::Invalid
+                    }
+                }
+            }
+            crate::protocol_state::EngineP2pRead::Missing => ValidatorP2pAddress::Missing,
+            crate::protocol_state::EngineP2pRead::Failed { error } => {
+                tracing::warn!(
+                    validator = %record.validator_address,
+                    error = %error,
+                    "failed to read validator p2p address registry entry; excluding peer"
+                );
+                ValidatorP2pAddress::Invalid
+            }
+        };
+        p2p_addresses.push(p2p_address);
+    }
+
+    debug!(
+        count = public_keys.len(),
+        "read validator set from on-chain state"
+    );
+
+    Ok(ValidatorSet {
+        public_keys,
+        addresses,
+        p2p_addresses,
+    })
+}
+
+fn outbe_p2p_to_commonware(
+    address: P2pAddress,
+) -> std::result::Result<CommonwareAddress, eyre::Report> {
+    match address {
+        P2pAddress::Symmetric(socket) => Ok(CommonwareAddress::Symmetric(socket)),
+        P2pAddress::Asymmetric { ingress, egress } => Ok(CommonwareAddress::Asymmetric {
+            ingress: match ingress {
+                P2pIngress::Socket(socket) => CommonwareIngress::Socket(socket),
+                P2pIngress::Dns { host, port } => CommonwareIngress::Dns {
+                    host: Hostname::new(host).map_err(|err| {
+                        ValidatorsError::InvalidCommonwareHostname(format!("{err}"))
+                    })?,
+                    port,
+                },
+            },
+            egress,
+        }),
+    }
+}
+
+/// Read active validators from the EVM state at a given block hash.
+///
+/// Convenience wrapper that obtains a `StateProviderBox` from the factory
+/// and delegates to [`read_validators_from_state`].
+pub fn read_validators_at_block(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    provider: &(impl StateProviderFactory + ?Sized),
+    block_hash: B256,
+) -> Result<ValidatorSet> {
+    let state =
+        provider
+            .state_by_block_hash(block_hash)
+            .map_err(|e| ValidatorsError::GetStateAtBlock {
+                block_hash,
+                error: format!("{e}"),
+            })?;
+    read_validators_from_state(protocol, &state)
+}
+
+/// Read current consensus participants from the EVM state at a given block hash.
+pub fn read_consensus_validators_at_block(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    provider: &(impl StateProviderFactory + ?Sized),
+    block_hash: B256,
+) -> Result<ValidatorSet> {
+    let state =
+        provider
+            .state_by_block_hash(block_hash)
+            .map_err(|e| ValidatorsError::GetStateAtBlock {
+                block_hash,
+                error: format!("{e}"),
+            })?;
+    read_consensus_validators_from_state(protocol, &state)
+}
+
+/// Read PENDING validators from the EVM state at a given block hash (secondary-tier
+/// P2P admission candidates).
+pub fn read_pending_validators_at_block(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    provider: &(impl StateProviderFactory + ?Sized),
+    block_hash: B256,
+) -> Result<ValidatorSet> {
+    let state =
+        provider
+            .state_by_block_hash(block_hash)
+            .map_err(|e| ValidatorsError::GetStateAtBlock {
+                block_hash,
+                error: format!("{e}"),
+            })?;
+    read_pending_validators_from_state(protocol, &state)
+}
+
+/// Read peers admitted to consensus P2P as SECONDARY from the EVM state at a
+/// given block hash - the secondary-tier P2P admission candidates, including
+/// TEE full-nodes. See [`read_admitted_non_consensus_from_state`] for the set.
+pub fn read_admitted_non_consensus_at_block(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    provider: &(impl StateProviderFactory + ?Sized),
+    block_hash: B256,
+) -> Result<ValidatorSet> {
+    let state =
+        provider
+            .state_by_block_hash(block_hash)
+            .map_err(|e| ValidatorsError::GetStateAtBlock {
+                block_hash,
+                error: format!("{e}"),
+            })?;
+    read_admitted_non_consensus_from_state(protocol, &state)
+}
+
+/// Read the active validator set from the latest committed state.
+///
+/// Scopes the underlying `StateProviderBox` so its MDBX read transaction
+/// cannot live across await points in consensus stack startup.
+pub fn read_validators_at_latest(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    provider: &(impl StateProviderFactory + ?Sized),
+) -> Result<ValidatorSet> {
+    let state = provider
+        .latest()
+        .map_err(|e| ValidatorsError::GetLatestState(format!("{e}")))?;
+    read_validators_from_state(protocol, &state)
+}
+
+/// Read the consensus participant set (ACTIVE + EXITING + `JailRetained`) from
+/// the latest committed state. Same lifetime guarantees as
+/// [`read_validators_at_latest`].
+pub fn read_consensus_validators_at_latest(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    provider: &(impl StateProviderFactory + ?Sized),
+) -> Result<ValidatorSet> {
+    let state = provider
+        .latest()
+        .map_err(|e| ValidatorsError::GetLatestState(format!("{e}")))?;
+    read_consensus_validators_from_state(protocol, &state)
+}
+
+/// Read the exact canonical committee snapshot committed for `epoch` from one
+/// state view. The resulting hash is the authority OST3 binds at block 1.
+pub fn read_committee_snapshot_from_state(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    state_access: &dyn RethStateAccess,
+    epoch: u64,
+) -> Result<Option<outbe_primitives::committee_snapshot::CommitteeSnapshot>> {
+    let reader = RethStateReader {
+        state: state_access,
+    };
+    let mut provider = ReadOnlyStorageProvider::new(reader);
+    let storage = StorageHandle::new(&mut provider);
+    protocol
+        .committee_snapshot(storage, epoch)
+        .map_err(|error| {
+            ValidatorsError::ReadCommitteeSnapshot {
+                epoch,
+                error: format!("{error}"),
+            }
+            .into()
+        })
+}
+
+/// Latest-state wrapper for [`read_committee_snapshot_from_state`].
+pub fn read_committee_snapshot_at_latest(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    provider: &(impl StateProviderFactory + ?Sized),
+    epoch: u64,
+) -> Result<Option<outbe_primitives::committee_snapshot::CommitteeSnapshot>> {
+    let state = provider
+        .latest()
+        .map_err(|error| ValidatorsError::GetLatestState(format!("{error}")))?;
+    read_committee_snapshot_from_state(protocol, &state, epoch)
+}
+
+/// Check if there's a pending validator set change in the on-chain state.
+///
+/// Reads the `pending_set_change` flag from the ValidatorSet contract.
+/// No production path calls this function. The block-height freeze schedule
+/// (`freeze_height`) triggers a DKG reshare, not this flag.
+pub fn has_pending_set_change(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    state_access: &dyn RethStateAccess,
+) -> Result<bool> {
+    let reader = RethStateReader {
+        state: state_access,
+    };
+    let mut provider = ReadOnlyStorageProvider::new(reader);
+    let storage = StorageHandle::new(&mut provider);
+
+    protocol
+        .has_pending_set_change(storage)
+        .map_err(|error| ValidatorsError::CheckPendingSetChange(format!("{error}")).into())
+}
+
+/// Read the on-chain registered tribute offer public key (`TeeRegistry` slot 1).
+/// It is the canonical startup comparison for the permanent resident key and the
+/// expected public value verified by one-time registry onboarding. Returns zero
+/// only before block-1 OST3 has bootstrapped the chain.
+pub fn read_tee_offer_public_from_state(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    state_access: &dyn RethStateAccess,
+) -> Result<B256> {
+    let reader = RethStateReader {
+        state: state_access,
+    };
+    let mut provider = ReadOnlyStorageProvider::new(reader);
+    let storage = StorageHandle::new(&mut provider);
+
+    protocol
+        .tee_offer_public(storage)
+        .map_err(|error| ValidatorsError::ReadTeeOfferPublicKey(format!("{error}")).into())
+}
+
+/// Read the on-chain tribute offer public from the latest committed state.
+pub fn read_tee_offer_public_at_latest(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    provider: &(impl StateProviderFactory + ?Sized),
+) -> Result<B256> {
+    let state = provider
+        .latest()
+        .map_err(|e| ValidatorsError::GetLatestState(format!("{e}")))?;
+    read_tee_offer_public_from_state(protocol, &state)
+}
+
+/// Read the on-chain tribute offer public key from the EVM state at a given block hash.
+pub fn read_tee_offer_public_at_block(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    provider: &(impl StateProviderFactory + ?Sized),
+    block_hash: B256,
+) -> Result<B256> {
+    let state =
+        provider
+            .state_by_block_hash(block_hash)
+            .map_err(|e| ValidatorsError::GetStateAtBlock {
+                block_hash,
+                error: format!("{e}"),
+            })?;
+    read_tee_offer_public_from_state(protocol, &state)
+}
+
+/// Read the on-chain tribute-offer epoch (`TeeRegistry` slot 4) from the latest
+/// state. The current permanent genesis offer key uses epoch zero. This function
+/// decodes the field explicitly. Onboarding code does not infer it.
+pub fn read_tee_offer_epoch_at_latest(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    provider: &(impl StateProviderFactory + ?Sized),
+) -> Result<u64> {
+    let state = provider
+        .latest()
+        .map_err(|e| ValidatorsError::GetLatestState(format!("{e}")))?;
+    let reader = RethStateReader { state: &state };
+    let mut provider = ReadOnlyStorageProvider::new(reader);
+    let storage = StorageHandle::new(&mut provider);
+    protocol
+        .tee_offer_epoch(storage)
+        .map_err(|error| ValidatorsError::ReadTeeOfferEpoch(format!("{error}")).into())
+}
+
+/// Read a validator's on-chain registered `recipient_x25519` (`TeeRegistry` per-
+/// validator slot). Returns an error if the validator has no NodeHost enclave
+/// binding. The one-time
+/// registry artifact must target this exact attested onboarding recipient.
+pub fn read_tee_recipient_x25519_from_state(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    state_access: &dyn RethStateAccess,
+    validator: Address,
+) -> Result<B256> {
+    let reader = RethStateReader {
+        state: state_access,
+    };
+    let mut provider = ReadOnlyStorageProvider::new(reader);
+    let storage = StorageHandle::new(&mut provider);
+
+    protocol
+        .tee_recipient(storage, validator)
+        .and_then(|recipient| {
+            recipient.ok_or_else(|| {
+                ValidatorsPrecompileError::ValidatorMissingNodeHostEnclaveBinding.into()
+            })
+        })
+        .map_err(|error| ValidatorsError::ReadTeeRecipientX25519(format!("{error}")).into())
+}
+
+/// Read a validator's on-chain registered `recipient_x25519` from the latest state.
+pub fn read_tee_recipient_x25519_at_latest(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    provider: &(impl StateProviderFactory + ?Sized),
+    validator: Address,
+) -> Result<B256> {
+    let state = provider
+        .latest()
+        .map_err(|e| ValidatorsError::GetLatestState(format!("{e}")))?;
+    read_tee_recipient_x25519_from_state(protocol, &state, validator)
+}
+
+/// Check if current binary version is compatible with active (or approved) proposals.
+/// Also warns if there are approved versions without registered handlers.
+pub fn check_binary_version_compatibility<H>(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    provider: &(impl StateProviderFactory + ?Sized),
+    _handlers: &H,
+) -> Result<()> {
+    let state = provider
+        .latest()
+        .map_err(|error| ValidatorsError::GetLatestState(format!("{error}")))?;
+    let reader = RethStateReader { state: &state };
+    let mut storage_provider = ReadOnlyStorageProvider::new(reader);
+    let storage = StorageHandle::new(&mut storage_provider);
+    protocol
+        .check_binary_compatibility(storage)
+        .map_err(eyre::Error::msg)
+}
+
+fn read_local_validator_tee_rejection(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    storage: StorageHandle<'_>,
+    node_binding: &outbe_primitives::tee_registry_abi_v1::NodeEnclaveBindingV1,
+    validator: Address,
+) -> Result<Option<LocalTeeRuntimeRejectionV1>> {
+    let Some(validator_binding) = protocol
+        .validator_enclave_binding(storage.clone(), validator)
+        .map_err(|error| ValidatorsError::ReadLocalValidatorTeeBinding(format!("{error}")))?
+    else {
+        return Ok(Some(LocalTeeRuntimeRejectionV1::MissingBinding));
+    };
+    if validator_binding.node_id_hash != node_binding.node_id_hash
+        || validator_binding.enclave_id != node_binding.enclave_id
+        || validator_binding.binding_id != node_binding.binding_id
+    {
+        return Ok(Some(LocalTeeRuntimeRejectionV1::ValidatorBindingMismatch));
+    }
+    if protocol
+        .validator_record(storage, validator)?
+        .is_some_and(|record| record.status == crate::protocol_state::VALIDATOR_STATUS_JAILED)
+    {
+        return Ok(Some(LocalTeeRuntimeRejectionV1::ValidatorJailed));
+    }
+    Ok(None)
+}
+
+/// Build a P2P peer map from a validator set and bootnode entries.
+///
+/// Registry/config P2P address takes priority. Bootnodes fill missing gaps.
+/// This function excludes invalid registry entries and never replaces them with
+/// static bootstrap addresses.
+pub fn build_peer_map(
+    validator_set: &ValidatorSet,
+    bootnode_map: &std::collections::BTreeMap<Vec<u8>, std::net::SocketAddr>,
+) -> commonware_utils::ordered::Map<bls12381::PublicKey, CommonwareAddress> {
+    let peer_entries: Vec<(bls12381::PublicKey, CommonwareAddress)> = validator_set
+        .public_keys
+        .iter()
+        .zip(validator_set.p2p_addresses.iter())
+        .filter_map(|(pk, p2p_addr)| {
+            match p2p_addr {
+                ValidatorP2pAddress::Known(addr) => {
+                    return Some((pk.clone(), addr.clone()));
+                }
+                ValidatorP2pAddress::Invalid => return None,
+                ValidatorP2pAddress::Missing => {}
+            }
+            let pk_bytes = commonware_codec::Encode::encode(pk);
+            if let Some(addr) = bootnode_map.get(pk_bytes.as_ref()) {
+                return Some((pk.clone(), CommonwareAddress::Symmetric(*addr)));
+            }
+            None
+        })
+        .collect();
+
+    commonware_utils::ordered::Map::from_iter_dedup(peer_entries)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use commonware_cryptography::{Signer as _, Verifier as _};
+    use commonware_math::algebra::Random;
+
+    // The relocated CL peer mapper must not fall back after invalid registry data.
+    #[test]
+    fn peer_map_preserves_registry_precedence_and_fail_closed_admission() {
+        let key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+            rand_commonware::rngs::SysRng,
+        ));
+        let pk = key.public_key();
+        let registered = CommonwareAddress::Symmetric("127.0.0.1:30400".parse().unwrap());
+        let bootstrap = "127.0.0.1:30401".parse().unwrap();
+        let bootnodes = std::collections::BTreeMap::from([(
+            commonware_codec::Encode::encode(&pk).to_vec(),
+            bootstrap,
+        )]);
+        for (registry, fallback, expected) in [
+            (
+                ValidatorP2pAddress::Known(registered.clone()),
+                true,
+                Some(registered),
+            ),
+            (ValidatorP2pAddress::Invalid, true, None),
+            (
+                ValidatorP2pAddress::Missing,
+                true,
+                Some(CommonwareAddress::Symmetric(bootstrap)),
+            ),
+            (ValidatorP2pAddress::Missing, false, None),
+        ] {
+            let validators = ValidatorSet {
+                public_keys: vec![pk.clone()],
+                addresses: vec![Address::with_last_byte(1)],
+                p2p_addresses: vec![registry],
+            };
+            let empty = std::collections::BTreeMap::new();
+            let peers = build_peer_map(&validators, if fallback { &bootnodes } else { &empty });
+            assert_eq!(peers.get_value(&pk), expected.as_ref());
+            assert_eq!(peers.len(), usize::from(expected.is_some()));
+        }
+    }
+
+    #[test]
+    fn test_load_signing_key_roundtrip() {
+        let key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+            rand_commonware::rngs::SysRng,
+        ));
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        crate::bls::save_individual_key(tmp.path(), &key, &crate::bls::KeyBackend::Plaintext)
+            .unwrap();
+
+        let loaded = load_signing_key(tmp.path(), &crate::bls::KeyBackend::Plaintext).unwrap();
+        assert_eq!(key, loaded);
+
+        // Verify the loaded key works
+        let sig = loaded.sign(b"test", b"msg");
+        let pk = loaded.public_key();
+        assert!(pk.verify(b"test", b"msg", &sig));
+    }
+}

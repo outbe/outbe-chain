@@ -71,7 +71,7 @@ impl<'storage> CallPass<'storage> for GemCallPass<'storage> {
     ) -> Result<outbe_primitives::day_pass::Progress> {
         let pinned_ts = outbe_primitives::time::date_key_to_utc_timestamp(pinned_day)
             .map_err(crate::errors::date_step_error)?;
-        let through_day = outbe_common::deadline_queue::deadline_day(pinned_ts)?;
+        let through_day = outbe_core_common::deadline_queue::deadline_day(pinned_ts)?;
         match phase {
             1 => crate::forfeited::forfeit_through(ctx, through_day, budget),
             2 => crate::positions_expired::expire_through(ctx, through_day, budget),

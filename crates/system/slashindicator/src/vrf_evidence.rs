@@ -3,7 +3,7 @@
 //! Carries everything `SlashIndicator.submitInvalidVrfProofEvidence(bytes)`
 //! needs to:
 //!   1. Run admissibility (size/age/epoch-lag/parent-canonical/proposer-attribution).
-//!   2. Re-run `outbe_consensus::proof::verify_v2_proof` against the
+//!   2. Re-run `outbe_primitives::proof::verify_v2_proof` against the
 //!      certified-parent metadata + cert bytes and classify any failure as
 //!      a VRF-specific class (only VRF classes are slashable here).
 //!   3. Dedup via `invalid_vrf_evidence_hash_v2(child_hash, phase1_tx_hash)`.

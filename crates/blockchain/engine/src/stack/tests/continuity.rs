@@ -1,8 +1,8 @@
 use super::*;
-use crate::stack::epoch::continuity::{
+use commonware_runtime::deterministic;
+use outbe_consensus::stack::epoch::continuity::{
     resolve_epoch_floor, wait_for_activation_anchor, AnchorTransition,
 };
-use commonware_runtime::deterministic;
 
 #[test]
 fn genesis_floor_does_not_require_a_finalized_certificate() {

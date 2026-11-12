@@ -1,9 +1,8 @@
 //! Immutable accepted Vote data for verifying historical native entries.
 use super::*;
 use crate::manager::FinalizedPatchApproval;
-use outbe_coderegistry::{
-    payload::{PatchVotePayloadV1, MAX_PATCH_VOTE_PAYLOAD_BYTES},
-    PatchApprovalRecord,
+use outbe_primitives::code_registry::{
+    PatchApprovalRecord, PatchVotePayloadV1, MAX_PATCH_VOTE_PAYLOAD_BYTES,
 };
 use tokio::sync::OwnedSemaphorePermit;
 

@@ -6,7 +6,7 @@
 
 use alloy_primitives::{Address, U256};
 
-use outbe_common::deadline_queue;
+use outbe_core_common::deadline_queue;
 use outbe_primitives::call_bins;
 use outbe_primitives::error::Result;
 use outbe_primitives::series_id::SeriesId;
@@ -232,7 +232,7 @@ impl<'storage> CredisContract<'storage> {
         let currency = self.series_currency.read(&series)?;
         call_bins::remove(&CallBins(self, currency), series)?;
         self.series_called_at.write(&series, now)?;
-        let deadline = outbe_common::settlement::settlement_deadline_of(
+        let deadline = outbe_core_common::settlement::settlement_deadline_of(
             now,
             self.series_call_notice_period_seconds.read(&series)?,
         );
@@ -286,7 +286,7 @@ fn take_from<K: outbe_primitives::storage::types::StorageKey>(
 /// This queue orders called series by the UTC day that contains their settlement deadline.
 pub struct ForfeitQueue<'a, 'storage>(pub &'a CredisContract<'storage>);
 
-outbe_common::impl_deadline_queue!(ForfeitQueue<SeriesId> {
+outbe_core_common::impl_deadline_queue!(ForfeitQueue<SeriesId> {
     root: forfeit_tree_root,
     mid: forfeit_tree_mid,
     leaf: forfeit_tree_leaf,
@@ -302,7 +302,7 @@ outbe_common::impl_deadline_queue!(ForfeitQueue<SeriesId> {
 /// Forfeited series whose Credis wait to be deleted.
 pub struct CleanupQueue<'a, 'storage>(pub &'a CredisContract<'storage>);
 
-outbe_common::impl_deadline_queue!(CleanupQueue<SeriesId> {
+outbe_core_common::impl_deadline_queue!(CleanupQueue<SeriesId> {
     root: cleanup_tree_root,
     mid: cleanup_tree_mid,
     leaf: cleanup_tree_leaf,

@@ -12,80 +12,6 @@ fn fixture(name: &str) -> cases::Case {
 }
 
 #[test]
-fn shared_diagnostics_match_original_node_snapshots() {
-    cases::assert_diagnostics(
-        true,
-        |body, header| {
-            validate_system_layout(body, header)
-                .map(|_| ())
-                .map_err(|error| error.to_string())
-        },
-        |layout, header| {
-            validate_parent_accounting_binding(layout, header).map_err(|error| match error {
-                ParentAccountingBindingError::Missing { block_number } => {
-                    format!("missing CertifiedParentAccounting system tx for block {block_number}")
-                }
-                error => error.to_string(),
-            })
-        },
-        |layout, artifacts| {
-            validate_boundary_outcome_binding(layout, artifacts).map_err(|error| error.to_string())
-        },
-    );
-    cases::assert_diagnostics(
-        false,
-        |body, header| {
-            validate_system_layout(body, header)
-                .map(|_| ())
-                .map_err(|error| match error {
-                    LayoutBindingError::Artifacts(err) => {
-                        format!("decode Outbe block artifacts for system tx validation: {err}")
-                    }
-                    LayoutBindingError::Layout(err) => {
-                        format!("invalid system tx layout for leader binding: {err}")
-                    }
-                    other => other.to_string(),
-                })
-        },
-        |layout, header| {
-            validate_parent_accounting_binding(layout, header).map_err(|error| match error {
-                ParentAccountingBindingError::Decode(err) => {
-                    format!("decode CertifiedParentAccounting system tx input: {err}")
-                }
-                other => other.to_string(),
-            })
-        },
-        |layout, artifacts| {
-            validate_boundary_outcome_binding(layout, artifacts).map_err(|error| match error {
-                BoundaryBindingError::Decode(err) => {
-                    format!("decode system transaction input: {err}")
-                }
-                other => other.to_string(),
-            })
-        },
-    );
-}
-
-#[test]
-fn layout_failures_identify_the_rejected_stage() {
-    let artifacts = fixture("artifacts_before_layout");
-    assert!(matches!(
-        validate_system_layout(&artifacts.body, &artifacts.header),
-        Err(LayoutBindingError::Artifacts(_))
-    ));
-    let order = fixture("wrong_order");
-    assert!(matches!(
-        validate_system_layout(&order.body, &order.header),
-        Err(LayoutBindingError::Layout(_))
-    ));
-    let set = fixture("block1_requires_boundary");
-    assert!(matches!(
-        validate_system_layout(&set.body, &set.header),
-        Err(LayoutBindingError::Set(_))
-    ));
-}
-
-#[test]
 fn parent_errors_carry_block_height_and_both_hashes() {
     let missing = fixture("parent_missing");
     assert!(matches!(
@@ -135,5 +61,124 @@ fn boundary_rejects_the_first_failure_in_system_transaction_order() {
     assert!(matches!(
         validate_boundary_outcome_binding(&layout, &mismatch.artifacts),
         Err(BoundaryBindingError::Mismatch)
+    ));
+}
+
+#[test]
+fn payload_validators_reject_trailing_bytes_and_cross_artifact_envelopes() {
+    use super::fixtures;
+    use crate::{
+        error::PrecompileError,
+        reshare_artifact::{
+            encode_outbe_block_artifacts, ConsensusHeaderArtifact, OutbeBlockArtifacts,
+        },
+        system_tx_context::{SystemTxPayloadValidationError, SystemTxValidationContext},
+        tee_attestation_v1::CodecError,
+    };
+    use alloy_primitives::Bytes;
+    let boundary = fixtures::boundary();
+    let boundary_artifact = crate::reshare_artifact::decode_boundary_artifact(boundary.payload())
+        .unwrap()
+        .unwrap();
+    let publication = fixtures::publication();
+    let publication_batch =
+        crate::radicle_publication::PublicationBatch::from_bytes(publication.payload()).unwrap();
+    let artifacts = OutbeBlockArtifacts {
+        consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(
+            boundary_artifact,
+        )),
+        radicle_publication: Some(publication_batch),
+        radicle_publication_enabled: true,
+        ..Default::default()
+    };
+    let ctx = SystemTxValidationContext {
+        regime: crate::block::BlockHeightRegime::SteadyState,
+        block_number: 2,
+        parent_hash: alloy_primitives::B256::repeat_byte(0x41),
+        artifacts: &artifacts,
+    };
+    for tx in [
+        fixtures::accounting(),
+        fixtures::late_credits(),
+        boundary,
+        fixtures::bootstrap(),
+        publication,
+    ] {
+        let validator = |payload: &[u8],
+                         ctx: &SystemTxValidationContext<'_>|
+         -> Result<(), SystemTxPayloadValidationError> {
+            match tx.step_index() {
+                0 => {
+                    validate_parent_accounting_payload(payload, ctx.parent_hash)?;
+                }
+                1 => {
+                    validate_late_finalize_credits_payload(payload, ctx.artifacts)?;
+                }
+                2 => {
+                    validate_boundary_outcome_payload(payload, ctx.artifacts)?;
+                }
+                3 => {
+                    validate_tee_bootstrap_payload(payload, ctx.block_number)?;
+                }
+                5 => {
+                    validate_publication_payload(payload, ctx.artifacts)?;
+                }
+                _ => unreachable!("fixture must exercise one of the five payload validators"),
+            }
+            Ok(())
+        };
+        validator(tx.payload(), &ctx).unwrap();
+        let mut trailing = tx.payload().to_vec();
+        trailing.push(0);
+        let result = validator(&trailing, &ctx);
+        match tx.step_index() {
+            0 => assert!(matches!(
+                result,
+                Err(SystemTxPayloadValidationError::ParentAccounting(
+                    ParentAccountingBindingError::PayloadDecode(PrecompileError::Revert(_))
+                ))
+            )),
+            1 => assert!(matches!(
+                result,
+                Err(SystemTxPayloadValidationError::LateCredits(
+                    LateCreditsBindingError::PayloadDecode(PrecompileError::Revert(_))
+                ))
+            )),
+            2 => assert!(matches!(
+                result,
+                Err(SystemTxPayloadValidationError::Boundary(
+                    BoundaryBindingError::PayloadDecode(PrecompileError::Revert(_))
+                ))
+            )),
+            3 => assert!(matches!(
+                result,
+                Err(SystemTxPayloadValidationError::TeeBootstrap {
+                    block_number: 2,
+                    source: CodecError::TrailingBytes(1)
+                })
+            )),
+            5 => assert!(matches!(
+                result,
+                Err(SystemTxPayloadValidationError::Publication(
+                    PublicationBindingError::PayloadDecode(PrecompileError::Revert(_))
+                ))
+            )),
+            _ => unreachable!("fixture must exercise one of the five payload validators"),
+        }
+    }
+    let contaminated = encode_outbe_block_artifacts(&artifacts).unwrap();
+    assert!(matches!(
+        validate_boundary_outcome_payload(&contaminated, &artifacts),
+        Err(BoundaryBindingError::NonCanonical)
+    ));
+    assert!(matches!(
+        validate_late_finalize_credits_payload(&contaminated, &artifacts),
+        Err(LateCreditsBindingError::NonCanonical)
+    ));
+    assert!(matches!(
+        validate_parent_accounting_payload(&Bytes::new(), ctx.parent_hash),
+        Err(ParentAccountingBindingError::PayloadDecode(
+            PrecompileError::Revert(_)
+        ))
     ));
 }

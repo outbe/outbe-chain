@@ -481,8 +481,8 @@ fn assert_real_zk_offer_with_key_source(
         ops::{self, sign_message},
         variant::MinSig,
     };
+    use outbe_enclave::process::{process_tribute_offer_batch, TributeOfferKeyMaterial};
     use outbe_l2registry::L2RegistryContract;
-    use outbe_tee_enclave::process::{process_tribute_offer_batch, TributeOfferKeyMaterial};
     use outbe_zk::wire::decode_public_words;
     use x25519_dalek::{PublicKey, StaticSecret};
 

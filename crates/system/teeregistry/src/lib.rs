@@ -5,6 +5,7 @@
 //! key once. [`v1_precompile`] is the only public ABI. There is no
 //! caller-authorized registration dispatcher or fallback admission path.
 
+pub mod bootstrap;
 pub mod errors;
 pub mod runtime;
 pub mod schema;
@@ -13,6 +14,10 @@ pub mod v1;
 #[cfg(feature = "tee-attestation-v1")]
 pub mod v1_precompile;
 
+pub use bootstrap::{
+    run_tee_bootstrap_v1, validate_tee_bootstrap_for_build, TeeBootstrapBuildError,
+    TeeBootstrapError, TeeBootstrapModule,
+};
 pub use runtime::TeeBootstrapData;
 pub use schema::TeeRegistry;
 pub use v1::{NodeEnclaveBindingV1, RevokeEnclaveBindingConflictV1, V1RegistrationOutcome};

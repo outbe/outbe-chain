@@ -1,43 +1,16 @@
-# Node modules
-/node_modules
-
-# Yarn (keep committed patches; ignore the rest)
-.yarn/*
-!.yarn/patches
-
-# Compilation output
-/dist
+# Foundry artifacts
 /out
-
-# pnpm deploy output
-/bundle
-
-# Hardhat Build Artifacts
-/artifacts
-
-# Hardhat compilation (v2) support directory
 /cache
-
-# Typechain output
-/types
-
-# Hardhat coverage reports
-/coverage
 
 # Forge coverage (LCOV)
 lcov.info
 
 # Secrets / config
 .env
-.npmrc
-.npmrc-pkg
 params.json
 
 # Local-only config (external/deployment addresses - never committed)
 config/external-addresses.json
-
-# ignition
-/ignition/deployments/
 
 # Local data (test fixtures, bidder wallets with private keys - never committed)
 /data/

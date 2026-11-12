@@ -18,14 +18,14 @@ import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 ///         including the origin chain as a loopback target (origin==target). There, the shared
 ///         NFT/bridge result from the idempotent CREATE3 deploy. The bridge meshes only with OTHER
 ///         targets, so it never self-peers.
-/// @dev Env: DEPLOYER_PRIVATE_KEY, BRIDGE_ADDRESS, ORIGIN_CHAIN_ID (where OriginRouter lives),
+/// @dev Env: DEPLOYER_PK, BRIDGE_ADDRESS, ORIGIN_CHAIN_ID (where OriginRouter lives),
 ///      TARGET_CHAIN_IDS (comma-separated, for the NFT-bridge mesh), optional WCOEN_BRIDGE
 ///      (proceeds route). The deployer is admin + delegate. The auction gets its collection and
-///      the issue role here. The rest of app wiring (escrow/compact, relayer roles) is a separate
-///      step. Peers are CREATE3-deterministic across chains.
+///      the issue role here. ConfigureTarget wires the rest (escrow/compact, relayer roles).
+///      Peers are CREATE3-deterministic across chains.
 contract DeployTarget is BaseScript {
     function run() external {
-        uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        uint256 pk = vm.envUint("DEPLOYER_PK");
         address deployer = vm.addr(pk);
         address admin = deployer;
         address delegate = deployer;

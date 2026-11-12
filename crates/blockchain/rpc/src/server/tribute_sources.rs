@@ -5,7 +5,6 @@ use outbe_primitives::{
     addresses::TRIBUTE_ADDRESS, storage::proof::AccountStorageProof, wwd_entity_id::WwdEntityId,
 };
 use outbe_tee::tribute_source::{TributeSourceSubject, TributeStateSource};
-use outbe_tribute::state_proof::{expected_record_words, TributeStateProofSubject};
 use reth_trie::TrieInput;
 
 pub(super) fn serve<P>(
@@ -13,6 +12,7 @@ pub(super) fn serve<P>(
     chain_identity: Option<(u64, B256)>,
     subject: TributeSourceSubject,
     tribute_id: WwdEntityId,
+    rpc_reader: &dyn crate::state_reader::OutbeRpcStateReader,
 ) -> RpcResult<TributeStateSource>
 where
     P: StateProviderFactory + HeaderProvider<Header = OutbeHeader> + BlockIdReader,
@@ -21,31 +21,11 @@ where
         return Err(invalid_params("Tribute source day mismatch"));
     }
     let (chain_id, genesis_hash, state) = checkpoint_state(provider, chain_identity, subject)?;
-    let node_subject = TributeStateProofSubject::from(subject);
     let reader = RethStateReader { state: &state };
     let mut readonly =
         ReadOnlyStorageProvider::new_with_chain_identity(reader, chain_id, genesis_hash);
     let (tribute, day_index, expected_words) = StorageHandle::enter(&mut readonly, |storage| {
-        let record = outbe_tribute::state_api::get_retained_record(&storage, tribute_id)?
-            .ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::storage("Tribute source is missing")
-            })?;
-        let tribute = record
-            .encrypted()
-            .ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::storage("Tribute source is not encrypted")
-            })?
-            .clone();
-        let contract = outbe_tribute::TributeContract::new(storage);
-        let position = contract.day_id_position.read(&tribute_id)?;
-        if position == 0 || position > subject.tribute_count {
-            return Err(outbe_primitives::error::PrecompileError::storage(
-                "Tribute source position mismatch",
-            ));
-        }
-        let day_index = position - 1;
-        let words = expected_record_words(&contract, &node_subject, day_index, &tribute)?;
-        Ok((tribute, day_index, words))
+        rpc_reader.tribute_words(storage, &subject, tribute_id)
     })
     .map_err(internal_err)?;
     let slots = expected_words

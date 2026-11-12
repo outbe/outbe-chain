@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-/// Stateful token, vault and IntexNFT1155 counterparties for testing/support/factory_erc20_settlement.rs.
+/// Stateful token, vault and IntexNFT1155 counterparties for crates/runtime/tests/support/factory_erc20_settlement.rs.
 /// Compile with solc 0.8.30 --optimize --evm-version prague --bin-runtime --metadata-hash none.
 contract FactorySettlement {
     address constant ASSET = 0x3333333333333333333333333333333333333333;

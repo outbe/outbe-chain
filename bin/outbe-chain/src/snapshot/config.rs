@@ -33,7 +33,7 @@ pub(crate) type RequestedLayout = NativeLayout;
 pub(crate) fn parse_node_inputs(
     arguments: impl IntoIterator<Item = OsString>,
 ) -> eyre::Result<NodeInputs> {
-    let _ = crate::outbe_default_txpool_values().try_init();
+    let _ = outbe_runtime::outbe_default_txpool_values().try_init();
     let argv = [OsString::from("outbe-chain"), OsString::from("node")]
         .into_iter()
         .chain(arguments);

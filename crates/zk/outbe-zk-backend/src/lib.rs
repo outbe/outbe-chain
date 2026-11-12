@@ -17,4 +17,10 @@
 
 pub mod barretenberg;
 pub mod errors;
+pub mod precompile;
 pub mod witness;
+
+pub use precompile::{
+    dispatch_zk_verify, zk_verify_base_gas, ZkPrecompileError, ZK_VERIFY_GAS,
+    ZK_VERIFY_PAYABLE_SELECTORS,
+};

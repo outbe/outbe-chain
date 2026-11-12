@@ -4,7 +4,7 @@
 
 use alloy_primitives::{Address, U256};
 use base64::Engine;
-use outbe_common::deadline_queue;
+use outbe_core_common::deadline_queue;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::indexed_list::IndexedList;
 
@@ -160,7 +160,7 @@ impl<'s> GemFactoryContract<'s> {
 /// Positions' expiry hours, each queued as one entry.
 pub struct PositionExpiryQueue<'a, 'storage>(pub &'a GemFactoryContract<'storage>);
 
-outbe_common::impl_deadline_queue!(PositionExpiryQueue<u64> {
+outbe_core_common::impl_deadline_queue!(PositionExpiryQueue<u64> {
     root: expiry_tree_root,
     mid: expiry_tree_mid,
     leaf: expiry_tree_leaf,
@@ -176,7 +176,7 @@ outbe_common::impl_deadline_queue!(PositionExpiryQueue<u64> {
 /// Expired hours whose positions wait to be deleted.
 pub struct PositionCleanupQueue<'a, 'storage>(pub &'a GemFactoryContract<'storage>);
 
-outbe_common::impl_deadline_queue!(PositionCleanupQueue<u64> {
+outbe_core_common::impl_deadline_queue!(PositionCleanupQueue<u64> {
     root: cleanup_tree_root,
     mid: cleanup_tree_mid,
     leaf: cleanup_tree_leaf,

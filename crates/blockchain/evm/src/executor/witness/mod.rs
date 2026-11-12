@@ -15,9 +15,9 @@ use std::sync::{Arc, Mutex};
 mod evm_scope;
 mod init;
 
-#[cfg(test)]
-pub(crate) use evm_scope::install_detached_trace_witness;
-pub(crate) use evm_scope::{
+#[cfg(any(test, feature = "test-hooks"))]
+pub use evm_scope::install_detached_trace_witness;
+pub use evm_scope::{
     clear_detached_trace_witness, install_detached_trace_witness_with_meta,
     match_detached_trace_tx, record_detached_trace_user_gas, run_matched_detached_trace_tx,
     synthetic_trace_success, with_evm_transact_witness_scope, DetachedTraceExecutionMeta,
@@ -289,9 +289,9 @@ fn validate_finished_tape(
     }
 }
 
-pub(in crate::executor) const MAX_DECOMPRESSED_WITNESS_BYTES: usize = 262_144;
+pub const MAX_DECOMPRESSED_WITNESS_BYTES: usize = 262_144;
 
-pub(crate) fn witness_fault_to_block_error(
+pub fn witness_fault_to_block_error(
     fault: BlockWitnessFault,
     detail: impl Into<String>,
 ) -> BlockExecutionError {
@@ -325,10 +325,7 @@ fn worst_case_base_extra_len(base_extra_data: &[u8]) -> Option<usize> {
     Some(encoded_base.len().max(7))
 }
 
-pub(in crate::executor) fn tape_fits_budget(
-    tape: &EnclaveWitnessTapeV1,
-    base_extra_data: &[u8],
-) -> bool {
+pub fn tape_fits_budget(tape: &EnclaveWitnessTapeV1, base_extra_data: &[u8]) -> bool {
     let Ok(raw) = postcard::to_allocvec(tape) else {
         return false;
     };
@@ -346,7 +343,7 @@ pub(in crate::executor) fn tape_fits_budget(
         .unwrap_or(false)
 }
 
-pub(in crate::executor) fn finalize_prefix_witness_with(
+pub fn finalize_prefix_witness_with(
     witness_state: Option<&Arc<Mutex<WitnessState>>>,
     base_extra_data: &[u8],
 ) -> Result<(), BlockExecutionError> {
@@ -368,11 +365,11 @@ pub(in crate::executor) fn finalize_prefix_witness_with(
 }
 
 impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
-    pub(in crate::executor) fn is_verifier_witness_mode(&self) -> bool {
+    pub fn is_verifier_witness_mode(&self) -> bool {
         !self.expected_begin_system_txs.is_empty() || self.block_hash.is_some()
     }
 
-    pub(in crate::executor) fn has_active_consensus_witness_scope(&self) -> bool {
+    pub fn has_active_consensus_witness_scope(&self) -> bool {
         if outbe_tee::call_context::current_witness_state().is_some() {
             return true;
         }
@@ -384,7 +381,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         })
     }
 
-    pub(in crate::executor) fn init_rpc_direct_witness_state(&mut self) {
+    pub fn init_rpc_direct_witness_state(&mut self) {
         self.witness_state = Some(Arc::new(Mutex::new(WitnessState::new(
             WitnessExecutionMode::RpcDirect,
             None,
@@ -392,7 +389,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         ))));
     }
 
-    pub(in crate::executor) fn enter_prefix_witness_scope(
+    pub fn enter_prefix_witness_scope(
         &self,
     ) -> Result<Option<WitnessExecutionScope>, BlockExecutionError> {
         let Some(state) = self.witness_state.as_ref() else {
@@ -415,9 +412,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         Ok(Some(WitnessExecutionScope::enter(state.clone())))
     }
 
-    pub(in crate::executor) fn advance_preexecuted_phase1_witness_index(
-        &mut self,
-    ) -> Result<(), BlockExecutionError> {
+    pub fn advance_preexecuted_phase1_witness_index(&mut self) -> Result<(), BlockExecutionError> {
         let next_index = self.body_tx_index.saturating_add(1);
         if let Some(state) = self.witness_state.as_ref() {
             let mut guard = state.lock().map_err(|_| witness_lock_poisoned())?;
@@ -449,7 +444,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         Ok(())
     }
 
-    pub(in crate::executor) fn prepare_tx_witness_scope(
+    pub fn prepare_tx_witness_scope(
         &self,
         is_user_candidate: bool,
     ) -> Result<Option<WitnessExecutionScope>, BlockExecutionError> {
@@ -474,7 +469,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         Ok(Some(WitnessExecutionScope::enter(state.clone())))
     }
 
-    pub(in crate::executor) fn check_witness_commit_allowed_with(
+    pub fn check_witness_commit_allowed_with(
         witness_state: Option<&Arc<Mutex<WitnessState>>>,
         body_tx_index: u32,
         base_extra_data: &[u8],
@@ -503,7 +498,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         }
     }
 
-    pub(in crate::executor) fn check_no_witness_fault(&self) -> Result<(), BlockExecutionError> {
+    pub fn check_no_witness_fault(&self) -> Result<(), BlockExecutionError> {
         let Some(state) = self.witness_state.as_ref() else {
             return Ok(());
         };
@@ -517,7 +512,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         Ok(())
     }
 
-    pub(in crate::executor) fn finish_tx_witness(
+    pub fn finish_tx_witness(
         &mut self,
         tx_hash: B256,
         committed: bool,
@@ -551,7 +546,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         Ok(())
     }
 
-    pub(in crate::executor) fn validate_finish_witness(
+    pub fn validate_finish_witness(
         &self,
         block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
     ) -> Result<(), BlockExecutionError> {

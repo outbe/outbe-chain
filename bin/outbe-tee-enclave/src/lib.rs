@@ -19,31 +19,16 @@
 //!     `EGETKEY` key under `gramine-sgx` (a `mock`-gated dev key only off-hardware).
 //!   - [`gramine`] - the real `/dev/attestation/*` quote/seal/measurement surface.
 
-pub mod compute;
-pub mod confidential;
-pub mod crypto;
 pub mod dcap_verifier;
 pub mod dkg;
-pub mod encrypted_tribute_offer;
 pub mod errors;
-pub mod fidelity;
-pub mod fidelity_cipher;
 pub mod finalized_admission;
 pub mod gramine;
-pub mod gratis;
-pub mod gratis_cipher;
 pub mod initialization;
 pub mod keys;
 #[cfg(feature = "local-e2e")]
 pub mod local_e2e;
-pub mod lysis;
-pub mod nod_encryption;
-pub mod nod_mine;
 mod onboarding_upload;
-pub mod payload;
-pub mod process;
-pub mod promis;
-pub mod promis_cipher;
 pub mod run;
 pub mod seal;
 #[cfg(not(feature = "sgx-sealing-probe"))]
@@ -54,47 +39,13 @@ pub mod telemetry;
 #[cfg(any(test, feature = "mock"))]
 pub mod test_utils;
 pub mod transport;
-pub mod tribute_day;
-pub mod tribute_encryption;
-pub mod zk_claim;
 
-/// Fixed dev identity for the in-process test-enclave stand-ins (NOT production).
-///
-/// In the real enclave one resident group signature yields every ledger's state
-/// key (the transport derives the gratis, fidelity, ... keys from the same
-/// `group_sig`). The per-crate in-process test enclaves must model that. The
-/// *gratis* stand-in derives a fidelity key when it applies a folded cohort
-/// section. That key MUST equal the key the *fidelity* stand-in uses for
-/// snapshots/queries. Otherwise a folded mint would write a blob the snapshot
-/// cannot read. Both derive the fidelity key from this single `(group_sig, chain)`
-/// pair.
-pub mod dev {
-    use alloy_primitives::{B256, U256};
-    use x25519_dalek::{PublicKey, StaticSecret};
+pub use outbe_enclave::{
+    compute, confidential, crypto, dev, encrypted_tribute_offer, fidelity, fidelity_cipher, gratis,
+    gratis_cipher, lysis, nod_encryption, nod_mine, payload, process, promis, promis_cipher,
+    tribute_day, tribute_encryption, zk_claim,
+};
 
-    /// Shared dev group signature for the fidelity test-enclave key.
-    pub const FIDELITY_GROUP_SIG: &[u8] = b"outbe-dev-fidelity-group-signature-fixed-seed";
-    /// Shared dev chain id for the fidelity test-enclave key (also the resident
-    /// chain the fidelity query auth is scoped to in tests).
-    pub const FIDELITY_CHAIN_ID: u64 = outbe_primitives::chain::DEVNET_CHAIN_ID;
-    /// Shared dev group signature for the gratis test-enclave key.
-    pub const GRATIS_GROUP_SIG: &[u8] = b"outbe-dev-gratis-group-signature-fixed-seed!!";
-    /// Shared dev chain id for the gratis test-enclave key.
-    pub const GRATIS_CHAIN: B256 = B256::repeat_byte(0xC1);
-    /// Shared dev X25519 secret key for TEE-encrypted amount envelopes in test-enclave mode.
-    pub const OFFER_SECRET_KEY: [u8; 32] = [0x42; 32];
-
-    /// The fidelity dev chain id as a `B256` (matching the runtime's
-    /// `B256::from(U256::from(storage.chain_id()))` encoding).
-    #[must_use]
-    pub fn fidelity_chain() -> B256 {
-        B256::from(U256::from(FIDELITY_CHAIN_ID))
-    }
-
-    /// Public key corresponding to [`OFFER_SECRET_KEY`].
-    #[must_use]
-    pub fn offer_public_key() -> [u8; 32] {
-        let secret = StaticSecret::from(OFFER_SECRET_KEY);
-        PublicKey::from(&secret).to_bytes()
-    }
-}
+#[cfg(test)]
+#[path = "../../../crates/core/enclave/src/lysis_fixture.rs"]
+mod lysis_fixture;

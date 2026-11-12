@@ -6,7 +6,7 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
 
-use outbe_common::erc::ERC165_INTERFACE_ID;
+use outbe_core_common::erc::ERC165_INTERFACE_ID;
 use outbe_gratis::api::ModifyAuth;
 use outbe_primitives::dispatch::{dispatch_call, mutate, mutate_void, view};
 use outbe_primitives::error::Result;

@@ -678,9 +678,9 @@ fn dealt_round(
                 .map_err(|error| format!("DKG player: {error:?}"))?,
         );
     }
-    outbe_consensus::test_harness::acknowledge_fixture_dealings(
+    outbe_simplex::test_harness::acknowledge_fixture_dealings(
         keys,
-        outbe_consensus::test_harness::FixtureDealings {
+        outbe_simplex::test_harness::FixtureDealings {
             public_messages: &pub_msgs,
             private_messages: &all_priv_msgs,
         },

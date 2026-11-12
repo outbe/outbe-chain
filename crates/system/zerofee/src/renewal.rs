@@ -49,8 +49,8 @@ fn envelope() -> ZeroFeeEnvelope {
     }
 }
 
-fn malformed(reason: &str) -> ZeroFeePolicyError {
-    ZeroFeePolicyError::MalformedCalldata(reason.to_string())
+fn malformed(reason: &'static str) -> ZeroFeePolicyError {
+    ZeroFeePolicyError::MalformedCalldata(reason)
 }
 
 fn canonical_node_hash(
@@ -359,19 +359,19 @@ mod tests {
         assert_eq!(
             classify(&renew_call(AttestationOperationV1::RegisterEnclave, 65, 64)),
             Err(ZeroFeePolicyError::MalformedCalldata(
-                "renewEnclave evidence operation is not renewal".to_string()
+                "renewEnclave evidence operation is not renewal"
             ))
         );
         assert_eq!(
             classify(&renew_call(AttestationOperationV1::RenewEnclave, 64, 64)),
             Err(ZeroFeePolicyError::MalformedCalldata(
-                "renewEnclave signature length is not canonical".to_string()
+                "renewEnclave signature length is not canonical"
             ))
         );
         assert_eq!(
             classify(&renew_call(AttestationOperationV1::RenewEnclave, 65, 63)),
             Err(ZeroFeePolicyError::MalformedCalldata(
-                "renewEnclave signature length is not canonical".to_string()
+                "renewEnclave signature length is not canonical"
             ))
         );
     }
@@ -384,7 +384,7 @@ mod tests {
         assert_eq!(
             classify(&gapped),
             Err(ZeroFeePolicyError::MalformedCalldata(
-                "renewEnclave calldata is not canonical".to_string()
+                "renewEnclave calldata is not canonical"
             ))
         );
 
@@ -393,7 +393,7 @@ mod tests {
         assert_eq!(
             classify(&wide),
             Err(ZeroFeePolicyError::MalformedCalldata(
-                "renewEnclave framing exceeds its limit".to_string()
+                "renewEnclave framing exceeds its limit"
             ))
         );
 
@@ -409,7 +409,7 @@ mod tests {
         assert_eq!(
             classify(&oversized),
             Err(ZeroFeePolicyError::MalformedCalldata(
-                "renewEnclave evidence exceeds its limit".to_string()
+                "renewEnclave evidence exceeds its limit"
             ))
         );
 

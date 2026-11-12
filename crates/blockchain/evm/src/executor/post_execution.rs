@@ -12,9 +12,7 @@ where
 {
     /// Applies Ethereum post-execution writes without Gwei conversion of native Outbe withdrawals.
     /// Retains EIP-7685 requests for final result assembly.
-    pub(in crate::executor) fn apply_outbe_ethereum_post_execution(
-        &mut self,
-    ) -> Result<(), BlockExecutionError> {
+    pub fn apply_outbe_ethereum_post_execution(&mut self) -> Result<(), BlockExecutionError> {
         use crate::errors::ExecutorValidationError;
 
         let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
@@ -82,14 +80,10 @@ where
     /// Settles accumulated block burned fees (`current_block_burned_fees`) to `PromisLimitContract`
     /// using `SYSTEM_ADDRESS` and `BurnSource::BaseFee`, then flushes storage to the underlying
     /// `State` so any attached `OnStateHook` receives the transition before parallel root freeze.
-    pub(in crate::executor) fn settle_block_burned_fees(
-        &mut self,
-    ) -> Result<(), BlockExecutionError> {
+    pub fn settle_block_burned_fees(&mut self) -> Result<(), BlockExecutionError> {
         use crate::errors::BurnedFeeSettlementError;
-        use outbe_primitives::addresses::SYSTEM_ADDRESS;
         use outbe_primitives::error::PrecompileError;
         use outbe_primitives::storage::{direct::DirectStorageProvider, StorageHandle};
-        use outbe_promislimit::{BurnSource, PromisLimitContract};
 
         if self.burned_fees_settled {
             return Ok(());
@@ -102,10 +96,10 @@ where
         }
 
         let block_ctx = self.fee_route_context()?;
+        let host = self.runtime_host.clone();
         let mut provider = DirectStorageProvider::new(self.inner.evm.db_mut(), block_ctx);
         StorageHandle::enter(&mut provider, |storage| {
-            let mut promis = PromisLimitContract::new(storage);
-            promis.burn_to_promis_limit(SYSTEM_ADDRESS, burned_fees, BurnSource::BaseFee)
+            host.settle_block_burned_fees(storage, burned_fees)
         })
         .map_err(|err| {
             if err.is_node_local()

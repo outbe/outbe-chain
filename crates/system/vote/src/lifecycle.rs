@@ -6,7 +6,7 @@ use outbe_primitives::error::Result;
 use crate::handlers::{self, VoteTargetRegistry};
 use crate::schema::Vote;
 
-/// Protocol module for `SystemTxKind::Vote` (`OSVT`).
+/// Protocol module for the begin-block vote step.
 pub struct VoteModule;
 
 impl ProtocolModule for VoteModule {

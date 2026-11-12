@@ -36,17 +36,10 @@ use outbe_radicle::integration::{
 };
 
 fn read_effective_slash_config(
+    reader: &dyn crate::state_reader::OutbeRpcStateReader,
     storage: StorageHandle<'_>,
 ) -> Result<SlashConfig, outbe_primitives::error::PrecompileError> {
-    let si = outbe_slashindicator::contract::SlashIndicator::new(storage);
-    Ok(SlashConfig {
-        proposer_misdemeanor_threshold: si.proposer_misdemeanor_threshold()?,
-        proposer_felony_threshold: si.proposer_felony_threshold()?,
-        voter_misdemeanor_threshold: si.voter_misdemeanor_threshold()?,
-        voter_felony_threshold: si.voter_felony_threshold()?,
-        slash_amount_percent: si.slash_amount_percent()?,
-        evidence_reward_percent: si.evidence_reward_percent()?,
-    })
+    reader.slash_config(storage)
 }
 
 /// Bridge from Reth's `StateProvider` to outbe's `StorageReader` trait.
@@ -72,6 +65,7 @@ pub struct OutbeApiHandler<P> {
     tee_renewal_schedule: Option<TeeRenewalScheduleConfigV1>,
     radicle_status: RadicleStatusHandle,
     tee_enclave_health: outbe_tee::TeeEnclaveHealthChannel,
+    reader: std::sync::Arc<dyn crate::state_reader::OutbeRpcStateReader>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -99,7 +93,10 @@ impl<P> std::fmt::Debug for OutbeApiHandler<P> {
 impl<P> OutbeApiHandler<P> {
     /// Create a new handler backed by the given state provider factory (no
     /// bridge, plain EL full node).
-    pub fn new(provider: Arc<P>) -> Self {
+    pub fn new(
+        provider: Arc<P>,
+        reader: std::sync::Arc<dyn crate::state_reader::OutbeRpcStateReader>,
+    ) -> Self {
         Self {
             provider,
             chain_identity: None,
@@ -107,12 +104,17 @@ impl<P> OutbeApiHandler<P> {
             tee_renewal_schedule: None,
             radicle_status: outbe_radicle::integration::RadicleStatusChannel::disabled(),
             tee_enclave_health: outbe_tee::TeeEnclaveHealthChannel::disabled(),
+            reader,
         }
     }
 
     /// Create a handler with access to the consensus bridge.
-    pub fn with_bridge(provider: Arc<P>, bridge: ConsensusExecutionBridge) -> Self {
-        let mut handler = Self::new(provider);
+    pub fn with_bridge(
+        provider: Arc<P>,
+        bridge: ConsensusExecutionBridge,
+        reader: std::sync::Arc<dyn crate::state_reader::OutbeRpcStateReader>,
+    ) -> Self {
+        let mut handler = Self::new(provider, reader);
         handler.bridge = Some(bridge);
         handler
     }
@@ -452,8 +454,15 @@ where
     ) -> RpcResult<outbe_tee::tribute_source::TributeStateSource> {
         let provider = Arc::clone(&self.provider);
         let chain_identity = self.chain_identity;
+        let reader = Arc::clone(&self.reader);
         tokio::task::spawn_blocking(move || {
-            tribute_sources::serve(&*provider, chain_identity, subject, tribute_id)
+            tribute_sources::serve(
+                &*provider,
+                chain_identity,
+                subject,
+                tribute_id,
+                reader.as_ref(),
+            )
         })
         .await
         .map_err(|error| internal_err(format!("Tribute source worker failed: {error}")))?
@@ -481,77 +490,15 @@ where
     }
 
     async fn get_validators(&self) -> RpcResult<Vec<ValidatorInfo>> {
-        self.with_latest_state(|storage| {
-            let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            let records = vs.get_active_validators()?;
-
-            let staking = outbe_staking::contract::Staking::new(storage);
-
-            let mut result = Vec::with_capacity(records.len());
-            for r in &records {
-                let stake = staking.get_stake(r.validator_address).unwrap_or(U256::ZERO);
-                result.push(ValidatorInfo {
-                    address: r.validator_address,
-                    consensus_pubkey: hex::encode(r.consensus_pubkey),
-                    status: r.status,
-                    stake,
-                });
-            }
-            Ok(result)
-        })
+        self.with_latest_state(|storage| self.reader.validators(storage))
     }
 
     async fn get_validator(&self, address: Address) -> RpcResult<Option<ValidatorDetailInfo>> {
-        self.with_latest_state(|storage| {
-            let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            let state = vs.validator_state(address)?;
-            if !state.is_registered() {
-                return Ok(None);
-            }
-            let consensus_pubkey = state
-                .consensus_pubkey()
-                .ok_or(crate::errors::RpcValidatorStateError::MissingConsensusPubkey)?;
-            let history = state
-                .history()
-                .ok_or(crate::errors::RpcValidatorStateError::MissingHistory)?;
-            Ok(Some(ValidatorDetailInfo {
-                address,
-                consensus_pubkey: hex::encode(consensus_pubkey),
-                status: state
-                    .lifecycle()
-                    .stored_status()
-                    .ok_or(crate::errors::RpcValidatorStateError::MissingPersistedStatus)?,
-                stake: state.bonded_stake(),
-                slash_count: history.slash_count(),
-                missed_blocks: history.missed_blocks(),
-                missed_votes: history.missed_votes(),
-                blocks_proposed: history.blocks_proposed(),
-                joined_at_height: history.joined_at_height(),
-                deactivated_at_height: history.last_deactivated_at_height().unwrap_or(0),
-                unbonding_end: state.unbonding_end_hint().unwrap_or(0),
-                has_bls_share: state.has_bls_share(),
-            }))
-        })
+        self.with_latest_state(|storage| self.reader.validator(storage, address))
     }
 
     async fn get_epoch_info(&self) -> RpcResult<EpochInfo> {
-        self.with_latest_state(|storage| {
-            let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            let epoch = vs.epoch_snapshot()?;
-            let active_count = vs.active_validator_count()?;
-
-            let staking = outbe_staking::contract::Staking::new(storage);
-            let total_staked = staking.get_total_staked()?;
-
-            Ok(EpochInfo {
-                epoch_number: epoch.number,
-                epoch_start_timestamp: epoch.start_timestamp,
-                epoch_start_block: epoch.start_block,
-                epoch_length_blocks: epoch.length_blocks,
-                active_validator_count: active_count,
-                total_staked,
-            })
-        })
+        self.with_latest_state(|storage| self.reader.epoch(storage))
     }
 
     async fn upgrade_key_v1(
@@ -560,32 +507,22 @@ where
         proof: outbe_tee::upgrade_transfer::UpgradeKeyProofV1,
         legacy_direct_dev_source: bool,
     ) -> RpcResult<Bytes> {
-        tee::TeeRpc::new(&*self.provider, self.chain_identity)
+        tee::TeeRpc::new(&*self.provider, self.chain_identity, self.reader.as_ref())
             .upgrade_key(context, proof, legacy_direct_dev_source)
             .await
     }
 
     async fn tee_renewal_schedule_v1(&self) -> RpcResult<TeeRenewalScheduleV1> {
-        tee::TeeRpc::new(&*self.provider, self.chain_identity)
+        tee::TeeRpc::new(&*self.provider, self.chain_identity, self.reader.as_ref())
             .renewal_schedule(self.tee_renewal_schedule)
     }
 
     async fn get_stake(&self, address: Address) -> RpcResult<U256> {
-        self.with_latest_state(|storage| {
-            let staking = outbe_staking::contract::Staking::new(storage);
-            staking.get_stake(address)
-        })
+        self.with_latest_state(|storage| self.reader.stake(storage, address))
     }
 
     async fn get_slash_info(&self, address: Address) -> RpcResult<SlashInfo> {
-        self.with_latest_state(|storage| {
-            let si = outbe_slashindicator::contract::SlashIndicator::new(storage);
-            Ok(SlashInfo {
-                proposer_miss_count: si.proposer_miss_count.read(&address)?,
-                voter_miss_count: si.voter_miss_count.read(&address)?,
-                felony_count: si.felony_count.read(&address)?,
-            })
-        })
+        self.with_latest_state(|storage| self.reader.slash_info(storage, address))
     }
 
     async fn consensus_status(&self) -> RpcResult<ConsensusStatusInfo> {
@@ -649,27 +586,15 @@ where
     }
 
     async fn get_emission_info(&self) -> RpcResult<EmissionInfo> {
-        Ok(EmissionInfo {
-            validator_reward_percent: outbe_emission::allocation::VALIDATOR_REWARD_PCT,
-            fee_escrow_address: outbe_primitives::addresses::REWARDS_ADDRESS,
-        })
+        Ok(self.reader.emission_info())
     }
 
     async fn get_slash_config(&self) -> RpcResult<SlashConfig> {
-        self.with_latest_state(read_effective_slash_config)
+        self.with_latest_state(|storage| read_effective_slash_config(self.reader.as_ref(), storage))
     }
 
     async fn get_participation(&self, address: Address) -> RpcResult<ParticipationInfo> {
-        self.with_latest_state(|storage| {
-            let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
-            let participation = vs.participation(address)?;
-            Ok(ParticipationInfo {
-                address,
-                blocks_proposed: participation.blocks_proposed,
-                missed_blocks: participation.missed_blocks,
-                missed_votes: participation.missed_votes,
-            })
-        })
+        self.with_latest_state(|storage| self.reader.participation(storage, address))
     }
 
     async fn sync_status(&self) -> RpcResult<SyncStatusInfo> {

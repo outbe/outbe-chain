@@ -1425,7 +1425,7 @@ fn sign_nullify_evidence(
 /// evidence epoch resolves to the test committee.
 fn write_test_committee(storage: &StorageHandle) {
     let snapshot = outbe_validatorset::state::CommitteeSnapshot {
-        committee: outbe_consensus::test_harness::committee_entries(
+        committee: outbe_simplex::test_harness::committee_entries(
             test_signing::committee_public_keys().iter(),
         ),
         vrf_material_version: 1,
@@ -1461,9 +1461,9 @@ fn build_test_namespace(suffix: &[u8]) -> Vec<u8> {
     // the epoch's committee snapshot.
     let c = test_signing::committee();
     match suffix {
-        b"_NOTARIZE" => outbe_consensus::proof::notarize_namespace(&c),
-        b"_NULLIFY" => outbe_consensus::proof::nullify_namespace(&c),
-        b"_FINALIZE" => outbe_consensus::proof::finalize_namespace(&c),
+        b"_NOTARIZE" => outbe_primitives::proof::notarize_namespace(&c),
+        b"_NULLIFY" => outbe_primitives::proof::nullify_namespace(&c),
+        b"_FINALIZE" => outbe_primitives::proof::finalize_namespace(&c),
         other => panic!("unexpected sub-namespace suffix {other:?}"),
     }
 }

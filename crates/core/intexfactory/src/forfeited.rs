@@ -3,7 +3,7 @@
 //! cleanup.
 
 use alloy_primitives::{B256, U256};
-use outbe_common::deadline_queue::{self, DeadlineHandler, Due};
+use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
 use outbe_primitives::{
     block::BlockRuntimeContext, error::Result, pass_budget::PassBudget, storage::StorageHandle,
 };

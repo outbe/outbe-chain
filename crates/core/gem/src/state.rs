@@ -1,6 +1,6 @@
 use alloy_primitives::{keccak256, B256, U256};
 
-use outbe_common::deadline_queue;
+use outbe_core_common::deadline_queue;
 use outbe_primitives::call_bins;
 use outbe_primitives::error::Result;
 use outbe_primitives::series_id::SeriesId;
@@ -391,7 +391,7 @@ impl GemContract<'_> {
 /// This queue schedules called groups by the UTC day when their notice period closes.
 pub struct ForfeitQueue<'a, 'storage>(pub &'a GemContract<'storage>);
 
-outbe_common::impl_deadline_queue!(ForfeitQueue<B256> {
+outbe_core_common::impl_deadline_queue!(ForfeitQueue<B256> {
     root: forfeit_tree_root,
     mid: forfeit_tree_mid,
     leaf: forfeit_tree_leaf,
@@ -407,7 +407,7 @@ outbe_common::impl_deadline_queue!(ForfeitQueue<B256> {
 /// Forfeited groups whose unpaid gems wait to be deleted.
 pub struct CleanupQueue<'a, 'storage>(pub &'a GemContract<'storage>);
 
-outbe_common::impl_deadline_queue!(CleanupQueue<B256> {
+outbe_core_common::impl_deadline_queue!(CleanupQueue<B256> {
     root: cleanup_tree_root,
     mid: cleanup_tree_mid,
     leaf: cleanup_tree_leaf,

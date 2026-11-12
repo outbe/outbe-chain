@@ -57,4 +57,4 @@ fn recovery_anchor_never_promotes_an_execution_only_head_to_finalized() {
 }
 
 #[cfg(feature = "snapshot-integration")]
-pub(in crate::stack::tests) mod copied_native;
+pub(in crate::stack::tests) use crate::stack::snapshot_native as copied_native;

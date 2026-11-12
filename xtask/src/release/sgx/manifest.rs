@@ -24,7 +24,7 @@ use eyre::eyre;
 use eyre::Result;
 use eyre::WrapErr;
 
-use outbe_evm::tee_attestation_activation::DcapChainSpecBindingV1;
+use outbe_tee::tee_attestation_activation::DcapChainSpecBindingV1;
 
 use serde::Deserialize;
 use serde::Serialize;

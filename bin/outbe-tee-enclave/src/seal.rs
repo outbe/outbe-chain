@@ -40,8 +40,8 @@ use zeroize::Zeroizing;
 use alloy_primitives::B256;
 use outbe_primitives::tee_attestation_v1::NetworkBindingV1;
 
-use crate::crypto::OneNonce;
 use crate::errors::{Result, TeeError};
+use outbe_primitives::crypto::OneNonce;
 
 /// Boot-time configuration that the sealing path needs. Startup builds it once
 /// from CLI args, and the seal-on-bootstrap / unseal-on-restart path consumes it.

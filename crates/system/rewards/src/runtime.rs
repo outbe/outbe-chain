@@ -7,7 +7,7 @@
 //!
 
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_consensus::proof::canonical_signer_set_hash;
+use outbe_primitives::proof::canonical_signer_set_hash;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     consensus_metadata::CertifiedParentAccountingMetadata,
@@ -184,7 +184,7 @@ pub enum MetadataFingerprintOutcome {
 // accounts for authenticated late participation separately, including
 // daily GEM participation. It does not relax this fingerprint. The canonical
 // signer set is therefore part of the
-// fingerprint via [`outbe_consensus::proof::canonical_signer_set_hash`].
+// fingerprint via [`outbe_primitives::proof::canonical_signer_set_hash`].
 //
 // Fields bound by V3 (in addition to the V2 set):
 // - `proof_kind` tag (Finalization / CertifiedNotarization).
@@ -236,7 +236,7 @@ pub fn day_number_since_genesis(ctx: &BlockRuntimeContext, utc_day: u32) -> Resu
 ///
 /// `canonical_vrf_proof_hash` is the executor-derived
 /// `keccak256(VrfProof::encode())` from the verified certificate. The
-/// caller obtains it from `outbe_consensus::proof::VerifiedProof::vrf_proof_hash`
+/// caller obtains it from `outbe_primitives::proof::VerifiedProof::vrf_proof_hash`
 /// (already validated by `verify_v2_proof` before this function runs).
 ///
 /// V3 fingerprint encoding:

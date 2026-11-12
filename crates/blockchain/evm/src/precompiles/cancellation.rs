@@ -7,7 +7,7 @@ use revm::context_interface::result::{AnyError, EVMError};
 use std::sync::Arc;
 
 #[derive(Clone, Default)]
-pub(crate) struct ExecutionAbortBridge {
+pub struct ExecutionAbortBridge {
     terminal: Arc<Mutex<Option<NodeLocalExecutionAbort>>>,
 }
 

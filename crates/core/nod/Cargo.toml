@@ -6,7 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-outbe-common.workspace = true
+outbe-core-common.workspace = true
 outbe-tee.workspace = true
 outbe-macros.workspace = true
 outbe-primitives.workspace = true
@@ -16,11 +16,11 @@ postcard.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 
-outbe-tee-enclave = { workspace = true, optional = true }
+outbe-enclave = { workspace = true, optional = true }
 
 [dev-dependencies]
 outbe-nod = { path = ".", features = ["test-enclave"] }
-outbe-tee-enclave.workspace = true
+outbe-enclave.workspace = true
 alloy-primitives = { workspace = true, features = ["rand"] }
 base64.workspace = true
 serde_json.workspace = true
@@ -32,7 +32,7 @@ test-utils = ["outbe-primitives/test-utils"]
 # Enabled by the node binary in release builds. Asserts, at compile time, that
 # the attestation-skipping in-process stand-in is not in this build.
 production-enclave = []
-test-enclave = ["dep:outbe-tee-enclave"]
+test-enclave = ["dep:outbe-enclave"]
 # Shortens the DEV call notice to a real e2e wait. Never enabled in a release build.
 e2e-test = []
 

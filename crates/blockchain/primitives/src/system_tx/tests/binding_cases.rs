@@ -7,22 +7,15 @@ use super::primitives::{
     reshare_artifact::{
         encode_outbe_block_artifacts, ConsensusHeaderArtifact, OutbeBlockArtifacts,
     },
-    system_tx::{SystemTx, SystemTxLayout, BEGIN_BLOCK_ORDER, END_BLOCK_ORDER},
+    system_tx::{SystemTx, SystemTxLayout},
     OutbeBlockBody, OutbeHeader,
 };
 use alloy_consensus::{Header, SignableTransaction, TxLegacy};
 use alloy_primitives::{Address, Bytes, Signature, TxKind, B256, U256};
 use reth_ethereum::TransactionSigned;
 
-pub(super) enum Check {
-    Layout,
-    Parent,
-    Boundary,
-}
-
 pub(super) struct Case {
     pub name: &'static str,
-    pub check: Check,
     pub header: OutbeHeader,
     pub body: OutbeBlockBody,
     pub artifacts: OutbeBlockArtifacts,
@@ -37,10 +30,9 @@ impl Case {
         }
     }
 
-    fn new(name: &'static str, check: Check, height: u64, inputs: Vec<Bytes>) -> Self {
+    fn new(name: &'static str, height: u64, inputs: Vec<Bytes>) -> Self {
         Self {
             name,
-            check,
             header: OutbeHeader::new(Header {
                 number: height,
                 parent_hash: B256::repeat_byte(0x41),
@@ -75,8 +67,9 @@ fn encoded(input: SystemTx) -> Bytes {
 }
 
 fn parent(hash: B256) -> Bytes {
-    encoded(SystemTx::CertifiedParentAccounting {
-        metadata: CertifiedParentAccountingMetadata {
+    encoded(SystemTx::Consensus {
+        step_index: 0,
+        payload: (CertifiedParentAccountingMetadata {
             finalized_block_number: 41,
             finalized_block_hash: hash,
             finalized_epoch: 7,
@@ -90,7 +83,9 @@ fn parent(hash: B256) -> Bytes {
             vrf_group_public_key_hash: B256::repeat_byte(0x88),
             proof_kind: ParentParticipationProof::Finalization,
             missed_proposers: Vec::new(),
-        },
+        })
+        .encode()
+        .unwrap(),
     })
 }
 
@@ -120,85 +115,65 @@ fn boundary() -> DkgBoundaryArtifact {
 fn steady_inputs() -> Vec<Bytes> {
     let mut inputs = vec![
         parent(B256::repeat_byte(0x41)),
-        encoded(SystemTx::LateFinalizeCredits {
-            artifact: Default::default(),
+        encoded(SystemTx::Consensus {
+            step_index: 1,
+            payload: crate::reshare_artifact::encode_late_finalize_credits_artifact(
+                &(Default::default()),
+            )
+            .unwrap(),
         }),
-        encoded(SystemTx::ValidatorLiveness),
+        encoded(SystemTx::Consensus {
+            step_index: 4,
+            payload: Bytes::new(),
+        }),
     ];
-    for kind in BEGIN_BLOCK_ORDER {
-        inputs.push(encoded(kind.into_empty_system_tx().unwrap()));
-    }
-    for kind in END_BLOCK_ORDER {
-        inputs.push(encoded(kind.into_empty_system_tx().unwrap()));
+    for input in super::super::fixtures::begin_stage_inputs()
+        .into_iter()
+        .chain(super::super::fixtures::end_stage_inputs())
+    {
+        inputs.push(encoded(input));
     }
     inputs
 }
 
 pub(super) fn cases() -> Vec<Case> {
-    let cycle = encoded(SystemTx::CycleTick);
-    let malformed = Bytes::from_static(b"OSA3\x02");
+    let cycle = encoded(SystemTx::BeginBlock { step_index: 8 });
+    let malformed = Bytes::from_static(b"OSCN\x03\x00");
     let mut cases = vec![
-        Case::new("genesis_empty", Check::Layout, 0, vec![]),
-        Case::new("block1_requires_boundary", Check::Layout, 1, vec![]),
-        Case::new("steady_disabled", Check::Layout, 2, steady_inputs()),
+        Case::new("genesis_empty", 0, vec![]),
+        Case::new("block1_requires_boundary", 1, vec![]),
+        Case::new("steady_disabled", 2, steady_inputs()),
         Case::new(
             "wrong_order",
-            Check::Layout,
             2,
             vec![cycle.clone(), parent(B256::repeat_byte(0x41))],
         ),
-        Case::new("malformed_layout", Check::Layout, 2, vec![Bytes::new()]),
-        Case::new(
-            "genesis_skips_parent",
-            Check::Parent,
-            0,
-            vec![malformed.clone()],
-        ),
-        Case::new(
-            "block1_skips_parent",
-            Check::Parent,
-            1,
-            vec![malformed.clone()],
-        ),
-        Case::new("parent_missing", Check::Parent, 2, vec![]),
-        Case::new("parent_wrong_kind", Check::Parent, 2, vec![cycle.clone()]),
-        Case::new("parent_malformed", Check::Parent, 2, vec![malformed]),
+        Case::new("malformed_layout", 2, vec![Bytes::new()]),
+        Case::new("genesis_skips_parent", 0, vec![malformed.clone()]),
+        Case::new("block1_skips_parent", 1, vec![malformed.clone()]),
+        Case::new("parent_missing", 2, vec![]),
+        Case::new("parent_wrong_kind", 2, vec![cycle.clone()]),
+        Case::new("parent_malformed", 2, vec![malformed]),
         Case::new(
             "parent_hash_mismatch",
-            Check::Parent,
             2,
             vec![parent(B256::repeat_byte(0x42))],
         ),
-        Case::new(
-            "parent_matches",
-            Check::Parent,
-            2,
-            vec![parent(B256::repeat_byte(0x41))],
-        ),
+        Case::new("parent_matches", 2, vec![parent(B256::repeat_byte(0x41))]),
         Case::new(
             "maximum_height_parent_matches",
-            Check::Parent,
             u64::MAX,
             vec![parent(B256::repeat_byte(0x41))],
         ),
-        Case::new(
-            "no_boundary_skips_malformed_inputs",
-            Check::Boundary,
-            2,
-            vec![Bytes::new()],
-        ),
+        Case::new("no_boundary_skips_malformed_inputs", 2, vec![Bytes::new()]),
     ];
-    let mut bad_artifacts = Case::new(
-        "artifacts_before_layout",
-        Check::Layout,
-        2,
-        vec![Bytes::new()],
-    );
+    let mut bad_artifacts = Case::new("artifacts_before_layout", 2, vec![Bytes::new()]);
     bad_artifacts.header.inner.extra_data = Bytes::from_static(b"bad artifacts");
     cases.push(bad_artifacts);
     let artifact = boundary();
-    let matching = encoded(SystemTx::BoundaryOutcome {
-        artifact: artifact.clone(),
+    let matching = encoded(SystemTx::Consensus {
+        step_index: 2,
+        payload: crate::reshare_artifact::encode_boundary_artifact(&(artifact.clone())).unwrap(),
     });
     let mut mismatched = artifact.clone();
     mismatched.epoch += 1;
@@ -207,8 +182,9 @@ pub(super) fn cases() -> Vec<Case> {
         ("boundary_matches", vec![matching.clone()]),
         (
             "boundary_mismatch",
-            vec![encoded(SystemTx::BoundaryOutcome {
-                artifact: mismatched,
+            vec![encoded(SystemTx::Consensus {
+                step_index: 2,
+                payload: crate::reshare_artifact::encode_boundary_artifact(&(mismatched)).unwrap(),
             })],
         ),
         (
@@ -220,17 +196,12 @@ pub(super) fn cases() -> Vec<Case> {
             vec![Bytes::new(), matching],
         ),
     ] {
-        let mut case = Case::new(name, Check::Boundary, 2, inputs);
+        let mut case = Case::new(name, 2, inputs);
         case.artifacts.consensus_header_artifact =
             Some(ConsensusHeaderArtifact::BoundaryOutcome(artifact.clone()));
         cases.push(case);
     }
-    let mut layout_mismatch = Case::new(
-        "boundary_header_missing_body",
-        Check::Layout,
-        2,
-        steady_inputs(),
-    );
+    let mut layout_mismatch = Case::new("boundary_header_missing_body", 2, steady_inputs());
     layout_mismatch.artifacts.consensus_header_artifact =
         Some(ConsensusHeaderArtifact::BoundaryOutcome(artifact));
     layout_mismatch.header.inner.extra_data =
@@ -238,55 +209,4 @@ pub(super) fn cases() -> Vec<Case> {
             .expect("valid binding header fixture encodes");
     cases.push(layout_mismatch);
     cases
-}
-
-/// Golden diagnostics captured from both layers before extracting the bindings.
-pub(super) fn assert_diagnostics(
-    node: bool,
-    validate_layout: impl Fn(&OutbeBlockBody, &OutbeHeader) -> Result<(), String>,
-    validate_parent: impl Fn(&SystemTxLayout<'_>, &OutbeHeader) -> Result<(), String>,
-    validate_boundary: impl Fn(&SystemTxLayout<'_>, &OutbeBlockArtifacts) -> Result<(), String>,
-) {
-    let expected_mismatch = "invalid system tx set: active system tx set mismatch: expected begin [[79, 83, 65, 51], [79, 83, 76, 50], [79, 83, 66, 50], [79, 83, 86, 76], [79, 83, 86, 84], [79, 83, 85, 80], [79, 83, 69, 85], [79, 83, 82, 87], [79, 83, 83, 84], [79, 83, 79, 82], [79, 83, 79, 83], [79, 83, 72, 76], [79, 83, 67, 50]], expected end [[79, 83, 78, 68], [79, 83, 71, 77], [79, 83, 73, 88], [79, 83, 67, 82], [79, 83, 71, 67]], actual begin [[79, 83, 65, 51], [79, 83, 76, 50], [79, 83, 86, 76], [79, 83, 86, 84], [79, 83, 85, 80], [79, 83, 69, 85], [79, 83, 82, 87], [79, 83, 83, 84], [79, 83, 79, 82], [79, 83, 79, 83], [79, 83, 72, 76], [79, 83, 67, 50]], actual end [[79, 83, 78, 68], [79, 83, 71, 77], [79, 83, 73, 88], [79, 83, 67, 82], [79, 83, 71, 67]]";
-    let expected = [
-        ("genesis_empty", None, None),
-        ("block1_requires_boundary", Some("invalid system tx set: V2 genesis bootstrap: block 1 must carry a BoundaryOutcome system tx (got has_boundary_outcome = false)"), Some("invalid system tx set: V2 genesis bootstrap: block 1 must carry a BoundaryOutcome system tx (got has_boundary_outcome = false)")),
-        ("steady_disabled", None, None),
-        ("wrong_order", Some("invalid system tx layout: system tx kind order violation in BeginBlock: previous CycleTick, current CertifiedParentAccounting"), Some("invalid system tx layout for leader binding: system tx kind order violation in BeginBlock: previous CycleTick, current CertifiedParentAccounting")),
-        ("malformed_layout", Some("invalid system tx layout: system tx input too short: 0 bytes"), Some("invalid system tx layout for leader binding: system tx input too short: 0 bytes")),
-        ("genesis_skips_parent", None, None),
-        ("block1_skips_parent", None, None),
-        ("parent_missing", Some("missing CertifiedParentAccounting system tx for block 2"), Some("missing CertifiedParentAccounting system tx")),
-        ("parent_wrong_kind", Some("expected CertifiedParentAccounting system tx at begin ordinal 0"), Some("expected CertifiedParentAccounting system tx at begin ordinal 0")),
-        ("parent_malformed", Some("decode CertifiedParentAccounting input: system tx codec error: revert: certified-parent accounting metadata too short"), Some("decode CertifiedParentAccounting system tx input: system tx codec error: revert: certified-parent accounting metadata too short")),
-        ("parent_hash_mismatch", Some("CertifiedParentAccounting metadata hash must match block parent: expected 0x4141414141414141414141414141414141414141414141414141414141414141, got 0x4242424242424242424242424242424242424242424242424242424242424242"), Some("CertifiedParentAccounting metadata hash must match block parent: expected 0x4141414141414141414141414141414141414141414141414141414141414141, got 0x4242424242424242424242424242424242424242424242424242424242424242")),
-        ("parent_matches", None, None),
-        ("maximum_height_parent_matches", None, None),
-        ("no_boundary_skips_malformed_inputs", None, None),
-        ("artifacts_before_layout", Some("decode Outbe block artifacts: revert: unknown non-empty extra_data block artifact"), Some("decode Outbe block artifacts for system tx validation: revert: unknown non-empty extra_data block artifact")),
-        ("boundary_missing", Some("missing BoundaryOutcome system tx for header artifact"), Some("missing BoundaryOutcome system tx for header artifact")),
-        ("boundary_matches", None, None),
-        ("boundary_mismatch", Some("BoundaryOutcome system tx artifact mismatch"), Some("BoundaryOutcome system tx artifact mismatch")),
-        ("boundary_match_then_bad_input", Some("decode system tx input: system tx input too short: 0 bytes"), Some("decode system transaction input: system tx input too short: 0 bytes")),
-        ("bad_input_before_boundary_match", Some("decode system tx input: system tx input too short: 0 bytes"), Some("decode system transaction input: system tx input too short: 0 bytes")),
-        ("boundary_header_missing_body", Some(expected_mismatch), Some(expected_mismatch)),
-    ];
-    let cases = cases();
-    assert_eq!(cases.len(), expected.len());
-    for (case, (name, node_error, leader_error)) in cases.iter().zip(expected) {
-        let layout = case.layout();
-        let result = match case.check {
-            Check::Layout => validate_layout(&case.body, &case.header),
-            Check::Parent => validate_parent(&layout, &case.header),
-            Check::Boundary => validate_boundary(&layout, &case.artifacts),
-        };
-        assert_eq!(case.name, name);
-        let expected_error = if node { node_error } else { leader_error };
-        assert_eq!(
-            result.as_ref().err().map(String::as_str),
-            expected_error,
-            "{}",
-            name
-        );
-    }
 }

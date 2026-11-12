@@ -41,7 +41,7 @@ fn fixture(count: u8, invalid_word: bool) -> Fixture {
         for index in 0..count {
             let owner = Address::repeat_byte(index + 1);
             let tribute_id = derive_poseidon_entity_id(owner, subject.worldwide_day);
-            let body = outbe_tee_enclave::tribute_encryption::encrypt_tribute(
+            let body = outbe_enclave::tribute_encryption::encrypt_tribute(
                 &[0x52; 32],
                 TributeContextV2 {
                     chain_id: subject.chain_id,

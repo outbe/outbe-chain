@@ -13,8 +13,8 @@ use eyre::eyre;
 use eyre::Result;
 use eyre::WrapErr;
 
-use outbe_evm::tee_attestation_activation::DcapChainSpecBindingV1;
-use outbe_evm::tee_attestation_activation::DcapSeededChainSpecBindingV1;
+use outbe_tee::tee_attestation_activation::DcapChainSpecBindingV1;
+use outbe_tee::tee_attestation_activation::DcapSeededChainSpecBindingV1;
 
 use outbe_primitives::tee_genesis_v1::tee_attestation_v1_genesis_field;
 

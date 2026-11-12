@@ -34,7 +34,7 @@ use outbe_primitives::reshare_artifact::OutbeBlockArtifacts;
 use outbe_primitives::OutbeExecutionData;
 use outbe_primitives::OutbePayloadAttributes;
 
-use reth_node_builder::BuiltPayload as _;
+use reth_ethereum::node::api::BuiltPayload as _;
 
 use std::sync::Arc;
 

@@ -26,11 +26,16 @@ run = "forge lint"
 description = "Export contracts ABI to ./abi-export"
 depends = ["build"]
 run = '''
-echo 'Exporting ABI for intent contracts'
+set -eu
+# OpenZeppelin's ERC20 is a dependency, so forge takes it by name only and fails if two match.
 mkdir -p ./abi-export
-rm -rf ./abi-export/*.json
-for contract in Router ERC20 SolverEscrow Auction; do
-  cat ./out/${contract}.sol/${contract}.json | jq -r '.abi' > ./abi-export/${contract}.json
+rm -f ./abi-export/*.json
+for target in \
+  src/router/Router.sol:Router \
+  src/SolverEscrow.sol:SolverEscrow \
+  src/Auction.sol:Auction \
+  ERC20; do
+  forge inspect "$target" abi --json > "./abi-export/${target##*:}.json"
 done
 '''
 

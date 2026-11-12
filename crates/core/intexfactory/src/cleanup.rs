@@ -2,7 +2,7 @@
 //! the expiry already returned what the groups forfeited.
 
 use alloy_primitives::B256;
-use outbe_common::deadline_queue::{self, DeadlineHandler, Due};
+use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
 use outbe_intex::{CleanupQueue, IntexContract, SeriesId};
 use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::StorageHandle};
 

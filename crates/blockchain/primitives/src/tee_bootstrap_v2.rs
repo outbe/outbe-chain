@@ -13,7 +13,8 @@ use std::{cmp::Ordering, collections::BTreeMap};
 use alloy_primitives::{keccak256, Address, Bytes, B256};
 
 use crate::system_tx::{
-    STEADY_BLOCK_GAS_LIMIT, SYSTEM_TX_NON_ZERO_BYTE_GAS, SYSTEM_TX_VISIBLE_GAS_FLOOR,
+    STEADY_BLOCK_GAS_LIMIT, SYSTEM_CALLDATA_FRAMING_BYTES, SYSTEM_TX_NON_ZERO_BYTE_GAS,
+    SYSTEM_TX_VISIBLE_GAS_FLOOR,
 };
 use crate::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, CodecError,
@@ -26,7 +27,6 @@ use crate::tee_attestation_v1::{
 
 const MAGIC: &[u8; 4] = b"TTB2";
 const SIGNING_DOMAIN: &[u8] = b"outbe/tee/bootstrap/v2";
-const SYSTEM_CALLDATA_FRAMING_BYTES: usize = 5;
 const MAX_BOOTSTRAP_PARTICIPANTS: usize = 256;
 const MAX_COLLATERAL_POOL_COMPONENTS: usize = MAX_BOOTSTRAP_PARTICIPANTS * 8;
 const MAX_GROUP_PUBLIC_KEY_BYTES: usize = 32 * 1024;
