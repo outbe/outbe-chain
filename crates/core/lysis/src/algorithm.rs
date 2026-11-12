@@ -1,8 +1,8 @@
 use alloy_primitives::ruint::UintTryTo;
 use alloy_primitives::{Uint, I256, U256};
 use outbe_primitives::error::Result;
-use outbe_primitives::math::scaled_math::checked_mul_div_floor;
-use outbe_primitives::units::{SCALE_1E6_U128, SCALE_1E6_U256};
+use outbe_system_common::math::scaled_math::checked_mul_div_floor;
+use outbe_system_common::units::{SCALE_1E6_U128, SCALE_1E6_U256};
 
 use crate::errors::LysisError;
 

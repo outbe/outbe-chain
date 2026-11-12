@@ -14,7 +14,7 @@ use outbe_tee::protocol::{ModifyAuth, PromisOp};
 use crate::api;
 use crate::enclave_client::test_enclave;
 use crate::precompile::{dispatch, IPromis};
-use outbe_primitives::units::SCALE_1E6_U64;
+use outbe_system_common::units::SCALE_1E6_U64;
 
 const CHAIN_ID: u64 = 1;
 
