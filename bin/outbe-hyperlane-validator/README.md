@@ -190,7 +190,7 @@ While the daemon waits for the controller, `/health` returns 200.
 | `last_submit_error` | The error of the last failed `submitCheckpoint`, or `null` after a success. |
 | `domains.<id>.leaves` | Stored leaf count. |
 | `domains.<id>.latest_signed_index` | Highest signed index. |
-| `domains.<id>.cursor` | Last origin block that the store covers. |
+| `domains.<id>.cursor` | Finalized origin block of the last stored leaf batch. It is `null` before the first leaf. It moves only when new leaves arrive, so it can stay behind the chain head while the domain has no messages. |
 | `domains.<id>.reorg` | The domain halted after a reorg. |
 | `domains.<id>.error` | Domain error, or `null`. |
 
@@ -204,7 +204,7 @@ open it.
 |---|---|---|
 | `Leaves` | (domain, index) | Message id, origin block |
 | `Checkpoints` | (domain, index) | Root, 65-byte signature |
-| `Cursor` | domain | Last processed finalized origin block |
+| `Cursor` | domain | Finalized origin block of the last stored leaf batch |
 | `Meta` | (domain, name) | `Announcement`, `Signer`, `ReorgFlag`, `Hook` |
 
 The `db` commands work only while the daemon is stopped:
