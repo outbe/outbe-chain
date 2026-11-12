@@ -15,6 +15,26 @@ import {InboundReason} from "@contracts/shared/libs/InboundReason.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
 
+/// @dev A target peer whose delivery tries to flush another parked leg of the same router.
+contract ReenteringPeer {
+    OriginRouter internal immutable ORIGIN;
+    uint256 internal immutable IDX;
+    bytes4 public innerRevert;
+
+    constructor(OriginRouter origin, uint256 idx) {
+        ORIGIN = origin;
+        IDX = idx;
+    }
+
+    function receiveMessage(bytes32, bytes calldata, bytes calldata) external payable returns (bytes4) {
+        try ORIGIN.resendParkedMessage(IDX) {}
+        catch (bytes memory reason) {
+            innerRevert = bytes4(reason);
+        }
+        return this.receiveMessage.selector;
+    }
+}
+
 /// @dev Multi-target OriginRouter behavior: registry, broadcast fan-out over the frozen day snapshot, addressed-send
 ///      membership, per-leg parking + flush, and inbound BIDS_DONE. Delivery is off (sends only record).
 contract OriginRouterMultiTargetTest is CrossChainTest {
@@ -199,6 +219,21 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         assertTrue(origin.parkedMessage(0).sent);
     }
 
+    function test_flush_rejectsReentry() public {
+        origin.setRemoteMessenger(TARGET_B, "");
+        _fireStart(DAY);
+        _fireStart(DAY + 1);
+        ReenteringPeer peer = new ReenteringPeer(origin, 1);
+        origin.setRemoteMessenger(TARGET_B, _interop(TARGET_B, address(peer)));
+        bridge.setAutoDeliver(true);
+
+        origin.resendParkedMessage(0);
+
+        assertEq(peer.innerRevert(), bytes4(keccak256("ReentrancyGuardReentrantCall()")), "re-entry rejected");
+        assertTrue(origin.parkedMessage(0).sent);
+        assertFalse(origin.parkedMessage(1).sent, "the inner flush did not run");
+    }
+
     function test_flush_revert_unknown() public {
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.NoParkedMessage.selector, uint256(0)));
         origin.resendParkedMessage(0);
@@ -231,6 +266,21 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
             keccak256(_interop(TARGET_A, peerA)),
             "and it goes only to the chain that asked"
         );
+    }
+
+    function test_inbound_bidsRemaining_fromOutbeSendsTheRoundWithoutParking() public {
+        uint32 local = uint32(block.chainid);
+        address peerLocal = makeAddr("peerLocal");
+        origin.setRemoteMessenger(local, _interop(local, peerLocal));
+        origin.addTarget(local);
+        _fireStart(DAY);
+        uint256 parkedBefore = origin.parkedMessageCount();
+
+        _deliver(local, peerLocal, address(origin), BridgeMsgCodec.encodeBidsRemaining(DAY, local, 2, 5));
+
+        assertEq(uint8(bridge.lastPayload()[1]), BridgeMsgCodec.MSG_AUCTION_STAGE_COLLECTING_BIDS, "round sent");
+        assertEq(keccak256(bridge.lastRecipient()), keccak256(_interop(local, peerLocal)), "to Outbe itself");
+        assertEq(origin.parkedMessageCount(), parkedBefore, "nothing parked");
     }
 
     /// @dev Once the day's intake has closed (cleared on the fan-in timeout, cancelled), another

@@ -4,6 +4,7 @@ pragma solidity 0.8.30;
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
@@ -182,6 +183,38 @@ contract TargetRouterProceedsTest is CrossChainTest {
         (uint32 s, uint16 chunk, uint128 a, bool exists, bool done) = target.parkedProceeds(0);
         assertEq(s, SERIES_ID);
         assertEq(chunk, 0, "the parked route keeps its chunk");
+        assertEq(a, AMOUNT);
+        assertTrue(exists);
+        assertFalse(done);
+    }
+
+    function test_RefundInstructions_OnOutbeParksProceedsNotInWcoen() public {
+        uint32 local = uint32(block.chainid);
+        OriginRouter origin = DeployProxy.originRouter(address(bridge), address(this));
+        MockWCOEN originWcoen = new MockWCOEN();
+        origin.setProceedsRoute(address(tokenBridge), address(originWcoen));
+        TargetRouter outbeTarget = DeployProxy.targetRouter(address(bridge), address(this), local);
+        outbeTarget.wire(makeAddr("auction"), makeAddr("intex"), address(escrow));
+        outbeTarget.setRemoteMessenger(local, _interop(local, originSender));
+        outbeTarget.setProceedsRoute(address(tokenBridge), address(origin));
+        escrow.setTotalPaid(AMOUNT);
+
+        address[] memory winners = new address[](1);
+        winners[0] = bidder;
+        bytes memory packet = BridgeMsgCodec.encodeRefundInstructions(SERIES_ID, 0, 1, 600_000, 1e6, winners, 0, 0);
+        vm.expectEmit(true, true, false, true, address(outbeTarget));
+        emit ITargetRouter.ProceedsParked(
+            0,
+            SERIES_ID,
+            0,
+            AMOUNT,
+            abi.encodeWithSelector(ITargetRouter.ProceedsTokenNotBridged.selector, address(wcoen), address(originWcoen))
+        );
+        _deliver(local, originSender, address(outbeTarget), packet);
+
+        assertEq(tokenBridge.calls(), 0, "the Outbe route does not use the token bridge");
+        (uint32 s,, uint128 a, bool exists, bool done) = outbeTarget.parkedProceeds(0);
+        assertEq(s, SERIES_ID);
         assertEq(a, AMOUNT);
         assertTrue(exists);
         assertFalse(done);
