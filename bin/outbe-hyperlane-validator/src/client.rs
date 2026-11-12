@@ -1,10 +1,12 @@
 //! Outbe RPC access: read-only calls and signed transaction submission.
 
+use std::time::Duration;
+
 use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, BlockId};
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, B256};
-use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types::TransactionRequest;
+use alloy_provider::{DynProvider, Provider, ProviderBuilder};
+use alloy_rpc_types::{TransactionReceipt, TransactionRequest};
 use eyre::{Context, Result};
 
 use crate::errors::LivenessError;
@@ -26,7 +28,8 @@ pub async fn eth_call<P: Provider>(
 }
 
 pub struct TxSender<'a> {
-    pub rpc_endpoint: &'a str,
+    /// A provider of [`crate::sync::connect`], with its time limits.
+    pub provider: &'a DynProvider,
     pub wallet: &'a EthereumWallet,
     pub chain_id: u64,
     pub gasless: bool,
@@ -39,12 +42,7 @@ pub struct TxSender<'a> {
 pub async fn send_tx(sender: &TxSender<'_>, to: Address, calldata: &[u8]) -> Result<B256> {
     let provider = ProviderBuilder::new()
         .wallet(sender.wallet.clone())
-        .connect_http(
-            sender
-                .rpc_endpoint
-                .parse()
-                .with_context(|| "invalid RPC URL")?,
-        );
+        .connect_provider(sender.provider.clone());
     let mut tx = TransactionRequest::default()
         .to(to)
         .input(Bytes::copy_from_slice(calldata).into())
@@ -63,4 +61,23 @@ pub async fn send_tx(sender: &TxSender<'_>, to: Address, calldata: &[u8]) -> Res
         .await
         .map_err(|e| LivenessError::TransactionFailed(format!("{e:#}")))?;
     Ok(*pending.tx_hash())
+}
+
+/// Polls the receipt of `hash` until it exists or `timeout` ends.
+pub async fn wait_receipt(
+    provider: &DynProvider,
+    hash: B256,
+    timeout: Duration,
+) -> Result<TransactionReceipt> {
+    let poll = async {
+        loop {
+            if let Some(receipt) = provider.get_transaction_receipt(hash).await? {
+                return Ok::<_, eyre::Report>(receipt);
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    };
+    tokio::time::timeout(timeout, poll)
+        .await
+        .map_err(|_| LivenessError::NoReceipt(hash))?
 }

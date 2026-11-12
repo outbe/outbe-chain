@@ -54,6 +54,8 @@ pub struct DomainSigner {
     store: Arc<Store>,
     key: PrivateKeySigner,
     halted: AtomicBool,
+    /// The sync rewinds again and again. See [`DomainSync::stalled`].
+    stalled: AtomicBool,
     /// Wakes the backfill worker after a commit or a halt.
     wake: Notify,
 }
@@ -67,6 +69,7 @@ impl DomainSigner {
             store,
             key,
             halted: AtomicBool::new(halted),
+            stalled: AtomicBool::new(false),
             wake: Notify::new(),
         })
     }
@@ -89,6 +92,10 @@ impl DomainSigner {
         self.halted.load(Ordering::Acquire)
     }
 
+    pub fn stalled(&self) -> bool {
+        self.stalled.load(Ordering::Relaxed)
+    }
+
     /// Syncs, signs and backfills the domain until a reorg halts it. A domain
     /// with a stored reorg flag does not start. Dropping this future also
     /// stops the backfill.
@@ -107,12 +114,14 @@ impl DomainSigner {
         let mut sync = None;
         while !self.halted() {
             if sync.is_none() {
-                sync = DomainSync::new(self.origin.clone(), &config, &self.store)
+                sync = DomainSync::new(self.origin.clone(), &config, self.store.clone())
                     .inspect_err(|error| warn!(domain, %error, "sync start failed"))
                     .ok();
             }
             if let Some(s) = &mut sync {
-                match s.tick().await {
+                let tick = s.tick().await;
+                self.stalled.store(s.stalled(), Ordering::Relaxed);
+                match tick {
                     Ok(Tick::Batch(batch)) => {
                         if let Err(error) = self.commit(&batch).await {
                             // The sync state may be ahead of the store.
@@ -127,7 +136,7 @@ impl DomainSigner {
                         observed,
                     }) => {
                         self.halt(format!(
-                            "index {index}: endpoints agree on root {observed}, the signed root is {local}"
+                            "index {index}: the origin chain has {observed}, the local history has {local}"
                         ))
                         .await
                     }
@@ -244,17 +253,17 @@ impl DomainSigner {
         let mut next = match tree {
             Some(tree) => tree.clone(),
             None => {
-                let first = match self.store.first_unsigned_index(domain)? {
-                    _ if resign => 0,
-                    Some(first) => first,
-                    None => self.store.leaf_count(domain)?,
+                let first = if resign {
+                    0
+                } else {
+                    match self.store.first_unsigned_index(domain)? {
+                        Some(first) => first,
+                        None => self.store.leaf_count(domain)?,
+                    }
                 };
                 let mut rebuilt = IncrementalMerkle::default();
-                self.store.for_each_leaf(domain, |index, leaf| {
-                    if index < first {
-                        rebuilt.ingest(leaf.message_id);
-                    }
-                })?;
+                self.store
+                    .for_each_leaf(domain, first, |_, leaf| rebuilt.ingest(leaf.message_id))?;
                 info!(domain, first_unsigned = first, "backfill starts");
                 *tree = Some(rebuilt.clone());
                 rebuilt
@@ -424,7 +433,8 @@ pub fn history_lost(domain: u32, submitted: u32, local: Option<u32>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sync::{tests::mock_rpc, SyncedLeaf};
+    use crate::sync::tests::{mock_rpc, MockChain};
+    use crate::sync::SyncedLeaf;
 
     fn key() -> PrivateKeySigner {
         PrivateKeySigner::from_bytes(&B256::repeat_byte(7)).unwrap()
@@ -678,9 +688,9 @@ mod tests {
             B256::repeat_byte(3),
         ];
         let leaves = vec![(ids[0], 10), (ids[1], 60), (ids[2], 90)];
-        let fake_root = Arc::new(std::sync::Mutex::new(None));
-        let a = mock_rpc(leaves.clone(), fake_root.clone()).await;
-        let c = mock_rpc(leaves, fake_root.clone()).await;
+        let chain = MockChain::new(leaves);
+        let a = mock_rpc(chain.clone()).await;
+        let c = mock_rpc(chain.clone()).await;
         let config: OriginConfig = toml::from_str(&format!(
             "domain = 5\nrpc_urls = [\"{a}\", \"{c}\"]\nreorg_period = 0\ninterval_secs = 1"
         ))
@@ -700,7 +710,7 @@ mod tests {
         assert_all_signed(&store, 5, Address::ZERO, &ids);
 
         // Both endpoints now report another root at index 2.
-        *fake_root.lock().unwrap() = Some(B256::repeat_byte(0xee));
+        chain.lock().unwrap().root = Some(B256::repeat_byte(0xee));
         tokio::time::timeout(Duration::from_secs(10), run)
             .await
             .expect("the loop stops")

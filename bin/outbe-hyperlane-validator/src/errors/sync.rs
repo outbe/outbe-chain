@@ -16,6 +16,14 @@ pub(crate) enum SyncError {
     /// The chain did not return the finalized block.
     #[error("the chain did not return a finalized block")]
     NoFinalizedBlock,
+    /// A replayed log has another message id than the stored leaf.
+    #[error("domain {domain} index {index}: the log has message id {read}, the stored leaf has {stored}")]
+    ReplayMismatch {
+        domain: u32,
+        index: u32,
+        stored: alloy_primitives::B256,
+        read: alloy_primitives::B256,
+    },
     /// A log has no block number (a pending log).
     #[error("InsertedIntoTree log without a block number")]
     LogWithoutBlock,

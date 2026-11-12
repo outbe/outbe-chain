@@ -139,7 +139,7 @@ fn vote_rewinds_wrong_pending_leaves() {
 #[test]
 fn domain_sync_starts_from_the_store() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(dir.path()).unwrap();
+    let store = Arc::new(Store::open(dir.path()).unwrap());
     let leaves: Vec<(u32, Leaf)> = (0..3)
         .map(|i| {
             (
@@ -163,26 +163,45 @@ fn domain_sync_starts_from_the_store() {
         "domain = 7\nrpc_urls = [\"http://127.0.0.1:1\", \"http://127.0.0.1:1\"]\nreorg_period = 0",
     )
     .unwrap();
-    let sync = DomainSync::new(origin.clone(), &config, &store).unwrap();
+    let sync = DomainSync::new(origin.clone(), &config, store.clone()).unwrap();
     let (tip, _) = pending(0, 3);
     assert_eq!(sync.committed.root(), tip.root());
     assert_eq!(sync.cursor, 60);
     assert_eq!(sync.endpoints.len(), 1);
 
     let empty = tempfile::tempdir().unwrap();
-    let store = Store::open(empty.path()).unwrap();
-    let sync = DomainSync::new(origin, &config, &store).unwrap();
+    let store = Arc::new(Store::open(empty.path()).unwrap());
+    let sync = DomainSync::new(origin, &config, store).unwrap();
     assert_eq!(sync.cursor, 39);
     assert_eq!(sync.committed.count(), 0);
 }
 
-/// A JSON-RPC server for one hook: leaves at fixed blocks, head at block
-/// 100, `eth_getLogs` rejects ranges above 50 blocks, and
-/// `latestCheckpoint()` returns `root` (or the real root when `None`).
-pub(crate) async fn mock_rpc(
-    leaves: Vec<(B256, u64)>,
-    root: Arc<std::sync::Mutex<Option<B256>>>,
-) -> String {
+/// The chain state behind [`mock_rpc`].
+pub(crate) struct MockChain {
+    /// Message id and block of each leaf, in index order.
+    pub leaves: Vec<(B256, u64)>,
+    /// `latestCheckpoint()` returns this root when set.
+    pub root: Option<B256>,
+    pub head: u64,
+    /// The next `eth_getLogs` requests that fail with a rate limit.
+    pub rate_limited: u32,
+}
+
+impl MockChain {
+    pub(crate) fn new(leaves: Vec<(B256, u64)>) -> Arc<std::sync::Mutex<Self>> {
+        Arc::new(std::sync::Mutex::new(Self {
+            leaves,
+            root: None,
+            head: 100,
+            rate_limited: 0,
+        }))
+    }
+}
+
+/// A JSON-RPC server for one hook. `eth_getLogs` rejects ranges above 50
+/// blocks. `latestCheckpoint()` returns the tree at the requested block, or
+/// `root` when it is set.
+pub(crate) async fn mock_rpc(chain: Arc<std::sync::Mutex<MockChain>>) -> String {
     use serde_json::{json, Value};
 
     let respond = move |req: &Value| -> Value {
@@ -190,9 +209,14 @@ pub(crate) async fn mock_rpc(
         let hex = |v: &Value| {
             u64::from_str_radix(v.as_str().unwrap().trim_start_matches("0x"), 16).unwrap()
         };
+        let mut chain = chain.lock().unwrap();
         let result = match req["method"].as_str().unwrap() {
-            "eth_blockNumber" => json!("0x64"),
+            "eth_blockNumber" => json!(format!("{:#x}", chain.head)),
             "eth_getLogs" => {
+                if chain.rate_limited > 0 {
+                    chain.rate_limited -= 1;
+                    return json!({"jsonrpc": "2.0", "id": id, "error": {"code": 429, "message": "Too Many Requests: rate limit exceeded"}});
+                }
                 let (from, to) = (
                     hex(&req["params"][0]["fromBlock"]),
                     hex(&req["params"][0]["toBlock"]),
@@ -200,7 +224,8 @@ pub(crate) async fn mock_rpc(
                 if to - from + 1 > 50 {
                     return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32602, "message": "query exceeds max block range 50"}});
                 }
-                let logs: Vec<Value> = leaves
+                let logs: Vec<Value> = chain
+                    .leaves
                     .iter()
                     .enumerate()
                     .filter(|(_, (_, block))| (from..=to).contains(block))
@@ -226,10 +251,15 @@ pub(crate) async fn mock_rpc(
                 json!(logs)
             }
             "eth_call" => {
+                let at = hex(&req["params"][1]);
                 let mut tree = IncrementalMerkle::default();
-                leaves.iter().for_each(|(id, _)| tree.ingest(*id));
+                chain
+                    .leaves
+                    .iter()
+                    .filter(|(_, block)| *block <= at)
+                    .for_each(|(id, _)| tree.ingest(*id));
                 let ret = IMerkleTreeHook::latestCheckpointReturn {
-                    root: root.lock().unwrap().unwrap_or(tree.root()),
+                    root: chain.root.unwrap_or(tree.root()),
                     index: tree.index().unwrap(),
                 };
                 json!(alloy_primitives::Bytes::from(
@@ -294,11 +324,11 @@ pub(crate) async fn serve_json_rpc(
 #[tokio::test]
 async fn tick_reads_votes_and_detects_a_reorg() {
     let leaves = vec![(b(1), 10), (b(2), 60), (b(3), 90)];
-    let fake_root = Arc::new(std::sync::Mutex::new(None));
-    let a = mock_rpc(leaves.clone(), fake_root.clone()).await;
-    let c = mock_rpc(leaves.clone(), fake_root.clone()).await;
+    let chain = MockChain::new(leaves.clone());
+    let a = mock_rpc(chain.clone()).await;
+    let c = mock_rpc(chain.clone()).await;
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(dir.path()).unwrap();
+    let store = Arc::new(Store::open(dir.path()).unwrap());
     let origin = Origin {
         domain: 5,
         hook: Address::ZERO,
@@ -310,12 +340,11 @@ async fn tick_reads_votes_and_detects_a_reorg() {
         "domain = 5\nrpc_urls = [\"{a}\", \"{c}\"]\nreorg_period = 0"
     ))
     .unwrap();
-    let mut sync = DomainSync::new(origin, &config, &store).unwrap();
+    let mut sync = DomainSync::new(origin, &config, store).unwrap();
 
     let Tick::Batch(batch) = sync.tick().await.unwrap() else {
         panic!("batch")
     };
-    assert!(sync.chunk <= 50, "range errors shrink the chunk");
     assert_eq!(batch.leaves.len(), 3);
     assert_eq!(batch.cursor, 100);
     let mut tree = IncrementalMerkle::default();
@@ -328,7 +357,7 @@ async fn tick_reads_votes_and_detects_a_reorg() {
     }
     assert_eq!(sync.tick().await.unwrap(), Tick::Idle);
 
-    *fake_root.lock().unwrap() = Some(b(0xee));
+    chain.lock().unwrap().root = Some(b(0xee));
     assert_eq!(
         sync.tick().await.unwrap(),
         Tick::Reorg {
@@ -342,7 +371,7 @@ async fn tick_reads_votes_and_detects_a_reorg() {
 #[test]
 fn take_verified_stops_the_cursor_before_unverified_leaves() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(dir.path()).unwrap();
+    let store = Arc::new(Store::open(dir.path()).unwrap());
     let origin = Origin {
         domain: 1,
         hook: Address::ZERO,
@@ -353,7 +382,7 @@ fn take_verified_stops_the_cursor_before_unverified_leaves() {
     let config: OriginConfig =
         toml::from_str("domain = 1\nrpc_urls = [\"http://127.0.0.1:1\"]\nreorg_period = 0")
             .unwrap();
-    let mut sync = DomainSync::new(origin, &config, &store).unwrap();
+    let mut sync = DomainSync::new(origin, &config, store).unwrap();
     let (tip, leaves) = pending(0, 4);
     sync.tip = tip;
     sync.pending = leaves;
@@ -372,4 +401,135 @@ fn take_verified_stops_the_cursor_before_unverified_leaves() {
     };
     assert_eq!(batch.cursor, 200);
     assert_eq!(sync.take_verified(3), Tick::Idle);
+}
+
+/// A sync of domain 5 over `urls` on `store`.
+fn domain_sync(urls: &[String], store: &Arc<Store>) -> DomainSync {
+    let origin = Origin {
+        domain: 5,
+        hook: Address::ZERO,
+        validator_announce: Address::ZERO,
+        mailbox: Address::ZERO,
+        start_block: 1,
+    };
+    let config: OriginConfig = toml::from_str(&format!(
+        "domain = 5\nrpc_urls = {urls:?}\nreorg_period = 0"
+    ))
+    .unwrap();
+    DomainSync::new(origin, &config, store.clone()).unwrap()
+}
+
+/// Leaves 0 and 1 are stored. Leaf 1 is in block 60, after the cursor 59, so
+/// the next read gets it again.
+fn store_with_two_leaves(cursor: u64) -> (Arc<Store>, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(Store::open(dir.path()).unwrap());
+    let leaf = |n: u8, block| Leaf {
+        message_id: b(n),
+        block,
+    };
+    store
+        .commit_batch(5, &[(0, leaf(1, 10)), (1, leaf(2, 60))], &[], cursor)
+        .unwrap();
+    (store, dir)
+}
+
+#[tokio::test]
+async fn replayed_leaf_with_another_id_is_a_reorg() {
+    let (store, _dir) = store_with_two_leaves(59);
+    // The chain now has another message at the stored index 1.
+    let chain = MockChain::new(vec![(b(1), 10), (b(0xaa), 60), (b(3), 90)]);
+    let urls = [mock_rpc(chain.clone()).await, mock_rpc(chain).await];
+    let mut sync = domain_sync(&urls, &store);
+    // Two endpoints: the majority needs both. The first one alone is not enough.
+    assert!(sync.tick().await.is_err());
+    assert_eq!(
+        sync.tick().await.unwrap(),
+        Tick::Reorg {
+            index: 1,
+            local: b(2),
+            observed: b(0xaa)
+        }
+    );
+}
+
+#[tokio::test]
+async fn one_endpoint_with_another_leaf_does_not_halt() {
+    let (store, _dir) = store_with_two_leaves(59);
+    let good = vec![(b(1), 10), (b(2), 60), (b(3), 90)];
+    let urls = [
+        mock_rpc(MockChain::new(vec![(b(1), 10), (b(0xaa), 60), (b(3), 90)])).await,
+        mock_rpc(MockChain::new(good.clone())).await,
+        mock_rpc(MockChain::new(good)).await,
+    ];
+    let mut sync = domain_sync(&urls, &store);
+    // The bad source gives an error and the source rotates.
+    assert!(sync.tick().await.is_err());
+    for _ in 0..3 {
+        if let Ok(tick) = sync.tick().await {
+            assert!(
+                !matches!(tick, Tick::Reorg { .. }),
+                "one endpoint must not halt"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_stale_log_source_rotates() {
+    let leaves = vec![(b(1), 10), (b(2), 60), (b(3), 90)];
+    let stale = MockChain::new(leaves.clone());
+    stale.lock().unwrap().head = 20;
+    let urls = [
+        mock_rpc(stale).await,
+        mock_rpc(MockChain::new(leaves)).await,
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(Store::open(dir.path()).unwrap());
+    let mut sync = domain_sync(&urls, &store);
+    // The first source stopped at block 20. The other endpoint is ahead.
+    for _ in 0..STALE_SOURCE_TICKS {
+        assert_eq!(sync.tick().await.unwrap(), Tick::Idle);
+    }
+    assert_eq!(sync.source, 1, "the source rotates");
+    assert!(matches!(sync.tick().await.unwrap(), Tick::Batch(_)));
+}
+
+#[tokio::test]
+async fn a_rate_limit_keeps_the_range_and_the_chunk_grows_back() {
+    assert!(!is_range_error(
+        "HTTP error 429 with body: Too Many Requests"
+    ));
+    assert!(!is_range_error("rate limit exceeded"));
+    let chain = MockChain::new(vec![(b(1), 10), (b(2), 60), (b(3), 90)]);
+    chain.lock().unwrap().rate_limited = 1;
+    let urls = [mock_rpc(chain).await];
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(Store::open(dir.path()).unwrap());
+    let mut sync = domain_sync(&urls, &store);
+
+    // A rate limit is not a range error: the next tick reads the same range.
+    assert!(sync.tick().await.is_err());
+    assert_eq!((sync.chunk, sync.scanned), (MAX_LOG_RANGE, 0));
+    let Tick::Batch(batch) = sync.tick().await.unwrap() else {
+        panic!("batch")
+    };
+    assert_eq!(batch.leaves.len(), 3);
+    // Range errors shrink the chunk below 50. Each read that succeeds
+    // doubles it again.
+    assert!(sync.chunk > 50, "chunk {}", sync.chunk);
+}
+
+#[tokio::test]
+async fn repeated_rewinds_mark_the_sync_stalled() {
+    let (store, _dir) = store_with_two_leaves(60);
+    // Leaf 0 changed in a block below the cursor: no replay reads it.
+    let chain = MockChain::new(vec![(b(0xbb), 10), (b(2), 60), (b(3), 90)]);
+    let urls = [mock_rpc(chain.clone()).await, mock_rpc(chain).await];
+    let mut sync = domain_sync(&urls, &store);
+    for _ in 0..MAX_REWINDS {
+        assert!(!sync.stalled());
+        assert_eq!(sync.tick().await.unwrap(), Tick::Idle);
+    }
+    assert!(sync.stalled());
 }

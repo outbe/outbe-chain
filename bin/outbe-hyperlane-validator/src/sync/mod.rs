@@ -20,6 +20,7 @@ mod vote;
 pub use discover::{check_origin, controller_domains, ControllerDomain};
 pub use vote::{dedup_urls, evaluate, Observed, Vote};
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -45,18 +46,30 @@ pub const RPC_TIMEOUT: Duration = Duration::from_secs(20);
 /// The largest `eth_getLogs` block range. The Outbe RPC rejects larger ranges.
 pub const MAX_LOG_RANGE: u64 = 100_000;
 const MAX_WS_BACKOFF: Duration = Duration::from_secs(60);
+/// Ticks in a row that wait for leaves before the log source rotates.
+const STALE_SOURCE_TICKS: u32 = 3;
+/// Rewinds without a new verified leaf before the sync shows as stalled.
+const MAX_REWINDS: u32 = 5;
+/// Time limits of each HTTP JSON-RPC request.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The block range of the next `eth_getLogs` request.
 fn log_range(start: u64, end: u64, chunk: u64) -> (u64, u64) {
     (start, end.min(start.saturating_add(chunk - 1)))
 }
 
-/// True when the RPC rejected a log request because of its size.
+/// True when the RPC rejected a log request because of its size. A rate
+/// limit is not a range error: the next tick reads the same range again.
 fn is_range_error(message: &str) -> bool {
     let message = message.to_lowercase();
-    ["range", "limit", "too many", "exceed"]
+    let rate_limit = ["429", "rate limit", "too many requests"]
         .iter()
-        .any(|word| message.contains(word))
+        .any(|word| message.contains(word));
+    !rate_limit
+        && ["range", "limit", "too many", "exceed"]
+            .iter()
+            .any(|word| message.contains(word))
 }
 
 /// A leaf with the tree root after it.
@@ -138,11 +151,20 @@ pub struct Origin {
     pub start_block: u64,
 }
 
+/// An HTTP provider with connect and request time limits. Without them a
+/// silent endpoint blocks its caller forever.
 pub fn connect(url: &str) -> Result<DynProvider> {
     let url = url
         .parse()
         .with_context(|| format!("invalid RPC URL {url}"))?;
-    Ok(ProviderBuilder::new().connect_http(url).erased())
+    let provider = ProviderBuilder::new().with_reqwest(url, |builder| {
+        builder
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(REQUEST_TIMEOUT)
+            .build()
+            .expect("HTTP client")
+    });
+    Ok(provider.erased())
 }
 
 /// The finalized block of one endpoint.
@@ -187,7 +209,8 @@ pub struct DomainSync {
     endpoints: Vec<DynProvider>,
     consensus: RpcConsensus,
     period: ReorgPeriod,
-    /// The endpoint that gives finality and logs. It rotates after an error.
+    /// The endpoint that gives finality and logs. It rotates after an error,
+    /// a rewind, or when the endpoints stay ahead of its finality.
     source: usize,
     /// The tree of the stored leaves.
     committed: IncrementalMerkle,
@@ -199,15 +222,26 @@ pub struct DomainSync {
     /// The last block that the log reads covered.
     scanned: u64,
     chunk: u64,
+    /// Compares replayed leaves with the stored leaves.
+    store: Arc<Store>,
+    /// Ticks in a row that waited for leaves.
+    waiting: u32,
+    /// Rewinds since the last verified leaf.
+    rewinds: u32,
+    /// Endpoints whose logs contradict a stored leaf. One endpoint cannot
+    /// halt the domain: the conflict needs the agreement count of the vote.
+    replay_conflicts: BTreeSet<usize>,
 }
 
 impl DomainSync {
     /// Rebuilds the tree from the stored leaves and continues after the
     /// stored cursor. After a store error, build a new `DomainSync`: the
     /// in-memory state may be ahead of the store.
-    pub fn new(origin: Origin, config: &OriginConfig, store: &Store) -> Result<Self> {
+    pub fn new(origin: Origin, config: &OriginConfig, store: Arc<Store>) -> Result<Self> {
         let mut committed = IncrementalMerkle::default();
-        store.for_each_leaf(origin.domain, |_, leaf| committed.ingest(leaf.message_id))?;
+        store.for_each_leaf(origin.domain, u32::MAX, |_, leaf| {
+            committed.ingest(leaf.message_id)
+        })?;
         let cursor = match store.cursor(origin.domain)? {
             Some(cursor) => cursor,
             None => origin.start_block.saturating_sub(1),
@@ -228,6 +262,10 @@ impl DomainSync {
             cursor,
             scanned: cursor,
             chunk: MAX_LOG_RANGE,
+            store,
+            waiting: 0,
+            rewinds: 0,
+            replay_conflicts: BTreeSet::new(),
         })
     }
 
@@ -235,17 +273,57 @@ impl DomainSync {
         self.origin.domain
     }
 
+    /// True when the endpoints reject the read leaves again and again. A
+    /// reorg below the stored cursor gives this: the replay does not see it.
+    pub fn stalled(&self) -> bool {
+        self.rewinds >= MAX_REWINDS
+    }
+
+    fn rotate_source(&mut self) {
+        self.source = (self.source + 1) % self.endpoints.len();
+    }
+
     /// Reads new finalized leaves, runs the endpoint vote and returns the
     /// leaves that the vote verified.
     pub async fn tick(&mut self) -> Result<Tick> {
         if let Err(error) = self.read_leaves().await {
-            self.source = (self.source + 1) % self.endpoints.len();
+            if let Some(&SyncError::ReplayMismatch {
+                index,
+                stored,
+                read,
+                ..
+            }) = error.downcast_ref()
+            {
+                self.replay_conflicts.insert(self.source);
+                let required = self.consensus.required(self.endpoints.len());
+                if self.replay_conflicts.len() >= required {
+                    return Ok(Tick::Reorg {
+                        index,
+                        local: stored,
+                        observed: read,
+                    });
+                }
+                warn!(
+                    domain = self.domain(),
+                    source = self.source,
+                    index,
+                    %stored,
+                    %read,
+                    "log source contradicts a stored leaf; reading from the next endpoint"
+                );
+            }
+            self.rotate_source();
             return Err(error);
         }
         let observed = self.vote().await;
         let committed = self.committed.index().map(|i| (i, self.committed.root()));
         let required = self.consensus.required(self.endpoints.len());
-        match evaluate(&observed, required, committed, &self.pending) {
+        let vote = evaluate(&observed, required, committed, &self.pending);
+        self.waiting = match vote {
+            Vote::WaitingForLeaves => self.waiting + 1,
+            _ => 0,
+        };
+        match vote {
             Vote::Verified(target) => Ok(self.take_verified(target)),
             Vote::Reorg {
                 index,
@@ -274,10 +352,28 @@ impl DomainSync {
                 self.pending.clear();
                 self.tip = self.committed.clone();
                 self.scanned = self.cursor;
-                self.source = (self.source + 1) % self.endpoints.len();
+                self.rotate_source();
+                self.rewinds += 1;
+                if self.stalled() {
+                    error!(
+                        domain = self.domain(),
+                        rewinds = self.rewinds,
+                        "no verified leaf after many rewinds: check for a reorg below the stored cursor"
+                    );
+                }
                 Ok(Tick::Idle)
             }
             vote => {
+                // The source finality is behind the endpoints: read the logs
+                // from the next endpoint.
+                if self.waiting >= STALE_SOURCE_TICKS {
+                    warn!(
+                        domain = self.domain(),
+                        "endpoints stay ahead of the log source; the source rotates"
+                    );
+                    self.waiting = 0;
+                    self.rotate_source();
+                }
                 if !self.pending.is_empty() {
                     warn!(
                         domain = self.domain(),
@@ -296,6 +392,8 @@ impl DomainSync {
         if split == 0 {
             return Tick::Idle;
         }
+        self.rewinds = 0;
+        self.replay_conflicts.clear();
         // ponytail: the first sync holds all unverified leaves in memory (~1 GB per 5M leaves); a vote at intermediate blocks needs archive RPC state
         let leaves = if split == self.pending.len() {
             std::mem::take(&mut self.pending)
@@ -342,10 +440,12 @@ impl DomainSync {
                 }
                 Err(error) => return Err(error.into()),
             };
+            self.chunk = (self.chunk * 2).min(MAX_LOG_RANGE);
             let mut leaves = Vec::with_capacity(logs.len());
             for log in logs {
                 let event = IMerkleTreeHook::InsertedIntoTree::decode_log_data(log.data())?;
                 let block = log.block_number.ok_or(SyncError::LogWithoutBlock)?;
+                self.check_replay(event.index, event.messageId)?;
                 leaves.push((event.index, event.messageId, block));
             }
             append(self.domain(), &mut self.tip, &mut self.pending, leaves)?;
@@ -353,6 +453,24 @@ impl DomainSync {
             start = to + 1;
         }
         Ok(())
+    }
+
+    /// A leaf below the committed count is a replay. Another message id than
+    /// the stored one is a reorg of a verified leaf.
+    fn check_replay(&self, index: u32, read: B256) -> Result<()> {
+        if index as usize >= self.committed.count() {
+            return Ok(());
+        }
+        match self.store.leaf(self.domain(), index)? {
+            Some(leaf) if leaf.message_id != read => Err(SyncError::ReplayMismatch {
+                domain: self.domain(),
+                index,
+                stored: leaf.message_id,
+                read,
+            }
+            .into()),
+            _ => Ok(()),
+        }
     }
 
     /// Every endpoint reads in parallel. A failed or slow endpoint keeps its

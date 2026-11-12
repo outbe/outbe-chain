@@ -19,7 +19,7 @@ use crate::errors::{ConfigError, StoreError};
 use crate::http::health::{Controller, ValidatorHealth};
 use crate::signer::DomainSigner;
 use crate::store::{Meta, Store};
-use crate::sync::{check_origin, controller_domains, ws_wake, ControllerDomain};
+use crate::sync::{check_origin, controller_domains, ws_wake, ControllerDomain, Origin};
 
 pub struct Daemon {
     pub origins: Vec<OriginConfig>,
@@ -36,7 +36,13 @@ pub struct Daemon {
 enum Domain {
     /// Dropping the tasks stops the signer, the backfill, the WebSocket
     /// waker and the announce loop.
-    Running { hook: Address, _tasks: JoinSet<()> },
+    Running {
+        hook: Address,
+        validator_announce: Address,
+        _tasks: JoinSet<()>,
+        /// The announce loop. A new ValidatorAnnounce replaces it.
+        announce: JoinSet<()>,
+    },
     /// The hook changed. The domain does not start again in this process.
     Stopped,
 }
@@ -70,7 +76,7 @@ impl Daemon {
         });
         self.health.retain_domains(listed_has);
         for d in &listed {
-            match domains.get(&d.domain) {
+            match domains.get_mut(&d.domain) {
                 Some(Domain::Running { hook, .. }) if *hook != d.hook => {
                     let message = format!(
                         "hookByDomain changed from {hook} to {}: signing of this domain stopped",
@@ -79,6 +85,23 @@ impl Daemon {
                     error!(domain = d.domain, "{message}");
                     domains.insert(d.domain, Domain::Stopped);
                     self.health.set_error(d.domain, message);
+                }
+                // The signed history stays valid. Only the announce changes.
+                Some(Domain::Running {
+                    validator_announce,
+                    announce,
+                    ..
+                }) if *validator_announce != d.validator_announce => {
+                    match self.restart_announce(d).await {
+                        Ok(task) => {
+                            info!(domain = d.domain, va = %d.validator_announce, "ValidatorAnnounce changed; the announce starts again");
+                            *announce = task;
+                            *validator_announce = d.validator_announce;
+                        }
+                        Err(error) => {
+                            warn!(domain = d.domain, %error, "announce restart failed; retry on the next poll")
+                        }
+                    }
                 }
                 Some(_) => {}
                 None => match self.start(outbe, d).await {
@@ -95,12 +118,35 @@ impl Daemon {
         Ok(())
     }
 
-    async fn start(&self, outbe: &DynProvider, d: &ControllerDomain) -> Result<Domain> {
-        let config = self
+    fn origin_config(&self, domain: u32) -> Result<&OriginConfig> {
+        Ok(self
             .origins
             .iter()
-            .find(|c| c.domain == d.domain)
-            .ok_or(ConfigError::MissingOrigin(d.domain))?;
+            .find(|c| c.domain == domain)
+            .ok_or(ConfigError::MissingOrigin(domain))?)
+    }
+
+    fn spawn_announce(&self, origin: Origin, config: &OriginConfig) -> JoinSet<()> {
+        let location = format!("{}/{}", self.location, origin.domain);
+        let mut task = JoinSet::new();
+        task.spawn(announce(
+            origin,
+            config.rpc_urls.clone(),
+            self.key.clone(),
+            self.store.clone(),
+            location,
+        ));
+        task
+    }
+
+    async fn restart_announce(&self, d: &ControllerDomain) -> Result<JoinSet<()>> {
+        let config = self.origin_config(d.domain)?;
+        let origin = check_origin(d, config).await?;
+        Ok(self.spawn_announce(origin, config))
+    }
+
+    async fn start(&self, outbe: &DynProvider, d: &ControllerDomain) -> Result<Domain> {
+        let config = self.origin_config(d.domain)?;
         // The stored history is signed for one hook. Another hook must not
         // continue it.
         let stored_hook = self.store.meta(d.domain, Meta::Hook)?;
@@ -132,18 +178,14 @@ impl Daemon {
         let mut tasks = JoinSet::new();
         let wake = ws_wake(config, origin.hook, &mut tasks);
         tasks.spawn(signer.clone().run(config.clone(), wake));
-        tasks.spawn(announce(
-            origin,
-            config.rpc_urls.clone(),
-            self.key.clone(),
-            self.store.clone(),
-            format!("{}/{}", self.location, d.domain),
-        ));
+        let announce = self.spawn_announce(origin, config);
         self.health.set_running(signer);
         info!(domain = d.domain, hook = %d.hook, "domain started");
         Ok(Domain::Running {
             hook: d.hook,
+            validator_announce: d.validator_announce,
             _tasks: tasks,
+            announce,
         })
     }
 }
@@ -167,8 +209,9 @@ mod tests {
     const VA: Address = Address::repeat_byte(0xa1);
     const MAILBOX: Address = Address::repeat_byte(0xb2);
 
-    /// What the controller returns: icaRouter, domains, hook of each domain.
-    type Controller = Arc<Mutex<(Address, Vec<u32>, Address)>>;
+    /// What the controller returns: icaRouter, domains, hook and
+    /// ValidatorAnnounce of each domain.
+    type Controller = Arc<Mutex<(Address, Vec<u32>, Address, Address)>>;
 
     /// One endpoint for Outbe and the origin chain of domain 5. The
     /// announcement of `location` is already on-chain.
@@ -189,14 +232,17 @@ mod tests {
                     };
                     let data: Bytes = serde_json::from_value(input.clone()).unwrap();
                     let selector: [u8; 4] = data[..4].try_into().unwrap();
-                    let (ica, domains, hook) = state.lock().unwrap().clone();
+                    let (ica, domains, hook, va) = state.lock().unwrap().clone();
                     let out = if to == HYPERLANE_CONTROLLER_ADDRESS {
                         match selector {
                             IHyperlaneController::icaRouterCall::SELECTOR => ica.abi_encode(),
                             IHyperlaneController::domainsCall::SELECTOR => domains.abi_encode(),
                             IHyperlaneController::hookByDomainCall::SELECTOR => hook.abi_encode(),
                             IHyperlaneController::validatorAnnounceByDomainCall::SELECTOR => {
-                                VA.abi_encode()
+                                va.abi_encode()
+                            }
+                            IHyperlaneController::hyperlaneSignerCall::SELECTOR => {
+                                Address::ZERO.abi_encode()
                             }
                             IHyperlaneController::submittedIndexCall::SELECTOR
                             | IHyperlaneController::missCountCall::SELECTOR => 0u32.abi_encode(),
@@ -205,7 +251,7 @@ mod tests {
                     } else if to == VALIDATOR_SET_ADDRESS {
                         assert_eq!(selector, IValidatorSet::getActiveValidatorsCall::SELECTOR);
                         Vec::<Address>::new().abi_encode()
-                    } else if to == VA {
+                    } else if to == va {
                         match selector {
                             IValidatorAnnounce::localDomainCall::SELECTOR => 5u32.abi_encode(),
                             IValidatorAnnounce::mailboxCall::SELECTOR => MAILBOX.abi_encode(),
@@ -238,7 +284,7 @@ mod tests {
     #[tokio::test]
     async fn poll_starts_stops_and_removes_domains() {
         let hook1 = Address::repeat_byte(0x11);
-        let state: Controller = Arc::new(Mutex::new((Address::ZERO, vec![], hook1)));
+        let state: Controller = Arc::new(Mutex::new((Address::ZERO, vec![], hook1, VA)));
         let url = chain(state.clone(), "s3+http://h:9000/0xb/5".into()).await;
         let dir = tempfile::tempdir().unwrap();
         let store = Arc::new(Store::open(dir.path()).unwrap());
@@ -315,6 +361,17 @@ mod tests {
         assert_eq!(status("active"), false);
         assert_eq!(status("submitted"), 0);
 
+        // A new ValidatorAnnounce with the same hook: the announce starts
+        // again for it. The domain keeps signing.
+        let va2 = Address::repeat_byte(0xa2);
+        state.lock().unwrap().3 = va2;
+        daemon.poll(&outbe, &mut domains).await.unwrap();
+        assert!(matches!(
+            domains.get(&5),
+            Some(Domain::Running { validator_announce, .. }) if *validator_announce == va2
+        ));
+        assert_eq!(health.running().len(), 1);
+
         // A hook change stops the domain and its tasks. No restart.
         state.lock().unwrap().2 = Address::repeat_byte(0x22);
         daemon.poll(&outbe, &mut domains).await.unwrap();
@@ -345,6 +402,7 @@ mod tests {
             Address::repeat_byte(1),
             vec![5],
             Address::repeat_byte(0x22),
+            VA,
         )));
         let url = chain(state, "s3+http://h:9000/0xb/5".into()).await;
         let dir = tempfile::tempdir().unwrap();

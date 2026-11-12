@@ -53,7 +53,9 @@ Use three distinct addresses.
 Register `H` as the checkpoint signer with
 `HyperlaneController.setHyperlaneSigner(H)` from the Hyperlane delegate.
 That mapping selects the checkpoint signature key. Delegation authorizes the
-transaction sender. These are separate checks.
+transaction sender. These are separate checks. Each liveness tick reads
+`hyperlaneSigner(V)` (`V` when it is zero). When it is not `H`, the daemon
+does not submit checkpoints and `/status` shows `signer_error`.
 
 Oracle delegation does not authorize Hyperlane calls. Hyperlane delegation
 does not authorize Oracle votes. Rotation or revocation changes only its
@@ -161,8 +163,10 @@ file.
 otherwise:
 
 - `missCount(V)` is not zero. The next misses lead to a jail, so alert on it.
+- `H` is not `hyperlaneSigner(V)`.
 - A domain halted after a reorg.
-- A domain has an error.
+- A domain has an error. A sync that makes no progress after many rewinds is
+  also an error.
 
 While the daemon waits for the controller, `/health` returns 200.
 
@@ -173,9 +177,11 @@ While the daemon waits for the controller, `/health` returns 200.
 | `healthy` | The `/health` result. |
 | `controller` | `unknown`, `waiting_for_controller` or `ready`. |
 | `active` | `V` is in the active validator set. `null` before the first read. |
+| `signer_error` | Why `H` is not the accepted checkpoint signer, or `null`. |
 | `miss_count` | `missCount(V)` on the controller. |
-| `submitted`, `failed` | `submitCheckpoint` counters since the start. |
-| `last_submit_time` | Unix time of the last sent `submitCheckpoint` (sent, not included). `0` before the first one. |
+| `submitted`, `failed` | `submitCheckpoint` counters since the start. `submitted` counts only transactions with a successful receipt. A revert or no receipt is a failure. |
+| `last_submit_time` | Unix time of the last successful `submitCheckpoint` receipt. `0` before the first one. |
+| `last_submit_error` | The error of the last failed `submitCheckpoint`, or `null` after a success. |
 | `domains.<id>.leaves` | Stored leaf count. |
 | `domains.<id>.latest_signed_index` | Highest signed index. |
 | `domains.<id>.cursor` | Last origin block that the store covers. |
@@ -216,6 +222,9 @@ The `db` commands work only while the daemon is stopped:
 The daemon halts a domain when one of these conditions is true:
 
 - Enough `rpc_urls` agree on a different root at a signed index.
+- Enough `rpc_urls` give logs with another message id than the stored leaf at
+  the same index. The count is the same as for the root vote. When fewer
+  endpoints do this, the daemon reads from the next endpoint and does not halt.
 - A stored signed root differs from the root of the stored leaves.
 
 The daemon logs the root of each endpoint and the local root. Then it writes
@@ -261,7 +270,7 @@ is jailed:
 
 While `V` is active, the daemon submits the latest signed checkpoint of each
 running domain when its index is above `submittedIndex(V, domain)`. It never
-submits index 0.
+submits index 0. It waits up to 60 seconds for the receipt.
 
 ## Limits
 

@@ -268,14 +268,15 @@ impl Store {
             .transpose()
     }
 
-    /// Calls `f` for every leaf of `domain` in index order (tree rebuild).
-    pub fn for_each_leaf(&self, domain: u32, mut f: impl FnMut(u32, Leaf)) -> Result<()> {
+    /// Calls `f` for every leaf of `domain` below index `end`, in index order
+    /// (tree rebuild).
+    pub fn for_each_leaf(&self, domain: u32, end: u32, mut f: impl FnMut(u32, Leaf)) -> Result<()> {
         let tx = self.db.tx()?;
         let mut cursor = tx.cursor_read::<Leaves>()?;
         for row in cursor.walk(Some(key(domain, 0)))? {
             let (k, v) = row?;
             let (d, index) = split(k);
-            if d != domain {
+            if d != domain || index >= end {
                 break;
             }
             f(index, decode_leaf(&v)?);
@@ -522,7 +523,9 @@ mod tests {
             .unwrap();
 
         let mut seen = Vec::new();
-        store.for_each_leaf(1, |i, l| seen.push((i, l))).unwrap();
+        store
+            .for_each_leaf(1, u32::MAX, |i, l| seen.push((i, l)))
+            .unwrap();
         assert_eq!(seen, vec![(0, leaf(10)), (1, leaf(11)), (2, leaf(12))]);
         assert_eq!(store.leaf_count(2).unwrap(), 2);
         assert_eq!(store.latest_checkpoint_index(1).unwrap(), None);

@@ -99,7 +99,7 @@ async fn try_announce(
         }
         .abi_encode();
         let sender = TxSender {
-            rpc_endpoint: url,
+            provider: &provider,
             wallet,
             chain_id: provider.get_chain_id().await?,
             gasless: false,
