@@ -3,7 +3,6 @@
 
 use alloy_primitives::{address, Address, B256, U256};
 use outbe_oracle::schema::OracleContract;
-use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -11,6 +10,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
+use outbe_system_common::address_pair::AddressPair;
 
 use outbe_gem::api;
 use outbe_gem::precompile::IGem;

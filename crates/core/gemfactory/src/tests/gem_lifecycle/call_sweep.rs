@@ -5,11 +5,13 @@ use alloy_primitives::U256;
 use alloy_sol_types::SolEvent;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::GEM_ADDRESS;
-use outbe_primitives::pass_budget::{PassBudget, SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
+use outbe_system_common::pass_budget::{
+    PassBudget, SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK,
+};
 
 use super::*;
 use outbe_gem::config::GemParams;
@@ -43,7 +45,7 @@ fn walk(
         &ctx,
         USD,
         window,
-        outbe_primitives::math::constants::MAX_BIN_ID,
+        outbe_system_common::math::constants::MAX_BIN_ID,
         &mut budget,
     )
     .unwrap()
@@ -194,7 +196,7 @@ fn a_bin_wider_than_the_budget_resumes_inside_it() {
             callable_gem_of(storage, USD, 1, issued_at, U256::from(100_000u64)),
         ];
         let bin = |id: U256| {
-            outbe_primitives::call_bins::price_to_bin(view(storage, id).terms.call_price_minor)
+            outbe_system_common::call_bins::price_to_bin(view(storage, id).terms.call_price_minor)
                 .unwrap()
         };
         assert_eq!(bin(ids[0]), bin(ids[1]), "one bin, two groups");
@@ -359,7 +361,7 @@ fn call_skips_below_threshold() {
 
 #[test]
 fn a_registry_edit_does_not_move_the_cursor_onto_another_currency() {
-    use outbe_primitives::day_pass::currency_position;
+    use outbe_system_common::day_pass::currency_position;
     let currencies = [USD, EUR];
     assert_eq!(
         currency_position(&currencies, u32::from(EUR)),

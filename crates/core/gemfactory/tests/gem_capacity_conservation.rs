@@ -9,7 +9,6 @@ use outbe_gem::{
 use outbe_gemfactory::{called, hooks};
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
-    address_pair::AddressPair,
     addresses::GEM_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     error::Result,
@@ -17,6 +16,7 @@ use outbe_primitives::{
     time::{previous_date_key, timestamp_to_date_key},
 };
 use outbe_promislimit::PromisLimitContract;
+use outbe_system_common::address_pair::AddressPair;
 
 const ISSUED: u64 = 1_704_067_200;
 use outbe_primitives::time::SECONDS_PER_DAY as DAY;

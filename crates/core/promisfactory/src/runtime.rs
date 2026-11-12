@@ -14,8 +14,8 @@ use crate::precompile::IPromisFactory;
 use outbe_primitives::addresses::PROMIS_FACTORY_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::checked_protocol_to_native;
 use outbe_promis::api::{self as promis, ModifyAuth};
+use outbe_system_common::units::checked_protocol_to_native;
 
 /// Mint `amount` promis to `account` from a settled Gem position (`gem_id`).
 ///

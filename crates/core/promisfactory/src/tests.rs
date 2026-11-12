@@ -12,9 +12,9 @@ use outbe_primitives::addresses::{GRATIS_ADDRESS, PROMIS_ADDRESS, PROMIS_FACTORY
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY;
-use outbe_primitives::units::{ONE_COEN, SCALE_1E6_U64};
 use outbe_promis::api::{self as promis_api, ModifyAuth};
 use outbe_promis::enclave_client::test_enclave;
+use outbe_system_common::units::{ONE_COEN, SCALE_1E6_U64};
 use outbe_tee::protocol::{GratisOp, PromisOp};
 
 use crate::precompile::{dispatch, IPromisFactory};
