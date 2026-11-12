@@ -1185,10 +1185,11 @@ fn run_nod_daily_pass(storage: &StorageHandle<'_>, mut height: u64, timestamp: u
             storage.clone(),
         );
         outbe_nodfactory::called::process_call_pass(&ctx).unwrap();
-        let selected =
-            outbe_primitives::pass_budget::BlockAllowance::unpack(nod.daily_budget.read().unwrap())
-                .unwrap()
-                .map_or(0, |allowance| allowance.day);
+        let selected = outbe_system_common::pass_budget::BlockAllowance::unpack(
+            nod.daily_budget.read().unwrap(),
+        )
+        .unwrap()
+        .map_or(0, |allowance| allowance.day);
         let next = nod.call_sweep_day.read().unwrap();
         if next == 0 || next == selected {
             assert!(
