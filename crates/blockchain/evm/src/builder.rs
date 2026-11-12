@@ -24,7 +24,7 @@ use crate::{
     executor::OutbeBlockExecutor,
 };
 
-pub(crate) fn encode_final_header_artifacts(
+pub fn encode_final_header_artifacts(
     prefinal_extra_data: &[u8],
     execution_summary: outbe_primitives::reshare_artifact::ExecutionSummaryArtifact,
     timestamp_millis_part: u64,
@@ -218,6 +218,3 @@ where
         self.executor
     }
 }
-
-#[cfg(test)]
-mod tests;

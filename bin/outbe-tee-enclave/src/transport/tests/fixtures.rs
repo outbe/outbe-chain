@@ -84,12 +84,12 @@ pub(in crate::transport::tests) fn intent_bound_processor_fixture_wire_bytes() -
 
     const ROOT: &str = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../crates/system/tee/tests/fixtures/",
+        "/../../crates/blockchain/tee/tests/fixtures/",
         "intel-dcap-1.26-intent-bound-processor/"
     );
     let intent = RegistrationIntentV1::decode_canonical(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../crates/system/tee/tests/fixtures/",
+        "/../../crates/blockchain/tee/tests/fixtures/",
         "intel-dcap-1.26-intent-bound-processor/intent.bin"
     )))
     .unwrap();

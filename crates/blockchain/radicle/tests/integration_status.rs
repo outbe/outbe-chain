@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256};
 use commonware_cryptography::{bls12381, Signer as _};
 use metrics_util::debugging::{DebugValue, DebuggingRecorder};
-use outbe_coderegistry::RepoId;
+use outbe_primitives::code_registry::RepoId;
 use outbe_radicle::{
     endpoint::{sign_response, EndpointAddress, EndpointFrame, EndpointResponseBody, PeerId},
     integration::{

@@ -1,5 +1,5 @@
 use alloy_primitives::B256;
-use outbe_common::deadline_queue::{self, DeadlineHandler, Due};
+use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PassFailure, Result},

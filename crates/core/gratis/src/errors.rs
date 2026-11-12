@@ -91,9 +91,9 @@ pub(crate) fn map_nod_transport_error(err: outbe_tee::TransportError) -> Precomp
 }
 
 #[cfg(any(test, feature = "test-enclave"))]
-pub(crate) fn map_test_enclave_error(err: outbe_tee_enclave::errors::TeeError) -> PrecompileError {
+pub(crate) fn map_test_enclave_error(err: outbe_enclave::errors::TeeError) -> PrecompileError {
     match err {
-        outbe_tee_enclave::errors::TeeError::TributeOfferReject(reason) => {
+        outbe_enclave::errors::TeeError::TributeOfferReject(reason) => {
             GratisError::Rejected(reason).into()
         }
         other => GratisFatalError::TestEnclaveError(other.to_string()).into(),

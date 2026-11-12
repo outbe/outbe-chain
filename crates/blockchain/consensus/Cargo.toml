@@ -11,15 +11,18 @@ test-marshal-drop = []
 test-protocol-overrides = []
 # The Byzantine proposal hook is included only in E2E node builds that also
 # enable test-protocol-overrides. Neither feature is enabled by default.
-e2e-byzantine-preannounce = []
+e2e-byzantine-preannounce = ["outbe-simplex/e2e-byzantine-preannounce"]
 # Exposes `test_harness` and other in-crate test scaffolding publicly so the
 # `outbe-engine` crate can reuse the multi-node deterministic Simplex harness
 # for its own stack_tests. Always enabled by `outbe-engine`'s dev-dependencies.
-test-utils = []
+test-utils = ["outbe-simplex/test-utils"]
 
 [dependencies]
 # Internal
 outbe-primitives.workspace = true
+outbe-simplex.workspace = true
+outbe-tee.workspace = true
+outbe-radicle.workspace = true
 radicle-crypto.workspace = true
 
 # Commonware
@@ -38,29 +41,25 @@ commonware-macros.workspace = true
 commonware-resolver = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.9.0" }
 
 # Reth
-reth-ethereum = { workspace = true, features = ["node", "node-api", "storage-api", "network"] }
-reth-node-builder.workspace = true
+reth-ethereum = { workspace = true, features = ["node", "node-api", "storage-api", "network", "provider"] }
 reth-payload-builder.workspace = true
-reth-db.workspace = true
+reth-chainspec.workspace = true
 
 # Alloy
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
-alloy-rlp.workspace = true
 alloy-rpc-types-engine.workspace = true
 bytes.workspace = true
 
 # Crypto (key encryption + EVM key generation)
-ring.workspace = true
 k256.workspace = true
-argon2.workspace = true
-keyring.workspace = true
 
 # Utilities
+clap.workspace = true
+jsonrpsee = { version = "0.26", default-features = false, features = ["http-client"] }
 eyre.workspace = true
 futures.workspace = true
 hex.workspace = true
-rand.workspace = true
 rand-commonware.workspace = true
 rand-core-commonware.workspace = true
 serde.workspace = true
@@ -74,6 +73,8 @@ thiserror.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+reth-provider = { workspace = true, features = ["test-utils"] }
+reth-primitives-traits.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-consensus = { workspace = true, features = ["test-utils"] }
 commonware-resolver = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.9.0" }

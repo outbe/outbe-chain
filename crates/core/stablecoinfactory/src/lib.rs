@@ -10,6 +10,10 @@ mod abi;
 mod state;
 
 pub use api::{FactoryReservation, StablecoinFactoryApi, ValidatedStablecoinCreate};
+pub use precompile::{
+    authenticate_registered_stablecoin, read_stablecoin_registration, stablecoin_class_dispatch,
+    PrecompileRouteError,
+};
 pub use schema::{ReservationRecord, StablecoinFactoryContract};
 pub use vote_target::{StablecoinFactoryVoteTarget, StablecoinVoteTargetError};
 

@@ -1,4 +1,5 @@
 use super::*;
+use reth_ethereum::provider::db as reth_db;
 
 fn write_invalid_record(dir: &Path, key: B256, record: &CertifiedParentProofRecord) {
     let backend = MdbxParentProofBackend::open(dir).unwrap();

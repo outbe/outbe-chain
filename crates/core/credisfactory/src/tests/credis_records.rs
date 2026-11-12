@@ -1,6 +1,6 @@
 use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::SolCall;
-use outbe_common::erc::ERC165_INTERFACE_ID;
+use outbe_core_common::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{
@@ -2200,7 +2200,7 @@ fn issuance_announces_the_mint() {
 #[test]
 fn supported_interfaces_match_the_implemented_selectors() {
     use alloy_sol_types::SolEvent;
-    use outbe_common::erc::{
+    use outbe_core_common::erc::{
         ERC4906_INTERFACE_ID, ERC721_ENUMERABLE_INTERFACE_ID, ERC721_INTERFACE_ID,
         ERC721_METADATA_INTERFACE_ID,
     };
@@ -2300,7 +2300,7 @@ fn token_uri_renders_the_credis_image_and_metadata() {
         let id = open_pos(&mut CredisContract::new(storage.clone()));
         let (json, svg) = token_uri_parts(&storage, id);
 
-        let short = outbe_common::nft_card::short_id(id);
+        let short = outbe_core_common::nft_card::short_id(id);
         assert_eq!(json["name"], format!("Credis {short}"));
         assert_eq!(
             json["description"],
@@ -2343,7 +2343,7 @@ fn a_called_credis_shows_its_settlement_deadline() {
         assert_eq!(trait_value(&json, "Called At").unwrap(), at(3));
         assert_eq!(trait_value(&json, "Settlement Deadline").unwrap(), deadline);
         assert!(svg.contains(">CALLED</text>"));
-        assert!(svg.contains(&outbe_common::nft_card::timestamp_utc(deadline)));
+        assert!(svg.contains(&outbe_core_common::nft_card::timestamp_utc(deadline)));
     });
 }
 

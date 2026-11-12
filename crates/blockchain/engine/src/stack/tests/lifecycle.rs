@@ -1,9 +1,9 @@
 //! `UpstreamBootstrap -> Verifier -> Signer` lifecycle seams.
 use super::*;
-use crate::stack::epoch::marshal_recovery::validator_marshal_epocher;
-use crate::stack::epoch::supervisor::future_epoch_hint_height;
-use crate::stack::follower::{bootstrap_ready_from_facts, BootstrapFacts};
 use commonware_consensus::types::Epocher as _;
+use outbe_consensus::stack::epoch::marshal_recovery::validator_marshal_epocher;
+use outbe_consensus::stack::epoch::supervisor::future_epoch_hint_height;
+use outbe_consensus::stack::follower::{bootstrap_ready_from_facts, BootstrapFacts};
 
 const OFFER: B256 = B256::repeat_byte(0x0f);
 
@@ -268,12 +268,13 @@ async fn activated_epoch_boundary_carrier_is_always_activation_anchor_plus_one()
         fence.advance_epoch(active_epoch);
 
         let epocher = validator_marshal_epocher(Some((181, 3)), rotation(60, 5));
-        let observed_carrier = crate::stack::epoch::activation::observe_activated_epoch_boundary(
-            &epocher,
-            active_epoch,
-            activation_anchor,
-        )
-        .unwrap();
+        let observed_carrier =
+            outbe_consensus::stack::epoch::activation::observe_activated_epoch_boundary(
+                &epocher,
+                active_epoch,
+                activation_anchor,
+            )
+            .unwrap();
         assert_eq!(observed_carrier, carrier_height);
 
         // The first block of active_epoch (4) is proposed and admitted at carrier_height
@@ -330,7 +331,7 @@ async fn activated_epoch_boundary_carrier_is_always_activation_anchor_plus_one()
 
 #[test]
 fn operating_mode_tracks_effective_radicle_signer_authority() {
-    use crate::stack::epoch::signer::radicle_signer_enabled;
+    use outbe_consensus::stack::epoch::signer::radicle_signer_enabled;
     use outbe_primitives::consensus::ConsensusOperatingMode;
 
     for (gate, has_share, expected_mode) in [
@@ -358,7 +359,9 @@ fn operating_mode_tracks_effective_radicle_signer_authority() {
         let radicle_signer = radicle_signer_enabled(gate, has_share).unwrap();
         let bridge = ConsensusExecutionBridge::new();
         bridge.set_operating_mode(
-            crate::stack::epoch::simplex::effective_validator_operating_mode(radicle_signer),
+            outbe_consensus::stack::epoch::simplex::effective_validator_operating_mode(
+                radicle_signer,
+            ),
         );
         assert_eq!(bridge.operating_mode(), expected_mode);
     }
@@ -366,7 +369,7 @@ fn operating_mode_tracks_effective_radicle_signer_authority() {
 
 #[tokio::test]
 async fn wait_for_bootstrap_tee_lease_parks_when_sender_is_dropped() {
-    use crate::stack::follower::{wait_for_bootstrap_tee_lease, ValidatorBootstrap};
+    use outbe_consensus::stack::follower::{wait_for_bootstrap_tee_lease, ValidatorBootstrap};
 
     let (tx, rx) = tokio::sync::watch::channel(false);
     drop(tx);
@@ -375,6 +378,7 @@ async fn wait_for_bootstrap_tee_lease_parks_when_sender_is_dropped() {
         local_key_in_genesis_validator_set: false,
         dkg_rotation_params: rotation(60, 5),
         tee_lease_armed_rx: rx,
+        protocol: std::sync::Arc::new(ClosedEngineState),
     };
     assert!(
         wait_for_bootstrap_tee_lease(Some(&mut readiness))
@@ -382,4 +386,113 @@ async fn wait_for_bootstrap_tee_lease_parks_when_sender_is_dropped() {
             .is_none(),
         "dropped tee_lease_armed watch sender must park rather than busy-spin FinalityObserver"
     );
+}
+
+struct ClosedEngineState;
+
+fn closed<T>() -> outbe_primitives::error::Result<T> {
+    Err(outbe_primitives::error::PrecompileError::storage(
+        "engine protocol state is not installed",
+    ))
+}
+
+impl outbe_consensus::protocol_state::EngineProtocolState for ClosedEngineState {
+    fn system_tx_leader_policy(
+        &self,
+    ) -> outbe_primitives::system_tx::binding::SystemTxLeaderPolicy {
+        Default::default()
+    }
+
+    fn validator_rows(
+        &self,
+        _: outbe_primitives::storage::StorageHandle<'_>,
+        _: outbe_consensus::protocol_state::EngineValidatorQuery,
+    ) -> outbe_primitives::error::Result<Vec<outbe_consensus::protocol_state::EngineValidatorRow>>
+    {
+        closed()
+    }
+
+    fn committee_snapshot(
+        &self,
+        _: outbe_primitives::storage::StorageHandle<'_>,
+        _: u64,
+    ) -> outbe_primitives::error::Result<
+        Option<outbe_primitives::committee_snapshot::CommitteeSnapshot>,
+    > {
+        closed()
+    }
+
+    fn has_pending_set_change(
+        &self,
+        _: outbe_primitives::storage::StorageHandle<'_>,
+    ) -> outbe_primitives::error::Result<bool> {
+        closed()
+    }
+
+    fn tee_offer_public(
+        &self,
+        _: outbe_primitives::storage::StorageHandle<'_>,
+    ) -> outbe_primitives::error::Result<alloy_primitives::B256> {
+        closed()
+    }
+
+    fn tee_offer_epoch(
+        &self,
+        _: outbe_primitives::storage::StorageHandle<'_>,
+    ) -> outbe_primitives::error::Result<u64> {
+        closed()
+    }
+
+    fn tee_recipient(
+        &self,
+        _: outbe_primitives::storage::StorageHandle<'_>,
+        _: alloy_primitives::Address,
+    ) -> outbe_primitives::error::Result<Option<alloy_primitives::B256>> {
+        closed()
+    }
+
+    fn node_host_binding(
+        &self,
+        _: outbe_primitives::storage::StorageHandle<'_>,
+        _: [u8; 33],
+    ) -> outbe_primitives::error::Result<
+        Option<outbe_primitives::tee_registry_abi_v1::NodeEnclaveBindingV1>,
+    > {
+        closed()
+    }
+
+    fn binding_code_admitted(
+        &self,
+        _: outbe_primitives::storage::StorageHandle<'_>,
+        _: &outbe_primitives::tee_registry_abi_v1::NodeEnclaveBindingV1,
+        _: u64,
+    ) -> outbe_primitives::error::Result<bool> {
+        closed()
+    }
+
+    fn validator_enclave_binding(
+        &self,
+        _: outbe_primitives::storage::StorageHandle<'_>,
+        _: alloy_primitives::Address,
+    ) -> outbe_primitives::error::Result<
+        Option<outbe_primitives::tee_registry_abi_v1::NodeEnclaveBindingV1>,
+    > {
+        closed()
+    }
+
+    fn validator_record(
+        &self,
+        _: outbe_primitives::storage::StorageHandle<'_>,
+        _: alloy_primitives::Address,
+    ) -> outbe_primitives::error::Result<Option<outbe_primitives::validator_dto::ValidatorRecord>>
+    {
+        closed()
+    }
+
+    fn check_binary_compatibility(
+        &self,
+        _: outbe_primitives::storage::StorageHandle<'_>,
+    ) -> Result<(), outbe_consensus::protocol_state::EngineProtocolError> {
+        Err(outbe_consensus::protocol_state::EngineProtocolError::NotInstalled)
+    }
 }

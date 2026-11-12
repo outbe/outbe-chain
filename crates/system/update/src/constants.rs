@@ -20,11 +20,14 @@ pub fn max_activatable_version(_chain_id: u64) -> crate::ProtocolVersion {
     PROTOCOL_VERSION
 }
 
-/// Bits reserved for the minor part of an on-chain protocol version.
-pub(crate) const PROTOCOL_VERSION_MINOR_BITS: u32 = 24;
+pub(crate) use outbe_primitives::protocol_version::{
+    MAX_PROTOCOL_VERSION_MINOR, PROTOCOL_VERSION_MINOR_BITS,
+};
 
-/// Maximum minor value in the `u8 major + u24 minor` protocol version encoding.
-pub(crate) const MAX_PROTOCOL_VERSION_MINOR: u32 = (1u32 << PROTOCOL_VERSION_MINOR_BITS) - 1;
+const _: () = {
+    assert!(PROTOCOL_VERSION_MINOR_BITS == 24);
+    assert!(MAX_PROTOCOL_VERSION_MINOR == (1u32 << PROTOCOL_VERSION_MINOR_BITS) - 1);
+};
 
 /// Protocol version embedded into this crate at compile time.
 pub(crate) const PROTOCOL_VERSION_MAJOR: u8 =

@@ -98,12 +98,13 @@ impl AccountingProgressView for StubProgress {
 // Two complementary sets of tests cover the "Phase 1 commit happens before the
 // Cycle dispatcher" invariant REALLY (no source-text scanning):
 //
-//   * Phase ORDER - `crates/blockchain/primitives/tests/system_tx_phase1_reorder.rs`
-//     (`phase1_receipt_index_0_before_cycle_tick`,
-//     `phase1_reordering_preserves_body_receipt_order`) asserts that Phase 1
-//     owns body_index 0 and CycleTick owns body_index 1. It uses the real
-//     `expected_begin_block_selectors` / `SystemTxPhase` routing API that drives the
-//     executor.
+//   * Phase ORDER - `crates/blockchain/evm/tests/system_tx_phase1_reorder.rs`
+//     (`phase1_reordering_preserves_body_order_and_suffix_ordinals`) asserts
+//     that Phase 1 consensus steps precede begin-block steps (including
+//     `CycleTick`) via the unified `BlockExecutionFsm` / `BlockOrder` contract
+//     that drives the executor. Cycle declares its gate dependency through
+//     `ProtocolModule::NEEDS_CYCLE_ACTIVE_UTC_DAY`; execution reads it through
+//     `outbe_evm::system_tx::ProtocolStep::needs_cycle_active_utc_day`.
 //   * Gate DEPENDENCY - the behavioral tests below prove that the Cycle gate
 //     reads `last_accounted_block_number` and runs only after the parent is
 //     accounted. `*_boundary_cycle_runs_after_parent_accounted` covers the
@@ -632,4 +633,64 @@ proptest! {
             "window equality round-trips for the same inputs"
         );
     }
+}
+
+#[test]
+fn cycle_module_entitlements_require_empty_payload_and_active_day() {
+    use outbe_cycle::{call_authority::cycle_tick_entitlements, runtime::CycleModule};
+    use outbe_primitives::{
+        block::{MetadosisEntitlementContext, ProtocolModule},
+        storage::MetadosisMutationEntitlements,
+    };
+    let mut context = MetadosisEntitlementContext {
+        payload: &[],
+        chain_id: CHAIN_ID,
+        block_number: 2,
+        timestamp: 1_704_153_600,
+        cycle_active_utc_day: Some(20240101),
+    };
+    assert!(std::hint::black_box(
+        CycleModule::NEEDS_CYCLE_ACTIVE_UTC_DAY
+    ));
+    assert_eq!(
+        CycleModule::mutation_entitlements(context),
+        cycle_tick_entitlements(CHAIN_ID, 2, context.timestamp, context.cycle_active_utc_day)
+    );
+    context.payload = &[1];
+    assert_eq!(
+        CycleModule::mutation_entitlements(context),
+        MetadosisMutationEntitlements::NONE
+    );
+}
+
+#[test]
+fn cycle_entitlements_preserve_genesis_and_unknown_day_bindings() {
+    use outbe_cycle::call_authority::cycle_tick_entitlements;
+    use outbe_primitives::storage::{
+        metadosis_init_genesis_binding, metadosis_late_settlement_binding,
+        MetadosisMutationEntitlements, MetadosisMutationPurposeTag,
+    };
+    let timestamp = 1_704_067_200;
+    let finality = MetadosisMutationEntitlements::exact(
+        MetadosisMutationPurposeTag::CertifiedFinality,
+        metadosis_late_settlement_binding(CHAIN_ID, 1, timestamp),
+    );
+    assert_eq!(
+        cycle_tick_entitlements(CHAIN_ID, 1, timestamp, None),
+        finality.union(MetadosisMutationEntitlements::exact(
+            MetadosisMutationPurposeTag::CycleLifecycle,
+            metadosis_init_genesis_binding(CHAIN_ID, 1, timestamp)
+        ))
+    );
+    assert_eq!(
+        cycle_tick_entitlements(CHAIN_ID, 2, timestamp, None),
+        MetadosisMutationEntitlements::exact(
+            MetadosisMutationPurposeTag::CertifiedFinality,
+            metadosis_late_settlement_binding(CHAIN_ID, 2, timestamp)
+        )
+    );
+    assert_eq!(
+        cycle_tick_entitlements(CHAIN_ID, 2, timestamp, Some(0)),
+        cycle_tick_entitlements(CHAIN_ID, 2, timestamp, None)
+    );
 }

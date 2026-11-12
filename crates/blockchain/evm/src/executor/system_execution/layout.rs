@@ -1,33 +1,31 @@
 use super::super::*;
+use crate::errors::ExecutorValidationError;
+use {
+    crate::system_tx::{assemble_prefix_system_txs, BlockSystemPlan},
+    outbe_primitives::{
+        block::BlockSystemFlags,
+        system_tx::{
+            SystemTxStepId, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+            CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX,
+        },
+        system_tx_context::{SystemTxBuildContext, SystemTxValidationContext},
+    },
+};
 
 type BeginSystemTransaction = (SystemTx, Option<AccountedParentArtifact>);
-
 type ExpectedSystemTransaction = (usize, SystemTx, Option<AccountedParentArtifact>);
 
 #[derive(Debug, Clone)]
-pub(crate) struct ResolvedBeginSystemTx {
+pub struct ResolvedBeginSystemTx {
     pub input: SystemTx,
     pub finalized_summary: Option<AccountedParentArtifact>,
 }
 
 impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
-    /// Read the current begin-zone system-tx phase cursor.
-    /// Test-only introspection point. The production driver is internal.
-    #[allow(dead_code)]
-    pub(crate) fn system_tx_phase_cursor(&self) -> crate::system_tx::SystemTxPhase {
-        self.system_tx_phase_cursor
-    }
-
-    pub(crate) fn is_preexecuted_phase1_witness(&self, tx: &TransactionSigned) -> bool {
-        let crate::system_tx::SystemTxPhase::Phase1Preexecuted {
-            tx_hash: cached_hash,
-            ..
-        } = self.system_tx_phase_cursor
-        else {
-            return false;
-        };
-
-        !cached_hash.is_zero() && is_reserved_system_tx(tx) && tx.signature_hash() == cached_hash
+    pub fn is_preexecuted_phase1_witness(&self, tx: &TransactionSigned) -> bool {
+        self.preexecuted_phase1_tx_hash.is_some_and(|cached_hash| {
+            is_reserved_system_tx(tx) && tx.signature_hash() == cached_hash
+        })
     }
 }
 
@@ -41,8 +39,6 @@ where
     E::Error: std::fmt::Display,
 {
     fn expected_begin_input(&self, ordinal: usize) -> Result<SystemTx, BlockExecutionError> {
-        use crate::errors::ExecutorValidationError;
-
         let recovered = self
             .expected_begin_system_txs
             .get(ordinal)
@@ -52,183 +48,104 @@ where
         })
     }
 
-    /// Layout-signaled flag for the one-time Phase 3b `TeeBootstrap`:
-    /// true iff this block carries that system tx in the begin zone. Verifier
-    /// mode reads it from `expected_begin_system_txs` (the body). Proposer mode
-    /// reads it from the injected `pending_tee_bootstrap` payload. Both feed the
-    /// same `has_tee_bootstrap` cursor signal so the phase cursor matches the
-    /// actual begin-zone on both paths.
-    pub(in crate::executor) fn block_has_tee_bootstrap(&self) -> bool {
-        if self.pending_tee_bootstrap.is_some() {
-            return true;
-        }
-        self.expected_begin_system_txs.iter().any(|tx| {
-            matches!(
-                SystemTx::decode(tx.input().as_ref()),
-                Ok(SystemTx::TeeBootstrap { .. })
-            )
-        })
+    pub fn block_has_tee_bootstrap(&self) -> bool {
+        self.pending_tee_bootstrap.is_some()
+            || self.expected_begin_system_txs.iter().any(|tx| {
+                matches!(
+                    SystemTx::decode(tx.input()),
+                    Ok(SystemTx::Consensus {
+                        step_index: CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX,
+                        ..
+                    })
+                )
+            })
     }
 
-    /// Advances the begin-zone system-transaction phase cursor and 4-stage FSM
-    /// after committing a begin-zone system transaction receipt (or consuming a
-    /// pre-executed Phase 1 witness).
-    pub(in crate::executor) fn advance_system_tx_phase_cursor(
-        &mut self,
-        kind: outbe_primitives::system_tx::SystemTxKind,
-        block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
-    ) -> Result<(), BlockExecutionError> {
-        let has_boundary_outcome = matches!(
-            block_artifacts.consensus_header_artifact,
-            Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
-        );
-        let has_tee_bootstrap = self.block_has_tee_bootstrap();
-        let has_publication = block_artifacts.radicle_publication.is_some();
-        if self.execute_outbe_block_hooks {
-            self.fsm
-                .on_system_tx(kind)
-                .map_err(crate::errors::ExecutorValidationError::from)?;
-        }
-        self.system_tx_phase_cursor = self
-            .system_tx_phase_cursor
-            .advance_after_commit_with_publication(
-                has_boundary_outcome,
-                has_tee_bootstrap,
-                has_publication,
-            );
-        Ok(())
-    }
-
-    pub(in crate::executor) fn begin_block_system_tx_inputs(
+    pub fn begin_block_system_tx_inputs(
         &self,
         block_number: u64,
-        block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
+        block_artifacts: &OutbeBlockArtifacts,
     ) -> Result<Vec<BeginSystemTransaction>, BlockExecutionError> {
         let regime = BlockHeightRegime::for_block(block_number);
-        // Genesis returns before inspecting queued bootstrap or body inputs.
-        if !regime.has_begin_zone_system_txs() {
+        if !regime.has_system_tx_prefix() {
             return Ok(Vec::new());
         }
-        let mut system_txs = Vec::new();
-        if regime.has_parent_finalization_accounting() {
-            self.append_parent_accounting_inputs(&mut system_txs, block_artifacts)?;
-        }
-        self.append_boundary_and_bootstrap_inputs(
-            &mut system_txs,
-            regime,
-            block_number,
-            block_artifacts,
-        )?;
-        self.append_begin_input(&mut system_txs, SystemTx::ValidatorLiveness)?;
-        if let Some(batch) = &block_artifacts.radicle_publication {
-            self.append_begin_input(
-                &mut system_txs,
-                SystemTx::RadiclePublication {
-                    batch: batch.clone(),
-                },
-            )?;
-        }
-        for kind in [
-            SystemTx::Vote,
-            SystemTx::Update,
-            SystemTx::EnclaveUpgradeDeadline,
-            SystemTx::Rewards,
-            SystemTx::Staking,
-            SystemTx::Oracle,
-            SystemTx::OracleSlash,
-            SystemTx::HyperlaneSlash,
-            SystemTx::CycleTick,
-        ] {
-            self.append_begin_input(&mut system_txs, kind)?;
-        }
-        Ok(system_txs)
-    }
-
-    fn append_parent_accounting_inputs(
-        &self,
-        system_txs: &mut Vec<BeginSystemTransaction>,
-        block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
-    ) -> Result<(), BlockExecutionError> {
-        let (input, summary) = match self.cached_phase1_input.clone() {
-            Some(cached) => cached,
-            None => self.certified_parent_begin_input(0)?,
-        };
-        system_txs.push((input, Some(summary)));
-        self.append_begin_input(
-            system_txs,
-            SystemTx::LateFinalizeCredits {
-                artifact: block_artifacts
-                    .late_finalize_credits
-                    .clone()
-                    .unwrap_or_default(),
-            },
-        )
-    }
-
-    fn append_boundary_and_bootstrap_inputs(
-        &self,
-        system_txs: &mut Vec<BeginSystemTransaction>,
-        regime: BlockHeightRegime,
-        block_number: u64,
-        block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
-    ) -> Result<(), BlockExecutionError> {
-        use crate::errors::ExecutorValidationError;
-
-        if let Some(ConsensusHeaderArtifact::BoundaryOutcome(artifact)) =
-            &block_artifacts.consensus_header_artifact
-        {
-            let input = self.boundary_begin_input(system_txs.len(), artifact)?;
-            system_txs.push((input, None));
-        }
-        if regime.requires_genesis_bootstrap_txs() {
-            let input = self.bootstrap_begin_input(system_txs.len())?;
-            system_txs.push((input, None));
-        } else if self.pending_tee_bootstrap.is_some() {
-            // Keep late OST3 rejection after boundary, before decoding Oracle.
+        if !regime.requires_genesis_bootstrap_txs() && self.pending_tee_bootstrap.is_some() {
             return Err(
                 ExecutorValidationError::Ost3BootstrapForbiddenAtBlock { block_number }.into(),
             );
         }
-        Ok(())
-    }
-
-    /// Admit a simple phase and advance its ordinal only after validation.
-    fn append_begin_input(
-        &self,
-        system_txs: &mut Vec<BeginSystemTransaction>,
-        expected_input: SystemTx,
-    ) -> Result<(), BlockExecutionError> {
-        let input = if self.expected_begin_system_txs.is_empty() {
-            expected_input
-        } else {
-            let ordinal = system_txs.len();
-            self.expected_begin_input(ordinal)?
+        let val_ctx = SystemTxValidationContext {
+            regime,
+            block_number,
+            parent_hash: self.parent_hash,
+            artifacts: block_artifacts,
         };
-        system_txs.push((input, None));
-        Ok(())
-    }
-
-    pub(in crate::executor) fn certified_parent_begin_input(
-        &self,
-        ordinal: usize,
-    ) -> Result<(SystemTx, AccountedParentArtifact), BlockExecutionError> {
-        use crate::errors::ExecutorValidationError;
-
-        let verifier_mode = !self.expected_begin_system_txs.is_empty();
-        let input = if verifier_mode {
-            self.expected_begin_input(ordinal)?
+        let inputs = if self.expected_begin_system_txs.is_empty() {
+            let build_ctx = SystemTxBuildContext {
+                regime,
+                block_number,
+                parent_hash: self.parent_hash,
+                artifacts: block_artifacts,
+                parent_consensus_metadata: self.parent_consensus_metadata.as_ref(),
+                pending_tee_bootstrap: self.pending_tee_bootstrap.as_ref(),
+                expected_tee_policy: None,
+            };
+            assemble_prefix_system_txs(&self.block_order, &build_ctx)
+                .map_err(ExecutorValidationError::from)?
         } else {
-            let metadata = self
-                .parent_consensus_metadata
-                .clone()
-                .ok_or(ExecutorValidationError::MissingParentConsensusMetadata)?;
-            SystemTx::CertifiedParentAccounting { metadata }
-        };
-        let SystemTx::CertifiedParentAccounting { metadata } = &input else {
-            return Err(
-                ExecutorValidationError::ExpectedCertifiedParentAccountingAtOrdinal0.into(),
+            let plan = BlockSystemPlan::for_block(
+                block_number,
+                BlockSystemFlags::from_artifacts(block_artifacts),
+                &self.block_order,
             );
+            let mut inputs =
+                Vec::with_capacity(plan.consensus_steps.len() + plan.begin_block_steps.len());
+            for (ordinal, planned) in plan
+                .consensus_steps
+                .iter()
+                .chain(&plan.begin_block_steps)
+                .enumerate()
+            {
+                let input = self.expected_begin_input(ordinal)?;
+                if input.step_id() != planned.id {
+                    return Err(ExecutorValidationError::SystemTxPhaseMismatch {
+                        body_index: ordinal,
+                        expected_phase: planned.step.name,
+                        actual_phase: self.block_order.step_name_or_stage(&input),
+                    }
+                    .into());
+                }
+                (planned.step.validate_payload)(input.payload(), &val_ctx)
+                    .map_err(ExecutorValidationError::from)?;
+                inputs.push(input);
+            }
+            inputs
         };
+        inputs
+            .into_iter()
+            .map(|input| {
+                let summary = if input.step_id()
+                    == SystemTxStepId::consensus(CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX)
+                {
+                    match &self.cached_phase1_input {
+                        Some((_, summary)) => Some(*summary),
+                        None => Some(self.parent_summary_for_input(&input)?),
+                    }
+                } else {
+                    None
+                };
+                Ok((input, summary))
+            })
+            .collect()
+    }
+
+    fn parent_summary_for_input(
+        &self,
+        input: &SystemTx,
+    ) -> Result<AccountedParentArtifact, BlockExecutionError> {
+        let metadata = CertifiedParentAccountingMetadata::decode(input.payload())
+            .map_err(ExecutorValidationError::block_artifacts)?;
         if metadata.finalized_block_hash != self.parent_hash {
             return Err(
                 ExecutorValidationError::CertifiedParentAccountingHashMismatch {
@@ -238,60 +155,34 @@ where
                 .into(),
             );
         }
-        let summary = self.accounted_parent_artifact_for_metadata(metadata)?;
-        Ok((input, summary))
+        self.accounted_parent_artifact_for_metadata(&metadata)
     }
 
-    fn boundary_begin_input(
+    pub fn certified_parent_begin_input(
         &self,
         ordinal: usize,
-        artifact: &outbe_primitives::consensus::DkgBoundaryArtifact,
-    ) -> Result<SystemTx, BlockExecutionError> {
-        use crate::errors::ExecutorValidationError;
-
-        let verifier_mode = !self.expected_begin_system_txs.is_empty();
-        let input = if verifier_mode {
-            self.expected_begin_input(ordinal)?
+    ) -> Result<(SystemTx, AccountedParentArtifact), BlockExecutionError> {
+        let input = if self.expected_begin_system_txs.is_empty() {
+            let metadata = self
+                .parent_consensus_metadata
+                .as_ref()
+                .ok_or(ExecutorValidationError::MissingParentConsensusMetadata)?;
+            SystemTx::Consensus {
+                step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+                payload: metadata
+                    .encode()
+                    .map_err(ExecutorValidationError::block_artifacts)?,
+            }
         } else {
-            SystemTx::BoundaryOutcome {
-                artifact: artifact.clone(),
-            }
-        };
-        match &input {
-            SystemTx::BoundaryOutcome {
-                artifact: input_artifact,
-            } if input_artifact == artifact => {}
-            SystemTx::BoundaryOutcome { .. } => {
-                return Err(
-                    ExecutorValidationError::BoundaryOutcomeArtifactMismatch { ordinal }.into(),
-                );
-            }
-            _ => {
-                return Err(
-                    ExecutorValidationError::ExpectedBoundaryOutcomeAtOrdinal { ordinal }.into(),
-                );
-            }
-        }
-        Ok(input)
-    }
-
-    fn bootstrap_begin_input(&self, ordinal: usize) -> Result<SystemTx, BlockExecutionError> {
-        use crate::errors::ExecutorValidationError;
-
-        let verifier_mode = !self.expected_begin_system_txs.is_empty();
-        let input = if verifier_mode {
             self.expected_begin_input(ordinal)?
-        } else {
-            let payload = self
-                .pending_tee_bootstrap
-                .clone()
-                .ok_or(ExecutorValidationError::MissingBlock1Ost3BootstrapPayload)?;
-            SystemTx::TeeBootstrap { payload }
         };
-        if !matches!(input, SystemTx::TeeBootstrap { .. }) {
-            return Err(ExecutorValidationError::ExpectedMandatoryOst3AtOrdinal { ordinal }.into());
+        if input.step_id() != SystemTxStepId::consensus(CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX) {
+            return Err(
+                ExecutorValidationError::ExpectedCertifiedParentAccountingAtOrdinal0.into(),
+            );
         }
-        Ok(input)
+        let summary = self.parent_summary_for_input(&input)?;
+        Ok((input, summary))
     }
 
     fn ensure_resolved_begin_zone(
@@ -338,54 +229,29 @@ where
             })
     }
 
-    /// resolve the expected system tx for the current cursor
-    /// position. Replaces the receipts-len-driven routing for begin-zone
-    /// system transactions. The cursor is the single source of truth.
-    /// Returns the resolved `(SystemTx,
-    /// finalized_summary)` plus the body index the cursor is pointing at.
-    /// Errors if the cursor is `UserTxs` (no system tx expected). Also errors if
-    /// the expected kind of the cursor does not match the resolved expected kind
-    /// for that body index. An example is block 1 + Phase 1 cursor, which is a
-    /// programmer invariant violation.
-    pub(in crate::executor) fn expected_system_tx_for_cursor(
+    /// The FSM is the sole source of the next prefix transaction's body position.
+    pub fn expected_system_tx_for_cursor(
         &mut self,
         block_number: u64,
-        block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
+        block_artifacts: &OutbeBlockArtifacts,
     ) -> Result<ExpectedSystemTransaction, BlockExecutionError> {
-        use crate::errors::ExecutorValidationError;
-
-        let cursor = self.system_tx_phase_cursor;
-        if matches!(
-            cursor,
-            crate::system_tx::SystemTxPhase::EndBlockNodFactory
-                | crate::system_tx::SystemTxPhase::EndBlockGemFactory
-                | crate::system_tx::SystemTxPhase::EndBlockIntexFactory
-                | crate::system_tx::SystemTxPhase::EndBlockCredisFactory
-                | crate::system_tx::SystemTxPhase::EndBlockGemCleanup
-                | crate::system_tx::SystemTxPhase::EndBlock
-        ) {
-            return Err(ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed.into());
-        }
-        let Some(body_index) = cursor.body_index() else {
-            // Cursor=UserTxs: all begin-zone system txs are consumed.
-            // A reserved system transaction address here has two possible
-            // causes: an unsolicited user-tx attempt at the reserved address,
-            // or a duplicate / out-of-band system tx. Both are fatal.
-            return Err(ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed.into());
-        };
-        let body_index_usize = usize::from(body_index);
+        let body_index = self
+            .fsm
+            .expected_prefix_body_index()
+            .ok_or(ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed)?;
         let (input, finalized_summary) =
-            self.expected_system_tx_at_body_index(body_index_usize, block_number, block_artifacts)?;
-        if let Some(expected_kind) = cursor.expected_selector() {
-            if expected_kind != input.selector() {
-                return Err(ExecutorValidationError::SystemTxCursorBodyMismatch {
-                    body_index: body_index_usize,
-                    expected_kind,
-                    resolved_kind: input.selector(),
-                }
-                .into());
+            self.expected_system_tx_at_body_index(body_index, block_number, block_artifacts)?;
+        if self.fsm.expected_step_id() != Some(input.step_id()) {
+            return Err(ExecutorValidationError::SystemTxPhaseMismatch {
+                body_index,
+                expected_phase: self
+                    .fsm
+                    .expected_step()
+                    .map_or("MidBlock", |step| step.step.name),
+                actual_phase: self.block_order.step_name_or_stage(&input),
             }
+            .into());
         }
-        Ok((body_index_usize, input, finalized_summary))
+        Ok((body_index, input, finalized_summary))
     }
 }

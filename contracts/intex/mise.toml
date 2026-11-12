@@ -16,20 +16,17 @@ bin_path = "aderyn-x86_64-unknown-linux-gnu"
 [tools."github:Cyfrin/aderyn".platforms.linux-arm64]
 bin_path = "aderyn-aarch64-unknown-linux-gnu"
 
-# Hardhat + Forge hybrid: tasks wrap the yarn scripts so intex matches the
-# Forge sub-projects (run them from here, e.g. `mise run build`).
-
 [tasks.install]
-description = "Install the Solidity dependencies (soldeer) and the Hardhat tooling (yarn)"
-run = "forge soldeer install && yarn install"
+description = "Install dependencies using soldeer"
+run = "forge soldeer install"
 
 [tasks.build]
-description = "Compile contracts (hardhat)"
-run = "yarn compile"
+description = "Build Solidity contracts using forge"
+run = "forge build"
 
 [tasks.test]
-description = "Run Hardhat + Forge tests"
-run = "yarn test"
+description = "Test Solidity contracts using forge"
+run = "forge test"
 
 [tasks.fmt]
 description = "Format Solidity code"
@@ -40,14 +37,37 @@ description = "Lint Solidity code (forge lint)"
 run = "forge lint"
 
 [tasks.export-abi]
-description = "Compile and extract ABIs"
-run = "yarn compile && yarn cd:extract-abi"
+description = "Export the contract and interface ABIs to ./abi-export"
+depends = ["build"]
+run = '''
+set -eu
+mkdir -p ./abi-export
+rm -f ./abi-export/*.json
+for target in \
+  src/origin/OriginRouter.sol:OriginRouter \
+  src/origin/interfaces/IOriginRouter.sol:IOriginRouter \
+  src/shared/IntexNFT1155.sol:IntexNFT1155 \
+  src/shared/interfaces/IIntexNFT1155.sol:IIntexNFT1155 \
+  src/shared/IntexNFT1155Bridge.sol:IntexNFT1155Bridge \
+  src/shared/interfaces/IIntexNFT1155Bridge.sol:IIntexNFT1155Bridge \
+  src/target/EscrowAdapter.sol:EscrowAdapter \
+  src/target/interfaces/IEscrowAdapter.sol:IEscrowAdapter \
+  src/target/IntexAuction.sol:IntexAuction \
+  src/target/interfaces/IIntexAuction.sol:IIntexAuction \
+  src/target/TargetRouter.sol:TargetRouter \
+  src/target/interfaces/ITargetRouter.sol:ITargetRouter; do
+  forge inspect "$target" abi --json > "./abi-export/${target##*:}.json"
+done
+'''
 
 [tasks.clean]
 description = "Clean up forge artifacts"
 run = "forge clean"
 
 [tasks.clean-all]
-description = "Clean all build artifacts, caches, and installed deps (dependencies, node_modules)"
+description = "Clean all build artifacts, and caches"
 depends = ["clean"]
-run = "forge soldeer clean; rm -rf ./out ./cache ./artifacts ./types ./dist ./coverage ./bundle ./lcov.info ./node_modules"
+run = '''
+forge soldeer clean
+rm -rf ./out ./cache ./lcov.info
+'''

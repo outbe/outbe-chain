@@ -1,40 +1,12 @@
-//! `outbe-engine` - bridge layer between pure `outbe-consensus`
-//! (Simplex/hybrid/DKG/proof) and the EVM/node side (`outbe-evm`,
-//! `outbe-validatorset`, `outbe-node`).
-//!
-//! Owns:
-//! * `stack/` - engine startup, epoch loop, reshare monitoring.
-//! * `validators.rs` - ValidatorSet storage reader (Reth state -> Commonware
-//!   participant set).
-//! * `peer_manager/` - P2P peer registration against `outbe-node`.
-//! * `args.rs` - `ConsensusArgs` CLI bundle for engine startup.
-//! * `bridge.rs` - re-exports for `ConsensusExecutionBridge` wiring.
+//! CL/EL bridge over the consensus ports and the concrete execution node.
 
-pub mod application_shutdown;
-pub mod args;
 pub mod bridge;
 pub mod errors;
+pub mod execution_backend;
 pub mod finalization;
-pub(crate) mod follow_transport;
-pub mod follower_shutdown;
-pub(crate) mod marshal_update_reporter;
-pub(crate) mod peer_manager;
 pub mod stack;
-pub mod tee_bootstrap;
-pub mod validators;
 
-pub use args::ConsensusArgs;
-pub use stack::{
-    run_consensus_stack, ConsensusExecutionServices, ConsensusRadicleServices,
-    ConsensusShutdownServices, ConsensusStackServices,
+pub use execution_backend::{
+    read_reth_recovery_forkchoice, run_consensus_with_execution, RethExecutionBackend,
+    RethLocalBlockSource, RethStateAccess,
 };
-
-/// Read the exact offer-key commitment from the selected certified upstream.
-/// Full-node startup uses this narrow adapter before launching execution.
-pub async fn read_upstream_tribute_offer_public_key(
-    url: &str,
-) -> eyre::Result<alloy_primitives::B256> {
-    follow_transport::UpstreamRpcClient::new(url)?
-        .tribute_offer_public_key()
-        .await
-}

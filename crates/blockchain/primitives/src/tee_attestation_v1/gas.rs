@@ -11,7 +11,7 @@ pub enum RegistryMutatorV1 {
 
 /// Canonical dimensions used to charge one block-1 `OST3` system call.
 ///
-/// `full_calldata_len` includes the four-byte selector and one-byte version.
+/// `full_calldata_len` includes the four-byte stage selector, one-byte version, and one-byte step index.
 /// Collateral deduplication affects only that encoded length. The precharge counts
 /// every entry in `logical_evidence_lengths` as a complete QVL verification.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

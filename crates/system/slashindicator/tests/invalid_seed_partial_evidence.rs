@@ -10,13 +10,13 @@ use commonware_consensus::types::{Epoch, Round, View};
 use commonware_cryptography::bls12381;
 use commonware_cryptography::bls12381::primitives::{ops::threshold, variant::MinSig};
 use commonware_cryptography::Signer as _;
-use outbe_consensus::bls::bootstrap_dkg;
-use outbe_consensus::dkg_manager::public_polynomial_hash;
-use outbe_consensus::proof::{hybrid_seed_namespace, seed_partial_attest_message};
 use outbe_primitives::addresses::{PROMIS_LIMIT_ADDRESS, STAKING_ADDRESS};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
 use outbe_promislimit::PromisLimitContract;
+use outbe_simplex::bls::bootstrap_dkg;
+use outbe_simplex::bls::odko::public_polynomial_hash;
+use outbe_simplex::proof::{hybrid_seed_namespace, seed_partial_attest_message};
 use outbe_slashindicator::precompile::ISlashIndicator;
 use outbe_slashindicator::schema::SlashIndicator;
 use outbe_staking::contract::Staking;
@@ -152,7 +152,7 @@ fn sign_partial(fx: &Fixture, signer: usize, epoch: u64, view: u64) -> [u8; 48] 
 fn identity_sign(fx: &Fixture, signer: usize, partial: &[u8; 48]) -> [u8; 96] {
     let msg = seed_partial_attest_message(ROUND_EPOCH, ROUND_VIEW, VRF_VERSION, partial);
     fx.keys[signer]
-        .sign(&outbe_consensus::proof::seed_attest_namespace(), &msg)
+        .sign(&outbe_simplex::proof::seed_attest_namespace(), &msg)
         .encode()
         .as_ref()
         .try_into()

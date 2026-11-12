@@ -400,7 +400,7 @@ impl AttestedAnswer for LeagueSnapshot {
 
 /// In-process enclave stand-in for tests (this crate's tests and any downstream
 /// crate that enables the `test-enclave` feature). Runs the **real**
-/// `outbe_tee_enclave::fidelity` engine against a fixed dev state key, so tests
+/// `outbe_enclave::fidelity` engine against a fixed dev state key, so tests
 /// exercise the full confidential path without an SGX sidecar. This path does not
 /// check attestation (only the mock-enclave e2e verifies it). The crate root
 /// rejects `all(feature = "test-enclave", feature = "production-enclave")` at
@@ -426,21 +426,21 @@ pub mod test_enclave {
     /// not verify chain id, so downstream crates may use any storage chain id.
     ///
     /// The group sig + chain are the SHARED dev fidelity identity
-    /// ([`outbe_tee_enclave::dev`]). The gratis stand-in derives the same
+    /// ([`outbe_enclave::dev`]). The gratis stand-in derives the same
     /// fidelity key when it applies a folded cohort section. Thus a folded mint
     /// and a standalone snapshot agree.
-    pub const DEV_CHAIN_ID: u64 = outbe_tee_enclave::dev::FIDELITY_CHAIN_ID;
+    pub const DEV_CHAIN_ID: u64 = outbe_enclave::dev::FIDELITY_CHAIN_ID;
 
     /// The resident chain id as a `B256`, matching the runtime's
     /// `B256::from(U256::from(storage.chain_id()))` encoding.
     pub fn dev_chain() -> B256 {
-        outbe_tee_enclave::dev::fidelity_chain()
+        outbe_enclave::dev::fidelity_chain()
     }
 
     /// Install the in-process enclave for the current thread.
     pub fn install() {
-        let key = outbe_tee_enclave::fidelity::derive_fidelity_state_key(
-            outbe_tee_enclave::dev::FIDELITY_GROUP_SIG,
+        let key = outbe_enclave::fidelity::derive_fidelity_state_key(
+            outbe_enclave::dev::FIDELITY_GROUP_SIG,
             dev_chain(),
             DEV_EPOCH,
         )
@@ -463,7 +463,7 @@ pub mod test_enclave {
     pub(super) fn try_cohort(req: &FidelityCohortRequest) -> Option<Result<FidelityCohortResult>> {
         STATE_KEY.with(|k| {
             k.borrow().map(|key| {
-                outbe_tee_enclave::fidelity::apply_cohort_op(&key, req).map_err(|e| {
+                outbe_enclave::fidelity::apply_cohort_op(&key, req).map_err(|e| {
                     FidelityFatalError::enclave_op_error("ApplyFidelityCohortOp", e).into()
                 })
             })
@@ -475,7 +475,7 @@ pub mod test_enclave {
     ) -> Option<Result<Vec<FidelityLeagueEntry>>> {
         STATE_KEY.with(|k| {
             k.borrow().map(|key| {
-                outbe_tee_enclave::fidelity::snapshot_leagues(&key, req).map_err(|e| {
+                outbe_enclave::fidelity::snapshot_leagues(&key, req).map_err(|e| {
                     FidelityFatalError::enclave_op_error("SnapshotFidelityLeagues", e).into()
                 })
             })
@@ -485,7 +485,7 @@ pub mod test_enclave {
     pub(super) fn try_query(req: &FidelityQueryRequest) -> Option<Result<FidelityQueryResult>> {
         STATE_KEY.with(|k| {
             k.borrow().map(|key| {
-                outbe_tee_enclave::fidelity::query_index(&key, dev_chain(), req)
+                outbe_enclave::fidelity::query_index(&key, dev_chain(), req)
                     .map_err(|e| FidelityError::enclave_query_error(e).into())
             })
         })

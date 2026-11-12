@@ -17,12 +17,12 @@ use cucumber::cli;
 use cucumber::writer::Stats as _;
 use cucumber::World as _;
 use eyre::{bail, eyre, Result, WrapErr as _};
-use outbe_evm::tee_attestation_activation::DcapChainSpecBindingV1;
 use outbe_primitives::tee_attestation_v1::NetworkBindingV1;
 use outbe_tee::node_host::{
     connect_committed_node_host_enclave, connect_or_initialize_node_host_enclave,
     NodeHostIdentityV1,
 };
+use outbe_tee::tee_attestation_activation::DcapChainSpecBindingV1;
 use rand_core::{OsRng, RngCore as _};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

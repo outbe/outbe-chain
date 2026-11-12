@@ -104,9 +104,7 @@ impl ZeroFeeEnvelope {
         }
         self.check_limits(tx)?;
         if C::abi_decode(tx.call.input).is_err() {
-            return Err(ZeroFeePolicyError::MalformedCalldata(
-                self.malformed_reason.to_string(),
-            ));
+            return Err(ZeroFeePolicyError::MalformedCalldata(self.malformed_reason));
         }
         Ok(Some(ZeroFeeCandidate::new(hook, tx.signer)))
     }

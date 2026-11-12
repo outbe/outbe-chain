@@ -9,6 +9,9 @@ use alloy_primitives::{Address, B256, U256};
 use commonware_cryptography::bls12381;
 use commonware_p2p::Address as CommonwareAddress;
 
+/// Maximum number of validators supported (used as upper bound for codec deserialization).
+pub const MAX_VALIDATORS: u32 = 256;
+
 /// Default minimum stake required to be an active validator when
 /// `config_min_stake` (slot 0) is zero in genesis:
 /// `10_000_000` COEN (`10_000_000 * 10^18` base units `unit`).

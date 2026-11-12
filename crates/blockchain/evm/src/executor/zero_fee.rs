@@ -44,13 +44,13 @@ pub fn is_enclave_witness_budget_deferral(error: &dyn alloy_evm::InvalidTxError)
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct ZeroFeeCfgSnapshot {
+pub struct ZeroFeeCfgSnapshot {
     disable_balance_check: bool,
     disable_base_fee: bool,
     disable_fee_charge: bool,
 }
 
-pub(crate) trait ZeroFeeCfgAccess {
+pub trait ZeroFeeCfgAccess {
     fn enable_zero_fee_overrides(&mut self) -> ZeroFeeCfgSnapshot;
     fn restore_zero_fee_overrides(&mut self, snapshot: ZeroFeeCfgSnapshot);
     fn set_executor_owned(&mut self, _owned: bool) {}
@@ -97,10 +97,7 @@ where
     }
 }
 
-pub(in crate::executor) fn zero_fee_transaction<'a, T>(
-    tx: &'a T,
-    signer: Address,
-) -> ZeroFeeTransaction<'a>
+pub fn zero_fee_transaction<'a, T>(tx: &'a T, signer: Address) -> ZeroFeeTransaction<'a>
 where
     T: alloy_consensus::Transaction + ?Sized,
 {
@@ -108,12 +105,15 @@ where
 }
 
 impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
-    pub(in crate::executor) fn sponsored_gas_fits(&self, gas_limit: u64) -> bool {
-        !outbe_zerofee::sponsored_gas_exceeds_block_budget(self.sponsored_gas_used, gas_limit)
+    pub fn sponsored_gas_fits(&self, gas_limit: u64) -> bool {
+        !self
+            .runtime_host
+            .user_fee_policy()
+            .sponsored_gas_exceeds_block_budget(self.sponsored_gas_used, gas_limit)
     }
 
     /// Called only after inclusion of a transaction whose gas limit passed the fit check.
-    pub(in crate::executor) fn charge_sponsored_gas(&mut self, gas_limit: u64) {
+    pub fn charge_sponsored_gas(&mut self, gas_limit: u64) {
         self.sponsored_gas_used += gas_limit;
     }
 
@@ -121,7 +121,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     /// hard `BlockExecutionError` when the executor rejects a user transaction
     /// outside the EVM (zero-fee policy). The value mirrors the
     /// 21_000 intrinsic-gas baseline of every EVM transaction.
-    pub(in crate::executor) const SOFT_FAILURE_GAS: u64 = 21_000;
+    pub const SOFT_FAILURE_GAS: u64 = 21_000;
 
     /// Maximum number of zero-fee soft-failure receipts a single
     /// block may carry.
@@ -156,7 +156,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     /// error (not nonce-too-low, so the builder marks it invalid rather than
     /// retrying). This keeps it out of the fatal `BlockExecutionError::Internal`
     /// class that would abort the build.
-    pub(in crate::executor) fn record_zero_fee_soft_failure(
+    pub fn record_zero_fee_soft_failure(
         &mut self,
         tx_hash: B256,
     ) -> Result<(), BlockExecutionError> {

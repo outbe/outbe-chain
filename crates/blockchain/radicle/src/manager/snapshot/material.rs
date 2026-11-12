@@ -18,6 +18,7 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             self.chain_id,
             self.genesis_hash,
             block,
+            self.protocol.as_ref(),
         )?;
         let mut storage = ReadOnlyStorageProvider::new_with_chain_identity(
             RethStateReader {
@@ -27,43 +28,41 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             self.genesis_hash,
         );
         let storage = StorageHandle::new(&mut storage);
-        let registry = CodeRegistry::new(storage.clone());
-        let sequence = registry
-            .publication_sequence
-            .read()
+        let protocol = self.protocol.as_ref();
+        let sequence = protocol
+            .publication_sequence(storage.clone())
             .map_err(snapshot_error)?;
-        let bound = registry
-            .publication_material_sequence
-            .read()
+        let bound = protocol
+            .publication_material_sequence(storage.clone())
             .map_err(snapshot_error)?;
         if sequence == 0 || bound == 0 || bound > sequence {
             return Err(ManagerError::Snapshot(
                 "material binding requires accepted bootstrap".into(),
             ));
         }
-        let root = registry
-            .publication_receipt(1)
+        let root = protocol
+            .publication_receipt(storage.clone(), 1)
             .map_err(snapshot_error)?
             .ok_or_else(|| ManagerError::Snapshot("bootstrap receipt missing".into()))?;
-        let checkpoint = registry
-            .publication_receipt(sequence)
+        let checkpoint = protocol
+            .publication_receipt(storage.clone(), sequence)
             .map_err(snapshot_error)?
             .ok_or_else(|| ManagerError::Snapshot("latest checkpoint missing".into()))?;
-        let material = registry
-            .publication_receipt(bound)
+        let material = protocol
+            .publication_receipt(storage.clone(), bound)
             .map_err(snapshot_error)?
             .ok_or_else(|| ManagerError::Snapshot("bound material missing".into()))?;
-        let repository = outbe_coderegistry::repo_id_from_storage_key(
-            registry.network_repository.read().map_err(snapshot_error)?,
+        let repository = outbe_primitives::code_registry::repo_id_from_storage_key(
+            protocol
+                .network_repository(storage.clone())
+                .map_err(snapshot_error)?,
         )
         .map_err(snapshot_error)?;
-        let descriptor = registry
-            .config_descriptor_hash
-            .read()
+        let descriptor = protocol
+            .config_descriptor_hash(storage.clone())
             .map_err(snapshot_error)?;
-        let latest_receipt_hash = registry
-            .publication_receipt_hash
-            .read()
+        let latest_receipt_hash = protocol
+            .publication_receipt_hash(storage.clone())
             .map_err(snapshot_error)?;
         if root.body.action != PublicationAction::Bootstrap
             || !matches!(
@@ -91,8 +90,8 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
                 "material binding chain/repository mismatch".into(),
             ));
         }
-        let height = ValidatorSet::new(storage)
-            .epoch_snapshot()
+        let height = protocol
+            .epoch_snapshot(storage)
             .map_err(snapshot_error)?
             .start_block;
         if height > block.number {
@@ -130,9 +129,9 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
 
     pub(super) fn receipt_mismatch(
         &self,
-        receipt: &outbe_coderegistry::publication::PublicationReceipt,
+        receipt: &outbe_primitives::code_registry::PublicationReceipt,
         max_height: u64,
-        repository: outbe_coderegistry::RepoId,
+        repository: outbe_primitives::code_registry::RepoId,
         owner: alloy_primitives::FixedBytes<96>,
         descriptor: B256,
     ) -> bool {

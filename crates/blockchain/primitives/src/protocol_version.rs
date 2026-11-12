@@ -1,0 +1,209 @@
+//! On-chain protocol version: `u8` major plus `u24` minor, encoded as `u32`.
+
+use alloy_primitives::U256;
+
+use crate::storage::types::{Storable, StorableType};
+
+/// Bits reserved for the minor part of an on-chain protocol version.
+pub const PROTOCOL_VERSION_MINOR_BITS: u32 = 24;
+
+/// Maximum minor value in the `u8` major + `u24` minor encoding.
+pub const MAX_PROTOCOL_VERSION_MINOR: u32 = (1u32 << PROTOCOL_VERSION_MINOR_BITS) - 1;
+
+/// On-chain protocol version: `u8 major + u24 minor` encoded as `u32`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct ProtocolVersion(u32);
+
+impl ProtocolVersion {
+    pub const ZERO: Self = Self(0);
+
+    /// Const fn impl From<u32> for ProtocolVersion.
+    pub const fn from_raw(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    /// Const fn impl Into<u32> for ProtocolVersion.
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
+
+    pub const fn is_zero(self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl From<u32> for ProtocolVersion {
+    fn from(value: u32) -> Self {
+        Self::from_raw(value)
+    }
+}
+
+impl From<ProtocolVersion> for u32 {
+    fn from(value: ProtocolVersion) -> Self {
+        value.raw()
+    }
+}
+
+impl std::fmt::Display for ProtocolVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "v{}.{}",
+            protocol_version_major(*self),
+            protocol_version_minor(*self)
+        )
+    }
+}
+
+impl StorableType for ProtocolVersion {
+    const SLOTS: usize = 1;
+}
+
+impl Storable for ProtocolVersion {
+    fn from_word(word: U256) -> Self {
+        // Storable::from_word cannot return Result. Saturate instead of panicking.
+        Self::from_raw(word.saturating_to::<u32>())
+    }
+
+    fn to_word(&self) -> U256 {
+        U256::from(self.raw())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ProtocolVersionParseError {
+    #[error("empty protocol version component")]
+    Empty,
+    #[error("protocol version contains a non-decimal digit")]
+    InvalidDigit,
+    #[error("protocol version has more than one dot")]
+    TooManyComponents,
+    #[error("protocol version component exceeds allowed range")]
+    Overflow,
+}
+
+/// Encodes the protocol version as `u8 major + u24 minor`.
+pub const fn encode_protocol_version(major: u8, minor: u32) -> ProtocolVersion {
+    ProtocolVersion::from_raw(((major as u32) << PROTOCOL_VERSION_MINOR_BITS) | minor)
+}
+
+const fn parse_decimal_range(
+    bytes: &[u8],
+    start: usize,
+    end: usize,
+    max: u32,
+) -> Result<u32, ProtocolVersionParseError> {
+    if start == end {
+        return Err(ProtocolVersionParseError::Empty);
+    }
+
+    let mut value = 0u32;
+    let mut index = start;
+    while index < end {
+        let byte = bytes[index];
+        if byte < b'0' || byte > b'9' {
+            return Err(ProtocolVersionParseError::InvalidDigit);
+        }
+
+        let digit = (byte - b'0') as u32;
+        if value > (max - digit) / 10 {
+            return Err(ProtocolVersionParseError::Overflow);
+        }
+        value = value * 10 + digit;
+        index += 1;
+    }
+
+    Ok(value)
+}
+
+pub const fn try_parse_protocol_version_major_component(
+    input: &str,
+) -> Result<u8, ProtocolVersionParseError> {
+    let bytes = input.as_bytes();
+    match parse_decimal_range(bytes, 0, bytes.len(), u8::MAX as u32) {
+        Ok(value) => Ok(value as u8),
+        Err(err) => Err(err),
+    }
+}
+
+pub const fn try_parse_protocol_version_minor_component(
+    input: &str,
+) -> Result<u32, ProtocolVersionParseError> {
+    let bytes = input.as_bytes();
+    parse_decimal_range(bytes, 0, bytes.len(), MAX_PROTOCOL_VERSION_MINOR)
+}
+
+pub const fn try_parse_protocol_version(
+    input: &str,
+) -> Result<ProtocolVersion, ProtocolVersionParseError> {
+    let bytes = input.as_bytes();
+    let len = bytes.len();
+    if len == 0 {
+        return Err(ProtocolVersionParseError::Empty);
+    }
+
+    let dot_index = match version_separator(bytes) {
+        Ok(index) => index,
+        Err(err) => return Err(err),
+    };
+    let Some(dot_index) = dot_index else {
+        return match parse_decimal_range(bytes, 0, len, u32::MAX) {
+            Ok(value) => Ok(ProtocolVersion::from_raw(value)),
+            Err(err) => Err(err),
+        };
+    };
+
+    parse_major_minor(bytes, dot_index)
+}
+
+const fn version_separator(bytes: &[u8]) -> Result<Option<usize>, ProtocolVersionParseError> {
+    let mut dot_index = None;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] == b'.' {
+            if dot_index.is_some() {
+                return Err(ProtocolVersionParseError::TooManyComponents);
+            }
+            dot_index = Some(index);
+        }
+        index += 1;
+    }
+    Ok(dot_index)
+}
+
+const fn parse_major_minor(
+    bytes: &[u8],
+    dot_index: usize,
+) -> Result<ProtocolVersion, ProtocolVersionParseError> {
+    let major = match parse_decimal_range(bytes, 0, dot_index, u8::MAX as u32) {
+        Ok(value) => value as u8,
+        Err(err) => return Err(err),
+    };
+    let minor = match parse_decimal_range(
+        bytes,
+        dot_index + 1,
+        bytes.len(),
+        MAX_PROTOCOL_VERSION_MINOR,
+    ) {
+        Ok(value) => value,
+        Err(err) => return Err(err),
+    };
+
+    Ok(encode_protocol_version(major, minor))
+}
+
+/// Returns the major part of an encoded protocol version.
+pub const fn protocol_version_major(version: ProtocolVersion) -> u8 {
+    (version.raw() >> PROTOCOL_VERSION_MINOR_BITS) as u8
+}
+
+/// Returns the minor part of an encoded protocol version.
+pub const fn protocol_version_minor(version: ProtocolVersion) -> u32 {
+    version.raw() & MAX_PROTOCOL_VERSION_MINOR
+}
+
+/// Formats a protocol version as `v{major}.{minor} ({raw})`.
+pub fn format_protocol_version(version: ProtocolVersion) -> String {
+    format!("{version} ({})", version.raw())
+}

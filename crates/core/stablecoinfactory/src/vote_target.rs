@@ -31,7 +31,7 @@ impl From<StablecoinVoteTargetError> for PrecompileError {
 }
 
 /// Checks whether a precompile error is a user revert.
-const fn is_revert_error(error: &PrecompileError) -> bool {
+pub(crate) const fn is_revert_error(error: &PrecompileError) -> bool {
     matches!(
         error,
         PrecompileError::Revert(_) | PrecompileError::RevertBytes(_)

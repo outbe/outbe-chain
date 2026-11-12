@@ -6,7 +6,8 @@ fn new_with_bridge_installs_cache_summary_provider() {
     let summary = test_summary();
     let block_hash = B256::repeat_byte(0x52);
     bridge.record_execution_summary(8, block_hash, summary, 456);
-    let config = OutbeEvmConfig::new_with_bridge(test_chain_spec(), bridge);
+    let config =
+        OutbeEvmConfig::new_with_bridge(test_chain_spec(), bridge, crate::host::stub_host());
 
     let provider = config
         .accounted_parent_artifact_provider
@@ -36,7 +37,7 @@ fn config_fixture_uses_the_gramine_direct_dev_chain_identity() {
 fn evm_config_binds_factory_to_canonical_chain_spec_genesis() {
     let chain_spec = test_chain_spec();
     let expected = chain_spec.genesis_hash();
-    let config = OutbeEvmConfig::new(chain_spec.clone());
+    let config = OutbeEvmConfig::new(chain_spec.clone(), crate::host::stub_host());
 
     assert_eq!(
         config.inner.executor_factory.evm_factory().genesis_hash(),
@@ -49,6 +50,30 @@ fn evm_config_binds_factory_to_canonical_chain_spec_genesis() {
             .evm_factory()
             .genesis_timestamp(),
         chain_spec.genesis_timestamp()
+    );
+
+    let signer = std::sync::Arc::new(
+        crate::OutbeEvmSigner::from_secret_bytes([1u8; 32]).expect("test proposer key"),
+    );
+    let metadata = outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata {
+        finalized_block_number: 1,
+        finalized_block_hash: expected,
+        ..Default::default()
+    };
+    let err = config
+        .with_evm_signer(signer)
+        .build_signed_phase1_tx(
+            2,
+            GRAMINE_DIRECT_DEV_CHAIN_ID,
+            expected,
+            Some(metadata),
+            None,
+        )
+        .expect_err("stub_host empty BlockOrder must fail closed in build_signed_phase1_tx");
+    assert!(
+        err.to_string()
+            .contains("missing parent consensus metadata for Phase 1 prebuild"),
+        "unexpected error: {err}"
     );
 }
 
@@ -70,7 +95,7 @@ fn pending_env_disables_outbe_hooks_and_uses_rewards_beneficiary() {
 
 #[test]
 fn context_for_next_block_strips_plain_builder_extra_data() {
-    let config = OutbeEvmConfig::new(test_chain_spec());
+    let config = OutbeEvmConfig::new(test_chain_spec(), crate::host::stub_host());
     let parent = test_parent();
 
     for plain in [&b""[..], b"x", b"OAR", b"reth/vtest/macos"] {
@@ -84,7 +109,7 @@ fn context_for_next_block_strips_plain_builder_extra_data() {
 
 #[test]
 fn context_for_next_block_uses_outbe_parent_hash() {
-    let config = OutbeEvmConfig::new(test_chain_spec());
+    let config = OutbeEvmConfig::new(test_chain_spec(), crate::host::stub_host());
     use alloy_primitives::{address, b256, hex, keccak256, B64};
 
     // Geth v1.16.5 TestBlockEncoding pins this header and its hash independently.
@@ -136,7 +161,7 @@ fn context_for_next_block_uses_outbe_parent_hash() {
 
 #[test]
 fn context_for_next_block_preserves_valid_consensus_header_artifact() {
-    let config = OutbeEvmConfig::new(test_chain_spec());
+    let config = OutbeEvmConfig::new(test_chain_spec(), crate::host::stub_host());
     let parent = test_parent();
     let artifact = encode_consensus_header_artifact(&ConsensusHeaderArtifact::BoundaryOutcome(
         DkgBoundaryArtifact {
@@ -177,7 +202,7 @@ fn context_for_next_block_rejects_malformed_or_unsupported_oart_before_execution
     use reth_evm::execute::BlockBuilder as _;
     use revm::database::State;
 
-    let config = OutbeEvmConfig::new(test_chain_spec());
+    let config = OutbeEvmConfig::new(test_chain_spec(), crate::host::stub_host());
     let parent = test_parent();
     for extra_data in [
         &b"OART"[..],
@@ -232,7 +257,7 @@ fn context_for_next_block_rejects_malformed_or_unsupported_oart_before_execution
 /// sealing.
 #[test]
 fn sanitizer_preserves_late_credits() {
-    let config = OutbeEvmConfig::new(test_chain_spec());
+    let config = OutbeEvmConfig::new(test_chain_spec(), crate::host::stub_host());
     let parent = test_parent();
     let credits = LateFinalizeCreditsArtifact {
         batches: vec![PerBlockCredit {

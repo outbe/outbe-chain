@@ -116,11 +116,21 @@ fn validate_phase1_calldata(tx: &TransactionSigned, calldata: &[u8]) -> Result<(
         return Err(SystemTxError::Phase1CalldataMismatch);
     }
     let actual = SystemTx::decode(calldata)?;
-    if !matches!(actual, SystemTx::CertifiedParentAccounting { .. }) {
+    let SystemTx::Consensus {
+        step_index: super::CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+        payload,
+    } = actual
+    else {
         return Err(SystemTxError::CalldataKindMismatch {
             expected: "CertifiedParentAccounting",
-            actual: actual.name(),
+            actual: actual.stage_name(),
         });
+    };
+    let metadata = crate::consensus_metadata::CertifiedParentAccountingMetadata::decode(&payload)
+        .map_err(SystemTxError::from_precompile)?;
+    let reencoded = metadata.encode().map_err(SystemTxError::from_precompile)?;
+    if reencoded.as_ref() != payload.as_ref() {
+        return Err(SystemTxError::Phase1CalldataMismatch);
     }
     Ok(())
 }

@@ -223,38 +223,6 @@ fn committee_chain_anchors_then_chains_across_epochs() {
 }
 
 #[test]
-fn admission_cursor_has_no_256_epoch_horizon_and_retains_one_verifier() {
-    let committee = committee(10);
-    let mut chain = CommitteeChain::new(Epoch::new(0), committee.participants.clone());
-
-    for raw_epoch in 0..=300_u64 {
-        let epoch = Epoch::new(raw_epoch);
-        chain
-            .register_epoch_from_outcome(epoch, &committee.outcome(epoch))
-            .unwrap();
-        chain.retain_only_highest();
-
-        assert_eq!(chain.highest_registered(), Some(epoch));
-        assert_eq!(chain.outcome_hashes.len(), 1);
-        assert!(commonware_cryptography::certificate::Provider::scoped(
-            chain.scheme_provider(),
-            epoch,
-        )
-        .is_some());
-        if raw_epoch > 0 {
-            assert!(
-                commonware_cryptography::certificate::Provider::scoped(
-                    chain.scheme_provider(),
-                    Epoch::new(raw_epoch - 1),
-                )
-                .is_none(),
-                "the prior verifier must be pruned after epoch {raw_epoch}"
-            );
-        }
-    }
-}
-
-#[test]
 fn preannounce_registers_and_self_finalized_boundary_cannot_override() {
     // The D1 fix, end to end at the follower: epoch 6's committee is registered
     // from its E-1 PRE-ANNOUNCE (carried in a block finalized by the trusted

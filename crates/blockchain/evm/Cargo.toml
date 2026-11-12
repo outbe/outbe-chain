@@ -8,49 +8,7 @@ publish.workspace = true
 [dependencies]
 # Internal
 outbe-primitives.workspace = true
-outbe-gratis.workspace = true
-outbe-gratisfactory.workspace = true
-outbe-promis.workspace = true
-outbe-promisfactory.workspace = true
-outbe-tribute.workspace = true
-outbe-nod.workspace = true
-outbe-nodfactory.workspace = true
-outbe-gem.workspace = true
-outbe-gemfactory.workspace = true
-outbe-intex.workspace = true
-outbe-intexfactory.workspace = true
-outbe-desis.workspace = true
-outbe-vaultrouter.workspace = true
-outbe-credis.workspace = true
-outbe-credisfactory.workspace = true
-outbe-tributefactory.workspace = true
-outbe-stablecoinpolicy.workspace = true
-outbe-stablecoin.workspace = true
-outbe-stablecoinfactory.workspace = true
-outbe-teeregistry = { workspace = true, features = ["tee-attestation-v1"] }
 outbe-tee.workspace = true
-outbe-l2registry.workspace = true
-outbe-hyperlanecontroller.workspace = true
-outbe-crosschainbridge.workspace = true
-outbe-coderegistry.workspace = true
-outbe-vote.workspace = true
-outbe-update.workspace = true
-outbe-agentreward.workspace = true
-outbe-ccaregistry.workspace = true
-outbe-metadosis.workspace = true
-outbe-emission.workspace = true
-outbe-validatorset.workspace = true
-outbe-consensus.workspace = true
-outbe-slashindicator.workspace = true
-outbe-staking.workspace = true
-outbe-rewards.workspace = true
-outbe-fidelity.workspace = true
-outbe-promislimit.workspace = true
-outbe-oracle.workspace = true
-outbe-zerofee.workspace = true
-outbe-cycle.workspace = true
-outbe-zk-backend.workspace = true
-outbe-zk.workspace = true
 
 # Alloy
 alloy-rpc-types-eth.workspace = true
@@ -78,34 +36,19 @@ reth-primitives-traits.workspace = true
 reth-rpc-eth-api.workspace = true
 
 alloy-sol-types.workspace = true
-blst.workspace = true
 eyre.workspace = true
-serde.workspace = true
-serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 parking_lot.workspace = true
 postcard.workspace = true
 
 [dev-dependencies]
-outbe-common.workspace = true
-outbe-system-common.workspace = true
-outbe-cycle = { workspace = true, features = ["test-utils"] }
+outbe-evm = { workspace = true, features = ["test-utils"] }
 outbe-genesis-cli.workspace = true
-outbe-consensus = { workspace = true, features = ["test-utils"] }
-outbe-evm = { path = ".", features = ["test-utils"] }
 outbe-tee = { workspace = true, features = ["test-utils"] }
-outbe-tribute = { workspace = true, features = ["test-enclave"] }
 outbe-chain-constants.workspace = true
-outbe-node.workspace = true
-outbe-metadosis = { workspace = true, features = ["test-utils"] }
-outbe-nod = { workspace = true, features = ["test-utils", "test-enclave"] }
-outbe-gem = { workspace = true, features = ["test-utils"] }
-outbe-gratis = { workspace = true, features = ["test-enclave"] }
 alloy-sol-types.workspace = true
-outbe-oracle = { workspace = true, features = ["test-utils"] }
 outbe-primitives = { workspace = true, features = ["test-utils"] }
-outbe-validatorset = { workspace = true, features = ["test-utils"] }
 reth-chainspec.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-trie = { workspace = true, features = ["test-utils"] }
@@ -126,25 +69,10 @@ rand-commonware.workspace = true
 rand-core-commonware.workspace = true
 
 [features]
-test-utils = []
-# Propagates the compile-time guard asserting that no enclave stand-in
-# (`test-enclave`) is unified into a production node build.
-production-enclave = [
-    "outbe-fidelity/production-enclave",
-    "outbe-gratis/production-enclave",
-    "outbe-promis/production-enclave",
-    "outbe-tribute/production-enclave",
-    "outbe-nod/production-enclave",
-]
-# Point the precompiles at a throwaway contract set an e2e run can deploy itself.
-e2e-test = [
-    "outbe-desis/e2e-test",
-    "outbe-intexfactory/e2e-test",
-    "outbe-cycle/e2e-test",
-    "outbe-gemfactory/e2e-test",
-    "outbe-nodfactory/e2e-test",
-    "outbe-credisfactory/e2e-test",
-]
+test-utils = ["outbe-primitives/test-utils"]
+# Exposes execution test controls to crates/runtime integration tests.
+# It does not pull a domain crate.
+test-hooks = []
 
 [package.metadata.cargo-machete]
 ignored = ["hex"]

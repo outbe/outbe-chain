@@ -96,13 +96,13 @@ pub(super) async fn admission_public(
 pub(super) fn compact_header(
     public: &serde_json::Value,
     height: u64,
-) -> Result<(outbe_consensus::block::ConsensusBlock, CertifiedHeaderV1)> {
+) -> Result<(outbe_simplex::block::ConsensusBlock, CertifiedHeaderV1)> {
     let finalization = json_hex_bytes(public, "finalizationHex")?;
     let encoded = json_hex_bytes(public, "blockHex")?;
-    let certified = outbe_consensus::follow::decode_public_finalized_block(
+    let certified = outbe_simplex::committee_chain::decode_public_finalized_block(
         &finalization,
         &encoded,
-        outbe_consensus::bls::MAX_COMMITTEE_MEMBERS,
+        outbe_simplex::bls::MAX_COMMITTEE_MEMBERS,
     )?;
     (certified.finalization.proposal.payload == certified.block.digest())
         .then_some(())
@@ -116,7 +116,7 @@ pub(super) fn compact_header(
         .ok_or(TeeAdmissionHistoryError::TooManyFinalityAncestors)?;
     let mut blocks = Vec::with_capacity(ancestors.len() + 1);
     for bytes in &ancestors {
-        let block = outbe_consensus::follow::upstream::decode_public_block(bytes)?;
+        let block = outbe_simplex::committee_chain::decode_public_block(bytes)?;
         blocks.push(block);
     }
     blocks.push(certified.block);

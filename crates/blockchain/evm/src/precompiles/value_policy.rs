@@ -1,5 +1,5 @@
 //! Native-value admission for an already validated EVM call frame.
-use crate::precompile_routes::ValuePolicy;
+use super::routes::ValuePolicy;
 use alloy_primitives::U256;
 
 /// Classification of a call's native value at the precompile boundary.

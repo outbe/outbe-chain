@@ -18,9 +18,12 @@ fn child_accounting_recovers_only_exact_parent_finalization() {
         ..Default::default()
     };
     let child = |metadata: CertifiedParentAccountingMetadata| {
-        let data = SystemTx::CertifiedParentAccounting { metadata }
-            .encode()
-            .unwrap();
+        let data = SystemTx::Consensus {
+            step_index: outbe_primitives::system_tx::CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+            payload: metadata.encode().unwrap(),
+        }
+        .encode()
+        .unwrap();
         let transaction = build_unsigned_system_tx(0, 44, 1, data)
             .unwrap()
             .into_signed(alloy_primitives::Signature::test_signature())

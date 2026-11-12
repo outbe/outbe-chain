@@ -23,6 +23,10 @@ use commonware_cryptography::bls12381::primitives::{
     ops::{self, sign_message},
     variant::MinSig,
 };
+use outbe_enclave::{
+    crypto::ecdhe_tribute_offer_decrypt,
+    process::{process_tribute_offer_batch, TributeOfferKeyMaterial},
+};
 use outbe_l2registry::L2RegistryContract;
 use outbe_metadosis::genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay};
 use outbe_oracle::{
@@ -44,10 +48,6 @@ use outbe_primitives::{
 };
 use outbe_tee::protocol::TributePublicInputs as DemoTributePublicInputs;
 use outbe_tee::OFFER_HKDF_SALT;
-use outbe_tee_enclave::{
-    crypto::ecdhe_tribute_offer_decrypt,
-    process::{process_tribute_offer_batch, TributeOfferKeyMaterial},
-};
 use outbe_tribute::TributeContract;
 use outbe_tributefactory::bench_support::{execute_offer_with_processor, BenchOfferInput};
 use outbe_zk::claim::TributeDraftClaim;

@@ -179,7 +179,7 @@ mod tests {
                 zk_context: None,
             };
             let digest = outbe_primitives::wwd_entity_id::derive_poseidon_digest(owner, day);
-            let body = outbe_tee_enclave::tribute_encryption::encrypt_tribute(
+            let body = outbe_enclave::tribute_encryption::encrypt_tribute(
                 &[7; 32],
                 TributeContextV2 {
                     chain_id: 1,

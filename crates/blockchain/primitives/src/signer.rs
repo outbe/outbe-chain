@@ -262,7 +262,9 @@ mod tests {
     #[test]
     fn signs_and_recovers_expected_address() {
         let signer = OutbeEvmSigner::from_secret_bytes([1u8; 32]).expect("valid signer");
-        let input = SystemTx::CycleTick.encode().expect("input encodes");
+        let input = SystemTx::BeginBlock { step_index: 0 }
+            .encode()
+            .expect("input encodes");
         let tx = build_unsigned_system_tx(0, 1, CHAIN_ID, input).expect("system tx builds");
 
         let signed = signer.sign_unsigned(tx).expect("signs");
@@ -273,7 +275,9 @@ mod tests {
     #[test]
     fn signatures_are_deterministic_for_same_unsigned_tx() {
         let signer = OutbeEvmSigner::from_secret_bytes([2u8; 32]).expect("valid signer");
-        let input = SystemTx::CycleTick.encode().expect("input encodes");
+        let input = SystemTx::BeginBlock { step_index: 0 }
+            .encode()
+            .expect("input encodes");
         let tx_a =
             build_unsigned_system_tx(0, 1, CHAIN_ID, input.clone()).expect("system tx builds");
         let tx_b = build_unsigned_system_tx(0, 1, CHAIN_ID, input).expect("system tx builds");
@@ -299,7 +303,9 @@ mod tests {
     #[test]
     fn signed_system_tx_keeps_reserved_to_and_zero_value() {
         let signer = OutbeEvmSigner::from_secret_bytes([3u8; 32]).expect("valid signer");
-        let input = SystemTx::CycleTick.encode().expect("input encodes");
+        let input = SystemTx::BeginBlock { step_index: 0 }
+            .encode()
+            .expect("input encodes");
         let tx = build_unsigned_system_tx(0, 1, CHAIN_ID, input).expect("system tx builds");
         let signed = signer.sign_unsigned(tx).expect("signs");
         assert_eq!(signed.to(), Some(crate::system_tx::OUTBE_SYSTEM_TX_ADDRESS));
@@ -308,6 +314,6 @@ mod tests {
             signed.kind(),
             TxKind::Call(crate::system_tx::OUTBE_SYSTEM_TX_ADDRESS)
         );
-        assert_eq!(signed.input(), &Bytes::from_static(b"OSC2\x02"));
+        assert_eq!(signed.input(), &Bytes::from_static(b"OSBB\x03\x00"));
     }
 }

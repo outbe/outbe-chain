@@ -8,7 +8,7 @@ use outbe_primitives::{
 /// Deletes the spent series of the expired groups.
 pub use crate::cleanup::cleanup;
 
-/// Protocol module for `SystemTxKind::IntexFactory` (`OSIX`).
+/// Protocol module for the end-block Intex factory step.
 pub struct IntexFactoryModule;
 
 impl ProtocolModule for IntexFactoryModule {
@@ -25,28 +25,27 @@ impl ProtocolModule for IntexFactoryModule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use outbe_primitives::block::BlockContext;
-    use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+    use outbe_primitives::{
+        block::BlockHeightRegime,
+        reshare_artifact::OutbeBlockArtifacts,
+        system_tx_context::{SystemTxPayloadValidationError, SystemTxValidationContext},
+    };
 
     #[test]
-    fn intex_factory_module_end_block_runs_passes() {
-        let mut provider = HashMapStorageProvider::new(1);
-        StorageHandle::enter(&mut provider, |storage| {
-            let ctx = BlockRuntimeContext::new(
-                BlockContext {
-                    block_gas_limit: 0,
-                    user_gas_used: 0,
-                    block_number: 2,
-                    timestamp: 1_700_000_000,
-                    chain_id: 1,
-                    genesis_hash: alloy_primitives::B256::ZERO,
-                    genesis_timestamp: 1_700_000_000,
-                    proposer: alloy_primitives::Address::ZERO,
-                    validators: Vec::new(),
-                },
-                storage,
-            );
-            <IntexFactoryModule as ProtocolModule>::end_block(&ctx).unwrap();
-        });
+    fn intex_factory_step_rejects_unexpected_payload() {
+        let artifacts = OutbeBlockArtifacts::default();
+        let ctx = SystemTxValidationContext {
+            regime: BlockHeightRegime::SteadyState,
+            block_number: 2,
+            parent_hash: alloy_primitives::B256::ZERO,
+            artifacts: &artifacts,
+        };
+        assert!(matches!(
+            IntexFactoryModule::validate_payload(&[1], &ctx),
+            Err(SystemTxPayloadValidationError::UnexpectedNonEmptyPayload {
+                module: "intex_factory",
+                len: 1,
+            })
+        ));
     }
 }

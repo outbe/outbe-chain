@@ -3,14 +3,7 @@ use crate::{errors::TeeRegistryError, NodeEnclaveBindingV1, TeeRegistry};
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_primitives::{error::Result, tee_attestation_v1::TeePolicyV1};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct EnclaveUpgradeV1 {
-    pub proposal_id: U256,
-    pub activation_height: u64,
-    pub mrenclave: B256,
-    pub successor_policy_hash: B256,
-    pub predecessor_policy_hash: B256,
-}
+pub use outbe_primitives::enclave_upgrade::EnclaveUpgradeV1;
 
 impl TeeRegistry<'_> {
     #[cfg(feature = "tee-attestation-v1")]
@@ -212,6 +205,51 @@ impl TeeRegistry<'_> {
     }
     pub fn last_enclave_retirement_height_v1(&self) -> Result<u64> {
         self.last_enclave_retirement_height.read()
+    }
+
+    /// Whether `context` matches a live enclave upgrade candidate at `timestamp`.
+    pub fn live_upgrade_candidate_v1(
+        &self,
+        context: &outbe_tee::dcap_protocol::DcapOnboardingContextV1,
+        timestamp: u64,
+        legacy_direct_dev_source: bool,
+    ) -> Result<bool> {
+        let policy = self.active_policy_v1()?;
+        if !self.candidate_binding_matches_v1(context, timestamp)? {
+            return Ok(false);
+        }
+        if !self.candidate_offer_matches_v1(context)? {
+            return Ok(false);
+        }
+        let chain_matches =
+            context.chain_id == policy.chain_id && context.genesis_hash == policy.genesis_hash;
+        let mode_allowed = !legacy_direct_dev_source
+            || policy.attestation_mode
+                == outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev;
+        Ok(chain_matches && mode_allowed)
+    }
+
+    fn candidate_binding_matches_v1(
+        &self,
+        context: &outbe_tee::dcap_protocol::DcapOnboardingContextV1,
+        timestamp: u64,
+    ) -> Result<bool> {
+        let node = context.node_id_hash;
+        let live_context = self.upgrade_candidate_context.read(&node)? == context.context_hash()
+            && self.upgrade_candidate_expiry.read(&node)? > timestamp;
+        Ok(live_context
+            && self.upgrade_candidate_source.read(&node)? == self.v1_node_binding_id.read(&node)?
+            && !self.v1_node_binding_id.read(&node)?.is_zero())
+    }
+
+    fn candidate_offer_matches_v1(
+        &self,
+        context: &outbe_tee::dcap_protocol::DcapOnboardingContextV1,
+    ) -> Result<bool> {
+        Ok(self.strict_upgrade_successor.read()? == context.policy_hash
+            && self.offer_public_key()?.0 == context.tribute_offer_public
+            && self.key_epoch()? == context.key_epoch
+            && self.tribute_offer_epoch()? == context.tribute_offer_epoch)
     }
 }
 

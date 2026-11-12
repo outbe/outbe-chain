@@ -3,7 +3,7 @@
 use std::ops::Deref;
 
 use alloy_primitives::{Address, U256};
-use outbe_common::entity_codec::{CanonicalBodyError, StoredBody};
+use outbe_core_common::entity_codec::{CanonicalBodyError, StoredBody};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{time::WorldwideDay, tribute_encryption::EncryptedTributeV2};
 
@@ -77,12 +77,12 @@ impl TributeRecord {
     pub fn stored_body(&self) -> Result<StoredBody, CanonicalBodyError> {
         match &self.body {
             Body::Legacy(body) => StoredBody::new(
-                outbe_common::entity_codec::BODY_SCHEMA_V1,
-                outbe_common::entity_codec::encode_tribute_v1(&crate::canonical_body(body))?,
+                outbe_core_common::entity_codec::BODY_SCHEMA_V1,
+                outbe_core_common::entity_codec::encode_tribute_v1(&crate::canonical_body(body))?,
             ),
             Body::Encrypted(body) => StoredBody::new(
-                outbe_common::entity_codec::TRIBUTE_BODY_SCHEMA_V2,
-                outbe_common::entity_codec::encode_tribute_v2(body)?,
+                outbe_core_common::entity_codec::TRIBUTE_BODY_SCHEMA_V2,
+                outbe_core_common::entity_codec::encode_tribute_v2(body)?,
             ),
         }
     }

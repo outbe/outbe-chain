@@ -458,7 +458,7 @@ fn config_dev_profile_terms_a_new_group() {
 /// A corrupt gem record read is this node's store: the forfeit sweep fails the block.
 #[test]
 fn a_corrupt_record_read_fails_the_forfeit_sweep() {
-    use outbe_common::deadline_queue::DeadlineHandler;
+    use outbe_core_common::deadline_queue::DeadlineHandler;
     use outbe_primitives::error::{PassFailure, PrecompileError};
     with_storage(|storage| {
         let ctx = block_ctx(storage);

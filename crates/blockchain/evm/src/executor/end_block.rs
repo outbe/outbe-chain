@@ -3,21 +3,21 @@
 use super::*;
 use crate::config::system_txs::sign_end_system_tx;
 use crate::errors::ExecutorValidationError;
-use outbe_primitives::system_tx::{
-    build_unsigned_system_tx, SystemTx, SystemTxPhase, CREDIS_FACTORY_ORDINAL, GEM_CLEANUP_ORDINAL,
-    GEM_FACTORY_ORDINAL, INTEX_FACTORY_ORDINAL, NOD_FACTORY_ORDINAL,
-};
 use reth_primitives_traits::Recovered;
+use {
+    crate::system_tx::PlannedSystemStep,
+    outbe_primitives::system_tx::{build_unsigned_system_tx, BlockExecutionStage, SystemTx},
+};
 
 struct AdmittedEndTx {
     input: SystemTx,
     ordinal: u8,
-    next_phase: SystemTxPhase,
 }
 
 struct EndTxCheck {
     block_number: u64,
-    phase: SystemTxPhase,
+    expected: PlannedSystemStep,
+    order: crate::system_tx::BlockOrder,
     chain_id: u64,
     proposer: Address,
 }
@@ -27,21 +27,10 @@ fn admit_end_tx(
     signer: Address,
     check: EndTxCheck,
 ) -> Result<AdmittedEndTx, BlockExecutionError> {
-    if !BlockHeightRegime::for_block(check.block_number).has_end_zone_system_txs() {
-        return Err(ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed.into());
-    }
-    let input = SystemTx::decode(tx.input().as_ref())
-        .map_err(|error| ExecutorValidationError::decode_system_tx_at_body_index(0, error))?;
-    if input.body_zone() != outbe_primitives::system_tx::BodyZone::EndBlock {
-        return Err(ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed.into());
-    }
-    let ordinal = input
-        .nonce_ordinal()
-        .ok_or(ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed)?;
-    let next_phase = expected_next_end_phase(&input, ordinal, check.phase)?;
+    let (input, ordinal) = decode_expected_end_tx(tx, &check)?;
     if tx.gas_limit() != 0 {
         return Err(ExecutorValidationError::EndBlockGasLimitMismatch {
-            kind: input.name(),
+            kind: check.order.step_name_or_stage(&input),
             expected: 0,
             actual: tx.gas_limit(),
             capacity: 0,
@@ -51,7 +40,7 @@ fn admit_end_tx(
     if signer != check.proposer {
         return Err(ExecutorValidationError::SystemTxSignerMismatch {
             body_index: usize::from(ordinal),
-            expected_phase: input.name(),
+            expected_phase: check.order.step_name_or_stage(&input),
             proposer: check.proposer,
             signer,
         }
@@ -67,69 +56,42 @@ fn admit_end_tx(
     if tx.signature_hash() != unsigned.signature_hash() {
         return Err(ExecutorValidationError::SystemTxSignatureHashMismatch {
             body_index: usize::from(ordinal),
-            expected_phase: input.name(),
+            expected_phase: check.order.step_name_or_stage(&input),
         }
         .into());
     }
-    Ok(AdmittedEndTx {
-        input,
-        ordinal,
-        next_phase,
-    })
+    Ok(AdmittedEndTx { input, ordinal })
 }
 
-fn expected_next_end_phase(
-    input: &SystemTx,
-    ordinal: u8,
-    phase: SystemTxPhase,
-) -> Result<SystemTxPhase, BlockExecutionError> {
-    match (phase, input) {
-        (SystemTxPhase::EndBlockNodFactory, SystemTx::NodFactory)
-            if ordinal == NOD_FACTORY_ORDINAL =>
-        {
-            Ok(SystemTxPhase::EndBlockGemFactory)
-        }
-        (SystemTxPhase::EndBlockGemFactory, SystemTx::GemFactory)
-            if ordinal == GEM_FACTORY_ORDINAL =>
-        {
-            Ok(SystemTxPhase::EndBlockIntexFactory)
-        }
-        (SystemTxPhase::EndBlockIntexFactory, SystemTx::IntexFactory)
-            if ordinal == INTEX_FACTORY_ORDINAL =>
-        {
-            Ok(SystemTxPhase::EndBlockCredisFactory)
-        }
-        (SystemTxPhase::EndBlockCredisFactory, SystemTx::CredisFactory)
-            if ordinal == CREDIS_FACTORY_ORDINAL =>
-        {
-            Ok(SystemTxPhase::EndBlockGemCleanup)
-        }
-        (SystemTxPhase::EndBlockGemCleanup, SystemTx::GemCleanup)
-            if ordinal == GEM_CLEANUP_ORDINAL =>
-        {
-            Ok(SystemTxPhase::EndBlock)
-        }
-        _ => {
-            let expected_phase = match phase {
-                SystemTxPhase::EndBlockNodFactory => "NodFactory",
-                SystemTxPhase::EndBlockGemFactory => "GemFactory",
-                SystemTxPhase::EndBlockIntexFactory => "IntexFactory",
-                SystemTxPhase::EndBlockCredisFactory => "CredisFactory",
-                SystemTxPhase::EndBlockGemCleanup => "GemCleanup",
-                _ => "EndBlock",
-            };
-            Err(ExecutorValidationError::SystemTxPhaseMismatch {
-                body_index: usize::from(ordinal),
-                expected_phase,
-                actual_phase: input.name(),
-            }
-            .into())
-        }
+fn decode_expected_end_tx(
+    tx: &TransactionSigned,
+    check: &EndTxCheck,
+) -> Result<(SystemTx, u8), BlockExecutionError> {
+    if !BlockHeightRegime::for_block(check.block_number).has_end_block_system_txs() {
+        return Err(ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed.into());
     }
+    let input = SystemTx::decode(tx.input().as_ref())
+        .map_err(|error| ExecutorValidationError::decode_system_tx_at_body_index(0, error))?;
+    if input.body_zone() != outbe_primitives::system_tx::BodyZone::EndBlock {
+        return Err(ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed.into());
+    }
+    let ordinal = check
+        .expected
+        .end_nonce_ordinal()
+        .ok_or(ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed)?;
+    if input.step_id() != check.expected.id {
+        return Err(ExecutorValidationError::SystemTxPhaseMismatch {
+            body_index: usize::from(ordinal),
+            expected_phase: check.expected.step.name,
+            actual_phase: check.order.step_name_or_stage(&input),
+        }
+        .into());
+    }
+    Ok((input, ordinal))
 }
 
 impl<E: Evm> OutbeBlockExecutor<'_, E> {
-    pub(super) fn accounted_block_gas(&self) -> u64 {
+    pub fn accounted_block_gas(&self) -> u64 {
         if self.inner.evm.cfg_env().enable_amsterdam_eip8037 {
             self.inner.max_block_gas_used()
         } else {
@@ -163,39 +125,20 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         E::Error: std::fmt::Display,
         E::Spec: Into<revm::primitives::hardfork::SpecId>,
     {
-        if matches!(self.system_tx_phase_cursor, SystemTxPhase::EndBlock) {
-            return Ok(());
-        }
-        let phase = self.enter_end_block_phase_if_needed()?;
-        if matches!(phase, SystemTxPhase::EndBlockNodFactory) {
+        let stage = self.enter_end_block_phase_if_needed()?;
+        if stage == BlockExecutionStage::EndBlock && self.fsm.end_cursor() == 0 {
             self.execute_built_end_suffix()?;
         }
         Ok(())
     }
 
-    fn enter_end_block_phase_if_needed(&mut self) -> Result<SystemTxPhase, BlockExecutionError> {
-        if matches!(
-            self.system_tx_phase_cursor,
-            SystemTxPhase::EndBlockNodFactory
-                | SystemTxPhase::EndBlockGemFactory
-                | SystemTxPhase::EndBlockIntexFactory
-                | SystemTxPhase::EndBlockCredisFactory
-                | SystemTxPhase::EndBlockGemCleanup
-                | SystemTxPhase::EndBlock
-        ) {
-            return Ok(self.system_tx_phase_cursor);
-        }
-        if !matches!(self.system_tx_phase_cursor, SystemTxPhase::UserTxs) {
-            return Err(ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed.into());
-        }
+    fn enter_end_block_phase_if_needed(
+        &mut self,
+    ) -> Result<BlockExecutionStage, BlockExecutionError> {
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
-        let next = if BlockHeightRegime::for_block(block_number).has_end_zone_system_txs() {
-            SystemTxPhase::EndBlockNodFactory
-        } else {
-            SystemTxPhase::EndBlock
-        };
-        self.system_tx_phase_cursor = next;
-        Ok(next)
+        self.fsm
+            .enter_end_block(block_number)
+            .map_err(|error| ExecutorValidationError::from(error).into())
     }
 
     fn end_block_proposer(&self, block_number: u64) -> Result<Address, BlockExecutionError> {
@@ -212,7 +155,7 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
             .ok_or_else(|| ExecutorValidationError::MissingBeginZoneProposerAddress.into())
     }
 
-    pub(crate) fn take_staged_end_block_txs(&mut self) -> Vec<Recovered<TransactionSigned>> {
+    pub fn take_staged_end_block_txs(&mut self) -> Vec<Recovered<TransactionSigned>> {
         std::mem::take(&mut self.staged_end_block_txs)
     }
 
@@ -224,14 +167,12 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         E::Error: std::fmt::Display,
         E::Spec: Into<revm::primitives::hardfork::SpecId>,
     {
-        let mut staged = Vec::with_capacity(5);
-        for input in [
-            SystemTx::NodFactory,
-            SystemTx::GemFactory,
-            SystemTx::IntexFactory,
-            SystemTx::CredisFactory,
-            SystemTx::GemCleanup,
-        ] {
+        let steps = self.fsm.plan().end_block_steps.clone();
+        let mut staged = Vec::with_capacity(steps.len());
+        for planned in steps {
+            let input = SystemTx::EndBlock {
+                step_index: planned.id.step_index,
+            };
             let signed_tx = self.sign_end_tx(input)?;
             self.execute_end_block_system_tx(signed_tx.tx(), Address::from(*signed_tx.signer()))?;
             staged.push(signed_tx);
@@ -258,10 +199,11 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
             block_number,
             self.chain_id,
             input,
+            &self.block_order,
         )
     }
 
-    pub(in crate::executor) fn execute_end_block_system_tx<DB>(
+    pub fn execute_end_block_system_tx<DB>(
         &mut self,
         tx: &TransactionSigned,
         signer: Address,
@@ -274,28 +216,28 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         E::Spec: Into<revm::primitives::hardfork::SpecId>,
     {
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
-        if !BlockHeightRegime::for_block(block_number).has_end_zone_system_txs() {
+        if !BlockHeightRegime::for_block(block_number).has_end_block_system_txs() {
             return Err(ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed.into());
         }
-        let phase = self.enter_end_block_phase_if_needed()?;
+        self.enter_end_block_phase_if_needed()?;
+        let expected = self
+            .fsm
+            .expected_step()
+            .ok_or(ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed)?;
         let proposer = self.end_block_proposer(block_number)?;
         let admitted = admit_end_tx(
             tx,
             signer,
             EndTxCheck {
                 block_number,
-                phase,
+                expected,
+                order: self.block_order,
                 chain_id: self.chain_id,
                 proposer,
             },
         )?;
         let input = admitted.input;
         let ordinal = admitted.ordinal;
-        if self.execute_outbe_block_hooks && self.decoded_block_artifacts.is_some() {
-            self.fsm
-                .on_system_tx(input.kind())
-                .map_err(ExecutorValidationError::from)?;
-        }
         let block_gas_limit = self.inner.evm.block().gas_limit();
         let user_gas_used = self.accounted_block_gas();
         let transact_outcome = with_preloaded_system_tx_context(
@@ -332,7 +274,7 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
                 );
                 let reason = format!(
                     "system tx {} did not succeed at body_index={}: {:?}",
-                    input.name(),
+                    self.block_order.step_name_or_stage(&input),
                     ordinal,
                     result.result
                 );
@@ -342,7 +284,7 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
             Err(error) => {
                 let reason = format!(
                     "system tx {} execution failed at body_index={ordinal}: {error}",
-                    input.name()
+                    self.block_order.step_name_or_stage(&input)
                 );
                 if outbe_primitives::projection::ExecutionReadCancelled::find(&error).is_none()
                     && outbe_primitives::projection::NodeLocalExecutionAbort::find(&error).is_none()
@@ -352,13 +294,7 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
                 return Err(BlockExecutionError::other(error));
             }
         }
-        self.system_tx_phase_cursor = admitted.next_phase;
-        if matches!(admitted.next_phase, SystemTxPhase::EndBlock)
-            && self.execute_outbe_block_hooks
-            && self.decoded_block_artifacts.is_some()
-        {
-            self.fsm.finish().map_err(ExecutorValidationError::from)?;
-        }
+        self.advance_system_tx_step(&input)?;
         Ok(Some(GasOutput::new(0)))
     }
 

@@ -1,7 +1,7 @@
 //! Typed storage-independent inputs, actions, observations and failures.
 
 use alloy_primitives::{Address, U256};
-use outbe_common::entity_codec::TributeBodyV1;
+use outbe_core_common::entity_codec::TributeBodyV1;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 

@@ -97,5 +97,5 @@ pub(crate) fn validate_pow(
     nonce: u64,
 ) -> Result<()> {
     let hash = compute_pow_hash(owner, promis_amount, series_id, seq, nonce);
-    outbe_common::pow::meets_difficulty(&hash).map_err(|e| IntexFactoryError::from(e).into())
+    outbe_core_common::pow::meets_difficulty(&hash).map_err(|e| IntexFactoryError::from(e).into())
 }

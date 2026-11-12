@@ -1,15 +1,15 @@
 use super::*;
 
-pub(in crate::executor) struct SystemFailureReceiptInput {
-    pub(super) tx_type: alloy_consensus::TxType,
-    pub(super) log_address: Address,
-    pub(super) code: u16,
-    pub(super) reason: String,
-    pub(super) internal_gas_used: u64,
-    pub(super) internal_gross_gas_used: u64,
+pub struct SystemFailureReceiptInput {
+    pub tx_type: alloy_consensus::TxType,
+    pub log_address: Address,
+    pub code: u16,
+    pub reason: String,
+    pub internal_gas_used: u64,
+    pub internal_gross_gas_used: u64,
 }
 
-pub(in crate::executor) fn validator_fee_for_gas(
+pub fn validator_fee_for_gas(
     max_fee_per_gas: u128,
     max_priority_fee_per_gas: Option<u128>,
     gas_used: u64,
@@ -22,7 +22,7 @@ pub(in crate::executor) fn validator_fee_for_gas(
     U256::from(validator_fee_per_gas) * U256::from(gas_used)
 }
 
-pub(in crate::executor) fn burned_fee_for_gas(
+pub fn burned_fee_for_gas(
     base_fee_per_gas: u128,
     gas_used: u64,
     blob_gas_price: u128,
@@ -49,7 +49,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     /// `(log_address, code, reason)`. Identical inputs across proposer
     /// and validators yield byte-equal receipts and therefore byte-equal
     /// `receipts_root`. See `crate::failure_receipt`.
-    pub(crate) fn push_failure_receipt(
+    pub fn push_failure_receipt(
         &mut self,
         tx_type: alloy_consensus::TxType,
         log_address: Address,
@@ -91,7 +91,7 @@ where
     /// Pushes a `status=0` system synthetic receipt with `0` visible gas under
     /// the Tempo 0-gas model while accounting internal execution gas in
     /// `system_tx_execution_gas`.
-    pub(in crate::executor) fn push_system_failure_receipt(
+    pub fn push_system_failure_receipt(
         &mut self,
         input: SystemFailureReceiptInput,
     ) -> Result<GasOutput, BlockExecutionError> {

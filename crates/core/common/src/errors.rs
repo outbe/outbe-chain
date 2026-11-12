@@ -1,4 +1,4 @@
-//! Shared error types for `outbe-common`.
+//! Shared error types for `outbe-core-common`.
 
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;

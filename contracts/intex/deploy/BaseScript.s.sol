@@ -2,6 +2,7 @@
 pragma solidity 0.8.30;
 
 import {Script} from "forge-std/Script.sol";
+import {console} from "forge-std/console.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {Create3Factory} from "@shared/Create3Factory.sol";
 import {Create3Deploy} from "./Create3Deploy.sol";
@@ -19,6 +20,8 @@ abstract contract BaseScript is Script {
     /// @notice The proxy belongs to governance (HandOver.s.sol). Change it by a governance
     ///         proposal, not by a deploy.
     error HandedOverToGovernance(address proxy);
+    /// @notice Nothing is deployed at the predicted address of `proxy` on this chain.
+    error NotDeployed(address proxy);
 
     /// @notice Reverts when `deployer` is no longer the admin of `proxy`.
     function requireDeployerAdmin(address proxy, address deployer) internal view {
@@ -31,11 +34,24 @@ abstract contract BaseScript is Script {
         return proxy.code.length != 0 && !IAccessControl(proxy).hasRole(bytes32(0), deployer);
     }
 
-    /// @notice CREATE3 salt version. `SALT_VERSION` in the env overrides it, so a test run can
+    function requireDeployed(address proxy) internal view {
+        if (proxy.code.length == 0) revert NotDeployed(proxy);
+    }
+
+    /// @notice Grants `role` on `proxy` to `account` unless it already holds it. Only a grant
+    ///         needs `deployer` to still be the admin.
+    function grantRoleIfMissing(address proxy, bytes32 role, address account, address deployer) internal {
+        if (IAccessControl(proxy).hasRole(role, account)) return;
+        requireDeployerAdmin(proxy, deployer);
+        IAccessControl(proxy).grantRole(role, account);
+        console.log("role granted on", proxy, "to", account);
+    }
+
+    /// @notice CREATE3 salt version. `CONTRACT_SALT` in the env overrides it, so a test run can
     ///         target a throwaway address set without disturbing the pinned production set. A
     ///         blank or unset value selects production.
     function saltVersion() internal view returns (string memory version) {
-        version = vm.envOr("SALT_VERSION", string(""));
+        version = vm.envOr("CONTRACT_SALT", string(""));
         if (bytes(version).length == 0) version = SALT_VERSION;
     }
 

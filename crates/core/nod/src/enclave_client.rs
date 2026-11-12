@@ -8,11 +8,8 @@ use outbe_tee::{nod_mine::NodGroupLoadOpRequestV1, TransportError};
 pub(crate) fn read_amount(record: &EncryptedNodV1) -> Result<U256, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
     if test_enclave::enabled() {
-        return outbe_tee_enclave::nod_encryption::decrypt_nod(
-            &test_enclave::NETWORK_SECRET,
-            record,
-        )
-        .map_err(crate::errors::enclave_transport_error);
+        return outbe_enclave::nod_encryption::decrypt_nod(&test_enclave::NETWORK_SECRET, record)
+            .map_err(crate::errors::enclave_transport_error);
     }
     outbe_tee::nod_mine::read_nod_amount(record)
 }
@@ -22,7 +19,7 @@ pub(crate) fn apply_group_load_operation(
 ) -> Result<EncryptedNodGroupLoadV1, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
     if test_enclave::enabled() {
-        return outbe_tee_enclave::nod_encryption::apply_nod_group_load_operation(
+        return outbe_enclave::nod_encryption::apply_nod_group_load_operation(
             &test_enclave::NETWORK_SECRET,
             &request,
         )
@@ -34,7 +31,7 @@ pub(crate) fn apply_group_load_operation(
 pub(crate) fn read_group_load(record: &EncryptedNodGroupLoadV1) -> Result<U256, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
     if test_enclave::enabled() {
-        return outbe_tee_enclave::nod_encryption::read_nod_group_load(
+        return outbe_enclave::nod_encryption::read_nod_group_load(
             &test_enclave::NETWORK_SECRET,
             record,
         )
@@ -52,7 +49,7 @@ pub(crate) fn seal_group_load(
 ) -> Result<EncryptedNodGroupLoadV1, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
     if test_enclave::enabled() {
-        return outbe_tee_enclave::nod_encryption::seal_group_load(
+        return outbe_enclave::nod_encryption::seal_group_load(
             &test_enclave::NETWORK_SECRET,
             (chain_id, scope),
             (sequence, inputs_hash),
@@ -71,7 +68,7 @@ pub(crate) fn encrypt_nod_quote(
 ) -> Result<Vec<u8>, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
     if test_enclave::enabled() {
-        return outbe_tee_enclave::nod_encryption::encrypt_nod_quote(
+        return outbe_enclave::nod_encryption::encrypt_nod_quote(
             &test_enclave::NETWORK_SECRET,
             nod,
             &context,

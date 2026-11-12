@@ -5,12 +5,12 @@
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolInterface};
+use outbe_enclave::gratis::{
+    decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
+};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_tee::protocol::{FidelityCohortOp, FidelityOpSection, GratisOp, ModifyAuth};
-use outbe_tee_enclave::gratis::{
-    decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
-};
 
 use crate::api;
 use crate::enclave_client::test_enclave;
@@ -32,7 +32,7 @@ fn auth(op: GratisOp, account: Address, amount: U256, nonce: u64) -> ModifyAuth 
     ModifyAuth {
         mac: modify_mac(
             &mk,
-            &outbe_tee_enclave::gratis::ModifyOperation {
+            &outbe_enclave::gratis::ModifyOperation {
                 account,
                 op,
                 amount,
@@ -513,7 +513,7 @@ fn encrypted_nod(
     nod_id_byte: u8,
 ) -> outbe_primitives::nod_encryption::EncryptedNodV1 {
     use outbe_primitives::{nod_encryption::NodTermsV1, time::WorldwideDay};
-    outbe_tee_enclave::nod_encryption::encrypt_nod(
+    outbe_enclave::nod_encryption::encrypt_nod(
         &[0x5a; 32],
         NodTermsV1 {
             chain_id: CHAIN_ID,

@@ -258,4 +258,16 @@ fn take<const N: usize>(input: &mut &[u8]) -> Result<[u8; N]> {
 }
 
 #[cfg(test)]
-pub(crate) mod tests;
+mod tests {
+    use super::RepositoryPublicationMailbox;
+
+    #[test]
+    fn mailbox_returns_without_waiting_when_locked() {
+        let mailbox = RepositoryPublicationMailbox::default();
+        mailbox
+            .set_ready(Some(crate::test_utils::sample_radicle_publication_batch(1)))
+            .unwrap();
+        let _held = mailbox.0.lock().unwrap();
+        assert!(mailbox.ready_prefix(usize::MAX).is_none());
+    }
+}

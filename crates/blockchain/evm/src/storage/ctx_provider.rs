@@ -52,13 +52,6 @@ use crate::gas::SubcallGasMeter;
 mod subcall;
 mod trigger_gas;
 
-#[cfg(test)]
-use crate::sub_call;
-
-#[cfg(test)]
-#[path = "subcall_tests.rs"]
-mod subcall_tests;
-
 thread_local! {
     /// Per-thread reentrancy stack. It records the outbe precompile addresses
     /// that are currently dispatched on this call chain. revm processes one
@@ -131,13 +124,13 @@ impl Drop for ReentrancyGuard {
 /// has a `Journal: Debug` bound (Journal<DB> Debug-derives over DB).
 pub struct CtxStorageProvider<'a, DB: Database + Debug> {
     /// Borrowed EVM context. Sub-call hands this to
-    /// [`crate::sub_call::run`]. Non-sub-call ops derive an
+    /// [`crate::sub_call::run_with_host`]. Non-sub-call ops derive an
     /// [`alloy_evm::EvmInternals`] facade on-the-fly per call.
     pub ctx: &'a mut EthEvmContext<DB>,
     /// Per-call gas meter (mirrors `revm::Gas`).
     pub gas: SubcallGasMeter,
     /// Admission OOG cannot be caught by a domain `try_call` handler.
-    pub(crate) subcall_out_of_gas: bool,
+    pub subcall_out_of_gas: bool,
     /// STATICCALL flag forwarded from the outer dispatcher.
     pub is_static: bool,
     /// Address of the outbe precompile the dispatcher is currently running.
@@ -151,35 +144,38 @@ pub struct CtxStorageProvider<'a, DB: Database + Debug> {
     /// Immutable genesis timestamp sourced from the canonical ChainSpec.
     pub genesis_timestamp: u64,
     /// Least-authority off-chain body readers propagated to nested precompiles.
-    pub(crate) abort_bridge: crate::precompiles::ExecutionAbortBridge,
+    pub abort_bridge: crate::precompiles::ExecutionAbortBridge,
+    /// Runtime host for nested precompile dispatch. Production sets the
+    /// executor host after construction. The default fails closed.
+    host: std::sync::Arc<dyn crate::EvmRuntimeHost>,
 
     /// One-shot authority for the active Metadosis mutation frame.
     dispatch_frames: DispatchFrameAuthority,
     /// Active journal checkpoints `(token, raw_revm_checkpoint)` in LIFO order.
     checkpoints: Vec<(JournalCheckpoint, JournalCheckpoint, Option<i64>)>,
-    trigger_budget: Option<outbe_primitives::storage::gas::TriggerBudget>,
+    pub trigger_budget: Option<outbe_primitives::storage::gas::TriggerBudget>,
     /// Remaining gas of the active resumable-unit child frame.
-    gas_child_remaining: Option<u64>,
+    pub gas_child_remaining: Option<u64>,
 }
 
 impl CtxStorageProviderConfig {
-    pub(crate) const fn with_genesis_timestamp(mut self, genesis_timestamp: u64) -> Self {
+    pub const fn with_genesis_timestamp(mut self, genesis_timestamp: u64) -> Self {
         self.genesis_timestamp = genesis_timestamp;
         self
     }
 }
 
-pub(crate) struct CtxStorageProviderConfig {
-    pub(crate) is_static: bool,
-    pub(crate) self_address: Address,
-    pub(crate) reentrancy_stack: ReentrancyStack,
-    pub(crate) spec: SpecId,
-    pub(crate) genesis_hash: B256,
-    pub(crate) genesis_timestamp: u64,
+pub struct CtxStorageProviderConfig {
+    pub is_static: bool,
+    pub self_address: Address,
+    pub reentrancy_stack: ReentrancyStack,
+    pub spec: SpecId,
+    pub genesis_hash: B256,
+    pub genesis_timestamp: u64,
 
-    pub(crate) abort_bridge: crate::precompiles::ExecutionAbortBridge,
+    pub abort_bridge: crate::precompiles::ExecutionAbortBridge,
 
-    pub(crate) metadosis_mutation_entitlements: MetadosisMutationEntitlements,
+    pub metadosis_mutation_entitlements: MetadosisMutationEntitlements,
 }
 
 struct DispatchFrameAuthority {
@@ -241,10 +237,11 @@ impl MetadosisMutationFrameState {
 
 impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
     /// Constructor.
-    pub(crate) fn new(
+    pub fn new(
         ctx: &'a mut EthEvmContext<DB>,
         gas: SubcallGasMeter,
         config: CtxStorageProviderConfig,
+        host: std::sync::Arc<dyn crate::EvmRuntimeHost>,
     ) -> Self {
         Self {
             ctx,
@@ -258,6 +255,7 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
             genesis_timestamp: 0,
 
             abort_bridge: config.abort_bridge,
+            host,
 
             dispatch_frames: DispatchFrameAuthority {
                 metadosis: MetadosisMutationFrameState::new(config.metadosis_mutation_entitlements),
@@ -269,12 +267,16 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
         .with_genesis_timestamp(config.genesis_timestamp)
     }
 
-    pub(crate) const fn with_genesis_timestamp(mut self, genesis_timestamp: u64) -> Self {
+    pub const fn with_genesis_timestamp(mut self, genesis_timestamp: u64) -> Self {
         self.genesis_timestamp = genesis_timestamp;
         self
     }
 
-    pub(crate) fn replace_metadosis_mutation_entitlements(
+    pub fn set_runtime_host(&mut self, host: std::sync::Arc<dyn crate::EvmRuntimeHost>) {
+        self.host = host;
+    }
+
+    pub fn replace_metadosis_mutation_entitlements(
         &mut self,
         entitlements: MetadosisMutationEntitlements,
     ) {

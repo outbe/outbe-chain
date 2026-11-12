@@ -7,14 +7,14 @@ use commonware_codec::ReadExt as _;
 use commonware_consensus::types::Epoch;
 use commonware_cryptography::bls12381;
 use commonware_utils::ordered::Set;
-use outbe_consensus::bls::MAX_COMMITTEE_MEMBERS;
-use outbe_consensus::follow::{decode_public_finalization, CommitteeChain};
 use outbe_primitives::{
     addresses::TEE_REGISTRY_ADDRESS,
     reshare_artifact::{decode_outbe_block_artifacts, ConsensusHeaderArtifact},
     tee_attestation_v1::TrustedNetworkDescriptorV1,
     OutbeHeader,
 };
+use outbe_simplex::bls::MAX_COMMITTEE_MEMBERS;
+use outbe_simplex::committee_chain::{decode_public_finalization, CommitteeChain};
 use outbe_tee::{
     dcap_protocol::DcapOnboardingContextV1,
     finalized_admission::{
@@ -72,7 +72,7 @@ impl FinalizedAdmissionVerifierV1 {
         let measured_chain_id =
             u64::try_from(U256::from_be_bytes(descriptor.network_binding.chain_id))
                 .map_err(|_| FinalizedAdmissionError::ConsensusChainIdOverflow)?;
-        outbe_consensus::config::init_consensus_chain_id(measured_chain_id)
+        outbe_simplex::config::init_consensus_chain_id(measured_chain_id)
             .map_err(FinalizedAdmissionError::consensus_chain_binding)?;
         let mut chain = CommitteeChain::new(Epoch::new(0), participants);
         chain
@@ -183,7 +183,7 @@ impl FinalizedAdmissionVerifierV1 {
 fn decode_certified_header(
     proof: &CertifiedHeaderV1,
 ) -> EnclaveResult<(
-    outbe_consensus::marshal_types::Finalization,
+    outbe_simplex::marshal_types::Finalization,
     OutbeHeader,
     B256,
 )> {
@@ -209,7 +209,7 @@ fn decode_certified_header(
         }
         previous = child;
     }
-    if finalization.proposal.payload != outbe_consensus::digest::Digest(previous.hash_slow()) {
+    if finalization.proposal.payload != outbe_simplex::digest::Digest(previous.hash_slow()) {
         return Err(FinalizedAdmissionError::FinalizationPayloadMismatch.into());
     }
     Ok((finalization, header, hash))
@@ -309,7 +309,7 @@ mod tests {
     use super::*;
 
     fn compact_certified_header(finalization: &[u8], block: &[u8]) -> CertifiedHeaderV1 {
-        let certified = outbe_consensus::follow::decode_public_finalized_block(
+        let certified = outbe_simplex::committee_chain::decode_public_finalized_block(
             finalization,
             block,
             MAX_COMMITTEE_MEMBERS,
@@ -384,7 +384,7 @@ mod tests {
 
     #[test]
     fn compact_header_decoder_binds_exact_canonical_header_and_finalization() {
-        use outbe_consensus::finalized_admission_test_utils::FinalityCommitteeFixture;
+        use outbe_simplex::finalized_admission_test_utils::FinalityCommitteeFixture;
 
         let committee = FinalityCommitteeFixture::new(80);
         let certified =
@@ -409,7 +409,7 @@ mod tests {
 
     #[test]
     fn streaming_verifier_crosses_256_committee_transitions() {
-        use outbe_consensus::finalized_admission_test_utils::FinalityCommitteeFixture;
+        use outbe_simplex::finalized_admission_test_utils::FinalityCommitteeFixture;
 
         use outbe_primitives::tee_attestation_v1::NetworkBindingV1;
 
@@ -461,7 +461,7 @@ mod tests {
 
     #[test]
     fn committee_transition_rejects_wrong_epoch_or_missing_successor() {
-        use outbe_consensus::finalized_admission_test_utils::FinalityCommitteeFixture;
+        use outbe_simplex::finalized_admission_test_utils::FinalityCommitteeFixture;
 
         use outbe_primitives::tee_attestation_v1::NetworkBindingV1;
 
@@ -530,9 +530,9 @@ mod tests {
     fn verify_real_proof(upgrade: bool, indirect: bool) {
         use alloy_primitives::{keccak256, Bytes};
         use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles, TrieAccount};
-        use outbe_consensus::finalized_admission_test_utils::FinalityCommitteeFixture;
         use outbe_primitives::tee_attestation_v1::NetworkBindingV1;
         use outbe_primitives::test_utils::state_proof::{proof_nodes_for_target, storage_trie};
+        use outbe_simplex::finalized_admission_test_utils::FinalityCommitteeFixture;
 
         fn account_trie(account: TrieAccount) -> (B256, Vec<Bytes>) {
             let target = Nibbles::unpack(keccak256(TEE_REGISTRY_ADDRESS));
@@ -623,7 +623,7 @@ mod tests {
             compact_certified_header(&transition.finalization, &transition.block);
         if indirect {
             let descendant = epoch0.certify_child_block(
-                outbe_consensus::finalized_admission_test_utils::CertifiedChildBlockInput {
+                outbe_simplex::finalized_admission_test_utils::CertifiedChildBlockInput {
                     epoch: Epoch::new(0),
                     height: 2,
                     timestamp: 950,
@@ -662,7 +662,7 @@ mod tests {
         };
         if indirect {
             let descendant = epoch1.certify_child_block(
-                outbe_consensus::finalized_admission_test_utils::CertifiedChildBlockInput {
+                outbe_simplex::finalized_admission_test_utils::CertifiedChildBlockInput {
                     epoch: Epoch::new(1),
                     height: admission_height + 1,
                     timestamp: 1_001,
@@ -690,7 +690,7 @@ mod tests {
             .contains("skips an unauthenticated committee"));
         if indirect {
             let forged = epoch1.certify_child_block(
-                outbe_consensus::finalized_admission_test_utils::CertifiedChildBlockInput {
+                outbe_simplex::finalized_admission_test_utils::CertifiedChildBlockInput {
                     epoch: Epoch::new(1),
                     height: 2,
                     timestamp: 950,

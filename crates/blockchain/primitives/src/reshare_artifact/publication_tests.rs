@@ -1,5 +1,5 @@
 use super::*;
-use crate::radicle_publication::tests::batch;
+use crate::test_utils::sample_radicle_publication_batch as batch;
 
 #[test]
 fn proposer_uses_maximum_ready_prefix_after_reserving_final_fields() {

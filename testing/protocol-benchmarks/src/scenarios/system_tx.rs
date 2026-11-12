@@ -4,9 +4,16 @@ use alloy_primitives::{address, Bytes, B256};
 use outbe_primitives::{
     consensus::DkgBoundaryArtifact,
     consensus_metadata::{CertifiedParentAccountingMetadata, ParentParticipationProof},
-    reshare_artifact::LateFinalizeCreditsArtifact,
+    reshare_artifact::{
+        encode_boundary_artifact, encode_late_finalize_credits_artifact,
+        LateFinalizeCreditsArtifact,
+    },
     system_tx::{
-        protocol_block_gas_limit, SystemTx, OUTBE_SYSTEM_TX_ADDRESS, SYSTEM_TX_ARTIFACT_GAS_LIMIT,
+        protocol_block_gas_limit, SystemTx, CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX,
+        CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+        CONSENSUS_RADICLE_PUBLICATION_STEP_INDEX, CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX,
+        CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX, OUTBE_SYSTEM_TX_ADDRESS,
+        SYSTEM_TX_ARTIFACT_GAS_LIMIT,
     },
 };
 
@@ -36,47 +43,76 @@ impl SystemTxScenario {
     pub const fn all() -> [Self; 20] {
         [
             Self::new("certified-parent-accounting", || {
-                Ok(SystemTx::CertifiedParentAccounting {
-                    metadata: sample_metadata(),
+                Ok(SystemTx::Consensus {
+                    step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
+                    payload: sample_metadata()
+                        .encode()
+                        .map_err(|error| error.to_string())?,
                 })
             }),
             Self::new("late-finalize-credits", || {
-                Ok(SystemTx::LateFinalizeCredits {
-                    artifact: LateFinalizeCreditsArtifact::default(),
+                Ok(SystemTx::Consensus {
+                    step_index: CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX,
+                    payload: encode_late_finalize_credits_artifact(
+                        &LateFinalizeCreditsArtifact::default(),
+                    )
+                    .map_err(|error| error.to_string())?,
                 })
             }),
             Self::new("boundary-outcome", || {
-                Ok(SystemTx::BoundaryOutcome {
-                    artifact: sample_boundary(),
+                Ok(SystemTx::Consensus {
+                    step_index: CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX,
+                    payload: encode_boundary_artifact(&sample_boundary())
+                        .map_err(|error| error.to_string())?,
                 })
             }),
             Self::new("tee-bootstrap", || {
-                Ok(SystemTx::TeeBootstrap {
-                    payload: sample_tee_bootstrap()?,
+                Ok(SystemTx::Consensus {
+                    step_index: CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX,
+                    payload: outbe_primitives::tee_bootstrap_v2::codec::encode_canonical(
+                        &sample_tee_bootstrap()?,
+                    )
+                    .map_err(|error| error.to_string())?,
                 })
             }),
-            Self::new("validator-liveness", || Ok(SystemTx::ValidatorLiveness)),
+            Self::new("validator-liveness", || {
+                Ok(SystemTx::Consensus {
+                    step_index: CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX,
+                    payload: Bytes::new(),
+                })
+            }),
             Self::new("radicle-publication", || {
-                Ok(SystemTx::RadiclePublication {
-                    batch: outbe_primitives::test_utils::sample_radicle_publication_batch(32),
+                Ok(SystemTx::Consensus {
+                    step_index: CONSENSUS_RADICLE_PUBLICATION_STEP_INDEX,
+                    payload: Bytes::from(
+                        outbe_primitives::test_utils::sample_radicle_publication_batch(32)
+                            .to_bytes()
+                            .map_err(|error| error.to_string())?,
+                    ),
                 })
             }),
-            Self::new("vote", || Ok(SystemTx::Vote)),
-            Self::new("update", || Ok(SystemTx::Update)),
+            Self::new("vote", || Ok(SystemTx::BeginBlock { step_index: 0 })),
+            Self::new("update", || Ok(SystemTx::BeginBlock { step_index: 1 })),
             Self::new("enclave-upgrade-deadline", || {
-                Ok(SystemTx::EnclaveUpgradeDeadline)
+                Ok(SystemTx::BeginBlock { step_index: 2 })
             }),
-            Self::new("rewards", || Ok(SystemTx::Rewards)),
-            Self::new("staking", || Ok(SystemTx::Staking)),
-            Self::new("oracle", || Ok(SystemTx::Oracle)),
-            Self::new("oracle-slash", || Ok(SystemTx::OracleSlash)),
-            Self::new("hyperlane-slash", || Ok(SystemTx::HyperlaneSlash)),
-            Self::new("cycle-tick", || Ok(SystemTx::CycleTick)),
-            Self::new("nod-factory", || Ok(SystemTx::NodFactory)),
-            Self::new("gem-factory", || Ok(SystemTx::GemFactory)),
-            Self::new("intex-factory", || Ok(SystemTx::IntexFactory)),
-            Self::new("credis-factory", || Ok(SystemTx::CredisFactory)),
-            Self::new("gem-cleanup", || Ok(SystemTx::GemCleanup)),
+            Self::new("rewards", || Ok(SystemTx::BeginBlock { step_index: 3 })),
+            Self::new("staking", || Ok(SystemTx::BeginBlock { step_index: 4 })),
+            Self::new("oracle", || Ok(SystemTx::BeginBlock { step_index: 5 })),
+            Self::new("oracle-slash", || {
+                Ok(SystemTx::BeginBlock { step_index: 6 })
+            }),
+            Self::new("hyperlane-slash", || {
+                Ok(SystemTx::BeginBlock { step_index: 7 })
+            }),
+            Self::new("cycle-tick", || Ok(SystemTx::BeginBlock { step_index: 8 })),
+            Self::new("nod-factory", || Ok(SystemTx::EndBlock { step_index: 0 })),
+            Self::new("gem-factory", || Ok(SystemTx::EndBlock { step_index: 1 })),
+            Self::new("intex-factory", || Ok(SystemTx::EndBlock { step_index: 2 })),
+            Self::new("credis-factory", || {
+                Ok(SystemTx::EndBlock { step_index: 3 })
+            }),
+            Self::new("gem-cleanup", || Ok(SystemTx::EndBlock { step_index: 4 })),
         ]
     }
 
@@ -107,7 +143,13 @@ impl BenchmarkScenario for SystemTxScenario {
 
     fn prepare(&self, _profile: Profile) -> Result<Self::Prepared, String> {
         let input = (self.fixture)()?;
-        let block_number = if matches!(input, SystemTx::TeeBootstrap { .. }) {
+        let block_number = if matches!(
+            input,
+            SystemTx::Consensus {
+                step_index: CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX,
+                ..
+            }
+        ) {
             BOOTSTRAP_BLOCK_NUMBER
         } else {
             STEADY_BLOCK_NUMBER
@@ -152,8 +194,7 @@ impl BenchmarkScenario for SystemTxScenario {
         .with_calldata(calldata_stats)
         .with_postcondition(
             "system_tx.codec_round_trip_kind",
-            (std::mem::discriminant(&decoded) == std::mem::discriminant(&prepared.input))
-                .to_string(),
+            (decoded == prepared.input).to_string(),
         )
         .with_postcondition(
             "system_tx.body_zone",
@@ -232,4 +273,49 @@ fn sample_tee_bootstrap() -> Result<outbe_primitives::tee_bootstrap_v2::TeeBoots
         }],
     )
     .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use outbe_primitives::system_tx::{BlockExecutionStage, SYSTEM_CALLDATA_FRAMING_BYTES};
+
+    use super::*;
+
+    #[test]
+    fn every_scenario_encodes_and_decodes_system_tx_input() {
+        for (position, scenario) in SystemTxScenario::all().iter().enumerate() {
+            let prepared = scenario.prepare(Profile::Single).expect("prepare scenario");
+            let encoded = prepared.input.encode().expect("encode system tx");
+            let decoded = SystemTx::decode(&encoded).expect("decode system tx");
+            let (stage, step_index) = match position {
+                0..=5 => (BlockExecutionStage::Consensus, position),
+                6..=14 => (BlockExecutionStage::BeginBlock, position - 6),
+                _ => (BlockExecutionStage::EndBlock, position - 15),
+            };
+            assert_eq!(decoded.stage(), stage, "{}", scenario.name());
+            assert_eq!(
+                usize::from(decoded.step_index()),
+                step_index,
+                "{}",
+                scenario.name()
+            );
+            assert_eq!(decoded, prepared.input, "{}", scenario.name());
+            assert_eq!(
+                encoded.len(),
+                SYSTEM_CALLDATA_FRAMING_BYTES + prepared.input.payload().len(),
+                "{}",
+                scenario.name()
+            );
+            assert_eq!(
+                prepared.block_number,
+                if scenario.name() == "tee-bootstrap" {
+                    BOOTSTRAP_BLOCK_NUMBER
+                } else {
+                    STEADY_BLOCK_NUMBER
+                },
+                "{}",
+                scenario.name()
+            );
+        }
+    }
 }

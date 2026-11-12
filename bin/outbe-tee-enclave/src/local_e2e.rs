@@ -164,7 +164,7 @@ pub fn run() -> EnclaveResult<()> {
     )
     .map_err(SgxSealingError::other)?;
     validate_binding(descriptor.network_binding)?;
-    outbe_consensus::config::init_consensus_chain_id(DEVNET_CHAIN_ID)
+    outbe_simplex::config::init_consensus_chain_id(DEVNET_CHAIN_ID)
         .map_err(SgxSealingError::other)?;
     let policy = arg("--seal-policy")?;
     if policy != "legacy" && policy != "combined" {

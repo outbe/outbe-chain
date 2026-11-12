@@ -5,7 +5,7 @@
 //! touch local storage. Orchestration and validation live in `api.rs`.
 
 use alloy_primitives::B256;
-use outbe_common::deadline_queue;
+use outbe_core_common::deadline_queue;
 use outbe_primitives::call_bins;
 use outbe_primitives::call_breach::{self, ScanTerms};
 use outbe_primitives::error::Result;
@@ -158,7 +158,7 @@ impl IntexContract<'_> {
         if called_at == 0 {
             return Ok(CallStamp::default());
         }
-        let deadline = outbe_common::settlement::settlement_deadline_of(
+        let deadline = outbe_core_common::settlement::settlement_deadline_of(
             called_at,
             self.call_group_notice_seconds.read(&group)?,
         );
@@ -279,7 +279,7 @@ impl IntexContract<'_> {
 /// This daily queue stores called groups whose settlement window remains open.
 pub struct ForfeitQueue<'a, 'b>(pub &'a IntexContract<'b>);
 
-outbe_common::impl_deadline_queue!(ForfeitQueue<B256> {
+outbe_core_common::impl_deadline_queue!(ForfeitQueue<B256> {
     root: forfeit_tree_root,
     mid: forfeit_tree_mid,
     leaf: forfeit_tree_leaf,
@@ -295,7 +295,7 @@ outbe_common::impl_deadline_queue!(ForfeitQueue<B256> {
 /// This daily queue stores expired groups whose spent series await deletion.
 pub struct CleanupQueue<'a, 'b>(pub &'a IntexContract<'b>);
 
-outbe_common::impl_deadline_queue!(CleanupQueue<B256> {
+outbe_core_common::impl_deadline_queue!(CleanupQueue<B256> {
     root: cleanup_tree_root,
     mid: cleanup_tree_mid,
     leaf: cleanup_tree_leaf,

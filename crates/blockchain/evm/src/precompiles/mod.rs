@@ -1,7 +1,7 @@
 //! Registers Outbe precompiles and preserves their public execution interface.
 //! This facade keeps domain admission and EVM outcome translation behind it.
 
-use crate::{precompile_routes, tee_attestation_activation::TeeAttestationChainSpecStateV1};
+use crate::tee_attestation_activation::TeeAttestationChainSpecStateV1;
 use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap};
 use alloy_primitives::{Address, B256};
 use core::fmt::Debug;
@@ -9,8 +9,10 @@ use dispatch::{outbe_ctx_dispatch, OutbeDispatchRuntime};
 use revm::{primitives::hardfork::SpecId, Database};
 
 mod call_authority;
+pub(crate) mod routes;
+pub use call_authority::MetadosisMutationCall;
 mod cancellation;
-pub(crate) use cancellation::ExecutionAbortBridge;
+pub use cancellation::ExecutionAbortBridge;
 mod dispatch;
 mod outcome;
 mod sub_call_provider;
@@ -19,16 +21,17 @@ mod tests;
 mod value_policy;
 
 pub use outcome::map_outbe_precompile_result;
+pub use routes::assert_valid_production_routes;
 pub(crate) use sub_call_provider::OutbeSubCallPrecompiles;
 
 /// Returns the list of outbe precompile addresses registered by
 /// [`extend_outbe_precompiles`].
 ///
 /// Lookup and enumeration are generated from the same compact declaration in
-/// [`crate::precompile_routes`], so dispatch-recognized exact routes cannot be omitted
+/// [`routes`], so dispatch-recognized exact routes cannot be omitted
 /// from this list.
-pub fn outbe_precompile_addresses() -> &'static [Address] {
-    precompile_routes::EXACT_ADDRESSES
+pub const fn outbe_precompile_addresses() -> &'static [Address] {
+    routes::EXACT_ADDRESSES
 }
 
 /// Immutable protocol context shared by every Outbe precompile dispatch.
@@ -92,13 +95,14 @@ impl OutbePrecompileRuntime {
 /// - builds a [`crate::storage::CtxStorageProvider`] that borrows that context.
 /// - dispatches the outbe precompile through a [`StorageHandle`].
 ///
-/// A sub-call from a precompile body reaches `sub_call::run` through the provider's
+/// A sub-call from a precompile body reaches `sub_call::run_with_host` through the provider's
 /// `sub_call` method.
 /// Registers Outbe precompiles with the executor-owned EVM context.
 pub fn extend_outbe_precompiles<DB>(
     precompiles: &mut PrecompilesMap,
     execution_context: OutbePrecompileExecutionContext,
     runtime: OutbePrecompileRuntime,
+    host: std::sync::Arc<dyn crate::EvmRuntimeHost>,
 ) where
     DB: Database + Debug,
     DB::Error: Debug,
@@ -112,7 +116,7 @@ pub fn extend_outbe_precompiles<DB>(
     let OutbePrecompileRuntime { abort_bridge } = runtime;
     precompiles.set_ctx_dispatch_hook(
         // handles: claim every outbe address.
-        |addr: &Address| precompile_routes::resolve(addr).is_some(),
+        |addr: &Address| routes::resolve(addr).is_some(),
         // dispatch: ctx_ptr is `*mut EthEvmContext<DB>` (cast in our caller, see
         // `PrecompileProvider::run` in the fork's `precompiles.rs`).
         move |ctx_ptr, inputs| {
@@ -133,6 +137,7 @@ pub fn extend_outbe_precompiles<DB>(
                     genesis_hash,
                     genesis_timestamp,
                     tee_attestation_v1: &tee_attestation_v1,
+                    host: std::sync::Arc::clone(&host),
                 },
             )
             .map_err(String::from)

@@ -300,7 +300,7 @@ fn derive_account_keys_opens_tribute_and_nod_ciphertexts_from_dispatchers() {
 
     let terms = NodTermsV1 {
         chain_id: outbe_primitives::chain::TESTNET_CHAIN_ID,
-        nod_id: outbe_common::nod_rules::derive_nod_id(
+        nod_id: outbe_core_common::nod_rules::derive_nod_id(
             outbe_primitives::series_id::SeriesId::for_pair(day.value(), 840, 978).unwrap(),
             owner_addr,
         ),

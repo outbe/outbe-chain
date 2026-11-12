@@ -44,7 +44,7 @@ pub(crate) fn apply_gratis_op(req: GratisOpRequest) -> Result<GratisOpResult> {
 
 /// In-process enclave stand-in for tests (this crate's tests and any downstream
 /// crate that enables the `test-enclave` feature). It runs the **real**
-/// `outbe_tee_enclave::gratis::apply_op` engine against a fixed dev state key. Thus
+/// `outbe_enclave::gratis::apply_op` engine against a fixed dev state key. Thus
 /// tests exercise the full confidential path without an SGX sidecar. This path does
 /// not check attestation. Only the mock-enclave e2e verifies it. The crate root
 /// rejects `all(feature = "test-enclave", feature = "production-enclave")` at
@@ -66,9 +66,9 @@ pub mod test_enclave {
 
     /// Install the in-process enclave for the current thread.
     pub fn install() {
-        let key = outbe_tee_enclave::gratis::derive_gratis_state_key(
-            outbe_tee_enclave::dev::GRATIS_GROUP_SIG,
-            outbe_tee_enclave::dev::GRATIS_CHAIN,
+        let key = outbe_enclave::gratis::derive_gratis_state_key(
+            outbe_enclave::dev::GRATIS_GROUP_SIG,
+            outbe_enclave::dev::GRATIS_CHAIN,
             DEV_EPOCH,
         )
         .expect("derive dev gratis state key");
@@ -90,12 +90,12 @@ pub mod test_enclave {
 
     /// Builds an authorization with the installed fixture key and operation nonce.
     pub fn modify_auth(
-        operation: outbe_tee_enclave::gratis::ModifyOperation,
+        operation: outbe_enclave::gratis::ModifyOperation,
     ) -> outbe_tee::protocol::ModifyAuth {
         let key =
-            outbe_tee_enclave::gratis::derive_modify_key(&state_key(), operation.account).unwrap();
+            outbe_enclave::gratis::derive_modify_key(&state_key(), operation.account).unwrap();
         outbe_tee::protocol::ModifyAuth {
-            mac: outbe_tee_enclave::gratis::modify_mac(&key, &operation),
+            mac: outbe_enclave::gratis::modify_mac(&key, &operation),
             op_nonce: operation.op_nonce,
         }
     }
@@ -105,13 +105,13 @@ pub mod test_enclave {
     ) -> Option<Result<outbe_tee::nod_mine::MineEncryptedNodResultV1>> {
         STATE_KEY.with(|key| {
             key.borrow().map(|state_key| {
-                let fidelity_key = outbe_tee_enclave::fidelity::derive_fidelity_state_key(
-                    outbe_tee_enclave::dev::FIDELITY_GROUP_SIG,
-                    outbe_tee_enclave::dev::fidelity_chain(),
+                let fidelity_key = outbe_enclave::fidelity::derive_fidelity_state_key(
+                    outbe_enclave::dev::FIDELITY_GROUP_SIG,
+                    outbe_enclave::dev::fidelity_chain(),
                     DEV_EPOCH,
                 )
                 .map_err(map_test_enclave_error)?;
-                outbe_tee_enclave::nod_mine::apply(&[0x5a; 32], &state_key, &fidelity_key, request)
+                outbe_enclave::nod_mine::apply(&[0x5a; 32], &state_key, &fidelity_key, request)
                     .map_err(map_test_enclave_error)
             })
         })
@@ -120,7 +120,7 @@ pub mod test_enclave {
     pub(crate) fn try_apply(req: &GratisOpRequest) -> Option<GratisOpResult> {
         STATE_KEY.with(|k| {
             k.borrow().map(|key| {
-                let mut result = outbe_tee_enclave::gratis::apply_op(&key, req);
+                let mut result = outbe_enclave::gratis::apply_op(&key, req);
                 // Mirror the real transport's combined op. On success, apply the
                 // co-located fidelity cohort section under the INDEPENDENT
                 // fidelity key. That key is the shared dev fidelity identity, so a
@@ -128,16 +128,16 @@ pub mod test_enclave {
                 if let (outbe_tee::protocol::GratisOpStatus::Applied, Some(section)) =
                     (&result.status, &req.fidelity)
                 {
-                    let fidelity_key = outbe_tee_enclave::fidelity::derive_fidelity_state_key(
-                        outbe_tee_enclave::dev::FIDELITY_GROUP_SIG,
-                        outbe_tee_enclave::dev::fidelity_chain(),
+                    let fidelity_key = outbe_enclave::fidelity::derive_fidelity_state_key(
+                        outbe_enclave::dev::FIDELITY_GROUP_SIG,
+                        outbe_enclave::dev::fidelity_chain(),
                         DEV_EPOCH,
                     )
                     .expect("derive dev fidelity state key");
                     // Mirror the real transport. A failing fidelity section
                     // rejects the WHOLE op (rejected_result). The host then reverts
                     // and writes NEITHER ledger. The failure is not a panic.
-                    match outbe_tee_enclave::fidelity::apply_cohort_section(
+                    match outbe_enclave::fidelity::apply_cohort_section(
                         &fidelity_key,
                         req.account,
                         req.amount,
@@ -145,7 +145,7 @@ pub mod test_enclave {
                     ) {
                         Ok(outcome) => result.fidelity = Some(outcome),
                         Err(e) => {
-                            result = outbe_tee_enclave::gratis::rejected_result(
+                            result = outbe_enclave::gratis::rejected_result(
                                 format!("fidelity section failed: {e}"),
                                 result.inputs_canonical_hash,
                             );
