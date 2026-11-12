@@ -3,6 +3,13 @@
 use super::*;
 
 #[test]
+fn promis_load_launch_exponent_stays_in_range() {
+    for params in [config::IntexParams::PROD, config::IntexParams::DEV] {
+        assert!((1..=21).contains(&params.promis_load_launch_exponent));
+    }
+}
+
+#[test]
 fn config_unset_resolves_by_chain_id() {
     with_registry(|s| {
         let intex = IntexContract::new(s.clone());

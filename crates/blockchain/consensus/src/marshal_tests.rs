@@ -22,6 +22,19 @@ mod tests {
         ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
     }
 
+    #[test]
+    fn finalize_retries_end_within_a_minute() {
+        use crate::config::{
+            FINALIZE_MAX_RETRIES, FINALIZE_RESOLUTION_TIMEOUT, FINALIZE_RETRY_DELAY,
+            PROPOSE_RESOLUTION_TIMEOUT, VERIFY_RESOLUTION_TIMEOUT,
+        };
+
+        let worst_case = FINALIZE_RESOLUTION_TIMEOUT * FINALIZE_MAX_RETRIES
+            + FINALIZE_RETRY_DELAY * (FINALIZE_MAX_RETRIES - 1);
+        assert!(worst_case <= std::time::Duration::from_secs(60));
+        assert_eq!(PROPOSE_RESOLUTION_TIMEOUT, VERIFY_RESOLUTION_TIMEOUT);
+    }
+
     // -----------------------------------------------------------------------
     // Regression: no raw unsolicited block admission path
     // -----------------------------------------------------------------------

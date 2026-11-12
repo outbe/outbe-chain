@@ -133,4 +133,11 @@ mod sponsored_budget_tests {
             assert!(sponsored_gas_exceeds_block_budget(used, gas_limit));
         }
     }
+
+    #[test]
+    fn sponsored_budget_fits_a_tribute_offer_and_stays_below_the_block() {
+        assert!((FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT
+            ..outbe_primitives::system_tx::STEADY_BLOCK_GAS_LIMIT)
+            .contains(&SPONSORED_GAS_PER_BLOCK));
+    }
 }
