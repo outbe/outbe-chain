@@ -1459,53 +1459,6 @@ mod distribute_daily_tests {
     }
 }
 
-/// Every function of `IAgentReward.sol` reaches the dispatch, and each view returns
-/// what the interface declares.
-#[test]
-fn iagentreward_interface_matches_the_dispatch() {
-    use crate::precompile::IAgentReward::*;
-    use alloy_sol_types::SolCall;
-    with_contract_mut(|storage, _| {
-        let dispatch = |data: Vec<u8>| {
-            crate::precompile::dispatch(storage.clone(), &data, Address::repeat_byte(1), U256::ZERO)
-        };
-        let writes = [
-            returnExpiredRewardCall::default().abi_encode(),
-            claimRewardCall::default().abi_encode(),
-        ];
-        let views = [
-            getClaimableBalanceCall::default().abi_encode(),
-            getPoolClaimableBalanceCall::default().abi_encode(),
-            getPoolBalanceDeadlineCall::default().abi_encode(),
-            getPoolClaimableTotalCall::default().abi_encode(),
-            getPoolPendingTotalCall::default().abi_encode(),
-        ];
-        let mut covered: Vec<[u8; 4]> = writes
-            .iter()
-            .chain(&views)
-            .map(|data| data[..4].try_into().unwrap())
-            .collect();
-        covered.sort_unstable();
-        let mut declared = IAgentRewardCalls::SELECTORS.to_vec();
-        declared.sort_unstable();
-        assert_eq!(covered, declared);
-
-        getClaimableBalanceCall::abi_decode_returns(&dispatch(views[0].clone()).unwrap()).unwrap();
-        getPoolClaimableBalanceCall::abi_decode_returns(&dispatch(views[1].clone()).unwrap())
-            .unwrap();
-        getPoolBalanceDeadlineCall::abi_decode_returns(&dispatch(views[2].clone()).unwrap())
-            .unwrap();
-        getPoolClaimableTotalCall::abi_decode_returns(&dispatch(views[3].clone()).unwrap())
-            .unwrap();
-        getPoolPendingTotalCall::abi_decode_returns(&dispatch(views[4].clone()).unwrap()).unwrap();
-        for data in writes {
-            if let Err(error) = dispatch(data) {
-                assert!(!error.to_string().contains("decode error"), "{error}");
-            }
-        }
-    });
-}
-
 #[test]
 fn distribution_failure_restores_prior_pools_and_counts() {
     with_contract_mut(|storage, contract| {

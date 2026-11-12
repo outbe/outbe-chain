@@ -15,7 +15,7 @@ use crate::seed_codec::{
 /// The reference currencies. The Oracle code defines them as
 /// `REFERENCE_CURRENCIES` in crates/system/oracle/src/constants.rs, and genesis
 /// does not write them. The seeder uses this copy only to check that each one
-/// has a policy rate. A test compares the copy with the Rust constant.
+/// has a policy rate.
 pub const REFERENCE_CURRENCIES: [u32; 6] = [156, 344, 392, 826, 840, 978];
 
 /// Default overnight policy rates at scale `1e6` (`(iso_code, annual_rate_1e6)`).

@@ -8406,7 +8406,6 @@ dependencies = [
  "flate2",
  "hex",
  "k256 0.13.4",
- "outbe-oracle",
  "outbe-primitives",
  "rand_core 0.6.4",
  "serde",
