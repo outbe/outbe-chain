@@ -3,7 +3,7 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     consensus_metadata::{CertifiedParentAccountingMetadata, ParentParticipationProof},
-    storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag},
+    storage::hashmap::HashMapStorageProvider,
 };
 use outbe_rewards::{api, block_fees, finalized_metadata_hook::record_votes_and_fees};
 
@@ -54,7 +54,6 @@ fn seed(ctx: &BlockRuntimeContext) {
 #[test]
 fn midnight_late_vote_survives_reentry_and_counts_once() {
     let mut storage = HashMapStorageProvider::new(1);
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CertifiedFinality, 1);
     storage.enter(|handle| {
         let ctx = BlockRuntimeContext::new(block(11), handle);
         seed(&ctx);

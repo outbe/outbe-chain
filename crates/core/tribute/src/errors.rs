@@ -74,12 +74,6 @@ pub enum TributeError {
         found: WwdEntityId,
     },
 
-    #[error("CapacityForfeiture requires a sealed Tribute partition")]
-    CapacityForfeitureRequiresSealedPartition,
-
-    #[error("CapacityForfeiture requires an unretired Tribute partition")]
-    CapacityForfeitureRequiresUnretiredPartition,
-
     #[error("invalid league: {0}")]
     InvalidLeague(u16),
 
@@ -112,6 +106,9 @@ pub enum TributeError {
 
     #[error("tribute is not forfeited")]
     TributeNotForfeited,
+
+    #[error("Tribute currencies spell no series id")]
+    TributeSeriesInvalid,
 }
 
 pub(crate) fn date_step_error(err: outbe_primitives::time::TimeError) -> PrecompileError {
@@ -142,7 +139,9 @@ impl From<TributeError> for PrecompileError {
         use ITribute as I;
         let message = value.to_string();
         match value {
-            TributeError::DayEnclave(_) => PrecompileError::EnclaveUnavailable(message),
+            TributeError::DayEnclave(_) | TributeError::DayResponseScopeMismatch => {
+                PrecompileError::EnclaveUnavailable(message)
+            }
             TributeError::InvalidEncryptedDayIdentity
             | TributeError::InvalidEncryptedEncoding
             | TributeError::ChainIdentityMismatch
@@ -151,8 +150,6 @@ impl From<TributeError> for PrecompileError {
             | TributeError::DayMetadataDiffersFromEncryptedAmount
             | TributeError::SealedDayMetadataDiffersFromEncryptedAmount
             | TributeError::DayCountOverflowOrUnderflow
-            | TributeError::CapacityForfeitureRequiresSealedPartition
-            | TributeError::CapacityForfeitureRequiresUnretiredPartition
             | TributeError::DayAmountCodec(_) => PrecompileError::BodyReadCorruption(message),
             TributeError::TributeNotFound => revert_with(I::TributeNotFound {}),
             TributeError::TributeAlreadyExists => revert_with(I::TributeAlreadyExists {}),
@@ -163,7 +160,6 @@ impl From<TributeError> for PrecompileError {
             TributeError::WorldwideDaySealed => revert_with(I::WorldwideDayIsSealed {}),
             TributeError::OwnerBalanceOverflow => revert_with(I::OwnerBalanceOverflow {}),
             TributeError::QueryLimitExceeded => revert_with(I::QueryLimitExceeded {}),
-            TributeError::DayResponseScopeMismatch => revert_with(I::DayResponseScopeMismatch {}),
             TributeError::CalculationView(value) => revert_with(I::CalculationView { value }),
             TributeError::WorldwideDayNotCompletedAndEmpty => {
                 revert_with(I::WorldwideDayNotCompletedAndEmpty {})
@@ -191,6 +187,7 @@ impl From<TributeError> for PrecompileError {
             }),
             TributeError::TributeForfeited => revert_with(I::TributeForfeited {}),
             TributeError::TributeNotForfeited => revert_with(I::TributeNotForfeited {}),
+            TributeError::TributeSeriesInvalid => revert_with(I::TributeSeriesInvalid {}),
         }
     }
 }

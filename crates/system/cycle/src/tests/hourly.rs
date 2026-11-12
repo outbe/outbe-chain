@@ -1,6 +1,7 @@
 //! Hourly protocol-cycle execution of due `EmissionDay` records.
 
 use super::*;
+use alloy_sol_types::SolEvent;
 
 #[test]
 fn hourly_protocol_cycle_executes_due_emission_day_at_metadosis_start() {
@@ -17,7 +18,7 @@ fn hourly_protocol_cycle_executes_due_emission_day_at_metadosis_start() {
             .unwrap()
             .unwrap();
         assert_eq!(ed.wwd, wwd);
-        assert_eq!(ed.state, outbe_metadosis::emission_day_state::NONE);
+        assert_eq!(ed.state, outbe_emission::schema::metadosis_state::PENDING);
         (ed, ed.metadosis_start.div_ceil(3_600) * 3_600)
     });
 
@@ -37,7 +38,7 @@ fn hourly_protocol_cycle_executes_due_emission_day_at_metadosis_start() {
             .unwrap();
         assert_eq!(
             updated.state,
-            outbe_metadosis::emission_day_state::SUCCEEDED
+            outbe_emission::schema::metadosis_state::COMPLETED
         );
         assert!(
             outbe_agentreward::distribution::has_pending_accruals_for_day(
@@ -109,8 +110,7 @@ pub(super) fn seed_trigger_clock(handle: &StorageHandle<'_>, fire_at: u64) {
     }
 }
 
-#[test]
-fn gap_ed09_conservation_mismatch_fails_the_block() {
+fn due_emission_day_fixture() -> (HashMapStorageProvider, u32, u64) {
     let mut storage = cycle_storage();
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 16);
     let (day, fire_at) = storage.enter(|handle| {
@@ -130,6 +130,83 @@ fn gap_ed09_conservation_mismatch_fails_the_block() {
         let prev_day = outbe_primitives::time::previous_date_key(day).expect("date step");
         outbe_emission::api::record_failed_day_allocation(handle, prev_day, U256::ZERO).unwrap();
     });
+    (storage, day, fire_at)
+}
+
+fn run_hour(
+    storage: &mut HashMapStorageProvider,
+    block_number: u64,
+    timestamp: u64,
+) -> outbe_primitives::error::Result<()> {
+    storage.set_block_number(block_number);
+    storage.enter(|handle| {
+        let ctx = runtime_context(block_ctx(block_number, timestamp), handle);
+        account_parent(&ctx, block_number);
+        dispatch_triggers(&ctx)
+    })
+}
+
+fn emission_day_record(
+    storage: &mut HashMapStorageProvider,
+    day: u32,
+) -> Option<outbe_emission::schema::EmissionDay> {
+    storage.enter(|handle| outbe_emission::api::get_emission_day_record(handle, day).unwrap())
+}
+
+#[test]
+fn gap_ed13_step_error_takes_its_fallback() {
+    use outbe_emission::schema::{emission_day_state, metadosis_state};
+
+    let (mut allocation, day, fire_at) = due_emission_day_fixture();
+    allocation.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 0);
+    run_hour(&mut allocation, 20, fire_at).unwrap();
+    let failed_allocation = emission_day_record(&mut allocation, day).unwrap();
+    assert_eq!(failed_allocation.state, emission_day_state::COMPLETED);
+    assert_eq!(
+        failed_allocation.metadosis_state,
+        metadosis_state::CANCELLED
+    );
+    assert_eq!(
+        failed_allocation.promis_limit,
+        failed_allocation.emission_limit
+    );
+
+    let (mut metadosis, day, fire_at) = due_emission_day_fixture();
+    // Two frames cover the allocation and the WWD step, so the Metadosis step has none.
+    metadosis.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 2);
+    run_hour(&mut metadosis, 20, fire_at).unwrap();
+    let failed_metadosis = emission_day_record(&mut metadosis, day).unwrap();
+    assert_eq!(failed_metadosis.metadosis_state, metadosis_state::FAILED);
+    assert_ne!(failed_metadosis.metadosis_limit, 0, "the allocation stays");
+
+    for (storage, closed) in [
+        (&mut allocation, failed_allocation),
+        (&mut metadosis, failed_metadosis),
+    ] {
+        storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 16);
+        run_hour(storage, 21, fire_at + 3_600).unwrap();
+        assert_eq!(emission_day_record(storage, day).unwrap(), closed);
+    }
+    let failed_events = metadosis
+        .get_events(outbe_primitives::addresses::METADOSIS_ADDRESS)
+        .iter()
+        .filter(|log| {
+            outbe_metadosis::precompile::IMetadosis::MetadosisFailed::decode_log_data(log).is_ok()
+        })
+        .count();
+    assert_eq!(failed_events, 1);
+
+    let (mut node_fault, day, fire_at) = due_emission_day_fixture();
+    let before = emission_day_record(&mut node_fault, day);
+    node_fault.fail_mutation_at_address(outbe_primitives::addresses::METADOSIS_ADDRESS);
+    assert!(run_hour(&mut node_fault, 20, fire_at).is_err());
+    node_fault.clear_mutation_failure();
+    assert_eq!(emission_day_record(&mut node_fault, day), before);
+}
+
+#[test]
+fn conservation_mismatch_fails_the_block() {
+    let (mut storage, day, fire_at) = due_emission_day_fixture();
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 16);
     storage.set_block_number(20);
     storage.enter(|handle| {

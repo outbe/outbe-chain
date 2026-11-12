@@ -42,6 +42,6 @@ fn typed_queries_distinguish_missing_days_from_active_schedule() {
         assert_eq!(ed.wwd, wwd);
         assert_eq!(ed.emission_limit_minor, U256::from(100));
         assert_eq!(ed.metadosis_start, 50);
-        assert_eq!(ed.state, emission_day_state::NONE);
+        assert_eq!(ed.state, metadosis_state::PENDING);
     });
 }

@@ -4,150 +4,12 @@ use outbe_primitives::{
     addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS},
     time::WorldwideDay,
 };
-use outbe_tee::{
-    lysis::{LysisRequest, LysisResult},
-    protocol::EnclaveResponse,
-    TransportError,
-};
-use std::cell::Cell;
 
 const WWD: WorldwideDay = WorldwideDay::new(20260920);
 const DAY: u32 = 20261014;
 pub(crate) const CLOCK: u64 = 1_792_022_400 + 3_600;
 const NOMINAL: u64 = 7_654_321;
 const LIMIT: u64 = 1_000_000;
-thread_local! {
-    static IDENTITY: Cell<u8> = const { Cell::new(1) };
-    static CORRUPTION: Cell<u8> = const { Cell::new(0) };
-}
-
-pub(crate) fn exchange(
-    request: &LysisRequest,
-) -> std::result::Result<([u8; 32], EnclaveResponse), TransportError> {
-    let encoded = serde_json::to_vec(request).unwrap();
-    let request: LysisRequest = serde_json::from_slice(&encoded).unwrap();
-    let result = outbe_enclave::lysis::execute(
-        &outbe_tribute::enclave_client::test_enclave::NETWORK_SECRET,
-        &outbe_nod::test_support::NETWORK_SECRET,
-        &outbe_fidelity::enclave_client::test_enclave::state_key(),
-        &request,
-    );
-    match result {
-        Ok(result) => attest(&request, result),
-        Err(outbe_enclave::errors::TeeError::LysisCalculationRejected) => {
-            attest_rejection(&request)
-        }
-        Err(_) => Err(TransportError::UnexpectedResponse),
-    }
-}
-
-fn attest_rejection(
-    request: &LysisRequest,
-) -> std::result::Result<([u8; 32], EnclaveResponse), TransportError> {
-    let keys = outbe_enclave::crypto::AttestationKeyPair::from_identity_seed(&[IDENTITY.get(); 32])
-        .unwrap();
-    let inputs = outbe_tee::lysis::inputs_hash(request)?;
-    let mut signature = keys
-        .sign_attestation(&outbe_tee::lysis::rejection_preimage(inputs))
-        .to_vec();
-    let mut response_inputs = inputs;
-    match CORRUPTION.get() {
-        8 => signature[0] ^= 1,
-        9 => response_inputs = B256::ZERO,
-        10 => signature.clear(),
-        11 => {
-            signature = keys.sign_attestation(inputs.as_slice()).to_vec();
-        }
-        _ => {}
-    }
-    Ok((
-        keys.attestation_pub(),
-        EnclaveResponse::LysisRejected {
-            inputs_canonical_hash: response_inputs,
-            attestation_tag: signature,
-        },
-    ))
-}
-
-fn attest(
-    request: &LysisRequest,
-    mut result: LysisResult,
-) -> std::result::Result<([u8; 32], EnclaveResponse), TransportError> {
-    let keys = outbe_enclave::crypto::AttestationKeyPair::from_identity_seed(&[IDENTITY.get(); 32])
-        .unwrap();
-    let inputs = outbe_tee::lysis::inputs_hash(request)?;
-    let signed = outbe_tee::lysis::result_preimage(inputs, &result)?;
-    let mut signature = keys.sign_attestation(&signed).to_vec();
-    match CORRUPTION.get() {
-        1 => {
-            result.nods[0].nod.terms.owner = Address::repeat_byte(0xfe);
-        }
-        2 => signature[0] ^= 1,
-        3 => {
-            result.total_nominal_minor += U256::ONE;
-            return signed_response(request, result, &keys);
-        }
-        4 => {
-            result.nods[1] = result.nods[0].clone();
-            return signed_response(request, result, &keys);
-        }
-        5 => {
-            result.nods[0].nod.terms.emission_day = DAY + 1;
-            return signed_response(request, result, &keys);
-        }
-        6 => {
-            result.nods.pop();
-            return signed_response(request, result, &keys);
-        }
-        7 => {
-            result.unused_lysis_limit_minor = request.lysis_limit_minor + U256::ONE;
-            return signed_response(request, result, &keys);
-        }
-        12 => {
-            // A valid signature must not authorize a noncanonical target identity.
-            result.nods[0].nod.terms.nod_id = request.tributes[0].context.tribute_id.to_u256();
-            return signed_response(request, result, &keys);
-        }
-        _ => {}
-    }
-    let response = EnclaveResponse::LysisExecuted {
-        result: Box::new(result),
-        inputs_canonical_hash: inputs,
-        attestation_tag: signature,
-    };
-    let bytes = serde_json::to_vec(&response).unwrap();
-    assert!(!String::from_utf8_lossy(&bytes).contains("gratis_load_minor"));
-    assert!(!String::from_utf8_lossy(&bytes).contains("nominal_amount_minor"));
-    Ok((
-        keys.attestation_pub(),
-        serde_json::from_slice(&bytes).unwrap(),
-    ))
-}
-
-fn signed_response(
-    request: &LysisRequest,
-    result: LysisResult,
-    keys: &outbe_enclave::crypto::AttestationKeyPair,
-) -> std::result::Result<([u8; 32], EnclaveResponse), TransportError> {
-    let inputs = outbe_tee::lysis::inputs_hash(request)?;
-    let signature = keys
-        .sign_attestation(&outbe_tee::lysis::result_preimage(inputs, &result)?)
-        .to_vec();
-    Ok((
-        keys.attestation_pub(),
-        EnclaveResponse::LysisExecuted {
-            result: Box::new(result),
-            inputs_canonical_hash: inputs,
-            attestation_tag: signature,
-        },
-    ))
-}
-
-fn unavailable(
-    _: &LysisRequest,
-) -> std::result::Result<([u8; 32], EnclaveResponse), TransportError> {
-    Err(TransportError::UnexpectedResponse)
-}
 
 pub(crate) fn fixture() -> HashMapStorageProvider {
     fixture_with_amounts(LIMIT, &[NOMINAL + 1, NOMINAL + 2, NOMINAL + 3])
@@ -188,7 +50,7 @@ fn fixture_with_amounts(limit: u64, amounts: &[u64]) -> HashMapStorageProvider {
                         WWD,
                         50,
                         u128::from(limit),
-                        emission_day_state::NONE,
+                        metadosis_state::PENDING,
                     );
                     ed.state = outbe_emission::schema::emission_day_state::PROCESSING;
                     metadosis.emission_days().create(&ed)?;
@@ -226,7 +88,6 @@ fn fixture_with_amounts(limit: u64, amounts: &[u64]) -> HashMapStorageProvider {
             )
             .unwrap();
     });
-    CORRUPTION.set(0);
     provider
 }
 
@@ -252,7 +113,6 @@ fn run(provider: &mut HashMapStorageProvider) -> outbe_primitives::error::Result
 #[test]
 fn native_fraction_completion_keeps_tributes_for_owner_issue_nod() {
     let mut provider = fixture();
-    assert!(!outbe_tee::lysis::is_test_transport_installed());
 
     run(&mut provider).unwrap();
 
@@ -265,7 +125,7 @@ fn native_fraction_completion_keeps_tributes_for_owner_issue_nod() {
                 .unwrap()
                 .unwrap()
                 .metadosis_state,
-            emission_day_state::SUCCEEDED
+            metadosis_state::COMPLETED
         );
 
         let tribute = TributeContract::new(storage.clone());
@@ -341,213 +201,78 @@ fn native_completion_briefs_the_emission_day() {
 }
 
 #[test]
-fn production_command_issues_encrypted_nods_and_completes_without_worker() {
-    let _transport = outbe_tee::lysis::test_transport::scope(exchange);
-    // Issuing a Lysis Nod reads its Gratis load for the group's unpaid total.
-    let _nod_enclave = outbe_nod::test_support::scope();
-    let mut provider = fixture();
-    run(&mut provider).unwrap();
-    StorageHandle::enter(&mut provider, |storage| {
-        let metadosis = MetadosisContract::new(storage.clone());
-        assert_eq!(
-            metadosis
+fn gap_ed14_failed_metadosis_forfeits_tributes() {
+    let amounts = [NOMINAL + 1, NOMINAL + 2, NOMINAL + 3];
+    for (limit, end_state) in [
+        (LIMIT, metadosis_state::FAILED),
+        (0, metadosis_state::CANCELLED),
+    ] {
+        let mut provider = fixture_with_amounts(limit, &amounts);
+        StorageHandle::enter(&mut provider, |storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
+                    block_number: 10,
+                    timestamp: CLOCK,
+                    chain_id: CHAIN_ID,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: u64::max(CLOCK, 1),
+                    proposer: alloy_primitives::Address::ZERO,
+                    validators: Vec::new(),
+                },
+                storage.clone(),
+            );
+            if end_state == metadosis_state::FAILED {
+                crate::commands::fail_metadosis(&ctx, DAY).unwrap();
+            } else {
+                crate::commands::start_metadosis(&ctx).unwrap();
+            }
+            let closed = MetadosisContract::new(storage.clone())
                 .emission_days()
                 .get(DAY)
                 .unwrap()
-                .unwrap()
-                .metadosis_state,
-            emission_day_state::SUCCEEDED
-        );
-        let tribute = TributeContract::new(storage.clone());
-        assert!(tribute.retired_days.read(&WWD).unwrap());
-        let nods = outbe_nod::api::list_by_owner(&storage, Address::repeat_byte(1)).unwrap();
-        assert_eq!(nods.len(), 1);
-        let owner = Address::repeat_byte(1);
-        assert_eq!(
-            nods[0].series_id,
-            outbe_primitives::series_id::SeriesId::for_pair(DAY, 840, 840).unwrap()
-        );
-        assert_eq!(
-            nods[0].nod_id,
-            outbe_core_common::nod_rules::derive_nod_id(nods[0].series_id, owner)
-        );
-        assert_ne!(
-            nods[0].nod_id,
-            outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(owner, WWD).to_u256()
-        );
-        let load =
-            outbe_enclave::nod_encryption::decrypt_nod(&[0x5a; 32], &nods[0].encrypted).unwrap();
-        assert!(!tribute.encrypted_day_fractions(WWD).unwrap().is_empty());
-        let expected_fraction = LIMIT * 1_000_000 / (3 * NOMINAL + 6);
-        assert_eq!(
-            load,
-            U256::from(NOMINAL + 1) * U256::from(expected_fraction) / U256::from(1_000_000u64)
-        );
-    });
-    let before = provider.storage.clone();
-    let logs = provider.get_ordered_events().to_vec();
-    run(&mut provider).unwrap();
-    assert_eq!(provider.storage, before);
-    assert_eq!(provider.get_ordered_events(), logs);
-}
-
-#[test]
-fn local_identity_does_not_change_ciphertexts_state_or_events() {
-    let _transport = outbe_tee::lysis::test_transport::scope(exchange);
-    // Issuing a Lysis Nod reads its Gratis load for the group's unpaid total.
-    let _nod_enclave = outbe_nod::test_support::scope();
-    let mut first = fixture();
-    let mut second = fixture();
-    first.enable_production_storage_gas_metering();
-    second.enable_production_storage_gas_metering();
-    IDENTITY.set(1);
-    run(&mut first).unwrap();
-    IDENTITY.set(2);
-    run(&mut second).unwrap();
-    IDENTITY.set(1);
-    assert_eq!(first.storage, second.storage);
-    assert_eq!(first.get_ordered_events(), second.get_ordered_events());
-    assert_eq!(
-        outbe_primitives::storage::PrecompileStorageProvider::gas_used(&first),
-        outbe_primitives::storage::PrecompileStorageProvider::gas_used(&second),
-    );
-}
-
-#[test]
-fn existing_full_digest_target_rejects_lysis_before_mutation() {
-    let _transport = outbe_tee::lysis::test_transport::scope(exchange);
-    let _nod_enclave = outbe_nod::test_support::scope();
-    let mut provider = fixture();
-    StorageHandle::enter(&mut provider, |storage| {
-        let mut item = outbe_nod::test_support::sample_item(Address::repeat_byte(1), DAY);
-        item.reference_currency = 840;
-        item.series_id = outbe_primitives::series_id::SeriesId::for_pair(DAY, 840, 840).unwrap();
-        item.nod_id = outbe_core_common::nod_rules::derive_nod_id(item.series_id, item.owner);
-        outbe_nod::test_support::set_terms(&mut item);
-        let terms =
-            outbe_nod::test_support::sealed_terms(&storage, &item, item.entry_price_minor())
                 .unwrap();
-        item.group_key = outbe_nod::identity::group_key(
-            item.issued_at,
-            terms.call_price_minor,
-            item.reference_currency,
-        )
-        .unwrap();
-        outbe_nod::test_support::add(&storage, &item).unwrap();
-    });
-    let before = provider.storage.clone();
-    let events = provider.get_ordered_events().to_vec();
-    assert!(run(&mut provider).is_err());
-    assert_eq!(provider.storage, before);
-    assert_eq!(provider.get_ordered_events(), events);
-}
+            assert_eq!(closed.metadosis_state, end_state);
 
-#[test]
-fn failed_enclave_and_invalid_results_leave_all_state_unchanged() {
-    for fault in (0..=7).chain([12]) {
-        let mut provider = fixture();
-        CORRUPTION.set(fault);
-        let before = provider.storage.clone();
-        let events = provider.get_ordered_events().to_vec();
-        let _transport = outbe_tee::lysis::test_transport::scope(if fault == 0 {
-            unavailable
-        } else {
-            exchange
-        });
-        assert!(run(&mut provider).is_err());
-        assert_eq!(provider.storage, before);
-        assert_eq!(provider.get_ordered_events(), events);
-    }
-    CORRUPTION.set(0);
-}
+            let mut tribute = TributeContract::new(storage.clone());
+            for byte in 1..=3u8 {
+                tribute
+                    .clean(outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(
+                        Address::repeat_byte(byte),
+                        WWD,
+                    ))
+                    .unwrap();
+            }
+            assert!(tribute.state_records_by_day(WWD).unwrap().is_empty());
 
-#[test]
-fn calculation_rejection_only_fails_the_day_and_preserves_all_economic_state() {
-    let _transport = outbe_tee::lysis::test_transport::scope(exchange);
-    for (limit, amounts) in [(1, vec![NOMINAL, NOMINAL + 1]), (LIMIT, vec![1, NOMINAL])] {
-        let mut provider = fixture_with_amounts(limit, &amounts);
-        let promis_before = StorageHandle::enter(&mut provider, |storage| {
-            outbe_promislimit::PromisLimitContract::new(storage)
-                .promis_limit()
-                .unwrap()
-        });
-        run(&mut provider).unwrap();
-        StorageHandle::enter(&mut provider, |storage| {
-            let metadosis = MetadosisContract::new(storage.clone());
-            let record = metadosis.emission_days().get(DAY).unwrap().unwrap();
-            assert_eq!(record.metadosis_state, emission_day_state::FAILED);
+            let completed = outbe_emission::api::MetadosisCompletedAmounts {
+                lysis_limit: U256::ZERO,
+                desis_limit: U256::ZERO,
+                nods: U256::ZERO,
+                promis_limit_added: U256::ZERO,
+            };
+            assert!(outbe_emission::api::record_metadosis_completed(
+                storage.clone(),
+                DAY,
+                completed
+            )
+            .is_err());
+            assert!(outbe_emission::api::record_metadosis_failed(storage.clone(), DAY).is_err());
+            assert!(outbe_emission::api::record_metadosis_canceled(storage.clone(), DAY).is_err());
             assert_eq!(
-                record.state,
-                outbe_emission::schema::emission_day_state::COMPLETED
-            );
-            assert_eq!(
-                outbe_promislimit::PromisLimitContract::new(storage.clone())
-                    .promis_limit()
+                MetadosisContract::new(storage)
+                    .emission_days()
+                    .get(DAY)
                     .unwrap(),
-                promis_before + U256::from(limit)
+                Some(closed)
             );
-            let tribute = TributeContract::new(storage.clone());
-            assert_eq!(
-                tribute.state_records_by_day(WWD).unwrap().len(),
-                amounts.len()
-            );
-            assert!(!tribute.retired_days.read(&WWD).unwrap());
-            assert!(tribute.get_day_totals(WWD).unwrap().is_sealed);
-            assert!((1..=amounts.len()).all(|index| {
-                let owner = Address::repeat_byte(u8::try_from(index).unwrap());
-                outbe_nod::api::balance_of(&storage, owner).unwrap() == 0
-            }));
         });
-        let failed = provider
-            .get_ordered_events()
-            .iter()
-            .filter_map(|event| IMetadosis::MetadosisFailed::decode_log(event).ok())
-            .map(|event| event.data)
-            .collect::<Vec<_>>();
-        assert_eq!(failed.len(), 1);
-        assert_eq!(failed[0].emissionDay, DAY);
-        assert_eq!(failed[0].reason, 1);
-        let after = provider.storage.clone();
-        let events = provider.get_ordered_events().to_vec();
-        run(&mut provider).unwrap();
-        assert_eq!(provider.storage, after);
-        assert_eq!(provider.get_ordered_events(), events);
     }
 }
 
 #[test]
-fn unauthenticated_rejection_and_local_fault_leave_ready_then_allow_retry() {
-    let mut control = fixture_with_amounts(1, &[NOMINAL]);
-    let _transport = outbe_tee::lysis::test_transport::scope(exchange);
-    run(&mut control).unwrap();
-    for fault in 0..=4 {
-        let mut provider = fixture_with_amounts(1, &[NOMINAL]);
-        let before = provider.storage.clone();
-        let events = provider.get_ordered_events().to_vec();
-        CORRUPTION.set(fault + 7);
-        {
-            let _transport = outbe_tee::lysis::test_transport::scope(if fault == 0 {
-                unavailable
-            } else {
-                exchange
-            });
-            assert!(matches!(
-                run(&mut provider),
-                Err(outbe_primitives::error::PrecompileError::EnclaveUnavailable(_))
-            ));
-        }
-        assert_eq!(provider.storage, before);
-        assert_eq!(provider.get_ordered_events(), events);
-        CORRUPTION.set(0);
-        run(&mut provider).unwrap();
-        assert_eq!(provider.storage, control.storage);
-        assert_eq!(provider.get_ordered_events(), control.get_ordered_events());
-    }
-}
-
-#[test]
-fn rejected_day_status_and_event_writes_roll_back_and_retry_exactly() {
-    let _transport = outbe_tee::lysis::test_transport::scope(exchange);
+fn metadosis_writes_roll_back_and_retry_exactly() {
     let mut control = fixture_with_amounts(1, &[NOMINAL]);
     control.fail_after_mutation_at(usize::MAX);
     run(&mut control).unwrap();
@@ -578,7 +303,6 @@ fn rejected_day_status_and_event_writes_roll_back_and_retry_exactly() {
 
 #[test]
 fn failed_owner_writes_roll_back_nods_tribute_and_economics() {
-    let _transport = outbe_tee::lysis::test_transport::scope(exchange);
     for address in [NOD_ADDRESS, TRIBUTE_ADDRESS] {
         let mut provider = fixture();
         let before = provider.storage.clone();
@@ -592,29 +316,44 @@ fn failed_owner_writes_roll_back_nods_tribute_and_economics() {
 }
 
 #[test]
-fn tribute_consumption_requires_the_exact_metadosis_command() {
-    let mut provider = fixture();
-    StorageHandle::enter(&mut provider, |storage| {
-        let mut tribute = TributeContract::new(storage.clone());
-        let nominal = tribute
-            .get_day_totals(WWD)
-            .unwrap()
-            .tribute_nominal_total_minor;
-        assert!(tribute
-            .consume_and_retire_lysis_partition(WWD, 3, nominal)
-            .is_err());
-        let wrong = outbe_primitives::storage::metadosis_init_genesis_binding(CHAIN_ID, 10, CLOCK);
-        storage
-            .with_metadosis_mutation::<outbe_primitives::storage::MetadosisCycleLifecycle, _>(
-                wrong,
-                || {
-                    assert!(tribute
-                        .consume_and_retire_lysis_partition(WWD, 3, nominal)
-                        .is_err());
-                    Ok(())
-                },
-            )
-            .unwrap();
-        assert_eq!(tribute.state_records_by_day(WWD).unwrap().len(), 3);
-    });
+fn gap_ed17_one_rule_for_metadosis_limit() {
+    for amounts in [&[][..], &[1, 2], &[NOMINAL + 1, NOMINAL + 2, NOMINAL + 3]] {
+        let mut provider = fixture_with_amounts(LIMIT, amounts);
+        let before = StorageHandle::enter(&mut provider, |storage| {
+            outbe_promislimit::PromisLimitContract::new(storage)
+                .promis_limit()
+                .unwrap()
+        });
+
+        run(&mut provider).unwrap();
+
+        let completed = provider
+            .get_ordered_events()
+            .iter()
+            .filter_map(|event| IMetadosis::MetadosisCompleted::decode_log(event).ok())
+            .map(|event| event.data)
+            .collect::<Vec<_>>();
+        assert_eq!(completed.len(), 1, "amounts {amounts:?}");
+        StorageHandle::enter(&mut provider, |storage| {
+            let record = outbe_emission::api::get_emission_day_record(storage.clone(), DAY)
+                .unwrap()
+                .unwrap();
+            assert_eq!(record.metadosis_state, metadosis_state::COMPLETED);
+            let desis = outbe_desis::schema::DesisContract::new(storage.clone())
+                .pending_desis_limit_minor
+                .read(&outbe_primitives::time::EmissionDate::new(DAY))
+                .unwrap();
+            let after = outbe_promislimit::PromisLimitContract::new(storage)
+                .promis_limit()
+                .unwrap();
+            assert_eq!(U256::from(record.desis_limit), desis);
+            assert_eq!(U256::from(record.nods), completed[0].lysisAllocationMinor);
+            assert_eq!(U256::from(record.lysis_limit), completed[0].lysisLimitMinor);
+            assert_eq!(
+                after + desis + U256::from(record.nods),
+                before + U256::from(LIMIT),
+                "amounts {amounts:?}"
+            );
+        });
+    }
 }

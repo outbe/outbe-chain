@@ -808,9 +808,7 @@ fn clean_handles_settled_nod_aborted_emission_day_retired_fi_groups_and_zero_loa
         set_day(&mut t_retired, day_retired);
         tc.issue_with_league(&t_retired, Some(300)).unwrap();
         in_process_ready(&storage, || tc.seal_day(day_retired));
-        in_process_ready(&storage, || {
-            tc.forfeit_sealed_partition(day_retired).map(|_| ())
-        });
+        tc.retired_days.write(&day_retired, true).unwrap();
         assert!(!tc.get_fi_groups(day_retired).unwrap().is_empty());
         let clean_retired = crate::precompile::ITribute::cleanCall {
             tributeId: t_retired.tribute_id.to_u256(),

@@ -3,8 +3,8 @@
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::{
     metadosis_advance_due_binding, metadosis_cycle_allocation_binding,
-    metadosis_init_genesis_binding, metadosis_late_settlement_binding,
-    metadosis_process_ready_binding, MetadosisMutationEntitlements, MetadosisMutationPurposeTag,
+    metadosis_init_genesis_binding, metadosis_process_ready_binding, MetadosisMutationEntitlements,
+    MetadosisMutationPurposeTag,
 };
 use outbe_primitives::time::{date_key_to_utc_timestamp, timestamp_to_date_key};
 
@@ -18,10 +18,7 @@ pub fn cycle_tick_entitlements(
     cycle_active_utc_day: Option<u32>,
 ) -> MetadosisMutationEntitlements {
     use MetadosisMutationPurposeTag as Purpose;
-    let mut entitlements = MetadosisMutationEntitlements::exact(
-        Purpose::CertifiedFinality,
-        metadosis_late_settlement_binding(chain_id, block_number, timestamp),
-    );
+    let mut entitlements = MetadosisMutationEntitlements::NONE;
     if block_number == 1 {
         entitlements = entitlements.union(MetadosisMutationEntitlements::exact(
             Purpose::CycleLifecycle,

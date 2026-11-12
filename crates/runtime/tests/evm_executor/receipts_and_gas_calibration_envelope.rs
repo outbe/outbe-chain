@@ -58,8 +58,8 @@ fn calibrated_canonical_envelope_fits_artifact_limit() {
         .iter()
         .try_fold(0u64, |sum, spec| sum.checked_add(spec.work_budget_gas()))
         .unwrap();
-    assert_eq!(outbe_cycle::triggers::ACTIVE_TRIGGERS.len(), 8);
-    assert_eq!(handlers, 27_863_000);
+    assert_eq!(outbe_cycle::triggers::ACTIVE_TRIGGERS.len(), 7);
+    assert_eq!(handlers, 22_093_000);
     assert!(handlers < outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT);
 }
 

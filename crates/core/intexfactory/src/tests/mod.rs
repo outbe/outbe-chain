@@ -265,7 +265,6 @@ mod issuance;
 mod lifecycle;
 mod mining_after_deadline;
 mod mining_sequence;
-mod parked;
 mod proceeds;
 mod router_fault;
 mod scans;

@@ -17,12 +17,6 @@ pub const NOTICE_RETRY_SECONDS: u64 = 30;
 /// send would otherwise spend the whole budget on calls that cannot land.
 pub const MAX_REFUSED_RUNS_PER_BLOCK: u32 = 3;
 
-/// Router calls one `intex_drain_parked` firing may make; each is a view read plus a cross-chain send.
-pub const MAX_PARKED_CALLS_PER_FIRING: u32 = 16;
-
-/// Consecutive failures that end a parked pass: an empty relay float fails every entry alike.
-pub const MAX_PARKED_FAILURES_PER_FIRING: u32 = 3;
-
 /// Series one ISSUANCE_INSTRUCTIONS message may carry. Mirrors `MAX_SERIES_PER_ISSUANCE`.
 pub const MAX_SERIES_PER_MESSAGE: usize = 16;
 

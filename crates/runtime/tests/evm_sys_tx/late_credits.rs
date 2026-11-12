@@ -61,9 +61,6 @@ fn late_finalize_window_close_settles_and_recycles_residue() {
 
     // Block N+K = 13 settles block N = 10 (K = LATE_FINALIZE_WINDOW_K = 3).
     let mut provider = configured_storage(13, timestamp);
-    provider.enable_metadosis_mutation_frame(
-        outbe_primitives::storage::MetadosisMutationPurposeTag::CertifiedFinality,
-    );
     provider.enter(|storage| {
         let ctx = runtime_ctx(storage);
 
@@ -140,10 +137,6 @@ fn window_close_records_miss_for_absent_committee_voter_only() {
 
     // Block N+K = 13 closes block N = 10 (K = LATE_FINALIZE_WINDOW_K = 3).
     let mut provider = configured_storage(13, timestamp);
-    provider.enable_metadosis_mutation_frames(
-        outbe_primitives::storage::MetadosisMutationPurposeTag::CertifiedFinality,
-        2,
-    );
     provider.enter(|storage| {
         // Register both committee members so the strict registered-validator
         // contract of `record_finalized_participation` accepts them.
@@ -230,9 +223,6 @@ fn window_close_absentee_pass_is_deterministic_and_correct() {
 
     let run = || -> Vec<(u64, u64)> {
         let mut provider = configured_storage(13, 1_700_000_000);
-        provider.enable_metadosis_mutation_frame(
-            outbe_primitives::storage::MetadosisMutationPurposeTag::CertifiedFinality,
-        );
         let mut out = Vec::new();
         provider.enter(|storage| {
             {
@@ -330,9 +320,6 @@ fn window_close_miss_survives_epoch_boundary_reset() {
     // Block 13 is an epoch boundary: configured_storage sets epoch_length=10,
     // epoch_start=0, so `is_epoch_boundary(13)` is true (13 >= 0 + 10).
     let mut provider = configured_storage(13, 1_700_000_000);
-    provider.enable_metadosis_mutation_frame(
-        outbe_primitives::storage::MetadosisMutationPurposeTag::CertifiedFinality,
-    );
     provider.enter(|storage| {
         {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());

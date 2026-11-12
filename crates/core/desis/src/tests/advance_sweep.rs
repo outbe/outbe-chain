@@ -1,8 +1,6 @@
 //! One `auction_advance` run moves every scheduled day that has a due step (OIP-00377).
 use super::*;
-use crate::constants::{
-    ADVANCE_DAY_BASE_GAS, DAY_STATE_LIVE, MAX_TARGET_CHAINS, OWN_CHAIN_ROUND_GAS,
-};
+use crate::constants::{ADVANCE_DAY_BASE_GAS, DAY_STATE_LIVE, MAX_TARGET_CHAINS};
 use crate::sol_ext::IOriginRouter::{
     sendAuctionStageCollectingBidsCall, sendAuctionStageStartCall,
 };
@@ -168,7 +166,7 @@ fn a_day_above_the_target_cap_reverts_and_the_other_days_move() {
 }
 
 #[test]
-fn the_own_chain_asks_for_the_floor_round_gas() {
+fn the_own_chain_asks_for_the_same_round_gas_as_another_chain() {
     const OTHER_CHAIN: u32 = 2;
     let own_chain = u32::try_from(CHAIN_ID).unwrap();
     let mut provider = fixture_provider(&[own_chain, OTHER_CHAIN]);
@@ -190,9 +188,9 @@ fn the_own_chain_asks_for_the_floor_round_gas() {
         .map(|call| (call.dstChainId, call.gasLimit))
         .collect();
     assert_eq!(asks.len(), 2);
-    assert_eq!(asks[0], (own_chain, U256::from(OWN_CHAIN_ROUND_GAS)));
+    assert_eq!(asks[0].0, own_chain);
     assert_eq!(asks[1].0, OTHER_CHAIN);
-    assert!(asks[1].1 > U256::from(OWN_CHAIN_ROUND_GAS));
+    assert_eq!(asks[0].1, asks[1].1);
 }
 
 #[test]
