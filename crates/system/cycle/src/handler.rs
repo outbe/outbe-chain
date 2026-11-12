@@ -410,10 +410,7 @@ pub(crate) fn credit_reward_slice(ctx: &BlockRuntimeContext) -> Result<()> {
 }
 
 fn is_recoverable_step_error(err: &PrecompileError) -> bool {
-    matches!(
-        err,
-        PrecompileError::RevertBytes(_) | PrecompileError::Revert(_)
-    )
+    err.record_pass_failure() == outbe_primitives::error::PassFailure::Skip
 }
 
 fn encode_recoverable_step_reason(err: &PrecompileError) -> alloy_primitives::Bytes {

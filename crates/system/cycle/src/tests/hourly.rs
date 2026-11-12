@@ -197,11 +197,9 @@ fn gap_ed13_step_error_takes_its_fallback() {
     assert_eq!(failed_events, 1);
 
     let (mut node_fault, day, fire_at) = due_emission_day_fixture();
+    let before = emission_day_record(&mut node_fault, day);
     node_fault.fail_mutation_at_address(outbe_primitives::addresses::METADOSIS_ADDRESS);
     assert!(run_hour(&mut node_fault, 20, fire_at).is_err());
     node_fault.clear_mutation_failure();
-    assert_ne!(
-        emission_day_record(&mut node_fault, day).map(|record| record.state),
-        Some(emission_day_state::COMPLETED)
-    );
+    assert_eq!(emission_day_record(&mut node_fault, day), before);
 }

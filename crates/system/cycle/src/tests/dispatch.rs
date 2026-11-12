@@ -522,8 +522,15 @@ fn topup_voters_claimable(ctx: &BlockRuntimeContext<'_>) -> U256 {
 #[test]
 fn failed_terminal_dispatch_takes_the_allocation_fallback() {
     let mut storage = failed_terminal_dispatch();
-    assert!(cycle_failure(&storage, EMISSION_LIMIT_1_ID).is_none());
-    assert!(cycle_executed(&storage, EMISSION_LIMIT_1_ID).is_some());
+    for id in [
+        EMISSION_LIMIT_1_ID,
+        TriggerId::AuctionAdvance.as_u32(),
+        TriggerId::AuctionClearing.as_u32(),
+        TriggerId::IntexCallDaily.as_u32(),
+    ] {
+        assert!(cycle_failure(&storage, id).is_none());
+        assert!(cycle_executed(&storage, id).is_some());
+    }
     let failed = storage
         .get_events(CYCLE_ADDRESS)
         .iter()
