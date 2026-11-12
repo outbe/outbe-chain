@@ -531,6 +531,7 @@ mod tests {
         let resources = ResourceScheduleV1::normative().unwrap();
         TeePolicyV1 {
             intel_root_der_hash: B256::repeat_byte(0x43),
+            amd_root_der_hash: B256::ZERO,
             resource_schedule_hash: resources.schedule_hash().unwrap(),
             measurement_rules: vec![TeeMeasurementRuleV1 {
                 mrenclave: B256::repeat_byte(0x45),

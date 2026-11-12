@@ -492,17 +492,23 @@ fn build_onboarding_artifact(
     let DcapVerificationOutcomeV1::Accepted(verdict) = outcome else {
         unreachable!("non-accepted outcomes return before onboarding construction")
     };
-    // The source hands the offer key only to a node with its own attestation
-    // mode and its own code identity. In the SEV-SNP mode the code identity is
-    // the launch measurement and the host data of the VM.
-    if source_manifest.attestation_mode != evidence.mode()
-        || (
+    #[cfg(feature = "sev-snp")]
+    let vm_release_rules = crate::confidential_vm::release_rules();
+    #[cfg(not(feature = "sev-snp"))]
+    let vm_release_rules = None;
+    let admitted = onboarding_recipient_admitted(
+        vm_release_rules,
+        source_manifest.attestation_mode,
+        evidence.mode(),
+        (
             verdict.mrenclave,
             verdict.mrsigner,
             verdict.isv_prod_id,
             verdict.isv_svn,
-        ) != source_code_identity
-    {
+        ),
+        source_code_identity,
+    );
+    if !admitted {
         *outcome = DcapVerificationOutcomeV1::Rejected(DcapRejectCodeV1::MeasurementRejected);
         return Ok(None);
     }
@@ -542,6 +548,46 @@ fn build_onboarding_artifact(
     )
     .map(Some)
     .map_err(|_| DcapVerifyError::ArtifactEncryptionFailed.into())
+}
+
+/// Decide whether the node of a verified verdict can receive the offer key.
+///
+/// The policy that the verifier used arrives from the node of this service,
+/// so a match with a policy rule is not a reason to release the key. The
+/// service compares the verdict with values that its operator cannot change:
+///
+/// - A service in a confidential VM takes the rules from the measured
+///   application manifest of its VM. The joining node can run on the other
+///   platform or in a VM of another shape if the manifest lists its image.
+/// - An SGX enclave admits only its own attestation mode and code identity.
+///
+/// `vm_release_rules` is present exactly when this process runs in a
+/// confidential VM, whatever mode its node wrote into the manifest.
+fn onboarding_recipient_admitted(
+    vm_release_rules: Option<&crate::measured_manifest::MeasuredManifest>,
+    source_mode: outbe_primitives::tee_attestation_v1::AttestationMode,
+    evidence_mode: outbe_primitives::tee_attestation_v1::AttestationMode,
+    verdict_identity: (B256, B256, u16, u16),
+    source_code_identity: (B256, B256, u16, u16),
+) -> bool {
+    match vm_release_rules {
+        Some(rules) => {
+            source_mode.is_confidential_vm()
+                && source_mode.admits_evidence(evidence_mode)
+                && rules.admits(&crate::measured_manifest::AdmittedIdentity {
+                    evidence_mode,
+                    mrenclave: verdict_identity.0,
+                    mrsigner: verdict_identity.1,
+                    isv_prod_id: verdict_identity.2,
+                    isv_svn: verdict_identity.3,
+                })
+        }
+        None => {
+            !source_mode.is_confidential_vm()
+                && source_mode == evidence_mode
+                && verdict_identity == source_code_identity
+        }
+    }
 }
 
 fn validate_onboarding_registration(
@@ -829,6 +875,7 @@ mod tests {
             intel_root_der_hash: alloy_primitives::b256!(
                 "69d063b45344d26a2e94e1f4210de49ef555308287d4c174445c95639a540bcd"
             ),
+            amd_root_der_hash: B256::ZERO,
             quote_version: 3,
             tee_type: 0,
             attestation_key_type: 2,
@@ -1460,5 +1507,139 @@ mod tests {
             outcome,
             DcapVerificationOutcomeV1::Rejected(DcapRejectCodeV1::MeasurementRejected)
         );
+    }
+
+    mod release_rule {
+        use super::super::onboarding_recipient_admitted;
+        use crate::measured_manifest::{
+            snp_host_data_of_manifest, tdx_mr_config_id_of_manifest, MeasuredManifest,
+        };
+        use alloy_primitives::B256;
+        use outbe_primitives::tee_attestation_v1::{
+            sev_snp_measurement_rule_value, tdx_image_rule_value, tdx_mrconfigid_rule_value,
+            AttestationMode, SEV_SNP_RULE_PRODUCT_ID_V1, SEV_SNP_RULE_SVN_V1,
+            TDX_RULE_PRODUCT_ID_V1, TDX_RULE_SVN_V1,
+        };
+
+        const SNP_MEASUREMENT: [u8; 48] = [0x31; 48];
+        const TDX_MRTD: [u8; 48] = [0x41; 48];
+        const TDX_RTMRS: [[u8; 48]; 3] = [[0x42; 48], [0x43; 48], [0x44; 48]];
+        type Identity = (B256, B256, u16, u16);
+
+        fn rules() -> (MeasuredManifest, [u8; 32]) {
+            let text = format!(
+                r#"{{"outbe_release":{{"network_descriptor_sha256":"{}","sev_snp_measurements":["{}"],"tdx_images":[{{"mrtd":"{}","rtmr0":"{}","rtmr1":"{}","rtmr2":"{}"}}]}}}}"#,
+                "00".repeat(32),
+                hex::encode(SNP_MEASUREMENT),
+                hex::encode(TDX_MRTD),
+                hex::encode(TDX_RTMRS[0]),
+                hex::encode(TDX_RTMRS[1]),
+                hex::encode(TDX_RTMRS[2]),
+            );
+            let hash: [u8; 32] = ring::digest::digest(&ring::digest::SHA256, text.as_bytes())
+                .as_ref()
+                .try_into()
+                .unwrap();
+            (MeasuredManifest::parse(text.as_bytes()).unwrap(), hash)
+        }
+
+        fn snp(measurement: &[u8; 48], manifest_hash: &[u8; 32]) -> Identity {
+            (
+                sev_snp_measurement_rule_value(measurement),
+                B256::from(snp_host_data_of_manifest(manifest_hash)),
+                SEV_SNP_RULE_PRODUCT_ID_V1,
+                SEV_SNP_RULE_SVN_V1,
+            )
+        }
+
+        fn tdx(manifest_hash: &[u8; 32]) -> Identity {
+            (
+                tdx_image_rule_value(&TDX_MRTD, &TDX_RTMRS),
+                tdx_mrconfigid_rule_value(&tdx_mr_config_id_of_manifest(manifest_hash)),
+                TDX_RULE_PRODUCT_ID_V1,
+                TDX_RULE_SVN_V1,
+            )
+        }
+
+        const SNP: AttestationMode = AttestationMode::SevSnpRequired;
+        const TDX: AttestationMode = AttestationMode::TdxRequired;
+        const MIXED: AttestationMode = AttestationMode::ConfidentialVmRequired;
+
+        #[test]
+        fn a_vm_admits_the_listed_images_with_its_own_manifest() {
+            let (rules, hash) = rules();
+            let own = snp(&SNP_MEASUREMENT, &hash);
+            let admitted = |source_mode, evidence_mode, verdict| {
+                onboarding_recipient_admitted(
+                    Some(&rules),
+                    source_mode,
+                    evidence_mode,
+                    verdict,
+                    own,
+                )
+            };
+            assert!(admitted(SNP, SNP, snp(&SNP_MEASUREMENT, &hash)));
+            assert!(admitted(MIXED, SNP, snp(&SNP_MEASUREMENT, &hash)));
+            // The other platform, in a mixed network only.
+            assert!(admitted(MIXED, TDX, tdx(&hash)));
+            assert!(!admitted(SNP, TDX, tdx(&hash)));
+        }
+
+        /// The verifier accepted these verdicts with a policy that the node
+        /// supplied. The policy can name any root and any measurement, so the
+        /// verdict alone must not release the key.
+        #[test]
+        fn a_vm_rejects_an_identity_that_only_the_supplied_policy_admits() {
+            let (rules, hash) = rules();
+            let own = snp(&SNP_MEASUREMENT, &hash);
+            let admitted = |source_mode, evidence_mode, verdict| {
+                onboarding_recipient_admitted(
+                    Some(&rules),
+                    source_mode,
+                    evidence_mode,
+                    verdict,
+                    own,
+                )
+            };
+            // Another image with this manifest.
+            assert!(!admitted(MIXED, SNP, snp(&[0x99; 48], &hash)));
+            // A listed image with another manifest.
+            assert!(!admitted(MIXED, SNP, snp(&SNP_MEASUREMENT, &[0x77; 32])));
+            assert!(!admitted(MIXED, TDX, tdx(&[0x77; 32])));
+            // The identity of one platform under the tag of the other.
+            assert!(!admitted(MIXED, TDX, snp(&SNP_MEASUREMENT, &hash)));
+            // Another product identifier or version.
+            let mut other_version = snp(&SNP_MEASUREMENT, &hash);
+            other_version.3 += 1;
+            assert!(!admitted(MIXED, SNP, other_version));
+            // A node that wrote an SGX or a development mode into the manifest
+            // of a service in a VM.
+            for source_mode in [
+                AttestationMode::DcapRequired,
+                AttestationMode::GramineDirectDev,
+            ] {
+                assert!(!admitted(source_mode, source_mode, own));
+                assert!(!admitted(source_mode, SNP, own));
+            }
+        }
+
+        #[test]
+        fn an_sgx_enclave_admits_only_its_own_mode_and_identity() {
+            let own: Identity = (B256::repeat_byte(1), B256::repeat_byte(2), 3, 4);
+            let admitted = |source_mode, evidence_mode, verdict| {
+                onboarding_recipient_admitted(None, source_mode, evidence_mode, verdict, own)
+            };
+            let dcap = AttestationMode::DcapRequired;
+            assert!(admitted(dcap, dcap, own));
+            assert!(!admitted(
+                dcap,
+                dcap,
+                (B256::repeat_byte(9), own.1, own.2, own.3)
+            ));
+            assert!(!admitted(dcap, SNP, own));
+            // A process outside a confidential VM never serves a VM mode.
+            assert!(!admitted(SNP, SNP, own));
+            assert!(!admitted(MIXED, TDX, own));
+        }
     }
 }

@@ -246,10 +246,28 @@ fn expired_rejoin_uses_exact_next_binding_and_registration_versions() {
 fn tee_join_rejects_a_live_binding_but_accepts_the_deadline_as_expired() {
     let mut binding = test_renewal_binding();
     binding.valid_until = 200;
-    assert!(ensure_joinable_binding(Some(&binding), 199).is_err());
-    assert!(ensure_joinable_binding(Some(&binding), 200).is_ok());
-    assert!(ensure_joinable_binding(Some(&binding), 201).is_ok());
-    assert!(ensure_joinable_binding(None, 199).is_ok());
+    let dcap = AttestationMode::DcapRequired;
+    assert!(ensure_joinable_binding(Some(&binding), 199, dcap).is_err());
+    assert!(ensure_joinable_binding(Some(&binding), 200, dcap).is_ok());
+    assert!(ensure_joinable_binding(Some(&binding), 201, dcap).is_ok());
+    assert!(ensure_joinable_binding(None, 199, dcap).is_ok());
+    assert!(
+        ensure_joinable_binding(Some(&binding), 199, AttestationMode::GramineDirectDev).is_err()
+    );
+}
+
+#[test]
+fn tee_join_accepts_a_live_binding_in_the_confidential_vm_modes() {
+    let mut binding = test_renewal_binding();
+    binding.valid_until = 200;
+    for mode in [
+        AttestationMode::SevSnpRequired,
+        AttestationMode::TdxRequired,
+    ] {
+        assert!(ensure_joinable_binding(Some(&binding), 199, mode).is_ok());
+        assert!(ensure_joinable_binding(Some(&binding), 200, mode).is_ok());
+        assert!(ensure_joinable_binding(None, 199, mode).is_ok());
+    }
 }
 
 fn test_renewal_binding() -> outbe_operator::tee::RenewalBindingV1 {

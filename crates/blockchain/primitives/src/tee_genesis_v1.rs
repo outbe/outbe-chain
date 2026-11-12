@@ -60,6 +60,9 @@ pub const fn is_attestation_mode_allowed_for_chain_id(
         AttestationMode::GramineDirectDev => is_gramine_direct_dev_chain_id(chain_id),
         AttestationMode::SevSnpRequired => is_sev_snp_required_chain_id(chain_id),
         AttestationMode::TdxRequired => is_tdx_required_chain_id(chain_id),
+        AttestationMode::ConfidentialVmRequired => {
+            is_sev_snp_required_chain_id(chain_id) && is_tdx_required_chain_id(chain_id)
+        }
     }
 }
 
@@ -115,6 +118,11 @@ pub enum InitialTeeProfileV1 {
     GramineDirectDev,
     SevSnpRequired(SevSnpLaunchIdentityV1),
     TdxRequired(TdxLaunchIdentityV1),
+    /// A network with validators on both platforms.
+    ConfidentialVmRequired {
+        sev_snp: SevSnpLaunchIdentityV1,
+        tdx: TdxLaunchIdentityV1,
+    },
 }
 
 impl InitialTeeProfileV1 {
@@ -124,8 +132,56 @@ impl InitialTeeProfileV1 {
             Self::GramineDirectDev => AttestationMode::GramineDirectDev,
             Self::SevSnpRequired(_) => AttestationMode::SevSnpRequired,
             Self::TdxRequired(_) => AttestationMode::TdxRequired,
+            Self::ConfidentialVmRequired { .. } => AttestationMode::ConfidentialVmRequired,
         }
     }
+}
+
+/// Measurement rule of an SEV-SNP launch identity. The rule keeps the SGX field
+/// names: `mrenclave` holds the projection of the launch measurement,
+/// `mrsigner` the host data.
+fn sev_snp_rule(
+    identity: &SevSnpLaunchIdentityV1,
+) -> Result<TeeMeasurementRuleV1, TeeGenesisPolicyError> {
+    if identity.measurement == [0; 48]
+        || identity.host_data.is_zero()
+        || identity.ark_der_sha256.is_zero()
+    {
+        return Err(TeeGenesisPolicyError::ZeroSevSnpIdentity);
+    }
+    Ok(TeeMeasurementRuleV1 {
+        mrenclave: sev_snp_measurement_rule_value(&identity.measurement),
+        mrsigner: identity.host_data,
+        isv_prod_id: SEV_SNP_RULE_PRODUCT_ID_V1,
+        minimum_isv_svn: SEV_SNP_RULE_SVN_V1,
+        admit_from_height: 1,
+        admit_until_height_exclusive: u64::MAX,
+    })
+}
+
+/// Measurement rule of a TDX launch identity: `mrenclave` holds the projection
+/// of the image measurements, `mrsigner` the projection of `MRCONFIGID`.
+fn tdx_rule(identity: &TdxLaunchIdentityV1) -> Result<TeeMeasurementRuleV1, TeeGenesisPolicyError> {
+    if identity.mrtd == [0; 48] || identity.mr_config_id == [0; 48] {
+        return Err(TeeGenesisPolicyError::ZeroTdxIdentity);
+    }
+    Ok(TeeMeasurementRuleV1 {
+        mrenclave: tdx_image_rule_value(&identity.mrtd, &identity.rtmrs),
+        mrsigner: tdx_mrconfigid_rule_value(&identity.mr_config_id),
+        isv_prod_id: TDX_RULE_PRODUCT_ID_V1,
+        minimum_isv_svn: TDX_RULE_SVN_V1,
+        admit_from_height: 1,
+        admit_until_height_exclusive: u64::MAX,
+    })
+}
+
+fn tdx_minimum_tcb_evaluation_data_number(
+    identity: &TdxLaunchIdentityV1,
+) -> Result<u32, TeeGenesisPolicyError> {
+    if identity.minimum_tcb_evaluation_data_number == 0 {
+        return Err(TeeGenesisPolicyError::ZeroMinimumTcbEvaluationDataNumber);
+    }
+    Ok(identity.minimum_tcb_evaluation_data_number)
 }
 
 /// Build the only policy shape permitted at block 1.
@@ -186,13 +242,24 @@ pub fn initial_tee_policy_v1(
                 testnet: TESTNET_CHAIN_ID,
             });
         }
+        AttestationMode::ConfidentialVmRequired
+            if !is_attestation_mode_allowed_for_chain_id(
+                chain_id,
+                AttestationMode::ConfidentialVmRequired,
+            ) =>
+        {
+            return Err(TeeGenesisPolicyError::InvalidTdxChainId {
+                devnet: DEVNET_CHAIN_ID,
+                testnet: TESTNET_CHAIN_ID,
+            });
+        }
         _ => {}
     }
 
     let resource_schedule_hash = ResourceScheduleV1::normative()
         .and_then(|schedule| schedule.schedule_hash())
         .map_err(TeeGenesisPolicyError::derive_normative_resource_schedule)?;
-    let (minimum_tcb_evaluation_data_number, measurement_rule) = match profile {
+    let (minimum_tcb_evaluation_data_number, measurement_rules) = match profile {
         InitialTeeProfileV1::DcapRequired(measurement) => {
             if measurement.mrenclave.is_zero() || measurement.mrsigner.is_zero() {
                 return Err(TeeGenesisPolicyError::ZeroDcapMeasurement);
@@ -208,7 +275,7 @@ pub fn initial_tee_policy_v1(
                 admit_from_height: 1,
                 admit_until_height_exclusive: u64::MAX,
             };
-            (measurement.minimum_tcb_evaluation_data_number, rule)
+            (measurement.minimum_tcb_evaluation_data_number, vec![rule])
         }
         InitialTeeProfileV1::GramineDirectDev => {
             // These are domain-separated non-hardware projections used only by
@@ -222,46 +289,18 @@ pub fn initial_tee_policy_v1(
                 admit_from_height: 1,
                 admit_until_height_exclusive: u64::MAX,
             };
-            (1, rule)
+            (1, vec![rule])
         }
-        InitialTeeProfileV1::SevSnpRequired(identity) => {
-            if identity.measurement == [0; 48]
-                || identity.host_data.is_zero()
-                || identity.ark_der_sha256.is_zero()
-            {
-                return Err(TeeGenesisPolicyError::ZeroSevSnpIdentity);
-            }
-            // The rule keeps the SGX field names. `mrenclave` holds the
-            // projection of the launch measurement, `mrsigner` the host data.
-            let rule = TeeMeasurementRuleV1 {
-                mrenclave: sev_snp_measurement_rule_value(&identity.measurement),
-                mrsigner: identity.host_data,
-                isv_prod_id: SEV_SNP_RULE_PRODUCT_ID_V1,
-                minimum_isv_svn: SEV_SNP_RULE_SVN_V1,
-                admit_from_height: 1,
-                admit_until_height_exclusive: u64::MAX,
-            };
-            (1, rule)
-        }
-        InitialTeeProfileV1::TdxRequired(identity) => {
-            if identity.mrtd == [0; 48] || identity.mr_config_id == [0; 48] {
-                return Err(TeeGenesisPolicyError::ZeroTdxIdentity);
-            }
-            if identity.minimum_tcb_evaluation_data_number == 0 {
-                return Err(TeeGenesisPolicyError::ZeroMinimumTcbEvaluationDataNumber);
-            }
-            // The rule keeps the SGX field names. `mrenclave` holds the
-            // projection of the image measurements, `mrsigner` the projection
-            // of `MRCONFIGID`.
-            let rule = TeeMeasurementRuleV1 {
-                mrenclave: tdx_image_rule_value(&identity.mrtd, &identity.rtmrs),
-                mrsigner: tdx_mrconfigid_rule_value(&identity.mr_config_id),
-                isv_prod_id: TDX_RULE_PRODUCT_ID_V1,
-                minimum_isv_svn: TDX_RULE_SVN_V1,
-                admit_from_height: 1,
-                admit_until_height_exclusive: u64::MAX,
-            };
-            (identity.minimum_tcb_evaluation_data_number, rule)
+        InitialTeeProfileV1::SevSnpRequired(identity) => (1, vec![sev_snp_rule(&identity)?]),
+        InitialTeeProfileV1::TdxRequired(identity) => (
+            tdx_minimum_tcb_evaluation_data_number(&identity)?,
+            vec![tdx_rule(&identity)?],
+        ),
+        InitialTeeProfileV1::ConfidentialVmRequired { sev_snp, tdx } => {
+            // One rule for each platform. The policy keeps its rules sorted.
+            let mut rules = vec![sev_snp_rule(&sev_snp)?, tdx_rule(&tdx)?];
+            rules.sort_by_key(|rule| (rule.mrenclave, rule.mrsigner));
+            (tdx_minimum_tcb_evaluation_data_number(&tdx)?, rules)
         }
     };
     // The policy has one field for the hash of the root certificate. An SEV-SNP
@@ -272,10 +311,21 @@ pub fn initial_tee_policy_v1(
         // A TDX quote chains to the same Intel SGX root as an SGX quote.
         InitialTeeProfileV1::DcapRequired(_)
         | InitialTeeProfileV1::GramineDirectDev
-        | InitialTeeProfileV1::TdxRequired(_) => B256::from(INTEL_SGX_ROOT_CA_DER_SHA256),
+        | InitialTeeProfileV1::TdxRequired(_)
+        | InitialTeeProfileV1::ConfidentialVmRequired { .. } => {
+            B256::from(INTEL_SGX_ROOT_CA_DER_SHA256)
+        }
+    };
+    // The mixed mode has a second root: the AMD root of its SEV-SNP rule.
+    let amd_root_der_hash = match profile {
+        InitialTeeProfileV1::ConfidentialVmRequired { sev_snp, .. } => sev_snp.ark_der_sha256,
+        _ => B256::ZERO,
     };
     let (quote_version, tee_type) = match profile {
-        InitialTeeProfileV1::TdxRequired(_) => (TDX_QUOTE_VERSION_V1, TDX_TEE_TYPE_V1),
+        InitialTeeProfileV1::TdxRequired(_)
+        | InitialTeeProfileV1::ConfidentialVmRequired { .. } => {
+            (TDX_QUOTE_VERSION_V1, TDX_TEE_TYPE_V1)
+        }
         InitialTeeProfileV1::DcapRequired(_)
         | InitialTeeProfileV1::GramineDirectDev
         | InitialTeeProfileV1::SevSnpRequired(_) => (3, 0),
@@ -289,6 +339,7 @@ pub fn initial_tee_policy_v1(
         predecessor_policy_hash: B256::ZERO,
         attestation_mode: profile.attestation_mode(),
         intel_root_der_hash: root_der_hash,
+        amd_root_der_hash,
         quote_version,
         tee_type,
         attestation_key_type: 2,
@@ -303,7 +354,7 @@ pub fn initial_tee_policy_v1(
         maximum_lease: PRODUCTION_TEE_LEASE_SECONDS_V1,
         collateral_margin: 3_600,
         resource_schedule_hash,
-        measurement_rules: vec![measurement_rule],
+        measurement_rules,
     };
     policy
         .encode_canonical()
@@ -440,6 +491,60 @@ mod tests {
         other_manifest.mr_config_id[0] ^= 1;
         assert_ne!(rule(other_manifest).mrsigner, base_rule.mrsigner);
         assert_eq!(rule(other_manifest).mrenclave, base_rule.mrenclave);
+    }
+
+    #[test]
+    fn mixed_policy_has_two_roots_and_a_rule_for_each_platform() {
+        let profile = InitialTeeProfileV1::ConfidentialVmRequired {
+            sev_snp: sev_snp_identity(),
+            tdx: tdx_identity(),
+        };
+        let policy =
+            initial_tee_policy_v1(profile, TESTNET_CHAIN_ID, B256::repeat_byte(0x77)).unwrap();
+
+        assert_eq!(
+            policy.attestation_mode,
+            AttestationMode::ConfidentialVmRequired
+        );
+        assert_eq!(
+            policy.intel_root_der_hash,
+            B256::from(INTEL_SGX_ROOT_CA_DER_SHA256)
+        );
+        assert_eq!(policy.amd_root_der_hash, sev_snp_identity().ark_der_sha256);
+        assert_eq!(policy.amd_root(), sev_snp_identity().ark_der_sha256);
+        assert_eq!((policy.quote_version, policy.tee_type), (4, 0x81));
+        assert_eq!(policy.measurement_rules.len(), 2);
+        // The policy round-trips with its second root.
+        let encoded = policy.encode_canonical().unwrap();
+        assert_eq!(TeePolicyV1::decode_canonical(&encoded).unwrap(), policy);
+
+        // The second root belongs to the mixed mode only.
+        let mut no_amd_root = policy.clone();
+        no_amd_root.amd_root_der_hash = B256::ZERO;
+        assert!(no_amd_root.encode_canonical().is_err());
+        let mut tdx_with_amd_root = initial_tee_policy_v1(
+            InitialTeeProfileV1::TdxRequired(tdx_identity()),
+            TESTNET_CHAIN_ID,
+            B256::repeat_byte(0x77),
+        )
+        .unwrap();
+        let tdx_len = tdx_with_amd_root.encode_canonical().unwrap().len();
+        // One more rule and one more root than the TDX policy.
+        assert!(encoded.len() > tdx_len + 32);
+        tdx_with_amd_root.amd_root_der_hash = B256::repeat_byte(0x01);
+        assert!(tdx_with_amd_root.encode_canonical().is_err());
+
+        // In the SEV-SNP mode the single root field holds the AMD root.
+        let snp = initial_tee_policy_v1(
+            InitialTeeProfileV1::SevSnpRequired(sev_snp_identity()),
+            TESTNET_CHAIN_ID,
+            B256::repeat_byte(0x77),
+        )
+        .unwrap();
+        assert_eq!(snp.amd_root(), sev_snp_identity().ark_der_sha256);
+        assert!(snp.amd_root_der_hash.is_zero());
+
+        assert!(initial_tee_policy_v1(profile, MAINNET_CHAIN_ID, B256::repeat_byte(0x77)).is_err());
     }
 
     #[test]

@@ -6,6 +6,10 @@ After=outbe-provision.service
 [Service]
 Type=simple
 ExecStart=/usr/local/lib/outbe/run-role.sh enclave
+# A new service process has no offer key. Restart the node so that it joins
+# the network again.
+ExecStopPost=/usr/bin/rm -f /run/outbe/enclave-current /run/outbe/rejoin-request
+ExecStopPost=/usr/bin/systemctl --no-block try-restart outbe-node.service
 Restart=always
 RestartSec=5
 LimitNOFILE=1048576

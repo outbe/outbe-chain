@@ -66,6 +66,8 @@ pub enum SevSnpRejectV1 {
     CertificateMalformed,
     #[error("the root certificate is not the one pinned by the policy")]
     RootNotPinned,
+    #[error("the root certificate is not a root certificate of AMD")]
+    RootNotAmd,
     #[error("the certificate chain is not valid")]
     CertificateChain,
     #[error("the report signature is not valid")]
@@ -96,7 +98,7 @@ impl SevSnpRejectV1 {
             Self::CertificateLength | Self::CertificateMalformed => {
                 DcapRejectCodeV1::CollateralNonCanonical
             }
-            Self::RootNotPinned => DcapRejectCodeV1::IntelRootMismatch,
+            Self::RootNotPinned | Self::RootNotAmd => DcapRejectCodeV1::IntelRootMismatch,
             Self::CertificateChain | Self::ReportSignature => {
                 DcapRejectCodeV1::NativeVerificationFailed
             }
@@ -125,7 +127,9 @@ pub fn verify_sev_snp_evidence(
     let policy_hash = policy
         .policy_hash()
         .map_err(|_| DcapRejectCodeV1::PolicyNonCanonical)?;
-    if policy.attestation_mode != AttestationMode::SevSnpRequired
+    if !policy
+        .attestation_mode
+        .admits_evidence(AttestationMode::SevSnpRequired)
         || evidence.intent.chain_id != policy.chain_id
         || evidence.intent.genesis_hash != policy.genesis_hash
         || evidence.intent.policy_hash != policy_hash
@@ -143,7 +147,7 @@ pub fn verify_sev_snp_evidence(
             ask_der: &evidence.ask_der,
             vcek_der: &evidence.vcek_der,
         },
-        &policy.intel_root_der_hash,
+        &policy.amd_root(),
     )
     .map_err(SevSnpRejectV1::protocol_code)?;
 
@@ -225,7 +229,42 @@ impl SevSnpVerifiedReportV1 {
     }
 }
 
+/// SHA-256 hashes of the DER root certificates (ARK) of AMD for the Milan,
+/// Genoa and Turin processor generations, as the `sev` crate embeds them.
+///
+/// The attestation policy also names a root, but the policy is data that a
+/// verifier receives. The party that supplies the policy can name its own
+/// root and sign a report with it. The verifier therefore accepts a root only
+/// if it is one of these, whatever the policy names.
+pub const AMD_ROOT_DER_SHA256: [[u8; 32]; 3] = [
+    hex_literal_32("69d063b45344d26a2e94e1f4210de49ef555308287d4c174445c95639a540bcd"),
+    hex_literal_32("4c6598d19c18719c5dfd4a7d335f674e5bfe1d8f800cea2cf270c10d103db2f1"),
+    hex_literal_32("1f084161a44bb6d93778a904877d4819cafa5d05ef4193b2ded9dd9c73dd3f6a"),
+];
+
+const fn hex_literal_32(text: &str) -> [u8; 32] {
+    const fn nibble(digit: u8) -> u8 {
+        match digit {
+            b'0'..=b'9' => digit - b'0',
+            b'a'..=b'f' => digit - b'a' + 10,
+            _ => panic!("not a lowercase hexadecimal digit"),
+        }
+    }
+    let text = text.as_bytes();
+    assert!(text.len() == 64);
+    let mut out = [0_u8; 32];
+    let mut index = 0;
+    while index < 32 {
+        out[index] = (nibble(text[2 * index]) << 4) | nibble(text[2 * index + 1]);
+        index += 1;
+    }
+    out
+}
+
 /// Verify an SEV-SNP attestation report against a pinned AMD root.
+///
+/// The root must be a root certificate of AMD and the one that
+/// `pinned_ark_sha256` names.
 pub fn verify_sev_snp_report_v1(
     report: &[u8],
     certificates: SevSnpCertificatesV1<'_>,
@@ -243,8 +282,15 @@ pub fn verify_sev_snp_report_v1(
             return Err(SevSnpRejectV1::CertificateLength);
         }
     }
-    if Sha256::digest(certificates.ark_der).as_slice() != pinned_ark_sha256.as_slice() {
+    let ark_sha256 = Sha256::digest(certificates.ark_der);
+    if ark_sha256.as_slice() != pinned_ark_sha256.as_slice() {
         return Err(SevSnpRejectV1::RootNotPinned);
+    }
+    if !AMD_ROOT_DER_SHA256
+        .iter()
+        .any(|root| root.as_slice() == ark_sha256.as_slice())
+    {
+        return Err(SevSnpRejectV1::RootNotAmd);
     }
 
     let version = u32::from_le_bytes([report[0], report[1], report[2], report[3]]);
@@ -319,6 +365,11 @@ mod tests {
     use alloy_primitives::keccak256;
 
     const MILAN_REPORT: &[u8] = include_bytes!("../tests/fixtures/sev_snp/milan-report.bin");
+    /// Report of version 5 from an EPYC 7413 with SEV-SNP firmware API 1.58.
+    const MILAN_REPORT_V5: &[u8] = include_bytes!("../tests/fixtures/sev_snp/milan-report-v5.bin");
+    /// VCEK of the processor that signed [`MILAN_REPORT_V5`], from the AMD key
+    /// distribution service.
+    const MILAN_VCEK_V5: &[u8] = include_bytes!("../tests/fixtures/sev_snp/milan-vcek-v5.der");
     const MILAN_ARK: &[u8] = include_bytes!("../tests/fixtures/sev_snp/milan-ark.der");
     const MILAN_ASK: &[u8] = include_bytes!("../tests/fixtures/sev_snp/milan-ask.der");
     const MILAN_VCEK: &[u8] = include_bytes!("../tests/fixtures/sev_snp/milan-vcek.der");
@@ -364,6 +415,43 @@ mod tests {
             }
         }
         panic!("certificate table has no entry with the requested GUID");
+    }
+
+    #[test]
+    fn accepts_a_report_of_version_5_signed_by_a_real_milan_processor() {
+        assert_eq!(MILAN_REPORT_V5[0], 5);
+        // Mitigation vectors: the fields that version 5 adds are not zero.
+        assert_ne!(MILAN_REPORT_V5[0x1f8..0x208], [0; 16]);
+        let certificates = SevSnpCertificatesV1 {
+            vcek_der: MILAN_VCEK_V5,
+            ..MILAN
+        };
+
+        let verified =
+            verify_sev_snp_report_v1(MILAN_REPORT_V5, certificates, &sha256(MILAN_ARK)).unwrap();
+
+        assert_eq!(verified.measurement[..], MILAN_REPORT_V5[0x90..0xC0]);
+        assert_eq!(verified.host_data[..], MILAN_REPORT_V5[0xC0..0xE0]);
+        assert_eq!(verified.report_data, [0; 64]);
+    }
+
+    #[test]
+    fn report_of_version_5_with_the_key_of_another_processor_fails_the_signature() {
+        assert_eq!(
+            verify_sev_snp_report_v1(MILAN_REPORT_V5, MILAN, &sha256(MILAN_ARK)),
+            Err(SevSnpRejectV1::ReportSignature)
+        );
+
+        let mut changed = MILAN_REPORT_V5.to_vec();
+        changed[0x90] ^= 1;
+        let certificates = SevSnpCertificatesV1 {
+            vcek_der: MILAN_VCEK_V5,
+            ..MILAN
+        };
+        assert_eq!(
+            verify_sev_snp_report_v1(&changed, certificates, &sha256(MILAN_ARK)),
+            Err(SevSnpRejectV1::ReportSignature)
+        );
     }
 
     #[test]
@@ -489,11 +577,11 @@ mod tests {
         );
     }
 
-    /// The dstack simulator signs its mock certificates with ECDSA P-384. The
-    /// AMD key hierarchy uses RSA-PSS, and the verifier accepts nothing else.
-    /// A network that pins the simulator root therefore cannot register.
+    /// A policy can name any root. The verifier accepts the roots of AMD only,
+    /// so a party that supplies its own policy cannot sign a report with its
+    /// own key hierarchy. The dstack simulator has such a hierarchy.
     #[test]
-    fn rejects_the_ecdsa_certificate_chain_of_the_dstack_simulator() {
+    fn rejects_a_root_that_is_not_a_root_of_amd_even_if_the_policy_pins_it() {
         let certificates = SevSnpCertificatesV1 {
             ark_der: SIMULATOR_ARK,
             ask_der: certificate_table_entry(SIMULATOR_CERT_TABLE, ASK_GUID),
@@ -503,7 +591,22 @@ mod tests {
         let result =
             verify_sev_snp_report_v1(SIMULATOR_REPORT, certificates, &sha256(SIMULATOR_ARK));
 
-        assert_eq!(result, Err(SevSnpRejectV1::CertificateChain));
+        assert_eq!(result, Err(SevSnpRejectV1::RootNotAmd));
+        assert_eq!(
+            SevSnpRejectV1::RootNotAmd.protocol_code(),
+            DcapRejectCodeV1::IntelRootMismatch
+        );
+    }
+
+    #[test]
+    fn the_embedded_roots_are_the_roots_of_the_sev_crate() {
+        use sev::certs::snp::builtin::{genoa, milan, turin};
+        let embedded = [milan::ark(), genoa::ark(), turin::ark()].map(|root| {
+            let der = root.unwrap().to_der().unwrap();
+            <[u8; 32]>::from(Sha256::digest(der))
+        });
+        assert_eq!(embedded, AMD_ROOT_DER_SHA256);
+        assert_eq!(sha256(MILAN_ARK).0, AMD_ROOT_DER_SHA256[0]);
     }
 
     fn sev_snp_policy(measurement: &[u8; 48], host_data: [u8; 32]) -> TeePolicyV1 {
@@ -518,6 +621,7 @@ mod tests {
             predecessor_policy_hash: B256::ZERO,
             attestation_mode: AttestationMode::SevSnpRequired,
             intel_root_der_hash: sha256(MILAN_ARK),
+            amd_root_der_hash: B256::ZERO,
             quote_version: 3,
             tee_type: 0,
             attestation_key_type: 2,
@@ -728,6 +832,36 @@ mod tests {
         assert_eq!(
             verify_sev_snp_evidence(&short, &policy, 1_000),
             Err(DcapRejectCodeV1::EvidenceNonCanonical)
+        );
+    }
+    #[test]
+    fn real_milan_evidence_is_accepted_under_a_mixed_mode_policy() {
+        // The mixed mode keeps the Intel root in the first field and pins the
+        // AMD root in its own field.
+        let mut policy = milan_policy();
+        policy.attestation_mode = AttestationMode::ConfidentialVmRequired;
+        policy.amd_root_der_hash = policy.intel_root_der_hash;
+        policy.intel_root_der_hash = B256::repeat_byte(0x44);
+        policy.quote_version = 4;
+        policy.tee_type = 0x81;
+        let mut evidence = milan_evidence(&policy);
+        evidence.intent.attestation_mode = AttestationMode::ConfidentialVmRequired;
+        evidence.intent.policy_hash = policy.policy_hash().unwrap();
+
+        // The intent of the fixture is not the one that the report binds, so
+        // the check stops at the report data, after the chain and the root.
+        let result = verify_sev_snp_evidence(&evidence, &policy, 1_000);
+        assert_ne!(result, Err(DcapRejectCodeV1::PolicyBindingMismatch));
+        assert_ne!(result, Err(DcapRejectCodeV1::IntelRootMismatch));
+
+        // A policy that pins another AMD root rejects the same evidence.
+        let mut other_root = policy.clone();
+        other_root.amd_root_der_hash = B256::repeat_byte(0x11);
+        let mut other_evidence = evidence;
+        other_evidence.intent.policy_hash = other_root.policy_hash().unwrap();
+        assert_eq!(
+            verify_sev_snp_evidence(&other_evidence, &other_root, 1_000),
+            Err(DcapRejectCodeV1::IntelRootMismatch)
         );
     }
 }

@@ -79,7 +79,8 @@ pub(super) async fn ingest_onboarding_offer_key(
         // is bound to a finalized admission anchor of the NodeHost.
         AttestationMode::DcapRequired
         | AttestationMode::SevSnpRequired
-        | AttestationMode::TdxRequired => {
+        | AttestationMode::TdxRequired
+        | AttestationMode::ConfidentialVmRequired => {
             let anchor_outcome = load_finalized_admission_anchor_v1(
                 client,
                 ctx.genesis,

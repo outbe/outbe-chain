@@ -44,6 +44,7 @@ fn policy_fixture(
         predecessor_policy_hash,
         attestation_mode: AttestationMode::DcapRequired,
         intel_root_der_hash: B256::repeat_byte(material_seed),
+        amd_root_der_hash: B256::ZERO,
         resource_schedule_hash: B256::repeat_byte(material_seed + 1),
         measurement_rules: vec![TeeMeasurementRuleV1 {
             mrenclave,

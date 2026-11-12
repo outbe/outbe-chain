@@ -307,7 +307,10 @@ impl TeeRegistryGasScheduleV1 {
             // change the gas schedule hash and with it the policy hash.
             AttestationMode::DcapRequired
             | AttestationMode::SevSnpRequired
-            | AttestationMode::TdxRequired => self.qvl_dcap(evidence_len, active_rule_count)?,
+            | AttestationMode::TdxRequired
+            | AttestationMode::ConfidentialVmRequired => {
+                self.qvl_dcap(evidence_len, active_rule_count)?
+            }
             AttestationMode::GramineDirectDev => self.qvl_dev(evidence_len, active_rule_count)?,
         };
         let input_charge = checked_mul(self.input_byte, checked_usize(input_len)?)?;

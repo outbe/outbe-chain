@@ -163,12 +163,14 @@ pub(super) fn replacement_fixture_for_mode(
             components: crate::test_utils::canonical_dcap_collateral_fixture(),
             transition_key_ready_proof,
         }),
-        AttestationMode::TdxRequired => AttestationEvidenceV1::Tdx(DcapEvidenceV1 {
-            intent,
-            quote: vec![0x51],
-            components: crate::test_utils::canonical_dcap_collateral_fixture(),
-            transition_key_ready_proof,
-        }),
+        AttestationMode::TdxRequired | AttestationMode::ConfidentialVmRequired => {
+            AttestationEvidenceV1::Tdx(DcapEvidenceV1 {
+                intent,
+                quote: vec![0x51],
+                components: crate::test_utils::canonical_dcap_collateral_fixture(),
+                transition_key_ready_proof,
+            })
+        }
         AttestationMode::GramineDirectDev => AttestationEvidenceV1::GramineDirectDev(
             outbe_primitives::tee_attestation_v1::GramineDirectEvidenceV1 {
                 transition_key_ready_proof: None,

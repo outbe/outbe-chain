@@ -151,7 +151,8 @@ fn run_with_args(opts: RunOpts, args: &[String]) -> Result<(), i32> {
 ///
 /// Without the flag the service uses the Gramine surface. `--platform sev-snp`
 /// and `--platform tdx` select the confidential VM backend and require
-/// `--network-descriptor`.
+/// `--network-descriptor` and `--app-manifest`. `--platform auto` takes the platform that the
+/// kernel reports, so one launch script serves both.
 fn select_platform(args: &[String]) -> EnclaveResult<()> {
     let Some(platform) = arg_value(args, "--platform") else {
         return Ok(());
@@ -162,12 +163,19 @@ fn select_platform(args: &[String]) -> EnclaveResult<()> {
         let selected = match platform.as_str() {
             "sev-snp" => Some(ConfidentialPlatform::SevSnp),
             "tdx" => Some(ConfidentialPlatform::Tdx),
+            "auto" => Some(crate::confidential_vm::detect_platform()?),
             _ => None,
         };
         if let Some(selected) = selected {
             let descriptor = arg_value(args, "--network-descriptor")
                 .ok_or(crate::errors::ConfidentialVmError::MissingNetworkDescriptorArgument)?;
-            return crate::confidential_vm::configure(selected, std::path::Path::new(&descriptor));
+            let manifest = arg_value(args, "--app-manifest")
+                .ok_or(crate::errors::ConfidentialVmError::MissingAppManifestArgument)?;
+            return crate::confidential_vm::configure(
+                selected,
+                std::path::Path::new(&descriptor),
+                std::path::Path::new(&manifest),
+            );
         }
     }
     Err(crate::errors::ConfidentialVmError::UnsupportedPlatform(platform).into())
@@ -182,7 +190,7 @@ fn log_attestation_banner(attest: &crate::gramine::AttestationType) {
     ) {
         eprintln!(
             "outbe-tee-enclave: MODE = confidential VM - hardware attestation ENABLED ({}); \
-             the network descriptor is NOT measured",
+             release rules and network descriptor from the measured application manifest",
             attest.label()
         );
     } else if attest.is_hardware() {

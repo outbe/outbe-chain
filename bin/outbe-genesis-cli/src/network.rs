@@ -255,7 +255,7 @@ fn validate_tee_mode(
             Ok(())
         }
         "dcap-required" => validate_dcap_mode(obj, chain_id),
-        "sev-snp-required" | "tdx-required" => {
+        "sev-snp-required" | "tdx-required" | "confidential-vm-required" => {
             if chain_id != DEVNET_CHAIN_ID && chain_id != TESTNET_CHAIN_ID {
                 return Err(GenesisError::validation(format!(
                     "tee.mode {mode} requires the devnet or testnet chain id ({DEVNET_CHAIN_ID} or {TESTNET_CHAIN_ID}), not {chain_id}"
@@ -264,7 +264,7 @@ fn validate_tee_mode(
             Ok(())
         }
         _ => Err(GenesisError::validation(
-            "tee.mode must be gramine-direct-dev, dcap-required, sev-snp-required or tdx-required",
+            "tee.mode must be gramine-direct-dev, dcap-required, sev-snp-required, tdx-required or confidential-vm-required",
         )),
     }
 }

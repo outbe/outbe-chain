@@ -200,54 +200,6 @@ pub fn describe_sev_snp_certificates(table: &[u8]) -> Vec<String> {
     }
 }
 
-/// Ask the processor for a key derived from the launch measurement of this VM.
-///
-/// The probe requests the key two times and prints a fingerprint, never the
-/// key. Equal fingerprints across two boots of the same image show that the key
-/// can seal the state of the service.
-#[cfg(feature = "sev-snp")]
-pub fn describe_sev_snp_derived_key() -> String {
-    use sev::firmware::guest::{DerivedKey, Firmware, GuestFieldSelect};
-    use zeroize::Zeroize as _;
-
-    let request = || {
-        let mut fields = GuestFieldSelect::default();
-        fields.set_guest_policy(true);
-        fields.set_measurement(true);
-        // Root key 0 is the chip key. The key does not depend on the firmware
-        // version, so a firmware update keeps the sealed state readable.
-        DerivedKey::new(false, fields, 0, 0, 0, None)
-    };
-    let mut firmware = match Firmware::open() {
-        Ok(firmware) => firmware,
-        Err(error) => return format!("derived key: UNAVAILABLE (open /dev/sev-guest: {error})"),
-    };
-    let mut first = match firmware.get_derived_key(None, request()) {
-        Ok(key) => key,
-        Err(error) => return format!("derived key: UNAVAILABLE ({error})"),
-    };
-    let second = firmware.get_derived_key(None, request());
-    let line = match second {
-        Ok(mut second) => {
-            let line = format!(
-                "derived key: AVAILABLE stable_within_boot={} fingerprint={}",
-                first == second,
-                &sha256_hex(&first)[..16]
-            );
-            second.zeroize();
-            line
-        }
-        Err(error) => format!("derived key: UNSTABLE (second request failed: {error})"),
-    };
-    first.zeroize();
-    line
-}
-
-#[cfg(not(feature = "sev-snp"))]
-pub fn describe_sev_snp_derived_key() -> String {
-    "derived key: NOT PROBED (binary built without the sev-snp feature)".to_owned()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

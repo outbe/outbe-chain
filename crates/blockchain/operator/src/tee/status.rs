@@ -53,9 +53,9 @@ pub async fn read_renewal_status_v1(
     let forecast_freeze_timestamp = view.schedule.forecast_freeze_timestamp();
     let blocks_until_freeze = view.schedule.blocks_until_freeze();
     let collateral_valid_until = match view.policy.attestation_mode {
-        AttestationMode::DcapRequired | AttestationMode::TdxRequired => {
-            Some(view.binding.collateral_valid_until)
-        }
+        AttestationMode::DcapRequired
+        | AttestationMode::TdxRequired
+        | AttestationMode::ConfidentialVmRequired => Some(view.binding.collateral_valid_until),
         // An SEV-SNP report has no collateral that expires.
         AttestationMode::GramineDirectDev | AttestationMode::SevSnpRequired => None,
     };

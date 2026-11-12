@@ -80,9 +80,24 @@ fn validate_authority_shape(payload: &TeeBootstrapV2) -> Result<(), CodecError> 
             "TEE bootstrap signatures do not cover every participant",
         ));
     }
+    let has_quote_evidence = payload.participants.iter().any(|participant| {
+        matches!(
+            participant.evidence,
+            TeeBootstrapParticipantEvidenceV2::Dcap { .. }
+        )
+    });
     match payload.authority.policy.attestation_mode {
         AttestationMode::DcapRequired | AttestationMode::TdxRequired
             if payload.collateral_pool.is_empty() =>
+        {
+            return Err(CodecError::NonCanonical(
+                "DCAP TEE bootstrap collateral pool is empty",
+            ));
+        }
+        // The mixed mode needs the pool exactly when a participant has a
+        // TDX quote.
+        AttestationMode::ConfidentialVmRequired
+            if payload.collateral_pool.is_empty() == has_quote_evidence =>
         {
             return Err(CodecError::NonCanonical(
                 "DCAP TEE bootstrap collateral pool is empty",
@@ -170,7 +185,9 @@ fn validate_participant_evidence(
             collateral_component_indices,
         } if matches!(
             payload.authority.policy.attestation_mode,
-            AttestationMode::DcapRequired | AttestationMode::TdxRequired
+            AttestationMode::DcapRequired
+                | AttestationMode::TdxRequired
+                | AttestationMode::ConfidentialVmRequired
         ) =>
         {
             validate_dcap_evidence(
@@ -198,7 +215,11 @@ fn validate_participant_evidence(
             ark_der,
             ask_der,
             vcek_der,
-        } if payload.authority.policy.attestation_mode == AttestationMode::SevSnpRequired => {
+        } if matches!(
+            payload.authority.policy.attestation_mode,
+            AttestationMode::SevSnpRequired | AttestationMode::ConfidentialVmRequired
+        ) =>
+        {
             // The signature and the certificate chain are verified at
             // execution. This check covers the canonical shape only.
             if report.len() != SEV_SNP_REPORT_BYTES

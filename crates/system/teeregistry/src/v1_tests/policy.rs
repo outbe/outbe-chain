@@ -8,9 +8,9 @@ fn other_mode(mode: AttestationMode) -> AttestationMode {
     match mode {
         AttestationMode::DcapRequired => AttestationMode::GramineDirectDev,
         AttestationMode::GramineDirectDev => AttestationMode::DcapRequired,
-        AttestationMode::SevSnpRequired | AttestationMode::TdxRequired => {
-            AttestationMode::DcapRequired
-        }
+        AttestationMode::SevSnpRequired
+        | AttestationMode::TdxRequired
+        | AttestationMode::ConfidentialVmRequired => AttestationMode::DcapRequired,
     }
 }
 

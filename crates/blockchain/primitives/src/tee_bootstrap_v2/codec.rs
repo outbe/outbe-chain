@@ -51,7 +51,9 @@ fn encode_participant(
     out.extend_from_slice(&participant.validator_binding.encode_canonical()?);
     out.extend_from_slice(&participant.validator_signature);
     out.extend_from_slice(&participant.node_binding_signature);
-    out.push(participant.intent.attestation_mode as u8);
+    // The byte names the platform of the evidence. It equals the intent mode
+    // except in the mixed mode, where each participant has its own platform.
+    out.push(evidence_platform(participant) as u8);
     encode_evidence(&participant.evidence, out)?;
     out.extend_from_slice(&participant.node_signature);
     out.extend_from_slice(&participant.enclave_signature);
@@ -91,6 +93,23 @@ fn encode_evidence(
         }
     }
     Ok(())
+}
+
+/// Platform of the evidence of one participant, as an attestation mode.
+fn evidence_platform(participant: &TeeBootstrapParticipantV2) -> AttestationMode {
+    match &participant.evidence {
+        TeeBootstrapParticipantEvidenceV2::Dcap { .. } => {
+            if participant.intent.attestation_mode == AttestationMode::DcapRequired {
+                AttestationMode::DcapRequired
+            } else {
+                AttestationMode::TdxRequired
+            }
+        }
+        TeeBootstrapParticipantEvidenceV2::GramineDirectDev { .. } => {
+            AttestationMode::GramineDirectDev
+        }
+        TeeBootstrapParticipantEvidenceV2::SevSnp { .. } => AttestationMode::SevSnpRequired,
+    }
 }
 
 /// Decode bounded canonical bytes and validate the resulting payload.
@@ -212,6 +231,9 @@ fn decode_evidence(
                 dev_signature: decoder.array()?,
             })
         }
+        AttestationMode::ConfidentialVmRequired => Err(CodecError::NonCanonical(
+            "TEE bootstrap evidence byte must name a platform",
+        )),
         AttestationMode::SevSnpRequired => {
             let report = decoder
                 .bounded_bytes("SEV-SNP report", SEV_SNP_REPORT_BYTES)?
@@ -274,7 +296,7 @@ pub(super) fn logical_evidence(
             };
             // TDX evidence has the DCAP layout. The intent mode selects the
             // logical variant.
-            if participant.intent.attestation_mode == AttestationMode::TdxRequired {
+            if participant.intent.attestation_mode != AttestationMode::DcapRequired {
                 AttestationEvidenceV1::Tdx(evidence)
             } else {
                 AttestationEvidenceV1::Dcap(evidence)

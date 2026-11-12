@@ -11,15 +11,44 @@ pub enum AttestationMode {
     /// Intel TDX confidential VM. The evidence is a TDX quote with the Intel
     /// collateral, in the same layout as DCAP evidence.
     TdxRequired = 0x04,
+    /// Confidential VM on AMD SEV-SNP or on Intel TDX. A network in this mode
+    /// admits the evidence of both platforms.
+    ConfidentialVmRequired = 0x05,
 }
 
 impl AttestationMode {
+    /// True for the modes in which the enclave service runs in a confidential
+    /// VM.
+    pub const fn is_confidential_vm(self) -> bool {
+        matches!(
+            self,
+            Self::SevSnpRequired | Self::TdxRequired | Self::ConfidentialVmRequired
+        )
+    }
+
+    /// Whether a network in this mode admits evidence of the platform
+    /// `evidence`. `evidence` is the mode that names the evidence variant.
+    /// The mixed mode admits SEV-SNP reports and TDX quotes. Every other mode
+    /// admits its own evidence only.
+    pub const fn admits_evidence(self, evidence: Self) -> bool {
+        match self {
+            Self::ConfidentialVmRequired => {
+                matches!(evidence, Self::SevSnpRequired | Self::TdxRequired)
+            }
+            Self::DcapRequired => matches!(evidence, Self::DcapRequired),
+            Self::GramineDirectDev => matches!(evidence, Self::GramineDirectDev),
+            Self::SevSnpRequired => matches!(evidence, Self::SevSnpRequired),
+            Self::TdxRequired => matches!(evidence, Self::TdxRequired),
+        }
+    }
+
     pub(crate) fn decode(value: u8) -> Result<Self, CodecError> {
         match value {
             0x01 => Ok(Self::DcapRequired),
             0x02 => Ok(Self::GramineDirectDev),
             0x03 => Ok(Self::SevSnpRequired),
             0x04 => Ok(Self::TdxRequired),
+            0x05 => Ok(Self::ConfidentialVmRequired),
             value => Err(CodecError::UnknownDiscriminant {
                 field: "attestation mode",
                 value,

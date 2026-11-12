@@ -167,6 +167,10 @@ pub enum TransportDispatchError {
     /// The upgrade export lost its verified network authorization.
     #[error("upgrade export lost its verified network authorization")]
     UpgradeExportLostAuthorization,
+    /// A service in a confidential VM does not export the offer key to
+    /// another code identity.
+    #[error("a service in a confidential VM does not export the offer key for an upgrade")]
+    UpgradeExportNotInConfidentialVm,
     /// The upgrade export source key is unavailable.
     #[error("source key is unavailable")]
     SourceKeyUnavailable,

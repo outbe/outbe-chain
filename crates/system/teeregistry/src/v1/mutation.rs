@@ -3,6 +3,7 @@ mod commit;
 mod operations;
 mod ownership;
 use super::*;
+pub(super) use operations::live_rejoin_allowed_v1;
 
 struct ReverseOwnersV1 {
     enclave: B256,
@@ -43,6 +44,17 @@ impl TeeRegistry<'_> {
             return self.commit_upgrade_candidate_v1(&mutation, &context);
         }
         self.consume_upgrade_candidate_v1(&mutation, &context)?;
+        // A registration that replaces a live binding retires the previous
+        // enclave: it must not be admitted again.
+        if mutation.expected_operation == AttestationOperationV1::RegisterEnclave {
+            if let Some(previous) = current.as_ref() {
+                if context.now < previous.valid_until
+                    && previous.enclave_id != mutation.intent.enclave_id
+                {
+                    self.v1_revoked_enclave.write(&previous.enclave_id, true)?;
+                }
+            }
+        }
         self.write_active_binding_v1(&mutation, &context)?;
         self.emit_binding_mutation_v1(&mutation, &context)?;
         Ok(V1RegistrationOutcome::Created)

@@ -56,6 +56,15 @@ fn successor_ids_are_fresh_v1(
     intent.enclave_id != current.enclave_id && intent.binding_id != current.binding_id
 }
 
+/// Whether a node may register a fresh enclave while its lease is live.
+///
+/// A service in a confidential VM can lose its state on a VM restart. It then
+/// starts with a fresh identity and must obtain the offer key again. The SGX
+/// mode keeps its rule: a live binding is renewed, not registered again.
+pub(in crate::v1) const fn live_rejoin_allowed_v1(mode: AttestationMode) -> bool {
+    mode.is_confidential_vm()
+}
+
 impl TeeRegistry<'_> {
     fn is_late_measurement_recovery_v1(
         &self,
@@ -102,11 +111,17 @@ impl TeeRegistry<'_> {
         context: &MutationContextV1,
         current: &Option<NodeEnclaveBindingV1>,
     ) -> Result<()> {
-        let VerifiedClaimsMutationV1 { intent, .. } = *mutation;
+        let VerifiedClaimsMutationV1 { intent, policy, .. } = *mutation;
         let MutationContextV1 { now, .. } = *context;
 
         if let Some(current) = current.as_ref() {
-            if now < current.valid_until {
+            // A live binding admits a registration only in a confidential VM
+            // mode and only with a fresh enclave id and a fresh binding id.
+            // The checks below then apply as for a rejoin after expiration.
+            if now < current.valid_until
+                && !(live_rejoin_allowed_v1(policy.attestation_mode)
+                    && successor_ids_are_fresh_v1(intent, current))
+            {
                 return Err(TeeRegistryError::LiveBindingMustRenew.into());
             }
             if B256::from(intent.node_host_authorization_hash)
@@ -295,9 +310,13 @@ impl TeeRegistry<'_> {
             }
         }
         // A TDX quote has Intel collateral with an expiration, as an SGX quote.
+        // The verdict of an SEV-SNP report has no expiration, so the mixed
+        // mode applies the limit to every binding.
         if matches!(
             policy.attestation_mode,
-            AttestationMode::DcapRequired | AttestationMode::TdxRequired
+            AttestationMode::DcapRequired
+                | AttestationMode::TdxRequired
+                | AttestationMode::ConfidentialVmRequired
         ) {
             let collateral_limit = claims
                 .collateral_valid_until

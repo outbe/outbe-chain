@@ -68,7 +68,10 @@ pub fn run_tee_stage(
         let val = tee.get(key).and_then(Value::as_str).map(str::to_owned);
         sev_snp_options.insert(flag, val);
     }
-    if mode != "sev-snp-required" && sev_snp_options.values().any(Option::is_some) {
+    // The mixed mode takes the identity of both platforms.
+    let takes_sev_snp = mode == "sev-snp-required" || mode == "confidential-vm-required";
+    let takes_tdx = mode == "tdx-required" || mode == "confidential-vm-required";
+    if !takes_sev_snp && sev_snp_options.values().any(Option::is_some) {
         return Err(GenesisError::validation(format!(
             "tee.mode {mode} forbids SEV-SNP identity values"
         )));
@@ -83,7 +86,7 @@ pub fn run_tee_stage(
         });
         tdx_options.insert(flag, val);
     }
-    if mode != "tdx-required" && tdx_options.values().any(Option::is_some) {
+    if !takes_tdx && tdx_options.values().any(Option::is_some) {
         return Err(GenesisError::validation(format!(
             "tee.mode {mode} forbids TDX identity values"
         )));
@@ -122,14 +125,14 @@ pub fn run_tee_stage(
             "tee.mode {mode} forbids DCAP measurement values"
         )));
     }
-    if mode == "sev-snp-required" {
+    if takes_sev_snp {
         let missing: Vec<&str> = sev_snp_options
             .iter()
             .filter_map(|(&flag, val)| val.is_none().then_some(flag))
             .collect();
         if !missing.is_empty() {
             return Err(GenesisError::validation(format!(
-                "tee.mode sev-snp-required needs the launch identity: {}",
+                "tee.mode {mode} needs the SEV-SNP launch identity: {}",
                 missing.join(", ")
             )));
         }
@@ -141,14 +144,14 @@ pub fn run_tee_stage(
         }
     }
 
-    if mode == "tdx-required" {
+    if takes_tdx {
         let missing: Vec<&str> = tdx_options
             .iter()
             .filter_map(|(&flag, val)| val.is_none().then_some(flag))
             .collect();
         if !missing.is_empty() {
             return Err(GenesisError::validation(format!(
-                "tee.mode tdx-required needs the trust domain identity: {}",
+                "tee.mode {mode} needs the trust domain identity: {}",
                 missing.join(", ")
             )));
         }

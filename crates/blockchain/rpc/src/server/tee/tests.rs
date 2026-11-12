@@ -20,6 +20,7 @@ fn policy() -> TeePolicyV1 {
         predecessor_policy_hash: B256::ZERO,
         attestation_mode: AttestationMode::DcapRequired,
         intel_root_der_hash: B256::repeat_byte(0x71),
+        amd_root_der_hash: B256::ZERO,
         quote_version: 3,
         tee_type: 0,
         attestation_key_type: 2,

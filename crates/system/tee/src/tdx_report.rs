@@ -88,6 +88,31 @@ pub fn tdx_quote_pck_certification_data(quote: &[u8]) -> Result<(u16, &[u8]), Dc
     Ok((certification_data_type, certification_data))
 }
 
+/// Platform that produced the evidence of a service in a confidential VM.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConfidentialVmEvidenceKind {
+    /// AMD SEV-SNP attestation report.
+    SevSnp,
+    /// Intel TDX quote.
+    Tdx,
+}
+
+/// Recognize the evidence that a service in a confidential VM returns: an
+/// SEV-SNP attestation report has a fixed length, a TDX quote names its
+/// version and its TEE type in the header. This reads the format only.
+pub fn confidential_vm_evidence_kind(evidence: &[u8]) -> Option<ConfidentialVmEvidenceKind> {
+    use outbe_primitives::tee_attestation_v1::{
+        SEV_SNP_REPORT_BYTES, TDX_QUOTE_VERSION_V1, TDX_TEE_TYPE_V1,
+    };
+    if evidence.len() == SEV_SNP_REPORT_BYTES {
+        return Some(ConfidentialVmEvidenceKind::SevSnp);
+    }
+    let version = u16::from_le_bytes(evidence.get(..2)?.try_into().ok()?);
+    let tee_type = u32::from_le_bytes(evidence.get(4..8)?.try_into().ok()?);
+    (version == TDX_QUOTE_VERSION_V1 && tee_type == TDX_TEE_TYPE_V1)
+        .then_some(ConfidentialVmEvidenceKind::Tdx)
+}
+
 /// Fields of a TD report body that identify the TD.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TdReportMeasurements {
@@ -208,6 +233,26 @@ mod tests {
             tdx_quote_canonical_len(&quote[..canonical - 1]),
             Err(DcapRejectCodeV1::QuoteMalformed)
         );
+    }
+
+    #[test]
+    fn evidence_kind_is_read_from_the_format() {
+        let report = vec![0_u8; 1184];
+        assert_eq!(
+            confidential_vm_evidence_kind(&report),
+            Some(ConfidentialVmEvidenceKind::SevSnp)
+        );
+        let mut quote = vec![0_u8; 5000];
+        quote[..2].copy_from_slice(&4_u16.to_le_bytes());
+        quote[4..8].copy_from_slice(&0x81_u32.to_le_bytes());
+        assert_eq!(
+            confidential_vm_evidence_kind(&quote),
+            Some(ConfidentialVmEvidenceKind::Tdx)
+        );
+        // An SGX quote and a short buffer are neither.
+        quote[4..8].copy_from_slice(&0_u32.to_le_bytes());
+        assert_eq!(confidential_vm_evidence_kind(&quote), None);
+        assert_eq!(confidential_vm_evidence_kind(&[4, 0, 2]), None);
     }
 
     #[test]

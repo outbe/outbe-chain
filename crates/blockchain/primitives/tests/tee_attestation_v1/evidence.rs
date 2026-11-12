@@ -438,3 +438,90 @@ fn tdx_evidence_keeps_the_dcap_component_rules() {
         .encode_canonical()
         .is_err());
 }
+
+#[test]
+fn mixed_mode_intent_admits_the_evidence_of_both_platforms() {
+    let mut tdx = tdx_evidence();
+    tdx.intent.attestation_mode = AttestationMode::ConfidentialVmRequired;
+    let tdx = AttestationEvidenceV1::Tdx(tdx);
+    let encoded = tdx.encode_canonical().unwrap();
+    // The frame names the platform, the intent names the mode of the network.
+    assert_eq!(encoded[1], AttestationMode::TdxRequired as u8);
+    assert_eq!(tdx.mode(), AttestationMode::TdxRequired);
+    assert_eq!(
+        AttestationEvidenceV1::decode_canonical(&encoded).unwrap(),
+        tdx
+    );
+
+    let mut snp = sev_snp_evidence();
+    snp.intent.attestation_mode = AttestationMode::ConfidentialVmRequired;
+    let snp = AttestationEvidenceV1::SevSnp(snp);
+    let encoded = snp.encode_canonical().unwrap();
+    assert_eq!(encoded[1], AttestationMode::SevSnpRequired as u8);
+    assert_eq!(
+        AttestationEvidenceV1::decode_canonical(&encoded).unwrap(),
+        snp
+    );
+
+    // The mixed mode is not a kind of evidence.
+    let mut as_mixed = encoded;
+    as_mixed[1] = AttestationMode::ConfidentialVmRequired as u8;
+    assert!(AttestationEvidenceV1::decode_canonical(&as_mixed).is_err());
+}
+
+#[test]
+fn mixed_mode_intent_does_not_admit_sgx_evidence() {
+    let mut sgx = tdx_evidence();
+    sgx.intent.attestation_mode = AttestationMode::ConfidentialVmRequired;
+    assert!(AttestationEvidenceV1::Dcap(sgx).encode_canonical().is_err());
+
+    for (network, evidence, admitted) in [
+        (
+            AttestationMode::ConfidentialVmRequired,
+            AttestationMode::SevSnpRequired,
+            true,
+        ),
+        (
+            AttestationMode::ConfidentialVmRequired,
+            AttestationMode::TdxRequired,
+            true,
+        ),
+        (
+            AttestationMode::ConfidentialVmRequired,
+            AttestationMode::DcapRequired,
+            false,
+        ),
+        (
+            AttestationMode::ConfidentialVmRequired,
+            AttestationMode::GramineDirectDev,
+            false,
+        ),
+        (
+            AttestationMode::ConfidentialVmRequired,
+            AttestationMode::ConfidentialVmRequired,
+            false,
+        ),
+        (
+            AttestationMode::TdxRequired,
+            AttestationMode::SevSnpRequired,
+            false,
+        ),
+        (
+            AttestationMode::SevSnpRequired,
+            AttestationMode::TdxRequired,
+            false,
+        ),
+        (
+            AttestationMode::TdxRequired,
+            AttestationMode::TdxRequired,
+            true,
+        ),
+        (
+            AttestationMode::DcapRequired,
+            AttestationMode::DcapRequired,
+            true,
+        ),
+    ] {
+        assert_eq!(network.admits_evidence(evidence), admitted);
+    }
+}

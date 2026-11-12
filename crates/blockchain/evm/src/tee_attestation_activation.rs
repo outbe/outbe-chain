@@ -397,7 +397,7 @@ fn validate_activation(
                     testnet: TESTNET_CHAIN_ID,
                 }
             }
-            AttestationMode::TdxRequired => {
+            AttestationMode::TdxRequired | AttestationMode::ConfidentialVmRequired => {
                 TeeAttestationActivationError::TdxRequiredChainIdDisallowed {
                     devnet: GRAMINE_DIRECT_DEV_CHAIN_ID,
                     testnet: TESTNET_CHAIN_ID,
@@ -551,6 +551,7 @@ mod tests {
             predecessor_policy_hash: B256::ZERO,
             attestation_mode: mode,
             intel_root_der_hash: B256::repeat_byte(0x11),
+            amd_root_der_hash: B256::ZERO,
             quote_version: 3,
             tee_type: 0,
             attestation_key_type: 2,

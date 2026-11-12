@@ -109,6 +109,10 @@ pub struct TeePolicyV1 {
     pub predecessor_policy_hash: B256,
     pub attestation_mode: AttestationMode,
     pub intel_root_der_hash: B256,
+    /// SHA-256 of the DER certificate of the AMD root key (ARK). Only the
+    /// mixed confidential VM mode has this field: it is zero in every other
+    /// mode and is then absent from the canonical encoding.
+    pub amd_root_der_hash: B256,
     pub quote_version: u16,
     pub tee_type: u32,
     pub attestation_key_type: u16,
@@ -169,6 +173,9 @@ impl TeePolicyV1 {
         out.extend_from_slice(self.predecessor_policy_hash.as_slice());
         out.push(self.attestation_mode as u8);
         out.extend_from_slice(self.intel_root_der_hash.as_slice());
+        if self.attestation_mode == AttestationMode::ConfidentialVmRequired {
+            out.extend_from_slice(self.amd_root_der_hash.as_slice());
+        }
         put_u16(&mut out, self.quote_version);
         put_u32(&mut out, self.tee_type);
         put_u16(&mut out, self.attestation_key_type);
@@ -206,6 +213,11 @@ impl TeePolicyV1 {
         let predecessor_policy_hash = B256::from(decoder.array::<32>()?);
         let attestation_mode = AttestationMode::decode(decoder.u8()?)?;
         let intel_root_der_hash = B256::from(decoder.array::<32>()?);
+        let amd_root_der_hash = if attestation_mode == AttestationMode::ConfidentialVmRequired {
+            B256::from(decoder.array::<32>()?)
+        } else {
+            B256::ZERO
+        };
         let quote_version = decoder.u16()?;
         let tee_type = decoder.u32()?;
         let attestation_key_type = decoder.u16()?;
@@ -244,6 +256,7 @@ impl TeePolicyV1 {
             predecessor_policy_hash,
             attestation_mode,
             intel_root_der_hash,
+            amd_root_der_hash,
             quote_version,
             tee_type,
             attestation_key_type,
@@ -264,6 +277,16 @@ impl TeePolicyV1 {
         Ok(value)
     }
 
+    /// SHA-256 of the AMD root certificate that this policy pins. The SEV-SNP
+    /// mode keeps it in the single root field. The mixed mode has its own
+    /// field.
+    pub const fn amd_root(&self) -> B256 {
+        match self.attestation_mode {
+            AttestationMode::ConfidentialVmRequired => self.amd_root_der_hash,
+            _ => self.intel_root_der_hash,
+        }
+    }
+
     pub fn policy_hash(&self) -> Result<B256, CodecError> {
         Ok(domain_hash(POLICY_DOMAIN_V1, &self.encode_canonical()?))
     }
@@ -282,6 +305,14 @@ impl TeePolicyV1 {
                 "TEE policy contains a zero commitment",
             ));
         }
+        // The mixed mode has two roots. Every other mode has one.
+        if (self.attestation_mode == AttestationMode::ConfidentialVmRequired)
+            == self.amd_root_der_hash.is_zero()
+        {
+            return Err(CodecError::NonCanonical(
+                "the AMD root belongs to the mixed confidential VM mode only",
+            ));
+        }
         self.validate_dcap_profile()?;
         if self.minimum_tcb_evaluation_data_number == 0 {
             return Err(CodecError::NonCanonical(
@@ -298,7 +329,10 @@ impl TeePolicyV1 {
         // PCK certificate chain: in a TDX quote it is nested in the QE report
         // certification data.
         let (quote_version, tee_type) = match self.attestation_mode {
-            AttestationMode::TdxRequired => (TDX_QUOTE_VERSION_V1, TDX_TEE_TYPE_V1),
+            // The mixed mode takes the TDX profile for its TDX quotes.
+            AttestationMode::TdxRequired | AttestationMode::ConfidentialVmRequired => {
+                (TDX_QUOTE_VERSION_V1, TDX_TEE_TYPE_V1)
+            }
             AttestationMode::DcapRequired
             | AttestationMode::GramineDirectDev
             | AttestationMode::SevSnpRequired => (3, 0),

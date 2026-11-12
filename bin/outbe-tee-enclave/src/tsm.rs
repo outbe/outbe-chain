@@ -225,8 +225,33 @@ impl TsmReportSource {
     }
 
     /// Platform that serves this interface.
+    ///
+    /// The kernel exposes the `provider` attribute in every request directory
+    /// and not in the interface directory. This function therefore creates a
+    /// request directory, reads the attribute and removes the directory. The
+    /// dstack simulator also has the attribute in the interface directory.
     pub fn provider(&self) -> EnclaveResult<TsmProvider> {
-        self.provider_of(&self.root)
+        if self.root.join("provider").exists() {
+            return self.provider_of(&self.root);
+        }
+        #[cfg(test)]
+        if let Some(entry) = &self.fixed_entry {
+            return self.provider_of(&self.root.join(entry));
+        }
+        static REQUEST: AtomicU64 = AtomicU64::new(0);
+        let entry = self.root.join(format!(
+            "{ENTRY_PREFIX}-provider-{}-{}",
+            std::process::id(),
+            REQUEST.fetch_add(1, Ordering::Relaxed)
+        ));
+        match fs::create_dir(&entry) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(TsmError::io("create", entry.display(), error).into()),
+        }
+        let result = self.provider_of(&entry);
+        let _ = fs::remove_dir(&entry);
+        result
     }
 
     fn provider_of(&self, entry: &Path) -> EnclaveResult<TsmProvider> {
@@ -324,6 +349,24 @@ mod tests {
             .unwrap();
 
         assert_eq!(report.auxiliary, b"table");
+    }
+
+    #[test]
+    fn provider_is_read_from_a_request_directory_of_a_real_kernel() {
+        // The kernel has `provider` in the request directory only.
+        let root = fake_interface("sev_guest\n", b"report", None);
+        assert!(!root.path().join("provider").exists());
+        let source = TsmReportSource::with_prepared_entry(root.path(), ENTRY);
+        assert_eq!(source.provider().unwrap(), TsmProvider::SevGuest);
+    }
+
+    #[test]
+    fn provider_lookup_creates_and_removes_its_request_directory() {
+        // Without a `provider` attribute anywhere the lookup fails and leaves
+        // no request directory behind.
+        let root = tempfile::tempdir().unwrap();
+        assert!(TsmReportSource::at(root.path()).provider().is_err());
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
     }
 
     #[test]

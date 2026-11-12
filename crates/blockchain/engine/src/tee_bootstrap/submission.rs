@@ -70,7 +70,8 @@ impl LocalRegistrationRequest<'_> {
                 AttestationMode::DcapRequired
                 | AttestationMode::GramineDirectDev
                 | AttestationMode::SevSnpRequired
-                | AttestationMode::TdxRequired,
+                | AttestationMode::TdxRequired
+                | AttestationMode::ConfidentialVmRequired,
                 RuntimeEnclaveClient::Production(_),
             ) => production_identity(self.production_manifest, &self.node_id, self.policy),
             (AttestationMode::GramineDirectDev, RuntimeEnclaveClient::Development(dev)) => {
@@ -82,7 +83,10 @@ impl LocalRegistrationRequest<'_> {
             (AttestationMode::SevSnpRequired, RuntimeEnclaveClient::Development(_)) => Err(
                 crate::errors::TeeBootstrapError::SevSnpRequiredCannotUseDevelopmentSession.into(),
             ),
-            (AttestationMode::TdxRequired, RuntimeEnclaveClient::Development(_)) => {
+            (
+                AttestationMode::TdxRequired | AttestationMode::ConfidentialVmRequired,
+                RuntimeEnclaveClient::Development(_),
+            ) => {
                 Err(crate::errors::TeeBootstrapError::TdxRequiredCannotUseDevelopmentSession.into())
             }
         }
@@ -280,59 +284,78 @@ fn create_evidence(
                 crate::errors::TeeBootstrapError::DcapRequiredCannotUseDevelopmentSession.into(),
             );
         }
-        (BootstrapEvidenceKind::SevSnp, RuntimeEnclaveClient::Production(production)) => {
-            // The service returns its attestation report in the quote field.
+        (
+            BootstrapEvidenceKind::SevSnp
+            | BootstrapEvidenceKind::Tdx
+            | BootstrapEvidenceKind::ConfidentialVm,
+            RuntimeEnclaveClient::Production(production),
+        ) => {
+            // The service in a confidential VM returns the evidence of its
+            // platform in the quote field: an SEV-SNP attestation report or a
+            // TDX quote. The node adds what the verifier needs.
+            use outbe_tee::tdx_report::{
+                confidential_vm_evidence_kind, ConfidentialVmEvidenceKind,
+            };
             let generated = production.generate_dcap_quote(&intent).map_err(|error| {
                 crate::errors::TeeBootstrapError::ProductionQuoteGenerationFailed(error.to_string())
             })?;
-            let certificates = outbe_tee::sev_snp_host::acquire_sev_snp_certificates_v1(
-                &generated.quote_body,
-                &policy.intel_root_der_hash,
-            )
-            .map_err(|error| {
-                crate::errors::TeeBootstrapError::SevSnpCertificateAcquisitionFailed(
-                    error.to_string(),
-                )
-            })?;
             let enclave_signature = generated.enclave_signature;
-            (
-                AttestationEvidenceV1::SevSnp(SevSnpEvidenceV1 {
-                    intent,
-                    report: generated.quote_body,
-                    ark_der: certificates.ark_der,
-                    ask_der: certificates.ask_der,
-                    vcek_der: certificates.vcek_der,
-                    transition_key_ready_proof: generated.transition_key_ready_proof,
-                }),
-                enclave_signature,
-            )
+            let evidence = match confidential_vm_evidence_kind(&generated.quote_body) {
+                Some(ConfidentialVmEvidenceKind::SevSnp) => {
+                    let certificates = outbe_tee::sev_snp_host::acquire_sev_snp_certificates_v1(
+                        &generated.quote_body,
+                        &policy.amd_root(),
+                    )
+                    .map_err(|error| {
+                        crate::errors::TeeBootstrapError::SevSnpCertificateAcquisitionFailed(
+                            error.to_string(),
+                        )
+                    })?;
+                    AttestationEvidenceV1::SevSnp(SevSnpEvidenceV1 {
+                        intent,
+                        report: generated.quote_body,
+                        ark_der: certificates.ark_der,
+                        ask_der: certificates.ask_der,
+                        vcek_der: certificates.vcek_der,
+                        transition_key_ready_proof: generated.transition_key_ready_proof,
+                    })
+                }
+                Some(ConfidentialVmEvidenceKind::Tdx) => {
+                    let assembled =
+                        outbe_tee::tdx_host::acquire_tdx_collateral_v1(&generated.quote_body)
+                            .map_err(|error| {
+                                crate::errors::TeeBootstrapError::TdxCollateralAcquisitionFailed(
+                                    error.to_string(),
+                                )
+                            })?;
+                    AttestationEvidenceV1::Tdx(DcapEvidenceV1 {
+                        intent,
+                        quote: assembled.quote,
+                        components: assembled.components,
+                        transition_key_ready_proof: generated.transition_key_ready_proof,
+                    })
+                }
+                None => {
+                    return Err(
+                        crate::errors::TeeBootstrapError::ProductionQuoteGenerationFailed(
+                            "the service evidence is neither an SEV-SNP report nor a TDX quote"
+                                .to_owned(),
+                        )
+                        .into(),
+                    );
+                }
+            };
+            (evidence, enclave_signature)
         }
         (BootstrapEvidenceKind::SevSnp, RuntimeEnclaveClient::Development(_)) => {
             return Err(
                 crate::errors::TeeBootstrapError::SevSnpRequiredCannotUseDevelopmentSession.into(),
             );
         }
-        (BootstrapEvidenceKind::Tdx, RuntimeEnclaveClient::Production(production)) => {
-            // The service returns its TDX quote in the quote field.
-            let generated = production.generate_dcap_quote(&intent).map_err(|error| {
-                crate::errors::TeeBootstrapError::ProductionQuoteGenerationFailed(error.to_string())
-            })?;
-            let assembled = outbe_tee::tdx_host::acquire_tdx_collateral_v1(&generated.quote_body)
-                .map_err(|error| {
-                crate::errors::TeeBootstrapError::TdxCollateralAcquisitionFailed(error.to_string())
-            })?;
-            let enclave_signature = generated.enclave_signature;
-            (
-                AttestationEvidenceV1::Tdx(DcapEvidenceV1 {
-                    intent,
-                    quote: assembled.quote,
-                    components: assembled.components,
-                    transition_key_ready_proof: generated.transition_key_ready_proof,
-                }),
-                enclave_signature,
-            )
-        }
-        (BootstrapEvidenceKind::Tdx, RuntimeEnclaveClient::Development(_)) => {
+        (
+            BootstrapEvidenceKind::Tdx | BootstrapEvidenceKind::ConfidentialVm,
+            RuntimeEnclaveClient::Development(_),
+        ) => {
             return Err(
                 crate::errors::TeeBootstrapError::TdxRequiredCannotUseDevelopmentSession.into(),
             );

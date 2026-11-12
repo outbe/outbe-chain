@@ -155,7 +155,11 @@ pub(super) fn evaluate_replay_and_lease(input: ReplayCheckInput<'_>) -> Result<P
         if try_complete_exact_replay(&input, binding)? {
             return Ok(PreflightOutcome::CompletedReplay);
         }
-        ensure_joinable_binding(Some(binding), input.finalized.schedule.finalized_timestamp)?;
+        ensure_joinable_binding(
+            Some(binding),
+            input.finalized.schedule.finalized_timestamp,
+            input.policy.attestation_mode,
+        )?;
     }
     let lease = input
         .valid_until

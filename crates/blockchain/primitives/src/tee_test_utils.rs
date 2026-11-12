@@ -52,6 +52,7 @@ pub fn gramine_direct_policy_v1(chain_id: u64, genesis_hash: B256) -> Result<Tee
         predecessor_policy_hash: B256::ZERO,
         attestation_mode: AttestationMode::GramineDirectDev,
         intel_root_der_hash: B256::repeat_byte(0x72),
+        amd_root_der_hash: B256::ZERO,
         quote_version: 3,
         tee_type: 0,
         attestation_key_type: 2,

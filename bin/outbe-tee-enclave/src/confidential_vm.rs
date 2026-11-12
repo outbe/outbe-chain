@@ -9,7 +9,7 @@
 //! |---|---|---|
 //! | `MRENCLAVE`, `MRSIGNER` | launch measurement, host data | `MRTD` with `RTMR0`-`RTMR2`, `MRCONFIGID` |
 //! | DCAP quote | attestation report from the kernel TSM interface | TDX quote from the same interface |
-//! | `EGETKEY` sealing key | key that the processor derives for this VM | key from the dstack guest agent |
+//! | `EGETKEY` sealing key | random key of this process | random key of this process |
 //!
 //! The process selects the backend one time at startup with `--platform
 //! sev-snp` or `--platform tdx`. The rest of the service reaches it through
@@ -19,44 +19,36 @@
 //! The Cargo feature `sev-snp` gates this module for both platforms: one VM
 //! image runs on both.
 //!
-//! Limits of this version, recorded as technical debt:
+//! The service keeps the offer key in the memory of the VM only. The sealing
+//! key is random for each process, so a state file does not open after a
+//! restart and a VM with another manifest cannot open it. A restarted VM
+//! receives the offer key again from the network.
 //!
-//! - The network descriptor comes from an unmeasured file. An operator can
-//!   supply a descriptor of a private chain.
-//! - SEV-SNP: the derived key depends on the launch measurement but not on the
-//!   host data. A VM that starts the same image with a different application
-//!   manifest receives the same key.
-//! - TDX: the sealing key comes from the dstack guest agent. Its protection is
-//!   that of the key provider of the VM. With the key provider `none` the
-//!   agent makes new keys at every boot, so sealed state does not survive a
-//!   restart and the key is not bound to the measurements.
+//! The application manifest of the VM is the trust root for two decisions:
+//! which network descriptor the service accepts, and which VMs receive the
+//! offer key. See [`crate::measured_manifest`].
 
 use std::path::Path;
 use std::sync::OnceLock;
 
 use outbe_primitives::tee_attestation_v1::{
     sev_snp_measurement_rule_value, tdx_image_rule_value, tdx_mrconfigid_rule_value,
-    NetworkBindingV1, TrustedNetworkDescriptorV1, SEV_SNP_RULE_PRODUCT_ID_V1, SEV_SNP_RULE_SVN_V1,
-    TDX_RULE_PRODUCT_ID_V1, TDX_RULE_SVN_V1,
+    AttestationMode, NetworkBindingV1, TrustedNetworkDescriptorV1, SEV_SNP_RULE_PRODUCT_ID_V1,
+    SEV_SNP_RULE_SVN_V1, TDX_RULE_PRODUCT_ID_V1, TDX_RULE_SVN_V1,
 };
 use outbe_tee::quote::ReportMeasurements;
 use outbe_tee::tdx_report::{parse_tdx_quote_measurements, tdx_quote_canonical_len};
 use zeroize::Zeroizing;
 
 use crate::errors::{ConfidentialVmError, EnclaveResult, TsmError};
+use crate::measured_manifest::{AdmittedIdentity, MeasuredManifest, MAX_MANIFEST_BYTES};
 use crate::seal::{self, KeyPolicy, SealHeader, UnsealedTributeOfferAndGroupSig};
 use crate::tsm::{self, SevSnpIdentity, TsmProvider, TsmReportSource};
 
-/// Prefix of a blob sealed with the derived key of an SEV-SNP VM.
-const SEV_SNP_SEAL_MAGIC: &[u8] = b"SNPS1";
-/// Prefix of a blob sealed with the key of a TDX VM.
-const TDX_SEAL_MAGIC: &[u8] = b"TDXS1";
+/// Prefix of a blob sealed with the process key of a confidential VM.
+const VM_SEAL_MAGIC: &[u8] = b"CVMS1";
 /// Offset of `REPORT_DATA` in an SEV-SNP attestation report.
 const REPORT_DATA_OFFSET: usize = 0x50;
-const SEALING_KEY_INFO: &[u8] = b"outbe/tee/seal-key/sev-snp/v1";
-const TDX_SEALING_KEY_INFO: &[u8] = b"outbe/tee/seal-key/tdx/v1";
-/// Key path that the service requests from the dstack guest agent.
-const TDX_GUEST_AGENT_KEY_PATH: &str = "outbe/tee/seal-key/v1";
 
 /// Confidential VM platform that `--platform` selects.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,27 +72,12 @@ enum Identity {
     Tdx(TdxIdentity),
 }
 
-impl Identity {
-    const fn key_policy(&self) -> KeyPolicy {
-        match self {
-            Self::SevSnp(_) => KeyPolicy::SevSnpDerived,
-            Self::Tdx(_) => KeyPolicy::TdxGuestAgent,
-        }
-    }
-
-    const fn seal_magic(&self) -> &'static [u8] {
-        match self {
-            Self::SevSnp(_) => SEV_SNP_SEAL_MAGIC,
-            Self::Tdx(_) => TDX_SEAL_MAGIC,
-        }
-    }
-}
-
 struct Backend {
     identity: Identity,
     sealing_key: Zeroizing<[u8; 32]>,
     source: TsmReportSource,
     network_descriptor: TrustedNetworkDescriptorV1,
+    manifest: MeasuredManifest,
 }
 
 static BACKEND: OnceLock<Backend> = OnceLock::new();
@@ -116,82 +93,118 @@ fn backend() -> EnclaveResult<&'static Backend> {
         .ok_or_else(|| ConfidentialVmError::NotConfigured.into())
 }
 
+/// Platform of the confidential VM that runs this process, as the kernel TSM
+/// report interface names it.
+pub fn detect_platform() -> EnclaveResult<ConfidentialPlatform> {
+    let source = TsmReportSource::system();
+    if !source.is_available() {
+        return Err(ConfidentialVmError::TsmUnavailable.into());
+    }
+    platform_of(source.provider()?)
+}
+
+fn platform_of(provider: TsmProvider) -> EnclaveResult<ConfidentialPlatform> {
+    match provider {
+        TsmProvider::SevGuest => Ok(ConfidentialPlatform::SevSnp),
+        TsmProvider::TdxGuest => Ok(ConfidentialPlatform::Tdx),
+        other => Err(TsmError::UnsupportedProvider(other.name().to_owned()).into()),
+    }
+}
+
 /// Select the confidential VM backend for this process.
 ///
-/// Reads the launch identity of the VM, obtains the sealing key and loads the
-/// network descriptor. Every step must succeed: the service does not start
-/// with a partial platform.
-pub fn configure(platform: ConfidentialPlatform, network_descriptor: &Path) -> EnclaveResult<()> {
+/// Reads the launch identity of the VM, the application manifest and the
+/// network descriptor. The launch identity must bind the manifest file, the
+/// manifest must list the image of this VM and name the network descriptor
+/// file. Every step must succeed: the service does not start with a partial
+/// platform.
+pub fn configure(
+    platform: ConfidentialPlatform,
+    network_descriptor: &Path,
+    app_manifest: &Path,
+) -> EnclaveResult<()> {
     let source = TsmReportSource::system();
     if !source.is_available() {
         return Err(ConfidentialVmError::TsmUnavailable.into());
     }
     let provider = source.provider()?;
     let report = source.report(&[0; tsm::REPORT_DATA_LEN])?;
-    let (identity, sealing_key) = match (platform, provider) {
+    let identity = match (platform, provider) {
         (ConfidentialPlatform::SevSnp, TsmProvider::SevGuest) => {
-            let identity = tsm::sev_snp_identity(&report.report)?;
-            let derived = derived_key()?;
-            (
-                Identity::SevSnp(identity),
-                sealing_key_from(&derived, &identity)?,
-            )
+            Identity::SevSnp(tsm::sev_snp_identity(&report.report)?)
         }
         (ConfidentialPlatform::Tdx, TsmProvider::TdxGuest) => {
-            let identity = tdx_identity(&report.report)?;
-            let agent_key = crate::dstack_guest_agent::get_key(TDX_GUEST_AGENT_KEY_PATH)?;
-            (
-                Identity::Tdx(identity),
-                tdx_sealing_key_from(&agent_key, &identity)?,
-            )
+            Identity::Tdx(tdx_identity(&report.report)?)
         }
         (_, other) => return Err(TsmError::UnsupportedProvider(other.name().to_owned()).into()),
     };
-    let bytes = std::fs::read(network_descriptor).map_err(|error| {
+    let manifest = read_bounded(app_manifest, MAX_MANIFEST_BYTES)
+        .map_err(|error| ConfidentialVmError::app_manifest(app_manifest.display(), error))?;
+    let descriptor_bytes = std::fs::read(network_descriptor).map_err(|error| {
         ConfidentialVmError::network_descriptor(network_descriptor.display(), error)
     })?;
-    let network_descriptor =
-        TrustedNetworkDescriptorV1::decode_canonical(&bytes).map_err(|error| {
+    let manifest = measured_manifest_of(&identity, &manifest, &descriptor_bytes)
+        .map_err(|error| ConfidentialVmError::app_manifest(app_manifest.display(), error))?;
+    let network_descriptor = TrustedNetworkDescriptorV1::decode_canonical(&descriptor_bytes)
+        .map_err(|error| {
             ConfidentialVmError::network_descriptor(network_descriptor.display(), error)
         })?;
     BACKEND
         .set(Backend {
             identity,
-            sealing_key,
+            sealing_key: process_sealing_key()?,
             source,
             network_descriptor,
+            manifest,
         })
         .map_err(|_| ConfidentialVmError::AlreadyConfigured.into())
 }
 
-/// Ask the processor for the key bound to the launch measurement of this VM.
-fn derived_key() -> EnclaveResult<Zeroizing<[u8; 32]>> {
-    use sev::firmware::guest::{DerivedKey, Firmware, GuestFieldSelect};
-
-    let mut fields = GuestFieldSelect::default();
-    fields.set_guest_policy(true);
-    fields.set_measurement(true);
-    // Root key 0 is the chip key. The request does not mix the firmware
-    // version, so a firmware update keeps the sealed state readable.
-    let request = DerivedKey::new(false, fields, 0, 0, 0, None);
-    let mut firmware = Firmware::open().map_err(ConfidentialVmError::derived_key)?;
-    firmware
-        .get_derived_key(None, request)
-        .map(Zeroizing::new)
-        .map_err(|error| ConfidentialVmError::derived_key(error).into())
+fn read_bounded(path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::Read as _;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(limit + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(std::io::Error::other(format!(
+            "the file is longer than {limit} bytes"
+        )));
+    }
+    Ok(bytes)
 }
 
-/// Expand the processor key into the sealing key of this service.
+/// Read the release rules of `manifest` and check them against this VM.
+fn measured_manifest_of(
+    identity: &Identity,
+    manifest: &[u8],
+    network_descriptor: &[u8],
+) -> Result<MeasuredManifest, crate::measured_manifest::MeasuredManifestError> {
+    let manifest = MeasuredManifest::parse(manifest)?;
+    match identity {
+        Identity::SevSnp(identity) => {
+            manifest.require_measured_by_host_data(&identity.host_data)?;
+        }
+        Identity::Tdx(identity) => {
+            manifest.require_measured_by_mr_config_id(&identity.mr_config_id)?;
+        }
+    }
+    manifest.require_own_identity(&admitted_identity_of(identity))?;
+    manifest.require_network_descriptor(network_descriptor)?;
+    Ok(manifest)
+}
+
+/// Make the sealing key of this process.
 ///
-/// The host data separates the keys of two deployments of one image. It is not
-/// a security boundary: the processor gives the same input key to both.
-fn sealing_key_from(
-    derived: &[u8; 32],
-    identity: &SevSnpIdentity,
-) -> EnclaveResult<Zeroizing<[u8; 32]>> {
-    crate::crypto::hkdf_sha256(&identity.host_data, derived, SEALING_KEY_INFO)
-        .map(Zeroizing::new)
-        .map_err(Into::into)
+/// The key does not leave the memory of the VM and does not exist after the
+/// process stops.
+fn process_sealing_key() -> EnclaveResult<Zeroizing<[u8; 32]>> {
+    use ring::rand::SecureRandom as _;
+    let mut key = Zeroizing::new([0_u8; 32]);
+    ring::rand::SystemRandom::new()
+        .fill(key.as_mut())
+        .map_err(|_| ConfidentialVmError::SealingKeyUnavailable)?;
+    Ok(key)
 }
 
 /// Read the identity of a trust domain from its quote.
@@ -212,24 +225,6 @@ fn tdx_identity(quote: &[u8]) -> EnclaveResult<TdxIdentity> {
         rtmrs: measurements.rtmrs,
         mr_config_id: measurements.mr_config_id,
     })
-}
-
-/// Expand the key of the dstack guest agent into the sealing key of this
-/// service.
-///
-/// The measurements separate the keys of two images and of two application
-/// manifests. They are not a security boundary by themselves: the protection
-/// of the input key is that of the key provider of the VM.
-fn tdx_sealing_key_from(
-    agent_key: &[u8],
-    identity: &TdxIdentity,
-) -> EnclaveResult<Zeroizing<[u8; 32]>> {
-    let mut salt = Vec::with_capacity(64);
-    salt.extend_from_slice(tdx_image_rule_value(&identity.mrtd, &identity.rtmrs).as_slice());
-    salt.extend_from_slice(tdx_mrconfigid_rule_value(&identity.mr_config_id).as_slice());
-    crate::crypto::hkdf_sha256(&salt, agent_key, TDX_SEALING_KEY_INFO)
-        .map(Zeroizing::new)
-        .map_err(Into::into)
 }
 
 /// Code identity of this VM in the fields of an SGX report.
@@ -262,6 +257,26 @@ fn measurements_of(identity: &Identity, report_data: &[u8; 64]) -> ReportMeasure
     }
 }
 
+/// Identity of a VM in the fields that the release rules compare.
+fn admitted_identity_of(identity: &Identity) -> AdmittedIdentity {
+    let measurements = measurements_of(identity, &[0; 64]);
+    AdmittedIdentity {
+        evidence_mode: match identity {
+            Identity::SevSnp(_) => AttestationMode::SevSnpRequired,
+            Identity::Tdx(_) => AttestationMode::TdxRequired,
+        },
+        mrenclave: measurements.mrenclave.into(),
+        mrsigner: measurements.mrsigner.into(),
+        isv_prod_id: measurements.isv_prod_id,
+        isv_svn: measurements.isv_svn,
+    }
+}
+
+/// Release rules of the measured manifest of this VM.
+pub(crate) fn release_rules() -> Option<&'static MeasuredManifest> {
+    BACKEND.get().map(|backend| &backend.manifest)
+}
+
 /// Platform of the configured backend.
 pub(crate) fn platform() -> Option<ConfidentialPlatform> {
     BACKEND.get().map(|backend| match backend.identity {
@@ -286,7 +301,7 @@ pub(crate) fn network_descriptor() -> Option<TrustedNetworkDescriptorV1> {
 pub(crate) fn sealing_key() -> Option<([u8; 32], KeyPolicy)> {
     BACKEND
         .get()
-        .map(|backend| (*backend.sealing_key, backend.identity.key_policy()))
+        .map(|backend| (*backend.sealing_key, KeyPolicy::ConfidentialVmMemory))
 }
 
 /// Request the evidence that binds `report_data`: an SEV-SNP attestation
@@ -353,51 +368,41 @@ pub(crate) fn seal(
     header: &SealHeader,
 ) -> EnclaveResult<Vec<u8>> {
     let backend = backend()?;
-    seal_with(
-        &backend.sealing_key,
-        &backend.identity,
-        secret,
-        extra,
-        binding,
-        header,
-    )
+    seal_with(&backend.sealing_key, secret, extra, binding, header)
 }
 
 fn seal_with(
     key: &[u8; 32],
-    identity: &Identity,
     secret: &[u8; 32],
     extra: &[u8],
     binding: NetworkBindingV1,
     header: &SealHeader,
 ) -> EnclaveResult<Vec<u8>> {
     let mut header = *header;
-    header.key_policy = identity.key_policy();
+    header.key_policy = KeyPolicy::ConfidentialVmMemory;
     let payload = seal::seal_tribute_offer_and_group_sig(secret, extra, key, binding, &header)?;
-    let magic = identity.seal_magic();
-    let mut blob = Vec::with_capacity(magic.len() + payload.len());
-    blob.extend_from_slice(magic);
+    let mut blob = Vec::with_capacity(VM_SEAL_MAGIC.len() + payload.len());
+    blob.extend_from_slice(VM_SEAL_MAGIC);
     blob.extend_from_slice(&payload);
     Ok(blob)
 }
 
-/// Open a blob that [`seal`] wrote in a VM with the same sealing key.
+/// Open a blob that [`seal`] wrote in this process.
 pub(crate) fn unseal(blob: &[u8], svn: u16) -> EnclaveResult<UnsealedTributeOfferAndGroupSig> {
     let backend = backend()?;
-    unseal_with(&backend.sealing_key, &backend.identity, blob, svn)
+    unseal_with(&backend.sealing_key, blob, svn)
 }
 
 fn unseal_with(
     key: &[u8; 32],
-    identity: &Identity,
     blob: &[u8],
     svn: u16,
 ) -> EnclaveResult<UnsealedTributeOfferAndGroupSig> {
     let payload = blob
-        .strip_prefix(identity.seal_magic())
-        .ok_or(ConfidentialVmError::NotSevSnpSeal)?;
+        .strip_prefix(VM_SEAL_MAGIC)
+        .ok_or(ConfidentialVmError::NotVmSeal)?;
     let value = seal::unseal_network_bound_payload(payload, key, svn)?;
-    if value.header.key_policy != identity.key_policy() {
+    if value.header.key_policy != KeyPolicy::ConfidentialVmMemory {
         return Err(ConfidentialVmError::SealPolicyMismatch.into());
     }
     Ok(value)
@@ -407,7 +412,6 @@ fn unseal_with(
 mod tests {
     use super::*;
     use crate::errors::EnclaveError;
-    use outbe_primitives::tee_attestation_v1::AttestationMode;
 
     const SIMULATOR_REPORT: &[u8] =
         include_bytes!("../../../crates/system/tee/tests/fixtures/sev_snp/simulator-report.bin");
@@ -566,84 +570,131 @@ mod tests {
     }
 
     #[test]
-    fn sealing_key_depends_on_the_processor_key_and_the_host_data() {
-        let identity = snp_identity();
-        let key = sealing_key_from(&[1; 32], &identity).unwrap();
-        assert_eq!(*key, *sealing_key_from(&[1; 32], &identity).unwrap());
-        assert_ne!(*key, *sealing_key_from(&[2; 32], &identity).unwrap());
-        let mut other_manifest = identity;
-        other_manifest.host_data[0] ^= 1;
-        assert_ne!(*key, *sealing_key_from(&[1; 32], &other_manifest).unwrap());
-    }
-
-    #[test]
-    fn tdx_sealing_key_depends_on_the_agent_key_and_the_measurements() {
-        let identity = tdx();
-        let key = tdx_sealing_key_from(&[1; 32], &identity).unwrap();
-        assert_eq!(*key, *tdx_sealing_key_from(&[1; 32], &identity).unwrap());
-        assert_ne!(*key, *tdx_sealing_key_from(&[2; 32], &identity).unwrap());
-
-        let mut other_image = identity;
-        other_image.rtmrs[2][0] ^= 1;
-        assert_ne!(*key, *tdx_sealing_key_from(&[1; 32], &other_image).unwrap());
-        let mut other_manifest = identity;
-        other_manifest.mr_config_id[0] ^= 1;
-        assert_ne!(
-            *key,
-            *tdx_sealing_key_from(&[1; 32], &other_manifest).unwrap()
-        );
-    }
-
-    #[test]
     fn seal_round_trip_and_rejections() {
-        let identity = identity();
-        let blob = seal_with(
-            &[4; 32],
-            &identity,
-            &[8; 32],
-            b"extra",
-            binding(),
-            &header(),
-        )
-        .unwrap();
-        assert!(blob.starts_with(SEV_SNP_SEAL_MAGIC));
-        let value = unseal_with(&[4; 32], &identity, &blob, SEV_SNP_RULE_SVN_V1).unwrap();
+        let blob = seal_with(&[4; 32], &[8; 32], b"extra", binding(), &header()).unwrap();
+        assert!(blob.starts_with(VM_SEAL_MAGIC));
+        let value = unseal_with(&[4; 32], &blob, SEV_SNP_RULE_SVN_V1).unwrap();
         assert_eq!(*value.tribute_offer_secret, [8; 32]);
         assert_eq!(value.group_sig.as_slice(), b"extra");
         assert_eq!(value.network_binding, binding());
-        assert_eq!(value.header.key_policy, KeyPolicy::SevSnpDerived);
+        assert_eq!(value.header.key_policy, KeyPolicy::ConfidentialVmMemory);
 
-        // A VM with another launch measurement has another key.
-        assert!(unseal_with(&[5; 32], &identity, &blob, SEV_SNP_RULE_SVN_V1).is_err());
+        // Another process has another key.
+        assert!(unseal_with(&[5; 32], &blob, SEV_SNP_RULE_SVN_V1).is_err());
 
         // A blob of another backend is not accepted.
-        for foreign in [b"TSGX1".as_slice(), b"LE2E1", b"TDXS1", b""] {
+        for foreign in [b"TSGX1".as_slice(), b"LE2E1", b"SNPS1", b"TDXS1", b""] {
             assert!(matches!(
-                unseal_with(&[4; 32], &identity, foreign, SEV_SNP_RULE_SVN_V1),
-                Err(EnclaveError::ConfidentialVm(
-                    ConfidentialVmError::NotSevSnpSeal
-                ))
+                unseal_with(&[4; 32], foreign, SEV_SNP_RULE_SVN_V1),
+                Err(EnclaveError::ConfidentialVm(ConfidentialVmError::NotVmSeal))
             ));
         }
 
         let mut corrupted = blob;
         let last = corrupted.len() - 1;
         corrupted[last] ^= 1;
-        assert!(unseal_with(&[4; 32], &identity, &corrupted, SEV_SNP_RULE_SVN_V1).is_err());
+        assert!(unseal_with(&[4; 32], &corrupted, SEV_SNP_RULE_SVN_V1).is_err());
     }
 
     #[test]
-    fn tdx_seal_round_trip_and_platform_separation() {
-        let tdx = Identity::Tdx(tdx());
-        let blob = seal_with(&[4; 32], &tdx, &[8; 32], b"extra", binding(), &header()).unwrap();
-        assert!(blob.starts_with(TDX_SEAL_MAGIC));
-        let value = unseal_with(&[4; 32], &tdx, &blob, TDX_RULE_SVN_V1).unwrap();
-        assert_eq!(*value.tribute_offer_secret, [8; 32]);
-        assert_eq!(value.header.key_policy, KeyPolicy::TdxGuestAgent);
+    fn process_sealing_keys_differ() {
+        assert_ne!(
+            *process_sealing_key().unwrap(),
+            *process_sealing_key().unwrap()
+        );
+    }
 
-        // The SEV-SNP backend does not open a TDX blob with the same key.
-        assert!(unseal_with(&[4; 32], &identity(), &blob, TDX_RULE_SVN_V1).is_err());
-        assert!(unseal_with(&[5; 32], &tdx, &blob, TDX_RULE_SVN_V1).is_err());
+    fn manifest_for(identities: &[Identity], descriptor: &[u8]) -> Vec<u8> {
+        let mut snp = Vec::new();
+        let mut tdx = Vec::new();
+        for identity in identities {
+            match identity {
+                Identity::SevSnp(identity) => {
+                    snp.push(format!("\"{}\"", hex::encode(identity.measurement)));
+                }
+                Identity::Tdx(identity) => tdx.push(format!(
+                    r#"{{"mrtd":"{}","rtmr0":"{}","rtmr1":"{}","rtmr2":"{}"}}"#,
+                    hex::encode(identity.mrtd),
+                    hex::encode(identity.rtmrs[0]),
+                    hex::encode(identity.rtmrs[1]),
+                    hex::encode(identity.rtmrs[2]),
+                )),
+            }
+        }
+        format!(
+            r#"{{"name":"outbe-validator","outbe_release":{{"network_descriptor_sha256":"{}","sev_snp_measurements":[{}],"tdx_images":[{}]}}}}"#,
+            hex::encode(ring::digest::digest(&ring::digest::SHA256, descriptor)),
+            snp.join(","),
+            tdx.join(","),
+        )
+        .into_bytes()
+    }
+
+    /// The identities of the fixtures with the launch fields that bind
+    /// `manifest`, as dstack sets them.
+    fn launched_with(manifest: &[u8]) -> (Identity, Identity) {
+        let hash: [u8; 32] = ring::digest::digest(&ring::digest::SHA256, manifest)
+            .as_ref()
+            .try_into()
+            .unwrap();
+        let mut snp = snp_identity();
+        snp.host_data = crate::measured_manifest::snp_host_data_of_manifest(&hash);
+        let mut tdx = tdx();
+        tdx.mr_config_id = crate::measured_manifest::tdx_mr_config_id_of_manifest(&hash);
+        (Identity::SevSnp(snp), Identity::Tdx(tdx))
+    }
+
+    #[test]
+    fn the_manifest_must_be_measured_list_this_image_and_name_the_descriptor() {
+        let descriptor = b"descriptor".as_slice();
+        let manifest = manifest_for(&[identity(), Identity::Tdx(tdx())], descriptor);
+        let (snp, tdx_vm) = launched_with(&manifest);
+
+        let rules = measured_manifest_of(&snp, &manifest, descriptor).unwrap();
+        // A service on one platform admits the listed image of the other.
+        assert!(rules.admits(&admitted_identity_of(&tdx_vm)));
+        assert!(rules.admits(&admitted_identity_of(&snp)));
+        measured_manifest_of(&tdx_vm, &manifest, descriptor).unwrap();
+
+        use crate::measured_manifest::MeasuredManifestError;
+        // The fixture identities carry the launch fields of another manifest.
+        assert_eq!(
+            measured_manifest_of(&identity(), &manifest, descriptor),
+            Err(MeasuredManifestError::NotMeasured)
+        );
+        assert_eq!(
+            measured_manifest_of(&Identity::Tdx(tdx()), &manifest, descriptor),
+            Err(MeasuredManifestError::NotMeasured)
+        );
+        assert_eq!(
+            measured_manifest_of(&snp, &manifest, b"another descriptor"),
+            Err(MeasuredManifestError::NetworkDescriptorMismatch)
+        );
+
+        // A manifest that lists only the other platform does not start here.
+        let tdx_only = manifest_for(&[Identity::Tdx(tdx())], descriptor);
+        let (snp, _) = launched_with(&tdx_only);
+        assert_eq!(
+            measured_manifest_of(&snp, &tdx_only, descriptor),
+            Err(MeasuredManifestError::OwnImageNotListed)
+        );
+
+        // A VM with the listed image and another manifest is not admitted.
+        let (_, tdx_other_manifest) = launched_with(&tdx_only);
+        assert!(!rules.admits(&admitted_identity_of(&tdx_other_manifest)));
+    }
+
+    #[test]
+    fn platform_follows_the_tsm_provider() {
+        assert_eq!(
+            platform_of(TsmProvider::SevGuest).unwrap(),
+            ConfidentialPlatform::SevSnp
+        );
+        assert_eq!(
+            platform_of(TsmProvider::TdxGuest).unwrap(),
+            ConfidentialPlatform::Tdx
+        );
+        assert!(platform_of(TsmProvider::Other("arm_cca_guest".to_owned())).is_err());
     }
 
     #[test]
@@ -652,6 +703,7 @@ mod tests {
         assert!(platform().is_none());
         assert!(sealing_key().is_none());
         assert!(network_descriptor().is_none());
+        assert!(release_rules().is_none());
         assert!(matches!(
             measurements(&[0; 64]),
             Err(EnclaveError::ConfidentialVm(

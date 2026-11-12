@@ -45,9 +45,12 @@ pub enum ConfidentialVmError {
     /// The kernel has no TSM report interface.
     #[error("the kernel TSM report interface is absent; this is not a confidential VM")]
     TsmUnavailable,
-    /// The processor did not return a derived key.
-    #[error("SEV-SNP derived key request failed: {0}")]
-    DerivedKey(String),
+    /// The system random source did not return a sealing key.
+    #[error("the system random source did not return a sealing key")]
+    SealingKeyUnavailable,
+    /// The application manifest is unreadable or does not admit this VM.
+    #[error("application manifest {path}: {detail}")]
+    AppManifest { path: String, detail: String },
     /// The network descriptor file is unreadable or not canonical.
     #[error("network descriptor {path}: {detail}")]
     NetworkDescriptor { path: String, detail: String },
@@ -57,35 +60,33 @@ pub enum ConfidentialVmError {
     /// The report does not bind the requested report data.
     #[error("the report does not bind the requested report data")]
     ReportDataMismatch,
-    /// The blob was not sealed by the backend of this platform.
-    #[error("the blob is not a sealed blob of this confidential VM platform")]
-    NotSevSnpSeal,
+    /// The blob was not sealed by the confidential VM backend.
+    #[error("the blob is not a sealed blob of a confidential VM")]
+    NotVmSeal,
     /// The sealed header names another key policy.
     #[error("the confidential VM sealed blob names another key policy")]
     SealPolicyMismatch,
     /// `--platform` was passed without `--network-descriptor`.
     #[error("--platform sev-snp and --platform tdx require --network-descriptor <file>")]
     MissingNetworkDescriptorArgument,
+    /// `--platform` was passed without `--app-manifest`.
+    #[error("--platform sev-snp and --platform tdx require --app-manifest <file>")]
+    MissingAppManifestArgument,
     /// The trust domain runs in debug mode.
     #[error("the trust domain runs in debug mode; the host can read its memory")]
     DebugTrustDomain,
-    /// The dstack guest agent did not return a key.
-    #[error("dstack guest agent key request failed: {0}")]
-    GuestAgentKey(String),
     /// `--platform` names a platform that this binary does not support.
     #[error("unsupported --platform value: {0}")]
     UnsupportedPlatform(String),
 }
 
 impl ConfidentialVmError {
-    /// Wrap a guest agent key request failure.
-    pub fn guest_agent_key(err: impl fmt::Display) -> Self {
-        Self::GuestAgentKey(err.to_string())
-    }
-
-    /// Wrap a derived key request failure.
-    pub fn derived_key(err: impl fmt::Display) -> Self {
-        Self::DerivedKey(err.to_string())
+    /// Wrap an application manifest failure with its path.
+    pub fn app_manifest(path: impl fmt::Display, err: impl fmt::Display) -> Self {
+        Self::AppManifest {
+            path: path.to_string(),
+            detail: err.to_string(),
+        }
     }
 
     /// Wrap a network descriptor failure with its path.

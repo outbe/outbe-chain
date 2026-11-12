@@ -156,8 +156,12 @@ pub(in super::super) fn select_join_transport(
         (AttestationMode::DcapRequired, true)
         | (AttestationMode::GramineDirectDev, true)
         | (AttestationMode::SevSnpRequired, true)
-        | (AttestationMode::TdxRequired, true) => Ok(JoinTransport::AuthorizedNodeHost),
-        (AttestationMode::TdxRequired, false) => Err(TeeJoinError::TdxRequiresNodeDataDir.into()),
+        | (AttestationMode::TdxRequired | AttestationMode::ConfidentialVmRequired, true) => {
+            Ok(JoinTransport::AuthorizedNodeHost)
+        }
+        (AttestationMode::TdxRequired | AttestationMode::ConfidentialVmRequired, false) => {
+            Err(TeeJoinError::TdxRequiresNodeDataDir.into())
+        }
         (AttestationMode::SevSnpRequired, false) => {
             Err(TeeJoinError::SevSnpRequiresNodeDataDir.into())
         }
@@ -166,11 +170,18 @@ pub(in super::super) fn select_join_transport(
     }
 }
 
+/// A node with a live lease joins again only in a confidential VM mode: its
+/// service can lose its state on a VM restart and then needs the offer key
+/// again. The registry requires a fresh enclave for such a registration.
 pub(in super::super) fn ensure_joinable_binding(
     binding: Option<&outbe_operator::tee::RenewalBindingV1>,
     finalized_timestamp: u64,
+    attestation_mode: AttestationMode,
 ) -> Result<()> {
-    if binding.is_some_and(|binding| finalized_timestamp < binding.valid_until) {
+    let live_rejoin_allowed = attestation_mode.is_confidential_vm();
+    if !live_rejoin_allowed
+        && binding.is_some_and(|binding| finalized_timestamp < binding.valid_until)
+    {
         return Err(TeeJoinError::FinalizedLeaseLive.into());
     }
     Ok(())

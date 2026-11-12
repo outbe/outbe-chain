@@ -37,7 +37,8 @@ impl TeeSessionMode {
                 Self::PolicyDefault,
                 AttestationMode::DcapRequired
                 | AttestationMode::SevSnpRequired
-                | AttestationMode::TdxRequired,
+                | AttestationMode::TdxRequired
+                | AttestationMode::ConfidentialVmRequired,
             )
             | (Self::ProductionNodeHost, _) => Ok(ResolvedTeeSession::ProductionNodeHost),
             (Self::PolicyDefault | Self::Development, AttestationMode::GramineDirectDev) => {
@@ -49,9 +50,10 @@ impl TeeSessionMode {
             (Self::Development, AttestationMode::SevSnpRequired) => {
                 Err(crate::errors::ArgsError::SevSnpRequiredForbidsDevSession)
             }
-            (Self::Development, AttestationMode::TdxRequired) => {
-                Err(crate::errors::ArgsError::TdxRequiredForbidsDevSession)
-            }
+            (
+                Self::Development,
+                AttestationMode::TdxRequired | AttestationMode::ConfidentialVmRequired,
+            ) => Err(crate::errors::ArgsError::TdxRequiredForbidsDevSession),
         }
     }
 }

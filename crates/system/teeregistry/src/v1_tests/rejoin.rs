@@ -398,3 +398,144 @@ fn expired_binding_rejects_replace_and_transition_without_state_change() {
         });
     });
 }
+
+/// The one-hour test policy in the SEV-SNP mode. A confidential VM policy
+/// keeps the SGX profile constants.
+fn confidential_vm_policy(genesis_hash: B256) -> TeePolicyV1 {
+    let mut policy = fixed_lease_policy(genesis_hash);
+    policy.attestation_mode = AttestationMode::SevSnpRequired;
+    policy
+}
+
+/// A registration of `validator` at `LIVE_REJOIN_TIME`, while its initial
+/// lease is live, with the enclave `enclave` and the intent `rejoin`.
+const LIVE_REJOIN_TIME: u64 = NOW + 100;
+
+fn submit_live_rejoin(
+    registry: &mut TeeRegistry<'_>,
+    validator: &LifecycleValidator,
+    rejoin: &RegistrationIntentV1,
+    enclave: &ed25519_dalek::SigningKey,
+) -> Result<V1RegistrationOutcome, PrecompileError> {
+    registry.register_enclave_and_bind_after_verifier_for_test_as(
+        validator.node_signer.address(),
+        validator
+            .sign_with_enclave(rejoin, enclave)
+            .with_verdict(up_to_date_verdict_until(NOW + 20_000)),
+        validator.association(rejoin).input(),
+    )
+}
+
+#[test]
+fn live_rejoin_with_a_fresh_enclave_is_admitted_in_a_confidential_vm_mode() {
+    let validator = LifecycleValidator::new(
+        confidential_vm_policy(B256::repeat_byte(0x61)),
+        0x62,
+        0x63,
+        EnclaveBindingSeeds::new(0x64, 0x65),
+    );
+    let fresh_enclave = ed25519_dalek::SigningKey::from_bytes(&[0x66; 32]);
+    let rejoin = new_enclave_rejoin_intent(
+        &validator.initial,
+        &fresh_enclave,
+        EnclaveBindingSeeds::new(0x67, 0x68),
+        LIVE_REJOIN_TIME + 3_600,
+    );
+    assert!(LIVE_REJOIN_TIME < validator.initial.requested_valid_until);
+    let signed_initial = validator.signed_initial();
+    validator.run_with_binding_at(
+        LIVE_REJOIN_TIME,
+        signed_initial.with_verdict(up_to_date_verdict_until(NOW + 20_000)),
+        |_storage, mut registry| {
+            let node_hash = validator.initial.node_id.node_id_hash().unwrap();
+            assert_created_then_idempotent(
+                &mut registry,
+                |registry| submit_live_rejoin(registry, &validator, &rejoin, &fresh_enclave),
+                |registry| {
+                    let stored = validator.stored_binding(registry);
+                    assert_eq!(stored.enclave_id, rejoin.enclave_id);
+                    assert_next_binding_versions(&stored, &rejoin, &validator.initial);
+                    assert_eq!(stored.valid_until, LIVE_REJOIN_TIME + 3_600);
+                    assert_reverse_owner(registry, &rejoin, node_hash);
+                    // The previous enclave is retired.
+                    assert!(registry
+                        .v1_revoked_enclave
+                        .read(&validator.initial.enclave_id)
+                        .unwrap());
+                    assert!(!registry
+                        .v1_revoked_enclave
+                        .read(&rejoin.enclave_id)
+                        .unwrap());
+                },
+            );
+        },
+    );
+}
+
+#[test]
+fn live_rejoin_needs_a_fresh_enclave_and_a_fresh_binding() {
+    let validator = LifecycleValidator::new(
+        confidential_vm_policy(B256::repeat_byte(0x69)),
+        0x6a,
+        0x6b,
+        EnclaveBindingSeeds::new(0x6c, 0x6d),
+    );
+    // The same enclave with a new binding id: the lease must be renewed.
+    let same_enclave = next_binding_intent(
+        &validator.initial,
+        AttestationOperationV1::RegisterEnclave,
+        0x6e,
+        LIVE_REJOIN_TIME + 3_600,
+    );
+    let signed_initial = validator.signed_initial();
+    validator.run_with_binding_at(
+        LIVE_REJOIN_TIME,
+        signed_initial.with_verdict(up_to_date_verdict_until(NOW + 20_000)),
+        |_storage, mut registry| {
+            validator.assert_binding_unchanged_by(&mut registry, |registry| {
+                assert_revert_bytes(
+                    submit_live_rejoin(
+                        registry,
+                        &validator,
+                        &same_enclave,
+                        &validator.enclave_signer,
+                    ),
+                    ITeeRegistryV1::LiveBindingMustRenew {}
+                        .abi_encode()
+                        .as_slice(),
+                );
+            });
+        },
+    );
+}
+
+#[test]
+fn live_rejoin_stays_forbidden_in_the_sgx_mode() {
+    let validator = LifecycleValidator::new(
+        fixed_lease_policy(B256::repeat_byte(0x6f)),
+        0x70,
+        0x71,
+        EnclaveBindingSeeds::new(0x72, 0x73),
+    );
+    let fresh_enclave = ed25519_dalek::SigningKey::from_bytes(&[0x74; 32]);
+    let rejoin = new_enclave_rejoin_intent(
+        &validator.initial,
+        &fresh_enclave,
+        EnclaveBindingSeeds::new(0x75, 0x76),
+        LIVE_REJOIN_TIME + 3_600,
+    );
+    let signed_initial = validator.signed_initial();
+    validator.run_with_binding_at(
+        LIVE_REJOIN_TIME,
+        signed_initial.with_verdict(up_to_date_verdict_until(NOW + 20_000)),
+        |_storage, mut registry| {
+            validator.assert_binding_unchanged_by(&mut registry, |registry| {
+                assert!(submit_live_rejoin(registry, &validator, &rejoin, &fresh_enclave).is_err());
+            });
+            assert!(!registry
+                .v1_revoked_enclave
+                .read(&validator.initial.enclave_id)
+                .unwrap());
+        },
+    );
+}

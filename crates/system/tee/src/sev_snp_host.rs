@@ -87,7 +87,8 @@ pub enum SevSnpHostError {
 
 /// Collect the certificates for `report` and check that they verify it.
 ///
-/// `pinned_ark_sha256` is `intel_root_der_hash` of the attestation policy.
+/// `pinned_ark_sha256` is the AMD root of the attestation policy
+/// (`TeePolicyV1::amd_root`).
 pub fn acquire_sev_snp_certificates_v1(
     report: &[u8],
     pinned_ark_sha256: &B256,

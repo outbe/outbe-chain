@@ -162,6 +162,7 @@ mod tests {
             predecessor_policy_hash: B256::ZERO,
             attestation_mode: outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired,
             intel_root_der_hash: B256::ZERO,
+            amd_root_der_hash: B256::ZERO,
             quote_version: 3,
             tee_type: 0,
             attestation_key_type: 2,

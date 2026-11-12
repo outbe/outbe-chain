@@ -52,7 +52,7 @@ impl DcapEvidenceV1 {
     /// Encode the payload of SGX DCAP evidence, or of TDX evidence when
     /// `mode` is [`AttestationMode::TdxRequired`]. The layout is the same.
     pub(super) fn encode_payload(&self, mode: AttestationMode) -> Result<Vec<u8>, CodecError> {
-        if self.intent.attestation_mode != mode {
+        if !self.intent.attestation_mode.admits_evidence(mode) {
             return Err(CodecError::NonCanonical(
                 "DCAP evidence intent mode mismatch",
             ));
@@ -128,7 +128,7 @@ impl DcapEvidenceV1 {
         let intent_len =
             decoder.declared_len("registration intent", MAX_EVIDENCE_CALL_FRAMING_BYTES)?;
         let intent = RegistrationIntentV1::decode_canonical(decoder.take(intent_len)?)?;
-        if intent.attestation_mode != mode {
+        if !intent.attestation_mode.admits_evidence(mode) {
             return Err(CodecError::NonCanonical(
                 "DCAP evidence intent mode mismatch",
             ));
@@ -351,7 +351,11 @@ impl SevSnpEvidenceV1 {
     }
 
     fn validate(&self) -> Result<(), CodecError> {
-        if self.intent.attestation_mode != AttestationMode::SevSnpRequired {
+        if !self
+            .intent
+            .attestation_mode
+            .admits_evidence(AttestationMode::SevSnpRequired)
+        {
             return Err(CodecError::NonCanonical(
                 "SEV-SNP evidence intent mode mismatch",
             ));
@@ -540,6 +544,13 @@ impl AttestationEvidenceV1 {
                 payload,
                 AttestationMode::TdxRequired,
             )?),
+            // The frame names the platform of the evidence. The mixed mode is
+            // a mode of a network and of an intent, not a kind of evidence.
+            AttestationMode::ConfidentialVmRequired => {
+                return Err(CodecError::NonCanonical(
+                    "attestation evidence must name a platform",
+                ))
+            }
         };
         decoder.finish()?;
         Ok(value)

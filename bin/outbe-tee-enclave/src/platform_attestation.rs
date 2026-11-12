@@ -185,16 +185,11 @@ pub fn probe_tsm_to_stderr() {
                 {
                     eprintln!("sev-snp {line}");
                 }
-                eprintln!(
-                    "sev-snp {}",
-                    crate::sev_snp_probe::describe_sev_snp_derived_key()
-                );
             }
             if evidence.platform == AttestationPlatform::Tdx {
                 for line in describe_tdx_quote(&evidence.evidence) {
                     eprintln!("tdx {line}");
                 }
-                eprintln!("tdx {}", describe_tdx_sealing_key());
             }
         }
         Err(error) => eprintln!("tsm evidence: UNAVAILABLE ({error})"),
@@ -251,30 +246,6 @@ fn describe_tdx_quote(quote: &[u8]) -> Vec<String> {
         Err(_) => lines.push("quote: signature data does not end the quote".to_owned()),
     }
     lines
-}
-
-/// Whether the dstack guest agent returns a key, with a fingerprint that is
-/// equal for equal keys. The fingerprint does not reveal the key.
-fn describe_tdx_sealing_key() -> String {
-    #[cfg(feature = "sev-snp")]
-    {
-        match crate::dstack_guest_agent::get_key("outbe/tee/probe/v1") {
-            Ok(key) => {
-                match crate::crypto::hkdf_sha256(b"", &key, b"outbe/tee/probe/fingerprint") {
-                    Ok(fingerprint) => format!(
-                        "guest agent key: AVAILABLE fingerprint={}",
-                        hex::encode(&fingerprint[..8])
-                    ),
-                    Err(error) => format!("guest agent key: UNAVAILABLE ({error})"),
-                }
-            }
-            Err(error) => format!("guest agent key: UNAVAILABLE ({error})"),
-        }
-    }
-    #[cfg(not(feature = "sev-snp"))]
-    {
-        "guest agent key: not probed (binary built without the confidential VM backend)".to_owned()
-    }
 }
 
 #[cfg(test)]

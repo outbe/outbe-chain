@@ -108,7 +108,9 @@ impl TeeRegistry<'_> {
         );
         if matches!(
             policy.attestation_mode,
-            AttestationMode::DcapRequired | AttestationMode::TdxRequired
+            AttestationMode::DcapRequired
+                | AttestationMode::TdxRequired
+                | AttestationMode::ConfidentialVmRequired
         ) && platform_requires_advisory_policy
             && policy.accepted_platform_tcb_statuses
                 != PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded

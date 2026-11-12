@@ -77,7 +77,10 @@ pub fn verify_tdx_evidence(
     policy: &TeePolicyV1,
     block_timestamp: u64,
 ) -> Result<DcapVerdictV1, DcapRejectCodeV1> {
-    if policy.attestation_mode != AttestationMode::TdxRequired {
+    if !policy
+        .attestation_mode
+        .admits_evidence(AttestationMode::TdxRequired)
+    {
         return Err(DcapRejectCodeV1::PolicyBindingMismatch);
     }
     validate_evidence_context(
@@ -223,6 +226,17 @@ fn validate_quote_binding(
     Ok(measurements)
 }
 
+/// SHA-256 hash of the DER certificate "Intel SGX Root CA", the root of the
+/// SGX and TDX attestation key hierarchy.
+///
+/// The attestation policy also names a root, but the policy is data that a
+/// verifier receives. The verifier accepts this root only, whatever the
+/// policy names.
+pub const INTEL_SGX_ROOT_CA_DER_SHA256: [u8; 32] = [
+    0x44, 0xa0, 0x19, 0x6b, 0x2b, 0x99, 0xf8, 0x89, 0xb8, 0xe1, 0x49, 0xe9, 0x5b, 0x80, 0x7a, 0x35,
+    0x0e, 0x74, 0x24, 0x96, 0x43, 0x99, 0xe8, 0x85, 0xa7, 0xcb, 0xb8, 0xcc, 0xfa, 0xb6, 0x74, 0xd3,
+];
+
 fn validate_canonical_collateral(
     evidence: &DcapEvidenceV1,
     policy: &TeePolicyV1,
@@ -233,7 +247,10 @@ fn validate_canonical_collateral(
     validate_canonical_der_crl(component(evidence, 3)?)?;
     validate_canonical_certificate_chain(component(evidence, 5)?, 2)?;
     validate_canonical_certificate_chain(component(evidence, 7)?, 2)?;
-    if pck_root_der_hash(component(evidence, 0)?)? != policy.intel_root_der_hash {
+    let root_der_hash = pck_root_der_hash(component(evidence, 0)?)?;
+    if root_der_hash != policy.intel_root_der_hash
+        || root_der_hash.0 != INTEL_SGX_ROOT_CA_DER_SHA256
+    {
         return Err(DcapRejectCodeV1::IntelRootMismatch);
     }
     Ok(())

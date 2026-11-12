@@ -152,7 +152,9 @@ struct ReplayIdentity {
 fn replay_policy(mode: AttestationMode) -> TeePolicyV1 {
     let genesis_hash = B256::repeat_byte(0x82);
     let profile = match mode {
-        AttestationMode::SevSnpRequired | AttestationMode::TdxRequired => {
+        AttestationMode::SevSnpRequired
+        | AttestationMode::TdxRequired
+        | AttestationMode::ConfidentialVmRequired => {
             unreachable!("this fixture covers the DCAP and development modes")
         }
         AttestationMode::DcapRequired => {
@@ -215,7 +217,9 @@ fn replay_source(
     let valid_until = 2_000_000;
     let requested_valid_until = valid_until + policy.maximum_lease;
     let source_collateral_valid_until = match mode {
-        AttestationMode::SevSnpRequired | AttestationMode::TdxRequired => {
+        AttestationMode::SevSnpRequired
+        | AttestationMode::TdxRequired
+        | AttestationMode::ConfidentialVmRequired => {
             unreachable!("this fixture covers the DCAP and development modes")
         }
         AttestationMode::DcapRequired => {
@@ -294,7 +298,9 @@ fn replay_evidence(
     enclave_signature: [u8; 64],
 ) -> (Vec<u8>, B256) {
     let evidence_value = match mode {
-        AttestationMode::SevSnpRequired | AttestationMode::TdxRequired => {
+        AttestationMode::SevSnpRequired
+        | AttestationMode::TdxRequired
+        | AttestationMode::ConfidentialVmRequired => {
             unreachable!("this fixture covers the DCAP and development modes")
         }
         AttestationMode::DcapRequired => AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
@@ -319,7 +325,9 @@ fn replay_evidence(
     };
     let evidence = evidence_value.encode_canonical().unwrap();
     let evidence_hash = match mode {
-        AttestationMode::SevSnpRequired | AttestationMode::TdxRequired => {
+        AttestationMode::SevSnpRequired
+        | AttestationMode::TdxRequired
+        | AttestationMode::ConfidentialVmRequired => {
             unreachable!("this fixture covers the DCAP and development modes")
         }
         AttestationMode::DcapRequired => dcap_evidence_hash_v1(&evidence).unwrap(),
@@ -393,7 +401,9 @@ fn replay_attempt(identity: &ReplayIdentity) -> (RelaySignerV1, PreparedRenewalV
         requested_valid_until,
         collateral_valid_until: source_collateral_valid_until,
         collateral_margin: match mode {
-            AttestationMode::SevSnpRequired | AttestationMode::TdxRequired => {
+            AttestationMode::SevSnpRequired
+            | AttestationMode::TdxRequired
+            | AttestationMode::ConfidentialVmRequired => {
                 unreachable!("this fixture covers the DCAP and development modes")
             }
             AttestationMode::DcapRequired => policy.collateral_margin,

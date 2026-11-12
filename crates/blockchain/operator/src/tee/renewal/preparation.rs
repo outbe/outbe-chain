@@ -162,7 +162,9 @@ pub(super) fn generate_renewal_evidence(
         AttestationMode::DcapRequired => generate_dcap_renewal(enclave, intent, policy, window),
         AttestationMode::GramineDirectDev => generate_direct_renewal(enclave, intent),
         // Renewal is outside the first scope of the confidential VM modes.
-        AttestationMode::SevSnpRequired | AttestationMode::TdxRequired => {
+        AttestationMode::SevSnpRequired
+        | AttestationMode::TdxRequired
+        | AttestationMode::ConfidentialVmRequired => {
             Err(RenewalError::SevSnpRenewalUnsupported.into())
         }
     }

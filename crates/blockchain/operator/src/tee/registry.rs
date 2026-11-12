@@ -479,7 +479,9 @@ mod tests {
     fn registry_rpc(binding_exists: bool, mode: AttestationMode) -> RegistryRpc {
         let finalized_hash = B256::repeat_byte(0x70);
         let profile = match mode {
-            AttestationMode::SevSnpRequired | AttestationMode::TdxRequired => {
+            AttestationMode::SevSnpRequired
+            | AttestationMode::TdxRequired
+            | AttestationMode::ConfidentialVmRequired => {
                 unreachable!("this fixture covers the DCAP and development modes")
             }
             AttestationMode::DcapRequired => {

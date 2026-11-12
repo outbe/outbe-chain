@@ -10,6 +10,8 @@ pub(super) enum BootstrapEvidenceKind {
     GramineDirectDev,
     SevSnp,
     Tdx,
+    /// The mixed mode: the platform comes from the evidence of the service.
+    ConfidentialVm,
 }
 
 pub(super) fn bootstrap_evidence_kind(
@@ -27,7 +29,10 @@ pub(super) fn bootstrap_evidence_kind(
             Err(crate::errors::TeeBootstrapError::SevSnpRequiredCannotUseDevelopmentSession.into())
         }
         (AttestationMode::TdxRequired, true) => Ok(BootstrapEvidenceKind::Tdx),
-        (AttestationMode::TdxRequired, false) => {
+        (AttestationMode::ConfidentialVmRequired, true) => {
+            Ok(BootstrapEvidenceKind::ConfidentialVm)
+        }
+        (AttestationMode::TdxRequired | AttestationMode::ConfidentialVmRequired, false) => {
             Err(crate::errors::TeeBootstrapError::TdxRequiredCannotUseDevelopmentSession.into())
         }
     }
@@ -45,7 +50,10 @@ struct SubmissionValidation<'a> {
 impl SubmissionValidation<'_> {
     fn committee_registration_matches(&self) -> bool {
         self.committee.contains(&self.validator)
-            && self.submission.evidence.mode() == self.policy.attestation_mode
+            && self
+                .policy
+                .attestation_mode
+                .admits_evidence(self.submission.evidence.mode())
             && self.intent.operation == AttestationOperationV1::RegisterEnclave
             && self.intent.attestation_mode == self.policy.attestation_mode
     }

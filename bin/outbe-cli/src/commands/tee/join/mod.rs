@@ -147,6 +147,7 @@ pub(super) async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> R
         ensure_joinable_binding(
             finalized.binding.as_ref(),
             finalized.schedule.finalized_timestamp,
+            policy.attestation_mode,
         )?;
     }
 
@@ -494,42 +495,47 @@ fn generate_fresh_evidence(
                 signature,
             ))
         }
-        AttestationMode::SevSnpRequired => {
-            // The service returns its attestation report in the quote field.
+        AttestationMode::SevSnpRequired
+        | AttestationMode::TdxRequired
+        | AttestationMode::ConfidentialVmRequired => {
+            // The service in a confidential VM returns the evidence of its
+            // platform in the quote field: an SEV-SNP attestation report or a
+            // TDX quote.
+            use outbe_tee::tdx_report::{
+                confidential_vm_evidence_kind, ConfidentialVmEvidenceKind,
+            };
             let generated = enclave.generate_dcap_quote(intent)?;
-            let certificates = outbe_tee::sev_snp_host::acquire_sev_snp_certificates_v1(
-                &generated.quote_body,
-                &policy.intel_root_der_hash,
-            )
-            .map_err(TeeJoinError::AcquireSevSnpCertificates)?;
             let signature = generated.enclave_signature;
-            Ok((
-                AttestationEvidenceV1::SevSnp(SevSnpEvidenceV1 {
-                    intent: intent.clone(),
-                    report: generated.quote_body,
-                    ark_der: certificates.ark_der,
-                    ask_der: certificates.ask_der,
-                    vcek_der: certificates.vcek_der,
-                    transition_key_ready_proof: generated.transition_key_ready_proof,
-                }),
-                signature,
-            ))
-        }
-        AttestationMode::TdxRequired => {
-            // The service returns its TDX quote in the quote field.
-            let generated = enclave.generate_dcap_quote(intent)?;
-            let assembled = outbe_tee::tdx_host::acquire_tdx_collateral_v1(&generated.quote_body)
-                .map_err(TeeJoinError::AcquireTdxCollateral)?;
-            let signature = generated.enclave_signature;
-            Ok((
-                AttestationEvidenceV1::Tdx(DcapEvidenceV1 {
-                    intent: intent.clone(),
-                    quote: assembled.quote,
-                    components: assembled.components,
-                    transition_key_ready_proof: generated.transition_key_ready_proof,
-                }),
-                signature,
-            ))
+            let evidence = match confidential_vm_evidence_kind(&generated.quote_body) {
+                Some(ConfidentialVmEvidenceKind::SevSnp) => {
+                    let certificates = outbe_tee::sev_snp_host::acquire_sev_snp_certificates_v1(
+                        &generated.quote_body,
+                        &policy.amd_root(),
+                    )
+                    .map_err(TeeJoinError::AcquireSevSnpCertificates)?;
+                    AttestationEvidenceV1::SevSnp(SevSnpEvidenceV1 {
+                        intent: intent.clone(),
+                        report: generated.quote_body,
+                        ark_der: certificates.ark_der,
+                        ask_der: certificates.ask_der,
+                        vcek_der: certificates.vcek_der,
+                        transition_key_ready_proof: generated.transition_key_ready_proof,
+                    })
+                }
+                Some(ConfidentialVmEvidenceKind::Tdx) => {
+                    let assembled =
+                        outbe_tee::tdx_host::acquire_tdx_collateral_v1(&generated.quote_body)
+                            .map_err(TeeJoinError::AcquireTdxCollateral)?;
+                    AttestationEvidenceV1::Tdx(DcapEvidenceV1 {
+                        intent: intent.clone(),
+                        quote: assembled.quote,
+                        components: assembled.components,
+                        transition_key_ready_proof: generated.transition_key_ready_proof,
+                    })
+                }
+                None => return Err(TeeJoinError::UnknownConfidentialVmEvidence.into()),
+            };
+            Ok((evidence, signature))
         }
     }
 }

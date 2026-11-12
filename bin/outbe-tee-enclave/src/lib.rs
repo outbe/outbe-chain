@@ -26,8 +26,6 @@ pub mod confidential_vm;
 pub mod crypto;
 pub mod dcap_verifier;
 pub mod dkg;
-#[cfg(feature = "sev-snp")]
-pub mod dstack_guest_agent;
 pub mod encrypted_tribute_offer;
 pub mod errors;
 pub mod fidelity;
@@ -41,6 +39,10 @@ pub mod keys;
 #[cfg(feature = "local-e2e")]
 pub mod local_e2e;
 pub mod lysis;
+// The backend that reads the manifest needs the `sev-snp` feature. The rule
+// that uses it compiles in every build and has no caller without the feature.
+#[cfg_attr(not(feature = "sev-snp"), allow(dead_code))]
+pub mod measured_manifest;
 pub mod nod_encryption;
 pub mod nod_mine;
 mod onboarding_upload;

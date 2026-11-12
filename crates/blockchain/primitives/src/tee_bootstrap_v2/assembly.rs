@@ -56,7 +56,8 @@ fn order_submissions(
     let mut ordered = submissions
         .into_iter()
         .map(|submission| {
-            if submission.evidence.mode() != mode {
+            // The mixed mode admits the evidence of both platforms.
+            if !mode.admits_evidence(submission.evidence.mode()) {
                 return Err(CodecError::NonCanonical(
                     "TEE bootstrap submission mode does not match policy",
                 ));

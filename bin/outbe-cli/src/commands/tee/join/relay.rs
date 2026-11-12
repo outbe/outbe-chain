@@ -81,7 +81,13 @@ pub(in super::super) async fn await_finalized_join_target(
         let view = read_finalized_registry_view_v1(&CliFinalityRpc(client), selector).await?;
         match view.binding.as_ref() {
             Some(binding) if finalized_binding_matches_intent(binding, intent)? => return Ok(view),
-            Some(binding) if view.schedule.finalized_timestamp < binding.valid_until => {
+            // A rejoin under a live lease replaces the previous binding. Until
+            // the registration is final the registry still shows that binding:
+            // it has a lower binding version and is not a competitor.
+            Some(binding)
+                if view.schedule.finalized_timestamp < binding.valid_until
+                    && binding.binding_version >= intent.binding_version =>
+            {
                 return Err(TeeJoinError::CompetingLiveBinding.into());
             }
             _ => {}

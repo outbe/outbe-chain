@@ -169,6 +169,18 @@ impl TeeBootstrapV2 {
                 .checked_mul(8)
                 .ok_or(CodecError::ArithmeticOverflow)?,
             AttestationMode::GramineDirectDev | AttestationMode::SevSnpRequired => 0,
+            AttestationMode::ConfidentialVmRequired => self
+                .participants
+                .iter()
+                .filter(|participant| {
+                    matches!(
+                        participant.evidence,
+                        TeeBootstrapParticipantEvidenceV2::Dcap { .. }
+                    )
+                })
+                .count()
+                .checked_mul(8)
+                .ok_or(CodecError::ArithmeticOverflow)?,
         };
         system_schedule.tee_bootstrap_precharge(
             tee_registry_schedule,

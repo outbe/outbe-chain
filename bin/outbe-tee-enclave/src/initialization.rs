@@ -249,7 +249,8 @@ impl InitializationState {
         match intent.attestation_mode {
             AttestationMode::DcapRequired
             | AttestationMode::SevSnpRequired
-            | AttestationMode::TdxRequired => {}
+            | AttestationMode::TdxRequired
+            | AttestationMode::ConfidentialVmRequired => {}
             AttestationMode::GramineDirectDev => {
                 return Err(InitError::QuoteRequiresDcapRequired.into());
             }
@@ -470,6 +471,9 @@ impl InitializationState {
             ) | (
                 crate::gramine::AttestationType::Tdx,
                 AttestationMode::TdxRequired
+            ) | (
+                crate::gramine::AttestationType::SevSnp | crate::gramine::AttestationType::Tdx,
+                AttestationMode::ConfidentialVmRequired
             )
         );
         if !runtime_matches {

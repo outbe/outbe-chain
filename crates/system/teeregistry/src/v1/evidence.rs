@@ -202,7 +202,7 @@ impl TeeRegistry<'_> {
         if expected_operation == AttestationOperationV1::TransitionEnclaveMeasurement {
             self.validate_transition_key_ready_proof_v1(&decoded)?;
         }
-        if decoded.mode() != policy.attestation_mode {
+        if !policy.attestation_mode.admits_evidence(decoded.mode()) {
             return Err(TeeRegistryError::AttestationEvidenceModeMismatch.into());
         }
 

@@ -6,6 +6,7 @@ impl TeeRegistry<'_> {
         &self,
         caller: Address,
         binding: &ValidatorNodeBindingV1,
+        attestation_mode: AttestationMode,
     ) -> Result<RegistrationCallerContextV1> {
         if caller != Address::from(binding.validator) {
             return Err(TeeRegistryError::RegistrationCallerAssociationMismatch.into());
@@ -25,7 +26,10 @@ impl TeeRegistry<'_> {
                 TeeRegistryError::RegistrationCallerNotAssociatedWithExistingNodeHost.into(),
             );
         }
-        let expired_rejoin = self.storage.now_secs()? >= current.valid_until;
+        // A rejoin replaces the binding of an associated node: after the lease
+        // expired, or in a confidential VM mode while the lease is live.
+        let expired_rejoin = self.storage.now_secs()? >= current.valid_until
+            || mutation::live_rejoin_allowed_v1(attestation_mode);
         if expired_rejoin
             && ValidatorSet::new(self.storage.clone())
                 .get_validator(caller)?
@@ -210,7 +214,8 @@ impl TeeRegistry<'_> {
         let binding = association.binding;
 
         Self::require_initial_binding_evidence_target_v1(evidence, binding)?;
-        let caller_context = self.require_registration_caller_v1(caller, binding)?;
+        let caller_context =
+            self.require_registration_caller_v1(caller, binding, policy.attestation_mode)?;
         self.register_and_associate_v1(association, caller_context, |registry| {
             let registration = registry.apply_evidence_mutation_with_active_policy_v1(
                 AttestationOperationV1::RegisterEnclave,
@@ -245,7 +250,8 @@ impl TeeRegistry<'_> {
         let binding = association.binding;
 
         Self::require_initial_binding_evidence_target_v1(evidence, binding)?;
-        let caller_context = self.require_registration_caller_v1(caller, binding)?;
+        let caller_context =
+            self.require_registration_caller_v1(caller, binding, policy.attestation_mode)?;
         self.register_and_associate_v1(association, caller_context, |registry| {
             registry.apply_evidence_mutation_with_onboarding_v1(
                 AttestationOperationV1::RegisterEnclave,

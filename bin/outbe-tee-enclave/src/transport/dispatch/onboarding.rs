@@ -73,6 +73,14 @@ fn complete_upgrade_key_export(
     initialization: &InitializationState,
 ) -> EnclaveResponse {
     let result = (|| -> EnclaveResult<Vec<u8>> {
+        // The export gives the key to another code identity on the word of
+        // the chain alone: this service sees no hardware evidence of the
+        // recipient. A service in a confidential VM gives the key only to the
+        // images that its measured manifest lists, so it has no export.
+        #[cfg(feature = "sev-snp")]
+        if crate::confidential_vm::configured() {
+            return Err(TransportDispatchError::UpgradeExportNotInConfidentialVm.into());
+        }
         let context =
             outbe_tee::dcap_protocol::DcapOnboardingArtifactV1::decode_canonical(&request.artifact)
                 .map_err(|_| TransportDispatchError::InvalidUpgradeExportContext)?

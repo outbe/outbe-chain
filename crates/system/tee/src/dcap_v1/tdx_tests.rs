@@ -68,6 +68,7 @@ fn policy_for(quote: &[u8]) -> TeePolicyV1 {
         predecessor_policy_hash: B256::ZERO,
         attestation_mode: AttestationMode::TdxRequired,
         intel_root_der_hash: B256::from_slice(&hex::decode(INTEL_SGX_ROOT_CA_DER_SHA256).unwrap()),
+        amd_root_der_hash: B256::ZERO,
         quote_version: TDX_QUOTE_VERSION_V1,
         tee_type: TDX_TEE_TYPE_V1,
         attestation_key_type: 2,
@@ -334,6 +335,23 @@ fn sgx_quote_is_not_a_tdx_quote() {
         verify_tdx_evidence(&evidence, &policy, FIXTURE_TIME),
         Err(DcapRejectCodeV1::QuoteMalformed | DcapRejectCodeV1::QuoteProfileMismatch)
     ));
+}
+
+#[test]
+fn real_tdx_quote_is_accepted_under_a_mixed_mode_policy() {
+    let quote = quote();
+    let mut policy = policy_for(&quote);
+    policy.attestation_mode = AttestationMode::ConfidentialVmRequired;
+    policy.amd_root_der_hash = B256::repeat_byte(0x69);
+    let mut evidence = evidence_for(quote, &policy);
+    evidence.intent.attestation_mode = AttestationMode::ConfidentialVmRequired;
+    evidence.intent.policy_hash = policy.policy_hash().unwrap();
+
+    assert!(verify_without_report_data_binding(&evidence, &policy, FIXTURE_TIME).is_ok());
+    assert_eq!(
+        verify_tdx_evidence(&evidence, &policy, FIXTURE_TIME),
+        Err(DcapRejectCodeV1::ReportDataMismatch)
+    );
 }
 
 #[test]

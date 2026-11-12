@@ -238,6 +238,9 @@ pub(crate) enum TeeJoinError {
     /// The AMD certificates for the SEV-SNP report could not be collected.
     #[error("collect AMD certificates for the SEV-SNP report: {0}")]
     AcquireSevSnpCertificates(outbe_tee::sev_snp_host::SevSnpHostError),
+    /// The service returned evidence of an unknown platform.
+    #[error("the service evidence is neither an SEV-SNP report nor a TDX quote")]
+    UnknownConfidentialVmEvidence,
     /// `TdxRequired` mode requires `--node-data-dir`.
     #[error("TdxRequired tee join requires --node-data-dir")]
     TdxRequiresNodeDataDir,
