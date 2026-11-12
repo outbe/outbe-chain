@@ -6,10 +6,15 @@
 //! `LICENSE-APACHE`). Changes: read only, objects come from the store on each
 //! request, no `metadata_latest.json` (the relayer does not read it).
 //!
+//! The server reads only the store. The checkpoint JSON gets the hook from
+//! `Meta::Hook`, so stored checkpoints stay readable while discovery or the
+//! Outbe RPC is down. A domain without a stored hook does not exist.
+//!
 //! Only the keys of the allow-list exist. A request path never maps to a file.
 
 use std::sync::Arc;
 
+use alloy_primitives::Address;
 use axum::extract::{Path, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -18,13 +23,15 @@ use axum::Router;
 use eyre::Result;
 use tracing::{info, warn};
 
-use crate::health::ValidatorHealth;
+use crate::errors::ValidatorError;
+use crate::signer::stored_checkpoint;
+use crate::store::{Meta, Store};
 
 #[derive(Clone)]
 pub struct Bucket {
     /// Lowercase `0x` address of the signer key.
     pub name: String,
-    pub health: Arc<ValidatorHealth>,
+    pub store: Arc<Store>,
 }
 
 pub fn router(bucket: Bucket) -> Router {
@@ -84,25 +91,30 @@ async fn object(
 
 /// The object body, or `None` when the key does not exist.
 fn read(bucket: &Bucket, domain: &str, key: &str) -> Result<Option<Vec<u8>>> {
-    let Some(signer) = canonical_u32(domain).and_then(|d| bucket.health.signer(d)) else {
+    let store = &bucket.store;
+    let Some(domain) = canonical_u32(domain) else {
         return Ok(None);
     };
+    let Some(hook) = store.meta(domain, Meta::Hook)? else {
+        return Ok(None);
+    };
+    let hook =
+        Address::try_from(hook.as_slice()).map_err(|_| ValidatorError::CorruptRecord("hook"))?;
     if key == "checkpoint_latest_index.json" {
-        return Ok(signer
-            .latest_index()?
+        return Ok(store
+            .latest_checkpoint_index(domain)?
             .map(|index| serde_json::to_vec(&index))
             .transpose()?);
     }
     if key == "announcement.json" {
-        return signer.announcement();
+        return store.meta(domain, Meta::Announcement);
     }
     let index = key
         .strip_prefix("checkpoint_")
         .and_then(|rest| rest.strip_suffix("_with_id.json"))
         .and_then(canonical_u32);
     match index {
-        Some(index) => Ok(signer
-            .signed_checkpoint(index)?
+        Some(index) => Ok(stored_checkpoint(store, domain, hook, index)?
             .map(|signed| serde_json::to_vec(&signed))
             .transpose()?),
         None => Ok(None),
@@ -135,28 +147,17 @@ fn xml_escape(s: &str) -> String {
 mod tests {
     use super::*;
     use crate::merkle::IncrementalMerkle;
-    use crate::signer::DomainSigner;
-    use crate::store::{Leaf, Meta, Store};
-    use crate::sync::Origin;
-    use alloy_primitives::{Address, B256};
+    use crate::store::Leaf;
+    use alloy_primitives::B256;
     use alloy_signer_local::PrivateKeySigner;
 
     const BUCKET: &str = "0x14dc79964da2c08b23698b3d3cc7ca32193d9955";
 
-    /// A server with domain 5: three leaves, none signed.
+    /// A server with domain 5: three leaves, none signed. No signer runs
+    /// and there is no discovery: the hook comes from `Meta::Hook`.
     async fn serve() -> (String, Arc<Store>, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let store = Arc::new(Store::open(dir.path()).unwrap());
-        let health = Arc::new(ValidatorHealth::new(store.clone()));
-        let origin = Origin {
-            domain: 5,
-            hook: Address::repeat_byte(0x11),
-            validator_announce: Address::ZERO,
-            mailbox: Address::ZERO,
-            start_block: 1,
-        };
-        let key = PrivateKeySigner::from_bytes(&B256::repeat_byte(7)).unwrap();
-        let signer = Arc::new(DomainSigner::new(origin, store.clone(), key).unwrap());
         let leaves: Vec<(u32, Leaf)> = (0..3u8)
             .map(|i| {
                 let leaf = Leaf {
@@ -167,7 +168,11 @@ mod tests {
             })
             .collect();
         store.commit_batch(5, &leaves, &[], 10).unwrap();
-        health.set_running(signer);
+        // Domain 6 has the same leaves but no stored hook.
+        store.commit_batch(6, &leaves, &[], 10).unwrap();
+        store
+            .set_meta(5, Meta::Hook, Address::repeat_byte(0x11).as_slice())
+            .unwrap();
         store
             .set_meta(5, Meta::Announcement, b"{\n  \"value\": 1\n}")
             .unwrap();
@@ -176,7 +181,7 @@ mod tests {
         let url = format!("http://{}", listener.local_addr().unwrap());
         let app = router(Bucket {
             name: BUCKET.into(),
-            health,
+            store: store.clone(),
         });
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         (url, store, dir)
@@ -234,6 +239,7 @@ mod tests {
             })
             .collect();
         store.put_checkpoints(5, &rows).unwrap();
+        store.put_checkpoints(6, &rows).unwrap();
 
         let (status, ct, len, body) = get(&format!("{base}/checkpoint_latest_index.json")).await;
         assert_eq!(
@@ -263,6 +269,13 @@ mod tests {
             expected.len().to_string().as_str()
         );
         assert_eq!(head.text().await.unwrap(), "");
+
+        // A domain without a stored hook does not exist.
+        for key in ["checkpoint_latest_index.json", "checkpoint_1_with_id.json"] {
+            let (status, _, _, body) = get(&format!("{url}/{BUCKET}/6/{key}")).await;
+            assert_eq!(status, 404, "{key}");
+            assert!(body.contains("<Code>NoSuchKey</Code>"), "{key}: {body}");
+        }
 
         // Keys outside the allow-list or in a non-canonical form do not exist.
         for key in [

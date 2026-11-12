@@ -94,8 +94,8 @@ impl ValidatorHealth {
         );
     }
 
-    /// Sets the error of a domain. A started domain keeps its signer, so its
-    /// stored checkpoints stay readable.
+    /// Sets the error of a domain. A started domain keeps its signer, so
+    /// `/status` still shows its reorg flag.
     pub fn set_error(&self, domain: u32, error: String) {
         self.state().domains.entry(domain).or_default().error = Some(error);
     }
@@ -106,6 +106,7 @@ impl ValidatorHealth {
     }
 
     /// The signer of a started domain, also after a stop.
+    #[cfg(test)]
     pub fn signer(&self, domain: u32) -> Option<Arc<DomainSigner>> {
         self.state().domains.get(&domain)?.signer.clone()
     }

@@ -60,6 +60,15 @@ pub enum ValidatorError {
         signed: alloy_primitives::B256,
         derived: alloy_primitives::B256,
     },
+    /// The stored history of a domain was signed for another hook.
+    #[error(
+        "domain {domain}: the local history belongs to hook {stored}, but hookByDomain is {current}. To recover, stop the daemon and delete the database directory: every domain syncs and signs again"
+    )]
+    HookMismatch {
+        domain: u32,
+        stored: alloy_primitives::Address,
+        current: alloy_primitives::Address,
+    },
     /// The domain halted after a reorg. It signs nothing more.
     #[error("domain {0} is halted after a reorg")]
     Halted(u32),

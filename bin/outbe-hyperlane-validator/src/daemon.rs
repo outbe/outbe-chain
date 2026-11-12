@@ -38,9 +38,6 @@ const ANNOUNCE_MAX_DELAY: Duration = Duration::from_secs(900);
 pub struct Daemon {
     pub origins: Vec<OriginConfig>,
     pub poll_interval: Duration,
-    /// The Outbe domain (chain id). Announcements there use `gasless`.
-    pub outbe_domain: u32,
-    pub gasless: bool,
     pub key: PrivateKeySigner,
     pub validator: Address,
     pub store: Arc<Store>,
@@ -118,7 +115,25 @@ impl Daemon {
             .iter()
             .find(|c| c.domain == d.domain)
             .ok_or(ValidatorError::MissingOrigin(d.domain))?;
+        // The stored history is signed for one hook. Another hook must not
+        // continue it.
+        let stored_hook = self.store.meta(d.domain, Meta::Hook)?;
+        if let Some(stored) = &stored_hook {
+            if stored.as_slice() != d.hook.as_slice() {
+                return Err(ValidatorError::HookMismatch {
+                    domain: d.domain,
+                    stored: Address::try_from(stored.as_slice())
+                        .map_err(|_| ValidatorError::CorruptRecord("hook"))?,
+                    current: d.hook,
+                }
+                .into());
+            }
+        }
         let origin = check_origin(d, config).await?;
+        if stored_hook.is_none() {
+            self.store
+                .set_meta(d.domain, Meta::Hook, d.hook.as_slice())?;
+        }
         let signer = Arc::new(DomainSigner::new(
             origin.clone(),
             self.store.clone(),
@@ -137,7 +152,6 @@ impl Daemon {
             self.key.clone(),
             self.store.clone(),
             format!("{}/{}", self.location, d.domain),
-            self.gasless && d.domain == self.outbe_domain,
         ));
         self.health.set_running(signer);
         info!(domain = d.domain, hook = %d.hook, "domain started");
@@ -150,14 +164,14 @@ impl Daemon {
 
 /// Signs the announcement, stores it for `announcement.json`, and sends
 /// `announce` on the origin chain until `getAnnouncedStorageLocations`
-/// contains `location`. The key `H` pays the gas on that chain.
+/// contains `location`. The key `H` pays the gas on that chain, also on
+/// Outbe: the ZeroFee policy waives the fee only for `submitCheckpoint`.
 async fn announce(
     origin: Origin,
     rpc_urls: Vec<String>,
     key: PrivateKeySigner,
     store: Arc<Store>,
     location: String,
-    gasless: bool,
 ) {
     let domain = origin.domain;
     let value = Announcement {
@@ -179,7 +193,7 @@ async fn announce(
     let wallet = EthereumWallet::from(key.clone());
     let mut delay = ANNOUNCE_MIN_DELAY;
     loop {
-        match try_announce(&origin, &rpc_urls, &signed, &wallet, gasless).await {
+        match try_announce(&origin, &rpc_urls, &signed, &wallet).await {
             Ok(true) => return info!(domain, location, "storage location is announced"),
             Ok(false) => {}
             Err(error) => warn!(
@@ -201,7 +215,6 @@ async fn try_announce(
     rpc_urls: &[String],
     signed: &Signed<Announcement>,
     wallet: &EthereumWallet,
-    gasless: bool,
 ) -> Result<bool> {
     let mut last_error = None;
     for url in rpc_urls {
@@ -224,7 +237,7 @@ async fn try_announce(
             rpc_endpoint: url,
             wallet,
             chain_id: provider.get_chain_id().await?,
-            gasless,
+            gasless: false,
         };
         let tx_hash = send_tx(&sender, origin.validator_announce, &calldata).await?;
         info!(domain = origin.domain, %tx_hash, "announce transaction sent");
@@ -343,8 +356,6 @@ mod tests {
         let daemon = Daemon {
             origins: vec![origin],
             poll_interval: Duration::from_secs(1),
-            outbe_domain: 5,
-            gasless: true,
             key: PrivateKeySigner::random(),
             validator: Address::repeat_byte(0x77),
             store: store.clone(),
@@ -374,6 +385,10 @@ mod tests {
             .unwrap()
             .contains("[[origin]]"));
         assert_eq!(errors["5"]["error"], Value::Null);
+        assert_eq!(
+            store.meta(5, Meta::Hook).unwrap().as_deref(),
+            Some(hook1.as_slice())
+        );
 
         // The announcement is signed and stored for `announcement.json`.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
@@ -428,5 +443,50 @@ mod tests {
         assert!(domains.is_empty());
         assert!(health.signer(5).is_none());
         assert_eq!(status("domains"), json!({}));
+    }
+
+    #[tokio::test]
+    async fn stored_history_of_another_hook_blocks_the_start() {
+        let state: Controller = Arc::new(Mutex::new((
+            Address::repeat_byte(1),
+            vec![5],
+            Address::repeat_byte(0x22),
+        )));
+        let url = chain(state, "s3+http://h:9000/0xb/5".into()).await;
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(dir.path()).unwrap());
+        let old_hook = Address::repeat_byte(0x11);
+        store.set_meta(5, Meta::Hook, old_hook.as_slice()).unwrap();
+        let health = Arc::new(ValidatorHealth::new(store.clone()));
+        let origin: OriginConfig = toml::from_str(&format!(
+            "domain = 5\nrpc_urls = [\"{url}\"]\nreorg_period = 0\ninterval_secs = 1"
+        ))
+        .unwrap();
+        let daemon = Daemon {
+            origins: vec![origin],
+            poll_interval: Duration::from_secs(1),
+            key: PrivateKeySigner::random(),
+            validator: Address::repeat_byte(0x77),
+            store: store.clone(),
+            health: health.clone(),
+            location: "s3+http://h:9000/0xb".into(),
+        };
+        let mut domains = HashMap::new();
+        daemon
+            .poll(&connect(&url).unwrap(), &mut domains)
+            .await
+            .unwrap();
+
+        assert!(domains.is_empty());
+        assert!(health.running().is_empty());
+        let status = health.status_json();
+        let error = status["domains"]["5"]["error"].as_str().unwrap();
+        assert!(error.contains("belongs to hook"), "{error}");
+        assert!(error.contains("delete the database directory"), "{error}");
+        assert_eq!(status["healthy"], false);
+        assert_eq!(
+            store.meta(5, Meta::Hook).unwrap().as_deref(),
+            Some(old_hook.as_slice())
+        );
     }
 }

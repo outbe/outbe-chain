@@ -75,28 +75,13 @@ impl DomainSigner {
         self.origin.domain
     }
 
-    /// The signed announcement JSON of this domain.
-    pub fn announcement(&self) -> Result<Option<Vec<u8>>> {
-        self.store.meta(self.domain(), Meta::Announcement)
-    }
-
     pub fn latest_index(&self) -> Result<Option<u32>> {
         self.store.latest_checkpoint_index(self.domain())
     }
 
     /// The stored signed checkpoint at `index`, in the upstream JSON type.
     pub fn signed_checkpoint(&self, index: u32) -> Result<Option<Signed<CheckpointWithMessageId>>> {
-        let domain = self.domain();
-        let (Some(leaf), Some(stored)) = (
-            self.store.leaf(domain, index)?,
-            self.store.checkpoint(domain, index)?,
-        ) else {
-            return Ok(None);
-        };
-        Ok(Some(Signed {
-            value: self.value(index, stored.root, leaf.message_id),
-            signature: Signature::try_from(&stored.signature[..])?,
-        }))
+        stored_checkpoint(&self.store, self.domain(), self.origin.hook, index)
     }
 
     /// True after a reorg. Only `db clear-reorg` and a restart clear it.
@@ -158,15 +143,7 @@ impl DomainSigner {
     }
 
     fn value(&self, index: u32, root: B256, message_id: B256) -> CheckpointWithMessageId {
-        CheckpointWithMessageId {
-            checkpoint: Checkpoint {
-                merkle_tree_hook_address: self.origin.hook.into_word(),
-                mailbox_domain: self.domain(),
-                root,
-                index,
-            },
-            message_id,
-        }
+        checkpoint_value(self.domain(), self.origin.hook, index, root, message_id)
     }
 
     fn sign(&self, index: u32, root: B256, message_id: B256) -> Result<SignedRoot> {
@@ -385,6 +362,42 @@ impl DomainSigner {
         let local = self.store.latest_checkpoint_index(self.domain())?;
         Ok(history_lost(self.domain(), submitted, local))
     }
+}
+
+fn checkpoint_value(
+    domain: u32,
+    hook: Address,
+    index: u32,
+    root: B256,
+    message_id: B256,
+) -> CheckpointWithMessageId {
+    CheckpointWithMessageId {
+        checkpoint: Checkpoint {
+            merkle_tree_hook_address: hook.into_word(),
+            mailbox_domain: domain,
+            root,
+            index,
+        },
+        message_id,
+    }
+}
+
+/// The stored signed checkpoint of `domain` at `index`, signed for `hook`.
+/// `None` when the leaf or the signed root is not stored.
+pub fn stored_checkpoint(
+    store: &Store,
+    domain: u32,
+    hook: Address,
+    index: u32,
+) -> Result<Option<Signed<CheckpointWithMessageId>>> {
+    let (Some(leaf), Some(stored)) = (store.leaf(domain, index)?, store.checkpoint(domain, index)?)
+    else {
+        return Ok(None);
+    };
+    Ok(Some(Signed {
+        value: checkpoint_value(domain, hook, index, stored.root, leaf.message_id),
+        signature: Signature::try_from(&stored.signature[..])?,
+    }))
 }
 
 /// True when the controller has a higher submitted index than the latest

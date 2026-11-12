@@ -96,6 +96,9 @@ pub enum Meta {
     /// re-signs the history (key rotation).
     Signer = 2,
     ReorgFlag = 3,
+    /// The 20-byte `MerkleTreeHook` address of the stored history. The
+    /// checkpoint JSON contains it.
+    Hook = 4,
 }
 
 fn key(domain: u32, index: u32) -> u64 {

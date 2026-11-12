@@ -88,6 +88,11 @@ Every `poll_interval_secs`, the daemon reads the controller:
 - When `hookByDomain(domain)` changes for a running domain, the daemon stops
   that domain and shows an error in `/status`. It does not start the domain
   again in this process.
+- At the first start of a domain, the store keeps its hook. If the stored hook
+  differs from `hookByDomain(domain)`, the domain does not start and `/status`
+  shows an error: the local history belongs to another hook. To recover, stop
+  the daemon and delete the database directory (`[storage] db_path`). Every
+  domain then syncs and signs again (RFC 6979 signatures are deterministic).
 - When the controller removes a domain, the daemon stops it.
 
 At the start of a domain, the daemon compares `submittedIndex(V, domain)` with
@@ -119,8 +124,9 @@ an `https` URL). The bucket is the lowercase address of `H`. If
 `ValidatorAnnounce.getAnnouncedStorageLocations([H])` does not contain this
 location, the daemon sends `announce` on that origin chain from `H`, through
 the first `rpc_urls` entry that answers. It retries with a backoff from 30 s
-to 15 min. `H` must have native gas on every origin chain. On Outbe, the
-announce uses the `gasless` setting.
+to 15 min. `H` must have native gas on every origin chain, Outbe included,
+for this one-time announce. The announce never uses `gasless`: the ZeroFee
+policy waives the fee only for `submitCheckpoint`.
 
 ## Checkpoint server
 
@@ -132,6 +138,11 @@ path-style: `GET /<bucket>/<domain>/<key>`. `HEAD` also works.
 | `checkpoint_latest_index.json` | The latest signed index, a JSON number. |
 | `checkpoint_<index>_with_id.json` | The signed checkpoint, the same bytes as the upstream agent. |
 | `announcement.json` | The signed announcement, pretty JSON. |
+
+The server reads only the local store. The hook in the checkpoint JSON comes
+from the hook that the store keeps for the domain. After a restart, the server
+serves the stored checkpoints also while the Outbe RPC is down. A domain
+without a stored hook does not exist.
 
 A missing key returns 404 with the S3 `NoSuchKey` XML. Another bucket returns
 404 `NoSuchBucket`. The server does not have `metadata_latest.json`: the

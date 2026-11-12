@@ -143,8 +143,6 @@ async fn main() -> Result<()> {
         .db_path;
     let bucket = format!("{:#x}", key.address());
     let outbe = sync::connect(&config.chain.rpc_endpoint)?;
-    let outbe_domain = u32::try_from(config.chain.chain_id)
-        .with_context(|| "chain.chain_id is not a Hyperlane domain")?;
 
     let store = Arc::new(Store::open(db_path)?);
     let health = Arc::new(ValidatorHealth::new(store.clone()));
@@ -161,7 +159,7 @@ async fn main() -> Result<()> {
         &server.bind_address,
         server::Bucket {
             name: bucket,
-            health: health.clone(),
+            store: store.clone(),
         },
     )
     .await?;
@@ -174,7 +172,6 @@ async fn main() -> Result<()> {
         "starting outbe-hyperlane-validator"
     );
     let poll_interval = Duration::from_secs(config.hyperlane.poll_interval_secs);
-    let gasless = config.hyperlane.gasless;
     let liveness = liveness::Liveness::new(
         config.hyperlane,
         &config.chain,
@@ -185,8 +182,6 @@ async fn main() -> Result<()> {
     let daemon = daemon::Daemon {
         origins: config.origin,
         poll_interval,
-        outbe_domain,
-        gasless,
         key,
         validator,
         store,
