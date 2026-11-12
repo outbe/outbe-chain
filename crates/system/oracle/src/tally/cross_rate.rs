@@ -1,8 +1,8 @@
 //! Cross-rate conversion between a pair ballot and the reference pair.
 
 use alloy_primitives::{Address, U256, U512};
-use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::Result;
+use outbe_system_common::address_pair::AddressPair;
 
 use super::ballot::vote_has_price;
 use super::VoteForTally;

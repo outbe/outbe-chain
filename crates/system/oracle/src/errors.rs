@@ -7,8 +7,8 @@ use crate::schema::PairIndex;
 use alloy_primitives::Bytes;
 use alloy_primitives::U256;
 use alloy_sol_types::SolError;
-use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::PrecompileError;
+use outbe_system_common::address_pair::AddressPair;
 use thiserror::Error;
 
 #[derive(Debug, Error)]

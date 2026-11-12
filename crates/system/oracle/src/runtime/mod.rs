@@ -11,9 +11,9 @@ mod window_vwap;
 use crate::errors::OracleError;
 use crate::schema::OracleContract;
 use alloy_primitives::U256;
-use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::Result;
-use outbe_primitives::math::reference_price::is_coen_iso_market;
+use outbe_system_common::address_pair::AddressPair;
+use outbe_system_common::math::reference_price::is_coen_iso_market;
 
 /// `(pairs, values, lookbacks)` - one row per active vote-target pair, each
 /// carrying the orientation it was registered in.

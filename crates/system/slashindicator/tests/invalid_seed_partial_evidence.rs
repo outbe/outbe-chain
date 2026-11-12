@@ -12,7 +12,6 @@ use commonware_cryptography::bls12381::primitives::{ops::threshold, variant::Min
 use commonware_cryptography::Signer as _;
 use outbe_primitives::addresses::{PROMIS_LIMIT_ADDRESS, STAKING_ADDRESS};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
 use outbe_promislimit::PromisLimitContract;
 use outbe_simplex::bls::bootstrap_dkg;
 use outbe_simplex::bls::odko::public_polynomial_hash;
@@ -20,6 +19,7 @@ use outbe_simplex::proof::{hybrid_seed_namespace, seed_partial_attest_message};
 use outbe_slashindicator::precompile::ISlashIndicator;
 use outbe_slashindicator::schema::SlashIndicator;
 use outbe_staking::contract::Staking;
+use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::state::write_committee_snapshot;
 use outbe_validatorset::test_support::{test_lifecycle_of, StorageOverrides};

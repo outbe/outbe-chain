@@ -53,7 +53,7 @@ pub(crate) fn allocate_day_validator_rewards(
     day: u32,
     validator_share: U256,
 ) -> Result<crate::api::ValidatorRewardAllocation> {
-    use outbe_primitives::units::{checked_protocol_to_native, units_to_protocol_minor_floor};
+    use outbe_system_common::units::{checked_protocol_to_native, units_to_protocol_minor_floor};
     require_sealed_day(ctx, day)?;
     let topup = if validator_share.is_zero() {
         U256::ZERO

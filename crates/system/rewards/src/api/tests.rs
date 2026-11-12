@@ -91,7 +91,7 @@ fn participation_after_the_day_is_sealed_is_refused() {
 #[test]
 fn validator_allocation_preserves_native_fee_precision_and_bounds() {
     use crate::test_support::{with_block, GENESIS_TS, SECONDS_PER_DAY};
-    use outbe_primitives::units::checked_protocol_to_native;
+    use outbe_system_common::units::checked_protocol_to_native;
     with_block(20, GENESIS_TS + SECONDS_PER_DAY, |ctx| {
         let day = 20240101;
         seal_votes_and_fees(&ctx, day).unwrap();

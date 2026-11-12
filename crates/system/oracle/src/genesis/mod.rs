@@ -10,8 +10,8 @@ mod validate;
 use crate::constants::{DAY_TYPE_ISO, DEFAULT_POLICY_RATES};
 use crate::types::AssetType;
 use alloy_primitives::{Address, U256};
-use outbe_primitives::asset_type::COEN_ASSET;
 use outbe_primitives::time::{WorldwideDay, SECONDS_PER_DAY};
+use outbe_system_common::asset_type::COEN_ASSET;
 
 pub use export::export_genesis;
 pub use import::init_from_genesis;

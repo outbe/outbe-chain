@@ -10,7 +10,7 @@ mod store;
 
 use alloy_primitives::U256;
 use outbe_primitives::time::SECONDS_PER_DAY;
-use outbe_primitives::units::SCALE_1E6_U256;
+use outbe_system_common::units::SCALE_1E6_U256;
 
 pub use query::{
     get_all_scurve_data, get_all_scurve_data_for_pair, get_scurve_entries, scurve_value,
@@ -195,8 +195,8 @@ pub fn compute_scurve_value(peak_price: U256, day_index: usize) -> U256 {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
-    use outbe_primitives::address_pair::AddressPair;
-    use outbe_primitives::units::SCALE_1E6_U64 as COEN840_SCALE;
+    use outbe_system_common::address_pair::AddressPair;
+    use outbe_system_common::units::SCALE_1E6_U64 as COEN840_SCALE;
 
     use outbe_primitives::time::WorldwideDay;
 

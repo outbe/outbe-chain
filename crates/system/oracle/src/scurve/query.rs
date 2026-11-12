@@ -1,9 +1,9 @@
 //! Reads of the per-pair S-curve ring.
 
 use alloy_primitives::{Address, U256};
-use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::Result;
 use outbe_primitives::time::{WorldwideDay, SECONDS_PER_DAY};
+use outbe_system_common::address_pair::AddressPair;
 
 use super::compute_scurve_value;
 use super::store::SCURVE_RING_SLOTS;

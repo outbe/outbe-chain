@@ -63,7 +63,7 @@ pub fn run_tally(oracle: &mut OracleContract, block_number: u64, timestamp: u64)
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256};
-    use outbe_primitives::address_pair::AddressPair;
+    use outbe_system_common::address_pair::AddressPair;
 
     use super::ballot::{evaluate_pair, pair_quorum};
     use super::cross_rate::from_cross_rate;

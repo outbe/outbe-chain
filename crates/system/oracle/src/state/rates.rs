@@ -1,8 +1,8 @@
 //! Spot exchange rates per registry index, readable in either quote direction.
 
 use alloy_primitives::{Address, U256};
-use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::Result;
+use outbe_system_common::address_pair::AddressPair;
 
 use crate::constants::reciprocal_scale;
 use crate::errors::OracleError;
