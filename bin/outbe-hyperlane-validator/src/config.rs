@@ -191,9 +191,7 @@ impl ValidatorConfig {
         if self.hyperlane.poll_interval_secs == 0 {
             return Err(ConfigError::ZeroPollInterval.into());
         }
-        if self.storage.is_none() {
-            return Err(ConfigError::NoDbPath.into());
-        }
+        self.storage.as_ref().ok_or(ConfigError::NoDbPath)?;
         self.server
             .as_ref()
             .ok_or(ConfigError::NoServer)?
@@ -203,12 +201,19 @@ impl ValidatorConfig {
             if !domains.insert(origin.domain) {
                 return Err(ConfigError::DuplicateOrigin(origin.domain).into());
             }
-            if origin.rpc_urls.is_empty() {
-                return Err(ConfigError::NoOriginRpc(origin.domain).into());
-            }
-            if origin.interval_secs == 0 {
-                return Err(ConfigError::ZeroOriginInterval(origin.domain).into());
-            }
+            origin.validate()?;
+        }
+        Ok(())
+    }
+}
+
+impl OriginConfig {
+    fn validate(&self) -> Result<()> {
+        if self.rpc_urls.is_empty() {
+            return Err(ConfigError::NoOriginRpc(self.domain).into());
+        }
+        if self.interval_secs == 0 {
+            return Err(ConfigError::ZeroOriginInterval(self.domain).into());
         }
         Ok(())
     }

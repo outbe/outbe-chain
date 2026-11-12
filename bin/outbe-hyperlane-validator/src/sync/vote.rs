@@ -76,55 +76,96 @@ pub fn evaluate(
     committed: Option<(u32, B256)>,
     pending: &[SyncedLeaf],
 ) -> Vote {
-    let agreeing = |o: &Observed| observed.iter().flatten().filter(|x| *x == o).count();
-    if let Some((index, local)) = committed {
-        for o in observed.iter().flatten() {
-            if o.index == index && o.root != local && agreeing(o) >= required {
-                return Vote::Reorg {
-                    index,
-                    local,
-                    observed: o.root,
-                };
-            }
-        }
+    if let Some(reorg) = confirmed_reorg(observed, required, committed) {
+        return reorg;
     }
-    let root_at = |index: u32| match committed {
-        Some((c, root)) if c == index => Some(root),
-        _ => pending.iter().find(|l| l.index == index).map(|l| l.root),
-    };
-    let mut matching = Vec::new();
-    let mut missing = 0;
-    let mut rewind = false;
-    for o in observed.iter().flatten() {
-        // An endpoint behind the committed tree has nothing to say.
-        if committed.is_some_and(|(c, _)| o.index < c) {
-            continue;
-        }
-        match root_at(o.index) {
-            Some(root) if root == o.root => matching.push(o.index),
-            Some(_) => {
-                warn!(
-                    index = o.index,
-                    "endpoint root differs from the local leaves"
-                );
-                rewind |= agreeing(o) >= required;
-            }
-            None => missing += 1,
-        }
-    }
+    let Tally {
+        mut matching,
+        missing,
+        rewind,
+    } = tally(observed, required, committed, pending);
     if matching.len() < required {
-        if rewind {
-            return Vote::Rewind;
-        }
-        if matching.len() + missing >= required {
-            return Vote::WaitingForLeaves;
-        }
-        return Vote::WaitingForRpc;
+        return if rewind {
+            Vote::Rewind
+        } else if matching.len() + missing >= required {
+            Vote::WaitingForLeaves
+        } else {
+            Vote::WaitingForRpc
+        };
     }
     // A matching later root authenticates every earlier leaf. The
     // required-th highest matching index is the verified boundary.
     matching.sort_unstable_by(|a, b| b.cmp(a));
     Vote::Verified(matching[required - 1])
+}
+
+/// Number of endpoints that returned the same checkpoint as `o`.
+fn agreeing(observed: &[Option<Observed>], o: &Observed) -> usize {
+    observed.iter().flatten().filter(|x| *x == o).count()
+}
+
+/// A different root at the committed index that `required` endpoints return.
+fn confirmed_reorg(
+    observed: &[Option<Observed>],
+    required: usize,
+    committed: Option<(u32, B256)>,
+) -> Option<Vote> {
+    let (index, local) = committed?;
+    observed
+        .iter()
+        .flatten()
+        .find(|o| o.index == index && o.root != local && agreeing(observed, o) >= required)
+        .map(|o| Vote::Reorg {
+            index,
+            local,
+            observed: o.root,
+        })
+}
+
+/// Endpoint answers compared with the local leaves.
+struct Tally {
+    /// Indexes where the endpoint root equals the local root.
+    matching: Vec<u32>,
+    /// Endpoints ahead of the local leaves.
+    missing: usize,
+    /// `required` endpoints agree on a root that differs from a local leaf.
+    rewind: bool,
+}
+
+fn tally(
+    observed: &[Option<Observed>],
+    required: usize,
+    committed: Option<(u32, B256)>,
+    pending: &[SyncedLeaf],
+) -> Tally {
+    let root_at = |index: u32| match committed {
+        Some((c, root)) if c == index => Some(root),
+        _ => pending.iter().find(|l| l.index == index).map(|l| l.root),
+    };
+    let mut tally = Tally {
+        matching: Vec::new(),
+        missing: 0,
+        rewind: false,
+    };
+    // An endpoint behind the committed tree has nothing to say.
+    let current = observed
+        .iter()
+        .flatten()
+        .filter(|o| committed.is_none_or(|(c, _)| o.index >= c));
+    for o in current {
+        match root_at(o.index) {
+            Some(root) if root == o.root => tally.matching.push(o.index),
+            Some(_) => {
+                warn!(
+                    index = o.index,
+                    "endpoint root differs from the local leaves"
+                );
+                tally.rewind |= agreeing(observed, o) >= required;
+            }
+            None => tally.missing += 1,
+        }
+    }
+    tally
 }
 
 impl RpcConsensus {

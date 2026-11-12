@@ -222,63 +222,78 @@ mod tests {
                 "eth_blockNumber" => json!("0x64"),
                 "eth_chainId" => json!("0x5"),
                 "eth_getLogs" => json!([]),
-                "eth_call" => {
-                    let call = &req["params"][0];
-                    let to: Address = serde_json::from_value(call["to"].clone()).unwrap();
-                    let input = if call["input"].is_null() {
-                        &call["data"]
-                    } else {
-                        &call["input"]
-                    };
-                    let data: Bytes = serde_json::from_value(input.clone()).unwrap();
-                    let selector: [u8; 4] = data[..4].try_into().unwrap();
-                    let (ica, domains, hook, va) = state.lock().unwrap().clone();
-                    let out = if to == HYPERLANE_CONTROLLER_ADDRESS {
-                        match selector {
-                            IHyperlaneController::icaRouterCall::SELECTOR => ica.abi_encode(),
-                            IHyperlaneController::domainsCall::SELECTOR => domains.abi_encode(),
-                            IHyperlaneController::hookByDomainCall::SELECTOR => hook.abi_encode(),
-                            IHyperlaneController::validatorAnnounceByDomainCall::SELECTOR => {
-                                va.abi_encode()
-                            }
-                            IHyperlaneController::hyperlaneSignerCall::SELECTOR => {
-                                Address::ZERO.abi_encode()
-                            }
-                            IHyperlaneController::submittedIndexCall::SELECTOR
-                            | IHyperlaneController::missCountCall::SELECTOR => 0u32.abi_encode(),
-                            other => panic!("controller selector {other:?}"),
-                        }
-                    } else if to == VALIDATOR_SET_ADDRESS {
-                        assert_eq!(selector, IValidatorSet::getActiveValidatorsCall::SELECTOR);
-                        Vec::<Address>::new().abi_encode()
-                    } else if to == va {
-                        match selector {
-                            IValidatorAnnounce::localDomainCall::SELECTOR => 5u32.abi_encode(),
-                            IValidatorAnnounce::mailboxCall::SELECTOR => MAILBOX.abi_encode(),
-                            IValidatorAnnounce::getAnnouncedStorageLocationsCall::SELECTOR => {
-                                vec![vec![location.clone()]].abi_encode()
-                            }
-                            other => panic!("VA selector {other:?}"),
-                        }
-                    } else {
-                        match selector {
-                            IMerkleTreeHook::mailboxCall::SELECTOR => MAILBOX.abi_encode(),
-                            IMerkleTreeHook::deployedBlockCall::SELECTOR => {
-                                alloy_primitives::U256::from(1).abi_encode()
-                            }
-                            IMerkleTreeHook::latestCheckpointCall::SELECTOR => {
-                                (B256::ZERO, 0u32).abi_encode_params()
-                            }
-                            other => panic!("hook selector {other:?}"),
-                        }
-                    };
-                    json!(Bytes::from(out))
-                }
+                "eth_call" => eth_call(&state, &location, &req["params"][0]),
                 other => panic!("unexpected method {other}"),
             };
             json!({"jsonrpc": "2.0", "id": id, "result": result})
         })
         .await
+    }
+
+    fn eth_call(state: &Controller, location: &str, call: &Value) -> Value {
+        let to: Address = serde_json::from_value(call["to"].clone()).unwrap();
+        let input = if call["input"].is_null() {
+            &call["data"]
+        } else {
+            &call["input"]
+        };
+        let data: Bytes = serde_json::from_value(input.clone()).unwrap();
+        let selector: [u8; 4] = data[..4].try_into().unwrap();
+        let (ica, domains, hook, va) = state.lock().unwrap().clone();
+        let out = if to == HYPERLANE_CONTROLLER_ADDRESS {
+            controller_call(selector, ica, domains, hook, va)
+        } else if to == VALIDATOR_SET_ADDRESS {
+            assert_eq!(selector, IValidatorSet::getActiveValidatorsCall::SELECTOR);
+            Vec::<Address>::new().abi_encode()
+        } else if to == va {
+            va_call(selector, location)
+        } else {
+            hook_call(selector)
+        };
+        json!(Bytes::from(out))
+    }
+
+    fn controller_call(
+        selector: [u8; 4],
+        ica: Address,
+        domains: Vec<u32>,
+        hook: Address,
+        va: Address,
+    ) -> Vec<u8> {
+        match selector {
+            IHyperlaneController::icaRouterCall::SELECTOR => ica.abi_encode(),
+            IHyperlaneController::domainsCall::SELECTOR => domains.abi_encode(),
+            IHyperlaneController::hookByDomainCall::SELECTOR => hook.abi_encode(),
+            IHyperlaneController::validatorAnnounceByDomainCall::SELECTOR => va.abi_encode(),
+            IHyperlaneController::hyperlaneSignerCall::SELECTOR => Address::ZERO.abi_encode(),
+            IHyperlaneController::submittedIndexCall::SELECTOR
+            | IHyperlaneController::missCountCall::SELECTOR => 0u32.abi_encode(),
+            other => panic!("controller selector {other:?}"),
+        }
+    }
+
+    fn va_call(selector: [u8; 4], location: &str) -> Vec<u8> {
+        match selector {
+            IValidatorAnnounce::localDomainCall::SELECTOR => 5u32.abi_encode(),
+            IValidatorAnnounce::mailboxCall::SELECTOR => MAILBOX.abi_encode(),
+            IValidatorAnnounce::getAnnouncedStorageLocationsCall::SELECTOR => {
+                vec![vec![location.to_owned()]].abi_encode()
+            }
+            other => panic!("VA selector {other:?}"),
+        }
+    }
+
+    fn hook_call(selector: [u8; 4]) -> Vec<u8> {
+        match selector {
+            IMerkleTreeHook::mailboxCall::SELECTOR => MAILBOX.abi_encode(),
+            IMerkleTreeHook::deployedBlockCall::SELECTOR => {
+                alloy_primitives::U256::from(1).abi_encode()
+            }
+            IMerkleTreeHook::latestCheckpointCall::SELECTOR => {
+                (B256::ZERO, 0u32).abi_encode_params()
+            }
+            other => panic!("hook selector {other:?}"),
+        }
     }
 
     #[tokio::test]
