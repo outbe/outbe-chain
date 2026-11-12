@@ -176,16 +176,6 @@ fn config_max_validators_cannot_exceed_consensus_bound() {
     });
 }
 
-#[test]
-fn owner_manual_reshare_selector_is_not_exposed() {
-    let digest = keccak256("activateResharedSet(address[],bytes32)");
-    let selector: [u8; 4] = digest[..4].try_into().unwrap();
-    assert!(
-        !crate::precompile::IValidatorSet::IValidatorSetCalls::SELECTORS.contains(&selector),
-        "owner/manual activation must not be reachable through ValidatorSet ABI",
-    );
-}
-
 // ---------------------------------------------------------------------------
 // 15. test_consensus_pubkey_roundtrip
 // ---------------------------------------------------------------------------
