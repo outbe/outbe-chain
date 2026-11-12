@@ -28,7 +28,7 @@ use outbe_primitives::{
         TeeBootstrapParticipantV2, TeeBootstrapV2,
     },
 };
-use reth_ethereum::TransactionSigned;
+use reth_ethereum_primitives::TransactionSigned;
 
 fn policy() -> TeePolicyV1 {
     TeePolicyV1 {

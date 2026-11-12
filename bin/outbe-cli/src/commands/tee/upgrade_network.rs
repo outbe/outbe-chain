@@ -4,20 +4,15 @@ use super::args::{UpgradeCandidateArgs, UpgradeProvisionArgs};
 use super::join::{
     classify_join_offer_key_state, load_finalized_admission_anchor_v1, JoinOfferKeyState,
 };
+use super::relay_tx::{buffered_gas_price, RelaySignerV1};
 use super::rpc::{json_b256_field, json_hex_array, json_hex_u256_field, json_hex_u64_field};
 use super::upgrade::connect_upgrade_candidate_v1;
+use super::upgrade_submission::record_network_key_provisioned_v1;
 use super::*;
 use crate::errors::TeeUpgradeNetworkError;
 use alloy_consensus::BlockHeader as _;
 use alloy_primitives::{keccak256, B256, U256};
 use alloy_sol_types::{SolCall, SolValue};
-use outbe_operator::tee::{
-    generate_transition_evidence_v1, read_finalized_bound_renewal_view_v1,
-    record_network_key_provisioned_v1, transition_intent_v1, NetworkUpgradeSubmissionV1,
-    UpgradeJournalGuardV1,
-};
-use outbe_operator::tee::{read_finalized_upgrade_policy_v1, UpgradeJournalStateV1};
-use outbe_operator::tx::{buffered_gas_price, RelaySignerV1};
 use outbe_primitives::addresses::TEE_REGISTRY_ADDRESS;
 use outbe_primitives::reshare_artifact::{decode_outbe_block_artifacts, ConsensusHeaderArtifact};
 use outbe_primitives::tee_attestation_v1::{
@@ -30,6 +25,13 @@ use outbe_tee::finalized_admission::{
 };
 use outbe_tee::load_committed_enclave_manifest_v1;
 use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
+use outbe_tee::registry_view::{
+    read_finalized_bound_renewal_view_v1, read_finalized_upgrade_policy_v1,
+};
+use outbe_tee::upgrade_journal::{
+    generate_transition_evidence_v1, transition_intent_v1, NetworkUpgradeSubmissionV1,
+    UpgradeJournalGuardV1, UpgradeJournalStateV1,
+};
 use outbe_tee::upgrade_transfer::UpgradeKeyProofV1;
 use std::path::Path;
 use std::time::{Duration, Instant};

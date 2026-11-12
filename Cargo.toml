@@ -13,9 +13,9 @@ members = [
     "crates/blockchain/rpc",
     "crates/blockchain/txpool",
     "crates/blockchain/execution",
-    "crates/blockchain/operator",
     "crates/blockchain/radicle",
     "crates/blockchain/snapshot",
+    "crates/blockchain/tee",
     # system
     "crates/system/common",
     "crates/system/validatorset",
@@ -26,7 +26,6 @@ members = [
     "crates/system/zerofee",
     "crates/system/emission",
     "crates/system/cycle",
-    "crates/blockchain/tee",
     "crates/system/teeregistry",
     "crates/system/l2registry",
     "crates/system/coderegistry",
@@ -65,6 +64,7 @@ members = [
     "crates/core/common",
     "crates/core/enclave",
     # binaries
+    "bin/outbe-up",
     "bin/outbe-chain",
     "bin/outbe-genesis-cli",
     "bin/outbe-keygen",
@@ -98,9 +98,9 @@ default-members = [
     "crates/blockchain/rpc",
     "crates/blockchain/txpool",
     "crates/blockchain/execution",
-    "crates/blockchain/operator",
     "crates/blockchain/radicle",
     "crates/blockchain/snapshot",
+    "crates/blockchain/tee",
     # system
     "crates/system/common",
     "crates/system/validatorset",
@@ -111,7 +111,6 @@ default-members = [
     "crates/system/zerofee",
     "crates/system/emission",
     "crates/system/cycle",
-    "crates/blockchain/tee",
     "crates/system/teeregistry",
     "crates/system/l2registry",
     "crates/system/coderegistry",
@@ -149,6 +148,7 @@ default-members = [
     "crates/core/stablecoinfactory",
     "crates/core/common",
     # binaries
+    "bin/outbe-up",
     "bin/outbe-chain",
     "bin/outbe-genesis-cli",
     "bin/outbe-keygen",
@@ -201,9 +201,9 @@ outbe-rpc = { path = "crates/blockchain/rpc" }
 outbe-txpool = { path = "crates/blockchain/txpool" }
 outbe-execution = { path = "crates/blockchain/execution" }
 outbe-runtime = { path = "crates/runtime" }
-outbe-operator = { path = "crates/blockchain/operator" }
 outbe-radicle = { path = "crates/blockchain/radicle" }
 outbe-snapshot = { path = "crates/blockchain/snapshot" }
+outbe-tee = { path = "crates/blockchain/tee", default-features = false }
 # Internal - system
 outbe-system-common = { path = "crates/system/common" }
 outbe-validatorset = { path = "crates/system/validatorset" }
@@ -214,7 +214,6 @@ outbe-oracle = { path = "crates/system/oracle" }
 outbe-zerofee = { path = "crates/system/zerofee" }
 outbe-emission = { path = "crates/system/emission" }
 outbe-cycle = { path = "crates/system/cycle" }
-outbe-tee = { path = "crates/blockchain/tee", default-features = false }
 outbe-tee-enclave = { path = "bin/outbe-tee-enclave" }
 outbe-teeregistry = { path = "crates/system/teeregistry" }
 outbe-l2registry = { path = "crates/system/l2registry" }
@@ -288,6 +287,7 @@ revm = { version = "=43.0.3", default-features = false, features = ["std"] }
 
 # Reth v2.8.1 (revm 43, alloy 2.5, alloy-evm 0.39)
 reth-ethereum = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
+reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
 reth-node-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
 reth-node-builder = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
 reth-node-core = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
@@ -372,7 +372,7 @@ multibase = "0.9"
 postcard = { version = "1", default-features = false, features = ["use-std"] }
 
 # CLI / IO
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 jsonrpsee = { version = "0.26", features = ["server", "macros"] }
 reqwest = { version = "0.12", features = ["json"] }
 
@@ -404,6 +404,7 @@ syn = { version = "2", features = ["full", "extra-traits"] }
 thiserror = "2"
 eyre = "0.6"
 hex = "0.4"
+indicatif = "0.18.0"
 libc = "0.2"
 rustix = { version = "1.1.6", features = ["fs", "process"] }
 tokio = { version = "1", features = ["full"] }
@@ -417,6 +418,7 @@ flate2 = "1"
 sha2 = "0.10"
 walkdir = "2"
 tar = "0.4"
+zstd = "=0.13.3"
 
 [profile.dev]
 debug = "line-tables-only"

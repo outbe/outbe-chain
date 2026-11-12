@@ -1,0 +1,22 @@
+version: 1
+
+network:
+  chain_id: 54322345
+  certified_rpc: "https://rpc.example.invalid"
+  external_ip: 192.0.2.10
+  bootnodes:
+    - "enode://REPLACE_WITH_NODE_ID@192.0.2.20:30303"
+  consensus_peers:
+    - "REPLACE_WITH_96_HEX_BLS_KEY@192.0.2.20:30400"
+  use_local_defaults: false
+
+tee:
+  runtime: bundled-sgx
+  lease_duration_seconds: auto
+
+feeder:
+  public_toml: |
+    [oracle]
+    sources = "local"
+    vote_period = 60
+    poll_interval_secs = 2

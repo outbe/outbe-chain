@@ -11,9 +11,8 @@ use outbe_primitives::{
     reshare_artifact::LateFinalizeCreditsArtifact,
     storage::{
         metadosis_advance_due_binding, metadosis_cycle_allocation_binding,
-        metadosis_init_genesis_binding, metadosis_late_settlement_binding,
-        metadosis_process_ready_binding, MetadosisMutationEntitlements,
-        MetadosisMutationPurposeTag as Purpose,
+        metadosis_init_genesis_binding, metadosis_process_ready_binding,
+        MetadosisMutationEntitlements, MetadosisMutationPurposeTag as Purpose,
     },
     system_tx::SystemTx,
 };
@@ -91,10 +90,6 @@ fn expected_cycle_entitlements() -> MetadosisMutationEntitlements {
         Purpose::CycleLifecycle,
         metadosis_process_ready_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
     ))
-    .union(MetadosisMutationEntitlements::exact(
-        Purpose::CertifiedFinality,
-        metadosis_late_settlement_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
-    ))
 }
 
 #[test]
@@ -134,10 +129,7 @@ fn exact_production_causes_receive_only_their_purpose() {
             )
             .unwrap()
         }),
-        MetadosisMutationEntitlements::exact(
-            Purpose::CertifiedFinality,
-            metadosis_late_settlement_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP,),
-        ),
+        MetadosisMutationEntitlements::NONE,
     );
     assert_eq!(
         system_entitlements(SystemTx::Consensus {
@@ -207,10 +199,6 @@ fn end_zone_walks_receive_only_process_ready() {
     ] {
         let granted = system_entitlements(input);
         assert!(granted.expects(Purpose::CycleLifecycle, ready));
-        assert!(!granted.expects(
-            Purpose::CertifiedFinality,
-            metadosis_late_settlement_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
-        ));
         assert!(!granted.expects(
             Purpose::CycleLifecycle,
             metadosis_advance_due_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),

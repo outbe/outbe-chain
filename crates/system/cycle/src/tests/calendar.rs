@@ -114,12 +114,6 @@ fn forward_seal_jump_waits_for_skipped_parent_late_votes() {
     let late = Address::repeat_byte(0xB3);
     for height in 11..=13 {
         storage.set_block_number(height);
-        if height == 13 {
-            storage.enable_metadosis_mutation_frames(
-                MetadosisMutationPurposeTag::CertifiedFinality,
-                1,
-            );
-        }
         storage.enter(|handle| {
             let ctx = runtime_context(block_ctx(height, restart_ts + height - 11), handle.clone());
             if height == 11 {

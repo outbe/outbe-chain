@@ -4,7 +4,7 @@ pragma solidity ^0.8.30;
 interface IMetadosis {
     error VwapMustBeNonZero();
     error InvalidLysisLimitSplit(uint256 dayLimit, uint256 lysisLimitMinor);
-    error LysisLimitCreditMismatch();
+    error LysisResultMismatch();
     error DesisLimitUnavailable(uint256 desisLimitMinor, uint256 available);
     error FormedDayLimitCannotBeReplaced();
     error UnknownWorldwideDayStatus();
@@ -12,7 +12,6 @@ interface IMetadosis {
     error FormingWindowOverflow();
     error LookbackWindowOverflow();
     error OfferingWindowOverflow();
-    error WaitingWindowOverflow();
     error DurationOverflow(string label);
     error UtcPlus14TimestampOverflow();
     error DateStep(uint8 kind, uint32 dateKey);

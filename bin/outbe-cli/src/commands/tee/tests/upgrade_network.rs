@@ -1,7 +1,7 @@
+use super::super::relay_tx::UnsignedRelayTransactionV1;
 use super::finality::wait_for_finalized_prepare;
 use super::*;
 use crate::rpc::mock::MockRpc;
-use outbe_operator::tx::UnsignedRelayTransactionV1;
 use outbe_rpc::test_support::RecordingRpc;
 
 fn saved_prepare() -> Result<(

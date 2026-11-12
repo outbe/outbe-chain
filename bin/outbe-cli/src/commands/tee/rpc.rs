@@ -1,3 +1,5 @@
+use std::future::Future;
+
 use crate::abi;
 use crate::errors::TeeRpcError;
 use crate::rpc::Rpc;
@@ -12,10 +14,50 @@ use alloy_sol_types::SolValue;
 use eyre::Result;
 use eyre::WrapErr;
 
-use outbe_operator::rpc::{
-    ChainRpc, FinalityRpc, FinalizedStateRpc, RegistryRpc, RelayPreparationRpc, RelayRpc,
-    TransactionReceiptRpc,
-};
+pub(super) use outbe_tee::registry_view::{ChainRpc, FinalizedStateRpc, RegistryRpc};
+
+#[derive(Debug, thiserror::Error)]
+#[error("{0:#}")]
+pub(super) struct CliRpcReport(pub(super) eyre::Report);
+
+pub(super) trait TransactionReceiptRpc {
+    fn transaction_receipt(
+        &self,
+        transaction_hash: &str,
+    ) -> impl Future<Output = Result<Option<serde_json::Value>>> + Send;
+}
+
+pub(super) trait FinalityRpc: FinalizedStateRpc + TransactionReceiptRpc {
+    fn logs(
+        &self,
+        address: Address,
+        topics: &[Option<String>],
+        from_block: &str,
+        to_block: &str,
+    ) -> impl Future<Output = Result<Vec<serde_json::Value>>> + Send;
+
+    fn block_by_number(&self, block: u64)
+        -> impl Future<Output = Result<serde_json::Value>> + Send;
+}
+
+pub(super) trait RelayPreparationRpc: ChainRpc {
+    fn gas_price(&self) -> impl Future<Output = Result<U256>> + Send;
+
+    fn transaction_count(&self, address: Address) -> impl Future<Output = Result<u64>> + Send;
+
+    fn balance(&self, address: Address) -> impl Future<Output = Result<U256>> + Send;
+}
+
+pub(super) trait RelayRpc: TransactionReceiptRpc {
+    fn send_raw_transaction(
+        &self,
+        raw_transaction: &[u8],
+    ) -> impl Future<Output = Result<String>> + Send;
+}
+
+pub(super) trait RenewalRpc: RegistryRpc + RelayPreparationRpc + RelayRpc {}
+
+impl<T> RenewalRpc for T where T: RegistryRpc + RelayPreparationRpc + RelayRpc {}
 
 pub(super) struct CliFinalityRpc<'a, R>(pub(super) &'a R);
 
@@ -88,19 +130,29 @@ impl<R: Rpc + Sync> FinalityRpc for CliFinalityRpc<'_, R> {
     }
 }
 
-impl<R: Rpc + Sync> FinalizedStateRpc for CliFinalityRpc<'_, R> {
-    async fn finalized_block(&self) -> Result<serde_json::Value> {
-        self.0.eth_get_finalized_block().await
-    }
+impl<R: Rpc + Sync> ChainRpc for CliFinalityRpc<'_, R> {
+    type Error = CliRpcReport;
 
-    async fn call_at(&self, to: Address, data: &[u8], block_tag: &str) -> Result<Vec<u8>> {
-        self.0.eth_call_at(to, data, block_tag).await
+    async fn chain_id(&self) -> std::result::Result<u64, Self::Error> {
+        self.0.eth_chain_id().await.map_err(CliRpcReport)
     }
 }
 
-impl<R: Rpc + Sync> ChainRpc for CliFinalityRpc<'_, R> {
-    async fn chain_id(&self) -> Result<u64> {
-        self.0.eth_chain_id().await
+impl<R: Rpc + Sync> FinalizedStateRpc for CliFinalityRpc<'_, R> {
+    async fn finalized_block(&self) -> std::result::Result<serde_json::Value, Self::Error> {
+        self.0.eth_get_finalized_block().await.map_err(CliRpcReport)
+    }
+
+    async fn call_at(
+        &self,
+        to: Address,
+        data: &[u8],
+        block_tag: &str,
+    ) -> std::result::Result<Vec<u8>, Self::Error> {
+        self.0
+            .eth_call_at(to, data, block_tag)
+            .await
+            .map_err(CliRpcReport)
     }
 }
 
@@ -127,8 +179,12 @@ impl<R: Rpc + Sync> RelayRpc for CliFinalityRpc<'_, R> {
 impl<R: Rpc + Sync> RegistryRpc for CliFinalityRpc<'_, R> {
     async fn tee_renewal_schedule_v1(
         &self,
-    ) -> Result<outbe_primitives::tee_operator_v1::TeeRenewalScheduleV1> {
-        self.0.outbe_tee_renewal_schedule_v1().await
+    ) -> std::result::Result<outbe_primitives::tee_operator_v1::TeeRenewalScheduleV1, Self::Error>
+    {
+        self.0
+            .outbe_tee_renewal_schedule_v1()
+            .await
+            .map_err(CliRpcReport)
     }
 }
 

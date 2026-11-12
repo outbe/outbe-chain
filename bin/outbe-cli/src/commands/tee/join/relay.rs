@@ -1,3 +1,6 @@
+use super::super::relay_tx::{
+    buffered_gas_price, RawRelayTransactionV1, RelaySignerV1, UnsignedRelayTransactionV1,
+};
 use super::super::CliFinalityRpc;
 use super::finalized_binding_matches_intent;
 
@@ -13,12 +16,10 @@ use alloy_primitives::B256;
 use eyre::Result;
 use eyre::WrapErr;
 
-use outbe_operator::tee::read_finalized_registry_view_v1;
-
-use outbe_operator::tee::FinalizedRegistryChainViewV1;
-use outbe_operator::tee::NodeBindingSelectorV1;
-
 use outbe_primitives::tee_attestation_v1::RegistrationIntentV1;
+use outbe_tee::registry_view::{
+    read_finalized_registry_view_v1, FinalizedRegistryChainViewV1, NodeBindingSelectorV1,
+};
 
 use std::time::Duration;
 
@@ -144,9 +145,8 @@ pub(super) async fn submit_or_resume_join_tx(
 async fn sign_join_relay_tx(
     client: &(impl Rpc + Sync),
     ctx: &JoinRelayContext<'_>,
-) -> Result<outbe_operator::tx::RawRelayTransactionV1> {
+) -> Result<RawRelayTransactionV1> {
     use alloy_primitives::U256;
-    use outbe_operator::tx::{buffered_gas_price, RelaySignerV1, UnsignedRelayTransactionV1};
 
     let relay_signer = RelaySignerV1::new(ctx.private_key_hex)?;
     if relay_signer.address() != ctx.evm_signer.address() {

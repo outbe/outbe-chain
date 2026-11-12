@@ -472,11 +472,6 @@
   },
   {
     "type": "error",
-    "name": "AuctionBriefLimitExceedsDomain",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "BatchArrayLengthMismatch",
     "inputs": []
   },

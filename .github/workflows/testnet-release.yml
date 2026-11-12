@@ -251,20 +251,13 @@ jobs:
           cp "${RUNNER_TEMP}/elf-fr/release-manifest.json" \
             "${RUNNER_TEMP}/release-inputs/elf-release-manifest.json"
 
-      - name: Package the reproducible binaries and deployment assets
+      - name: Package the reproducible binaries
         run: |
           set -euo pipefail
-          epoch="$(jq -r .build.source_date_epoch "${RUNNER_TEMP}/elf-fr/release-manifest.json")"
           cp "${RUNNER_TEMP}/builder-fr/elf.tar" \
             "${RUNNER_TEMP}/release-inputs/outbe-linux-x86_64.tar"
           tar -tf "${RUNNER_TEMP}/release-inputs/outbe-linux-x86_64.tar" \
             | grep -qx './bin/outbe-chain'
-          tar --sort=name --format=gnu --mtime="@${epoch}" \
-            --owner=0 --group=0 --numeric-owner \
-            -cf "${RUNNER_TEMP}/release-inputs/outbe-deploy-assets.tar" \
-            deploy/validator/install.sh \
-            deploy/validator/outbe-validator-service.py \
-            deploy/validator/systemd
 
       - name: Upload exact unsigned release inputs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -767,7 +760,6 @@ jobs:
             "${RUNNER_TEMP}/final/ReleaseManifest.json"
             "${RUNNER_TEMP}/final/ReleaseManifest.sigstore.json"
             "${RUNNER_TEMP}/release-inputs/outbe-linux-x86_64.tar"
-            "${RUNNER_TEMP}/release-inputs/outbe-deploy-assets.tar"
             "${RUNNER_TEMP}/published/outbe-tee-enclave-sgx.tar"
             "${RUNNER_TEMP}/published/outbe-tee-enclave.spdx.json"
             "${RUNNER_TEMP}/published/oci-evidence.json"

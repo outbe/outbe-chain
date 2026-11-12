@@ -4,7 +4,7 @@ use alloy_primitives::B256;
 
 use eyre::Result;
 
-use outbe_operator::tee::RenewalBindingV1;
+use outbe_tee::registry_view::RenewalBindingV1;
 
 use outbe_primitives::tee_attestation_v1::AttestationMode;
 
@@ -162,7 +162,7 @@ pub(in super::super) fn select_join_transport(
 }
 
 pub(in super::super) fn ensure_joinable_binding(
-    binding: Option<&outbe_operator::tee::RenewalBindingV1>,
+    binding: Option<&RenewalBindingV1>,
     finalized_timestamp: u64,
 ) -> Result<()> {
     if binding.is_some_and(|binding| finalized_timestamp < binding.valid_until) {
@@ -172,7 +172,7 @@ pub(in super::super) fn ensure_joinable_binding(
 }
 
 pub(in super::super) fn registration_counters(
-    binding: Option<&outbe_operator::tee::RenewalBindingV1>,
+    binding: Option<&RenewalBindingV1>,
 ) -> Result<(u64, u64, u64, u64)> {
     let Some(binding) = binding else {
         return Ok((1, 0, 0, 0));

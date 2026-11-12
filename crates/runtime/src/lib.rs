@@ -59,12 +59,12 @@ pub(crate) use outbe_execution::{
     state_persistence::{validate_state_persistence_runtime_config, StatePersistenceRuntimeConfig},
     OutbeBeaconConsensus, OutbeFullNode, OutbeNode,
 };
-pub(crate) use outbe_operator::tee::{
-    inspect_upgrade_journal_v1, read_finalized_registry_view_v1, record_upgrade_finalized_v1,
-    record_upgrade_missed_cutoff_v1, record_upgrade_promoted_v1, NodeBindingSelectorV1,
-    UpgradeJournalStateV1,
-};
 pub(crate) use outbe_primitives::OutbeHeader;
+pub(crate) use outbe_tee::registry_view::{read_finalized_registry_view_v1, NodeBindingSelectorV1};
+pub(crate) use outbe_tee::upgrade_journal::{
+    inspect_upgrade_journal_v1, record_upgrade_finalized_v1, record_upgrade_missed_cutoff_v1,
+    record_upgrade_promoted_v1, UpgradeContextV1, UpgradeJournalSnapshotV1, UpgradeJournalStateV1,
+};
 pub(crate) use reth_chainspec::{ChainSpec, EthChainSpec};
 pub(crate) use reth_cli::chainspec::ChainSpecParser;
 pub(crate) use reth_ethereum::cli::interface::Cli;

@@ -76,10 +76,6 @@ pub enum TransportError {
     #[error("Tribute source rejected: {0}")]
     TributeSourceRejected(String),
 
-    /// NOD multipart transfer exceeded the capacity bound.
-    #[error("NOD transfer capacity exceeded: {0}")]
-    NodTransferCapacityExceeded(String),
-
     /// Enclave rejected an encrypted NOD mint request.
     #[error("encrypted NOD mint rejected: {0}")]
     NodMintRejected(String),
@@ -211,7 +207,6 @@ impl TransportError {
             Self::UnexpectedResponse => "unexpected_response",
             Self::EnclaveError(_) => "enclave_error",
             Self::TributeSourceRejected(_) => "tribute_source_rejected",
-            Self::NodTransferCapacityExceeded(_) => "nod_transfer_capacity",
             Self::NodMintRejected(_) => "nod_mint_rejected",
             Self::IdentityMismatch(_) => "identity_mismatch",
             Self::SessionRevoked(_) => "session_revoked",

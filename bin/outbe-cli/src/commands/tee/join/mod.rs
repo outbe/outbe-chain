@@ -12,13 +12,16 @@ use crate::rpc::Rpc;
 use alloy_primitives::B256;
 use alloy_sol_types::SolCall;
 use eyre::{Result, WrapErr};
-use outbe_operator::tee::{read_finalized_registry_view_v1, NodeBindingSelectorV1};
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapEvidenceV1,
     GramineDirectEvidenceV1, NodeIdV1, RegistrationIntentV1, RegistryMutatorV1, TeePolicyV1,
     TeeRegistryGasScheduleV1,
 };
 use outbe_tee::protocol::EnclaveRequest;
+use outbe_tee::registry_view::{
+    read_finalized_registry_view_v1, FinalizedRegistryChainViewV1, NodeBindingSelectorV1,
+    RenewalBindingV1,
+};
 use outbe_tee::{
     acquire_dcap_collateral_v1, persist_committed_join_submission,
     persist_replacement_candidate_submission,
@@ -356,7 +359,7 @@ fn ensure_matching_checkpoint_lifecycle(
 
 struct IntentBuildContext<'a> {
     durable_resume_intent: Option<RegistrationIntentV1>,
-    source_binding: Option<&'a outbe_operator::tee::RenewalBindingV1>,
+    source_binding: Option<&'a RenewalBindingV1>,
     policy: &'a TeePolicyV1,
     policy_hash: B256,
     node_id: NodeIdV1,
@@ -548,7 +551,7 @@ fn decode_evidence_node_id_hash(evidence: &[u8]) -> Result<B256> {
 fn persist_admission_anchor_if_authorized<'a>(
     join_transport: JoinTransport,
     node_data_dir: Option<&'a Path>,
-    finalized_join: &outbe_operator::tee::FinalizedRegistryChainViewV1,
+    finalized_join: &FinalizedRegistryChainViewV1,
     (node_id_hash, enclave_id, intent_hash): (B256, B256, B256),
 ) -> Result<Option<&'a Path>> {
     if join_transport != JoinTransport::AuthorizedNodeHost {

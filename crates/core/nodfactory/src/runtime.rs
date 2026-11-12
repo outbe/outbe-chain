@@ -39,35 +39,12 @@ pub struct LysisSeriesInput {
     pub unclaimed_tribute_load: outbe_primitives::nod_encryption::EncryptedNodGroupLoadV1,
 }
 
-#[derive(Default)]
-struct IssueNodHints {
-    verified_cost: Option<U256>,
-    gratis_load_minor: Option<U256>,
-    sealed_series: Option<SeriesId>,
-}
-
 pub(crate) fn issue_nod_at(
     storage: &StorageHandle<'_>,
     encrypted: &EncryptedNodV1,
     issued_at: u64,
 ) -> Result<U256> {
-    issue_nod_with_cost(storage, encrypted, issued_at, IssueNodHints::default())
-}
-
-pub fn issue_lysis_nod(
-    storage: &StorageHandle<'_>,
-    verified: &outbe_tee::lysis::VerifiedLysisNod,
-) -> Result<U256> {
-    storage.require_metadosis_process_ready()?;
-    issue_nod_with_cost(
-        storage,
-        verified.nod(),
-        storage.now_secs()?,
-        IssueNodHints {
-            verified_cost: Some(verified.settlement_cost_minor()),
-            ..IssueNodHints::default()
-        },
-    )
+    issue_nod_with_cost(storage, encrypted, issued_at, None)
 }
 
 /// Issues a Nod claimed from a Tribute of a Lysis-sealed series into the series' call group.
@@ -78,15 +55,7 @@ pub fn issue_tribute_nod_in_series(
     encrypted: &EncryptedNodV1,
     series_id: SeriesId,
 ) -> Result<U256> {
-    issue_nod_with_cost(
-        storage,
-        encrypted,
-        storage.now_secs()?,
-        IssueNodHints {
-            sealed_series: Some(series_id),
-            ..IssueNodHints::default()
-        },
-    )
+    issue_nod_with_cost(storage, encrypted, storage.now_secs()?, Some(series_id))
 }
 
 /// Seals a Lysis series into the call group of its first full day after `sealed_at`, its
@@ -148,18 +117,12 @@ pub fn seal_lysis_series(storage: &StorageHandle<'_>, input: LysisSeriesInput) -
     Ok(())
 }
 
-/// `gratis_load_minor` is read through the enclave when the caller does not know it.
 fn issue_nod_with_cost(
     storage: &StorageHandle<'_>,
     encrypted: &EncryptedNodV1,
     issued_at: u64,
-    hints: IssueNodHints,
+    sealed_series: Option<SeriesId>,
 ) -> Result<U256> {
-    let IssueNodHints {
-        verified_cost,
-        gratis_load_minor,
-        sealed_series,
-    } = hints;
     let terms = &encrypted.terms;
     if terms.owner.is_zero() {
         return Err(NodFactoryError::InvalidOwner.into());
@@ -206,19 +169,8 @@ fn issue_nod_with_cost(
     if let Some(series_id) = sealed_series {
         nod_api::add_series_nod(storage, &item, call_terms, series_id)?;
     } else {
-        let gratis_load_minor = match (gratis_load_minor, verified_cost) {
-            (Some(load), Some(_)) => load,
-            (None, Some(_)) => U256::ZERO,
-            (Some(load), None) => {
-                let _ = nod_api::settlement_cost_minor(terms.entry_price_minor, load)?;
-                load
-            }
-            (None, None) => {
-                let load = nod_api::calculation_amount(&item)?;
-                let _ = nod_api::settlement_cost_minor(terms.entry_price_minor, load)?;
-                load
-            }
-        };
+        let gratis_load_minor = nod_api::calculation_amount(&item)?;
+        let _ = nod_api::settlement_cost_minor(terms.entry_price_minor, gratis_load_minor)?;
         nod_api::add_nod(storage, &item, call_terms, gratis_load_minor)?;
     }
     emit_event(

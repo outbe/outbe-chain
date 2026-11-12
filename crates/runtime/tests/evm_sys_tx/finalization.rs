@@ -52,9 +52,6 @@ fn dispatch_phase1(
     provider: &mut HashMapStorageProvider,
     metadata: CertifiedParentAccountingMetadata,
 ) -> Result<Bytes> {
-    provider.enable_metadosis_mutation_frame(
-        outbe_primitives::storage::MetadosisMutationPurposeTag::CertifiedFinality,
-    );
     provider.enter(|storage| {
         let input = SystemTx::Consensus {
             step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
@@ -94,9 +91,6 @@ fn dispatch_finalization_uses_preloaded_summary_not_calldata_money() {
         user_gas_used: 0,
     };
 
-    provider.enable_metadosis_mutation_frame(
-        outbe_primitives::storage::MetadosisMutationPurposeTag::CertifiedFinality,
-    );
     provider.enter(|storage| {
         storage
             .increase_balance(outbe_primitives::addresses::REWARDS_ADDRESS, preloaded_fee)
@@ -132,9 +126,6 @@ fn dispatch_finalization_uses_preloaded_summary_not_calldata_money() {
     });
 
     // Supported identical replay succeeds without duplicating fee escrow or participation.
-    provider.enable_metadosis_mutation_frame(
-        outbe_primitives::storage::MetadosisMutationPurposeTag::CertifiedFinality,
-    );
     provider.enter(|storage| {
         let input = SystemTx::Consensus {
             step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
@@ -200,9 +191,6 @@ fn phase1_reorg_same_height_uses_parent_state_progress_not_abandoned_post_state(
 #[test]
 fn dispatch_finalization_counts_duplicate_missed_proposer_events_by_index() {
     let mut provider = configured_storage(2, 1_700_000_000);
-    provider.enable_metadosis_mutation_frame(
-        outbe_primitives::storage::MetadosisMutationPurposeTag::CertifiedFinality,
-    );
     provider.enter(|storage| {
         let mut metadata = metadata();
         metadata.missed_proposers = vec![

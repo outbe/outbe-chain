@@ -667,27 +667,19 @@ fn cycle_module_entitlements_require_empty_payload_and_active_day() {
 fn cycle_entitlements_preserve_genesis_and_unknown_day_bindings() {
     use outbe_cycle::call_authority::cycle_tick_entitlements;
     use outbe_primitives::storage::{
-        metadosis_init_genesis_binding, metadosis_late_settlement_binding,
-        MetadosisMutationEntitlements, MetadosisMutationPurposeTag,
+        metadosis_init_genesis_binding, MetadosisMutationEntitlements, MetadosisMutationPurposeTag,
     };
     let timestamp = 1_704_067_200;
-    let finality = MetadosisMutationEntitlements::exact(
-        MetadosisMutationPurposeTag::CertifiedFinality,
-        metadosis_late_settlement_binding(CHAIN_ID, 1, timestamp),
-    );
     assert_eq!(
         cycle_tick_entitlements(CHAIN_ID, 1, timestamp, None),
-        finality.union(MetadosisMutationEntitlements::exact(
+        MetadosisMutationEntitlements::exact(
             MetadosisMutationPurposeTag::CycleLifecycle,
             metadosis_init_genesis_binding(CHAIN_ID, 1, timestamp)
-        ))
+        )
     );
     assert_eq!(
         cycle_tick_entitlements(CHAIN_ID, 2, timestamp, None),
-        MetadosisMutationEntitlements::exact(
-            MetadosisMutationPurposeTag::CertifiedFinality,
-            metadosis_late_settlement_binding(CHAIN_ID, 2, timestamp)
-        )
+        MetadosisMutationEntitlements::NONE
     );
     assert_eq!(
         cycle_tick_entitlements(CHAIN_ID, 2, timestamp, Some(0)),

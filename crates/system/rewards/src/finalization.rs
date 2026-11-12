@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use std::fmt::Display;
 
 use alloy_primitives::{Address, Bytes, B256};
-use outbe_primitives::block::{BlockRuntimeContext, MetadosisEntitlementContext, ProtocolModule};
+use outbe_primitives::block::{BlockRuntimeContext, ProtocolModule};
 use outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K;
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use outbe_primitives::error::{PrecompileError, Result};
@@ -16,10 +16,7 @@ use outbe_primitives::reshare_artifact::{
     decode_late_finalize_credits_artifact, encode_late_finalize_credits_artifact,
     LateFinalizeCreditsArtifact, PerBlockCredit,
 };
-use outbe_primitives::storage::{
-    metadosis_late_settlement_binding, MetadosisMutationEntitlements, MetadosisMutationPurposeTag,
-    StorageHandle,
-};
+use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::system_tx_context::{
     SystemTxBuildContext, SystemTxExecutionContext, SystemTxPayloadBuildError,
     SystemTxPayloadValidationError, SystemTxValidationContext,
@@ -104,25 +101,6 @@ impl ProtocolModule for LateFinalizeCreditsModule {
             ctx.artifacts,
         )?;
         Ok(())
-    }
-
-    fn mutation_entitlements(
-        ctx: MetadosisEntitlementContext<'_>,
-    ) -> MetadosisMutationEntitlements {
-        let Ok(artifact) = decode_late_finalize_credits_artifact(ctx.payload) else {
-            return MetadosisMutationEntitlements::NONE;
-        };
-        let Ok(reencoded) = encode_late_finalize_credits_artifact(&artifact.unwrap_or_default())
-        else {
-            return MetadosisMutationEntitlements::NONE;
-        };
-        if reencoded.as_ref() != ctx.payload {
-            return MetadosisMutationEntitlements::NONE;
-        }
-        MetadosisMutationEntitlements::exact(
-            MetadosisMutationPurposeTag::CertifiedFinality,
-            metadosis_late_settlement_binding(ctx.chain_id, ctx.block_number, ctx.timestamp),
-        )
     }
 
     fn begin_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
@@ -539,11 +517,8 @@ mod protocol_module_tests {
     use super::*;
     use outbe_primitives::{
         block::{BlockHeightRegime, MetadosisEntitlementContext, ProtocolModule},
-        reshare_artifact::{encode_late_finalize_credits_artifact, OutbeBlockArtifacts},
-        storage::{
-            metadosis_late_settlement_binding, MetadosisMutationEntitlements,
-            MetadosisMutationPurposeTag,
-        },
+        reshare_artifact::OutbeBlockArtifacts,
+        storage::MetadosisMutationEntitlements,
         system_tx_context::{
             SystemTxBuildContext, SystemTxPayloadBuildError, SystemTxValidationContext,
         },
@@ -582,31 +557,6 @@ mod protocol_module_tests {
             ParentAccountingModule::build_payload(&build),
             Err(SystemTxPayloadBuildError::CertifiedParentAccountingHashMismatch { .. })
         ));
-    }
-
-    #[test]
-    fn late_module_grants_only_canonical_payload_entitlements() {
-        let payload =
-            encode_late_finalize_credits_artifact(&LateFinalizeCreditsArtifact::default()).unwrap();
-        let mut context = MetadosisEntitlementContext {
-            payload: &payload,
-            chain_id: 1,
-            block_number: 2,
-            timestamp: 100,
-            cycle_active_utc_day: None,
-        };
-        assert_eq!(
-            LateFinalizeCreditsModule::mutation_entitlements(context),
-            MetadosisMutationEntitlements::exact(
-                MetadosisMutationPurposeTag::CertifiedFinality,
-                metadosis_late_settlement_binding(1, 2, 100)
-            )
-        );
-        context.payload = &[0xff];
-        assert_eq!(
-            LateFinalizeCreditsModule::mutation_entitlements(context),
-            MetadosisMutationEntitlements::NONE
-        );
     }
 
     #[test]

@@ -12,7 +12,6 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
-import {IERC7786TokenReceiver} from "@contracts/origin/interfaces/IERC7786TokenReceiver.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
@@ -104,9 +103,11 @@ contract WCOEN is MockERC20 {
     receive() external payable {}
 }
 
-/// @dev Same-chain token bridge: delivers the wCOEN and invokes the receiver hook in the same tx,
-///      mirroring the composed loopback token leg.
-contract SyncTokenBridge {
+/// @dev The WCOEN token bridge on Outbe. Like the real one, it has no peer on its own chain, so a
+///      route through it to this chain reverts.
+contract LocalTokenBridge {
+    error RemoteBridgeNotSet(uint32 domain);
+
     IERC20 internal immutable TOKEN;
 
     constructor(IERC20 token) {
@@ -117,27 +118,18 @@ contract SyncTokenBridge {
         return TOKEN;
     }
 
-    function quoteSend(uint32, address, uint256, bytes calldata, uint256) external pure returns (uint256) {
-        return 0;
+    function quoteSend(uint32 domain, address, uint256, bytes calldata, uint256) external pure returns (uint256) {
+        revert RemoteBridgeNotSet(domain);
     }
 
-    function sendAndCall(uint32, address to, uint256 amount, bytes calldata extraData, uint256)
-        external
-        payable
-        returns (bytes32)
-    {
-        require(TOKEN.transferFrom(msg.sender, to, amount));
-        IERC7786TokenReceiver(to)
-            .onCrosschainTokensReceived(
-                uint32(block.chainid), InteroperableAddress.formatEvmV1(block.chainid, msg.sender), amount, extraData
-            );
-        return bytes32(0);
+    function sendAndCall(uint32 domain, address, uint256, bytes calldata, uint256) external payable returns (bytes32) {
+        revert RemoteBridgeNotSet(domain);
     }
 }
 
 /// @dev Origin==target on one chain. The setup wires both routers, the auction, the escrow and the
 ///      canonical NFT to a synchronous in-process bridge. Thus every protocol message executes in
-///      the sending transaction, as in the loopback transport. This includes the nested bids relay
+///      the sending transaction. This includes the nested bids relay
 ///      that fires from inside the CLEARING delivery. Each delivery runs under its exact IntexGas
 ///      executionGasLimit attribute. An undersized budget makes the delivery run out of gas and
 ///      fails the walk. Thus the test is also the budget check.
@@ -160,7 +152,7 @@ contract LocalLoopbackTest is Test {
     RecordingDesis internal desis;
     RecordingFactory internal factory;
     WCOEN internal wcoen;
-    SyncTokenBridge internal tokenBridge;
+    LocalTokenBridge internal tokenBridge;
     MockTheCompact internal compact;
 
     uint32 internal local;
@@ -178,7 +170,7 @@ contract LocalLoopbackTest is Test {
         iba1 = vm.addr(iba1Pk);
         iba2 = vm.addr(iba2Pk);
 
-        // Synchronous delivery under the exact per-message gas attribute, like the loopback transport.
+        // Synchronous delivery under the exact per-message gas attribute.
         bridge = new MockERC7786Bridge();
         bridge.setEnforceGasAttribute(true);
 
@@ -191,7 +183,7 @@ contract LocalLoopbackTest is Test {
         desis = new RecordingDesis();
         factory = new RecordingFactory();
         wcoen = new WCOEN();
-        tokenBridge = new SyncTokenBridge(IERC20(address(wcoen)));
+        tokenBridge = new LocalTokenBridge(IERC20(address(wcoen)));
         vm.deal(address(wcoen), INITIAL_WCOEN_BALANCE * 2); // native backing for both unwrap paths
 
         escrow = DeployProxy.escrowAdapter(address(this), address(this));
@@ -262,7 +254,7 @@ contract LocalLoopbackTest is Test {
     }
 
     function test_FullWalk_OriginAsTarget() public {
-        // 1. STAGE_START broadcast lands synchronously: hub -> loopback -> hub -> TargetRouter -> auction.
+        // 1. STAGE_START broadcast lands synchronously: bridge -> TargetRouter -> auction.
         vm.prank(address(desis));
         origin.sendAuctionStageStart(_stageStartParams());
         assertEq(uint8(auction.getAuctionStage(DAY)), uint8(IIntexAuction.AuctionStage.CommittingBids), "not started");
@@ -286,7 +278,7 @@ contract LocalLoopbackTest is Test {
         assertEq(uint256(escrow.getBidLock(DAY, iba2).lockedAmount), 28e18, "iba2 lock");
 
         // 4. CLEARING: the delivery itself fires the nested bids relay (BIDS_BATCH + BIDS_DONE)
-        //    back through the loopback to the origin. This makes three chained same-tx deliveries.
+        //    back through the bridge to the origin. This makes three chained same-tx deliveries.
         vm.warp(startTs + 201);
         vm.prank(address(desis));
         origin.sendAuctionStageCollectingBids(DAY, local, IntexGas.AUCTION_STAGE_COLLECTING_BIDS);
@@ -306,7 +298,7 @@ contract LocalLoopbackTest is Test {
         assertEq(result.auctionClearingRate, 700_000, "clearing rate");
 
         // 6. REFUND_INSTRUCTIONS: the delivery takes each winner's payment AND routes the paid wCOEN to
-        //    the origin (sync token leg + unwrap + factory hand-off), all inside the refund budget.
+        //    the origin (direct hand-over + unwrap + factory hand-off), all inside the refund budget.
         //    The rest of each lock waits for its claim. iba2 is the partial fill: 20 of 40.
         address[] memory bidders = new address[](2);
         bidders[0] = iba1;
@@ -326,7 +318,7 @@ contract LocalLoopbackTest is Test {
         assertEq(factory.lastDay(), DAY, "proceeds day");
         assertEq(address(origin).balance, 0, "native stranded on origin");
 
-        // 7. ISSUANCE_INSTRUCTIONS: the series lands on the canonical NFT via the loopback leg.
+        // 7. ISSUANCE_INSTRUCTIONS: the series lands on the canonical NFT via the bridge.
         IOriginRouter.IssuanceInstructionsParams[] memory issuance = new IOriginRouter.IssuanceInstructionsParams[](1);
         issuance[0] = IOriginRouter.IssuanceInstructionsParams({
             seriesId: CreateSeriesLib.seriesId(DAY),

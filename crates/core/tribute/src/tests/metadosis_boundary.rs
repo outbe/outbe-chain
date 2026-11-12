@@ -5,8 +5,7 @@ use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{
     metadosis_advance_due_binding, metadosis_cycle_allocation_binding,
-    metadosis_init_genesis_binding, metadosis_late_settlement_binding,
-    metadosis_process_ready_binding, MetadosisCertifiedFinality, MetadosisCycleLifecycle,
+    metadosis_init_genesis_binding, metadosis_process_ready_binding, MetadosisCycleLifecycle,
     MetadosisMutationPurposeTag, StorageHandle,
 };
 use outbe_primitives::time::WorldwideDay;
@@ -52,10 +51,6 @@ fn day_mutators_reject_a_missing_lease_without_writes() {
             tc.compute_and_record_metadosis_fractions(day, U256::from(1u64), 1)
                 .unwrap_err()
                 .to_string(),
-            MISMATCH
-        );
-        assert_eq!(
-            tc.forfeit_sealed_partition(day).unwrap_err().to_string(),
             MISMATCH
         );
         assert_eq!(
@@ -148,27 +143,5 @@ fn day_mutators_follow_the_caller_binding() {
             assert!(tc.is_day_sealed(day_d)?);
             Ok(())
         });
-    });
-}
-
-#[test]
-fn certified_finality_rejects_day_mutation_without_writes() {
-    let mut provider = HashMapStorageProvider::new(1);
-    provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CertifiedFinality);
-    let day = WorldwideDay::new(20260920);
-    StorageHandle::enter(&mut provider, |storage| {
-        let binding = metadosis_late_settlement_binding(
-            storage.chain_id().unwrap(),
-            storage.block_number().unwrap(),
-            storage.now_secs().unwrap(),
-        );
-        storage
-            .with_metadosis_mutation::<MetadosisCertifiedFinality, _>(binding, || {
-                let mut tc = TributeContract::new(storage.clone());
-                assert_eq!(tc.seal_day(day).unwrap_err().to_string(), MISMATCH);
-                assert!(!tc.is_day_sealed(day)?);
-                Ok(())
-            })
-            .unwrap();
     });
 }

@@ -278,7 +278,6 @@ fn an_oversized_brief_cancels_in_order_and_a_second_brief_is_rejected() {
                     desis_limit_minor: U256::MAX,
                     has_limit: true,
                 },
-                crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
             )
             .unwrap(),
             crate::api::AuctionBriefReceipt::ReturnedToPromisLimit { .. }
@@ -296,7 +295,6 @@ fn an_oversized_brief_cancels_in_order_and_a_second_brief_is_rejected() {
                 desis_limit_minor: U256::MAX,
                 has_limit: true,
             },
-            crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
         )
         .is_err());
     });

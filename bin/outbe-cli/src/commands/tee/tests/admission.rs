@@ -86,7 +86,7 @@ fn finalized_join_anchor_binds_the_exact_finalized_view_and_registry_binding() {
         state_root: B256::repeat_byte(0x13),
         consensus_timestamp: 19_000,
     };
-    let binding = outbe_operator::test_support::RenewalBindingFixtureV1::new(0x21)
+    let binding = outbe_tee::test_utils::RenewalBindingFixtureV1::new(0x21)
         .versions(2, 3)
         .nonces(0, 0)
         .lease(18_000, 20_000, 20_000)

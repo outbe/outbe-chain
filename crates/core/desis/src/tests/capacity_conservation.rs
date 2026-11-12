@@ -68,7 +68,6 @@ fn world_selling(units: u16) -> HashMapStorageProvider {
                 desis_limit_minor: U256::from(LIMIT),
                 has_limit: true,
             },
-            crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
         )
         .unwrap();
     });

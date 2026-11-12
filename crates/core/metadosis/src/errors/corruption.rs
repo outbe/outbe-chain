@@ -14,21 +14,6 @@ pub enum MetadosisStorageCorruptionError {
 
     #[error("Metadosis full-precision demand overflow")]
     FullPrecisionDemandOverflow,
-
-    #[error("Metadosis day-limit return overflow")]
-    DayLimitReturnOverflow,
-
-    #[error("Metadosis Lysis limit exceeds day nominal")]
-    LysisLimitExceedsDayNominal,
-
-    #[error("Metadosis split exceeds day limit")]
-    SplitExceedsDayLimit,
-
-    #[error("accepted Desis brief exceeds routing limit")]
-    AcceptedDesisBriefExceedsRoutingLimit,
-
-    #[error("Desis rejection receipt does not match dispatched limit")]
-    DesisRejectionReceiptMismatchDispatchedLimit,
 }
 
 impl From<MetadosisStorageCorruptionError> for PrecompileError {

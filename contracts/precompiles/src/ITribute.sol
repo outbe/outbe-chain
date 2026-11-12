@@ -9,7 +9,6 @@ interface ITribute {
     error WorldwideDayIsSealed();
     error OwnerBalanceOverflow();
     error QueryLimitExceeded();
-    error DayResponseScopeMismatch();
     error CalculationView(string value);
     error WorldwideDayNotCompletedAndEmpty();
     error PrivateAmountReadFailed(string value);
@@ -23,6 +22,7 @@ interface ITribute {
     error DateStep(uint8 kind, uint32 dateKey);
     error TributeForfeited();
     error TributeNotForfeited();
+    error TributeSeriesInvalid();
 
     event TributeOffered(
         uint256 indexed tributeId,

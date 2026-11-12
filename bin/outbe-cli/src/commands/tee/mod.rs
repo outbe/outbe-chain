@@ -183,7 +183,14 @@ use upgrade::{
 };
 
 mod admission_history;
+mod onboarding;
+mod operator_errors;
+mod relay_tx;
+mod renewal_engine;
+mod renewal_journal;
+mod status_view;
 mod upgrade_network;
+mod upgrade_submission;
 
 mod join;
 
