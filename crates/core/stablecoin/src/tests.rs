@@ -1568,6 +1568,52 @@ fn erc7943_abi_reports_interface_and_roundtrips_views_and_mutations() {
     );
 }
 
+/// Domain separators that Foundry `cast` 1.7.1 computed for these names, chains and addresses.
+#[test]
+fn domain_separator_matches_the_foundry_vectors() {
+    for (name, chain_id, token_address, expected) in [
+        (
+            "Example Dollar",
+            424_242,
+            address!("53c0438d2aa31f9642f6718ce7b1ab3253c7f350"),
+            b256!("bad60a9ff5a489b59649a99c4bf6d3cf3ac4ed82c76304f0b14cbb2b8c9a83e9"),
+        ),
+        (
+            "Example Dollar",
+            54_322_345,
+            address!("53c0f7f0acaf4c6a42867edc0cfedd65ee90c97f"),
+            b256!("24aae2a2078bc2de3469da62ff425b346368ad5de045f3e522e81d0ccac6a425"),
+        ),
+        (
+            "Example Dollar",
+            676,
+            address!("53c0232442bb7951098f3e4c2d9751e2d0d33564"),
+            b256!("0c42886de638f55263886351ee424f51fc70ccd71565c06342557215ae759ee5"),
+        ),
+        (
+            "Yen \u{5186}",
+            54_322_345,
+            address!("53c0000000000000000000000000000000000001"),
+            b256!("03ee71636f30d301ad5c69dffab683b90815b40042bcc9da442e6fa559a09dfd"),
+        ),
+    ] {
+        let mut provider = HashMapStorageProvider::new(chain_id);
+        StorageHandle::enter(&mut provider, |storage| {
+            let token = StablecoinContract::new(storage, token_address);
+            token
+                .schema_version
+                .write(u64::from(STABLECOIN_V1_SCHEMA_VERSION))
+                .unwrap();
+            token.name.write_string(name).unwrap();
+            assert_eq!(
+                token.domain_separator().unwrap(),
+                expected,
+                "{name} on {chain_id}"
+            );
+        });
+    }
+}
+
 #[test]
 fn permit_domain_and_cast_golden_signature_are_exact_and_work_at_deadline_while_paused() {
     let init = initialization("USDX");
