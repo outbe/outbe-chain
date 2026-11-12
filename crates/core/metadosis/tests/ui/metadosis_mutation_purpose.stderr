@@ -10,26 +10,20 @@ help: the trait `metadosis_mutation::sealed::Sealed` is not implemented for `For
 3 | struct ForgedPurpose;
   | ^^^^^^^^^^^^^^^^^^^^
   = note: `ForgedPurpose` implements similarly named trait `tonic::service::layered::sealed::Sealed`, but not `metadosis_mutation::sealed::Sealed`
-help: the following other types implement trait `metadosis_mutation::sealed::Sealed`
+help: the trait `metadosis_mutation::sealed::Sealed` is implemented for `MetadosisCycleLifecycle`
  --> $WORKSPACE/crates/blockchain/primitives/src/storage/metadosis_mutation.rs
   |
   |         impl sealed::Sealed for $name {}
   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  |         |
-  |         `MetadosisCertifiedFinality`
-  |         `MetadosisCycleLifecycle`
 ...
   | define_purpose!(MetadosisCycleLifecycle, CycleLifecycle);
   | -------------------------------------------------------- in this macro invocation
-  | define_purpose!(MetadosisCertifiedFinality, CertifiedFinality);
-  | -------------------------------------------------------------- in this macro invocation
 note: required by a bound in `MetadosisMutationPurpose`
  --> $WORKSPACE/crates/blockchain/primitives/src/storage/metadosis_mutation.rs
   |
   | pub trait MetadosisMutationPurpose: sealed::Sealed {
   |                                     ^^^^^^^^^^^^^^ required by this bound in `MetadosisMutationPurpose`
   = note: `MetadosisMutationPurpose` is a "sealed trait", because to implement it you also need to implement `outbe_primitives::storage::metadosis_mutation::sealed::Sealed`, which is not accessible; this is usually done to force you to use one of the provided types that already implement it
-  = help: the following types implement the trait:
+  = help: the following type implements the trait:
             outbe_primitives::storage::MetadosisCycleLifecycle
-            outbe_primitives::storage::MetadosisCertifiedFinality
   = note: this error originates in the macro `define_purpose` (in Nightly builds, run with -Z macro-backtrace for more info)
