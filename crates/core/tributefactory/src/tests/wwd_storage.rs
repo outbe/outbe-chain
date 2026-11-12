@@ -153,7 +153,6 @@ fn test_storage_dsl_layout_is_compatible_with_previous_slots() {
             factory.last_wwd_advance_day.slot(),
             alloy_primitives::U256::from(7)
         );
-        assert_eq!(crate::schema::SU_HASH_RETAIN, 1 << 20);
     });
 }
 

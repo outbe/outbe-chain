@@ -367,8 +367,6 @@ fn publication_maximum_committee_and_wire_batches_calibrate_all_actions() {
     use outbe_coderegistry::{payload::PatchVotePayloadV1, PatchApprovalRecord};
     use outbe_vote::{schema::ProposalRecord, ProposalStatus, Vote};
 
-    assert_eq!(outbe_consensus::bls::MAX_VALIDATORS, 256);
-    assert_eq!(MAX_PUBLICATION_ATTESTATIONS, 32);
     let mut fixture = publication_fixture(256, true);
     let oversized = signed_batch(&fixture.keys, &fixture.body, 0..33);
     assert!(

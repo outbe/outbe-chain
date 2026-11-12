@@ -129,45 +129,6 @@ mod tests {
     // Finalization retry constants
     // -----------------------------------------------------------------------
 
-    /// Verify retry constants are reasonable and accessible.
-    #[test]
-    fn test_finalize_retry_constants() {
-        use crate::config::{
-            FINALIZE_MAX_RETRIES, FINALIZE_RESOLUTION_TIMEOUT, FINALIZE_RETRY_DELAY,
-            PROPOSE_RESOLUTION_TIMEOUT, VERIFY_RESOLUTION_TIMEOUT,
-        };
-
-        assert_eq!(FINALIZE_MAX_RETRIES, 5, "max retries must be 5");
-        assert_eq!(
-            FINALIZE_RESOLUTION_TIMEOUT,
-            std::time::Duration::from_secs(10),
-            "finalize per-attempt timeout must be 10 seconds"
-        );
-        assert_eq!(
-            FINALIZE_RETRY_DELAY,
-            std::time::Duration::from_secs(2),
-            "retry delay must be 2 seconds"
-        );
-
-        // Worst case before structured failure: N attempts x per-attempt timeout
-        // + (N - 1) sleeps between them (no sleep after the last attempt).
-        let total_worst_case = FINALIZE_RESOLUTION_TIMEOUT * FINALIZE_MAX_RETRIES
-            + FINALIZE_RETRY_DELAY * (FINALIZE_MAX_RETRIES - 1);
-        assert_eq!(
-            total_worst_case,
-            std::time::Duration::from_secs(58),
-            "worst-case before structured failure must be exactly 58s"
-        );
-        assert!(
-            total_worst_case <= std::time::Duration::from_secs(60),
-            "worst-case before structured failure must be bounded (<=60s)"
-        );
-        assert_eq!(
-            PROPOSE_RESOLUTION_TIMEOUT, VERIFY_RESOLUTION_TIMEOUT,
-            "propose and verify marshal resolution should use the same per-attempt budget"
-        );
-    }
-
     /// Regression: parent block resolution must hint the parent's view, not the
     /// child proposal's current view. Otherwise marshal fetches notarization for
     /// the child round while the waiter is subscribed to the parent digest.

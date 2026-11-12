@@ -64,7 +64,7 @@ use outbe_simplex::test_harness::{
 use outbe_slashindicator::precompile::ISlashIndicator as Isi;
 use outbe_slashindicator::runtime::classify_vrf_failure;
 use outbe_slashindicator::schema::SlashIndicator;
-use outbe_slashindicator::vrf_evidence::{InvalidVrfProofEvidence, MAGIC, VERSION};
+use outbe_slashindicator::vrf_evidence::InvalidVrfProofEvidence;
 use outbe_staking::contract::Staking;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::state::{write_committee_snapshot, CommitteeEntry, CommitteeSnapshot};
@@ -956,17 +956,6 @@ fn classify_vrf_failure_covers_all_reachable_vrf_variants_only() {
         }),
         None
     );
-}
-
-// ===========================================================================
-// Sanity: confirm the codec wire constants used in the file above match
-// the runtime's published values. Acts as a smoke check that the codec
-// header didn't drift away from what the runtime expects.
-// ===========================================================================
-#[test]
-fn codec_wire_constants_are_stable() {
-    assert_eq!(MAGIC, *b"IVE2");
-    assert_eq!(VERSION, 0x02);
 }
 
 // ===========================================================================

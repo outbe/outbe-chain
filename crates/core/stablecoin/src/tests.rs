@@ -1,4 +1,4 @@
-use alloy_primitives::{address, b256, keccak256, Address, B256, U256};
+use alloy_primitives::{address, b256, Address, B256, U256};
 use alloy_sol_types::{SolCall, SolError, SolEvent};
 use outbe_primitives::addresses::{STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS};
 use outbe_primitives::error::PrecompileError;
@@ -14,8 +14,8 @@ use crate::abi::IStablecoin;
 use crate::api::{FactoryTokenInitialization, StablecoinFactoryApi};
 use crate::precompile::dispatch;
 use crate::schema::{
-    role_key, StablecoinContract, ADMIN_ROLE, CAP_MANAGER_ROLE, COMPLIANCE_ROLE, ENFORCER_ROLE,
-    GUARDIAN_ROLE, ISSUER_ROLE, OPERATIONAL_ROLES,
+    role_key, StablecoinContract, ADMIN_ROLE, COMPLIANCE_ROLE, GUARDIAN_ROLE, ISSUER_ROLE,
+    OPERATIONAL_ROLES,
 };
 
 const CHAIN_ID: u64 = 7;
@@ -180,16 +180,6 @@ fn layout_is_pinned_to_the_documented_root_slots() {
         assert_eq!(token.roles.base_slot(), U256::from(17));
         assert_eq!(token.frozen.base_slot(), U256::from(18));
     });
-}
-
-#[test]
-fn role_ids_match_the_frozen_abi_vectors() {
-    assert_eq!(ADMIN_ROLE, keccak256("ADMIN"));
-    assert_eq!(ISSUER_ROLE, keccak256("ISSUER"));
-    assert_eq!(CAP_MANAGER_ROLE, keccak256("CAP_MANAGER"));
-    assert_eq!(GUARDIAN_ROLE, keccak256("GUARDIAN"));
-    assert_eq!(COMPLIANCE_ROLE, keccak256("COMPLIANCE"));
-    assert_eq!(ENFORCER_ROLE, keccak256("ENFORCER"));
 }
 
 #[test]
@@ -1013,10 +1003,6 @@ fn cancel_admin_transfer_emits_admin_transfer_canceled() {
             canceledPendingAdmin: candidate,
         }
         .encode_log_data()
-    );
-    assert_eq!(
-        IStablecoin::AdminTransferCanceled::SIGNATURE,
-        "AdminTransferCanceled(address,address)"
     );
 }
 

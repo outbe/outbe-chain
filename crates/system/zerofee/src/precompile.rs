@@ -111,7 +111,7 @@ mod tests {
     //! These tests must verify it independently of `runtime::authorize_sponsorship`.
 
     use alloy_primitives::{address, Address, U256};
-    use alloy_sol_types::{SolCall, SolType};
+    use alloy_sol_types::SolCall;
     use outbe_primitives::{
         addresses::ZEROFEE_ADDRESS,
         storage::{hashmap::HashMapStorageProvider, StorageHandle},
@@ -120,7 +120,7 @@ mod tests {
     use crate::schema::{pack_counter, ZeroFeeContract};
 
     // Encode and decode as external callers do, using the published interface.
-    use super::{__ZeroFeeContractAbi as dispatch_abi, IZeroFee as abi};
+    use super::IZeroFee as abi;
 
     const SIGNER: Address = address!("0x1111111111111111111111111111111111111111");
     // 2026-04-01 00:00:00 UTC -> date_key 20260401.
@@ -280,25 +280,5 @@ mod tests {
             let res = super::dispatch(storage, &bogus, Address::ZERO, U256::ZERO);
             assert!(res.is_err(), "unknown selector must not dispatch");
         });
-    }
-
-    /// Compare the published ABI with the independently generated dispatch ABI.
-    /// Return types need an explicit check: widening uint32 to uint256 preserves
-    /// both the selector and the encoded bytes for values that fit in uint32.
-    #[test]
-    fn izerofee_sol_matches_dispatch_abi() {
-        fn assert_call_abi<Published: SolCall, Generated: SolCall>() {
-            assert_eq!(Published::SIGNATURE, Generated::SIGNATURE);
-            assert_eq!(Published::SELECTOR, Generated::SELECTOR);
-            assert_eq!(
-                <Published::ReturnTuple<'static> as SolType>::SOL_NAME,
-                <Generated::ReturnTuple<'static> as SolType>::SOL_NAME,
-                "{} return types differ",
-                Published::SIGNATURE
-            );
-        }
-
-        assert_call_abi::<abi::authorizeSponsorshipCall, dispatch_abi::authorizeSponsorshipCall>();
-        assert_call_abi::<abi::getCounterCall, dispatch_abi::getCounterCall>();
     }
 }

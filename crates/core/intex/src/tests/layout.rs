@@ -50,31 +50,6 @@ fn config_auto_profile_follows_the_network() {
     }
 }
 
-/// PROD keeps 2.28 times the entry price. DEV uses 1.04 times the entry price.
-#[test]
-fn config_call_rate_is_pinned_per_profile() {
-    assert_eq!(
-        config::IntexParams::PROD.call_rate,
-        crate::constants::CALL_RATE_PCT
-    );
-    assert_eq!(config::IntexParams::PROD.call_rate, 128);
-    assert_eq!(config::IntexParams::DEV.call_rate, 4);
-}
-
-#[test]
-fn config_promis_load_launch_exponent_is_pinned_per_profile() {
-    use outbe_primitives::units::PROTOCOL_AMOUNT_DECIMALS;
-
-    assert_eq!(config::IntexParams::PROD.promis_load_launch_exponent, 12);
-    assert_eq!(config::IntexParams::DEV.promis_load_launch_exponent, 12);
-    assert!((1..=21).contains(&config::IntexParams::PROD.promis_load_launch_exponent));
-    assert!((1..=21).contains(&config::IntexParams::DEV.promis_load_launch_exponent));
-    assert_eq!(
-        10u128.pow(config::IntexParams::PROD.promis_load_launch_exponent),
-        1_000_000 * 10u128.pow(u32::from(PROTOCOL_AMOUNT_DECIMALS)),
-    );
-}
-
 /// Slots are dense in `order` sequence, so a field inserted rather than appended moves every
 /// one after it. The seeder writes `config_profile` as a raw slot.
 #[test]

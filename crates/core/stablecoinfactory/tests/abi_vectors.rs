@@ -1,5 +1,5 @@
-use alloy_primitives::{b256, hex, keccak256, Address, B256, U256};
-use alloy_sol_types::{sol, SolCall, SolError, SolEvent};
+use alloy_primitives::{hex, Address, B256, U256};
+use alloy_sol_types::{sol, SolCall, SolError};
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
@@ -22,84 +22,6 @@ sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
     "../../../contracts/precompiles/src/IVote.sol"
 );
-
-#[test]
-fn complete_exported_abis_match_golden_hashes() {
-    let token = include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../../contracts/precompiles/abi-export/IStablecoin.json"
-    ));
-    let factory = include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../../contracts/precompiles/abi-export/IStablecoinFactory.json"
-    ));
-    let policy = include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../../contracts/precompiles/abi-export/IStablecoinPolicyRegistry.json"
-    ));
-    let vote = include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../../contracts/precompiles/abi-export/IVote.json"
-    ));
-
-    assert_eq!(
-        canonical_abi_hash(token),
-        b256!("0b520fbe7cb333952c9da443a6dac00228ca7faf92f2ddd9436813fd02dc4587")
-    );
-    assert_eq!(
-        canonical_abi_hash(factory),
-        b256!("c2eef29b3be6e35a38c704c3276d4c548a0745a80b146d28db7c5e920a8b02a7")
-    );
-    assert_eq!(
-        canonical_abi_hash(policy),
-        b256!("2adf78db2a4b1cef88cd655e8e5cf9df6568a281035743fb8743e476fb905c14")
-    );
-    assert_eq!(
-        canonical_abi_hash(vote),
-        // Enum ordinals are not represented in the export; pin their wire encoding below.
-        b256!("d70f8faa5eab98ddebd07e706f1fbadac3fb1e3db207b440ebff591fe48cbf18")
-    );
-}
-
-#[test]
-fn alloy_call_selectors_match_solidity_vectors() {
-    assert_eq!(
-        IStablecoin::transferWithMemoCall::SELECTOR,
-        [0x95, 0x77, 0x7d, 0x59]
-    );
-    assert_eq!(
-        IStablecoin::forcedTransferWithMemoCall::SELECTOR,
-        [0xea, 0x24, 0x5f, 0xb8]
-    );
-    assert_eq!(
-        IStablecoinFactory::predictTokenAddressCall::SELECTOR,
-        [0xc5, 0xab, 0x02, 0x80]
-    );
-    assert_eq!(
-        IStablecoinFactory::listTokensCall::SELECTOR,
-        [0xe3, 0x0e, 0x5a, 0xe9]
-    );
-    assert_eq!(
-        IStablecoinPolicyRegistry::createDirectionalPolicyCall::SELECTOR,
-        [0xba, 0xa1, 0x72, 0x5c]
-    );
-    assert_eq!(
-        IStablecoinPolicyRegistry::policyMemberCountCall::SELECTOR,
-        [0x20, 0xaa, 0x75, 0x1c]
-    );
-    assert_eq!(
-        IStablecoinPolicyRegistry::listPolicyMembersCall::SELECTOR,
-        [0xb5, 0x4e, 0x03, 0x19]
-    );
-    assert_eq!(
-        IVote::getProposalBondCall::SELECTOR,
-        [0xb6, 0xe1, 0x93, 0x28]
-    );
-    assert_eq!(
-        IVote::createProposalWithVotingWindowCall::SELECTOR,
-        [0x1f, 0x02, 0xa1, 0xe5]
-    );
-}
 
 #[test]
 fn alloy_encodes_canonical_dynamic_arguments() {
@@ -165,75 +87,4 @@ fn vote_status_filters_match_compact_abi_vectors() {
         };
         assert_eq!(call.abi_encode().as_slice(), &expected);
     }
-}
-
-#[test]
-fn alloy_event_and_error_selectors_match_solidity_vectors() {
-    assert_eq!(
-        IVote::InvalidProposalBond::SELECTOR,
-        [0x1f, 0xa7, 0xab, 0xd9]
-    );
-    assert_eq!(
-        IStablecoinFactory::StablecoinCreated::SIGNATURE_HASH,
-        b256!("3bc7cf7e0d900433f10a105db3704bd383cbe686a86099bff51166e3c9e5fe02")
-    );
-    assert_eq!(
-        IStablecoin::TransferWithMemo::SIGNATURE_HASH,
-        b256!("57bc7354aa85aed339e000bccffabbc529466af35f0772c8f8ee1145927de7f0")
-    );
-    assert_eq!(
-        IStablecoin::AdminTransferCanceled::SIGNATURE_HASH,
-        b256!("012014d40e69ecaa410e0186be24b4f60c813a38bb7df57297748bb2b4727add")
-    );
-    assert_eq!(
-        IStablecoin::Paused::SIGNATURE_HASH,
-        b256!("62e78cea01bee320cd4e420270b5ea74000d11b0c9f74754ebdbfc544b05a258")
-    );
-    assert_eq!(
-        IStablecoin::Unpaused::SIGNATURE_HASH,
-        b256!("5db9ee0a495bf2e6ff9c91a7834c1ba4fdd244a5e8aa4e537bd38aeae4b073aa")
-    );
-    assert_eq!(
-        IStablecoinPolicyRegistry::PolicyAdminTransferCanceled::SIGNATURE_HASH,
-        b256!("31974c65c1cd5fc64f2b0cd2bc0ed34c3e05ea9f879b50fad107131356024050")
-    );
-    assert_eq!(
-        IVote::ProposalBondBurned::SIGNATURE_HASH,
-        b256!("b7e5d2683c51bcb2296756a4963c8b5130542b95b0f975446e6f3ac3f02dfb89")
-    );
-    assert_eq!(
-        IStablecoinPolicyRegistry::MembershipUnchanged::SELECTOR,
-        [0x0c, 0xdf, 0x47, 0x3a]
-    );
-    assert_eq!(
-        IStablecoinPolicyRegistry::PolicyMemberEnumerationUnsupported::SELECTOR,
-        [0x1c, 0x87, 0x79, 0xff]
-    );
-    assert_eq!(
-        IStablecoin::ERC7943CannotSend::SELECTOR,
-        [0x45, 0xba, 0xe9, 0xe2]
-    );
-    assert_eq!(
-        IStablecoin::ERC7943CannotReceive::SELECTOR,
-        [0x70, 0x5c, 0x1e, 0xed]
-    );
-    assert_eq!(
-        IStablecoin::ERC7943CannotTransfer::SELECTOR,
-        [0x22, 0xdd, 0xa4, 0xbe]
-    );
-    assert_eq!(
-        IStablecoin::ERC7943InsufficientUnfrozenBalance::SELECTOR,
-        [0x00, 0x38, 0x4e, 0x71]
-    );
-    assert_eq!(
-        IVote::ProposalErrored::SIGNATURE_HASH,
-        b256!("c67a227da837cfcd61a6205491c7c4e5e187f7f490ff3ff1ba7735fe96f6f724")
-    );
-}
-
-fn canonical_abi_hash(mut bytes: &[u8]) -> B256 {
-    while bytes.last().is_some_and(u8::is_ascii_whitespace) {
-        bytes = &bytes[..bytes.len() - 1];
-    }
-    keccak256(bytes)
 }

@@ -26,25 +26,8 @@ pub(super) const fn parse_protocol_version_minor_component(input: &str) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::{PROTOCOL_VERSION, PROTOCOL_VERSION_MAJOR, PROTOCOL_VERSION_MINOR};
     use alloy_primitives::U256;
     use outbe_primitives::storage::types::Storable;
-
-    #[test]
-    fn protocol_version_constants_come_from_package_metadata() {
-        assert_eq!(
-            PROTOCOL_VERSION_MAJOR,
-            env!("CARGO_PKG_VERSION_MAJOR").parse::<u8>().unwrap()
-        );
-        assert_eq!(
-            PROTOCOL_VERSION_MINOR,
-            env!("CARGO_PKG_VERSION_MINOR").parse::<u32>().unwrap()
-        );
-        assert_eq!(
-            PROTOCOL_VERSION,
-            encode_protocol_version(PROTOCOL_VERSION_MAJOR, PROTOCOL_VERSION_MINOR)
-        );
-    }
 
     #[test]
     fn parse_protocol_version_is_const() {

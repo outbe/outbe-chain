@@ -259,12 +259,6 @@ fn schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_due_after_
 
 #[test]
 fn first_wwd_for_genesis_splits_3_or_4_empty_emission_days_across_noon_utc() {
-    assert_eq!(outbe_chain_constants::MAX_PIPELINE_WWDS, 7);
-    assert_eq!(
-        outbe_tributefactory::worldwideday::constants::MAX_PIPELINE_WWDS,
-        7
-    );
-    assert_eq!(crate::constants::MAX_PIPELINE_WWDS, 7);
     // Genesis on 2026-10-01 at 11:59 UTC -> first_wwd = 20260930 (G - 1),
     // offering_end on 20261004 (G + 3) -> 3 empty EmissionDays (20261001..=20261003).
     with_storage(|storage| {

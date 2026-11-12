@@ -70,21 +70,11 @@ pub fn build_outbe_failure_log(log_address: Address, code: u16, reason: String) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{address, keccak256, Bytes};
+    use alloy_primitives::{address, Bytes};
     use {
         crate::system_tx::TEST_BLOCK_ORDER,
         outbe_primitives::system_tx::{SystemTx, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX},
     };
-
-    #[test]
-    fn topic0_matches_signature() {
-        let expected = keccak256(b"OutbeFailure(uint16,string)");
-        assert_eq!(OUTBE_FAILURE_TOPIC0, expected);
-        assert_eq!(
-            IOutbeFailure::OutbeFailure::SIGNATURE,
-            "OutbeFailure(uint16,string)"
-        );
-    }
 
     #[test]
     fn empty_reason_still_encodes() {

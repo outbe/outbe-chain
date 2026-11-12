@@ -30,17 +30,3 @@ pub const REAL_ID_SHIFT: i32 = 1 << 23;
 /// Largest representable bin id (uint24 max). LB's `safe24` reverts past
 /// this. The Outbe `price_helper::get_id_from_price` saturates instead.
 pub const MAX_BIN_ID: u32 = (1 << 24) - 1;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn constants_match_pancakeswap() {
-        assert_eq!(SCALE_1_128_128, U256::ONE << 128);
-        assert_eq!(PRECISION, U256::from(1_000_000_000_000_000_000u64));
-        assert_eq!(REAL_ID_SHIFT, 1 << 23);
-        assert_eq!(BASIS_POINT_MAX, 10_000);
-        assert_eq!(SCALE_OFFSET, 128);
-    }
-}

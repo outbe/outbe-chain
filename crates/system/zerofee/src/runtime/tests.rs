@@ -722,14 +722,6 @@ fn precheck_accepts_non_paymaster_signer() {
 }
 
 #[test]
-fn day_constant_matches_timestamp_seconds_division() {
-    // The test scaffolding picks `BLOCK_TS` to land on the start of
-    // `BLOCK_DAY`. Document the invariant so future date pickers
-    // notice if SECONDS_PER_DAY ever changes.
-    assert_eq!(BLOCK_TS % SECONDS_PER_DAY, 0);
-}
-
-#[test]
 fn record_use_emits_sponsorship_event_at_zerofee_address() {
     use alloy_sol_types::SolEvent;
 

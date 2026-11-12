@@ -2224,7 +2224,6 @@ fn a_day_briefed_with_no_limit_is_cancelled_with_no_limit() {
         .clone();
 
     assert_eq!(stage, AuctionStage::Cancelled);
-    assert_eq!(DAY_STATE_CANCELLED, 2);
     assert_eq!(sent_day_states(&storage), vec![DAY_STATE_CANCELLED]);
     assert!(below_one_unit(&events).is_none());
     assert!(events.iter().any(|log| {

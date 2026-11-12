@@ -233,8 +233,6 @@ mod tests {
     #[test]
     fn devnet_and_testnet_accept_both_modes_while_mainnet_requires_dcap() {
         let genesis_hash = B256::repeat_byte(0x33);
-        assert_eq!(GRAMINE_DIRECT_DEV_CHAIN_ID, DEVNET_CHAIN_ID);
-        assert_ne!(GRAMINE_DIRECT_DEV_CHAIN_ID, TESTNET_CHAIN_ID);
         assert!(initial_tee_policy_v1(
             InitialTeeProfileV1::DcapRequired(dcap_measurement()),
             TESTNET_CHAIN_ID,

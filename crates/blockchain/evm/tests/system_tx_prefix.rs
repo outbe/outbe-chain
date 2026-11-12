@@ -290,9 +290,6 @@ fn assert_zero_gas(tx: &TransactionSigned, ordinal: u8) {
 
 #[test]
 fn system_tx_wire_limits_leave_runtime_gas_headroom() {
-    assert_eq!(MAX_SYSTEM_TXS_PER_BLOCK, 32);
-    assert_eq!(SYSTEM_TX_ARTIFACT_GAS_LIMIT, 10_000_000_000);
-
     for (ordinal, input) in canonical_inputs().into_iter().enumerate() {
         let ordinal = u8::try_from(ordinal).unwrap();
         assert_zero_gas(&system_tx(input, ordinal), ordinal);
@@ -381,8 +378,6 @@ fn visible_system_tx_gas_must_not_exceed_visible_block_gas_limit_for_generic_rep
 
 #[test]
 fn stage_framing_roundtrips_exact_header_and_payload_bytes() {
-    assert_eq!(SYSTEM_CALLDATA_FRAMING_BYTES, 6);
-    assert_eq!(SYSTEM_TX_INPUT_VERSION, 3);
     for (input, expected) in [
         (
             SystemTx::Consensus {

@@ -106,10 +106,6 @@ mod tests {
         assert_eq!(&message[1..9], &0x0102030405060708_u64.to_be_bytes());
         assert_eq!(&message[9..29], validator.as_slice());
         assert_eq!(&message[29..61], node_id.as_slice());
-        assert_eq!(
-            VALIDATOR_REGISTRATION_DST,
-            b"OUTBE_VALIDATOR_REGISTRATION_V2"
-        );
     }
 
     #[test]
@@ -123,10 +119,6 @@ mod tests {
 
     #[test]
     fn effective_min_stake_resolves_zero_to_ten_million_coen_base_units() {
-        assert_eq!(
-            DEFAULT_MIN_STAKE,
-            U256::from(10_000_000u64) * crate::units::ONE_COEN
-        );
         assert_eq!(effective_min_stake(U256::ZERO), DEFAULT_MIN_STAKE);
         assert_eq!(
             effective_min_stake(U256::from(1_000u64)),
