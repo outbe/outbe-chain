@@ -2,7 +2,7 @@ use alloy_primitives::{U256, U512};
 use serde::{de::Error as _, Deserialize, Deserializer};
 
 #[cfg(test)]
-use outbe_primitives::units::SCALE_1E18;
+use outbe_system_common::units::SCALE_1E18;
 
 /// Non-negative decimal value represented deterministically at FP18.
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]

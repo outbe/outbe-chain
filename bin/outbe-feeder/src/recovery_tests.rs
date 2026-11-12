@@ -134,10 +134,10 @@ impl RpcState {
                         IOracle::getVoteTargetsCall::abi_encode_returns(
                             &IOracle::getVoteTargetsReturn {
                                 bases: vec![Address::ZERO],
-                                quotes: vec![outbe_primitives::asset_type::AssetType::IsoCurrency(
-                                    840
-                                )
-                                .into()],
+                                quotes: vec![
+                                    outbe_system_common::asset_type::AssetType::IsoCurrency(840)
+                                        .into()
+                                ],
                             }
                         )
                     ))

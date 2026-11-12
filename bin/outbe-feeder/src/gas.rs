@@ -11,7 +11,7 @@
 
 use alloy_primitives::{Address, U256, U512};
 use eyre::{ensure, eyre, Result};
-use outbe_primitives::asset_type::{currency_address, COEN_ASSET};
+use outbe_system_common::asset_type::{currency_address, COEN_ASSET};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tracing::warn;

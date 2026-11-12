@@ -18,7 +18,7 @@ use crate::provider::{CandlePrice, Provider, TickerPrice};
 use alloy_primitives::{aliases::U1024, Address, U256, U512};
 use eyre::Result;
 use math::{filter_deviations, narrow_u1024, narrow_u512};
-use outbe_primitives::units::SCALE_1E18;
+use outbe_system_common::units::SCALE_1E18;
 use std::collections::HashMap;
 
 /// Aggregated price/volume for a single pair in that pair's registered scale.
@@ -35,8 +35,8 @@ pub struct AggregatedPrice {
 fn is_coen_iso_pair(base: Address, quote: Address) -> bool {
     base.is_zero()
         && matches!(
-            outbe_primitives::asset_type::AssetType::from(quote),
-            outbe_primitives::asset_type::AssetType::IsoCurrency(_)
+            outbe_system_common::asset_type::AssetType::from(quote),
+            outbe_system_common::asset_type::AssetType::IsoCurrency(_)
         )
 }
 
@@ -292,7 +292,7 @@ mod tests {
         OracleConfig,
     };
     use crate::provider::mock::MockProvider;
-    use outbe_primitives::units::{SCALE_1E18, SCALE_1E6_U128 as COEN_ISO_SCALE};
+    use outbe_system_common::units::{SCALE_1E18, SCALE_1E6_U128 as COEN_ISO_SCALE};
 
     const ETH_TOKEN: &str = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
 
@@ -727,7 +727,7 @@ mod tests {
         let eth_address = ETH_TOKEN.parse::<Address>().unwrap();
         let eth = results.iter().find(|p| p.base == eth_address).unwrap();
 
-        let usd: Address = outbe_primitives::asset_type::AssetType::IsoCurrency(840).into();
+        let usd: Address = outbe_system_common::asset_type::AssetType::IsoCurrency(840).into();
         assert_eq!(coen.quote, usd);
         assert_eq!(eth.quote, usd);
         assert_eq!(coen.price, U256::from(COEN_ISO_SCALE));
@@ -774,7 +774,7 @@ mod tests {
 
         let results = fetch_and_aggregate(&providers, &config).await.unwrap();
         assert_eq!(results.len(), 2);
-        let eur: Address = outbe_primitives::asset_type::AssetType::IsoCurrency(978).into();
+        let eur: Address = outbe_system_common::asset_type::AssetType::IsoCurrency(978).into();
         let coen_eur = results.iter().find(|p| p.quote == eur).unwrap();
         // 2.5 dollars per COEN / 1.25 dollars per euro = 2 euros per COEN.
         assert_eq!(
@@ -817,7 +817,7 @@ mod tests {
         let prices = aggregate_coen_iso_ticker("999", "1.25", "2.5").await;
         assert_eq!(prices.len(), 1);
         let expected_quote: Address =
-            outbe_primitives::asset_type::AssetType::IsoCurrency(999).into();
+            outbe_system_common::asset_type::AssetType::IsoCurrency(999).into();
         assert_eq!(prices[0].quote, expected_quote);
         assert_eq!(prices[0].price, U256::from(1_250_000u64));
         assert_eq!(prices[0].volume, U256::from(2_500_000u64));

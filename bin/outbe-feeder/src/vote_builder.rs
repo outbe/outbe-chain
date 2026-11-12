@@ -5,7 +5,7 @@
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
-use outbe_primitives::asset_type::AssetType;
+use outbe_system_common::asset_type::AssetType;
 
 use crate::abi::IOracle;
 use crate::aggregator::AggregatedPrice;
