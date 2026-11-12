@@ -2,8 +2,8 @@ use super::*;
 
 #[test]
 fn delayed_first_cycle_tick_starts_all_fresh_passes_at_chainspec_genesis() {
-    use outbe_primitives::pass_budget::BlockAllowance;
     use outbe_primitives::time::{date_key_to_utc_timestamp, WorldwideDay};
+    use outbe_system_common::pass_budget::BlockAllowance;
 
     let genesis_ts = date_key_to_utc_timestamp(20_240_131).unwrap() + 86_390;
     let block_ts = date_key_to_utc_timestamp(20_240_203).unwrap() + 60;

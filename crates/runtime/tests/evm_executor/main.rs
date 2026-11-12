@@ -51,18 +51,18 @@ use outbe_primitives::reshare_artifact::{
     decode_outbe_block_artifacts, encode_outbe_block_artifacts, ConsensusHeaderArtifact,
     ExecutionSummaryArtifact, OutbeBlockArtifacts,
 };
+use outbe_primitives::stablecoin_fork::STABLECOIN_CREATE_BOND;
 use outbe_primitives::storage::{
     direct::DirectStorageProvider, hashmap::HashMapStorageProvider, StorageHandle,
 };
 use outbe_primitives::tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::OutbeHeader;
-use outbe_primitives::{
-    stablecoin::{encode_canonical_stablecoin_create, StablecoinCreatePayload},
-    stablecoin_fork::STABLECOIN_CREATE_BOND,
-};
 use outbe_stablecoin::StablecoinContract;
 use outbe_stablecoinfactory::{precompile::IStablecoinFactory, StablecoinFactoryContract};
+use outbe_system_common::stablecoin::{
+    encode_canonical_stablecoin_create, StablecoinCreatePayload,
+};
 use outbe_tee::witness::decode_witness_payload_v1;
 use outbe_tribute::{TributeContract, TributeData};
 use outbe_validatorset::{HistoryCounters, ValidatorHistory};

@@ -579,8 +579,8 @@ fn activation_bootstrap(
 
 #[test]
 fn enclave_upgrade_deadline_uses_configured_slash_and_credits_promis_limit_once() {
-    use outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
     use outbe_slashindicator::enforce_enclave_upgrade_deadline;
+    use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 
     for (configured_percent, expected_percent) in [(0, 8u64), (17, 17)] {
         let validator = Address::repeat_byte(0x73);
@@ -659,10 +659,8 @@ fn enclave_upgrade_deadline_uses_configured_slash_and_credits_promis_limit_once(
 
 #[test]
 fn update_activates_enclave_upgrade_and_enclave_upgrade_deadline_enforces_it_in_same_begin_block() {
-    use outbe_primitives::{
-        block::ProtocolModule as _, tee_test_utils::gramine_direct_policy_v1,
-        units::UNITS_PER_PROTOCOL_MINOR,
-    };
+    use outbe_primitives::{block::ProtocolModule as _, tee_test_utils::gramine_direct_policy_v1};
+    use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 
     let validator = Address::repeat_byte(0x76);
     let proposal_id = U256::from(11u64);

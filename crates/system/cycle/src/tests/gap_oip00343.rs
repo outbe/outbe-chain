@@ -5,7 +5,6 @@ use alloy_sol_types::{SolError, SolEvent};
 use outbe_emission::day_emission::day_emission_limit;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
-    address_pair::AddressPair,
     addresses::TRIBUTE_FACTORY_ADDRESS,
     error::PrecompileError,
     storage::MetadosisMutationPurposeTag,
@@ -14,6 +13,7 @@ use outbe_primitives::{
         SECONDS_PER_DAY,
     },
 };
+use outbe_system_common::address_pair::AddressPair;
 use outbe_tributefactory::{precompile::ITributeFactory, TributeFactoryContract};
 
 use super::*;

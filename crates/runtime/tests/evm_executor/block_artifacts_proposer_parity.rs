@@ -132,9 +132,10 @@ fn proposer_validator_same_state_root() {
     let settle_fb_hash = B256::with_last_byte(0x11);
     let settle_voter = Address::with_last_byte(0x77);
     let settle_committee = 4u64;
-    let settle_fee = U256::from(4_000u64) * outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
+    let settle_fee = U256::from(4_000u64) * outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
     // payout_i = fee * w(1) / (committee * w_max) = 4000e12 * 100 / 400 = 1000e12.
-    let expected_payout = U256::from(1_000u64) * outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
+    let expected_payout =
+        U256::from(1_000u64) * outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
     let artifact = signed_late_credit_artifact(
         &keys,
         &LateCreditBinding {

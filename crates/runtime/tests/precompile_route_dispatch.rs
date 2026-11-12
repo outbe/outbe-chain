@@ -8,13 +8,13 @@ use outbe_primitives::addresses::{
     STABLECOIN_POLICY_REGISTRY_ADDRESS, TEE_REGISTRY_ADDRESS, TRIBUTE_ADDRESS,
 };
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::stablecoin::StablecoinCreatePayload;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_stablecoin::{FactoryTokenInitialization, StablecoinFactoryApi as TokenFactoryApi};
 use outbe_stablecoinfactory::{
     precompile::IStablecoinFactory, FactoryReservation, StablecoinFactoryApi as RegistryApi,
 };
 use outbe_stablecoinpolicy::precompile::IStablecoinPolicyRegistry;
+use outbe_system_common::stablecoin::StablecoinCreatePayload;
 use revm::state::Bytecode;
 
 sol! {
@@ -146,7 +146,7 @@ fn install_token(storage: StorageHandle<'_>, marker: bool, initialize: bool) -> 
         supply_cap: U256::from(1_000_000u64),
         policy_id: U256::from(1u64),
     };
-    let (token_id, token) = outbe_primitives::stablecoin::predict_stablecoin(
+    let (token_id, token) = outbe_system_common::stablecoin::predict_stablecoin(
         storage.chain_id().unwrap(),
         STABLECOIN_FACTORY_ADDRESS,
         issuer,
