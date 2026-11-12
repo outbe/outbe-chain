@@ -418,7 +418,10 @@ fn is_recoverable_wwd_advance_error(err: &PrecompileError) -> bool {
     )
 }
 
-fn run_advance_worldwide_days_step(ctx: &BlockRuntimeContext, block_utc_day: u32) -> Result<()> {
+pub(crate) fn run_advance_worldwide_days_step(
+    ctx: &BlockRuntimeContext,
+    block_utc_day: u32,
+) -> Result<()> {
     match ctx
         .storage
         .with_checkpoint(|| outbe_tributefactory::worldwideday::advance_worldwide_days_command(ctx))

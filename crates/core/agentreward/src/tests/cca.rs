@@ -285,14 +285,17 @@ fn gap_ed29_job_rounding_rest_goes_to_promis_limit_once() {
             .unwrap()
             .unwrap();
         assert_eq!(
-            (
-                ledger.validators,
-                ledger.waa,
-                ledger.sra,
-                ledger.cca,
-                ledger.metadosis_limit
-            ),
-            (0, 0, 0, 0, 40)
+            (ledger.validators, ledger.waa, ledger.sra, ledger.cca),
+            (0, 0, 0, 0)
+        );
+        crate::api::process_agent_rewards(&context).unwrap();
+        crate::api::process_agent_rewards(&ctx(storage.clone(), 1)).unwrap();
+        assert!(!crate::distribution::has_pending_accruals_for_day(&storage, DAY.value()).unwrap());
+        assert_eq!(
+            outbe_promislimit::PromisLimitContract::new(storage.clone())
+                .promis_limit()
+                .unwrap(),
+            U256::ZERO
         );
     });
 }

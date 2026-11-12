@@ -412,6 +412,14 @@ fn gap_ed54_wwd_step_runs_once_a_day() {
                 .contains(&WorldwideDay::new(20_240_101)),
             "reverted A6 must roll back closing/sealing of WWD 20240101"
         );
+        assert!(
+            factory
+                .worldwide_days
+                .get(WorldwideDay::new(20_240_107))
+                .unwrap()
+                .is_none(),
+            "reverted A6 must roll back the creation of WWD 20240107"
+        );
         let ed_20240105 =
             outbe_emission::api::get_emission_day_record(ctx.storage.clone(), 20_240_105)
                 .unwrap()
@@ -496,13 +504,12 @@ fn gap_ed54_wwd_step_runs_once_a_day() {
     });
 
     // Also verify that `PrecompileError::Revert(String)` inside A6 is caught and emits no event.
-    // At 2024-01-07 00:00 UTC, grant 1 mutation frame so A4 (`dispatch_terminal_remainder_at`)
-    // succeeds and A6 (`advance_worldwide_days_command`) hits `PrecompileError::Revert(String)`.
+    // At 2024-01-07 00:00 UTC, A6 runs with no mutation frame and hits `PrecompileError::Revert(String)`.
     block_no += 1;
     let ts_day7_00h = GENESIS_TS + 6 * SECONDS_PER_DAY;
     let factory_events_before_text_revert = storage.get_events(TRIBUTE_FACTORY_ADDRESS).len();
     storage.set_block_number(block_no);
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 1);
+    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 0);
     storage.enter(|handle| {
         let block = BlockContext {
             block_gas_limit: 0,
@@ -516,9 +523,14 @@ fn gap_ed54_wwd_step_runs_once_a_day() {
             validators: Vec::new(),
         };
         let ctx = runtime_context(block, handle);
-        account_parent(&ctx, block_no);
-        // Settle previous day (A4) consumes the 1 frame; A6 reverts with `PrecompileError::Revert(String)`.
-        crate::handler::run_protocol_cycle(&ctx).expect_err("A7 has 0 frames left after A6");
+        crate::handler::run_advance_worldwide_days_step(&ctx, 20_240_107).unwrap();
+        let factory = TributeFactoryContract::new(ctx.storage.clone());
+        assert_eq!(factory.last_wwd_advance_day.read().unwrap(), 20_240_106);
+        assert!(factory
+            .worldwide_days
+            .get(WorldwideDay::new(20_240_108))
+            .unwrap()
+            .is_none());
     });
     assert_eq!(
         storage.get_events(TRIBUTE_FACTORY_ADDRESS).len(),

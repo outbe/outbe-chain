@@ -1603,12 +1603,16 @@ fn gap_ed20_failed_auction_needs_no_message() {
     StorageHandle::enter(&mut storage, |s| {
         brief(&s, true);
         runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + 2 * SECONDS_PER_DAY).unwrap();
         runtime::schedule_tick(&s, LAST_CLEARING - 1).unwrap();
+        let contract = s.contract::<DesisContract>();
         assert_eq!(
-            s.contract::<DesisContract>()
-                .read_stage(EMISSION_DAY)
-                .unwrap(),
+            contract.read_stage(EMISSION_DAY).unwrap(),
             AuctionStage::CollectingBids
+        );
+        assert_eq!(
+            contract.clearing_deadline.read(&EMISSION_DAY).unwrap(),
+            ANCHOR + 2 * SECONDS_PER_DAY + BIDS_FANIN_TIMEOUT_SECS
         );
     });
     let sends = |storage: &HashMapStorageProvider| {

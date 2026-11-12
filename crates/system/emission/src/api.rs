@@ -484,8 +484,11 @@ mod tests {
             (PrecompileError::RevertBytes(actual), PrecompileError::RevertBytes(expected)) => {
                 assert_eq!(actual, expected);
             }
-            (PrecompileError::Fatal(actual), PrecompileError::Fatal(expected)) => {
-                assert_eq!(actual, expected);
+            (
+                PrecompileError::FatalWithCause(actual),
+                PrecompileError::FatalWithCause(expected),
+            ) => {
+                assert_eq!(actual.to_string(), expected.to_string());
             }
             (actual, expected) => panic!("expected {expected:?}, got {actual:?}"),
         }
@@ -586,6 +589,14 @@ mod tests {
         let day = 20261001;
         let shell = ensure_emission_day_shell(storage.clone(), day).unwrap();
         assert_eq!(shell.state, emission_day_state::PENDING);
+        assert_emission_error(
+            complete_emission_day(storage.clone(), day).unwrap_err(),
+            EmissionError::InvalidStateTransition {
+                day,
+                from_state: emission_day_state::PENDING,
+                to_state: emission_day_state::COMPLETED,
+            },
+        );
         let allocated = record_day_allocation(storage.clone(), day, amounts).unwrap();
         assert_eq!(allocated.state, emission_day_state::PROCESSING);
         record_metadosis_failed(storage.clone(), day).unwrap();
@@ -619,8 +630,17 @@ mod tests {
             expected,
         );
         assert_emission_error(
-            record_failed_day_allocation(storage, unknown_state, U256::from(100u64)).unwrap_err(),
+            record_failed_day_allocation(storage.clone(), unknown_state, U256::from(100u64))
+                .unwrap_err(),
             expected,
+        );
+        assert_emission_error(
+            complete_emission_day(storage, unknown_state).unwrap_err(),
+            EmissionError::InvalidStateTransition {
+                day: unknown_state,
+                from_state: 3,
+                to_state: emission_day_state::COMPLETED,
+            },
         );
     }
 
@@ -659,7 +679,10 @@ mod tests {
         };
 
         let error = complete_emission_day(storage.clone(), broken).unwrap_err();
-        assert!(matches!(error, PrecompileError::Fatal(_)));
+        assert_eq!(
+            error.pass_failure(),
+            outbe_primitives::error::PassFailure::Propagate
+        );
         assert_emission_error(error, mismatch);
         let error =
             record_reward_pool_residue(storage.clone(), broken, RewardPool::Waa, U256::from(1))
