@@ -635,9 +635,9 @@ fn seeded_profiles_and_gems_read_back_through_their_schemas() {
 fn seeded_scurve_matches_a_curve_that_the_oracle_starts() {
     use outbe_oracle::schema::OracleContract;
     use outbe_oracle::scurve::{scurve_value, store_scurve_entry};
-    use outbe_primitives::address_pair::AddressPair;
     use outbe_primitives::addresses::ORACLE_ADDRESS;
     use outbe_primitives::time::WorldwideDay;
+    use outbe_system_common::address_pair::AddressPair;
 
     const SEED: &str = r#"{
       "oracle": {

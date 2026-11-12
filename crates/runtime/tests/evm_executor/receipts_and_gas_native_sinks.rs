@@ -10,10 +10,10 @@ use alloy_evm::block::{BlockExecutionError, BlockValidationError, CommitChanges}
 use alloy_sol_types::SolError;
 use outbe_evm::errors::BurnedFeeSettlementError;
 use outbe_primitives::{
-    addresses::PROMIS_LIMIT_ADDRESS, error::PrecompileError,
-    storage::direct::DirectStorageProvider, units::UNITS_PER_PROTOCOL_MINOR,
+    addresses::PROMIS_LIMIT_ADDRESS, error::PrecompileError, storage::direct::DirectStorageProvider,
 };
 use outbe_promislimit::{precompile::IPromisLimit, PromisLimitContract};
+use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 use revm::context_interface::block::BlobExcessGasAndPrice;
 use std::sync::Mutex;
 
