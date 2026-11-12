@@ -33,5 +33,8 @@ time = { workspace = true, features = ["formatting", "parsing"] }
 toml.workspace = true
 walkdir.workspace = true
 
+[dev-dependencies]
+outbe-oracle.workspace = true
+
 [lints]
 workspace = true

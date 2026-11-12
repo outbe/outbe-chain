@@ -12,7 +12,7 @@ use outbe_genesis_cli::seed_codec::{
     StorageBuilder,
 };
 use outbe_genesis_cli::seed_economy::clear_seeded_metadosis_days;
-use outbe_genesis_cli::seed_oracle::{seed_oracle, DEFAULT_POLICY_RATES};
+use outbe_genesis_cli::seed_oracle::{seed_oracle, DEFAULT_POLICY_RATES, REFERENCE_CURRENCIES};
 use outbe_genesis_cli::seed_validators::{seed_staking, seed_validator_set};
 use serde_json::{json, Value};
 
@@ -181,6 +181,15 @@ fn every_reference_currency_needs_a_policy_rate() {
     let cfg = json!({ "policy_rates": policy_rates });
     let err = seed_oracle(&mut StorageBuilder::new(), &cfg).expect_err("missing policy rate");
     assert!(err.to_string().contains("no policy rate: [978]"));
+}
+
+#[test]
+fn reference_currencies_match_the_oracle() {
+    let oracle: Vec<u32> = outbe_oracle::constants::REFERENCE_CURRENCIES
+        .iter()
+        .map(|&iso_code| u32::from(iso_code))
+        .collect();
+    assert_eq!(REFERENCE_CURRENCIES.to_vec(), oracle);
 }
 
 #[test]
