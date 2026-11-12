@@ -12,7 +12,7 @@ use std::{
 use alloy_consensus::{SignableTransaction as _, TxEip1559, TxLegacy};
 use alloy_primitives::{keccak256, Address, Signature};
 use k256::ecdsa::{signature::hazmat::PrehashSigner, SigningKey};
-use reth_ethereum::TransactionSigned;
+use reth_ethereum_primitives::TransactionSigned;
 use zeroize::Zeroizing;
 
 pub mod load;

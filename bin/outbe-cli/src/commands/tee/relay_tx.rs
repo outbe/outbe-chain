@@ -1,0 +1,437 @@
+//! Relay transaction construction shared by TEE CLI commands.
+
+use std::{
+    fs::{self, OpenOptions},
+    io::Read as _,
+    os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _},
+    path::Path,
+};
+
+use alloy_primitives::{keccak256, Address, U256};
+use eyre::{Result, WrapErr as _};
+use k256::ecdsa::{signature::hazmat::PrehashSigner as _, SigningKey};
+use zeroize::Zeroizing;
+
+pub(super) use outbe_tee::upgrade_journal::RawRelayTransactionV1;
+
+use super::operator_errors::TxError;
+
+pub(super) fn buffered_gas_price(suggested: U256) -> U256 {
+    suggested
+        .saturating_mul(U256::from(2))
+        .max(U256::from(alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE))
+}
+
+/// Unsigned zero-value relay call, before nonce/gas signing and serialization.
+#[derive(Clone, Copy)]
+pub(super) struct UnsignedRelayTransactionV1<'a> {
+    pub chain_id: u64,
+    pub account_nonce: u64,
+    pub gas_price: U256,
+    pub gas_limit: u64,
+    pub to: Address,
+    pub calldata: &'a [u8],
+}
+
+pub(super) struct RelaySignerV1 {
+    key: SigningKey,
+    address: Address,
+}
+
+impl RelaySignerV1 {
+    pub(super) fn new(private_key_hex: &str) -> Result<Self> {
+        let encoded = private_key_hex
+            .trim()
+            .strip_prefix("0x")
+            .unwrap_or(private_key_hex.trim());
+        let decoded = Zeroizing::new(hex::decode(encoded).wrap_err("decode relay private key")?);
+        Self::from_bytes(decoded.as_ref())
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn from_file(path: &Path) -> Result<Self> {
+        let path_metadata = fs::symlink_metadata(path)
+            .wrap_err_with(|| format!("stat relay private key {}", path.display()))?;
+        if !owner_bound_key_file(&path_metadata)
+            || path_metadata.len() == 0
+            || path_metadata.len() > 130
+        {
+            return Err(TxError::InvalidKeyFilePermissions.into());
+        }
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)
+            .wrap_err_with(|| format!("open relay private key {}", path.display()))?;
+        let opened = file
+            .metadata()
+            .wrap_err_with(|| format!("stat opened relay private key {}", path.display()))?;
+        if opened.dev() != path_metadata.dev() || opened.ino() != path_metadata.ino() {
+            return Err(TxError::KeyFilePathChanged.into());
+        }
+        let mut bytes = Vec::with_capacity(opened.len() as usize);
+        file.take(131)
+            .read_to_end(&mut bytes)
+            .wrap_err_with(|| format!("read relay private key {}", path.display()))?;
+        if bytes.len() > 130 {
+            return Err(TxError::KeyFileSizeExceeded.into());
+        }
+        let encoded = Zeroizing::new(bytes);
+        if encoded.len() == 32 {
+            return Self::from_bytes(encoded.as_ref());
+        }
+        let text = std::str::from_utf8(encoded.as_ref())
+            .wrap_err("relay private key is neither raw bytes nor UTF-8 hex")?;
+        Self::new(text)
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        let bytes: Zeroizing<[u8; 32]> =
+            Zeroizing::new(bytes.try_into().map_err(|_| TxError::InvalidKeyLength)?);
+        let key = SigningKey::from_bytes((&*bytes).into()).map_err(TxError::InvalidPrivateKey)?;
+        let public = key.verifying_key().to_encoded_point(false);
+        let hash = keccak256(&public.as_bytes()[1..]);
+        let address = Address::from_slice(&hash[12..]);
+        Ok(Self { key, address })
+    }
+
+    #[must_use]
+    pub(super) const fn address(&self) -> Address {
+        self.address
+    }
+
+    pub(super) fn sign_renewal(
+        &self,
+        transaction: UnsignedRelayTransactionV1<'_>,
+    ) -> Result<RawRelayTransactionV1> {
+        let UnsignedRelayTransactionV1 {
+            chain_id,
+            account_nonce,
+            gas_price,
+            gas_limit,
+            to: _,
+            calldata,
+        } = transaction;
+        let raw_transaction = self.sign_legacy_transaction(transaction, U256::ZERO)?;
+        Ok(RawRelayTransactionV1 {
+            relay: self.address,
+            chain_id,
+            account_nonce,
+            gas_price,
+            gas_limit,
+            calldata_hash: keccak256(calldata),
+            transaction_hash: keccak256(&raw_transaction),
+            raw_transaction,
+        })
+    }
+
+    /// Signs one new own-lease renewal. The priority fee is zero and the fee cap is `gas_price`.
+    pub(super) fn sign_zero_fee_renewal(
+        &self,
+        transaction: UnsignedRelayTransactionV1<'_>,
+    ) -> Result<RawRelayTransactionV1> {
+        let UnsignedRelayTransactionV1 {
+            chain_id,
+            account_nonce,
+            gas_price,
+            gas_limit,
+            to,
+            calldata,
+        } = transaction;
+        let unsigned = rlp_list(&[
+            rlp_u64(chain_id),
+            rlp_u64(account_nonce),
+            rlp_u64(0),
+            rlp_u256(gas_price),
+            rlp_u64(gas_limit),
+            rlp_bytes(to.as_slice()),
+            rlp_u256(U256::ZERO),
+            rlp_bytes(calldata),
+            vec![0xc0],
+        ]);
+        let mut preimage = Vec::with_capacity(1 + unsigned.len());
+        preimage.push(0x02);
+        preimage.extend_from_slice(&unsigned);
+        let digest = keccak256(&preimage);
+        let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = self
+            .key
+            .sign_prehash(digest.as_slice())
+            .map_err(TxError::SigningFailed)?;
+        let y_parity = recovery.to_byte();
+        if y_parity > 1 {
+            return Err(TxError::RecoveryIdOverflow.into());
+        }
+        let bytes = signature.to_bytes();
+        let body = rlp_list(&[
+            rlp_u64(chain_id),
+            rlp_u64(account_nonce),
+            rlp_u64(0),
+            rlp_u256(gas_price),
+            rlp_u64(gas_limit),
+            rlp_bytes(to.as_slice()),
+            rlp_u256(U256::ZERO),
+            rlp_bytes(calldata),
+            vec![0xc0],
+            rlp_u64(u64::from(y_parity)),
+            rlp_u256(U256::from_be_slice(&bytes[..32])),
+            rlp_u256(U256::from_be_slice(&bytes[32..])),
+        ]);
+        let mut raw_transaction = Vec::with_capacity(1 + body.len());
+        raw_transaction.push(0x02);
+        raw_transaction.extend_from_slice(&body);
+        Ok(RawRelayTransactionV1 {
+            relay: self.address,
+            chain_id,
+            account_nonce,
+            gas_price,
+            gas_limit,
+            calldata_hash: keccak256(calldata),
+            transaction_hash: keccak256(&raw_transaction),
+            raw_transaction,
+        })
+    }
+
+    fn sign_legacy_transaction(
+        &self,
+        transaction: UnsignedRelayTransactionV1<'_>,
+        value: U256,
+    ) -> Result<Vec<u8>> {
+        let UnsignedRelayTransactionV1 {
+            chain_id,
+            account_nonce: nonce,
+            gas_price,
+            gas_limit,
+            to,
+            calldata: data,
+        } = transaction;
+        let unsigned_fields = [
+            rlp_u64(nonce),
+            rlp_u256(gas_price),
+            rlp_u64(gas_limit),
+            rlp_bytes(to.as_slice()),
+            rlp_u256(value),
+            rlp_bytes(data),
+            rlp_u64(chain_id),
+            rlp_u64(0),
+            rlp_u64(0),
+        ];
+        let unsigned = rlp_list(&unsigned_fields);
+        let digest = keccak256(&unsigned);
+        let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = self
+            .key
+            .sign_prehash(digest.as_slice())
+            .map_err(TxError::SigningFailed)?;
+        let bytes = signature.to_bytes();
+        let v = chain_id
+            .checked_mul(2)
+            .and_then(|value| value.checked_add(35 + u64::from(recovery.to_byte())))
+            .ok_or(TxError::RecoveryIdOverflow)?;
+        Ok(rlp_list(&[
+            rlp_u64(nonce),
+            rlp_u256(gas_price),
+            rlp_u64(gas_limit),
+            rlp_bytes(to.as_slice()),
+            rlp_u256(value),
+            rlp_bytes(data),
+            rlp_u64(v),
+            rlp_u256(U256::from_be_slice(&bytes[..32])),
+            rlp_u256(U256::from_be_slice(&bytes[32..])),
+        ]))
+    }
+}
+
+fn owner_bound_key_file(metadata: &fs::Metadata) -> bool {
+    metadata.file_type().is_file()
+        && metadata.uid() == rustix::process::geteuid().as_raw()
+        && metadata.permissions().mode() & 0o777 == 0o600
+        && metadata.nlink() == 1
+}
+
+fn rlp_u64(value: u64) -> Vec<u8> {
+    if value == 0 {
+        return vec![0x80];
+    }
+    let bytes = value.to_be_bytes();
+    rlp_bytes(&bytes[bytes.iter().position(|byte| *byte != 0).unwrap_or(7)..])
+}
+
+fn rlp_u256(value: U256) -> Vec<u8> {
+    if value.is_zero() {
+        return vec![0x80];
+    }
+    let bytes = value.to_be_bytes::<32>();
+    rlp_bytes(&bytes[bytes.iter().position(|byte| *byte != 0).unwrap_or(31)..])
+}
+
+fn rlp_bytes(value: &[u8]) -> Vec<u8> {
+    if value.len() == 1 && value[0] < 0x80 {
+        return value.to_vec();
+    }
+    let mut encoded = length_prefix(0x80, 0xb7, value.len());
+    encoded.extend_from_slice(value);
+    encoded
+}
+
+fn rlp_list(fields: &[Vec<u8>]) -> Vec<u8> {
+    let length = fields.iter().map(Vec::len).sum();
+    let mut encoded = length_prefix(0xc0, 0xf7, length);
+    for field in fields {
+        encoded.extend_from_slice(field);
+    }
+    encoded
+}
+
+fn length_prefix(short: u8, long: u8, length: usize) -> Vec<u8> {
+    if length <= 55 {
+        return vec![short + length as u8];
+    }
+    let bytes = length.to_be_bytes();
+    let significant = &bytes[bytes.iter().position(|byte| *byte != 0).unwrap_or(7)..];
+    let mut prefix = Vec::with_capacity(1 + significant.len());
+    prefix.push(long + significant.len() as u8);
+    prefix.extend_from_slice(significant);
+    prefix
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
+
+    #[test]
+    fn buffered_gas_price_uses_native_unit_protocol_floor() {
+        let protocol_floor = U256::from(MIN_PROTOCOL_BASE_FEE);
+        assert_eq!(buffered_gas_price(U256::ZERO), protocol_floor);
+        assert_eq!(
+            buffered_gas_price(protocol_floor),
+            protocol_floor * U256::from(2)
+        );
+    }
+
+    #[test]
+    fn exact_inputs_produce_exact_raw_transaction_and_hash() {
+        let signer = RelaySignerV1::new(&format!("{:064x}", 1)).unwrap();
+        let first = signer
+            .sign_renewal(UnsignedRelayTransactionV1 {
+                chain_id: 54_322_345,
+                account_nonce: 7,
+                gas_price: U256::from(1_000_000_000_u64),
+                gas_limit: 1_000_000,
+                to: Address::repeat_byte(0xee),
+                calldata: &[1, 2, 3],
+            })
+            .unwrap();
+        let second = signer
+            .sign_renewal(UnsignedRelayTransactionV1 {
+                chain_id: 54_322_345,
+                account_nonce: 7,
+                gas_price: U256::from(1_000_000_000_u64),
+                gas_limit: 1_000_000,
+                to: Address::repeat_byte(0xee),
+                calldata: &[1, 2, 3],
+            })
+            .unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first.transaction_hash, keccak256(&first.raw_transaction));
+    }
+
+    #[test]
+    fn replacement_keeps_nonce_and_calldata_but_changes_only_fee_and_hash() {
+        use alloy_consensus::{
+            transaction::SignerRecoverable as _, EthereumTxEnvelope, Transaction as _, TxEip4844,
+        };
+        use alloy_eips::eip2718::Decodable2718 as _;
+        use alloy_primitives::TxKind;
+
+        let signer = RelaySignerV1::new(&format!("{:064x}", 2)).unwrap();
+        let low = signer
+            .sign_renewal(UnsignedRelayTransactionV1 {
+                chain_id: 1,
+                account_nonce: 9,
+                gas_price: U256::from(10),
+                gas_limit: 100,
+                to: Address::ZERO,
+                calldata: &[4, 5],
+            })
+            .unwrap();
+        let high = signer
+            .sign_renewal(UnsignedRelayTransactionV1 {
+                chain_id: 1,
+                account_nonce: 9,
+                gas_price: U256::from(20),
+                gas_limit: 100,
+                to: Address::ZERO,
+                calldata: &[4, 5],
+            })
+            .unwrap();
+        assert_eq!(low.account_nonce, high.account_nonce);
+        assert_eq!(low.calldata_hash, high.calldata_hash);
+        assert_ne!(low.raw_transaction, high.raw_transaction);
+        assert_ne!(low.transaction_hash, high.transaction_hash);
+
+        let mut low_bytes = low.raw_transaction.as_slice();
+        let mut high_bytes = high.raw_transaction.as_slice();
+        let low_env = EthereumTxEnvelope::<TxEip4844>::decode_2718(&mut low_bytes).unwrap();
+        let high_env = EthereumTxEnvelope::<TxEip4844>::decode_2718(&mut high_bytes).unwrap();
+        assert!(low_bytes.is_empty() && high_bytes.is_empty());
+
+        for (env, expected_gas_price, expected_hash) in [
+            (&low_env, 10u128, low.transaction_hash),
+            (&high_env, 20u128, high.transaction_hash),
+        ] {
+            assert_eq!(env.recover_signer().unwrap(), signer.address());
+            assert_eq!(env.chain_id(), Some(1));
+            assert_eq!(env.nonce(), 9);
+            assert_eq!(env.gas_limit(), 100);
+            assert_eq!(env.kind(), TxKind::Call(Address::ZERO));
+            assert_eq!(env.value(), U256::ZERO);
+            assert_eq!(env.input().as_ref(), &[4, 5]);
+            assert_eq!(env.gas_price(), Some(expected_gas_price));
+            assert_eq!(*env.tx_hash(), expected_hash);
+        }
+    }
+
+    #[test]
+    fn relay_signer_from_file_enforces_permissions_bounds_and_formats() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_key = [0x11u8; 32];
+        let hex_key = format!("0x{}\n", hex::encode(raw_key));
+        let expected_address = RelaySignerV1::new(&hex_key).unwrap().address();
+
+        let write_key = |name: &str, bytes: &[u8], mode: u32| {
+            let path = dir.path().join(name);
+            fs::write(&path, bytes).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+            path
+        };
+
+        let hex_path = write_key("relay.hex", hex_key.as_bytes(), 0o600);
+        assert_eq!(
+            RelaySignerV1::from_file(&hex_path).unwrap().address(),
+            expected_address
+        );
+
+        let raw_path = write_key("relay.raw", &raw_key, 0o600);
+        assert_eq!(
+            RelaySignerV1::from_file(&raw_path).unwrap().address(),
+            expected_address
+        );
+
+        assert!(RelaySignerV1::from_file(&dir.path().join("missing.key")).is_err());
+
+        for (name, bytes, mode) in [
+            ("group-readable.key", hex_key.as_bytes(), 0o640),
+            ("empty.key", b"".as_slice(), 0o600),
+            ("oversized.key", &[b'a'; 131], 0o600),
+            ("bad-hex.key", b"not-hex".as_slice(), 0o600),
+        ] {
+            let path = write_key(name, bytes, mode);
+            assert!(RelaySignerV1::from_file(&path).is_err(), "{name}");
+        }
+
+        let hardlink = dir.path().join("hardlink.key");
+        fs::hard_link(&hex_path, &hardlink).unwrap();
+        assert!(RelaySignerV1::from_file(&hex_path).is_err());
+        assert!(RelaySignerV1::from_file(&hardlink).is_err());
+    }
+}

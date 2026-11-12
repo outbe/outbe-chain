@@ -12,28 +12,21 @@ use alloy_primitives::U256;
 
 use eyre::Result;
 
-use outbe_operator::tee::copy_same_platform_sealed_root_and_checkpoint_v1;
-use outbe_operator::tee::inspect_upgrade_journal_v1;
-use outbe_operator::tee::prepare_upgrade_journal_v1;
-
-use outbe_operator::tee::read_finalized_upgrade_policy_v1;
-use outbe_operator::tee::{
-    record_upgrade_finalized_v1, record_upgrade_promoted_v1, UpgradeJournalStateV1,
-};
-
-use outbe_operator::tee::{
-    run_upgrade_submission_v1, UpgradeSubmissionRequestV1, UpgradeSubmissionServicesV1,
-};
-
-use outbe_operator::tee::NodeBindingSelectorV1;
-
-use outbe_operator::tee::UpgradeContextV1;
-
-use outbe_operator::tx::RelaySignerV1;
-
 use super::join::{finalized_binding_matches_intent, persist_authorized_join_admission_anchor_v1};
-use outbe_operator::tee::read_finalized_registry_view_v1;
+use super::relay_tx::RelaySignerV1;
+use super::upgrade_submission::{
+    prepare_upgrade_journal_v1, run_upgrade_submission_v1, UpgradeSubmissionRequestV1,
+    UpgradeSubmissionServicesV1,
+};
 use outbe_primitives::tee_attestation_v1::AttestationEvidenceV1;
+use outbe_tee::registry_view::{
+    read_finalized_registry_view_v1, read_finalized_upgrade_policy_v1, NodeBindingSelectorV1,
+};
+use outbe_tee::upgrade_journal::{
+    copy_same_platform_sealed_root_and_checkpoint_v1, inspect_upgrade_journal_v1,
+    record_upgrade_finalized_v1, record_upgrade_promoted_v1, UpgradeContextV1,
+    UpgradeJournalStateV1,
+};
 use outbe_tee::{
     construct_finalized_replacement_authorization_v1, load_committed_enclave_manifest_v1,
     load_replacement_candidate_submission, promote_replacement_candidate,

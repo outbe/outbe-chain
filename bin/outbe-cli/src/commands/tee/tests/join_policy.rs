@@ -252,8 +252,8 @@ fn tee_join_rejects_a_live_binding_but_accepts_the_deadline_as_expired() {
     assert!(ensure_joinable_binding(None, 199).is_ok());
 }
 
-fn test_renewal_binding() -> outbe_operator::tee::RenewalBindingV1 {
-    outbe_operator::tee::RenewalBindingV1 {
+fn test_renewal_binding() -> outbe_tee::registry_view::RenewalBindingV1 {
+    outbe_tee::registry_view::RenewalBindingV1 {
         node_id_hash: B256::repeat_byte(1),
         enclave_id: B256::repeat_byte(2),
         binding_id: B256::repeat_byte(3),

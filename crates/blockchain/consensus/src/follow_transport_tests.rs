@@ -399,3 +399,59 @@ fn well_formed_proof_still_decodes() {
     assert_eq!(decoded.finalization.encode(), finalization.encode());
     assert_eq!(decoded.block.encode(), block.encode());
 }
+
+#[tokio::test]
+async fn registry_rpc_and_block_hash_preserve_wire_and_schedule_validation() {
+    use alloy_primitives::{Address, B256};
+    use outbe_tee::registry_view::{ChainRpc as _, FinalizedStateRpc as _, RegistryRpc as _};
+
+    fn script(method: &str) -> Reply {
+        match method {
+            "eth_chainId" => Reply::Result(r#""0x2a4""#.into()),
+            "eth_getBlockByNumber" => Reply::Result(
+                r#"{"number":"0x64","timestamp":"0x123","hash":"0x1111111111111111111111111111111111111111111111111111111111111111"}"#.into(),
+            ),
+            "eth_call" => Reply::Result(r#""0x0304""#.into()),
+            "outbe_teeRenewalScheduleV1" => Reply::Result(
+                serde_json::json!({
+                    "finalizedHeight": 120,
+                    "finalizedHash": format!("0x{}", "01".repeat(32)),
+                    "finalizedTimestamp": 1000,
+                    "epochNumber": 2,
+                    "epochStartHeight": 100,
+                    "epochLengthBlocks": 100,
+                    "nextFreezeHeight": 181,
+                    "plannedActivationHeight": 200,
+                    "dkgPrepareWindowBlocks": 20,
+                    "minimumBlockTimeMillis": 2000,
+                })
+                .to_string(),
+            ),
+            _ => Reply::Error(-32601),
+        }
+    }
+
+    let (url, _) = upstream(script);
+    let rpc = client(&url, Duration::from_secs(2));
+    assert_eq!(rpc.chain_id().await.expect("chain_id"), 676);
+    assert_eq!(
+        rpc.block_hash_by_number(100).await.expect("block_hash"),
+        Some(B256::repeat_byte(0x11))
+    );
+    assert_eq!(
+        rpc.finalized_block().await.expect("finalized_block")["number"],
+        "0x64"
+    );
+    assert_eq!(
+        rpc.call_at(Address::repeat_byte(0x11), &[1, 2], "0x64")
+            .await
+            .expect("call_at"),
+        [3, 4]
+    );
+    assert!(matches!(
+        rpc.tee_renewal_schedule_v1().await,
+        Err(crate::errors::FollowTransportError::InvalidRenewalSchedule(
+            _
+        ))
+    ));
+}

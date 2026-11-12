@@ -8,14 +8,14 @@ use crate::errors::TeeJoinError;
 use crate::rpc::Rpc;
 use alloy_primitives::{Address, B256, U256};
 use eyre::{Result, WrapErr};
-use outbe_operator::tee::{
-    read_finalized_registry_view_v1, read_finalized_staged_successor_policy_v1,
-    FinalizedRegistryChainViewV1, NodeBindingSelectorV1, RenewalBindingV1,
-};
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, RegistrationIntentV1, TeePolicyV1,
 };
 use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
+use outbe_tee::registry_view::{
+    read_finalized_registry_view_v1, read_finalized_staged_successor_policy_v1,
+    FinalizedRegistryChainViewV1, NodeBindingSelectorV1, RenewalBindingV1,
+};
 use outbe_tee::{
     connect_committed_node_host_enclave, load_committed_enclave_manifest_v1,
     load_committed_join_submission, load_replacement_candidate_submission,

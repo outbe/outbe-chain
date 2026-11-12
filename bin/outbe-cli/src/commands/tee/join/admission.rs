@@ -17,9 +17,7 @@ use alloy_primitives::B256;
 use eyre::Result;
 use eyre::WrapErr;
 
-use outbe_operator::tee::FinalizedRegistryChainViewV1;
-
-use outbe_operator::tee::RenewalBindingV1;
+use outbe_tee::registry_view::{FinalizedRegistryChainViewV1, RenewalBindingV1};
 
 use outbe_primitives::reshare_artifact::decode_outbe_block_artifacts;
 use outbe_primitives::reshare_artifact::ConsensusHeaderArtifact;

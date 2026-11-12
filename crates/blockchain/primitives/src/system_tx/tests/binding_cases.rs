@@ -12,7 +12,7 @@ use super::primitives::{
 };
 use alloy_consensus::{Header, SignableTransaction, TxLegacy};
 use alloy_primitives::{Address, Bytes, Signature, TxKind, B256, U256};
-use reth_ethereum::TransactionSigned;
+use reth_ethereum_primitives::TransactionSigned;
 
 pub(super) struct Case {
     pub name: &'static str,

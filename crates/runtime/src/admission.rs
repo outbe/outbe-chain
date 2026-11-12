@@ -606,7 +606,7 @@ pub(crate) async fn require_upstream_fullnode_tee_admission(
     upstream: &str,
     identity: outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
 ) -> eyre::Result<LocalTeeAdmissionAnchorV1> {
-    let rpc = outbe_operator::rpc::HttpRenewalRpc::new(upstream)?;
+    let rpc = outbe_consensus::follow_transport::UpstreamRpcClient::new(upstream)?;
     let view = read_finalized_registry_view_v1(
         &rpc,
         &NodeBindingSelectorV1::NodeHost(identity.reth_p2p_public),
