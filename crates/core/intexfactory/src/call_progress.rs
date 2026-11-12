@@ -3,7 +3,8 @@
 use alloy_primitives::U256;
 use outbe_intex::{IntexContract, IntexState};
 use outbe_oracle::call_window::CallWindow;
-use outbe_primitives::{day_pass::PassDays, error::Result, storage::StorageHandle};
+use outbe_primitives::{error::Result, storage::StorageHandle};
+use outbe_system_common::day_pass::PassDays;
 
 use crate::called::breach_terms;
 use crate::errors::{date_step_error, IntexFactoryError};

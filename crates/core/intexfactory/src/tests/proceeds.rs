@@ -1,8 +1,8 @@
 use super::*;
 
 use alloy_sol_types::SolEvent;
-use outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
 use outbe_promislimit::PromisLimitContract;
+use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 
 use crate::constants::ORIGIN_ROUTER_ADDRESS;
 

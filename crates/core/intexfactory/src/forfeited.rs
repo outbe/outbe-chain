@@ -4,9 +4,8 @@
 
 use alloy_primitives::{B256, U256};
 use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
-use outbe_primitives::{
-    block::BlockRuntimeContext, error::Result, pass_budget::PassBudget, storage::StorageHandle,
-};
+use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::StorageHandle};
+use outbe_system_common::pass_budget::PassBudget;
 
 use outbe_intex::precompile::IIntex;
 use outbe_intex::{ForfeitQueue, IntexContract};
