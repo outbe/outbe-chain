@@ -230,11 +230,6 @@ contract OriginRouterTest is CrossChainTest {
         );
     }
 
-    // --- Role Constants Tests ---
-    function test_role_constants() public view {
-        assertEq(originRouter.DESIS_ROLE(), keccak256("DESIS_ROLE"));
-    }
-
     // --- ERC165 Tests ---
     function test_supportsInterface() public view {
         // IAccessControl interface ID

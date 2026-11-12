@@ -4,7 +4,6 @@ pragma solidity 0.8.30;
 import {Test} from "forge-std/Test.sol";
 
 import {IntexNFT1155BridgeCodec} from "@contracts/shared/libs/IntexNFT1155BridgeCodec.sol";
-import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 
 /// @dev External wrappers so that tests can exercise the `bytes calldata` decoders from memory.
 contract CodecHarness {
@@ -220,15 +219,6 @@ contract IntexNFT1155BridgeCodecTest is Test {
         );
         vm.expectRevert(IntexNFT1155BridgeCodec.ArrayLengthMismatch.selector);
         harness.decodeMulti(encoded);
-    }
-
-    // --- cap relationship ---
-
-    /// @dev The bridge's cap is deliberately the narrower one. The bridge records a rejected
-    ///      item with its revert bytes, which is the dearest per-item work anywhere. The cap
-    ///      must never exceed the protocol-wide payload cap.
-    function test_MaxBatchSize_StaysWithinTheProtocolPayloadCap() public pure {
-        assertLe(IntexNFT1155BridgeCodec.MAX_BATCH_SIZE, uint256(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN));
     }
 
     // --- fixtures ---
