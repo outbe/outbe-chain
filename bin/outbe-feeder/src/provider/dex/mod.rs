@@ -1,4 +1,4 @@
-//! Pool spot prices read a few blocks behind the head and independent rolling base-token swap volumes.
+//! Time-weighted pool rates read a few blocks behind the head and independent rolling base-token swap volumes.
 mod abi;
 mod config;
 pub(crate) mod math;

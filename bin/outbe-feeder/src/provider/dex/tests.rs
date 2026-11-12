@@ -7,15 +7,19 @@ use super::{
     config::{DexMarketConfig, DexProviderConfig, PoolConfig},
     worker::{DexProvider, MarketWorker},
 };
-use crate::provider::evm_rpc::{quantity, Log, Rpc};
+use crate::provider::evm_rpc::{quantity, Block, Log, Rpc};
 use crate::provider::test_server;
-use crate::{config::FeederConfig, provider::Provider};
+use crate::{
+    config::FeederConfig,
+    provider::{Provider, TickerPrice},
+};
 use alloy_primitives::{
     aliases::{I24, U112, U160, U24},
     Address, Bytes, B256, I256,
 };
 use alloy_sol_types::SolValue;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex,
@@ -212,6 +216,9 @@ struct Fixture {
     wrong_token: AtomicBool,
     stale: AtomicBool,
     reorg: AtomicBool,
+    /// V2 quote reserve by block number: the pool rate at that block. A block
+    /// with no entry has a rate of 4.
+    rates: Mutex<HashMap<u64, u8>>,
     calls: Mutex<Vec<Value>>,
 }
 
@@ -287,7 +294,13 @@ impl Fixture {
                 } else if data[..4] == selector("poolManager()") {
                     self.market.pool.address().abi_encode()
                 } else if data[..4] == selector("getReserves()") {
-                    (U112::from(1u8), U112::from(4u8), 0u32).abi_encode()
+                    let block: B256 =
+                        serde_json::from_value(params[1]["blockHash"].clone()).unwrap();
+                    let number = (0..=self.head.load(Ordering::Relaxed))
+                        .find(|number| self.block_hash(*number) == block)
+                        .unwrap();
+                    let rate = self.rates.lock().unwrap().get(&number).copied();
+                    (U112::from(1u8), U112::from(rate.unwrap_or(4)), 0u32).abi_encode()
                 } else if data[..4] == selector("slot0()") {
                     // Nonzero upper fee bits expose use of the wrong V3 ABI.
                     let fee = if matches!(self.market.pool, PoolConfig::PancakeswapV3 { .. }) {
@@ -374,6 +387,7 @@ impl Server {
             wrong_token: AtomicBool::new(false),
             stale: AtomicBool::new(false),
             reorg: AtomicBool::new(false),
+            rates: Mutex::new(HashMap::new()),
             calls: Mutex::new(vec![]),
         });
         let state = Arc::clone(&fixture);
@@ -440,13 +454,38 @@ async fn confirmations_read_behind_the_head_by_number_and_hash() {
     let (block, ticker) = worker.refresh().await.unwrap();
     assert_eq!(block.number, 4);
     assert_eq!(ticker.volume, fp("300"));
-    let expected_hash = serde_json::to_value(server.fixture.block_hash(4)).unwrap();
+    // Block 3 is the last block before the price window of block 4.
+    let expected = [3, 4].map(|n| serde_json::to_value(server.fixture.block_hash(n)).unwrap());
     let calls = server.fixture.calls.lock().unwrap();
     assert!(calls.iter().any(|r| r["params"][0] == "latest"));
     assert!(calls
         .iter()
         .filter(|r| r["method"] == "eth_call")
-        .all(|r| r["params"][1]["blockHash"] == expected_hash));
+        .all(|r| expected.contains(&r["params"][1]["blockHash"])));
+}
+
+#[tokio::test]
+async fn price_is_the_time_weighted_rate_of_the_window() {
+    let server = Server::start(market(protocols()[0].clone(), false)).await;
+    let rates = |entries: &[(u64, u8)]| {
+        *server.fixture.rates.lock().unwrap() = entries.iter().copied().collect();
+    };
+    // Block 3 is older than the window of block 4, so its rate of 4 applies in
+    // the full window. The rate of the read block has no weight yet.
+    rates(&[(4, 1)]);
+    let mut worker = server.worker();
+    assert_eq!(worker.refresh().await.unwrap().1.price, fp("4"));
+    // Block 5 is 2 seconds after block 4: 118 seconds at 4 and 2 seconds at 1.
+    rates(&[(4, 1), (5, 100)]);
+    server.fixture.head.store(5, Ordering::Relaxed);
+    assert_eq!(worker.refresh().await.unwrap().1.price, fp("3.95"));
+    // A worker that starts at block 5 gets the same price.
+    assert_eq!(server.worker().refresh().await.unwrap().1.price, fp("3.95"));
+    // A change of the chain history drops the stored rates.
+    rates(&[(3, 1), (4, 1)]);
+    server.fixture.reorg.store(true, Ordering::Relaxed);
+    assert!(worker.refresh().await.is_err());
+    assert_eq!(worker.refresh().await.unwrap().1.price, fp("1"));
 }
 
 #[tokio::test]
@@ -663,4 +702,104 @@ async fn dex_ticker_flows_through_existing_feeder_as_coen_usd() {
     server.fixture.fail_logs.store(true, Ordering::Relaxed);
     let provider = DexProvider::new(&config.dex_providers[0]).unwrap();
     assert!(provider.get_ticker_prices(&pairs).await.unwrap().is_empty());
+}
+
+alloy_sol_types::sol! {
+    interface UniV3Oracle {
+        function observe(uint32[] secondsAgos) external view
+            returns (int56[] tickCumulatives, uint160[] secondsPerLiquidityCumulativeX128s);
+    }
+}
+
+/// A public RPC can time out on the log backfill of a busy pool.
+async fn refresh_with_retries(worker: &mut MarketWorker) -> (Block, TickerPrice) {
+    for _ in 0..3 {
+        if let Ok(result) = worker.refresh().await {
+            return result;
+        }
+    }
+    worker.refresh().await.unwrap()
+}
+
+/// Reads the WETH/USDC 0.05% pool of Uniswap V3 on Ethereum over a public RPC.
+/// Compares the price with the 120-second mean that the pool calculates
+/// itself (`observe`), then reads a later block:
+/// `cargo test -p outbe-feeder live_dex_twap -- --ignored --nocapture`
+#[tokio::test]
+#[ignore]
+async fn live_dex_twap() {
+    let endpoint = "https://ethereum-rpc.publicnode.com";
+    let pool: Address = "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640"
+        .parse()
+        .unwrap();
+    let market = DexMarketConfig {
+        base: "WETH".into(),
+        quote: "USDC".into(),
+        base_token: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+            .parse()
+            .unwrap(),
+        quote_token: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+            .parse()
+            .unwrap(),
+        pool: PoolConfig::UniswapV3 { address: pool },
+    };
+    let mut config = dex_config(market.clone(), endpoint.into());
+    config.confirmations = 3;
+    let rpc = Rpc::new(endpoint).unwrap();
+    let worker = || MarketWorker::new(config.clone(), market.clone(), rpc.clone());
+    let as_f64 = |value: FixedValue| value.raw().to_string().parse::<f64>().unwrap() / 1e18;
+
+    let mut first = worker();
+    let (block, ticker) = refresh_with_retries(&mut first).await;
+    let decimals = market.read_decimals(&rpc, &block).await.unwrap();
+    let spot = market.read_rate(&rpc, &block, decimals).await.unwrap();
+    // WETH is token1: the pool tick gives WETH-wei for each USDC unit.
+    let window = super::worker::TWAP_WINDOW_SECS as u32;
+    let observed = rpc
+        .call(
+            pool,
+            UniV3Oracle::observeCall {
+                secondsAgos: vec![window, 0],
+            },
+            &block,
+        )
+        .await
+        .unwrap();
+    let ticks = observed.tickCumulatives;
+    let tick = (ticks[1] - ticks[0]).as_i64() as f64 / f64::from(window);
+    let pool_mean = 1e12 / 1.0001f64.powf(tick);
+    let price = as_f64(ticker.price);
+    println!(
+        "block {}: price {price:.4}, pool observe() {pool_mean:.4}, spot {:.4}, 1h volume {:.2} WETH",
+        block.number,
+        as_f64(spot),
+        as_f64(ticker.volume)
+    );
+    // The pool mean is geometric and has whole ticks of 0.01%.
+    assert!((price / pool_mean - 1.0).abs() < 0.0005);
+
+    // A worker that continues and a worker that starts read the same price.
+    loop {
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        let (next, continued) = refresh_with_retries(&mut first).await;
+        if next.number == block.number {
+            continue;
+        }
+        let (fresh_block, fresh) = refresh_with_retries(&mut worker()).await;
+        println!(
+            "block {}: price {:.4}",
+            next.number,
+            as_f64(continued.price)
+        );
+        println!(
+            "started at block {}: price {:.4}",
+            fresh_block.number,
+            as_f64(fresh.price)
+        );
+        if fresh_block == next {
+            assert_eq!(continued.price, fresh.price);
+            assert_eq!(continued.volume, fresh.volume);
+        }
+        break;
+    }
 }
