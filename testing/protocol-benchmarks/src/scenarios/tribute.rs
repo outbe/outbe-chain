@@ -35,7 +35,6 @@ use outbe_oracle::{
 };
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
-    address_pair::AddressPair,
     addresses::{
         AGENT_REWARD_ADDRESS, L2_REGISTRY_ADDRESS, METADOSIS_ADDRESS, ORACLE_ADDRESS,
         TRIBUTE_ADDRESS, TRIBUTE_FACTORY_ADDRESS,
@@ -46,6 +45,7 @@ use outbe_primitives::{
     },
     time::date_key_to_utc_timestamp,
 };
+use outbe_system_common::address_pair::AddressPair;
 use outbe_tee::protocol::TributePublicInputs as DemoTributePublicInputs;
 use outbe_tee::OFFER_HKDF_SALT;
 use outbe_tribute::TributeContract;

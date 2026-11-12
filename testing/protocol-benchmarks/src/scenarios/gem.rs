@@ -8,8 +8,8 @@ use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, EmissionD
 use outbe_primitives::{
     addresses::INTEX_NFT1155_ADDRESS,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
-    units::{SCALE_1E6_U128, SCALE_1E6_U64},
 };
+use outbe_system_common::units::{SCALE_1E6_U128, SCALE_1E6_U64};
 
 use super::support::{capture_execution, elapsed_ns};
 use crate::{BenchmarkScenario, ExecutionClass, GasLedger, Observation, Profile, ScenarioMetadata};
