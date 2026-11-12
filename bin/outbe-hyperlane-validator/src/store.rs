@@ -90,8 +90,11 @@ pub struct SignedRoot {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum Meta {
+    /// The signed announcement JSON, served as `announcement.json`.
     Announcement = 1,
-    Metadata = 2,
+    /// The signer address of the last full backfill pass. A different key
+    /// re-signs the history (key rotation).
+    Signer = 2,
     ReorgFlag = 3,
 }
 
@@ -196,6 +199,30 @@ impl Store {
         let tx = self.db.tx_mut()?;
         let count = leaf_count(&tx, domain)?;
         put_signed(&tx, domain, signed, count)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Replaces the signatures of stored checkpoints after a key rotation.
+    /// Each index must already have a signed root equal to the new root. Only
+    /// the signature changes: a different or missing root is a conflict.
+    pub fn resign_checkpoints(&self, domain: u32, signed: &[(u32, SignedRoot)]) -> Result<()> {
+        let tx = self.db.tx_mut()?;
+        for (index, value) in signed {
+            let k = key(domain, *index);
+            match tx.get::<Checkpoints>(k)? {
+                Some(stored) if decode_signed(&stored)?.root == value.root => {
+                    tx.put::<Checkpoints>(k, encode_signed(value))?
+                }
+                _ => {
+                    return Err(ValidatorError::CheckpointConflict {
+                        domain,
+                        index: *index,
+                    }
+                    .into())
+                }
+            }
+        }
         tx.commit()?;
         Ok(())
     }
@@ -449,6 +476,32 @@ mod tests {
         assert_eq!(store.leaf(1, 1).unwrap(), None);
         assert_eq!(store.checkpoint(1, 0).unwrap(), Some(signed(1)));
         assert_eq!(store.cursor(1).unwrap(), Some(5));
+    }
+
+    #[test]
+    fn resign_replaces_only_the_signature() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        store
+            .commit_batch(1, &[(0, leaf(1)), (1, leaf(2))], &[(0, signed(1))], 5)
+            .unwrap();
+        let new_sig = SignedRoot {
+            signature: [9; 65],
+            ..signed(1)
+        };
+        // The normal write path refuses a second signature.
+        assert!(store.put_checkpoints(1, &[(0, new_sig)]).is_err());
+        store.resign_checkpoints(1, &[(0, new_sig)]).unwrap();
+        assert_eq!(store.checkpoint(1, 0).unwrap(), Some(new_sig));
+
+        // A different root or an unsigned index is a conflict. Nothing is written.
+        let err = store
+            .resign_checkpoints(1, &[(0, signed(1)), (1, signed(2))])
+            .unwrap_err();
+        assert!(err.to_string().contains("different root"), "{err}");
+        assert!(store.resign_checkpoints(1, &[(0, signed(7))]).is_err());
+        assert_eq!(store.checkpoint(1, 0).unwrap(), Some(new_sig));
+        assert_eq!(store.checkpoint(1, 1).unwrap(), None);
     }
 
     #[test]

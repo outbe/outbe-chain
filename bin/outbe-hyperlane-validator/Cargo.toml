@@ -22,6 +22,7 @@ alloy-rpc-types.workspace = true
 reth-db.workspace = true
 
 tokio.workspace = true
+axum = { version = "0.8", default-features = false, features = ["tokio", "http1"] }
 futures.workspace = true
 reqwest.workspace = true
 

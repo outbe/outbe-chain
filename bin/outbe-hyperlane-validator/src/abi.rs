@@ -3,6 +3,7 @@
 use alloy_sol_types::sol;
 
 sol!("../../contracts/precompiles/src/IHyperlaneController.sol");
+sol!("../../contracts/precompiles/src/IValidatorSet.sol");
 
 sol! {
     /// Hyperlane ValidatorAnnounce: where each validator publishes its checkpoint bucket.
@@ -13,6 +14,9 @@ sol! {
             returns (string[][] memory);
         function mailbox() external view returns (address);
         function localDomain() external view returns (uint32);
+        function announce(address validator, string calldata storageLocation, bytes calldata signature)
+            external
+            returns (bool);
     }
 
     /// Hyperlane MerkleTreeHook: the tree of dispatched message ids.

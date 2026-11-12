@@ -13,10 +13,11 @@ pub struct ValidatorConfig {
     #[serde(default)]
     pub hyperlane: HyperlaneConfig,
     pub health: Option<HealthConfig>,
-    /// Local MDBX store. Only the `db` commands use it for now.
+    /// Local MDBX store. The daemon and the `db` commands need it.
     pub storage: Option<StorageConfig>,
-    /// Origin chains whose MerkleTreeHook this validator signs. The daemon
-    /// does not use them yet.
+    /// Checkpoint HTTP server. The daemon needs it.
+    pub server: Option<ServerConfig>,
+    /// Origin chains whose MerkleTreeHook this validator signs.
     #[serde(default)]
     pub origin: Vec<OriginConfig>,
 }
@@ -93,21 +94,19 @@ pub struct ChainConfig {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AccountConfig {
-    /// Hex-encoded private key of the validator's Hyperlane delegate.
-    /// The validator key is accepted when no Hyperlane delegate is assigned.
+    /// Hex-encoded private key `H`: the checkpoint signer, the announce
+    /// sender and the `submitCheckpoint` sender. Its lowercase address is the
+    /// bucket name.
     pub private_key: String,
-    /// Validator that this daemon acts for. It is also the checkpoint bucket name.
+    /// Validator `V` that this daemon acts for.
     pub validator_address: String,
 }
 
-/// Checkpoint submission settings. The daemon reads this validator's own
-/// public-read bucket (the location it announced on-chain, `<bucket>/<domain>/`)
-/// for every domain that the HyperlaneController knows. It submits the latest
-/// signed checkpoint of each domain.
+/// Liveness and discovery settings.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HyperlaneConfig {
-    /// How often to poll the bucket (seconds).
+    /// How often to read the controller and submit checkpoints (seconds).
     #[serde(default = "default_poll_interval")]
     pub poll_interval_secs: u64,
     /// Submit through the ZeroFee txpool policy.
@@ -131,6 +130,35 @@ pub struct StorageConfig {
     pub db_path: std::path::PathBuf,
 }
 
+/// The S3-compatible read endpoint that relayers use.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServerConfig {
+    #[serde(default = "default_server_bind")]
+    pub bind_address: String,
+    /// The public `http(s)://host[:port]` of this server. The announced
+    /// storage location is built from it.
+    pub public_url: String,
+}
+
+impl ServerConfig {
+    /// `s3+http(s)://host[:port]`: the announced location without the bucket.
+    pub fn location_base(&self) -> Result<String> {
+        let invalid = || ValidatorError::InvalidPublicUrl(self.public_url.clone());
+        let url: reqwest::Url = self.public_url.parse().map_err(|_| invalid())?;
+        let host = url.host_str().ok_or_else(invalid)?;
+        if !matches!(url.scheme(), "http" | "https")
+            || url.path() != "/"
+            || url.query().is_some()
+            || !url.username().is_empty()
+        {
+            return Err(invalid().into());
+        }
+        let port = url.port().map(|p| format!(":{p}")).unwrap_or_default();
+        Ok(format!("s3+{}://{host}{port}", url.scheme()))
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HealthConfig {
@@ -145,6 +173,9 @@ fn default_true() -> bool {
 }
 fn default_health_bind() -> String {
     "0.0.0.0:9003".to_string()
+}
+fn default_server_bind() -> String {
+    "0.0.0.0:9000".to_string()
 }
 fn default_poll_interval() -> u64 {
     30
@@ -171,6 +202,13 @@ impl ValidatorConfig {
         if self.hyperlane.poll_interval_secs == 0 {
             return Err(ValidatorError::ZeroPollInterval.into());
         }
+        if self.storage.is_none() {
+            return Err(ValidatorError::NoDbPath.into());
+        }
+        self.server
+            .as_ref()
+            .ok_or(ValidatorError::NoServer)?
+            .location_base()?;
         let mut domains = std::collections::HashSet::new();
         for origin in &self.origin {
             if !domains.insert(origin.domain) {
@@ -199,6 +237,12 @@ chain_id = 54322345
 [account]
 private_key = "0xdead"
 validator_address = "0x1111111111111111111111111111111111111111"
+
+[storage]
+db_path = "/tmp/db"
+
+[server]
+public_url = "http://203.0.113.7:9000"
 "#;
 
     #[test]
@@ -208,11 +252,30 @@ validator_address = "0x1111111111111111111111111111111111111111"
         assert_eq!(cfg.hyperlane.poll_interval_secs, 30);
         assert!(!cfg.hyperlane.gasless);
         assert!(cfg.health.is_none());
-        assert!(cfg.storage.is_none());
-
-        let cfg: ValidatorConfig =
-            toml::from_str(&format!("{MINIMAL}\n[storage]\ndb_path = \"/tmp/db\"\n")).unwrap();
         assert_eq!(cfg.storage.unwrap().db_path.to_str(), Some("/tmp/db"));
+        assert_eq!(cfg.server.unwrap().bind_address, "0.0.0.0:9000");
+    }
+
+    #[test]
+    fn location_base_follows_public_url() {
+        let base = |url: &str| {
+            ServerConfig {
+                bind_address: String::new(),
+                public_url: url.to_string(),
+            }
+            .location_base()
+        };
+        assert_eq!(
+            base("http://203.0.113.7:9000").unwrap(),
+            "s3+http://203.0.113.7:9000"
+        );
+        assert_eq!(
+            base("https://v.example.org/").unwrap(),
+            "s3+https://v.example.org"
+        );
+        for bad in ["ftp://h:9000", "http://h:9000/path", "h:9000", "http://u@h"] {
+            assert!(base(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]
@@ -223,6 +286,13 @@ validator_address = "0x1111111111111111111111111111111111111111"
 
         let mut cfg: ValidatorConfig = toml::from_str(MINIMAL).unwrap();
         cfg.account.validator_address = "not-an-address".to_string();
+        assert!(cfg.validate().is_err());
+
+        let mut cfg: ValidatorConfig = toml::from_str(MINIMAL).unwrap();
+        cfg.server = None;
+        assert!(cfg.validate().is_err());
+        let mut cfg: ValidatorConfig = toml::from_str(MINIMAL).unwrap();
+        cfg.storage = None;
         assert!(cfg.validate().is_err());
 
         assert!(toml::from_str::<ValidatorConfig>(&format!(

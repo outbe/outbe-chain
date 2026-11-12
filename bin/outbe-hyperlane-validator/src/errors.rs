@@ -3,15 +3,6 @@
 /// Errors that the Hyperlane validator daemon returns.
 #[derive(Debug, thiserror::Error)]
 pub enum ValidatorError {
-    /// The storage location does not start with `s3+`.
-    #[error("unsupported storage location '{0}'")]
-    UnsupportedStorageLocation(String),
-    /// The storage location does not contain `://`.
-    #[error("malformed storage location '{0}'")]
-    MalformedStorageLocation(String),
-    /// The storage location does not include a bucket name.
-    #[error("storage location '{0}' has no bucket")]
-    StorageLocationMissingBucket(String),
     /// The RPC provider rejected the transaction.
     #[error("transaction failed: {0}")]
     TransactionFailed(String),
@@ -72,7 +63,13 @@ pub enum ValidatorError {
     /// The domain halted after a reorg. It signs nothing more.
     #[error("domain {0} is halted after a reorg")]
     Halted(u32),
-    /// A `db` command needs `[storage] db_path` in the configuration.
+    /// The daemon and the `db` commands need `[storage] db_path`.
     #[error("storage.db_path is not set in the configuration")]
     NoDbPath,
+    /// The daemon needs `[server] public_url`.
+    #[error("the [server] section with public_url is not set in the configuration")]
+    NoServer,
+    /// `server.public_url` is not `http(s)://host[:port]`.
+    #[error("server.public_url must be http(s)://host[:port] without a path: {0}")]
+    InvalidPublicUrl(String),
 }

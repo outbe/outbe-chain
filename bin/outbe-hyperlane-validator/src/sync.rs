@@ -23,6 +23,7 @@ use alloy_rpc_types::Filter;
 use alloy_sol_types::{SolCall, SolEvent};
 use eyre::{Context, Result};
 use tokio::sync::Notify;
+use tokio::task::JoinSet;
 use tracing::{debug, error, warn};
 
 use crate::abi::{IHyperlaneController, IMerkleTreeHook, IValidatorAnnounce};
@@ -241,54 +242,46 @@ pub struct Origin {
     pub start_block: u64,
 }
 
-/// The result of the controller discovery.
-pub enum Discovery {
-    /// `icaRouter()` is zero. Poll again later.
-    NotInitialized,
-    /// Domains that are ready, and domains with a configuration or contract
-    /// error. An error in one domain does not stop the others.
-    Ready {
-        origins: Vec<Origin>,
-        errors: Vec<(u32, eyre::Report)>,
-    },
+/// One domain of the HyperlaneController.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ControllerDomain {
+    pub domain: u32,
+    pub hook: Address,
+    pub validator_announce: Address,
 }
 
-/// Reads the domains and their contracts from the HyperlaneController and
-/// checks them on each origin chain.
-pub async fn discover(outbe: &impl Provider, configs: &[OriginConfig]) -> Result<Discovery> {
+/// Reads the domains and their contracts from the HyperlaneController.
+/// Returns `None` while `icaRouter()` is zero: the controller is not
+/// initialized yet.
+pub async fn controller_domains(outbe: &impl Provider) -> Result<Option<Vec<ControllerDomain>>> {
     let call =
         |data: Vec<u8>| eth_call(outbe, HYPERLANE_CONTROLLER_ADDRESS, data, BlockId::latest());
     let out = call(IHyperlaneController::icaRouterCall {}.abi_encode()).await?;
     if IHyperlaneController::icaRouterCall::abi_decode_returns(&out)? == Address::ZERO {
-        return Ok(Discovery::NotInitialized);
+        return Ok(None);
     }
     let out = call(IHyperlaneController::domainsCall {}.abi_encode()).await?;
-    let mut origins = Vec::new();
-    let mut errors = Vec::new();
+    let mut domains = Vec::new();
     for domain in IHyperlaneController::domainsCall::abi_decode_returns(&out)? {
         let out = call(IHyperlaneController::hookByDomainCall { domain }.abi_encode()).await?;
         let hook = IHyperlaneController::hookByDomainCall::abi_decode_returns(&out)?;
         let out = call(IHyperlaneController::validatorAnnounceByDomainCall { domain }.abi_encode())
             .await?;
-        let va = IHyperlaneController::validatorAnnounceByDomainCall::abi_decode_returns(&out)?;
-        let Some(config) = configs.iter().find(|c| c.domain == domain) else {
-            errors.push((domain, ValidatorError::MissingOrigin(domain).into()));
-            continue;
-        };
-        match check_origin(domain, hook, va, config).await {
-            Ok(origin) => origins.push(origin),
-            Err(error) => errors.push((domain, error)),
-        }
+        let validator_announce =
+            IHyperlaneController::validatorAnnounceByDomainCall::abi_decode_returns(&out)?;
+        domains.push(ControllerDomain {
+            domain,
+            hook,
+            validator_announce,
+        });
     }
-    Ok(Discovery::Ready { origins, errors })
+    Ok(Some(domains))
 }
 
-async fn check_origin(
-    domain: u32,
-    hook: Address,
-    va: Address,
-    config: &OriginConfig,
-) -> Result<Origin> {
+/// Checks the contracts of a controller domain on its origin chain and
+/// returns the origin.
+pub async fn check_origin(d: &ControllerDomain, config: &OriginConfig) -> Result<Origin> {
+    let (domain, hook, va) = (d.domain, d.hook, d.validator_announce);
     let provider = connect(&config.rpc_urls[0])?;
     let call = |to: Address, data: Vec<u8>| eth_call(&provider, to, data, BlockId::latest());
     let mismatch = |what: String| ValidatorError::OriginMismatch { domain, what };
@@ -324,7 +317,7 @@ async fn check_origin(
     })
 }
 
-fn connect(url: &str) -> Result<DynProvider> {
+pub fn connect(url: &str) -> Result<DynProvider> {
     let url = url
         .parse()
         .with_context(|| format!("invalid RPC URL {url}"))?;
@@ -482,7 +475,12 @@ impl DomainSync {
         if split == 0 {
             return Tick::Idle;
         }
-        let leaves: Vec<SyncedLeaf> = self.pending.drain(..split).collect();
+        // ponytail: the first sync holds all unverified leaves in memory (~1 GB per 5M leaves); a vote at intermediate blocks needs archive RPC state
+        let leaves = if split == self.pending.len() {
+            std::mem::take(&mut self.pending)
+        } else {
+            self.pending.drain(..split).collect()
+        };
         for leaf in &leaves {
             self.committed.ingest(leaf.message_id);
         }
@@ -561,36 +559,39 @@ impl DomainSync {
     }
 }
 
-/// Starts the WebSocket waker of an origin when `ws_url` is set.
-pub fn ws_wake(config: &OriginConfig, hook: Address) -> Option<Arc<Notify>> {
+/// Starts the WebSocket waker of an origin in `tasks` when `ws_url` is set.
+/// Dropping `tasks` stops the subscription.
+pub fn ws_wake(
+    config: &OriginConfig,
+    hook: Address,
+    tasks: &mut JoinSet<()>,
+) -> Option<Arc<Notify>> {
     let url = config.ws_url.clone()?;
     let wake = Arc::new(Notify::new());
-    spawn_ws_waker(url, hook, wake.clone());
+    tasks.spawn(ws_waker(url, hook, wake.clone()));
     Some(wake)
 }
 
 /// Wakes `wake` on every `InsertedIntoTree` event of `hook`. The event does
 /// not carry trust: the poll reads and verifies as usual. After a drop the
 /// task connects again with a growing pause.
-fn spawn_ws_waker(url: String, hook: Address, wake: Arc<Notify>) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut backoff = Duration::from_secs(1);
-        loop {
-            match subscribe(&url, hook).await {
-                Ok(mut stream) => {
-                    use futures::StreamExt;
-                    backoff = Duration::from_secs(1);
-                    while stream.next().await.is_some() {
-                        wake.notify_one();
-                    }
-                    warn!(url, "WebSocket subscription ended; HTTP polling continues");
+async fn ws_waker(url: String, hook: Address, wake: Arc<Notify>) {
+    let mut backoff = Duration::from_secs(1);
+    loop {
+        match subscribe(&url, hook).await {
+            Ok(mut stream) => {
+                use futures::StreamExt;
+                backoff = Duration::from_secs(1);
+                while stream.next().await.is_some() {
+                    wake.notify_one();
                 }
-                Err(error) => warn!(url, %error, "WebSocket subscription failed"),
+                warn!(url, "WebSocket subscription ended; HTTP polling continues");
             }
-            tokio::time::sleep(backoff).await;
-            backoff = (backoff * 2).min(MAX_WS_BACKOFF);
+            Err(error) => warn!(url, %error, "WebSocket subscription failed"),
         }
-    })
+        tokio::time::sleep(backoff).await;
+        backoff = (backoff * 2).min(MAX_WS_BACKOFF);
+    }
 }
 
 async fn subscribe(
@@ -806,7 +807,6 @@ pub(crate) mod tests {
         root: Arc<std::sync::Mutex<Option<B256>>>,
     ) -> String {
         use serde_json::{json, Value};
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         let respond = move |req: &Value| -> Value {
             let id = req["id"].clone();
@@ -863,6 +863,15 @@ pub(crate) mod tests {
             };
             json!({"jsonrpc": "2.0", "id": id, "result": result})
         };
+        serve_json_rpc(respond).await
+    }
+
+    /// A JSON-RPC server over HTTP. `respond` maps a request to a response.
+    pub(crate) async fn serve_json_rpc(
+        respond: impl Fn(&serde_json::Value) -> serde_json::Value + Send + Sync + 'static,
+    ) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
         let respond = Arc::new(respond);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
@@ -891,7 +900,7 @@ pub(crate) mod tests {
                         if buf.len() < end + 4 + len {
                             continue;
                         }
-                        let body: Value =
+                        let body: serde_json::Value =
                             serde_json::from_slice(&buf[end + 4..end + 4 + len]).unwrap();
                         buf.drain(..end + 4 + len);
                         let reply = respond(&body).to_string();

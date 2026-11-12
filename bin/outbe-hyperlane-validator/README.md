@@ -1,11 +1,19 @@
 # outbe-hyperlane-validator
 
-Proves on-chain that this validator's Hyperlane agent keeps signing. It reads the
-latest signed checkpoint per domain from the validator's own checkpoint bucket and
-submits it to the `HyperlaneController` precompile (`0x…EE14`) with
-`submitCheckpoint`. The controller jails validators that fall behind the quorum for
-`MAX_MISSES` liveness windows in a row (see
-[`liveness.rs`](../../crates/system/hyperlanecontroller/src/liveness.rs)).
+The Hyperlane validator of an Outbe validator, in one process. It replaces the
+upstream Hyperlane validator agent. The daemon:
+
+1. Reads the domains and their contracts from the `HyperlaneController`
+   precompile (`0x…EE14`).
+2. Syncs the `MerkleTreeHook` of each origin chain and signs checkpoints into
+   a local MDBX store.
+3. Serves the signed checkpoints as an S3-compatible bucket on port 9000. The
+   relayer reads them with its S3 client.
+4. Announces the bucket on the `ValidatorAnnounce` of each origin chain.
+5. Submits the latest checkpoint of each domain to the controller with
+   `submitCheckpoint`. The controller jails validators that fall behind the
+   quorum for `MAX_MISSES` liveness windows in a row (see
+   [`liveness.rs`](../../crates/system/hyperlanecontroller/src/liveness.rs)).
 
 Runs on the validator host next to `outbe-feeder`. Use a separate Hyperlane
 delegate key so the services have independent transaction nonces.
@@ -20,9 +28,9 @@ Use three distinct addresses for each validator:
 | `P` | Price-feeder transactions | `V` calls `ValidatorSet.setDelegate(1, P)` |
 | `H` | Hyperlane agent and `outbe-hyperlane-validator` | `V` calls `ValidatorSet.setDelegate(2, H)` |
 
-`outbe-hyperlane-validator` uses `H` as its transaction sender and sets `validator_address`
-to `V`. Register the agent's checkpoint signing key with
-`HyperlaneController.setHyperlaneSigner(H)` from the Hyperlane delegate.
+`outbe-hyperlane-validator` uses `H` as its checkpoint signer and its transaction
+sender, and sets `validator_address` to `V`. Register `H` as the checkpoint
+signer with `HyperlaneController.setHyperlaneSigner(H)` from the Hyperlane delegate.
 That mapping selects the checkpoint signature key. Delegation authorizes
 the transaction sender. These are separate checks.
 
@@ -33,7 +41,7 @@ checkpoints or change the checkpoint signer. `V` can rotate or revoke `H`
 through ValidatorSet. Without an explicit Hyperlane delegate, the active
 validator key remains accepted for Hyperlane calls.
 
-Coordinate agent announcements and `outbe-hyperlane-validator` transactions that use `H`.
+Do not run a second process with `H`: both processes would use the same nonces.
 
 ## Quick Start
 
@@ -61,37 +69,77 @@ gasless = true            # optional, default false: ZeroFee txpool policy
 enabled = true            # optional, default true
 bind_address = "0.0.0.0:9003"
 
-[storage]                 # optional, only the db commands use it now
+[storage]                 # required
 db_path = "/var/lib/outbe-hyperlane-validator/db"
+
+[server]                  # required
+bind_address = "0.0.0.0:9000"            # optional, default 0.0.0.0:9000
+public_url = "http://203.0.113.7:9000"   # the address that relayers use
 ```
 
-The configuration has no bucket settings. On every poll, the daemon:
+## Daemon loop
 
-1. Reads `HyperlaneController.domains()` and
-   `validatorAnnounceByDomain(<Outbe chain id>)`.
-2. Reads the latest announced location of the validator from
-   `ValidatorAnnounce.getAnnouncedStorageLocations`
-   (`s3+http://host:port/<validator>/<folder>`).
-3. Fetches `<bucket>/<domain>/checkpoint_latest_index.json` and
-   `checkpoint_<index>_with_id.json`.
+Every `poll_interval_secs`, the daemon reads the controller:
 
-The Hyperlane agent must run with `--checkpointSyncer.folder=<domain id>`.
-A host move needs no change in this daemon. The agent announces the new
-location, and the daemon reads it on the next poll, as the relayer does.
+- While `icaRouter()` is zero, the controller is not initialized. The daemon
+  waits and polls again. It does not stop.
+- A new domain with an `[[origin]]` block starts: one signing loop, one
+  backfill worker, an optional WebSocket waker and the announce loop.
+- When `hookByDomain(domain)` changes for a running domain, the daemon stops
+  that domain and shows an error in `/status`. It does not start the domain
+  again in this process.
+- When the controller removes a domain, the daemon stops it.
 
-The daemon submits a checkpoint only when its index is higher than
-`submittedIndex(validator, domain)`. It never submits index 0. Until the
-controller is initialized (`domains()` is empty), the daemon does nothing.
+At the start of a domain, the daemon compares `submittedIndex(V, domain)` with
+the local store. A higher index on-chain means that the local history was
+lost. The daemon logs a warning and continues.
+
+### Liveness
+
+Every poll, the daemon reads `missCount(V)` and
+`ValidatorSet.getActiveValidators()` (`0x…EE00`). While `V` is not active (for
+example jailed), the daemon keeps signing, serving and announcing, but it does
+not send `submitCheckpoint`: the controller would reject it. `/status` then
+shows `"active": false`. This is not an error.
+
+While `V` is active, for each running domain, the daemon submits the latest
+signed checkpoint when its index is higher than `submittedIndex(V, domain)`.
+It never submits index 0.
 
 `gasless = true` sends `submitCheckpoint` with zero priority fee; the node's
 `HyperlaneSubmitCheckpointHook` waives the fee for active validators and their
 Hyperlane delegates. An explicit Hyperlane delegate replaces the validator
 key for this authorization.
 
+### Announce
+
+For each origin chain, the daemon signs an announcement with `H` for the
+location `s3+http://<public_url host:port>/<bucket>/<domain>` (`s3+https` for
+an `https` URL). The bucket is the lowercase address of `H`. If
+`ValidatorAnnounce.getAnnouncedStorageLocations([H])` does not contain this
+location, the daemon sends `announce` on that origin chain from `H`, through
+the first `rpc_urls` entry that answers. It retries with a backoff from 30 s
+to 15 min. `H` must have native gas on every origin chain. On Outbe, the
+announce uses the `gasless` setting.
+
+## Checkpoint server
+
+The server on `[server] bind_address` is an S3-compatible anonymous read,
+path-style: `GET /<bucket>/<domain>/<key>`. `HEAD` also works.
+
+| Key | Body |
+|---|---|
+| `checkpoint_latest_index.json` | The latest signed index, a JSON number. |
+| `checkpoint_<index>_with_id.json` | The signed checkpoint, the same bytes as the upstream agent. |
+| `announcement.json` | The signed announcement, pretty JSON. |
+
+A missing key returns 404 with the S3 `NoSuchKey` XML. Another bucket returns
+404 `NoSuchBucket`. The server does not have `metadata_latest.json`: the
+relayer does not read it. A request path never maps to a file.
+
 ## Origin chains
 
-Each `[[origin]]` block configures one origin chain. The daemon does not use
-these blocks yet. A later step of the validator port starts the sync.
+Each `[[origin]]` block configures one origin chain.
 
 ```toml
 [[origin]]
@@ -146,9 +194,7 @@ poll earlier. The event does not verify a leaf.
 ## Local store
 
 `[storage] db_path` sets the directory of the validator's own MDBX store.
-Do not use the node database directory. The daemon does not use the store
-yet. Later steps of the validator port write leaves and signed checkpoints
-to it.
+Do not use the node database directory.
 
 The store opens in MDBX exclusive mode. While one process holds the store,
 a second process cannot open it. Stop the daemon before you run a `db`
@@ -162,9 +208,8 @@ command.
 
 ## Signing
 
-The daemon does not run the signing yet. A later step of the validator port
-starts it. Each origin domain has one signing loop and one backfill worker.
-The signer key is `account.private_key` (`H`).
+Each origin domain has one signing loop and one backfill worker. The signer
+key is `account.private_key` (`H`).
 
 1. The signing loop gets the verified leaves of a sync poll. In one store
    transaction, it writes all the leaves, the cursor, and the signed
@@ -176,6 +221,10 @@ The signer key is `account.private_key` (`H`).
    for each 1,000 leaves.
 
 The daemon never signs a second root for an index that it signed before.
+
+After a change of `H`, the backfill starts at index 0 once. It signs again
+each stored checkpoint of the old key. Only the signature changes: a
+different root is a conflict and halts the domain.
 
 ### Reorg flag
 
@@ -195,7 +244,24 @@ the flag, find and fix the cause. Then stop the daemon and run
 
 ## Health
 
-`GET /health` returns 200 while `missCount(validator)` on the controller is zero
-and 503 otherwise: a non-zero value means the next misses lead to a jail, so alert
-on it. `GET /status` returns `submitted`, `failed`, `last_submit_time` and
-`miss_count`.
+The health server listens on `[health] bind_address` (default port 9003).
+
+`GET /health` returns 503 when one of these conditions occurs, and 200
+otherwise:
+
+- `missCount(V)` is not zero. The next misses lead to a jail, so alert on it.
+- A domain halted after a reorg.
+- A domain has an error (for example no `[[origin]]` block, or a changed hook).
+
+While the daemon waits for the controller, `/health` returns 200.
+
+`GET /status` returns:
+
+| Field | Meaning |
+|---|---|
+| `healthy` | The `/health` result. |
+| `controller` | `unknown`, `waiting_for_controller` or `ready`. |
+| `active` | `V` is in the active validator set. `null` before the first read. |
+| `miss_count` | `missCount(V)` on the controller. |
+| `submitted`, `failed`, `last_submit_time` | `submitCheckpoint` counters. |
+| `domains.<id>` | `leaves`, `latest_signed_index`, `cursor`, `reorg`, `error`. |

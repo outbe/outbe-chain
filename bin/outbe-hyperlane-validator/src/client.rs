@@ -5,19 +5,9 @@ use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, B256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
-use alloy_signer_local::PrivateKeySigner;
 use eyre::{Context, Result};
 
-use crate::config::AccountConfig;
 use crate::errors::ValidatorError;
-
-pub fn create_wallet(account: &AccountConfig) -> Result<EthereumWallet> {
-    let signer: PrivateKeySigner = account
-        .private_key
-        .parse()
-        .with_context(|| "invalid private key")?;
-    Ok(EthereumWallet::from(signer))
-}
 
 pub async fn eth_call<P: Provider>(
     provider: &P,

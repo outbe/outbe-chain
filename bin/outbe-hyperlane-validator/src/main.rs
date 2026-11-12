@@ -1,32 +1,30 @@
 //! Outbe Hyperlane validator daemon.
 //!
-//! Proves that this validator's Hyperlane agent keeps signing. The daemon reads
-//! the latest signed checkpoint per domain from the validator's own bucket. It
-//! submits that checkpoint to the HyperlaneController precompile (see
-//! `liveness.rs`).
+//! Syncs the MerkleTreeHook of each origin chain, signs checkpoints into a
+//! local store, serves them as an S3-compatible bucket, announces the bucket
+//! on each origin chain, and proves liveness to the HyperlaneController.
 
 mod abi;
-// The validator port uses these modules. The submit loop wires them in.
-#[allow(dead_code)]
 mod checkpoint;
 mod client;
 mod config;
+mod daemon;
 mod errors;
 mod health;
 mod liveness;
-#[allow(dead_code)]
 mod merkle;
-#[allow(dead_code)]
+mod server;
 mod signer;
-#[allow(dead_code)]
 mod store;
-#[allow(dead_code)]
 mod sync;
 
 use std::sync::Arc;
+use std::time::Duration;
 
+use alloy_network::EthereumWallet;
+use alloy_signer_local::PrivateKeySigner;
 use clap::{Parser, Subcommand};
-use eyre::Result;
+use eyre::{Context, Result};
 use tracing::{info, warn};
 
 use crate::config::ValidatorConfig;
@@ -131,8 +129,25 @@ async fn main() -> Result<()> {
     config.validate()?;
     warn!("private key loaded from plaintext config - use an encrypted keystore in production");
 
-    let wallet = client::create_wallet(&config.account)?;
-    let health = Arc::new(ValidatorHealth::new());
+    let key: PrivateKeySigner = config
+        .account
+        .private_key
+        .parse()
+        .with_context(|| "invalid private key")?;
+    let validator = config.account.validator_address.parse()?;
+    let server = config.server.as_ref().ok_or(ValidatorError::NoServer)?;
+    let db_path = &config
+        .storage
+        .as_ref()
+        .ok_or(ValidatorError::NoDbPath)?
+        .db_path;
+    let bucket = format!("{:#x}", key.address());
+    let outbe = sync::connect(&config.chain.rpc_endpoint)?;
+    let outbe_domain = u32::try_from(config.chain.chain_id)
+        .with_context(|| "chain.chain_id is not a Hyperlane domain")?;
+
+    let store = Arc::new(Store::open(db_path)?);
+    let health = Arc::new(ValidatorHealth::new(store.clone()));
     if config.health.as_ref().is_none_or(|h| h.enabled) {
         let bind = config
             .health
@@ -141,22 +156,65 @@ async fn main() -> Result<()> {
             .unwrap_or_else(|| "0.0.0.0:9003".to_string());
         health::start_health_server(&bind, health.clone()).await?;
     }
+    let location = format!("{}/{bucket}", server.location_base()?);
+    server::start(
+        &server.bind_address,
+        server::Bucket {
+            name: bucket,
+            health: health.clone(),
+        },
+    )
+    .await?;
 
     info!(
         rpc = %config.chain.rpc_endpoint,
-        validator = %config.account.validator_address,
+        validator = %validator,
+        signer = %key.address(),
+        location,
         "starting outbe-hyperlane-validator"
     );
+    let poll_interval = Duration::from_secs(config.hyperlane.poll_interval_secs);
+    let gasless = config.hyperlane.gasless;
     let liveness = liveness::Liveness::new(
         config.hyperlane,
-        config.chain,
-        wallet,
-        config.account.validator_address.parse()?,
-        health,
+        &config.chain,
+        EthereumWallet::from(key.clone()),
+        validator,
+        health.clone(),
     );
+    let daemon = daemon::Daemon {
+        origins: config.origin,
+        poll_interval,
+        outbe_domain,
+        gasless,
+        key,
+        validator,
+        store,
+        health,
+        location,
+    };
     tokio::select! {
+        _ = daemon.run(outbe) => {}
         _ = liveness.run() => {}
-        _ = tokio::signal::ctrl_c() => info!("shutdown signal received, exiting"),
+        signal = shutdown_signal() => info!(signal, "shutdown signal received"),
     }
+    // Leaving `main` drops the domain tasks. The runtime waits for an open
+    // store write to end, then the last store handle closes MDBX.
+    info!("stopped");
     Ok(())
+}
+
+async fn shutdown_signal() -> &'static str {
+    let mut term = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+        Ok(term) => term,
+        Err(error) => {
+            warn!(%error, "SIGTERM handler failed; only SIGINT stops the daemon");
+            let _ = tokio::signal::ctrl_c().await;
+            return "SIGINT";
+        }
+    };
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => "SIGINT",
+        _ = term.recv() => "SIGTERM",
+    }
 }

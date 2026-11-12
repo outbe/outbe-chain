@@ -8438,6 +8438,7 @@ dependencies = [
  "alloy-signer",
  "alloy-signer-local",
  "alloy-sol-types",
+ "axum",
  "clap",
  "eyre",
  "futures",

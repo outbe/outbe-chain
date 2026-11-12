@@ -13,18 +13,23 @@
 //! Order: the live loop commits all leaves of a verified batch, the cursor
 //! and the signed checkpoint of the last leaf in one transaction. The backfill
 //! worker then signs every earlier index that has a leaf but no checkpoint.
+//!
+//! Key rotation follows `sign_and_submit_checkpoint`: a stored checkpoint of
+//! another key is signed again. Here only the signature may differ, the value
+//! must be the same.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use alloy_eips::BlockId;
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, Signature, B256};
 use alloy_provider::Provider;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
 use eyre::Result;
 use tokio::sync::Notify;
+use tokio::task::JoinSet;
 use tracing::{error, info, warn};
 
 use crate::abi::IHyperlaneController;
@@ -70,13 +75,38 @@ impl DomainSigner {
         self.origin.domain
     }
 
+    /// The signed announcement JSON of this domain.
+    pub fn announcement(&self) -> Result<Option<Vec<u8>>> {
+        self.store.meta(self.domain(), Meta::Announcement)
+    }
+
+    pub fn latest_index(&self) -> Result<Option<u32>> {
+        self.store.latest_checkpoint_index(self.domain())
+    }
+
+    /// The stored signed checkpoint at `index`, in the upstream JSON type.
+    pub fn signed_checkpoint(&self, index: u32) -> Result<Option<Signed<CheckpointWithMessageId>>> {
+        let domain = self.domain();
+        let (Some(leaf), Some(stored)) = (
+            self.store.leaf(domain, index)?,
+            self.store.checkpoint(domain, index)?,
+        ) else {
+            return Ok(None);
+        };
+        Ok(Some(Signed {
+            value: self.value(index, stored.root, leaf.message_id),
+            signature: Signature::try_from(&stored.signature[..])?,
+        }))
+    }
+
     /// True after a reorg. Only `db clear-reorg` and a restart clear it.
     pub fn halted(&self) -> bool {
         self.halted.load(Ordering::Acquire)
     }
 
     /// Syncs, signs and backfills the domain until a reorg halts it. A domain
-    /// with a stored reorg flag does not start.
+    /// with a stored reorg flag does not start. Dropping this future also
+    /// stops the backfill.
     pub async fn run(self: Arc<Self>, config: OriginConfig, ws_wake: Option<Arc<Notify>>) {
         let domain = self.domain();
         if self.halted() {
@@ -86,7 +116,8 @@ impl DomainSigner {
             );
             return;
         }
-        let backfill = tokio::spawn(self.clone().backfill());
+        let mut backfill = JoinSet::new();
+        backfill.spawn(self.clone().backfill());
         let interval = Duration::from_secs(config.interval_secs);
         let mut sync = None;
         while !self.halted() {
@@ -122,12 +153,12 @@ impl DomainSigner {
                 wait_next(interval, ws_wake.as_deref()).await;
             }
         }
-        let _ = backfill.await;
+        let _ = backfill.join_next().await;
         error!(domain, "domain halted: signing and backfill stopped");
     }
 
-    fn sign(&self, index: u32, root: B256, message_id: B256) -> Result<SignedRoot> {
-        let value = CheckpointWithMessageId {
+    fn value(&self, index: u32, root: B256, message_id: B256) -> CheckpointWithMessageId {
+        CheckpointWithMessageId {
             checkpoint: Checkpoint {
                 merkle_tree_hook_address: self.origin.hook.into_word(),
                 mailbox_domain: self.domain(),
@@ -135,11 +166,26 @@ impl DomainSigner {
                 index,
             },
             message_id,
-        };
+        }
+    }
+
+    fn sign(&self, index: u32, root: B256, message_id: B256) -> Result<SignedRoot> {
+        let value = self.value(index, root, message_id);
         Ok(SignedRoot {
             root,
             signature: Signed::sign(value, &self.key)?.signature_bytes(),
         })
+    }
+
+    /// True when the stored signature does not recover to the current key.
+    fn other_signer(&self, index: u32, stored: &SignedRoot, message_id: B256) -> bool {
+        let signer = Signature::try_from(&stored.signature[..])
+            .ok()
+            .and_then(|signature| {
+                let value = self.value(index, stored.root, message_id);
+                Signed { value, signature }.recover().ok()
+            });
+        signer != Some(self.key.address())
     }
 
     /// Commits the leaves and the cursor of `batch`, and the signed
@@ -209,12 +255,20 @@ impl DomainSigner {
     /// when more leaves may follow. `tree` holds every leaf before the page.
     /// It is built once, from the stored leaves before the first unsigned
     /// index, and moves only after a successful write.
+    ///
+    /// Until a key completes one pass, the pass starts at index 0 and signs
+    /// again each stored checkpoint of another key (`Meta::Signer`).
     fn backfill_page(&self, tree: &mut Option<IncrementalMerkle>) -> Result<bool> {
         let domain = self.domain();
+        let me = self.key.address();
+        // ponytail: a pass after a key change recovers every stored signature
+        // (about 50 µs each, minutes for millions); a rotation is rare.
+        let resign = self.store.meta(domain, Meta::Signer)?.as_deref() != Some(me.as_slice());
         let mut next = match tree {
             Some(tree) => tree.clone(),
             None => {
                 let first = match self.store.first_unsigned_index(domain)? {
+                    _ if resign => 0,
                     Some(first) => first,
                     None => self.store.leaf_count(domain)?,
                 };
@@ -233,10 +287,19 @@ impl DomainSigner {
             .store
             .leaves_from(domain, next.count() as u32, BACKFILL_PAGE)?;
         let mut signed = Vec::new();
+        let mut resigned = Vec::new();
         for (index, leaf, stored) in &page {
             next.ingest(leaf.message_id);
             let root = next.root();
             match stored {
+                // Same value and another key: sign it again (key rotation).
+                Some(stored)
+                    if stored.root == root
+                        && resign
+                        && self.other_signer(*index, stored, leaf.message_id) =>
+                {
+                    resigned.push((*index, self.sign(*index, root, leaf.message_id)?))
+                }
                 // Already signed with this value (the live loop signs the
                 // last leaf of each batch): keep it.
                 Some(stored) if stored.root == root => {}
@@ -258,8 +321,20 @@ impl DomainSigner {
             return Ok(false);
         }
         self.store.put_checkpoints(domain, &signed)?;
+        if !resigned.is_empty() {
+            warn!(
+                domain,
+                count = resigned.len(),
+                "signed again the checkpoints of another key"
+            );
+            self.store.resign_checkpoints(domain, &resigned)?;
+        }
         *tree = Some(next);
-        Ok(page.len() == BACKFILL_PAGE)
+        let more = page.len() == BACKFILL_PAGE;
+        if !more && resign {
+            self.store.set_meta(domain, Meta::Signer, me.as_slice())?;
+        }
+        Ok(more)
     }
 
     async fn halt_on_conflict(&self, error: &eyre::Report) {
@@ -486,6 +561,30 @@ mod tests {
         assert!(!signer.backfill_page(&mut tree).unwrap());
         assert_eq!(tree.unwrap().count(), ids.len());
         assert!(!signer.halted());
+    }
+
+    #[tokio::test]
+    async fn a_new_key_signs_the_history_again() {
+        let (domain, hook, ids, _) = testnet();
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(dir.path()).unwrap());
+        let old_key = PrivateKeySigner::from_bytes(&B256::repeat_byte(3)).unwrap();
+        let old = DomainSigner::new(origin(domain, hook), store.clone(), old_key).unwrap();
+        old.commit(&batch(domain, &[], &ids, 100)).await.unwrap();
+        backfill_all(&old);
+        assert_eq!(store.first_unsigned_index(domain).unwrap(), None);
+
+        // Same values, new key: every index is signed again with the new key.
+        let new = DomainSigner::new(origin(domain, hook), store.clone(), key()).unwrap();
+        backfill_all(&new);
+        assert_all_signed(&store, domain, hook, &ids);
+        assert_eq!(
+            store.meta(domain, Meta::Signer).unwrap().as_deref(),
+            Some(key().address().as_slice())
+        );
+        let latest = new.signed_checkpoint(42).unwrap().unwrap();
+        assert_eq!(latest.recover().unwrap(), key().address());
+        assert_eq!(new.signed_checkpoint(43).unwrap(), None);
     }
 
     #[tokio::test]
