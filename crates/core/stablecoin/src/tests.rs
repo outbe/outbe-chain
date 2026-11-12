@@ -2,13 +2,13 @@ use alloy_primitives::{address, b256, keccak256, Address, B256, U256};
 use alloy_sol_types::{SolCall, SolError, SolEvent};
 use outbe_primitives::addresses::{STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS};
 use outbe_primitives::error::PrecompileError;
-use outbe_primitives::stablecoin::{predict_stablecoin, StablecoinCreatePayload};
 use outbe_primitives::stablecoin_fork::STABLECOIN_V1_SCHEMA_VERSION;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{PrecompileStorageProvider, StorageHandle};
 use outbe_stablecoinpolicy::{
     PolicyType, StablecoinPolicyRegistryContract, ALLOW_ALL_POLICY_ID, DENY_ALL_POLICY_ID,
 };
+use outbe_system_common::stablecoin::{predict_stablecoin, StablecoinCreatePayload};
 
 use crate::abi::IStablecoin;
 use crate::api::{FactoryTokenInitialization, StablecoinFactoryApi};

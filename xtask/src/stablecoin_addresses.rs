@@ -8,8 +8,8 @@ pub(super) fn load_planned_classes(
     repo_root: &Path,
     manifest: &StablecoinAddressManifest,
 ) -> Result<Vec<CheckedAddressClass>> {
-    let path = repo_root
-        .join("crates/blockchain/primitives/testdata/stablecoin/v1/planned-address-classes.json");
+    let path =
+        repo_root.join("crates/system/common/testdata/stablecoin/v1/planned-address-classes.json");
     let bytes = fs::read(&path).wrap_err_with(|| format!("read {}", path.display()))?;
     let registry: PlannedAddressClasses =
         serde_json::from_slice(&bytes).wrap_err_with(|| format!("parse {}", path.display()))?;

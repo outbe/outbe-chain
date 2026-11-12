@@ -2,13 +2,13 @@
 
 use alloy_primitives::{Address, U256};
 use eyre::{Context, Result};
-use outbe_primitives::stablecoin::{iso_4217_alpha, ISO_4217_NUMERIC_CODES};
+use outbe_system_common::stablecoin::{iso_4217_alpha, ISO_4217_NUMERIC_CODES};
 use serde::Deserialize;
 
 use crate::errors::ConfigError;
 use crate::fixed::FixedValue;
-use outbe_primitives::asset_type::AssetType;
-use outbe_primitives::units::SCALE_1E18;
+use outbe_system_common::asset_type::AssetType;
+use outbe_system_common::units::SCALE_1E18;
 
 mod cross;
 mod pairs_file;

@@ -2,8 +2,8 @@
 
 use async_trait::async_trait;
 use eyre::{Context, Result};
-use outbe_primitives::stablecoin::iso_4217_alpha;
-use outbe_primitives::units::SCALE_1E18;
+use outbe_system_common::stablecoin::iso_4217_alpha;
+use outbe_system_common::units::SCALE_1E18;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};

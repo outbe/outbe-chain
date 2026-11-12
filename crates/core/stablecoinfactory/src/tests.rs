@@ -4,13 +4,13 @@ use outbe_primitives::{
     addresses::{STABLECOIN_FACTORY_ADDRESS, STABLECOIN_MARKER_CODE},
     block::BlockContext,
     error::PrecompileError,
-    stablecoin::{
-        encode_canonical_stablecoin_create, StablecoinCreatePayload, MAX_NAME_LEN, MAX_TICKER_LEN,
-    },
     stablecoin_fork::{STABLECOIN_LIST_PAGE_CAP, STABLECOIN_V1_SCHEMA_VERSION},
     storage::{direct::DirectStorageProvider, hashmap::HashMapStorageProvider, StorageHandle},
 };
 use outbe_stablecoin::StablecoinContract;
+use outbe_system_common::stablecoin::{
+    encode_canonical_stablecoin_create, StablecoinCreatePayload, MAX_NAME_LEN, MAX_TICKER_LEN,
+};
 use revm::{
     database::{CacheDB, EmptyDB},
     state::{AccountInfo, Bytecode},

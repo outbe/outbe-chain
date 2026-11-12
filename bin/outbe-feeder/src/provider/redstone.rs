@@ -18,7 +18,7 @@ use super::{checked_ticker, Provider, TickerPrice, VolumeInput};
 use crate::config::ApiProviderConfig;
 use crate::errors::RedstoneError;
 use crate::fixed::{FixedValue, JsonDecimal};
-use outbe_primitives::stablecoin::iso_4217_alpha;
+use outbe_system_common::stablecoin::iso_4217_alpha;
 
 /// Authenticated gateway: serves the requested feeds to a key holder.
 const DEFAULT_GATEWAY_URL: &str = "https://oracle-gateway.a.redstone.finance";

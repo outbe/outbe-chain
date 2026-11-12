@@ -3,11 +3,13 @@ use alloy_sol_types::SolEvent;
 use outbe_primitives::{
     addresses::{STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_MARKER_CODE},
     error::{PrecompileError, Result},
-    stablecoin::{decode_canonical_stablecoin_create, predict_stablecoin, validate_ticker},
     stablecoin_fork::STABLECOIN_LIST_PAGE_CAP,
 };
 use outbe_stablecoin::{
     FactoryTokenInitialization, StablecoinFactoryApi as StablecoinTokenFactoryApi,
+};
+use outbe_system_common::stablecoin::{
+    decode_canonical_stablecoin_create, predict_stablecoin, validate_ticker,
 };
 use revm::state::Bytecode;
 

@@ -5,7 +5,7 @@ use crate::errors::AggregatorError;
 use crate::fixed::FixedValue;
 use alloy_primitives::{aliases::U1024, U256, U512};
 use eyre::Result;
-use outbe_primitives::units::SCALE_1E18;
+use outbe_system_common::units::SCALE_1E18;
 
 /// A price this close to the median always stays, in thousandths (0.5%).
 /// Sources disagree by this much in normal trading: Chainlink moves only past
