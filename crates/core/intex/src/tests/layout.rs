@@ -63,7 +63,7 @@ fn config_call_rate_is_pinned_per_profile() {
 
 #[test]
 fn config_promis_load_launch_exponent_is_pinned_per_profile() {
-    use outbe_primitives::units::PROTOCOL_AMOUNT_DECIMALS;
+    use outbe_system_common::units::PROTOCOL_AMOUNT_DECIMALS;
 
     assert_eq!(config::IntexParams::PROD.promis_load_launch_exponent, 12);
     assert_eq!(config::IntexParams::DEV.promis_load_launch_exponent, 12);

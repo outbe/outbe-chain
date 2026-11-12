@@ -6,7 +6,7 @@
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
-use outbe_primitives::units::SCALE_1E6_U128;
+use outbe_system_common::units::SCALE_1E6_U128;
 
 use crate::constants::{
     CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, COMMIT_BOND_MINOR,

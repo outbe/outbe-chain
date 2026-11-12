@@ -217,7 +217,7 @@ mod tests {
                 issuance_currency: 840,
                 reference_currency: 840,
                 issued_at: day.start_timestamp().unwrap(),
-                group_key: outbe_primitives::call_breach::group_key(
+                group_key: outbe_system_common::call_breach::group_key(
                     day.value(),
                     U256::from(2_280_000),
                     840,
@@ -275,7 +275,7 @@ mod tests {
                 issuance_currency: 840,
                 reference_currency: 840,
                 issued_at: day.start_timestamp().unwrap(),
-                group_key: outbe_primitives::call_breach::group_key(
+                group_key: outbe_system_common::call_breach::group_key(
                     day.value(),
                     U256::from(2_280_000),
                     840,

@@ -1,9 +1,9 @@
 use alloy_primitives::{keccak256, B256, U256};
 
 use outbe_core_common::deadline_queue;
-use outbe_primitives::call_bins;
 use outbe_primitives::error::Result;
 use outbe_primitives::series_id::SeriesId;
+use outbe_system_common::call_bins;
 
 use crate::{
     constants::{TOKEN_NAME, TOKEN_SYMBOL},
@@ -216,7 +216,7 @@ impl GemContract<'_> {
     pub(crate) fn seal_group_call_terms(&mut self, group: B256, terms: CallTerms) -> Result<()> {
         self.seal_group_prices(group, &terms)?;
         self.seal_group_calendar(group, &terms)?;
-        outbe_primitives::call_breach::widen_scan_terms(
+        outbe_system_common::call_breach::widen_scan_terms(
             &self.max_call_window_seconds,
             &self.min_call_threshold_seconds,
             terms.reference_currency,
@@ -423,7 +423,7 @@ outbe_core_common::impl_deadline_queue!(CleanupQueue<B256> {
 /// The uncalled groups of one reference currency, by call price.
 pub struct CallBins<'a, 'storage>(pub &'a GemContract<'storage>, pub u16);
 
-outbe_primitives::impl_call_bins!(CallBins<B256> {
+outbe_system_common::impl_call_bins!(CallBins<B256> {
     root: call_bin_tree_root,
     mid: call_bin_tree_mid,
     leaf: call_bin_tree_leaf,

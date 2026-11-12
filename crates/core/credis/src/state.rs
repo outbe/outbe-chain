@@ -7,11 +7,11 @@
 use alloy_primitives::{Address, U256};
 
 use outbe_core_common::deadline_queue;
-use outbe_primitives::call_bins;
 use outbe_primitives::error::Result;
 use outbe_primitives::series_id::SeriesId;
 use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::indexed_list::{create_indexed, delete_indexed, IndexedList};
+use outbe_system_common::call_bins;
 
 use crate::errors::CredisError;
 use crate::precompile::ICredis;
@@ -121,7 +121,7 @@ impl<'storage> CredisContract<'storage> {
 
     /// Widens the currency's scan terms to cover a newly opened Credis.
     pub fn widen_scan_terms(&mut self, record: &Credis) -> Result<()> {
-        outbe_primitives::call_breach::widen_scan_terms(
+        outbe_system_common::call_breach::widen_scan_terms(
             &self.max_call_window_seconds,
             &self.min_call_threshold_seconds,
             record.reference_currency,
@@ -318,7 +318,7 @@ outbe_core_common::impl_deadline_queue!(CleanupQueue<SeriesId> {
 /// One reference currency's uncalled series, by call price.
 pub struct CallBins<'a, 'storage>(pub &'a CredisContract<'storage>, pub u16);
 
-outbe_primitives::impl_call_bins!(CallBins<SeriesId> {
+outbe_system_common::impl_call_bins!(CallBins<SeriesId> {
     root: call_bin_tree_root,
     mid: call_bin_tree_mid,
     leaf: call_bin_tree_leaf,
