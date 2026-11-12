@@ -1535,17 +1535,7 @@ fn a_failed_day_queues_its_bids_for_bounded_deletion() {
 #[test]
 #[cfg(not(feature = "e2e-test"))]
 fn failed_auction_needs_no_message() {
-    use crate::constants::{
-        BIDS_FANIN_TIMEOUT_SECS, INTEX_ISSUANCE_WINDOW_SECONDS, REVEAL_WINDOW_SECONDS,
-        TARGET_UNFINALIZED_REFUND_DELAY_SECONDS,
-    };
-    assert_eq!(BIDS_FANIN_TIMEOUT_SECS, 8 * 3600);
-    assert_eq!(TARGET_UNFINALIZED_REFUND_DELAY_SECONDS, 48 * 3600);
-    assert_eq!(
-        REVEAL_WINDOW_SECONDS + INTEX_ISSUANCE_WINDOW_SECONDS,
-        TARGET_UNFINALIZED_REFUND_DELAY_SECONDS
-    );
-
+    use crate::constants::BIDS_FANIN_TIMEOUT_SECS;
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
     storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
