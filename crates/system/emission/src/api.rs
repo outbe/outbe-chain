@@ -598,13 +598,21 @@ mod tests {
         assert_eq!(failed.state, emission_day_state::COMPLETED);
         assert_eq!(failed.promis_limit, 100);
 
+        assert_eq!(
+            (
+                emission_day_state::PENDING,
+                emission_day_state::PROCESSING,
+                emission_day_state::COMPLETED
+            ),
+            (0, 1, 2)
+        );
         let unknown_state = 20261003;
         let mut record = EmissionDay::new_pending(unknown_state, WorldwideDay::new(0), 1);
-        record.state = 1;
+        record.state = 3;
         put_emission_day_record(storage.clone(), &record).unwrap();
         let expected = EmissionError::DayAlreadyAllocated {
             day: unknown_state,
-            state: 1,
+            state: 3,
         };
         assert_emission_error(
             record_day_allocation(storage.clone(), unknown_state, amounts).unwrap_err(),
