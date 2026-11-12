@@ -1,7 +1,7 @@
 //! The terms an Intex series is issued under, and the Settled Intex collection.
 
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
-use outbe_primitives::units::SCALE_1E6_U128;
+use outbe_system_common::units::SCALE_1E6_U128;
 
 /// Call price = entry * 2.28; its breach arms a Call Event.
 pub const CALL_RATE_PCT: u16 = 128;

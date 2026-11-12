@@ -10,7 +10,7 @@ use alloy_primitives::{Address, U256};
 
 use outbe_primitives::error::Result;
 use outbe_primitives::time::SECONDS_PER_DAY;
-use outbe_primitives::units::SCALE_1E6_U256;
+use outbe_system_common::units::SCALE_1E6_U256;
 
 use crate::constants::DAYS_PER_YEAR;
 use crate::errors::CredisError;
