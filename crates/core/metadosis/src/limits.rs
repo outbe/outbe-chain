@@ -114,21 +114,33 @@ pub(crate) fn allocate_day_metadosis_limit(
     Ok(split)
 }
 
+/// Briefs Desis and returns the Desis Limit the auction holds. A limit that Desis
+/// returns goes back to the Promis Limit.
 pub(crate) fn apply_auction_brief(
     storage: StorageHandle<'_>,
     emission_day: u32,
     split: &LimitSplit,
-) -> Result<()> {
+) -> Result<U256> {
     let is_active = !split.desis_limit_minor.is_zero();
     storage.with_checkpoint(|| {
-        outbe_desis::api::dispatch_auction_brief(
+        let receipt = outbe_desis::api::dispatch_auction_brief(
             storage.clone(),
             outbe_desis::api::AuctionBrief {
                 emission_day: emission_day.into(),
                 desis_limit_minor: split.desis_limit_minor,
                 has_limit: is_active,
             },
-        )
+        )?;
+        match receipt {
+            outbe_desis::api::AuctionBriefReceipt::Accepted => Ok(split.desis_limit_minor),
+            outbe_desis::api::AuctionBriefReceipt::ReturnedToPromisLimit {
+                desis_limit_minor,
+                ..
+            } => {
+                PromisLimitContract::new(storage.clone()).checked_credit(desis_limit_minor)?;
+                Ok(U256::ZERO)
+            }
+        }
     })
 }
 
@@ -193,12 +205,6 @@ mod tests {
         for (base, lysis, nominal, carry) in [
             (U256::MAX, U256::ZERO, U256::MAX, U256::ZERO),
             (U256::from(100), U256::from(40), U256::from(100), U256::MAX),
-            (
-                U256::from(u128::MAX) + U256::from(3),
-                U256::ONE,
-                U256::MAX,
-                U256::ZERO,
-            ),
         ] {
             let mut provider = HashMapStorageProvider::new(1);
             StorageHandle::enter(&mut provider, |storage| {
@@ -225,5 +231,41 @@ mod tests {
             assert_eq!(provider.storage, before);
             assert_eq!(provider.get_ordered_events(), events);
         }
+    }
+
+    #[test]
+    fn a_desis_limit_above_the_auction_domain_goes_back_to_the_promis_limit() {
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let base = U256::from(u128::MAX) + U256::from(3);
+            let split = allocate_day_metadosis_limit(
+                storage.clone(),
+                LysisLimitInput {
+                    base_limit: base,
+                    lysis_limit_minor: U256::ONE,
+                    nominal_total: U256::MAX,
+                },
+            )
+            .unwrap();
+            assert!(split.desis_limit_minor > U256::from(u128::MAX));
+            let day = EmissionDate::new(20260101);
+            assert_eq!(
+                apply_auction_brief(storage.clone(), day.value(), &split).unwrap(),
+                U256::ZERO
+            );
+            assert_eq!(
+                PromisLimitContract::new(storage.clone())
+                    .promis_limit()
+                    .unwrap(),
+                base - U256::ONE
+            );
+            assert_eq!(
+                outbe_desis::DesisContract::new(storage)
+                    .auction_stage
+                    .read(&day)
+                    .unwrap(),
+                outbe_desis::AuctionStage::Cancelled as u8
+            );
+        });
     }
 }

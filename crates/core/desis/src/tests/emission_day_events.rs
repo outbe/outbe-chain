@@ -10,8 +10,8 @@ use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_promislimit::PromisLimitContract;
 
 use crate::constants::{
-    CANCELED_BELOW_ONE_UNIT, CANCELED_LATE_START, CANCELED_NO_LIMIT, CANCELED_UNPRICED,
-    COMMIT_WINDOW_SECONDS, INTEX_ISSUANCE_WINDOW_SECONDS, REVEAL_WINDOW_SECONDS,
+    CANCELED_BELOW_ONE_UNIT, CANCELED_LATE_START, CANCELED_LIMIT_OVERFLOW, CANCELED_NO_LIMIT,
+    CANCELED_UNPRICED, COMMIT_WINDOW_SECONDS, INTEX_ISSUANCE_WINDOW_SECONDS, REVEAL_WINDOW_SECONDS,
 };
 use crate::precompile::IDesis;
 use crate::runtime;
@@ -264,6 +264,56 @@ fn each_cancel_reason_balances_and_a_repeat_tick_is_quiet() {
         assert_cancel_before_limit_events(&storage);
         assert_repeat_tick_is_quiet(&mut storage);
     }
+}
+
+#[test]
+fn an_oversized_brief_cancels_in_order_and_a_second_brief_is_rejected() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |s| {
+        assert!(matches!(
+            crate::api::dispatch_auction_brief(
+                s.clone(),
+                crate::api::AuctionBrief {
+                    emission_day: EMISSION_DAY,
+                    desis_limit_minor: U256::MAX,
+                    has_limit: true,
+                },
+            )
+            .unwrap(),
+            crate::api::AuctionBriefReceipt::ReturnedToPromisLimit { .. }
+        ));
+        assert_eq!(
+            s.contract::<DesisContract>()
+                .read_stage(EMISSION_DAY)
+                .unwrap(),
+            AuctionStage::Cancelled
+        );
+        assert!(crate::api::dispatch_auction_brief(
+            s.clone(),
+            crate::api::AuctionBrief {
+                emission_day: EMISSION_DAY,
+                desis_limit_minor: U256::MAX,
+                has_limit: true,
+            },
+        )
+        .is_err());
+    });
+    let names: Vec<_> = logs(&storage)
+        .iter()
+        .map(|log| log.topics().first().copied())
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            Some(IDesis::DesisLimitSet::SIGNATURE_HASH),
+            Some(IDesis::IntexAuctionCanceled::SIGNATURE_HASH),
+            Some(IDesis::DesisLimitAllocated::SIGNATURE_HASH),
+            Some(IDesis::DesisLimitReturned::SIGNATURE_HASH),
+        ]
+    );
+    assert_eq!(cancel_reason(&storage), CANCELED_LIMIT_OVERFLOW);
+    assert_limit_identity(&mut storage, U256::ZERO);
+    assert_repeat_tick_is_quiet(&mut storage);
 }
 
 #[test]

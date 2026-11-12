@@ -49,13 +49,8 @@ fn finalize_lysis_settlement(
     {
         return Err(mismatch());
     }
-    let credit = PromisLimitContract::new(storage.clone()).checked_credit(completion.unused)?;
-    if credit.credited != completion.unused {
-        return Err(PrecompileError::fatal(
-            "Promis Limit did not take the unused Lysis limit",
-        ));
-    }
-    apply_auction_brief(storage, emission_day.day, &split)?;
+    PromisLimitContract::new(storage.clone()).checked_credit(completion.unused)?;
+    let desis_limit = apply_auction_brief(storage, emission_day.day, &split)?;
     let promis_limit_added = emission_day
         .metadosis_limit_minor()
         .checked_sub(completion.used)
@@ -65,7 +60,7 @@ fn finalize_lysis_settlement(
         emission_day.day,
         outbe_emission::api::MetadosisCompletedAmounts {
             lysis_limit: calculation.lysis_limit_minor,
-            desis_limit: split.desis_limit_minor,
+            desis_limit,
             nods: completion.used,
             promis_limit_added,
         },
