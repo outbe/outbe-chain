@@ -29,6 +29,7 @@ pub mod nod_encryption;
 pub mod pass_budget;
 pub mod payload;
 pub mod projection;
+#[cfg(feature = "consensus")]
 pub mod proof;
 pub mod protocol_schedule;
 pub mod protocol_version;

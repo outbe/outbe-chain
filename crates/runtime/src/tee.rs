@@ -203,18 +203,10 @@ async fn upstream_block_hash_v1(
     upstream: &str,
     height: u64,
 ) -> eyre::Result<Option<alloy_primitives::B256>> {
-    use outbe_operator::rpc::FinalityRpc as _;
-
-    let block = outbe_operator::rpc::HttpRenewalRpc::new(upstream)?
-        .block_by_number(height)
+    outbe_consensus::follow_transport::UpstreamRpcClient::new(upstream)?
+        .block_hash_by_number(height)
         .await
-        .wrap_err("read upstream block at the durable TEE join anchor")?;
-    block
-        .get("hash")
-        .and_then(serde_json::Value::as_str)
-        .map(str::parse::<alloy_primitives::B256>)
-        .transpose()
-        .wrap_err("decode upstream block hash at the durable TEE join anchor")
+        .wrap_err("read upstream block at the durable TEE join anchor")
 }
 
 /// `Ready` local admission at the latest finalized block, with a resident

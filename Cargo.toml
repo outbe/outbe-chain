@@ -13,7 +13,6 @@ members = [
     "crates/blockchain/rpc",
     "crates/blockchain/txpool",
     "crates/blockchain/execution",
-    "crates/blockchain/operator",
     "crates/blockchain/radicle",
     "crates/blockchain/snapshot",
     "crates/blockchain/tee",
@@ -99,7 +98,6 @@ default-members = [
     "crates/blockchain/rpc",
     "crates/blockchain/txpool",
     "crates/blockchain/execution",
-    "crates/blockchain/operator",
     "crates/blockchain/radicle",
     "crates/blockchain/snapshot",
     "crates/blockchain/tee",
@@ -203,7 +201,6 @@ outbe-rpc = { path = "crates/blockchain/rpc" }
 outbe-txpool = { path = "crates/blockchain/txpool" }
 outbe-execution = { path = "crates/blockchain/execution" }
 outbe-runtime = { path = "crates/runtime" }
-outbe-operator = { path = "crates/blockchain/operator" }
 outbe-radicle = { path = "crates/blockchain/radicle" }
 outbe-snapshot = { path = "crates/blockchain/snapshot" }
 outbe-tee = { path = "crates/blockchain/tee", default-features = false }
@@ -290,6 +287,7 @@ revm = { version = "=43.0.3", default-features = false, features = ["std"] }
 
 # Reth v2.8.1 (revm 43, alloy 2.5, alloy-evm 0.39)
 reth-ethereum = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
+reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
 reth-node-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
 reth-node-builder = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
 reth-node-core = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
@@ -374,7 +372,7 @@ multibase = "0.9"
 postcard = { version = "1", default-features = false, features = ["use-std"] }
 
 # CLI / IO
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 jsonrpsee = { version = "0.26", features = ["server", "macros"] }
 reqwest = { version = "0.12", features = ["json"] }
 

@@ -1,12 +1,10 @@
 //! Preparation under the existing upgrade journal lock.
+use super::super::relay_tx::{RawRelayTransactionV1, UnsignedRelayTransactionV1};
 use super::*;
-use outbe_operator::tee::registry::{
-    FinalizedRenewalChainViewV1, FinalizedStagedSuccessorPolicyV1,
+use outbe_tee::registry_view::{
+    FinalizedRenewalChainViewV1, FinalizedStagedSuccessorPolicyV1, NodeBindingSelectorV1,
 };
-use outbe_operator::tee::upgrade::PreparedTransitionEvidenceV1;
-use outbe_operator::tx::RawRelayTransactionV1;
-
-use outbe_operator::tx::UnsignedRelayTransactionV1;
+use outbe_tee::upgrade_journal::{PreparedTransitionEvidenceV1, UpgradeContextV1};
 pub(super) struct ProvisioningTarget {
     pub(super) binding_id: B256,
     pub(super) valid_until: u64,
@@ -43,7 +41,7 @@ impl<R: Rpc + Sync> NetworkPreparation<'_, R> {
     pub(super) async fn load_or_prepare(
         &mut self,
         args: &UpgradeProvisionArgs,
-        selector: &outbe_operator::tee::NodeBindingSelectorV1,
+        selector: &NodeBindingSelectorV1,
     ) -> Result<NetworkUpgradeSubmissionV1> {
         let rpc = self.rpc;
         let node_dir = args.candidate.node_data_dir.as_path();
@@ -153,7 +151,7 @@ impl<R: Rpc + Sync> NetworkPreparation<'_, R> {
     async fn prepare_evidence(
         &mut self,
         active: &FinalizedRenewalChainViewV1,
-        context: &outbe_operator::tee::UpgradeContextV1,
+        context: &UpgradeContextV1,
     ) -> Result<FreshPreparation> {
         let rpc = self.rpc;
         let candidate = &mut *self.candidate;

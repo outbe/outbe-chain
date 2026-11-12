@@ -6,7 +6,9 @@
 //! ValidatorSet from Reth state and constructs it for the consensus stack.
 
 use alloy_primitives::{Address, B256, U256};
+#[cfg(feature = "consensus")]
 use commonware_cryptography::bls12381;
+#[cfg(feature = "consensus")]
 use commonware_p2p::Address as CommonwareAddress;
 
 /// Maximum number of validators supported (used as upper bound for codec deserialization).
@@ -64,6 +66,7 @@ pub fn validator_registration_message(
 pub const MAX_TEE_EXPIRED_TARGET_EXCLUSIONS: usize = 256;
 
 /// Loaded validator set.
+#[cfg(feature = "consensus")]
 #[derive(Debug, Clone)]
 pub struct ValidatorSet {
     /// Ordered list of BLS MinPk public keys (determines participant indices).
@@ -74,6 +77,7 @@ pub struct ValidatorSet {
     pub p2p_addresses: Vec<ValidatorP2pAddress>,
 }
 
+#[cfg(feature = "consensus")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidatorP2pAddress {
     /// No registry address exists. Static bootstrap may fill this gap.

@@ -7902,10 +7902,11 @@ dependencies = [
  "commonware-codec",
  "commonware-cryptography",
  "commonware-math",
+ "ed25519-dalek",
  "eyre",
  "hex",
  "k256 0.13.4",
- "outbe-operator",
+ "libc",
  "outbe-primitives",
  "outbe-rpc",
  "outbe-simplex",
@@ -7917,6 +7918,7 @@ dependencies = [
  "rand 0.10.2",
  "rand_core 0.10.1",
  "reqwest 0.12.28",
+ "rustix",
  "serde",
  "serde_json",
  "snow",
@@ -8686,31 +8688,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-operator"
-version = "0.1.0"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-primitives",
- "alloy-sol-types",
- "ed25519-dalek",
- "eyre",
- "hex",
- "k256 0.13.4",
- "libc",
- "outbe-primitives",
- "outbe-tee",
- "reqwest 0.12.28",
- "rustix",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "zeroize",
-]
-
-[[package]]
 name = "outbe-oracle"
 version = "0.1.0"
 dependencies = [
@@ -8769,9 +8746,8 @@ dependencies = [
  "rand 0.10.2",
  "rand_core 0.10.1",
  "reth-codecs",
- "reth-ethereum",
  "reth-ethereum-engine-primitives",
- "reth-node-builder",
+ "reth-ethereum-primitives",
  "reth-payload-primitives",
  "reth-primitives-traits",
  "reth-rpc-traits",
@@ -9063,7 +9039,6 @@ dependencies = [
  "outbe-metadosis",
  "outbe-nod",
  "outbe-nodfactory",
- "outbe-operator",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promis",
@@ -9291,7 +9266,9 @@ dependencies = [
 name = "outbe-tee"
 version = "0.1.0"
 dependencies = [
+ "alloy-genesis",
  "alloy-primitives",
+ "alloy-sol-types",
  "blst",
  "cc",
  "commonware-runtime",
@@ -9306,7 +9283,7 @@ dependencies = [
  "pem",
  "postcard",
  "rand 0.8.6",
- "reth-ethereum",
+ "reth-chainspec",
  "ring",
  "rustix",
  "serde",

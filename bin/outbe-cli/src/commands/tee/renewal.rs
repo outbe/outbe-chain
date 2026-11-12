@@ -11,20 +11,15 @@ use alloy_primitives::U256;
 
 use eyre::Result;
 
-use outbe_operator::errors::RenewalError;
-use outbe_operator::tee::read_renewal_status_v1;
-use outbe_operator::tee::run_renewal_once_v1;
-
-use outbe_operator::tee::NodeBindingSelectorV1;
-
-use outbe_operator::tee::RenewalOutcomeV1;
-use outbe_operator::tee::RenewalServiceConfigV1;
-use outbe_operator::tee::RenewalServicesV1;
-
-use outbe_operator::tx::RelaySignerV1;
+use super::operator_errors::RenewalError;
+use super::relay_tx::RelaySignerV1;
+use super::renewal_engine::{
+    run_renewal_once_v1, RenewalOutcomeV1, RenewalServiceConfigV1, RenewalServicesV1,
+};
+use super::status_view::read_renewal_status_v1;
 
 use outbe_tee::load_committed_enclave_manifest_v1;
-
+use outbe_tee::registry_view::NodeBindingSelectorV1;
 use outbe_tee::NodeHostIdentityV1;
 
 use std::time::Duration;
