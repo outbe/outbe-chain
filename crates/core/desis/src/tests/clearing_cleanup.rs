@@ -35,7 +35,7 @@ fn poll(s: &StorageHandle<'_>) {
         },
         s.clone(),
     );
-    runtime::tick_gate(&ctx).unwrap();
+    runtime::complete_auctions(&ctx).unwrap();
 }
 
 #[test]

@@ -5,10 +5,10 @@ use sweep::Sweep;
 
 mod sweep;
 
-/// Cycle `auction_advance` trigger: advance every scheduled day that has a due step.
+/// Cycle `advance_auctions` trigger: advance every scheduled day that has a due step.
 /// Each day runs in its own checkpoint. A day that reverts is retried on a later pass.
 /// The sweep stops before a day whose due steps the rest of the trigger budget cannot pay for.
-pub fn tick_schedule(ctx: &BlockRuntimeContext) -> Result<()> {
+pub fn advance_auctions(ctx: &BlockRuntimeContext) -> Result<()> {
     schedule_tick(&ctx.storage, ctx.block.timestamp)
 }
 

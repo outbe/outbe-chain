@@ -44,8 +44,8 @@ const ANCHOR: u64 = NOW - NOW % SECONDS_PER_DAY;
 const ENTRY_PRICE: u128 = 2_000_000; // 2.0 on the COEN/840 scale; escrow basis = promis_load
 /// The load any first priced brief picks, pinned by `the_fixture_load_is_the_one_the_ladder_picks`.
 const LOAD_MINOR: u128 = 1_000_000 * PROMIS_LOAD_MINOR;
-/// The `auction_advance` work budget in `outbe-cycle`.
-const ADVANCE_BUDGET: u64 = crate::constants::AUCTION_ADVANCE_BUDGET_GAS;
+/// The `advance_auctions` work budget in `outbe-cycle`.
+const ADVANCE_BUDGET: u64 = crate::constants::ADVANCE_AUCTIONS_BUDGET_GAS;
 
 #[test]
 fn the_bridge_caps_match_the_contracts() {
@@ -2729,7 +2729,7 @@ fn force_clear_skips_missing_chain_after_deadline() {
 }
 
 #[test]
-fn tick_gate_no_active_days_is_noop() {
+fn complete_auctions_without_active_days_is_noop() {
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
     with_storage(|s| {
         let ctx = BlockRuntimeContext::new(
@@ -2746,13 +2746,13 @@ fn tick_gate_no_active_days_is_noop() {
             },
             s.clone(),
         );
-        runtime::tick_gate(&ctx).unwrap();
+        runtime::complete_auctions(&ctx).unwrap();
     });
 }
 
 #[test]
 #[cfg(not(feature = "e2e-test"))]
-fn tick_gate_clears_ready_day() {
+fn complete_auctions_clears_a_ready_day() {
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
     with_storage(|s| {
         open_clearing(&s, 1);
@@ -2784,7 +2784,7 @@ fn tick_gate_clears_ready_day() {
             },
             s.clone(),
         );
-        runtime::tick_gate(&ctx).unwrap();
+        runtime::complete_auctions(&ctx).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),

@@ -119,7 +119,7 @@ fn world_selling(units: u16) -> HashMapStorageProvider {
 fn gate(p: &mut HashMapStorageProvider) -> Result<()> {
     p.set_timestamp(U256::from(CLEAR_AT));
     StorageHandle::enter(p, |s| {
-        runtime::tick_gate(&BlockRuntimeContext::new(
+        runtime::complete_auctions(&BlockRuntimeContext::new(
             BlockContext {
                 block_gas_limit: 0,
                 user_gas_used: 0,

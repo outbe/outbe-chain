@@ -123,7 +123,7 @@ fn assert_repeat_tick_is_quiet(storage: &mut HashMapStorageProvider) {
     let before = logs(storage).len();
     StorageHandle::enter(storage, |s| {
         runtime::schedule_tick(&s, NOW).unwrap();
-        runtime::tick_gate(&BlockRuntimeContext::new(
+        runtime::complete_auctions(&BlockRuntimeContext::new(
             BlockContext {
                 block_gas_limit: 0,
                 user_gas_used: 0,
