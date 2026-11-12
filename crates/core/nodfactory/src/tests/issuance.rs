@@ -439,7 +439,7 @@ fn lysis_series_of_one_day_and_reference_share_one_call_group() {
             },
             storage.clone(),
         );
-        let mut budget = outbe_primitives::pass_budget::PassBudget::new(100, 100);
+        let mut budget = outbe_system_common::pass_budget::PassBudget::new(100, 100);
         crate::forfeited::forfeit_through(&ctx, through_day, &mut budget).unwrap();
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(storage.clone())
