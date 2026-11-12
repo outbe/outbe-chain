@@ -1534,7 +1534,7 @@ fn a_failed_day_queues_its_bids_for_bounded_deletion() {
 
 #[test]
 #[cfg(not(feature = "e2e-test"))]
-fn gap_ed20_failed_auction_needs_no_message() {
+fn failed_auction_needs_no_message() {
     use crate::constants::{
         BIDS_FANIN_TIMEOUT_SECS, INTEX_ISSUANCE_WINDOW_SECONDS, REVEAL_WINDOW_SECONDS,
         TARGET_UNFINALIZED_REFUND_DELAY_SECONDS,
@@ -1592,7 +1592,7 @@ fn gap_ed20_failed_auction_needs_no_message() {
 
 #[test]
 #[cfg(not(feature = "e2e-test"))]
-fn gap_ed24_desis_deletes_bids_of_closed_auction() {
+fn desis_deletes_bids_of_closed_auction() {
     for (completes, end_stage) in [
         (true, AuctionStage::Completed),
         (false, AuctionStage::Failed),

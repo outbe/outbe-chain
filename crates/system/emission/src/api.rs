@@ -552,7 +552,7 @@ mod tests {
     }
 
     #[test]
-    fn gap_ed10_day_emission_limit_states() {
+    fn day_emission_limit_states() {
         let mut provider = HashMapStorageProvider::new(1);
         let storage = StorageHandle::new(&mut provider);
         let amounts = DayAllocationAmounts {
@@ -624,7 +624,7 @@ mod tests {
     }
 
     #[test]
-    fn gap_ed09_day_emission_limit_rule_holds() {
+    fn day_emission_limit_rule_holds() {
         let mut provider = HashMapStorageProvider::new(1);
         let storage = StorageHandle::new(&mut provider);
         let amounts = DayAllocationAmounts {
