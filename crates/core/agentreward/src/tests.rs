@@ -1,7 +1,6 @@
 use alloy_primitives::{address, Address, U256};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::test_utils::sol_interface::sol_function_canonical;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 
 use crate::schema::RewardPool as PoolKind;
@@ -1460,33 +1459,51 @@ mod distribute_daily_tests {
     }
 }
 
-/// Drift guard between `contracts/precompiles/src/IAgentReward.sol` and the
-/// `#[contract_public(...)]` annotations on `AgentRewardContract`. The
-/// AgentReward module uses macro-driven dispatch, so the .sol file is a
-/// documentation/abi-export mirror rather than the dispatch source.
-/// This test fails if either side changes without the other.
+/// Every function of `IAgentReward.sol` reaches the dispatch, and each view returns
+/// what the interface declares.
 #[test]
-fn iagentreward_sol_matches_contract_public_annotations() {
-    const SOL: &str = include_str!("../../../../contracts/precompiles/src/IAgentReward.sol");
-    let expected = [
-        ("getClaimableBalance", "address", true, "uint256"),
-        ("getPoolClaimableBalance", "address,uint8", true, "uint256"),
-        ("getPoolBalanceDeadline", "address,uint8", true, "uint64"),
-        ("returnExpiredReward", "address,uint8", false, "uint256"),
-        (
-            "claimReward",
-            "uint8,uint256,uint16,uint16",
-            false,
-            "uint256",
-        ),
-    ];
-    for (name, args_types, is_view, ret_types) in expected {
-        let canon = sol_function_canonical(SOL, name)
-            .unwrap_or_else(|| panic!("IAgentReward.sol is missing `function {name}(...)`"));
-        assert_eq!(canon.arg_types, args_types, "{name}: arg types differ");
-        assert_eq!(canon.is_view, is_view, "{name}: view-modifier differs");
-        assert_eq!(canon.ret_types, ret_types, "{name}: return types differ");
-    }
+fn iagentreward_interface_matches_the_dispatch() {
+    use crate::precompile::IAgentReward::*;
+    use alloy_sol_types::SolCall;
+    with_contract_mut(|storage, _| {
+        let dispatch = |data: Vec<u8>| {
+            crate::precompile::dispatch(storage.clone(), &data, Address::repeat_byte(1), U256::ZERO)
+        };
+        let writes = [
+            returnExpiredRewardCall::default().abi_encode(),
+            claimRewardCall::default().abi_encode(),
+        ];
+        let views = [
+            getClaimableBalanceCall::default().abi_encode(),
+            getPoolClaimableBalanceCall::default().abi_encode(),
+            getPoolBalanceDeadlineCall::default().abi_encode(),
+            getPoolClaimableTotalCall::default().abi_encode(),
+            getPoolPendingTotalCall::default().abi_encode(),
+        ];
+        let mut covered: Vec<[u8; 4]> = writes
+            .iter()
+            .chain(&views)
+            .map(|data| data[..4].try_into().unwrap())
+            .collect();
+        covered.sort_unstable();
+        let mut declared = IAgentRewardCalls::SELECTORS.to_vec();
+        declared.sort_unstable();
+        assert_eq!(covered, declared);
+
+        getClaimableBalanceCall::abi_decode_returns(&dispatch(views[0].clone()).unwrap()).unwrap();
+        getPoolClaimableBalanceCall::abi_decode_returns(&dispatch(views[1].clone()).unwrap())
+            .unwrap();
+        getPoolBalanceDeadlineCall::abi_decode_returns(&dispatch(views[2].clone()).unwrap())
+            .unwrap();
+        getPoolClaimableTotalCall::abi_decode_returns(&dispatch(views[3].clone()).unwrap())
+            .unwrap();
+        getPoolPendingTotalCall::abi_decode_returns(&dispatch(views[4].clone()).unwrap()).unwrap();
+        for data in writes {
+            if let Err(error) = dispatch(data) {
+                assert!(!error.to_string().contains("decode error"), "{error}");
+            }
+        }
+    });
 }
 
 #[test]
