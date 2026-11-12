@@ -261,9 +261,9 @@ impl reth_primitives_traits::header::HeaderMut for OutbeHeader {
     }
 }
 
-pub type OutbeTxEnvelope = reth_ethereum::TransactionSigned;
-pub type OutbeTxType = reth_ethereum::TxType;
-pub type OutbeReceipt = reth_ethereum::Receipt;
+pub type OutbeTxEnvelope = reth_ethereum_primitives::TransactionSigned;
+pub type OutbeTxType = reth_ethereum_primitives::TxType;
+pub type OutbeReceipt = reth_ethereum_primitives::Receipt;
 pub type OutbeBlock = alloy_consensus::Block<OutbeTxEnvelope, OutbeHeader>;
 pub type OutbeBlockBody = alloy_consensus::BlockBody<OutbeTxEnvelope, OutbeHeader>;
 

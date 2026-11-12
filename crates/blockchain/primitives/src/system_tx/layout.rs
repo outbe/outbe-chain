@@ -1,5 +1,5 @@
 use alloy_consensus::Transaction as _;
-use reth_ethereum::TransactionSigned;
+use reth_ethereum_primitives::TransactionSigned;
 
 use super::{
     is_reserved_system_tx, BlockExecutionStage, BodyZone, SystemTx, SystemTxError, SystemTxStepId,

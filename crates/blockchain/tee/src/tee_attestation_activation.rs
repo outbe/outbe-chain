@@ -20,9 +20,36 @@ use outbe_primitives::{
     },
     OutbeHeader,
 };
-use reth_ethereum::chainspec::ChainSpec;
+use reth_chainspec::{ChainSpec, DEV, HOLESKY, HOODI, MAINNET, SEPOLIA};
 use serde::Deserialize;
 use serde_json::Value;
+
+#[derive(Debug, thiserror::Error)]
+enum ChainSpecLoadError {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+}
+
+fn parse_chain_spec(s: &str) -> Result<Arc<ChainSpec>, ChainSpecLoadError> {
+    Ok(match s {
+        "mainnet" => MAINNET.clone(),
+        "sepolia" => SEPOLIA.clone(),
+        "holesky" => HOLESKY.clone(),
+        "hoodi" => HOODI.clone(),
+        "dev" => DEV.clone(),
+        _ => {
+            let raw = match std::fs::read_to_string(s) {
+                Ok(raw) => raw,
+                Err(_) if s.contains('{') => s.to_owned(),
+                Err(io_err) => return Err(ChainSpecLoadError::Io(io_err)),
+            };
+            let genesis: alloy_genesis::Genesis = serde_json::from_str(&raw)?;
+            Arc::new(genesis.into())
+        }
+    })
+}
 
 pub const TEE_ATTESTATION_V1_CONFIG_FIELD: &str = "teeAttestationV1";
 pub const TEE_ATTESTATION_V1_ACTIVATION_HEIGHT: u64 = 1;
@@ -44,7 +71,7 @@ impl DcapSeededChainSpecBindingV1 {
         let path_text = path
             .to_str()
             .ok_or(TeeAttestationActivationError::SeededGenesisPathNotUtf8)?;
-        let spec = reth_ethereum::cli::chainspec::chain_value_parser(path_text)
+        let spec = parse_chain_spec(path_text)
             .map_err(TeeAttestationActivationError::parse_seeded_chain_spec)?;
         let bytes = std::fs::read(path)
             .map_err(|error| TeeAttestationActivationError::read_seeded_genesis(path, error))?;
@@ -202,7 +229,7 @@ impl DcapChainSpecBindingV1 {
         let path = path
             .to_str()
             .ok_or(TeeAttestationActivationError::DcapGenesisPathNotUtf8)?;
-        let spec = reth_ethereum::cli::chainspec::chain_value_parser(path)
+        let spec = parse_chain_spec(path)
             .map_err(TeeAttestationActivationError::parse_dcap_chain_spec)?
             .as_ref()
             .clone()
@@ -497,8 +524,7 @@ mod tests {
             "alloc": {}
         });
         std::fs::write(&path, serde_json::to_vec_pretty(&genesis).unwrap()).unwrap();
-        let base =
-            reth_ethereum::cli::chainspec::chain_value_parser(path.to_str().unwrap()).unwrap();
+        let base = parse_chain_spec(path.to_str().unwrap()).unwrap();
         let policy = initial_tee_policy_v1(
             InitialTeeProfileV1::DcapRequired(ProductionSgxMeasurementV1 {
                 mrenclave: B256::repeat_byte(0x22),
@@ -514,7 +540,7 @@ mod tests {
         genesis["config"][TEE_ATTESTATION_V1_CONFIG_FIELD] =
             tee_attestation_v1_genesis_field(&policy).unwrap();
         std::fs::write(&path, serde_json::to_vec_pretty(&genesis).unwrap()).unwrap();
-        let spec = reth_ethereum::cli::chainspec::chain_value_parser(path.to_str().unwrap())
+        let spec = parse_chain_spec(path.to_str().unwrap())
             .unwrap()
             .as_ref()
             .clone()

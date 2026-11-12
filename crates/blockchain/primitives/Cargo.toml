@@ -8,7 +8,7 @@ publish.workspace = true
 [dependencies]
 outbe-macros.workspace = true
 alloy-trie = { workspace = true, optional = true }
-alloy-consensus.workspace = true
+alloy-consensus = { workspace = true, features = ["serde"] }
 alloy-eips.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-rpc-types-engine.workspace = true
@@ -20,12 +20,11 @@ ark-bn254.workspace = true
 ark-ff.workspace = true
 outbe-poseidon.workspace = true
 bytes.workspace = true
-reth-ethereum = { workspace = true, features = ["node"] }
+reth-ethereum-primitives = { workspace = true, features = ["serde"] }
 reth-ethereum-engine-primitives.workspace = true
 reth-codecs.workspace = true
-reth-node-builder.workspace = true
 reth-payload-primitives.workspace = true
-reth-primitives-traits.workspace = true
+reth-primitives-traits = { workspace = true, features = ["serde"] }
 reth-rpc-traits.workspace = true
 reth-trie.workspace = true
 revm.workspace = true
@@ -33,14 +32,14 @@ ring.workspace = true
 commonware-math.workspace = true
 rand-core-commonware.workspace = true
 commonware-codec.workspace = true
-commonware-consensus.workspace = true
+commonware-consensus = { workspace = true, optional = true }
 commonware-utils.workspace = true
 # Validator-set data types (ValidatorSet / ValidatorP2pAddress) live here so
 # both `outbe-consensus` and `outbe-engine` see the same canonical types
 # without `outbe-consensus` having to depend on `outbe-engine` and without
 # `outbe-engine`-only callers re-deriving the shape.
 commonware-cryptography.workspace = true
-commonware-p2p.workspace = true
+commonware-p2p = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
@@ -69,7 +68,8 @@ trybuild = "1"
 tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 
 [features]
-default = []
+default = ["consensus"]
+consensus = ["dep:commonware-consensus", "dep:commonware-p2p"]
 bench-utils = []
 # Retarget the Intex CREATE3 addresses at the throwaway e2e set. Never in a release build.
 e2e-test = []

@@ -8728,9 +8728,8 @@ dependencies = [
  "rand 0.10.2",
  "rand_core 0.10.1",
  "reth-codecs",
- "reth-ethereum",
  "reth-ethereum-engine-primitives",
- "reth-node-builder",
+ "reth-ethereum-primitives",
  "reth-payload-primitives",
  "reth-primitives-traits",
  "reth-rpc-traits",
@@ -9249,6 +9248,7 @@ dependencies = [
 name = "outbe-tee"
 version = "0.1.0"
 dependencies = [
+ "alloy-genesis",
  "alloy-primitives",
  "alloy-sol-types",
  "blst",
@@ -9265,7 +9265,7 @@ dependencies = [
  "pem",
  "postcard",
  "rand 0.8.6",
- "reth-ethereum",
+ "reth-chainspec",
  "ring",
  "rustix",
  "serde",
