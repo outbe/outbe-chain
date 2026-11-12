@@ -495,7 +495,7 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
         "Dense Cycle body: {:?}",
         outbe_cycle::runtime::take_cycle_gas_samples()
     );
-    assert_eq!(samples.len(), 8);
+    assert_eq!(samples.len(), outbe_cycle::triggers::ACTIVE_TRIGGERS.len());
 
     let cycle_receipt = executor
         .receipts()
