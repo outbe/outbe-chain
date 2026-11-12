@@ -358,8 +358,8 @@ fn a_registry_edit_does_not_move_the_cursor_onto_another_currency() {
     );
 }
 
-fn terms(window_days: u32, threshold_days: u32) -> outbe_primitives::call_breach::ScanTerms {
-    outbe_primitives::call_breach::ScanTerms {
+fn terms(window_days: u32, threshold_days: u32) -> outbe_system_common::call_breach::ScanTerms {
+    outbe_system_common::call_breach::ScanTerms {
         window_days,
         threshold_days,
     }
@@ -751,7 +751,7 @@ fn a_day_wider_than_one_block_resumes_where_it_gave_out() {
         let deadline = now + DAY;
         let day = IntexContract::deadline_day(deadline);
 
-        let queued = outbe_primitives::pass_budget::SWEEP_WRITES_PER_BLOCK + 44;
+        let queued = outbe_system_common::pass_budget::SWEEP_WRITES_PER_BLOCK + 44;
         for index in 0..queued {
             called_series(&s, 20260101 + index, deadline);
         }

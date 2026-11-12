@@ -12,7 +12,7 @@ use outbe_primitives::time::EmissionDate;
 use crate::called;
 use outbe_intex::IntexContract;
 use outbe_oracle::call_window::CallWindow;
-use outbe_primitives::call_breach::ScanTerms;
+use outbe_system_common::call_breach::ScanTerms;
 
 const REFERENCE_ISO: u16 = 840;
 const LAST_DAY: u32 = 20260212;
