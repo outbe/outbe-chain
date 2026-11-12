@@ -13,7 +13,6 @@ members = [
     "crates/blockchain/rpc",
     "crates/blockchain/txpool",
     "crates/blockchain/execution",
-    "crates/blockchain/operator",
     "crates/blockchain/radicle",
     "crates/blockchain/snapshot",
     # system
@@ -98,7 +97,6 @@ default-members = [
     "crates/blockchain/rpc",
     "crates/blockchain/txpool",
     "crates/blockchain/execution",
-    "crates/blockchain/operator",
     "crates/blockchain/radicle",
     "crates/blockchain/snapshot",
     # system
@@ -201,7 +199,6 @@ outbe-rpc = { path = "crates/blockchain/rpc" }
 outbe-txpool = { path = "crates/blockchain/txpool" }
 outbe-execution = { path = "crates/blockchain/execution" }
 outbe-runtime = { path = "crates/runtime" }
-outbe-operator = { path = "crates/blockchain/operator" }
 outbe-radicle = { path = "crates/blockchain/radicle" }
 outbe-snapshot = { path = "crates/blockchain/snapshot" }
 # Internal - system

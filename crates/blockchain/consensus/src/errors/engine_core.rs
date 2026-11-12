@@ -115,6 +115,38 @@ pub enum FollowTransportError {
     /// Indicates that tributeOfferPublicKey returned an unexpected byte length.
     #[error("upstream tributeOfferPublicKey returned {0} bytes instead of one ABI word")]
     UnexpectedTributeOfferPublicKeyLength(usize),
+    /// Indicates that an upstream JSON-RPC request failed.
+    #[error("upstream {method} RPC failed: {error}")]
+    UpstreamRpcRequest {
+        /// JSON-RPC method name.
+        method: &'static str,
+        /// Underlying client error text.
+        error: String,
+    },
+    /// Indicates that a hex-encoded `u64` RPC result could not be parsed.
+    #[error("parse {method} u64 result: {source}")]
+    ParseHexU64Result {
+        /// JSON-RPC method name.
+        method: &'static str,
+        /// Underlying integer parse error.
+        #[source]
+        source: std::num::ParseIntError,
+    },
+    /// Indicates that a hex-encoded byte array RPC result could not be decoded.
+    #[error("decode {method} hex bytes: {source}")]
+    DecodeHexBytesResult {
+        /// JSON-RPC method name.
+        method: &'static str,
+        /// Underlying hex decode error.
+        #[source]
+        source: hex::FromHexError,
+    },
+    /// Indicates that an upstream block hash was not valid 32-byte hex.
+    #[error("decode upstream block hash: {0}")]
+    DecodeBlockHash(#[from] alloy_primitives::hex::FromHexError),
+    /// Indicates that the upstream TEE renewal schedule violated invariants.
+    #[error(transparent)]
+    InvalidRenewalSchedule(#[from] outbe_primitives::errors::TeeRenewalScheduleError),
 }
 
 /// Represents errors from follower ingress shutdown coordination.

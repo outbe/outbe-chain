@@ -11,7 +11,7 @@ use outbe_primitives::tee_attestation_v1::NetworkBindingV1;
 use zeroize::Zeroize as _;
 use zeroize::Zeroizing;
 
-const MAGIC: &[u8; 5] = b"TSGX1";
+const MAGIC: &[u8; 5] = outbe_tee::SGX_COMBINED_SEAL_MAGIC;
 const REQUEST_LEN: usize = 512;
 const KEY_ID: &[u8] = b"outbe/tee/seal/both/v1";
 const FLAGS_MASK: u64 = 0xffff_ffff_ffff_fff3;

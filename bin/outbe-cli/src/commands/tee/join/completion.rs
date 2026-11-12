@@ -1,3 +1,4 @@
+use super::super::onboarding::await_finalized_onboarding_v1;
 use super::super::CliFinalityRpc;
 use super::{
     finalized_binding_matches_intent, load_finalized_admission_anchor_v1,
@@ -8,12 +9,11 @@ use crate::errors::TeeJoinCompletionError;
 use crate::rpc::Rpc;
 use alloy_primitives::B256;
 use eyre::{Result, WrapErr};
-use outbe_operator::tee::{
-    await_finalized_onboarding_v1, read_finalized_registry_view_v1, ExpectedOnboardingBindingV1,
-    NodeBindingSelectorV1,
-};
 use outbe_primitives::tee_attestation_v1::{AttestationMode, RegistrationIntentV1, TeePolicyV1};
 use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
+use outbe_tee::registry_view::{
+    read_finalized_registry_view_v1, ExpectedOnboardingBindingV1, NodeBindingSelectorV1,
+};
 use outbe_tee::{
     clear_committed_join_checkpoint, connect_committed_node_host_enclave,
     construct_finalized_replacement_authorization_v1, promote_replacement_candidate,

@@ -2,7 +2,6 @@ use super::*;
 use crate::upgrade::CycleOutcome;
 use crate::upgrade_ports::UpgradePromotionIo;
 use alloy_eips::BlockNumHash;
-use outbe_operator::tee::UpgradeContextV1;
 
 pub(crate) fn recover_finalized(
     io: &impl UpgradePromotionIo,
@@ -133,7 +132,7 @@ fn committed_manifest_and_hash(
 
 pub(crate) fn resume_checkpoint(
     io: &impl UpgradePromotionIo,
-    snapshot: outbe_operator::tee::UpgradeJournalSnapshotV1,
+    snapshot: UpgradeJournalSnapshotV1,
     config: &UpgradePromotionWorkerConfigV1,
 ) -> CycleOutcome {
     match &snapshot.lifecycle {

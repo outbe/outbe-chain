@@ -25,6 +25,7 @@ pub mod fidelity_decrypt;
 pub mod finalized_admission;
 pub mod gratis_decrypt;
 pub mod host_collateral;
+pub mod journal_storage;
 pub mod lysis;
 mod metrics;
 #[cfg(feature = "native-dcap")]
@@ -39,6 +40,7 @@ pub mod promis_decrypt;
 pub use promis_decrypt::decrypt_promis_balance;
 pub mod protocol;
 pub mod quote;
+pub mod registry_view;
 pub mod release_dcap_artifacts;
 pub mod remote_session;
 pub mod response_auth;
@@ -56,6 +58,7 @@ pub mod tribute_day_client;
 pub mod tribute_decrypt;
 pub mod tribute_source;
 pub mod tribute_v2;
+pub mod upgrade_journal;
 pub mod upgrade_transfer;
 pub mod witness;
 pub use witness::consensus_call;
@@ -113,6 +116,15 @@ pub const NOISE_PARAMS: &str = "Noise_IK_25519_ChaChaPoly_SHA256";
 /// Version of the enclave's durable, network-bound sealed-state payload.
 /// Release metadata and the enclave decoder use this single constant.
 pub const SEALED_STATE_SCHEMA_V1: u8 = 3;
+
+/// Magic prefix of a `TSEAL` sealed-state blob.
+pub const SEAL_MAGIC: &[u8; 5] = b"TSEAL";
+
+/// Magic prefix of a combined `MRENCLAVE | MRSIGNER` hardware-sealed `TSGX1` blob.
+pub const SGX_COMBINED_SEAL_MAGIC: &[u8; 5] = b"TSGX1";
+
+/// Encoded `TSEAL` header byte length (excluding magic): `1 + 1 + 2 + 8 + 8 + 12`.
+pub const SEAL_HEADER_LEN: usize = 32;
 
 /// Fixed, **public** HKDF-SHA256 salt for the tribute offer encryption key.
 ///
