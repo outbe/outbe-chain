@@ -316,7 +316,7 @@ fn burn_to_promis_limit_accumulates_rest_across_sources_and_rolls_back_on_overfl
 }
 
 #[test]
-fn gap_ed34_only_executor_gives_burned_amount() {
+fn only_executor_gives_burned_amount() {
     use alloy_primitives::Bytes;
     use alloy_sol_types::SolError;
     use outbe_primitives::{

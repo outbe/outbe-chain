@@ -154,7 +154,7 @@ fn emission_day_record(
 }
 
 #[test]
-fn gap_ed13_step_error_takes_its_fallback() {
+fn step_error_takes_its_fallback() {
     use outbe_emission::schema::{emission_day_state, metadosis_state};
 
     let (mut allocation, day, fire_at) = due_emission_day_fixture();

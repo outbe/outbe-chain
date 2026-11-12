@@ -168,7 +168,7 @@ fn phase1_metadata(block_number: u64, block_hash: B256) -> CertifiedParentAccoun
 }
 
 #[test]
-fn gas_04_osaka_user_tx_cap_accepts_visible_outbe_system_tx_envelopes() {
+fn osaka_user_tx_cap_accepts_visible_outbe_system_tx_envelopes() {
     const MAX_TX_GAS_LIMIT_OSAKA: u64 = 1 << 24;
     const {
         assert!(

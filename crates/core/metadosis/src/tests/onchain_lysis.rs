@@ -201,7 +201,7 @@ fn native_completion_briefs_the_emission_day() {
 }
 
 #[test]
-fn gap_ed14_failed_metadosis_forfeits_tributes() {
+fn failed_metadosis_forfeits_tributes() {
     let amounts = [NOMINAL + 1, NOMINAL + 2, NOMINAL + 3];
     for (limit, end_state) in [
         (LIMIT, metadosis_state::FAILED),
@@ -316,7 +316,7 @@ fn failed_owner_writes_roll_back_nods_tribute_and_economics() {
 }
 
 #[test]
-fn gap_ed17_one_rule_for_metadosis_limit() {
+fn one_rule_for_metadosis_limit() {
     for amounts in [&[][..], &[1, 2], &[NOMINAL + 1, NOMINAL + 2, NOMINAL + 3]] {
         let mut provider = fixture_with_amounts(LIMIT, amounts);
         let before = StorageHandle::enter(&mut provider, |storage| {

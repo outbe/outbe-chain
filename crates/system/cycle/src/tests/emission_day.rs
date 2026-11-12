@@ -19,7 +19,7 @@ use outbe_tributefactory::{precompile::ITributeFactory, TributeFactoryContract};
 use super::*;
 
 #[test]
-fn gap_ed01_every_utc_day_is_an_emission_day() {
+fn every_utc_day_is_an_emission_day() {
     // Genesis at 2026-10-01 00:01:00 UTC (date key 20261001).
     // The first WWD is 20260930 (forming_end = 2026-10-01 12:00 UTC > genesis), whose E = D+4 is 20261004.
     // Days 20261001, 20261002, 20261003 have wwd == 0; day 20261004 has wwd == 20260930 (with 0 Tributes).
@@ -125,7 +125,7 @@ fn gap_ed01_every_utc_day_is_an_emission_day() {
 }
 
 #[test]
-fn gap_ed03_start_date_comes_from_genesis_block() {
+fn start_date_comes_from_genesis_block() {
     let mut storage = cycle_storage();
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 32);
 
@@ -208,7 +208,7 @@ fn gap_ed03_start_date_comes_from_genesis_block() {
 }
 
 #[test]
-fn gap_ed54_wwd_step_runs_once_a_day() {
+fn wwd_step_runs_once_a_day() {
     let mut storage = cycle_storage();
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 64);
 

@@ -136,7 +136,7 @@ fn with_contract_mut<R>(f: impl FnOnce(StorageHandle, &mut AgentRewardContract) 
 }
 
 #[test]
-fn gas_06_agentreward_dense_daily_distribution_completes_and_clears_indexes() {
+fn agentreward_dense_daily_distribution_completes_and_clears_indexes() {
     const DAILY_ADDRESSES_PER_POOL: u64 = 512;
     let day = WorldwideDay::new(20260525);
     let waa_pool = U256::from(DAILY_ADDRESSES_PER_POOL * 1_000);

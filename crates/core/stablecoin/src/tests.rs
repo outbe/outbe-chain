@@ -415,7 +415,7 @@ fn self_transfer_preserves_max_balance_and_still_emits() {
 }
 
 #[test]
-fn pfs_010_07_cap_failures_restore_supply_balances_and_events() {
+fn cap_failures_restore_supply_balances_and_events() {
     let init = initialization("USDX");
     let alice = Address::repeat_byte(0x31);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
@@ -1128,7 +1128,7 @@ fn mint_burn_burn_from_and_cap_follow_the_fixed_roles() {
 }
 
 #[test]
-fn pfs_010_07_role_failures_restore_state_and_events() {
+fn role_failures_restore_state_and_events() {
     let init = initialization("USDX");
     let attacker = Address::repeat_byte(0xd1);
     let target = Address::repeat_byte(0xd2);
@@ -1388,7 +1388,7 @@ fn forced_transfer_bypasses_source_checks_consumes_only_frozen_units_and_orders_
 }
 
 #[test]
-fn pfs_010_07_policy_failures_restore_balances_freeze_supply_and_events() {
+fn policy_failures_restore_balances_freeze_supply_and_events() {
     let init = initialization("USDX");
     let alice = Address::repeat_byte(0xc1);
     let bob = Address::repeat_byte(0xc2);
@@ -1659,7 +1659,7 @@ fn permit_domain_and_cast_golden_signature_are_exact_and_work_at_deadline_while_
 }
 
 #[test]
-fn pfs_010_07_signature_failures_restore_nonce_allowance_and_events() {
+fn signature_failures_restore_nonce_allowance_and_events() {
     let init = initialization("USDX");
     let call = golden_permit_call();
 

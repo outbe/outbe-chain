@@ -383,7 +383,7 @@ fn tee_expiry_worst_case_active_sweep_fits_cycle_tick_budget() {
 }
 
 #[test]
-fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
+fn cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     outbe_cycle::runtime::take_trigger_gas_samples();
     outbe_cycle::runtime::take_cycle_gas_samples();
     const GENESIS_TS: u64 = 1_704_067_200;
@@ -548,7 +548,7 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
 }
 
 #[test]
-fn gas_09_noncritical_system_oog_emits_zero_gas_failure_receipt_and_continues_block() {
+fn noncritical_system_oog_emits_zero_gas_failure_receipt_and_continues_block() {
     let signer = test_evm_signer();
     let proposer = signer.address();
     let mut state = state_with_active_proposer(proposer);
@@ -633,7 +633,7 @@ fn gas_09_noncritical_system_oog_emits_zero_gas_failure_receipt_and_continues_bl
 }
 
 #[test]
-fn gas_13_system_receipt_rpc_gas_delta_is_visible_envelope_gas() {
+fn system_receipt_rpc_gas_delta_is_visible_envelope_gas() {
     let signer = test_evm_signer();
     let proposer = signer.address();
     let user_tx = test_regular_tx()
@@ -775,7 +775,7 @@ fn system_protocol_precharge_and_ce_gas_are_published_and_block_limited() {
 }
 
 #[test]
-fn gas_14_executor_finish_sets_visible_system_gas_for_fee_history_input() {
+fn executor_finish_sets_visible_system_gas_for_fee_history_input() {
     let signer = test_evm_signer();
     let proposer = signer.address();
     let mut state = state_with_active_proposer(proposer);
@@ -853,7 +853,7 @@ fn gas_14_executor_finish_sets_visible_system_gas_for_fee_history_input() {
 }
 
 #[test]
-fn gas_16_mixed_system_and_user_block_finish_uses_visible_system_gas() {
+fn mixed_system_and_user_block_finish_uses_visible_system_gas() {
     let signer = test_evm_signer();
     let proposer = signer.address();
     let user_tx = test_regular_tx()

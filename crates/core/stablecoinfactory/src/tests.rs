@@ -384,7 +384,7 @@ fn reserve_create(
 }
 
 #[test]
-fn pfs_010_08_every_initializer_failure_rolls_back_token_marker_registry_and_event() {
+fn every_initializer_failure_rolls_back_token_marker_registry_and_event() {
     let issuer = Address::repeat_byte(0x11);
     let proposal_id = U256::from(7u64);
     let raw =

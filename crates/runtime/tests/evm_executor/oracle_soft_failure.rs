@@ -65,7 +65,7 @@ fn oracle_tx_keeps_fee_envelope_for_basefee_validation() {
 }
 
 #[test]
-fn gas_10_low_gas_zero_fee_policy_failure_must_not_mint_intrinsic_gas() {
+fn low_gas_zero_fee_policy_failure_must_not_mint_intrinsic_gas() {
     let config = OutbeEvmConfig::new(
         test_chain_spec(),
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),

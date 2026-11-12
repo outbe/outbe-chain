@@ -303,7 +303,7 @@ fn system_tx_wire_limits_leave_runtime_gas_headroom() {
 }
 
 #[test]
-fn gas_12_system_prefix_aggregate_visible_gas_must_fit_block_cap() {
+fn system_prefix_aggregate_visible_gas_must_fit_block_cap() {
     let inputs = vec![
         SystemTx::Consensus {
             step_index: CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
@@ -371,7 +371,7 @@ fn gas_12_system_prefix_aggregate_visible_gas_must_fit_block_cap() {
 }
 
 #[test]
-fn gas_15_visible_system_tx_gas_must_not_exceed_visible_block_gas_limit_for_generic_replay() {
+fn visible_system_tx_gas_must_not_exceed_visible_block_gas_limit_for_generic_replay() {
     let cycle = system_tx(SystemTx::BeginBlock { step_index: 8 }, 1);
 
     assert_eq!(cycle.gas_limit(), 0);

@@ -201,7 +201,7 @@ pub(super) fn run_emission_limit_daily(
 mod budgets;
 mod calendar;
 mod dispatch;
-mod gap_oip00343;
+mod emission_day;
 mod genesis_nod;
 mod hourly;
 mod schedule;
