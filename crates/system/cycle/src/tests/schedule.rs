@@ -140,7 +140,6 @@ fn only_the_two_auction_edges_declare_a_dependency() {
     assert_eq!(specs[4].depends_on, &[TriggerId::AuctionAdvance]);
     assert!(specs[5].depends_on.is_empty());
     assert!(specs[6].depends_on.is_empty());
-    assert!(specs[7].depends_on.is_empty());
 }
 
 #[test]

@@ -321,7 +321,7 @@ fn bootstrap_without_triggers_creates_genesis_worldwide_day() {
 
 #[cfg(feature = "test-utils")]
 #[test]
-fn canonical_body_observers_keep_all_eight_scoped_handler_samples_without_prefix() {
+fn canonical_body_observers_keep_every_scoped_handler_sample_without_prefix() {
     let mut storage = calendar_storage();
     storage.enter(|handle| {
         let ctx = runtime_context(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
@@ -335,7 +335,7 @@ fn canonical_body_observers_keep_all_eight_scoped_handler_samples_without_prefix
         let handlers = crate::runtime::take_trigger_gas_samples();
         assert_eq!(
             handlers.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
-            vec![0, 1, 2, 3, 4, 5, 6, 8]
+            vec![0, 1, 2, 3, 4, 5, 6]
         );
         assert!(handlers.iter().all(|(_, gas)| *gas > 0));
         let handler_gas = handlers

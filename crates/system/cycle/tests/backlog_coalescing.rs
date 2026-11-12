@@ -69,7 +69,7 @@ fn a_timestamp_before_the_first_slot_yields_the_offset() {
 
 #[test]
 fn only_current_state_scans_and_calendar_owned_protocol_cycle_coalesce() {
-    const COALESCING: [TriggerId; 8] = [
+    const COALESCING: [TriggerId; 7] = [
         TriggerId::AuctionClearing,
         TriggerId::AuctionAdvance,
         TriggerId::ProtocolCycle,
@@ -77,7 +77,6 @@ fn only_current_state_scans_and_calendar_owned_protocol_cycle_coalesce() {
         TriggerId::CredisCallDaily,
         TriggerId::IntexCallDaily,
         TriggerId::GemCallDaily,
-        TriggerId::IntexDrainParked,
     ];
     for spec in ACTIVE_TRIGGERS {
         let coalesces = COALESCING.iter().any(|id| id.as_u32() == spec.id);
@@ -118,11 +117,19 @@ fn the_clearing_poll_runs_after_the_stage_schedule() {
 fn the_genesis_interval_leaves_the_clearing_poll_alone() {
     for _interval in [10_u64, 600, SECONDS_PER_DAY] {
         let configured = active_triggers().expect("nonzero interval");
-        let clearing = configured
-            .iter()
-            .find(|spec| spec.id == TriggerId::AuctionClearing.as_u32())
-            .expect("clearing trigger registered");
-        assert_eq!(clearing.period_seconds(), PERIOD);
+        let find = |id: TriggerId| {
+            configured
+                .iter()
+                .find(|spec| spec.id == id.as_u32())
+                .expect("trigger registered")
+        };
+        let clearing = find(TriggerId::AuctionClearing);
+        assert_eq!(
+            clearing.period_seconds(),
+            find(TriggerId::AuctionAdvance).period_seconds()
+        );
+        #[cfg(not(feature = "e2e-test"))]
+        assert_eq!(clearing.period_seconds(), 3_600);
         assert_eq!(clearing.start_offset_seconds, OFFSET);
         assert!(!clearing.requires_accounting_window);
     }
@@ -134,7 +141,7 @@ fn registry_ids_are_unique_and_traversed_in_id_order() {
         .iter()
         .map(|spec| spec.id)
         .collect::<Vec<_>>();
-    assert_eq!(ids, vec![0, 1, 2, 3, 4, 5, 6, 8]);
+    assert_eq!(ids, vec![0, 1, 2, 3, 4, 5, 6]);
 
     let mut unique = ids.clone();
     unique.sort_unstable();
