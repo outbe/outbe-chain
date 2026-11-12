@@ -108,3 +108,56 @@ pub(super) fn seed_trigger_clock(handle: &StorageHandle<'_>, fire_at: u64) {
         cycle.last_executed_at.write(&spec.id, last).unwrap();
     }
 }
+
+#[test]
+fn gap_ed09_conservation_mismatch_fails_the_block() {
+    let mut storage = cycle_storage();
+    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 16);
+    let (day, fire_at) = storage.enter(|handle| {
+        let anchor = genesis_block(handle.clone(), GENESIS_TS + 60);
+        run_cycle_tick(&anchor).unwrap();
+        let wwd = outbe_primitives::time::WorldwideDay::new(20_240_101);
+        let wwd_proj = outbe_metadosis::api::worldwide_day(handle.clone(), wwd)
+            .unwrap()
+            .unwrap();
+        let ed = outbe_metadosis::api::emission_day(handle, wwd_proj.day)
+            .unwrap()
+            .unwrap();
+        (ed.day, ed.metadosis_start.div_ceil(3_600) * 3_600)
+    });
+    storage.enter(|handle| {
+        seed_trigger_clock(&handle, fire_at);
+        let prev_day = outbe_primitives::time::previous_date_key(day).expect("date step");
+        outbe_emission::api::record_failed_day_allocation(handle, prev_day, U256::ZERO).unwrap();
+    });
+    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 16);
+    storage.set_block_number(20);
+    storage.enter(|handle| {
+        let ctx = dispatch_at(handle.clone(), 20, fire_at);
+        let mut record = outbe_emission::api::get_emission_day_record(ctx.storage.clone(), day)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            record.metadosis_state,
+            outbe_emission::schema::metadosis_state::COMPLETED
+        );
+        record.validators += 1;
+        outbe_emission::schema::EmissionContract::new(ctx.storage.clone())
+            .emission_days
+            .update(&record)
+            .unwrap();
+
+        let error = crate::handler::credit_reward_slice(&ctx).unwrap_err();
+        assert!(matches!(
+            error,
+            outbe_primitives::error::PrecompileError::FatalWithCause(_)
+        ));
+        assert_eq!(
+            outbe_emission::api::get_emission_day_record(ctx.storage.clone(), day)
+                .unwrap()
+                .unwrap()
+                .state,
+            outbe_emission::schema::emission_day_state::PROCESSING
+        );
+    });
+}

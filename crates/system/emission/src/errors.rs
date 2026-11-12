@@ -106,7 +106,7 @@ impl From<EmissionError> for PrecompileError {
     fn from(err: EmissionError) -> Self {
         let bytes = match err {
             EmissionError::ConservationInvariantViolated { .. } => {
-                return PrecompileError::fatal(err.to_string());
+                return PrecompileError::FatalWithCause(Box::new(err));
             }
             EmissionError::EmissionDayNotFound => IEmission::EmissionDayNotFound {}.abi_encode(),
             EmissionError::InvalidEmissionDay { day } => {
