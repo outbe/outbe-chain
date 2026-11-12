@@ -17,13 +17,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::block::ConsensusBlock;
+use crate::errors::FollowTransportError;
 use crate::follow::{CertifiedFinalizedBlock, FinalizedSource, TipSource};
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use commonware_codec::Read as _;
 use commonware_consensus::types::Height;
 use jsonrpsee::core::client::{ClientT, Error as ClientError};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use jsonrpsee::rpc_params;
+use outbe_primitives::tee_operator_v1::TeeRenewalScheduleV1;
+use outbe_tee::registry_view::{ChainRpc, FinalizedStateRpc, RegistryRpc};
 use tracing::{debug, warn};
 
 /// Minimal view of the upstream's `outbe_consensusStatus` response. We only
@@ -197,6 +200,106 @@ impl UpstreamRpcClient {
                 crate::errors::FollowTransportError::MalformedEthCallResult(e.to_string())
             })?;
         decode_tribute_offer_public_key(&bytes)
+    }
+
+    /// Query the canonical block hash at `height` on the upstream endpoint via
+    /// `eth_getBlockByNumber`. Returns `Ok(None)` when the upstream has no block
+    /// at `height` yet (or the response carries no `hash` field).
+    pub async fn block_hash_by_number(
+        &self,
+        height: u64,
+    ) -> Result<Option<B256>, FollowTransportError> {
+        let block: serde_json::Value = self
+            .client
+            .request(
+                "eth_getBlockByNumber",
+                rpc_params![format!("0x{height:x}"), false],
+            )
+            .await
+            .map_err(|error| FollowTransportError::UpstreamRpcRequest {
+                method: "eth_getBlockByNumber",
+                error: error.to_string(),
+            })?;
+        block
+            .get("hash")
+            .and_then(serde_json::Value::as_str)
+            .map(str::parse::<B256>)
+            .transpose()
+            .map_err(FollowTransportError::from)
+    }
+}
+
+impl ChainRpc for UpstreamRpcClient {
+    type Error = FollowTransportError;
+
+    async fn chain_id(&self) -> Result<u64, Self::Error> {
+        let encoded: String = self
+            .client
+            .request("eth_chainId", rpc_params![])
+            .await
+            .map_err(|error| FollowTransportError::UpstreamRpcRequest {
+                method: "eth_chainId",
+                error: error.to_string(),
+            })?;
+        u64::from_str_radix(encoded.strip_prefix("0x").unwrap_or(&encoded), 16).map_err(|source| {
+            FollowTransportError::ParseHexU64Result {
+                method: "eth_chainId",
+                source,
+            }
+        })
+    }
+}
+
+impl FinalizedStateRpc for UpstreamRpcClient {
+    async fn finalized_block(&self) -> Result<serde_json::Value, Self::Error> {
+        self.client
+            .request("eth_getBlockByNumber", rpc_params!["finalized", false])
+            .await
+            .map_err(|error| FollowTransportError::UpstreamRpcRequest {
+                method: "eth_getBlockByNumber",
+                error: error.to_string(),
+            })
+    }
+
+    async fn call_at(
+        &self,
+        to: Address,
+        data: &[u8],
+        block_tag: &str,
+    ) -> Result<Vec<u8>, Self::Error> {
+        let call = serde_json::json!({
+            "to": format!("{to:#x}"),
+            "data": format!("0x{}", hex::encode(data)),
+        });
+        let encoded: String = self
+            .client
+            .request("eth_call", rpc_params![call, block_tag])
+            .await
+            .map_err(|error| FollowTransportError::UpstreamRpcRequest {
+                method: "eth_call",
+                error: error.to_string(),
+            })?;
+        hex::decode(encoded.strip_prefix("0x").unwrap_or(&encoded)).map_err(|source| {
+            FollowTransportError::DecodeHexBytesResult {
+                method: "eth_call",
+                source,
+            }
+        })
+    }
+}
+
+impl RegistryRpc for UpstreamRpcClient {
+    async fn tee_renewal_schedule_v1(&self) -> Result<TeeRenewalScheduleV1, Self::Error> {
+        let schedule: TeeRenewalScheduleV1 = self
+            .client
+            .request("outbe_teeRenewalScheduleV1", rpc_params![])
+            .await
+            .map_err(|error| FollowTransportError::UpstreamRpcRequest {
+                method: "outbe_teeRenewalScheduleV1",
+                error: error.to_string(),
+            })?;
+        schedule.validate()?;
+        Ok(schedule)
     }
 }
 

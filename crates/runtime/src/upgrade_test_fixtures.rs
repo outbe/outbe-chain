@@ -5,6 +5,7 @@ use outbe_execution::tee_remote_session::{
 use outbe_primitives::tee_attestation_v1::{
     AttestationMode, EnclaveInitializationManifestV1, NodeIdV1,
 };
+use outbe_tee::upgrade_journal::{PreparedUpgradeSubmissionV1, UpgradeSecurityMaterialV1};
 use outbe_tee::FinalizedRegistryViewV1;
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -22,8 +23,7 @@ pub(crate) enum Action {
 }
 
 pub(crate) struct RecordingIo {
-    pub(crate) journal:
-        RefCell<VecDeque<eyre::Result<Option<outbe_operator::tee::UpgradeJournalSnapshotV1>>>>,
+    pub(crate) journal: RefCell<VecDeque<eyre::Result<Option<UpgradeJournalSnapshotV1>>>>,
     pub(crate) manifest: EnclaveInitializationManifestV1,
     pub(crate) status:
         RefCell<VecDeque<Result<LocalFinalizedSuccessorStatusV1, LocalRegistryAdmissionError>>>,
@@ -63,9 +63,9 @@ impl RecordingIo {
     }
 
     pub(crate) fn checkpoint(&self, state: UpgradeJournalStateV1) {
-        self.journal.borrow_mut().push_back(Ok(Some(
-            outbe_operator::tee::UpgradeJournalSnapshotV1::new(state),
-        )));
+        self.journal
+            .borrow_mut()
+            .push_back(Ok(Some(UpgradeJournalSnapshotV1::new(state))));
     }
 
     fn perform(&self, action: Action) -> eyre::Result<()> {
@@ -78,9 +78,7 @@ impl RecordingIo {
 impl UpgradePromotionIo for RecordingIo {
     type Authorization = FinalizedRegistryViewV1;
 
-    fn inspect_journal(
-        &self,
-    ) -> eyre::Result<Option<outbe_operator::tee::UpgradeJournalSnapshotV1>> {
+    fn inspect_journal(&self) -> eyre::Result<Option<UpgradeJournalSnapshotV1>> {
         self.perform(Action::Inspect)?;
         self.journal
             .borrow_mut()
@@ -150,8 +148,8 @@ pub(crate) fn config() -> UpgradePromotionWorkerConfigV1 {
     }
 }
 
-pub(crate) fn context() -> outbe_operator::tee::UpgradeContextV1 {
-    outbe_operator::tee::UpgradeContextV1 {
+pub(crate) fn context() -> UpgradeContextV1 {
+    UpgradeContextV1 {
         predecessor_manifest_hash: B256::repeat_byte(10),
         candidate_manifest_hash: B256::repeat_byte(11),
         successor_policy_hash: B256::repeat_byte(12),
@@ -182,8 +180,8 @@ pub(crate) fn status(height: u64) -> LocalFinalizedSuccessorStatusV1 {
     }
 }
 
-pub(crate) fn submission() -> outbe_operator::tee::PreparedUpgradeSubmissionV1 {
-    outbe_operator::tee::PreparedUpgradeSubmissionV1 {
+pub(crate) fn submission() -> PreparedUpgradeSubmissionV1 {
+    PreparedUpgradeSubmissionV1 {
         intent_hash: B256::repeat_byte(20),
         evidence_hash: B256::repeat_byte(21),
         calldata_hash: B256::repeat_byte(22),
@@ -192,15 +190,15 @@ pub(crate) fn submission() -> outbe_operator::tee::PreparedUpgradeSubmissionV1 {
     }
 }
 
-pub(crate) fn security() -> outbe_operator::tee::UpgradeSecurityMaterialV1 {
-    outbe_operator::tee::UpgradeSecurityMaterialV1 {
+pub(crate) fn security() -> UpgradeSecurityMaterialV1 {
+    UpgradeSecurityMaterialV1 {
         sealed_root_hash: B256::repeat_byte(24),
         resident_offer_public: B256::repeat_byte(25),
         proof_hash: B256::repeat_byte(26),
     }
 }
 
-pub(crate) fn finalized(context: outbe_operator::tee::UpgradeContextV1) -> UpgradeJournalStateV1 {
+pub(crate) fn finalized(context: UpgradeContextV1) -> UpgradeJournalStateV1 {
     UpgradeJournalStateV1::Finalized {
         context,
         security: security(),

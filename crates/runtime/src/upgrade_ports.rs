@@ -18,9 +18,7 @@ pub(crate) struct PromotionAuthorization<A> {
 pub(crate) trait UpgradePromotionIo {
     type Authorization;
 
-    fn inspect_journal(
-        &self,
-    ) -> eyre::Result<Option<outbe_operator::tee::UpgradeJournalSnapshotV1>>;
+    fn inspect_journal(&self) -> eyre::Result<Option<UpgradeJournalSnapshotV1>>;
     fn committed_manifest(&self) -> eyre::Result<EnclaveInitializationManifestV1>;
     fn successor_status(
         &self,
@@ -48,10 +46,8 @@ where
 {
     type Authorization = FinalizedReplacementAuthorizationV1;
 
-    fn inspect_journal(
-        &self,
-    ) -> eyre::Result<Option<outbe_operator::tee::UpgradeJournalSnapshotV1>> {
-        inspect_upgrade_journal_v1(&self.node_data_dir)
+    fn inspect_journal(&self) -> eyre::Result<Option<UpgradeJournalSnapshotV1>> {
+        Ok(inspect_upgrade_journal_v1(&self.node_data_dir)?)
     }
 
     fn committed_manifest(&self) -> eyre::Result<EnclaveInitializationManifestV1> {

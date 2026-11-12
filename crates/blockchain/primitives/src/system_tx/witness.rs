@@ -4,7 +4,7 @@ use alloy_eips::eip2718::Decodable2718;
 use alloy_primitives::Bytes;
 use alloy_primitives::B256;
 use alloy_primitives::U256;
-use reth_ethereum::TransactionSigned;
+use reth_ethereum_primitives::TransactionSigned;
 use reth_primitives_traits::SignedTransaction;
 
 use super::{

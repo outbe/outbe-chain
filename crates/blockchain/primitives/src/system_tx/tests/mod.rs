@@ -6,7 +6,7 @@ use crate::signer::OutbeEvmSigner;
 use alloy_consensus::{SignableTransaction, TxLegacy};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{address, Bytes, Signature, TxKind, B256, U256};
-use reth_ethereum::TransactionSigned;
+use reth_ethereum_primitives::TransactionSigned;
 
 mod fixtures;
 use fixtures::{

@@ -6,8 +6,7 @@ use alloy_rlp::Encodable as _;
 use alloy_rpc_types_engine::{PayloadAttributes as EthPayloadAttributes, PayloadId};
 use alloy_rpc_types_eth::Withdrawal;
 use reth_ethereum_engine_primitives::EthBuiltPayload;
-use reth_node_builder::PayloadTypes;
-use reth_payload_primitives::{BuiltPayload, BuiltPayloadExecutedBlock};
+use reth_payload_primitives::{BuiltPayload, BuiltPayloadExecutedBlock, PayloadTypes};
 use reth_primitives_traits::{AlloyBlockHeader as _, BlockBody as _, SealedBlock};
 use serde::{Deserialize, Serialize};
 
@@ -145,7 +144,7 @@ impl From<EthPayloadAttributes> for OutbePayloadAttributes {
     }
 }
 
-impl reth_node_builder::PayloadAttributes for OutbePayloadAttributes {
+impl reth_payload_primitives::PayloadAttributes for OutbePayloadAttributes {
     fn payload_id(&self, parent_hash: &B256) -> PayloadId {
         outbe_payload_id(parent_hash, self)
     }
@@ -238,7 +237,7 @@ impl From<OutbeBuiltPayload> for OutbeExecutionData {
     }
 }
 
-impl reth_node_builder::ExecutionPayload for OutbeExecutionData {
+impl reth_payload_primitives::ExecutionPayload for OutbeExecutionData {
     fn parent_hash(&self) -> B256 {
         self.block.parent_hash()
     }

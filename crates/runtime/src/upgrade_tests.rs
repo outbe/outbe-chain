@@ -66,7 +66,7 @@ async fn terminal_checkpoint_stops_before_loading_manifest_or_finalized_state() 
 async fn restart_after_installed_candidate_only_reconciles_the_promoted_checkpoint() {
     for fail in [None, Some(Action::Promoted)] {
         let mut io = RecordingIo::new().unwrap();
-        let context = outbe_operator::tee::UpgradeContextV1 {
+        let context = UpgradeContextV1 {
             candidate_manifest_hash: io.manifest.authorization_hash().unwrap(),
             ..context()
         };

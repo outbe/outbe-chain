@@ -17,6 +17,7 @@ pub mod payload;
 pub mod process;
 pub mod promis;
 pub mod promis_cipher;
+pub mod seal;
 pub mod tribute_day;
 pub mod tribute_encryption;
 pub mod zk_claim;
