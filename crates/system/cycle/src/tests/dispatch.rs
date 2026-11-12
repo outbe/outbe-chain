@@ -103,12 +103,6 @@ fn protocol_cycle_keeps_midnight_slot_pending_until_late_reward_window_closes() 
     });
     for height in 11..=13 {
         storage.set_block_number(height);
-        if height == 13 {
-            storage.enable_metadosis_mutation_frames(
-                MetadosisMutationPurposeTag::CertifiedFinality,
-                1,
-            );
-        }
         storage.enter(|handle| {
             let ctx = runtime_context(
                 block_ctx(height, GENESIS_TS + SECONDS_PER_DAY + height - 11),

@@ -13,8 +13,9 @@ use crate::{
 #[repr(u8)]
 pub enum MetadosisMutationPurposeTag {
     CycleLifecycle = 0,
-    CertifiedFinality = 1,
 }
+
+const PURPOSE_COUNT: usize = 1;
 
 /// Compact executor-owned set of purposes admitted by one authenticated
 /// dispatch route. It is not authority by itself. The provider consumes it
@@ -23,14 +24,14 @@ const MAX_EXACT_BINDINGS_PER_PURPOSE: usize = 4;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct MetadosisMutationEntitlements {
-    unbound_counts: [u8; 2],
-    exact_bindings: [[Option<B256>; MAX_EXACT_BINDINGS_PER_PURPOSE]; 2],
+    unbound_counts: [u8; PURPOSE_COUNT],
+    exact_bindings: [[Option<B256>; MAX_EXACT_BINDINGS_PER_PURPOSE]; PURPOSE_COUNT],
 }
 
 impl MetadosisMutationEntitlements {
     pub const NONE: Self = Self {
-        unbound_counts: [0; 2],
-        exact_bindings: [[None; MAX_EXACT_BINDINGS_PER_PURPOSE]; 2],
+        unbound_counts: [0; PURPOSE_COUNT],
+        exact_bindings: [[None; MAX_EXACT_BINDINGS_PER_PURPOSE]; PURPOSE_COUNT],
     };
 
     #[must_use]
@@ -43,21 +44,21 @@ impl MetadosisMutationEntitlements {
     /// small, statically bounded sequence of distinct Metadosis commands.
     #[must_use]
     pub const fn repeated(purpose: MetadosisMutationPurposeTag, count: u8) -> Self {
-        let mut counts = [0; 2];
+        let mut counts = [0; PURPOSE_COUNT];
         counts[purpose as usize] = count;
         Self {
             unbound_counts: counts,
-            exact_bindings: [[None; MAX_EXACT_BINDINGS_PER_PURPOSE]; 2],
+            exact_bindings: [[None; MAX_EXACT_BINDINGS_PER_PURPOSE]; PURPOSE_COUNT],
         }
     }
 
     /// Grants one exact command identity for a provider-authenticated route.
     #[must_use]
     pub const fn exact(purpose: MetadosisMutationPurposeTag, binding: B256) -> Self {
-        let mut exact_bindings = [[None; MAX_EXACT_BINDINGS_PER_PURPOSE]; 2];
+        let mut exact_bindings = [[None; MAX_EXACT_BINDINGS_PER_PURPOSE]; PURPOSE_COUNT];
         exact_bindings[purpose as usize][0] = Some(binding);
         Self {
-            unbound_counts: [0; 2],
+            unbound_counts: [0; PURPOSE_COUNT],
             exact_bindings,
         }
     }
@@ -226,7 +227,6 @@ macro_rules! define_purpose {
 }
 
 define_purpose!(MetadosisCycleLifecycle, CycleLifecycle);
-define_purpose!(MetadosisCertifiedFinality, CertifiedFinality);
 
 /// Non-cloneable, non-serializable, closure-bounded authority for exactly one
 /// Metadosis command class.
@@ -350,10 +350,7 @@ mod tests {
     use alloy_primitives::{address, B256, U256};
 
     use super::*;
-    use crate::{
-        error::PrecompileError,
-        storage::{hashmap::HashMapStorageProvider, MetadosisCertifiedFinality},
-    };
+    use crate::{error::PrecompileError, storage::hashmap::HashMapStorageProvider};
 
     const OWNER: alloy_primitives::Address = address!("0x0000000000000000000000000000000000001003");
     const SLOT: U256 = U256::from_limbs([7, 0, 0, 0]);
@@ -397,26 +394,6 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(provider.storage.get(&(OWNER, SLOT)), None);
-    }
-
-    #[test]
-    fn mismatched_purpose_rejects_before_callback() {
-        let mut provider = HashMapStorageProvider::new(1);
-        provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
-        let called = Cell::new(false);
-
-        let result = provider.enter(|storage| {
-            storage.with_metadosis_mutation::<MetadosisCertifiedFinality, _>(
-                B256::repeat_byte(0x33),
-                || {
-                    called.set(true);
-                    Ok(())
-                },
-            )
-        });
-
-        assert!(result.is_err());
-        assert!(!called.get());
     }
 
     #[test]

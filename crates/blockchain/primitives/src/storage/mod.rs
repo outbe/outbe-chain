@@ -14,9 +14,8 @@ pub mod types;
 pub use handle::StorageHandle;
 pub use metadosis_mutation::{
     metadosis_advance_due_binding, metadosis_cycle_allocation_binding,
-    metadosis_init_genesis_binding, metadosis_process_ready_binding, MetadosisCertifiedFinality,
-    MetadosisCycleLifecycle, MetadosisMutationEntitlements, MetadosisMutationPurpose,
-    MetadosisMutationPurposeTag,
+    metadosis_init_genesis_binding, metadosis_process_ready_binding, MetadosisCycleLifecycle,
+    MetadosisMutationEntitlements, MetadosisMutationPurpose, MetadosisMutationPurposeTag,
 };
 pub use revm::state::{AccountInfo, Bytecode};
 pub use types::{Mapping, Slot, Storable, StorableType, StorageKey, StorageOps};

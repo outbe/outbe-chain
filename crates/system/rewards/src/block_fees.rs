@@ -430,8 +430,6 @@ mod tests {
         let mut storage = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, GENESIS_HASH);
         storage.set_block_number(156);
         seed_native_runtime(&mut storage);
-        // The shared-carry fixture transfers two distinct windows in this context.
-        storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CertifiedFinality, 2);
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(
                 BlockContext {
@@ -831,7 +829,6 @@ mod tests {
         storage.set_timestamp(U256::from(timestamp));
         let expected_residue = U256::from(1_000);
         let unit = outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
-        storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CertifiedFinality);
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(
                 BlockContext {

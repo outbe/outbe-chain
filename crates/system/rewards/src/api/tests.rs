@@ -232,9 +232,8 @@ fn sealing_rollback_preserves_inputs_and_allows_retry() {
 fn forward_seal_waits_for_an_older_parents_late_votes_without_processing_skipped_days() {
     use crate::block_fees::{record_late_vote, seal_block_votes};
     use crate::test_support::{block_ctx, CHAIN_ID, GENESIS_TS, SECONDS_PER_DAY};
-    use outbe_primitives::storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag};
+    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CertifiedFinality);
     provider.enter(|storage| {
         let ctx =
             BlockRuntimeContext::new(block_ctx(11, GENESIS_TS + 70 * SECONDS_PER_DAY), storage);
