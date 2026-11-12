@@ -11,7 +11,7 @@ use outbe_primitives::block::{BlockContext, BlockRuntimeContext, ProtocolModule}
 use outbe_primitives::chain::DEVNET_CHAIN_ID;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
-use outbe_primitives::units::SCALE_1E6_U256;
+use outbe_system_common::units::SCALE_1E6_U256;
 use outbe_update::constants::PROTOCOL_VERSION;
 use outbe_update::lifecycle::UpdateLifecycle;
 use outbe_update::payload::encode_schedule_update_json;
