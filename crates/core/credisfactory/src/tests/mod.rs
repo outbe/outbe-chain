@@ -28,7 +28,7 @@ use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
-use outbe_primitives::units::{checked_protocol_to_native, SCALE_1E6_U256};
+use outbe_system_common::units::{checked_protocol_to_native, SCALE_1E6_U256};
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
 use outbe_vaultrouter::{LiquidityReservation, VaultRouterContract};
 
@@ -345,10 +345,11 @@ fn block_at<'storage>(
     timestamp: u64,
 ) -> BlockRuntimeContext<'storage> {
     let credis = CredisContract::new(storage.clone());
-    let height =
-        outbe_primitives::pass_budget::BlockAllowance::unpack(credis.daily_budget.read().unwrap())
-            .unwrap()
-            .map_or(BLOCK_NUMBER, |previous| previous.height + 1);
+    let height = outbe_system_common::pass_budget::BlockAllowance::unpack(
+        credis.daily_budget.read().unwrap(),
+    )
+    .unwrap()
+    .map_or(BLOCK_NUMBER, |previous| previous.height + 1);
     BlockRuntimeContext::new(
         BlockContext {
             block_gas_limit: 0,
@@ -375,7 +376,7 @@ pub fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
     let mut called = 0;
     loop {
         called += crate::called::scan_and_call(&block_at(storage, timestamp)).unwrap();
-        let selected = outbe_primitives::pass_budget::BlockAllowance::unpack(
+        let selected = outbe_system_common::pass_budget::BlockAllowance::unpack(
             credis.daily_budget.read().unwrap(),
         )
         .unwrap()
@@ -437,7 +438,7 @@ pub fn daily_pass(
     loop {
         crate::called::process_call_pass(&block_at(storage, timestamp))?;
         let selected =
-            outbe_primitives::pass_budget::BlockAllowance::unpack(credis.daily_budget.read()?)?
+            outbe_system_common::pass_budget::BlockAllowance::unpack(credis.daily_budget.read()?)?
                 .map_or(0, |allowance| allowance.day);
         let next = credis.call_sweep_day.read()?;
         if next == 0 || next == selected {

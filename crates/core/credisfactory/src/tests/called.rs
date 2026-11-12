@@ -87,7 +87,7 @@ fn reterm(
         .series_call_notice_period_seconds
         .write(&group, notice_days * SECONDS_PER_DAY_U32)
         .unwrap();
-    outbe_primitives::call_breach::widen_scan_terms(
+    outbe_system_common::call_breach::widen_scan_terms(
         &credis.max_call_window_seconds,
         &credis.min_call_threshold_seconds,
         REFERENCE_ISO,
@@ -606,7 +606,7 @@ fn each_reference_currency_prices_off_its_own_daily_series() {
         // Re-point the Credis's series at an unregistered currency, so it prices off a
         // series that does not exist, and index it there.
         {
-            use outbe_primitives::call_bins;
+            use outbe_system_common::call_bins;
             let credis = CredisContract::new(storage.clone());
             let record = credis.get_credis(credis_id).unwrap();
             let group = record.series_id;
@@ -731,7 +731,7 @@ fn cursor_of(storage: &StorageHandle<'_>) -> u32 {
         .call_bin_cursor
         .read(&REFERENCE_ISO)
         .unwrap();
-    outbe_primitives::call_bins::unpack_cursor(packed).1
+    outbe_system_common::call_bins::unpack_cursor(packed).1
 }
 
 fn is_indexed(storage: &StorageHandle<'_>, group: outbe_primitives::series_id::SeriesId) -> bool {
@@ -783,12 +783,12 @@ fn pin_sweep(storage: &StorageHandle<'_>, day: u32, sample: U256, remaining: u32
     let credis = CredisContract::new(storage.clone());
     credis.call_latest_day.write(day).unwrap();
     let price = credis.get_credis(sample).unwrap().call_price_minor;
-    let bin = outbe_primitives::call_bins::price_to_bin(price).unwrap();
+    let bin = outbe_system_common::call_bins::price_to_bin(price).unwrap();
     credis
         .call_bin_cursor
         .write(
             &REFERENCE_ISO,
-            outbe_primitives::call_bins::pack_cursor(bin, remaining),
+            outbe_system_common::call_bins::pack_cursor(bin, remaining),
         )
         .unwrap();
 }
@@ -1133,7 +1133,7 @@ fn settling_a_called_credis_in_full_leaves_the_queue() {
 #[test]
 fn the_cleanup_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
     let mut provider = env();
-    let budget = outbe_primitives::pass_budget::SWEEP_WRITES_PER_BLOCK;
+    let budget = outbe_system_common::pass_budget::SWEEP_WRITES_PER_BLOCK;
     let total = budget + 1;
     StorageHandle::enter(&mut provider, |storage| {
         bootstrap_for(&storage, alice(), pledge_cost() * U256::from(total));
@@ -1278,7 +1278,7 @@ fn lapsed_group_of_three() -> (
 
 #[test]
 fn the_daily_pass_finishes_only_after_atomic_pledge_burns_and_credits() {
-    use outbe_primitives::pass_budget::BlockAllowance;
+    use outbe_system_common::pass_budget::BlockAllowance;
 
     let (mut provider, ids) = lapsed_group_of_three();
     StorageHandle::enter(&mut provider, |storage| {
