@@ -143,8 +143,14 @@ Domain lifecycle:
 
 | Port | Who reads it | Endpoints |
 |---|---|---|
-| 9000 | The relayer | S3-compatible anonymous `GET` and `HEAD`. Allow only the relayer address in the firewall. |
-| 9003 | Monitoring | `GET /health`, `GET /status` |
+| 9000 | Any relayer | S3-compatible anonymous `GET` and `HEAD`. Open it to everyone. |
+| 9003 | Monitoring | `GET /health`, `GET /status`. Keep it on a private address. |
+
+Hyperlane relayers are permissionless, so many relayers can read port 9000.
+The data is public: signatures, roots, indexes, message ids and the
+announcement. The process on port 9000 also holds the signing key. A reverse
+proxy (nginx, caddy) with a request limit in front of port 9000 is
+recommended. A signed checkpoint never changes, so the proxy can cache it.
 
 Port 9000 uses path-style requests: `GET /<bucket>/<domain>/<key>`.
 

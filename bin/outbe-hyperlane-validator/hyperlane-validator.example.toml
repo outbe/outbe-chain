@@ -31,7 +31,7 @@ bind_address = "0.0.0.0:9003"
 db_path = "/var/lib/outbe-hyperlane-validator/db"
 
 [server]
-# S3-compatible read endpoint for the relayer. Allow only the relayer in the firewall.
+# S3-compatible read endpoint for relayers. Open it to everyone: relayers are permissionless.
 bind_address = "0.0.0.0:9000"
 # The http(s)://host[:port] that relayers use. No path.
 public_url = "http://203.0.113.7:9000"
