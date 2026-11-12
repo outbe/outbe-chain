@@ -142,7 +142,7 @@ fn backdate(storage: &StorageHandle<'_>, gem_id: U256, issued_at: u64) -> Result
         call_price,
         reissued.sub_series_id == 0,
     )?;
-    reissued.group_key = outbe_primitives::call_breach::group_key(
+    reissued.group_key = outbe_system_common::call_breach::group_key(
         outbe_primitives::time::first_full_day(issued_at).expect("date step"),
         call_price,
         reissued.reference_currency,

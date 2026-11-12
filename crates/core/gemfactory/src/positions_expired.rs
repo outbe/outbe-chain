@@ -5,9 +5,9 @@ use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PassFailure, PrecompileError, Result},
-    pass_budget::PassBudget,
     storage::StorageHandle,
 };
+use outbe_system_common::pass_budget::PassBudget;
 
 use crate::errors::GemFactoryError;
 use crate::runtime::emit_event;

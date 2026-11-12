@@ -13,7 +13,7 @@ use outbe_primitives::addresses::{GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY;
-use outbe_primitives::units::checked_protocol_to_native;
+use outbe_system_common::units::checked_protocol_to_native;
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
 
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
