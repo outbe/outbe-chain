@@ -1,38 +1,59 @@
 # outbe-hyperlane-validator
 
-The Hyperlane validator of an Outbe validator, in one process. It replaces the
-upstream Hyperlane validator agent. The daemon:
+## What it is
 
-1. Reads the domains and their contracts from the `HyperlaneController`
-   precompile (`0x…EE14`).
-2. Syncs the `MerkleTreeHook` of each origin chain and signs checkpoints into
-   a local MDBX store.
-3. Serves the signed checkpoints as an S3-compatible bucket on port 9000. The
-   relayer reads them with its S3 client.
-4. Announces the bucket on the `ValidatorAnnounce` of each origin chain.
-5. Submits the latest checkpoint of each domain to the controller with
-   `submitCheckpoint`. The controller jails validators that fall behind the
-   quorum for `MAX_MISSES` liveness windows in a row (see
+`outbe-hyperlane-validator` is the Hyperlane validator of an Outbe validator,
+in one process. It replaces three services: the Docker Hyperlane validator
+agent, MinIO and the attester. The sync, signing, announce and checkpoint
+formats are ported from hyperlane-monorepo `agents-v3.0.0` (Apache-2.0, see
+[`LICENSE-APACHE`](LICENSE-APACHE)). The ported files name their upstream
+source and the changes.
+
+## How it works
+
+```text
+           HyperlaneController (0x…EE14)
+                 │ domains, hooks, ValidatorAnnounce
+                 ▼
+  origin RPCs ──► sync + RPC vote ──► sign ──► MDBX store ──► :9000 S3 GET ──► relayer
+                                                   │
+                                                   ├──► announce (each origin chain)
+                                                   └──► submitCheckpoint (Outbe)
+```
+
+1. **Discovery.** Every `poll_interval_secs`, the daemon reads the domains
+   and their contracts from the `HyperlaneController` precompile.
+2. **Sync.** For each domain, the daemon reads `InsertedIntoTree` logs of the
+   `MerkleTreeHook` up to the finalized block. A leaf becomes verified only
+   when enough `rpc_urls` return the same `latestCheckpoint()` as the local
+   tree (the RPC vote).
+3. **Sign.** The daemon signs the latest verified leaf first. A backfill
+   worker then signs every earlier leaf in index order.
+4. **Store.** Leaves, signed roots and the sync cursor go to a local MDBX
+   store.
+5. **Serve.** Port 9000 serves the signed checkpoints as an S3-compatible
+   bucket. The relayer reads them with its S3 client.
+6. **Announce.** The daemon announces the bucket on the `ValidatorAnnounce`
+   of each origin chain, once.
+7. **Liveness.** The daemon sends the latest signed checkpoint of each domain
+   to the controller with `submitCheckpoint`. The controller jails validators
+   that fall behind the quorum for `MAX_MISSES` liveness windows in a row (see
    [`liveness.rs`](../../crates/system/hyperlanecontroller/src/liveness.rs)).
 
-Runs on the validator host next to `outbe-feeder`. Use a separate Hyperlane
-delegate key so the services have independent transaction nonces.
-
-## Operational keys
-
-Use three distinct addresses for each validator:
+## Keys
 
 | Address | Purpose | Binding |
 |---|---|---|
-| `V` | Validator, stake and TEE renewal | Existing validator identity |
-| `P` | Price-feeder transactions | `V` calls `ValidatorSet.setDelegate(1, P)` |
-| `H` | Hyperlane agent and `outbe-hyperlane-validator` | `V` calls `ValidatorSet.setDelegate(2, H)` |
+| `V` | Validator, stake and TEE renewal | Existing validator identity. Set it as `validator_address`. |
+| `H` | Checkpoint signer, announce sender, `submitCheckpoint` sender | `V` calls `ValidatorSet.setDelegate(2, H)`. Set it as `private_key`. |
 
-`outbe-hyperlane-validator` uses `H` as its checkpoint signer and its transaction
-sender, and sets `validator_address` to `V`. Register `H` as the checkpoint
-signer with `HyperlaneController.setHyperlaneSigner(H)` from the Hyperlane delegate.
-That mapping selects the checkpoint signature key. Delegation authorizes
-the transaction sender. These are separate checks.
+The price feeder uses its own key `P` (`ValidatorSet.setDelegate(1, P)`).
+Use three distinct addresses.
+
+Register `H` as the checkpoint signer with
+`HyperlaneController.setHyperlaneSigner(H)` from the Hyperlane delegate.
+That mapping selects the checkpoint signature key. Delegation authorizes the
+transaction sender. These are separate checks.
 
 Oracle delegation does not authorize Hyperlane calls. Hyperlane delegation
 does not authorize Oracle votes. Rotation or revocation changes only its
@@ -41,139 +62,52 @@ checkpoints or change the checkpoint signer. `V` can rotate or revoke `H`
 through ValidatorSet. Without an explicit Hyperlane delegate, the active
 validator key remains accepted for Hyperlane calls.
 
-Do not run a second process with `H`: both processes would use the same nonces.
+| Rule | Detail |
+|---|---|
+| Bucket name | The lowercase `0x` address of `H`. |
+| Gas for announce | `H` needs native gas on every origin chain, Outbe included. The announce is a normal transaction. |
+| Gas for liveness | With `gasless = true`, `submitCheckpoint` on Outbe uses the ZeroFee policy and costs no gas. |
+| One process per `H` | Do not run a second process with `H`. Both processes would use the same nonces. |
 
-## Quick Start
+## Quick start
 
 ```bash
-cargo build -p outbe-hyperlane-validator
-./target/debug/outbe-hyperlane-validator --config hyperlane-validator.toml
+cargo build --release -p outbe-hyperlane-validator
+cp bin/outbe-hyperlane-validator/hyperlane-validator.example.toml hyperlane-validator.toml
+# Set private_key, validator_address, public_url and db_path.
+./target/release/outbe-hyperlane-validator --config hyperlane-validator.toml
 ```
+
+Without `--config`, the binary reads `hyperlane-validator.toml` in the
+current directory. Set the log level with `RUST_LOG` (default
+`outbe_hyperlane_validator=info`).
 
 ## Configuration
 
-```toml
-[chain]
-rpc_endpoint = "http://127.0.0.1:8545"
-chain_id = 54322345
+[`hyperlane-validator.example.toml`](hyperlane-validator.example.toml) is a
+complete testnet example. A unit test parses and validates it, so it always
+matches the code. Unknown fields are errors.
 
-[account]
-private_key = "0x..."                                   # Hyperlane delegate key H
-validator_address = "0x1111111111111111111111111111111111111111"
-
-[hyperlane]
-poll_interval_secs = 30   # optional, default 30
-gasless = true            # optional, default false: ZeroFee txpool policy
-
-[health]
-enabled = true            # optional, default true
-bind_address = "0.0.0.0:9003"
-
-[storage]                 # required
-db_path = "/var/lib/outbe-hyperlane-validator/db"
-
-[server]                  # required
-bind_address = "0.0.0.0:9000"            # optional, default 0.0.0.0:9000
-public_url = "http://203.0.113.7:9000"   # the address that relayers use
-```
-
-## Daemon loop
-
-Every `poll_interval_secs`, the daemon reads the controller:
-
-- While `icaRouter()` is zero, the controller is not initialized. The daemon
-  waits and polls again. It does not stop.
-- A new domain with an `[[origin]]` block starts: one signing loop, one
-  backfill worker, an optional WebSocket waker and the announce loop.
-- When `hookByDomain(domain)` changes for a running domain, the daemon stops
-  that domain and shows an error in `/status`. It does not start the domain
-  again in this process.
-- At the first start of a domain, the store keeps its hook. If the stored hook
-  differs from `hookByDomain(domain)`, the domain does not start and `/status`
-  shows an error: the local history belongs to another hook. To recover, stop
-  the daemon and delete the database directory (`[storage] db_path`). Every
-  domain then syncs and signs again (RFC 6979 signatures are deterministic).
-- When the controller removes a domain, the daemon stops it.
-
-At the start of a domain, the daemon compares `submittedIndex(V, domain)` with
-the local store. A higher index on-chain means that the local history was
-lost. The daemon logs a warning and continues.
-
-### Liveness
-
-Every poll, the daemon reads `missCount(V)` and
-`ValidatorSet.getActiveValidators()` (`0x…EE00`). While `V` is not active (for
-example jailed), the daemon keeps signing, serving and announcing, but it does
-not send `submitCheckpoint`: the controller would reject it. `/status` then
-shows `"active": false`. This is not an error.
-
-While `V` is active, for each running domain, the daemon submits the latest
-signed checkpoint when its index is higher than `submittedIndex(V, domain)`.
-It never submits index 0.
-
-`gasless = true` sends `submitCheckpoint` with zero priority fee; the node's
-`HyperlaneSubmitCheckpointHook` waives the fee for active validators and their
-Hyperlane delegates. An explicit Hyperlane delegate replaces the validator
-key for this authorization.
-
-### Announce
-
-For each origin chain, the daemon signs an announcement with `H` for the
-location `s3+http://<public_url host:port>/<bucket>/<domain>` (`s3+https` for
-an `https` URL). The bucket is the lowercase address of `H`. If
-`ValidatorAnnounce.getAnnouncedStorageLocations([H])` does not contain this
-location, the daemon sends `announce` on that origin chain from `H`, through
-the first `rpc_urls` entry that answers. It retries with a backoff from 30 s
-to 15 min. `H` must have native gas on every origin chain, Outbe included,
-for this one-time announce. The announce never uses `gasless`: the ZeroFee
-policy waives the fee only for `submitCheckpoint`.
-
-## Checkpoint server
-
-The server on `[server] bind_address` is an S3-compatible anonymous read,
-path-style: `GET /<bucket>/<domain>/<key>`. `HEAD` also works.
-
-| Key | Body |
-|---|---|
-| `checkpoint_latest_index.json` | The latest signed index, a JSON number. |
-| `checkpoint_<index>_with_id.json` | The signed checkpoint, the same bytes as the upstream agent. |
-| `announcement.json` | The signed announcement, pretty JSON. |
-
-The server reads only the local store. The hook in the checkpoint JSON comes
-from the hook that the store keeps for the domain. After a restart, the server
-serves the stored checkpoints also while the Outbe RPC is down. A domain
-without a stored hook does not exist.
-
-A missing key returns 404 with the S3 `NoSuchKey` XML. Another bucket returns
-404 `NoSuchBucket`. The server does not have `metadata_latest.json`: the
-relayer does not read it. A request path never maps to a file.
-
-## Origin chains
-
-Each `[[origin]]` block configures one origin chain.
-
-```toml
-[[origin]]
-domain = 54322345
-rpc_urls = ["https://rpc.testnet.outbe.net"]
-# Number of rpc_urls that must return the same root before the validator signs:
-#   "majority" - N - floor(N/3), at least 2/3 (default)
-#   "quorum"   - ceil(N/2), at least 1/2
-#   "single"   - the first RPC that answers, no vote
-rpc_consensus = "majority"
-reorg_period = 0                          # Blocks, or "finalized".
-interval_secs = 15                        # Poll interval without WebSocket, or the fallback poll with it.
-# ws_url = "wss://…"                      # Optional. Enable after the Outbe RPC nodes serve WebSocket.
-# index_from = 4782                       # Optional. Default: deployedBlock() of the hook.
-
-[[origin]]
-domain = 97
-rpc_urls = ["https://data-seed-prebsc-1-s1.bnbchain.org:8545", "https://data-seed-prebsc-1-s2.bnbchain.org:8545", "https://data-seed-prebsc-2-s1.bnbchain.org:8545"]
-rpc_consensus = "majority"                # majority (default) | quorum | single
-reorg_period = 9
-interval_secs = 15
-ws_url = "wss://…"
-```
+| Field | Default | Meaning |
+|---|---|---|
+| `[chain] rpc_endpoint` | required | Outbe JSON-RPC (HTTP). Discovery and liveness use it. |
+| `[chain] chain_id` | required | Outbe chain id for `submitCheckpoint` transactions. |
+| `[account] private_key` | required | Hex key of `H`. It is plaintext: protect the file. |
+| `[account] validator_address` | required | Address of `V`. |
+| `[hyperlane] poll_interval_secs` | `30` | Interval of the controller poll and of the liveness loop. Must be > 0. |
+| `[hyperlane] gasless` | `false` | Send `submitCheckpoint` with zero priority fee (ZeroFee txpool policy). |
+| `[health] enabled` | `true` | Start the health server. Without a `[health]` section, it starts. |
+| `[health] bind_address` | `0.0.0.0:9003` | Address of `/health` and `/status`. |
+| `[storage] db_path` | required | Directory of the MDBX store. Never the node database. |
+| `[server] bind_address` | `0.0.0.0:9000` | Address of the S3-compatible read endpoint. |
+| `[server] public_url` | required | `http(s)://host[:port]` that relayers use. No path. The announced location comes from it. |
+| `[[origin]] domain` | required | Hyperlane domain of the origin chain. One block per domain. |
+| `[[origin]] rpc_urls` | required | HTTP endpoints. Each unique URL has one vote. Duplicates are removed. |
+| `[[origin]] rpc_consensus` | `"majority"` | Votes for a root: `"majority"` = N − floor(N/3), `"quorum"` = ceil(N/2), `"single"` = 1. |
+| `[[origin]] reorg_period` | required | Blocks behind the head (an integer), or `"finalized"`. |
+| `[[origin]] interval_secs` | `15` | Sync poll interval. With `ws_url`, the fallback poll. Must be > 0. |
+| `[[origin]] ws_url` | none | WebSocket endpoint. Its events only start the next poll earlier. They verify nothing. |
+| `[[origin]] index_from` | `deployedBlock()` of the hook | First origin block to read. |
 
 The configuration has no contract addresses. The daemon reads them from the
 chains:
@@ -185,88 +119,54 @@ chains:
 | ValidatorAnnounce | `HyperlaneController.validatorAnnounceByDomain(domain)` |
 | Mailbox | `ValidatorAnnounce.mailbox()` on the origin chain |
 | First block | `index_from`, else `MerkleTreeHook.deployedBlock()` |
+| Active set | `ValidatorSet.getActiveValidators()` (`0x…EE00`) |
 
-While `icaRouter()` is zero, the controller is not initialized and the daemon
-waits. Before it uses a domain, the daemon checks these conditions:
+Before it starts a domain, the daemon checks these conditions on the origin
+chain:
 
 1. `ValidatorAnnounce.localDomain()` is equal to the domain.
 2. `MerkleTreeHook.mailbox()` is equal to `ValidatorAnnounce.mailbox()`.
 
-A domain of the controller without an `[[origin]]` block is an error of that
-domain only. The other domains continue.
+Domain lifecycle:
 
-The sync reads `InsertedIntoTree` logs only up to the finalized block, in
-ranges of at most 100,000 blocks. The Outbe RPC rejects larger ranges. A new
-leaf becomes verified only when enough `rpc_urls` return the same
-`latestCheckpoint()` as the local tree. One `rpc_urls` entry has one vote.
-The daemon removes duplicate URLs. A WebSocket event only starts the next
-poll earlier. The event does not verify a leaf.
-
-## Local store
-
-`[storage] db_path` sets the directory of the validator's own MDBX store.
-Do not use the node database directory.
-
-The store opens in MDBX exclusive mode. While one process holds the store,
-a second process cannot open it. Stop the daemon before you run a `db`
-command.
-
-| Command | What it does |
+| Event | Behavior |
 |---|---|
-| `db status` | For each domain: leaf count, latest signed index, cursor, reorg flag. |
-| `db checkpoint --domain D --index I` | Prints the stored leaf and the signed root at index `I`. |
-| `db clear-reorg --domain D` | Removes the reorg flag of domain `D`. Do this only after you fix the cause. |
+| `icaRouter()` is zero | The controller is not initialized. The daemon waits and polls again. It does not stop. |
+| New domain with an `[[origin]]` block | The domain starts: sync, signing, backfill, optional WebSocket waker, announce. |
+| Domain without an `[[origin]]` block | An error of that domain only. The other domains continue. |
+| `hookByDomain` changes | The daemon stops that domain and shows an error. The domain does not start again in this process. |
+| Controller removes the domain | The daemon stops the domain. |
 
-## Signing
+## Ports
 
-Each origin domain has one signing loop and one backfill worker. The signer
-key is `account.private_key` (`H`).
+| Port | Who reads it | Endpoints |
+|---|---|---|
+| 9000 | The relayer | S3-compatible anonymous `GET` and `HEAD`. Allow only the relayer address in the firewall. |
+| 9003 | Monitoring | `GET /health`, `GET /status` |
 
-1. The signing loop gets the verified leaves of a sync poll. In one store
-   transaction, it writes all the leaves, the cursor, and the signed
-   checkpoint of the last leaf. Relayers and the liveness check get the
-   newest index at once.
-2. The backfill worker then signs each index that has a leaf but no
-   checkpoint, in index order. It starts at the first unsigned index.
-   On the first start, it signs from index 0. It writes one transaction
-   for each 1,000 leaves.
+Port 9000 uses path-style requests: `GET /<bucket>/<domain>/<key>`.
 
-The daemon never signs a second root for an index that it signed before.
+| Key | Body |
+|---|---|
+| `checkpoint_latest_index.json` | The latest signed index, a JSON number. |
+| `checkpoint_<index>_with_id.json` | The signed checkpoint, the same bytes as the upstream agent. |
+| `announcement.json` | The signed announcement, pretty JSON. |
 
-After a change of `H`, the backfill starts at index 0 once. It signs again
-each stored checkpoint of the old key. Only the signature changes: a
-different root is a conflict and halts the domain.
+A missing key returns 404 with the S3 `NoSuchKey` XML. Another bucket returns
+404 `NoSuchBucket`. The server reads only the store, so it serves stored
+checkpoints also while the Outbe RPC is down. A request path never maps to a
+file.
 
-### Reorg flag
-
-The daemon halts a domain when one of these conditions occurs:
-
-- Enough `rpc_urls` agree on a different root at a signed index.
-- A stored signed root differs from the root of the stored leaves.
-
-The daemon logs the roots of each endpoint and the local root. Then it
-writes the reorg flag of the domain to the store. It retries until the
-write succeeds. The signing loop and the backfill worker of that domain
-stop. The other domains continue, and the process does not stop.
-
-At start, a domain with the reorg flag does not sync or sign. To clear
-the flag, find and fix the cause. Then stop the daemon and run
-`db clear-reorg --domain D`.
-
-## Health
-
-The health server listens on `[health] bind_address` (default port 9003).
-
-`GET /health` returns 503 when one of these conditions occurs, and 200
+`GET /health` returns 503 when one of these conditions is true, and 200
 otherwise:
 
 - `missCount(V)` is not zero. The next misses lead to a jail, so alert on it.
 - A domain halted after a reorg.
-- A domain has an error (for example no `[[origin]]` block, or a changed hook).
+- A domain has an error.
 
 While the daemon waits for the controller, `/health` returns 200.
 
-`GET /status` returns:
+`GET /status` fields:
 
 | Field | Meaning |
 |---|---|
@@ -274,5 +174,100 @@ While the daemon waits for the controller, `/health` returns 200.
 | `controller` | `unknown`, `waiting_for_controller` or `ready`. |
 | `active` | `V` is in the active validator set. `null` before the first read. |
 | `miss_count` | `missCount(V)` on the controller. |
-| `submitted`, `failed`, `last_submit_time` | `submitCheckpoint` counters. |
-| `domains.<id>` | `leaves`, `latest_signed_index`, `cursor`, `reorg`, `error`. |
+| `submitted`, `failed` | `submitCheckpoint` counters since the start. |
+| `last_submit_time` | Unix time of the last sent `submitCheckpoint` (sent, not included). `0` before the first one. |
+| `domains.<id>.leaves` | Stored leaf count. |
+| `domains.<id>.latest_signed_index` | Highest signed index. |
+| `domains.<id>.cursor` | Last origin block that the store covers. |
+| `domains.<id>.reorg` | The domain halted after a reorg. |
+| `domains.<id>.error` | Domain error, or `null`. |
+
+## Storage
+
+`[storage] db_path` is the directory of the validator's own MDBX store. The
+store opens in exclusive mode. While the daemon runs, no other process can
+open it.
+
+| Table | Key | Value |
+|---|---|---|
+| `Leaves` | (domain, index) | Message id, origin block |
+| `Checkpoints` | (domain, index) | Root, 65-byte signature |
+| `Cursor` | domain | Last processed finalized origin block |
+| `Meta` | (domain, name) | `Announcement`, `Signer`, `ReorgFlag`, `Hook` |
+
+The `db` commands work only while the daemon is stopped:
+
+| Command | What it does |
+|---|---|
+| `db status` | For each domain: leaf count, latest signed index, cursor, reorg flag. |
+| `db checkpoint --domain D --index I` | Prints the stored leaf and the signed root at index `I`. |
+| `db clear-reorg --domain D` | Removes the reorg flag of domain `D`. |
+
+## Safety
+
+| Rule | Detail |
+|---|---|
+| Finality | The sync reads logs and roots only up to `latest - reorg_period`, or the `finalized` block. |
+| RPC vote | A leaf is verified only when `rpc_consensus` endpoints return the same root as the local tree. A failed endpoint keeps its slot, so it never lowers the threshold. The log source alone never authorizes a root. |
+| One signature per index | The daemon never signs a second root for an index that it signed before. The store rejects such a write. |
+| Reorg halt | A conflict halts only its domain. The other domains and the HTTP servers continue. |
+| Lost history | When `submittedIndex(V, domain)` is above the local latest index, the daemon logs a warning and continues. |
+
+The daemon halts a domain when one of these conditions is true:
+
+- Enough `rpc_urls` agree on a different root at a signed index.
+- A stored signed root differs from the root of the stored leaves.
+
+The daemon logs the root of each endpoint and the local root. Then it writes
+the reorg flag and retries until the write is durable. Do not restart the
+daemon while it logs `reorg flag write failed`. A domain with the flag does
+not sync or sign after a restart.
+
+Reorg recovery:
+
+1. Read the logs. Find the cause, for example a bad RPC or a deep reorg on the
+   origin chain.
+2. Fix the cause, for example replace the RPC or increase `reorg_period`.
+3. Stop the daemon.
+4. Run `db clear-reorg --domain D`.
+5. Start the daemon.
+
+If the endpoints still agree on another root, the next vote halts the domain
+again. Do not delete the store to clear a real reorg: a new sync signs a
+second root for indexes that relayers already read.
+
+Hook mismatch recovery: the store keeps the hook of each domain. If
+`hookByDomain(domain)` differs from the stored hook at start, the domain does
+not start and `/status` shows an error. Stop the daemon and delete the
+`db_path` directory. Every domain then syncs and signs again. RFC 6979
+signatures are deterministic, so the same roots get the same signatures.
+
+Key rotation: after a change of `H`, the backfill starts at index 0 once. It
+signs every stored checkpoint again with the new key. Only the signature
+changes. A different root is a conflict and halts the domain. A new `H` also
+gives a new bucket name, so the daemon announces again on every origin chain.
+
+## Inactive validator
+
+When `V` is not in `ValidatorSet.getActiveValidators()`, for example while it
+is jailed:
+
+| Part | Behavior |
+|---|---|
+| Sync, sign, backfill | Continue. |
+| Port 9000, announce | Continue. |
+| `submitCheckpoint` | Skipped. The controller would reject it. |
+| `/status` | `"active": false`. This is not an error. |
+
+While `V` is active, the daemon submits the latest signed checkpoint of each
+running domain when its index is above `submittedIndex(V, domain)`. It never
+submits index 0.
+
+## Limits
+
+| Limit | Detail |
+|---|---|
+| First sync memory | Unverified leaves stay in memory until the vote verifies them. Expect about 1 GB per 5M leaves on the first sync. |
+| Outbe `eth_getLogs` | The Outbe RPC rejects ranges above 100,000 blocks. The sync uses at most 100,000 and halves the range after a range error. |
+| `metadata_latest.json` | Not served. The relayer does not read it. |
+| Private key | The key is plaintext in the config file. |

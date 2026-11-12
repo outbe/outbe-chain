@@ -290,6 +290,21 @@ public_url = "http://203.0.113.7:9000"
         .is_err());
     }
 
+    /// The shipped example must parse and validate, so it cannot drift from
+    /// the structs.
+    #[test]
+    fn example_config_parses_and_validates() {
+        let cfg: ValidatorConfig =
+            toml::from_str(include_str!("../hyperlane-validator.example.toml")).unwrap();
+        cfg.validate().unwrap();
+        let domains: Vec<u32> = cfg.origin.iter().map(|o| o.domain).collect();
+        assert_eq!(domains, [54322345, 97, 11155111]);
+        assert_eq!(cfg.origin[0].reorg_period, ReorgPeriod::Blocks(0));
+        assert_eq!(cfg.origin[0].ws_url, None);
+        assert_eq!(cfg.origin[1].rpc_urls.len(), 3);
+        assert!(cfg.origin.iter().all(|o| o.interval_secs == 15));
+    }
+
     const ORIGINS: &str = r#"
 [[origin]]
 domain = 54322345
