@@ -1,8 +1,8 @@
 //! TWAP over the raw price snapshot ring.
 
 use alloy_primitives::U256;
-use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::Result;
+use outbe_system_common::address_pair::AddressPair;
 
 use super::{pair_series, PairSeries};
 use crate::errors::OracleError;

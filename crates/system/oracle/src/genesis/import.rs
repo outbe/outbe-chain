@@ -1,8 +1,8 @@
 //! Genesis import: writes a validated `OracleGenesisConfig` into a fresh oracle.
 
 use alloy_primitives::{Address, U256};
-use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::Result;
+use outbe_system_common::address_pair::AddressPair;
 use std::collections::BTreeSet;
 
 use super::validate::validate_genesis_config;

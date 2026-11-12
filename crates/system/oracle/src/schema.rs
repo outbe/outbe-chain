@@ -1,10 +1,10 @@
 use alloy_primitives::{Address, U256};
 use outbe_macros::contract;
-use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::storage::types::{Mapping, Slot, StorageVec};
 use outbe_primitives::time::WorldwideDay;
-pub use outbe_primitives::units::SCALE_1E18;
+use outbe_system_common::address_pair::AddressPair;
+pub use outbe_system_common::units::SCALE_1E18;
 
 /// Which pair a parallel-column group is talking about. It labels two indices:
 /// - the registry's 1-based enumeration index in `pair_by_index`.

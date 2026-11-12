@@ -5,5 +5,5 @@
 //! crate. This crate re-exports them so oracle code can keep saying
 //! `crate::types`.
 
-pub use outbe_primitives::address_pair::AddressPair;
-pub use outbe_primitives::asset_type::{currency_address, AssetType, COEN_ASSET};
+pub use outbe_system_common::address_pair::AddressPair;
+pub use outbe_system_common::asset_type::{currency_address, AssetType, COEN_ASSET};

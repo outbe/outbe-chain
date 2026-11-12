@@ -3,8 +3,8 @@
 //! two thirds of the rounds of the whole window.
 
 use alloy_primitives::U256;
-use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_system_common::address_pair::AddressPair;
 
 use crate::schema::OracleContract;
 

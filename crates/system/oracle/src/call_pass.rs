@@ -6,13 +6,15 @@ use std::fmt::Display;
 use alloy_primitives::U256;
 use outbe_primitives::{
     block::BlockRuntimeContext,
+    error::{decide, Decided, PassFailure, PrecompileError, Result},
+    storage::{dsl::Value, StorageHandle},
+    time::{timestamp_to_date_key, TimeError, SECONDS_PER_DAY},
+};
+use outbe_system_common::{
     call_bins::{self, CallBinStore, Visit},
     call_breach::ScanTerms,
     day_pass::{DayPassError, PassDays, PinnedDay, Progress, Scheduled},
-    error::{decide, Decided, PassFailure, PrecompileError, Result},
     pass_budget::{BlockAllowance, PassBudget},
-    storage::{dsl::Value, StorageHandle},
-    time::{timestamp_to_date_key, TimeError, SECONDS_PER_DAY},
 };
 
 use crate::call_window::{CallWindow, CallWindows};
@@ -351,7 +353,7 @@ mod tests {
     }
 
     struct TestBins<'a, 's>(&'a TestSweep<'s>, u16);
-    outbe_primitives::impl_call_bins!(TestBins<u64> {
+    outbe_system_common::impl_call_bins!(TestBins<u64> {
         root: root, mid: mid, leaf: leaf, count: count, at: at,
         slot: slot, cursor: cursor, failed: failed
     });

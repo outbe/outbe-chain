@@ -5,7 +5,7 @@ use super::common::{
     assert_typed_revert, coen_iso, eur, register_voter, usd, with_coen840_oracle, COEN,
     COEN_ISO_SCALE,
 };
-use outbe_primitives::address_pair::AddressPair;
+use outbe_system_common::address_pair::AddressPair;
 
 #[test]
 fn submit_vote_accepts_the_price_and_volume_ceiling() {
