@@ -3,6 +3,14 @@
     {
       "classification": "production",
       "features": [],
+      "install_profiles": ["operator-tools", "validator"],
+      "name": "outbe-up",
+      "package": "outbe-up",
+      "role": "installer"
+    },
+    {
+      "classification": "production",
+      "features": [],
       "install_profiles": ["full-node", "validator"],
       "name": "outbe-chain",
       "package": "outbe-chain",

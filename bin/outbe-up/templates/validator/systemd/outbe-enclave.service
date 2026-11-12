@@ -1,21 +1,16 @@
 [Unit]
-Description=Outbe validator price feeder
-After=outbe-validator.service
-Wants=outbe-validator.service
+Description=Outbe TEE enclave
+After=network-online.target aesmd.service
+Wants=network-online.target aesmd.service
 PartOf=outbe-validator.target
 StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-User=outbe
-Group=outbe
+User=root
 EnvironmentFile=/opt/outbe-chain/validator.env
-RuntimeDirectory=outbe-feeder
-RuntimeDirectoryMode=0700
-StateDirectory=outbe-feeder
-StateDirectoryMode=0700
-ExecStartPre=/opt/outbe-chain/deploy/validator/outbe-validator-service.py wait-rpc
-ExecStart=/opt/outbe-chain/deploy/validator/outbe-validator-service.py feeder
+ExecStart=@OUTBE_UP@ internal enclave
+ExecStartPost=@OUTBE_UP@ internal wait-enclave
 Restart=always
 RestartMode=direct
 RestartSec=5
@@ -23,13 +18,18 @@ RestartSteps=5
 RestartMaxDelaySec=60
 TimeoutStartSec=150
 TimeoutStopSec=60
+KillMode=mixed
 KillSignal=SIGTERM
+SuccessExitStatus=143 SIGTERM
 UMask=0077
 LimitNOFILE=65535
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
+ReadWritePaths=/opt/outbe-chain/tee
+BindReadOnlyPaths=-/opt/outbe-chain/sgx:/opt/outbe/sgx
+BindPaths=/opt/outbe-chain/tee:/var/lib/outbe/tee
 
 [Install]
 WantedBy=outbe-validator.target
