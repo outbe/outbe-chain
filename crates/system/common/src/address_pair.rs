@@ -2,8 +2,8 @@ use alloy_primitives::{keccak256, wrap_fixed_bytes, Address, U256};
 // `wrap_fixed_bytes!` expands to `derive_more` derives that emit unqualified
 // paths, so the crate has to be nameable here.
 use crate::asset_type::AssetType;
-use crate::storage::types::{Storable, StorableType, StorageKey, TwoWordStorable};
 use alloy_primitives::private::derive_more;
+use outbe_primitives::storage::types::{Storable, StorableType, StorageKey, TwoWordStorable};
 
 wrap_fixed_bytes!(
     /// Two Ethereum addresses concatenated, 40 bytes in length.
@@ -75,7 +75,7 @@ impl AddressPair {
 /// `Mapping<K, AddressPair>` accessors: [`Storable`] round-trips through a
 /// single 32-byte word and 40 bytes do not fit one.
 ///
-/// [`Storable`]: crate::storage::types::Storable
+/// [`Storable`]: outbe_primitives::storage::types::Storable
 impl StorageKey for AddressPair {
     /// Sorted, so `from_addresses(a, b)` and `from_addresses(b, a)` address the same slot.
     fn key_bytes(&self) -> Vec<u8> {
@@ -119,10 +119,10 @@ impl TwoWordStorable for AddressPair {
 mod tests {
     use super::AddressPair;
     use crate::asset_type::AssetType;
-    use crate::storage::hashmap::HashMapStorageProvider;
-    use crate::storage::types::{Mapping, StorageKey};
-    use crate::storage::StorageHandle;
     use alloy_primitives::{address, b256, keccak256, Address, U256};
+    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+    use outbe_primitives::storage::types::{Mapping, StorageKey};
+    use outbe_primitives::storage::StorageHandle;
 
     const FIRST: Address = address!("0x1111111111111111111111111111111111111111");
     const SECOND: Address = address!("0x2222222222222222222222222222222222222222");

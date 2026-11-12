@@ -29,7 +29,7 @@ pub const MIN_TICKER_LEN: usize = 2;
 pub const MAX_TICKER_LEN: usize = 12;
 /// Maximum immutable token-name length in UTF-8 bytes.
 pub const MAX_NAME_LEN: usize = 64;
-pub use crate::iso_4217::*;
+pub use outbe_primitives::iso_4217::*;
 
 pub fn validate_currency_code(iso_code: u16) -> Result<(), CurrencyCodeError> {
     if iso_4217_alpha(iso_code).is_none() {

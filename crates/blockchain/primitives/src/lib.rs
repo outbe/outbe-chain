@@ -1,12 +1,8 @@
 extern crate alloc;
 extern crate self as outbe_primitives;
 
-pub mod address_pair;
 pub mod addresses;
-pub mod asset_type;
 pub mod block;
-pub mod call_bins;
-pub mod call_breach;
 pub mod chain;
 pub mod code_registry;
 pub mod committee_snapshot;
@@ -14,7 +10,6 @@ pub mod consensus;
 pub mod consensus_metadata;
 pub mod consensus_p2p;
 pub mod crypto;
-pub mod day_pass;
 pub mod digest;
 pub mod dispatch;
 pub mod enclave_upgrade;
@@ -25,9 +20,7 @@ pub mod header;
 pub mod iso_4217;
 #[cfg(unix)]
 pub mod local_record;
-pub mod math;
 pub mod nod_encryption;
-pub mod pass_budget;
 pub mod payload;
 pub mod projection;
 #[cfg(feature = "consensus")]
@@ -40,7 +33,6 @@ pub mod reshare_artifact;
 pub mod runtime_audit_v1;
 pub mod series_id;
 pub mod signer;
-pub mod stablecoin;
 pub mod stablecoin_fork;
 pub mod storage;
 pub mod system_tx;
@@ -59,7 +51,6 @@ pub mod time;
 pub mod transaction_call;
 pub mod tribute_day_encryption;
 pub mod tribute_encryption;
-pub mod units;
 pub mod validator_dto;
 pub mod validators;
 pub mod wwd_entity_id;

@@ -6,8 +6,8 @@ use outbe_primitives::addresses::{
     METADOSIS_ADDRESS, PROMIS_LIMIT_ADDRESS, REWARDS_ADDRESS, STAKING_ADDRESS,
 };
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
 use outbe_promislimit::PromisLimitContract;
+use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 
 use crate::contract::Staking;
 use crate::tests::{register_validator, seed_balance, with_staking};

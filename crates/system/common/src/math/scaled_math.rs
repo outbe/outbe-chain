@@ -5,8 +5,9 @@
 
 use alloy_primitives::{U256, U512};
 
-use crate::error::{PrimitivesMathError, Result};
+use crate::errors::PrimitivesMathError;
 use crate::units::MAX_ASSET_DECIMALS;
+use outbe_primitives::error::Result;
 
 /// Quote asset-atomic principal against a canonical six-decimal
 /// COEN/currency VWAP (`issuanceCurrencyVwapMinor`).

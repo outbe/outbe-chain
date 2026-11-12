@@ -7,10 +7,10 @@ use alloy_primitives::U256;
 
 use crate::address_pair::AddressPair;
 use crate::asset_type::AssetType;
-use crate::error::Result;
 use crate::math::price_helper;
 use crate::math::uint256x256_math::{mul_shift_round_down, shift_div_round_down};
 use crate::units::SCALE_1E6_U256;
+use outbe_primitives::error::Result;
 
 const PRICE_BINARY_OFFSET: u8 = 128;
 

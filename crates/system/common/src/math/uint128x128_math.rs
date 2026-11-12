@@ -8,9 +8,10 @@
 
 use alloy_primitives::{I256, U256};
 
-use crate::error::{PrimitivesMathError, Result};
+use crate::errors::PrimitivesMathError;
 use crate::math::bit_math::most_significant_bit;
 use crate::math::constants::SCALE_1_128_128;
+use outbe_primitives::error::Result;
 
 const LOG_SCALE_OFFSET: u32 = 127;
 /// `1 << 127` - the 1.0 of the inner 129.127 fixed-point space used by `log2`.

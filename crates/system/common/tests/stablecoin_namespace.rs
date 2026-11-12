@@ -10,8 +10,8 @@ use outbe_primitives::{
         DEVNET_CHAIN_ID, DEVNET_CHAIN_NAME, MAINNET_CHAIN_ID, MAINNET_CHAIN_NAME, TESTNET_CHAIN_ID,
         TESTNET_CHAIN_NAME,
     },
-    stablecoin::{predict_stablecoin, stablecoin_token_id_preimage},
 };
+use outbe_system_common::stablecoin::{predict_stablecoin, stablecoin_token_id_preimage};
 use serde::Deserialize;
 
 const NETWORK_VECTORS: &str = include_str!(concat!(

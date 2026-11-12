@@ -53,7 +53,7 @@ pub fn most_significant_bit(mut x: U256) -> u8 {
 /// Returns [`None`] for [`U256::ZERO`] instead of a `255` sentinel. Callers
 /// turn that absence into a typed error.
 ///
-/// Walks alloy's little-endian limb array (limb[0] = bits 0..63) and uses
+/// Walks alloy's little-endian limb array (`limb[0]` = bits 0..63) and uses
 /// `u64::trailing_zeros`, which is deterministic across every Rust target
 /// (defined for 0 -> 64, never CPU-intrinsic-dependent).
 pub fn least_significant_bit(word: U256) -> Option<u8> {

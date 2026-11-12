@@ -2,7 +2,7 @@
 
 use alloy_primitives::U256;
 
-use crate::error::{PrecompileError, Result};
+use outbe_primitives::error::{PrecompileError, Result};
 
 /// Entities or queue slots read and decided.
 pub const SWEEP_VISITS_PER_BLOCK: u32 = 256;

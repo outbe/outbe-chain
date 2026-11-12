@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::stablecoin::{
+use outbe_system_common::stablecoin::{
     decode_canonical_stablecoin_create, encode_canonical_stablecoin_create, is_supported_iso4217,
     iso_4217_alpha, predict_stablecoin, stablecoin_address, stablecoin_token_id,
     stablecoin_token_id_preimage, StablecoinCodecError, StablecoinCreatePayload, ISO_4217_ALPHA,

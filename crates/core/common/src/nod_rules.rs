@@ -8,7 +8,8 @@ pub fn derive_nod_id(series_id: outbe_primitives::series_id::SeriesId, owner: Ad
 }
 
 use crate::settlement::{settlement_cost_units, SettlementCost};
-use outbe_primitives::{error::Result, units::PROTOCOL_AMOUNT_DECIMALS};
+use outbe_primitives::error::Result;
+use outbe_system_common::units::PROTOCOL_AMOUNT_DECIMALS;
 
 pub fn is_issuable_entry(entry: U256) -> bool {
     crate::markup::marked_up(entry, u16::MAX).is_some()

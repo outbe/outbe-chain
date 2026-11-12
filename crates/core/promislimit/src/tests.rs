@@ -152,10 +152,10 @@ fn checked_credit_rejects_overflow() {
 fn burn_to_promis_limit_accumulates_rest_across_sources_and_rolls_back_on_overflow() {
     use alloy_primitives::Address;
     use alloy_sol_types::{SolCall, SolEvent, SolValue};
-    use outbe_primitives::{
-        addresses::{PROMIS_LIMIT_ADDRESS, STAKING_ADDRESS, SYSTEM_ADDRESS, VOTE_ADDRESS},
-        units::UNITS_PER_PROTOCOL_MINOR,
+    use outbe_primitives::addresses::{
+        PROMIS_LIMIT_ADDRESS, STAKING_ADDRESS, SYSTEM_ADDRESS, VOTE_ADDRESS,
     };
+    use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 
     use crate::{
         precompile::{dispatch, IPromisLimit},
@@ -325,8 +325,8 @@ fn gap_ed34_only_executor_gives_burned_amount() {
             VOTE_ADDRESS,
         },
         error::PrecompileError,
-        units::UNITS_PER_PROTOCOL_MINOR,
     };
+    use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 
     use crate::{precompile::IPromisLimit, runtime::BurnSource};
 

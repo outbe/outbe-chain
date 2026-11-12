@@ -1,9 +1,9 @@
 //! Scheduling of a pass that walks one closed UTC day at a time, every closed day in
 //! order.
 
-use crate::error::{PrecompileError, Result};
-use crate::storage::dsl::Value;
-use crate::time::{next_date_key, previous_date_key, TimeError};
+use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::storage::dsl::Value;
+use outbe_primitives::time::{next_date_key, previous_date_key, TimeError};
 
 /// A pass step failed in storage or in the date helper.
 #[derive(Debug)]
@@ -235,8 +235,8 @@ mod tests {
     }
 
     fn with_pinned(test: impl FnOnce(&PinnedDay<'_, '_>)) {
-        use crate::storage::{hashmap::HashMapStorageProvider, StorageHandle};
         use alloy_primitives::{address, U256};
+        use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
         let contract = address!("0x0000000000000000000000000000000000001003");
         let mut provider = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut provider, |storage| {

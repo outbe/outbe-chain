@@ -3,8 +3,8 @@ use alloy_sol_types::SolEvent;
 use outbe_primitives::{
     addresses::{PROMIS_LIMIT_ADDRESS, SYSTEM_ADDRESS},
     error::Result,
-    units::UNITS_PER_PROTOCOL_MINOR,
 };
+use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 
 use crate::{errors::PromisLimitError, precompile::IPromisLimit, schema::PromisLimitContract};
 

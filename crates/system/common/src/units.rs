@@ -89,7 +89,7 @@ mod tests {
 
     #[test]
     fn the_intex_codec_uses_the_same_units() {
-        use crate::test_utils::sol_interface::sol_constant;
+        use outbe_primitives::test_utils::sol_interface::sol_constant;
         const CODEC: &str =
             include_str!("../../../../contracts/intex/src/shared/libs/BridgeMsgCodec.sol");
         assert_eq!(
