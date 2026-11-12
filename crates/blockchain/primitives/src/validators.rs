@@ -125,7 +125,7 @@ mod tests {
     fn effective_min_stake_resolves_zero_to_ten_million_coen_base_units() {
         assert_eq!(
             DEFAULT_MIN_STAKE,
-            U256::from(10_000_000u64) * crate::units::ONE_COEN
+            U256::from(10_000_000u64) * U256::from(10u64).pow(U256::from(18u64))
         );
         assert_eq!(effective_min_stake(U256::ZERO), DEFAULT_MIN_STAKE);
         assert_eq!(

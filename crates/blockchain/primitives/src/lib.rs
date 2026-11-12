@@ -22,6 +22,7 @@ pub mod error;
 pub mod errors;
 pub mod filesystem;
 pub mod header;
+pub mod iso_4217;
 #[cfg(unix)]
 pub mod local_record;
 pub mod math;

@@ -10,6 +10,7 @@ name = "outbe-feeder"
 path = "src/main.rs"
 
 [dependencies]
+outbe-system-common.workspace = true
 # Internal
 outbe-primitives.workspace = true
 

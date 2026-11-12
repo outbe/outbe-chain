@@ -29,6 +29,12 @@ pub trait StorableType {
     const SLOTS: usize;
 }
 
+/// A value encoded in two consecutive EVM storage words.
+pub trait TwoWordStorable: StorableType {
+    fn from_words(first: U256, second: U256) -> Self;
+    fn to_words(self) -> (U256, U256);
+}
+
 /// Trait for types that can be stored/loaded from a single EVM storage slot.
 pub trait Storable: StorableType + Sized {
     /// Byte width of the encoded value within a 32-byte storage word (`1..=32`).
@@ -312,15 +318,6 @@ impl StorageKey for alloy_primitives::B256 {
     }
 }
 
-use crate::address_pair::AddressPair;
-
-/// Two words wide, which is exactly why there is no `Storable` impl: 40 bytes
-/// cannot round-trip through a single one. As a mapping value it goes through
-/// the `Mapping<K, AddressPair>` accessors instead.
-impl StorableType for AddressPair {
-    const SLOTS: usize = 2;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,26 +353,5 @@ mod tests {
         for word in [U256::from(u8::MAX) + U256::ONE, U256::MAX] {
             assert_eq!(u8::from_word(word), u8::MAX);
         }
-    }
-
-    #[test]
-    fn wide_key_mapping_slot() {
-        struct DefaultWideKey(Vec<u8>);
-
-        impl StorageKey for DefaultWideKey {
-            fn key_bytes(&self) -> Vec<u8> {
-                self.0.clone()
-            }
-        }
-
-        let first = Address::repeat_byte(0x11);
-        let second = Address::repeat_byte(0x22);
-        let pair = AddressPair::from_addresses(second, first);
-        let wide = DefaultWideKey(pair.key_bytes());
-        let base_slot = U256::from(42u64);
-
-        // A 40-byte key using the default trait method must not underflow or panic,
-        // and must derive the exact same slot as AddressPair's hand-written override.
-        assert_eq!(wide.mapping_slot(base_slot), pair.mapping_slot(base_slot));
     }
 }

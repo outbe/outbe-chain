@@ -2,7 +2,7 @@ use alloy_primitives::{keccak256, wrap_fixed_bytes, Address, U256};
 // `wrap_fixed_bytes!` expands to `derive_more` derives that emit unqualified
 // paths, so the crate has to be nameable here.
 use crate::asset_type::AssetType;
-use crate::storage::types::StorageKey;
+use crate::storage::types::{Storable, StorableType, StorageKey, TwoWordStorable};
 use alloy_primitives::private::derive_more;
 
 wrap_fixed_bytes!(
@@ -95,11 +95,33 @@ impl StorageKey for AddressPair {
     }
 }
 
+/// Two words wide, which is exactly why there is no `Storable` impl: 40 bytes
+/// cannot round-trip through a single one. As a mapping value it goes through
+/// the `Mapping<K, AddressPair>` accessors instead.
+impl StorableType for AddressPair {
+    const SLOTS: usize = 2;
+}
+
+impl TwoWordStorable for AddressPair {
+    fn from_words(first: U256, second: U256) -> Self {
+        Self::from_addresses(
+            Address::from_word(first.into()),
+            Address::from_word(second.into()),
+        )
+    }
+
+    fn to_words(self) -> (U256, U256) {
+        (self.address1().to_word(), self.address2().to_word())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::AddressPair;
     use crate::asset_type::AssetType;
-    use crate::storage::types::StorageKey;
+    use crate::storage::hashmap::HashMapStorageProvider;
+    use crate::storage::types::{Mapping, StorageKey};
+    use crate::storage::StorageHandle;
     use alloy_primitives::{address, b256, keccak256, Address, U256};
 
     const FIRST: Address = address!("0x1111111111111111111111111111111111111111");
@@ -285,5 +307,81 @@ mod tests {
     #[test]
     fn new_coen_to_separates_pairs_sharing_an_asset() {
         assert_ne!(AddressPair::new_coen_to(840), AddressPair::new_coen_to(978));
+    }
+
+    #[test]
+    fn wide_key_mapping_slot() {
+        struct DefaultWideKey(Vec<u8>);
+
+        impl StorageKey for DefaultWideKey {
+            fn key_bytes(&self) -> Vec<u8> {
+                self.0.clone()
+            }
+        }
+
+        let first = Address::repeat_byte(0x11);
+        let second = Address::repeat_byte(0x22);
+        let pair = AddressPair::from_addresses(second, first);
+        let wide = DefaultWideKey(pair.key_bytes());
+        let base_slot = U256::from(42u64);
+
+        // A 40-byte key using the default trait method must not underflow or panic,
+        // and must derive the exact same slot as AddressPair's hand-written override.
+        assert_eq!(wide.mapping_slot(base_slot), pair.mapping_slot(base_slot));
+    }
+
+    #[test]
+    fn test_mapping_address_pair_round_trip() {
+        let contract = address!("0x0000000000000000000000000000000000001003");
+        let base = address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+        let quote = address!("0x00000000000000000000000000000000000cc840");
+
+        let mut provider = HashMapStorageProvider::new(1);
+        let storage = StorageHandle::new(&mut provider);
+        let mapping: Mapping<u32, AddressPair> = Mapping::new(U256::from(43), contract, storage);
+
+        // An unwritten key reads back as the zero pair, not as an error. The zero
+        // address is a legitimate asset, so absence is decided elsewhere.
+        assert_eq!(mapping.read_pair(&1).unwrap(), AddressPair::ZERO);
+
+        let pair = AddressPair::from_addresses(base, quote);
+        mapping.write_pair(&1, pair).unwrap();
+
+        // The quoted orientation survives the round trip. It is not sorted.
+        assert_eq!(mapping.read_pair(&1).unwrap(), pair);
+        assert_eq!(mapping.read_pair(&1).unwrap().address1(), base);
+        assert_eq!(mapping.read_pair(&1).unwrap().address2(), quote);
+        assert_eq!(mapping.read_pair(&2).unwrap(), AddressPair::ZERO);
+    }
+
+    /// Pins the two-word layout `outbe-genesis-cli` and the native state opening
+    /// plan both reproduce by hand: base at the key's mapping slot, quote at +1.
+    #[test]
+    fn test_mapping_address_pair_occupies_two_consecutive_slots() {
+        let contract = address!("0x0000000000000000000000000000000000001003");
+        let base = address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+        let quote = address!("0x00000000000000000000000000000000000cc840");
+        let base_slot = U256::from(43);
+
+        let mut provider = HashMapStorageProvider::new(1);
+        let storage = StorageHandle::new(&mut provider);
+        let mapping: Mapping<u32, AddressPair> = Mapping::new(base_slot, contract, storage.clone());
+        mapping
+            .write_pair(&7, AddressPair::from_addresses(base, quote))
+            .unwrap();
+
+        let mut buf = [0u8; 64];
+        buf[28..32].copy_from_slice(&7u32.to_be_bytes());
+        buf[32..64].copy_from_slice(&base_slot.to_be_bytes::<32>());
+        let slot = U256::from_be_bytes(keccak256(buf).0);
+
+        assert_eq!(
+            storage.sload(contract, slot).unwrap(),
+            U256::from_be_bytes(base.into_word().0),
+        );
+        assert_eq!(
+            storage.sload(contract, slot + U256::from(1)).unwrap(),
+            U256::from_be_bytes(quote.into_word().0),
+        );
     }
 }

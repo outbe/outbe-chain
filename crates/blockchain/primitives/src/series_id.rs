@@ -5,7 +5,7 @@
 use alloy_primitives::{Address, FixedBytes, U256};
 use std::fmt;
 
-use crate::stablecoin::iso_4217_alpha;
+use crate::iso_4217::iso_4217_alpha;
 use crate::storage::types::{Storable, StorableType, StorageKey};
 
 pub const SERIES_ID_LEN: usize = 14;

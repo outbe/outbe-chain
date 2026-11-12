@@ -20,6 +20,7 @@ thiserror.workspace = true
 outbe-enclave = { workspace = true, optional = true }
 
 [dev-dependencies]
+outbe-system-common.workspace = true
 alloy-primitives = { workspace = true, features = ["rand"] }
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 # Promis' own unit tests run the confidential path against the in-process engine.
