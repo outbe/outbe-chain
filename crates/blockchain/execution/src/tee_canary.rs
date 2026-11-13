@@ -372,33 +372,16 @@ mod tests {
 
     #[test]
     fn tee_canary_metrics_use_canonical_names_types_and_heap_labels() {
-        use outbe_tee::protocol::{
-            EnclaveHeapUsageV1, EnclaveRequestClassCountsV1, EnclaveRequestCountsV1,
-        };
-
         let recorder = CanaryMetricRecorder::default();
         let mut snapshot = TeeEnclaveHealthSnapshot::default();
-        let health = EnclaveHealthStatusV1 {
-            uptime_s: 30,
-            offer_key_ready: true,
-            heap: EnclaveHeapUsageV1 {
-                current_bytes: 1024,
-                peak_bytes: 2048,
-            },
-            requests: EnclaveRequestCountsV1 {
-                total: 10,
-                errored: 2,
-                denied: 0,
-            },
-            classes: EnclaveRequestClassCountsV1 {
-                initialized: 10,
-                founding_keyless: 0,
-                keyless_onboarding: 0,
-                ready: 0,
-                dev_source_seal: 0,
-                dev_recipient_ingest: 0,
-            },
-        };
+        let health: EnclaveHealthStatusV1 = serde_json::from_value(serde_json::json!({
+            "uptime_s": 30, "offer_key_ready": true,
+            "heap": { "current_bytes": 1024, "peak_bytes": 2048 },
+            "requests": { "total": 10, "errored": 2, "denied": 0 },
+            "classes": { "initialized": 10, "founding_keyless": 0, "keyless_onboarding": 0,
+                "ready": 0, "dev_source_seal": 0, "dev_recipient_ingest": 0 }
+        }))
+        .expect("enclave health fixture");
         metrics::with_local_recorder(&recorder, || {
             apply_tick(
                 &mut snapshot,

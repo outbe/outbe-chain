@@ -56,14 +56,117 @@ fn emit_consensus() {
     record_parent_cert_included();
     record_parent_cert_missing();
     record_block_cache_size(1);
-    record_dkg_status(2);
-    record_reshare_completed();
-    record_dkg_revealed_shares(1);
-    record_invalid_vrf_partial();
     record_finalize_verify_admission("accepted");
     record_finalize_verify_verification("valid");
     record_finalize_verify_queue_depth(1, 32);
     record_finalize_verify_observed(1, 32);
+    record_parent_cert_record_pruned(1);
+    record_parent_cert_retained_depth(10);
+    record_phase1_used_cn_fallback(1, 10);
+    emit_consensus_events();
+    emit_consensus_drop_reasons();
+    emit_consensus_evidence();
+    emit_dkg_vrf();
+    emit_consensus_latencies();
+}
+
+fn emit_consensus_events() {
+    use outbe_consensus::metrics::*;
+    for emit in [
+        record_finalization_resolution_stalled,
+        record_finalization_divergence_suspected,
+        record_finalization_divergence_cleared,
+        record_finalization_snapshot_build_degraded,
+        record_finalization_persist_degraded,
+        record_finalization_persist_recovered,
+        record_executor_head_flip,
+        record_executor_head_finalized_conflict,
+        record_executor_head_rollback,
+        record_executor_finalized_conflict,
+        record_executor_finalized_stale,
+        record_finalized_cert_invalid_vrf_proof,
+        record_certification_persisted,
+        record_parent_proof_unavailable_forfeit,
+        record_phase1_parent_proof_unavailable,
+        record_parent_proof_recovered_from_marshal,
+        record_dkg_boundary_duplicate_rejected,
+        record_genesis_dkg_boundary_not_ready_forfeit,
+    ] {
+        emit();
+    }
+}
+
+fn emit_consensus_drop_reasons() {
+    use outbe_consensus::metrics::*;
+    [
+        FinalizationDropReason::MailboxClosed,
+        FinalizationDropReason::StaleRound,
+        FinalizationDropReason::SameRoundInconsistency,
+        FinalizationDropReason::DuplicateRound,
+    ]
+    .into_iter()
+    .for_each(record_finalization_dropped);
+    [
+        CertificationDropReason::QueueFull,
+        CertificationDropReason::VerifyFailed,
+        CertificationDropReason::SnapshotBuildFailed,
+        CertificationDropReason::MailboxClosed,
+        CertificationDropReason::StoreError,
+    ]
+    .into_iter()
+    .for_each(record_certification_dropped);
+}
+
+fn emit_consensus_evidence() {
+    use outbe_consensus::{forfeit::ProposerForfeitReason, metrics::*};
+    [
+        EquivocationKind::ConflictingNotarize,
+        EquivocationKind::ConflictingFinalize,
+        EquivocationKind::NullifyFinalize,
+    ]
+    .into_iter()
+    .for_each(record_byzantine_evidence);
+    [
+        ProposerForfeitReason::ParentProofUnavailable,
+        ProposerForfeitReason::GenesisDkgBoundaryNotReady,
+        ProposerForfeitReason::VrfRecoverFailedUnderQuorum,
+    ]
+    .into_iter()
+    .for_each(record_proposer_forfeit);
+}
+
+fn emit_dkg_vrf() {
+    use outbe_consensus::metrics::*;
+    record_dkg_status(2);
+    record_reshare_completed();
+    record_dkg_revealed_shares(1);
+    record_vrf_partial_drop("invalid", 1);
+    [
+        DkgBoundaryDecision::AlreadyCommitted,
+        DkgBoundaryDecision::MustEmit,
+        DkgBoundaryDecision::NoPending,
+    ]
+    .into_iter()
+    .for_each(record_dkg_boundary_requirement);
+    [
+        DkgBoundaryUnavailableReason::GenesisBoundaryNotReady,
+        DkgBoundaryUnavailableReason::AncestryUnavailable,
+    ]
+    .into_iter()
+    .for_each(record_dkg_boundary_unavailable);
+    for emit in [
+        record_invalid_vrf_partial,
+        record_forged_seed_partial,
+        record_vrf_recover_failed_under_quorum,
+        record_vrf_degraded_leader_selection,
+        record_vrf_randomness_expired,
+    ] {
+        emit();
+    }
+}
+
+fn emit_consensus_latencies() {
+    use outbe_consensus::metrics::*;
     for emit in [
         record_block_build_time,
         record_block_wait_time,
@@ -389,17 +492,25 @@ mod canary {
                 status.clone(),
                 shutdown.clone(),
             ));
-            // One period is the budget for observing the immediate first tick.
-            let observed = tokio::time::timeout(period, async {
-                while status.snapshot().state != expected {
-                    tokio::task::yield_now().await;
-                }
-            })
-            .await;
+            let observed = observe_tick(&status, expected, period).await;
             shutdown.cancel();
             worker.await.expect("canary worker stopped");
             observed.expect("canary published expected tick");
         }
+    }
+
+    async fn observe_tick(
+        status: &TeeEnclaveHealthChannel,
+        expected: TeeEnclaveHealthState,
+        period: Duration,
+    ) -> Result<(), tokio::time::error::Elapsed> {
+        // One period is the budget for observing the immediate first tick.
+        tokio::time::timeout(period, async {
+            while status.snapshot().state != expected {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
     }
 
     struct FakeEnclaveRequester {
