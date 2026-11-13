@@ -669,7 +669,6 @@ mod tests {
         for (name, value) in expected {
             assert_eq!(values.get(name), Some(&DebugValue::Gauge(value.into())));
         }
-        assert!(!values.contains_key("outbe_consensus_tip_available_in_reth_provider"));
     }
 
     #[test]

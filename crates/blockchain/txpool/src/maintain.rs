@@ -341,7 +341,7 @@ mod tests {
             recorder.value("outbe_txpool_pending_snapshot_txs"),
             Some(2.0_f64.to_bits())
         );
-        assert_eq!(recorder.value("outbe_txpool_pending_snapshot_size"), None);
+        assert_eq!(recorder.values.lock().unwrap().len(), 1);
         assert_eq!(recorder.value("outbe_txpool_stale_evicted_total"), None);
 
         // A newcomer admitted between snapshots must survive this round.
@@ -358,7 +358,7 @@ mod tests {
             recorder.value("outbe_txpool_pending_snapshot_txs"),
             Some(3.0_f64.to_bits())
         );
-        assert_eq!(recorder.value("outbe_txpool_pending_snapshot_size"), None);
+        assert_eq!(recorder.values.lock().unwrap().len(), 2);
         assert_eq!(recorder.value("outbe_txpool_stale_evicted_total"), Some(2));
         assert!(removed.contains(&head_hash), "stale head must be evicted");
         assert!(

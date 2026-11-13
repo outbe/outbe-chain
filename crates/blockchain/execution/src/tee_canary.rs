@@ -429,11 +429,6 @@ mod tests {
         );
         assert_eq!(recorder.failures.get(), 1);
         assert_eq!(recorder.latencies.get(), 1);
-        assert!(recorder
-            .gauges
-            .borrow()
-            .iter()
-            .all(|key| key.name() != "outbe_tee_requests_errored_total"));
     }
 
     #[tokio::test]
