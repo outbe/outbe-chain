@@ -20,7 +20,7 @@
         "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
         "targets": [
           {
-            "expr": "outbe_finalized_view",
+            "expr": "reth_outbe_consensus_finalized_view",
             "legendFormat": "{{instance}}"
           }
         ],
@@ -42,7 +42,7 @@
         "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
         "targets": [
           {
-            "expr": "outbe_proposed_height",
+            "expr": "reth_outbe_consensus_proposed_height",
             "legendFormat": "{{instance}}"
           }
         ],
@@ -64,7 +64,7 @@
         "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
         "targets": [
           {
-            "expr": "outbe_validator_count",
+            "expr": "reth_outbe_consensus_committee_validators",
             "legendFormat": "validators"
           }
         ],
@@ -88,7 +88,7 @@
         "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
         "targets": [
           {
-            "expr": "commonware_p2p_tracked_peer_set_size",
+            "expr": "reth_outbe_consensus_tracked_peers",
             "legendFormat": "peer set"
           }
         ],
@@ -112,7 +112,7 @@
         "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
         "targets": [
           {
-            "expr": "outbe_epoch_number",
+            "expr": "reth_outbe_consensus_epoch",
             "legendFormat": "epoch"
           }
         ],
@@ -134,7 +134,7 @@
         "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
         "targets": [
           {
-            "expr": "rate(outbe_blocks_proposed_total[5m]) * 60",
+            "expr": "rate(reth_outbe_consensus_blocks_proposed_total[5m]) * 60",
             "legendFormat": "blocks/min"
           }
         ],
@@ -156,11 +156,11 @@
         "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
         "targets": [
           {
-            "expr": "outbe_proposed_height",
+            "expr": "reth_outbe_consensus_proposed_height",
             "legendFormat": "proposed"
           },
           {
-            "expr": "outbe_consensus_tip_block_height",
+            "expr": "reth_outbe_consensus_tip_height",
             "legendFormat": "consensus tip"
           }
         ],
@@ -182,7 +182,7 @@
         "gridPos": { "h": 6, "w": 8, "x": 0, "y": 12 },
         "targets": [
           {
-            "expr": "outbe_participation_rate",
+            "expr": "reth_outbe_consensus_participation_ratio",
             "legendFormat": "participation"
           }
         ],
@@ -209,7 +209,7 @@
         "gridPos": { "h": 6, "w": 4, "x": 8, "y": 12 },
         "targets": [
           {
-            "expr": "outbe_dkg_status",
+            "expr": "reth_outbe_dkg_status",
             "legendFormat": "status"
           }
         ],
@@ -218,7 +218,8 @@
             "mappings": [
               { "type": "value", "options": { "0": { "text": "Idle", "color": "blue" } } },
               { "type": "value", "options": { "1": { "text": "In Progress", "color": "yellow" } } },
-              { "type": "value", "options": { "2": { "text": "Completed", "color": "green" } } }
+              { "type": "value", "options": { "2": { "text": "Completed", "color": "green" } } },
+              { "type": "value", "options": { "3": { "text": "Expired", "color": "red" } } }
             ],
             "thresholds": {
               "mode": "absolute",
@@ -236,7 +237,7 @@
         "gridPos": { "h": 6, "w": 4, "x": 12, "y": 12 },
         "targets": [
           {
-            "expr": "outbe_reshares_completed_total",
+            "expr": "reth_outbe_dkg_reshares_completed_total",
             "legendFormat": "reshares"
           }
         ],
@@ -258,7 +259,7 @@
         "gridPos": { "h": 6, "w": 8, "x": 16, "y": 12 },
         "targets": [
           {
-            "expr": "rate(outbe_views_skipped_total[5m]) * 60",
+            "expr": "rate(reth_outbe_consensus_views_skipped_total[5m]) * 60",
             "legendFormat": "skipped/min"
           }
         ],
@@ -288,7 +289,7 @@
         "gridPos": { "h": 6, "w": 6, "x": 0, "y": 18 },
         "targets": [
           {
-            "expr": "outbe_parent_cert_store_size",
+            "expr": "reth_outbe_consensus_parent_cert_store_entries",
             "legendFormat": "records"
           }
         ],
@@ -313,16 +314,12 @@
         "gridPos": { "h": 6, "w": 18, "x": 6, "y": 18 },
         "targets": [
           {
-            "expr": "rate(outbe_parent_cert_included_total[5m])",
+            "expr": "rate(reth_outbe_consensus_parent_cert_included_total[5m])",
             "legendFormat": "included/s"
           },
           {
-            "expr": "rate(outbe_parent_cert_missing_total[5m])",
+            "expr": "rate(reth_outbe_consensus_parent_cert_missing_total[5m])",
             "legendFormat": "missing/s"
-          },
-          {
-            "expr": "rate(outbe_parent_cert_invalid_omitted_total[5m])",
-            "legendFormat": "invalid/s"
           }
         ],
         "fieldConfig": {
@@ -343,7 +340,7 @@
         "gridPos": { "h": 6, "w": 12, "x": 0, "y": 24 },
         "targets": [
           {
-            "expr": "outbe_blocks_proposed_total",
+            "expr": "reth_outbe_consensus_blocks_proposed_total",
             "legendFormat": "{{instance}}"
           }
         ],
@@ -365,7 +362,7 @@
         "gridPos": { "h": 6, "w": 12, "x": 12, "y": 24 },
         "targets": [
           {
-            "expr": "outbe_consensus_reth_readiness_gap_blocks",
+            "expr": "reth_outbe_consensus_reth_readiness_gap_blocks",
             "legendFormat": "readiness gap (blocks)"
           }
         ],

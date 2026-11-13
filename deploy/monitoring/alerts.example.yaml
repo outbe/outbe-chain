@@ -4,20 +4,22 @@
 # directory (e.g. /etc/prometheus/rules/outbe-chain.yaml) and adjust
 # label selectors / hosts / contacts as needed.
 #
+# Wire metrics: Reth --metrics adds reth_ to emitted names
+# (reth_outbe_<subsystem>_* and reth_process_*).
 # Source metrics:
-#   - outbe_block_cache_size
+#   - reth_outbe_consensus_block_cache_entries
 #       process-local block_cache entry count
 #       (emitted from `crates/blockchain/consensus/src/metrics.rs`
 #        and updated on every bounded insert + finalization eviction).
-#   - process_resident_memory_bytes
+#   - reth_process_resident_memory_bytes
 #       Reth's standard per-process RSS gauge.
-#   - commonware_p2p_tracked_peer_set_size
+#   - reth_outbe_consensus_tracked_peers
 #       current tracked Commonware consensus peer-set size (membership,
 #       NOT live TCP connections - it does not drop on disconnect).
-#   - outbe_current_view / outbe_finalized_view
+#   - reth_outbe_consensus_current_view / reth_outbe_consensus_finalized_view
 #       highest observed Simplex view vs last finalized view. The gap is the
 #       primary consensus-stall signal: views advancing but nothing finalizing.
-#   - outbe_views_nullified_total
+#   - reth_outbe_consensus_views_nullified_total
 #       count of nullified (view-timed-out / skipped) views.
 #
 # Constants used here mirror the Rust source of truth:
@@ -36,7 +38,7 @@ groups:
       # Soft warning: cache approaching the hard cap. Indicates either
       # a sustained wedge (no finalization advancing) or fork spam.
       - alert: OutbeBlockCacheNearCap
-        expr: outbe_block_cache_size > 0.9 * 1024
+        expr: reth_outbe_consensus_block_cache_entries > 0.9 * 1024
         for: 5m
         labels:
           severity: warning
@@ -44,16 +46,16 @@ groups:
         annotations:
           summary: "block_cache near max entries on {{ $labels.instance }}"
           description: |
-            outbe_block_cache_size = {{ $value }} (>= 90% of 1024).
+            reth_outbe_consensus_block_cache_entries = {{ $value }} (>= 90% of 1024).
             Either consensus cannot advance finalization or
             the network is producing many same-height forks. Investigate
-            via logs and `outbe_consensus_tip_block_height` /
-            `outbe_finalized_view`.
+            via logs and `reth_outbe_consensus_tip_height` /
+            `reth_outbe_consensus_finalized_view`.
 
       # Hard alarm: cache remains at the cap for an extended period.
       # Eviction continues, but the underlying condition (wedge or fork spam) persists.
       - alert: OutbeBlockCacheAtCap
-        expr: outbe_block_cache_size >= 1024
+        expr: reth_outbe_consensus_block_cache_entries >= 1024
         for: 15m
         labels:
           severity: critical
@@ -61,7 +63,7 @@ groups:
         annotations:
           summary: "block_cache pinned at MAX_ENTRIES on {{ $labels.instance }} for >15m"
           description: |
-            outbe_block_cache_size remains at or above
+            reth_outbe_consensus_block_cache_entries remains at or above
             BLOCK_CACHE_MAX_ENTRIES (1024) for 15 minutes. This is
             survivable (eviction still runs) but indicates a sustained
             problem - wedge or fork spam - that the operator must
@@ -73,7 +75,7 @@ groups:
       # Use it with the stall alert below. That alert uses the finalization gap
       # to detect connectivity loss that the membership count cannot detect.
       - alert: OutbeConsensusPeerSetEmpty
-        expr: commonware_p2p_tracked_peer_set_size == 0
+        expr: reth_outbe_consensus_tracked_peers == 0
         for: 5m
         labels:
           severity: critical
@@ -81,7 +83,7 @@ groups:
         annotations:
           summary: "validator {{ $labels.instance }} has an empty tracked peer set for >5m"
           description: |
-            commonware_p2p_tracked_peer_set_size == 0 for 5 minutes. The
+            reth_outbe_consensus_tracked_peers == 0 for 5 minutes. The
             validator has no tracked consensus peers and cannot finalize. Check
             P2P reachability, known-peers.json, and bootnode pingability.
 
@@ -90,7 +92,7 @@ groups:
       # It detects connectivity loss, a leader-timeout storm, or a wedge,
       # even while the tracked peer set looks healthy.
       - alert: OutbeConsensusStalled
-        expr: (outbe_current_view - outbe_finalized_view) > 20
+        expr: (reth_outbe_consensus_current_view - reth_outbe_consensus_finalized_view) > 20
         for: 2m
         labels:
           severity: critical
@@ -98,17 +100,17 @@ groups:
         annotations:
           summary: "consensus stalled on {{ $labels.instance }}: views advancing, no finalization"
           description: |
-            outbe_current_view - outbe_finalized_view = {{ $value }} (> 20) for
+            reth_outbe_consensus_current_view - reth_outbe_consensus_finalized_view = {{ $value }} (> 20) for
             2 minutes. Views are progressing but no view is finalizing - a
             liveness fault (lost connectivity, a byzantine/offline leader run,
-            or a wedge). Cross-reference rate(outbe_views_nullified_total[5m])
+            or a wedge). Cross-reference rate(reth_outbe_consensus_views_nullified_total[5m])
             and the `outbe::reporter` / `outbe::consensus` log targets.
 
       # View-timeout storm: leaders are repeatedly failing to deliver proposals
       # in time, nullifying views. A sustained rate degrades liveness even if
       # the chain has not fully stalled yet.
       - alert: OutbeViewNullificationStorm
-        expr: rate(outbe_views_nullified_total[5m]) > 0.2
+        expr: rate(reth_outbe_consensus_views_nullified_total[5m]) > 0.2
         for: 5m
         labels:
           severity: warning
@@ -116,7 +118,7 @@ groups:
         annotations:
           summary: "high view-nullification rate on {{ $labels.instance }}"
           description: |
-            rate(outbe_views_nullified_total[5m]) = {{ $value }} (> 0.2/s) for
+            rate(reth_outbe_consensus_views_nullified_total[5m]) = {{ $value }} (> 0.2/s) for
             5 minutes. Leaders are repeatedly timing out before delivering
             proposals (network turbulence or an offline/byzantine leader run).
             Finalization continues but with degraded liveness.
@@ -128,7 +130,7 @@ groups:
       # headroom to investigate before OOM. Threshold sized for the
       # current 7.8 GiB hosts. Raise to ~12 GiB after the RAM upgrade.
       - alert: OutbeChainHighRSS
-        expr: process_resident_memory_bytes{job=~".*outbe.*"} > 6 * 1024 * 1024 * 1024
+        expr: reth_process_resident_memory_bytes{job=~".*outbe.*"} > 6 * 1024 * 1024 * 1024
         for: 10m
         labels:
           severity: warning
@@ -146,10 +148,10 @@ groups:
     rules:
       # Early-warning before a felony fires. Threshold values match
       # `slashindicator::constants::DEFAULT_PROPOSER_FELONY_THRESHOLD` (128).
-      # Adjust for network overrides reported by outbe_getSlashConfig.
+      # Adjust for network overrides reported by the slash-config RPC.
       # Fire when miss count exceeds 80% of the threshold.
       - alert: OutbeProposerMissNearFelony
-        expr: outbe_proposer_miss_count > 102.4
+        expr: reth_outbe_slashing_proposer_misses > 102.4
         for: 2m
         labels:
           severity: warning
@@ -157,14 +159,14 @@ groups:
         annotations:
           summary: "validator {{ $labels.addr }} approaching proposer felony"
           description: |
-            outbe_proposer_miss_count = {{ $value }} for {{ $labels.addr }}.
+            reth_outbe_slashing_proposer_misses = {{ $value }} for {{ $labels.addr }}.
             Default felony threshold is 128 - at this rate the validator
             will be jailed and slashed soon. Investigate node health.
 
       # Validator just transitioned to EXITING (status code 3). This
       # means a slash or voluntary deactivation just happened.
       - alert: OutbeValidatorExiting
-        expr: outbe_validator_status == 3
+        expr: reth_outbe_validatorset_validator_status == 3
         for: 1m
         labels:
           severity: critical
@@ -180,7 +182,7 @@ groups:
       # Validator transitioned to UNBONDING. Permanent exit from
       # consensus participation.
       - alert: OutbeValidatorUnbonding
-        expr: outbe_validator_status == 4
+        expr: reth_outbe_validatorset_validator_status == 4
         for: 1m
         labels:
           severity: critical
@@ -195,7 +197,7 @@ groups:
       # Slash event just happened (any reason). Treats the slash as a
       # signal that needs human attention.
       - alert: OutbeValidatorSlashed
-        expr: rate(outbe_validator_slashed_total[5m]) > 0
+        expr: rate(reth_outbe_slashing_validator_slashed_total[5m]) > 0
         for: 0m
         labels:
           severity: critical
@@ -203,15 +205,14 @@ groups:
         annotations:
           summary: "validator {{ $labels.addr }} slashed (reason={{ $labels.reason }})"
           description: |
-            outbe_validator_slashed_total incremented for
+            reth_outbe_slashing_validator_slashed_total incremented for
             {{ $labels.addr }} (reason={{ $labels.reason }}). Full
             forensic context lives under the `outbe::slashing` log
             target.
 
-      # Felony count climbed for a validator. Cumulative metric, so any
-      # increase is worth investigating.
+      # Felony count is a gauge; use its delta to detect a rise.
       - alert: OutbeFelonyCountIncreased
-        expr: increase(outbe_felony_count[5m]) > 0
+        expr: delta(reth_outbe_slashing_felonies[5m]) > 0
         for: 0m
         labels:
           severity: warning
@@ -219,9 +220,9 @@ groups:
         annotations:
           summary: "felony count rose for {{ $labels.addr }}"
           description: |
-            outbe_felony_count for {{ $labels.addr }} = {{ $value }}.
-            Cumulative metric - any rise indicates a new felony just
-            fired. Cross-reference `outbe_validator_slashed_total`
+            reth_outbe_slashing_felonies rose by {{ $value }} for {{ $labels.addr }}.
+            A positive gauge delta indicates a new felony just
+            fired. Cross-reference `reth_outbe_slashing_validator_slashed_total`
             with the corresponding `reason` label.
 
   - name: outbe-chain.validatorset
@@ -229,7 +230,7 @@ groups:
     rules:
       # Active validator count dropped. f+1 or worse may halt finalization.
       - alert: OutbeActiveValidatorCountDropped
-        expr: outbe_validator_active_count < 4
+        expr: reth_outbe_validatorset_active_validators < 4
         for: 5m
         labels:
           severity: critical
@@ -237,14 +238,14 @@ groups:
         annotations:
           summary: "active validator count = {{ $value }}"
           description: |
-            outbe_validator_active_count fell below the 4-validator
+            reth_outbe_validatorset_active_validators fell below the 4-validator
             minimum quorum needed for healthy finalization. Investigate
             recent EXITING / UNBONDING transitions.
 
       # The next reshare did not resolve a pending validator-set change.
       # This may indicate stuck DKG or operator inattention.
       - alert: OutbeValidatorSetChangePending
-        expr: outbe_validator_pending_set_change == 1
+        expr: reth_outbe_validatorset_set_change_pending == 1
         for: 30m
         labels:
           severity: warning
@@ -252,26 +253,27 @@ groups:
         annotations:
           summary: "validator-set change pending for >30 min"
           description: |
-            outbe_validator_pending_set_change remains 1 for over 30 minutes.
+            reth_outbe_validatorset_set_change_pending remains 1 for over 30 minutes.
             A reshare should have completed by now.
             Check DKG progress and validator availability.
 
   # --- TEE enclave observability (2026-08-22 incident follow-up) ---
   #
+  # Wire metrics below include the Reth --metrics reth_ prefix.
   # Source metrics (node-side, emitted by the tee-canary worker and the
   # enclave-client session in `crates/blockchain/tee` / `crates/blockchain/node`):
-  #   outbe_tee_canary_latency_ms              - canary decrypt round-trip
-  #   outbe_tee_canary_failures_total          - failed canary ticks
-  #   outbe_tee_canary_consecutive_failures    - current failure streak
-  #   outbe_tee_canary_last_ok_timestamp_seconds - unix time of last success
-  #   outbe_tee_heap_bytes{kind=current|peak}  - enclave self-observed heap
+  #   reth_outbe_tee_canary_latency_ms              - canary decrypt round-trip
+  #   reth_outbe_tee_canary_failures_total          - failed canary ticks
+  #   reth_outbe_tee_canary_consecutive_failures    - current failure streak
+  #   reth_outbe_tee_canary_last_ok_timestamp_seconds - unix time of last success
+  #   reth_outbe_tee_enclave_heap_bytes{kind=current|peak}  - enclave self-observed heap
   #                                              (allocator-level proxy for EPC pressure,
   #                                              excluding stacks and fragmentation)
-  #   outbe_tee_enclave_uptime_seconds         - enclave self-reported uptime
+  #   reth_outbe_tee_enclave_uptime_seconds         - enclave self-reported uptime
   #                                              (drop to ~0 = silent restart)
-  #   outbe_tee_request_duration_ms{request}   - per-request client latency
-  #   outbe_tee_reconnect_total{result}        - session reconnects
-  #   outbe_tee_session_generation             - bumps on every reconnect
+  #   reth_outbe_tee_client_request_duration_ms{request}   - per-request client latency
+  #   reth_outbe_tee_client_reconnects_total{result}        - session reconnects
+  #   reth_outbe_tee_client_session_generation             - bumps on every reconnect
   #
   # Host-level RSS of the gramine loader (outside-the-enclave view), when
   # needed manually:
@@ -283,7 +285,7 @@ groups:
     interval: 30s
     rules:
       - alert: OutbeTeeCanaryFailing
-        expr: outbe_tee_canary_consecutive_failures >= 3
+        expr: reth_outbe_tee_canary_consecutive_failures >= 3
         for: 2m
         labels:
           severity: critical
@@ -296,7 +298,7 @@ groups:
             With a small committee, this slows every block (see the 2026-08-22 incident).
 
       - alert: OutbeTeeCanaryStale
-        expr: time() - outbe_tee_canary_last_ok_timestamp_seconds > 300
+        expr: time() - reth_outbe_tee_canary_last_ok_timestamp_seconds > 300
         labels:
           severity: critical
           subsystem: tee
@@ -304,11 +306,9 @@ groups:
           summary: "no successful TEE canary for >5 min on {{ $labels.instance }}"
 
       - alert: OutbeTeeCanaryLatencyHigh
-        # Check how the exporter renders histograms before deployment.
-        # metrics-exporter-prometheus may emit summary quantiles
-        # (outbe_tee_canary_latency_ms{quantile="0.99"}) instead of _bucket
-        # series. Use the series that the running node exposes.
-        expr: histogram_quantile(0.99, sum by (le) (rate(outbe_tee_canary_latency_ms_bucket[10m]))) > 250
+        # install_outbe_prometheus_recorder uses Matcher::Suffix("_ms")
+        # to guarantee histogram _bucket series for this latency metric.
+        expr: histogram_quantile(0.99, sum by (le) (rate(reth_outbe_tee_canary_latency_ms_bucket[10m]))) > 250
         for: 10m
         labels:
           severity: warning
@@ -321,7 +321,7 @@ groups:
 
       - alert: OutbeTeeEnclaveHeapHigh
         # 0.75 * 256MiB enclave budget.
-        expr: outbe_tee_heap_bytes{kind="current"} > 201326592
+        expr: reth_outbe_tee_enclave_heap_bytes{kind="current"} > 201326592
         for: 10m
         labels:
           severity: warning
@@ -331,7 +331,7 @@ groups:
 
       - alert: OutbeTeeEnclaveHeapGrowth
         # >32MiB/h sustained growth = leak suspicion.
-        expr: delta(outbe_tee_heap_bytes{kind="current"}[1h]) > 33554432
+        expr: delta(reth_outbe_tee_enclave_heap_bytes{kind="current"}[1h]) > 33554432
         labels:
           severity: warning
           subsystem: tee
@@ -339,7 +339,7 @@ groups:
           summary: "enclave heap grew >32MiB in the last hour (leak suspicion)"
 
       - alert: OutbeTeeSessionReconnecting
-        expr: increase(outbe_tee_reconnect_total{result="ok"}[15m]) > 3
+        expr: increase(reth_outbe_tee_client_reconnects_total{result="ok"}[15m]) > 3
         labels:
           severity: warning
           subsystem: tee
@@ -348,12 +348,13 @@ groups:
 
   # --- Transaction pool eviction (2026-08-22 incident follow-up) ---
   #
+  # Wire metrics below include the Reth --metrics reth_ prefix.
   # Source metrics (emitted by the node-side pool maintenance loop in
   # `crates/blockchain/txpool/src/maintain.rs`):
-  #   outbe_txpool_stale_evicted_total     - transactions evicted after
+  #   reth_outbe_txpool_stale_evicted_total     - transactions evicted after
   #                                          surviving two consecutive pending
   #                                          snapshots (plus their descendants)
-  #   outbe_txpool_pending_snapshot_size   - pending-set size at the last snapshot
+  #   reth_outbe_txpool_pending_snapshot_txs   - pending-set size at the last snapshot
   #
   # Steady state is zero evictions. The network mines a healthy transaction long
   # before the staleness interval elapses. Sustained evictions mean transactions
@@ -364,7 +365,7 @@ groups:
     interval: 30s
     rules:
       - alert: OutbeTxpoolSustainedStaleEviction
-        expr: increase(outbe_txpool_stale_evicted_total[15m]) > 0
+        expr: increase(reth_outbe_txpool_stale_evicted_total[15m]) > 0
         for: 15m
         labels:
           severity: warning
@@ -379,7 +380,7 @@ groups:
       - alert: OutbeTxpoolPendingBacklog
         # Well below the 10k pending sub-pool cap. A sustained backlog on a
         # low-traffic chain means the pool does not drain transactions.
-        expr: outbe_txpool_pending_snapshot_size > 1000
+        expr: reth_outbe_txpool_pending_snapshot_txs > 1000
         for: 15m
         labels:
           severity: warning
