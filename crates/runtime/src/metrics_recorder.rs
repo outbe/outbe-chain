@@ -140,17 +140,22 @@ fn validate_metric_type(series: &str, kind: &str, rendered: &str, errors: &mut V
                 "_ms series must have type histogram",
             ));
         }
-        let bucket = format!("{series}_bucket{{le=\"");
-        if !rendered
-            .lines()
-            .any(|line| line.trim_start().starts_with(&bucket))
-        {
+        if !has_histogram_bucket(series, rendered) {
             errors.push(taxonomy_error(
                 series,
                 "_ms histogram must have a bucket sample with le",
             ));
         }
     }
+}
+
+fn has_histogram_bucket(series: &str, rendered: &str) -> bool {
+    let bucket = format!("{series}_bucket{{");
+    rendered
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix(&bucket))
+        .filter_map(|sample| sample.split_once('}'))
+        .any(|(labels, _)| labels.starts_with("le=\"") || labels.contains(",le=\""))
 }
 
 #[cfg(test)]
@@ -187,6 +192,10 @@ mod tests {
                     .output()
                     .expect("isolated foreign recorder test");
             assert!(output.status.success(), "{output:?}");
+            assert!(
+                String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+                "{output:?}"
+            );
         }
     }
 
@@ -206,6 +215,8 @@ mod tests {
             }
         });
         metrics::histogram!("outbe_consensus_stage1_probe_duration_ms").record(12.3);
+        metrics::histogram!("outbe_tee_client_request_duration_ms", "request" => "canary")
+            .record(12.3);
         let rendered = recorder.handle().render();
         let series = "reth_outbe_consensus_stage1_probe_duration_ms";
         assert!(
@@ -231,7 +242,9 @@ mod tests {
                      # TYPE reth_outbe_tee_duration_ms histogram\n\
                      reth_outbe_tee_duration_ms_bucket{le=\"0.5\"} 1\n\
                      reth_outbe_tee_duration_ms_sum 0.1\n\
-                     reth_outbe_tee_duration_ms_count 1\n";
+                     reth_outbe_tee_duration_ms_count 1\n\
+                     # TYPE reth_outbe_tee_client_request_duration_ms histogram\n\
+                     reth_outbe_tee_client_request_duration_ms_bucket{request=\"canary\",le=\"0.5\"} 1\n";
         assert_eq!(validate_outbe_metric_taxonomy(valid), Ok(()));
         assert_eq!(
             validate_outbe_metric_taxonomy(
@@ -278,6 +291,16 @@ mod tests {
             (
                 "# TYPE reth_outbe_vrf_duration_ms histogram",
                 "reth_outbe_vrf_duration_ms",
+                "bucket",
+            ),
+            (
+                "# TYPE reth_outbe_tee_duration_ms histogram\nreth_outbe_tee_duration_ms_bucket{request=\"canary\",le=\"0.5\" 1",
+                "reth_outbe_tee_duration_ms",
+                "bucket",
+            ),
+            (
+                "# TYPE reth_outbe_tee_duration_ms histogram\nreth_outbe_tee_duration_ms_bucket{request=\"canary\"} 1",
+                "reth_outbe_tee_duration_ms",
                 "bucket",
             ),
             (
