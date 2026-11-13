@@ -1,8 +1,8 @@
 //! Installed-network-key-only Tribute commands.
 
 use alloy_primitives::{B256, U256};
-use outbe_primitives::tribute_encryption::EncryptedTributeV2;
-use outbe_tee::{
+use outbe_core_common::tribute_encryption::EncryptedTributeV2;
+use outbe_enclave::{
     protocol::{EnclaveResponse, EncryptedTributeOffer},
     tribute_v2,
 };

@@ -19,8 +19,6 @@ pub enum TeeClientVerificationError {
     TeeSidecarUnavailable,
     #[error("TEE sidecar is not configured")]
     TeeSidecarNotConfigured,
-    #[error("invalid Tribute day predecessor version")]
-    InvalidTributeDayPredecessorVersion,
     #[error("finalized admission proof offset exceeds u32")]
     FinalizedAdmissionProofOffsetExceedsU32,
     #[error("finalized admission proof offset overflow")]
@@ -84,7 +82,6 @@ impl From<TeeClientVerificationError> for TransportError {
             TeeClientVerificationError::StreamMissingCallContext
             | TeeClientVerificationError::EnclaveSessionNotConfigured
             | TeeClientVerificationError::TeeSidecarUnavailable
-            | TeeClientVerificationError::InvalidTributeDayPredecessorVersion
             | TeeClientVerificationError::GramineDirectDevOnboardingArtifactNonCanonical {
                 ..
             } => Self::EnclaveError(error.to_string()),

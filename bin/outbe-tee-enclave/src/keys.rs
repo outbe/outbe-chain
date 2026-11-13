@@ -298,18 +298,18 @@ impl EnclaveKeys {
     }
 
     /// Borrow the (dev) offer decrypt key material for a batch call. The salt is
-    /// the fixed protocol constant [`outbe_tee::OFFER_HKDF_SALT`] (clients use the
+    /// the fixed protocol constant [`outbe_enclave::OFFER_HKDF_SALT`] (clients use the
     /// same value), so the derived key is identical on every validator.
     pub fn tribute_offer_key_material(&self) -> TributeOfferKeyMaterial<'_> {
         TributeOfferKeyMaterial {
             tribute_offer_private_key: &self.tribute_offer_secret,
-            salt: &outbe_tee::OFFER_HKDF_SALT,
+            salt: &outbe_enclave::OFFER_HKDF_SALT,
         }
     }
 
     /// Offer decrypt key material using an externally-supplied secret (the
     /// DKG-derived offer secret) with the fixed protocol salt
-    /// [`outbe_tee::OFFER_HKDF_SALT`]. Clients use the same non-secret domain value.
+    /// [`outbe_enclave::OFFER_HKDF_SALT`]. Clients use the same non-secret domain value.
     /// The dev and DKG-derived offer keys share it alike.
     pub fn tribute_offer_key_material_with<'a>(
         &'a self,
@@ -317,7 +317,7 @@ impl EnclaveKeys {
     ) -> TributeOfferKeyMaterial<'a> {
         TributeOfferKeyMaterial {
             tribute_offer_private_key: secret,
-            salt: &outbe_tee::OFFER_HKDF_SALT,
+            salt: &outbe_enclave::OFFER_HKDF_SALT,
         }
     }
 

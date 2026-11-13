@@ -2551,7 +2551,7 @@ fn same_utc_day_reservations_share_series_id_including_midnight_and_next_day_ope
         assert_ne!(r_next_day.series_id, r_midnight.series_id);
         assert_eq!(
             r_next_day.series_id,
-            outbe_primitives::series_id::SeriesId::for_pair(day_0, USD_ISO_CODE, USD_ISO_CODE)
+            outbe_core_common::series_id::SeriesId::for_pair(day_0, USD_ISO_CODE, USD_ISO_CODE)
                 .unwrap()
         );
     });

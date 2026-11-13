@@ -2,15 +2,18 @@
 
 use std::collections::BTreeMap;
 
+use crate::{
+    errors::{Result, TeeError},
+    host::lysis::{LysisNod, LysisRequest, LysisResult},
+};
 use alloy_primitives::U256;
+use outbe_core_common::{
+    nod_encryption::NodTermsV1, series_id::SeriesId, wwd_entity_id::derive_poseidon_entity_id,
+};
 use outbe_lysis::program_v1::{
     execute_with_amounts, LysisArithmeticErrorV1, ObservationValueV1, ObservedTributeV1,
     ProgramErrorV1, ProgramInputV1, TributeInputV1,
 };
-use outbe_primitives::{nod_encryption::NodTermsV1, wwd_entity_id::derive_poseidon_entity_id};
-use outbe_tee::lysis::{LysisNod, LysisRequest, LysisResult};
-
-use crate::errors::{Result, TeeError};
 
 fn rejected() -> TeeError {
     TeeError::TributeOfferReject("Lysis input or computation rejected".into())
@@ -115,7 +118,7 @@ pub fn execute(
             NodTermsV1 {
                 chain_id: request.chain_id,
                 nod_id: outbe_core_common::nod_rules::derive_nod_id(
-                    outbe_primitives::series_id::SeriesId::for_pair(
+                    SeriesId::for_pair(
                         request.emission_day,
                         action.issuance_currency,
                         action.reference_currency,
@@ -221,7 +224,7 @@ pub(crate) mod tests {
             let nod_view_key =
                 crate::nod_encryption::derive_view_key(&nod_key, output.nod.terms.owner).unwrap();
             let owner_load =
-                outbe_tee::nod_decrypt::decrypt_nod_for_owner(&nod_view_key, &output.nod).unwrap();
+                crate::nod_decrypt::decrypt_nod_for_owner(&nod_view_key, &output.nod).unwrap();
             assert_eq!(enclave_load, expected_load);
             assert_eq!(owner_load, expected_load);
             let terms = &output.nod.terms;
@@ -229,7 +232,7 @@ pub(crate) mod tests {
             assert_eq!(
                 terms.nod_id,
                 outbe_core_common::nod_rules::derive_nod_id(
-                    outbe_primitives::series_id::SeriesId::for_pair(
+                    SeriesId::for_pair(
                         request.emission_day,
                         terms.issuance_currency,
                         terms.reference_currency,

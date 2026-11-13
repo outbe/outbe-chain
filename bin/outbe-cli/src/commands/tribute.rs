@@ -292,7 +292,7 @@ async fn offer(
     //    `OFFER_HKDF_SALT` + ChaCha20Poly1305), byte-compatible with the enclave
     //    decrypt path and the node's canary probe.
     let (cipher_text, nonce, eph_pub) =
-        outbe_tee::offer_encrypt::encrypt_tribute_offer(&offer_pub, &plaintext)
+        outbe_enclave::offer_encrypt::encrypt_tribute_offer(&offer_pub, &plaintext)
             .map_err(TributeError::OfferEncryptionFailed)?;
 
     // 4. Build + send `offerTribute` (msg.value MUST be 0).

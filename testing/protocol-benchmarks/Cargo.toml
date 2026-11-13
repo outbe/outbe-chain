@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 outbe-system-common.workspace = true
+outbe-core-common.workspace = true
 outbe-ccaregistry.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
@@ -35,8 +36,7 @@ outbe-primitives = { workspace = true, features = ["bench-utils", "test-utils"] 
 outbe-zk.workspace = true
 outbe-promis = { workspace = true, features = ["test-enclave"] }
 outbe-promisfactory.workspace = true
-outbe-tee.workspace = true
-outbe-enclave.workspace = true
+outbe-enclave = { workspace = true, features = ["engine"] }
 outbe-tribute.workspace = true
 outbe-tributefactory = { workspace = true, features = ["bench-utils"] }
 outbe-vaultrouter = { workspace = true, features = ["test-utils"] }

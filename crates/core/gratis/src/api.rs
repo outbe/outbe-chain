@@ -5,7 +5,7 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-pub use outbe_tee::protocol::{
+pub use outbe_enclave::protocol::{
     FidelityOpOutcome, FidelityOpSection, MineGratisFromPromisResultV1, ModifyAuth,
 };
 
@@ -108,7 +108,7 @@ pub fn burn_pledged(storage: &StorageHandle<'_>, account: Address, amount: U256)
 /// Consume a canonical, settled encrypted NOD without exporting its amount.
 pub fn mint_encrypted_nod(
     storage: StorageHandle<'_>,
-    nod: &outbe_primitives::nod_encryption::EncryptedNodV1,
+    nod: &outbe_core_common::nod_encryption::EncryptedNodV1,
     auth: ModifyAuth,
     fidelity: FidelityOpSection,
 ) -> Result<FidelityOpOutcome> {

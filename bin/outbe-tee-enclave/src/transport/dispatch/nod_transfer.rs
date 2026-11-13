@@ -5,7 +5,7 @@ use crate::{
     transport::SharedTributeOfferKey,
 };
 use alloy_primitives::{keccak256, B256};
-use outbe_tee::{
+use outbe_enclave::{
     nod_transport::{MAX_TRANSFER_BYTES, TRANSFER_CHUNK_BYTES},
     protocol::{EnclaveRequest, EnclaveResponse},
 };
@@ -175,7 +175,8 @@ mod tests {
     fn invalid_transfer_requests_keep_their_error_messages_on_retry() {
         let keys = EnclaveKeys::new([0x43; 32], None).unwrap();
         let offer: SharedTributeOfferKey = Arc::new(OnceLock::new());
-        let forbidden = serde_json::to_vec(&EnclaveRequest::GetPublicKeys).unwrap();
+        let forbidden =
+            serde_json::to_vec(&EnclaveRequest::DiscardNodTransferV1 { id: B256::ZERO }).unwrap();
         for (bytes, expected) in [
             (b"{".as_slice(), "NOD transfer request encoding"),
             (forbidden.as_slice(), "NOD transfer command not permitted"),

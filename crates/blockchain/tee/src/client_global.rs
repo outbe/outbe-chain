@@ -25,8 +25,9 @@ use crate::dcap_protocol::{
     DcapVerificationOutcomeV1,
 };
 use crate::errors::TransportError;
-use crate::protocol::{EnclaveRequest, EnclaveResponse};
+use crate::protocol::{EnclaveRequest, EnclaveResponse, PayloadLane};
 use crate::session::EnclaveSession;
+use crate::tee_call::CallMeta;
 use outbe_primitives::tee_attestation_v1::RegistrationIntentV1;
 
 // Stored once in a process-global OnceLock<Mutex<_>>. It is a single instance for
@@ -40,7 +41,22 @@ pub enum RuntimeEnclaveClient {
 
 impl RuntimeEnclaveClient {
     pub fn request(&mut self, request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
-        let label = request.label();
+        self.request_with_meta(
+            CallMeta {
+                label: request.label(),
+                idempotent: request.is_idempotent(),
+                recordable: false,
+            },
+            request,
+        )
+    }
+
+    pub fn request_with_meta(
+        &mut self,
+        meta: CallMeta,
+        request: &EnclaveRequest,
+    ) -> Result<EnclaveResponse, TransportError> {
+        let label = meta.label;
         let started = std::time::Instant::now();
         let result = match self {
             Self::Development(client) => client.request(request),
@@ -100,30 +116,72 @@ impl EnclaveSessions {
         &self,
         request: &EnclaveRequest,
     ) -> Result<EnclaveResponse, TransportError> {
+        self.canary_request_with_meta(
+            CallMeta {
+                label: request.label(),
+                idempotent: request.is_idempotent(),
+                recordable: false,
+            },
+            request,
+        )
+    }
+
+    pub(crate) fn canary_request_with_meta(
+        &self,
+        meta: CallMeta,
+        request: &EnclaveRequest,
+    ) -> Result<EnclaveResponse, TransportError> {
         if !matches!(
             request,
             EnclaveRequest::Health
                 | EnclaveRequest::GetPublicKeys
-                | EnclaveRequest::ProcessTributeOfferBatch { .. }
-                | EnclaveRequest::ProcessEncryptedTributeOfferBatchV2 { .. }
+                | EnclaveRequest::Payload {
+                    lane: PayloadLane::Canary,
+                    ..
+                }
         ) {
             return Err(TransportError::EnclaveError(
                 "request is not permitted on the canary connection".into(),
             ));
         }
-        with_session(&self.canary, |session| session.request(request))
+        with_session(&self.canary, |session| {
+            session.request_with_meta(meta, request)
+        })
     }
 
     pub(crate) fn account_query_request(
         &self,
         request: &EnclaveRequest,
     ) -> Result<EnclaveResponse, TransportError> {
-        if !matches!(request, EnclaveRequest::DeriveAccountKeys { .. }) {
+        self.account_query_request_with_meta(
+            CallMeta {
+                label: request.label(),
+                idempotent: request.is_idempotent(),
+                recordable: false,
+            },
+            request,
+        )
+    }
+
+    pub(crate) fn account_query_request_with_meta(
+        &self,
+        meta: CallMeta,
+        request: &EnclaveRequest,
+    ) -> Result<EnclaveResponse, TransportError> {
+        if !matches!(
+            request,
+            EnclaveRequest::Payload {
+                lane: PayloadLane::AccountQuery,
+                ..
+            }
+        ) {
             return Err(TransportError::EnclaveError(
                 "request is not permitted on the account-query connection".into(),
             ));
         }
-        with_session(&self.account_queries, |session| session.request(request))
+        with_session(&self.account_queries, |session| {
+            session.request_with_meta(meta, request)
+        })
     }
 }
 
@@ -179,6 +237,18 @@ pub fn try_account_query(
     Some(ENCLAVE_SESSION.get()?.account_query_request(request))
 }
 
+/// Run an authorized account-query [`EnclaveRequest::Payload`] with explicit call metadata.
+pub fn try_account_query_with_meta(
+    meta: CallMeta,
+    request: &EnclaveRequest,
+) -> Option<Result<EnclaveResponse, TransportError>> {
+    Some(
+        ENCLAVE_SESSION
+            .get()?
+            .account_query_request_with_meta(meta, request),
+    )
+}
+
 /// Run only the canary's existing read-only probes on its own authenticated
 /// connection. It acquires no execution-session mutex, including on reconnects.
 pub fn canary_request(request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
@@ -186,6 +256,17 @@ pub fn canary_request(request: &EnclaveRequest) -> Result<EnclaveResponse, Trans
         .get()
         .ok_or(crate::errors::TeeClientVerificationError::EnclaveSessionNotConfigured)?
         .canary_request(request)
+}
+
+/// Run a canary probe [`EnclaveRequest::Payload`] with explicit call metadata.
+pub fn canary_request_with_meta(
+    meta: CallMeta,
+    request: &EnclaveRequest,
+) -> Result<EnclaveResponse, TransportError> {
+    ENCLAVE_SESSION
+        .get()
+        .ok_or(crate::errors::TeeClientVerificationError::EnclaveSessionNotConfigured)?
+        .canary_request_with_meta(meta, request)
 }
 
 /// Read the install-time attestation pin without waiting for enclave I/O.
@@ -378,13 +459,14 @@ fn validate_direct_dev_response(
     if *request_hash != expected {
         return Err(TransportError::UnexpectedResponse);
     }
-    let preimage = crate::response_auth::attestation(
+    let preimage = crate::tee_call::canonical_attestation_preimage(
         b"outbe/tee/gramine-direct-dev-onboarding-result/v2",
         expected,
         onboarding_artifact,
     )
     .map_err(TransportError::codec)?;
-    crate::tribute_v2::verify_attestation(key, &preimage, attestation_tag)?;
+    crate::tee_call::verify_enclave_attestation(key, &preimage, attestation_tag)
+        .map_err(TransportError::attestation)?;
     let artifact = DcapOnboardingArtifactV1::decode_canonical(onboarding_artifact)
         .map_err(|error| TransportError::Attestation(format!("{error:?}")))?;
     if artifact.context != context {

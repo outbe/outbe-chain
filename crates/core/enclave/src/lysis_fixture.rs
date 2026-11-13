@@ -1,14 +1,14 @@
 //! Shared deterministic fixture for domain and daemon Lysis tests.
-use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::{
-    time::WorldwideDay,
-    tribute_encryption::{TributeAmountsV2, TributeContextV2},
-    wwd_entity_id::derive_poseidon_entity_id,
-};
-use outbe_tee::{
+use crate::{
     lysis::LysisRequest,
     protocol::{FidelitySnapshotEntry, FidelitySnapshotRequest},
 };
+use alloy_primitives::{Address, B256, U256};
+use outbe_core_common::{
+    tribute_encryption::{TributeAmountsV2, TributeContextV2},
+    wwd_entity_id::derive_poseidon_entity_id,
+};
+use outbe_primitives::time::WorldwideDay;
 const GROUP_SIG: [u8; 48] = [9; 48];
 
 pub(crate) fn tribute_state_key() -> [u8; 32] {

@@ -49,7 +49,6 @@ use crate::onboarding_upload::{
     CompleteOnboardingArtifactIngestV1, OnboardingArtifactUploadProgressV1,
     OnboardingArtifactUploadSessionV1,
 };
-use crate::process::process_tribute_offer_batch;
 use crate::seal::{EnclaveBootConfig, KeyPolicy, SealHeader, SEAL_FORMAT};
 
 mod dispatch;
@@ -59,7 +58,7 @@ mod session;
 #[cfg(test)]
 mod tests;
 
-pub use dispatch::requests::dispatch;
+pub use dispatch::requests::{dispatch, dispatch_domain};
 
 pub use offer_key::{
     unseal_tribute_offer_and_group_sig_on_boot, DerivedTributeOfferKey, SharedTributeOfferKey,
@@ -100,9 +99,10 @@ use dispatch::onboarding::{
     complete_onboarding_artifact_ingest_response, OnboardingArtifactExpectations,
 };
 
-use dispatch::requests::{
-    dispatch_with_initialization, into_response, DispatchInitializationContext,
-};
+use dispatch::requests::{into_response, DispatchInitializationContext};
+
+#[cfg(test)]
+use dispatch::requests::dispatch_with_initialization;
 
 use offer_key::persist_then_activate_offer_key;
 

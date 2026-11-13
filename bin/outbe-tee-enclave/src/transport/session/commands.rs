@@ -84,7 +84,8 @@ impl CommandSession {
             return Response::Immediate(response);
         }
 
-        let resp = self.dispatch(req, context);
+        let (resp, resolved_label) = self.dispatch(req, context);
+        let req_label = resolved_label.unwrap_or(req_label);
 
         let outcome = if matches!(
             resp,
@@ -104,7 +105,11 @@ impl CommandSession {
         Response::Admitted(resp)
     }
 
-    fn dispatch(&mut self, req: EnclaveRequest, context: ConnectionContext<'_>) -> EnclaveResponse {
+    fn dispatch(
+        &mut self,
+        req: EnclaveRequest,
+        context: ConnectionContext<'_>,
+    ) -> (EnclaveResponse, Option<&'static str>) {
         let ConnectionContext {
             keys,
             offer_key,
@@ -117,18 +122,21 @@ impl CommandSession {
             EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 {
                 request_hash,
                 context,
-            } => match initialization.manifest() {
-                Ok(manifest) => complete_gramine_direct_dev_onboarding_response(
-                    request_hash,
-                    &context,
-                    offer_key.get(),
-                    manifest.as_ref(),
-                ),
-                Err(message) => EnclaveResponse::Error {
-                    message: message.to_string(),
+            } => (
+                match initialization.manifest() {
+                    Ok(manifest) => complete_gramine_direct_dev_onboarding_response(
+                        request_hash,
+                        &context,
+                        offer_key.get(),
+                        manifest.as_ref(),
+                    ),
+                    Err(message) => EnclaveResponse::Error {
+                        message: message.to_string(),
+                    },
                 },
-            },
-            EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 { context } => {
+                None,
+            ),
+            EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 { context } => (
                 match initialization.manifest() {
                     Ok(manifest) => complete_gramine_direct_dev_onboarding_response_v2(
                         context,
@@ -139,22 +147,23 @@ impl CommandSession {
                     Err(message) => EnclaveResponse::Error {
                         message: message.to_string(),
                     },
-                }
-            }
+                },
+                None,
+            ),
             request @ (EnclaveRequest::BeginDcapVerificationV1 { .. }
             | EnclaveRequest::BeginDcapOnboardingVerificationV1 { .. }
             | EnclaveRequest::DcapVerificationChunkV1 { .. }
             | EnclaveRequest::FinishDcapVerificationV1 { .. }) => {
-                self.handle_verification(request, context)
+                (self.handle_verification(request, context), None)
             }
             request @ (EnclaveRequest::BeginUpgradeKeyTransferV1 { .. }
             | EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 { .. }
             | EnclaveRequest::DcapOnboardingArtifactChunkV1 { .. }
             | EnclaveRequest::CommitDcapOnboardingArtifactRecordV1 { .. }
             | EnclaveRequest::FinishDcapOnboardingArtifactIngestV1 { .. }) => {
-                self.handle_upload(request, context)
+                (self.handle_upload(request, context), None)
             }
-            request => dispatch_with_initialization(
+            request => dispatch::requests::dispatch_with_label(
                 request,
                 keys,
                 &mut self.dkg,

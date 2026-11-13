@@ -1,8 +1,8 @@
 //! Deterministic confidential ledger keys, slot ciphertexts, and write authorizations.
 use crate::crypto::{chacha20poly1305_decrypt, chacha20poly1305_encrypt, hkdf_sha256};
 use crate::errors::{Result, TeeError};
+use crate::protocol::{GratisOp, Ledger, PromisOp};
 use alloy_primitives::{Address, B256, U256};
-use outbe_tee::protocol::{GratisOp, Ledger, PromisOp};
 use ring::hmac;
 use zeroize::Zeroizing;
 

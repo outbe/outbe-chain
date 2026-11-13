@@ -1,16 +1,16 @@
-//! `outbe-tee` - host-side TEE integration crate for the Tribute SGX enclave PoC.
+//! `outbe-tee` - host-side TEE transport, attestation, DKG, and witness infrastructure.
 //!
-//! Architecture: the DKG actor and all
-//! gossip / ceremony bookkeeping live on the **node (host)**. The secret
-//! material and key assembly live **inside the enclave**. This crate is the
-//! host-side half: the neutral wire-protocol types, the framed-UDS + Noise-IK
-//! codec, and the blocking client that the precompile path uses.
+//! Architecture: the DKG actor and all gossip / ceremony bookkeeping live on
+//! the **node (host)**. The secret material and key assembly live **inside the
+//! enclave**. This crate is the pure blockchain-layer TEE infrastructure:
+//! domain-neutral wire framing + Noise-IK sessions, DCAP verification and
+//! onboarding, witness tape recording/replay, and domain-neutral client AEAD
+//! and attestation primitives (`tee_encrypt`, `tee_decrypt`, `tee_call`).
 //!
-//! This crate MUST NOT contain secret-bearing cryptography. That cryptography
-//! lives only in `bin/outbe-tee-enclave`. Here we keep the message contract and
-//! transport.
+//! This crate MUST NOT contain enclave-resident secret material or domain
+//! protocol logic. Enclave-resident secrets live in `bin/outbe-tee-enclave` and
+//! `crates/core/enclave`.
 
-pub mod balance_client;
 mod byte_cursor;
 pub mod call_context;
 pub mod canary;
@@ -21,43 +21,26 @@ pub mod dcap_protocol;
 #[cfg(feature = "native-dcap")]
 pub mod dcap_v1;
 pub mod errors;
-pub mod fidelity_decrypt;
 pub mod finalized_admission;
-pub mod gratis_decrypt;
 pub mod host_collateral;
 pub mod journal_storage;
-pub mod lysis;
 mod metrics;
 #[cfg(feature = "native-dcap")]
 pub mod native_qvl;
-pub mod nod_decrypt;
-pub mod nod_mine;
-pub mod nod_transport;
 pub mod node_host;
-pub mod offer_encrypt;
-mod owner_local_open;
-pub mod promis_decrypt;
-pub use promis_decrypt::decrypt_promis_balance;
 pub mod protocol;
 pub mod quote;
 pub mod registry_view;
 pub mod release_dcap_artifacts;
 pub mod remote_session;
-pub mod response_auth;
 pub mod session;
 pub mod tee_attestation_activation;
+pub mod tee_call;
+pub mod tee_decrypt;
 pub mod tee_dkg;
+pub mod tee_encrypt;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
-#[cfg(test)]
-#[path = "../../../../testing/fixtures/transition_key_ready.rs"]
-mod transition_key_ready;
-pub mod tribute_client;
-pub mod tribute_day;
-pub mod tribute_day_client;
-pub mod tribute_decrypt;
-pub mod tribute_source;
-pub mod tribute_v2;
 pub mod upgrade_journal;
 pub mod upgrade_transfer;
 pub mod witness;
@@ -65,25 +48,23 @@ pub use witness::consensus_call;
 
 pub use canary::{TeeEnclaveHealthChannel, TeeEnclaveHealthSnapshot, TeeEnclaveHealthState};
 pub use client::{
-    verify_fidelity_cohort_attestation, verify_fidelity_query_attestation,
-    verify_fidelity_snapshot_attestation, verify_gratis_op_attestation,
-    verify_mine_gratis_from_promis_attestation, verify_peer_quote, verify_promis_op_attestation,
-    verify_tribute_offer_attestation, AttestedPeerKeys, AuthorizedEnclaveClient, EnclaveClient,
+    verify_peer_quote, AttestedPeerKeys, AuthorizedEnclaveClient, EnclaveClient,
     EnclaveInitializationChallenge, GeneratedDcapQuoteV1, NodeHostNoiseKey, RemoteEnclaveClient,
     RemoteEnclavePublicKeysV1, RemoteSessionTicketV1,
 };
 pub use client_global::{
-    generate_dcap_quote_v1, install_authorized_enclave_client, install_enclave_client,
-    is_enclave_configured, prepare_gramine_direct_dev_onboarding_artifact_v1,
-    resident_offer_public_key_state_v1, resident_offer_public_key_v1, try_account_query,
-    try_with_enclave, verify_dcap_evidence_v1, verify_dcap_registration_and_seal_v1, InstallError,
+    canary_attestation_pub, canary_request, canary_request_with_meta, generate_dcap_quote_v1,
+    install_authorized_enclave_client, install_enclave_client, is_enclave_configured,
+    prepare_gramine_direct_dev_onboarding_artifact_v1, resident_offer_public_key_state_v1,
+    resident_offer_public_key_v1, try_account_query, try_account_query_with_meta, try_with_enclave,
+    verify_dcap_evidence_v1, verify_dcap_registration_and_seal_v1, InstallError,
     RegistrationVerificationRequest, RuntimeEnclaveClient,
 };
 #[cfg(feature = "native-dcap")]
 pub use dcap_v1::{dcap_collateral_validity_window_v1, DcapCollateralValidityWindowV1};
 pub use errors::{
-    BalanceClientError, CallContextError, CallContextProviderError, DcapFixtureError,
-    DevIdentityMismatchError, LocalCryptoError, QuoteParseError, TransportError,
+    CallContextError, CallContextProviderError, DcapFixtureError, DevIdentityMismatchError,
+    PayloadAttestationError, PayloadRejectedError, QuoteParseError, TeeCryptoError, TransportError,
 };
 pub use host_collateral::acquire_dcap_collateral_v1;
 pub use node_host::{
@@ -106,6 +87,7 @@ pub use remote_session::{
     RemoteSessionExpectationV1, RpcTrustedRemoteSessionV1,
 };
 pub use session::EnclaveSession;
+pub use tee_call::{CallMeta, TeeAttestationError};
 pub use tee_dkg::{CeremonyCoordinator, CeremonyOutcome, EnclaveChannel};
 
 /// Noise pattern for the node <-> enclave channel: **IK** (the responder/enclave
@@ -125,15 +107,3 @@ pub const SGX_COMBINED_SEAL_MAGIC: &[u8; 5] = b"TSGX1";
 
 /// Encoded `TSEAL` header byte length (excluding magic): `1 + 1 + 2 + 8 + 8 + 12`.
 pub const SEAL_HEADER_LEN: usize = 32;
-
-/// Fixed, **public** HKDF-SHA256 salt for the tribute offer encryption key.
-///
-/// An HKDF salt provides domain separation, not confidentiality. It is not a
-/// secret. It is a single protocol constant (the same for every enclave and every
-/// client), so the derived ChaCha20Poly1305 key is deterministic across all
-/// validators. A client encrypts an offer with
-/// `key = HKDF-SHA256(salt = OFFER_HKDF_SALT, ikm = ECDHE(ephemeral, tribute_offer_pub),
-/// info = b"tribute-factory-encryption")` and ChaCha20Poly1305 over the JSON
-/// payload - the only public input the client must know besides the on-chain
-/// offer public key. Value: ASCII `"outbe/tribute/offer-salt/v1"`, zero-padded.
-pub const OFFER_HKDF_SALT: [u8; 32] = *b"outbe/tribute/offer-salt/v1\0\0\0\0\0";

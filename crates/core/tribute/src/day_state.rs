@@ -1,16 +1,13 @@
 //! Storage boundary for encrypted daily amounts and transient calculation views.
 
 use alloy_primitives::{keccak256, B256, U256};
-use outbe_primitives::{
-    error::Result,
-    time::WorldwideDay,
-    tribute_day_encryption::{
-        EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1, EncryptedTributeLeagueAmountV1,
-    },
+use outbe_core_common::tribute_day_encryption::{
+    EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1, EncryptedTributeLeagueAmountV1,
 };
-use outbe_tee::tribute_day::{
+use outbe_enclave::tribute_day::{
     TributeDayOpRequestV2, TributeDayOperationV2, TributeLeagueOpRequestV1,
 };
+use outbe_primitives::{error::Result, time::WorldwideDay};
 
 use crate::{day_schema::StoredDayTotals, schema::day_league_key, DayTotals, TributeContract};
 

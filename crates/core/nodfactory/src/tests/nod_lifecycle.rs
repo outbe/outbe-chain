@@ -1690,7 +1690,7 @@ fn a_group_settled_in_full_closes_with_zero_forfeit() {
     assert_eq!(closed.len(), 1);
     assert_eq!(
         (
-            outbe_primitives::series_id::SeriesId::from(closed[0].seriesId),
+            outbe_core_common::series_id::SeriesId::from(closed[0].seriesId),
             closed[0].issuanceCurrency,
             closed[0].referenceCurrency,
             closed[0].forfeitedCount,
@@ -1700,7 +1700,7 @@ fn a_group_settled_in_full_closes_with_zero_forfeit() {
         (series_id, issuance, reference, 0, 0, U256::ZERO)
     );
     assert_eq!(
-        outbe_primitives::series_id::SeriesId::for_pair(
+        outbe_core_common::series_id::SeriesId::for_pair(
             series_id.day(),
             closed[0].issuanceCurrency,
             closed[0].referenceCurrency

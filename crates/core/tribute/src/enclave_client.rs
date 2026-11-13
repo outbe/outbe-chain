@@ -3,21 +3,21 @@
 use std::collections::BTreeMap;
 
 use alloy_primitives::{B256, U256};
-use outbe_primitives::{
-    time::WorldwideDay,
+use outbe_core_common::{
     tribute_day_encryption::{
         EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1, EncryptedTributeLeagueAmountV1,
     },
     tribute_encryption::{EncryptedTributeV2, TributeAmountsV2},
 };
-use outbe_tee::{
+use outbe_enclave::{
     nod_mine::{IssueNodFromTributeOutcomeV1, IssueNodFromTributeRequestV1},
     tribute_day::{
         LysisFractionsRequestV1, LysisFractionsResultV1, TributeDayOpRequestV2,
         TributeLeagueOpRequestV1,
     },
-    TransportError,
 };
+use outbe_primitives::time::WorldwideDay;
+use outbe_tee::TransportError;
 
 pub(crate) fn apply_day_operation(
     request: TributeDayOpRequestV2,
@@ -28,7 +28,7 @@ pub(crate) fn apply_day_operation(
     }) {
         return result.map_err(crate::errors::enclave_transport_error);
     }
-    outbe_tee::tribute_day_client::apply_day_operation(request)
+    outbe_enclave::tribute_day_client::apply_day_operation(request)
 }
 
 pub(crate) fn apply_league_operation(
@@ -40,7 +40,7 @@ pub(crate) fn apply_league_operation(
     }) {
         return result.map_err(crate::errors::enclave_transport_error);
     }
-    outbe_tee::tribute_day_client::apply_league_operation(request)
+    outbe_enclave::tribute_day_client::apply_league_operation(request)
 }
 
 pub(crate) fn read_league_amount(
@@ -52,7 +52,7 @@ pub(crate) fn read_league_amount(
     {
         return result.map_err(crate::errors::enclave_transport_error);
     }
-    outbe_tee::tribute_day_client::read_league_amount(record)
+    outbe_enclave::tribute_day_client::read_league_amount(record)
 }
 
 pub(crate) fn execute_lysis_fractions(
@@ -64,7 +64,7 @@ pub(crate) fn execute_lysis_fractions(
     }) {
         return result.map_err(crate::errors::enclave_transport_error);
     }
-    outbe_tee::tribute_day_client::execute_lysis_fractions(request)
+    outbe_enclave::tribute_day_client::execute_lysis_fractions(request)
 }
 
 #[cfg(test)]
@@ -77,7 +77,7 @@ pub(crate) fn read_day_fractions(
     {
         return result.map_err(crate::errors::enclave_transport_error);
     }
-    outbe_tee::tribute_day_client::read_day_fractions(record)
+    outbe_enclave::tribute_day_client::read_day_fractions(record)
 }
 
 pub(crate) fn seal_day_fractions(
@@ -117,7 +117,7 @@ pub(crate) fn issue_nod_from_tribute(
     }) {
         return result.map_err(crate::errors::enclave_transport_error);
     }
-    outbe_tee::nod_mine::issue_nod_from_tribute(request)
+    outbe_enclave::nod_mine::issue_nod_from_tribute(request)
 }
 
 pub(crate) fn read_day_amount(
@@ -129,7 +129,7 @@ pub(crate) fn read_day_amount(
     {
         return result.map_err(crate::errors::enclave_transport_error);
     }
-    outbe_tee::tribute_day_client::read_day_amount(record)
+    outbe_enclave::tribute_day_client::read_day_amount(record)
 }
 
 pub(crate) fn read_amounts(
@@ -141,7 +141,7 @@ pub(crate) fn read_amounts(
     }) {
         return result.map_err(crate::errors::enclave_transport_error);
     }
-    outbe_tee::tribute_client::read_tribute_amounts(std::slice::from_ref(record))?
+    outbe_enclave::tribute_client::read_tribute_amounts(std::slice::from_ref(record))?
         .into_iter()
         .next()
         .ok_or(TransportError::UnexpectedResponse)
@@ -220,7 +220,7 @@ pub mod test_enclave {
             };
             contract.apply_day_amount(
                 totals.worldwide_day,
-                outbe_tee::tribute_day::TributeDayOperationV2::AdjustTransient {
+                outbe_enclave::tribute_day::TributeDayOperationV2::AdjustTransient {
                     nominal_amount_minor: delta,
                     add,
                 },
@@ -232,9 +232,9 @@ pub mod test_enclave {
     pub fn encrypted_fixture(
         tribute: &crate::TributeData,
         chain_id: u64,
-    ) -> outbe_primitives::error::Result<outbe_primitives::tribute_encryption::EncryptedTributeV2>
+    ) -> outbe_primitives::error::Result<outbe_core_common::tribute_encryption::EncryptedTributeV2>
     {
-        use outbe_primitives::tribute_encryption::{TributeAmountsV2, TributeContextV2};
+        use outbe_core_common::tribute_encryption::{TributeAmountsV2, TributeContextV2};
         outbe_enclave::tribute_encryption::encrypt_tribute(
             &NETWORK_SECRET,
             TributeContextV2 {

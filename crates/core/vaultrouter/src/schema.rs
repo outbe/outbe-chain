@@ -47,7 +47,7 @@ pub struct LiquidityReservation {
     #[attribute(order = 15)]
     pub source: Address,
     #[attribute(order = 16)]
-    pub series_id: outbe_primitives::series_id::SeriesId,
+    pub series_id: outbe_core_common::series_id::SeriesId,
     #[attribute(order = 17)]
     pub call_start_day: u32,
     #[attribute(order = 18)]

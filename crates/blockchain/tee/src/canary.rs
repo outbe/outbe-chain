@@ -48,7 +48,7 @@ pub struct TeeEnclaveHealthSnapshot {
     pub state: TeeEnclaveHealthState,
     /// Unix milliseconds of the last successful canary decrypt.
     pub last_ok_unix_ms: Option<u64>,
-    /// Round-trip of the last successful canary `ProcessTributeOfferBatch`.
+    /// Round-trip of the last successful canary decrypt probe.
     pub last_canary_latency_ms: Option<u64>,
     pub consecutive_failures: u64,
     /// Class/short description of the last failure (never key material).

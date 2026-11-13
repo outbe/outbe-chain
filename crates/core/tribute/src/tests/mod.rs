@@ -1,10 +1,11 @@
 use alloy_primitives::{address, Address, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
+use outbe_core_common::wwd_entity_id::derive_poseidon_entity_id;
 use outbe_primitives::addresses::TRIBUTE_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result as PrecompileResult};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::wwd_entity_id::{derive_poseidon_entity_id, WwdEntityId};
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::{TributeContract, TributeData};
 
@@ -838,7 +839,7 @@ fn failed_burn_transaction_restores_tribute_state_and_events() {
 fn encrypted_retirement_preserves_frozen_nominal_after_live_total_is_zero() {
     with_process_ready_tribute(|tc| {
         let plain = sample_tribute();
-        let context = outbe_primitives::tribute_encryption::TributeContextV2 {
+        let context = outbe_core_common::tribute_encryption::TributeContextV2 {
             chain_id: 1,
             tribute_id: plain.tribute_id,
             owner: plain.owner,
@@ -851,7 +852,7 @@ fn encrypted_retirement_preserves_frozen_nominal_after_live_total_is_zero() {
         let encrypted = outbe_enclave::tribute_encryption::encrypt_tribute(
             &crate::enclave_client::test_enclave::NETWORK_SECRET,
             context,
-            &outbe_primitives::tribute_encryption::TributeAmountsV2 {
+            &outbe_core_common::tribute_encryption::TributeAmountsV2 {
                 issuance_amount_minor: plain.issuance_amount_minor,
                 nominal_amount_minor: plain.nominal_amount_minor,
             },

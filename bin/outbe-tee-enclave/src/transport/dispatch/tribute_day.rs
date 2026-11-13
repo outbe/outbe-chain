@@ -1,8 +1,8 @@
 use alloy_primitives::B256;
-use outbe_primitives::tribute_day_encryption::{
+use outbe_core_common::tribute_day_encryption::{
     EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1, EncryptedTributeLeagueAmountV1,
 };
-use outbe_tee::{
+use outbe_enclave::{
     protocol::EnclaveResponse,
     tribute_day::{self, LysisFractionsRequestV1, TributeDayOpRequestV2, TributeLeagueOpRequestV1},
 };

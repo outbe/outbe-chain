@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use clap::{Args, Parser, Subcommand};
 use eyre::{bail, ensure, Result, WrapErr as _};
 use xtask::{
-    protocol_bench,
+    layer_boundaries, protocol_bench,
     release::{elf, sgx, toolchain},
     stablecoin,
 };
@@ -18,6 +18,11 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Enforce crates/blockchain dependency and source-inclusion layer boundaries.
+    CheckLayerBoundaries {
+        #[arg(long)]
+        repo_root: Option<PathBuf>,
+    },
     /// Build, verify and publish release artifacts.
     Release(Box<ReleaseArgs>),
     /// Validate Stablecoin V1 repository and genesis invariants.
@@ -345,6 +350,17 @@ enum SgxCommand {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Command::CheckLayerBoundaries { repo_root } => {
+            let root = match repo_root {
+                Some(path) => path,
+                None => sgx::repository_root()?,
+            };
+            let report = layer_boundaries::check_layer_boundaries(&root)?;
+            println!(
+                "crates/blockchain layer boundaries ok: {} packages, {} Rust source files, {} verified inclusions",
+                report.blockchain_packages, report.scanned_source_files, report.verified_inclusions,
+            );
+        }
         Command::ProtocolBench(arguments) => {
             let repo_root = sgx::repository_root()?;
             let (action, options) = match arguments.command {

@@ -8,7 +8,7 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-pub use outbe_tee::protocol::{FidelityCohortOp, FidelityOpOutcome, FidelityOpSection};
+pub use outbe_enclave::protocol::{FidelityCohortOp, FidelityOpOutcome, FidelityOpSection};
 
 use crate::schema::FidelityContract;
 

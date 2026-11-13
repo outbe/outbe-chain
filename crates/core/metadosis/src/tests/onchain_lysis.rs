@@ -58,7 +58,7 @@ fn fixture_with_amounts(limit: u64, amounts: &[u64]) -> HashMapStorageProvider {
                         let owner = Address::repeat_byte(u8::try_from(index + 1).unwrap());
                         let amount = U256::from(*amount);
                         tribute.issue(&outbe_tribute::TributeData {
-                            tribute_id: outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(
+                            tribute_id: outbe_core_common::wwd_entity_id::derive_poseidon_entity_id(
                                 owner, WWD,
                             ),
                             owner,
@@ -238,7 +238,7 @@ fn failed_metadosis_forfeits_tributes() {
             let mut tribute = TributeContract::new(storage.clone());
             for byte in 1..=3u8 {
                 tribute
-                    .clean(outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(
+                    .clean(outbe_core_common::wwd_entity_id::derive_poseidon_entity_id(
                         Address::repeat_byte(byte),
                         WWD,
                     ))

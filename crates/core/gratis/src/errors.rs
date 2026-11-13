@@ -3,8 +3,8 @@
 use crate::precompile::IGratis;
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolError;
+use outbe_enclave::protocol::EnclaveResponse;
 use outbe_primitives::error::PrecompileError;
-use outbe_tee::protocol::EnclaveResponse;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -83,9 +83,11 @@ impl From<GratisFatalError> for PrecompileError {
     }
 }
 
-pub(crate) fn map_nod_transport_error(err: outbe_tee::TransportError) -> PrecompileError {
+pub(crate) fn map_nod_transport_error(err: outbe_enclave::EnclaveClientError) -> PrecompileError {
     match err {
-        outbe_tee::TransportError::NodMintRejected(reason) => GratisError::Rejected(reason).into(),
+        outbe_enclave::EnclaveClientError::NodMintRejected { reason } => {
+            GratisError::Rejected(reason).into()
+        }
         other => GratisFatalError::EncryptedNodEnclaveFailed(other.to_string()).into(),
     }
 }

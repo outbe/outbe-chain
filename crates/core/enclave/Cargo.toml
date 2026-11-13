@@ -5,17 +5,32 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+default = ["host"]
+host = []
+engine = [
+    "host",
+    "dep:outbe-lysis",
+    "dep:outbe-fidelity-math",
+    "dep:outbe-zk",
+    "dep:ark-bn254",
+    "dep:ark-ff",
+    "dep:rand_core",
+]
+dev-keys = ["engine"]
+test-utils = ["host", "outbe-tee/test-utils"]
+
 [dependencies]
 outbe-system-common.workspace = true
 outbe-tee.workspace = true
 outbe-primitives.workspace = true
 outbe-core-common.workspace = true
-outbe-lysis.workspace = true
-outbe-fidelity-math.workspace = true
-outbe-zk.workspace = true
+outbe-lysis = { workspace = true, optional = true }
+outbe-fidelity-math = { workspace = true, optional = true }
+outbe-zk = { workspace = true, optional = true }
 alloy-primitives.workspace = true
-ark-bn254.workspace = true
-ark-ff.workspace = true
+ark-bn254 = { workspace = true, optional = true }
+ark-ff = { workspace = true, optional = true }
 ring.workspace = true
 x25519-dalek.workspace = true
 ed25519-dalek.workspace = true
@@ -25,9 +40,10 @@ serde.workspace = true
 serde_json.workspace = true
 hex.workspace = true
 postcard.workspace = true
-rand_core.workspace = true
+rand_core = { workspace = true, optional = true }
 
 [dev-dependencies]
+outbe-enclave = { path = ".", features = ["engine", "dev-keys", "test-utils"] }
 k256.workspace = true
 proptest.workspace = true
 

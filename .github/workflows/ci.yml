@@ -240,6 +240,29 @@ jobs:
               exit 1
             fi
           done
+          for pkg in outbe-chain outbe-cli; do
+            enclave_features="$(cargo tree --locked --package "${pkg}" -e=features,no-dev -i outbe-enclave --depth 1)"
+            for forbidden in engine dev-keys test-utils; do
+              if grep -Eq "outbe-enclave feature \"${forbidden}\"" <<<"${enclave_features}"; then
+                echo "error: outbe-enclave feature \"${forbidden}\" is enabled in ${pkg} production dependency graph" >&2
+                exit 1
+              fi
+            done
+          done
+          prod_enclave_features="$(cargo tree --locked --package outbe-chain --features outbe-chain/production-enclave -e=features,no-dev -i outbe-enclave --depth 1)"
+          for forbidden in engine dev-keys test-utils; do
+            if grep -Eq "outbe-enclave feature \"${forbidden}\"" <<<"${prod_enclave_features}"; then
+              echo "error: outbe-enclave feature \"${forbidden}\" is enabled under outbe-chain/production-enclave" >&2
+              exit 1
+            fi
+          done
+          sidecar_enclave_features="$(cargo tree --locked --package outbe-tee-enclave -e=features,no-dev -i outbe-enclave --depth 1)"
+          for forbidden in dev-keys test-utils; do
+            if grep -Eq "outbe-enclave feature \"${forbidden}\"" <<<"${sidecar_enclave_features}"; then
+              echo "error: outbe-enclave feature \"${forbidden}\" is enabled in outbe-tee-enclave production dependency graph" >&2
+              exit 1
+            fi
+          done
           echo "enclave stand-in production boundary: OK"
       - name: Ensure consensus does not depend on EVM
         shell: bash
@@ -254,6 +277,8 @@ jobs:
             exit 1
           fi
           echo "consensus dependency boundary: OK"
+      - name: Enforce crates/blockchain layer boundaries
+        run: cargo xtask check-layer-boundaries
 
   # Non-blocking audit jobs (continue-on-error). Promote to required after the
   # first clean run on main.

@@ -6,11 +6,11 @@ use crate::{
     transport::SharedTributeOfferKey,
 };
 use alloy_primitives::B256;
-use outbe_primitives::{
+use outbe_core_common::{
     nod_encryption::{EncryptedNodGroupLoadV1, EncryptedNodV1, NodQuoteContextV1, NodTermsV1},
     tribute_encryption::EncryptedTributeV2,
 };
-use outbe_tee::{
+use outbe_enclave::{
     nod_mine::{
         self, IssueNodFromTributeRequestV1, MineEncryptedNodRequestV1, NodGroupLoadOpRequestV1,
     },
@@ -277,7 +277,7 @@ pub(super) fn execute_lysis(
     keys: &EnclaveKeys,
     offer: &SharedTributeOfferKey,
     chain: B256,
-    request: &outbe_tee::lysis::LysisRequest,
+    request: &outbe_enclave::lysis::LysisRequest,
 ) -> EnclaveResponse {
     response((|| -> EnclaveResult<EnclaveResponse> {
         let key = offer
@@ -293,7 +293,7 @@ pub(super) fn execute_lysis(
             .map_err(|_| TransportDispatchError::NodKeyUnavailable)?;
         let fidelity = crate::fidelity::derive_fidelity_state_key(key.group_sig(), chain, 0)
             .map_err(|_| TransportDispatchError::FidelityKeyUnavailable)?;
-        let inputs = outbe_tee::lysis::inputs_hash(request)
+        let inputs = outbe_enclave::lysis::inputs_hash(request)
             .map_err(|_| TransportDispatchError::InvalidLysisInputs)?;
         let result = match crate::lysis::execute(&tribute_key, &nod_key, &fidelity, request) {
             Ok(result) => result,
@@ -301,13 +301,13 @@ pub(super) fn execute_lysis(
                 return Ok(EnclaveResponse::LysisRejected {
                     inputs_canonical_hash: inputs,
                     attestation_tag: keys
-                        .sign_attestation(&outbe_tee::lysis::rejection_preimage(inputs))
+                        .sign_attestation(&outbe_enclave::lysis::rejection_preimage(inputs))
                         .to_vec(),
                 });
             }
             Err(error) => return Err(error.into()),
         };
-        let preimage = outbe_tee::lysis::result_preimage(inputs, &result)
+        let preimage = outbe_enclave::lysis::result_preimage(inputs, &result)
             .map_err(|_| TransportDispatchError::InvalidLysisResult)?;
         Ok(EnclaveResponse::LysisExecuted {
             result: Box::new(result),
@@ -325,7 +325,7 @@ mod tests {
 
     #[test]
     fn lysis_dispatch_requires_resident_chain_and_attests_ready_nods() {
-        use outbe_tee::protocol::EnclaveRequest;
+        use outbe_enclave::protocol::EnclaveRequest;
         let request = crate::lysis_fixture::fixture();
         let keys = EnclaveKeys::new([0x43; 32], None).unwrap();
         let offer: SharedTributeOfferKey = Arc::new(OnceLock::new());
@@ -346,13 +346,11 @@ mod tests {
             execute_lysis(&keys, &offer, B256::ZERO, &request),
             EnclaveResponse::Error { .. }
         ));
-        let mut dkg = crate::dkg::DkgSessionStore::new();
-        let response = crate::transport::dispatch(
+        let response = crate::transport::dispatch_domain(
             EnclaveRequest::ExecuteLysis {
                 request: Box::new(request.clone()),
             },
             &keys,
-            &mut dkg,
             &offer,
             chain,
         );
@@ -366,21 +364,21 @@ mod tests {
         };
         assert_eq!(
             inputs_canonical_hash,
-            outbe_tee::lysis::inputs_hash(&request).unwrap()
+            outbe_enclave::lysis::inputs_hash(&request).unwrap()
         );
         assert_eq!(result.nods.len(), request.tributes.len());
-        outbe_tee::tribute_v2::verify_attestation(
+        outbe_enclave::tribute_v2::verify_attestation(
             &keys.attestation_pub(),
-            &outbe_tee::lysis::result_preimage(inputs_canonical_hash, &result).unwrap(),
+            &outbe_enclave::lysis::result_preimage(inputs_canonical_hash, &result).unwrap(),
             &attestation_tag,
         )
         .unwrap();
         let mut different = request.clone();
         different.timestamp += 1;
-        assert!(outbe_tee::tribute_v2::verify_attestation(
+        assert!(outbe_enclave::tribute_v2::verify_attestation(
             &keys.attestation_pub(),
-            &outbe_tee::lysis::result_preimage(
-                outbe_tee::lysis::inputs_hash(&different).unwrap(),
+            &outbe_enclave::lysis::result_preimage(
+                outbe_enclave::lysis::inputs_hash(&different).unwrap(),
                 &result
             )
             .unwrap(),
@@ -413,17 +411,17 @@ mod tests {
         };
         assert_eq!(
             inputs_canonical_hash,
-            outbe_tee::lysis::inputs_hash(&request).unwrap()
+            outbe_enclave::lysis::inputs_hash(&request).unwrap()
         );
-        outbe_tee::tribute_v2::verify_attestation(
+        outbe_enclave::tribute_v2::verify_attestation(
             &keys.attestation_pub(),
-            &outbe_tee::lysis::rejection_preimage(inputs_canonical_hash),
+            &outbe_enclave::lysis::rejection_preimage(inputs_canonical_hash),
             &attestation_tag,
         )
         .unwrap();
-        assert!(outbe_tee::tribute_v2::verify_attestation(
+        assert!(outbe_enclave::tribute_v2::verify_attestation(
             &keys.attestation_pub(),
-            &outbe_tee::lysis::rejection_preimage(B256::ZERO),
+            &outbe_enclave::lysis::rejection_preimage(B256::ZERO),
             &attestation_tag,
         )
         .is_err());

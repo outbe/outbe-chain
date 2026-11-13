@@ -5,6 +5,7 @@ use outbe_credisfactory::precompile::ICredisFactory;
 use outbe_enclave::gratis::{
     decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
 };
+use outbe_enclave::protocol::{GratisOp, ModifyAuth};
 use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratis::precompile::IGratis;
@@ -22,7 +23,6 @@ use outbe_primitives::{
     storage::{StorageHandle, SubCallInput, SubCallStatus},
     time::{previous_date_key, timestamp_to_date_key},
 };
-use outbe_tee::protocol::{GratisOp, ModifyAuth};
 use outbe_vaultrouter::{
     api::IVaultRouter,
     test_support::{register_source, register_target},
@@ -170,7 +170,7 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
         reference_currency: 840,
         call_anchor_price_minor: U256::from(2_000_000),
         source: OWNER,
-        series_id: outbe_primitives::series_id::SeriesId::for_pair(closed_day, 840, 840)
+        series_id: outbe_core_common::series_id::SeriesId::for_pair(closed_day, 840, 840)
             .expect("series id"),
         call_start_day: outbe_primitives::time::first_full_day(NOW).expect("date step"),
         call_rate: call_terms.call_rate,

@@ -14,7 +14,7 @@ pub(super) fn resolve_price_day(
 
 type SeriesMetaMap = std::collections::BTreeMap<
     alloy_primitives::B256,
-    (outbe_primitives::series_id::SeriesId, u16, u16, U256),
+    (outbe_core_common::series_id::SeriesId, u16, u16, U256),
 >;
 
 fn collect_active_leagues(
@@ -24,7 +24,7 @@ fn collect_active_leagues(
     Vec<(
         u16,
         u32,
-        outbe_primitives::tribute_day_encryption::EncryptedTributeLeagueAmountV1,
+        outbe_core_common::tribute_day_encryption::EncryptedTributeLeagueAmountV1,
     )>,
 > {
     let mut leagues = Vec::new();
@@ -48,7 +48,7 @@ fn collect_lysis_tributes(
     price_day: u32,
     lysis_limit_minor: U256,
 ) -> Result<(
-    Vec<outbe_tee::tribute_day::LysisTributeInputV1>,
+    Vec<outbe_enclave::tribute_day::LysisTributeInputV1>,
     SeriesMetaMap,
 )> {
     let mut tributes = Vec::new();
@@ -69,7 +69,7 @@ fn collect_lysis_tributes(
             lysis_limit_minor,
             &mut series_meta,
         )?;
-        tributes.push(outbe_tee::tribute_day::LysisTributeInputV1 {
+        tributes.push(outbe_enclave::tribute_day::LysisTributeInputV1 {
             tribute: encrypted,
             league,
             series_scope,
@@ -125,7 +125,7 @@ pub(super) fn compute_and_record_metadosis_fractions(
     let (tributes, series_meta) =
         collect_lysis_tributes(contract, &storage, day, price_day, lysis_limit_minor)?;
     let result = crate::enclave_client::execute_lysis_fractions(
-        outbe_tee::tribute_day::LysisFractionsRequestV1 {
+        outbe_enclave::tribute_day::LysisFractionsRequestV1 {
             chain_id: storage.chain_id()?,
             worldwide_day: day,
             lysis_limit_minor,
@@ -169,8 +169,8 @@ fn series_of(
     price_day: u32,
     issuance_currency: u16,
     reference_currency: u16,
-) -> Result<outbe_primitives::series_id::SeriesId> {
-    outbe_primitives::series_id::SeriesId::for_pair(
+) -> Result<outbe_core_common::series_id::SeriesId> {
+    outbe_core_common::series_id::SeriesId::for_pair(
         price_day,
         issuance_currency,
         reference_currency,
@@ -224,14 +224,14 @@ fn require_issuable_tribute(
 }
 
 fn unwrap_issued_nod(
-    outcome: outbe_tee::nod_mine::IssueNodFromTributeOutcomeV1,
-) -> Result<outbe_primitives::nod_encryption::EncryptedNodV1> {
+    outcome: outbe_enclave::nod_mine::IssueNodFromTributeOutcomeV1,
+) -> Result<outbe_core_common::nod_encryption::EncryptedNodV1> {
     match outcome {
-        outbe_tee::nod_mine::IssueNodFromTributeOutcomeV1::Issued(nod) => Ok(nod),
-        outbe_tee::nod_mine::IssueNodFromTributeOutcomeV1::LysisArithmetic(msg) => {
+        outbe_enclave::nod_mine::IssueNodFromTributeOutcomeV1::Issued(nod) => Ok(nod),
+        outbe_enclave::nod_mine::IssueNodFromTributeOutcomeV1::LysisArithmetic(msg) => {
             Err(TributeError::LysisArithmetic(msg).into())
         }
-        outbe_tee::nod_mine::IssueNodFromTributeOutcomeV1::ZeroSettlementCost => {
+        outbe_enclave::nod_mine::IssueNodFromTributeOutcomeV1::ZeroSettlementCost => {
             Err(outbe_nodfactory::errors::NodFactoryError::EntryPriceOutOfBounds.into())
         }
     }
@@ -258,10 +258,10 @@ pub(super) fn issue_nod_from_tribute(
             .encrypted()
             .ok_or(TributeError::InvalidEncryptedEncoding)?;
         let outcome = crate::enclave_client::issue_nod_from_tribute(
-            outbe_tee::nod_mine::IssueNodFromTributeRequestV1 {
+            outbe_enclave::nod_mine::IssueNodFromTributeRequestV1 {
                 tribute: encrypted_tribute.clone(),
                 day_fractions,
-                terms: outbe_primitives::nod_encryption::NodTermsV1 {
+                terms: outbe_core_common::nod_encryption::NodTermsV1 {
                     chain_id: storage.chain_id()?,
                     nod_id: outbe_core_common::nod_rules::derive_nod_id(series_id, record.owner),
                     owner: record.owner,
@@ -296,7 +296,7 @@ fn resolve_series_and_price(
     storage: &StorageHandle<'_>,
     record: &crate::TributeRecord,
     completed_at: u64,
-) -> Result<(outbe_primitives::series_id::SeriesId, U256)> {
+) -> Result<(outbe_core_common::series_id::SeriesId, U256)> {
     let price_day = resolve_price_day(contract, record.worldwide_day, completed_at)?;
     let series_id = series_of(
         price_day,
@@ -366,7 +366,7 @@ fn check_tribute_forfeited(
     storage: &StorageHandle<'_>,
     record: &crate::TributeRecord,
     retired: bool,
-) -> Result<(bool, Option<outbe_primitives::series_id::SeriesId>)> {
+) -> Result<(bool, Option<outbe_core_common::series_id::SeriesId>)> {
     if retired {
         return Ok((true, None));
     }

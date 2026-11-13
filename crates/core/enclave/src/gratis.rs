@@ -1,8 +1,8 @@
 //! Stateless encrypted Gratis transitions over an account's liquid and pledged balances.
 use crate::confidential::{FIELD_BALANCE, GRATIS};
 use crate::errors::{GratisRejectReason, Result};
+use crate::protocol::{GratisOp, GratisOpRequest, GratisOpResult, GratisOpStatus};
 use alloy_primitives::{Address, B256, U256};
-use outbe_tee::protocol::{GratisOp, GratisOpRequest, GratisOpResult, GratisOpStatus};
 use zeroize::Zeroizing;
 
 /// Pledged-blob field tag; differs from `FIELD_BALANCE` so the two blobs never share a nonce.
@@ -98,7 +98,7 @@ fn rejected_gratis_op(reason: GratisRejectReason) -> GratisOpResult {
 /// and fills `attestation_tag`. This function returns business rejections as
 /// `GratisOpStatus::Rejected` (-> precompile revert), never as a panic.
 pub fn apply_op(state_key: &[u8; 32], req: &GratisOpRequest) -> GratisOpResult {
-    let inputs_canonical_hash = outbe_tee::protocol::gratis_op_canonical_hash(req);
+    let inputs_canonical_hash = crate::protocol::gratis_op_canonical_hash(req);
     let mut result = match apply_op_inner(state_key, req) {
         Ok(r) => r,
         Err(e) => rejected_gratis_op(GratisRejectReason::from(e)),
@@ -184,7 +184,7 @@ fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
                 field,
                 previous_version: version,
                 amount: next,
-                input_hash: outbe_tee::protocol::gratis_op_canonical_hash(req),
+                input_hash: crate::protocol::gratis_op_canonical_hash(req),
             },
         )?;
     }
@@ -194,7 +194,7 @@ fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
         req.op,
         GratisOp::Mint | GratisOp::Burn | GratisOp::BurnPledged
     ) {
-        let input_hash = outbe_tee::protocol::gratis_op_canonical_hash(req);
+        let input_hash = crate::protocol::gratis_op_canonical_hash(req);
         r.encrypted_event_amount = crate::gratis_cipher::write_amount(
             &view,
             crate::confidential::BalanceTransition {
@@ -212,7 +212,7 @@ fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
 #[cfg(test)]
 mod tests {
     use super::*;
-    use outbe_tee::protocol::ModifyAuth;
+    use crate::protocol::ModifyAuth;
     const CHAIN: B256 = B256::repeat_byte(0xC1);
     fn state_key() -> [u8; 32] {
         *derive_gratis_state_key(b"a-group-threshold-signature-~48-bytes-long!!", CHAIN, 0).unwrap()
@@ -276,7 +276,7 @@ mod tests {
             "00000000000000014752413246232be65ee469056f27d81bd908bab2cd61705404526e19acfa103c5f924bfb368f1a38d1b119051b1b5fb22425659291417af423d4475f231b154efb71e9de9e128688bc118a0bf920c64f413581a4"
         );
         assert_eq!(
-            outbe_tee::gratis_decrypt::decrypt_gratis_balance(&vk, alice(), &blob).unwrap(),
+            crate::gratis_decrypt::decrypt_gratis_balance(&vk, alice(), &blob).unwrap(),
             U256::from(1000u64),
         );
         let pledged = test_amount(&vk, FIELD_PLEDGED, 1000).unwrap();
@@ -462,8 +462,9 @@ mod tests {
     }
     #[test]
     fn pledged_blobs_cross_the_wire_and_bind_the_inputs_hash() {
+        use crate::protocol::{EnclaveRequest, EnclaveResponse};
         use outbe_tee::codec::{decode_request, decode_response, encode_request, encode_response};
-        use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
+        use outbe_tee::protocol::{EnclaveRequest as WireEnclaveRequest, PayloadLane};
         let sk = state_key();
         let mut r = req(GratisOp::ReleasePledged, alice(), U256::from(1u64), 0);
         r.current_pledged = pledged(&sk, 100);
@@ -472,13 +473,20 @@ mod tests {
         other.current_pledged = pledged(&sk, 101);
         assert_ne!(
             result.inputs_canonical_hash,
-            outbe_tee::protocol::gratis_op_canonical_hash(&other)
+            crate::protocol::gratis_op_canonical_hash(&other)
         );
         let request = EnclaveRequest::ApplyGratisOp {
             request: Box::new(r.clone()),
         };
+        let wire_request = request.encode_wire(PayloadLane::Execution).unwrap();
+        let WireEnclaveRequest::Payload { lane, payload } =
+            decode_request(&encode_request(&wire_request).unwrap()).unwrap()
+        else {
+            panic!("wire request variant changed");
+        };
+        assert_eq!(lane, PayloadLane::Execution);
         let EnclaveRequest::ApplyGratisOp { request } =
-            decode_request(&encode_request(&request).unwrap()).unwrap()
+            EnclaveRequest::decode_wire_canonical(&payload).unwrap()
         else {
             panic!("request variant changed");
         };
@@ -486,8 +494,10 @@ mod tests {
         let response = EnclaveResponse::GratisOpApplied {
             result: Box::new(result.clone()),
         };
+        let wire_response = response.into_wire_response().unwrap();
+        let decoded_wire = decode_response(&encode_response(&wire_response).unwrap()).unwrap();
         let EnclaveResponse::GratisOpApplied { result: decoded } =
-            decode_response(&encode_response(&response).unwrap()).unwrap()
+            EnclaveResponse::from_wire_response(&decoded_wire).unwrap()
         else {
             panic!("response variant changed");
         };
@@ -499,8 +509,8 @@ mod tests {
         for op in [GratisOp::ReleasePledged, GratisOp::BurnPledged] {
             let mut r = req(op, alice(), U256::from(1u64), 0);
             r.current_pledged = pledged(&sk, 100);
-            r.fidelity = Some(outbe_tee::protocol::FidelityOpSection {
-                op: outbe_tee::protocol::FidelityCohortOp::Out,
+            r.fidelity = Some(crate::protocol::FidelityOpSection {
+                op: crate::protocol::FidelityCohortOp::Out,
                 timestamp: 1,
                 first_qualified_start: 0,
                 current_blob: Vec::new(),

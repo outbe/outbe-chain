@@ -3,23 +3,21 @@
 use std::collections::BTreeMap;
 
 use alloy_primitives::{B256, U256};
-use outbe_primitives::{
-    time::WorldwideDay,
-    tribute_day_encryption::{
-        EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1, EncryptedTributeLeagueAmountV1,
-    },
+use outbe_core_common::tribute_day_encryption::{
+    EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1, EncryptedTributeLeagueAmountV1,
 };
-use outbe_tee::tribute_day::{
-    day_operation_inputs_hash, league_operation_inputs_hash, lysis_fractions_inputs_hash,
-    LysisFractionsRequestV1, LysisFractionsResultV1, LysisSeriesLoadOutputV1,
-    TributeDayOpRequestV2, TributeDayOperationV2, TributeLeagueOpRequestV1,
-};
+use outbe_primitives::time::WorldwideDay;
 use ring::hmac;
 use zeroize::Zeroizing;
 
 use crate::{
     confidential::SlotCipherDomain,
     errors::{Result, TeeError, TributeDayRejectReason},
+    host::tribute_day::{
+        day_operation_inputs_hash, league_operation_inputs_hash, lysis_fractions_inputs_hash,
+        LysisFractionsRequestV1, LysisFractionsResultV1, LysisSeriesLoadOutputV1,
+        TributeDayOpRequestV2, TributeDayOperationV2, TributeLeagueOpRequestV1,
+    },
     tribute_encryption::decrypt_tribute,
 };
 

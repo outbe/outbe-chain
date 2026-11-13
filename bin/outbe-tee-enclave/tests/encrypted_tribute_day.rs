@@ -1,10 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::{
-    time::WorldwideDay,
-    tribute_encryption::{TributeAmountsV2, TributeContextV2},
-    wwd_entity_id::WwdEntityId,
-};
-use outbe_tee::tribute_day::{TributeDayOpRequestV2, TributeDayOperationV2};
+use outbe_core_common::tribute_encryption::{TributeAmountsV2, TributeContextV2};
+use outbe_enclave::tribute_day::{TributeDayOpRequestV2, TributeDayOperationV2};
+use outbe_primitives::{time::WorldwideDay, wwd_entity_id::WwdEntityId};
 use outbe_tee_enclave::{
     tribute_day::{apply_day_operation, read_day_amount},
     tribute_encryption::encrypt_tribute,
@@ -108,7 +105,7 @@ fn encrypted_day_rejects_wrong_key_and_modified_context_or_ciphertext() {
     let record = apply_day_operation(&secret, &secret, &day_request(U256::from(71))).unwrap();
     assert!(read_day_amount(&[8; 32], &record).is_err());
     for change in [
-        (|record: &mut outbe_primitives::tribute_day_encryption::EncryptedTributeDayAmountV2| {
+        (|record: &mut outbe_core_common::tribute_day_encryption::EncryptedTributeDayAmountV2| {
             record.chain_id += 1
         }) as fn(&mut _),
         |record| record.worldwide_day = WorldwideDay::new(20250116),
@@ -143,7 +140,7 @@ fn exact_predecessor_and_public_state_change_the_deterministic_write_context() {
     assert_ne!(record.encrypted_amount, branch.encrypted_amount);
     assert_ne!(
         record.operation_hash,
-        outbe_tee::tribute_day::day_operation_inputs_hash(&request).unwrap()
+        outbe_enclave::tribute_day::day_operation_inputs_hash(&request).unwrap()
     );
     assert_eq!(read_day_amount(&secret, &branch).unwrap(), U256::from(71));
     let freeze = TributeDayOpRequestV2 {

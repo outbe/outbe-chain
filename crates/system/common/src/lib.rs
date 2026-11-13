@@ -9,6 +9,7 @@ pub mod call_breach;
 pub mod day_pass;
 pub mod emission;
 pub mod errors;
+pub mod iso_4217;
 mod journal_writer;
 pub mod math;
 pub mod pass_budget;

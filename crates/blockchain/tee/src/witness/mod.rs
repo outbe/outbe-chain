@@ -1,5 +1,4 @@
 //! Authenticated block witness recording, comparison and socket-free replay.
-mod authenticate;
 mod codec;
 mod state;
 mod tape;
@@ -18,5 +17,3 @@ mod codec_tests;
 mod state_tests;
 #[cfg(test)]
 mod tape_tests;
-
-pub(crate) use authenticate::authenticate_request;

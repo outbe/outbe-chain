@@ -1,11 +1,11 @@
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::tribute_encryption::{
+use outbe_core_common::tribute_encryption::{
     EncryptedTributeV2, TributeAmountsV2, TributeContextV2,
 };
+use outbe_enclave::protocol::{EncryptedTributeOffer, TributeOfferStatus, TributeZkContext};
+use outbe_enclave::tribute_decrypt::decrypt_tribute_for_owner;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
-use outbe_tee::protocol::{EncryptedTributeOffer, TributeOfferStatus, TributeZkContext};
-use outbe_tee::tribute_decrypt::decrypt_tribute_for_owner;
 use outbe_tee_enclave::encrypted_tribute_offer::process_encrypted_tribute_offer_batch;
 use outbe_tee_enclave::process::TributeOfferKeyMaterial;
 use outbe_tee_enclave::tribute_encryption::{decrypt_tribute, derive_view_key, encrypt_tribute};
@@ -160,7 +160,7 @@ fn offer_creator_owns_the_tribute_while_proof_binding_uses_the_transaction_calle
         "amount_micro": "0",
         "su_hashes": [B256::repeat_byte(0x22)],
     });
-    let cipher_text = outbe_tee::offer_encrypt::encrypt_tribute_offer_with(
+    let cipher_text = outbe_enclave::offer_encrypt::encrypt_tribute_offer_with(
         &f.enclave_public,
         [9; 32],
         [1; 12],
@@ -189,7 +189,7 @@ fn offer_creator_owns_the_tribute_while_proof_binding_uses_the_transaction_calle
     };
     let key = TributeOfferKeyMaterial {
         tribute_offer_private_key: &f.tribute_state_key,
-        salt: &outbe_tee::OFFER_HKDF_SALT,
+        salt: &outbe_enclave::OFFER_HKDF_SALT,
     };
     let (results, _) = process_encrypted_tribute_offer_batch(
         &key,

@@ -3,11 +3,11 @@
 //! record and its reads.
 
 use alloy_primitives::{Address, U256};
+use outbe_core_common::series_id::SeriesId;
 use outbe_credis::errors::CredisError;
 use outbe_credis::runtime::effective_state;
 use outbe_credis::{Credis, CredisContract, CredisState};
 use outbe_primitives::error::Result;
-use outbe_primitives::series_id::SeriesId;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{timestamp_to_date_key, SECONDS_PER_DAY};
 

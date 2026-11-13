@@ -8,13 +8,13 @@
 //! `tee_sidecar_unavailable` failure mode.
 
 use alloy_primitives::{Address, B256};
-use outbe_primitives::error::{PrecompileError, Result};
-use outbe_tee::protocol::{
+use outbe_enclave::protocol::{
     fidelity_cohort_canonical_hash, fidelity_query_canonical_hash,
     fidelity_snapshot_canonical_hash, EnclaveRequest, EnclaveResponse, FidelityCohortRequest,
     FidelityCohortResult, FidelityLeagueEntry, FidelityQueryRequest, FidelityQueryResult,
     FidelitySnapshotRequest,
 };
+use outbe_primitives::error::{PrecompileError, Result};
 use outbe_tee::TransportError;
 
 use crate::errors::FidelityFatalError;
@@ -87,14 +87,11 @@ pub(crate) fn query_index(req: FidelityQueryRequest) -> Result<FidelityQueryResu
 }
 
 fn call_enclave<T: AttestedAnswer>(expected_hash: B256, request: EnclaveRequest) -> Result<T> {
-    let (attestation_pub, response) = outbe_tee::try_with_enclave(|client| {
-        let attestation_pub = client.attestation_pub();
-        let response = client.request(&request);
-        (attestation_pub, response)
-    })
-    .ok_or(FidelityFatalError::SidecarUnavailable {
-        context: T::OPERATION,
-    })?;
+    let (attestation_pub, response) = outbe_enclave::try_with_domain_enclave(&request).ok_or(
+        FidelityFatalError::SidecarUnavailable {
+            context: T::OPERATION,
+        },
+    )?;
     let response =
         response.map_err(|e| FidelityFatalError::sidecar_request_failed(T::OPERATION, e))?;
     validate_answer(expected_hash, &attestation_pub, response)
@@ -104,17 +101,10 @@ fn call_consensus_enclave<T: AttestedAnswer>(
     expected_hash: B256,
     request: EnclaveRequest,
 ) -> Result<T> {
-    let (attestation_pub, response) = outbe_tee::consensus_call(
+    let (attestation_pub, response) = outbe_enclave::consensus_domain_call(
         T::OPERATION,
-        || {
-            outbe_tee::try_with_enclave(|client| {
-                let attestation_pub = client.attestation_pub();
-                client
-                    .request(&request)
-                    .map(|response| (attestation_pub, response))
-            })
-            .ok_or_else(|| TransportError::Unavailable("enclave session unavailable".into()))?
-        },
+        &request,
+        || TransportError::Unavailable("enclave session unavailable".into()),
         |key, response| authenticate_answer::<T>(expected_hash, key, response),
     )
     .map_err(|error| map_consensus_error(T::OPERATION, error))?;
@@ -135,23 +125,16 @@ fn authenticate_answer<T: AttestedAnswer>(
 }
 
 fn call_query_enclave(expected_hash: B256, request: EnclaveRequest) -> Result<FidelityQueryResult> {
-    let (attestation_pub, response) = outbe_tee::consensus_call(
+    let (attestation_pub, response) = outbe_enclave::consensus_domain_call(
         "QueryFidelityIndex",
-        || {
-            outbe_tee::try_with_enclave(|client| {
-                let attestation_pub = client.attestation_pub();
-                client
-                    .request(&request)
-                    .map(|response| (attestation_pub, response))
-            })
-            .ok_or_else(|| TransportError::Unavailable("enclave session unavailable".into()))?
-        },
+        &request,
+        || TransportError::Unavailable("enclave session unavailable".into()),
         |key, response| match response {
             EnclaveResponse::FidelityIndexQueried { result } => {
                 if result.inputs_canonical_hash != expected_hash {
                     return Err(TransportError::UnexpectedResponse);
                 }
-                outbe_tee::verify_fidelity_query_attestation(
+                outbe_enclave::verify_fidelity_query_attestation(
                     key,
                     result.inputs_canonical_hash,
                     result,
@@ -207,13 +190,13 @@ fn verify_query_rejection(
     if inputs_hash != expected_hash {
         return Err(TransportError::UnexpectedResponse);
     }
-    let preimage = outbe_tee::response_auth::attestation(
+    let preimage = outbe_enclave::response_auth::attestation(
         b"outbe/fidelity/query-rejected/v1",
         expected_hash,
         reason,
     )
     .map_err(TransportError::codec)?;
-    outbe_tee::tribute_v2::verify_attestation(key, &preimage, tag)
+    outbe_enclave::tribute_v2::verify_attestation(key, &preimage, tag)
 }
 
 fn map_consensus_error(operation: &'static str, error: TransportError) -> FidelityFatalError {
@@ -236,7 +219,7 @@ mod consensus_tests {
         let signer = SigningKey::from_bytes(&[0x71; 32]);
         let expected = B256::repeat_byte(0x42);
         let reason = "query is not available";
-        let preimage = outbe_tee::response_auth::attestation(
+        let preimage = outbe_enclave::response_auth::attestation(
             b"outbe/fidelity/query-rejected/v1",
             expected,
             reason,
@@ -347,13 +330,13 @@ boxed_answer!(
     FidelityCohortResult,
     FidelityCohortApplied,
     "ApplyFidelityCohortOp",
-    outbe_tee::verify_fidelity_cohort_attestation
+    outbe_enclave::verify_fidelity_cohort_attestation
 );
 boxed_answer!(
     FidelityQueryResult,
     FidelityIndexQueried,
     "QueryFidelityIndex",
-    outbe_tee::verify_fidelity_query_attestation
+    outbe_enclave::verify_fidelity_query_attestation
 );
 
 #[derive(Debug)]
@@ -389,7 +372,7 @@ impl AttestedAnswer for LeagueSnapshot {
         &self,
         attestation_pub: &[u8; 32],
     ) -> core::result::Result<(), TransportError> {
-        outbe_tee::verify_fidelity_snapshot_attestation(
+        outbe_enclave::verify_fidelity_snapshot_attestation(
             attestation_pub,
             self.inputs_canonical_hash,
             &self.leagues,

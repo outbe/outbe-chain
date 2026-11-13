@@ -54,18 +54,6 @@ pub enum RpcInternalError {
     /// A precompile state query failed.
     #[error("precompile error: {0}")]
     Precompile(#[from] PrecompileError),
-    /// The TEE enclave is not configured on this node.
-    #[error("tee enclave not configured")]
-    TeeEnclaveNotConfigured,
-    /// The enclave `DeriveAccountKeys` request failed.
-    #[error("enclave DeriveAccountKeys failed: {0}")]
-    EnclaveDeriveAccountKeysFailed(String),
-    /// The enclave returned an explicit error response.
-    #[error("enclave error: {0}")]
-    EnclaveError(String),
-    /// The enclave returned an unexpected response variant.
-    #[error("unexpected enclave response: {0}")]
-    UnexpectedEnclaveResponse(String),
     /// Reading the latest block number failed.
     #[error("failed to read latest block number: {0}")]
     LatestBlockNumberReadFailed(String),
@@ -177,16 +165,6 @@ impl RpcInternalError {
         Self::LatestStateReadFailed(error.to_string())
     }
 
-    /// Creates [`RpcInternalError::EnclaveDeriveAccountKeysFailed`] from a displayable error.
-    pub fn enclave_derive_account_keys_failed(error: impl std::fmt::Display) -> Self {
-        Self::EnclaveDeriveAccountKeysFailed(error.to_string())
-    }
-
-    /// Creates [`RpcInternalError::UnexpectedEnclaveResponse`] from a debuggable response.
-    pub fn unexpected_enclave_response(response: impl std::fmt::Debug) -> Self {
-        Self::UnexpectedEnclaveResponse(format!("{response:?}"))
-    }
-
     /// Creates [`RpcInternalError::LatestBlockNumberReadFailed`] from a displayable error.
     pub fn latest_block_number_read_failed(error: impl std::fmt::Display) -> Self {
         Self::LatestBlockNumberReadFailed(error.to_string())
@@ -232,20 +210,6 @@ impl RpcInternalError {
 /// Typed invalid-parameter errors returned by Outbe JSON-RPC methods.
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum RpcInvalidParamsError {
-    /// A signature parameter did not have the required 65-byte length.
-    #[error("signature must be 65 bytes (r||s||v), got {0}")]
-    InvalidSignatureLength(usize),
-    /// Recovering the signer from the signature failed.
-    #[error("signature recovery failed: {0}")]
-    SignatureRecoveryFailed(String),
-    /// The recovered signature signer does not match the requested account.
-    #[error("signature signer {recovered} does not control account {account}")]
-    SignatureSignerMismatch {
-        /// Recovered signer address.
-        recovered: alloy_primitives::Address,
-        /// Target account address.
-        account: alloy_primitives::Address,
-    },
     /// The requested block height exceeds the node's advertised finalized height.
     #[error("height {height} is above the node's finalized height {finalized}")]
     HeightAboveFinalized {
@@ -268,11 +232,4 @@ pub enum RpcResourceExhaustedError {
     /// Waiting for the consensus finalization drainer timed out.
     #[error("finalization request timed out")]
     FinalizationRequestTimedOut,
-}
-
-impl RpcInvalidParamsError {
-    /// Creates [`RpcInvalidParamsError::SignatureRecoveryFailed`] from a displayable error.
-    pub fn signature_recovery_failed(error: impl std::fmt::Display) -> Self {
-        Self::SignatureRecoveryFailed(error.to_string())
-    }
 }

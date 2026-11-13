@@ -11,11 +11,11 @@
 //! recheck) and attestation (verify-then-discard) guarantees. It has the same
 //! `tee_sidecar_unavailable` failure mode when no enclave is configured.
 
-use outbe_primitives::error::Result;
-use outbe_tee::protocol::{
+use outbe_enclave::protocol::{
     promis_op_canonical_hash, EnclaveRequest, EnclaveResponse, MineGratisFromPromisRequestV1,
     MineGratisFromPromisResultV1, PromisOpRequest, PromisOpResult,
 };
+use outbe_primitives::error::Result;
 use outbe_tee::TransportError;
 
 use crate::errors::PromisFatalError;
@@ -36,25 +36,19 @@ pub(crate) fn apply_promis_op(req: PromisOpRequest) -> Result<PromisOpResult> {
     }
 
     let expected_hash = promis_op_canonical_hash(&req);
-    let (attestation_pub, response) = outbe_tee::consensus_call(
+    let request = EnclaveRequest::ApplyPromisOp {
+        request: Box::new(req),
+    };
+    let (attestation_pub, response) = outbe_enclave::consensus_domain_call(
         "ApplyPromisOp",
-        || {
-            outbe_tee::try_with_enclave(|client| {
-                let attestation_pub = client.attestation_pub();
-                client
-                    .request(&EnclaveRequest::ApplyPromisOp {
-                        request: Box::new(req),
-                    })
-                    .map(|response| (attestation_pub, response))
-            })
-            .ok_or_else(|| TransportError::Unavailable("enclave session unavailable".into()))?
-        },
+        &request,
+        || TransportError::Unavailable("enclave session unavailable".into()),
         |key, response| match response {
             EnclaveResponse::PromisOpApplied { result } => {
                 if result.inputs_canonical_hash != expected_hash {
                     return Err(TransportError::UnexpectedResponse);
                 }
-                outbe_tee::verify_promis_op_attestation(
+                outbe_enclave::verify_promis_op_attestation(
                     key,
                     result.inputs_canonical_hash,
                     result,
@@ -80,7 +74,7 @@ pub(crate) fn apply_promis_op(req: PromisOpRequest) -> Result<PromisOpResult> {
     if result.inputs_canonical_hash != expected_hash {
         return Err(PromisFatalError::EnclaveNondeterminism.into());
     }
-    outbe_tee::verify_promis_op_attestation(
+    outbe_enclave::verify_promis_op_attestation(
         &attestation_pub,
         result.inputs_canonical_hash,
         &result,
@@ -102,7 +96,7 @@ pub(crate) fn mine_gratis_from_promis(
     let request = EnclaveRequest::MineGratisFromPromisV1 {
         request: Box::new(req),
     };
-    let response = outbe_tee::balance_client::execute_confidential_balance_op(request)?;
+    let response = outbe_enclave::balance_client::execute_confidential_balance_op(request)?;
     let EnclaveResponse::GratisMinedFromPromisV1 { result } = response else {
         return Err(PromisFatalError::UnexpectedEnclaveResponse(Box::new(response)).into());
     };
@@ -148,14 +142,14 @@ pub mod test_enclave {
 
     /// The modify authorization a client would send for `op` on chain 1.
     pub fn modify_auth(
-        op: outbe_tee::protocol::PromisOp,
+        op: outbe_enclave::protocol::PromisOp,
         account: alloy_primitives::Address,
         amount: alloy_primitives::U256,
         nonce: u64,
-    ) -> outbe_tee::protocol::ModifyAuth {
+    ) -> outbe_enclave::protocol::ModifyAuth {
         use outbe_enclave::promis::{derive_modify_key, modify_mac, ModifyOperation};
         let mk = derive_modify_key(&state_key(), account).unwrap();
-        outbe_tee::protocol::ModifyAuth {
+        outbe_enclave::protocol::ModifyAuth {
             mac: modify_mac(
                 &mk,
                 &ModifyOperation {
@@ -176,7 +170,7 @@ pub mod test_enclave {
         account: alloy_primitives::Address,
         amount: alloy_primitives::U256,
     ) -> Vec<u8> {
-        outbe_tee::offer_encrypt::encrypt_tee_amount(
+        outbe_enclave::offer_encrypt::encrypt_tee_amount(
             &outbe_enclave::dev::offer_public_key(),
             B256::from(alloy_primitives::U256::from(1u64)),
             account,

@@ -13,7 +13,7 @@ outbe-promis.workspace = true
 # The promis→gratis conversion mints through the Gratis factory's own seam, so the
 # acquisition Fidelity cohort is recorded exactly as for any other gratis mint.
 outbe-gratisfactory.workspace = true
-outbe-tee.workspace = true
+outbe-enclave.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
@@ -24,8 +24,7 @@ thiserror.workspace = true
 outbe-promis = { workspace = true, features = ["test-enclave"] }
 outbe-gratis = { workspace = true, features = ["test-enclave"] }
 outbe-fidelity = { workspace = true, features = ["test-enclave"] }
-outbe-tee.workspace = true
-outbe-enclave.workspace = true
+outbe-enclave = { workspace = true, features = ["engine"] }
 
 [lints]
 workspace = true

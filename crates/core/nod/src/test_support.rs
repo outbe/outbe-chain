@@ -2,7 +2,7 @@
 pub use crate::enclave_client::test_enclave::{install, scope, uninstall, Guard, NETWORK_SECRET};
 use crate::{NodIssueParams, NodItemState};
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::{
+use outbe_core_common::{
     nod_encryption::{EncryptedNodV1, NodTermsV1},
     series_id::SeriesId,
 };

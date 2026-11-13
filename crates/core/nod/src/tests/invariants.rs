@@ -168,7 +168,7 @@ fn issuance_rejects_legacy_and_mismatched_digests_without_writes() {
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         super::seed_production_nod_genesis(&storage);
-        let legacy = outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(
+        let legacy = outbe_core_common::wwd_entity_id::derive_poseidon_entity_id(
             body.owner,
             WorldwideDay::new(body.series_id.day()),
         )
@@ -177,7 +177,7 @@ fn issuance_rejects_legacy_and_mismatched_digests_without_writes() {
         for invalid_id in [
             legacy,
             U256::from_be_bytes(
-                outbe_primitives::wwd_entity_id::derive_poseidon_digest(
+                outbe_core_common::wwd_entity_id::derive_poseidon_digest(
                     body.owner,
                     WorldwideDay::new(body.series_id.day()),
                 )

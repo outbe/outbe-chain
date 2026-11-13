@@ -21,9 +21,9 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Through
 use alloy_primitives::{Address, U256};
 use x25519_dalek::{PublicKey, StaticSecret};
 
-use outbe_tee::offer_encrypt::encrypt_tribute_offer_with;
-use outbe_tee::protocol::{EncryptedTributeOffer, WorldwideDay};
-use outbe_tee::OFFER_HKDF_SALT;
+use outbe_enclave::offer_encrypt::encrypt_tribute_offer_with;
+use outbe_enclave::protocol::{EncryptedTributeOffer, WorldwideDay};
+use outbe_enclave::OFFER_HKDF_SALT;
 use outbe_tee_enclave::compute::compute_token_id;
 use outbe_tee_enclave::crypto::ecdhe_tribute_offer_decrypt;
 use outbe_tee_enclave::process::{process_tribute_offer_batch, TributeOfferKeyMaterial};

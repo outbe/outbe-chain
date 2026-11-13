@@ -6,10 +6,9 @@
 //! legacy `EnclaveClient` GetQuote flow remains for the separate dev/mock
 //! transport. The production enclave does not accept this flow.
 //!
-//! The client is fully synchronous. The `offerTribute` precompile drives it
-//! with a blocking UDS round-trip. The enclave batch request is
-//! `ProcessTributeOfferBatch`. It uses no async,
-//! no `spawn`, and nothing that would capture a `StorageHandle`.
+//! The client is fully synchronous: callers drive it with a blocking UDS/TCP
+//! round-trip. It uses no async, no `spawn`, and nothing that would capture a
+//! `StorageHandle`.
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
@@ -53,12 +52,7 @@ pub(crate) use verification::{
     validate_dcap_onboarding_response, validate_dcap_verification_response,
 };
 use verification::{validate_generated_dcap_quote, verify_quote};
-pub use verification::{
-    verify_fidelity_cohort_attestation, verify_fidelity_query_attestation,
-    verify_fidelity_snapshot_attestation, verify_gratis_op_attestation,
-    verify_mine_gratis_from_promis_attestation, verify_peer_quote, verify_promis_op_attestation,
-    verify_tribute_offer_attestation, AttestedPeerKeys,
-};
+pub use verification::{verify_peer_quote, AttestedPeerKeys};
 
 /// The enclave identity fields captured from the quote response at connect time.
 #[derive(Debug, Clone)]
@@ -300,10 +294,9 @@ impl EnclaveClient {
     }
 
     /// The enclave's Ed25519 attestation public key, pinned from this session's
-    /// structurally validated quote response. Used to verify per-offer
-    /// attestation tags (`verify_tribute_offer_attestation`). That is a local
-    /// verify-then-discard check that binds a batch's results to the peer holding
-    /// this session key. Production enclave identity is established separately.
+    /// structurally validated quote response. Used to verify per-response
+    /// attestation tags locally (binding results to the peer holding this
+    /// session key). Production enclave identity is established separately.
     pub fn attestation_pub(&self) -> [u8; 32] {
         self.identity.attestation_pub
     }

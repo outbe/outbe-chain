@@ -135,30 +135,6 @@ impl From<NodeStorageReadError> for outbe_primitives::error::PrecompileError {
     }
 }
 
-/// This enum defines errors that occur when the node validates a canary batch.
-#[derive(Debug, thiserror::Error)]
-pub enum CanaryBatchValidationError {
-    #[error("canary expected 1 result, got {0}")]
-    UnexpectedResultCount(usize),
-    #[error("canary offer rejected: {0}")]
-    OfferRejected(String),
-    #[error("canary result echoes a different owner")]
-    OwnerMismatch,
-    #[error("canary inputs_canonical_hash mismatch (non-determinism)")]
-    InputsCanonicalHashMismatch,
-    #[error("no pinned attestation key")]
-    NoPinnedAttestationKey,
-    #[error("canary attestation tag invalid: {0}")]
-    InvalidAttestationTag(String),
-}
-
-impl CanaryBatchValidationError {
-    #[must_use]
-    pub fn invalid_attestation_tag(error: impl core::fmt::Display) -> Self {
-        Self::InvalidAttestationTag(error.to_string())
-    }
-}
-
 impl LocalRegistryAdmissionError {
     #[must_use]
     pub fn replacement_authorization(error: impl core::fmt::Display) -> Self {

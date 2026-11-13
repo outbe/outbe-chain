@@ -20,13 +20,13 @@ use outbe_credis::config::CredisParams;
 use outbe_credis::precompile::ICredis;
 use outbe_credis::{CallBins, CredisContract};
 
+use outbe_core_common::series_id::SeriesId;
 use outbe_oracle::call_pass::{self, CallPass};
 use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::{
     addresses::CREDIS_FACTORY_ADDRESS,
     block::BlockRuntimeContext,
     error::Result,
-    series_id::SeriesId,
     storage::{dsl::Value, StorageHandle},
 };
 use outbe_system_common::{

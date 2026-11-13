@@ -85,6 +85,13 @@ impl Enclave {
         )
     }
 
+    pub(in crate::transport::tests) fn call_domain(
+        &mut self,
+        req: outbe_enclave::protocol::EnclaveRequest,
+    ) -> outbe_enclave::protocol::EnclaveResponse {
+        dispatch_domain(req, &self.keys, &self.offer_key, self.chain_id)
+    }
+
     pub(in crate::transport::tests) fn bls_public(&mut self) -> Vec<u8> {
         match self.call(EnclaveRequest::GetPublicKeys) {
             EnclaveResponse::PublicKeys { tee_bls_pub, .. } => tee_bls_pub,

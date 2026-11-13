@@ -3,6 +3,35 @@
 use std::fmt;
 use thiserror::Error;
 
+use crate::tee_call::TeeAttestationError;
+
+/// Structured payload attestation failure boxed inside [`TransportError::PayloadAttestation`]
+/// so `size_of::<TransportError>()` stays compact (`<= 32` bytes).
+#[derive(Debug, Error)]
+#[error("{context} attestation signature invalid: {cause}")]
+pub struct PayloadAttestationError {
+    /// Human-readable domain context prefix.
+    pub context: &'static str,
+    /// Stable `outbe_tee_request_errors_total{class}` counter label.
+    pub metric_class: &'static str,
+    /// Structured attestation failure cause.
+    #[source]
+    pub cause: TeeAttestationError,
+}
+
+/// Structured application-layer deterministic rejection boxed inside
+/// [`TransportError::PayloadRejected`] so `size_of::<TransportError>()` stays compact.
+#[derive(Debug, Error)]
+#[error("{context}: {reason}")]
+pub struct PayloadRejectedError {
+    /// Human-readable domain prefix.
+    pub context: &'static str,
+    /// Stable `outbe_tee_request_errors_total{class}` counter label.
+    pub metric_class: &'static str,
+    /// Rejection reason string.
+    pub reason: String,
+}
+
 /// Errors returned by the host-side enclave transport and session layer.
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -40,25 +69,13 @@ pub enum TransportError {
     #[error("attestation verification failed: {0}")]
     Attestation(String),
 
-    /// Tribute offer attestation signature check failed.
-    #[error("offer attestation signature invalid: {0}")]
-    TributeOfferAttestation(String),
-
-    /// Gratis operation attestation signature check failed.
-    #[error("gratis-op attestation signature invalid: {0}")]
-    GratisOpAttestation(String),
-
-    /// Promis operation attestation signature check failed.
-    #[error("promis-op attestation signature invalid: {0}")]
-    PromisOpAttestation(String),
+    /// Application-layer payload attestation signature check failed.
+    #[error(transparent)]
+    PayloadAttestation(#[from] Box<PayloadAttestationError>),
 
     /// DCAP verification stream or response check failed.
     #[error("DCAP verification channel invalid: {0}")]
     DcapVerification(String),
-
-    /// Fidelity attestation signature check failed.
-    #[error("fidelity attestation signature invalid: {0}")]
-    FidelityAttestation(String),
 
     /// Attestation preimage JSON did not serialize. The source stays structured.
     #[error("attestation preimage serialization failed: {0}")]
@@ -72,13 +89,9 @@ pub enum TransportError {
     #[error("enclave returned error: {0}")]
     EnclaveError(String),
 
-    /// Tribute source verification rejected the supplied record.
-    #[error("Tribute source rejected: {0}")]
-    TributeSourceRejected(String),
-
-    /// Enclave rejected an encrypted NOD mint request.
-    #[error("encrypted NOD mint rejected: {0}")]
-    NodMintRejected(String),
+    /// Application-layer operation or state source was deterministically rejected.
+    #[error(transparent)]
+    PayloadRejected(#[from] Box<PayloadRejectedError>),
 
     /// Reconnected enclave identity differed from the pinned identity.
     #[error("enclave identity mismatch after reconnect: {0}")]
@@ -92,6 +105,8 @@ pub enum TransportError {
     #[error("enclave unavailable: {0}")]
     Unavailable(String),
 }
+
+const _: () = assert!(std::mem::size_of::<TransportError>() <= 32);
 
 impl TransportError {
     /// Construct a [`Self::Codec`] error from a displayable value.
@@ -124,9 +139,34 @@ impl TransportError {
         super::TeeClientVerificationError::QuoteParse(error).into()
     }
 
-    /// Construct a [`Self::TributeOfferAttestation`] error from a displayable value.
-    pub fn tribute_offer_attestation(error: impl fmt::Display) -> Self {
-        Self::TributeOfferAttestation(error.to_string())
+    /// Construct a structured application-layer attestation failure, preserving
+    /// [`Self::AttestationPreimageSerialization`] when canonical JSON serialization fails.
+    pub fn payload_attestation(
+        context: &'static str,
+        metric_class: &'static str,
+        cause: TeeAttestationError,
+    ) -> Self {
+        match cause {
+            TeeAttestationError::CanonicalJson(err) => Self::AttestationPreimageSerialization(err),
+            other => Self::PayloadAttestation(Box::new(PayloadAttestationError {
+                context,
+                metric_class,
+                cause: other,
+            })),
+        }
+    }
+
+    /// Construct an application-layer deterministic rejection with a stable metric class.
+    pub fn payload_rejected(
+        context: &'static str,
+        metric_class: &'static str,
+        reason: impl fmt::Display,
+    ) -> Self {
+        Self::PayloadRejected(Box::new(PayloadRejectedError {
+            context,
+            metric_class,
+            reason: reason.to_string(),
+        }))
     }
 
     /// Construct a [`Self::DcapVerification`] error from a displayable value.
@@ -198,16 +238,12 @@ impl TransportError {
             Self::Noise(_) => "noise",
             Self::Handshake(_) => "handshake",
             Self::Attestation(_) => "attestation",
-            Self::TributeOfferAttestation(_) => "tribute_offer_attestation",
-            Self::GratisOpAttestation(_) => "gratis_op_attestation",
-            Self::PromisOpAttestation(_) => "promis_op_attestation",
+            Self::PayloadAttestation(inner) => inner.metric_class,
             Self::DcapVerification(_) => "dcap_verification",
-            Self::FidelityAttestation(_) => "fidelity_attestation",
             Self::AttestationPreimageSerialization(_) => "attestation_preimage_serialization",
             Self::UnexpectedResponse => "unexpected_response",
             Self::EnclaveError(_) => "enclave_error",
-            Self::TributeSourceRejected(_) => "tribute_source_rejected",
-            Self::NodMintRejected(_) => "nod_mint_rejected",
+            Self::PayloadRejected(inner) => inner.metric_class,
             Self::IdentityMismatch(_) => "identity_mismatch",
             Self::SessionRevoked(_) => "session_revoked",
             Self::Unavailable(_) => "unavailable",

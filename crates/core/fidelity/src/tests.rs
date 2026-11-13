@@ -114,12 +114,12 @@ fn evm_signer(seed: u8) -> (k256::ecdsa::SigningKey, Address) {
 
 /// EIP-191 owner authorization over the query-auth message for the test chain.
 fn query_auth(sk: &k256::ecdsa::SigningKey, account: Address, expiry: u64) -> Vec<u8> {
-    let msg = outbe_tee::protocol::fidelity_query_auth_message(
+    let msg = outbe_enclave::protocol::fidelity_query_auth_message(
         test_enclave::dev_chain(),
         account,
         expiry,
     );
-    let prehash = outbe_tee::protocol::eip191_hash(&msg);
+    let prehash = outbe_enclave::protocol::eip191_hash(&msg);
     let (sig, recid): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) =
         sk.sign_prehash(prehash.as_slice()).unwrap();
     let mut sig65 = [0u8; 65];
@@ -269,12 +269,12 @@ fn precompile_dispatch_query_auth_and_metadata() {
 mod enclave_responses {
     use alloy_primitives::{Address, B256, U256};
     use ed25519_dalek::{Signer, SigningKey};
-    use outbe_primitives::error::{PrecompileError, Result};
-    use outbe_tee::protocol::{
+    use outbe_enclave::protocol::{
         fidelity_cohort_attestation_preimage, fidelity_query_attestation_preimage,
         fidelity_snapshot_attestation_preimage, EnclaveResponse, FidelityCohortResult,
         FidelityLeagueEntry, FidelityOpOutcome, FidelityQueryResult,
     };
+    use outbe_primitives::error::{PrecompileError, Result};
 
     use crate::enclave_client::{require_requested_owners, validate_answer, LeagueSnapshot};
 

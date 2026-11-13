@@ -1,10 +1,10 @@
 //! Amount-private NOD mining; both ledger outcomes commit together on the host.
-use crate::errors::{NodMineRejectReason, Result, TeeError};
-use alloy_primitives::{B256, U256};
-use outbe_tee::{
-    nod_mine::{MineEncryptedNodRequestV1, MineEncryptedNodResultV1},
+use crate::{
+    errors::{NodMineRejectReason, Result, TeeError},
+    host::nod_mine::{inputs_hash, MineEncryptedNodRequestV1, MineEncryptedNodResultV1},
     protocol::{FidelityCohortOp, GratisOp, GratisOpRequest, GratisOpStatus},
 };
+use alloy_primitives::{B256, U256};
 pub fn apply(
     nod_state_key: &[u8; 32],
     gratis_key: &[u8; 32],
@@ -15,7 +15,7 @@ pub fn apply(
         return Err(TeeError::DecryptFailed);
     }
     let amount = crate::nod_encryption::decrypt_nod(nod_state_key, &request.nod)?;
-    let inputs = outbe_tee::nod_mine::inputs_hash(request).map_err(|_| TeeError::EncryptFailed)?;
+    let inputs = inputs_hash(request).map_err(|_| TeeError::EncryptFailed)?;
     let operation = GratisOpRequest {
         op: GratisOp::Mint,
         chain_id: B256::from(U256::from(request.nod.terms.chain_id)),

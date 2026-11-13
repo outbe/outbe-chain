@@ -1,6 +1,7 @@
 use super::*;
-use crate::transition_key_ready::signed_transition_key_ready_proof;
-use outbe_primitives::tee_test_utils::sign_node_host_hash_for_test;
+use outbe_primitives::tee_test_utils::{
+    sign_node_host_hash_for_test, signed_transition_key_ready_proof,
+};
 
 #[derive(Clone, Copy)]
 pub(super) enum DirectorySync {

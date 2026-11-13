@@ -1,7 +1,8 @@
 //! Route requests within one domain family.
 
+use outbe_enclave::protocol::{EnclaveRequest, EnclaveResponse};
+
 use super::requests::RequestContext;
-use crate::transport::*;
 
 pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> EnclaveResponse {
     let RequestContext {

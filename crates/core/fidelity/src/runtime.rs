@@ -12,12 +12,12 @@
 //! `first_qualified_start` anchor.
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::error::Result;
-use outbe_primitives::storage::StorageHandle;
-use outbe_tee::protocol::{
+use outbe_enclave::protocol::{
     FidelityCohortOp, FidelityCohortRequest, FidelityOpOutcome, FidelityOpSection,
     FidelityQueryRequest, FidelityQueryResult, FidelitySnapshotEntry, FidelitySnapshotRequest,
 };
+use outbe_primitives::error::Result;
+use outbe_primitives::storage::StorageHandle;
 
 use crate::enclave_client;
 use crate::errors::FidelityFatalError;
