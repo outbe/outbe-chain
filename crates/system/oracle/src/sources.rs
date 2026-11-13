@@ -7,10 +7,10 @@
 //! source set is a new file. `build.rs` reads the files at compile time.
 
 use alloy_primitives::Address;
-use outbe_primitives::address_pair::AddressPair;
-use outbe_primitives::asset_type::AssetType;
 use outbe_primitives::chain::MAINNET_CHAIN_ID;
 use outbe_primitives::error::Result;
+use outbe_system_common::address_pair::AddressPair;
+use outbe_system_common::asset_type::AssetType;
 use outbe_update::{encode_protocol_version, ProtocolVersion};
 
 use crate::schema::OracleContract;
@@ -24,7 +24,7 @@ enum Asset {
 impl Asset {
     fn address(self) -> Address {
         match self {
-            Self::Coen => outbe_primitives::asset_type::COEN_ASSET,
+            Self::Coen => outbe_system_common::asset_type::COEN_ASSET,
             Self::Iso(code) => AssetType::IsoCurrency(code).into(),
         }
     }

@@ -51,7 +51,6 @@ use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::system_tx::{
     build_unsigned_system_tx, SystemTx, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
 };
-use outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
 use outbe_promislimit::PromisLimitContract;
 use outbe_simplex::hybrid::HybridScheme;
 use outbe_simplex::proof::{
@@ -66,6 +65,7 @@ use outbe_slashindicator::runtime::classify_vrf_failure;
 use outbe_slashindicator::schema::SlashIndicator;
 use outbe_slashindicator::vrf_evidence::InvalidVrfProofEvidence;
 use outbe_staking::contract::Staking;
+use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::state::{write_committee_snapshot, CommitteeEntry, CommitteeSnapshot};
 use outbe_validatorset::test_support::{test_lifecycle_of, StorageOverrides};

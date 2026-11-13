@@ -6,7 +6,7 @@ use outbe_primitives::storage::types::Mapping;
 use crate::errors::UpdateError;
 use crate::ProtocolVersion;
 
-pub use outbe_primitives::scheduled_update::ScheduledUpdateStatus;
+pub use outbe_system_common::scheduled_update::ScheduledUpdateStatus;
 
 /// Scheduled update record keyed by vote `proposal_id`.
 #[derive(Debug, Clone, PartialEq, Eq)]

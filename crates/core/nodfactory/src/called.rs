@@ -24,12 +24,15 @@ use outbe_oracle::call_pass::{self, CallPass};
 use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::{
     block::BlockRuntimeContext,
+    error::{PassFailure, PrecompileError, Result},
+    storage::dsl::Value,
+};
+
+use outbe_system_common::{
     call_bins,
     call_breach::{BreachTerms, ScanTerms},
     day_pass::{PinnedDay, Progress},
-    error::{PassFailure, PrecompileError, Result},
     pass_budget::PassBudget,
-    storage::dsl::Value,
 };
 
 use outbe_nod::state::CallBins;
@@ -187,7 +190,7 @@ fn scan_terms(
     iso_code: u16,
     params: &outbe_nod::config::NodParams,
 ) -> Result<ScanTerms> {
-    outbe_primitives::call_breach::scan_terms(
+    outbe_system_common::call_breach::scan_terms(
         &nod.max_call_window_seconds,
         &nod.min_call_threshold_seconds,
         iso_code,

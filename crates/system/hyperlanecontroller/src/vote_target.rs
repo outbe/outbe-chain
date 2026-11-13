@@ -12,7 +12,7 @@ use alloy_sol_types::SolCall;
 use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
-use outbe_primitives::vote_target::{
+use outbe_system_common::vote_target::{
     decode_proposal_payload, decode_stored_proposal_payload, TargetExecutionOutcome, VoteTarget,
     VoteTargetContext, VoteTargetError,
 };

@@ -9,8 +9,10 @@ use outbe_primitives::{
         STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS,
         VOTE_ADDRESS,
     },
-    stablecoin::{encode_canonical_stablecoin_create, predict_stablecoin, StablecoinCreatePayload},
     stablecoin_fork::STABLECOIN_CREATE_BOND,
+};
+use outbe_system_common::stablecoin::{
+    encode_canonical_stablecoin_create, predict_stablecoin, StablecoinCreatePayload,
 };
 
 use crate::{

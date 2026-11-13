@@ -6,7 +6,8 @@ fn issue_enrolls_in_call_bin() {
     with_factory(|s| {
         runtime::issue_intex(&s, sample(7)).unwrap();
         let f = IntexContract::new(s.clone());
-        let bin = outbe_primitives::call_bins::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
+        let bin =
+            outbe_system_common::call_bins::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
         assert_eq!(
             f.call_bin_count
                 .read(&IntexContract::scoped(REFERENCE_ISO, bin))
@@ -66,7 +67,8 @@ fn a_group_holds_its_bin_entry_until_its_last_member_leaves() {
         runtime::issue_intex(&s, sample(11)).unwrap();
         runtime::issue_intex(&s, sample(22)).unwrap();
         let mut f = IntexContract::new(s.clone());
-        let bin = outbe_primitives::call_bins::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
+        let bin =
+            outbe_system_common::call_bins::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
         let count = |f: &IntexContract<'_>| {
             f.call_bin_count
                 .read(&IntexContract::scoped(REFERENCE_ISO, bin))
@@ -98,7 +100,8 @@ fn try_call_marks_called_when_threshold_met() {
         let group = group_of(&s, sid(7));
         assert_eq!(call_group(&s, &mut f, group, last_closed_day, scan_ts), 1);
         assert_eq!(series_state(&s, sid(7)), outbe_intex::IntexState::Called);
-        let bin = outbe_primitives::call_bins::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
+        let bin =
+            outbe_system_common::call_bins::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
         assert_eq!(
             f.call_bin_count
                 .read(&IntexContract::scoped(REFERENCE_ISO, bin))

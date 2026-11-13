@@ -11,8 +11,8 @@ use outbe_primitives::{
     addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS},
     error::PrecompileError,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
-    units::SCALE_1E6_U64,
 };
+use outbe_system_common::units::SCALE_1E6_U64;
 use outbe_tee::protocol::GratisOp;
 use outbe_vaultrouter::settlement::SettlementPayment;
 

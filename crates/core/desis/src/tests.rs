@@ -14,7 +14,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, EmissionDate};
 #[cfg(not(feature = "e2e-test"))]
-use outbe_primitives::units::SCALE_1E6_U128;
+use outbe_system_common::units::SCALE_1E6_U128;
 
 use crate::api::{AuctionBriefReceipt, AuctionBriefRejectionReason};
 #[cfg(not(feature = "e2e-test"))]

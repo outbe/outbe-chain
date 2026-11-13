@@ -7,16 +7,16 @@
 
 use alloy_primitives::{keccak256, B256, U256};
 
-pub use outbe_primitives::day_pass::Progress;
 use outbe_primitives::error::{PassFailure, PrecompileError, Result};
-use outbe_primitives::math::constants::MAX_BIN_ID;
-use outbe_primitives::math::tree_math::{self, BinTreeStorage};
-use outbe_primitives::pass_budget::{BlockAllowance, PassBudget};
 use outbe_primitives::series_id::{SeriesId, SERIES_ID_LEN};
 use outbe_primitives::storage::dsl::{Map, Value};
 use outbe_primitives::storage::types::{Storable, StorageKey};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY;
+pub use outbe_system_common::day_pass::Progress;
+use outbe_system_common::math::constants::MAX_BIN_ID;
+use outbe_system_common::math::tree_math::{self, BinTreeStorage};
+use outbe_system_common::pass_budget::{BlockAllowance, PassBudget};
 
 mod walk;
 pub use walk::{process_through, PassTime};
@@ -345,7 +345,7 @@ macro_rules! impl_deadline_queue {
         sweep_day: $sweep_day:ident,
         cursor: $cursor:ident $(,)?
     }) => {
-        ::outbe_primitives::impl_bin_tree_storage!($adapter {
+        $crate::__system_common::impl_bin_tree_storage!($adapter {
             root: $root,
             mid: $mid,
             leaf: $leaf
@@ -848,7 +848,9 @@ mod tests {
     fn cleanup_persists_its_allowance_and_rolls_back_a_failed_continuation() {
         with_queue(|queue, storage| {
             use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
-            use outbe_primitives::pass_budget::{SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
+            use outbe_system_common::pass_budget::{
+                SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK,
+            };
 
             push(queue, id(1), 10 * DAY).unwrap();
             push(queue, id(2), 10 * DAY).unwrap();

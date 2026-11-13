@@ -1,10 +1,10 @@
 //! Module-local protocol constants.
 
 use alloy_primitives::U256;
-use outbe_primitives::address_pair::AddressPair;
-use outbe_primitives::math::reference_price::is_coen_iso_market;
 use outbe_primitives::time::SECONDS_PER_DAY;
-use outbe_primitives::units::{SCALE_1E18, SCALE_1E18_U128, SCALE_1E6_U128, SCALE_1E6_U256};
+use outbe_system_common::address_pair::AddressPair;
+use outbe_system_common::math::reference_price::is_coen_iso_market;
+use outbe_system_common::units::{SCALE_1E18, SCALE_1E18_U128, SCALE_1E6_U128, SCALE_1E6_U256};
 
 /// Genesis policy rate of each reference currency, as `(iso_code, annual_rate_1e6)`
 /// in ascending ISO order: the overnight rate of that currency.
@@ -71,12 +71,13 @@ const _: () = {
         let code = REFERENCE_CURRENCIES[i];
         assert!(i == 0 || REFERENCE_CURRENCIES[i - 1] < code);
         has_day_type |= code == DAY_TYPE_ISO;
-        let Some(alpha) = outbe_primitives::stablecoin::iso_4217_alpha(code) else {
+        let Some(alpha) = outbe_system_common::stablecoin::iso_4217_alpha(code) else {
             panic!("reference currency without an ISO 4217 letter code");
         };
         let mut j = 0;
         while j < i {
-            let Some(other) = outbe_primitives::stablecoin::iso_4217_alpha(REFERENCE_CURRENCIES[j])
+            let Some(other) =
+                outbe_system_common::stablecoin::iso_4217_alpha(REFERENCE_CURRENCIES[j])
             else {
                 panic!("reference currency without an ISO 4217 letter code");
             };
@@ -172,7 +173,7 @@ pub(crate) fn zero_volume_weight(pair: AddressPair) -> U256 {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{address, U256};
-    use outbe_primitives::asset_type::AssetType;
+    use outbe_system_common::asset_type::AssetType;
 
     use super::{
         reciprocal_scale, vote_caps, zero_volume_weight, AddressPair, DAY_TYPE_ISO, DAY_TYPE_PAIR,

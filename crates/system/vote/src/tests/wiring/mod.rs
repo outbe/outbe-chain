@@ -6,10 +6,12 @@ use commonware_cryptography::bls12381::primitives::{ops, variant::MinSig};
 use outbe_l2registry::L2RegistryContract;
 use outbe_primitives::addresses::{L2_REGISTRY_ADDRESS, STABLECOIN_FACTORY_ADDRESS, VOTE_ADDRESS};
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext, ProtocolModule};
-use outbe_primitives::stablecoin::{encode_canonical_stablecoin_create, StablecoinCreatePayload};
 use outbe_primitives::stablecoin_fork::STABLECOIN_CREATE_BOND;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_stablecoinfactory::StablecoinFactoryContract;
+use outbe_system_common::stablecoin::{
+    encode_canonical_stablecoin_create, StablecoinCreatePayload,
+};
 use outbe_validatorset::contract::ValidatorSet;
 
 use crate::abi::IVote;

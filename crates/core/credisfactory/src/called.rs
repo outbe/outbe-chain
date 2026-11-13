@@ -25,13 +25,15 @@ use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::{
     addresses::CREDIS_FACTORY_ADDRESS,
     block::BlockRuntimeContext,
+    error::Result,
+    series_id::SeriesId,
+    storage::{dsl::Value, StorageHandle},
+};
+use outbe_system_common::{
     call_bins,
     call_breach::{BreachTerms, ScanTerms},
     day_pass::{PinnedDay, Progress},
-    error::Result,
     pass_budget::PassBudget,
-    series_id::SeriesId,
-    storage::{dsl::Value, StorageHandle},
 };
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
@@ -203,7 +205,7 @@ fn scan_terms(
     reference_currency: u16,
     live: &CredisParams,
 ) -> Result<ScanTerms> {
-    outbe_primitives::call_breach::scan_terms(
+    outbe_system_common::call_breach::scan_terms(
         &credis.max_call_window_seconds,
         &credis.min_call_threshold_seconds,
         reference_currency,

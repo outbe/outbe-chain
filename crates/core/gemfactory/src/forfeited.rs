@@ -3,8 +3,8 @@ use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PassFailure, Result},
-    pass_budget::PassBudget,
 };
+use outbe_system_common::pass_budget::PassBudget;
 
 use outbe_gem::precompile::IGem::GemSeriesClosed;
 use outbe_gem::{ForfeitQueue, GemContract};

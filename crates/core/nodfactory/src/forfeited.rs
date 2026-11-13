@@ -6,9 +6,10 @@ use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PassFailure, PrecompileError, Result},
-    pass_budget::PassBudget,
     storage::StorageHandle,
 };
+
+use outbe_system_common::pass_budget::PassBudget;
 
 use outbe_nod::state::ForfeitQueue;
 use outbe_nod::{precompile::INod, schema::NodContract};

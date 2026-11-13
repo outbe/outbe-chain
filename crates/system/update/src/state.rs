@@ -8,7 +8,7 @@ use crate::schema::{ScheduledUpdateRecord, Update};
 use crate::ProtocolVersion;
 
 pub use crate::schema::ScheduledUpdateStatus;
-pub use outbe_primitives::scheduled_update::ScheduledUpdateInfo;
+pub use outbe_system_common::scheduled_update::ScheduledUpdateInfo;
 
 fn scheduled_update_info(
     record: ScheduledUpdateRecord,

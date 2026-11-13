@@ -9,15 +9,15 @@ use alloy_sol_types::SolCall;
 use outbe_intex::SeriesId;
 use outbe_oracle::call_pass::{self, CallPass};
 use outbe_oracle::call_window::CallWindow;
-use outbe_primitives::day_pass::PinnedDay;
 use outbe_primitives::time::EmissionDate;
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    call_bins::{self, Visit},
     error::{PassFailure, Result},
-    pass_budget::PassBudget,
     storage::{dsl::Value, StorageHandle},
 };
+use outbe_system_common::call_bins::{self, Visit};
+use outbe_system_common::day_pass::PinnedDay;
+use outbe_system_common::pass_budget::PassBudget;
 
 use crate::constants::{MAX_SERIES_PER_MARK, ORIGIN_ROUTER_ADDRESS};
 use crate::schema::IntexFactoryContract;
@@ -75,7 +75,7 @@ impl<'storage> CallPass<'storage> for IntexCallPass<'storage> {
         pinned_day: u32,
         _phase: u8,
         budget: &mut PassBudget,
-    ) -> Result<outbe_primitives::day_pass::Progress> {
+    ) -> Result<outbe_system_common::day_pass::Progress> {
         let pinned_ts = outbe_primitives::time::date_key_to_utc_timestamp(pinned_day)
             .map_err(crate::errors::date_step_error)?;
         let through_day = outbe_core_common::deadline_queue::deadline_day(pinned_ts)?;
@@ -219,4 +219,4 @@ pub(crate) fn notify_called(
 }
 
 #[cfg(test)]
-pub(crate) use outbe_primitives::day_pass::currency_position;
+pub(crate) use outbe_system_common::day_pass::currency_position;

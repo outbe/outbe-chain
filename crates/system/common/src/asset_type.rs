@@ -1,7 +1,7 @@
 //! Every asset an oracle pair can name, encoded as a single [`Address`].
 //!
 //! Native COEN, an ISO 4217 currency and an ERC20 token all collapse onto one
-//! 20-byte address, so a pair of assets is just an [`AddressPair`] and needs no
+//! 20-byte address, so a pair of assets is just an [crate::address_pair::AddressPair] and needs no
 //! symbol strings and no hashing.
 
 use alloy_primitives::{Address, U256};
@@ -22,7 +22,7 @@ pub enum AssetType {
 }
 
 impl From<AssetType> for Address {
-    /// A currency code is packed as BCD behind the [`ISO_MARKER`] nibbles, so
+    /// A currency code is packed as BCD behind the `ISO_MARKER` nibbles, so
     /// ISO 840 becomes `0x0000...0cc840`. `ERC20` addresses inside that reserved
     /// range decode back as `IsoCurrency`.
     fn from(value: AssetType) -> Self {

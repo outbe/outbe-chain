@@ -2,13 +2,15 @@
 
 use alloy_primitives::U256;
 use outbe_primitives::{
+    error::Result,
+    storage::StorageHandle,
+    time::{previous_date_key, TimeError, SECONDS_PER_DAY_U32},
+};
+use outbe_system_common::{
     call_breach::{
         breached_enough, count_breaches, min_days_to_call, BreachCount, BreachTerms, ScanTerms,
     },
     day_pass::PassDays,
-    error::Result,
-    storage::StorageHandle,
-    time::{previous_date_key, TimeError, SECONDS_PER_DAY_U32},
 };
 
 use crate::schema::OracleContract;

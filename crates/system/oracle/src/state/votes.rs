@@ -1,8 +1,8 @@
 //! Pending aggregate votes of the current vote period.
 
 use alloy_primitives::{Address, U256};
-use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::Result;
+use outbe_system_common::address_pair::AddressPair;
 
 use crate::schema::OracleContract;
 

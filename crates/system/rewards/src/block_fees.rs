@@ -391,8 +391,8 @@ mod tests {
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag};
     use outbe_primitives::time::WorldwideDay;
-    use outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
     use outbe_promislimit::PromisLimitContract;
+    use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 
     const CHAIN_ID: u64 = 1;
     const GENESIS_HASH: B256 = B256::repeat_byte(0x11);
@@ -730,7 +730,7 @@ mod tests {
     #[test]
     fn residue_burns_all_native_and_carries_shared_fractional_credit() {
         run(|ctx| {
-            let unit = outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
+            let unit = outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
             let pending = U256::from(4_000) * unit + U256::from(7);
             fund(ctx, pending);
             escrow_block_fee(ctx, &block_at(10, FB), pending, &[V0, V1, V2]).unwrap();
@@ -767,7 +767,7 @@ mod tests {
     #[test]
     fn residue_crosses_unit_boundary_with_preexisting_shared_remainder() {
         let storage = run(|ctx| {
-            let unit = outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
+            let unit = outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
             let pending = U256::from(24) * unit / U256::from(10);
             seed_shared_remainder(ctx, unit / U256::from(2));
             let second = B256::repeat_byte(0xCD);
@@ -828,7 +828,7 @@ mod tests {
         let timestamp = wwd.start_timestamp().unwrap();
         storage.set_timestamp(U256::from(timestamp));
         let expected_residue = U256::from(1_000);
-        let unit = outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
+        let unit = outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(
                 BlockContext {

@@ -18,9 +18,10 @@
 
 use alloy_primitives::U256;
 
-use crate::error::{PrimitivesMathError, Result};
+use crate::errors::PrimitivesMathError;
 use crate::math::bit_math::{least_significant_bit, mask_from};
 use crate::math::constants::MAX_BIN_ID;
+use outbe_primitives::error::Result;
 
 // --- Address arithmetic (mirrors LB key2 = id >> 8, key1 = key2 >> 8) ------
 
@@ -81,60 +82,78 @@ pub trait BinTreeStorage {
 macro_rules! impl_bin_tree_storage {
     ($adapter:ident { root: $root:ident, mid: $mid:ident, leaf: $leaf:ident $(,)? }) => {
         impl $crate::math::tree_math::BinTreeStorage for $adapter<'_, '_> {
-            fn read_root(&self) -> $crate::error::Result<::alloy_primitives::U256> {
+            fn read_root(&self) -> $crate::__primitives::error::Result<::alloy_primitives::U256> {
                 self.0.$root.read()
             }
-            fn write_root(&self, value: ::alloy_primitives::U256) -> $crate::error::Result<()> {
+            fn write_root(
+                &self,
+                value: ::alloy_primitives::U256,
+            ) -> $crate::__primitives::error::Result<()> {
                 self.0.$root.write(value)
             }
-            fn read_mid(&self, key: u32) -> $crate::error::Result<::alloy_primitives::U256> {
+            fn read_mid(
+                &self,
+                key: u32,
+            ) -> $crate::__primitives::error::Result<::alloy_primitives::U256> {
                 self.0.$mid.read(&key)
             }
             fn write_mid(
                 &self,
                 key: u32,
                 value: ::alloy_primitives::U256,
-            ) -> $crate::error::Result<()> {
+            ) -> $crate::__primitives::error::Result<()> {
                 self.0.$mid.write(&key, value)
             }
-            fn read_leaf(&self, key: u32) -> $crate::error::Result<::alloy_primitives::U256> {
+            fn read_leaf(
+                &self,
+                key: u32,
+            ) -> $crate::__primitives::error::Result<::alloy_primitives::U256> {
                 self.0.$leaf.read(&key)
             }
             fn write_leaf(
                 &self,
                 key: u32,
                 value: ::alloy_primitives::U256,
-            ) -> $crate::error::Result<()> {
+            ) -> $crate::__primitives::error::Result<()> {
                 self.0.$leaf.write(&key, value)
             }
         }
     };
     ($adapter:ident scoped by $scoped:path { root: $root:ident, mid: $mid:ident, leaf: $leaf:ident $(,)? }) => {
         impl $crate::math::tree_math::BinTreeStorage for $adapter<'_, '_> {
-            fn read_root(&self) -> $crate::error::Result<::alloy_primitives::U256> {
+            fn read_root(&self) -> $crate::__primitives::error::Result<::alloy_primitives::U256> {
                 self.0.$root.read(&self.1)
             }
-            fn write_root(&self, value: ::alloy_primitives::U256) -> $crate::error::Result<()> {
+            fn write_root(
+                &self,
+                value: ::alloy_primitives::U256,
+            ) -> $crate::__primitives::error::Result<()> {
                 self.0.$root.write(&self.1, value)
             }
-            fn read_mid(&self, key: u32) -> $crate::error::Result<::alloy_primitives::U256> {
+            fn read_mid(
+                &self,
+                key: u32,
+            ) -> $crate::__primitives::error::Result<::alloy_primitives::U256> {
                 self.0.$mid.read(&$scoped(self.1, key))
             }
             fn write_mid(
                 &self,
                 key: u32,
                 value: ::alloy_primitives::U256,
-            ) -> $crate::error::Result<()> {
+            ) -> $crate::__primitives::error::Result<()> {
                 self.0.$mid.write(&$scoped(self.1, key), value)
             }
-            fn read_leaf(&self, key: u32) -> $crate::error::Result<::alloy_primitives::U256> {
+            fn read_leaf(
+                &self,
+                key: u32,
+            ) -> $crate::__primitives::error::Result<::alloy_primitives::U256> {
                 self.0.$leaf.read(&$scoped(self.1, key))
             }
             fn write_leaf(
                 &self,
                 key: u32,
                 value: ::alloy_primitives::U256,
-            ) -> $crate::error::Result<()> {
+            ) -> $crate::__primitives::error::Result<()> {
                 self.0.$leaf.write(&$scoped(self.1, key), value)
             }
         }
@@ -478,11 +497,10 @@ mod tests {
             add(s, MAX_BIN_ID).unwrap();
             let id = MAX_BIN_ID + 1;
             let err = find_first_left_inclusive(s, id).unwrap_err();
-            let expected =
-                crate::error::PrecompileError::from(PrimitivesMathError::LbMathBinIdOutOfRange {
-                    id,
-                })
-                .to_string();
+            let expected = outbe_primitives::error::PrecompileError::from(
+                PrimitivesMathError::LbMathBinIdOutOfRange { id },
+            )
+            .to_string();
             assert_eq!(err.to_string(), expected);
         });
     }
@@ -491,8 +509,10 @@ mod tests {
     fn trie_rejects_out_of_domain() {
         let id = MAX_BIN_ID + 1;
         let out_of_range = || {
-            crate::error::PrecompileError::from(PrimitivesMathError::LbMathBinIdOutOfRange { id })
-                .to_string()
+            outbe_primitives::error::PrecompileError::from(
+                PrimitivesMathError::LbMathBinIdOutOfRange { id },
+            )
+            .to_string()
         };
         with_store(|store| {
             assert_eq!(contains(store, id).unwrap_err().to_string(), out_of_range());
@@ -517,9 +537,10 @@ mod tests {
             store.write_root(U256::ONE << 1).unwrap();
             store.write_mid(mid_key(1), U256::ONE).unwrap();
             let err = find_first_left_inclusive(store, 0).unwrap_err();
-            let expected =
-                crate::error::PrecompileError::from(PrimitivesMathError::LbMathTreeInvariantBroken)
-                    .to_string();
+            let expected = outbe_primitives::error::PrecompileError::from(
+                PrimitivesMathError::LbMathTreeInvariantBroken,
+            )
+            .to_string();
             assert_eq!(err.to_string(), expected);
         });
     }

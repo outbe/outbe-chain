@@ -53,7 +53,7 @@ fn seed_predeploy_rejects_both_stablecoin_fixed_addresses() {
     ] {
         let directory = TempDir::new().unwrap();
         let root = directory.path();
-        let fixture_dir = root.join("crates/blockchain/primitives/testdata/stablecoin/v1");
+        let fixture_dir = root.join("crates/system/common/testdata/stablecoin/v1");
         fs::create_dir_all(&fixture_dir).unwrap();
         for fixture in [
             "network-address-vectors.json",
@@ -61,7 +61,7 @@ fn seed_predeploy_rejects_both_stablecoin_fixed_addresses() {
         ] {
             fs::copy(
                 repository_root()
-                    .join("crates/blockchain/primitives/testdata/stablecoin/v1")
+                    .join("crates/system/common/testdata/stablecoin/v1")
                     .join(fixture),
                 fixture_dir.join(fixture),
             )

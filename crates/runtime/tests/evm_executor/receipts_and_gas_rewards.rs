@@ -78,7 +78,7 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
         voters.push(snapshot.committee[2].address);
     }
     let absent = snapshot.committee[3].address;
-    let unit = outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
+    let unit = outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
     let matured_fee = U256::from(8_000) * unit + U256::from(4);
     let prior_remainder = unit - U256::from(1);
     let parent_fee = U256::from(123);

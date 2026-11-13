@@ -159,13 +159,13 @@ fn expiry_releases_identity_and_pending_cap_and_burns_once() {
                 .promis_limit()
                 .unwrap(),
             promis_limit_before
-                + STABLECOIN_CREATE_BOND / outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR
+                + STABLECOIN_CREATE_BOND / outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR
         );
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(storage.clone())
                 .rest_minor()
                 .unwrap(),
-            STABLECOIN_CREATE_BOND % outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR
+            STABLECOIN_CREATE_BOND % outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR
         );
         assert_eq!(
             vote.proposal_bond(proposal_id).unwrap().state,

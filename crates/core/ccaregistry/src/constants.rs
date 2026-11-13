@@ -1,6 +1,7 @@
 //! CCA bonding parameters.
 use alloy_primitives::{uint, U256};
-use outbe_primitives::{time::SECONDS_PER_DAY, units::ONE_COEN};
+use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_system_common::units::ONE_COEN;
 
 /// One billion COENs.
 pub const BOND_REQUIREMENT: U256 = ONE_COEN.strict_mul(uint!(1_000_000_000_U256));

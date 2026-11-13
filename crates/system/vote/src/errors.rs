@@ -167,9 +167,9 @@ impl VoteError {
     }
 }
 
-impl From<outbe_primitives::vote_target::VoteTargetError> for VoteError {
-    fn from(error: outbe_primitives::vote_target::VoteTargetError) -> Self {
-        use outbe_primitives::vote_target::VoteTargetError;
+impl From<outbe_system_common::vote_target::VoteTargetError> for VoteError {
+    fn from(error: outbe_system_common::vote_target::VoteTargetError) -> Self {
+        use outbe_system_common::vote_target::VoteTargetError;
         match error {
             VoteTargetError::InvalidProposalStatus => Self::InvalidProposalStatus,
             VoteTargetError::InvalidElectorate => Self::InvalidElectorate,

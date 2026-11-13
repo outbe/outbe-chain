@@ -8,10 +8,8 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use outbe_fidelity::api::FidelityCohortOp;
 use outbe_gratis::api::{self as gratis, ModifyAuth};
-use outbe_primitives::{
-    addresses::GRATIS_FACTORY_ADDRESS, error::Result, storage::StorageHandle,
-    units::checked_protocol_to_native,
-};
+use outbe_primitives::{addresses::GRATIS_FACTORY_ADDRESS, error::Result, storage::StorageHandle};
+use outbe_system_common::units::checked_protocol_to_native;
 
 /// Pledge exactly the reservation's Gratis from its source. Only the source may
 /// pledge, once per reservation, before the reservation expires.

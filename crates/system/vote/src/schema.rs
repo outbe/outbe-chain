@@ -4,7 +4,7 @@ use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::VOTE_ADDRESS;
 use outbe_primitives::storage::{Storable, StorableType};
 
-pub use outbe_primitives::vote_target::{
+pub use outbe_system_common::vote_target::{
     read_proposal_status, read_vote_proposal, vote_proposals, ProposalRecord,
     ProposalRecordEntryExt, ProposalRecordView, ProposalStatus, VOTE_PROPOSALS_BASE_SLOT,
 };

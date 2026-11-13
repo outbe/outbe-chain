@@ -12,7 +12,7 @@ fn bin_count(f: &IntexContract<'_>, bin: u32) -> u32 {
 }
 
 fn call_bin(price: u64) -> u32 {
-    outbe_primitives::call_bins::price_to_bin(U256::from(price)).unwrap()
+    outbe_system_common::call_bins::price_to_bin(U256::from(price)).unwrap()
 }
 
 fn issue(s: &StorageHandle, day: u32, issued_at: u64, call_price: u64) -> SeriesId {

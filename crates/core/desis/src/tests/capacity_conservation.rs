@@ -4,7 +4,6 @@ use alloy_sol_types::{SolCall, SolEvent};
 use outbe_oracle::{api, schema::OracleContract};
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::{
-    address_pair::AddressPair,
     addresses::DESIS_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     error::Result,
@@ -12,6 +11,7 @@ use outbe_primitives::{
     time::{previous_date_key, timestamp_to_date_key, EmissionDate},
 };
 use outbe_promislimit::PromisLimitContract;
+use outbe_system_common::address_pair::AddressPair;
 
 use crate::{
     constants::ORIGIN_ROUTER_ADDRESS,

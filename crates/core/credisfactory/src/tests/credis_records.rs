@@ -6,7 +6,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{
     date_key_to_utc_timestamp, timestamp_to_date_key, worldwide_day_from_timestamp,
 };
-use outbe_primitives::units::SCALE_1E6_U256;
+use outbe_system_common::units::SCALE_1E6_U256;
 
 use crate::rules::{self, calc_call_price, IssueCredisParams};
 use outbe_credis::constants::CALL_RATE_PCT;
@@ -15,7 +15,7 @@ use outbe_credis::precompile::{dispatch, ICredis};
 use outbe_credis::runtime::{effective_state, settlement_deadline};
 use outbe_credis::schema::{Credis, CredisContract, CredisState};
 use outbe_credis::state::CallBins;
-use outbe_primitives::call_bins;
+use outbe_system_common::call_bins;
 
 const CHAIN_ID: u64 = 1;
 use outbe_primitives::time::SECONDS_PER_DAY as DAY;

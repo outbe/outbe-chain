@@ -9,12 +9,13 @@
 
 use alloy_primitives::{I256, U256};
 
-use crate::error::{PrimitivesMathError, Result};
+use crate::errors::PrimitivesMathError;
 use crate::math::constants::{
     BASIS_POINT_MAX, MAX_BIN_ID, PRECISION, REAL_ID_SHIFT, SCALE_1_128_128, SCALE_OFFSET,
 };
 use crate::math::uint128x128_math::{log2, pow};
 use crate::math::uint256x256_math::{mul_shift_round_down, shift_div_round_down};
+use outbe_primitives::error::Result;
 
 /// Mirrors `PriceHelper.getBase(uint16)` (PriceHelper.sol L46-50).
 /// Returns `1 + binStep / BASIS_POINT_MAX` in 128.128 fixed-point.
@@ -144,8 +145,10 @@ mod tests {
         assert_eq!(get_exponent(MAX_BIN_ID).unwrap(), REAL_ID_SHIFT - 1);
 
         let displayed = |id: u32| {
-            crate::error::PrecompileError::from(PrimitivesMathError::LbMathBinIdOutOfRange { id })
-                .to_string()
+            outbe_primitives::error::PrecompileError::from(
+                PrimitivesMathError::LbMathBinIdOutOfRange { id },
+            )
+            .to_string()
         };
         let above = MAX_BIN_ID + 1;
         assert_eq!(

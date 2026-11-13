@@ -13,8 +13,8 @@ use outbe_primitives::{
     addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS},
     storage::{gas::PRECOMPILE_BASE_GAS, hashmap::HashMapStorageProvider, StorageHandle},
     time::{previous_date_key, timestamp_to_date_key},
-    units::{checked_protocol_to_native, SCALE_1E6_U256},
 };
+use outbe_system_common::units::{checked_protocol_to_native, SCALE_1E6_U256};
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
 use outbe_vaultrouter::{LiquidityReservation, VaultRouterContract};
 

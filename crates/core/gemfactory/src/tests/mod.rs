@@ -446,7 +446,9 @@ pub(crate) fn daily_pass<'s>(
     let mut height = ctx.block.block_number;
     loop {
         for packed in [gem.daily_budget.read()?, gem.cleanup_budget.read()?] {
-            if let Some(previous) = outbe_primitives::pass_budget::BlockAllowance::unpack(packed)? {
+            if let Some(previous) =
+                outbe_system_common::pass_budget::BlockAllowance::unpack(packed)?
+            {
                 height = height.max(previous.height);
             }
         }
@@ -459,7 +461,7 @@ pub(crate) fn daily_pass<'s>(
         );
         crate::called::process_call_pass(&block)?;
         let selected =
-            outbe_primitives::pass_budget::BlockAllowance::unpack(gem.daily_budget.read()?)?
+            outbe_system_common::pass_budget::BlockAllowance::unpack(gem.daily_budget.read()?)?
                 .map_or(0, |allowance| allowance.day);
         let next = gem.call_sweep_day.read()?;
         if next == 0 || next == selected {

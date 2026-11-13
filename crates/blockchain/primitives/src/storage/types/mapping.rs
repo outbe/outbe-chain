@@ -1,8 +1,9 @@
 use alloy_primitives::{Address, U256};
 
-use crate::address_pair::AddressPair;
 use crate::error::Result;
-use crate::storage::types::{Slot, Storable, StorageBytes, StorageKey, StorageSet};
+use crate::storage::types::{
+    Slot, Storable, StorageBytes, StorageKey, StorageSet, TwoWordStorable,
+};
 use crate::storage::StorageHandle;
 
 /// A Solidity-compatible mapping: `mapping(K => V)`.
@@ -89,28 +90,23 @@ impl<'storage, K: StorageKey> Mapping<'storage, K, StorageBytes<'storage>> {
     }
 }
 
-// Mapping<K, AddressPair> -> a two-word value. Its layout is exactly a Solidity
-// `mapping(K => struct { address base; address quote; })`: base at the key's
-// mapping slot, quote at the next one. `AddressPair` is 40 bytes, so it cannot be
-// `Storable`. This keeps it off the single-word `read`/`write` above.
-impl<'storage, K: StorageKey> Mapping<'storage, K, AddressPair> {
-    /// Reads the pair for the given key, in the orientation it was written.
-    pub fn read_pair(&self, key: &K) -> Result<AddressPair> {
+// Mapping<K, V: TwoWordStorable> -> two consecutive storage words.
+impl<'storage, K: StorageKey, V: TwoWordStorable> Mapping<'storage, K, V> {
+    /// Reads both words for the given key in their stored order.
+    pub fn read_pair(&self, key: &K) -> Result<V> {
         let slot = key.mapping_slot(self.base_slot);
-        let base = self.word(slot)?;
-        let quote = self.word(slot + U256::ONE)?;
-        Ok(AddressPair::from_addresses(
-            Address::from_word(base.into()),
-            Address::from_word(quote.into()),
-        ))
+        let first = self.word(slot)?;
+        let second = self.word(slot + U256::ONE)?;
+        Ok(V::from_words(first, second))
     }
 
     /// Writes both words. Callers holding a checkpoint must keep this inside it:
-    /// half a pair decodes as a different pair, not as a missing one.
-    pub fn write_pair(&self, key: &K, pair: AddressPair) -> Result<()> {
+    /// a partial write decodes as a different value, not as a missing one.
+    pub fn write_pair(&self, key: &K, value: V) -> Result<()> {
         let slot = key.mapping_slot(self.base_slot);
-        self.set_word(slot, pair.address1().to_word())?;
-        self.set_word(slot + U256::ONE, pair.address2().to_word())
+        let (first, second) = value.to_words();
+        self.set_word(slot, first)?;
+        self.set_word(slot + U256::ONE, second)
     }
 
     fn word(&self, slot: U256) -> Result<U256> {
@@ -140,6 +136,45 @@ mod tests {
     use crate::storage::hashmap::HashMapStorageProvider;
     use crate::storage::StorageHandle;
     use alloy_primitives::{address, keccak256};
+
+    #[test]
+    fn test_mapping_two_word_storable_round_trip() {
+        use crate::storage::types::{StorableType, TwoWordStorable};
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        struct TestTwoWords(U256, U256);
+
+        impl StorableType for TestTwoWords {
+            const SLOTS: usize = 2;
+        }
+
+        impl TwoWordStorable for TestTwoWords {
+            fn from_words(first: U256, second: U256) -> Self {
+                Self(first, second)
+            }
+
+            fn to_words(self) -> (U256, U256) {
+                (self.0, self.1)
+            }
+        }
+
+        let contract = address!("0x0000000000000000000000000000000000001003");
+        let mut provider = HashMapStorageProvider::new(1);
+        let storage = StorageHandle::new(&mut provider);
+        let mapping: Mapping<u32, TestTwoWords> = Mapping::new(U256::from(43), contract, storage);
+        let value = TestTwoWords(U256::MAX, U256::from(42));
+
+        assert_eq!(
+            mapping.read_pair(&1).unwrap(),
+            TestTwoWords(U256::ZERO, U256::ZERO)
+        );
+        mapping.write_pair(&1, value).unwrap();
+        assert_eq!(mapping.read_pair(&1).unwrap(), value);
+        assert_eq!(
+            mapping.read_pair(&2).unwrap(),
+            TestTwoWords(U256::ZERO, U256::ZERO)
+        );
+    }
 
     #[test]
     fn test_mapping_slot_computation() {
@@ -195,61 +230,6 @@ mod tests {
         inner.write(&key, true).unwrap();
         let val = inner.read(&key).unwrap();
         assert!(val);
-    }
-
-    #[test]
-    fn test_mapping_address_pair_round_trip() {
-        let contract = address!("0x0000000000000000000000000000000000001003");
-        let base = address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
-        let quote = address!("0x00000000000000000000000000000000000cc840");
-
-        let mut provider = HashMapStorageProvider::new(1);
-        let storage = StorageHandle::new(&mut provider);
-        let mapping: Mapping<u32, AddressPair> = Mapping::new(U256::from(43), contract, storage);
-
-        // An unwritten key reads back as the zero pair, not as an error. The zero
-        // address is a legitimate asset, so absence is decided elsewhere.
-        assert_eq!(mapping.read_pair(&1).unwrap(), AddressPair::ZERO);
-
-        let pair = AddressPair::from_addresses(base, quote);
-        mapping.write_pair(&1, pair).unwrap();
-
-        // The quoted orientation survives the round trip. It is not sorted.
-        assert_eq!(mapping.read_pair(&1).unwrap(), pair);
-        assert_eq!(mapping.read_pair(&1).unwrap().address1(), base);
-        assert_eq!(mapping.read_pair(&1).unwrap().address2(), quote);
-        assert_eq!(mapping.read_pair(&2).unwrap(), AddressPair::ZERO);
-    }
-
-    /// Pins the two-word layout `outbe-genesis-cli` and the native state opening
-    /// plan both reproduce by hand: base at the key's mapping slot, quote at +1.
-    #[test]
-    fn test_mapping_address_pair_occupies_two_consecutive_slots() {
-        let contract = address!("0x0000000000000000000000000000000000001003");
-        let base = address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
-        let quote = address!("0x00000000000000000000000000000000000cc840");
-        let base_slot = U256::from(43);
-
-        let mut provider = HashMapStorageProvider::new(1);
-        let storage = StorageHandle::new(&mut provider);
-        let mapping: Mapping<u32, AddressPair> = Mapping::new(base_slot, contract, storage.clone());
-        mapping
-            .write_pair(&7, AddressPair::from_addresses(base, quote))
-            .unwrap();
-
-        let mut buf = [0u8; 64];
-        buf[28..32].copy_from_slice(&7u32.to_be_bytes());
-        buf[32..64].copy_from_slice(&base_slot.to_be_bytes::<32>());
-        let slot = U256::from_be_bytes(keccak256(buf).0);
-
-        assert_eq!(
-            storage.sload(contract, slot).unwrap(),
-            U256::from_be_bytes(base.into_word().0),
-        );
-        assert_eq!(
-            storage.sload(contract, slot + U256::from(1)).unwrap(),
-            U256::from_be_bytes(quote.into_word().0),
-        );
     }
 
     #[test]

@@ -1,13 +1,13 @@
 use std::time::Instant;
 
 use alloy_primitives::{Address, U256};
-use outbe_primitives::{
-    stablecoin::{encode_canonical_stablecoin_create, StablecoinCreatePayload},
-    storage::{hashmap::HashMapStorageProvider, StorageHandle},
-};
+use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_stablecoinfactory::{
     api::{FactoryReservation, StablecoinFactoryApi, ValidatedStablecoinCreate},
     StablecoinFactoryContract,
+};
+use outbe_system_common::stablecoin::{
+    encode_canonical_stablecoin_create, StablecoinCreatePayload,
 };
 
 use super::support::{capture_execution, elapsed_ns};

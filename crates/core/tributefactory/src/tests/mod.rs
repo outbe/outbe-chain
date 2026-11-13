@@ -4,12 +4,12 @@ use outbe_oracle::{
     genesis::{init_from_genesis, OracleGenesisConfig},
     schema::OracleContract,
 };
-use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{MetadosisMutationPurposeTag, StorageHandle};
 use outbe_primitives::time::date_key_to_utc_timestamp;
 use outbe_primitives::time::WorldwideDay;
+use outbe_system_common::address_pair::AddressPair;
 use outbe_tribute::TributeContract;
 
 use crate::runtime::{validate_agent_reward_addresses, OfferTributeInput};

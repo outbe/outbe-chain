@@ -4,7 +4,6 @@ use alloy_primitives::U256;
 use outbe_emission::day_emission::emission_limit_of_day;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
-    address_pair::AddressPair,
     addresses::TRIBUTE_FACTORY_ADDRESS,
     error::PrecompileError,
     storage::MetadosisMutationPurposeTag,
@@ -13,6 +12,7 @@ use outbe_primitives::{
         SECONDS_PER_DAY,
     },
 };
+use outbe_system_common::address_pair::AddressPair;
 use outbe_tributefactory::TributeFactoryContract;
 
 use super::*;

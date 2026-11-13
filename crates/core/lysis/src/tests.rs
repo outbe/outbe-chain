@@ -6,7 +6,7 @@ use alloy_primitives::U256;
 /// (`program_v1::execute`), so these are test inputs, not policy.
 const F_FP_DEFAULT: U256 = u256_from_u128(SCALE_U128 * 32 / 100);
 const F_MAX_FP: U256 = u256_from_u128(SCALE_U128 * 64 / 100);
-use outbe_primitives::units::SCALE_1E6_U256;
+use outbe_system_common::units::SCALE_1E6_U256;
 
 fn coen(whole: u64) -> U256 {
     U256::from(whole) * SCALE_1E6_U256

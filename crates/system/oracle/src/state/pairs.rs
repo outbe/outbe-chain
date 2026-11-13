@@ -1,10 +1,10 @@
 //! Pair registry: registration, lookup, orientation checks and vote targets.
 
 use alloy_primitives::{Address, U256};
-use outbe_primitives::address_pair::AddressPair;
-use outbe_primitives::asset_type::AssetType;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::types::Mapping;
+use outbe_system_common::address_pair::AddressPair;
+use outbe_system_common::asset_type::AssetType;
 
 use crate::errors::OracleError;
 use crate::schema::{OracleContract, PairIndex};

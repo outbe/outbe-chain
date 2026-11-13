@@ -1,7 +1,7 @@
 use alloy_primitives::Address;
-use outbe_primitives::address_pair::AddressPair;
-use outbe_primitives::asset_type::{currency_address, AssetType};
-use outbe_primitives::math::reference_price::pair_scales;
+use outbe_system_common::address_pair::AddressPair;
+use outbe_system_common::asset_type::{currency_address, AssetType};
+use outbe_system_common::math::reference_price::pair_scales;
 
 const COEN: Address = Address::ZERO;
 

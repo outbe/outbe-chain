@@ -135,8 +135,8 @@ pub fn check_abi_exports(repo_root: &Path) -> Result<AbiReport> {
 }
 
 fn load_address_manifest(repo_root: &Path) -> Result<StablecoinAddressManifest> {
-    let path = repo_root
-        .join("crates/blockchain/primitives/testdata/stablecoin/v1/network-address-vectors.json");
+    let path =
+        repo_root.join("crates/system/common/testdata/stablecoin/v1/network-address-vectors.json");
     let bytes = fs::read(&path).wrap_err_with(|| format!("read {}", path.display()))?;
     serde_json::from_slice(&bytes).wrap_err_with(|| format!("parse {}", path.display()))
 }

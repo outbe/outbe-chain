@@ -12,3 +12,6 @@ pub mod nod_rules;
 pub mod pow;
 pub mod profile;
 pub mod settlement;
+
+#[doc(hidden)]
+pub use outbe_system_common as __system_common;

@@ -10,8 +10,8 @@ publish.workspace = true
 # implementation without a dependency cycle (the enclave depends on this, and the
 # fidelity crate depends on the enclave via its `test-enclave` seam).
 [dependencies]
+outbe-system-common.workspace = true
 alloy-primitives.workspace = true
-outbe-primitives.workspace = true
 thiserror.workspace = true
 
 [lints]

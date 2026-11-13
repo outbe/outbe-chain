@@ -6,10 +6,10 @@
 
 use alloy_primitives::B256;
 use outbe_core_common::deadline_queue;
-use outbe_primitives::call_bins;
-use outbe_primitives::call_breach::{self, ScanTerms};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::indexed_list::IndexedList;
+use outbe_system_common::call_bins;
+use outbe_system_common::call_breach::{self, ScanTerms};
 
 use crate::errors::{date_step_error, IntexError};
 use crate::schema::{intex_id, CallStamp, IntexContract, SeriesId, SeriesRecord};
@@ -311,7 +311,7 @@ outbe_core_common::impl_deadline_queue!(CleanupQueue<B256> {
 /// The call-price bins of one reference currency, holding its call groups.
 pub struct CallBins<'a, 'b>(pub &'a IntexContract<'b>, pub u16);
 
-outbe_primitives::impl_call_bins!(CallBins<B256> {
+outbe_system_common::impl_call_bins!(CallBins<B256> {
     root: call_bin_tree_root,
     mid: call_bin_tree_mid,
     leaf: call_bin_tree_leaf,

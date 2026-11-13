@@ -13,12 +13,14 @@ use outbe_oracle::{
 };
 use outbe_primitives::{
     block::BlockRuntimeContext,
+    error::{PassFailure, PrecompileError, Result},
+    storage::dsl::Value,
+};
+use outbe_system_common::{
     call_bins,
     call_breach::{BreachTerms, ScanTerms},
     day_pass::PinnedDay,
-    error::{PassFailure, PrecompileError, Result},
     pass_budget::PassBudget,
-    storage::dsl::Value,
 };
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
@@ -68,7 +70,7 @@ impl<'storage> CallPass<'storage> for GemCallPass<'storage> {
         pinned_day: u32,
         phase: u8,
         budget: &mut PassBudget,
-    ) -> Result<outbe_primitives::day_pass::Progress> {
+    ) -> Result<outbe_system_common::day_pass::Progress> {
         let pinned_ts = outbe_primitives::time::date_key_to_utc_timestamp(pinned_day)
             .map_err(crate::errors::date_step_error)?;
         let through_day = outbe_core_common::deadline_queue::deadline_day(pinned_ts)?;
@@ -140,7 +142,7 @@ impl<'storage> CallPass<'storage> for GemCallPass<'storage> {
 
 /// The live profile is the terms the next gem is sealed with.
 fn scan_terms(gem: &GemContract<'_>, iso_code: u16, params: &GemParams) -> Result<ScanTerms> {
-    outbe_primitives::call_breach::scan_terms(
+    outbe_system_common::call_breach::scan_terms(
         &gem.max_call_window_seconds,
         &gem.min_call_threshold_seconds,
         iso_code,

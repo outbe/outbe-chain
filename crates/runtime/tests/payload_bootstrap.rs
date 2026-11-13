@@ -26,9 +26,9 @@ use outbe_primitives::{
     },
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID,
-    units::SCALE_1E6_U256,
     OutbeBuiltPayload, OutbeHeader, OutbePayloadAttributes, OutbePrimitives,
 };
+use outbe_system_common::units::SCALE_1E6_U256;
 use reth_basic_payload_builder::{BuildArguments, PayloadConfig};
 use reth_chainspec::{ChainSpec, ChainSpecBuilder, EthereumHardfork, ForkCondition};
 use reth_ethereum_payload_builder::EthereumBuilderConfig;

@@ -5,8 +5,8 @@
 
 use alloy_primitives::{Address, B256};
 use outbe_primitives::error::Result;
-use outbe_primitives::stablecoin::StablecoinCreatePayload;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::stablecoin::StablecoinCreatePayload;
 
 use crate::schema::StablecoinContract;
 

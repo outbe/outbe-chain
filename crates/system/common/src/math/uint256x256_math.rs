@@ -11,7 +11,8 @@
 
 use alloy_primitives::U256;
 
-use crate::error::{PrimitivesMathError, Result};
+use crate::errors::PrimitivesMathError;
+use outbe_primitives::error::Result;
 
 // --- 512-bit multiplication / division ---------------------------------------
 

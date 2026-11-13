@@ -5,8 +5,8 @@ use outbe_primitives::{
     error::{PrecompileError, Result},
     stablecoin_fork::MAX_PENDING_PUBLIC_BONDED_PROPOSALS,
     storage::StorageHandle,
-    units::UNITS_PER_PROTOCOL_MINOR,
 };
+use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 
 use outbe_promislimit::{precompile::IPromisLimit, BurnSource, PromisLimitContract};
 

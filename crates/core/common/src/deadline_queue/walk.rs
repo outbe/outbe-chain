@@ -5,9 +5,9 @@ use super::{
     DeadlineHandler, DeadlineQueueStore, Due, Progress,
 };
 use outbe_primitives::error::{decide, Decided, PrecompileError, Result};
-use outbe_primitives::math::constants::MAX_BIN_ID;
-use outbe_primitives::pass_budget::PassBudget;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::math::constants::MAX_BIN_ID;
+use outbe_system_common::pass_budget::PassBudget;
 
 /// This structure stores the actual block time and the selected cutoff day for scheduling.
 /// Processing missed days must not use the cutoff as the clock for retries.

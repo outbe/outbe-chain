@@ -6,9 +6,9 @@ use outbe_intex::{IntexState, SeriesId};
 use outbe_oracle::api::get_utc_day_vwap_for_iso;
 use outbe_primitives::addresses::{GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS};
 use outbe_primitives::error::Result;
-use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
+use outbe_system_common::stablecoin::iso_4217_alpha;
 
 use outbe_core_common::pow;
 
@@ -427,7 +427,11 @@ pub(crate) fn settlement_units(
 /// What settlement charges in a six-decimal reference-currency asset.
 #[cfg(test)]
 pub(crate) fn gem_cost_minor(gem: &GemView) -> Result<U256> {
-    settlement_units(gem, None, outbe_primitives::units::PROTOCOL_AMOUNT_DECIMALS)
+    settlement_units(
+        gem,
+        None,
+        outbe_system_common::units::PROTOCOL_AMOUNT_DECIMALS,
+    )
 }
 
 /// What settling `gem_id` with `asset` costs, in which currency, and the VWAP

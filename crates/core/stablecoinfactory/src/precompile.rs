@@ -3,8 +3,8 @@ use alloy_sol_types::SolInterface;
 use outbe_primitives::addresses::{STABLECOIN_ADDRESS_PREFIX, STABLECOIN_MARKER_CODE};
 use outbe_primitives::dispatch::{dispatch_call, view};
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::stablecoin::stablecoin_address;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::stablecoin::stablecoin_address;
 
 pub use crate::abi::IStablecoinFactory;
 use crate::errors::{AbiDecodeError, StablecoinFactoryError};

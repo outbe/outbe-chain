@@ -12,12 +12,11 @@ use outbe_oracle::{
 };
 use outbe_primitives::{
     error::Result,
-    math::scaled_math::checked_quote,
     series_id::SeriesId,
     storage::StorageHandle,
     time::{first_full_day, previous_date_key, timestamp_to_date_key},
-    units::MAX_ASSET_DECIMALS,
 };
+use outbe_system_common::{math::scaled_math::checked_quote, units::MAX_ASSET_DECIMALS};
 pub(crate) fn quote(
     storage: &StorageHandle<'_>,
     asset: Address,

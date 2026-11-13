@@ -4,10 +4,10 @@ use crate::offer_result::ProcessedOffer;
 use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_agentreward::AgentRewardContract;
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::stablecoin::validate_currency_code;
 use outbe_primitives::time::timestamp_to_date_key;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::wwd_entity_id::{derive_poseidon_digest, WwdEntityId};
+use outbe_system_common::stablecoin::validate_currency_code;
 #[cfg(any(test, feature = "bench-utils"))]
 use outbe_tee::protocol::TributeOfferResult;
 use outbe_tee::protocol::{

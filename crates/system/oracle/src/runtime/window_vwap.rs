@@ -1,8 +1,8 @@
 //! VWAP of a finalized snapshot window, judged by round coverage.
 
 use alloy_primitives::U256;
-use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::Result;
+use outbe_system_common::address_pair::AddressPair;
 
 use super::VwapAccumulator;
 use crate::constants::{MIN_WINDOW_COVERAGE, VWAP_HOUR_SECONDS};

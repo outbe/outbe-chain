@@ -3,12 +3,12 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::GEM_ADDRESS;
-use outbe_primitives::math::constants::REAL_ID_SHIFT;
-use outbe_primitives::math::tree_math;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
+use outbe_system_common::math::constants::REAL_ID_SHIFT;
+use outbe_system_common::math::tree_math;
 
 use super::*;
 use outbe_gem::config::GemParams;
@@ -17,7 +17,7 @@ use outbe_gem::schema::{GemContract, GemState};
 #[test]
 fn coen_iso_one_maps_to_the_center_price_bin_at_six_decimals() {
     assert_eq!(
-        outbe_primitives::call_bins::price_to_bin(U256::from(1_000_000u64)).unwrap(),
+        outbe_system_common::call_bins::price_to_bin(U256::from(1_000_000u64)).unwrap(),
         REAL_ID_SHIFT as u32
     );
 }
@@ -262,7 +262,7 @@ fn a_group_holds_the_gems_of_one_first_full_day_call_price_and_currency() {
         assert_eq!(group_of(storage, gems[1]), group, "the load is not a term");
         assert_eq!(
             group,
-            outbe_primitives::call_breach::group_key(
+            outbe_system_common::call_breach::group_key(
                 outbe_primitives::time::first_full_day(T_NOW).expect("date step"),
                 view(storage, gems[0]).terms.call_price_minor,
                 USD
@@ -379,9 +379,10 @@ fn group_and_terms_survive_until_unpaid_and_settled_are_zero() {
         let group = group_of(storage, gem_id);
         let group_id = item(storage, gem_id).unwrap().group_key;
         let gem = GemContract::new(storage.clone());
-        let bin =
-            outbe_primitives::call_bins::price_to_bin(view(storage, gem_id).terms.call_price_minor)
-                .unwrap();
+        let bin = outbe_system_common::call_bins::price_to_bin(
+            view(storage, gem_id).terms.call_price_minor,
+        )
+        .unwrap();
         assert!(tree_math::contains(&outbe_gem::CallBins(&gem, USD), bin).unwrap());
 
         settle(storage, gem_id);
@@ -600,7 +601,7 @@ fn backdate_that_changes_the_day_moves_the_gem_and_opens_a_new_group() {
         assert_ne!(after.group_key, before.group_key);
         assert_eq!(
             after.group_key,
-            outbe_primitives::call_breach::group_key(
+            outbe_system_common::call_breach::group_key(
                 after.full_day_after_issue().expect("date step").value(),
                 view(storage, gem_id).terms.call_price_minor,
                 USD

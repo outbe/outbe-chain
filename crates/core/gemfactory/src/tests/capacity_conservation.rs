@@ -21,9 +21,9 @@ const REMAINDER: u64 = 3_000_007;
 #[test]
 fn position_queue_encoding_preserves_zero_and_maximum_supported_hours() {
     use crate::state::{position_queue_entry, position_queue_hour};
-    let max_deadline =
-        outbe_core_common::deadline_queue::day_end(outbe_primitives::math::constants::MAX_BIN_ID)
-            - 1;
+    let max_deadline = outbe_core_common::deadline_queue::day_end(
+        outbe_system_common::math::constants::MAX_BIN_ID,
+    ) - 1;
     for hour in [
         0,
         1,
@@ -93,7 +93,8 @@ fn daily_position_expiry_preserves_hour_topics() {
 fn daily_pass_shares_series_and_position_allowance_across_reentry() {
     use alloy_primitives::B256;
     use outbe_gem::GemContract;
-    use outbe_primitives::{pass_budget::SWEEP_WRITES_PER_BLOCK, time::timestamp_to_date_key};
+    use outbe_primitives::time::timestamp_to_date_key;
+    use outbe_system_common::pass_budget::SWEEP_WRITES_PER_BLOCK;
     let mut p = world();
     StorageHandle::enter(&mut p, |s| {
         outbe_oracle::schema::OracleContract::new(s.clone())

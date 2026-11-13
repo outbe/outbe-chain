@@ -6,13 +6,14 @@
 use alloy_primitives::{keccak256, B256, U256};
 
 use crate::day_pass::currency_position;
-use crate::error::{CallBinError, PrimitivesMathError, Result};
+use crate::errors::{CallBinError, PrimitivesMathError};
 use crate::math::constants::MAX_BIN_ID;
 use crate::math::reference_price;
 use crate::math::tree_math::{self, BinTreeStorage};
 use crate::pass_budget::PassBudget;
-use crate::storage::dsl::{Map, Value};
-use crate::storage::types::{Storable, StorageKey};
+use outbe_primitives::error::Result;
+use outbe_primitives::storage::dsl::{Map, Value};
+use outbe_primitives::storage::types::{Storable, StorageKey};
 
 /// Bin step of the call-price ladder, in basis points.
 pub const BIN_STEP_BP: u16 = 25;
@@ -283,19 +284,19 @@ macro_rules! impl_call_bins {
             fn currency(&self) -> u16 {
                 self.1
             }
-            fn bin_count(&self) -> &$crate::storage::dsl::Map<'s, u64, u32> {
+            fn bin_count(&self) -> &$crate::__primitives::storage::dsl::Map<'s, u64, u32> {
                 &self.0.$count
             }
-            fn bin_at(&self) -> &$crate::storage::dsl::Map<'s, ::alloy_primitives::B256, $entry> {
+            fn bin_at(&self) -> &$crate::__primitives::storage::dsl::Map<'s, ::alloy_primitives::B256, $entry> {
                 &self.0.$at
             }
-            fn entry_slot(&self) -> &$crate::storage::dsl::Map<'s, $entry, u64> {
+            fn entry_slot(&self) -> &$crate::__primitives::storage::dsl::Map<'s, $entry, u64> {
                 &self.0.$slot
             }
-            fn scan_cursor(&self) -> &$crate::storage::dsl::Map<'s, u16, u64> {
+            fn scan_cursor(&self) -> &$crate::__primitives::storage::dsl::Map<'s, u16, u64> {
                 &self.0.$cursor
             }
-            fn failed_day(&self) -> &$crate::storage::dsl::Map<'s, u16, u32> {
+            fn failed_day(&self) -> &$crate::__primitives::storage::dsl::Map<'s, u16, u32> {
                 &self.0.$failed
             }
         }
@@ -354,8 +355,8 @@ mod tests {
 
     #[test]
     fn insert_remove_and_budgeted_walk_across_currencies() {
-        use crate::storage::{hashmap::HashMapStorageProvider, StorageHandle};
         use alloy_primitives::Address;
+        use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 
         let mut provider = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut provider, |storage| {

@@ -5,12 +5,12 @@ use outbe_oracle::api::AddressPair;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
-use outbe_primitives::math::constants::REAL_ID_SHIFT;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::EmissionDate;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
+use outbe_system_common::math::constants::REAL_ID_SHIFT;
 
 mod called {
     use super::*;
@@ -57,7 +57,7 @@ mod called {
             let mut height = ctx.block.block_number;
             for packed in [intex.daily_budget.read()?, intex.cleanup_budget.read()?] {
                 if let Some(previous) =
-                    outbe_primitives::pass_budget::BlockAllowance::unpack(packed)?
+                    outbe_system_common::pass_budget::BlockAllowance::unpack(packed)?
                 {
                     height = height.max(previous.height + 1);
                 }
@@ -70,9 +70,10 @@ mod called {
                 ctx.storage.clone(),
             );
             crate::called::process_call_pass(&block)?;
-            let selected =
-                outbe_primitives::pass_budget::BlockAllowance::unpack(intex.daily_budget.read()?)?
-                    .map_or(0, |allowance| allowance.day);
+            let selected = outbe_system_common::pass_budget::BlockAllowance::unpack(
+                intex.daily_budget.read()?,
+            )?
+            .map_or(0, |allowance| allowance.day);
             let next = intex.call_sweep_day.read()?;
             if next == 0 || next == selected {
                 assert!(
@@ -188,7 +189,7 @@ fn call_group<'s>(
         s,
         f.group_currency(group).unwrap(),
         last_closed_day,
-        outbe_primitives::call_breach::ScanTerms {
+        outbe_system_common::call_breach::ScanTerms {
             window_days: CALL_WINDOW / secs_per_day,
             threshold_days: CALL_THRESHOLD / secs_per_day,
         },

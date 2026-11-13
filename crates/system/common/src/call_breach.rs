@@ -6,9 +6,9 @@
 
 use alloy_primitives::{keccak256, B256, U256};
 
-use crate::error::Result;
-use crate::storage::dsl::Map;
-use crate::time::SECONDS_PER_DAY_U32;
+use outbe_primitives::error::Result;
+use outbe_primitives::storage::dsl::Map;
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
 /// The call terms one right was sealed with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -166,7 +166,7 @@ pub fn min_days_to_call(vwaps: &[(u32, Option<U256>)], terms: &BreachTerms) -> u
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::call_breach_prices as days;
+    use outbe_primitives::test_utils::call_breach_prices as days;
 
     const DAY: u32 = SECONDS_PER_DAY_U32;
 
@@ -189,8 +189,8 @@ mod tests {
 
     #[test]
     fn a_midnight_issue_and_a_later_one_that_day_share_one_group() {
-        let midnight = crate::time::first_full_day(1_773_100_800).expect("date step");
-        let later = crate::time::first_full_day(1_773_100_802).expect("date step");
+        let midnight = outbe_primitives::time::first_full_day(1_773_100_800).expect("date step");
+        let later = outbe_primitives::time::first_full_day(1_773_100_802).expect("date step");
         assert_eq!(
             group_key(midnight, U256::from(4_560_000), 840),
             group_key(later, U256::from(4_560_000), 840)
@@ -217,7 +217,7 @@ mod tests {
 
     #[test]
     fn a_live_threshold_under_a_day_leaves_the_stored_one() {
-        use crate::storage::{dsl::Map, hashmap::HashMapStorageProvider, StorageHandle};
+        use outbe_primitives::storage::{dsl::Map, hashmap::HashMapStorageProvider, StorageHandle};
         let contract = alloy_primitives::address!("0x0000000000000000000000000000000000001003");
         let mut provider = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut provider, |storage| {

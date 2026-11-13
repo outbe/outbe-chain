@@ -7,9 +7,9 @@ use outbe_credis::{CleanupQueue, CredisContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PassFailure, PrecompileError, Result},
-    pass_budget::PassBudget,
     series_id::SeriesId,
 };
+use outbe_system_common::pass_budget::PassBudget;
 
 pub(crate) fn cleanup_through(
     ctx: &BlockRuntimeContext,

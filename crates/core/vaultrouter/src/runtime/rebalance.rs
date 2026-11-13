@@ -3,9 +3,9 @@
 use alloy_primitives::{Address, U256};
 
 use outbe_primitives::error::Result;
-use outbe_primitives::stablecoin::validate_currency_code;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::MAX_ASSET_DECIMALS;
+use outbe_system_common::stablecoin::validate_currency_code;
+use outbe_system_common::units::MAX_ASSET_DECIMALS;
 
 use super::calls::{
     asset_iso_code, erc20_balance_of, erc20_decimals, erc20_transfer, erc20_transfer_from,

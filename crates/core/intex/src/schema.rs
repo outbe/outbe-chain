@@ -4,8 +4,8 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::INTEX_ADDRESS;
-use outbe_primitives::call_breach::group_key;
 use outbe_primitives::time::{first_full_day, EmissionDate, TimeError};
+use outbe_system_common::call_breach::group_key;
 
 use crate::errors::IntexError;
 
@@ -351,7 +351,7 @@ pub struct IntexContract {
 impl IntexContract<'_> {
     /// Namespace a bin-index column by the reference currency its prices are in.
     pub const fn scoped(reference_currency: u16, key: u32) -> u64 {
-        outbe_primitives::call_bins::scoped(reference_currency, key)
+        outbe_system_common::call_bins::scoped(reference_currency, key)
     }
 
     /// Composite key for the per-owner ledgers: `keccak256(intex_id ++ owner)`.

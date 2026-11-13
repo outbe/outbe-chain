@@ -16,7 +16,7 @@ pub use outbe_system_common::emission::{
 mod tests {
     use super::*;
     use alloy_primitives::{uint, U256};
-    use outbe_primitives::units::SCALE_1E6_U256;
+    use outbe_system_common::units::SCALE_1E6_U256;
 
     const REFERENCE_VECTORS: &str =
         include_str!("../../../../testing/emission-reference/vectors.json");

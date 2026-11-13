@@ -143,7 +143,7 @@ mod tests {
     use super::*;
     use crate::compute::compute_token_id;
     use crate::crypto::{chacha20poly1305_encrypt, hkdf_sha256};
-    use outbe_primitives::units::SCALE_1E6_U256;
+    use outbe_system_common::units::SCALE_1E6_U256;
     use outbe_tee::protocol::{TributeZkContext, WorldwideDay};
     use x25519_dalek::{PublicKey, StaticSecret};
 

@@ -65,7 +65,7 @@ mod group_scans {
             let group = group_of(&s, ids[0]);
             assert_eq!(f.group_members(group).unwrap(), ids);
             let bin =
-                outbe_primitives::call_bins::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
+                outbe_system_common::call_bins::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
             assert_eq!(f.call_bin_groups(REFERENCE_ISO, bin).unwrap(), vec![group]);
 
             let oracle = outbe_oracle::schema::OracleContract::new(s.clone());
@@ -142,7 +142,7 @@ mod group_scans {
         use alloy_sol_types::SolEvent;
         use outbe_intex::precompile::IIntex;
         use outbe_primitives::addresses::INTEX_ADDRESS;
-        use outbe_primitives::pass_budget::PassBudget;
+        use outbe_system_common::pass_budget::PassBudget;
 
         let mut storage = super::super::factory_provider();
         let id = super::super::sid(7);

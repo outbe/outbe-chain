@@ -21,7 +21,7 @@
 #![deny(clippy::float_arithmetic)]
 
 use alloy_primitives::{Address, B256, U256, U512};
-use outbe_primitives::units::SCALE_1E6_U256;
+use outbe_system_common::units::SCALE_1E6_U256;
 use outbe_tee::protocol::WorldwideDay;
 
 use crate::errors::{ComputeError, EnclaveResult};

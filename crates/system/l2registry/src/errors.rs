@@ -118,9 +118,9 @@ impl From<L2RegistryError> for PrecompileError {
 impl L2RegistryError {
     pub fn into_execution_outcome(
         result: outbe_primitives::error::Result<()>,
-    ) -> outbe_primitives::error::Result<outbe_primitives::vote_target::TargetExecutionOutcome>
+    ) -> outbe_primitives::error::Result<outbe_system_common::vote_target::TargetExecutionOutcome>
     {
-        use outbe_primitives::vote_target::TargetExecutionOutcome;
+        use outbe_system_common::vote_target::TargetExecutionOutcome;
         match result {
             Ok(()) => Ok(TargetExecutionOutcome::Applied),
             Err(PrecompileError::Revert(reason)) => Ok(TargetExecutionOutcome::Error { reason }),

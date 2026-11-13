@@ -128,7 +128,7 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
                 auth(GratisOp::Pledge, alice(), collateral, 1),
             )
             .unwrap();
-            let stake = outbe_primitives::units::checked_protocol_to_native(collateral).unwrap();
+            let stake = outbe_system_common::units::checked_protocol_to_native(collateral).unwrap();
             fund_stake(&storage, stake);
             let (id, disbursed) =
                 runtime::issue_credis(storage.clone(), cca(), reservation_id, stake).unwrap();
@@ -460,10 +460,10 @@ fn a_credis_settled_at_the_deadline_is_never_forfeited() {
         let credis = CredisContract::new(storage.clone());
         let open = record(&storage, bystander);
         let bins = outbe_credis::CallBins(&credis, open.reference_currency);
-        let bin = outbe_primitives::call_bins::price_to_bin(open.call_price_minor).unwrap();
-        assert_eq!(outbe_primitives::call_bins::len(&bins, bin).unwrap(), 1);
+        let bin = outbe_system_common::call_bins::price_to_bin(open.call_price_minor).unwrap();
+        assert_eq!(outbe_system_common::call_bins::len(&bins, bin).unwrap(), 1);
         assert_eq!(
-            outbe_primitives::call_bins::entry_at(&bins, bin, 0).unwrap(),
+            outbe_system_common::call_bins::entry_at(&bins, bin, 0).unwrap(),
             open.series_id
         );
         assert_eq!(

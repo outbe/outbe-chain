@@ -7,8 +7,8 @@
 use alloy_primitives::U256;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use core::fmt::Write;
-use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::time::{timestamp_to_date_key, SECONDS_PER_DAY};
+use outbe_system_common::stablecoin::iso_4217_alpha;
 
 const DECIMALS: u32 = 6;
 

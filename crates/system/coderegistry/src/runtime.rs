@@ -47,10 +47,13 @@ impl CodeRegistry<'_> {
         let Some(approval) = self.patch_approvals.get(proposal_id)? else {
             return Ok(None);
         };
-        let proposal =
-            outbe_primitives::vote_target::read_vote_proposal(self.storage.clone(), proposal_id)?
-                .ok_or(CodeRegistryError::ApprovalProposalMismatch)?;
-        if proposal.proposal_status()? != outbe_primitives::vote_target::ProposalStatus::Approved {
+        let proposal = outbe_system_common::vote_target::read_vote_proposal(
+            self.storage.clone(),
+            proposal_id,
+        )?
+        .ok_or(CodeRegistryError::ApprovalProposalMismatch)?;
+        if proposal.proposal_status()? != outbe_system_common::vote_target::ProposalStatus::Approved
+        {
             return Ok(None);
         }
         if proposal.target_module != outbe_primitives::addresses::CODE_REGISTRY_ADDRESS
