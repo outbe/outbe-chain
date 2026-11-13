@@ -78,6 +78,32 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    pub(super) fn try_read_any_string_literal(&mut self) -> Option<(usize, String)> {
+        let saved = (self.pos, self.line);
+        let start_line = self.line;
+        if matches!(
+            (self.peek(), self.peek_at(1)),
+            (Some(b'b' | b'c'), Some(b'"'))
+        ) || (matches!(self.peek(), Some(b'b' | b'c'))
+            && self.starts_raw_string_at(self.pos + 1))
+        {
+            self.advance();
+        }
+        let parsed = if self.starts_raw_string_at(self.pos) {
+            self.parse_raw_string()
+        } else if self.peek() == Some(b'"') {
+            self.parse_quoted_string()
+        } else {
+            None
+        };
+        if let Some(value) = parsed {
+            Some((start_line, value))
+        } else {
+            (self.pos, self.line) = saved;
+            None
+        }
+    }
+
     fn parse_raw_string(&mut self) -> Option<String> {
         if self.advance() != Some(b'r') {
             return None;
