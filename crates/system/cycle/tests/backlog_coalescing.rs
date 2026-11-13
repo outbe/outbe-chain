@@ -70,13 +70,13 @@ fn a_timestamp_before_the_first_slot_yields_the_offset() {
 #[test]
 fn only_current_state_scans_and_calendar_owned_protocol_cycle_coalesce() {
     const COALESCING: [TriggerId; 7] = [
-        TriggerId::AuctionClearing,
-        TriggerId::AuctionAdvance,
+        TriggerId::CompleteAuctions,
+        TriggerId::AdvanceAuctions,
         TriggerId::ProtocolCycle,
-        TriggerId::NodCallDaily,
-        TriggerId::CredisCallDaily,
-        TriggerId::IntexCallDaily,
-        TriggerId::GemCallDaily,
+        TriggerId::ScheduleNodCallPass,
+        TriggerId::ScheduleCredisCallPass,
+        TriggerId::ScheduleIntexCallPass,
+        TriggerId::ScheduleGemCallPass,
     ];
     for spec in ACTIVE_TRIGGERS {
         let coalesces = COALESCING.iter().any(|id| id.as_u32() == spec.id);
@@ -97,19 +97,19 @@ fn dispatch_position(id: TriggerId) -> usize {
 }
 
 #[test]
-fn auction_advance_runs_after_emission_limit_1() {
+fn advance_auctions_runs_after_emission_limit_1() {
     assert!(
-        dispatch_position(TriggerId::AuctionAdvance) > dispatch_position(TriggerId::ProtocolCycle),
-        "auction_advance must dispatch after emission_limit_1 so the same-slot brief starts the auction"
+        dispatch_position(TriggerId::AdvanceAuctions) > dispatch_position(TriggerId::ProtocolCycle),
+        "advance_auctions must dispatch after emission_limit_1 so the same-slot brief starts the auction"
     );
 }
 
 #[test]
 fn the_clearing_poll_runs_after_the_stage_schedule() {
     assert!(
-        dispatch_position(TriggerId::AuctionClearing)
-            > dispatch_position(TriggerId::AuctionAdvance),
-        "auction_clearing must dispatch after auction_advance so a day armed this slot can clear in it"
+        dispatch_position(TriggerId::CompleteAuctions)
+            > dispatch_position(TriggerId::AdvanceAuctions),
+        "complete_auctions must dispatch after advance_auctions so a day armed this slot can clear in it"
     );
 }
 
@@ -123,10 +123,10 @@ fn the_genesis_interval_leaves_the_clearing_poll_alone() {
                 .find(|spec| spec.id == id.as_u32())
                 .expect("trigger registered")
         };
-        let clearing = find(TriggerId::AuctionClearing);
+        let clearing = find(TriggerId::CompleteAuctions);
         assert_eq!(
             clearing.period_seconds(),
-            find(TriggerId::AuctionAdvance).period_seconds()
+            find(TriggerId::AdvanceAuctions).period_seconds()
         );
         #[cfg(not(feature = "e2e-test"))]
         assert_eq!(clearing.period_seconds(), 3_600);

@@ -69,7 +69,7 @@ pub fn active_emission_sinks() -> &'static [EmissionSinkSpec] {
 }
 
 /// Allocates emission across the active static sink table.
-pub fn allocate_emission(total: U256) -> Result<Vec<EmissionAllocation>> {
+pub fn allocate_day_emission_limit(total: U256) -> Result<Vec<EmissionAllocation>> {
     allocate_emission_with_specs(total, active_emission_sinks())
 }
 
@@ -150,7 +150,7 @@ mod tests {
     #[test]
     fn test_allocation_invariant() {
         let total = U256::from(16384u64) * U256::from(10u64).pow(U256::from(18u64));
-        let allocations = allocate_emission(total).unwrap();
+        let allocations = allocate_day_emission_limit(total).unwrap();
         let sum = allocation_sum(&allocations);
         assert_eq!(sum, total, "allocation sum must equal total");
     }
@@ -158,7 +158,7 @@ mod tests {
     #[test]
     fn test_allocation_percentages() {
         let total = U256::from(10000u64);
-        let allocations = allocate_emission(total).unwrap();
+        let allocations = allocate_day_emission_limit(total).unwrap();
         for sink in [
             EmissionSinkId::Validator,
             EmissionSinkId::Waa,
@@ -212,7 +212,7 @@ mod tests {
         let boundary = U256::from(9007199254740992u64);
         for offset in [0u64, 1, 7, 999, 123456789] {
             let total = boundary + U256::from(offset);
-            let allocations = allocate_emission(total).unwrap();
+            let allocations = allocate_day_emission_limit(total).unwrap();
             assert_eq!(
                 allocation_sum(&allocations),
                 total,
@@ -221,7 +221,7 @@ mod tests {
         }
 
         let huge = U256::from(10u64).pow(U256::from(30u64));
-        let allocations = allocate_emission(huge).unwrap();
+        let allocations = allocate_day_emission_limit(huge).unwrap();
         assert_eq!(
             allocation_sum(&allocations),
             huge,
@@ -232,8 +232,8 @@ mod tests {
     #[test]
     fn test_allocation_deterministic_exact() {
         let total = U256::from(16384u64) * U256::from(10u64).pow(U256::from(18u64));
-        let first = allocate_emission(total).unwrap();
-        let second = allocate_emission(total).unwrap();
+        let first = allocate_day_emission_limit(total).unwrap();
+        let second = allocate_day_emission_limit(total).unwrap();
         assert_eq!(first, second, "allocation must be deterministic");
     }
 
@@ -331,11 +331,11 @@ mod tests {
 
     #[test]
     fn active_allocation_at_maximum_day_emission_is_pinned() {
-        let total = crate::day_emission::day_emission_limit(1_024);
+        let total = crate::day_emission::emission_limit_of_day(1_024);
         assert_eq!(total, U256::from(581_610_154_000_000u64));
 
         assert_eq!(
-            allocate_emission(total).unwrap(),
+            allocate_day_emission_limit(total).unwrap(),
             vec![
                 EmissionAllocation {
                     id: EmissionSinkId::Validator,
@@ -364,7 +364,7 @@ mod tests {
     #[test]
     fn test_allocation_rounding_dust_goes_to_terminal_sink() {
         let total = U256::from(101u64);
-        let allocations = allocate_emission(total).unwrap();
+        let allocations = allocate_day_emission_limit(total).unwrap();
 
         for sink in [
             EmissionSinkId::Validator,

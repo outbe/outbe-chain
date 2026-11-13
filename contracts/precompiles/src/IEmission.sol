@@ -11,7 +11,6 @@ interface IEmission {
     error InvalidStateTransition(uint32 day, uint8 fromState, uint8 toState);
     error InvalidMetadosisStateTransition(uint32 day, uint8 fromState, uint8 toState);
     error AmountOverflow();
-    error ConservationInvariantViolated(uint32 day, uint128 expectedLimit, uint128 landedSum);
     error WaitingWindowOverflow();
     error DateStep(uint8 kind, uint32 dateKey);
 

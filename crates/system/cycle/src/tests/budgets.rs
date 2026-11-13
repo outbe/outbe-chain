@@ -64,7 +64,7 @@ fn over_budget_rolls_back_and_propagates_pending_then_retries_once_next_block() 
     let mut advance = spec(2, 100, independent);
     advance.depends_on = &[TriggerId::ProtocolCycle];
     let mut clearing = spec(4, 100, independent);
-    clearing.depends_on = &[TriggerId::AuctionAdvance];
+    clearing.depends_on = &[TriggerId::AdvanceAuctions];
     let mut specs = [
         spec(0, 50, write_then_spend),
         spec(1, 100, independent),

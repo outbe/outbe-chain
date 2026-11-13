@@ -19,5 +19,5 @@ mod tests;
 
 pub use cleanup::process_cleanup;
 pub use errors::DesisError;
-pub use runtime::{tick_gate, tick_schedule};
+pub use runtime::{advance_auctions, complete_auctions};
 pub use schema::{AuctionConfig, AuctionStage, BidData, ClearingResult, DesisContract};

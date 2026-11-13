@@ -31,7 +31,13 @@ fn zero_period_is_rejected_and_an_offset_at_or_above_the_period_stays_valid() {
     use crate::triggers::{TriggerHandler, TriggerSpec};
 
     assert!(matches!(
-        TriggerSpec::new(1, "zero", (0, 0), 100, TriggerHandler::IntexCallDaily),
+        TriggerSpec::new(
+            1,
+            "zero",
+            (0, 0),
+            100,
+            TriggerHandler::ScheduleIntexCallPass
+        ),
         Err(CycleError::ZeroTriggerPeriod)
     ));
     let wide_offset = TriggerSpec::new(
@@ -39,7 +45,7 @@ fn zero_period_is_rejected_and_an_offset_at_or_above_the_period_stays_valid() {
         "wide-offset",
         (600, 5_000),
         100,
-        TriggerHandler::IntexCallDaily,
+        TriggerHandler::ScheduleIntexCallPass,
     )
     .expect("offset at or above the period");
     assert_eq!(wide_offset.period_seconds(), 600);
@@ -137,7 +143,7 @@ fn only_the_two_auction_edges_declare_a_dependency() {
     assert!(specs[1].depends_on.is_empty());
     assert_eq!(specs[2].depends_on, &[TriggerId::ProtocolCycle]);
     assert!(specs[3].depends_on.is_empty());
-    assert_eq!(specs[4].depends_on, &[TriggerId::AuctionAdvance]);
+    assert_eq!(specs[4].depends_on, &[TriggerId::AdvanceAuctions]);
     assert!(specs[5].depends_on.is_empty());
     assert!(specs[6].depends_on.is_empty());
 }

@@ -123,27 +123,6 @@
   },
   {
     "type": "error",
-    "name": "ConservationInvariantViolated",
-    "inputs": [
-      {
-        "name": "day",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "expectedLimit",
-        "type": "uint128",
-        "internalType": "uint128"
-      },
-      {
-        "name": "landedSum",
-        "type": "uint128",
-        "internalType": "uint128"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "DateStep",
     "inputs": [
       {

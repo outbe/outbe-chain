@@ -18,12 +18,12 @@ use crate::errors::CycleError;
 #[repr(u32)]
 pub enum TriggerId {
     ProtocolCycle = 0,
-    IntexCallDaily = 1,
-    AuctionAdvance = 2,
-    GemCallDaily = 3,
-    AuctionClearing = 4,
-    CredisCallDaily = 5,
-    NodCallDaily = 6,
+    ScheduleIntexCallPass = 1,
+    AdvanceAuctions = 2,
+    ScheduleGemCallPass = 3,
+    CompleteAuctions = 4,
+    ScheduleCredisCallPass = 5,
+    ScheduleNodCallPass = 6,
 }
 
 impl TriggerId {
@@ -78,12 +78,12 @@ pub enum TriggerHandler {
     #[cfg(test)]
     Test(fn(&BlockRuntimeContext<'_>) -> Result<()>),
     ProtocolCycle,
-    IntexCallDaily,
-    AuctionAdvance,
-    GemCallDaily,
-    AuctionClearing,
-    CredisCallDaily,
-    NodCallDaily,
+    ScheduleIntexCallPass,
+    AdvanceAuctions,
+    ScheduleGemCallPass,
+    CompleteAuctions,
+    ScheduleCredisCallPass,
+    ScheduleNodCallPass,
 }
 
 impl TriggerSpec {
@@ -136,12 +136,12 @@ impl TriggerHandler {
             #[cfg(test)]
             Self::Test(handler) => handler(ctx),
             Self::ProtocolCycle => crate::handler::run_protocol_cycle(ctx),
-            Self::IntexCallDaily => outbe_intexfactory::called::schedule_call_pass(ctx),
-            Self::AuctionAdvance => outbe_desis::tick_schedule(ctx),
-            Self::GemCallDaily => outbe_gemfactory::called::schedule_call_pass(ctx),
-            Self::AuctionClearing => outbe_desis::tick_gate(ctx),
-            Self::CredisCallDaily => outbe_credisfactory::called::schedule_call_pass(ctx),
-            Self::NodCallDaily => outbe_nodfactory::called::schedule_call_pass(ctx),
+            Self::ScheduleIntexCallPass => outbe_intexfactory::called::schedule_call_pass(ctx),
+            Self::AdvanceAuctions => outbe_desis::advance_auctions(ctx),
+            Self::ScheduleGemCallPass => outbe_gemfactory::called::schedule_call_pass(ctx),
+            Self::CompleteAuctions => outbe_desis::complete_auctions(ctx),
+            Self::ScheduleCredisCallPass => outbe_credisfactory::called::schedule_call_pass(ctx),
+            Self::ScheduleNodCallPass => outbe_nodfactory::called::schedule_call_pass(ctx),
         }
     }
 }
@@ -151,11 +151,11 @@ impl TriggerHandler {
 /// on this tick: a slower cadence would spend the commit window on waiting for the start.
 ///
 /// An e2e day is minutes long, so it advances faster still.
-/// `auction_clearing` uses the same cadence.
+/// `complete_auctions` uses the same cadence.
 #[cfg(not(feature = "e2e-test"))]
-const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 3_600;
+const ADVANCE_AUCTIONS_PERIOD_SECONDS: u64 = 3_600;
 #[cfg(feature = "e2e-test")]
-const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 60;
+const ADVANCE_AUCTIONS_PERIOD_SECONDS: u64 = 60;
 
 /// Every right's call sweep schedules a closed day, daily in production. An e2e run
 /// seeds the days it reads instead of living through them, so it recurs sooner.
@@ -184,7 +184,7 @@ pub const PROTOCOL_CYCLE_PERIOD_SECONDS: u64 = 3_600;
 /// Any other handler error stops the walk.
 /// A due trigger whose dependency failed in this walk records its slot
 /// and does not run.
-/// AuctionAdvance must stay after ProtocolCycle.
+/// AdvanceAuctions must stay after ProtocolCycle.
 /// Same-slot brief and auction order depends on that sequence.
 ///
 /// Budgets use measured successful gross maxima from
@@ -193,7 +193,7 @@ pub const PROTOCOL_CYCLE_PERIOD_SECONDS: u64 = 3_600;
 /// [381500, 50300, 991492, 50300, 2583089, 50300, 50300].
 /// The supported nested bridge profile performs calldata copy/hash, persistent
 /// reads/writes, logs, and a real relay call. It is not a universal contract bound.
-/// `auction_advance` takes the step bounds of Desis, measured on the deployed bridge.
+/// `advance_auctions` takes the step bounds of Desis, measured on the deployed bridge.
 pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 7], CycleError> {
     Ok([
         // ProtocolCycle settles a contiguous completed UTC day. It MUST
@@ -220,11 +220,11 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 7], CycleEr
         // would only walk the same day again.
         {
             let mut spec = const_spec!(TriggerSpec::new(
-                TriggerId::IntexCallDaily.as_u32(),
-                "intex_call_daily",
+                TriggerId::ScheduleIntexCallPass.as_u32(),
+                "schedule_intex_call_pass",
                 (CALL_SWEEP_PERIOD_SECONDS, 0),
                 202_000,
-                TriggerHandler::IntexCallDaily,
+                TriggerHandler::ScheduleIntexCallPass,
             ));
             spec.requires_accounting_window = false;
             spec.coalesces_backlog = true;
@@ -239,11 +239,11 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 7], CycleEr
         // and the next run starts with that day.
         {
             let mut spec = const_spec!(TriggerSpec::new(
-                TriggerId::AuctionAdvance.as_u32(),
-                "auction_advance",
-                (AUCTION_ADVANCE_PERIOD_SECONDS, 0),
-                outbe_desis::constants::AUCTION_ADVANCE_BUDGET_GAS,
-                TriggerHandler::AuctionAdvance,
+                TriggerId::AdvanceAuctions.as_u32(),
+                "advance_auctions",
+                (ADVANCE_AUCTIONS_PERIOD_SECONDS, 0),
+                outbe_desis::constants::ADVANCE_AUCTIONS_BUDGET_GAS,
+                TriggerHandler::AdvanceAuctions,
             ));
             spec.requires_accounting_window = true;
             spec.coalesces_backlog = true;
@@ -256,32 +256,32 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 7], CycleEr
         // would only walk the same day again.
         {
             let mut spec = const_spec!(TriggerSpec::new(
-                TriggerId::GemCallDaily.as_u32(),
-                "gem_call_daily",
+                TriggerId::ScheduleGemCallPass.as_u32(),
+                "schedule_gem_call_pass",
                 (CALL_SWEEP_PERIOD_SECONDS, 0),
                 202_000,
-                TriggerHandler::GemCallDaily,
+                TriggerHandler::ScheduleGemCallPass,
             ));
             spec.requires_accounting_window = false;
             spec.coalesces_backlog = true;
             spec
         },
-        // Polls the fan-in gate that `auction_advance` arms, on the same cadence.
+        // Polls the fan-in gate that `advance_auctions` arms, on the same cadence.
         // Each firing completes one waiting day.
         // Clears from bids already ingested and the router's frozen target
         // list. It has no dependency on the parent block's settlement accounting.
         // A poll has nothing to replay: a gap collapses to one clearing sweep.
         {
             let mut spec = const_spec!(TriggerSpec::new(
-                TriggerId::AuctionClearing.as_u32(),
-                "auction_clearing",
-                (AUCTION_ADVANCE_PERIOD_SECONDS, 0),
+                TriggerId::CompleteAuctions.as_u32(),
+                "complete_auctions",
+                (ADVANCE_AUCTIONS_PERIOD_SECONDS, 0),
                 10_333_000,
-                TriggerHandler::AuctionClearing,
+                TriggerHandler::CompleteAuctions,
             ));
             spec.requires_accounting_window = false;
             spec.coalesces_backlog = true;
-            spec.depends_on = &[TriggerId::AuctionAdvance];
+            spec.depends_on = &[TriggerId::AdvanceAuctions];
             spec
         },
         // Reads finalized oracle VWAP history to call credis
@@ -291,11 +291,11 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 7], CycleEr
         // would only schedule the same day again.
         {
             let mut spec = const_spec!(TriggerSpec::new(
-                TriggerId::CredisCallDaily.as_u32(),
-                "credis_call_daily",
+                TriggerId::ScheduleCredisCallPass.as_u32(),
+                "schedule_credis_call_pass",
                 (CALL_SWEEP_PERIOD_SECONDS, 0),
                 202_000,
-                TriggerHandler::CredisCallDaily,
+                TriggerHandler::ScheduleCredisCallPass,
             ));
             spec.requires_accounting_window = false;
             spec.coalesces_backlog = true;
@@ -305,11 +305,11 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 7], CycleEr
         // Missed slots would schedule the same day against the current clock.
         {
             let mut spec = const_spec!(TriggerSpec::new(
-                TriggerId::NodCallDaily.as_u32(),
-                "nod_call_daily",
+                TriggerId::ScheduleNodCallPass.as_u32(),
+                "schedule_nod_call_pass",
                 (CALL_SWEEP_PERIOD_SECONDS, 0),
                 202_000,
-                TriggerHandler::NodCallDaily,
+                TriggerHandler::ScheduleNodCallPass,
             ));
             spec.requires_accounting_window = false;
             spec.coalesces_backlog = true;
@@ -405,7 +405,7 @@ mod protocol_parameter_tests {
                 .and_then(|units| units.checked_mul(1_000))
                 .expect("measured handler headroom fits u64");
             assert!(spec.work_budget_gas() > 0);
-            if spec.id != TriggerId::AuctionAdvance.as_u32() {
+            if spec.id != TriggerId::AdvanceAuctions.as_u32() {
                 assert_eq!(spec.work_budget_gas(), rounded, "trigger {}", spec.id);
             }
             total = total
@@ -429,7 +429,7 @@ mod protocol_parameter_tests {
         assert_eq!(configured[1].period_seconds(), CALL_SWEEP_PERIOD_SECONDS);
         assert_eq!(
             configured[2].period_seconds(),
-            AUCTION_ADVANCE_PERIOD_SECONDS
+            ADVANCE_AUCTIONS_PERIOD_SECONDS
         );
         #[cfg(not(feature = "e2e-test"))]
         assert_eq!(configured[2].period_seconds(), 3_600);
@@ -437,30 +437,30 @@ mod protocol_parameter_tests {
         assert_eq!(configured[3].period_seconds(), CALL_SWEEP_PERIOD_SECONDS);
         assert!(matches!(
             configured[3].handler,
-            TriggerHandler::GemCallDaily
+            TriggerHandler::ScheduleGemCallPass
         ));
         assert_eq!(
             configured[4].period_seconds(),
-            AUCTION_ADVANCE_PERIOD_SECONDS
+            ADVANCE_AUCTIONS_PERIOD_SECONDS
         );
         #[cfg(not(feature = "e2e-test"))]
         assert_eq!(configured[4].period_seconds(), 3_600);
-        assert_eq!(configured[4].id, TriggerId::AuctionClearing.as_u32());
+        assert_eq!(configured[4].id, TriggerId::CompleteAuctions.as_u32());
         assert!(matches!(
             configured[4].handler,
-            TriggerHandler::AuctionClearing
+            TriggerHandler::CompleteAuctions
         ));
         assert_eq!(configured[5].period_seconds(), CALL_SWEEP_PERIOD_SECONDS);
         assert_eq!(configured[5].start_offset_seconds, 0);
         assert!(matches!(
             configured[5].handler,
-            TriggerHandler::CredisCallDaily
+            TriggerHandler::ScheduleCredisCallPass
         ));
         assert_eq!(configured[6].period_seconds(), CALL_SWEEP_PERIOD_SECONDS);
         assert_eq!(configured[6].start_offset_seconds, 0);
         assert!(matches!(
             configured[6].handler,
-            TriggerHandler::NodCallDaily
+            TriggerHandler::ScheduleNodCallPass
         ));
         assert_eq!(configured.len(), 7);
     }

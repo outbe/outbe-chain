@@ -1,8 +1,7 @@
 //! OIP-00343 proof tests for `ED01`, `ED03`, and `ED54`.
 
 use alloy_primitives::U256;
-use alloy_sol_types::{SolError, SolEvent};
-use outbe_emission::day_emission::day_emission_limit;
+use outbe_emission::day_emission::emission_limit_of_day;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
     address_pair::AddressPair,
@@ -14,7 +13,7 @@ use outbe_primitives::{
         SECONDS_PER_DAY,
     },
 };
-use outbe_tributefactory::{precompile::ITributeFactory, TributeFactoryContract};
+use outbe_tributefactory::TributeFactoryContract;
 
 use super::*;
 
@@ -86,11 +85,11 @@ fn gap_ed01_every_utc_day_is_an_emission_day() {
                 .unwrap()
                 .unwrap_or_else(|| panic!("missing EmissionDay record for {day}"));
             assert_eq!(record.wwd, expected_wwd, "unexpected wwd for day {day}");
-            let limit = day_emission_limit(day_index);
+            let limit = emission_limit_of_day(day_index);
             assert_eq!(
                 U256::from(record.emission_limit),
                 limit,
-                "day {day} must receive day_emission_limit({day_index})"
+                "day {day} must receive emission_limit_of_day({day_index})"
             );
             assert_eq!(
                 record.state,
@@ -110,7 +109,7 @@ fn gap_ed01_every_utc_day_is_an_emission_day() {
                 + U256::from(record.promis_limit);
             assert_eq!(
                 distributed_and_promis, limit,
-                "distributed pools + PromisLimit must conserve day_emission_limit({day_index}) on day {day}"
+                "distributed pools + PromisLimit must conserve emission_limit_of_day({day_index}) on day {day}"
             );
             expected_promis_total += U256::from(record.promis_limit);
         }
@@ -203,7 +202,7 @@ fn gap_ed03_start_date_comes_from_genesis_block() {
         let record = outbe_emission::api::get_emission_day_record(handle, 20_240_101)
             .unwrap()
             .expect("genesis day must be allocated");
-        assert_eq!(U256::from(record.emission_limit), day_emission_limit(0));
+        assert_eq!(U256::from(record.emission_limit), emission_limit_of_day(0));
     });
 }
 
@@ -387,13 +386,14 @@ fn gap_ed54_wwd_step_runs_once_a_day() {
     // Verify:
     // - Step A4 (`settle_emission_day(20240105)`) still commits (`state == PROCESSING`).
     // - Step A6 rolls back its inner checkpoint (`last_wwd_advance_day` stays 20240105, WWD 20240101
-    //   remains unsealed in `pipeline_wwd`) and emits `WorldwideDayAdvanceFailed` with non-empty reason.
+    //   remains unsealed in `pipeline_wwd`) and emits no event.
     // - Step A7 (`start_metadosis`) runs cleanly and defers EmissionDay 20240105 because WWD 20240101
     //   is not yet sealed (`metadosis_state == PENDING`).
     storage.enter(|handle| {
         outbe_emission::api::link_wwd(handle, 20_240_111, WorldwideDay::new(20_240_120)).unwrap();
     });
     let ts_day6_00h = GENESIS_TS + 5 * SECONDS_PER_DAY;
+    let factory_events_before_failed_a6 = storage.get_events(TRIBUTE_FACTORY_ADDRESS).len();
     storage.set_block_number(block_no);
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 8);
     storage.enter(|handle| {
@@ -412,6 +412,14 @@ fn gap_ed54_wwd_step_runs_once_a_day() {
                 .contains(&WorldwideDay::new(20_240_101)),
             "reverted A6 must roll back closing/sealing of WWD 20240101"
         );
+        assert!(
+            factory
+                .worldwide_days
+                .get(WorldwideDay::new(20_240_107))
+                .unwrap()
+                .is_none(),
+            "reverted A6 must roll back the creation of WWD 20240107"
+        );
         let ed_20240105 =
             outbe_emission::api::get_emission_day_record(ctx.storage.clone(), 20_240_105)
                 .unwrap()
@@ -427,16 +435,10 @@ fn gap_ed54_wwd_step_runs_once_a_day() {
             "A7 must defer 20240105 while WWD 20240101 is unsealed"
         );
     });
-    let failed_event = storage
-        .get_events(TRIBUTE_FACTORY_ADDRESS)
-        .iter()
-        .find_map(|log| ITributeFactory::WorldwideDayAdvanceFailed::decode_log_data(log).ok())
-        .expect("WorldwideDayAdvanceFailed must be emitted when A6 reverts");
-    assert_eq!(failed_event.utcDay, 20_240_106);
-    assert_eq!(failed_event.blockTimestamp, ts_day6_00h);
-    assert!(
-        !failed_event.reason.is_empty(),
-        "WorldwideDayAdvanceFailed.reason must carry the revert payload"
+    assert_eq!(
+        storage.get_events(TRIBUTE_FACTORY_ADDRESS).len(),
+        factory_events_before_failed_a6,
+        "a reverted A6 must emit no TributeFactory event"
     );
     block_no += 1;
 
@@ -501,14 +503,13 @@ fn gap_ed54_wwd_step_runs_once_a_day() {
         );
     });
 
-    // Also verify end-to-end that `PrecompileError::Revert(String)` inside A6 is caught,
-    // rolled back, and ABI-encoded as Solidity `Error(string)` in `WorldwideDayAdvanceFailed.reason`.
-    // At 2024-01-07 00:00 UTC, grant 1 mutation frame so A4 (`set_metadosis_limit`)
-    // succeeds and A6 (`advance_worldwide_days_command`) hits `PrecompileError::Revert(String)`.
+    // Also verify that `PrecompileError::Revert(String)` inside A6 is caught and emits no event.
+    // At 2024-01-07 00:00 UTC, A6 runs with no mutation frame and hits `PrecompileError::Revert(String)`.
     block_no += 1;
     let ts_day7_00h = GENESIS_TS + 6 * SECONDS_PER_DAY;
+    let factory_events_before_text_revert = storage.get_events(TRIBUTE_FACTORY_ADDRESS).len();
     storage.set_block_number(block_no);
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 1);
+    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 0);
     storage.enter(|handle| {
         let block = BlockContext {
             block_gas_limit: 0,
@@ -522,22 +523,18 @@ fn gap_ed54_wwd_step_runs_once_a_day() {
             validators: Vec::new(),
         };
         let ctx = runtime_context(block, handle);
-        account_parent(&ctx, block_no);
-        // Settle previous day (A4) consumes the 1 frame; A6 reverts with `PrecompileError::Revert(String)`.
-        // A7 has 0 frames left and takes its fallback.
-        crate::handler::run_protocol_cycle(&ctx).unwrap();
+        crate::handler::run_advance_worldwide_days_step(&ctx, 20_240_107).unwrap();
+        let factory = TributeFactoryContract::new(ctx.storage.clone());
+        assert_eq!(factory.last_wwd_advance_day.read().unwrap(), 20_240_106);
+        assert!(factory
+            .worldwide_days
+            .get(WorldwideDay::new(20_240_108))
+            .unwrap()
+            .is_none());
     });
-    let revert_str_event = storage
-        .get_events(TRIBUTE_FACTORY_ADDRESS)
-        .iter()
-        .filter_map(|log| ITributeFactory::WorldwideDayAdvanceFailed::decode_log_data(log).ok())
-        .find(|ev| ev.utcDay == 20_240_107)
-        .expect("WorldwideDayAdvanceFailed must be emitted when A6 reverts with Revert(String)");
-    let decoded = alloy_sol_types::Revert::abi_decode(&revert_str_event.reason)
-        .expect("Revert(String) reason must be ABI-encoded as Error(string)");
     assert_eq!(
-        decoded.reason, "test provider has no matching Metadosis mutation lease",
-        "unexpected decoded Error(string): {}",
-        decoded.reason
+        storage.get_events(TRIBUTE_FACTORY_ADDRESS).len(),
+        factory_events_before_text_revert,
+        "a text revert of A6 must emit no TributeFactory event"
     );
 }

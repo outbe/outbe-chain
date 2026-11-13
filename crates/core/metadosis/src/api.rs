@@ -18,7 +18,7 @@ impl From<EmissionDay> for EmissionDayProjection {
     fn from(record: EmissionDay) -> Self {
         Self {
             day: record.day,
-            emission_limit_minor: record.emission_limit_minor(),
+            emission_limit_minor: U256::from(record.metadosis_limit.max(record.emission_limit)),
             wwd: record.wwd,
             metadosis_start: record.metadosis_start,
             state: record.metadosis_state,
