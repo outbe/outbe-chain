@@ -127,6 +127,7 @@ impl TributeContract<'_> {
         }
     }
 
+    #[cfg(any(test, feature = "test-enclave"))]
     pub(crate) fn store_day_metadata(&mut self, totals: &DayTotals) -> Result<()> {
         let mut stored = StoredDayTotals::with_key(totals.worldwide_day);
         stored.initialized = totals.initialized;

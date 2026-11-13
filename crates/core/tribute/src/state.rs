@@ -107,6 +107,7 @@ impl TributeContract<'_> {
         Ok(())
     }
 
+    #[cfg(any(test, feature = "test-enclave"))]
     pub(crate) fn store_day_totals(&mut self, totals: &DayTotals) -> Result<()> {
         if totals.tribute_nominal_total_minor
             != self.day_nominal_amount(totals.worldwide_day, false)?
