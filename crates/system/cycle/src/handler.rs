@@ -235,6 +235,10 @@ fn settle_emission_day_inner(ctx: &BlockRuntimeContext, prev_day: u32) -> Result
 
     let metadosis_total = shares.terminal_total(fee_covered, pool_excess)?;
     wrap(
+        "set_metadosis_limit",
+        set_metadosis_limit(ctx, prev_day, metadosis_total),
+    )?;
+    wrap(
         "record_day_allocation",
         outbe_emission::api::record_day_allocation(
             ctx.storage.clone(),
@@ -252,10 +256,8 @@ fn settle_emission_day_inner(ctx: &BlockRuntimeContext, prev_day: u32) -> Result
         .map(|_| ()),
     )?;
 
-    dispatch_terminal_remainder(ctx, prev_day, metadosis_total)?;
-
     let g4 = gas(ctx);
-    tracing::debug!(target: "outbe::cycle::gas", step_gas = gas_sample_delta(g4, g3), cumulative = g4, "after terminal dispatch");
+    tracing::debug!(target: "outbe::cycle::gas", step_gas = gas_sample_delta(g4, g3), cumulative = g4, "after day allocation record");
 
     let g5 = gas(ctx);
     tracing::debug!(target: "outbe::cycle::gas", step_gas = gas_sample_delta(g5, g4), cumulative = g5, total = gas_sample_delta(g5, g0), "completed");
@@ -371,27 +373,6 @@ impl EmissionShares {
             .checked_add(fee_covered)
             .and_then(|v| v.checked_add(pool_excess))
             .ok_or_else(|| CycleError::MetadosisTerminalOverflow.into())
-    }
-}
-
-/// Sends the terminal Metadosis remainder of `prev_day`. Then checks that
-/// Metadosis formed the day limit for `prev_day` with the same base limit.
-fn dispatch_terminal_remainder(
-    ctx: &BlockRuntimeContext,
-    prev_day: u32,
-    metadosis_total: U256,
-) -> Result<()> {
-    let prev_day_ts = date_key_to_utc_timestamp(prev_day).map_err(calendar_step_error)?;
-    wrap(
-        "set_metadosis_limit",
-        set_metadosis_limit(ctx, metadosis_total, prev_day_ts),
-    )?;
-    let emission_day = outbe_emission::api::get_emission_day_record(ctx.storage.clone(), prev_day)?
-        .ok_or(CycleError::AllocationWithoutMetadosisReceipt)?;
-    if emission_day.day == prev_day && U256::from(emission_day.metadosis_limit) == metadosis_total {
-        Ok(())
-    } else {
-        Err(CycleError::AllocationDisagreesWithMetadosisReceipt.into())
     }
 }
 

@@ -41,10 +41,6 @@ pub enum CycleError {
     MetadosisTerminalOverflow,
     #[error("validator top-up exceeds allocation")]
     ValidatorTopupExceedsAllocation,
-    #[error("Cycle allocation committed without a Metadosis day-limit receipt")]
-    AllocationWithoutMetadosisReceipt,
-    #[error("Cycle allocation disagrees with the Metadosis day-limit receipt")]
-    AllocationDisagreesWithMetadosisReceipt,
     #[error("last_accounted_block_number regression: current={current}, attempted={attempted}")]
     BlockNumberRegression { current: u64, attempted: u64 },
     #[error("accounting progress input is zero")]
@@ -117,12 +113,6 @@ impl From<CycleError> for PrecompileError {
             )),
             CycleError::ValidatorTopupExceedsAllocation => PrecompileError::RevertBytes(
                 Bytes::from(ICycle::ValidatorTopupExceedsAllocation {}.abi_encode()),
-            ),
-            CycleError::AllocationWithoutMetadosisReceipt => PrecompileError::RevertBytes(
-                Bytes::from(ICycle::AllocationWithoutMetadosisReceipt {}.abi_encode()),
-            ),
-            CycleError::AllocationDisagreesWithMetadosisReceipt => PrecompileError::RevertBytes(
-                Bytes::from(ICycle::AllocationDisagreesWithMetadosisReceipt {}.abi_encode()),
             ),
             CycleError::BlockNumberRegression { current, attempted } => {
                 PrecompileError::RevertBytes(Bytes::from(
@@ -233,14 +223,6 @@ mod tests {
             (
                 CycleError::ValidatorTopupExceedsAllocation,
                 ICycle::ValidatorTopupExceedsAllocation::SELECTOR,
-            ),
-            (
-                CycleError::AllocationWithoutMetadosisReceipt,
-                ICycle::AllocationWithoutMetadosisReceipt::SELECTOR,
-            ),
-            (
-                CycleError::AllocationDisagreesWithMetadosisReceipt,
-                ICycle::AllocationDisagreesWithMetadosisReceipt::SELECTOR,
             ),
             (
                 CycleError::BlockNumberRegression {

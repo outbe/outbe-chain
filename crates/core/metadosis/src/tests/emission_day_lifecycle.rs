@@ -149,12 +149,7 @@ fn schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_due_after_
 
         // Nested process-ready checks recompute the lease from the provider clock
         // and block. Allocate day 20260905 into Processing.
-        crate::commands::set_metadosis_limit(
-            &ctx,
-            U256::from(1_000_000u64),
-            date_key_to_utc_timestamp(20260905).unwrap(),
-        )
-        .unwrap();
+        allocate_to_metadosis(&ctx, 20260905, U256::from(1_000_000u64));
 
         let at_start = BlockRuntimeContext::new(
             BlockContext {
@@ -256,12 +251,7 @@ fn first_wwd_for_genesis_splits_3_or_4_empty_emission_days_across_noon_utc() {
         }
         assert_eq!(empty_count, 3);
 
-        crate::commands::set_metadosis_limit(
-            &ctx,
-            U256::from(1_000_000u64),
-            date_key_to_utc_timestamp(20261001).unwrap(),
-        )
-        .unwrap();
+        allocate_to_metadosis(&ctx, 20261001, U256::from(1_000_000u64));
         let empty_due_ts = date_key_to_utc_timestamp(20261002).unwrap() + 1;
         storage
             .set_block_timestamp(U256::from(empty_due_ts))
@@ -477,12 +467,7 @@ fn wwd_without_price_runs_as_empty_day() {
             },
             storage.clone(),
         );
-        crate::commands::set_metadosis_limit(
-            &ctx_06,
-            expected_limit,
-            date_key_to_utc_timestamp(emission_day).unwrap(),
-        )
-        .unwrap();
+        allocate_to_metadosis(&ctx_06, emission_day, expected_limit);
         outbe_tributefactory::worldwideday::advance_worldwide_days_command(&ctx_06).unwrap();
         assert!(TributeContract::new(storage.clone())
             .is_day_sealed(wwd)

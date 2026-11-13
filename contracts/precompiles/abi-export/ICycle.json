@@ -182,16 +182,6 @@
   },
   {
     "type": "error",
-    "name": "AllocationDisagreesWithMetadosisReceipt",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "AllocationWithoutMetadosisReceipt",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "BlockNumberRegression",
     "inputs": [
       {

@@ -13,8 +13,6 @@ interface ICycle {
     error MetadosisReceiptWithoutDailySettled();
     error MetadosisTerminalOverflow();
     error ValidatorTopupExceedsAllocation();
-    error AllocationWithoutMetadosisReceipt();
-    error AllocationDisagreesWithMetadosisReceipt();
     error BlockNumberRegression(uint64 current, uint64 attempted);
     error ZeroAccountingProgress();
     error AccountingProgressGap(uint64 current, uint64 attempted);

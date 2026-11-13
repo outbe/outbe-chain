@@ -19,30 +19,9 @@ pub fn process_emission_day(ctx: &BlockRuntimeContext<'_>, day: u32) -> Result<(
     })
 }
 
-/// Purpose-bound terminal-sink adapter used by the Cycle-owned daily
-/// allocation flow.
-pub fn apply_cycle_day_limit(ctx: &BlockRuntimeContext<'_>, amount: U256) -> Result<U256> {
-    crate::emission_sink::apply(ctx, amount)?;
-    Ok(U256::ZERO)
-}
-
-/// Sends the daily Cycle terminal allocation to the Metadosis sink, anchored at
-/// `timestamp`.
-pub fn set_metadosis_limit(
-    ctx: &BlockRuntimeContext<'_>,
-    amount: U256,
-    timestamp: u64,
-) -> Result<()> {
-    let mut terminal_block = ctx.block.clone();
-    terminal_block.timestamp = timestamp;
-    let terminal_ctx = BlockRuntimeContext::new(terminal_block, ctx.storage.clone());
-    let unused = apply_cycle_day_limit(&terminal_ctx, amount)?;
-    if !unused.is_zero() {
-        return Err(
-            outbe_emission::errors::EmissionLimitError::TerminalSinkReturnedUnusedAmount.into(),
-        );
-    }
-    Ok(())
+/// Gives Metadosis of `day` its limit, before the Cycle marks the record of `day` Processing.
+pub fn set_metadosis_limit(ctx: &BlockRuntimeContext<'_>, day: u32, amount: U256) -> Result<()> {
+    crate::emission_sink::apply(ctx, day, amount)
 }
 
 /// Marks Metadosis of `day` as `Failed` (returning its Metadosis limit to `PromisLimit`
