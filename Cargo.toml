@@ -291,6 +291,7 @@ reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth.git", ta
 reth-node-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
 reth-node-builder = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
 reth-node-core = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
+reth-node-metrics = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
 reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
 reth-chain-state = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
@@ -383,6 +384,8 @@ rand-core-commonware = { package = "rand_core", version = "0.10.1" }
 rand_core = { version = "0.6", features = ["getrandom"] }
 bytes = "1"
 metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
+metrics-process = "2.4.3"
 
 # TEE node <-> enclave transport (Noise-IK over UDS)
 snow = "0.9"
