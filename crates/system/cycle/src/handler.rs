@@ -25,7 +25,7 @@ use outbe_primitives::{
     },
 };
 
-use crate::{errors::CycleError, schema::Cycle, triggers::Readiness, ICycle};
+use crate::{errors::CycleError, schema::Cycle, tasks::Readiness, ICycle};
 
 /// Maximum number of completed UTC days that `derive_active_utc_day` scans backward
 /// and catches up (one oldest unallocated day per hourly run, OIP-00343).

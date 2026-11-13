@@ -1,4 +1,4 @@
-//! Trigger dispatch, emission settlement and validator top-up conservation.
+//! Task dispatch, emission settlement and validator top-up conservation.
 
 use alloy_sol_types::SolEvent;
 use outbe_emission::allocation::EmissionSinkId;
@@ -23,7 +23,7 @@ fn cycle_tick_runs_dispatcher() {
 }
 
 // ---------------------------------------------------------------------------
-// advance_auctions trigger
+// advance_auctions task
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -32,7 +32,7 @@ fn dispatcher_fires_advance_auctions_at_its_slot() {
         let fire_ts = GENESIS_TS + SECONDS_PER_DAY + 5;
         let ctx_fire = dispatch_at(handle, 2, fire_ts);
 
-        let advance_auctions_id = TriggerId::AdvanceAuctions.as_u32();
+        let advance_auctions_id = TaskId::AdvanceAuctions.as_u32();
         let cycle: Cycle<'_> = ctx_fire.storage.contract::<Cycle<'_>>();
         assert_eq!(
             cycle.last_executed_at.read(&advance_auctions_id).unwrap(),
@@ -433,18 +433,15 @@ const TOPUP_VOTERS: [Address; 3] = [
 /// Block time of the first settlement dispatch on day 2.
 const TOPUP_FIRE_TS: u64 = GENESIS_TS + SECONDS_PER_DAY + 60;
 
-/// Returns the slot that trigger `id` records at `TOPUP_FIRE_TS`.
+/// Returns the slot that task `id` records at `TOPUP_FIRE_TS`.
 /// The slot is the day boundary in production. Under `e2e-test`, a period of
 /// 60 s gives a later slot.
-fn topup_slot(id: TriggerId) -> u64 {
-    let spec = ACTIVE_TRIGGERS
+fn topup_slot(id: TaskId) -> u64 {
+    let spec = ACTIVE_TASKS
         .iter()
         .find(|spec| spec.id == id.as_u32())
-        .expect("active trigger");
-    assert!(
-        spec.coalesces_backlog,
-        "the trigger records its latest slot"
-    );
+        .expect("active task");
+    assert!(spec.coalesces_backlog, "the task records its latest slot");
     last_fire_at(
         spec.period_seconds(),
         spec.start_offset_seconds,
@@ -509,9 +506,9 @@ fn corrupt_emission_day(ctx: &BlockRuntimeContext<'_>, day: u32) {
 fn cycle_failure(
     storage: &HashMapStorageProvider,
     id: u32,
-) -> Option<crate::ICycle::CycleTriggerFailed> {
+) -> Option<crate::ICycle::CycleTaskFailed> {
     storage.get_events(CYCLE_ADDRESS).iter().find_map(|log| {
-        crate::ICycle::CycleTriggerFailed::decode_log_data(log)
+        crate::ICycle::CycleTaskFailed::decode_log_data(log)
             .ok()
             .filter(|event| event.id == id)
     })
@@ -520,9 +517,9 @@ fn cycle_failure(
 fn cycle_executed(
     storage: &HashMapStorageProvider,
     id: u32,
-) -> Option<crate::ICycle::CycleTriggerExecuted> {
+) -> Option<crate::ICycle::CycleTaskExecuted> {
     storage.get_events(CYCLE_ADDRESS).iter().find_map(|log| {
-        crate::ICycle::CycleTriggerExecuted::decode_log_data(log)
+        crate::ICycle::CycleTaskExecuted::decode_log_data(log)
             .ok()
             .filter(|event| event.id == id)
     })
@@ -541,12 +538,12 @@ fn topup_voters_claimable(ctx: &BlockRuntimeContext<'_>) -> U256 {
 #[test]
 fn failed_terminal_dispatch_takes_the_allocation_fallback() {
     let mut storage = failed_terminal_dispatch();
-    let recorded_at = topup_slot(TriggerId::ProcessEmissionDay);
+    let recorded_at = topup_slot(TaskId::ProcessEmissionDay);
     for id in [
         EMISSION_LIMIT_1_ID,
-        TriggerId::AdvanceAuctions.as_u32(),
-        TriggerId::CompleteAuctions.as_u32(),
-        TriggerId::ScheduleIntexCallPass.as_u32(),
+        TaskId::AdvanceAuctions.as_u32(),
+        TaskId::CompleteAuctions.as_u32(),
+        TaskId::ScheduleIntexCallPass.as_u32(),
     ] {
         assert!(cycle_failure(&storage, id).is_none());
         assert!(cycle_executed(&storage, id).is_some());
@@ -596,9 +593,9 @@ fn failed_terminal_dispatch_takes_the_allocation_fallback() {
             recorded_at
         );
         for id in [
-            TriggerId::AdvanceAuctions,
-            TriggerId::CompleteAuctions,
-            TriggerId::ScheduleIntexCallPass,
+            TaskId::AdvanceAuctions,
+            TaskId::CompleteAuctions,
+            TaskId::ScheduleIntexCallPass,
         ] {
             assert_eq!(
                 cycle.last_executed_at.read(&id.as_u32()).unwrap(),
@@ -619,7 +616,7 @@ fn failed_terminal_dispatch_is_not_retried() {
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
     let next_window = GENESIS_TS
         + SECONDS_PER_DAY
-        + crate::triggers::PROCESS_EMISSION_DAY_PERIOD_SECONDS
+        + crate::tasks::PROCESS_EMISSION_DAY_PERIOD_SECONDS
         + PROCESS_EMISSION_DAY_START_OFFSET_SECONDS;
     storage.set_block_number(3);
     storage.enter(|handle| {

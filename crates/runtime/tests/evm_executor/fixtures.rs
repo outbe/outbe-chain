@@ -52,7 +52,7 @@ pub(crate) fn seed_cycle_tick_genesis(
         .call_latest_day
         .write(0)?;
     let cycle = outbe_cycle::schema::Cycle::new(storage);
-    let trigger = outbe_cycle::triggers::TriggerId::ProcessEmissionDay.as_u32();
+    let trigger = outbe_cycle::tasks::TaskId::ProcessEmissionDay.as_u32();
     cycle.last_executed_at.write(&trigger, genesis_ts + 60)?;
     Ok(())
 }

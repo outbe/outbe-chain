@@ -289,7 +289,7 @@ pub(super) fn run_prefix_checked(
     let (label, validators, clock) = scenario;
     let (verify_deferred, verify_state) = verification;
     let (block, timestamp) = clock;
-    outbe_cycle::runtime::take_trigger_gas_samples();
+    outbe_cycle::runtime::take_task_gas_samples();
     outbe_cycle::runtime::take_cycle_gas_samples();
     let signer = test_evm_signer();
     let proposer = signer.address();
@@ -427,7 +427,7 @@ pub(super) fn run_prefix_checked(
             executor.system_tx_gross_gas - before,
         ));
     }
-    let samples = outbe_cycle::runtime::take_trigger_gas_samples();
+    let samples = outbe_cycle::runtime::take_task_gas_samples();
     let body = outbe_cycle::runtime::take_cycle_gas_samples();
     for (gross, handlers) in &body {
         assert!(gross >= handlers);
@@ -624,13 +624,13 @@ fn assert_deferred_trigger_logs(
 ) {
     let over: Vec<_> = logs
         .iter()
-        .filter_map(|log| outbe_cycle::ICycle::CycleTriggerOverBudget::decode_log(log).ok())
+        .filter_map(|log| outbe_cycle::ICycle::CycleTaskOverBudget::decode_log(log).ok())
         .collect();
     assert_eq!(over.len(), 1);
     let over = &over[0].data;
     assert_eq!(over.id, 4);
     assert_eq!(over.blockNumber, block);
-    let budget = outbe_cycle::triggers::ACTIVE_TRIGGERS
+    let budget = outbe_cycle::tasks::ACTIVE_TASKS
         .iter()
         .find(|spec| spec.id == 4)
         .unwrap()
@@ -643,14 +643,14 @@ fn assert_deferred_trigger_logs(
     assert!(over.consumedGas > budget / 2 && over.consumedGas <= budget);
     assert!(system_gross_gas > over.consumedGas);
     assert!(!logs.iter().any(
-        |log| outbe_cycle::ICycle::CycleTriggerExecuted::decode_log(log)
+        |log| outbe_cycle::ICycle::CycleTaskExecuted::decode_log(log)
             .is_ok_and(|event| event.data.id == 4)
-            || outbe_cycle::ICycle::CycleTriggerFailed::decode_log(log)
+            || outbe_cycle::ICycle::CycleTaskFailed::decode_log(log)
                 .is_ok_and(|event| event.data.id == 4)
     ));
     for id in [5, 6] {
         assert!(logs.iter().any(
-            |log| outbe_cycle::ICycle::CycleTriggerExecuted::decode_log(log)
+            |log| outbe_cycle::ICycle::CycleTaskExecuted::decode_log(log)
                 .is_ok_and(|event| event.data.id == id)
         ));
     }
@@ -671,7 +671,7 @@ fn assert_deferred_state(
         for id in [5, 6] {
             let scheduled = logs
                 .iter()
-                .filter_map(|log| outbe_cycle::ICycle::CycleTriggerExecuted::decode_log(log).ok())
+                .filter_map(|log| outbe_cycle::ICycle::CycleTaskExecuted::decode_log(log).ok())
                 .find(|event| event.data.id == id)
                 .unwrap()
                 .data

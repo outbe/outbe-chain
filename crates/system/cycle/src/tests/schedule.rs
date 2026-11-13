@@ -28,24 +28,18 @@ fn schedule_math_pinned_values() {
 #[test]
 fn zero_period_is_rejected_and_an_offset_at_or_above_the_period_stays_valid() {
     use crate::errors::CycleError;
-    use crate::triggers::{TriggerHandler, TriggerSpec};
+    use crate::tasks::{TaskHandler, TaskSpec};
 
     assert!(matches!(
-        TriggerSpec::new(
-            1,
-            "zero",
-            (0, 0),
-            100,
-            TriggerHandler::ScheduleIntexCallPass
-        ),
-        Err(CycleError::ZeroTriggerPeriod)
+        TaskSpec::new(1, "zero", (0, 0), 100, TaskHandler::ScheduleIntexCallPass),
+        Err(CycleError::ZeroTaskPeriod)
     ));
-    let wide_offset = TriggerSpec::new(
+    let wide_offset = TaskSpec::new(
         1,
         "wide-offset",
         (600, 5_000),
         100,
-        TriggerHandler::ScheduleIntexCallPass,
+        TaskHandler::ScheduleIntexCallPass,
     )
     .expect("offset at or above the period");
     assert_eq!(wide_offset.period_seconds(), 600);
@@ -53,11 +47,11 @@ fn zero_period_is_rejected_and_an_offset_at_or_above_the_period_stays_valid() {
     assert!(wide_offset.depends_on.is_empty());
     assert!(matches!(
         next_fire_at(0, 0, 0),
-        Err(CycleError::ZeroTriggerPeriod)
+        Err(CycleError::ZeroTaskPeriod)
     ));
     assert!(matches!(
         last_fire_at(0, 5_000, 4_999),
-        Err(CycleError::ZeroTriggerPeriod)
+        Err(CycleError::ZeroTaskPeriod)
     ));
     // Offset 5000 with period 600 is the first anchor, not an invalid setting.
     assert_eq!(next_fire_at(600, 5_000, 0), Ok(5_000));
@@ -98,7 +92,7 @@ fn next_slot_arithmetic_rejects_a_quotient_increment_a_product_and_a_sum_past_u6
 }
 
 #[test]
-fn dispatch_propagates_schedule_overflow_instead_of_skipping_the_trigger() {
+fn dispatch_propagates_schedule_overflow_instead_of_skipping_the_task() {
     use alloy_sol_types::{SolError, SolEvent};
     use outbe_primitives::error::PrecompileError;
 
@@ -119,7 +113,7 @@ fn dispatch_propagates_schedule_overflow_instead_of_skipping_the_trigger() {
             .expect("overflow payload");
         assert_eq!(
             decoded.period,
-            crate::triggers::PROCESS_EMISSION_DAY_PERIOD_SECONDS
+            crate::tasks::PROCESS_EMISSION_DAY_PERIOD_SECONDS
         );
         assert_eq!(decoded.offset, PROCESS_EMISSION_DAY_START_OFFSET_SECONDS);
         assert_eq!(decoded.timestamp, u64::MAX);
@@ -131,19 +125,19 @@ fn dispatch_propagates_schedule_overflow_instead_of_skipping_the_trigger() {
     assert!(storage
         .get_events(outbe_primitives::addresses::CYCLE_ADDRESS)
         .iter()
-        .all(|log| crate::ICycle::CycleTriggerFailed::decode_log_data(log).is_err()));
+        .all(|log| crate::ICycle::CycleTaskFailed::decode_log_data(log).is_err()));
 }
 
 #[test]
 fn only_the_two_auction_edges_declare_a_dependency() {
-    use crate::triggers::{active_triggers, TriggerId};
+    use crate::tasks::{active_tasks, TaskId};
 
-    let specs = active_triggers().expect("nonzero interval");
+    let specs = active_tasks().expect("nonzero interval");
     assert!(specs[0].depends_on.is_empty());
     assert!(specs[1].depends_on.is_empty());
-    assert_eq!(specs[2].depends_on, &[TriggerId::ProcessEmissionDay]);
+    assert_eq!(specs[2].depends_on, &[TaskId::ProcessEmissionDay]);
     assert!(specs[3].depends_on.is_empty());
-    assert_eq!(specs[4].depends_on, &[TriggerId::AdvanceAuctions]);
+    assert_eq!(specs[4].depends_on, &[TaskId::AdvanceAuctions]);
     assert!(specs[5].depends_on.is_empty());
     assert!(specs[6].depends_on.is_empty());
 }
@@ -169,7 +163,7 @@ fn schedule_math_aligned_property() {
 
 #[test]
 fn first_encounter_anchors_without_firing() {
-    // First time the dispatcher sees the trigger, it anchors
+    // First time the dispatcher sees the task, it anchors
     // `last_executed_at = block_ts` and skips firing. No event, no
     // handler invocation, no settle.
     let mut storage = cycle_storage();
@@ -196,7 +190,7 @@ fn first_encounter_anchors_without_firing() {
 
 #[test]
 fn block_1_cycle_tick_creates_genesis_worldwide_day() {
-    // Production regression: at block 1 the daily Cycle trigger only anchors.
+    // Production regression: at block 1 the daily Cycle task only anchors.
     // It never invokes `start_metadosis`. So `handle_cycle_tick`
     // must itself create the genesis metadosis worldwide day. Before the fix
     // the active-WWD set was empty until the first block past the next UTC
@@ -223,12 +217,12 @@ fn block_1_cycle_tick_creates_genesis_worldwide_day() {
             "block-1 CycleTick must create the genesis worldwide day"
         );
 
-        // The daily trigger must only have anchored - no settlement fired.
+        // The daily task must only have anchored - no settlement fired.
         let cycle: Cycle<'_> = ctx.storage.contract::<Cycle<'_>>();
         assert_eq!(
             cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
             block_ts,
-            "daily trigger still only anchors on block 1"
+            "daily task still only anchors on block 1"
         );
         assert_eq!(
             cycle
@@ -282,7 +276,7 @@ fn does_not_fire_before_next_slot_after_anchor() {
         assert_eq!(
             last_executed_at(&ctx_before),
             ANCHOR_TS,
-            "trigger must not fire before the next slot"
+            "task must not fire before the next slot"
         );
     });
 }
@@ -329,7 +323,7 @@ fn does_not_refire_within_same_slot() {
         assert_eq!(
             last_executed_at(&ctx_again),
             after_first_fire,
-            "trigger must not refire within the same slot"
+            "task must not refire within the same slot"
         );
     });
 }

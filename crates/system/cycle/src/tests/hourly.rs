@@ -23,7 +23,7 @@ fn hourly_process_emission_day_executes_due_emission_day_at_metadosis_start() {
     });
 
     storage.enter(|handle| {
-        seed_trigger_clock(&handle, fire_at);
+        seed_task_clock(&handle, fire_at);
         let prev_day =
             outbe_primitives::time::previous_date_key(emission_day.day).expect("date step");
         outbe_emission::api::record_failed_day_allocation(handle, prev_day, U256::ZERO).unwrap();
@@ -83,25 +83,25 @@ fn hourly_process_emission_day_executes_due_emission_day_at_metadosis_start() {
         assert_eq!(
             cycle
                 .last_executed_at
-                .read(&TriggerId::ProcessEmissionDay.as_u32())
+                .read(&TaskId::ProcessEmissionDay.as_u32())
                 .unwrap(),
             fire_at
         );
         assert_eq!(
             cycle
                 .last_executed_block_number
-                .read(&TriggerId::ProcessEmissionDay.as_u32())
+                .read(&TaskId::ProcessEmissionDay.as_u32())
                 .unwrap(),
             20
         );
     });
 }
 
-pub(super) fn seed_trigger_clock(handle: &StorageHandle<'_>, fire_at: u64) {
+pub(super) fn seed_task_clock(handle: &StorageHandle<'_>, fire_at: u64) {
     let previous_hour = fire_at - 3_600;
     let cycle: Cycle<'_> = handle.contract::<Cycle<'_>>();
-    for spec in ACTIVE_TRIGGERS {
-        let last = if spec.id == TriggerId::ProcessEmissionDay.as_u32() {
+    for spec in ACTIVE_TASKS {
+        let last = if spec.id == TaskId::ProcessEmissionDay.as_u32() {
             previous_hour
         } else {
             fire_at
@@ -126,7 +126,7 @@ fn due_emission_day_fixture() -> (HashMapStorageProvider, u32, u64) {
         (ed.day, ed.metadosis_start.div_ceil(3_600) * 3_600)
     });
     storage.enter(|handle| {
-        seed_trigger_clock(&handle, fire_at);
+        seed_task_clock(&handle, fire_at);
         let prev_day = outbe_primitives::time::previous_date_key(day).expect("date step");
         outbe_emission::api::record_failed_day_allocation(handle, prev_day, U256::ZERO).unwrap();
     });

@@ -1,8 +1,6 @@
-//! Slot bookkeeping for poll-style triggers.
+//! Slot bookkeeping for poll-style tasks.
 
-use outbe_cycle::triggers::{
-    active_triggers, last_fire_at, next_fire_at, TriggerId, ACTIVE_TRIGGERS,
-};
+use outbe_cycle::tasks::{active_tasks, last_fire_at, next_fire_at, TaskId, ACTIVE_TASKS};
 use outbe_primitives::time::SECONDS_PER_DAY;
 
 const PERIOD: u64 = 600;
@@ -69,16 +67,16 @@ fn a_timestamp_before_the_first_slot_yields_the_offset() {
 
 #[test]
 fn only_current_state_scans_and_calendar_owned_process_emission_day_coalesce() {
-    const COALESCING: [TriggerId; 7] = [
-        TriggerId::CompleteAuctions,
-        TriggerId::AdvanceAuctions,
-        TriggerId::ProcessEmissionDay,
-        TriggerId::ScheduleNodCallPass,
-        TriggerId::ScheduleCredisCallPass,
-        TriggerId::ScheduleIntexCallPass,
-        TriggerId::ScheduleGemCallPass,
+    const COALESCING: [TaskId; 7] = [
+        TaskId::CompleteAuctions,
+        TaskId::AdvanceAuctions,
+        TaskId::ProcessEmissionDay,
+        TaskId::ScheduleNodCallPass,
+        TaskId::ScheduleCredisCallPass,
+        TaskId::ScheduleIntexCallPass,
+        TaskId::ScheduleGemCallPass,
     ];
-    for spec in ACTIVE_TRIGGERS {
+    for spec in ACTIVE_TASKS {
         let coalesces = COALESCING.iter().any(|id| id.as_u32() == spec.id);
         assert_eq!(
             spec.coalesces_backlog, coalesces,
@@ -88,18 +86,18 @@ fn only_current_state_scans_and_calendar_owned_process_emission_day_coalesce() {
     }
 }
 
-/// Position of trigger `id` in the dispatch order.
-fn dispatch_position(id: TriggerId) -> usize {
-    ACTIVE_TRIGGERS
+/// Position of task `id` in the dispatch order.
+fn dispatch_position(id: TaskId) -> usize {
+    ACTIVE_TASKS
         .iter()
         .position(|spec| spec.id == id.as_u32())
-        .expect("trigger registered")
+        .expect("task registered")
 }
 
 #[test]
 fn advance_auctions_runs_after_emission_limit_1() {
     assert!(
-        dispatch_position(TriggerId::AdvanceAuctions) > dispatch_position(TriggerId::ProcessEmissionDay),
+        dispatch_position(TaskId::AdvanceAuctions) > dispatch_position(TaskId::ProcessEmissionDay),
         "advance_auctions must dispatch after emission_limit_1 so the same-slot brief starts the auction"
     );
 }
@@ -107,8 +105,8 @@ fn advance_auctions_runs_after_emission_limit_1() {
 #[test]
 fn the_clearing_poll_runs_after_the_stage_schedule() {
     assert!(
-        dispatch_position(TriggerId::CompleteAuctions)
-            > dispatch_position(TriggerId::AdvanceAuctions),
+        dispatch_position(TaskId::CompleteAuctions)
+            > dispatch_position(TaskId::AdvanceAuctions),
         "complete_auctions must dispatch after advance_auctions so a day armed this slot can clear in it"
     );
 }
@@ -116,23 +114,23 @@ fn the_clearing_poll_runs_after_the_stage_schedule() {
 #[test]
 fn the_genesis_interval_leaves_the_clearing_poll_alone() {
     for _interval in [10_u64, 600, SECONDS_PER_DAY] {
-        let configured = active_triggers().expect("nonzero interval");
-        let find = |id: TriggerId| {
+        let configured = active_tasks().expect("nonzero interval");
+        let find = |id: TaskId| {
             configured
                 .iter()
                 .find(|spec| spec.id == id.as_u32())
-                .expect("trigger registered")
+                .expect("task registered")
         };
-        let clearing = find(TriggerId::CompleteAuctions);
+        let clearing = find(TaskId::CompleteAuctions);
         assert_eq!(
             clearing.period_seconds(),
-            find(TriggerId::AdvanceAuctions).period_seconds()
+            find(TaskId::AdvanceAuctions).period_seconds()
         );
         #[cfg(not(feature = "e2e-test"))]
         assert_eq!(clearing.period_seconds(), 3_600);
         assert_eq!(
             clearing.start_offset_seconds,
-            outbe_cycle::triggers::PROCESS_EMISSION_DAY_START_OFFSET_SECONDS
+            outbe_cycle::tasks::PROCESS_EMISSION_DAY_START_OFFSET_SECONDS
         );
         assert!(!clearing.requires_accounting_window);
     }
@@ -140,10 +138,7 @@ fn the_genesis_interval_leaves_the_clearing_poll_alone() {
 
 #[test]
 fn registry_ids_are_unique_and_traversed_in_id_order() {
-    let ids = ACTIVE_TRIGGERS
-        .iter()
-        .map(|spec| spec.id)
-        .collect::<Vec<_>>();
+    let ids = ACTIVE_TASKS.iter().map(|spec| spec.id).collect::<Vec<_>>();
     assert_eq!(ids, vec![0, 1, 2, 3, 4, 5, 6]);
 
     let mut unique = ids.clone();
@@ -162,7 +157,7 @@ fn registry_schedule_matches_a_reference_scheduler() {
         candidate
     }
 
-    for spec in active_triggers().expect("interval 3600") {
+    for spec in active_tasks().expect("interval 3600") {
         for last in [0, 1, 599, 600, 3_599, 3_600, 43_200, 86_400, 172_801] {
             assert_eq!(
                 next_fire_at(spec.period_seconds(), spec.start_offset_seconds, last)

@@ -210,7 +210,7 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
     });
 
     // Forcing `DistributionOverflow` (`RevertBytes`) inside reward allocation
-    // triggers the Step 2 inner checkpoint rollback and `record_failed_day_allocation` fallback.
+    // tasks the Step 2 inner checkpoint rollback and `record_failed_day_allocation` fallback.
     storage.set_block_number(2);
     storage.enter(|handle| {
         let promis_before = outbe_promislimit::PromisLimitContract::new(handle.clone())
