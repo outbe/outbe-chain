@@ -3,7 +3,17 @@
 use std::{collections::HashMap, time::Duration};
 
 use alloy_primitives::{Address, B256, U256};
+use outbe_consensus::{forfeit::ProposerForfeitReason, metrics::*};
+use outbe_radicle::integration::{RadicleMetrics, RadicleStatusSnapshot, RadicleVotingGate};
 use outbe_runtime::metrics_recorder::{validate_outbe_metric_taxonomy, OUTBE_METRIC_SUBSYSTEMS};
+use outbe_slashindicator::metrics::*;
+use outbe_tee::metrics::*;
+use outbe_txpool::maintain::{run_staleness_tick, PendingStalenessTracker};
+use outbe_validatorset::metrics::*;
+use reth_transaction_pool::{
+    test_utils::{testing_pool, MockTransactionFactory},
+    TransactionOrigin, TransactionPool,
+};
 use serde_json::Value;
 
 const LATENCIES: &[&str] = &[
@@ -34,6 +44,10 @@ async fn prometheus_recorder_contract() {
     let rendered = recorder.handle().render();
     assert_eq!(validate_outbe_metric_taxonomy(&rendered), Ok(()));
     let types = metric_types(&rendered);
+    assert_eq!(
+        types.get("reth_outbe_consensus_metrics_exporter_up"),
+        Some(&"gauge")
+    );
     assert_subsystems(&rendered, &types);
     assert_latency_buckets(&rendered, &types);
     assert_monitoring(&rendered, &types);
@@ -43,7 +57,7 @@ async fn prometheus_recorder_contract() {
 }
 
 fn emit_consensus() {
-    use outbe_consensus::metrics::*;
+    record_metrics_exporter_up(true);
     record_block_proposed(10);
     record_block_finalized(9, 3, 4);
     record_views_skipped(1);
@@ -71,7 +85,6 @@ fn emit_consensus() {
 }
 
 fn emit_consensus_events() {
-    use outbe_consensus::metrics::*;
     for emit in [
         record_finalization_resolution_stalled,
         record_finalization_divergence_suspected,
@@ -97,7 +110,6 @@ fn emit_consensus_events() {
 }
 
 fn emit_consensus_drop_reasons() {
-    use outbe_consensus::metrics::*;
     [
         FinalizationDropReason::MailboxClosed,
         FinalizationDropReason::StaleRound,
@@ -118,7 +130,6 @@ fn emit_consensus_drop_reasons() {
 }
 
 fn emit_consensus_evidence() {
-    use outbe_consensus::{forfeit::ProposerForfeitReason, metrics::*};
     [
         EquivocationKind::ConflictingNotarize,
         EquivocationKind::ConflictingFinalize,
@@ -136,7 +147,6 @@ fn emit_consensus_evidence() {
 }
 
 fn emit_dkg_vrf() {
-    use outbe_consensus::metrics::*;
     record_dkg_status(2);
     record_reshare_completed();
     record_dkg_revealed_shares(1);
@@ -166,7 +176,6 @@ fn emit_dkg_vrf() {
 }
 
 fn emit_consensus_latencies() {
-    use outbe_consensus::metrics::*;
     for emit in [
         record_block_build_time,
         record_block_wait_time,
@@ -178,7 +187,6 @@ fn emit_consensus_latencies() {
 }
 
 fn emit_validatorset() {
-    use outbe_validatorset::metrics::*;
     let addr = Address::repeat_byte(1);
     record_validator_status(addr, 2);
     record_validator_force_exit(addr);
@@ -194,7 +202,6 @@ fn emit_validatorset() {
 }
 
 fn emit_slashing() {
-    use outbe_slashindicator::metrics::*;
     let addr = Address::repeat_byte(1);
     record_proposer_miss_count(addr, 1);
     record_proposer_miss_event(addr);
@@ -206,7 +213,6 @@ fn emit_slashing() {
 }
 
 fn emit_radicle() {
-    use outbe_radicle::integration::{RadicleMetrics, RadicleStatusSnapshot, RadicleVotingGate};
     let mut snapshot = RadicleStatusSnapshot::default();
     snapshot.local_node_id = Some([1; 32]);
     snapshot.voting_gate = RadicleVotingGate::SignerAllowed;
@@ -221,7 +227,6 @@ fn emit_radicle() {
 }
 
 fn emit_tee_client() {
-    use outbe_tee::metrics::*;
     record_request_duration("health", Duration::from_millis(5));
     record_request_error("health", "codec");
     record_reconnect("ok");
@@ -229,11 +234,6 @@ fn emit_tee_client() {
 }
 
 async fn emit_txpool() {
-    use outbe_txpool::maintain::{run_staleness_tick, PendingStalenessTracker};
-    use reth_transaction_pool::{
-        test_utils::{testing_pool, MockTransactionFactory},
-        TransactionOrigin, TransactionPool,
-    };
     let pool = testing_pool();
     let transaction = MockTransactionFactory::default().create_eip1559();
     pool.add_transaction(TransactionOrigin::External, transaction.transaction)
