@@ -6,9 +6,8 @@ use outbe_primitives::time::WorldwideDay as WorldwideDayKey;
 /// Lifecycle state of an `EmissionDay` (OIP-00348).
 pub mod emission_day_state {
     pub const PENDING: u8 = 0;
-    pub const SEALED: u8 = 1;
-    pub const PROCESSING: u8 = 2;
-    pub const COMPLETED: u8 = 3;
+    pub const PROCESSING: u8 = 1;
+    pub const COMPLETED: u8 = 2;
 }
 
 /// Lifecycle state of the Metadosis phase of an `EmissionDay` (OIP-00348).
@@ -128,12 +127,6 @@ impl EmissionDay {
             nods: 0,
             promis_limit: 0,
         }
-    }
-
-    /// Returns `emission_limit` widened to `U256` in six-decimal minor units.
-    #[inline]
-    pub fn emission_limit_minor(&self) -> U256 {
-        U256::from(self.metadosis_limit.max(self.emission_limit))
     }
 
     /// Returns `metadosis_limit` widened to `U256` in six-decimal minor units.

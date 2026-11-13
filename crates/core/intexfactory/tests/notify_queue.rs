@@ -13,7 +13,7 @@ use alloy_sol_types::SolEvent;
 use outbe_intex::SeriesId;
 use outbe_intexfactory::constants::{MAX_REFUSED_RUNS_PER_BLOCK, NOTICE_RETRY_SECONDS};
 use outbe_intexfactory::notify::{
-    call_notice_attempts, notice_retry_at, pack_call_notice, send_call_notices, with_retry_at,
+    call_notice_attempts, notice_retry_at, pack_call_notice, send_called_notices, with_retry_at,
 };
 use outbe_intexfactory::precompile::IIntexFactory::IntexSeriesCallNoticeFailed;
 use outbe_intexfactory::IntexFactoryContract;
@@ -110,7 +110,7 @@ fn drain_at(handle: &StorageHandle<'_>, now: u64) {
         },
         handle.clone(),
     );
-    send_call_notices(&ctx).expect("a refused notice never fails the send");
+    send_called_notices(&ctx).expect("a refused notice never fails the send");
 }
 
 fn queue_bounds(handle: &StorageHandle<'_>) -> (u32, u32) {

@@ -34,9 +34,6 @@ fn stranger() -> Address {
 fn ica_router() -> Address {
     address!("0x0000000000000000000000000000000000000626")
 }
-fn validator_announce() -> Address {
-    address!("0x0000000000000000000000000000000000000627")
-}
 fn local_ism() -> Address {
     address!("0x0000000000000000000000000000000000000151")
 }
@@ -104,13 +101,20 @@ fn hook(n: u8) -> Address {
     Address::from(bytes)
 }
 
+fn announce(n: u8) -> Address {
+    let mut bytes = [0u8; 20];
+    bytes[18] = 0x0b;
+    bytes[19] = n;
+    Address::from(bytes)
+}
+
 fn initialize_call() -> Bytes {
     IHyperlaneController::initializeCall {
         icaRouter: ica_router(),
-        validatorAnnounce: validator_announce(),
         domains: vec![LOCAL, SEPOLIA, BSC],
         isms: vec![local_ism(), sepolia_ism(), bsc_ism()],
         hooks: vec![hook(1), hook(2), hook(3)],
+        validatorAnnounces: vec![announce(1), announce(2), announce(3)],
     }
     .abi_encode()
     .into()

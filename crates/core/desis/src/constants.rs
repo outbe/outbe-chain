@@ -20,7 +20,7 @@ pub const BIDS_FANIN_TIMEOUT_SECS: u64 = 8 * 3600;
 /// targets, so a longer snapshot fails the day instead of the run.
 pub const MAX_TARGET_CHAINS: usize = 16;
 
-/// Work bounds of the `auction_advance` steps at `MAX_TARGET_CHAINS`: the sends measured on the
+/// Work bounds of the `advance_auctions` steps at `MAX_TARGET_CHAINS`: the sends measured on the
 /// deployed testnet stack × 1.2 (`OriginStageSendGas.t.sol`) plus the Desis side (`calibration.rs`).
 pub const ADVANCE_START_GAS: u64 = 4_224_000;
 pub const ADVANCE_REVEAL_END_GAS: u64 = 5_102_000;
@@ -29,7 +29,7 @@ pub const ADVANCE_FAIL_GAS: u64 = 99_000;
 pub const ADVANCE_DAY_BASE_GAS: u64 = 20_000;
 
 /// The steps due at one midnight: a start, a commit end, a reveal end and a day that waits.
-pub const AUCTION_ADVANCE_BUDGET_GAS: u64 =
+pub const ADVANCE_AUCTIONS_BUDGET_GAS: u64 =
     ADVANCE_START_GAS + ADVANCE_REVEAL_END_GAS + 5 * ADVANCE_DAY_BASE_GAS;
 
 /// Midnight-anchored schedule: the commit, reveal and Intex issuance windows each span one day.

@@ -54,7 +54,7 @@ impl std::error::Error for ObservationError {}
 /// Provider decimals are parsed directly from their decimal lexemes into FP18.
 #[derive(Debug, Clone)]
 pub struct TickerPrice {
-    /// Current provider rate at FP18 (pool spot rate for DEX providers).
+    /// Current provider rate at FP18 (time-weighted pool rate for DEX providers).
     pub price: FixedValue,
     /// Trailing trading volume at FP18 (exchange ticker window, or the DEX
     /// rolling window).

@@ -34,9 +34,6 @@ fn stranger() -> Address {
 fn ica_router() -> Address {
     address!("0x0000000000000000000000000000000000000626")
 }
-fn validator_announce() -> Address {
-    address!("0x0000000000000000000000000000000000000627")
-}
 fn local_ism() -> Address {
     address!("0x0000000000000000000000000000000000000151")
 }
@@ -104,13 +101,20 @@ fn hook(n: u8) -> Address {
     Address::from(bytes)
 }
 
+fn announce(n: u8) -> Address {
+    let mut bytes = [0u8; 20];
+    bytes[18] = 0x0b;
+    bytes[19] = n;
+    Address::from(bytes)
+}
+
 fn initialize_call() -> Bytes {
     IHyperlaneController::initializeCall {
         icaRouter: ica_router(),
-        validatorAnnounce: validator_announce(),
         domains: vec![LOCAL, SEPOLIA, BSC],
         isms: vec![local_ism(), sepolia_ism(), bsc_ism()],
         hooks: vec![hook(1), hook(2), hook(3)],
+        validatorAnnounces: vec![announce(1), announce(2), announce(3)],
     }
     .abi_encode()
     .into()
@@ -198,10 +202,27 @@ fn initialize_accepts_ism_ownership_and_stores_table() {
     StorageHandle::enter(&mut p, |storage| {
         let c = HyperlaneControllerContract::new(storage);
         assert_eq!(c.ica_router.read().unwrap(), ica_router());
-        assert_eq!(c.validator_announce.read().unwrap(), validator_announce());
         assert_eq!(c.ism_by_domain.read(&LOCAL).unwrap(), local_ism());
+        for (domain, n) in [(LOCAL, 1), (SEPOLIA, 2), (BSC, 3)] {
+            assert_eq!(
+                c.validator_announce_by_domain.read(&domain).unwrap(),
+                announce(n)
+            );
+        }
         assert_eq!(c.ism_by_domain.read(&SEPOLIA).unwrap(), sepolia_ism());
         assert_eq!(c.domains.read_all().unwrap(), vec![LOCAL, SEPOLIA, BSC]);
+        let call = IHyperlaneController::validatorAnnounceByDomainCall { domain: BSC };
+        let ret = dispatch(
+            c.storage.clone(),
+            &call.abi_encode(),
+            stranger(),
+            U256::ZERO,
+        )
+        .unwrap();
+        assert_eq!(
+            IHyperlaneController::validatorAnnounceByDomainCall::abi_decode_returns(&ret).unwrap(),
+            announce(3)
+        );
     });
     let t = topics(&p);
     assert_eq!(
@@ -311,10 +332,10 @@ fn initialize_is_gated_and_one_shot() {
     StorageHandle::enter(&mut p, |storage| {
         let call: Bytes = IHyperlaneController::initializeCall {
             icaRouter: ica_router(),
-            validatorAnnounce: validator_announce(),
             domains: vec![SEPOLIA],
             isms: vec![sepolia_ism()],
             hooks: vec![hook(2)],
+            validatorAnnounces: vec![announce(2)],
         }
         .abi_encode()
         .into();
@@ -324,6 +345,37 @@ fn initialize_is_gated_and_one_shot() {
             IHyperlaneController::LocalDomainMissing::SELECTOR
         );
     });
+
+    // ValidatorAnnounce list shorter than the domains, then a zero ValidatorAnnounce.
+    for (announces, error) in [
+        (
+            vec![announce(1)],
+            IHyperlaneController::ValidatorAnnounceLengthMismatch::SELECTOR,
+        ),
+        (
+            vec![announce(1), Address::ZERO],
+            IHyperlaneController::InvalidAddress::SELECTOR,
+        ),
+    ] {
+        let mut p = provider();
+        stub_pre_initialize(&mut p);
+        StorageHandle::enter(&mut p, |storage| {
+            let call: Bytes = IHyperlaneController::initializeCall {
+                icaRouter: ica_router(),
+                domains: vec![LOCAL, SEPOLIA],
+                isms: vec![local_ism(), sepolia_ism()],
+                hooks: vec![hook(1), hook(2)],
+                validatorAnnounces: announces,
+            }
+            .abi_encode()
+            .into();
+            let err = dispatch(storage.clone(), &call, deployer(), U256::ZERO).unwrap_err();
+            assert_eq!(revert_selector(err), error);
+            assert!(!HyperlaneControllerContract::new(storage)
+                .is_initialized()
+                .unwrap());
+        });
+    }
 
     // Second call.
     let mut p = initialized_provider();
@@ -371,20 +423,29 @@ fn domains_can_be_added_and_removed_except_the_local_one() {
     let mut p = initialized_provider();
     StorageHandle::enter(&mut p, |storage| {
         let mut c = HyperlaneControllerContract::new(storage);
-        c.add_domain(1, v(5), hook(5)).unwrap();
+        c.add_domain(1, v(5), hook(5), announce(5)).unwrap();
         assert_eq!(c.domains.read_all().unwrap(), vec![LOCAL, SEPOLIA, BSC, 1]);
-        c.add_domain(1, v(6), hook(6)).unwrap();
+        c.add_domain(1, v(6), hook(6), announce(6)).unwrap();
         assert_eq!(c.ism_by_domain.read(&1).unwrap(), v(6));
+        assert_eq!(
+            c.validator_announce_by_domain.read(&1).unwrap(),
+            announce(6)
+        );
         assert_eq!(c.domains.read_all().unwrap().len(), 4);
 
         c.remove_domain(SEPOLIA).unwrap();
         assert_eq!(c.domains.read_all().unwrap(), vec![LOCAL, BSC, 1]);
         assert_eq!(c.ism_by_domain.read(&SEPOLIA).unwrap(), Address::ZERO);
+        assert_eq!(
+            c.validator_announce_by_domain.read(&SEPOLIA).unwrap(),
+            Address::ZERO
+        );
 
         assert!(c.remove_domain(SEPOLIA).is_err());
         assert!(c.remove_domain(LOCAL).is_err());
-        assert!(c.add_domain(LOCAL, v(7), hook(7)).is_err());
-        assert!(c.add_domain(0, v(7), hook(7)).is_err());
+        assert!(c.add_domain(LOCAL, v(7), hook(7), announce(7)).is_err());
+        assert!(c.add_domain(0, v(7), hook(7), announce(7)).is_err());
+        assert!(c.add_domain(2, v(7), hook(7), Address::ZERO).is_err());
     });
 }
 
@@ -398,7 +459,7 @@ fn operations_require_initialization() {
             c.set_validators_and_threshold(&[v(1)], 1),
             Err(outbe_primitives::error::PrecompileError::RevertBytes(_))
         ));
-        assert!(c.add_domain(SEPOLIA, v(1), hook(1)).is_err());
+        assert!(c.add_domain(SEPOLIA, v(1), hook(1), announce(1)).is_err());
     });
 }
 
@@ -583,10 +644,10 @@ mod liveness {
         StorageHandle::enter(&mut p, |storage| {
             let call: Bytes = IHyperlaneController::initializeCall {
                 icaRouter: ica_router(),
-                validatorAnnounce: validator_announce(),
                 domains: vec![LOCAL, SEPOLIA],
                 isms: vec![local_ism(), sepolia_ism()],
                 hooks: vec![FIXTURE_HOOK, hook(2)],
+                validatorAnnounces: vec![announce(1), announce(2)],
             }
             .abi_encode()
             .into();
@@ -1071,10 +1132,11 @@ mod vote_target {
 
     fn add_arbitrum() -> String {
         format!(
-            r#"{{"operation":"addHyperlaneChain","chainId":{ARBITRUM},"icaRouter":"{:#x}","ism":"{:#x}","hook":"{:#x}"}}"#,
+            r#"{{"operation":"addHyperlaneChain","chainId":{ARBITRUM},"icaRouter":"{:#x}","ism":"{:#x}","hook":"{:#x}","validatorAnnounce":"{:#x}"}}"#,
             v(0xe1),
             v(0xd1),
-            hook(9)
+            hook(9),
+            announce(9)
         )
     }
 
@@ -1131,6 +1193,8 @@ mod vote_target {
             remove(LOCAL),
             remove(0),
             add_arbitrum().replace(&format!("{:#x}", v(0xd1)), &zero),
+            add_arbitrum().replace(&format!("{:#x}", announce(9)), &zero),
+            add_arbitrum().replace(&format!(r#","validatorAnnounce":"{:#x}""#, announce(9)), ""),
             add_arbitrum().replace('}', r#","extra":1}"#),
             r#"{"operation":"setBridgePaused","chainId":97}"#.to_string(),
         ] {
@@ -1172,6 +1236,10 @@ mod vote_target {
         StorageHandle::enter(&mut p, |storage| {
             let c = HyperlaneControllerContract::new(storage);
             assert_eq!(c.ism_by_domain.read(&ARBITRUM).unwrap(), v(0xd1));
+            assert_eq!(
+                c.validator_announce_by_domain.read(&ARBITRUM).unwrap(),
+                announce(9)
+            );
         });
 
         // The deployer enrolled the same router: no second enrollment.

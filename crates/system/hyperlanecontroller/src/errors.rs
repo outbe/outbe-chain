@@ -44,6 +44,9 @@ pub enum HyperlaneControllerError {
     #[error("domains and hooks length mismatch")]
     HookLengthMismatch,
 
+    #[error("domains and ValidatorAnnounce contracts length mismatch")]
+    ValidatorAnnounceLengthMismatch,
+
     #[error("no MerkleTreeHook configured for domain {domain}")]
     UnknownHook { domain: u32 },
 
@@ -152,6 +155,11 @@ impl From<HyperlaneControllerError> for PrecompileError {
             HyperlaneControllerError::HookLengthMismatch => PrecompileError::RevertBytes(
                 Bytes::from(IHyperlaneController::HookLengthMismatch {}.abi_encode()),
             ),
+            HyperlaneControllerError::ValidatorAnnounceLengthMismatch => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IHyperlaneController::ValidatorAnnounceLengthMismatch {}.abi_encode(),
+                ))
+            }
             HyperlaneControllerError::UnknownHook { domain } => PrecompileError::RevertBytes(
                 Bytes::from(IHyperlaneController::UnknownHook { domain }.abi_encode()),
             ),

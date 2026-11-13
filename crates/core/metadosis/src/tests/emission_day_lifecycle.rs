@@ -506,7 +506,7 @@ fn wwd_without_price_runs_as_empty_day() {
             .to_string()
         );
 
-        let expected_limit = outbe_emission::day_emission::day_emission_limit(4);
+        let expected_limit = outbe_emission::day_emission::emission_limit_of_day(4);
         let settle_ts = date_key_to_utc_timestamp(20261006).unwrap() + 1;
         storage.set_block_timestamp(U256::from(settle_ts)).unwrap();
         let ctx_06 = BlockRuntimeContext::new(

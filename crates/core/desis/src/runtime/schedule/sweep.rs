@@ -1,4 +1,4 @@
-//! Visit order of the `auction_advance` sweep over the dense schedule set.
+//! Visit order of the `advance_auctions` sweep over the dense schedule set.
 
 /// The dense indices that one sweep did not visit yet: `[index, end)`, then `[0, front)`.
 /// The first lap goes from the cursor to the tail. The second lap goes from 0 to the cursor.

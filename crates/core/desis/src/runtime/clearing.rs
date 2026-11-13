@@ -27,7 +27,7 @@ pub fn force_clear(
 
 /// Poll one fan-in gate per invocation, rotating through the active set. A day
 /// runs in its own checkpoint; ordinary reverts do not block other days.
-pub fn tick_gate(ctx: &BlockRuntimeContext) -> Result<()> {
+pub fn complete_auctions(ctx: &BlockRuntimeContext) -> Result<()> {
     ctx.storage.with_checkpoint(|| poll_gate(ctx))
 }
 

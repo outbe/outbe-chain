@@ -23,26 +23,26 @@ fn cycle_tick_runs_dispatcher() {
 }
 
 // ---------------------------------------------------------------------------
-// auction_advance trigger
+// advance_auctions trigger
 // ---------------------------------------------------------------------------
 
 #[test]
-fn dispatcher_fires_auction_advance_at_its_slot() {
+fn dispatcher_fires_advance_auctions_at_its_slot() {
     with_anchored_cycle(|handle| {
         let fire_ts = GENESIS_TS + SECONDS_PER_DAY + 5;
         let ctx_fire = dispatch_at(handle, 2, fire_ts);
 
-        let auction_advance_id = TriggerId::AuctionAdvance.as_u32();
+        let advance_auctions_id = TriggerId::AdvanceAuctions.as_u32();
         let cycle: Cycle<'_> = ctx_fire.storage.contract::<Cycle<'_>>();
         assert_eq!(
-            cycle.last_executed_at.read(&auction_advance_id).unwrap(),
+            cycle.last_executed_at.read(&advance_auctions_id).unwrap(),
             GENESIS_TS + SECONDS_PER_DAY,
             "coalesces the backlog to the latest slot at or before the block"
         );
         assert_eq!(
             cycle
                 .last_executed_block_number
-                .read(&auction_advance_id)
+                .read(&advance_auctions_id)
                 .unwrap(),
             2
         );
@@ -539,9 +539,9 @@ fn failed_terminal_dispatch_takes_the_allocation_fallback() {
     let recorded_at = topup_slot(TriggerId::ProtocolCycle);
     for id in [
         EMISSION_LIMIT_1_ID,
-        TriggerId::AuctionAdvance.as_u32(),
-        TriggerId::AuctionClearing.as_u32(),
-        TriggerId::IntexCallDaily.as_u32(),
+        TriggerId::AdvanceAuctions.as_u32(),
+        TriggerId::CompleteAuctions.as_u32(),
+        TriggerId::ScheduleIntexCallPass.as_u32(),
     ] {
         assert!(cycle_failure(&storage, id).is_none());
         assert!(cycle_executed(&storage, id).is_some());
@@ -591,9 +591,9 @@ fn failed_terminal_dispatch_takes_the_allocation_fallback() {
             recorded_at
         );
         for id in [
-            TriggerId::AuctionAdvance,
-            TriggerId::AuctionClearing,
-            TriggerId::IntexCallDaily,
+            TriggerId::AdvanceAuctions,
+            TriggerId::CompleteAuctions,
+            TriggerId::ScheduleIntexCallPass,
         ] {
             assert_eq!(
                 cycle.last_executed_at.read(&id.as_u32()).unwrap(),
@@ -642,15 +642,15 @@ fn a_dependency_that_is_not_due_keeps_its_watermark() {
         fire.storage
             .contract::<Cycle<'_>>()
             .last_executed_at
-            .write(&TriggerId::AuctionAdvance.as_u32(), held_at)
+            .write(&TriggerId::AdvanceAuctions.as_u32(), held_at)
             .unwrap();
         corrupt_emission_day(fire, 20_240_101);
     });
-    let recorded_at = topup_slot(TriggerId::AuctionClearing);
+    let recorded_at = topup_slot(TriggerId::CompleteAuctions);
     assert!(cycle_failure(&storage, EMISSION_LIMIT_1_ID).is_some());
-    assert!(cycle_failure(&storage, TriggerId::AuctionAdvance.as_u32()).is_none());
-    assert!(cycle_executed(&storage, TriggerId::AuctionAdvance.as_u32()).is_none());
-    let clearing = cycle_executed(&storage, TriggerId::AuctionClearing.as_u32())
+    assert!(cycle_failure(&storage, TriggerId::AdvanceAuctions.as_u32()).is_none());
+    assert!(cycle_executed(&storage, TriggerId::AdvanceAuctions.as_u32()).is_none());
+    let clearing = cycle_executed(&storage, TriggerId::CompleteAuctions.as_u32())
         .expect("clearing runs when advance was not marked failed");
     assert_eq!(clearing.scheduledAt, recorded_at);
     // The provider is only read above. Re-enter to read the untouched slot.
@@ -661,14 +661,14 @@ fn a_dependency_that_is_not_due_keeps_its_watermark() {
         assert_eq!(
             cycle
                 .last_executed_at
-                .read(&TriggerId::AuctionAdvance.as_u32())
+                .read(&TriggerId::AdvanceAuctions.as_u32())
                 .unwrap(),
             held_at
         );
         assert_eq!(
             cycle
                 .last_executed_at
-                .read(&TriggerId::AuctionClearing.as_u32())
+                .read(&TriggerId::CompleteAuctions.as_u32())
                 .unwrap(),
             recorded_at
         );

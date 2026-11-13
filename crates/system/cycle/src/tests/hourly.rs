@@ -203,3 +203,38 @@ fn step_error_takes_its_fallback() {
     node_fault.clear_mutation_failure();
     assert_eq!(emission_day_record(&mut node_fault, day), before);
 }
+
+#[test]
+fn conservation_mismatch_fails_the_block() {
+    let (mut storage, day, fire_at) = due_emission_day_fixture();
+    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 16);
+    storage.set_block_number(20);
+    storage.enter(|handle| {
+        let ctx = dispatch_at(handle.clone(), 20, fire_at);
+        let mut record = outbe_emission::api::get_emission_day_record(ctx.storage.clone(), day)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            record.metadosis_state,
+            outbe_emission::schema::metadosis_state::COMPLETED
+        );
+        record.validators += 1;
+        outbe_emission::schema::EmissionContract::new(ctx.storage.clone())
+            .emission_days
+            .update(&record)
+            .unwrap();
+
+        let error = crate::handler::credit_reward_slice(&ctx).unwrap_err();
+        assert!(matches!(
+            error,
+            outbe_primitives::error::PrecompileError::FatalWithCause(_)
+        ));
+        assert_eq!(
+            outbe_emission::api::get_emission_day_record(ctx.storage.clone(), day)
+                .unwrap()
+                .unwrap()
+                .state,
+            outbe_emission::schema::emission_day_state::PROCESSING
+        );
+    });
+}

@@ -9,7 +9,7 @@
 //! vectors.
 
 pub use outbe_system_common::emission::{
-    day_emission_limit, FLOOR_DAY_EMISSION, FLOOR_DAY_THRESHOLD, INITIAL_DAY_EMISSION,
+    emission_limit_of_day, FLOOR_DAY_EMISSION, FLOOR_DAY_THRESHOLD, INITIAL_DAY_EMISSION,
 };
 
 #[cfg(test)]
@@ -75,15 +75,15 @@ mod tests {
             (3071, PIN_DAY_3071),
             (3072, PIN_DAY_3072),
         ] {
-            assert_eq!(day_emission_limit(day), expected, "day {day}");
+            assert_eq!(emission_limit_of_day(day), expected, "day {day}");
         }
     }
 
     #[test]
     fn floor_clamp_at_and_beyond_threshold() {
-        assert_eq!(day_emission_limit(FLOOR_DAY_THRESHOLD), PIN_DAY_3072);
-        assert_eq!(day_emission_limit(FLOOR_DAY_THRESHOLD + 1), PIN_DAY_3072);
-        assert_eq!(day_emission_limit(u32::MAX), PIN_DAY_3072);
+        assert_eq!(emission_limit_of_day(FLOOR_DAY_THRESHOLD), PIN_DAY_3072);
+        assert_eq!(emission_limit_of_day(FLOOR_DAY_THRESHOLD + 1), PIN_DAY_3072);
+        assert_eq!(emission_limit_of_day(u32::MAX), PIN_DAY_3072);
     }
 
     #[test]
@@ -115,7 +115,7 @@ mod tests {
     #[test]
     fn production_matches_independent_reference_for_full_range() {
         for (day, expected) in reference_days() {
-            let actual = day_emission_limit(day);
+            let actual = emission_limit_of_day(day);
             assert_eq!(actual, expected, "day {day}");
             assert_eq!(actual % SCALE_1E6_U256, U256::ZERO, "day {day}");
         }
@@ -123,9 +123,9 @@ mod tests {
 
     #[test]
     fn production_rises_to_p_then_falls_to_the_floor() {
-        let mut previous = day_emission_limit(0);
+        let mut previous = emission_limit_of_day(0);
         for day in 1..=FLOOR_DAY_THRESHOLD {
-            let current = day_emission_limit(day);
+            let current = emission_limit_of_day(day);
             if day <= 1_024 {
                 assert!(
                     current >= previous,

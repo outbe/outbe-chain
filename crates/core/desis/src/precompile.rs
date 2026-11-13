@@ -1,6 +1,6 @@
 //! ABI dispatch for the Desis precompile at `DESIS_ADDRESS`.
 //!
-//! OriginRouter submits bids through this ABI. The Cycle `tick_gate` hook owns clearing.
+//! OriginRouter submits bids through this ABI. The Cycle `complete_auctions` hook owns clearing.
 //! The runtime owns the protocol logic.
 
 use alloy_primitives::{Address, Bytes, U256};

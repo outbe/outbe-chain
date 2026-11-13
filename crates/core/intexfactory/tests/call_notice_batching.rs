@@ -6,7 +6,7 @@
 use alloy_primitives::U256;
 use outbe_intex::SeriesId;
 use outbe_intexfactory::constants::MAX_SERIES_PER_MARK;
-use outbe_intexfactory::notify::{joins_run, pack_call_notice, send_call_notices};
+use outbe_intexfactory::notify::{joins_run, pack_call_notice, send_called_notices};
 use outbe_intexfactory::IntexFactoryContract;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::pass_budget::SWEEP_WRITES_PER_BLOCK;
@@ -85,7 +85,7 @@ fn drain(handle: &StorageHandle<'_>) {
         },
         handle.clone(),
     );
-    send_call_notices(&ctx).expect("a dropped notice never fails the drain");
+    send_called_notices(&ctx).expect("a dropped notice never fails the drain");
 }
 
 /// A provider whose OriginRouter accepts sends, so the drain exercises the path a live chain takes

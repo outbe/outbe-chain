@@ -231,8 +231,8 @@ volume-weighted mean rounded down.
 | `huobi` | Working | Huobi WebSocket ticker/candle streams with REST bootstrap fallback |
 | `mexc` | Working | MEXC protobuf WebSocket ticker/candle streams with REST bootstrap fallback |
 | `coinbase` | Working | Coinbase WebSocket ticker stream with REST bootstrap fallback |
-| `uniswap` | Implemented | Ethereum or Sepolia V2/V3/V4 pool spot rate and 1h COEN swap volume, read a few blocks behind the head |
-| `pancakeswap` | Implemented | BNB Chain V2/V3/Infinity CL/Bin pool spot rate and 1h COEN swap volume, read a few blocks behind the head |
+| `uniswap` | Implemented | Ethereum or Sepolia V2/V3/V4 pool rate (time-weighted, 120 s) and 1h COEN swap volume, read a few blocks behind the head |
+| `pancakeswap` | Implemented | BNB Chain V2/V3/Infinity CL/Bin pool rate (time-weighted, 120 s) and 1h COEN swap volume, read a few blocks behind the head |
 
 Provider errors, non-success responses, unsupported custom pairs, and timeouts are logged and skipped. The feeder does not fabricate fallback prices from failed providers.
 
@@ -369,8 +369,20 @@ of the chain.
 
 ### DEX providers
 
-DEX v1 reads the current pool spot rate and independently collects one-hour
-base volume, matching the 60 one-minute candles exchange sources aggregate. It returns tickers, with no candles or time averaging of the rate.
+DEX v1 reads the time-weighted pool rate of the last 120 seconds and
+independently collects one-hour base volume, matching the 60 one-minute candles
+exchange sources aggregate. It returns tickers, with no candles.
+
+The feeder reads the pool rate at the end of each block. The rate of a block
+applies from the timestamp of that block to the timestamp of the next block.
+The price of a ticker is the mean of these rates, weighted by time, in the 120
+seconds before the block that the feeder reads. Thus the rate of that last block
+has no weight yet. The window is about one vote period:
+
+- A move of the pool inside one block changes the price by a small part only.
+- Feeders that read adjacent blocks get almost the same price.
+- The calculation is the same for each pool protocol.
+
 A pool feeds the Oracle pair whose market names it, like any other market, through
 the existing deviation filter and volume-weighted source mean. There is no
 stablecoin/USD feed or depeg correction. The rate is the core AMM price before fees, slippage or
@@ -420,8 +432,10 @@ including its hook settings and fee. A dynamic fee is encoded as `8388608`.
 RPC must support `eth_chainId`, `eth_getBlockByNumber("latest")`, historical
 block headers, `eth_getLogs`, and EIP-1898 `eth_call` with
 `{blockHash, requireCanonical: true}`. Each cycle reads `latest`, steps back
-`confirmations` blocks by number, and pins every price, decimals and log read to
-that block's hash; volume covers `(block timestamp - 1h, block timestamp]`.
+`confirmations` blocks by number, and pins every decimals and log read to
+that block's hash. Each rate read is pinned to the hash of its own block.
+The price covers `(block timestamp - 120 s, block timestamp]` and the volume
+covers `(block timestamp - 1h, block timestamp]`.
 The feeder does not wait for the `finalized` tag: on Ethereum that lags about
 13 minutes and moves once per epoch, while three confirmations already rule
 out ordinary one-block reorgs. A deeper reorg still fails the hash checks and
@@ -430,7 +444,7 @@ use an endpoint that exposes it and returns complete results or a range-limit
 error. Oversized responses above 16 MiB are rejected and log ranges reduced.
 
 Each market has an independent background worker. It backfills the volume
-window at startup, then scans only new confirmed blocks. It deduplicates log
+window and the price window at startup, then scans only new confirmed blocks. It deduplicates log
 rows, checks block hashes and commits a range only after validating every event.
 V2 volume uses the absolute net base-token input/output; V3/V4/Infinity use the
 absolute signed base-token delta. Volumes remain in COEN units for comparable
@@ -441,7 +455,7 @@ clear it for rebuilding.
 Uninitialized pools, RPC failures and incomplete backfills publish no ticker.
 A complete window with no swaps publishes real zero volume. Cached observations
 expire 30 seconds after their state acquisition began; a long backfill cannot
-make an old spot price look freshly acquired. A failed market does not block
+make an old price look freshly acquired. A failed market does not block
 other markets. Dropping the provider cancels its workers. Logs distinguish
 warmup, a ready block/hash and retryable unavailability.
 

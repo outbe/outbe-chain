@@ -50,9 +50,7 @@ pub(crate) fn ensure_emission_day_with_limit(
     };
     existing.emission_limit = existing.emission_limit.max(limit);
     existing.metadosis_limit = limit;
-    if existing.state == outbe_emission::schema::emission_day_state::PENDING
-        || existing.state == outbe_emission::schema::emission_day_state::SEALED
-    {
+    if existing.state == outbe_emission::schema::emission_day_state::PENDING {
         existing.state = outbe_emission::schema::emission_day_state::PROCESSING;
     }
     emission_days.update(&existing)

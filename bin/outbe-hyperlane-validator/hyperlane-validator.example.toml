@@ -1,0 +1,76 @@
+# outbe-hyperlane-validator: example configuration for the Outbe testnet.
+# Copy this file to hyperlane-validator.toml and replace the placeholders.
+# The configuration has no contract addresses: the daemon reads them from the
+# HyperlaneController and the origin chains. Unknown fields are errors.
+
+[chain]
+# Outbe JSON-RPC (HTTP). Discovery and liveness use it.
+rpc_endpoint = "http://127.0.0.1:8545"
+chain_id = 54322345
+
+[account]
+# Hex private key of H: the checkpoint signer and the transaction sender.
+# Its lowercase address is the bucket name. Protect this file.
+private_key = "0x…"
+# Validator address V. Replace the zero address.
+validator_address = "0x0000000000000000000000000000000000000000"
+
+[hyperlane]
+# Interval of the controller poll and of the liveness loop, in seconds.
+poll_interval_secs = 30
+# Send submitCheckpoint with zero priority fee (ZeroFee txpool policy).
+gasless = true
+
+[health]
+# /health and /status.
+enabled = true
+bind_address = "0.0.0.0:9003"
+
+[storage]
+# Directory of the MDBX store. Never the node database.
+db_path = "/var/lib/outbe-hyperlane-validator/db"
+
+[server]
+# S3-compatible read endpoint for relayers. Open it to everyone: relayers are permissionless.
+bind_address = "0.0.0.0:9000"
+# The http(s)://host[:port] that relayers use. No path.
+public_url = "http://203.0.113.7:9000"
+
+# One [[origin]] block for each domain of the HyperlaneController.
+
+[[origin]]
+domain = 54322345
+rpc_urls = ["https://rpc.testnet.outbe.net"]
+# Number of rpc_urls that must return the same root before the validator signs:
+#   "majority" - N - floor(N/3), at least 2/3 (default)
+#   "quorum"   - ceil(N/2), at least 1/2
+#   "single"   - the first RPC that answers, no vote
+rpc_consensus = "majority"
+# Blocks behind the head, or "finalized".
+reorg_period = 0
+# Poll interval without WebSocket, or the fallback poll with it (seconds).
+interval_secs = 15
+# Optional. Enable after the Outbe RPC nodes serve WebSocket.
+# ws_url = "wss://…"
+# Optional. First block to read. Default: deployedBlock() of the hook.
+# index_from = 4782
+
+[[origin]]
+domain = 97
+rpc_urls = [
+  "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+  "https://data-seed-prebsc-1-s2.bnbchain.org:8545",
+  "https://data-seed-prebsc-2-s1.bnbchain.org:8545",
+]
+rpc_consensus = "majority" # majority (default) | quorum | single
+reorg_period = 9
+interval_secs = 15
+ws_url = "wss://…"
+
+[[origin]]
+domain = 11155111
+rpc_urls = ["https://ethereum-sepolia-rpc.publicnode.com"]
+rpc_consensus = "majority" # majority (default) | quorum | single
+reorg_period = 2
+interval_secs = 15
+ws_url = "wss://ethereum-sepolia-rpc.publicnode.com"

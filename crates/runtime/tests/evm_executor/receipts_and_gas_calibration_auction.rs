@@ -175,7 +175,7 @@ fn calibration_live_auction_start() {
     ));
 }
 
-/// A scheduled day at 00:00, in the step that the `auction_advance` run makes for it.
+/// A scheduled day at 00:00, in the step that the `advance_auctions` run makes for it.
 #[derive(Clone, Copy, Debug)]
 enum DueStep {
     /// A briefed day starts and sends START to every target chain.
@@ -253,7 +253,7 @@ fn max_targets() -> Vec<u32> {
     (1..=outbe_desis::constants::MAX_TARGET_CHAINS as u32).collect()
 }
 
-/// One `auction_advance` run at 00:00 over `steps`, with the most target chains Desis takes.
+/// One `advance_auctions` run at 00:00 over `steps`, with the most target chains Desis takes.
 /// Returns the gross gas of the run and the logs of the block.
 fn due_auctions(steps: &[DueStep]) -> (u64, Vec<Log>) {
     use router_abi::IOriginRouter;
@@ -342,7 +342,7 @@ fn due_auctions(steps: &[DueStep]) -> (u64, Vec<Log>) {
         .any(|log| outbe_cycle::ICycle::CycleTriggerOverBudget::decode_log(log).is_ok()));
     let gross = samples
         .iter()
-        .find(|(id, _)| *id == outbe_cycle::triggers::TriggerId::AuctionAdvance.as_u32())
+        .find(|(id, _)| *id == outbe_cycle::triggers::TriggerId::AdvanceAuctions.as_u32())
         .unwrap()
         .1;
     eprintln!("DUE AUCTIONS {steps:?}: advance gross={gross}");
@@ -350,7 +350,7 @@ fn due_auctions(steps: &[DueStep]) -> (u64, Vec<Log>) {
 }
 
 /// The steps that send nothing stay inside the Desis base bound, and one run moves all four days
-/// that are due at 00:00 inside the `auction_advance` budget.
+/// that are due at 00:00 inside the `advance_auctions` budget.
 #[test]
 fn calibration_four_due_auctions_at_midnight() {
     use outbe_desis::constants::ADVANCE_DAY_BASE_GAS;
@@ -364,7 +364,7 @@ fn calibration_four_due_auctions_at_midnight() {
     let (gross, logs) = due_auctions(&DueStep::ALL);
     let budget = outbe_cycle::triggers::ACTIVE_TRIGGERS
         .iter()
-        .find(|spec| spec.id == outbe_cycle::triggers::TriggerId::AuctionAdvance.as_u32())
+        .find(|spec| spec.id == outbe_cycle::triggers::TriggerId::AdvanceAuctions.as_u32())
         .unwrap()
         .work_budget_gas();
     assert!(gross <= budget, "gross={gross}, budget={budget}");

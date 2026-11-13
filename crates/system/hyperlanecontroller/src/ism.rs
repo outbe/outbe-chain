@@ -110,12 +110,18 @@ impl HyperlaneControllerContract<'_> {
 
     /// Connects a remote chain (or replaces its ISM) and takes the ownership
     /// of its ISM. The local domain is fixed at `initialize`.
-    pub fn add_domain(&mut self, domain: u32, ism: Address, hook: Address) -> Result<()> {
+    pub fn add_domain(
+        &mut self,
+        domain: u32,
+        ism: Address,
+        hook: Address,
+        validator_announce: Address,
+    ) -> Result<()> {
         self.require_initialized()?;
         self.require_remote_domain(domain)?;
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
-            self.write_domain(domain, ism, hook)?;
+            self.write_domain(domain, ism, hook, validator_announce)?;
             accept_remote_ism(&self.storage, domain, ism)
         })
     }
@@ -130,6 +136,7 @@ impl HyperlaneControllerContract<'_> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             self.ism_by_domain.clear(&domain)?;
+            self.validator_announce_by_domain.clear(&domain)?;
             let remaining: Vec<u32> = self
                 .domains
                 .read_all()?
@@ -154,11 +161,17 @@ impl HyperlaneControllerContract<'_> {
         Ok(())
     }
 
-    pub(crate) fn write_domain(&mut self, domain: u32, ism: Address, hook: Address) -> Result<()> {
+    pub(crate) fn write_domain(
+        &mut self,
+        domain: u32,
+        ism: Address,
+        hook: Address,
+        validator_announce: Address,
+    ) -> Result<()> {
         if domain == 0 {
             return Err(HyperlaneControllerError::InvalidDomain.into());
         }
-        if ism == Address::ZERO || hook == Address::ZERO {
+        if [ism, hook, validator_announce].contains(&Address::ZERO) {
             return Err(HyperlaneControllerError::InvalidAddress.into());
         }
         if self.ism_by_domain.read(&domain)? == Address::ZERO {
@@ -166,6 +179,8 @@ impl HyperlaneControllerContract<'_> {
         }
         self.ism_by_domain.write(&domain, ism)?;
         self.hook_by_domain.write(&domain, hook)?;
+        self.validator_announce_by_domain
+            .write(&domain, validator_announce)?;
         self.emit(IHyperlaneController::DomainAdded { domain, ism })
     }
 }

@@ -310,7 +310,7 @@ fn isolate_nod_call_schedule(
             .last_executed_at
             .write(&spec.id, midnight + 10 * SECONDS_PER_DAY)?;
     }
-    let trigger = TriggerId::NodCallDaily.as_u32();
+    let trigger = TriggerId::ScheduleNodCallPass.as_u32();
     cycle.last_executed_at.write(&trigger, midnight - 1)?;
     Ok(trigger)
 }
