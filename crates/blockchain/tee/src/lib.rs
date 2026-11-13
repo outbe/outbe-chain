@@ -27,7 +27,7 @@ pub mod gratis_decrypt;
 pub mod host_collateral;
 pub mod journal_storage;
 pub mod lysis;
-mod metrics;
+pub mod metrics;
 #[cfg(feature = "native-dcap")]
 pub mod native_qvl;
 pub mod nod_decrypt;
