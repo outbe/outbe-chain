@@ -130,18 +130,18 @@ fn test_storage_dsl_layout_is_compatible_with_previous_slots() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn checked_credit_rejects_overflow() {
+fn an_overflowing_credit_fails_the_block() {
     with_contract(|c| {
         let near_max = U256::MAX - U256::from(10u64);
         c.checked_credit(near_max).unwrap();
 
         let err = c.checked_credit(U256::from(100u64)).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            outbe_primitives::error::PrecompileError::from(
-                crate::errors::PromisLimitError::Overflow
-            )
-            .to_string()
+        assert!(
+            matches!(
+                err,
+                outbe_primitives::error::PrecompileError::FatalWithCause(_)
+            ),
+            "{err:?}"
         );
 
         assert_eq!(c.promis_limit().unwrap(), near_max);

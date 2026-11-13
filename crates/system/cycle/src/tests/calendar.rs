@@ -161,7 +161,7 @@ fn forward_seal_jump_waits_for_skipped_parent_late_votes() {
 }
 
 #[test]
-fn failed_allocation_fallback_rolls_back_seal_and_cleanup_before_retry() {
+fn a_failed_allocation_whose_limit_cannot_reach_the_promis_limit_fails_the_block() {
     let mut storage = cycle_storage();
     storage.enter(|handle| {
         let anchor = genesis_block(handle, GENESIS_TS + 60);
@@ -185,76 +185,17 @@ fn failed_allocation_fallback_rolls_back_seal_and_cleanup_before_retry() {
                 U256::MAX,
             )
             .unwrap();
-        // Allocation overflows first; the full limit makes its fallback fail after sealing.
+        // Allocation overflows first; the full limit then overflows the Promis Limit in its fallback.
         outbe_promislimit::PromisLimitContract::new(handle.clone())
             .checked_credit(U256::MAX)
             .unwrap();
-        dispatch_triggers(&ctx).unwrap();
-        assert_eq!(outbe_rewards::api::get_last_sealed_day(&handle).unwrap(), 0);
+        let err = dispatch_triggers(&ctx).unwrap_err();
         assert!(
-            outbe_emission::api::get_emission_day_record(handle.clone(), 20_240_101)
-                .unwrap()
-                .is_none()
-        );
-        assert_eq!(
-            agents
-                .waa_address_count
-                .read(&20_240_101u32.into())
-                .unwrap(),
-            1
-        );
-        assert!(!handle
-            .contract::<outbe_rewards::schema::Rewards>()
-            .day_cleanup_scheduled
-            .read(&20_240_101)
-            .unwrap());
-        assert_eq!(
-            outbe_promislimit::PromisLimitContract::new(handle.clone())
-                .promis_limit()
-                .unwrap(),
-            U256::MAX
-        );
-        outbe_promislimit::PromisLimitContract::new(handle)
-            .checked_take(U256::MAX)
-            .unwrap();
-    });
-    storage.set_block_number(3);
-    storage.enter(|handle| {
-        let ctx = runtime_context(
-            block_ctx(3, GENESIS_TS + SECONDS_PER_DAY + 7_200),
-            handle.clone(),
-        );
-        account_parent(&ctx, 3);
-        dispatch_triggers(&ctx).unwrap();
-        assert_eq!(
-            outbe_rewards::api::get_last_sealed_day(&handle).unwrap(),
-            20_240_101
-        );
-        let cap = outbe_emission::day_emission::emission_limit_of_day(0);
-        assert_eq!(
-            outbe_promislimit::PromisLimitContract::new(handle.clone())
-                .promis_limit()
-                .unwrap(),
-            cap
-        );
-        crate::handler::credit_reward_slice(&ctx).unwrap();
-        crate::handler::settle_emission_day(&ctx, 20_240_101).unwrap();
-        assert_eq!(
-            outbe_agentreward::AgentRewardContract::new(handle.clone())
-                .waa_address_count
-                .read(&20_240_101u32.into())
-                .unwrap(),
-            0
-        );
-        assert_eq!(
-            outbe_rewards::api::get_last_sealed_day(&handle).unwrap(),
-            20_240_101
-        );
-        assert_eq!(
-            outbe_promislimit::PromisLimitContract::new(handle)
-                .promis_limit()
-                .unwrap(),
-            cap
+            matches!(
+                err,
+                outbe_primitives::error::PrecompileError::FatalWithCause(_)
+            ),
+            "{err:?}"
         );
     });
 }
