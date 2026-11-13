@@ -4,7 +4,9 @@
 //!
 //! Signal only. A failing canary never gates consensus participation. It
 //! surfaces through `outbe_consensusStatus.enclave`, `outbe-cli monitor
-//! readiness` and the `outbe_tee_canary_*` / `outbe_tee_heap_*` metric series.
+//! readiness` and the `outbe_tee_canary_*` / `outbe_tee_enclave_*` metric series.
+//! Counters end in `_total`, latency histograms in `_ms`, and gauges never in
+//! `_total` or `_count`; see `crates/runtime/src/metrics_recorder.rs`.
 //!
 //! The probe uses a separate connection to the same pinned enclave identity.
 //! It never holds the execution session's mutex. The blocking round-trip runs
@@ -194,10 +196,11 @@ fn apply_tick(
 }
 
 fn publish_health_gauges(status: &EnclaveHealthStatusV1) {
-    gauge!("outbe_tee_heap_bytes", "kind" => "current").set(status.heap.current_bytes as f64);
-    gauge!("outbe_tee_heap_bytes", "kind" => "peak").set(status.heap.peak_bytes as f64);
+    gauge!("outbe_tee_enclave_heap_bytes", "kind" => "current")
+        .set(status.heap.current_bytes as f64);
+    gauge!("outbe_tee_enclave_heap_bytes", "kind" => "peak").set(status.heap.peak_bytes as f64);
     gauge!("outbe_tee_enclave_uptime_seconds").set(status.uptime_s as f64);
-    gauge!("outbe_tee_requests_errored_total").set(status.requests.errored as f64);
+    gauge!("outbe_tee_enclave_errored_requests").set(status.requests.errored as f64);
 }
 
 fn unix_now_ms() -> Option<u64> {
@@ -331,7 +334,107 @@ pub async fn run_tee_canary_worker(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use metrics::{
+        Counter, Gauge, Histogram, Key, KeyName, Metadata, Recorder, SharedString, Unit,
+    };
+    use std::cell::{Cell, RefCell};
     use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct CanaryMetricRecorder {
+        gauges: RefCell<Vec<Key>>,
+        failures: Cell<u64>,
+        latencies: Cell<u64>,
+    }
+
+    impl Recorder for CanaryMetricRecorder {
+        fn describe_counter(&self, _: KeyName, _: Option<Unit>, _: SharedString) {}
+        fn describe_gauge(&self, _: KeyName, _: Option<Unit>, _: SharedString) {}
+        fn describe_histogram(&self, _: KeyName, _: Option<Unit>, _: SharedString) {}
+
+        fn register_counter(&self, key: &Key, _: &Metadata<'_>) -> Counter {
+            assert_eq!(key, &Key::from_name("outbe_tee_canary_failures_total"));
+            self.failures.set(self.failures.get() + 1);
+            Counter::noop()
+        }
+
+        fn register_gauge(&self, key: &Key, _: &Metadata<'_>) -> Gauge {
+            self.gauges.borrow_mut().push(key.clone());
+            Gauge::noop()
+        }
+
+        fn register_histogram(&self, key: &Key, _: &Metadata<'_>) -> Histogram {
+            assert_eq!(key, &Key::from_name("outbe_tee_canary_latency_ms"));
+            self.latencies.set(self.latencies.get() + 1);
+            Histogram::noop()
+        }
+    }
+
+    #[test]
+    fn tee_canary_metrics_use_canonical_names_types_and_heap_labels() {
+        use outbe_tee::protocol::{
+            EnclaveHeapUsageV1, EnclaveRequestClassCountsV1, EnclaveRequestCountsV1,
+        };
+
+        let recorder = CanaryMetricRecorder::default();
+        let mut snapshot = TeeEnclaveHealthSnapshot::default();
+        let health = EnclaveHealthStatusV1 {
+            uptime_s: 30,
+            offer_key_ready: true,
+            heap: EnclaveHeapUsageV1 {
+                current_bytes: 1024,
+                peak_bytes: 2048,
+            },
+            requests: EnclaveRequestCountsV1 {
+                total: 10,
+                errored: 2,
+                denied: 0,
+            },
+            classes: EnclaveRequestClassCountsV1 {
+                initialized: 10,
+                founding_keyless: 0,
+                keyless_onboarding: 0,
+                ready: 0,
+                dev_source_seal: 0,
+                dev_recipient_ingest: 0,
+            },
+        };
+        metrics::with_local_recorder(&recorder, || {
+            apply_tick(
+                &mut snapshot,
+                CanaryTickOutcome::Success { latency_ms: 5 },
+                2,
+            );
+            apply_tick(
+                &mut snapshot,
+                CanaryTickOutcome::Failure {
+                    unreachable: false,
+                    reason: "decrypt mismatch".into(),
+                },
+                2,
+            );
+            publish_health_gauges(&health);
+        });
+        assert_eq!(
+            *recorder.gauges.borrow(),
+            vec![
+                Key::from_name("outbe_tee_canary_last_ok_timestamp_seconds"),
+                Key::from_name("outbe_tee_canary_consecutive_failures"),
+                Key::from_name("outbe_tee_canary_consecutive_failures"),
+                Key::from_parts("outbe_tee_enclave_heap_bytes", &[("kind", "current")]),
+                Key::from_parts("outbe_tee_enclave_heap_bytes", &[("kind", "peak")]),
+                Key::from_name("outbe_tee_enclave_uptime_seconds"),
+                Key::from_name("outbe_tee_enclave_errored_requests"),
+            ]
+        );
+        assert_eq!(recorder.failures.get(), 1);
+        assert_eq!(recorder.latencies.get(), 1);
+        assert!(recorder
+            .gauges
+            .borrow()
+            .iter()
+            .all(|key| key.name() != "outbe_tee_requests_errored_total"));
+    }
 
     #[tokio::test]
     async fn shutdown_does_not_wait_for_an_in_flight_canary_request() {
