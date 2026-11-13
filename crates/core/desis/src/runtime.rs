@@ -382,14 +382,14 @@ mod schedule;
 
 #[cfg(test)]
 pub(crate) use algorithm::rate_lock;
+pub use clearing::complete_auctions;
 #[cfg(all(test, not(feature = "e2e-test")))]
 pub(crate) use clearing::force_clear;
-pub use clearing::tick_gate;
 #[cfg(test)]
 pub(crate) use clearing::{
     clearing_round_gas, issuance_groups, refund_chunk_count, refund_chunks, RefundChunk,
 };
 pub use intake::{process_bids_batch, process_bids_done, Inbound};
+pub use schedule::advance_auctions;
 #[cfg(test)]
 pub(crate) use schedule::schedule_tick;
-pub use schedule::tick_schedule;

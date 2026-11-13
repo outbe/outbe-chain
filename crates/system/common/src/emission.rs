@@ -76,7 +76,7 @@ fn fixed_div(value: U256, divisor: U256) -> U256 {
 
 /// Returns the day emission cap for `day_number` days since the chain's
 /// genesis UTC day. It is a closed-form pure function with no storage I/O.
-pub fn day_emission_limit(day_number: u32) -> U256 {
+pub fn emission_limit_of_day(day_number: u32) -> U256 {
     if day_number >= FLOOR_DAY_THRESHOLD {
         return FLOOR_DAY_EMISSION;
     }
@@ -111,9 +111,9 @@ pub fn day_emission_limit(day_number: u32) -> U256 {
 }
 
 /// Returns the terminal Metadosis share (84 % after four 4 % fixed pools)
-/// of `day_emission_limit(day_number)`.
+/// of `emission_limit_of_day(day_number)`.
 pub fn metadosis_day_emission_limit(day_number: u32) -> U256 {
-    let total = day_emission_limit(day_number);
+    let total = emission_limit_of_day(day_number);
     let fixed_pool = total * U256::from(4u64) / U256::from(100u64);
     total.saturating_sub(fixed_pool * U256::from(4u64))
 }

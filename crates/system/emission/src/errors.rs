@@ -102,6 +102,9 @@ impl From<TimeError> for EmissionError {
 impl From<EmissionError> for PrecompileError {
     fn from(err: EmissionError) -> Self {
         let bytes = match err {
+            EmissionError::ConservationInvariantViolated { .. } => {
+                return PrecompileError::FatalWithCause(Box::new(err));
+            }
             EmissionError::EmissionDayNotFound => IEmission::EmissionDayNotFound {}.abi_encode(),
             EmissionError::InvalidEmissionDay { day } => {
                 IEmission::InvalidEmissionDay { day }.abi_encode()
@@ -140,16 +143,6 @@ impl From<EmissionError> for PrecompileError {
             }
             .abi_encode(),
             EmissionError::AmountOverflow => IEmission::AmountOverflow {}.abi_encode(),
-            EmissionError::ConservationInvariantViolated {
-                day,
-                expected_limit,
-                landed_sum,
-            } => IEmission::ConservationInvariantViolated {
-                day,
-                expectedLimit: expected_limit,
-                landedSum: landed_sum,
-            }
-            .abi_encode(),
             EmissionError::WaitingWindowOverflow => {
                 IEmission::WaitingWindowOverflow {}.abi_encode()
             }

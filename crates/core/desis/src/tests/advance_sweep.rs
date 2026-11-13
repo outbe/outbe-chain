@@ -1,4 +1,4 @@
-//! One `auction_advance` run moves every scheduled day that has a due step (OIP-00377).
+//! One `advance_auctions` run moves every scheduled day that has a due step (OIP-00377).
 use super::*;
 use crate::constants::{ADVANCE_DAY_BASE_GAS, DAY_STATE_LIVE, MAX_TARGET_CHAINS};
 use crate::sol_ext::IOriginRouter::{

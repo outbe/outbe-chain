@@ -12,6 +12,7 @@ use super::{
     config::{DexMarketConfig, DexProviderConfig},
     math,
     pool::Decimals,
+    twap::RateWindow,
 };
 use crate::errors::{check, DexError};
 use crate::provider::evm_rpc::{quantity, Block, Log, Rpc};
@@ -120,6 +121,8 @@ pub(super) struct MarketWorker {
     cursor: Option<Block>,
     /// Per-block raw base volume: bounded by the rolling window, not swap count.
     volumes: BTreeMap<u64, (u64, U256)>,
+    /// Pool rates of the price window.
+    rates: RateWindow,
 }
 
 impl MarketWorker {
@@ -131,6 +134,7 @@ impl MarketWorker {
             decimals: None,
             cursor: None,
             volumes: BTreeMap::new(),
+            rates: RateWindow::default(),
         }
     }
 
@@ -161,10 +165,15 @@ impl MarketWorker {
             if canonical != *cursor || head.number < cursor.number {
                 self.cursor = None;
                 self.volumes.clear();
+                self.rates.clear();
                 self.decimals = None;
                 return Err(DexError::ChainHistoryChanged.into());
             }
         }
+        // The hash check above covers the blocks up to the cursor. Read the
+        // rates of later blocks again.
+        let checked = self.cursor.as_ref().map_or(0, |cursor| cursor.number + 1);
+        self.rates.drop_from(checked);
         let decimals = match self.decimals {
             Some(decimals) => decimals,
             None => {
@@ -174,7 +183,9 @@ impl MarketWorker {
             }
         };
         // Validate initialization before doing a potentially long log backfill.
-        let price = self.market.read_rate(&self.rpc, &head, decimals).await?;
+        self.rates
+            .collect(&self.rpc, &self.market, &head, decimals)
+            .await?;
         self.collect_volume(&head).await?;
         check(
             self.rpc.block_at(head.number).await? == head,
@@ -189,6 +200,7 @@ impl MarketWorker {
                 sum.checked_add(*amount)
                     .ok_or(DexError::RollingVolumeOverflow)
             })?;
+        let price = self.rates.mean(&head);
         Ok((
             head,
             TickerPrice {

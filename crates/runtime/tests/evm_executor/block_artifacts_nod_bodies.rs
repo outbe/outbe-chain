@@ -437,7 +437,7 @@ fn seed_nod_daily_trigger(
     outbe_cycle::schema::Cycle::new(storage.clone())
         .last_executed_at
         .write(
-            &outbe_cycle::triggers::TriggerId::NodCallDaily.as_u32(),
+            &outbe_cycle::triggers::TriggerId::ScheduleNodCallPass.as_u32(),
             TEST_BLOCK_TIMESTAMP_BASE - SECONDS_PER_DAY,
         )?;
 

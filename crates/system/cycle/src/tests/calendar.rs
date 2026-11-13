@@ -230,7 +230,7 @@ fn failed_allocation_fallback_rolls_back_seal_and_cleanup_before_retry() {
             outbe_rewards::api::get_last_sealed_day(&handle).unwrap(),
             20_240_101
         );
-        let cap = outbe_emission::day_emission::day_emission_limit(0);
+        let cap = outbe_emission::day_emission::emission_limit_of_day(0);
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(handle.clone())
                 .promis_limit()
@@ -293,7 +293,7 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
         let rec = outbe_emission::api::get_emission_day_record(handle.clone(), 20_240_101)
             .unwrap()
             .unwrap();
-        let expected_cap = outbe_emission::day_emission::day_emission_limit(0);
+        let expected_cap = outbe_emission::day_emission::emission_limit_of_day(0);
         assert_eq!(
             rec.state,
             outbe_emission::schema::emission_day_state::COMPLETED
@@ -333,7 +333,7 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
     use outbe_desis::precompile::IDesis;
     use outbe_metadosis::precompile::IMetadosis;
 
-    let expected_cap = outbe_emission::day_emission::day_emission_limit(0);
+    let expected_cap = outbe_emission::day_emission::emission_limit_of_day(0);
     let alloc_failed: Vec<_> = storage
         .get_ordered_events()
         .iter()

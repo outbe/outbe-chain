@@ -29,7 +29,7 @@
 //! Each completed-day settlement preserves the existing 5-pool + Metadosis
 //! terminal split:
 //!
-//! 1. Compute `day_emission_limit(day_number_since_genesis(prev_day))`.
+//! 1. Compute `emission_limit_of_day(day_number_since_genesis(prev_day))`.
 //! 2. Allocate over the 5-sink table from `outbe-emission`.
 //! 3. Close participation and calculate the validator top-up through
 //!    `outbe_rewards::api::allocate_day_validator_rewards`. The fee-covered part

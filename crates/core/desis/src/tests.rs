@@ -44,8 +44,8 @@ const ANCHOR: u64 = NOW - NOW % SECONDS_PER_DAY;
 const ENTRY_PRICE: u128 = 2_000_000; // 2.0 on the COEN/840 scale; escrow basis = promis_load
 /// The load any first priced brief picks, pinned by `the_fixture_load_is_the_one_the_ladder_picks`.
 const LOAD_MINOR: u128 = 1_000_000 * PROMIS_LOAD_MINOR;
-/// The `auction_advance` work budget in `outbe-cycle`.
-const ADVANCE_BUDGET: u64 = crate::constants::AUCTION_ADVANCE_BUDGET_GAS;
+/// The `advance_auctions` work budget in `outbe-cycle`.
+const ADVANCE_BUDGET: u64 = crate::constants::ADVANCE_AUCTIONS_BUDGET_GAS;
 
 #[test]
 fn the_bridge_caps_match_the_contracts() {
@@ -1534,6 +1534,82 @@ fn a_failed_day_queues_its_bids_for_bounded_deletion() {
 
 #[test]
 #[cfg(not(feature = "e2e-test"))]
+fn failed_auction_needs_no_message() {
+    use crate::constants::BIDS_FANIN_TIMEOUT_SECS;
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(NOW));
+    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+    storage.stub_sub_call_at(
+        outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
+        Bytes::from(vec![0u8; 32]),
+    );
+    StorageHandle::enter(&mut storage, |s| {
+        brief(&s, true);
+        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + 2 * SECONDS_PER_DAY).unwrap();
+        runtime::schedule_tick(&s, LAST_CLEARING - 1).unwrap();
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(EMISSION_DAY).unwrap(),
+            AuctionStage::CollectingBids
+        );
+        assert_eq!(
+            contract.clearing_deadline.read(&EMISSION_DAY).unwrap(),
+            ANCHOR + 2 * SECONDS_PER_DAY + BIDS_FANIN_TIMEOUT_SECS
+        );
+    });
+    let sends = |storage: &HashMapStorageProvider| {
+        use crate::sol_ext::IOriginRouter::targetsOfCall;
+        storage
+            .sub_call_inputs()
+            .iter()
+            .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
+            .filter(|input| !input.calldata.starts_with(&targetsOfCall::SELECTOR))
+            .count()
+    };
+    let sends_before = sends(&storage);
+    StorageHandle::enter(&mut storage, |s| {
+        runtime::schedule_tick(&s, LAST_CLEARING).unwrap();
+        assert_eq!(
+            s.contract::<DesisContract>()
+                .read_stage(EMISSION_DAY)
+                .unwrap(),
+            AuctionStage::Failed
+        );
+    });
+    assert_eq!(sends(&storage), sends_before);
+}
+
+#[test]
+#[cfg(not(feature = "e2e-test"))]
+fn desis_deletes_bids_of_closed_auction() {
+    for (completes, end_stage) in [
+        (true, AuctionStage::Completed),
+        (false, AuctionStage::Failed),
+    ] {
+        with_storage(|s| {
+            open_clearing(&s, 100);
+            relay_bids(&s, SRC_CHAIN, 3, 200);
+            if completes {
+                clear(&s);
+            } else {
+                runtime::schedule_tick(&s, last_clearing_for(&s)).unwrap();
+            }
+            assert_eq!(
+                s.contract::<DesisContract>()
+                    .read_stage(EMISSION_DAY)
+                    .unwrap(),
+                end_stage
+            );
+            assert!(holds_bids(&s, SRC_CHAIN, 3));
+            crate::process_cleanup(s.clone()).unwrap();
+            assert!(!holds_bids(&s, SRC_CHAIN, 3));
+        });
+    }
+}
+
+#[test]
+#[cfg(not(feature = "e2e-test"))]
 fn a_day_fails_even_when_the_router_cannot_name_its_chains() {
     use crate::sol_ext::IOriginRouter::targetsOfCall;
     use alloy_sol_types::SolCall;
@@ -2643,7 +2719,7 @@ fn force_clear_skips_missing_chain_after_deadline() {
 }
 
 #[test]
-fn tick_gate_no_active_days_is_noop() {
+fn complete_auctions_without_active_days_is_noop() {
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
     with_storage(|s| {
         let ctx = BlockRuntimeContext::new(
@@ -2660,13 +2736,13 @@ fn tick_gate_no_active_days_is_noop() {
             },
             s.clone(),
         );
-        runtime::tick_gate(&ctx).unwrap();
+        runtime::complete_auctions(&ctx).unwrap();
     });
 }
 
 #[test]
 #[cfg(not(feature = "e2e-test"))]
-fn tick_gate_clears_ready_day() {
+fn complete_auctions_clears_a_ready_day() {
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
     with_storage(|s| {
         open_clearing(&s, 1);
@@ -2698,7 +2774,7 @@ fn tick_gate_clears_ready_day() {
             },
             s.clone(),
         );
-        runtime::tick_gate(&ctx).unwrap();
+        runtime::complete_auctions(&ctx).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),

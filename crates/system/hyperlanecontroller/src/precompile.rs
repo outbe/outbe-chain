@@ -40,10 +40,10 @@ pub fn dispatch(
                         sender,
                         &ControllerBootstrap {
                             ica_router: c.icaRouter,
-                            validator_announce: c.validatorAnnounce,
                             domains: &c.domains,
                             isms: &c.isms,
                             hooks: &c.hooks,
+                            validator_announces: &c.validatorAnnounces,
                         },
                     )
                 }),
@@ -67,9 +67,11 @@ pub fn dispatch(
                     )
                 }),
                 icaRouter(c) => view(c, |_| controller.ica_router.read()),
-                validatorAnnounce(c) => view(c, |_| controller.validator_announce.read()),
                 ismByDomain(c) => view(c, |c| controller.ism_by_domain.read(&c.domain)),
                 hookByDomain(c) => view(c, |c| controller.hook_by_domain.read(&c.domain)),
+                validatorAnnounceByDomain(c) => view(c, |c| {
+                    controller.validator_announce_by_domain.read(&c.domain)
+                }),
                 domains(c) => view(c, |_| controller.domains.read_all()),
                 hyperlaneSigner(c) => view(c, |c| controller.signer_of.read(&c.validator)),
                 submittedIndex(c) => view(c, |c| {

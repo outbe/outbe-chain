@@ -128,7 +128,7 @@ fn send_notices_in_block(
             s.clone(),
         );
         // The cycle runtime runs each trigger inside its own checkpoint.
-        s.with_checkpoint(|| crate::notify::send_call_notices(&ctx))
+        s.with_checkpoint(|| crate::notify::send_called_notices(&ctx))
     })
 }
 

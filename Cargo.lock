@@ -8464,7 +8464,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-hyperlane-attester"
+name = "outbe-hyperlane-validator"
 version = "0.1.0"
 dependencies = [
  "alloy-eips",
@@ -8472,13 +8472,18 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types",
+ "alloy-signer",
  "alloy-signer-local",
  "alloy-sol-types",
+ "axum",
  "clap",
  "eyre",
+ "futures",
  "reqwest 0.12.28",
+ "reth-db",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "toml 0.8.23",
