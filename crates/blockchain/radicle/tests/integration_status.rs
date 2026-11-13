@@ -6,7 +6,7 @@ use outbe_radicle::{
     endpoint::{sign_response, EndpointAddress, EndpointFrame, EndpointResponseBody, PeerId},
     integration::{
         ObservedRepositoryStatus, RadicleMetrics, RadicleRepositoryState, RadicleStatusChannel,
-        RadicleVotingGate, SignedEndpointEvidence,
+        RadicleVotingGate, RadicleVotingGateError, SignedEndpointEvidence,
     },
     manager::{
         BoxFuture, FinalizedBlock, FinalizedSnapshot, FinalizedValidator, ManagerError,
@@ -173,6 +173,7 @@ fn metrics_use_frozen_names_and_known_height_bits() {
     assert_gauge("outbe_radicle_connected_peers", 2.0);
     assert_gauge("outbe_radicle_desired_repositories", 5.0);
     assert_gauge("outbe_radicle_observed_repositories", 3.0);
+    assert_gauge("outbe_radicle_voting_gate_signer_allowed", 0.0);
     assert_counter("outbe_radicle_provider_failures_total", 4);
     assert_counter("outbe_radicle_uds_failures_total", 5);
 
@@ -199,6 +200,36 @@ fn metrics_use_frozen_names_and_known_height_bits() {
         find_after("outbe_radicle_uds_failures_total").3,
         DebugValue::Counter(0)
     );
+}
+
+#[test]
+fn metrics_track_voting_gate_transitions() {
+    let (publisher, handle) = RadicleStatusChannel::enabled(Address::repeat_byte(0x11), [1_u8; 32]);
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    let mut metrics = RadicleMetrics::default();
+
+    for (gate, expected) in [
+        (RadicleVotingGate::SignerAllowed, 1.0),
+        (RadicleVotingGate::Verifier, 0.0),
+        (RadicleVotingGate::SignerAllowed, 1.0),
+        (
+            RadicleVotingGate::Fatal(RadicleVotingGateError::SidecarUnavailable),
+            0.0,
+        ),
+    ] {
+        publisher.set_voting_gate(gate);
+        metrics::with_local_recorder(&recorder, || metrics.record(&handle.snapshot()));
+        let values = snapshotter.snapshot().into_vec();
+        let (_, _, _, value) = values
+            .iter()
+            .find(|(key, _, _, _)| key.key().name() == "outbe_radicle_voting_gate_signer_allowed")
+            .expect("missing voting gate metric");
+        match value {
+            DebugValue::Gauge(value) => assert_eq!(value.into_inner(), expected, "gate {gate:?}"),
+            other => panic!("expected gauge, got {other:?}"),
+        }
+    }
 }
 
 #[test]
@@ -232,6 +263,7 @@ fn disabled_metrics() {
         "outbe_radicle_phase",
         "outbe_radicle_last_seen_finalized_known",
         "outbe_radicle_last_converged_finalized_known",
+        "outbe_radicle_voting_gate_signer_allowed",
     ] {
         match &gauge(name).3 {
             DebugValue::Gauge(value) => assert_eq!(value.into_inner(), 0.0),
