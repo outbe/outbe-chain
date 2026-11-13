@@ -513,6 +513,21 @@ fn record_failed_metadosis_fallback(ctx: &BlockRuntimeContext, day: u32) -> Resu
 /// 3. `start_metadosis` (step A7) for the oldest `state == PROCESSING` day in its own checkpoint
 ///    with fallback to `record_metadosis_failed` + `PromisLimit`.
 pub fn run_protocol_cycle(ctx: &BlockRuntimeContext) -> Result<()> {
+    run_protocol_cycle_steps(ctx).map_err(fail_block)
+}
+
+/// A revert that reaches the run comes from a step fallback or from code outside the step
+/// checkpoints. The runner would consume the slot and try the same day again, so it fails the block.
+fn fail_block(err: PrecompileError) -> PrecompileError {
+    match err {
+        err @ (PrecompileError::Revert(_) | PrecompileError::RevertBytes(_)) => {
+            PrecompileError::FatalWithCause(Box::new(err))
+        }
+        err => err,
+    }
+}
+
+fn run_protocol_cycle_steps(ctx: &BlockRuntimeContext) -> Result<()> {
     let block_utc_day = timestamp_to_date_key(ctx.block.timestamp);
     let active_utc_day = derive_active_utc_day(
         ctx.storage.clone(),

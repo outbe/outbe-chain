@@ -453,14 +453,16 @@ fn topup_slot(id: TriggerId) -> u64 {
 /// Anchors with a bonded CCA, then runs the first settlement dispatch without
 /// Metadosis mutation frames, so the terminal sink reverts. The slot is consumed.
 fn failed_terminal_dispatch() -> HashMapStorageProvider {
-    failed_terminal_dispatch_after(|_| {})
+    let (storage, dispatched) = terminal_dispatch_after(|_| {});
+    dispatched.unwrap();
+    storage
 }
 
-/// [`failed_terminal_dispatch`] with `before_dispatch` run after the fixture
-/// writes and before the dispatcher.
-fn failed_terminal_dispatch_after(
+/// Runs the dispatch of [`failed_terminal_dispatch`] with `before_dispatch` run after the
+/// fixture writes, and returns its result.
+fn terminal_dispatch_after(
     before_dispatch: impl FnOnce(&BlockRuntimeContext<'_>),
-) -> HashMapStorageProvider {
+) -> (HashMapStorageProvider, outbe_primitives::error::Result<()>) {
     let mut storage = cycle_storage();
     storage.enter(|handle| {
         anchor_with(handle, GENESIS_TS + 60, |anchor| {
@@ -470,15 +472,15 @@ fn failed_terminal_dispatch_after(
 
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 0);
     storage.set_block_number(2);
-    storage.enter(|handle| {
+    let dispatched = storage.enter(|handle| {
         let fire = runtime_context(block_ctx(2, TOPUP_FIRE_TS), handle);
         account_parent(&fire, 2);
         seed_fresh_reward_oracle(&fire);
         seed_daily_voters(&fire, 20_240_101, &TOPUP_VOTERS.map(|voter| (voter, 1)));
         before_dispatch(&fire);
-        dispatch_triggers(&fire).unwrap();
+        dispatch_triggers(&fire)
     });
-    storage
+    (storage, dispatched)
 }
 
 /// Writes an unknown state into the record of `day`, so the allocation fallback fails too.
@@ -636,43 +638,10 @@ fn failed_terminal_dispatch_is_not_retried() {
 }
 
 #[test]
-fn a_dependency_that_is_not_due_keeps_its_watermark() {
-    let held_at = TOPUP_FIRE_TS;
-    let storage = failed_terminal_dispatch_after(|fire| {
-        fire.storage
-            .contract::<Cycle<'_>>()
-            .last_executed_at
-            .write(&TriggerId::AdvanceAuctions.as_u32(), held_at)
-            .unwrap();
-        corrupt_emission_day(fire, 20_240_101);
-    });
-    let recorded_at = topup_slot(TriggerId::CompleteAuctions);
-    assert!(cycle_failure(&storage, EMISSION_LIMIT_1_ID).is_some());
-    assert!(cycle_failure(&storage, TriggerId::AdvanceAuctions.as_u32()).is_none());
-    assert!(cycle_executed(&storage, TriggerId::AdvanceAuctions.as_u32()).is_none());
-    let clearing = cycle_executed(&storage, TriggerId::CompleteAuctions.as_u32())
-        .expect("clearing runs when advance was not marked failed");
-    assert_eq!(clearing.scheduledAt, recorded_at);
-    // The provider is only read above. Re-enter to read the untouched slot.
-    let mut storage = storage;
-    storage.enter(|handle| {
-        let fire = runtime_context(block_ctx(2, TOPUP_FIRE_TS), handle);
-        let cycle: Cycle<'_> = fire.storage.contract::<Cycle<'_>>();
-        assert_eq!(
-            cycle
-                .last_executed_at
-                .read(&TriggerId::AdvanceAuctions.as_u32())
-                .unwrap(),
-            held_at
-        );
-        assert_eq!(
-            cycle
-                .last_executed_at
-                .read(&TriggerId::CompleteAuctions.as_u32())
-                .unwrap(),
-            recorded_at
-        );
-    });
+fn a_failing_allocation_fallback_fails_the_block() {
+    let (_, dispatched) = terminal_dispatch_after(|fire| corrupt_emission_day(fire, 20_240_101));
+    let err = dispatched.expect_err("the failed fallback must fail the block");
+    assert!(matches!(err, PrecompileError::FatalWithCause(_)), "{err:?}");
 }
 
 #[test]
