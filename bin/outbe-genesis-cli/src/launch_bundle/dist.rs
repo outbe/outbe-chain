@@ -216,8 +216,8 @@ every machine, because each founder runs on its own host.\n\
 ## 1. Copy the per-validator archive to each machine\n\
 \n\
 The generator writes one self-contained archive per machine under `dist/`. Each\n\
-archive contains the shared genesis and bootnodes, the bundled SGX runtime,\n\
-systemd units and installer, launch scripts, and **only that validator's** keys.\n\
+archive contains the shared genesis and bootnodes, systemd units and installer,\n\
+launch scripts, the selected enclave runtime, and **only that validator's** keys.\n\
 \n\
 ```bash\n\
 # From the generated output directory, for machine N (0..3):\n\
@@ -272,10 +272,10 @@ sudo {base_dir}/install-systemd.sh N\n\
 ```\n\
 \n\
 `install-systemd.sh` installs one templated unit per role, starts them in\n\
-dependency order, and enables the daily TEE renewal timer for a NodeHost SGX\n\
-session. The services recover after clean or failed exits. `preflight.sh` is\n\
-read-only: run it first and compare the genesis and enclave digests it prints\n\
-across all four machines - they must be identical.\n\
+dependency order, and enables the daily TEE renewal timer only for a NodeHost\n\
+DCAP session. The services recover after clean or failed exits. `preflight.sh`\n\
+is read-only: run it first and compare the genesis digest it prints across all\n\
+four machines. In DCAP mode, compare the enclave digest too.\n\
 \n\
 `start-all.sh` starts the components in dependency order - configured storage, enclave,\n\
 Radicle sidecar, node, feeder - and writes pids and logs into\n\
