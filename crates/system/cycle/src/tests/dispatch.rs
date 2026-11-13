@@ -116,7 +116,7 @@ fn protocol_cycle_keeps_midnight_slot_pending_until_late_reward_window_closes() 
                 cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
                 GENESIS_TS + 60
             );
-            assert!(!is_day_settled(&ctx, 20240101));
+            assert!(!is_day_allocated(&ctx, 20240101));
             if height == 13 {
                 // Real phase order: Cycle first, then final-slot credit and GC.
                 outbe_rewards::block_fees::record_late_vote(&ctx, hash, late, 3).unwrap();
@@ -131,7 +131,7 @@ fn protocol_cycle_keeps_midnight_slot_pending_until_late_reward_window_closes() 
     storage.enter(|handle| {
         let ctx = dispatch_at(handle, 14, GENESIS_TS + SECONDS_PER_DAY + 3);
         crate::handler::credit_reward_slice(&ctx).unwrap();
-        assert!(is_day_settled(&ctx, 20240101));
+        assert!(is_day_allocated(&ctx, 20240101));
         let cycle = ctx.storage.contract::<Cycle>();
         assert_eq!(active_utc_day(&ctx), 20240102);
         assert_eq!(
@@ -166,7 +166,7 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
         let ctx_fire = dispatch_at(handle, 2, fire_ts);
 
         assert!(
-            is_day_settled(&ctx_fire, 20_240_101),
+            is_day_allocated(&ctx_fire, 20_240_101),
             "Cycle handler must seal prev_day"
         );
 
@@ -407,7 +407,7 @@ fn zero_total_validator_participation_routes_the_pool_without_halting() {
 
         run_emission_limit_daily(&ctx).unwrap();
 
-        assert!(is_day_settled(&ctx, 20_240_101));
+        assert!(is_day_allocated(&ctx, 20_240_101));
         let agent_reward = outbe_agentreward::AgentRewardContract::new(ctx.storage.clone());
         for voter in voters {
             assert_eq!(
@@ -559,7 +559,7 @@ fn failed_terminal_dispatch_takes_the_allocation_fallback() {
     assert_eq!(failed.emissionDay, 20_240_101);
     storage.enter(|handle| {
         let fire = runtime_context(block_ctx(2, TOPUP_FIRE_TS), handle);
-        assert!(is_day_settled(&fire, 20_240_101));
+        assert!(is_day_allocated(&fire, 20_240_101));
         let record = outbe_emission::api::get_emission_day_record(fire.storage.clone(), 20_240_101)
             .unwrap()
             .unwrap();
@@ -686,7 +686,7 @@ fn storage_error_from_the_handler_does_not_consume_the_slot() {
         let err = dispatch_triggers(&fire).expect_err("storage failure must fail the block");
         assert!(matches!(err, PrecompileError::Storage(_)));
         assert_eq!(last_executed_at(&fire), GENESIS_TS + 60);
-        assert!(!is_day_settled(&fire, 20_240_101));
+        assert!(!is_day_allocated(&fire, 20_240_101));
     });
     assert!(cycle_failure(&storage, EMISSION_LIMIT_1_ID).is_none());
 }
@@ -729,7 +729,7 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
         run_emission_limit_daily(&ctx).unwrap();
         crate::handler::credit_reward_slice(&ctx).unwrap();
         assert!(
-            is_day_settled(&ctx, 20_240_101),
+            is_day_allocated(&ctx, 20_240_101),
             "first fire must seal prev_day"
         );
         let cca_claimable = || {

@@ -384,7 +384,7 @@ fn wwd_step_runs_once_a_day() {
     // (the E = D+4 target of WWD 20240107) to a conflicting WWD, so creating WWD 20240107 inside
     // `advance_worldwide_days` reverts with `RevertBytes`.
     // Verify:
-    // - Step A4 (`settle_emission_day(20240105)`) still commits (`state == PROCESSING`).
+    // - Step A4 (`allocate_emission_limit(20240105)`) still commits (`state == PROCESSING`).
     // - Step A6 rolls back its inner checkpoint (`last_wwd_advance_day` stays 20240105, WWD 20240101
     //   remains unsealed in `pipeline_wwd`) and emits no event.
     // - Step A7 (`process_emission_day`) still runs the Metadosis of 20240105 on the unsealed WWD.

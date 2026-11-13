@@ -2,7 +2,7 @@ use alloy_primitives::U256;
 use outbe_primitives::{
     error::Result,
     storage::StorageHandle,
-    time::{date_key_to_utc_timestamp, next_date_key, WorldwideDay},
+    time::{date_key_to_utc_timestamp, next_date_key, EmissionDate, WorldwideDay},
 };
 
 use crate::{
@@ -82,7 +82,7 @@ pub fn to_u128_checked(amount: U256) -> Result<u128> {
 
 /// Computes `metadosis_start = 00:00:01 UTC` of `next_date_key(day)`.
 pub fn compute_metadosis_start(day: u32) -> Result<u64> {
-    if !WorldwideDay::new(day).is_valid() {
+    if !EmissionDate::new(day).is_valid() {
         return Err(EmissionError::InvalidEmissionDay { day }.into());
     }
     let next_day = next_date_key(day).map_err(EmissionError::from)?;
@@ -125,7 +125,7 @@ pub fn put_emission_day_record(storage: StorageHandle<'_>, record: &EmissionDay)
 /// - Reverts with `DayAlreadyAllocated` if `day` has already left `Pending` with a different `wwd`.
 /// - Reverts with `ConflictingWwdLink` if `day` is already linked to a different non-zero `wwd`.
 pub fn link_wwd(storage: StorageHandle<'_>, day: u32, wwd: WorldwideDay) -> Result<()> {
-    if !WorldwideDay::new(day).is_valid() || (wwd.value() != 0 && !wwd.is_valid()) {
+    if !EmissionDate::new(day).is_valid() || (wwd.value() != 0 && !wwd.is_valid()) {
         return Err(EmissionError::InvalidEmissionDay { day }.into());
     }
     let contract = EmissionContract::new(storage);

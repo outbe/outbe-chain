@@ -198,11 +198,6 @@
   },
   {
     "type": "error",
-    "name": "DailySettledWithoutMetadosisReceipt",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "DateStep",
     "inputs": [
       {
@@ -232,11 +227,6 @@
         "internalType": "uint32"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "MetadosisReceiptWithoutDailySettled",
-    "inputs": []
   },
   {
     "type": "error",

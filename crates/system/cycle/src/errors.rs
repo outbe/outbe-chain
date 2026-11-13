@@ -33,10 +33,6 @@ pub enum CycleError {
     ActiveUtcDayAfterBlock { active: u32, block: u32 },
     #[error("native validator budget overflow")]
     NativeValidatorBudgetOverflow,
-    #[error("Cycle daily_settled marker has no Metadosis day-limit semantic receipt")]
-    DailySettledWithoutMetadosisReceipt,
-    #[error("Metadosis day-limit semantic receipt has no Cycle daily_settled marker")]
-    MetadosisReceiptWithoutDailySettled,
     #[error("metadosis terminal overflow")]
     MetadosisTerminalOverflow,
     #[error("validator top-up exceeds allocation")]
@@ -102,12 +98,6 @@ impl From<CycleError> for PrecompileError {
             CycleError::NativeValidatorBudgetOverflow => PrecompileError::RevertBytes(Bytes::from(
                 ICycle::NativeValidatorBudgetOverflow {}.abi_encode(),
             )),
-            CycleError::DailySettledWithoutMetadosisReceipt => PrecompileError::RevertBytes(
-                Bytes::from(ICycle::DailySettledWithoutMetadosisReceipt {}.abi_encode()),
-            ),
-            CycleError::MetadosisReceiptWithoutDailySettled => PrecompileError::RevertBytes(
-                Bytes::from(ICycle::MetadosisReceiptWithoutDailySettled {}.abi_encode()),
-            ),
             CycleError::MetadosisTerminalOverflow => PrecompileError::RevertBytes(Bytes::from(
                 ICycle::MetadosisTerminalOverflow {}.abi_encode(),
             )),
@@ -207,14 +197,6 @@ mod tests {
             (
                 CycleError::NativeValidatorBudgetOverflow,
                 ICycle::NativeValidatorBudgetOverflow::SELECTOR,
-            ),
-            (
-                CycleError::DailySettledWithoutMetadosisReceipt,
-                ICycle::DailySettledWithoutMetadosisReceipt::SELECTOR,
-            ),
-            (
-                CycleError::MetadosisReceiptWithoutDailySettled,
-                ICycle::MetadosisReceiptWithoutDailySettled::SELECTOR,
             ),
             (
                 CycleError::MetadosisTerminalOverflow,

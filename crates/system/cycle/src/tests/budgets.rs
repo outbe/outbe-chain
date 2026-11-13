@@ -188,7 +188,7 @@ fn late_protocol_exhaustion_rolls_back_calendar_and_allocation_then_retries_acro
             .with_trigger_budget(50_000_000, || crate::handler::run_protocol_cycle(&ctx))
             .unwrap();
         complete_gas = ctx.storage.gas_used().unwrap() - before;
-        assert!(is_day_settled(&ctx, 20_240_101));
+        assert!(is_day_allocated(&ctx, 20_240_101));
     });
     assert!(complete_gas > 1);
     let protocol = |budget| {
@@ -220,7 +220,7 @@ fn late_protocol_exhaustion_rolls_back_calendar_and_allocation_then_retries_acro
             height_before
         );
         assert_eq!(active_utc_day(&ctx), 20_240_101);
-        assert!(!is_day_settled(&ctx, 20_240_101));
+        assert!(!is_day_allocated(&ctx, 20_240_101));
         assert!(
             outbe_emission::api::get_emission_day_record(ctx.storage.clone(), 20_240_101)
                 .unwrap()
@@ -257,8 +257,8 @@ fn late_protocol_exhaustion_rolls_back_calendar_and_allocation_then_retries_acro
         account_parent(&ctx, 3);
         let triggers = [protocol(50_000_000)];
         dispatch(&ctx, &triggers).unwrap();
-        assert!(is_day_settled(&ctx, 20_240_101));
-        assert!(!is_day_settled(&ctx, 20_240_102));
+        assert!(is_day_allocated(&ctx, 20_240_101));
+        assert!(!is_day_allocated(&ctx, 20_240_102));
         assert_eq!(active_utc_day(&ctx), 20_240_102);
         let settled =
             outbe_emission::api::get_emission_day_record(ctx.storage.clone(), 20_240_101).unwrap();

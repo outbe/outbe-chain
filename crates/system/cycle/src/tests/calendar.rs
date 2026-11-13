@@ -19,9 +19,9 @@ fn protocol_cycle_catches_up_one_oldest_day_per_hourly_run_after_a_multi_day_hal
         let fire_ts = GENESIS_TS + 3 * SECONDS_PER_DAY + 3_600;
         let fire = dispatch_at(handle, 2, fire_ts);
 
-        assert!(is_day_settled(&fire, 20_240_101));
-        assert!(!is_day_settled(&fire, 20_240_102));
-        assert!(!is_day_settled(&fire, 20_240_103));
+        assert!(is_day_allocated(&fire, 20_240_101));
+        assert!(!is_day_allocated(&fire, 20_240_102));
+        assert!(!is_day_allocated(&fire, 20_240_103));
         assert_eq!(active_utc_day(&fire), 20_240_102);
 
         assert!(
@@ -40,8 +40,8 @@ fn protocol_cycle_catches_up_one_oldest_day_per_hourly_run_after_a_multi_day_hal
     storage.enter(|handle| {
         let fire_ts = GENESIS_TS + 3 * SECONDS_PER_DAY + 2 * 3_600;
         let fire = dispatch_at(handle, 3, fire_ts);
-        assert!(is_day_settled(&fire, 20_240_102));
-        assert!(!is_day_settled(&fire, 20_240_103));
+        assert!(is_day_allocated(&fire, 20_240_102));
+        assert!(!is_day_allocated(&fire, 20_240_103));
         assert_eq!(active_utc_day(&fire), 20_240_103);
     });
 
@@ -50,7 +50,7 @@ fn protocol_cycle_catches_up_one_oldest_day_per_hourly_run_after_a_multi_day_hal
     storage.enter(|handle| {
         let fire_ts = GENESIS_TS + 3 * SECONDS_PER_DAY + 3 * 3_600;
         let fire = dispatch_at(handle, 4, fire_ts);
-        assert!(is_day_settled(&fire, 20_240_103));
+        assert!(is_day_allocated(&fire, 20_240_103));
         assert_eq!(active_utc_day(&fire), 20_240_104);
     });
 }
@@ -84,7 +84,7 @@ fn catchup_horizon_bounds_backward_scan_to_max_reward_catchup_days() {
             outbe_rewards::api::get_last_sealed_day(&handle).unwrap(),
             expected_floor
         );
-        assert!(is_day_settled(&ctx, expected_floor));
+        assert!(is_day_allocated(&ctx, expected_floor));
         assert!(
             outbe_emission::api::get_emission_day_record(handle.clone(), 20_240_101)
                 .unwrap()
@@ -147,7 +147,7 @@ fn forward_seal_jump_waits_for_skipped_parent_late_votes() {
             outbe_rewards::api::get_last_sealed_day(&handle).unwrap(),
             floor
         );
-        assert!(is_day_settled(&ctx, floor));
+        assert!(is_day_allocated(&ctx, floor));
         assert_eq!(
             outbe_rewards::api::get_day_voters(&ctx, 20_240_101).unwrap(),
             vec![(early, 1), (late, 1)]
@@ -261,7 +261,7 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
             outbe_rewards::api::get_last_sealed_day(&handle).unwrap(),
             20_240_101
         );
-        crate::handler::settle_emission_day(&ctx, 20_240_101).unwrap();
+        crate::handler::allocate_emission_limit(&ctx, 20_240_101).unwrap();
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(handle.clone())
                 .promis_limit()
