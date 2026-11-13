@@ -1,10 +1,10 @@
-//! UTC-day calendar transitions: contiguous settlement and 1-day-per-block catch-up (`OIP-00343`).
+//! UTC-day calendar transitions: contiguous settlement and one-day-per-hourly-run catch-up (`OIP-00343`).
 
 use super::*;
 use crate::handler::MAX_REWARD_CATCHUP_DAYS;
 
 #[test]
-fn protocol_cycle_catches_up_one_oldest_day_per_block_after_a_multi_day_halt() {
+fn protocol_cycle_catches_up_one_oldest_day_per_hourly_run_after_a_multi_day_halt() {
     let mut storage = cycle_storage();
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 32);
     storage.enter(|handle| {

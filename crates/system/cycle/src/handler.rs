@@ -28,7 +28,7 @@ use outbe_primitives::{
 use crate::{errors::CycleError, schema::Cycle, triggers::Readiness, ICycle};
 
 /// Maximum number of completed UTC days that `derive_active_utc_day` scans backward
-/// and catches up (one oldest unsettled day per block, OIP-00343).
+/// and catches up (one oldest unallocated day per hourly run, OIP-00343).
 pub const MAX_REWARD_CATCHUP_DAYS: u32 = 64;
 
 /// `ICycle.DayEmissionLimitAllocationFailed.reason`: the daily emission limit allocation step reverted.
@@ -104,7 +104,7 @@ pub enum ProtocolDayAction {
 /// Selects the daily action for an hourly ProtocolCycle execution.
 ///
 /// If `active_utc_day < block_utc_day`, settles the single oldest unallocated UTC day
-/// `active_utc_day` (`E_next`), catching up at most one day per block within `MAX_REWARD_CATCHUP_DAYS`.
+/// `active_utc_day` (`E_next`), catching up at most one day per hourly run within `MAX_REWARD_CATCHUP_DAYS`.
 pub fn protocol_day_action(active_utc_day: u32, block_utc_day: u32) -> Result<ProtocolDayAction> {
     if !is_valid_utc_day(active_utc_day) {
         return Err(CycleError::InvalidActiveUtcDay {
