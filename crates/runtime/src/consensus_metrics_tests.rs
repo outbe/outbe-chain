@@ -6,8 +6,6 @@ use super::{
 use commonware_runtime::{
     telemetry::metrics::raw::Counter, tokio::Context, Metrics as _, Runner as _, Supervisor as _,
 };
-// Thread-local recorder dependency is staged for runtime exporter wiring tests.
-use metrics_util as _;
 use std::{future::Future, net::SocketAddr, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
