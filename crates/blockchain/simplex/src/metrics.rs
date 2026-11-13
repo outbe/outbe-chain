@@ -1,4 +1,8 @@
 //! VRF admission metrics shared with runtime consumers.
+//!
+//! Follow `crates/runtime/src/metrics_recorder.rs`: `outbe_<subsystem>_*`,
+//! counters end in `_total`, millisecond histograms in `_ms`, and gauges
+//! never end in `_total` or `_count`.
 
 use metrics::{counter, gauge};
 
@@ -6,7 +10,7 @@ use metrics::{counter, gauge};
 pub fn record_vrf_partial_drop(verdict: &'static str, signer: u32) {
     counter!(
         "outbe_vrf_partial_dropped_total",
-        "verdict" => verdict,
+        "reason" => verdict,
         "signer" => signer.to_string(),
     )
     .increment(1);
@@ -20,7 +24,7 @@ pub fn record_vrf_partial_drop(verdict: &'static str, signer: u32) {
 /// cannot poison `recover_proof`. The verifier also buffered slashable evidence
 /// for an external watcher to submit.
 pub fn record_invalid_vrf_partial() {
-    counter!("outbe_invalid_vrf_partial_total").increment(1);
+    counter!("outbe_vrf_invalid_partial_total").increment(1);
 }
 
 /// Record an invalid threshold-VRF seed partial whose rider identity signature
@@ -28,14 +32,14 @@ pub fn record_invalid_vrf_partial() {
 /// probable in-transit relay forgery. Its complete attestation is dropped before
 /// quorum admission but never slashed.
 pub fn record_forged_seed_partial() {
-    counter!("outbe_forged_seed_partial_total").increment(1);
+    counter!("outbe_vrf_forged_seed_partial_total").increment(1);
 }
 
 /// `HybridScheme::recover_proof`
 /// returned `None` while quorum was met. The proposer forfeits the slot instead
 /// of stalling Simplex or emitting proof-less metadata.
 pub fn record_vrf_recover_failed_under_quorum() {
-    counter!("outbe_proposer_forfeit_total", "reason" => crate::forfeit::ProposerForfeitReason::VrfRecoverFailedUnderQuorum.label().to_string()).increment(1);
+    counter!("outbe_consensus_proposer_forfeit_total", "reason" => crate::forfeit::ProposerForfeitReason::VrfRecoverFailedUnderQuorum.label().to_string()).increment(1);
 }
 
 /// Record deterministic degraded leader election due to missing or invalid VRF.

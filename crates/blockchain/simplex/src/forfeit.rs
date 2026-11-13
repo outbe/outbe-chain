@@ -2,7 +2,7 @@
 //!
 //! A proposer that cannot legitimately build a block must forfeit its slot
 //! with a deterministic, structured reason. Every validator uses the same set
-//! of reasons. The reason drives the `outbe_proposer_forfeit_total{reason}`
+//! of reasons. The reason drives the `outbe_consensus_proposer_forfeit_total{reason}`
 //! counter (see `outbe_consensus::metrics::record_proposer_forfeit`).
 //!
 //! Adding a new variant is a metric-schema change: the label value is part of
