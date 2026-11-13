@@ -83,30 +83,6 @@ impl TributeContract<'_> {
     }
 
     /// Records the Stage 3 Metadosis league fractions for `day` as a sealed enclave record.
-    pub fn record_metadosis_fractions(
-        &mut self,
-        day: WorldwideDay,
-        fractions: &std::collections::BTreeMap<u16, u64>,
-        completed_at: u64,
-    ) -> Result<()> {
-        self.storage_handle().require_metadosis_process_ready()?;
-        let chain_id = self.storage_handle().chain_id()?;
-        let mut context = b"outbe/tribute/record-fractions/v1".to_vec();
-        context.extend_from_slice(&day.value().to_be_bytes());
-        context.extend_from_slice(&completed_at.to_be_bytes());
-        let sealed = crate::enclave_client::seal_day_fractions(
-            chain_id,
-            day,
-            completed_at,
-            alloy_primitives::keccak256(context),
-            fractions,
-        )
-        .map_err(TributeError::DayEnclave)?;
-        self.day_metadosis_completed_at.write(&day, completed_at)?;
-        self.store_day_fractions_record(day, &sealed)?;
-        Ok(())
-    }
-
     /// Resolves the Oracle UTC day (`emission_day`) that prices `day`.
     pub fn resolve_price_day(&self, day: WorldwideDay, completed_at: u64) -> Result<u32> {
         forfeiture::resolve_price_day(self, day, completed_at)

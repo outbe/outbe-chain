@@ -638,7 +638,7 @@ impl core::fmt::Debug for EnclaveRequest {
             Self::ReadTributeDayFractionsV1 { record } => f
                 .debug_struct("ReadTributeDayFractionsV1")
                 .field("chain_id", &record.chain_id)
-                .field("worldwide_day", &record.worldwide_day)
+                .field("emission_day", &record.emission_day)
                 .field("completed_at", &record.completed_at)
                 .field("encrypted_fractions", &"<redacted>")
                 .finish(),

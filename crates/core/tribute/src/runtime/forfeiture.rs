@@ -109,16 +109,20 @@ pub(super) fn compute_and_record_metadosis_fractions(
         outbe_tee::tribute_day::LysisFractionsRequestV1 {
             chain_id: storage.chain_id()?,
             worldwide_day: day,
+            emission_day: price_day,
             metadosis_limit_minor,
             completed_at,
             tributes,
         },
     )
     .map_err(TributeError::DayEnclave)?;
+    if contract.lysis_emission_day(day)?.is_none() {
+        contract.day_emission_day.write(&day, price_day)?;
+    }
     contract
         .day_metadosis_completed_at
-        .write(&day, completed_at)?;
-    contract.store_day_fractions_record(day, &result.day_fractions)?;
+        .write(&price_day, completed_at)?;
+    contract.store_day_fractions_record(price_day, &result.day_fractions)?;
     for zero_id in &result.zero_load_tribute_ids {
         contract.tribute_lysis_zero_load.write(zero_id, true)?;
     }
@@ -173,7 +177,7 @@ fn require_issuable_tribute(
     if contract.retired_days.read(&day)? {
         return Err(TributeError::TributeNotFound.into());
     }
-    let completed_at = contract.day_metadosis_completed_at.read(&day)?;
+    let completed_at = contract.lysis_completed_at(day)?;
     if completed_at == 0 {
         return Err(TributeError::MetadosisNotCompleted.into());
     }
@@ -220,8 +224,11 @@ pub(super) fn issue_nod_from_tribute(
         let (record, completed_at) =
             require_issuable_tribute(contract, &storage, caller, tribute_id)?;
         let raw_league = contract.tribute_leagues.read(&tribute_id)?;
+        let emission_day = contract
+            .lysis_emission_day(day)?
+            .ok_or(TributeError::MetadosisNotCompleted)?;
         let day_fractions = contract
-            .day_fractions_record(day)?
+            .day_fractions_record(emission_day)?
             .ok_or(TributeError::MetadosisNotCompleted)?;
         let (series_id, gratis_day_price) =
             resolve_series_and_price(contract, &storage, &record, completed_at)?;
@@ -342,7 +349,7 @@ fn check_tribute_forfeited(
         return Ok((true, None));
     }
     let day = record.worldwide_day;
-    let completed_at = contract.day_metadosis_completed_at.read(&day)?;
+    let completed_at = contract.lysis_completed_at(day)?;
     if completed_at == 0 {
         let recorded = contract.day_emission_day.read(&day)?;
         if recorded == 0 {

@@ -197,19 +197,19 @@ impl TributeContract<'_> {
             .write(&bytes)
     }
 
-    pub fn encrypted_day_fractions(&self, day: WorldwideDay) -> Result<Vec<u8>> {
-        self.day_fraction_map_ct.bytes(&day).read()
+    pub fn encrypted_day_fractions(&self, emission_day: u32) -> Result<Vec<u8>> {
+        self.day_fraction_map_ct.bytes(&emission_day).read()
     }
 
     pub(crate) fn day_fractions_record(
         &self,
-        day: WorldwideDay,
+        emission_day: u32,
     ) -> Result<Option<EncryptedTributeDayFractionsV1>> {
-        let bytes = self.encrypted_day_fractions(day)?;
+        let bytes = self.encrypted_day_fractions(emission_day)?;
         self.decode_validated_record(
             &bytes,
             |record: &EncryptedTributeDayFractionsV1, chain_id| {
-                record.worldwide_day == day
+                record.emission_day == emission_day
                     && record.chain_id == chain_id
                     && record.version().is_some()
             },
@@ -218,13 +218,28 @@ impl TributeContract<'_> {
 
     pub(crate) fn store_day_fractions_record(
         &self,
-        day: WorldwideDay,
+        emission_day: u32,
         record: &EncryptedTributeDayFractionsV1,
     ) -> Result<()> {
-        if record.worldwide_day != day || record.chain_id != self.storage_handle().chain_id()? {
+        if record.emission_day != emission_day
+            || record.chain_id != self.storage_handle().chain_id()?
+        {
             return Err(crate::errors::TributeError::DayResponseScopeMismatch.into());
         }
         let bytes = postcard::to_allocvec(record).map_err(crate::errors::TributeError::from)?;
-        self.day_fraction_map_ct.bytes(&day).write(&bytes)
+        self.day_fraction_map_ct.bytes(&emission_day).write(&bytes)
+    }
+
+    /// The emission day whose Lysis covers the Tributes of `day`, once it is known.
+    pub(crate) fn lysis_emission_day(&self, day: WorldwideDay) -> Result<Option<u32>> {
+        Ok(Some(self.day_emission_day.read(&day)?).filter(|&emission_day| emission_day != 0))
+    }
+
+    /// When the Lysis of the Tributes of `day` completed, or 0 before it did.
+    pub fn lysis_completed_at(&self, day: WorldwideDay) -> Result<u64> {
+        match self.lysis_emission_day(day)? {
+            Some(emission_day) => self.day_metadosis_completed_at.read(&emission_day),
+            None => Ok(0),
+        }
     }
 }

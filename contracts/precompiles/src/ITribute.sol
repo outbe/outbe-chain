@@ -41,7 +41,7 @@ interface ITribute {
     function balanceOf(address owner) external view returns (uint256);
     function ownerOf(uint256 tributeId) external view returns (address);
     function tokenURI(uint256 tributeId) external view returns (string memory);
-    function getDayTotals(uint32 worldwideDay)
+    function getDayTotals(uint32 emissionDay)
         external
         view
         returns (uint32 tributeCount, bytes memory tributeNominalTotalMinor, bool isSealed);

@@ -1,13 +1,8 @@
 //! Private amount access; public Tribute queries never call this module.
 
-use std::collections::BTreeMap;
-
-use alloy_primitives::{B256, U256};
+use alloy_primitives::U256;
 use outbe_primitives::{
-    time::WorldwideDay,
-    tribute_day_encryption::{
-        EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1, EncryptedTributeLeagueAmountV1,
-    },
+    tribute_day_encryption::{EncryptedTributeDayAmountV2, EncryptedTributeLeagueAmountV1},
     tribute_encryption::{EncryptedTributeV2, TributeAmountsV2},
 };
 use outbe_tee::{
@@ -69,8 +64,8 @@ pub(crate) fn execute_lysis_fractions(
 
 #[cfg(test)]
 pub(crate) fn read_day_fractions(
-    record: &EncryptedTributeDayFractionsV1,
-) -> Result<BTreeMap<u16, u64>, TransportError> {
+    record: &outbe_primitives::tribute_day_encryption::EncryptedTributeDayFractionsV1,
+) -> Result<std::collections::BTreeMap<u16, u64>, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
     if let Some(result) =
         test_enclave::with_key(|key| outbe_enclave::tribute_day::read_day_fractions(key, record))
@@ -78,34 +73,6 @@ pub(crate) fn read_day_fractions(
         return result.map_err(crate::errors::enclave_transport_error);
     }
     outbe_tee::tribute_day_client::read_day_fractions(record)
-}
-
-pub(crate) fn seal_day_fractions(
-    chain_id: u64,
-    worldwide_day: WorldwideDay,
-    completed_at: u64,
-    inputs_hash: B256,
-    fractions: &BTreeMap<u16, u64>,
-) -> Result<EncryptedTributeDayFractionsV1, TransportError> {
-    #[cfg(any(test, feature = "test-enclave"))]
-    if let Some(result) = test_enclave::with_key(|key| {
-        outbe_enclave::tribute_day::seal_day_fractions(
-            key,
-            (chain_id, worldwide_day, completed_at),
-            inputs_hash,
-            fractions,
-        )
-    }) {
-        return result.map_err(crate::errors::enclave_transport_error);
-    }
-    let _ = (
-        chain_id,
-        worldwide_day,
-        completed_at,
-        inputs_hash,
-        fractions,
-    );
-    Err(TransportError::UnexpectedResponse)
 }
 
 pub(crate) fn issue_nod_from_tribute(

@@ -196,7 +196,7 @@ fn entries() -> Vec<EnclaveWitnessEntryV1> {
             result: Box::new(LysisFractionsResultV1 {
                 day_fractions: EncryptedTributeDayFractionsV1 {
                     chain_id: 1,
-                    worldwide_day: WorldwideDay::new(20261028),
+                    emission_day: 20261028,
                     completed_at: 10,
                     operation_hash: B256::ZERO,
                     encrypted_fractions: vec![6],
