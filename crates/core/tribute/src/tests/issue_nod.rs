@@ -443,6 +443,7 @@ fn lysis_keys_its_result_by_the_emission_day_and_binds_the_nod_to_it() {
         assert!(tc.encrypted_day_fractions(wwd_as_day).unwrap().is_empty());
         let day_fractions = tc.day_fractions_record(emission_day).unwrap().unwrap();
         assert_eq!(day_fractions.emission_day, emission_day);
+        assert_eq!(day_fractions.worldwide_day, day);
 
         let record = tc.get_record(tribute.tribute_id).unwrap().unwrap();
         let request_for = |fractions_day: EmissionDate| {
@@ -471,6 +472,11 @@ fn lysis_keys_its_result_by_the_emission_day_and_binds_the_nod_to_it() {
         wrong_terms.terms = request_for(other_day).terms;
         let rejected = crate::enclave_client::issue_nod_from_tribute(wrong_terms).unwrap_err();
         assert!(rejected.to_string().contains("NOD source terms mismatch"));
+        let other_days_fractions =
+            crate::enclave_client::issue_nod_from_tribute(request_for(other_day)).unwrap_err();
+        assert!(other_days_fractions
+            .to_string()
+            .contains("NOD source terms mismatch"));
     });
 }
 

@@ -116,6 +116,9 @@ pub(super) fn compute_and_record_metadosis_fractions(
         },
     )
     .map_err(TributeError::DayEnclave)?;
+    if result.day_fractions.worldwide_day != day {
+        return Err(TributeError::DayResponseScopeMismatch.into());
+    }
     contract
         .day_metadosis_completed_at
         .write(&emission_day, completed_at)?;

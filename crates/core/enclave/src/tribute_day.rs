@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use alloy_primitives::{B256, U256};
-use outbe_primitives::time::EmissionDate;
+use outbe_primitives::time::{EmissionDate, WorldwideDay};
 use outbe_primitives::tribute_day_encryption::{
     EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1, EncryptedTributeLeagueAmountV1,
 };
@@ -186,12 +186,13 @@ pub fn apply_league_operation(
 
 pub fn seal_day_fractions(
     network_secret: &[u8; 32],
-    (chain_id, emission_day, completed_at): (u64, EmissionDate, u64),
+    (chain_id, worldwide_day, emission_day, completed_at): (u64, WorldwideDay, EmissionDate, u64),
     inputs_hash: B256,
     fractions: &BTreeMap<u16, u64>,
 ) -> Result<EncryptedTributeDayFractionsV1> {
     let mut record = EncryptedTributeDayFractionsV1 {
         chain_id,
+        worldwide_day,
         emission_day,
         completed_at,
         operation_hash: sign_operation_hash(
@@ -398,7 +399,12 @@ pub fn execute_lysis_fractions(
     let inputs_hash = lysis_fractions_inputs_hash(request).map_err(|_| TeeError::EncryptFailed)?;
     let day_fractions = seal_day_fractions(
         network_secret,
-        (request.chain_id, request.emission_day, request.completed_at),
+        (
+            request.chain_id,
+            request.worldwide_day,
+            request.emission_day,
+            request.completed_at,
+        ),
         inputs_hash,
         &fractions,
     )?;

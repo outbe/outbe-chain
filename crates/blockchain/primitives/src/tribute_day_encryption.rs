@@ -64,6 +64,7 @@ impl EncryptedTributeLeagueAmountV1 {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct EncryptedTributeDayFractionsV1 {
     pub chain_id: u64,
+    pub worldwide_day: WorldwideDay,
     pub emission_day: EmissionDate,
     pub completed_at: u64,
     pub operation_hash: B256,
@@ -74,6 +75,7 @@ impl EncryptedTributeDayFractionsV1 {
     pub fn crypto_slot(&self) -> Address {
         let mut context = b"outbe/tribute/day-fractions/slot/v1".to_vec();
         context.extend_from_slice(&self.chain_id.to_be_bytes());
+        context.extend_from_slice(&self.worldwide_day.value().to_be_bytes());
         context.extend_from_slice(&self.emission_day.value().to_be_bytes());
         context.extend_from_slice(&self.completed_at.to_be_bytes());
         context.extend_from_slice(self.operation_hash.as_slice());

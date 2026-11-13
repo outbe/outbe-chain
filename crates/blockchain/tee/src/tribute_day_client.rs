@@ -160,6 +160,7 @@ pub fn execute_lysis_fractions(
     let expected = tribute_day::lysis_fractions_inputs_hash(&request).map_err(codec)?;
     let expected_identity = (
         request.chain_id,
+        request.worldwide_day,
         request.emission_day,
         request.completed_at,
         Some(1),
@@ -177,6 +178,7 @@ pub fn execute_lysis_fractions(
     };
     let returned_identity = (
         result.day_fractions.chain_id,
+        result.day_fractions.worldwide_day,
         result.day_fractions.emission_day,
         result.day_fractions.completed_at,
         result.day_fractions.version(),
