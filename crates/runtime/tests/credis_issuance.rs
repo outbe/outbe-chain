@@ -21,8 +21,8 @@ use outbe_primitives::{
     },
     chain::CHAIN_ID,
     storage::{StorageHandle, SubCallInput, SubCallStatus},
-    time::{previous_date_key, timestamp_to_date_key},
 };
+use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 use outbe_vaultrouter::{
     api::IVaultRouter,
     test_support::{register_source, register_target},
@@ -172,7 +172,7 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
         source: OWNER,
         series_id: outbe_core_common::series_id::SeriesId::for_pair(closed_day, 840, 840)
             .expect("series id"),
-        call_start_day: outbe_primitives::time::first_full_day(NOW).expect("date step"),
+        call_start_day: outbe_system_common::time::first_full_day(NOW).expect("date step"),
         call_rate: call_terms.call_rate,
         call_window_seconds: call_terms.call_window_seconds,
         call_threshold_seconds: call_terms.call_threshold_seconds,

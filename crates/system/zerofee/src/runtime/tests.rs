@@ -7,9 +7,9 @@ use outbe_primitives::{
     addresses::{AGENT_REWARD_ADDRESS, TRIBUTE_FACTORY_ADDRESS, ZEROFEE_ADDRESS},
     consensus::{MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS, MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
-    time::SECONDS_PER_DAY,
     transaction_call::TransactionCallFields,
 };
+use outbe_system_common::time::SECONDS_PER_DAY;
 
 const SIGNER: Address = address!("0x1111111111111111111111111111111111111111");
 /// Block timestamp parked safely inside `2026-04-01 00:00:00 UTC` ->
@@ -518,7 +518,7 @@ fn authorize_applies_lazy_reset_on_new_day() {
         seed_packed(
             &storage,
             SIGNER,
-            outbe_primitives::time::previous_date_key(BLOCK_DAY).expect("date step"),
+            outbe_system_common::time::previous_date_key(BLOCK_DAY).expect("date step"),
             8,
         );
         let auth = authorize_sponsorship(storage, SIGNER, BLOCK_TS).unwrap();
@@ -556,7 +556,7 @@ fn utc_midnight_boundary_is_inclusive_on_the_new_day() {
         seed_packed(
             &storage,
             SIGNER,
-            outbe_primitives::time::previous_date_key(BLOCK_DAY).expect("date step"),
+            outbe_system_common::time::previous_date_key(BLOCK_DAY).expect("date step"),
             8,
         );
         let auth = authorize_sponsorship(storage, SIGNER, BLOCK_TS).unwrap();
@@ -571,7 +571,7 @@ fn one_second_before_midnight_belongs_to_previous_day() {
         let auth = authorize_sponsorship(storage, SIGNER, just_before).unwrap();
         assert_eq!(
             auth.current_day(),
-            outbe_primitives::time::previous_date_key(BLOCK_DAY).expect("date step")
+            outbe_system_common::time::previous_date_key(BLOCK_DAY).expect("date step")
         );
     });
 }

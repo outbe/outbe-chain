@@ -1,13 +1,12 @@
 use outbe_core_common::{
     tribute_encryption::{EncryptedTributeV2, TRIBUTE_AMOUNTS_BLOB_LEN},
-    wwd_entity_id::derive_poseidon_entity_id,
+    wwd_entity_id::{derive_poseidon_entity_id, WwdEntityId},
 };
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::StorageHandle,
-    time::WorldwideDay,
-    wwd_entity_id::WwdEntityId,
 };
+use outbe_system_common::time::WorldwideDay;
 
 use crate::{
     errors::TributeError,

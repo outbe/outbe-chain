@@ -35,8 +35,8 @@ pub(crate) fn dispatch(storage: &StorageHandle<'_>, data: &[u8]) -> Option<Resul
     }
     if rescanClosedDayForTestCall::abi_decode(data).is_ok() {
         return Some(guarded(storage, || {
-            let day = outbe_primitives::time::previous_date_key(
-                outbe_primitives::time::timestamp_to_date_key(storage.now_secs()?),
+            let day = outbe_system_common::time::previous_date_key(
+                outbe_system_common::time::timestamp_to_date_key(storage.now_secs()?),
             )
             .map_err(crate::errors::date_step_error)?;
             reopen_day(storage, day)
@@ -106,7 +106,7 @@ fn requeue_called(storage: &StorageHandle<'_>, group_key: B256, deadline: u64) -
         .write(&group_key, deadline.saturating_sub(notice).max(1))?;
     nod.remove_called(group_key)?;
     nod.push_called(group_key, deadline)?;
-    let day = outbe_primitives::time::timestamp_to_date_key(deadline);
+    let day = outbe_system_common::time::timestamp_to_date_key(deadline);
     reopen_day(storage, day)
 }
 

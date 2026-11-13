@@ -80,3 +80,27 @@ impl From<CurrencyCodeError> for PrecompileError {
         Self::Revert(value.to_string())
     }
 }
+
+/// Errors that [`crate::time::WorldwideDay`] string parsing returns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum WorldwideDayParseError {
+    #[error("worldwide_day must be a valid u32 value")]
+    InvalidU32,
+    #[error("worldwide_day must be a valid YYYYMMDD date")]
+    InvalidDate,
+}
+
+impl WorldwideDayParseError {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidU32 => "worldwide_day must be a valid u32 value",
+            Self::InvalidDate => "worldwide_day must be a valid YYYYMMDD date",
+        }
+    }
+
+    #[must_use]
+    pub fn contains(self, pat: &str) -> bool {
+        self.as_str().contains(pat)
+    }
+}

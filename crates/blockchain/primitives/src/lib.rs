@@ -17,8 +17,6 @@ pub mod error;
 pub mod errors;
 pub mod filesystem;
 pub mod header;
-#[cfg(unix)]
-pub mod local_record;
 pub mod payload;
 pub mod projection;
 #[cfg(feature = "consensus")]
@@ -48,7 +46,6 @@ pub mod time;
 pub mod transaction_call;
 pub mod validator_dto;
 pub mod validators;
-pub mod wwd_entity_id;
 pub mod zero_fee_types;
 
 pub use header::{

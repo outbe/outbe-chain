@@ -9,7 +9,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::storage::{
     metadosis_process_ready_binding, MetadosisCycleLifecycle, MetadosisMutationPurposeTag,
 };
-use outbe_primitives::time::EmissionDate;
+use outbe_system_common::time::EmissionDate;
 
 // These fixtures share a chain that predates their December 2024 WorldwideDays.
 const GENESIS_TIMESTAMP: u64 = 1_733_011_200; // 2024-12-01 00:00 UTC
@@ -31,7 +31,7 @@ fn nod_id_of(tc: &TributeContract<'_>, tribute: &crate::schema::TributeData) -> 
 /// Seals the Lysis of `day` for its linked emission day, or the price day of `completed_at`.
 fn seal_lysis(
     tc: &mut TributeContract<'_>,
-    day: outbe_primitives::time::WorldwideDay,
+    day: outbe_system_common::time::WorldwideDay,
     metadosis_limit: U256,
     completed_at: u64,
 ) -> outbe_primitives::error::Result<(U256, U256)> {
@@ -66,7 +66,7 @@ fn seed_entry_price(storage: &StorageHandle<'_>, iso: u16, utc_day: u32, vwap: U
         index => index,
     };
     for day in [
-        outbe_primitives::time::previous_date_key(utc_day).unwrap(),
+        outbe_system_common::time::previous_date_key(utc_day).unwrap(),
         utc_day,
     ] {
         oracle.record_utc_day_vwap(day, index, vwap).unwrap();
@@ -75,7 +75,7 @@ fn seed_entry_price(storage: &StorageHandle<'_>, iso: u16, utc_day: u32, vwap: U
 
 fn test_day_league_fraction(
     tc: &TributeContract<'_>,
-    day: outbe_primitives::time::WorldwideDay,
+    day: outbe_system_common::time::WorldwideDay,
     league: u16,
 ) -> u64 {
     let Some(emission_day) = tc.lysis_emission_day(day).unwrap() else {
@@ -97,7 +97,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
     provider.set_timestamp(U256::from(base_ts));
     provider.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 3);
 
-    let day: outbe_primitives::time::WorldwideDay = 20241220u32.into();
+    let day: outbe_system_common::time::WorldwideDay = 20241220u32.into();
     let owner1 = address!("0x1111111111111111111111111111111111111111");
     let owner2 = address!("0x2222222222222222222222222222222222222222");
     let stranger = address!("0x9999999999999999999999999999999999999999");
@@ -178,7 +178,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
         // Owner1 creates a Nod three days after completion.
         storage
             .set_block_timestamp(U256::from(
-                base_ts + 3 * outbe_primitives::time::SECONDS_PER_DAY,
+                base_ts + 3 * outbe_system_common::time::SECONDS_PER_DAY,
             ))
             .unwrap();
         let call_bytes = crate::precompile::ITribute::issueNodCall {
@@ -212,7 +212,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
         assert_eq!(nod_item.league_id, 100);
         assert_eq!(
             nod_item.issued_at,
-            base_ts + 3 * outbe_primitives::time::SECONDS_PER_DAY
+            base_ts + 3 * outbe_system_common::time::SECONDS_PER_DAY
         );
         assert_eq!(
             nod_item.encrypted.terms.entry_price_minor,
@@ -263,7 +263,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
         );
 
         // A claim after seven days still creates the Nod and deletes only that Tribute.
-        let late = base_ts + 7 * outbe_primitives::time::SECONDS_PER_DAY + 1;
+        let late = base_ts + 7 * outbe_system_common::time::SECONDS_PER_DAY + 1;
         storage.set_block_timestamp(U256::from(late)).unwrap();
         assert_eq!(
             tc.issue_nod(owner2, t2.tribute_id).unwrap(),
@@ -336,7 +336,7 @@ fn a_series_unpriced_at_lysis_gives_no_nod_and_cleans_at_once() {
             .unwrap();
         storage
             .set_block_timestamp(U256::from(
-                completed_at + outbe_primitives::time::SECONDS_PER_DAY,
+                completed_at + outbe_system_common::time::SECONDS_PER_DAY,
             ))
             .unwrap();
 
@@ -388,7 +388,7 @@ fn lysis_keys_its_result_by_the_emission_day_and_binds_the_nod_to_it() {
     let tribute = sample_tribute();
     let day = tribute.worldwide_day;
     let mut other_tribute = sample_tribute();
-    let other_wwd = outbe_primitives::time::WorldwideDay::new(20241221);
+    let other_wwd = outbe_system_common::time::WorldwideDay::new(20241221);
     set_day(&mut other_tribute, other_wwd);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -545,7 +545,7 @@ fn series_sealing_zero_nod_forfeit_returns_unclaimed_load_and_enables_permission
     provider.set_timestamp(U256::from(base_ts));
     provider.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 3);
 
-    let day: outbe_primitives::time::WorldwideDay = 20241220u32.into();
+    let day: outbe_system_common::time::WorldwideDay = 20241220u32.into();
     let emission_day_key = 20250110u32;
     let owner1 = address!("0x1111111111111111111111111111111111111111");
     let owner2 = address!("0x2222222222222222222222222222222222222222");
@@ -653,7 +653,7 @@ fn series_sealing_zero_nod_forfeit_returns_unclaimed_load_and_enables_permission
             outbe_nod::api::settlement_deadline_of(base_ts, terms.call_notice_period_seconds);
         nod.record_group_called(group_key, base_ts, deadline)
             .unwrap();
-        let forfeit_ts = deadline + outbe_primitives::time::SECONDS_PER_DAY;
+        let forfeit_ts = deadline + outbe_system_common::time::SECONDS_PER_DAY;
         storage.set_block_timestamp(U256::from(forfeit_ts)).unwrap();
         let promis_before = outbe_promislimit::PromisLimitContract::new(storage.clone())
             .promis_limit()
@@ -710,7 +710,7 @@ fn series_sealing_zero_nod_forfeit_returns_unclaimed_load_and_enables_permission
 #[test]
 fn series_zero_minted_nods_automatic_breach_call_forfeit_and_clean() {
     use alloy_sol_types::SolCall;
-    use outbe_primitives::time::{
+    use outbe_system_common::time::{
         date_key_to_utc_timestamp, next_date_key, previous_date_key, timestamp_to_date_key,
         SECONDS_PER_DAY,
     };
@@ -721,7 +721,7 @@ fn series_zero_minted_nods_automatic_breach_call_forfeit_and_clean() {
     provider.set_timestamp(U256::from(base_ts));
     provider.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 3);
 
-    let day: outbe_primitives::time::WorldwideDay = 20241220u32.into();
+    let day: outbe_system_common::time::WorldwideDay = 20241220u32.into();
     let owner1 = address!("0x1111111111111111111111111111111111111111");
     let owner2 = address!("0x2222222222222222222222222222222222222222");
     let owner_unquoted = address!("0x3333333333333333333333333333333333333333");
@@ -907,9 +907,9 @@ fn clean_handles_settled_nod_aborted_emission_day_retired_fi_groups_and_zero_loa
     provider.set_timestamp(U256::from(base_ts));
     provider.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 8);
 
-    let day_zero_load: outbe_primitives::time::WorldwideDay = 20241221u32.into();
-    let day_aborted: outbe_primitives::time::WorldwideDay = 20241222u32.into();
-    let day_retired: outbe_primitives::time::WorldwideDay = 20241223u32.into();
+    let day_zero_load: outbe_system_common::time::WorldwideDay = 20241221u32.into();
+    let day_aborted: outbe_system_common::time::WorldwideDay = 20241222u32.into();
+    let day_retired: outbe_system_common::time::WorldwideDay = 20241223u32.into();
     let owner1 = address!("0x1111111111111111111111111111111111111111");
     let owner2 = address!("0x2222222222222222222222222222222222222222");
     let stranger = address!("0x9999999999999999999999999999999999999999");
@@ -1017,7 +1017,7 @@ fn a_zero_load_tribute_stays_out_of_its_series_and_cleans_at_once() {
     provider.set_timestamp(U256::from(base_ts));
     provider.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 3);
 
-    let day: outbe_primitives::time::WorldwideDay = 20241221u32.into();
+    let day: outbe_system_common::time::WorldwideDay = 20241221u32.into();
     let owner1 = address!("0x1111111111111111111111111111111111111111");
     let owner2 = address!("0x2222222222222222222222222222222222222222");
     let stranger = address!("0x9999999999999999999999999999999999999999");
@@ -1097,7 +1097,7 @@ fn multi_league_lysis_and_issue_nod_keep_league_nominals_fractions_and_loads_pri
     provider.set_timestamp(U256::from(base_ts));
     provider.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 3);
 
-    let day: outbe_primitives::time::WorldwideDay = 20241221u32.into();
+    let day: outbe_system_common::time::WorldwideDay = 20241221u32.into();
     let owner1 = address!("0x1111111111111111111111111111111111111111");
     let owner2 = address!("0x2222222222222222222222222222222222222222");
     let owner3 = address!("0x3333333333333333333333333333333333333333");
@@ -1333,7 +1333,7 @@ fn multi_league_lysis_and_issue_nod_keep_league_nominals_fractions_and_loads_pri
 /// Runs the Nod daily pass at `timestamp` through the UTC day before it, one day per block
 /// from `height`, as the Cycle does.
 fn run_nod_daily_pass(storage: &StorageHandle<'_>, mut height: u64, timestamp: u64) {
-    use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
+    use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 
     let closed = previous_date_key(timestamp_to_date_key(timestamp)).unwrap();
     let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());

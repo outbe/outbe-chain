@@ -6,7 +6,7 @@ use crate::state::{enqueue_cleanup, release_pending};
 use alloy_primitives::{Address, U256, U512};
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
-use outbe_primitives::time::WorldwideDay;
+use outbe_system_common::time::WorldwideDay;
 
 /// Performs at most 256 accrual visits and four job headers, then independent cleanup
 /// passes of at most 256 entries and four headers per owner. All writes, including the

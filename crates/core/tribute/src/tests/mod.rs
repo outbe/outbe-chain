@@ -1,11 +1,11 @@
 use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_core_common::wwd_entity_id::derive_poseidon_entity_id;
+use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_primitives::addresses::TRIBUTE_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result as PrecompileResult};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::{TributeContract, TributeData};
 
@@ -65,7 +65,7 @@ fn sample_tribute() -> TributeData {
     }
 }
 
-fn entity_id(seed: u64, day: outbe_primitives::time::WorldwideDay) -> WwdEntityId {
+fn entity_id(seed: u64, day: outbe_system_common::time::WorldwideDay) -> WwdEntityId {
     derive_poseidon_entity_id(alloy_primitives::Address::repeat_byte(seed as u8), day)
 }
 
@@ -74,7 +74,7 @@ fn set_owner(tribute: &mut TributeData, owner: alloy_primitives::Address) {
     tribute.tribute_id = derive_poseidon_entity_id(owner, tribute.worldwide_day);
 }
 
-fn set_day(tribute: &mut TributeData, day: outbe_primitives::time::WorldwideDay) {
+fn set_day(tribute: &mut TributeData, day: outbe_system_common::time::WorldwideDay) {
     tribute.worldwide_day = day;
     tribute.tribute_id = derive_poseidon_entity_id(tribute.owner, day);
 }
@@ -288,7 +288,7 @@ fn tribute_population_crosses_multiple_work_shards_without_a_total_cap() {
 
 fn assert_day_totals_match_fold(
     tc: &TributeContract<'_>,
-    day: outbe_primitives::time::WorldwideDay,
+    day: outbe_system_common::time::WorldwideDay,
     entries: &[(TributeData, bool)],
 ) {
     let mut count = 0_u32;

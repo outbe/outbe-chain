@@ -8,18 +8,18 @@ use outbe_intex::{
     schema::{CreateSeriesParams, IntexCallTrigger},
     SeriesId,
 };
-use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::{
     addresses::INTEX_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     error::Result,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
-    time::EmissionDate,
 };
 use outbe_promislimit::PromisLimitContract;
+use outbe_system_common::time::EmissionDate;
+use outbe_system_common::time::SECONDS_PER_DAY_U32;
 
 const ISSUED: u64 = 1_704_067_200;
-use outbe_primitives::time::SECONDS_PER_DAY as DAY;
+use outbe_system_common::time::SECONDS_PER_DAY as DAY;
 const DEADLINE: u64 = ISSUED + 7 * DAY;
 const LOAD: u128 = 1_000_003;
 const SERIES_DAY: u32 = 20_240_101;
@@ -76,7 +76,7 @@ fn world() -> (HashMapStorageProvider, SeriesId) {
         .unwrap();
         outbe_oracle::schema::OracleContract::new(s.clone())
             .utc_day_vwap_last_finalized
-            .write(outbe_primitives::time::timestamp_to_date_key(
+            .write(outbe_system_common::time::timestamp_to_date_key(
                 DEADLINE + 2 * DAY,
             ))
             .unwrap();

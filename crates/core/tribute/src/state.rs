@@ -1,9 +1,9 @@
 use alloy_primitives::{keccak256, Address};
 #[cfg(any(test, feature = "test-enclave"))]
 use outbe_core_common::wwd_entity_id::derive_poseidon_entity_id;
+use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_primitives::error::Result;
-use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::wwd_entity_id::WwdEntityId;
+use outbe_system_common::time::WorldwideDay;
 
 use crate::errors::TributeError;
 use crate::schema::{DayTotals, TributeContract, TributeData};

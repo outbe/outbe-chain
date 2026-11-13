@@ -35,7 +35,6 @@ use outbe_oracle::{
     genesis::{init_from_genesis, OracleGenesisConfig},
     schema::OracleContract,
 };
-use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::{
         AGENT_REWARD_ADDRESS, L2_REGISTRY_ADDRESS, METADOSIS_ADDRESS, ORACLE_ADDRESS,
@@ -45,9 +44,10 @@ use outbe_primitives::{
         hashmap::{HashMapStorageProvider, StorageTraceKind},
         StorageHandle,
     },
-    time::date_key_to_utc_timestamp,
 };
 use outbe_system_common::address_pair::AddressPair;
+use outbe_system_common::time::date_key_to_utc_timestamp;
+use outbe_system_common::time::WorldwideDay;
 use outbe_tribute::TributeContract;
 use outbe_tributefactory::bench_support::{execute_offer_with_processor, BenchOfferInput};
 use outbe_zk::claim::TributeDraftClaim;

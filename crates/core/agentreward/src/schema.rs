@@ -4,7 +4,7 @@ use outbe_primitives::addresses::AGENT_REWARD_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::types::StorageKey;
-use outbe_primitives::time::WorldwideDay;
+use outbe_system_common::time::WorldwideDay;
 
 use crate::errors::AgentRewardError;
 

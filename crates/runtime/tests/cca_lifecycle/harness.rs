@@ -14,7 +14,6 @@ pub(crate) use outbe_ccaregistry::{
 };
 pub(crate) use outbe_evm::OutbeEvmFactory;
 pub(crate) use outbe_gemfactory::precompile::IGemFactory;
-pub(crate) use outbe_primitives::time::SECONDS_PER_DAY;
 pub(crate) use outbe_primitives::{
     addresses::{
         AGENT_REWARD_ADDRESS, CCA_REGISTRY_ADDRESS, GEM_ADDRESS, GEM_FACTORY_ADDRESS,
@@ -22,8 +21,9 @@ pub(crate) use outbe_primitives::{
     },
     block::{BlockContext, BlockRuntimeContext},
     storage::{direct::DirectStorageProvider, StorageHandle},
-    time::{previous_date_key, timestamp_to_date_key},
 };
+pub(crate) use outbe_system_common::time::SECONDS_PER_DAY;
+pub(crate) use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 pub(crate) use reth_ethereum::evm::primitives::EvmEnv;
 pub(crate) use revm::{
     context::{result::ExecutionResult, BlockEnv, CfgEnv, TxEnv},

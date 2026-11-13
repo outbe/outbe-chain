@@ -3,7 +3,7 @@ use alloy_sol_types::SolCall;
 use outbe_core_common::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{
+use outbe_system_common::time::{
     date_key_to_utc_timestamp, timestamp_to_date_key, worldwide_day_from_timestamp,
 };
 use outbe_system_common::units::SCALE_1E6_U256;
@@ -18,7 +18,7 @@ use outbe_credis::state::CallBins;
 use outbe_system_common::call_bins;
 
 const CHAIN_ID: u64 = 1;
-use outbe_primitives::time::SECONDS_PER_DAY as DAY;
+use outbe_system_common::time::SECONDS_PER_DAY as DAY;
 const ORIGINATED_AT: u64 = 1_700_000_000;
 
 // ---------------------------------------------------------------------------

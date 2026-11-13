@@ -164,30 +164,6 @@ impl TeeRenewalScheduleError {
     }
 }
 
-/// Errors that [`crate::time::WorldwideDay`] string parsing returns.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum WorldwideDayParseError {
-    #[error("worldwide_day must be a valid u32 value")]
-    InvalidU32,
-    #[error("worldwide_day must be a valid YYYYMMDD date")]
-    InvalidDate,
-}
-
-impl WorldwideDayParseError {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::InvalidU32 => "worldwide_day must be a valid u32 value",
-            Self::InvalidDate => "worldwide_day must be a valid YYYYMMDD date",
-        }
-    }
-
-    #[must_use]
-    pub fn contains(self, pat: &str) -> bool {
-        self.as_str().contains(pat)
-    }
-}
-
 /// Errors returned by [`crate::consensus_metadata`] wire and RLP codecs.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -404,10 +380,6 @@ pub enum PrimitivesStorageError {
     TestProviderNoActiveMetadosisLease,
     #[error("test provider Metadosis mutation lease identity mismatch")]
     TestProviderMetadosisLeaseIdentityMismatch,
-    #[error("test provider has no certified Lysis activation lease")]
-    TestProviderNoCertifiedLysisActivationLease,
-    #[error("test provider Lysis activation lease identity mismatch")]
-    TestProviderLysisActivationLeaseIdentityMismatch,
     #[error("insufficient balance: {from} has {balance} but needs {needed}")]
     InsufficientBalance {
         from: Address,
@@ -442,8 +414,6 @@ pub enum PrimitivesStorageError {
     },
     #[error("Metadosis mutation frame is not available")]
     MetadosisMutationFrameUnavailable,
-    #[error("certified Lysis activation frame is not available")]
-    CertifiedLysisActivationFrameUnavailable,
     #[error("{name} not found")]
     RecordNotFound { name: String },
     #[error("{name} already exists")]
@@ -457,10 +427,6 @@ pub enum PrimitivesStorageError {
     },
     #[error("invalid checkpoint revert index {checkpoint} for stack depth {depth}")]
     InvalidCheckpointRevert { checkpoint: usize, depth: usize },
-    #[error("certified Lysis activation frame returned before terminal completion")]
-    CertifiedLysisActivationIncomplete,
-    #[error("certified Lysis activation {owner} cursor is out of order")]
-    CertifiedLysisActivationCursorOutOfOrder { owner: &'static str },
     #[error("array index out of bounds")]
     ArrayIndexOutOfBounds,
     #[error("vec index out of bounds")]

@@ -7,17 +7,19 @@
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_oracle::{api::AddressPair, schema::OracleContract};
-use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::{
     addresses::NOD_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
-    time::{date_key_to_utc_timestamp, first_full_day, previous_date_key, timestamp_to_date_key},
 };
 use outbe_system_common::math::constants::MAX_BIN_ID;
 use outbe_system_common::pass_budget::{
     PassBudget, SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK,
+};
+use outbe_system_common::time::WorldwideDay;
+use outbe_system_common::time::SECONDS_PER_DAY_U32;
+use outbe_system_common::time::{
+    date_key_to_utc_timestamp, first_full_day, previous_date_key, timestamp_to_date_key,
 };
 
 use outbe_nod::{
@@ -32,7 +34,7 @@ use outbe_nod::{
 
 const CHAIN_ID: u64 = 1;
 const BLOCK_NUMBER: u64 = 42;
-use outbe_primitives::time::SECONDS_PER_DAY as DAY;
+use outbe_system_common::time::SECONDS_PER_DAY as DAY;
 /// The notice period a group seals at issuance, in the width these tests
 /// do timestamp arithmetic in.
 const NOTICE: u64 = CALL_NOTICE_PERIOD as u64;
@@ -1763,7 +1765,7 @@ fn a_running_call_sweep_keeps_its_day() {
         assert_eq!(called_at(storage, item.group_key), later);
         assert_eq!(
             nod.call_sweep_day.read().unwrap(),
-            outbe_primitives::time::next_date_key(day).expect("date step"),
+            outbe_system_common::time::next_date_key(day).expect("date step"),
             "only the pinned day ran at this height"
         );
     });

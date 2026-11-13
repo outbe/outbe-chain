@@ -19,9 +19,8 @@
 use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
 use outbe_primitives::system_tx::STEADY_BLOCK_GAS_LIMIT;
 
-pub use outbe_primitives::zero_fee_types::{
-    ELEVATED_SPONSORED_GAS, FREE_TX_BOOTSTRAP_GAS_LIMIT, FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT,
-};
+pub use crate::sponsorship::{ELEVATED_SPONSORED_GAS, FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT};
+pub use outbe_primitives::zero_fee_types::FREE_TX_BOOTSTRAP_GAS_LIMIT;
 
 /// Maximum number of sponsored free transactions per signer per UTC day.
 pub const FREE_TX_DAILY_LIMIT: u32 = 8;

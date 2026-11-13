@@ -49,7 +49,7 @@ pub enum AgentRewardError {
     DateStep { kind: u8, date_key: u32 },
 }
 
-pub(crate) fn date_step_error(err: outbe_primitives::time::TimeError) -> PrecompileError {
+pub(crate) fn date_step_error(err: outbe_system_common::time::TimeError) -> PrecompileError {
     match err.date_step() {
         Some((kind, date_key)) => AgentRewardError::DateStep { kind, date_key }.into(),
         None => PrecompileError::Fatal(err.to_string()),

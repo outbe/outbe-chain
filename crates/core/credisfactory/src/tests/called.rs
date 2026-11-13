@@ -10,8 +10,8 @@ use alloy_primitives::{Address, U256};
 use outbe_credis::constants::{CALL_LOOKBACK_DAYS, CALL_THRESHOLD_DAYS};
 use outbe_credis::{CallBins, CredisContract, CredisState};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::previous_date_key;
-use outbe_primitives::time::SECONDS_PER_DAY_U32;
+use outbe_system_common::time::previous_date_key;
+use outbe_system_common::time::SECONDS_PER_DAY_U32;
 
 use crate::tests::*;
 
@@ -1258,7 +1258,8 @@ fn lapsed_group_of_three() -> (
         call_by_hand(&storage, &ids[..1], CREATED_AT);
         let lapsed = CREATED_AT + NOTICE + CLOSED_DAY_DELAY;
         let deadline_day = last_closed_day(lapsed);
-        let before_close = outbe_primitives::time::date_key_to_utc_timestamp(deadline_day).unwrap();
+        let before_close =
+            outbe_system_common::time::date_key_to_utc_timestamp(deadline_day).unwrap();
         advance_to(&storage, before_close);
         daily_pass(&storage, before_close).unwrap();
         let credis = CredisContract::new(storage.clone());

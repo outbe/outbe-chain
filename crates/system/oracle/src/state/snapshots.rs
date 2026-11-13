@@ -4,9 +4,9 @@
 use alloy_primitives::U256;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::types::Mapping;
-use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_system_common::address_pair::AddressPair;
 use outbe_system_common::math::reference_price::is_coen_iso_market;
+use outbe_system_common::time::SECONDS_PER_DAY;
 
 use crate::constants::{
     zero_volume_weight, HOURLY_VWAP_CELLS, MAX_SNAPSHOT_EVICTIONS_PER_WRITE,

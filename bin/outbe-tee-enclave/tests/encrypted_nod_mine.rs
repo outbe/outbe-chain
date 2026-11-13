@@ -6,7 +6,7 @@ use outbe_enclave::{
         FidelityCohortOp, FidelityOpSection, GratisOp, GratisOpRequest, GratisOpStatus, ModifyAuth,
     },
 };
-use outbe_primitives::time::WorldwideDay;
+use outbe_system_common::time::WorldwideDay;
 use outbe_tee_enclave::{gratis, nod_encryption::encrypt_nod, nod_mine};
 
 #[test]

@@ -1912,8 +1912,8 @@ fn with_reservable_vault_at_block<R>(
             U256::ONE,
         )
         .unwrap();
-        let day = outbe_primitives::time::previous_date_key(
-            outbe_primitives::time::timestamp_to_date_key(1_700_000_000),
+        let day = outbe_system_common::time::previous_date_key(
+            outbe_system_common::time::timestamp_to_date_key(1_700_000_000),
         )
         .expect("date step");
         let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), USD_ISO_CODE)
@@ -2008,8 +2008,8 @@ fn a_reservation_needs_every_call_term() {
                 .is_zero());
         };
     with_reservable_vault(U256::from(100u64), |storage| {
-        let day = outbe_primitives::time::previous_date_key(
-            outbe_primitives::time::timestamp_to_date_key(1_700_000_000),
+        let day = outbe_system_common::time::previous_date_key(
+            outbe_system_common::time::timestamp_to_date_key(1_700_000_000),
         )
         .expect("date step");
         let oracle = OracleContract::new(storage.clone());
@@ -2070,8 +2070,8 @@ fn a_reservation_needs_every_call_term() {
 #[test]
 fn a_reservation_quotes_the_call_terms_in_its_reference_currency() {
     with_reservable_vault(U256::from(100u64), |storage| {
-        let day = outbe_primitives::time::previous_date_key(
-            outbe_primitives::time::timestamp_to_date_key(1_700_000_000),
+        let day = outbe_system_common::time::previous_date_key(
+            outbe_system_common::time::timestamp_to_date_key(1_700_000_000),
         )
         .expect("date step");
         outbe_oracle::api::register_pair(storage.clone(), AddressPair::new_coen_to(EUR_ISO_CODE))
@@ -2484,8 +2484,8 @@ fn same_utc_day_reservations_share_series_id_including_midnight_and_next_day_ope
             U256::ONE,
         )
         .unwrap();
-        let day_0 = outbe_primitives::time::timestamp_to_date_key(midnight);
-        let prev_day = outbe_primitives::time::previous_date_key(day_0).unwrap();
+        let day_0 = outbe_system_common::time::timestamp_to_date_key(midnight);
+        let prev_day = outbe_system_common::time::previous_date_key(day_0).unwrap();
         let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), USD_ISO_CODE)
             .unwrap()
             .unwrap();
@@ -2526,7 +2526,7 @@ fn same_utc_day_reservations_share_series_id_including_midnight_and_next_day_ope
         assert_eq!(r_midnight.call_start_day, r_plus_1s.call_start_day);
         assert_eq!(
             r_midnight.call_start_day,
-            outbe_primitives::time::next_date_key(day_0).unwrap()
+            outbe_system_common::time::next_date_key(day_0).unwrap()
         );
         assert!(r_midnight.call_window_seconds > 0);
 

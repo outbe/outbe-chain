@@ -5,10 +5,8 @@ use outbe_core_common::tribute_day_encryption::{
     EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1,
 };
 use outbe_enclave::tribute_day::{TributeDayOpRequestV2, TributeDayOperationV2};
-use outbe_primitives::{
-    error::Result,
-    time::{EmissionDate, WorldwideDay},
-};
+use outbe_primitives::error::Result;
+use outbe_system_common::time::{EmissionDate, WorldwideDay};
 
 use crate::{day_schema::StoredDayTotals, DayTotals, TributeContract};
 

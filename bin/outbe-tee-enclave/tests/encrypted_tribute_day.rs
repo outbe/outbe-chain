@@ -1,7 +1,8 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_core_common::tribute_encryption::{TributeAmountsV2, TributeContextV2};
+use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_enclave::tribute_day::{TributeDayOpRequestV2, TributeDayOperationV2};
-use outbe_primitives::{time::WorldwideDay, wwd_entity_id::WwdEntityId};
+use outbe_system_common::time::WorldwideDay;
 use outbe_tee_enclave::{
     tribute_day::{apply_day_operation, read_day_amount},
     tribute_encryption::encrypt_tribute,

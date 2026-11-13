@@ -107,7 +107,7 @@ fn populated_auction(chain_count: u32) -> Calibration {
             }
         },
         vec![
-            (outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS, router),
+            (outbe_core_common::addresses::ORIGIN_ROUTER_ADDRESS, router),
             (RELAY, Bytecode::new_legacy(bridge_work(false).into())),
         ],
         None,
@@ -162,7 +162,7 @@ fn calibration_live_auction_start() {
             }
         },
         vec![
-            (outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS, router),
+            (outbe_core_common::addresses::ORIGIN_ROUTER_ADDRESS, router),
             (RELAY, Bytecode::new_legacy(bridge_work(false).into())),
         ],
         None,
@@ -307,7 +307,7 @@ fn due_auctions(steps: &[DueStep]) -> (u64, Vec<Log>) {
             }
         },
         vec![
-            (outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS, router),
+            (outbe_core_common::addresses::ORIGIN_ROUTER_ADDRESS, router),
             (RELAY, Bytecode::new_legacy(bridge_work(false).into())),
         ],
         None,
@@ -380,7 +380,7 @@ fn calibration_four_due_auctions_at_midnight() {
     assert_eq!(
         logs.iter()
             .filter(
-                |log| log.address == outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS
+                |log| log.address == outbe_core_common::addresses::ORIGIN_ROUTER_ADDRESS
                     && log.data.data.starts_with(&collecting)
             )
             .count(),
@@ -462,7 +462,7 @@ fn accepted_1088_bid_auction_completes_before_incremental_cycle_cleanup() {
         ),
         |storage| seed_accepted_auction(storage, timestamp, 17),
         vec![
-            (outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS, router),
+            (outbe_core_common::addresses::ORIGIN_ROUTER_ADDRESS, router),
             (RELAY, Bytecode::new_legacy(bridge_work(false).into())),
         ],
         None,
@@ -532,7 +532,7 @@ fn accepted_bid_deadlines_retire_with_reverting_router_within_advance_budget() {
                 auction.sched_active_slot.write(&day, 1).unwrap();
             },
             vec![(
-                outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS,
+                outbe_core_common::addresses::ORIGIN_ROUTER_ADDRESS,
                 Bytecode::new_legacy(vec![0x60, 0, 0x60, 0, 0xfd].into()),
             )],
             None,

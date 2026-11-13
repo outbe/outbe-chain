@@ -13,8 +13,8 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
 use outbe_primitives::addresses::{AGENT_REWARD_ADDRESS, TRIBUTE_FACTORY_ADDRESS, ZEROFEE_ADDRESS};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
-use outbe_primitives::time::timestamp_to_date_key;
 use outbe_runtime::OutbeRuntime;
+use outbe_system_common::time::timestamp_to_date_key;
 use outbe_txpool::{
     sponsorship_decision, OutbeTransactionValidator, SponsorshipOutcome, TxPoolZeroFeePolicy,
 };

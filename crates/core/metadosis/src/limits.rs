@@ -160,7 +160,7 @@ pub(crate) fn brief_auction(
 mod tests {
     use super::*;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-    use outbe_primitives::time::EmissionDate;
+    use outbe_system_common::time::EmissionDate;
 
     #[test]
     fn native_split_preserves_the_day_and_carry_economic_vectors() {

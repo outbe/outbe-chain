@@ -80,8 +80,8 @@ pub fn seal_lysis_series(storage: &StorageHandle<'_>, input: LysisSeriesInput) -
         reference_currency,
     )
     .map_err(date_step_error)?;
-    let full_day_after_issue = outbe_primitives::time::WorldwideDay::new(
-        outbe_primitives::time::first_full_day(sealed_at).map_err(date_step_error)?,
+    let full_day_after_issue = outbe_system_common::time::WorldwideDay::new(
+        outbe_system_common::time::first_full_day(sealed_at).map_err(date_step_error)?,
     );
     let sealed = nod_api::seal_lysis_series(
         storage,

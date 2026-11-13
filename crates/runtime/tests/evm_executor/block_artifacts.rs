@@ -1,5 +1,5 @@
 use super::*;
-use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_system_common::time::SECONDS_PER_DAY;
 
 #[test]
 fn proposer_and_validator_state_matches_after_a_gem_issue() {
@@ -51,8 +51,8 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
                         merchant: Address(*user.signer()),
                         // Dated by the priced day, which floors the merchant gem.
                         source_series_id: outbe_intex::SeriesId::pack(
-                            outbe_primitives::time::previous_date_key(
-                                outbe_primitives::time::timestamp_to_date_key(block_ts),
+                            outbe_system_common::time::previous_date_key(
+                                outbe_system_common::time::timestamp_to_date_key(block_ts),
                             )
                             .unwrap(),
                             *b"USD",

@@ -3,8 +3,8 @@
 
 use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
-use outbe_primitives::time::WorldwideDay;
 use outbe_system_common::address_pair::AddressPair;
+use outbe_system_common::time::WorldwideDay;
 use std::collections::BTreeSet;
 
 use super::{

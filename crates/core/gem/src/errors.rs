@@ -3,8 +3,8 @@
 use crate::precompile::IGem;
 use alloy_primitives::{Bytes, B256, U256};
 use alloy_sol_types::SolError;
+use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_primitives::error::PrecompileError;
-use outbe_primitives::wwd_entity_id::WwdEntityId;
 use thiserror::Error;
 
 /// Revert errors that the Gem runtime returns.
@@ -70,7 +70,7 @@ impl From<outbe_core_common::series_id::InvalidSeriesId> for GemError {
 }
 
 pub(crate) fn date_step_error(
-    err: outbe_primitives::time::TimeError,
+    err: outbe_system_common::time::TimeError,
 ) -> outbe_primitives::error::PrecompileError {
     match err.date_step() {
         Some((kind, date_key)) => GemError::DateStep { kind, date_key }.into(),

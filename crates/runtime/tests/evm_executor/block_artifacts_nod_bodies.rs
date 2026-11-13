@@ -1,7 +1,7 @@
 //! Independent EVM states produce identical full-block results on both execution roles.
 
 use super::*;
-use outbe_primitives::time::{date_key_to_utc_timestamp, SECONDS_PER_DAY};
+use outbe_system_common::time::{date_key_to_utc_timestamp, SECONDS_PER_DAY};
 
 /// A non-midnight second on 2020-01-01. `first_full_day` can step that day.
 fn issued_at_on_protocol_floor(second_of_day: u64) -> u64 {
@@ -428,8 +428,8 @@ fn seed_nod_daily_trigger(
     _fixture: &NodBodyFixture,
 ) -> eyre::Result<()> {
     let (.., pair_index) = outbe_oracle::api::require_coen_pair(storage.clone(), 840)?;
-    let previous_day = outbe_primitives::time::previous_date_key(
-        outbe_primitives::time::timestamp_to_date_key(TEST_BLOCK_TIMESTAMP_BASE + 2),
+    let previous_day = outbe_system_common::time::previous_date_key(
+        outbe_system_common::time::timestamp_to_date_key(TEST_BLOCK_TIMESTAMP_BASE + 2),
     )
     .expect("date step");
     let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());

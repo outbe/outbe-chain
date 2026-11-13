@@ -6,8 +6,8 @@ use std::collections::HashMap;
 
 use alloy_primitives::U256;
 use outbe_core_common::wwd_entity_id::derive_poseidon_entity_id;
-use outbe_primitives::time::WorldwideDay;
 use outbe_system_common::math::scaled_math::checked_mul_div_floor;
+use outbe_system_common::time::WorldwideDay;
 
 use crate::algorithm::{calc_fraction_distribution_fp, SCALE};
 

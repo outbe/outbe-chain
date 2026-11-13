@@ -1,8 +1,8 @@
 use outbe_primitives::{
     block::{BlockRuntimeContext, ProtocolModule},
     error::Result,
-    time::{previous_date_key, timestamp_to_date_key, TimeError},
 };
+use outbe_system_common::time::{previous_date_key, timestamp_to_date_key, TimeError};
 
 use crate::constants::MAX_UTC_DAY_VWAP_BACKFILL_DAYS;
 use crate::schema::OracleContract;

@@ -53,8 +53,8 @@ mod group_scans {
             .map(|issuance| params(DAY, *issuance).series_id)
             .collect();
         let scan_ts = super::super::ISSUED_AT + 60 * super::super::DAY;
-        let last_closed_day = outbe_primitives::time::previous_date_key(
-            outbe_primitives::time::timestamp_to_date_key(scan_ts),
+        let last_closed_day = outbe_system_common::time::previous_date_key(
+            outbe_system_common::time::timestamp_to_date_key(scan_ts),
         )
         .expect("date step");
 
@@ -76,7 +76,7 @@ mod group_scans {
                 oracle
                     .record_utc_day_vwap(cur, 1, U256::from(EXPECTED_TRIGGER) + U256::ONE)
                     .unwrap();
-                cur = outbe_primitives::time::previous_date_key(cur).expect("date step");
+                cur = outbe_system_common::time::previous_date_key(cur).expect("date step");
             }
             assert_eq!(
                 super::super::call_group(&s, &mut f, group, last_closed_day, scan_ts),

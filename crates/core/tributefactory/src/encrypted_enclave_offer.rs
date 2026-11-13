@@ -144,7 +144,7 @@ mod tests {
     use alloy_primitives::{Address, U256};
     use ed25519_dalek::{Signer, SigningKey};
     use outbe_core_common::tribute_encryption::{TributeAmountsV2, TributeContextV2};
-    use outbe_primitives::time::WorldwideDay;
+    use outbe_system_common::time::WorldwideDay;
 
     struct Fixture {
         offer: EncryptedTributeOffer,
@@ -173,7 +173,7 @@ mod tests {
                 &[7; 32],
                 TributeContextV2 {
                     chain_id: 1,
-                    tribute_id: outbe_primitives::wwd_entity_id::WwdEntityId::from_day_and_digest(
+                    tribute_id: outbe_core_common::wwd_entity_id::WwdEntityId::from_day_and_digest(
                         day, digest,
                     ),
                     owner,

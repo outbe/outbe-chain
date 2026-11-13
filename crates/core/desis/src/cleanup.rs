@@ -1,6 +1,7 @@
 //! Bounded local garbage collection, separate from terminal economic transitions.
 
-use outbe_primitives::{error::Result, storage::StorageHandle, time::EmissionDate};
+use outbe_primitives::{error::Result, storage::StorageHandle};
+use outbe_system_common::time::EmissionDate;
 
 use crate::{
     constants::{CLEANUP_HEADER_UNITS, CLEANUP_MAX_HEADERS, CLEANUP_WORK_UNITS},

@@ -1,8 +1,5 @@
-use outbe_primitives::{
-    error::Result,
-    storage::StorageHandle,
-    time::{previous_date_key, timestamp_to_date_key},
-};
+use outbe_primitives::{error::Result, storage::StorageHandle};
+use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 
 use crate::schema::OracleContract;
 

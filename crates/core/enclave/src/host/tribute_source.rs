@@ -10,8 +10,8 @@ use outbe_primitives::{
         proof::{AccountStorageProof, StateProofLimits},
         readonly::StorageReader,
     },
-    time::WorldwideDay,
 };
+use outbe_system_common::time::WorldwideDay;
 use outbe_tee::TransportError;
 use serde::{Deserialize, Serialize};
 

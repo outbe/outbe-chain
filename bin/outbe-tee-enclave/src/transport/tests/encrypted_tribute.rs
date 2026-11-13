@@ -1,6 +1,7 @@
 use outbe_core_common::tribute_encryption::{TributeAmountsV2, TributeContextV2};
+use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_enclave::protocol::{EnclaveRequest as DomainRequest, EnclaveResponse as DomainResponse};
-use outbe_primitives::{time::WorldwideDay, wwd_entity_id::WwdEntityId};
+use outbe_system_common::time::WorldwideDay;
 use outbe_tee::protocol::PayloadLane;
 
 use crate::transport::tests::*;

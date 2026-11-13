@@ -1,11 +1,8 @@
 //! The trailing finalized daily VWAPs a call sweep decides against.
 
 use alloy_primitives::U256;
-use outbe_primitives::{
-    error::Result,
-    storage::StorageHandle,
-    time::{previous_date_key, TimeError, SECONDS_PER_DAY_U32},
-};
+use outbe_primitives::{error::Result, storage::StorageHandle};
+use outbe_system_common::time::{previous_date_key, TimeError, SECONDS_PER_DAY_U32};
 use outbe_system_common::{
     call_breach::{
         breached_enough, count_breaches, min_days_to_call, BreachCount, BreachTerms, ScanTerms,
@@ -191,7 +188,7 @@ impl<'storage> CallWindows<'storage> {
 mod tests {
     use super::*;
     use outbe_primitives::test_utils::call_breach_prices as days;
-    use outbe_primitives::time::SECONDS_PER_DAY_U32 as DAY;
+    use outbe_system_common::time::SECONDS_PER_DAY_U32 as DAY;
 
     fn terms(price: u64, threshold: u32) -> BreachTerms {
         BreachTerms {

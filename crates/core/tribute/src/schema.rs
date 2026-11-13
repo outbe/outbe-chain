@@ -1,8 +1,8 @@
 use alloy_primitives::{Address, U256};
+use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::TRIBUTE_ADDRESS;
-use outbe_primitives::time::{EmissionDate, WorldwideDay};
-use outbe_primitives::wwd_entity_id::WwdEntityId;
+use outbe_system_common::time::{EmissionDate, WorldwideDay};
 use serde::{Deserialize, Serialize};
 
 /// Legacy plaintext tribute. Current issuance stores ciphertext instead.

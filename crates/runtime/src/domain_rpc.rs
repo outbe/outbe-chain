@@ -5,6 +5,7 @@ use std::sync::Arc;
 use alloy_primitives::{Address, Bytes, B256, U256};
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
+use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_enclave::tribute_source::{TributeSourceSubject, TributeStateSource};
 use outbe_primitives::{
     addresses::TRIBUTE_ADDRESS,
@@ -14,7 +15,6 @@ use outbe_primitives::{
         readonly::{ReadOnlyStorageProvider, StorageReader},
         StorageHandle,
     },
-    wwd_entity_id::WwdEntityId,
 };
 use reth_ethereum::primitives::AlloyBlockHeader as _;
 use reth_ethereum::storage::{

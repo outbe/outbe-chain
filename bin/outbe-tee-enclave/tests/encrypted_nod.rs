@@ -1,4 +1,5 @@
 use alloy_primitives::{Address, B256, U256};
+use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_core_common::{
     nod_encryption::NodTermsV1,
     series_id::SeriesId,
@@ -6,7 +7,7 @@ use outbe_core_common::{
     wwd_entity_id::{derive_poseidon_digest, derive_poseidon_entity_id},
 };
 use outbe_enclave::nod_decrypt::decrypt_nod_for_owner;
-use outbe_primitives::{time::WorldwideDay, wwd_entity_id::WwdEntityId};
+use outbe_system_common::time::WorldwideDay;
 use outbe_tee_enclave::{
     nod_encryption::{decrypt_nod, derive_view_key, encrypt_nod_for_tribute},
     tribute_encryption::encrypt_tribute,

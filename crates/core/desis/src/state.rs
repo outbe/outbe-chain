@@ -3,7 +3,7 @@
 use alloy_primitives::U256;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::dsl::{Map, Value};
-use outbe_primitives::time::EmissionDate;
+use outbe_system_common::time::EmissionDate;
 
 use crate::schema::{
     AuctionConfig, AuctionStage, BidData, DesisContract, IntexCallTrigger, ReferenceCurrencyPrice,

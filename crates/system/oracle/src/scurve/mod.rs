@@ -9,7 +9,7 @@ mod query;
 mod store;
 
 use alloy_primitives::U256;
-use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_system_common::time::SECONDS_PER_DAY;
 use outbe_system_common::units::SCALE_1E6_U256;
 
 pub use query::{
@@ -198,7 +198,7 @@ mod tests {
     use outbe_system_common::address_pair::AddressPair;
     use outbe_system_common::units::SCALE_1E6_U64 as COEN840_SCALE;
 
-    use outbe_primitives::time::WorldwideDay;
+    use outbe_system_common::time::WorldwideDay;
 
     use super::*;
     use crate::schema::OracleContract;
@@ -326,7 +326,7 @@ mod tests {
     /// WWD `day` days after 2024-01-01.
     fn wwd(day: u64) -> WorldwideDay {
         WorldwideDay::from_timestamp(
-            outbe_primitives::time::date_key_to_utc_timestamp(20_240_101).unwrap()
+            outbe_system_common::time::date_key_to_utc_timestamp(20_240_101).unwrap()
                 + day * SECONDS_PER_DAY,
         )
     }

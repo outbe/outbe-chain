@@ -6,7 +6,7 @@ use outbe_primitives::storage::{
     metadosis_init_genesis_binding, metadosis_process_ready_binding, MetadosisMutationEntitlements,
     MetadosisMutationPurposeTag,
 };
-use outbe_primitives::time::{date_key_to_utc_timestamp, timestamp_to_date_key};
+use outbe_system_common::time::{date_key_to_utc_timestamp, timestamp_to_date_key};
 
 use crate::handler;
 

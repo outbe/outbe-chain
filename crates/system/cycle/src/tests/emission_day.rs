@@ -4,15 +4,14 @@ use alloy_primitives::U256;
 use outbe_emission::day_emission::emission_limit_of_day;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
-    addresses::TRIBUTE_FACTORY_ADDRESS,
-    error::PrecompileError,
+    addresses::TRIBUTE_FACTORY_ADDRESS, error::PrecompileError,
     storage::MetadosisMutationPurposeTag,
-    time::{
-        date_key_to_utc_timestamp, day_number_between, timestamp_to_date_key, WorldwideDay,
-        SECONDS_PER_DAY,
-    },
 };
 use outbe_system_common::address_pair::AddressPair;
+use outbe_system_common::time::{
+    date_key_to_utc_timestamp, day_number_between, timestamp_to_date_key, WorldwideDay,
+    SECONDS_PER_DAY,
+};
 use outbe_tributefactory::TributeFactoryContract;
 
 use super::*;

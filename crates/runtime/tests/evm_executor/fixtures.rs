@@ -11,8 +11,8 @@ pub(super) const OWNER: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 
 pub(super) fn seed_cycle_genesis(storage: StorageHandle<'_>) {
     // Established-parent fixtures completed every day before the most recent closed day.
-    let completed = outbe_primitives::time::timestamp_to_date_key(
-        TEST_BLOCK_TIMESTAMP_BASE - 2 * outbe_primitives::time::SECONDS_PER_DAY,
+    let completed = outbe_system_common::time::timestamp_to_date_key(
+        TEST_BLOCK_TIMESTAMP_BASE - 2 * outbe_system_common::time::SECONDS_PER_DAY,
     );
     outbe_nod::NodContract::new(storage.clone())
         .call_latest_day
@@ -64,8 +64,8 @@ pub(crate) fn seed_previous_day_vwap(
     rate: U256,
 ) {
     let (_, index) = outbe_oracle::api::require_coen_pair(storage.clone(), 840).unwrap();
-    let day = outbe_primitives::time::previous_date_key(
-        outbe_primitives::time::timestamp_to_date_key(block_ts),
+    let day = outbe_system_common::time::previous_date_key(
+        outbe_system_common::time::timestamp_to_date_key(block_ts),
     )
     .expect("date step");
     outbe_oracle::schema::OracleContract::new(storage.clone())
@@ -88,7 +88,7 @@ pub fn dummy_pubkey(seed: u8) -> [u8; 48] {
 
 pub fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
     test_chain_spec_with_genesis_timestamp(
-        TEST_BLOCK_TIMESTAMP_BASE - 2 * outbe_primitives::time::SECONDS_PER_DAY,
+        TEST_BLOCK_TIMESTAMP_BASE - 2 * outbe_system_common::time::SECONDS_PER_DAY,
     )
 }
 

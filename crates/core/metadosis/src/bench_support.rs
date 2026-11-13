@@ -1,11 +1,11 @@
 //! Narrow benchmark-only adapters over production Metadosis transitions.
 
-use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     error::Result,
     storage::StorageHandle,
 };
+use outbe_system_common::time::WorldwideDay;
 
 /// Creates one WWD through the canonical production transition without
 /// exposing the raw Metadosis storage facade to the benchmark crate.

@@ -71,7 +71,7 @@ fn dispatch_finalization_uses_preloaded_summary_not_calldata_money() {
     let mut provider = configured_storage(2, 1_700_000_000);
     let preloaded_fee = U256::from(1_234u64);
     let parent_timestamp = 1_699_999_990u64;
-    let parent_day = outbe_primitives::time::timestamp_to_date_key(parent_timestamp);
+    let parent_day = outbe_system_common::time::timestamp_to_date_key(parent_timestamp);
     let vrf_hash = B256::repeat_byte(0xAB);
     let meta = metadata();
     let fb_hash = meta.finalized_block_hash;

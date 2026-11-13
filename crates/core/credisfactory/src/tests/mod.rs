@@ -28,7 +28,7 @@ use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
+use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 use outbe_system_common::units::{checked_protocol_to_native, SCALE_1E6_U256};
 use outbe_vaultrouter::{LiquidityReservation, VaultRouterContract};
 
@@ -48,7 +48,7 @@ pub const ISSUANCE_ISO: u16 = 840;
 /// anchor is 2.0 and the call price is 3.28.
 pub const REFERENCE_ISO: u16 = 978;
 
-pub use outbe_primitives::time::SECONDS_PER_DAY as DAY;
+pub use outbe_system_common::time::SECONDS_PER_DAY as DAY;
 
 /// Adding this delay to any deadline advances time past the end of its UTC day.
 pub const CLOSED_DAY_DELAY: u64 = DAY;
@@ -171,7 +171,7 @@ pub fn seed_reservation(
     let series_id =
         outbe_core_common::series_id::SeriesId::for_pair(day, ISSUANCE_ISO, REFERENCE_ISO)
             .expect("series id");
-    let call_start_day = outbe_primitives::time::first_full_day(now).expect("date step");
+    let call_start_day = outbe_system_common::time::first_full_day(now).expect("date step");
     let call_terms = outbe_credis::config::read(storage).expect("call terms");
     contract
         .reservations

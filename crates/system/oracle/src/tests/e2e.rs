@@ -5,7 +5,7 @@ use crate::schema::{OracleContract, SCALE_1E18};
 use alloy_primitives::{Address, U256};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{WorldwideDay, SECONDS_PER_DAY};
+use outbe_system_common::time::{WorldwideDay, SECONDS_PER_DAY};
 
 use super::common::*;
 
@@ -934,7 +934,7 @@ fn store_worldwide_day_vwap_snapshot_round_trips_every_pair() {
 
     let mut provider = HashMapStorageProvider::new(1);
     provider.set_block_number(1);
-    let worldwide_day = outbe_primitives::time::WorldwideDay::new(20260302);
+    let worldwide_day = outbe_system_common::time::WorldwideDay::new(20260302);
     let start_time = worldwide_day.start_timestamp().unwrap();
     let end_time = start_time + 50 * 60 * 60;
     StorageHandle::enter(&mut provider, |storage| {
@@ -1031,7 +1031,7 @@ fn store_worldwide_day_vwap_snapshot_round_trips_every_pair() {
 #[test]
 fn day_type_pair_vwap_reports_missing_data_without_reverting() {
     with_storage(|storage| {
-        let wwd = outbe_primitives::time::WorldwideDay::new(20260302u32);
+        let wwd = outbe_system_common::time::WorldwideDay::new(20260302u32);
         let start_time = wwd.start_timestamp().unwrap();
         let end_time = start_time + 50 * 60 * 60;
 
@@ -1083,7 +1083,7 @@ fn day_type_pair_vwap_reports_missing_data_without_reverting() {
 #[test]
 fn worldwide_day_vwap_uses_the_exact_half_open_50_hour_window() {
     with_bare_coen840_oracle(|oracle, pair| {
-        let worldwide_day = outbe_primitives::time::WorldwideDay::new(20260815);
+        let worldwide_day = outbe_system_common::time::WorldwideDay::new(20260815);
         let start = worldwide_day.start_timestamp().unwrap();
         let end = start + 50 * 60 * 60;
 
@@ -1187,7 +1187,7 @@ fn range_vwap_rejects_a_window_wider_than_the_lookback_duration() {
 #[test]
 fn worldwide_day_snapshot_rejects_noncanonical_bounds_without_writes() {
     with_bare_coen840_oracle(|oracle, pair| {
-        let worldwide_day = outbe_primitives::time::WorldwideDay::new(20260815);
+        let worldwide_day = outbe_system_common::time::WorldwideDay::new(20260815);
         let start = worldwide_day.start_timestamp().unwrap();
         let end = start + 50 * 60 * 60;
         oracle
@@ -1297,7 +1297,7 @@ fn finalize_utc_day_vwap_persists_every_vote_target_pair() {
             .unwrap();
 
         let utc_day = 20260624u32;
-        let day_start = outbe_primitives::time::date_key_to_utc_timestamp(utc_day).unwrap();
+        let day_start = outbe_system_common::time::date_key_to_utc_timestamp(utc_day).unwrap();
 
         let day_end = day_start + SECONDS_PER_DAY;
         note_hours(oracle, day_start, day_end + 3_600);
@@ -1482,7 +1482,7 @@ fn get_utc_day_vwap_precompile_returns_the_finalized_value() {
     with_bare_oracle(|storage, oracle| {
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         let utc_day = 20260624u32;
-        let day_start = outbe_primitives::time::date_key_to_utc_timestamp(utc_day).unwrap();
+        let day_start = outbe_system_common::time::date_key_to_utc_timestamp(utc_day).unwrap();
         let day_end = day_start + SECONDS_PER_DAY;
         note_hours(oracle, day_start, day_end + 3_600);
         for hour in (day_start..day_end).step_by(3_600) {
@@ -1814,7 +1814,7 @@ fn tribute_pricing_separates_an_unregistered_issuance_from_unpriced_inputs() {
 #[test]
 fn tribute_pricing_reads_both_wwd_legs_and_only_the_reference_curve() {
     let eur: Address = AssetType::IsoCurrency(978).into();
-    let day = outbe_primitives::time::WorldwideDay::new(20260302u32);
+    let day = outbe_system_common::time::WorldwideDay::new(20260302u32);
     let start_time = day.start_timestamp().unwrap();
 
     with_bare_oracle(|storage, oracle| {

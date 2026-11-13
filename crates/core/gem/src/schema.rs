@@ -1,11 +1,11 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_core_common::series_id::SeriesId;
+use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::GEM_ADDRESS;
-use outbe_primitives::time::{
+use outbe_system_common::time::{
     first_full_day, previous_date_key, timestamp_to_date_key, TimeError, WorldwideDay,
 };
-use outbe_primitives::wwd_entity_id::WwdEntityId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

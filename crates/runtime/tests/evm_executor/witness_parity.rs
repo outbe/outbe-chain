@@ -28,10 +28,8 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
     use alloy_sol_types::SolCall;
     use outbe_evm::config::OutbeEvmConfig;
     use outbe_nodfactory::precompile::INodFactory;
-    use outbe_primitives::{
-        addresses::{NOD_FACTORY_ADDRESS, REWARDS_ADDRESS},
-        time::WorldwideDay,
-    };
+    use outbe_primitives::addresses::{NOD_FACTORY_ADDRESS, REWARDS_ADDRESS};
+    use outbe_system_common::time::WorldwideDay;
     use reth_evm::ConfigureEvm;
     use reth_primitives_traits::SignedTransaction as _;
     use revm::database::states::bundle_state::BundleRetention;
@@ -54,7 +52,7 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
     let proposer = signer.address();
     let worldwide_day = WorldwideDay::new(20_241_220);
     let entry_price_minor = U256::from(450_000_000u64);
-    let issued_at = outbe_primitives::time::date_key_to_utc_timestamp(20_200_101).unwrap() + 1;
+    let issued_at = outbe_system_common::time::date_key_to_utc_timestamp(20_200_101).unwrap() + 1;
     let group_key = outbe_nod::test_support::group_key_at(
         &outbe_nod::config::NodParams::DEV,
         issued_at,

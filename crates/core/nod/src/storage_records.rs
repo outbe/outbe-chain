@@ -132,7 +132,7 @@ impl<'storage> crate::NodContract<'storage> {
 mod tests {
     use super::*;
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
-    use outbe_primitives::time::WorldwideDay;
+    use outbe_system_common::time::WorldwideDay;
 
     #[test]
     fn indexed_record_creation_reverts_if_an_index_rejects_it() {

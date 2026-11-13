@@ -10,7 +10,7 @@ fn hourly_process_emission_day_executes_due_emission_day_at_metadosis_start() {
     let (emission_day, fire_at) = storage.enter(|handle| {
         let anchor = genesis_block(handle.clone(), GENESIS_TS + 60);
         run_cycle_tick(&anchor).unwrap();
-        let wwd = outbe_primitives::time::WorldwideDay::new(20_240_101);
+        let wwd = outbe_system_common::time::WorldwideDay::new(20_240_101);
         let wwd_proj = outbe_metadosis::api::worldwide_day(handle.clone(), wwd)
             .unwrap()
             .unwrap();
@@ -25,7 +25,7 @@ fn hourly_process_emission_day_executes_due_emission_day_at_metadosis_start() {
     storage.enter(|handle| {
         seed_trigger_clock(&handle, fire_at);
         let prev_day =
-            outbe_primitives::time::previous_date_key(emission_day.day).expect("date step");
+            outbe_system_common::time::previous_date_key(emission_day.day).expect("date step");
         outbe_emission::api::record_failed_day_allocation(handle, prev_day, U256::ZERO).unwrap();
     });
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 16);
@@ -116,7 +116,7 @@ fn due_emission_day_fixture() -> (HashMapStorageProvider, u32, u64) {
     let (day, fire_at) = storage.enter(|handle| {
         let anchor = genesis_block(handle.clone(), GENESIS_TS + 60);
         run_cycle_tick(&anchor).unwrap();
-        let wwd = outbe_primitives::time::WorldwideDay::new(20_240_101);
+        let wwd = outbe_system_common::time::WorldwideDay::new(20_240_101);
         let wwd_proj = outbe_metadosis::api::worldwide_day(handle.clone(), wwd)
             .unwrap()
             .unwrap();
@@ -127,7 +127,7 @@ fn due_emission_day_fixture() -> (HashMapStorageProvider, u32, u64) {
     });
     storage.enter(|handle| {
         seed_trigger_clock(&handle, fire_at);
-        let prev_day = outbe_primitives::time::previous_date_key(day).expect("date step");
+        let prev_day = outbe_system_common::time::previous_date_key(day).expect("date step");
         outbe_emission::api::record_failed_day_allocation(handle, prev_day, U256::ZERO).unwrap();
     });
     (storage, day, fire_at)

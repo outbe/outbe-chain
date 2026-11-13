@@ -1,7 +1,8 @@
 //! Neutral encrypted Tribute records shared by storage, clients and the enclave.
 
+use crate::wwd_entity_id::WwdEntityId;
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_primitives::{time::WorldwideDay, wwd_entity_id::WwdEntityId};
+use outbe_system_common::time::WorldwideDay;
 use serde::{Deserialize, Serialize};
 
 pub const TRIBUTE_AMOUNTS_BLOB_LEN: usize = 8 + 64 + 16;

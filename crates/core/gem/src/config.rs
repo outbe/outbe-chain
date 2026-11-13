@@ -5,7 +5,7 @@
 
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::SECONDS_PER_DAY_U32;
+use outbe_system_common::time::SECONDS_PER_DAY_U32;
 
 use crate::constants::{
     CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, POSITION_VALIDITY_SECONDS,
@@ -48,7 +48,7 @@ impl GemParams {
         call_notice_period_seconds: 600,
         call_rate: 4,
         #[cfg(not(feature = "e2e-test"))]
-        position_validity: 7 * outbe_primitives::time::SECONDS_PER_DAY,
+        position_validity: 7 * outbe_system_common::time::SECONDS_PER_DAY,
         #[cfg(feature = "e2e-test")]
         position_validity: 900,
     };

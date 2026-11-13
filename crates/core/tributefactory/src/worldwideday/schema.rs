@@ -1,5 +1,5 @@
 use outbe_macros::storage_record;
-use outbe_primitives::time::WorldwideDay as WorldwideDayKey;
+use outbe_system_common::time::WorldwideDay as WorldwideDayKey;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[storage_record(packed, exists_field = offering_start)]
@@ -18,11 +18,11 @@ pub struct WorldwideDay {
 }
 
 impl WorldwideDay {
-    pub fn forming_start(&self) -> Result<u64, outbe_primitives::time::TimeError> {
+    pub fn forming_start(&self) -> Result<u64, outbe_system_common::time::TimeError> {
         self.wwd.start_timestamp()
     }
 
-    pub fn forming_end(&self) -> Result<u64, outbe_primitives::time::TimeError> {
+    pub fn forming_end(&self) -> Result<u64, outbe_system_common::time::TimeError> {
         Ok(self
             .forming_start()?
             .saturating_add(outbe_chain_constants::get_metadosis_forming_period_seconds()))

@@ -6,7 +6,7 @@ use outbe_intex::{IntexCallTrigger, SeriesId, SERIES_ID_LEN};
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::error::Result;
-use outbe_primitives::time::EmissionDate;
+use outbe_system_common::time::EmissionDate;
 
 /// The call terms of the live profile. `api::call_terms` reads them once, and the
 /// auction start fixes them for the day.

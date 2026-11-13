@@ -2,8 +2,8 @@
 
 use alloy_primitives::{Address, U256};
 use outbe_core_common::entity_codec::TributeBodyV1;
-use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::wwd_entity_id::WwdEntityId;
+use outbe_core_common::wwd_entity_id::WwdEntityId;
+use outbe_system_common::time::WorldwideDay;
 
 pub use crate::errors::{LysisArithmeticErrorV1, ProgramErrorV1};
 

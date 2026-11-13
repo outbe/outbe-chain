@@ -11,8 +11,8 @@ use outbe_oracle::api::AddressPair;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::SECONDS_PER_DAY;
-use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, EmissionDate};
+use outbe_system_common::time::SECONDS_PER_DAY;
+use outbe_system_common::time::{previous_date_key, timestamp_to_date_key, EmissionDate};
 #[cfg(not(feature = "e2e-test"))]
 use outbe_system_common::units::SCALE_1E6_U128;
 
@@ -3297,7 +3297,7 @@ fn a_clearing_round_is_sized_from_the_chains_recent_days() {
         let quiet = crate::runtime::clearing_round_gas(&s, day, chain).unwrap();
 
         let contract = s.contract::<DesisContract>();
-        let busy = outbe_primitives::time::previous_date_key(day.value()).expect("date step");
+        let busy = outbe_system_common::time::previous_date_key(day.value()).expect("date step");
         contract
             .chain_bid_count
             .write(

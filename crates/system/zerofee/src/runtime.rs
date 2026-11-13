@@ -29,9 +29,8 @@
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_primitives::{
-    addresses::ZEROFEE_ADDRESS, storage::StorageHandle, time::timestamp_to_date_key,
-};
+use outbe_primitives::{addresses::ZEROFEE_ADDRESS, storage::StorageHandle};
+use outbe_system_common::time::timestamp_to_date_key;
 
 use crate::{
     constants::{

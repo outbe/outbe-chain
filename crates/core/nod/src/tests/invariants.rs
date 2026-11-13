@@ -1,12 +1,12 @@
 use alloy_primitives::{Address, U256};
-use outbe_primitives::time::{
-    date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key, WorldwideDay,
-};
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
 use outbe_system_common::math::constants::REAL_ID_SHIFT;
+use outbe_system_common::time::{
+    date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key, WorldwideDay,
+};
 
 use crate::{api, NodContract, NodItemState};
 

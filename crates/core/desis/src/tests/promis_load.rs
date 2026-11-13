@@ -5,7 +5,7 @@ use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::DESIS_ADDRESS;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::EmissionDate;
+use outbe_system_common::time::EmissionDate;
 
 use crate::precompile::IDesis;
 use crate::runtime;

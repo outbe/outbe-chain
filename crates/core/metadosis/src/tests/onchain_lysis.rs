@@ -1,9 +1,7 @@
 use super::*;
 use alloy_sol_types::SolEvent;
-use outbe_primitives::{
-    addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS},
-    time::WorldwideDay,
-};
+use outbe_primitives::addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS};
+use outbe_system_common::time::WorldwideDay;
 
 const WWD: WorldwideDay = WorldwideDay::new(20260920);
 const DAY: u32 = 20261014;
@@ -242,7 +240,7 @@ fn native_completion_credits_the_unused_lysis_limit_once() {
             .metadosis_limit_minor();
         let desis = outbe_desis::schema::DesisContract::new(storage.clone())
             .pending_desis_limit_minor
-            .read(&outbe_primitives::time::EmissionDate::new(DAY))
+            .read(&outbe_system_common::time::EmissionDate::new(DAY))
             .unwrap();
         let after = outbe_promislimit::PromisLimitContract::new(storage)
             .promis_limit()
@@ -266,7 +264,7 @@ fn native_completion_briefs_the_emission_day() {
     run(&mut provider).unwrap();
     StorageHandle::enter(&mut provider, |storage| {
         let desis = outbe_desis::schema::DesisContract::new(storage);
-        let day = outbe_primitives::time::EmissionDate::new(DAY);
+        let day = outbe_system_common::time::EmissionDate::new(DAY);
         assert_eq!(
             desis.auction_stage.read(&day).unwrap(),
             outbe_desis::schema::AuctionStage::Briefed as u8
@@ -415,7 +413,7 @@ fn one_rule_for_metadosis_limit() {
             assert_eq!(record.metadosis_state, metadosis_state::COMPLETED);
             let desis = outbe_desis::schema::DesisContract::new(storage.clone())
                 .pending_desis_limit_minor
-                .read(&outbe_primitives::time::EmissionDate::new(DAY))
+                .read(&outbe_system_common::time::EmissionDate::new(DAY))
                 .unwrap();
             let after = outbe_promislimit::PromisLimitContract::new(storage)
                 .promis_limit()

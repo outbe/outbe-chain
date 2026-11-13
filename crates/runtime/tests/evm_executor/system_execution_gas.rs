@@ -2,8 +2,8 @@ use super::*;
 
 #[test]
 fn delayed_first_cycle_tick_starts_all_fresh_passes_at_chainspec_genesis() {
-    use outbe_primitives::time::{date_key_to_utc_timestamp, WorldwideDay};
     use outbe_system_common::pass_budget::BlockAllowance;
+    use outbe_system_common::time::{date_key_to_utc_timestamp, WorldwideDay};
 
     let genesis_ts = date_key_to_utc_timestamp(20_240_131).unwrap() + 86_390;
     let block_ts = date_key_to_utc_timestamp(20_240_203).unwrap() + 60;
@@ -566,7 +566,7 @@ fn critical_cycle_tick_revert_fails_block() {
 #[test]
 fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
     const GENESIS_TS: u64 = 1_704_067_200;
-    use outbe_primitives::time::SECONDS_PER_DAY;
+    use outbe_system_common::time::SECONDS_PER_DAY;
     const PREVIOUS_DAY: u32 = 20_240_101;
 
     #[derive(Debug, Eq, PartialEq)]

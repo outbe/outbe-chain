@@ -3,8 +3,8 @@ use outbe_primitives::{
     block::BlockRuntimeContext,
     error::Result,
     storage::{metadosis_cycle_allocation_binding, MetadosisCycleLifecycle},
-    time::date_key_to_utc_timestamp,
 };
+use outbe_system_common::time::date_key_to_utc_timestamp;
 
 use crate::precompile::IMetadosis;
 use crate::schema::MetadosisContract;

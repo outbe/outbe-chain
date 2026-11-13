@@ -2,10 +2,10 @@ mod forfeiture;
 pub use forfeiture::{LysisOutcome, PricedCurrencies};
 
 use alloy_primitives::U256;
+use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{EmissionDate, WorldwideDay};
-use outbe_primitives::wwd_entity_id::WwdEntityId;
+use outbe_system_common::time::{EmissionDate, WorldwideDay};
 
 use crate::errors::TributeError;
 use crate::precompile::ITribute;

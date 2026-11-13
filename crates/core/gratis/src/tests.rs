@@ -513,7 +513,7 @@ fn encrypted_nod(
     nod_id_byte: u8,
 ) -> outbe_core_common::nod_encryption::EncryptedNodV1 {
     use outbe_core_common::nod_encryption::NodTermsV1;
-    use outbe_primitives::time::WorldwideDay;
+    use outbe_system_common::time::WorldwideDay;
     outbe_enclave::nod_encryption::encrypt_nod(
         &[0x5a; 32],
         NodTermsV1 {

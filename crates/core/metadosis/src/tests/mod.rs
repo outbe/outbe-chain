@@ -61,11 +61,11 @@ fn arm_reference_price(storage: &StorageHandle, timestamp: u64) {
         }
     };
     let oracle = OracleContract::new(storage.clone());
-    let last_closed = outbe_primitives::time::previous_date_key(
-        outbe_primitives::time::timestamp_to_date_key(timestamp),
+    let last_closed = outbe_system_common::time::previous_date_key(
+        outbe_system_common::time::timestamp_to_date_key(timestamp),
     )
     .expect("date step");
-    let day_before = outbe_primitives::time::previous_date_key(last_closed).expect("date step");
+    let day_before = outbe_system_common::time::previous_date_key(last_closed).expect("date step");
     for day in [day_before, last_closed] {
         oracle
             .record_utc_day_vwap(day, index, U256::from(100u64))

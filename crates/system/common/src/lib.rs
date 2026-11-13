@@ -16,6 +16,7 @@ pub mod pass_budget;
 pub mod scheduled_update;
 pub mod slashing_journal;
 pub mod stablecoin;
+pub mod time;
 pub mod units;
 pub mod vote_target;
 pub mod zero_fee;

@@ -6,11 +6,13 @@ use alloy_sol_types::SolEvent;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::GEM_ADDRESS;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::SECONDS_PER_DAY;
-use outbe_primitives::time::SECONDS_PER_DAY_U32;
-use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
 use outbe_system_common::pass_budget::{
     PassBudget, SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK,
+};
+use outbe_system_common::time::SECONDS_PER_DAY;
+use outbe_system_common::time::SECONDS_PER_DAY_U32;
+use outbe_system_common::time::{
+    date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key,
 };
 
 use super::*;

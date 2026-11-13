@@ -6,7 +6,7 @@ use outbe_primitives::storage::{
     metadosis_process_ready_binding, MetadosisCycleLifecycle, MetadosisMutationPurposeTag,
     StorageHandle,
 };
-use outbe_primitives::time::WorldwideDay;
+use outbe_system_common::time::WorldwideDay;
 use outbe_tribute::TributeContract;
 
 use super::CHAIN_ID;
@@ -192,9 +192,9 @@ fn currency_price_unavailable_encodes_selector_and_pipeline_cap_and_historical_c
                         TributeContract::new(storage.clone())
                             .day_emission_day
                             .read(&cur_wwd)?,
-                        outbe_primitives::time::EmissionDate::new(schedule.day)
+                        outbe_system_common::time::EmissionDate::new(schedule.day)
                     );
-                    day_key = outbe_primitives::time::next_date_key(day_key).unwrap();
+                    day_key = outbe_system_common::time::next_date_key(day_key).unwrap();
                 }
                 let overflow_wwd = WorldwideDay::new(day_key);
                 let (overflow_schedule, _) =
@@ -242,7 +242,7 @@ fn currency_price_unavailable_encodes_selector_and_pipeline_cap_and_historical_c
                     TributeContract::new(storage.clone())
                         .day_emission_day
                         .read(&hist_wwd)?,
-                    outbe_primitives::time::EmissionDate::new(hist_schedule.day)
+                    outbe_system_common::time::EmissionDate::new(hist_schedule.day)
                 );
                 crate::worldwideday::close_worldwide_day(&mut factory, hist_wwd)?;
                 assert!(!factory.pipeline_wwd.read_all()?.contains(&hist_wwd));

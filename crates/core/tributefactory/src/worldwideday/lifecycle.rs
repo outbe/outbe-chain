@@ -7,10 +7,10 @@ use outbe_primitives::{
         metadosis_advance_due_binding, metadosis_init_genesis_binding, MetadosisCycleLifecycle,
         StorageHandle,
     },
-    time::{
-        date_key_to_utc_timestamp, next_date_key, timestamp_to_date_key, WorldwideDay,
-        SECONDS_PER_DAY, UTC_PLUS_14_OFFSET,
-    },
+};
+use outbe_system_common::time::{
+    date_key_to_utc_timestamp, next_date_key, timestamp_to_date_key, WorldwideDay, SECONDS_PER_DAY,
+    UTC_PLUS_14_OFFSET,
 };
 
 use crate::schema::TributeFactoryContract;

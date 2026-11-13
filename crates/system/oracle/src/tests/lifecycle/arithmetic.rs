@@ -1,5 +1,5 @@
 use super::*;
-use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_system_common::time::SECONDS_PER_DAY;
 
 /// Restore a pre-admission-bounds ballot for lifecycle arithmetic regression
 /// tests. Current submitVote rejects these extreme values. Admission tests cover
@@ -72,7 +72,8 @@ fn begin_block_skips_only_the_unrepresentable_legacy_cross_row() {
 
         // 24 seconds into 2020-01-02. Block 2 stays the vote-period boundary.
         // A timestamp on 2020-01-01 makes the zero watermark step 2019-12-31.
-        let timestamp = outbe_primitives::time::date_key_to_utc_timestamp(20_200_102).unwrap() + 24;
+        let timestamp =
+            outbe_system_common::time::date_key_to_utc_timestamp(20_200_102).unwrap() + 24;
         let runtime_ctx = BlockRuntimeContext::new(
             BlockContext {
                 block_gas_limit: 0,

@@ -1,9 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_core_common::wwd_entity_id::derive_poseidon_entity_id;
-use outbe_primitives::{
-    storage::{hashmap::HashMapStorageProvider, StorageHandle},
-    time::WorldwideDay,
-};
+use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+use outbe_system_common::time::WorldwideDay;
 use outbe_tribute::{TributeContract, TributeData};
 
 fn tribute(owner: Address, day: u32) -> TributeData {

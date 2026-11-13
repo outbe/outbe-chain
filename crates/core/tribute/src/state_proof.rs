@@ -1,6 +1,7 @@
 use alloy_primitives::{B256, U256};
 use outbe_core_common::{
-    tribute_encryption::EncryptedTributeV2, wwd_entity_id::derive_poseidon_entity_id,
+    tribute_encryption::EncryptedTributeV2,
+    wwd_entity_id::{derive_poseidon_entity_id, WwdEntityId},
 };
 use outbe_primitives::storage::proof::FinalizedStateCheckpoint;
 use outbe_primitives::{
@@ -12,9 +13,8 @@ use outbe_primitives::{
         types::Storable,
         StorageHandle,
     },
-    time::WorldwideDay,
-    wwd_entity_id::WwdEntityId,
 };
+use outbe_system_common::time::WorldwideDay;
 use serde::{Deserialize, Serialize};
 
 use crate::{storage_records::StoredTributeEntryExt, TributeContract};

@@ -222,7 +222,7 @@ fn every_block_credits_a_queued_reward_slice_between_hourly_cycles() {
     use outbe_agentreward::schema::RewardPool;
 
     with_anchored_cycle(|handle| {
-        let day = outbe_primitives::time::WorldwideDay::new(20_231_231);
+        let day = outbe_system_common::time::WorldwideDay::new(20_231_231);
         let slice = u64::from(ACCRUAL_RECIPIENTS_PER_BLOCK);
         let recipients = slice + 4;
         let recipient = |n: u64| Address::from_word(U256::from(n + 1).into());
@@ -311,7 +311,7 @@ fn next_day_cycle_settlement_pays_previous_utc_day_agent_activity() {
     with_anchored_cycle(|handle| {
         let wallet = Address::repeat_byte(0x71);
         let sra = Address::repeat_byte(0x72);
-        let reward_day = outbe_primitives::time::WorldwideDay::new(REWARD_UTC_DAY);
+        let reward_day = outbe_system_common::time::WorldwideDay::new(REWARD_UTC_DAY);
         let mut agent_reward = outbe_agentreward::AgentRewardContract::new(handle.clone());
         agent_reward
             .increment_waa_tribute(reward_day, wallet)
@@ -514,7 +514,7 @@ fn corrupt_emission_day(ctx: &BlockRuntimeContext<'_>, day: u32) {
         None => {
             let mut record = outbe_emission::schema::EmissionDay::new_pending(
                 day,
-                outbe_primitives::time::WorldwideDay::new(0),
+                outbe_system_common::time::WorldwideDay::new(0),
                 1,
             );
             record.state = 7;

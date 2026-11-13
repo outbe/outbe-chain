@@ -13,13 +13,13 @@ use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     error::Result,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
-    time::{previous_date_key, timestamp_to_date_key},
 };
 use outbe_promislimit::PromisLimitContract;
 use outbe_system_common::address_pair::AddressPair;
+use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 
 const ISSUED: u64 = 1_704_067_200;
-use outbe_primitives::time::SECONDS_PER_DAY as DAY;
+use outbe_system_common::time::SECONDS_PER_DAY as DAY;
 const CALLED: u64 = ISSUED + 29 * DAY;
 const DEADLINE: u64 = CALLED + 7 * DAY;
 const GEMS: u8 = 5;

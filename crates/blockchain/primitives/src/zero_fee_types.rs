@@ -6,25 +6,11 @@ use alloy_consensus::Transaction;
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_primitives::{Address, B256, U256};
 
-use crate::addresses::TRIBUTE_FACTORY_ADDRESS;
 use crate::error::PrecompileError;
 use crate::transaction_call::TransactionCallFields;
 
 /// Maximum gas limit for the one-time self-authorized EIP-7702 bootstrap.
 pub const FREE_TX_BOOTSTRAP_GAS_LIMIT: u64 = 100_000;
-
-/// Maximum sponsored gas limit for `TributeFactory.offerTribute`.
-pub const FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT: u64 = 8_000_000;
-
-/// `offerTribute(bytes,bytes,uint256,uint32,uint16,uint16,bytes,uint32,string,bytes,bytes,bytes)`.
-const OFFER_TRIBUTE_SELECTOR: [u8; 4] = [0x7c, 0x65, 0xe0, 0x88];
-
-/// Operation-specific sponsored gas ceilings, keyed by `(target, selector)`.
-pub const ELEVATED_SPONSORED_GAS: &[(Address, [u8; 4], u64)] = &[(
-    TRIBUTE_FACTORY_ADDRESS,
-    OFFER_TRIBUTE_SELECTOR,
-    FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT,
-)];
 
 /// A minimal transaction view for zero-fee hooks.
 #[derive(Clone, Copy)]

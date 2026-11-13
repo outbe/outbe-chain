@@ -1,4 +1,4 @@
-pub use outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS;
+pub use outbe_core_common::addresses::ORIGIN_ROUTER_ADDRESS;
 
 /// Minimum-bid-quantity floor: 4% of the prior series' issued count (basis points).
 pub const BID_QUANTITY_FLOOR_BPS: u32 = 400;

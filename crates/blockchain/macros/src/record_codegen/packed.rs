@@ -59,7 +59,7 @@ fn record_field_byte_width(ty: &Type) -> Option<usize> {
     match last_type_ident(&inner).as_deref() {
         Some("bool" | "u8") => Some(1),
         Some("u16") => Some(2),
-        Some("u32" | "WorldwideDay" | "WorldwideDayKey" | "EmissionDate") => Some(4),
+        Some("u32") => Some(4),
         Some("u64") => Some(8),
         Some("u128") => Some(16),
         Some("Address") => Some(20),
@@ -99,7 +99,11 @@ fn place_one_field(
     field: &RecordFieldInfo,
     state: &mut (u64, usize),
 ) -> syn::Result<FieldPlacement> {
-    let Some(width) = record_field_byte_width(&field.ty) else {
+    let Some(width) = field
+        .attrs
+        .bytes
+        .or_else(|| record_field_byte_width(&field.ty))
+    else {
         if state.1 > 0 {
             state.0 += 1;
             state.1 = 0;
@@ -222,7 +226,15 @@ fn emit_pack_steps_for_slot(
             let fname = &field.name;
             let storage_ty = record_field_inner_storage_type(&field.ty);
             let byte_offset_lit = placement.byte_offset;
+            let width_assert = field.attrs.bytes.map(|expected_width| {
+                quote! {
+                    const _: () = assert!(
+                        <#storage_ty as ::outbe_primitives::storage::types::Storable>::BYTES == #expected_width
+                    );
+                }
+            });
             quote! {
+                #width_assert
                 __word = ::outbe_primitives::storage::types::pack_into_word::<#storage_ty>(
                     __word,
                     #byte_offset_lit,

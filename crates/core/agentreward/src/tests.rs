@@ -1,7 +1,7 @@
 use alloy_primitives::{address, Address, U256};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
+use outbe_system_common::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 
 use crate::schema::RewardPool as PoolKind;
 use crate::schema::{AgentRewardContract, DayIndex, RewardPool};

@@ -283,7 +283,7 @@ pub fn apply_cohort_section(
 ) -> Result<FidelityOpOutcome> {
     let view_key = FIDELITY.account_keys.derive_view_key(state_key, account)?;
     let (version, mut state) = read_state(&view_key, account, &section.current_blob)?;
-    let utc_day = outbe_primitives::time::utc_day_from_timestamp(section.timestamp);
+    let utc_day = outbe_system_common::time::utc_day_from_timestamp(section.timestamp);
 
     let mut qualified_start_initialized = None;
     match section.op {
@@ -351,7 +351,7 @@ pub fn snapshot_leagues(
     state_key: &[u8; 32],
     req: &FidelitySnapshotRequest,
 ) -> Result<Vec<FidelityLeagueEntry>> {
-    let eval_day = outbe_primitives::time::utc_day_from_timestamp(req.timestamp);
+    let eval_day = outbe_system_common::time::utc_day_from_timestamp(req.timestamp);
     let mut leagues = Vec::with_capacity(req.entries.len());
     for entry in &req.entries {
         let view_key = FIDELITY
@@ -398,7 +398,7 @@ pub fn query_index(
         .account_keys
         .derive_view_key(state_key, req.account)?;
     let (_, state) = read_state(&view_key, req.account, &req.cohort_blob)?;
-    let query_day = outbe_primitives::time::utc_day_from_timestamp(req.query_timestamp);
+    let query_day = outbe_system_common::time::utc_day_from_timestamp(req.query_timestamp);
     let (rcfi, efficiency, league) = state.evaluate(query_day, req.first_qualified_start)?;
     Ok(FidelityQueryResult {
         rcfi,
@@ -415,7 +415,7 @@ mod tests {
     use outbe_fidelity_math::{MAX_LEAGUE, MIN_LEAGUE};
 
     const CHAIN: B256 = B256::repeat_byte(0xC2);
-    use outbe_primitives::time::SECONDS_PER_DAY as DAY;
+    use outbe_system_common::time::SECONDS_PER_DAY as DAY;
 
     fn state_key() -> [u8; 32] {
         *derive_fidelity_state_key(b"a-group-threshold-signature-~48-bytes-long!!", CHAIN, 0)
@@ -448,7 +448,7 @@ mod tests {
     /// - any change to the auth message
     ///
     /// Regenerate only on an intentional, reviewed format change.
-    const FIRST_DAY: u64 = outbe_primitives::time::utc_day_from_timestamp(1_000_000);
+    const FIRST_DAY: u64 = outbe_system_common::time::utc_day_from_timestamp(1_000_000);
 
     #[test]
     fn divergent_cohort_transitions_rederive_independent_keys() {
@@ -775,7 +775,7 @@ mod tests {
 
         for s in samples {
             let ts = s["ts"].as_u64().unwrap();
-            let sample_day = outbe_primitives::time::utc_day_from_timestamp(ts);
+            let sample_day = outbe_system_common::time::utc_day_from_timestamp(ts);
             let want_rcfi = s["rcfi"].as_f64().unwrap();
             let want_eff = s["efficiency"].as_f64().unwrap();
             let want_dage = s["d_age"].as_f64().unwrap();
@@ -785,7 +785,7 @@ mod tests {
             let mut state = CohortState::default();
             for (t_ts, deposit, amount) in &txs {
                 if *t_ts <= ts {
-                    let tx_day = outbe_primitives::time::utc_day_from_timestamp(*t_ts);
+                    let tx_day = outbe_system_common::time::utc_day_from_timestamp(*t_ts);
                     if *deposit {
                         state.cohort_in(*amount, tx_day);
                     } else {

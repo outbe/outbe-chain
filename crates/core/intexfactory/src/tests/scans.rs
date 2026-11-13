@@ -1,7 +1,7 @@
 use super::*;
 
 use super::lifecycle::{fill_days, setup_pair};
-use outbe_primitives::time::SECONDS_PER_DAY_U32;
+use outbe_system_common::time::SECONDS_PER_DAY_U32;
 
 /// Well past issuance: the closed day before it is one every seeded series held in full.
 const MATURE_TS: u64 = ISSUED_AT + 21 * DAY + 1;

@@ -9,9 +9,9 @@ use outbe_intex::SeriesId;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::SECONDS_PER_DAY;
-use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, EmissionDate};
 use outbe_promisfactory::api::ModifyAuth;
+use outbe_system_common::time::SECONDS_PER_DAY;
+use outbe_system_common::time::{previous_date_key, timestamp_to_date_key, EmissionDate};
 use outbe_vaultrouter::settlement::SettlementPayment;
 
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
@@ -97,7 +97,7 @@ fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
     storage.set_timestamp(U256::from(T_NOW));
     // Stub IntexNFT1155: `burnIntex` succeeds and returns nothing.
     storage.stub_sub_call_at(
-        outbe_primitives::addresses::INTEX_NFT1155_ADDRESS,
+        outbe_core_common::addresses::INTEX_NFT1155_ADDRESS,
         alloy_primitives::Bytes::new(),
     );
     // Answered per selector, so the settlement path can tell USD from EUR.
@@ -345,7 +345,7 @@ fn assert_called_source_cannot_be_sent(called_at: u64) {
     let mut provider = test_storage(None);
     // An empty burn answer fails to decode, so a burn before the state check would show.
     provider.stub_sub_call_at(
-        outbe_primitives::addresses::INTEX_NFT1155_ADDRESS,
+        outbe_core_common::addresses::INTEX_NFT1155_ADDRESS,
         alloy_primitives::Bytes::new(),
     );
     StorageHandle::enter(&mut provider, |storage| {

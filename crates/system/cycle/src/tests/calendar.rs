@@ -27,7 +27,7 @@ fn process_emission_day_catches_up_one_oldest_day_per_hourly_run_after_a_multi_d
         assert!(
             outbe_metadosis::api::worldwide_day(
                 fire.storage.clone(),
-                outbe_primitives::time::WorldwideDay::new(20_240_104),
+                outbe_system_common::time::WorldwideDay::new(20_240_104),
             )
             .unwrap()
             .is_some(),
@@ -69,12 +69,12 @@ fn catchup_horizon_bounds_backward_scan_to_max_reward_catchup_days() {
         let halt_days = u64::from(MAX_REWARD_CATCHUP_DAYS) + 6;
         let restart_ts = GENESIS_TS + halt_days * SECONDS_PER_DAY + 3_600;
         let ctx = runtime_context(block_ctx(2, restart_ts), handle.clone());
-        let yesterday = outbe_primitives::time::previous_date_key(
-            outbe_primitives::time::timestamp_to_date_key(restart_ts),
+        let yesterday = outbe_system_common::time::previous_date_key(
+            outbe_system_common::time::timestamp_to_date_key(restart_ts),
         )
         .unwrap();
-        let expected_floor = outbe_primitives::time::timestamp_to_date_key(
-            outbe_primitives::time::date_key_to_utc_timestamp(yesterday).unwrap()
+        let expected_floor = outbe_system_common::time::timestamp_to_date_key(
+            outbe_system_common::time::date_key_to_utc_timestamp(yesterday).unwrap()
                 - u64::from(MAX_REWARD_CATCHUP_DAYS - 1) * SECONDS_PER_DAY,
         );
         assert_eq!(active_utc_day(&ctx), expected_floor);
@@ -142,7 +142,8 @@ fn forward_seal_jump_waits_for_skipped_parent_late_votes() {
     storage.set_block_number(14);
     storage.enter(|handle| {
         let ctx = dispatch_at(handle.clone(), 14, restart_ts + 3);
-        let floor = outbe_primitives::time::timestamp_to_date_key(GENESIS_TS + 6 * SECONDS_PER_DAY);
+        let floor =
+            outbe_system_common::time::timestamp_to_date_key(GENESIS_TS + 6 * SECONDS_PER_DAY);
         assert_eq!(
             outbe_rewards::api::get_last_sealed_day(&handle).unwrap(),
             floor
@@ -322,7 +323,7 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
         outbe_desis::schema::DesisContract::new(handle.clone())
             .auction_stage
             .write(
-                &outbe_primitives::time::EmissionDate::new(20_240_102),
+                &outbe_system_common::time::EmissionDate::new(20_240_102),
                 outbe_desis::schema::AuctionStage::Briefed as u8,
             )
             .unwrap();

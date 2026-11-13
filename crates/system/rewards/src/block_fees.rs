@@ -390,8 +390,8 @@ mod tests {
     use alloy_sol_types::SolEvent;
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag};
-    use outbe_primitives::time::WorldwideDay;
     use outbe_promislimit::PromisLimitContract;
+    use outbe_system_common::time::WorldwideDay;
     use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 
     const CHAIN_ID: u64 = 1;
@@ -854,7 +854,7 @@ mod tests {
                 .unwrap();
             assert_eq!(distributed, U256::from(3_000) * unit);
             assert_eq!(residue, expected_residue * unit);
-            let utc_day = outbe_primitives::time::timestamp_to_date_key(timestamp);
+            let utc_day = outbe_system_common::time::timestamp_to_date_key(timestamp);
             assert!(
                 outbe_emission::api::emission_day(ctx.storage.clone(), utc_day)
                     .unwrap()
@@ -885,7 +885,7 @@ mod tests {
                 handle,
             );
             let daily_base = U256::from(10_000);
-            let utc_day = outbe_primitives::time::timestamp_to_date_key(timestamp);
+            let utc_day = outbe_system_common::time::timestamp_to_date_key(timestamp);
             outbe_emission::api::record_day_allocation(
                 ctx.storage.clone(),
                 utc_day,

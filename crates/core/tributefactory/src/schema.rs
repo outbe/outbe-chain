@@ -1,8 +1,7 @@
 use alloy_primitives::B256;
 use outbe_macros::{contract, storage_schema};
-use outbe_primitives::{
-    addresses::TRIBUTE_FACTORY_ADDRESS, storage::types::Mapping, time::WorldwideDay,
-};
+use outbe_primitives::{addresses::TRIBUTE_FACTORY_ADDRESS, storage::types::Mapping};
+use outbe_system_common::time::WorldwideDay;
 
 /// Number of recent SU hashes retained in the replay-guard ring.
 ///

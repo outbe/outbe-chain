@@ -169,10 +169,6 @@ pub enum CtxStorageError {
     MetadosisMutationFrameIdentityMismatch,
     #[error("Metadosis mutation frame execution scope mismatch")]
     MetadosisMutationFrameScopeMismatch,
-    #[error("certified Lysis activation frame is not entitled for this EVM call")]
-    LysisActivationFrameNotEntitled,
-    #[error("certified Lysis activation frame identity mismatch")]
-    LysisActivationFrameIdentityMismatch,
     #[error("insufficient balance for transfer from {from}: needs {amount}")]
     InsufficientBalanceForTransfer { from: Address, amount: U256 },
     #[error("insufficient balance for burn from {address}: has {balance} but needs {amount}")]
@@ -233,9 +229,7 @@ impl From<CtxStorageError> for PrecompileError {
             | CtxStorageError::MetadosisMutationPurposeNotEntitled { .. }
             | CtxStorageError::MetadosisMutationFrameNotActive
             | CtxStorageError::MetadosisMutationFrameIdentityMismatch
-            | CtxStorageError::MetadosisMutationFrameScopeMismatch
-            | CtxStorageError::LysisActivationFrameNotEntitled
-            | CtxStorageError::LysisActivationFrameIdentityMismatch => {
+            | CtxStorageError::MetadosisMutationFrameScopeMismatch => {
                 Self::Revert(error.to_string())
             }
             CtxStorageError::StorageOperation(_)

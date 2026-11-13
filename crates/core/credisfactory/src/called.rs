@@ -83,7 +83,7 @@ impl<'storage> CallPass<'storage> for CredisCallPass<'storage> {
         phase: u8,
         budget: &mut PassBudget,
     ) -> Result<Progress> {
-        let pinned_ts = outbe_primitives::time::date_key_to_utc_timestamp(pinned_day)
+        let pinned_ts = outbe_system_common::time::date_key_to_utc_timestamp(pinned_day)
             .map_err(crate::rules::date_step_error)?;
         let through_day = outbe_core_common::deadline_queue::deadline_day(pinned_ts)?;
         match phase {

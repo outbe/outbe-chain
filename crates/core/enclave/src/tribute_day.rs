@@ -6,7 +6,7 @@ use alloy_primitives::{B256, U256};
 use outbe_core_common::tribute_day_encryption::{
     EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1,
 };
-use outbe_primitives::time::{EmissionDate, WorldwideDay};
+use outbe_system_common::time::{EmissionDate, WorldwideDay};
 use ring::hmac;
 use zeroize::Zeroizing;
 

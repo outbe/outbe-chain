@@ -98,7 +98,7 @@ fn seal_lysis(ctx: &BlockRuntimeContext<'_>, emission_day: &EmissionDay) -> Resu
     let priced = priced_currencies(ctx, emission_day.day)?;
     let outcome = tribute.compute_and_record_metadosis_fractions(
         wwd,
-        outbe_primitives::time::EmissionDate::new(emission_day.day),
+        outbe_system_common::time::EmissionDate::new(emission_day.day),
         &priced,
         emission_day.metadosis_limit_minor(),
         ctx.block.timestamp,

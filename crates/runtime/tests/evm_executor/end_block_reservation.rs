@@ -371,8 +371,8 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
     use outbe_intex::SeriesId;
     use outbe_intexfactory::IntexFactoryContract;
     use outbe_oracle::schema::OracleContract;
-    use outbe_primitives::time::{timestamp_to_date_key, SECONDS_PER_DAY};
     use outbe_promislimit::PromisLimitContract;
+    use outbe_system_common::time::{timestamp_to_date_key, SECONDS_PER_DAY};
 
     outbe_chain_constants::initialize(None).unwrap();
     let signer = test_evm_signer();

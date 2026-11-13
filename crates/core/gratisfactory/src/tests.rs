@@ -13,7 +13,7 @@ use outbe_gratis::enclave_client::test_enclave;
 use outbe_primitives::addresses::{GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_system_common::time::SECONDS_PER_DAY;
 use outbe_system_common::units::checked_protocol_to_native;
 
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
@@ -684,7 +684,7 @@ fn encrypted_nod_mint_preserves_nonce_and_combined_fidelity_state() {
 /// One second past the largest block timestamp that fits in `u64`.
 fn encrypted_nod(amount: U256) -> outbe_core_common::nod_encryption::EncryptedNodV1 {
     use outbe_core_common::nod_encryption::NodTermsV1;
-    use outbe_primitives::time::WorldwideDay;
+    use outbe_system_common::time::WorldwideDay;
     let day = WorldwideDay::new(20250115);
     outbe_enclave::nod_encryption::encrypt_nod(
         &[0x5a; 32],
