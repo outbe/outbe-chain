@@ -17,6 +17,9 @@
 //! Eviction is node-local pool policy and never consensus-visible. Payload
 //! content is proposer-discretionary, and block validation audits only parent
 //! binding, beneficiary and system-transaction layout.
+//!
+//! Metrics use `outbe_txpool_*`: gauges count transactions with `_txs`, and
+//! counters end in `_total`. See `crates/runtime/src/metrics_recorder.rs`.
 
 use std::collections::HashSet;
 
@@ -131,7 +134,7 @@ where
         .into_iter()
         .map(|tx| *tx.hash())
         .collect();
-    gauge!("outbe_txpool_pending_snapshot_size").set(pending.len() as f64);
+    gauge!("outbe_txpool_pending_snapshot_txs").set(pending.len() as f64);
     let stale = tracker.check_and_update(pending, tip_timestamp);
     if stale.is_empty() {
         return Vec::new();
@@ -196,7 +199,60 @@ pub async fn maintain_outbe_pool<Provider, Pool>(
 mod tests {
     use super::*;
 
-    use std::time::Duration;
+    use std::{
+        collections::HashMap,
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc, Mutex,
+        },
+        time::Duration,
+    };
+
+    use metrics::{
+        Counter, Gauge, Histogram, Key, KeyName, Metadata, Recorder, SharedString, Unit,
+    };
+
+    #[derive(Default)]
+    struct TestRecorder {
+        values: Mutex<HashMap<String, Arc<AtomicU64>>>,
+    }
+
+    impl TestRecorder {
+        fn register(&self, key: &Key) -> Arc<AtomicU64> {
+            self.values
+                .lock()
+                .unwrap()
+                .entry(key.name().to_owned())
+                .or_default()
+                .clone()
+        }
+
+        fn value(&self, name: &str) -> Option<u64> {
+            self.values
+                .lock()
+                .unwrap()
+                .get(name)
+                .map(|value| value.load(Ordering::Relaxed))
+        }
+    }
+
+    impl Recorder for TestRecorder {
+        fn describe_counter(&self, _: KeyName, _: Option<Unit>, _: SharedString) {}
+        fn describe_gauge(&self, _: KeyName, _: Option<Unit>, _: SharedString) {}
+        fn describe_histogram(&self, _: KeyName, _: Option<Unit>, _: SharedString) {}
+
+        fn register_counter(&self, key: &Key, _: &Metadata<'_>) -> Counter {
+            Counter::from_arc(self.register(key))
+        }
+
+        fn register_gauge(&self, key: &Key, _: &Metadata<'_>) -> Gauge {
+            Gauge::from_arc(self.register(key))
+        }
+
+        fn register_histogram(&self, _: &Key, _: &Metadata<'_>) -> Histogram {
+            Histogram::noop()
+        }
+    }
 
     fn hash(byte: u8) -> B256 {
         B256::repeat_byte(byte)
@@ -275,8 +331,18 @@ mod tests {
             .expect("add descendant");
 
         let mut tracker = PendingStalenessTracker::new(10);
+        let recorder = TestRecorder::default();
         // First snapshot seeds. Nothing is evicted.
-        assert!(run_staleness_tick(&pool, &mut tracker, 100).is_empty());
+        assert!(metrics::with_local_recorder(&recorder, || {
+            run_staleness_tick(&pool, &mut tracker, 100)
+        })
+        .is_empty());
+        assert_eq!(
+            recorder.value("outbe_txpool_pending_snapshot_txs"),
+            Some(2.0_f64.to_bits())
+        );
+        assert_eq!(recorder.value("outbe_txpool_pending_snapshot_size"), None);
+        assert_eq!(recorder.value("outbe_txpool_stale_evicted_total"), None);
 
         // A newcomer admitted between snapshots must survive this round.
         let newcomer = factory.create_eip1559();
@@ -285,7 +351,15 @@ mod tests {
             .await
             .expect("add newcomer");
 
-        let removed = run_staleness_tick(&pool, &mut tracker, 110);
+        let removed = metrics::with_local_recorder(&recorder, || {
+            run_staleness_tick(&pool, &mut tracker, 110)
+        });
+        assert_eq!(
+            recorder.value("outbe_txpool_pending_snapshot_txs"),
+            Some(3.0_f64.to_bits())
+        );
+        assert_eq!(recorder.value("outbe_txpool_pending_snapshot_size"), None);
+        assert_eq!(recorder.value("outbe_txpool_stale_evicted_total"), Some(2));
         assert!(removed.contains(&head_hash), "stale head must be evicted");
         assert!(
             removed.contains(&descendant_hash),
