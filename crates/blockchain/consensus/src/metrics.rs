@@ -12,6 +12,11 @@ pub use outbe_simplex::metrics::*;
 use std::time::Duration;
 use tracing::debug;
 
+/// Record whether the optional `--consensus.metrics-addr` HTTP exporter bound (`1`) or failed (`0`).
+pub fn record_metrics_exporter_up(up: bool) {
+    gauge!("outbe_consensus_metrics_exporter_up").set(if up { 1.0 } else { 0.0 });
+}
+
 /// Record a block proposed by this node.
 pub fn record_block_proposed(block_number: u64) {
     counter!("outbe_consensus_blocks_proposed_total").increment(1);
@@ -514,9 +519,27 @@ mod tests {
     use metrics_util::debugging::{DebugValue, DebuggingRecorder};
 
     use super::{
-        consensus_reth_readiness_gap_blocks, CertificationDropReason, DkgBoundaryDecision,
-        DkgBoundaryUnavailableReason, EquivocationKind, FinalizationDropReason,
+        consensus_reth_readiness_gap_blocks, record_metrics_exporter_up, CertificationDropReason,
+        DkgBoundaryDecision, DkgBoundaryUnavailableReason, EquivocationKind,
+        FinalizationDropReason,
     };
+
+    #[test]
+    fn metrics_exporter_up_records_unlabeled_state() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        for (up, expected) in [(true, 1.0), (false, 0.0)] {
+            metrics::with_local_recorder(&recorder, || {
+                record_metrics_exporter_up(up);
+            });
+            let snapshot = snapshotter.snapshot().into_vec();
+            assert_eq!(snapshot.len(), 1);
+            let (key, _, _, value) = &snapshot[0];
+            assert_eq!(key.key().name(), "outbe_consensus_metrics_exporter_up");
+            assert_eq!(key.key().labels().count(), 0);
+            assert_eq!(*value, DebugValue::Gauge(expected.into()));
+        }
+    }
 
     /// Pins the byzantine-evidence telemetry labels. These strings are an external,
     /// operator-facing surface (the `outbe_consensus_byzantine_evidence_total{kind=...}` metric
