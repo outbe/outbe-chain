@@ -24,17 +24,17 @@ scrape_configs:
     metrics_path: /metrics
 
     # Custom outbe metrics to watch:
-    #   reth_outbe_consensus_blocks_proposed_total           - blocks proposed by this node
-    #   reth_outbe_consensus_proposed_height                 - latest proposed block height
-    #   reth_outbe_consensus_finalized_view                  - latest finalized Simplex view
-    #   reth_outbe_consensus_committee_validators                 - number of validators in set
-    #   reth_outbe_consensus_participation_ratio              - ratio of signers to total validators
-    #   reth_outbe_consensus_views_skipped_total             - skipped views (missed proposers)
-    #   reth_outbe_consensus_epoch                    - current consensus epoch
-    #   reth_outbe_consensus_tracked_peers - Commonware P2P tracked peer-set size (membership, not live connections)
-    #   reth_outbe_consensus_reth_tip_hash_matched   - consensus tip is available in Reth provider
-    #   reth_outbe_dkg_status                      - DKG status (0=idle, 1=in_progress, 2=completed, 3=expired)
-    #   reth_outbe_dkg_reshares_completed_total        - number of DKG reshares completed
-    #   reth_outbe_consensus_parent_cert_store_entries          - exact-parent certificate handoff records retained
-    #   reth_outbe_consensus_parent_cert_included_total      - Phase 1 parent certificate metadata included
-    #   reth_outbe_consensus_parent_cert_missing_total       - proposer slot forfeits/misses due to unavailable certificate
+    #   reth_outbe_consensus_blocks_proposed_total       - blocks proposed by this node
+    #   reth_outbe_consensus_proposed_height             - latest proposed block height
+    #   reth_outbe_consensus_finalized_view              - latest finalized Simplex view
+    #   reth_outbe_consensus_committee_validators        - number of validators in set
+    #   reth_outbe_consensus_participation_ratio         - ratio of signers to total validators
+    #   reth_outbe_consensus_views_skipped_total         - skipped views (missed proposers)
+    #   reth_outbe_consensus_epoch                       - current consensus epoch
+    #   reth_outbe_consensus_tracked_peers               - Commonware P2P tracked peer-set size (membership, not live connections)
+    #   reth_outbe_consensus_reth_tip_hash_matched       - consensus tip is available in Reth provider
+    #   reth_outbe_dkg_status                            - DKG status (0=idle, 1=in_progress, 2=completed, 3=expired)
+    #   reth_outbe_dkg_reshares_completed_total          - number of DKG reshares completed
+    #   reth_outbe_consensus_parent_cert_store_entries   - exact-parent certificate handoff records retained
+    #   reth_outbe_consensus_parent_cert_included_total  - Phase 1 parent certificate metadata included
+    #   reth_outbe_consensus_parent_cert_missing_total   - proposer slot forfeits/misses due to unavailable certificate

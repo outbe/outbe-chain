@@ -148,7 +148,7 @@ groups:
     rules:
       # Early-warning before a felony fires. Threshold values match
       # `slashindicator::constants::DEFAULT_PROPOSER_FELONY_THRESHOLD` (128).
-      # Adjust for network overrides reported by the slash-config RPC.
+      # Adjust for network overrides reported by outbe_getSlashConfig.
       # Fire when miss count exceeds 80% of the threshold.
       - alert: OutbeProposerMissNearFelony
         expr: reth_outbe_slashing_proposer_misses > 102.4
@@ -262,18 +262,18 @@ groups:
   # Wire metrics below include the Reth --metrics reth_ prefix.
   # Source metrics (node-side, emitted by the tee-canary worker and the
   # enclave-client session in `crates/blockchain/tee` / `crates/blockchain/node`):
-  #   reth_outbe_tee_canary_latency_ms              - canary decrypt round-trip
-  #   reth_outbe_tee_canary_failures_total          - failed canary ticks
-  #   reth_outbe_tee_canary_consecutive_failures    - current failure streak
-  #   reth_outbe_tee_canary_last_ok_timestamp_seconds - unix time of last success
+  #   reth_outbe_tee_canary_latency_ms                      - canary decrypt round-trip
+  #   reth_outbe_tee_canary_failures_total                  - failed canary ticks
+  #   reth_outbe_tee_canary_consecutive_failures            - current failure streak
+  #   reth_outbe_tee_canary_last_ok_timestamp_seconds       - unix time of last success
   #   reth_outbe_tee_enclave_heap_bytes{kind=current|peak}  - enclave self-observed heap
-  #                                              (allocator-level proxy for EPC pressure,
-  #                                              excluding stacks and fragmentation)
-  #   reth_outbe_tee_enclave_uptime_seconds         - enclave self-reported uptime
-  #                                              (drop to ~0 = silent restart)
-  #   reth_outbe_tee_client_request_duration_ms{request}   - per-request client latency
+  #                                                           (allocator-level proxy for EPC pressure,
+  #                                                           excluding stacks and fragmentation)
+  #   reth_outbe_tee_enclave_uptime_seconds                 - enclave self-reported uptime
+  #                                                           (drop to ~0 = silent restart)
+  #   reth_outbe_tee_client_request_duration_ms{request}    - per-request client latency
   #   reth_outbe_tee_client_reconnects_total{result}        - session reconnects
-  #   reth_outbe_tee_client_session_generation             - bumps on every reconnect
+  #   reth_outbe_tee_client_session_generation              - bumps on every reconnect
   #
   # Host-level RSS of the gramine loader (outside-the-enclave view), when
   # needed manually:
@@ -351,10 +351,10 @@ groups:
   # Wire metrics below include the Reth --metrics reth_ prefix.
   # Source metrics (emitted by the node-side pool maintenance loop in
   # `crates/blockchain/txpool/src/maintain.rs`):
-  #   reth_outbe_txpool_stale_evicted_total     - transactions evicted after
-  #                                          surviving two consecutive pending
-  #                                          snapshots (plus their descendants)
-  #   reth_outbe_txpool_pending_snapshot_txs   - pending-set size at the last snapshot
+  #   reth_outbe_txpool_stale_evicted_total   - transactions evicted after
+  #                                             surviving two consecutive pending
+  #                                             snapshots (plus their descendants)
+  #   reth_outbe_txpool_pending_snapshot_txs  - pending-set size at the last snapshot
   #
   # Steady state is zero evictions. The network mines a healthy transaction long
   # before the staleness interval elapses. Sustained evictions mean transactions
