@@ -6,6 +6,7 @@ use rand::RngCore;
 use crate::{
     support::{process, progress::Progress},
     validator::{
+        config::EnclaveRuntime,
         journal::Journal,
         path_text,
         rpc::RpcClient,
@@ -142,13 +143,11 @@ async fn run_tee_join(journal: &Journal) -> Result<()> {
         .valid_until
         .expect("valid_until was saved")
         .to_string();
-    let args = [
-        "tee",
-        "join",
-        "--enclave-socket",
-        "127.0.0.1:17000",
-        "--node-data-dir",
-        "/opt/outbe-chain/validator-0/data",
+    let mut args = vec!["tee", "join", "--enclave-socket", "127.0.0.1:17000"];
+    if !matches!(journal.config.tee.runtime, EnclaveRuntime::GramineDirectDev) {
+        args.extend(["--node-data-dir", "/opt/outbe-chain/validator-0/data"]);
+    }
+    args.extend([
         "--reth-p2p-secret-key",
         "/opt/outbe-chain/keys/reth-p2p-secret.hex",
         "--genesis",
@@ -159,7 +158,7 @@ async fn run_tee_join(journal: &Journal) -> Result<()> {
         &valid_until,
         "--timeout-secs",
         "600",
-    ];
+    ]);
     for attempt in 1..=TEE_JOIN_ATTEMPTS {
         match run_outbe_cli(&args) {
             Ok(_) => return Ok(()),
