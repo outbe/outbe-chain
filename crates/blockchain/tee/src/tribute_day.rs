@@ -6,9 +6,7 @@ use alloy_primitives::{keccak256, B256, U256};
 use outbe_primitives::{
     nod_encryption::EncryptedNodGroupLoadV1,
     time::{EmissionDate, WorldwideDay},
-    tribute_day_encryption::{
-        EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1, EncryptedTributeLeagueAmountV1,
-    },
+    tribute_day_encryption::{EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1},
     tribute_encryption::EncryptedTributeV2,
     wwd_entity_id::WwdEntityId,
 };
@@ -25,9 +23,6 @@ pub enum TributeDayOperationV2 {
     AdjustTransient {
         nominal_amount_minor: U256,
         add: bool,
-    },
-    Reset {
-        expected_total: U256,
     },
     Freeze,
 }
@@ -70,49 +65,6 @@ pub fn day_read_inputs_hash(
 
 pub fn day_read_attestation_preimage(inputs_hash: B256, amount: U256) -> Vec<u8> {
     let mut bytes = b"outbe/tribute/day-read-result/v2".to_vec();
-    bytes.extend_from_slice(inputs_hash.as_slice());
-    bytes.extend_from_slice(&amount.to_be_bytes::<32>());
-    bytes
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct TributeLeagueOpRequestV1 {
-    pub chain_id: u64,
-    pub worldwide_day: WorldwideDay,
-    pub league: u16,
-    pub previous: Option<EncryptedTributeLeagueAmountV1>,
-    pub public_state_hash: B256,
-    pub operation: TributeDayOperationV2,
-}
-
-pub fn league_operation_inputs_hash(
-    request: &TributeLeagueOpRequestV1,
-) -> Result<B256, serde_json::Error> {
-    let mut bytes = b"outbe/tribute/league-inputs/v1".to_vec();
-    bytes.extend_from_slice(&serde_json::to_vec(request)?);
-    Ok(keccak256(bytes))
-}
-
-pub fn league_operation_attestation_preimage(
-    inputs_hash: B256,
-    result: &EncryptedTributeLeagueAmountV1,
-) -> Result<Vec<u8>, serde_json::Error> {
-    let mut bytes = b"outbe/tribute/league-result/v1".to_vec();
-    bytes.extend_from_slice(inputs_hash.as_slice());
-    bytes.extend_from_slice(&serde_json::to_vec(result)?);
-    Ok(bytes)
-}
-
-pub fn league_read_inputs_hash(
-    record: &EncryptedTributeLeagueAmountV1,
-) -> Result<B256, serde_json::Error> {
-    let mut bytes = b"outbe/tribute/league-read/v1".to_vec();
-    bytes.extend_from_slice(&serde_json::to_vec(record)?);
-    Ok(keccak256(bytes))
-}
-
-pub fn league_read_attestation_preimage(inputs_hash: B256, amount: U256) -> Vec<u8> {
-    let mut bytes = b"outbe/tribute/league-read-result/v1".to_vec();
     bytes.extend_from_slice(inputs_hash.as_slice());
     bytes.extend_from_slice(&amount.to_be_bytes::<32>());
     bytes

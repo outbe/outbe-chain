@@ -292,7 +292,6 @@ fn burn_live_tribute_record(
     let tribute_id = record.tribute_id;
     contract.bump_day_bucket_record(record, false)?;
     if raw_league != 0 {
-        contract.adjust_fi_group(record, raw_league, false)?;
         contract.tribute_leagues.clear(&tribute_id)?;
     }
     contract.tribute_lysis_zero_load.clear(&tribute_id)?;
@@ -325,7 +324,6 @@ pub(super) fn clean_forfeited_tribute(
             return Ok(());
         }
         if raw_league != 0 {
-            contract.adjust_fi_group(&record, raw_league, false)?;
             contract.tribute_leagues.clear(&tribute_id)?;
         }
         contract.tribute_lysis_zero_load.clear(&tribute_id)?;

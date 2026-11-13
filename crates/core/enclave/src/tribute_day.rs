@@ -5,12 +5,12 @@ use std::collections::BTreeMap;
 use alloy_primitives::{B256, U256};
 use outbe_primitives::time::{EmissionDate, WorldwideDay};
 use outbe_primitives::tribute_day_encryption::{
-    EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1, EncryptedTributeLeagueAmountV1,
+    EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1,
 };
 use outbe_tee::tribute_day::{
-    day_operation_inputs_hash, league_operation_inputs_hash, lysis_fractions_inputs_hash,
-    LysisFractionsRequestV1, LysisFractionsResultV1, LysisSeriesLoadOutputV1, LysisTributeInputV1,
-    TributeDayOpRequestV2, TributeDayOperationV2, TributeLeagueOpRequestV1,
+    day_operation_inputs_hash, lysis_fractions_inputs_hash, LysisFractionsRequestV1,
+    LysisFractionsResultV1, LysisSeriesLoadOutputV1, LysisTributeInputV1, TributeDayOpRequestV2,
+    TributeDayOperationV2,
 };
 use ring::hmac;
 use zeroize::Zeroizing;
@@ -23,9 +23,6 @@ use crate::{
 
 const DAY_AMOUNT: SlotCipherDomain = SlotCipherDomain {
     nonce_info: b"outbe/tribute/day/nonce/v2",
-};
-const LEAGUE_AMOUNT: SlotCipherDomain = SlotCipherDomain {
-    nonce_info: b"outbe/tribute/league/nonce/v1",
 };
 const DAY_FRACTIONS: SlotCipherDomain = SlotCipherDomain {
     nonce_info: b"outbe/tribute/day-fractions/nonce/v1",
@@ -111,12 +108,6 @@ fn apply_amount(
             nominal_amount_minor,
             add,
         } => (*nominal_amount_minor, *add),
-        TributeDayOperationV2::Reset { expected_total } => {
-            if amount != *expected_total {
-                return Err(TributeDayRejectReason::DayRetirementAmountMismatch.into());
-            }
-            (*expected_total, false)
-        }
         TributeDayOperationV2::Freeze => return Ok(amount),
     };
     if add {
@@ -125,63 +116,6 @@ fn apply_amount(
         amount.checked_sub(delta)
     }
     .ok_or_else(|| TributeDayRejectReason::DayNominalAmountOverflowOrUnderflow.into())
-}
-
-pub fn read_league_amount(
-    network_secret: &[u8; 32],
-    record: &EncryptedTributeLeagueAmountV1,
-) -> Result<U256> {
-    LEAGUE_AMOUNT
-        .slot(network_secret, record.crypto_slot(), 0)
-        .read_u256(record.version(), &record.encrypted_amount)
-}
-
-pub fn apply_league_operation(
-    network_secret: &[u8; 32],
-    tribute_state_key: &[u8; 32],
-    request: &TributeLeagueOpRequestV1,
-) -> Result<EncryptedTributeLeagueAmountV1> {
-    let (previous_version, amount) = match &request.previous {
-        None => (0, U256::ZERO),
-        Some(previous) => {
-            if previous.chain_id != request.chain_id
-                || previous.worldwide_day != request.worldwide_day
-                || previous.league != request.league
-            {
-                return Err(TributeDayRejectReason::InvalidLeaguePredecessor.into());
-            }
-            (
-                previous.version().ok_or(TeeError::DecryptFailed)?,
-                read_league_amount(network_secret, previous)?,
-            )
-        }
-    };
-    let day_req = TributeDayOpRequestV2 {
-        chain_id: request.chain_id,
-        worldwide_day: request.worldwide_day,
-        previous: None,
-        public_state_hash: request.public_state_hash,
-        operation: request.operation.clone(),
-    };
-    let next = apply_amount(tribute_state_key, &day_req, amount).map_err(|_| {
-        TeeError::from(TributeDayRejectReason::LeagueNominalAmountOverflowOrUnderflow)
-    })?;
-    let inputs_hash = league_operation_inputs_hash(request).map_err(|_| TeeError::EncryptFailed)?;
-    let mut record = EncryptedTributeLeagueAmountV1 {
-        chain_id: request.chain_id,
-        worldwide_day: request.worldwide_day,
-        league: request.league,
-        operation_hash: sign_operation_hash(
-            network_secret,
-            b"outbe/tribute/league-operation/v1",
-            inputs_hash,
-        ),
-        encrypted_amount: Vec::new(),
-    };
-    record.encrypted_amount = LEAGUE_AMOUNT
-        .slot(network_secret, record.crypto_slot(), 0)
-        .write_u256(previous_version, next)?;
-    Ok(record)
 }
 
 pub fn seal_day_fractions(

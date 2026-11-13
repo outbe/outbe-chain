@@ -120,12 +120,6 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
         assert_eq!(tc.get_league(t1.tribute_id).unwrap(), 100);
         assert_eq!(tc.get_league(t2.tribute_id).unwrap(), 4000);
 
-        // Stage 2: Verify fi_groups[wwd]
-        let groups = tc.get_fi_groups(day).unwrap();
-        assert_eq!(groups.len(), 2);
-        assert_eq!(groups.get(&100), Some(&(1, t1.nominal_amount_minor)));
-        assert_eq!(groups.get(&4000), Some(&(1, t2.nominal_amount_minor)));
-
         // Cannot issueNod before Metadosis has completed
         assert!(tc.issue_nod(owner1, t1.tribute_id).is_err());
 
@@ -261,12 +255,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
             totals_after_t1.tribute_nominal_total_minor,
             t2.nominal_amount_minor
         );
-        let groups_after_t1 = tc.get_fi_groups(day).unwrap();
-        assert_eq!(groups_after_t1.len(), 1);
-        assert_eq!(
-            groups_after_t1.get(&4000),
-            Some(&(1, t2.nominal_amount_minor))
-        );
+        assert_eq!(tc.tribute_leagues.read(&t1.tribute_id).unwrap(), 0);
 
         // Calling issueNod a second time for the burned Tribute must fail
         assert!(
@@ -291,7 +280,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
         let totals_after_t2 = tc.get_day_totals(day).unwrap();
         assert_eq!(totals_after_t2.tribute_count, 0);
         assert!(totals_after_t2.tribute_nominal_total_minor.is_zero());
-        assert!(tc.get_fi_groups(day).unwrap().is_empty());
+        assert_eq!(tc.tribute_leagues.read(&t2.tribute_id).unwrap(), 0);
         assert!(outbe_nod::api::get_item(&storage, nod_id_of(&tc, &t1))
             .unwrap()
             .is_some());
@@ -922,22 +911,22 @@ fn clean_handles_settled_nod_aborted_emission_day_retired_fi_groups_and_zero_loa
         .abi_encode();
         crate::precompile::dispatch(storage.clone(), &clean_aborted, stranger, U256::ZERO).unwrap();
         assert!(tc.get_record(t_aborted.tribute_id).unwrap().is_none());
-        assert!(tc.get_fi_groups(day_aborted).unwrap().is_empty());
+        assert_eq!(tc.tribute_leagues.read(&t_aborted.tribute_id).unwrap(), 0);
 
-        // 4. P4.4h: ITribute.clean on a retired partition cleans fi_group_counts and fi_group_nominals
+        // 4. P4.4h: ITribute.clean on a retired partition cleans the Tribute league
         let mut t_retired = sample_tribute();
         set_owner(&mut t_retired, owner1);
         set_day(&mut t_retired, day_retired);
         tc.issue_with_league(&t_retired, Some(300)).unwrap();
         in_process_ready(&storage, || tc.seal_day(day_retired));
         tc.retired_days.write(&day_retired, true).unwrap();
-        assert!(!tc.get_fi_groups(day_retired).unwrap().is_empty());
+        assert_eq!(tc.tribute_leagues.read(&t_retired.tribute_id).unwrap(), 300);
         let clean_retired = crate::precompile::ITribute::cleanCall {
             tributeId: t_retired.tribute_id.to_u256(),
         }
         .abi_encode();
         crate::precompile::dispatch(storage.clone(), &clean_retired, stranger, U256::ZERO).unwrap();
-        assert!(tc.get_fi_groups(day_retired).unwrap().is_empty());
+        assert_eq!(tc.tribute_leagues.read(&t_retired.tribute_id).unwrap(), 0);
         t_normal.tribute_id.to_u256()
     });
 
@@ -1105,8 +1094,6 @@ fn multi_league_lysis_and_issue_nod_keep_league_nominals_fractions_and_loads_pri
             let open_load_ct_before = nod_contract.encrypted_group_open_load(group_key).unwrap();
             assert!(!open_load_ct_before.is_empty());
 
-            assert!(!tc.encrypted_league_nominal(day, 100).unwrap().is_empty());
-            assert!(!tc.encrypted_league_nominal(day, 200).unwrap().is_empty());
             assert!(!tc
                 .encrypted_day_fractions(EmissionDate::new(price_day))
                 .unwrap()

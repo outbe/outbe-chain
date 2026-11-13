@@ -2,15 +2,12 @@
 
 use alloy_primitives::U256;
 use outbe_primitives::{
-    tribute_day_encryption::{EncryptedTributeDayAmountV2, EncryptedTributeLeagueAmountV1},
+    tribute_day_encryption::EncryptedTributeDayAmountV2,
     tribute_encryption::{EncryptedTributeV2, TributeAmountsV2},
 };
 use outbe_tee::{
     nod_mine::{IssueNodFromTributeOutcomeV1, IssueNodFromTributeRequestV1},
-    tribute_day::{
-        LysisFractionsRequestV1, LysisFractionsResultV1, TributeDayOpRequestV2,
-        TributeLeagueOpRequestV1,
-    },
+    tribute_day::{LysisFractionsRequestV1, LysisFractionsResultV1, TributeDayOpRequestV2},
     TransportError,
 };
 
@@ -24,30 +21,6 @@ pub(crate) fn apply_day_operation(
         return result.map_err(crate::errors::enclave_transport_error);
     }
     outbe_tee::tribute_day_client::apply_day_operation(request)
-}
-
-pub(crate) fn apply_league_operation(
-    request: TributeLeagueOpRequestV1,
-) -> Result<EncryptedTributeLeagueAmountV1, TransportError> {
-    #[cfg(any(test, feature = "test-enclave"))]
-    if let Some(result) = test_enclave::with_key(|key| {
-        outbe_enclave::tribute_day::apply_league_operation(key, key, &request)
-    }) {
-        return result.map_err(crate::errors::enclave_transport_error);
-    }
-    outbe_tee::tribute_day_client::apply_league_operation(request)
-}
-
-pub(crate) fn read_league_amount(
-    record: &EncryptedTributeLeagueAmountV1,
-) -> Result<U256, TransportError> {
-    #[cfg(any(test, feature = "test-enclave"))]
-    if let Some(result) =
-        test_enclave::with_key(|key| outbe_enclave::tribute_day::read_league_amount(key, record))
-    {
-        return result.map_err(crate::errors::enclave_transport_error);
-    }
-    outbe_tee::tribute_day_client::read_league_amount(record)
 }
 
 pub(crate) fn execute_lysis_fractions(

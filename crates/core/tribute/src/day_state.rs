@@ -4,15 +4,11 @@ use alloy_primitives::{keccak256, B256, U256};
 use outbe_primitives::{
     error::Result,
     time::{EmissionDate, WorldwideDay},
-    tribute_day_encryption::{
-        EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1, EncryptedTributeLeagueAmountV1,
-    },
+    tribute_day_encryption::{EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1},
 };
-use outbe_tee::tribute_day::{
-    TributeDayOpRequestV2, TributeDayOperationV2, TributeLeagueOpRequestV1,
-};
+use outbe_tee::tribute_day::{TributeDayOpRequestV2, TributeDayOperationV2};
 
-use crate::{day_schema::StoredDayTotals, schema::day_league_key, DayTotals, TributeContract};
+use crate::{day_schema::StoredDayTotals, DayTotals, TributeContract};
 
 impl TributeContract<'_> {
     pub fn freeze_day_nominal(&self, totals: &DayTotals) -> Result<()> {
@@ -138,63 +134,6 @@ impl TributeContract<'_> {
         } else {
             self.day_totals.create(&stored)
         }
-    }
-
-    pub fn encrypted_league_nominal(&self, day: WorldwideDay, league: u16) -> Result<Vec<u8>> {
-        self.fi_group_nominal_ct
-            .bytes(&day_league_key(day, league))
-            .read()
-    }
-
-    pub(crate) fn league_amount_record(
-        &self,
-        day: WorldwideDay,
-        league: u16,
-    ) -> Result<Option<EncryptedTributeLeagueAmountV1>> {
-        let bytes = self.encrypted_league_nominal(day, league)?;
-        self.decode_validated_record(
-            &bytes,
-            |record: &EncryptedTributeLeagueAmountV1, chain_id| {
-                record.worldwide_day == day
-                    && record.league == league
-                    && record.chain_id == chain_id
-                    && record.version().is_some()
-            },
-        )
-    }
-
-    pub(crate) fn league_nominal_amount(&self, day: WorldwideDay, league: u16) -> Result<U256> {
-        match self.league_amount_record(day, league)? {
-            None => Ok(U256::ZERO),
-            Some(record) => crate::enclave_client::read_league_amount(&record)
-                .map_err(|err| crate::errors::TributeError::DayEnclave(err).into()),
-        }
-    }
-
-    pub(crate) fn apply_league_amount(
-        &self,
-        day: WorldwideDay,
-        league: u16,
-        operation: TributeDayOperationV2,
-        public_state_hash: B256,
-    ) -> Result<()> {
-        let request = TributeLeagueOpRequestV1 {
-            chain_id: self.storage_handle().chain_id()?,
-            worldwide_day: day,
-            league,
-            previous: self.league_amount_record(day, league)?,
-            operation,
-            public_state_hash,
-        };
-        let record = crate::enclave_client::apply_league_operation(request)
-            .map_err(crate::errors::TributeError::DayEnclave)?;
-        if record.worldwide_day != day || record.league != league {
-            return Err(crate::errors::TributeError::DayResponseScopeMismatch.into());
-        }
-        let bytes = postcard::to_allocvec(&record).map_err(crate::errors::TributeError::from)?;
-        self.fi_group_nominal_ct
-            .bytes(&day_league_key(day, league))
-            .write(&bytes)
     }
 
     pub fn encrypted_day_fractions(&self, emission_day: EmissionDate) -> Result<Vec<u8>> {

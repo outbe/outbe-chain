@@ -531,12 +531,10 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         | EnclaveRequest::IssueNodFromTributeV1 { .. }
         | EnclaveRequest::EncryptNodQuoteV1 { .. }
         | EnclaveRequest::ApplyTributeDayOpV2 { .. }
-        | EnclaveRequest::ApplyTributeLeagueOpV1 { .. }
         | EnclaveRequest::ApplyNodGroupLoadOpV1 { .. } => CommandClass::Ready,
         EnclaveRequest::ReadNodAmountV1 { .. }
         | EnclaveRequest::ReadTributeAmountsV2 { .. }
         | EnclaveRequest::ReadTributeDayAmountV2 { .. }
-        | EnclaveRequest::ReadTributeLeagueAmountV1 { .. }
         | EnclaveRequest::ReadTributeDayFractionsV1 { .. }
         | EnclaveRequest::ReadNodGroupLoadV1 { .. } => CommandClass::Ready,
         EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 { .. }
