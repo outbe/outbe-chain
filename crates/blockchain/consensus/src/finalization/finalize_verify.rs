@@ -69,8 +69,7 @@ impl FinalizeVerifyMailbox {
                 None
             };
         if let Some(reason) = reject {
-            metrics::counter!("outbe_finalize_verify_admission_total", "result" => reason)
-                .increment(1);
+            crate::metrics::record_finalize_verify_admission(reason);
             return;
         }
         let bytes = finalize.encode();
@@ -86,8 +85,7 @@ impl FinalizeVerifyMailbox {
             .unwrap_or_else(|e| e.into_inner())
             .push(key, queued)
         {
-            metrics::counter!("outbe_finalize_verify_admission_total", "result" => "queued")
-                .increment(1);
+            crate::metrics::record_finalize_verify_admission("queued");
             // Capacity-one wake channel coalesces notifications. No sender waits.
             let _ = self.wake.try_send(());
         }
@@ -186,8 +184,7 @@ impl FinalizeVerifyActor {
         }
         let mut rng = bls_batch_verification_rng();
         if !finalize.verify(&mut rng, scheme.as_ref(), &Sequential) {
-            metrics::counter!("outbe_finalize_verify_verification_total", "result" => "invalid")
-                .increment(1);
+            crate::metrics::record_finalize_verify_verification("invalid");
             return;
         }
         self.admit_verified_vote(epoch, view, finalize);
@@ -247,11 +244,11 @@ impl FinalizeVerifyActor {
             self.observed_bytes = self.observed_bytes.saturating_add(bytes);
             self.observed_finalizes.insert(key, finalize);
         }
-        metrics::gauge!("outbe_finalize_verify_observed_votes")
-            .set(self.observed_finalizes.len() as f64);
-        metrics::gauge!("outbe_finalize_verify_observed_bytes").set(self.observed_bytes as f64);
-        metrics::counter!("outbe_finalize_verify_verification_total", "result" => "valid")
-            .increment(1);
+        crate::metrics::record_finalize_verify_observed(
+            self.observed_finalizes.len(),
+            self.observed_bytes,
+        );
+        crate::metrics::record_finalize_verify_verification("valid");
     }
 
     fn recount_bytes(&mut self) {

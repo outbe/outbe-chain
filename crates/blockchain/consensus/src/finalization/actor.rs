@@ -353,7 +353,7 @@ impl FinalizationActor {
         // ~1-minute correlated outage. The actor (correctly) cannot advance
         // finalization past an unresolved block. Thus it stays parked here and
         // retries until the block resolves. A sustained
-        // `outbe_finalization_resolution_stalled_total` rate is the operator's
+        // `outbe_consensus_finalization_resolution_stalled_total` rate is the operator's
         // signal that the block is unavailable network-wide or local state has
         // diverged. Only a missing marshal mailbox (a config error, above)
         // remains fatal.
