@@ -36,7 +36,7 @@ fn dispatcher_fires_advance_auctions_at_its_slot() {
         let cycle: Cycle<'_> = ctx_fire.storage.contract::<Cycle<'_>>();
         assert_eq!(
             cycle.last_executed_at.read(&advance_auctions_id).unwrap(),
-            GENESIS_TS + SECONDS_PER_DAY,
+            GENESIS_TS + SECONDS_PER_DAY + PROTOCOL_CYCLE_START_OFFSET_SECONDS,
             "coalesces the backlog to the latest slot at or before the block"
         );
         assert_eq!(
@@ -171,8 +171,11 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
         );
 
         // Cycle's last_executed_at advanced to the slot
-        // (GENESIS_TS + 86_400), not the block timestamp.
-        assert_eq!(last_executed_at(&ctx_fire), GENESIS_TS + SECONDS_PER_DAY);
+        // (GENESIS_TS + 86_400 + 1), not the block timestamp.
+        assert_eq!(
+            last_executed_at(&ctx_fire),
+            GENESIS_TS + SECONDS_PER_DAY + PROTOCOL_CYCLE_START_OFFSET_SECONDS
+        );
 
         // No tributes for any AgentReward pool: all three WAA/SRA/CCA
         // allocations return to terminal Metadosis and no native COEN moves.
@@ -614,7 +617,10 @@ fn failed_terminal_dispatch_is_not_retried() {
             .unwrap()
     });
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
-    let next_window = GENESIS_TS + SECONDS_PER_DAY + crate::triggers::PROTOCOL_CYCLE_PERIOD_SECONDS;
+    let next_window = GENESIS_TS
+        + SECONDS_PER_DAY
+        + crate::triggers::PROTOCOL_CYCLE_PERIOD_SECONDS
+        + PROTOCOL_CYCLE_START_OFFSET_SECONDS;
     storage.set_block_number(3);
     storage.enter(|handle| {
         let retry = runtime_context(block_ctx(3, next_window), handle);

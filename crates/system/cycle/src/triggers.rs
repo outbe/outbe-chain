@@ -186,6 +186,9 @@ macro_rules! const_spec {
 
 /// Hourly cadence of the canonical protocol cycle.
 pub const PROTOCOL_CYCLE_PERIOD_SECONDS: u64 = 3_600;
+/// The protocol cycle runs one second into each hour, so Metadosis of E starts at 00:00:01 of E+1.
+/// The auction tasks share the offset to land in the slot of the brief.
+pub const PROTOCOL_CYCLE_START_OFFSET_SECONDS: u64 = 1;
 
 /// Active trigger table in permanent numeric-id order.
 /// The dispatcher walks this array in order inside one block.
@@ -215,7 +218,10 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 7], CycleEr
             let mut spec = const_spec!(TriggerSpec::new(
                 TriggerId::ProtocolCycle.as_u32(),
                 "protocol_cycle",
-                (PROTOCOL_CYCLE_PERIOD_SECONDS, 0),
+                (
+                    PROTOCOL_CYCLE_PERIOD_SECONDS,
+                    PROTOCOL_CYCLE_START_OFFSET_SECONDS
+                ),
                 1_526_000,
                 TriggerHandler::ProtocolCycle,
             ));
@@ -250,7 +256,10 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 7], CycleEr
             let mut spec = const_spec!(TriggerSpec::new(
                 TriggerId::AdvanceAuctions.as_u32(),
                 "advance_auctions",
-                (ADVANCE_AUCTIONS_PERIOD_SECONDS, 0),
+                (
+                    ADVANCE_AUCTIONS_PERIOD_SECONDS,
+                    PROTOCOL_CYCLE_START_OFFSET_SECONDS
+                ),
                 outbe_desis::constants::ADVANCE_AUCTIONS_BUDGET_GAS,
                 TriggerHandler::AdvanceAuctions,
             ));
@@ -284,7 +293,10 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 7], CycleEr
             let mut spec = const_spec!(TriggerSpec::new(
                 TriggerId::CompleteAuctions.as_u32(),
                 "complete_auctions",
-                (ADVANCE_AUCTIONS_PERIOD_SECONDS, 0),
+                (
+                    ADVANCE_AUCTIONS_PERIOD_SECONDS,
+                    PROTOCOL_CYCLE_START_OFFSET_SECONDS
+                ),
                 10_333_000,
                 TriggerHandler::CompleteAuctions,
             ));

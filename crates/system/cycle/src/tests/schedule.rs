@@ -121,7 +121,7 @@ fn dispatch_propagates_schedule_overflow_instead_of_skipping_the_trigger() {
             decoded.period,
             crate::triggers::PROTOCOL_CYCLE_PERIOD_SECONDS
         );
-        assert_eq!(decoded.offset, 0);
+        assert_eq!(decoded.offset, PROTOCOL_CYCLE_START_OFFSET_SECONDS);
         assert_eq!(decoded.timestamp, u64::MAX);
         assert_eq!(
             cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
@@ -299,7 +299,7 @@ fn fires_at_first_block_past_next_slot() {
         let cycle: Cycle<'_> = ctx_fire.storage.contract::<Cycle<'_>>();
         assert_eq!(
             cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
-            GENESIS_TS + 3_600,
+            GENESIS_TS + 3_600 + PROTOCOL_CYCLE_START_OFFSET_SECONDS,
             "last_executed_at must be the slot, not block.timestamp"
         );
         assert_eq!(
@@ -347,11 +347,12 @@ fn multi_slot_gap_fires_only_for_latest_slot_after_anchor() {
     storage.enter(|handle| {
         // Missed hourly scheduler slots collapse to one execution at the latest
         // due boundary. Calendar policy then forfeits this multi-day gap.
-        let ctx_fire = dispatch_at(handle, 2, GENESIS_TS + 4 * SECONDS_PER_DAY);
+        let fire_at = GENESIS_TS + 4 * SECONDS_PER_DAY + PROTOCOL_CYCLE_START_OFFSET_SECONDS;
+        let ctx_fire = dispatch_at(handle, 2, fire_at);
 
         assert_eq!(
             last_executed_at(&ctx_fire),
-            GENESIS_TS + 4 * SECONDS_PER_DAY,
+            fire_at,
             "multi-slot gap fires once at the latest due hourly slot"
         );
     });

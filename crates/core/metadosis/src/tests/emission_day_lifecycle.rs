@@ -148,34 +148,13 @@ fn schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_due_after_
         assert_eq!(ed_05.emission_limit_minor, U256::ZERO);
 
         // Nested process-ready checks recompute the lease from the provider clock
-        // and block. Allocate day 20260905 into Processing so find_due_emission_day selects it.
+        // and block. Allocate day 20260905 into Processing.
         crate::commands::set_metadosis_limit(
             &ctx,
             U256::from(1_000_000u64),
             date_key_to_utc_timestamp(20260905).unwrap(),
         )
         .unwrap();
-
-        let metadosis = MetadosisContract::new(storage.clone());
-        let before_start = BlockRuntimeContext::new(
-            BlockContext {
-                block_gas_limit: 0,
-                user_gas_used: 0,
-                block_number: 2,
-                timestamp: expected_metadosis_start - 1,
-                chain_id: CHAIN_ID,
-                genesis_hash: alloy_primitives::B256::ZERO,
-                genesis_timestamp: u64::max(expected_metadosis_start - 1, 1),
-                proposer: alloy_primitives::Address::ZERO,
-                validators: Vec::new(),
-            },
-            storage.clone(),
-        );
-        assert!(
-            crate::lifecycle::find_due_emission_day(&metadosis, &before_start)
-                .unwrap()
-                .is_none()
-        );
 
         let at_start = BlockRuntimeContext::new(
             BlockContext {
@@ -195,36 +174,11 @@ fn schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_due_after_
             .set_block_timestamp(U256::from(at_start.block.timestamp))
             .unwrap();
         outbe_tributefactory::worldwideday::advance_worldwide_days_command(&at_start).unwrap();
-        let due_at_start = crate::lifecycle::find_due_emission_day(&metadosis, &at_start)
-            .unwrap()
-            .unwrap();
-        assert_eq!(due_at_start.day, 20260905);
-        assert_eq!(due_at_start.wwd, wwd_sep_01);
 
         // Simulate a halt from 5 Sep to 8 Sep 2026: the first block after restart
-        // must still select and execute the oldest due emission day (20260905).
+        // still runs the Metadosis of 20260905.
         let restart_ts = date_key_to_utc_timestamp(20260908).unwrap() + 3_600;
         arm_reference_price(&storage, restart_ts);
-        let restart_ctx = BlockRuntimeContext::new(
-            BlockContext {
-                block_gas_limit: 0,
-                user_gas_used: 0,
-                block_number: 4,
-                timestamp: restart_ts,
-                chain_id: CHAIN_ID,
-                genesis_hash: alloy_primitives::B256::ZERO,
-                genesis_timestamp: u64::max(restart_ts, 1),
-                proposer: alloy_primitives::Address::ZERO,
-                validators: Vec::new(),
-            },
-            storage.clone(),
-        );
-        let due_after_halt = crate::lifecycle::find_due_emission_day(&metadosis, &restart_ctx)
-            .unwrap()
-            .unwrap();
-        assert_eq!(due_after_halt.day, 20260905);
-        assert_eq!(due_after_halt.wwd, wwd_sep_01);
-
         storage.set_block_timestamp(U256::from(restart_ts)).unwrap();
         let aligned = BlockRuntimeContext::new(
             BlockContext {
@@ -240,7 +194,7 @@ fn schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_due_after_
             },
             storage.clone(),
         );
-        crate::commands::start_metadosis(&aligned).unwrap();
+        crate::commands::process_emission_day(&aligned, 20260905).unwrap();
         let completed = api::emission_day(storage.clone(), 20260905)
             .unwrap()
             .unwrap();
@@ -326,7 +280,7 @@ fn first_wwd_for_genesis_splits_3_or_4_empty_emission_days_across_noon_utc() {
             },
             storage.clone(),
         );
-        crate::commands::start_metadosis(&empty_due_ctx).unwrap();
+        crate::commands::process_emission_day(&empty_due_ctx, 20261001).unwrap();
         let settled_empty = api::emission_day(storage, 20261001).unwrap().unwrap();
         assert_eq!(settled_empty.wwd, WorldwideDay::new(0));
         assert_eq!(settled_empty.state, metadosis_state::COMPLETED);
@@ -534,7 +488,7 @@ fn wwd_without_price_runs_as_empty_day() {
             .is_day_sealed(wwd)
             .unwrap());
 
-        crate::commands::start_metadosis(&ctx_06).unwrap();
+        crate::commands::process_emission_day(&ctx_06, emission_day).unwrap();
         let settled = api::emission_day(storage.clone(), emission_day)
             .unwrap()
             .unwrap();
@@ -622,7 +576,7 @@ fn zero_metadosis_limit_cancels_day_with_reason_one_and_preserves_cancelled_stat
             },
             storage.clone(),
         );
-        crate::commands::start_metadosis(&ctx).unwrap();
+        crate::commands::process_emission_day(&ctx, emission_day).unwrap();
 
         let record = outbe_emission::api::get_emission_day_record(storage, emission_day)
             .unwrap()

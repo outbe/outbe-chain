@@ -431,12 +431,13 @@ pub(crate) fn run_advance_worldwide_days_step(
     }
 }
 
-fn run_allocate_emission_day_step(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
+/// Allocates `day` and returns it when Metadosis of `day` is to run in this run.
+fn run_allocate_emission_day_step(ctx: &BlockRuntimeContext, day: u32) -> Result<Option<u32>> {
     if day_settlement(ctx, day)? == DaySettlement::Settled {
-        return Ok(());
+        return Ok(None);
     }
     match settle_emission_day(ctx, day) {
-        Ok(()) => Ok(()),
+        Ok(()) => Ok(Some(day)),
         Err(err) if is_recoverable_step_error(&err) => {
             tracing::warn!(
                 target: "outbe::cycle",
@@ -446,7 +447,7 @@ fn run_allocate_emission_day_step(ctx: &BlockRuntimeContext, day: u32) -> Result
                 error = ?err,
                 "settle_emission_day step reverted; routing day emission limit to PromisLimit"
             );
-            record_failed_allocation_fallback(ctx, day)
+            record_failed_allocation_fallback(ctx, day).map(|()| None)
         }
         Err(err) => Err(err),
     }
@@ -475,11 +476,10 @@ fn record_failed_allocation_fallback(ctx: &BlockRuntimeContext, day: u32) -> Res
     })
 }
 
-fn run_metadosis_step(ctx: &BlockRuntimeContext) -> Result<()> {
-    let due_day = outbe_metadosis::commands::find_due_emission_day(ctx)?.map(|record| record.day);
+fn run_metadosis_step(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
     match ctx
         .storage
-        .with_checkpoint(|| outbe_metadosis::commands::start_metadosis(ctx))
+        .with_checkpoint(|| outbe_metadosis::commands::process_emission_day(ctx, day))
     {
         Ok(()) => Ok(()),
         Err(err) if is_recoverable_step_error(&err) => {
@@ -488,9 +488,10 @@ fn run_metadosis_step(ctx: &BlockRuntimeContext) -> Result<()> {
                 block_number = ctx.block.block_number,
                 block_timestamp = ctx.block.timestamp,
                 error = ?err,
-                "start_metadosis step reverted; routing metadosis limit to PromisLimit"
+                day,
+                "process_emission_day step reverted; routing metadosis limit to PromisLimit"
             );
-            due_day.map_or(Ok(()), |day| record_failed_metadosis_fallback(ctx, day))
+            record_failed_metadosis_fallback(ctx, day)
         }
         Err(err) => Err(err),
     }
@@ -507,7 +508,7 @@ fn record_failed_metadosis_fallback(ctx: &BlockRuntimeContext, day: u32) -> Resu
 ///    checkpoint with fallback to `record_failed_day_allocation` + `PromisLimit`.
 /// 2. `advance_worldwide_days` (step A6) once per UTC day at 00:00 UTC in its own checkpoint,
 ///    logging the cause and retrying on the next hour if it reverts.
-/// 3. `start_metadosis` (step A7) for the oldest `state == PROCESSING` day in its own checkpoint
+/// 3. `process_emission_day` (step A7) for the day that step A4 allocated, in its own checkpoint
 ///    with fallback to `record_metadosis_failed` + `PromisLimit`.
 pub fn run_protocol_cycle(ctx: &BlockRuntimeContext) -> Result<Readiness> {
     run_protocol_cycle_steps(ctx).map_err(fail_block)
@@ -533,19 +534,21 @@ fn run_protocol_cycle_steps(ctx: &BlockRuntimeContext) -> Result<Readiness> {
     )?;
     let day_action = protocol_day_action(active_utc_day, block_utc_day)?;
 
-    match day_action {
-        ProtocolDayAction::SameDay => {}
+    let allocated = match day_action {
+        ProtocolDayAction::SameDay => None,
         ProtocolDayAction::SettlePrevious { day } => {
             if !outbe_rewards::api::is_voting_complete(ctx, day)? {
                 return Ok(Readiness::NotReady);
             }
-            run_allocate_emission_day_step(ctx, day)?;
+            run_allocate_emission_day_step(ctx, day)?
         }
-    }
+    };
 
     run_advance_worldwide_days_step(ctx, block_utc_day)?;
 
-    run_metadosis_step(ctx)?;
+    if let Some(day) = allocated {
+        run_metadosis_step(ctx, day)?;
+    }
 
     tracing::info!(
         target: "outbe::cycle",
@@ -561,12 +564,10 @@ fn run_protocol_cycle_steps(ctx: &BlockRuntimeContext) -> Result<Readiness> {
 
 #[cfg(test)]
 pub(crate) fn run_emission_limit_daily(ctx: &BlockRuntimeContext) -> Result<()> {
-    settle_emission_day(
-        ctx,
-        outbe_primitives::time::previous_date_key(timestamp_to_date_key(ctx.block.timestamp))
-            .expect("date step"),
-    )?;
-    outbe_metadosis::commands::start_metadosis(ctx)
+    let day = outbe_primitives::time::previous_date_key(timestamp_to_date_key(ctx.block.timestamp))
+        .expect("date step");
+    settle_emission_day(ctx, day)?;
+    outbe_metadosis::commands::process_emission_day(ctx, day)
 }
 
 #[cfg(test)]

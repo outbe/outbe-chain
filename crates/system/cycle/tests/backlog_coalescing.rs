@@ -130,7 +130,10 @@ fn the_genesis_interval_leaves_the_clearing_poll_alone() {
         );
         #[cfg(not(feature = "e2e-test"))]
         assert_eq!(clearing.period_seconds(), 3_600);
-        assert_eq!(clearing.start_offset_seconds, OFFSET);
+        assert_eq!(
+            clearing.start_offset_seconds,
+            outbe_cycle::triggers::PROTOCOL_CYCLE_START_OFFSET_SECONDS
+        );
         assert!(!clearing.requires_accounting_window);
     }
 }

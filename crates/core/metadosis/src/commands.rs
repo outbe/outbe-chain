@@ -7,14 +7,15 @@ use outbe_primitives::{
 
 use crate::commit::commit_transition;
 
-pub fn start_metadosis(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+/// Runs the Metadosis of emission day `day`, which the Cycle allocated in this run.
+pub fn process_emission_day(ctx: &BlockRuntimeContext<'_>, day: u32) -> Result<()> {
     let binding = metadosis_process_ready_binding(
         ctx.block.chain_id,
         ctx.block.block_number,
         ctx.block.timestamp,
     );
     commit_transition::<MetadosisCycleLifecycle, _>(ctx.storage.clone(), binding, |_| {
-        crate::runtime::start_metadosis(ctx)
+        crate::runtime::process_emission_day(ctx, day)
     })
 }
 
@@ -42,13 +43,6 @@ pub fn set_metadosis_limit(
         );
     }
     Ok(())
-}
-
-pub fn find_due_emission_day(
-    ctx: &BlockRuntimeContext<'_>,
-) -> Result<Option<crate::schema::EmissionDay>> {
-    let metadosis = crate::schema::MetadosisContract::new(ctx.storage.clone());
-    crate::lifecycle::find_due_emission_day(&metadosis, ctx)
 }
 
 /// Marks Metadosis of `day` as `Failed` (returning its Metadosis limit to `PromisLimit`

@@ -727,7 +727,10 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
 
     let first = run_once();
     assert_eq!(first.active_day, 20_240_102);
-    assert_eq!(first.last_executed_at, GENESIS_TS + SECONDS_PER_DAY);
+    assert_eq!(
+        first.last_executed_at,
+        GENESIS_TS + SECONDS_PER_DAY + outbe_cycle::triggers::PROTOCOL_CYCLE_START_OFFSET_SECONDS
+    );
     assert!(first.day_settled);
     assert!(!first.voter_claimable.is_zero());
     assert_eq!(first.voter_gems, 0);

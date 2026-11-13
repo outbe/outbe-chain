@@ -19,7 +19,7 @@ fn hourly_protocol_cycle_executes_due_emission_day_at_metadosis_start() {
             .unwrap();
         assert_eq!(ed.wwd, wwd);
         assert_eq!(ed.state, outbe_emission::schema::metadosis_state::PENDING);
-        (ed, ed.metadosis_start.div_ceil(3_600) * 3_600)
+        (ed, ed.metadosis_start)
     });
 
     storage.enter(|handle| {
