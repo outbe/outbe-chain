@@ -1,3 +1,12 @@
+//! Outbe metric taxonomy: see `crates/runtime/src/metrics_recorder.rs`.
+//!
+//! Rust names use `outbe_radicle_*`; Reth exports them as `reth_outbe_radicle_*`.
+//! Counters end in `_total`; histograms end in their measurement unit (`_ms`
+//! for millisecond latencies). Gauges never end in `_total` or `_count`; use
+//! units, plural quantities, or boolean predicates such as `_known`/`_allowed`.
+//! Boolean gauges emit only 0.0 or 1.0, never sentinel values.
+//! Standard labels are `addr`, `signer`, `reason`, `kind`, and `result`.
+
 use super::{RadicleStatusSnapshot, RadicleVotingGate};
 
 #[derive(Default)]
@@ -94,7 +103,11 @@ impl RadicleMetrics {
         );
         self.previous = current;
 
-        let _ = status.voting_gate == RadicleVotingGate::SignerAllowed;
+        let signer_allowed = match status.voting_gate {
+            RadicleVotingGate::SignerAllowed => 1.0,
+            RadicleVotingGate::Verifier | RadicleVotingGate::Fatal(_) => 0.0,
+        };
+        metrics::gauge!("outbe_radicle_voting_gate_signer_allowed").set(signer_allowed);
     }
 }
 

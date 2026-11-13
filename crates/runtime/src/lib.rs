@@ -11,6 +11,7 @@ mod errors;
 mod execution_runtime;
 mod identity;
 mod launch;
+pub mod metrics_recorder;
 mod precompiles;
 mod radicle;
 mod shutdown;
@@ -30,6 +31,7 @@ pub use configuration::{
 };
 pub use launch::run_node;
 pub(crate) use launch::LaunchConfig;
+pub use metrics_recorder::install_outbe_prometheus_recorder;
 pub use system_tx::BLOCK_ORDER;
 pub use wiring::OutbeRuntime;
 

@@ -21,6 +21,11 @@ acvm = { git = "https://github.com/noir-lang/noir.git", tag = "v1.0.0-beta.22", 
 bn254_blackbox_solver = { git = "https://github.com/noir-lang/noir.git", tag = "v1.0.0-beta.22", package = "bn254_blackbox_solver" }
 barretenberg-rs = { version = "=5.0.0-nightly.20260522", default-features = false, features = ["ffi"] }
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"], optional = true }
+quinn-udp = { workspace = true, optional = true }
+
+[package.metadata.cargo-machete]
+# Transitive security floor for RUSTSEC-2026-0538 (reqwest 0.13 -> quinn -> quinn-udp >= 0.5.16).
+ignored = ["quinn-udp"]
 
 [features]
 default = ["with-network-srs"]

@@ -15,7 +15,7 @@ fn phase1_cn_fallback_counter_has_no_round_labels() {
     let snapshot = snapshotter.snapshot().into_vec();
     let matches: Vec<_> = snapshot
         .iter()
-        .filter(|(key, _, _, _)| key.key().name() == "outbe_phase1_used_cn_fallback_total")
+        .filter(|(key, _, _, _)| key.key().name() == "outbe_consensus_phase1_cn_fallback_total")
         .collect();
     assert_eq!(
         matches.len(),
