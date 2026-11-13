@@ -47,12 +47,6 @@ pub enum TributeError {
     #[error("{0}")]
     CalculationView(String),
 
-    #[error("Lysis input count/nominal does not match sealed Tribute DayTotals")]
-    LysisInputMismatch,
-
-    #[error("MissedOffering requires a sealed empty Tribute partition")]
-    MissedOfferingRequiresSealedEmptyPartition,
-
     #[error("Tribute WWD is not completed and empty")]
     WorldwideDayNotCompletedAndEmpty,
 
@@ -145,8 +139,6 @@ impl From<TributeError> for PrecompileError {
             TributeError::InvalidEncryptedDayIdentity
             | TributeError::InvalidEncryptedEncoding
             | TributeError::ChainIdentityMismatch
-            | TributeError::LysisInputMismatch
-            | TributeError::MissedOfferingRequiresSealedEmptyPartition
             | TributeError::DayMetadataDiffersFromEncryptedAmount
             | TributeError::SealedDayMetadataDiffersFromEncryptedAmount
             | TributeError::DayCountOverflowOrUnderflow

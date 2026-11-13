@@ -100,9 +100,6 @@ fn settle_partition(
             unused: lysis_limit_minor,
         });
     };
-    if !totals.is_sealed || !totals.initialized {
-        return Err(mismatch());
-    }
     tribute.freeze_day_nominal(&totals)?;
     let (_, onchain_allocated_minor) = tribute.compute_and_record_metadosis_fractions(
         wwd,

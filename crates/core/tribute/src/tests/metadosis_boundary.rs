@@ -53,16 +53,6 @@ fn day_mutators_reject_a_missing_lease_without_writes() {
                 .to_string(),
             MISMATCH
         );
-        assert_eq!(
-            tc.consume_lysis_partition(
-                day,
-                totals.tribute_count,
-                totals.tribute_nominal_total_minor
-            )
-            .unwrap_err()
-            .to_string(),
-            MISMATCH
-        );
         assert_eq!(tc.seal_day(day).unwrap_err().to_string(), MISMATCH);
         assert_eq!(
             tc.record_metadosis_fractions(day, &std::collections::BTreeMap::new(), 1)

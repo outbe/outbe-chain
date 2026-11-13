@@ -113,20 +113,6 @@ impl TributeContract<'_> {
         }
     }
 
-    pub(crate) fn reset_day_nominal(&self, totals: &DayTotals) -> Result<()> {
-        let mut context = b"outbe/tribute/day-retirement/v2".to_vec();
-        context.extend_from_slice(&totals.worldwide_day.value().to_be_bytes());
-        context.extend_from_slice(&totals.tribute_count.to_be_bytes());
-        context.push(u8::from(totals.is_sealed));
-        self.apply_day_amount(
-            totals.worldwide_day,
-            TributeDayOperationV2::Reset {
-                expected_total: totals.tribute_nominal_total_minor,
-            },
-            keccak256(context),
-        )
-    }
-
     pub(crate) fn set_day_sealed(&mut self, day: WorldwideDay, is_sealed: bool) -> Result<()> {
         let mut stored = self
             .day_totals

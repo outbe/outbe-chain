@@ -83,11 +83,9 @@ pub(crate) fn process_ready_candidate(
     let wwd = emission_day.wwd;
     let mut nominal_total = U256::ZERO;
     if wwd.value() != 0 {
-        let totals = TributeContract::new(metadosis.storage.clone()).get_day_totals(wwd)?;
-        if !totals.is_sealed {
-            return Ok(());
-        }
-        nominal_total = totals.tribute_nominal_total_minor;
+        nominal_total = TributeContract::new(metadosis.storage.clone())
+            .get_day_totals(wwd)?
+            .tribute_nominal_total_minor;
     }
     let calculation = metadosis.lysis_limit_of_day(nominal_total, limit_amount)?;
     crate::lysis::execute(metadosis, ctx, emission_day, calculation)

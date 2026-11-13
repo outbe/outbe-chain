@@ -20,63 +20,11 @@ pub enum RetirementOutcome {
 }
 
 impl TributeContract<'_> {
-    /// Applies ADR-011's one bulk accounting transition after every verified
-    /// Tribute in the sealed WWD has produced exactly one Nod.
-    pub fn consume_lysis_partition(
-        &mut self,
-        day: WorldwideDay,
-        verified_count: u32,
-        verified_nominal: alloy_primitives::U256,
-    ) -> Result<()> {
-        self.storage_handle().require_metadosis_process_ready()?;
-        self.consume_lysis_partition_inner(day, verified_count, verified_nominal)
-    }
-
-    pub(crate) fn consume_lysis_partition_inner(
-        &mut self,
-        day: WorldwideDay,
-        verified_count: u32,
-        verified_nominal: alloy_primitives::U256,
-    ) -> Result<()> {
-        let mut totals = self.get_day_totals(day)?;
-        if !totals.initialized
-            || !totals.is_sealed
-            || totals.tribute_count != verified_count
-            || totals.tribute_nominal_total_minor != verified_nominal
-        {
-            return Err(TributeError::LysisInputMismatch.into());
-        }
-        self.reset_day_nominal(&totals)?;
-        totals.tribute_count = 0;
-        totals.tribute_nominal_total_minor = alloy_primitives::U256::ZERO;
-        self.store_day_totals(&totals)
-    }
-
     /// Retires a sealed empty day in the same state checkpoint as completion.
     pub fn retire_completed_partition(&mut self, day: WorldwideDay) -> Result<RetirementOutcome> {
         let storage = self.storage_handle();
         storage.require_metadosis_process_ready()?;
         storage.with_checkpoint(|| self.retire_completed_partition_inner(day))
-    }
-
-    /// Retires a sealed empty day when OFFERING was never opened.
-    pub fn retire_empty_missed_offering_partition(
-        &mut self,
-        day: WorldwideDay,
-    ) -> Result<RetirementOutcome> {
-        let storage = self.storage_handle();
-        storage.require_metadosis_process_ready()?;
-        storage.with_checkpoint(|| {
-            let totals = self.get_day_totals(day)?;
-            if !totals.initialized
-                || !totals.is_sealed
-                || totals.tribute_count != 0
-                || !totals.tribute_nominal_total_minor.is_zero()
-            {
-                return Err(TributeError::MissedOfferingRequiresSealedEmptyPartition.into());
-            }
-            self.retire_completed_partition_inner(day)
-        })
     }
 
     pub(crate) fn retire_completed_partition_inner(
