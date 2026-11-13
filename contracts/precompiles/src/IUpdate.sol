@@ -37,6 +37,7 @@ interface IUpdate {
     error UnexpectedAppliedClassification();
     error UnknownApprovedUpgrade(uint256 proposalId);
     error ApprovedPayloadMismatch(uint256 proposalId);
+    error ContractUpgradeLocked(uint256 proposalId, uint64 unlockHeight);
 
     enum ScheduledUpdateStatus {
         Scheduled,
@@ -64,11 +65,14 @@ interface IUpdate {
     /// @notice Emitted when `applyApproved` runs an approved contract upgrade.
     event ContractUpgradeApplied(uint256 indexed proposalId);
 
-    /// @notice Emitted when `applyApproved` drops an approved contract upgrade after the voting window.
+    /// @notice Emitted when `applyApproved` drops an approved contract upgrade more than one voting
+    /// window after its unlock height.
     event ContractUpgradeExpired(uint256 indexed proposalId);
 
     /// @notice Runs the approved `upgradeContracts` proposal `proposalId` once. Anyone can call it.
-    /// `payload` must be the approved JSON payload.
+    /// `payload` must be the approved JSON payload. The unlock height is
+    /// `max(approval block, proposal created height + governance voting window)`.
+    /// Before the unlock height, the call reverts with `ContractUpgradeLocked` and the approval stays.
     function applyApproved(uint256 proposalId, bytes calldata payload) external;
 
     /// @notice Returns the active protocol version.

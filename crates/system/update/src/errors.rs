@@ -66,6 +66,11 @@ pub enum UpdateError {
     UnknownApprovedUpgrade { proposal_id: U256 },
     #[error("payload is not the approved payload of proposal {proposal_id}")]
     ApprovedPayloadMismatch { proposal_id: U256 },
+    #[error("approved contract upgrade {proposal_id} is locked until block {unlock_height}")]
+    ContractUpgradeLocked {
+        proposal_id: U256,
+        unlock_height: u64,
+    },
 }
 
 impl From<UpdateError> for PrecompileError {
@@ -186,6 +191,16 @@ impl From<UpdateError> for PrecompileError {
                     .abi_encode(),
                 ))
             }
+            UpdateError::ContractUpgradeLocked {
+                proposal_id,
+                unlock_height,
+            } => PrecompileError::RevertBytes(Bytes::from(
+                IUpdate::ContractUpgradeLocked {
+                    proposalId: proposal_id,
+                    unlockHeight: unlock_height,
+                }
+                .abi_encode(),
+            )),
         }
     }
 }

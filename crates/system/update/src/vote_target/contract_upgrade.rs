@@ -9,12 +9,16 @@
 //! Outbe that is one `callLocal` for each upgrade. Each other chain gets one
 //! `callRemote` message with all its upgrades, through the Interchain Account.
 //! This address is in the owner-caller list of CrosschainBridge.
+//!
+//! A batch runs no earlier than one governance voting window after its
+//! proposal (OIP-00382). A short voting window makes the vote faster, not the
+//! upgrade.
 
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::addresses::CROSSCHAIN_BRIDGE_ADDRESS;
 use outbe_primitives::error::Result;
-use outbe_system_common::vote_target::decode_stored_proposal_payload;
+use outbe_system_common::vote_target::{decode_stored_proposal_payload, read_vote_proposal};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -143,8 +147,10 @@ impl Update<'_> {
     }
 
     /// Runs an approved batch once, inside one checkpoint: every upgrade is
-    /// sent, or none. A batch that waited longer than the voting window is
-    /// dropped.
+    /// sent, or none. The batch runs no earlier than its unlock height (see
+    /// `contract_upgrade_unlock_height`). Before that height the call
+    /// reverts and the approval stays. A batch that waited longer than the
+    /// voting window after its unlock height is dropped.
     pub fn apply_approved(&mut self, proposal_id: U256, payload: &[u8]) -> Result<()> {
         let approved = self.approved_upgrades.read(&proposal_id)?;
         if approved == B256::ZERO {
@@ -153,15 +159,21 @@ impl Update<'_> {
         if keccak256(payload) != approved {
             return Err(UpdateError::ApprovedPayloadMismatch { proposal_id }.into());
         }
+        let window = outbe_chain_constants::get_governance_voting_window_blocks();
+        let unlock_height = self.contract_upgrade_unlock_height(proposal_id, window)?;
+        let block_number = self.storage.block_number()?;
+        if block_number < unlock_height {
+            return Err(UpdateError::ContractUpgradeLocked {
+                proposal_id,
+                unlock_height,
+            }
+            .into());
+        }
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             // Consume first. The checkpoint restores it if an upgrade fails.
             self.approved_upgrades.write(&proposal_id, B256::ZERO)?;
-            let deadline = self
-                .approved_upgrade_at
-                .read(&proposal_id)?
-                .saturating_add(outbe_chain_constants::get_governance_voting_window_blocks());
-            if self.storage.block_number()? > deadline {
+            if block_number > unlock_height.saturating_add(window) {
                 return self.emit(IUpdate::ContractUpgradeExpired {
                     proposalId: proposal_id,
                 });
@@ -177,6 +189,20 @@ impl Update<'_> {
                 proposalId: proposal_id,
             })
         })
+    }
+
+    /// The first block at which an approved batch can run:
+    /// `max(approved_at, created_height + window)`. A proposal with a short
+    /// voting window gets a faster vote, but its upgrade still waits one full
+    /// `window` after the proposal.
+    fn contract_upgrade_unlock_height(&self, proposal_id: U256, window: u64) -> Result<u64> {
+        let proposal = read_vote_proposal(self.storage.clone(), proposal_id)?.ok_or_else(|| {
+            UpdateError::VoteTargetInvariantFailure(format!(
+                "approved contract upgrade {proposal_id} has no Vote proposal record"
+            ))
+        })?;
+        let approved_at = self.approved_upgrade_at.read(&proposal_id)?;
+        Ok(approved_at.max(proposal.created_height.saturating_add(window)))
     }
 }
 

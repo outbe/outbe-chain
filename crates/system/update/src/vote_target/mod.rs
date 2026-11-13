@@ -134,7 +134,8 @@ fn classify_domain_error(err: UpdateError) -> Result<TargetExecutionOutcome> {
         | UpdateError::VoteTargetInvariantFailure(_)
         | UpdateError::UnexpectedAppliedClassification
         | UpdateError::UnknownApprovedUpgrade { .. }
-        | UpdateError::ApprovedPayloadMismatch { .. } => {
+        | UpdateError::ApprovedPayloadMismatch { .. }
+        | UpdateError::ContractUpgradeLocked { .. } => {
             Err(UpdateError::VoteTargetInvariantFailure(err.to_string()).into())
         }
     }
