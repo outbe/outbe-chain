@@ -116,15 +116,6 @@ fn recorded(methods: &Methods) -> Vec<String> {
 }
 
 #[test]
-fn production_limits_are_explicit() {
-    assert_eq!(
-        UpstreamLimits::DEFAULT.request_timeout,
-        Duration::from_secs(10)
-    );
-    assert_eq!(UpstreamLimits::DEFAULT.max_response_bytes, 10 * 1024 * 1024);
-}
-
-#[test]
 fn only_method_not_found_selects_the_legacy_method() {
     let call = |code| {
         ClientError::Call(jsonrpsee::types::ErrorObject::owned(

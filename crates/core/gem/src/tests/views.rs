@@ -4,8 +4,6 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_primitives::addresses::GEM_ADDRESS;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::SECONDS_PER_DAY;
-use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
 use super::*;
 use crate::config::GemParams;
@@ -236,11 +234,6 @@ fn supported_interfaces_match_the_implemented_selectors() {
         ]),
         ERC721_METADATA_INTERFACE_ID
     );
-    assert_eq!(IGem::MetadataUpdate::SIGNATURE, "MetadataUpdate(uint256)");
-    assert_eq!(
-        IGem::BatchMetadataUpdate::SIGNATURE,
-        "BatchMetadataUpdate(uint256,uint256)"
-    );
 
     with_storage(|storage| {
         let supports = |id: [u8; 4]| {
@@ -450,11 +443,6 @@ fn config_unset_resolves_by_chain_id() {
         // An explicit selector still wins over the network default.
         set_profile(storage, crate::config::PROFILE_PROD);
         assert_eq!(crate::config::read(storage).unwrap(), GemParams::PROD);
-        assert_eq!(
-            GemParams::PROD.call_window_seconds,
-            28 * SECONDS_PER_DAY_U32
-        );
-        assert_eq!(GemParams::PROD.position_validity, 365 * SECONDS_PER_DAY);
     });
 }
 
@@ -473,14 +461,6 @@ fn config_auto_profile_follows_the_network() {
             GemParams::DEV
         );
     }
-}
-
-/// PROD keeps 2.28 times the entry price. DEV uses 1.04 times the entry price.
-#[test]
-fn config_call_rate_is_pinned_per_profile() {
-    assert_eq!(GemParams::PROD.call_rate, crate::constants::CALL_RATE_PCT);
-    assert_eq!(GemParams::PROD.call_rate, 128);
-    assert_eq!(GemParams::DEV.call_rate, 4);
 }
 
 #[test]

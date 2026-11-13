@@ -201,7 +201,7 @@ fn payload_attributes(timestamp: u64, proposer: Address) -> OutbePayloadAttribut
 }
 
 #[tokio::test]
-async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
+async fn rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
     reth_tracing::init_test_tracing();
 
     let signer = Arc::new(OutbeEvmSigner::from_secret_bytes([1u8; 32])?);

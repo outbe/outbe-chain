@@ -9,10 +9,9 @@ use outbe_primitives::tee_attestation_v1::{
     QvlTcbStatusV1, RegistrationIntentV1, RegistryMutatorV1, ResourceScheduleV1,
     SystemGasScheduleV1, TeeBootstrapGasInputV1, TeeMeasurementRuleV1, TeePolicyScheduleEntryV1,
     TeePolicyScheduleV1, TeePolicyV1, TeeRegistryGasScheduleV1, TransitionKeyReadyProofV1,
-    TrustedNetworkDescriptorV1, ACTIVE_TEE_ATTESTATION_V1_MANIFEST, MAX_ACTIVE_MEASUREMENT_RULES,
-    MAX_ATTESTATION_EVIDENCE_BYTES, MAX_COLLATERAL_COMPONENT_BYTES,
-    MAX_EVIDENCE_CALL_FRAMING_BYTES, MAX_NODE_HOST_AUTHORIZATION_WITNESS_BYTES, MAX_QUOTE_BYTES,
-    MAX_TEE_BOOTSTRAP_BYTES,
+    TrustedNetworkDescriptorV1, MAX_ACTIVE_MEASUREMENT_RULES, MAX_ATTESTATION_EVIDENCE_BYTES,
+    MAX_COLLATERAL_COMPONENT_BYTES, MAX_EVIDENCE_CALL_FRAMING_BYTES,
+    MAX_NODE_HOST_AUTHORIZATION_WITNESS_BYTES, MAX_QUOTE_BYTES, MAX_TEE_BOOTSTRAP_BYTES,
 };
 
 fn validator_intent(genesis_hash: B256) -> RegistrationIntentV1 {

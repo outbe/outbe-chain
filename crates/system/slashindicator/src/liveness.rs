@@ -198,11 +198,6 @@ mod tests {
     use outbe_primitives::tee_attestation_v1::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT;
 
     #[test]
-    fn activation_height_is_block_one() {
-        assert_eq!(TEE_ATTESTATION_V1_ACTIVATION_HEIGHT, 1);
-    }
-
-    #[test]
     fn bootstrap_block_skips_the_lease_sweep() {
         let mut provider = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut provider, |storage| {

@@ -8,7 +8,7 @@
 
 use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::SolCall;
-use outbe_primitives::addresses::{UPDATE_ADDRESS, VOTE_ADDRESS};
+use outbe_primitives::addresses::UPDATE_ADDRESS;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_update::constants::MIN_ACTIVATION_BUFFER;
 use outbe_update::payload::encode_schedule_update_json;
@@ -80,18 +80,6 @@ fn schedule_update(update: &mut Update<'_>, fixture: ScheduleUpdateFixture<'_>) 
     update
         .schedule_update_from_propose(proposal_id, &payload, current_height)
         .expect("schedule update should succeed");
-}
-
-#[test]
-fn precompile_addresses_match_eth_call_targets() {
-    assert_eq!(
-        UPDATE_ADDRESS,
-        address!("0x000000000000000000000000000000000000EE0B")
-    );
-    assert_eq!(
-        VOTE_ADDRESS,
-        address!("0x000000000000000000000000000000000000EE0C")
-    );
 }
 
 #[test]

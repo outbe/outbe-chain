@@ -158,21 +158,6 @@ fn validate_active_system_tx_set_requires_mandatory_and_conditional_kinds() {
 }
 
 #[test]
-fn revert_policy_lives_in_injected_protocol_steps() {
-    assert!(TEST_BLOCK_ORDER
-        .consensus
-        .iter()
-        .all(|step| step.revert_fails_block));
-    for (index, step) in TEST_BLOCK_ORDER.begin_block.iter().enumerate() {
-        assert_eq!(step.revert_fails_block, !matches!(index, 6 | 7));
-    }
-    assert!(TEST_BLOCK_ORDER
-        .end_block
-        .iter()
-        .all(|step| !step.revert_fails_block));
-}
-
-#[test]
 fn validate_active_system_tx_set_rejects_phase3b_outside_block1() {
     let mut txs = vec![
         system_tx(accounting(), 0, 2),

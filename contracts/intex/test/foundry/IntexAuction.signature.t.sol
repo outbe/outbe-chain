@@ -311,35 +311,6 @@ contract AuctionSignatureTest is Test {
 
     // --- Golden digest snapshot (B1.5) ---
 
-    /// @dev Lock the EIP-712 typed-data shape: any change to the domain (`name`, `version`,
-    ///      chainid mixing) or the `RevealBid` struct (field order/types) flips the digest.
-    ///      Inputs:
-    ///        chainid           = 56          (BSC mainnet)
-    ///        verifyingContract = 0x..00cafe
-    ///        emissionDay          = 20260108
-    ///        bidder            = 0x..00abcd
-    ///        quantity          = 5
-    ///        bidRate           = 1100
-    ///        issuanceCurrency  = 840
-    ///        referenceCurrency = 840
-    function test_eip712_goldenDigest() public pure {
-        address vc = 0x000000000000000000000000000000000000cafE;
-        address bidder = 0x000000000000000000000000000000000000ABcD;
-        bytes32 expected = 0x14e44a96eadd78a82b7c63b22c587acebf6a677c14838e162a08bb43aef112df;
-
-        bytes32 domain = keccak256(
-            abi.encode(EIP712_DOMAIN_TYPEHASH, keccak256(bytes("IntexAuction")), keccak256(bytes("1")), uint256(56), vc)
-        );
-        bytes32 structH = keccak256(
-            abi.encode(
-                REVEAL_BID_TYPEHASH, uint32(20260108), bidder, uint16(5), uint32(1100), ISSUANCE_CCY, REFERENCE_CCY
-            )
-        );
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domain, structH));
-
-        assertEq(digest, expected, "typed-data digest drift");
-    }
-
     // --- Indexer events ---
 
     function test_emit_BidCommitted() public {
@@ -382,16 +353,32 @@ contract AuctionSignatureTest is Test {
         auction.revealBid(emissionDay, 5, 50, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
     }
 
-    function test_quantity_matchesTypeScriptSignatureVector() public pure {
+    /// @dev A signature a TypeScript client made for chain 56 and the auction at 0x..cafe.
+    function test_revealBid_acceptsTheTypeScriptSignatureVector() public {
+        vm.chainId(56);
+        address verifyingContract = 0x000000000000000000000000000000000000cafE;
         address bidder = 0xFc32402667182d11B29fab5c5e323e80483e7800;
-        address vc = 0x000000000000000000000000000000000000cafE;
-        bytes32 digest = _digest(vc, 56, 20260108, bidder, 5, 1100);
-        assertEq(digest, 0x7f26be2b1d489635cd22fb2019f31e13972acad1b7e36a17a196fe49be06611e);
-        bytes memory signature = _signFor(0x100, vc, 56, 20260108, bidder, 5, 1100);
-        assertEq(
-            signature,
-            hex"7437b13d15709b11ed69749f7cbe1a25eed7f7f8446648e7333f77425659f4a37ccc8d5b10792f253f3a14251ab8cb69b7f9648c987dfaf63f1053d43b0cb48a1c"
+        uint32 emissionDay = 20260108;
+        deployCodeTo(
+            "ERC1967Proxy.sol:ERC1967Proxy",
+            abi.encode(address(new IntexAuction()), abi.encodeCall(IntexAuction.initialize, (admin))),
+            verifyingContract
         );
-        assertEq(keccak256(signature), 0x537a1bb70ac6dc25baa8ac58896c8af7ab9f3c0afec2c5bbc230bcefde277969);
+        auction = IntexAuction(verifyingContract);
+        vm.startPrank(admin);
+        auction.grantRole(auction.RELAYER_ROLE(), bridger);
+        auction.wire(address(escrow));
+        vm.stopPrank();
+        bytes memory signature =
+            hex"7437b13d15709b11ed69749f7cbe1a25eed7f7f8446648e7333f77425659f4a37ccc8d5b10792f253f3a14251ab8cb69b7f9648c987dfaf63f1053d43b0cb48a1c";
+
+        _start(emissionDay);
+        _commit(auction, emissionDay, bidder, signature);
+        _enterReveal(emissionDay);
+
+        vm.expectEmit(true, true, false, true, verifyingContract);
+        emit IIntexAuction.BidRevealed(emissionDay, bidder, 5, 1100, ISSUANCE_CCY, REFERENCE_CCY);
+        vm.prank(bidder);
+        auction.revealBid(emissionDay, 5, 1100, ISSUANCE_CCY, REFERENCE_CCY, 56, signature);
     }
 }

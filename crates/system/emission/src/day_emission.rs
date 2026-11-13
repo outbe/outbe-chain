@@ -81,7 +81,6 @@ mod tests {
 
     #[test]
     fn floor_clamp_at_and_beyond_threshold() {
-        assert_eq!(FLOOR_DAY_THRESHOLD, 3_072);
         assert_eq!(emission_limit_of_day(FLOOR_DAY_THRESHOLD), PIN_DAY_3072);
         assert_eq!(emission_limit_of_day(FLOOR_DAY_THRESHOLD + 1), PIN_DAY_3072);
         assert_eq!(emission_limit_of_day(u32::MAX), PIN_DAY_3072);

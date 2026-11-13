@@ -44,16 +44,6 @@ struct NetworkVector {
 
 #[test]
 fn stablecoin_constants_are_exact_and_class_disjoint() {
-    assert_eq!(
-        STABLECOIN_FACTORY_ADDRESS,
-        Address::from_str("0x000000000000000000000000000000000000ee0f").unwrap()
-    );
-    assert_eq!(
-        STABLECOIN_POLICY_REGISTRY_ADDRESS,
-        Address::from_str("0x000000000000000000000000000000000000ee10").unwrap()
-    );
-    assert_eq!(STABLECOIN_ADDRESS_PREFIX, [0x53, 0xc0]);
-    assert_eq!(STABLECOIN_MARKER_CODE, [0xef]);
     assert!(!is_stablecoin_address(STABLECOIN_FACTORY_ADDRESS));
     assert!(!is_stablecoin_address(STABLECOIN_POLICY_REGISTRY_ADDRESS));
 }

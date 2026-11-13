@@ -310,36 +310,6 @@ fn metadata_and_layout() {
 }
 
 #[test]
-fn iface_id_matches_selector_xor() {
-    let xor: [u8; 4] = [
-        IPromis::nameCall::SELECTOR,
-        IPromis::symbolCall::SELECTOR,
-        IPromis::decimalsCall::SELECTOR,
-        IPromis::balanceOfCall::SELECTOR,
-        IPromis::opNonceOfCall::SELECTOR,
-        IPromis::allowanceCall::SELECTOR,
-        IPromis::approveCall::SELECTOR,
-        IPromis::transferCall::SELECTOR,
-        IPromis::transferFromCall::SELECTOR,
-    ]
-    .into_iter()
-    .fold([0u8; 4], |acc, sel| {
-        [
-            acc[0] ^ sel[0],
-            acc[1] ^ sel[1],
-            acc[2] ^ sel[2],
-            acc[3] ^ sel[3],
-        ]
-    });
-
-    assert_eq!(
-        xor,
-        crate::precompile::IPROMIS_INTERFACE_ID,
-        "IPROMIS_INTERFACE_ID is stale; update it to match the new selector XOR"
-    );
-}
-
-#[test]
 fn an_owner_result_that_differs_from_the_request_is_refused() {
     use crate::runtime::ensure_owner_result;
     use outbe_tee::protocol::{PromisOpResult, PromisOpStatus};

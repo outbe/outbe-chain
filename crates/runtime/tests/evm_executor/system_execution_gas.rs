@@ -158,7 +158,7 @@ fn delayed_first_cycle_tick_starts_all_fresh_passes_at_chainspec_genesis() {
 }
 
 #[test]
-fn gas_01_evm_level_system_tx_err_must_not_be_soft_receipted() {
+fn evm_level_system_tx_err_must_not_be_soft_receipted() {
     let signer = test_evm_signer();
     let proposer = signer.address();
     let mut state = state_with_active_proposer(proposer);
@@ -208,7 +208,7 @@ fn gas_01_evm_level_system_tx_err_must_not_be_soft_receipted() {
 }
 
 #[test]
-fn gas_02_phase1_preexec_failure_must_consume_body0_or_abort() {
+fn phase1_preexec_failure_must_consume_body0_or_abort() {
     let signer = test_evm_signer();
     let proposer = signer.address();
     let parent_hash = B256::with_last_byte(0xA1);
@@ -301,7 +301,7 @@ fn gas_02_phase1_preexec_failure_must_consume_body0_or_abort() {
 }
 
 #[test]
-fn gas_03_without_commit_reserved_system_tx_must_not_use_user_lane_admission() {
+fn without_commit_reserved_system_tx_must_not_use_user_lane_admission() {
     let signer = test_evm_signer();
     let proposer = signer.address();
     let mut state = state_with_active_proposer(proposer);
@@ -343,7 +343,7 @@ fn gas_03_without_commit_reserved_system_tx_must_not_use_user_lane_admission() {
 }
 
 #[test]
-fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_lane_clean() {
+fn reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_lane_clean() {
     let signer = test_evm_signer();
     let proposer = signer.address();
     let user_tx = test_regular_tx()

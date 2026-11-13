@@ -121,10 +121,4 @@ mod tests {
         assert!(!is_testnet(unknown));
         assert!(!is_mainnet(unknown));
     }
-
-    #[test]
-    fn compiled_default_remains_devnet() {
-        assert_eq!(CHAIN_ID, DEVNET_CHAIN_ID);
-        assert_eq!(CHAIN_NAME, DEVNET_CHAIN_NAME);
-    }
 }

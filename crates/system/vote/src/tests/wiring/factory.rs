@@ -97,7 +97,7 @@ fn real_factory_vote_approval_creates_token_refunds_once_and_preserves_surplus()
 }
 
 #[test]
-fn pfs_010_05_expiry_releases_identity_and_pending_cap_and_burns_once() {
+fn expiry_releases_identity_and_pending_cap_and_burns_once() {
     let issuer = Address::repeat_byte(0x11);
     let raw = payload(issuer);
     let raw = core::str::from_utf8(&raw).unwrap();
@@ -224,7 +224,7 @@ fn pfs_010_05_expiry_releases_identity_and_pending_cap_and_burns_once() {
 }
 
 #[test]
-fn pfs_010_06_execution_error_refunds_bond_once_and_retains_reservation() {
+fn execution_error_refunds_bond_once_and_retains_reservation() {
     let issuer = Address::repeat_byte(0x11);
     let raw = payload(issuer);
     let raw = core::str::from_utf8(&raw).unwrap();
@@ -557,7 +557,7 @@ fn factory_target_approved_expired_malformed_payload_and_corrupted_reservation_o
 }
 
 #[test]
-fn pfs_010_08_fatal_creation_rolls_back_the_containing_block() {
+fn fatal_creation_rolls_back_the_containing_block() {
     let issuer = Address::repeat_byte(0x11);
     let raw = payload(issuer);
     let raw_text = core::str::from_utf8(&raw).unwrap();

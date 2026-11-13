@@ -59,7 +59,7 @@ fn deadlines_follow_positive_credits_and_are_independent() {
 }
 
 #[test]
-fn gap_ed32_idle_reward_balance_goes_to_promis_limit() {
+fn idle_reward_balance_goes_to_promis_limit() {
     for pool in POOLS {
         with_contract_mut(|storage, contract| {
             let load = U256::from(100);

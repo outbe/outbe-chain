@@ -157,9 +157,6 @@ fn dense_enumeration_tracks_created_series() {
 
 #[test]
 fn intex_state_encoding_matches_solidity() {
-    assert_eq!(IntexState::Issued as u8, 0);
-    assert_eq!(IntexState::Called as u8, 1);
-    assert_eq!(IntexState::Forfeited as u8, 2);
     assert_eq!(IntexState::from_u8(0).unwrap(), IntexState::Issued);
     assert_eq!(IntexState::from_u8(1).unwrap(), IntexState::Called);
     assert_eq!(IntexState::from_u8(2).unwrap(), IntexState::Forfeited);

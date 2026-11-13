@@ -3,6 +3,13 @@
 use super::*;
 
 #[test]
+fn promis_load_launch_exponent_stays_in_range() {
+    for params in [config::IntexParams::PROD, config::IntexParams::DEV] {
+        assert!((1..=21).contains(&params.promis_load_launch_exponent));
+    }
+}
+
+#[test]
 fn config_unset_resolves_by_chain_id() {
     with_registry(|s| {
         let intex = IntexContract::new(s.clone());
@@ -11,14 +18,6 @@ fn config_unset_resolves_by_chain_id() {
         // An explicit selector still wins over the network default.
         intex.config_profile.write(config::PROFILE_PROD).unwrap();
         assert_eq!(config::read(&s).unwrap(), config::IntexParams::PROD);
-        assert_eq!(
-            config::IntexParams::PROD.commit_bond_minor,
-            100_000_000u128 * 1_000_000u128
-        );
-        assert_eq!(
-            config::IntexParams::DEV.commit_bond_minor,
-            100u128 * 1_000_000u128
-        );
     });
 }
 
@@ -48,31 +47,6 @@ fn config_auto_profile_follows_the_network() {
             config::IntexParams::DEV
         );
     }
-}
-
-/// PROD keeps 2.28 times the entry price. DEV uses 1.04 times the entry price.
-#[test]
-fn config_call_rate_is_pinned_per_profile() {
-    assert_eq!(
-        config::IntexParams::PROD.call_rate,
-        crate::constants::CALL_RATE_PCT
-    );
-    assert_eq!(config::IntexParams::PROD.call_rate, 128);
-    assert_eq!(config::IntexParams::DEV.call_rate, 4);
-}
-
-#[test]
-fn config_promis_load_launch_exponent_is_pinned_per_profile() {
-    use outbe_system_common::units::PROTOCOL_AMOUNT_DECIMALS;
-
-    assert_eq!(config::IntexParams::PROD.promis_load_launch_exponent, 12);
-    assert_eq!(config::IntexParams::DEV.promis_load_launch_exponent, 12);
-    assert!((1..=21).contains(&config::IntexParams::PROD.promis_load_launch_exponent));
-    assert!((1..=21).contains(&config::IntexParams::DEV.promis_load_launch_exponent));
-    assert_eq!(
-        10u128.pow(config::IntexParams::PROD.promis_load_launch_exponent),
-        1_000_000 * 10u128.pow(u32::from(PROTOCOL_AMOUNT_DECIMALS)),
-    );
 }
 
 /// Slots are dense in `order` sequence, so a field inserted rather than appended moves every

@@ -53,7 +53,7 @@ fn voters(storage: &StorageHandle<'_>, day: WorldwideDay, count: u32) {
 }
 
 #[test]
-fn gap_ed27_cca_that_left_gets_its_share() {
+fn cca_that_left_gets_its_share() {
     with_contract_mut(|storage, contract| {
         seed_oracle(&storage, ONE_COEN);
         let alice = numbered_address(1);
@@ -94,7 +94,7 @@ fn gap_ed27_cca_that_left_gets_its_share() {
 }
 
 #[test]
-fn gap_ed26_reward_jobs_pay_256_receivers_per_block() {
+fn reward_jobs_pay_256_receivers_per_block() {
     with_contract_mut(|storage, contract| {
         voters(&storage, DAY, 100);
         for n in 0..100 {
@@ -211,7 +211,7 @@ fn a_thousand_positive_ccas_finish_in_four_blocks_and_survive_exit_during_proces
 }
 
 #[test]
-fn gap_ed29_job_rounding_rest_goes_to_promis_limit_once() {
+fn job_rounding_rest_goes_to_promis_limit_once() {
     with_contract_mut(|storage, contract| {
         voters(&storage, DAY, 3);
         for n in 1..=3 {
@@ -301,7 +301,7 @@ fn gap_ed29_job_rounding_rest_goes_to_promis_limit_once() {
 }
 
 #[test]
-fn gap_ed28_day_records_deleted_after_their_job() {
+fn day_records_deleted_after_their_job() {
     with_contract_mut(|storage, contract| {
         voters(&storage, DAY, 300);
         for n in 1..=300 {

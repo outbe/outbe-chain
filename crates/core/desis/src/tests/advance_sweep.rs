@@ -86,7 +86,7 @@ fn is_scheduled(s: &StorageHandle, day: EmissionDate) -> bool {
 }
 
 #[test]
-fn gap_ed55_advance_auctions_moves_each_due_auction() {
+fn advance_auctions_moves_each_due_auction() {
     let mut provider = fixture_provider(&[SRC_CHAIN]);
     StorageHandle::enter(&mut provider, |s| {
         // The worst order of the OIP example: the waiting day first, the new day last.

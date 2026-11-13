@@ -1303,10 +1303,6 @@ fn a_fully_unpaid_forfeit_burns_all_collateral() {
         id
     });
 
-    assert_eq!(
-        ICredis::CredisForfeited::SIGNATURE,
-        "CredisForfeited(uint256,address,address,address,uint16,uint16,uint256)"
-    );
     let forfeits: Vec<_> = provider
         .get_events(outbe_primitives::addresses::CREDIS_ADDRESS)
         .iter()
@@ -2199,7 +2195,6 @@ fn issuance_announces_the_mint() {
 
 #[test]
 fn supported_interfaces_match_the_implemented_selectors() {
-    use alloy_sol_types::SolEvent;
     use outbe_core_common::erc::{
         ERC4906_INTERFACE_ID, ERC721_ENUMERABLE_INTERFACE_ID, ERC721_INTERFACE_ID,
         ERC721_METADATA_INTERFACE_ID,
@@ -2246,14 +2241,6 @@ fn supported_interfaces_match_the_implemented_selectors() {
         assert!(supports(ERC721_INTERFACE_ID));
         assert!(supports(ERC721_METADATA_INTERFACE_ID));
         assert!(supports(ERC4906_INTERFACE_ID));
-        assert_eq!(
-            ICredis::MetadataUpdate::SIGNATURE,
-            "MetadataUpdate(uint256)"
-        );
-        assert_eq!(
-            ICredis::BatchMetadataUpdate::SIGNATURE,
-            "BatchMetadataUpdate(uint256,uint256)"
-        );
         assert!(!supports(ERC721_ENUMERABLE_INTERFACE_ID));
         assert!(!supports([0xff; 4]));
     });

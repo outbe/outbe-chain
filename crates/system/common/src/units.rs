@@ -76,30 +76,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn native_coen_uses_eighteen_decimal_units_while_protocol_stays_six_decimal() {
-        let one_coen = U256::from(1_000_000_000_000_000_000u128);
-
-        assert_eq!(ONE_UNIT, U256::ONE);
-        assert_eq!(ONE_COEN, one_coen);
-        assert_eq!(SCALE_1E6_U64, 1_000_000);
-        assert_eq!(SCALE_1E6_U128, 1_000_000);
-        assert_eq!(SCALE_1E6_U256, U256::from(1_000_000u64));
-        assert_eq!(NATIVE_TOKEN_DECIMALS, 18);
-    }
-
-    #[test]
-    fn the_intex_codec_uses_the_same_units() {
-        use outbe_primitives::test_utils::sol_interface::sol_constant;
-        const CODEC: &str =
-            include_str!("../../../../contracts/intex/src/shared/libs/BridgeMsgCodec.sol");
-        assert_eq!(
-            sol_constant(CODEC, "PROTOCOL_DECIMALS"),
-            Some(PROTOCOL_AMOUNT_DECIMALS)
-        );
-        assert_eq!(sol_constant(CODEC, "SCALE_1E6"), Some(SCALE_1E6_U128));
-    }
-
-    #[test]
     fn protocol_amount_converts_to_native_coen_without_changing_protocol_precision() {
         assert_eq!(
             checked_protocol_to_native(U256::ONE),

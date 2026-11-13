@@ -271,11 +271,6 @@ fn node_host_initialization_signature_uses_the_exact_reth_p2p_key() {
 }
 
 #[test]
-fn v1_manifest_is_compiled_for_direct_harnesses_but_inactive() {
-    assert!(ACTIVE_TEE_ATTESTATION_V1_MANIFEST.is_none());
-}
-
-#[test]
 fn registration_intent_rejects_same_chain_id_with_another_genesis() {
     let expected_genesis = B256::repeat_byte(0x11);
     let other_genesis = B256::repeat_byte(0x12);

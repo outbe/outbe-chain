@@ -160,6 +160,23 @@ contract OriginRouterProceedsTest is CrossChainTest {
         origin.onCrosschainTokensReceived(BNB_CHAIN_ID, from, AMOUNT, abi.encode(EMISSION_DAY));
     }
 
+    function test_RevertWhen_LocalProceedsCallerNotTargetRouter() public {
+        uint32 local = uint32(block.chainid);
+        origin.setRemoteMessenger(local, _interop(local, targetRouter));
+        origin.addTarget(local);
+        _seedDaySnapshot(EMISSION_DAY + 1);
+
+        vm.prank(stranger);
+        vm.expectRevert(
+            abi.encodeWithSelector(IOriginRouter.UnauthorizedProceedsSender.selector, _interop(local, stranger))
+        );
+        origin.receiveLocalProceeds(EMISSION_DAY + 1, AMOUNT);
+
+        vm.prank(targetRouter);
+        vm.expectRevert(abi.encodeWithSelector(IOriginRouter.UnexpectedProceedsSource.selector, local));
+        origin.receiveLocalProceeds(EMISSION_DAY, AMOUNT);
+    }
+
     function test_RevertWhen_WrongSourceDomain() public {
         vm.prank(tokenBridge);
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.UnexpectedProceedsSource.selector, uint32(999)));

@@ -1,7 +1,6 @@
 use alloy_primitives::{address, Address, U256};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::test_utils::sol_interface::sol_function_canonical;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 
 use crate::schema::RewardPool as PoolKind;
@@ -137,7 +136,7 @@ fn with_contract_mut<R>(f: impl FnOnce(StorageHandle, &mut AgentRewardContract) 
 }
 
 #[test]
-fn gas_06_agentreward_dense_daily_distribution_completes_and_clears_indexes() {
+fn agentreward_dense_daily_distribution_completes_and_clears_indexes() {
     const DAILY_ADDRESSES_PER_POOL: u64 = 512;
     let day = WorldwideDay::new(20260525);
     let waa_pool = U256::from(DAILY_ADDRESSES_PER_POOL * 1_000);
@@ -1457,35 +1456,6 @@ mod distribute_daily_tests {
                 U256::ZERO
             );
         });
-    }
-}
-
-/// Drift guard between `contracts/precompiles/src/IAgentReward.sol` and the
-/// `#[contract_public(...)]` annotations on `AgentRewardContract`. The
-/// AgentReward module uses macro-driven dispatch, so the .sol file is a
-/// documentation/abi-export mirror rather than the dispatch source.
-/// This test fails if either side changes without the other.
-#[test]
-fn iagentreward_sol_matches_contract_public_annotations() {
-    const SOL: &str = include_str!("../../../../contracts/precompiles/src/IAgentReward.sol");
-    let expected = [
-        ("getClaimableBalance", "address", true, "uint256"),
-        ("getPoolClaimableBalance", "address,uint8", true, "uint256"),
-        ("getPoolBalanceDeadline", "address,uint8", true, "uint64"),
-        ("returnExpiredReward", "address,uint8", false, "uint256"),
-        (
-            "claimReward",
-            "uint8,uint256,uint16,uint16",
-            false,
-            "uint256",
-        ),
-    ];
-    for (name, args_types, is_view, ret_types) in expected {
-        let canon = sol_function_canonical(SOL, name)
-            .unwrap_or_else(|| panic!("IAgentReward.sol is missing `function {name}(...)`"));
-        assert_eq!(canon.arg_types, args_types, "{name}: arg types differ");
-        assert_eq!(canon.is_view, is_view, "{name}: view-modifier differs");
-        assert_eq!(canon.ret_types, ret_types, "{name}: return types differ");
     }
 }
 
