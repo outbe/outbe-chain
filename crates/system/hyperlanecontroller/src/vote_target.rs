@@ -37,12 +37,13 @@ enum Action {
     /// Puts `chain_id` under the validator sync: the Outbe ICA router enrolls
     /// `ica_router` (the ICA router on that chain), then the owner accepts
     /// the ownership of the ISM there and starts to sync the Outbe validators
-    /// to it.
+    /// to it. `validator_announce` is the ValidatorAnnounce on that chain.
     AddHyperlaneChain {
         chain_id: u32,
         ica_router: Address,
         ism: Address,
         hook: Address,
+        validator_announce: Address,
     },
     /// Stops the validator sync to `chain_id`.
     RemoveHyperlaneChain { chain_id: u32 },
@@ -77,7 +78,13 @@ impl Action {
                 ica_router,
                 ism,
                 hook,
-            } => remote(chain_id) && ![ica_router, ism, hook].iter().any(|a| a.is_zero()),
+                validator_announce,
+            } => {
+                remote(chain_id)
+                    && ![ica_router, ism, hook, validator_announce]
+                        .iter()
+                        .any(|a| a.is_zero())
+            }
             Self::RemoveHyperlaneChain { chain_id } => remote(chain_id),
             Self::SetGasConfig { igp, chain_id, .. } => remote(chain_id) && !igp.is_zero(),
             Self::SetOutbeGasData {
@@ -105,9 +112,10 @@ impl Action {
                 ica_router,
                 ism,
                 hook,
+                validator_announce,
             } => {
                 controller.enroll_ica_router(*chain_id, *ica_router)?;
-                controller.add_domain(*chain_id, *ism, *hook)
+                controller.add_domain(*chain_id, *ism, *hook, *validator_announce)
             }
             Self::RemoveHyperlaneChain { chain_id } => controller.remove_domain(*chain_id),
             Self::SetGasConfig {

@@ -13,8 +13,8 @@ use crate::schema::{validator_domain_key, HyperlaneControllerContract};
 
 /// Submissions younger than this many blocks do not count towards the
 /// per-domain reference index. This gives the agent time to sign and upload,
-/// and the attester time to submit, before the controller considers a lagging
-/// validator behind.
+/// and `outbe-hyperlane-validator` time to submit, before the controller
+/// considers a lagging validator behind.
 pub const GRACE_BLOCKS: u64 = 30;
 /// The liveness verdict runs when the block number is a multiple of this
 /// value. The oracle slash window is a separate genesis parameter.

@@ -70,7 +70,7 @@ members = [
     "bin/outbe-keygen",
     "bin/outbe-cli",
     "bin/outbe-feeder",
-    "bin/outbe-hyperlane-attester",
+    "bin/outbe-hyperlane-validator",
     "bin/outbe-radicle",
     "bin/outbe-tee-enclave",
     # testing
@@ -154,7 +154,7 @@ default-members = [
     "bin/outbe-keygen",
     "bin/outbe-cli",
     "bin/outbe-feeder",
-    "bin/outbe-hyperlane-attester",
+    "bin/outbe-hyperlane-validator",
     "bin/outbe-radicle",
     "bin/outbe-tee-enclave",
     # zk
