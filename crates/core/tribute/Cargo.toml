@@ -13,7 +13,6 @@ outbe-lysis.workspace = true
 outbe-macros.workspace = true
 outbe-nod.workspace = true
 outbe-nodfactory.workspace = true
-outbe-oracle.workspace = true
 outbe-primitives.workspace = true
 outbe-tee.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
@@ -26,6 +25,7 @@ thiserror.workspace = true
 outbe-enclave = { workspace = true, optional = true }
 
 [dev-dependencies]
+outbe-oracle.workspace = true
 outbe-system-common.workspace = true
 alloy-consensus.workspace = true
 outbe-nodfactory = { workspace = true, features = ["test-utils"] }

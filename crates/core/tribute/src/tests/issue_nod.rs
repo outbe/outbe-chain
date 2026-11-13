@@ -29,6 +29,29 @@ fn nod_id_of(tc: &TributeContract<'_>, tribute: &crate::schema::TributeData) -> 
     outbe_core_common::nod_rules::derive_nod_id(series, tribute.owner)
 }
 
+/// Seals the Lysis of `day` with the currencies the Oracle prices on its price day.
+fn seal_lysis(
+    tc: &mut TributeContract<'_>,
+    day: outbe_primitives::time::WorldwideDay,
+    metadosis_limit: U256,
+    completed_at: u64,
+) -> outbe_primitives::error::Result<(U256, U256)> {
+    let storage = tc.storage_handle();
+    let price_day = tc.resolve_price_day(day, completed_at)?;
+    let priced = outbe_oracle::constants::REFERENCE_CURRENCIES
+        .iter()
+        .filter_map(|&iso| {
+            outbe_oracle::api::get_utc_day_vwap_for_iso(storage.clone(), price_day, iso)
+                .unwrap()
+                .filter(|&vwap| outbe_nod::pricing::is_issuable_entry(vwap))
+                .map(|vwap| (iso, vwap))
+        })
+        .collect();
+    let outcome =
+        tc.compute_and_record_metadosis_fractions(day, &priced, metadosis_limit, completed_at)?;
+    Ok((outcome.nominal_minor, outcome.allocated_minor))
+}
+
 fn seed_entry_price(storage: &StorageHandle<'_>, iso: u16, utc_day: u32, vwap: U256) {
     let index = outbe_oracle::api::register_pair(
         storage.clone(),
@@ -109,7 +132,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
         );
         let (_total_nominal, allocated) = storage
             .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
-                tc.compute_and_record_metadosis_fractions(day, lysis_limit, base_ts)
+                seal_lysis(&mut tc, day, lysis_limit, base_ts)
             })
             .unwrap();
         assert!(test_day_league_fraction(&tc, day, 4000) > 0);
@@ -306,11 +329,7 @@ fn a_series_unpriced_at_lysis_gives_no_nod_and_cleans_at_once() {
         );
         storage
             .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
-                tc.compute_and_record_metadosis_fractions(
-                    day,
-                    U256::from(500_000_000_000u64),
-                    completed_at,
-                )
+                seal_lysis(&mut tc, day, U256::from(500_000_000_000u64), completed_at)
             })
             .unwrap();
         storage
@@ -400,7 +419,7 @@ fn series_sealing_zero_nod_forfeit_returns_unclaimed_load_and_enables_permission
         );
         let (_fractions, allocated) = storage
             .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
-                tc.compute_and_record_metadosis_fractions(day, lysis_limit, base_ts)
+                seal_lysis(&mut tc, day, lysis_limit, base_ts)
             })
             .unwrap();
 
@@ -586,7 +605,7 @@ fn series_zero_minted_nods_automatic_breach_call_forfeit_and_clean() {
         );
         let (_fractions, allocated) = storage
             .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
-                tc.compute_and_record_metadosis_fractions(day, lysis_limit, base_ts)
+                seal_lysis(&mut tc, day, lysis_limit, base_ts)
             })
             .unwrap();
 
@@ -755,11 +774,7 @@ fn clean_handles_settled_nod_aborted_emission_day_retired_fi_groups_and_zero_loa
         let binding = metadosis_process_ready_binding(1, 0, base_ts);
         let (_fracs, allocated) = storage
             .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
-                tc.compute_and_record_metadosis_fractions(
-                    day_zero_load,
-                    U256::from(100_000u64),
-                    base_ts,
-                )
+                seal_lysis(&mut tc, day_zero_load, U256::from(100_000u64), base_ts)
             })
             .unwrap();
         assert!(allocated <= U256::from(100_000u64));
@@ -865,7 +880,7 @@ fn a_zero_load_tribute_stays_out_of_its_series_and_cleans_at_once() {
         let binding = metadosis_process_ready_binding(1, 0, base_ts);
         storage
             .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
-                tc.compute_and_record_metadosis_fractions(day, U256::from(100_000u64), base_ts)
+                seal_lysis(&mut tc, day, U256::from(100_000u64), base_ts)
             })
             .unwrap();
         let tiny_fraction = test_day_league_fraction(&tc, day, 100);
@@ -957,11 +972,7 @@ fn multi_league_lysis_and_issue_nod_keep_league_nominals_fractions_and_loads_pri
             let binding = metadosis_process_ready_binding(1, 0, base_ts);
             storage
                 .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
-                    tc.compute_and_record_metadosis_fractions(
-                        day,
-                        U256::from(500_000_000u64),
-                        base_ts,
-                    )
+                    seal_lysis(&mut tc, day, U256::from(500_000_000u64), base_ts)
                 })
                 .unwrap();
 

@@ -8654,6 +8654,7 @@ dependencies = [
  "outbe-desis",
  "outbe-emission",
  "outbe-fidelity",
+ "outbe-lysis",
  "outbe-macros",
  "outbe-nod",
  "outbe-oracle",

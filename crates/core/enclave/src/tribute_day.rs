@@ -11,7 +11,7 @@ use outbe_primitives::{
 };
 use outbe_tee::tribute_day::{
     day_operation_inputs_hash, league_operation_inputs_hash, lysis_fractions_inputs_hash,
-    LysisFractionsRequestV1, LysisFractionsResultV1, LysisSeriesLoadOutputV1,
+    LysisFractionsRequestV1, LysisFractionsResultV1, LysisSeriesLoadOutputV1, LysisTributeInputV1,
     TributeDayOpRequestV2, TributeDayOperationV2, TributeLeagueOpRequestV1,
 };
 use ring::hmac;
@@ -255,82 +255,85 @@ type LysisEvaluation = (
     Option<U256>,
 );
 
-fn collect_league_groups(
-    network_secret: &[u8; 32],
-    request: &LysisFractionsRequestV1,
-) -> Result<(LeagueGroupMap, u32, U256)> {
-    let mut fi_groups = BTreeMap::new();
-    let mut tribute_count = 0u32;
-    let mut total_interest = U256::ZERO;
-    for (league, count, record) in &request.leagues {
-        if record.chain_id != request.chain_id
-            || record.worldwide_day != request.worldwide_day
-            || record.league != *league
-        {
-            return Err(TributeDayRejectReason::InvalidLeaguePredecessor.into());
-        }
-        if *count == 0 {
-            continue;
-        }
-        let nominal = read_league_amount(network_secret, record)?;
-        tribute_count = tribute_count
-            .checked_add(*count)
-            .ok_or(TributeDayRejectReason::LysisFractionComputationFailed)?;
-        total_interest = total_interest
-            .checked_add(nominal)
-            .ok_or(TributeDayRejectReason::LysisFractionComputationFailed)?;
-        fi_groups.insert(*league, (*count, nominal));
-    }
-    Ok((fi_groups, tribute_count, total_interest))
+/// The priced Tributes of the day with their nominal, and their league groups.
+struct PricedTributes<'a> {
+    tributes: Vec<(&'a LysisTributeInputV1, B256, U256)>,
+    groups: LeagueGroupMap,
+    count: u32,
+    nominal: U256,
 }
 
-fn evaluate_tributes_for_lysis(
+fn collect_priced_tributes<'a>(
     tribute_state_key: &[u8; 32],
-    nod_state_key: &[u8; 32],
-    request: &LysisFractionsRequestV1,
-    u256_fractions: &BTreeMap<u16, U256>,
-    inputs_hash: B256,
-) -> Result<LysisEvaluation> {
-    if request.tributes.is_empty() {
-        return Ok((Vec::new(), Vec::new(), None));
-    }
-    let scale = U256::from(1_000_000u64);
-    let mut zero_load_tribute_ids = Vec::new();
-    let mut series_totals: BTreeMap<B256, (u64, U256)> = BTreeMap::new();
+    request: &'a LysisFractionsRequestV1,
+) -> Result<PricedTributes<'a>> {
+    let mut priced = PricedTributes {
+        tributes: Vec::new(),
+        groups: BTreeMap::new(),
+        count: 0,
+        nominal: U256::ZERO,
+    };
+    let overflow = || TributeDayRejectReason::LysisFractionComputationFailed;
     for input in &request.tributes {
         if input.tribute.context.chain_id != request.chain_id
             || input.tribute.context.worldwide_day != request.worldwide_day
         {
             return Err(TributeDayRejectReason::TributeWrongDayOrChain.into());
         }
-        let amounts = decrypt_tribute(tribute_state_key, &input.tribute)?;
+        let Some(scope) = input.series_scope else {
+            continue;
+        };
+        let nominal = decrypt_tribute(tribute_state_key, &input.tribute)?.nominal_amount_minor;
+        let group = priced
+            .groups
+            .entry(input.league.max(1))
+            .or_insert((0, U256::ZERO));
+        group.0 = group.0.checked_add(1).ok_or_else(overflow)?;
+        group.1 = group.1.checked_add(nominal).ok_or_else(overflow)?;
+        priced.count = priced.count.checked_add(1).ok_or_else(overflow)?;
+        priced.nominal = priced.nominal.checked_add(nominal).ok_or_else(overflow)?;
+        priced.tributes.push((input, scope, nominal));
+    }
+    Ok(priced)
+}
+
+fn evaluate_tributes_for_lysis(
+    nod_state_key: &[u8; 32],
+    request: &LysisFractionsRequestV1,
+    priced: &PricedTributes<'_>,
+    u256_fractions: &BTreeMap<u16, U256>,
+    (lysis_limit_minor, inputs_hash): (U256, B256),
+) -> Result<LysisEvaluation> {
+    if priced.tributes.is_empty() {
+        return Ok((Vec::new(), Vec::new(), None));
+    }
+    let scale = U256::from(1_000_000u64);
+    let mut zero_load_tribute_ids = Vec::new();
+    let mut series_totals: BTreeMap<B256, (u64, U256)> = BTreeMap::new();
+    for (input, scope, nominal) in &priced.tributes {
         let fraction = u256_fractions
             .get(&input.league.max(1))
             .copied()
             .unwrap_or(U256::ZERO);
         let load = outbe_system_common::math::scaled_math::checked_mul_div_floor(
-            amounts.nominal_amount_minor,
-            fraction,
-            scale,
+            *nominal, fraction, scale,
         )
         .map_err(|_| TributeDayRejectReason::LysisFractionComputationFailed)?;
         if load.is_zero() {
             zero_load_tribute_ids.push(input.tribute.context.tribute_id);
-        } else if !request.lysis_limit_minor.is_zero() {
-            if let Some(scope) = input.series_scope {
-                let entry = series_totals.entry(scope).or_insert((0, U256::ZERO));
-                entry.0 = entry
-                    .0
-                    .checked_add(1)
-                    .ok_or(TributeDayRejectReason::LysisFractionComputationFailed)?;
-                entry.1 = entry
-                    .1
-                    .checked_add(load)
-                    .ok_or(TributeDayRejectReason::LysisFractionComputationFailed)?;
-            }
+        } else if !lysis_limit_minor.is_zero() {
+            let entry = series_totals.entry(*scope).or_insert((0, U256::ZERO));
+            entry.0 = entry
+                .0
+                .checked_add(1)
+                .ok_or(TributeDayRejectReason::LysisFractionComputationFailed)?;
+            entry.1 = entry
+                .1
+                .checked_add(load)
+                .ok_or(TributeDayRejectReason::LysisFractionComputationFailed)?;
         }
     }
-    if request.lysis_limit_minor.is_zero() {
+    if lysis_limit_minor.is_zero() {
         return Ok((zero_load_tribute_ids, Vec::new(), None));
     }
     let (series_loads, exact_total) =
@@ -338,7 +341,7 @@ fn evaluate_tributes_for_lysis(
     Ok((
         zero_load_tribute_ids,
         series_loads,
-        Some(exact_total.min(request.lysis_limit_minor)),
+        Some(exact_total.min(lysis_limit_minor)),
     ))
 }
 
@@ -375,16 +378,18 @@ pub fn execute_lysis_fractions(
     nod_state_key: &[u8; 32],
     request: &LysisFractionsRequestV1,
 ) -> Result<LysisFractionsResultV1> {
-    let (fi_groups, tribute_count, total_interest) =
-        collect_league_groups(network_secret, request)?;
-    let u256_fractions = if tribute_count == 0 || total_interest.is_zero() {
+    let priced = collect_priced_tributes(tribute_state_key, request)?;
+    let (gratis_demand_minor, lysis_limit_minor) =
+        outbe_lysis::day_limit::lysis_limit_of_day(priced.nominal, request.metadosis_limit_minor)
+            .ok_or(TributeDayRejectReason::LysisFractionComputationFailed)?;
+    let u256_fractions = if priced.count == 0 || priced.nominal.is_zero() {
         BTreeMap::new()
     } else {
         outbe_lysis::program_v1::compute_fraction_map_from_groups(
-            &fi_groups,
-            tribute_count,
-            total_interest,
-            request.lysis_limit_minor,
+            &priced.groups,
+            priced.count,
+            priced.nominal,
+            lysis_limit_minor,
         )
         .map_err(|_| TributeDayRejectReason::LysisFractionComputationFailed)?
     };
@@ -404,17 +409,19 @@ pub fn execute_lysis_fractions(
         &fractions,
     )?;
     let default_allocated =
-        sum_allocated_gratis_from_groups(&fi_groups, &u256_fractions, request.lysis_limit_minor);
+        sum_allocated_gratis_from_groups(&priced.groups, &u256_fractions, lysis_limit_minor);
     let (zero_load_tribute_ids, series_loads, exact_allocated) = evaluate_tributes_for_lysis(
-        tribute_state_key,
         nod_state_key,
         request,
+        &priced,
         &u256_fractions,
-        inputs_hash,
+        (lysis_limit_minor, inputs_hash),
     )?;
     Ok(LysisFractionsResultV1 {
         day_fractions,
-        total_nominal_minor: total_interest,
+        total_nominal_minor: priced.nominal,
+        gratis_demand_minor,
+        lysis_limit_minor,
         allocated_minor: exact_allocated.unwrap_or(default_allocated),
         zero_load_tribute_ids,
         series_loads,

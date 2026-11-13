@@ -22,7 +22,7 @@ pub mod state_proof;
 pub mod storage_records;
 
 pub use record::{TributeMetadata, TributeRecord};
-pub use runtime::LoadedTribute;
+pub use runtime::{LoadedTribute, LysisOutcome, PricedCurrencies};
 pub use schema::{DayTotals, TributeContract, TributeData};
 
 #[cfg(test)]

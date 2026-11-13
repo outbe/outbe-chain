@@ -137,15 +137,18 @@ pub struct LysisFractionsRequestV1 {
     pub chain_id: u64,
     pub worldwide_day: WorldwideDay,
     pub completed_at: u64,
-    pub lysis_limit_minor: U256,
-    pub leagues: Vec<(u16, u32, EncryptedTributeLeagueAmountV1)>,
+    pub metadosis_limit_minor: U256,
+    /// A Tribute without a series scope is unpriced: it is left out of the groups and the nominal.
     pub tributes: Vec<LysisTributeInputV1>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct LysisFractionsResultV1 {
     pub day_fractions: EncryptedTributeDayFractionsV1,
+    /// Nominal of the priced Tributes.
     pub total_nominal_minor: U256,
+    pub gratis_demand_minor: U256,
+    pub lysis_limit_minor: U256,
     pub allocated_minor: U256,
     pub zero_load_tribute_ids: Vec<WwdEntityId>,
     pub series_loads: Vec<LysisSeriesLoadOutputV1>,

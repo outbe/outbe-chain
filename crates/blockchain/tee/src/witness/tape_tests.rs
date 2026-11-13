@@ -202,6 +202,8 @@ fn entries() -> Vec<EnclaveWitnessEntryV1> {
                     encrypted_fractions: vec![6],
                 },
                 total_nominal_minor: U256::from(7),
+                gratis_demand_minor: U256::from(2),
+                lysis_limit_minor: U256::from(2),
                 allocated_minor: U256::from(8),
                 zero_load_tribute_ids: vec![],
                 series_loads: vec![],

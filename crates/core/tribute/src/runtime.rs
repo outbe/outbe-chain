@@ -1,4 +1,5 @@
 mod forfeiture;
+pub use forfeiture::{LysisOutcome, PricedCurrencies};
 
 use alloy_primitives::U256;
 use outbe_primitives::error::{PrecompileError, Result};
@@ -111,20 +112,22 @@ impl TributeContract<'_> {
         forfeiture::resolve_price_day(self, day, completed_at)
     }
 
-    /// Computes league fractions from `fi_group_nominal_ct[day]` and `lysis_limit_minor`
-    /// inside the enclave, stores the sealed fraction map along with `completed_at`,
-    /// seals series unclaimed loads, and returns `(total_nominal_minor, total_allocated_minor)`.
+    /// Seals the Lysis of `day` in the enclave over its priced Tributes: the enclave takes the
+    /// Lysis Limit of their nominal under `metadosis_limit_minor`, the fractions are stored with
+    /// `completed_at`, and the series loads are sealed. Unpriced Tributes get no series.
     pub fn compute_and_record_metadosis_fractions(
         &mut self,
         day: WorldwideDay,
-        lysis_limit_minor: U256,
+        priced: &PricedCurrencies,
+        metadosis_limit_minor: U256,
         completed_at: u64,
-    ) -> Result<(U256, U256)> {
+    ) -> Result<LysisOutcome> {
         self.storage_handle().require_metadosis_process_ready()?;
         forfeiture::compute_and_record_metadosis_fractions(
             self,
             day,
-            lysis_limit_minor,
+            priced,
+            metadosis_limit_minor,
             completed_at,
         )
     }

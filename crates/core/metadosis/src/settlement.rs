@@ -2,10 +2,9 @@
 
 use alloy_primitives::U256;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
-use outbe_tribute::TributeContract;
 
 use crate::{
-    constants::{METADOSIS_CANCELED_NO_LIMIT, SYMBOLIC_RATE},
+    constants::METADOSIS_CANCELED_NO_LIMIT,
     lifecycle::cancel_emission_day,
     schema::{EmissionDay, MetadosisContract},
 };
@@ -14,7 +13,7 @@ use crate::{
 /// 1_000_000 minor units equal 1 COEN. These amounts are not native wei.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct MetadosisCalculation {
-    /// `floor(nominal * SYMBOLIC_RATE / 100)`.
+    /// `floor(nominal * SYMBOLIC_RATE / 100)` of the priced Tributes.
     pub(crate) gratis_demand: U256,
     /// Emission cap for the day, in the same minor units.
     pub(crate) day_gratis_limit_minor: U256,
@@ -23,34 +22,19 @@ pub(crate) struct MetadosisCalculation {
 }
 
 impl MetadosisContract<'_> {
-    /// Demand is `floor(nominal * SYMBOLIC_RATE / 100)` through the quotient and remainder split.
-    /// Lysis is the minimum of that demand and `emission_limit_minor`.
-    /// Both inputs are six-decimal protocol COEN minor units, not native wei.
-    /// At rate 32 every `U256` nominal succeeds, including `U256::MAX`.
-    /// `FullPrecisionDemandOverflow` stays as a defensive guard.
-    /// This comment records the source contract. It is not a runtime certificate.
+    /// Demand and Lysis Limit of `nominal` under `metadosis_limit_minor`, in protocol minor units.
     pub(crate) fn lysis_limit_of_day(
         &self,
-        tribute_nominal_total: U256,
-        emission_limit_minor: U256,
+        nominal: U256,
+        metadosis_limit_minor: U256,
     ) -> Result<MetadosisCalculation> {
-        let denominator = U256::from(100u64);
-        let rate = U256::from(SYMBOLIC_RATE);
-        let quotient = tribute_nominal_total / denominator;
-        let remainder = tribute_nominal_total % denominator;
-        let demand = quotient
-            .checked_mul(rate)
-            .and_then(|scaled| {
-                remainder
-                    .checked_mul(rate)
-                    .and_then(|tail| scaled.checked_add(tail / denominator))
-            })
-            .ok_or(crate::errors::MetadosisStorageCorruptionError::FullPrecisionDemandOverflow)?;
-        let day_gratis_limit_minor = emission_limit_minor;
-        let lysis_limit_minor = demand.min(day_gratis_limit_minor);
+        let (gratis_demand, lysis_limit_minor) =
+            outbe_lysis::day_limit::lysis_limit_of_day(nominal, metadosis_limit_minor).ok_or(
+                crate::errors::MetadosisStorageCorruptionError::FullPrecisionDemandOverflow,
+            )?;
         Ok(MetadosisCalculation {
-            gratis_demand: demand,
-            day_gratis_limit_minor,
+            gratis_demand,
+            day_gratis_limit_minor: metadosis_limit_minor,
             lysis_limit_minor,
         })
     }
@@ -80,15 +64,7 @@ pub(crate) fn process_ready_candidate(
     if limit_amount.is_zero() {
         return cancel_emission_day(metadosis, emission_day.day, METADOSIS_CANCELED_NO_LIMIT);
     }
-    let wwd = emission_day.wwd;
-    let mut nominal_total = U256::ZERO;
-    if wwd.value() != 0 {
-        nominal_total = TributeContract::new(metadosis.storage.clone())
-            .get_day_totals(wwd)?
-            .tribute_nominal_total_minor;
-    }
-    let calculation = metadosis.lysis_limit_of_day(nominal_total, limit_amount)?;
-    crate::lysis::execute(metadosis, ctx, emission_day, calculation)
+    crate::lysis::execute(metadosis, ctx, emission_day)
 }
 
 #[cfg(test)]

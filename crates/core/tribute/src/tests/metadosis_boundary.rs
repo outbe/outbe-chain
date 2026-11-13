@@ -48,9 +48,14 @@ fn day_mutators_reject_a_missing_lease_without_writes() {
             MISMATCH
         );
         assert_eq!(
-            tc.compute_and_record_metadosis_fractions(day, U256::from(1u64), 1)
-                .unwrap_err()
-                .to_string(),
+            tc.compute_and_record_metadosis_fractions(
+                day,
+                &Default::default(),
+                U256::from(1u64),
+                1
+            )
+            .unwrap_err()
+            .to_string(),
             MISMATCH
         );
         assert_eq!(tc.seal_day(day).unwrap_err().to_string(), MISMATCH);

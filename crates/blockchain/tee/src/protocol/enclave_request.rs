@@ -633,7 +633,6 @@ impl core::fmt::Debug for EnclaveRequest {
                 .field("chain_id", &request.chain_id)
                 .field("worldwide_day", &request.worldwide_day)
                 .field("completed_at", &request.completed_at)
-                .field("leagues", &request.leagues.len())
                 .field("tributes", &request.tributes.len())
                 .finish(),
             Self::ReadTributeDayFractionsV1 { record } => f

@@ -1,12 +1,12 @@
 //! Executes one sealed WorldwideDay linked to a due EmissionDay.
 
+use alloy_primitives::U256;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
-    time::WorldwideDay,
 };
 use outbe_promislimit::PromisLimitContract;
-use outbe_tribute::TributeContract;
+use outbe_tribute::{PricedCurrencies, TributeContract};
 
 use crate::{
     lifecycle::complete_metadosis,
@@ -80,11 +80,23 @@ fn finalize_lysis_settlement(
     })
 }
 
+/// Reference currencies priced for `day`, filtered by the Nod entry bound.
+fn priced_currencies(ctx: &BlockRuntimeContext<'_>, day: u32) -> Result<PricedCurrencies> {
+    Ok(
+        outbe_oracle::api::priced_reference_currencies_of_day(ctx.storage.clone(), day)?
+            .into_iter()
+            .filter(|&(_, vwap)| outbe_nod::pricing::is_issuable_entry(vwap))
+            .collect(),
+    )
+}
+
 fn settle_partition(
+    metadosis: &MetadosisContract<'_>,
     ctx: &BlockRuntimeContext<'_>,
-    wwd: WorldwideDay,
-    lysis_limit_minor: alloy_primitives::U256,
-) -> Result<SettlementCompletion> {
+    emission_day: &EmissionDay,
+) -> Result<(MetadosisCalculation, SettlementCompletion)> {
+    let wwd = emission_day.wwd;
+    let metadosis_limit = emission_day.metadosis_limit_minor();
     let mut tribute = TributeContract::new(ctx.storage.clone());
     let totals = match wwd.value() {
         0 => None,
@@ -94,34 +106,47 @@ fn settle_partition(
         if wwd.value() != 0 {
             tribute.retire_completed_partition(wwd)?;
         }
-        return Ok(SettlementCompletion {
-            total_nominal_minor: alloy_primitives::U256::ZERO,
-            used: alloy_primitives::U256::ZERO,
-            unused: lysis_limit_minor,
-        });
+        let calculation = metadosis.lysis_limit_of_day(U256::ZERO, metadosis_limit)?;
+        return Ok((
+            calculation,
+            SettlementCompletion {
+                total_nominal_minor: U256::ZERO,
+                used: U256::ZERO,
+                unused: calculation.lysis_limit_minor,
+            },
+        ));
     };
     tribute.freeze_day_nominal(&totals)?;
-    let (_, onchain_allocated_minor) = tribute.compute_and_record_metadosis_fractions(
+    let priced = priced_currencies(ctx, emission_day.day)?;
+    let outcome = tribute.compute_and_record_metadosis_fractions(
         wwd,
-        lysis_limit_minor,
+        &priced,
+        metadosis_limit,
         ctx.block.timestamp,
     )?;
     outbe_fidelity::api::finalize_wwd_max_fidelity(ctx.storage.clone(), wwd, ctx.block.timestamp)?;
-    let used = onchain_allocated_minor.min(lysis_limit_minor);
-    Ok(SettlementCompletion {
-        total_nominal_minor: totals.tribute_nominal_total_minor,
-        used,
-        unused: lysis_limit_minor.saturating_sub(used),
-    })
+    let calculation = MetadosisCalculation {
+        gratis_demand: outcome.gratis_demand_minor,
+        day_gratis_limit_minor: metadosis_limit,
+        lysis_limit_minor: outcome.lysis_limit_minor,
+    };
+    let used = outcome.allocated_minor.min(calculation.lysis_limit_minor);
+    Ok((
+        calculation,
+        SettlementCompletion {
+            total_nominal_minor: outcome.nominal_minor,
+            used,
+            unused: calculation.lysis_limit_minor.saturating_sub(used),
+        },
+    ))
 }
 
 pub(crate) fn execute(
     metadosis: &mut MetadosisContract<'_>,
     ctx: &BlockRuntimeContext<'_>,
     emission_day: &EmissionDay,
-    calculation: MetadosisCalculation,
 ) -> Result<()> {
     ctx.storage.require_metadosis_process_ready()?;
-    let completion = settle_partition(ctx, emission_day.wwd, calculation.lysis_limit_minor)?;
+    let (calculation, completion) = settle_partition(metadosis, ctx, emission_day)?;
     finalize_lysis_settlement(metadosis, ctx, emission_day, calculation, completion)
 }
