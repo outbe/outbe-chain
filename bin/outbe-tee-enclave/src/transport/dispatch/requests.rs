@@ -66,8 +66,6 @@ pub(in crate::transport) fn dispatch_with_initialization(
         | EnclaveRequest::EncryptNodQuoteV1 { .. }) => super::nod_requests::dispatch(req, resident),
         req @ (EnclaveRequest::ApplyTributeDayOpV2 { .. }
         | EnclaveRequest::ReadTributeDayAmountV2 { .. }
-        | EnclaveRequest::ApplyTributeLeagueOpV1 { .. }
-        | EnclaveRequest::ReadTributeLeagueAmountV1 { .. }
         | EnclaveRequest::ExecuteLysisFractionsV1 { .. }
         | EnclaveRequest::ReadTributeDayFractionsV1 { .. }
         | EnclaveRequest::ProcessEncryptedTributeOfferBatchV2 { .. }

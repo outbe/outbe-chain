@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::{EmissionDate, WorldwideDay};
 use outbe_primitives::{error::Result, storage::StorageHandle};
 use outbe_tribute::TributeContract;
 
@@ -144,7 +144,7 @@ pub fn create_worldwide_day(
     let tribute = TributeContract::new(factory.storage.clone());
     tribute
         .day_emission_day
-        .write(&worldwide_day, schedule.day)?;
+        .write(&worldwide_day, EmissionDate::new(schedule.day))?;
 
     factory.emit(ITributeFactory::WorldwideDayOpened {
         worldwideDay: worldwide_day.into(),

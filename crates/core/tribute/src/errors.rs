@@ -38,6 +38,9 @@ pub enum TributeError {
     #[error("Tribute day enclave: Tribute day response scope mismatch")]
     DayResponseScopeMismatch,
 
+    #[error("Tribute day is linked to another emission day")]
+    LysisEmissionDayMismatch,
+
     #[error("invalid encrypted Tribute encoding")]
     InvalidEncryptedEncoding,
 
@@ -142,6 +145,7 @@ impl From<TributeError> for PrecompileError {
             | TributeError::DayMetadataDiffersFromEncryptedAmount
             | TributeError::SealedDayMetadataDiffersFromEncryptedAmount
             | TributeError::DayCountOverflowOrUnderflow
+            | TributeError::LysisEmissionDayMismatch
             | TributeError::DayAmountCodec(_) => PrecompileError::BodyReadCorruption(message),
             TributeError::TributeNotFound => revert_with(I::TributeNotFound {}),
             TributeError::TributeAlreadyExists => revert_with(I::TributeAlreadyExists {}),

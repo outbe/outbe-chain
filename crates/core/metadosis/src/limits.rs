@@ -6,6 +6,20 @@ use outbe_promislimit::PromisLimitContract;
 
 use crate::errors::MetadosisError;
 
+/// The smaller of nominal minus Lysis and the unused day limit plus the draw, or `None` when
+/// Lysis exceeds either of them or the sum overflows.
+pub(crate) fn desis_limit(
+    nominal_total: U256,
+    lysis_limit_minor: U256,
+    day_limit: U256,
+    promis_limit_draw: U256,
+) -> Option<U256> {
+    let available = day_limit
+        .checked_sub(lysis_limit_minor)?
+        .checked_add(promis_limit_draw)?;
+    Some(nominal_total.checked_sub(lysis_limit_minor)?.min(available))
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct LimitSplit {
     /// The day's own emission plus what it drew from the Promis Limit.
@@ -35,7 +49,7 @@ impl LimitSplit {
         let promis_limit_credit = base_limit
             .checked_sub(lysis_limit_minor)
             .ok_or_else(invalid)?;
-        let desis_limit_minor = crate::process::desis_limit(
+        let desis_limit_minor = desis_limit(
             nominal_total,
             lysis_limit_minor,
             base_limit,
@@ -268,5 +282,54 @@ mod tests {
                 outbe_desis::AuctionStage::Cancelled as u8
             );
         });
+    }
+
+    #[test]
+    fn desis_limit_refuses_each_checked_arm_and_returns_the_minimum() {
+        let cases = [
+            (
+                U256::from(1u64),
+                U256::from(1u64),
+                U256::ZERO,
+                U256::ZERO,
+                None,
+            ),
+            (U256::MAX, U256::ZERO, U256::MAX, U256::from(1u64), None),
+            (
+                U256::from(4u64),
+                U256::from(5u64),
+                U256::from(10u64),
+                U256::ZERO,
+                None,
+            ),
+            (
+                U256::from(50u64),
+                U256::from(10u64),
+                U256::from(40u64),
+                U256::from(5u64),
+                Some(U256::from(35u64)),
+            ),
+            (
+                U256::from(30u64),
+                U256::from(10u64),
+                U256::from(100u64),
+                U256::ZERO,
+                Some(U256::from(20u64)),
+            ),
+            (
+                U256::MAX,
+                U256::ZERO,
+                U256::MAX,
+                U256::ZERO,
+                Some(U256::MAX),
+            ),
+        ];
+        for (nominal, lysis, day_limit, draw, expected) in cases {
+            assert_eq!(
+                desis_limit(nominal, lysis, day_limit, draw),
+                expected,
+                "nominal {nominal} lysis {lysis} day_limit {day_limit} draw {draw}"
+            );
+        }
     }
 }

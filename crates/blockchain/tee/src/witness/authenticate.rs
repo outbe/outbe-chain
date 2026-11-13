@@ -187,32 +187,6 @@ pub(crate) fn authenticate_request(
             crate::tribute_day::day_read_attestation_preimage,
         ),
         (
-            Q::ApplyTributeLeagueOpV1 { request },
-            A::TributeLeagueOpAppliedV1 {
-                record,
-                inputs_canonical_hash,
-                attestation_tag,
-            },
-        ) => verify_serialized_pair(
-            key,
-            crate::tribute_day::league_operation_inputs_hash(request),
-            (*inputs_canonical_hash, record, attestation_tag),
-            crate::tribute_day::league_operation_attestation_preimage,
-        ),
-        (
-            Q::ReadTributeLeagueAmountV1 { record },
-            A::TributeLeagueAmountReadV1 {
-                amount,
-                inputs_canonical_hash,
-                attestation_tag,
-            },
-        ) => verify_read_amount(
-            key,
-            crate::tribute_day::league_read_inputs_hash(record),
-            (*inputs_canonical_hash, *amount, attestation_tag),
-            crate::tribute_day::league_read_attestation_preimage,
-        ),
-        (
             Q::ExecuteLysisFractionsV1 { request },
             A::LysisFractionsExecutedV1 {
                 result,

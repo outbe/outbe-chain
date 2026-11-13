@@ -27,7 +27,6 @@ mod lifecycle;
 mod limits;
 mod lysis;
 pub mod precompile;
-mod process;
 mod runtime;
 mod schema;
 #[cfg(any(test, feature = "test-utils"))]

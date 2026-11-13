@@ -12,7 +12,7 @@ use crate::{
 };
 use outbe_primitives::{
     nod_encryption::{EncryptedNodGroupLoadV1, EncryptedNodV1},
-    tribute_day_encryption::{EncryptedTributeDayAmountV2, EncryptedTributeLeagueAmountV1},
+    tribute_day_encryption::EncryptedTributeDayAmountV2,
     tribute_encryption::TributeAmountsV2,
 };
 
@@ -90,16 +90,6 @@ pub enum EnclaveWitnessEntryV1 {
     GramineDirectDevOnboardingArtifactPreparedV2 {
         request_hash: B256,
         onboarding_artifact: Vec<u8>,
-        attestation_tag: Vec<u8>,
-    },
-    TributeLeagueOpAppliedV1 {
-        record: EncryptedTributeLeagueAmountV1,
-        inputs_canonical_hash: B256,
-        attestation_tag: Vec<u8>,
-    },
-    TributeLeagueAmountReadV1 {
-        amount: U256,
-        inputs_canonical_hash: B256,
         attestation_tag: Vec<u8>,
     },
     LysisFractionsExecutedV1 {
@@ -316,30 +306,6 @@ impl EnclaveWitnessEntryV1 {
                     ..
                 },
             ) => a == b && aa == ba,
-            (
-                TributeLeagueOpAppliedV1 {
-                    record: a,
-                    inputs_canonical_hash: ah,
-                    ..
-                },
-                TributeLeagueOpAppliedV1 {
-                    record: b,
-                    inputs_canonical_hash: bh,
-                    ..
-                },
-            ) => a == b && ah == bh,
-            (
-                TributeLeagueAmountReadV1 {
-                    amount: a,
-                    inputs_canonical_hash: ah,
-                    ..
-                },
-                TributeLeagueAmountReadV1 {
-                    amount: b,
-                    inputs_canonical_hash: bh,
-                    ..
-                },
-            ) => a == b && ah == bh,
             (
                 LysisFractionsExecutedV1 {
                     result: a,
@@ -558,24 +524,6 @@ impl TryFrom<EnclaveResponse> for EnclaveWitnessEntryV1 {
                 onboarding_artifact,
                 attestation_tag,
             },
-            R::TributeLeagueOpAppliedV1 {
-                record,
-                inputs_canonical_hash,
-                attestation_tag,
-            } => Self::TributeLeagueOpAppliedV1 {
-                record,
-                inputs_canonical_hash,
-                attestation_tag,
-            },
-            R::TributeLeagueAmountReadV1 {
-                amount,
-                inputs_canonical_hash,
-                attestation_tag,
-            } => Self::TributeLeagueAmountReadV1 {
-                amount,
-                inputs_canonical_hash,
-                attestation_tag,
-            },
             R::LysisFractionsExecutedV1 {
                 result,
                 inputs_canonical_hash,
@@ -752,24 +700,6 @@ impl From<EnclaveWitnessEntryV1> for EnclaveResponse {
             } => Self::GramineDirectDevOnboardingArtifactPreparedV2 {
                 request_hash,
                 onboarding_artifact,
-                attestation_tag,
-            },
-            W::TributeLeagueOpAppliedV1 {
-                record,
-                inputs_canonical_hash,
-                attestation_tag,
-            } => Self::TributeLeagueOpAppliedV1 {
-                record,
-                inputs_canonical_hash,
-                attestation_tag,
-            },
-            W::TributeLeagueAmountReadV1 {
-                amount,
-                inputs_canonical_hash,
-                attestation_tag,
-            } => Self::TributeLeagueAmountReadV1 {
-                amount,
-                inputs_canonical_hash,
                 attestation_tag,
             },
             W::LysisFractionsExecutedV1 {

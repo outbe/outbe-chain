@@ -157,11 +157,11 @@ pub fn issue_nod_from_tribute(
     let canonical_id = terms
         .series_id()
         .map(|series_id| outbe_core_common::nod_rules::derive_nod_id(series_id, terms.owner));
-    if issued_terms != source_terms
-        || canonical_id != Ok(terms.nod_id)
-        || request.day_fractions.chain_id != terms.chain_id
-        || request.day_fractions.emission_day != terms.emission_day
-    {
+    let fractions = &request.day_fractions;
+    let fractions_of_this_day = fractions.chain_id == terms.chain_id
+        && fractions.worldwide_day == source.worldwide_day
+        && fractions.emission_day.value() == terms.emission_day;
+    if issued_terms != source_terms || canonical_id != Ok(terms.nod_id) || !fractions_of_this_day {
         return Err(TeeError::TributeOfferReject(
             "NOD source terms mismatch".into(),
         ));

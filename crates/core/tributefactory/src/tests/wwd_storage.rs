@@ -192,7 +192,7 @@ fn currency_price_unavailable_encodes_selector_and_pipeline_cap_and_historical_c
                         TributeContract::new(storage.clone())
                             .day_emission_day
                             .read(&cur_wwd)?,
-                        schedule.day
+                        outbe_primitives::time::EmissionDate::new(schedule.day)
                     );
                     day_key = outbe_primitives::time::next_date_key(day_key).unwrap();
                 }
@@ -242,7 +242,7 @@ fn currency_price_unavailable_encodes_selector_and_pipeline_cap_and_historical_c
                     TributeContract::new(storage.clone())
                         .day_emission_day
                         .read(&hist_wwd)?,
-                    hist_schedule.day
+                    outbe_primitives::time::EmissionDate::new(hist_schedule.day)
                 );
                 crate::worldwideday::close_worldwide_day(&mut factory, hist_wwd)?;
                 assert!(!factory.pipeline_wwd.read_all()?.contains(&hist_wwd));
