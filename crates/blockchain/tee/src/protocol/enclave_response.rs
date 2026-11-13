@@ -414,15 +414,6 @@ pub enum EnclaveResponse {
         inputs_canonical_hash: B256,
         attestation_tag: Vec<u8>,
     },
-    LysisRejected {
-        inputs_canonical_hash: B256,
-        attestation_tag: Vec<u8>,
-    },
-    LysisExecuted {
-        result: Box<crate::lysis::LysisResult>,
-        inputs_canonical_hash: B256,
-        attestation_tag: Vec<u8>,
-    },
     EncryptedNodMinedV1 {
         result: Box<crate::nod_mine::MineEncryptedNodResultV1>,
     },
@@ -430,23 +421,6 @@ pub enum EnclaveResponse {
         amount: U256,
         inputs_canonical_hash: B256,
         attestation_tag: Vec<u8>,
-    },
-    NodTransferAckV1 {
-        id: B256,
-        next_offset: u32,
-    },
-    NodTransferReadyV1 {
-        id: B256,
-        total: u32,
-        digest: B256,
-    },
-    NodTransferOutputV1 {
-        id: B256,
-        offset: u32,
-        bytes: Vec<u8>,
-    },
-    NodTransferDiscardedV1 {
-        id: B256,
     },
     EncryptedTributeOfferBatchV2 {
         results: Vec<crate::tribute_v2::EncryptedTributeOfferResultV2>,
@@ -863,8 +837,8 @@ mod wire_compat_tests {
             reason: String::new(),
             attestation_tag: Vec::new(),
         };
-        assert_eq!(postcard::to_allocvec(&old_tail).unwrap()[0], 52);
-        assert_eq!(postcard::to_allocvec(&prepared).unwrap()[0], 53);
-        assert_eq!(postcard::to_allocvec(&rejected).unwrap()[0], 54);
+        assert_eq!(postcard::to_allocvec(&old_tail).unwrap()[0], 46);
+        assert_eq!(postcard::to_allocvec(&prepared).unwrap()[0], 47);
+        assert_eq!(postcard::to_allocvec(&rejected).unwrap()[0], 48);
     }
 }

@@ -10,7 +10,6 @@ pub mod fidelity;
 pub mod fidelity_cipher;
 pub mod gratis;
 pub mod gratis_cipher;
-pub mod lysis;
 pub mod nod_encryption;
 pub mod nod_mine;
 pub mod payload;
@@ -21,6 +20,3 @@ pub mod seal;
 pub mod tribute_day;
 pub mod tribute_encryption;
 pub mod zk_claim;
-
-#[cfg(test)]
-mod lysis_fixture;

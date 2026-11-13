@@ -8,7 +8,6 @@ mod tribute_day;
 mod tribute_requests;
 
 mod nod;
-mod nod_transfer;
 
 mod ledgers;
 

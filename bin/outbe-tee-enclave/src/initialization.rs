@@ -525,7 +525,6 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         }
         EnclaveRequest::ProcessTributeOfferBatch { .. }
         | EnclaveRequest::ProcessEncryptedTributeOfferBatchV2 { .. }
-        | EnclaveRequest::ExecuteLysis { .. }
         | EnclaveRequest::ExecuteLysisFractionsV1 { .. }
         | EnclaveRequest::MineEncryptedNodV1 { .. }
         | EnclaveRequest::EncryptNodForTributeV1 { .. }
@@ -539,11 +538,7 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         | EnclaveRequest::ReadTributeDayAmountV2 { .. }
         | EnclaveRequest::ReadTributeLeagueAmountV1 { .. }
         | EnclaveRequest::ReadTributeDayFractionsV1 { .. }
-        | EnclaveRequest::ReadNodGroupLoadV1 { .. }
-        | EnclaveRequest::NodTransferChunkV1 { .. }
-        | EnclaveRequest::ExecuteNodTransferV1 { .. }
-        | EnclaveRequest::ReadNodTransferV1 { .. }
-        | EnclaveRequest::DiscardNodTransferV1 { .. } => CommandClass::Ready,
+        | EnclaveRequest::ReadNodGroupLoadV1 { .. } => CommandClass::Ready,
         EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 { .. }
         | EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 { .. }
         | EnclaveRequest::ApplyGratisOp { .. }
