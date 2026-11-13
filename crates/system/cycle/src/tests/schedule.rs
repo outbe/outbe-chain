@@ -197,7 +197,7 @@ fn first_encounter_anchors_without_firing() {
 #[test]
 fn block_1_cycle_tick_creates_genesis_worldwide_day() {
     // Production regression: at block 1 the daily Cycle trigger only anchors.
-    // It never invokes `start_metadosis`. So `handle_cycle_tick`
+    // It never invokes `process_emission_day`. So `handle_cycle_tick`
     // must itself create the genesis metadosis worldwide day. Before the fix
     // the active-WWD set was empty until the first block past the next UTC
     // midnight.
