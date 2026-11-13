@@ -177,7 +177,7 @@ pub fn close_worldwide_day(
 ) -> Result<()> {
     factory.pipeline_wwd.remove(&worldwide_day)?;
     let mut tribute = TributeContract::new(factory.storage.clone());
-    if !tribute.is_day_sealed(worldwide_day)? {
+    if !tribute.is_day_sealed(worldwide_day)? && !tribute.retired_days.read(&worldwide_day)? {
         tribute.seal_day(worldwide_day)?;
     }
     Ok(())

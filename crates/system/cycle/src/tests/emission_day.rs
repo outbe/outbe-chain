@@ -65,8 +65,8 @@ fn every_utc_day_is_an_emission_day() {
             };
             let ctx = runtime_context(block, handle);
             account_parent(&ctx, block_number);
-            dispatch_triggers(&ctx).unwrap();
-            crate::handler::credit_reward_slice(&ctx).unwrap();
+            run_due_tasks(&ctx).unwrap();
+            crate::handler::process_agent_rewards(&ctx).unwrap();
         });
         block_number += 1;
         ts += 3_600;
@@ -183,7 +183,7 @@ fn start_date_comes_from_genesis_block() {
             },
             handle.clone(),
         );
-        let err = crate::handler::run_protocol_cycle(&ctx_zero_genesis)
+        let err = crate::handler::process_emission_day(&ctx_zero_genesis)
             .expect_err("zero genesis_timestamp must fail");
         assert!(matches!(err, PrecompileError::Fatal(_)));
     });
@@ -198,7 +198,7 @@ fn start_date_comes_from_genesis_block() {
     storage.enter(|handle| {
         let fire_ts = GENESIS_TS + SECONDS_PER_DAY + 3_600;
         let ctx = dispatch_at(handle.clone(), 2, fire_ts);
-        crate::handler::credit_reward_slice(&ctx).unwrap();
+        crate::handler::process_agent_rewards(&ctx).unwrap();
         let record = outbe_emission::api::get_emission_day_record(handle, 20_240_101)
             .unwrap()
             .expect("genesis day must be allocated");
@@ -269,7 +269,7 @@ fn wwd_step_runs_once_a_day() {
         storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 8);
         storage.enter(|handle| {
             let ctx = dispatch_at(handle.clone(), block_no, midnight_ts);
-            crate::handler::credit_reward_slice(&ctx).unwrap();
+            crate::handler::process_agent_rewards(&ctx).unwrap();
             let expected_day = timestamp_to_date_key(midnight_ts);
             let factory = TributeFactoryContract::new(ctx.storage.clone());
             assert_eq!(factory.last_wwd_advance_day.read().unwrap(), expected_day);
@@ -340,7 +340,7 @@ fn wwd_step_runs_once_a_day() {
         storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 8);
         storage.enter(|handle| {
             let ctx = dispatch_at(handle.clone(), block_no, ts_hour);
-            crate::handler::credit_reward_slice(&ctx).unwrap();
+            crate::handler::process_agent_rewards(&ctx).unwrap();
             let factory = TributeFactoryContract::new(ctx.storage.clone());
             assert_eq!(factory.last_wwd_advance_day.read().unwrap(), 20_240_105);
             if hour == 13 {
@@ -384,11 +384,10 @@ fn wwd_step_runs_once_a_day() {
     // (the E = D+4 target of WWD 20240107) to a conflicting WWD, so creating WWD 20240107 inside
     // `advance_worldwide_days` reverts with `RevertBytes`.
     // Verify:
-    // - Step A4 (`settle_emission_day(20240105)`) still commits (`state == PROCESSING`).
+    // - Step A4 (`allocate_emission_limit(20240105)`) still commits (`state == PROCESSING`).
     // - Step A6 rolls back its inner checkpoint (`last_wwd_advance_day` stays 20240105, WWD 20240101
     //   remains unsealed in `pipeline_wwd`) and emits no event.
-    // - Step A7 (`start_metadosis`) runs cleanly and defers EmissionDay 20240105 because WWD 20240101
-    //   is not yet sealed (`metadosis_state == PENDING`).
+    // - Step A7 (`process_emission_day`) still runs the Metadosis of 20240105 on the unsealed WWD.
     storage.enter(|handle| {
         outbe_emission::api::link_wwd(handle, 20_240_111, WorldwideDay::new(20_240_120)).unwrap();
     });
@@ -431,8 +430,8 @@ fn wwd_step_runs_once_a_day() {
         );
         assert_eq!(
             ed_20240105.metadosis_state,
-            outbe_emission::schema::metadosis_state::PENDING,
-            "A7 must defer 20240105 while WWD 20240101 is unsealed"
+            outbe_emission::schema::metadosis_state::COMPLETED,
+            "A7 must run the Metadosis of 20240105 although A6 reverted"
         );
     });
     assert_eq!(
@@ -443,8 +442,8 @@ fn wwd_step_runs_once_a_day() {
     block_no += 1;
 
     // Clear the conflicting pre-link on 20240111 and advance to the next hourly tick (2024-01-06 01:00 UTC).
-    // Now A6 retries, seals/closes WWD 20240101, finalizes forming snapshot of WWD 20240104, creates WWD 20240107,
-    // updates `last_wwd_advance_day = 20240106`, and A7 immediately settles EmissionDay 20240105 in the same cycle!
+    // Now A6 retries, closes WWD 20240101 without sealing the day Metadosis retired, finalizes the
+    // forming snapshot of WWD 20240104, creates WWD 20240107 and updates `last_wwd_advance_day = 20240106`.
     storage.enter(|handle| {
         let mut clear = outbe_emission::api::get_emission_day_record(handle.clone(), 20_240_111)
             .unwrap()
@@ -460,7 +459,7 @@ fn wwd_step_runs_once_a_day() {
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 8);
     storage.enter(|handle| {
         let ctx = dispatch_at(handle.clone(), block_no, ts_day6_01h);
-        crate::handler::credit_reward_slice(&ctx).unwrap();
+        crate::handler::process_agent_rewards(&ctx).unwrap();
         let factory = TributeFactoryContract::new(ctx.storage.clone());
         assert_eq!(factory.last_wwd_advance_day.read().unwrap(), 20_240_106);
         assert!(
@@ -469,13 +468,20 @@ fn wwd_step_runs_once_a_day() {
                 .read_all()
                 .unwrap()
                 .contains(&WorldwideDay::new(20_240_101)),
-            "A6 retry at 01:00 UTC must close/seal WWD 20240101"
+            "A6 retry at 01:00 UTC must close WWD 20240101"
         );
+        let tribute = outbe_tribute::TributeContract::new(ctx.storage.clone());
+        assert!(tribute
+            .retired_days
+            .read(&WorldwideDay::new(20_240_101))
+            .unwrap());
         assert!(
-            outbe_tribute::TributeContract::new(ctx.storage.clone())
-                .is_day_sealed(WorldwideDay::new(20_240_101))
-                .unwrap(),
-            "A6 retry at 01:00 UTC must seal WWD 20240101 in Tribute"
+            tribute
+                .day_totals
+                .get(WorldwideDay::new(20_240_101))
+                .unwrap()
+                .is_none(),
+            "A6 retry at 01:00 UTC must leave the retired WWD 20240101 alone"
         );
         assert!(
             factory
@@ -499,7 +505,7 @@ fn wwd_step_runs_once_a_day() {
         assert_eq!(
             ed_20240105.metadosis_state,
             outbe_emission::schema::metadosis_state::COMPLETED,
-            "A7 must settle 20240105 once A6 has sealed WWD 20240101"
+            "the Metadosis of 20240105 stays completed"
         );
     });
 

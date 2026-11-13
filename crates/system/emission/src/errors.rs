@@ -32,9 +32,6 @@ pub enum EmissionLimitError {
     /// Indicates that fixed sink percentages exceed 100.
     #[error("emission fixed percentages exceed 100")]
     FixedPercentagesExceed100,
-    /// Indicates that the terminal emission sink returned an unused amount.
-    #[error("terminal emission sink returned unused amount")]
-    TerminalSinkReturnedUnusedAmount,
 }
 
 impl From<EmissionLimitError> for PrecompileError {

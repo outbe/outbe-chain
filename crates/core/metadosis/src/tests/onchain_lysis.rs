@@ -86,7 +86,7 @@ fn fixture_with_tributes(limit: u64, tributes: &[(u64, u16)]) -> HashMapStorageP
                             offering_end,
                         },
                     )?;
-                    // A6 seals the WorldwideDay. Metadosis settles only a sealed day.
+                    // A6 seals the WorldwideDay.
                     tribute.seal_day(WWD)?;
                     Ok(())
                 },
@@ -98,20 +98,23 @@ fn fixture_with_tributes(limit: u64, tributes: &[(u64, u16)]) -> HashMapStorageP
 
 fn run(provider: &mut HashMapStorageProvider) -> outbe_primitives::error::Result<()> {
     StorageHandle::enter(provider, |storage| {
-        crate::commands::start_metadosis(&BlockRuntimeContext::new(
-            BlockContext {
-                block_gas_limit: 0,
-                user_gas_used: 0,
-                block_number: 10,
-                timestamp: CLOCK,
-                chain_id: CHAIN_ID,
-                genesis_hash: alloy_primitives::B256::ZERO,
-                genesis_timestamp: u64::max(CLOCK, 1),
-                proposer: alloy_primitives::Address::ZERO,
-                validators: Vec::new(),
-            },
-            storage,
-        ))
+        crate::commands::process_emission_day(
+            &BlockRuntimeContext::new(
+                BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
+                    block_number: 10,
+                    timestamp: CLOCK,
+                    chain_id: CHAIN_ID,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: u64::max(CLOCK, 1),
+                    proposer: alloy_primitives::Address::ZERO,
+                    validators: Vec::new(),
+                },
+                storage,
+            ),
+            DAY,
+        )
     })
 }
 
@@ -297,7 +300,7 @@ fn failed_metadosis_forfeits_tributes() {
             if end_state == metadosis_state::FAILED {
                 crate::commands::fail_metadosis(&ctx, DAY).unwrap();
             } else {
-                crate::commands::start_metadosis(&ctx).unwrap();
+                crate::commands::process_emission_day(&ctx, DAY).unwrap();
             }
             let closed = MetadosisContract::new(storage.clone())
                 .emission_days()

@@ -182,16 +182,6 @@
   },
   {
     "type": "error",
-    "name": "AllocationDisagreesWithMetadosisReceipt",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "AllocationWithoutMetadosisReceipt",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "BlockNumberRegression",
     "inputs": [
       {
@@ -205,11 +195,6 @@
         "internalType": "uint64"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "DailySettledWithoutMetadosisReceipt",
-    "inputs": []
   },
   {
     "type": "error",
@@ -245,11 +230,6 @@
   },
   {
     "type": "error",
-    "name": "MetadosisReceiptWithoutDailySettled",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "MetadosisTerminalOverflow",
     "inputs": []
   },
@@ -278,11 +258,6 @@
         "internalType": "uint64"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "SettlementBeforeParticipationWindowsClose",
-    "inputs": []
   },
   {
     "type": "error",

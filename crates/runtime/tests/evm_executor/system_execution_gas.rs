@@ -589,7 +589,7 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
             .expect("test feeder vote signer should recover");
         let feeder = Address::from(*feeder_vote.signer());
         let voter = Address::repeat_byte(0x71);
-        let emission_trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
+        let emission_trigger = outbe_cycle::triggers::TriggerId::ProcessEmissionDay.as_u32();
 
         let mut state = state_with_active_validators_seeded_at_block_with_cycle_frames(
             &[(proposer, proposer_key)],
@@ -727,7 +727,12 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
 
     let first = run_once();
     assert_eq!(first.active_day, 20_240_102);
-    assert_eq!(first.last_executed_at, GENESIS_TS + SECONDS_PER_DAY);
+    assert_eq!(
+        first.last_executed_at,
+        GENESIS_TS
+            + SECONDS_PER_DAY
+            + outbe_cycle::triggers::PROCESS_EMISSION_DAY_START_OFFSET_SECONDS
+    );
     assert!(first.day_settled);
     assert!(!first.voter_claimable.is_zero());
     assert_eq!(first.voter_gems, 0);

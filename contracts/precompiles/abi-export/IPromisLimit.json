@@ -46,11 +46,6 @@
   },
   {
     "type": "error",
-    "name": "Overflow",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "UnauthorizedBurnCaller",
     "inputs": [
       {

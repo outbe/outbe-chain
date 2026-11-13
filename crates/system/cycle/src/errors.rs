@@ -1,4 +1,4 @@
-//! Typed error definitions for the ProtocolCycle system precompile.
+//! Typed error definitions for the Cycle system precompile.
 
 use crate::ICycle;
 use alloy_primitives::Bytes;
@@ -21,32 +21,22 @@ impl From<AccountingProgressError> for CycleError {
     }
 }
 
-/// Represents errors returned by the ProtocolCycle runtime.
+/// Represents errors returned by the Cycle runtime.
 #[derive(Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CycleError {
-    #[error("ProtocolCycle received invalid UTC day: active={active}, block={block}")]
+    #[error("ProcessEmissionDay received invalid UTC day: active={active}, block={block}")]
     InvalidActiveUtcDay { active: u32, block: u32 },
-    #[error("ProtocolCycle received invalid UTC day: active={active}, block={block}")]
+    #[error("ProcessEmissionDay received invalid UTC day: active={active}, block={block}")]
     InvalidBlockUtcDay { active: u32, block: u32 },
-    #[error("ProtocolCycle active UTC day {active} is after block UTC day {block}")]
+    #[error("ProcessEmissionDay active UTC day {active} is after block UTC day {block}")]
     ActiveUtcDayAfterBlock { active: u32, block: u32 },
     #[error("native validator budget overflow")]
     NativeValidatorBudgetOverflow,
-    #[error("Cycle settlement before reward participation windows close")]
-    SettlementBeforeParticipationWindowsClose,
-    #[error("Cycle daily_settled marker has no Metadosis day-limit semantic receipt")]
-    DailySettledWithoutMetadosisReceipt,
-    #[error("Metadosis day-limit semantic receipt has no Cycle daily_settled marker")]
-    MetadosisReceiptWithoutDailySettled,
     #[error("metadosis terminal overflow")]
     MetadosisTerminalOverflow,
     #[error("validator top-up exceeds allocation")]
     ValidatorTopupExceedsAllocation,
-    #[error("Cycle allocation committed without a Metadosis day-limit receipt")]
-    AllocationWithoutMetadosisReceipt,
-    #[error("Cycle allocation disagrees with the Metadosis day-limit receipt")]
-    AllocationDisagreesWithMetadosisReceipt,
     #[error("last_accounted_block_number regression: current={current}, attempted={attempted}")]
     BlockNumberRegression { current: u64, attempted: u64 },
     #[error("accounting progress input is zero")]
@@ -108,26 +98,11 @@ impl From<CycleError> for PrecompileError {
             CycleError::NativeValidatorBudgetOverflow => PrecompileError::RevertBytes(Bytes::from(
                 ICycle::NativeValidatorBudgetOverflow {}.abi_encode(),
             )),
-            CycleError::SettlementBeforeParticipationWindowsClose => PrecompileError::RevertBytes(
-                Bytes::from(ICycle::SettlementBeforeParticipationWindowsClose {}.abi_encode()),
-            ),
-            CycleError::DailySettledWithoutMetadosisReceipt => PrecompileError::RevertBytes(
-                Bytes::from(ICycle::DailySettledWithoutMetadosisReceipt {}.abi_encode()),
-            ),
-            CycleError::MetadosisReceiptWithoutDailySettled => PrecompileError::RevertBytes(
-                Bytes::from(ICycle::MetadosisReceiptWithoutDailySettled {}.abi_encode()),
-            ),
             CycleError::MetadosisTerminalOverflow => PrecompileError::RevertBytes(Bytes::from(
                 ICycle::MetadosisTerminalOverflow {}.abi_encode(),
             )),
             CycleError::ValidatorTopupExceedsAllocation => PrecompileError::RevertBytes(
                 Bytes::from(ICycle::ValidatorTopupExceedsAllocation {}.abi_encode()),
-            ),
-            CycleError::AllocationWithoutMetadosisReceipt => PrecompileError::RevertBytes(
-                Bytes::from(ICycle::AllocationWithoutMetadosisReceipt {}.abi_encode()),
-            ),
-            CycleError::AllocationDisagreesWithMetadosisReceipt => PrecompileError::RevertBytes(
-                Bytes::from(ICycle::AllocationDisagreesWithMetadosisReceipt {}.abi_encode()),
             ),
             CycleError::BlockNumberRegression { current, attempted } => {
                 PrecompileError::RevertBytes(Bytes::from(
@@ -224,32 +199,12 @@ mod tests {
                 ICycle::NativeValidatorBudgetOverflow::SELECTOR,
             ),
             (
-                CycleError::SettlementBeforeParticipationWindowsClose,
-                ICycle::SettlementBeforeParticipationWindowsClose::SELECTOR,
-            ),
-            (
-                CycleError::DailySettledWithoutMetadosisReceipt,
-                ICycle::DailySettledWithoutMetadosisReceipt::SELECTOR,
-            ),
-            (
-                CycleError::MetadosisReceiptWithoutDailySettled,
-                ICycle::MetadosisReceiptWithoutDailySettled::SELECTOR,
-            ),
-            (
                 CycleError::MetadosisTerminalOverflow,
                 ICycle::MetadosisTerminalOverflow::SELECTOR,
             ),
             (
                 CycleError::ValidatorTopupExceedsAllocation,
                 ICycle::ValidatorTopupExceedsAllocation::SELECTOR,
-            ),
-            (
-                CycleError::AllocationWithoutMetadosisReceipt,
-                ICycle::AllocationWithoutMetadosisReceipt::SELECTOR,
-            ),
-            (
-                CycleError::AllocationDisagreesWithMetadosisReceipt,
-                ICycle::AllocationDisagreesWithMetadosisReceipt::SELECTOR,
             ),
             (
                 CycleError::BlockNumberRegression {

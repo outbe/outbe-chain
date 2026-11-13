@@ -9,13 +9,8 @@ interface ICycle {
     error InvalidBlockUtcDay(uint32 active, uint32 blockDay);
     error ActiveUtcDayAfterBlock(uint32 active, uint32 blockDay);
     error NativeValidatorBudgetOverflow();
-    error SettlementBeforeParticipationWindowsClose();
-    error DailySettledWithoutMetadosisReceipt();
-    error MetadosisReceiptWithoutDailySettled();
     error MetadosisTerminalOverflow();
     error ValidatorTopupExceedsAllocation();
-    error AllocationWithoutMetadosisReceipt();
-    error AllocationDisagreesWithMetadosisReceipt();
     error BlockNumberRegression(uint64 current, uint64 attempted);
     error ZeroAccountingProgress();
     error AccountingProgressGap(uint64 current, uint64 attempted);

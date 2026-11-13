@@ -6,7 +6,7 @@
 //! ```
 //!
 //! ```compile_fail
-//! use outbe_metadosis::runtime::start_metadosis;
+//! use outbe_metadosis::runtime::process_emission_day;
 //! ```
 //!
 //! ```compile_fail

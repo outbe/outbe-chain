@@ -1,10 +1,10 @@
-//! UTC-day calendar transitions: contiguous settlement and 1-day-per-block catch-up (`OIP-00343`).
+//! UTC-day calendar transitions: contiguous settlement and one-day-per-hourly-run catch-up (`OIP-00343`).
 
 use super::*;
 use crate::handler::MAX_REWARD_CATCHUP_DAYS;
 
 #[test]
-fn protocol_cycle_catches_up_one_oldest_day_per_block_after_a_multi_day_halt() {
+fn process_emission_day_catches_up_one_oldest_day_per_hourly_run_after_a_multi_day_halt() {
     let mut storage = cycle_storage();
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 32);
     storage.enter(|handle| {
@@ -19,9 +19,9 @@ fn protocol_cycle_catches_up_one_oldest_day_per_block_after_a_multi_day_halt() {
         let fire_ts = GENESIS_TS + 3 * SECONDS_PER_DAY + 3_600;
         let fire = dispatch_at(handle, 2, fire_ts);
 
-        assert!(is_day_settled(&fire, 20_240_101));
-        assert!(!is_day_settled(&fire, 20_240_102));
-        assert!(!is_day_settled(&fire, 20_240_103));
+        assert!(is_day_allocated(&fire, 20_240_101));
+        assert!(!is_day_allocated(&fire, 20_240_102));
+        assert!(!is_day_allocated(&fire, 20_240_103));
         assert_eq!(active_utc_day(&fire), 20_240_102);
 
         assert!(
@@ -40,8 +40,8 @@ fn protocol_cycle_catches_up_one_oldest_day_per_block_after_a_multi_day_halt() {
     storage.enter(|handle| {
         let fire_ts = GENESIS_TS + 3 * SECONDS_PER_DAY + 2 * 3_600;
         let fire = dispatch_at(handle, 3, fire_ts);
-        assert!(is_day_settled(&fire, 20_240_102));
-        assert!(!is_day_settled(&fire, 20_240_103));
+        assert!(is_day_allocated(&fire, 20_240_102));
+        assert!(!is_day_allocated(&fire, 20_240_103));
         assert_eq!(active_utc_day(&fire), 20_240_103);
     });
 
@@ -50,7 +50,7 @@ fn protocol_cycle_catches_up_one_oldest_day_per_block_after_a_multi_day_halt() {
     storage.enter(|handle| {
         let fire_ts = GENESIS_TS + 3 * SECONDS_PER_DAY + 3 * 3_600;
         let fire = dispatch_at(handle, 4, fire_ts);
-        assert!(is_day_settled(&fire, 20_240_103));
+        assert!(is_day_allocated(&fire, 20_240_103));
         assert_eq!(active_utc_day(&fire), 20_240_104);
     });
 }
@@ -79,12 +79,12 @@ fn catchup_horizon_bounds_backward_scan_to_max_reward_catchup_days() {
         );
         assert_eq!(active_utc_day(&ctx), expected_floor);
         account_parent(&ctx, 2);
-        dispatch_triggers(&ctx).unwrap();
+        run_due_tasks(&ctx).unwrap();
         assert_eq!(
             outbe_rewards::api::get_last_sealed_day(&handle).unwrap(),
             expected_floor
         );
-        assert!(is_day_settled(&ctx, expected_floor));
+        assert!(is_day_allocated(&ctx, expected_floor));
         assert!(
             outbe_emission::api::get_emission_day_record(handle.clone(), 20_240_101)
                 .unwrap()
@@ -121,7 +121,7 @@ fn forward_seal_jump_waits_for_skipped_parent_late_votes() {
                 super::dispatch::record_parent_with_late_voter(&ctx, hash, early, late);
             }
             account_parent(&ctx, height);
-            dispatch_triggers(&ctx).unwrap();
+            run_due_tasks(&ctx).unwrap();
             assert_eq!(outbe_rewards::api::get_last_sealed_day(&handle).unwrap(), 0);
             if height == 12 {
                 outbe_rewards::block_fees::record_late_vote(&ctx, hash, late, 2).unwrap();
@@ -147,7 +147,7 @@ fn forward_seal_jump_waits_for_skipped_parent_late_votes() {
             outbe_rewards::api::get_last_sealed_day(&handle).unwrap(),
             floor
         );
-        assert!(is_day_settled(&ctx, floor));
+        assert!(is_day_allocated(&ctx, floor));
         assert_eq!(
             outbe_rewards::api::get_day_voters(&ctx, 20_240_101).unwrap(),
             vec![(early, 1), (late, 1)]
@@ -161,7 +161,7 @@ fn forward_seal_jump_waits_for_skipped_parent_late_votes() {
 }
 
 #[test]
-fn failed_allocation_fallback_rolls_back_seal_and_cleanup_before_retry() {
+fn a_failed_allocation_whose_limit_cannot_reach_the_promis_limit_fails_the_block() {
     let mut storage = cycle_storage();
     storage.enter(|handle| {
         let anchor = genesis_block(handle, GENESIS_TS + 60);
@@ -185,76 +185,17 @@ fn failed_allocation_fallback_rolls_back_seal_and_cleanup_before_retry() {
                 U256::MAX,
             )
             .unwrap();
-        // Allocation overflows first; the full limit makes its fallback fail after sealing.
+        // Allocation overflows first; the full limit then overflows the Promis Limit in its fallback.
         outbe_promislimit::PromisLimitContract::new(handle.clone())
             .checked_credit(U256::MAX)
             .unwrap();
-        dispatch_triggers(&ctx).unwrap();
-        assert_eq!(outbe_rewards::api::get_last_sealed_day(&handle).unwrap(), 0);
+        let err = run_due_tasks(&ctx).unwrap_err();
         assert!(
-            outbe_emission::api::get_emission_day_record(handle.clone(), 20_240_101)
-                .unwrap()
-                .is_none()
-        );
-        assert_eq!(
-            agents
-                .waa_address_count
-                .read(&20_240_101u32.into())
-                .unwrap(),
-            1
-        );
-        assert!(!handle
-            .contract::<outbe_rewards::schema::Rewards>()
-            .day_cleanup_scheduled
-            .read(&20_240_101)
-            .unwrap());
-        assert_eq!(
-            outbe_promislimit::PromisLimitContract::new(handle.clone())
-                .promis_limit()
-                .unwrap(),
-            U256::MAX
-        );
-        outbe_promislimit::PromisLimitContract::new(handle)
-            .checked_take(U256::MAX)
-            .unwrap();
-    });
-    storage.set_block_number(3);
-    storage.enter(|handle| {
-        let ctx = runtime_context(
-            block_ctx(3, GENESIS_TS + SECONDS_PER_DAY + 7_200),
-            handle.clone(),
-        );
-        account_parent(&ctx, 3);
-        dispatch_triggers(&ctx).unwrap();
-        assert_eq!(
-            outbe_rewards::api::get_last_sealed_day(&handle).unwrap(),
-            20_240_101
-        );
-        let cap = outbe_emission::day_emission::emission_limit_of_day(0);
-        assert_eq!(
-            outbe_promislimit::PromisLimitContract::new(handle.clone())
-                .promis_limit()
-                .unwrap(),
-            cap
-        );
-        crate::handler::credit_reward_slice(&ctx).unwrap();
-        crate::handler::settle_emission_day(&ctx, 20_240_101).unwrap();
-        assert_eq!(
-            outbe_agentreward::AgentRewardContract::new(handle.clone())
-                .waa_address_count
-                .read(&20_240_101u32.into())
-                .unwrap(),
-            0
-        );
-        assert_eq!(
-            outbe_rewards::api::get_last_sealed_day(&handle).unwrap(),
-            20_240_101
-        );
-        assert_eq!(
-            outbe_promislimit::PromisLimitContract::new(handle)
-                .promis_limit()
-                .unwrap(),
-            cap
+            matches!(
+                err,
+                outbe_primitives::error::PrecompileError::FatalWithCause(_)
+            ),
+            "{err:?}"
         );
     });
 }
@@ -288,7 +229,7 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
             )
             .unwrap();
 
-        dispatch_triggers(&ctx).unwrap();
+        run_due_tasks(&ctx).unwrap();
 
         let rec = outbe_emission::api::get_emission_day_record(handle.clone(), 20_240_101)
             .unwrap()
@@ -314,13 +255,13 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
         assert!(ar
             .increment_waa_tribute(20_240_101u32.into(), Address::repeat_byte(0x45))
             .is_err());
-        crate::handler::credit_reward_slice(&ctx).unwrap();
+        crate::handler::process_agent_rewards(&ctx).unwrap();
         assert_eq!(ar.waa_address_count.read(&20_240_101u32.into()).unwrap(), 0);
         assert_eq!(
             outbe_rewards::api::get_last_sealed_day(&handle).unwrap(),
             20_240_101
         );
-        crate::handler::settle_emission_day(&ctx, 20_240_101).unwrap();
+        crate::handler::allocate_emission_limit(&ctx, 20_240_101).unwrap();
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(handle.clone())
                 .promis_limit()
@@ -366,9 +307,9 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
         .filter_map(|log| IDesis::DesisLimitSet::decode_log(log).ok())
         .all(|ev| ev.data.emissionDay != 20_240_101));
 
-    // Now test Step 3 (`start_metadosis`) recoverable revert fallback (`MetadosisFailed(E, 1)`):
+    // Now test Step 3 (`process_emission_day`) recoverable revert fallback (`MetadosisFailed(E, 1)`):
     // Clear the WAA pending total so day 20240102 allocates cleanly, and pre-set Desis stage
-    // for 20240102 so `start_metadosis` reverts with `InvalidStageTransition`.
+    // for 20240102 so `process_emission_day` reverts with `InvalidStageTransition`.
     storage.set_block_number(3);
     storage.enter(|handle| {
         let ar = outbe_agentreward::AgentRewardContract::new(handle.clone());
@@ -391,7 +332,7 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
         let fire_ts = GENESIS_TS + 2 * SECONDS_PER_DAY + 3_600;
         let ctx = runtime_context(block_ctx(3, fire_ts), handle.clone());
         account_parent(&ctx, 3);
-        dispatch_triggers(&ctx).unwrap();
+        run_due_tasks(&ctx).unwrap();
 
         let rec = outbe_emission::api::get_emission_day_record(handle.clone(), 20_240_102)
             .unwrap()

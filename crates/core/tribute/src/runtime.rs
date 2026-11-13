@@ -21,7 +21,7 @@ pub enum RetirementOutcome {
 }
 
 impl TributeContract<'_> {
-    /// Retires a sealed empty day in the same state checkpoint as completion.
+    /// Retires an empty day in the same state checkpoint as completion.
     pub fn retire_completed_partition(&mut self, day: WorldwideDay) -> Result<RetirementOutcome> {
         let storage = self.storage_handle();
         storage.require_metadosis_process_ready()?;

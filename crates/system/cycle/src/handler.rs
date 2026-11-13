@@ -1,4 +1,4 @@
-//! ProtocolCycle calendar orchestration and completed-day emission settlement.
+//! ProcessEmissionDay calendar orchestration and completed-day emission settlement.
 //!
 //! This is the natural home of the `Cycle -> EmissionLimit -> AgentReward
 //! -> Rewards -> Metadosis` orchestration. The orchestration lives in `outbe-cycle`
@@ -7,7 +7,7 @@
 //! `outbe-rewards -> outbe-emissionlimit` re-export.
 
 use alloy_primitives::U256;
-use outbe_agentreward::api::{allocate_day_agent_rewards, process_agent_rewards, DayAgentPools};
+use outbe_agentreward::api::{allocate_day_agent_rewards, DayAgentPools};
 use outbe_emission::{
     allocation::{allocate_day_emission_limit, EmissionSinkId},
     api::DayAllocationAmounts,
@@ -25,16 +25,16 @@ use outbe_primitives::{
     },
 };
 
-use crate::{errors::CycleError, schema::Cycle, ICycle};
+use crate::{errors::CycleError, schema::Cycle, triggers::Readiness, ICycle};
 
 /// Maximum number of completed UTC days that `derive_active_utc_day` scans backward
-/// and catches up (one oldest unsettled day per block, OIP-00343).
+/// and catches up (one oldest unallocated day per hourly run, OIP-00343).
 pub const MAX_REWARD_CATCHUP_DAYS: u32 = 64;
 
 /// `ICycle.DayEmissionLimitAllocationFailed.reason`: the daily emission limit allocation step reverted.
 pub const ALLOCATION_FAILED_STEP_REVERTED: u8 = 1;
 
-fn latest_settled_day_through(
+fn latest_allocated_day_through(
     storage: StorageHandle<'_>,
     from_day: u32,
     start_date: u32,
@@ -83,29 +83,19 @@ pub fn derive_active_utc_day(
         * outbe_primitives::time::SECONDS_PER_DAY;
     let catchup_floor = timestamp_to_date_key(yesterday_ts.saturating_sub(catchup_span_secs));
     let floor_day = start_date.max(catchup_floor);
-    let d_settled = latest_settled_day_through(storage, yesterday, floor_day)?;
-    match d_settled {
-        Some(settled) => next_date_key(settled).map_err(calendar_step_error),
+    let d_allocated = latest_allocated_day_through(storage, yesterday, floor_day)?;
+    match d_allocated {
+        Some(allocated) => next_date_key(allocated).map_err(calendar_step_error),
         None => Ok(floor_day),
     }
 }
 
-/// Calendar work owned by one hourly ProtocolCycle execution.
+/// Returns the day that an hourly ProcessEmissionDay execution allocates, if any.
 ///
-/// This type is intentionally not persisted and not exposed through the EVM ABI.
-/// The executor shares it, so the executor derives command authority from exactly
-/// the same calendar decision as the handler.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ProtocolDayAction {
-    SameDay,
-    SettlePrevious { day: u32 },
-}
-
-/// Selects the daily action for an hourly ProtocolCycle execution.
-///
-/// If `active_utc_day < block_utc_day`, settles the single oldest unallocated UTC day
-/// `active_utc_day` (`E_next`), catching up at most one day per block within `MAX_REWARD_CATCHUP_DAYS`.
-pub fn protocol_day_action(active_utc_day: u32, block_utc_day: u32) -> Result<ProtocolDayAction> {
+/// If `active_utc_day < block_utc_day`, it is the single oldest unallocated UTC day
+/// `active_utc_day` (`E_next`), catching up at most one day per hourly run within `MAX_REWARD_CATCHUP_DAYS`.
+/// The executor shares this decision, so it derives command authority from the same calendar.
+pub fn day_to_allocate(active_utc_day: u32, block_utc_day: u32) -> Result<Option<u32>> {
     if !is_valid_utc_day(active_utc_day) {
         return Err(CycleError::InvalidActiveUtcDay {
             active: active_utc_day,
@@ -128,12 +118,7 @@ pub fn protocol_day_action(active_utc_day: u32, block_utc_day: u32) -> Result<Pr
         .into());
     }
 
-    if active_utc_day == block_utc_day {
-        return Ok(ProtocolDayAction::SameDay);
-    }
-    Ok(ProtocolDayAction::SettlePrevious {
-        day: active_utc_day,
-    })
+    Ok((active_utc_day < block_utc_day).then_some(active_utc_day))
 }
 
 /// Maps a date step to the cycle error class.
@@ -180,23 +165,23 @@ fn wrap(step: &str, r: Result<()>) -> Result<()> {
     })
 }
 
-/// Settles one explicitly owned, completed UTC day inside its own checkpoint.
-/// Calendar selection belongs to [`run_protocol_cycle`].
-pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<()> {
-    if day_settlement(ctx, prev_day)? == DaySettlement::Settled {
+/// Allocates the emission limit of one explicitly owned, completed UTC day inside its own
+/// checkpoint. Calendar selection belongs to [`process_emission_day`].
+pub fn allocate_emission_limit(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<()> {
+    if is_day_allocated(ctx, prev_day)? {
         return Ok(());
     }
     ctx.storage
-        .with_checkpoint(|| settle_emission_day_inner(ctx, prev_day))
+        .with_checkpoint(|| allocate_emission_limit_inner(ctx, prev_day))
 }
 
-fn settle_emission_day_inner(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<()> {
-    trace_settlement_dates(ctx, prev_day);
+fn allocate_emission_limit_inner(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<()> {
+    trace_allocation_dates(ctx, prev_day);
 
     let g0 = gas(ctx);
     tracing::debug!(target: "outbe::cycle::gas", gas_used = g0, prev_day, block_ts = ctx.block.timestamp, "entry");
 
-    let day_number = day_number(ctx, prev_day)?;
+    let day_number = emission_day_number(ctx, prev_day)?;
     let cap = emission_limit_of_day(day_number);
     if cap.is_zero() {
         return Ok(());
@@ -235,6 +220,10 @@ fn settle_emission_day_inner(ctx: &BlockRuntimeContext, prev_day: u32) -> Result
 
     let metadosis_total = shares.terminal_total(fee_covered, pool_excess)?;
     wrap(
+        "set_metadosis_limit",
+        set_metadosis_limit(ctx, prev_day, metadosis_total),
+    )?;
+    wrap(
         "record_day_allocation",
         outbe_emission::api::record_day_allocation(
             ctx.storage.clone(),
@@ -252,13 +241,8 @@ fn settle_emission_day_inner(ctx: &BlockRuntimeContext, prev_day: u32) -> Result
         .map(|_| ()),
     )?;
 
-    dispatch_terminal_remainder(ctx, prev_day, metadosis_total)?;
-
     let g4 = gas(ctx);
-    tracing::debug!(target: "outbe::cycle::gas", step_gas = gas_sample_delta(g4, g3), cumulative = g4, "after terminal dispatch");
-
-    let g5 = gas(ctx);
-    tracing::debug!(target: "outbe::cycle::gas", step_gas = gas_sample_delta(g5, g4), cumulative = g5, total = gas_sample_delta(g5, g0), "completed");
+    tracing::debug!(target: "outbe::cycle::gas", step_gas = gas_sample_delta(g4, g3), cumulative = g4, total = gas_sample_delta(g4, g0), "after day allocation record");
 
     tracing::info!(
         target: "outbe::cycle",
@@ -269,29 +253,16 @@ fn settle_emission_day_inner(ctx: &BlockRuntimeContext, prev_day: u32) -> Result
         validator_topup = %validator_topup,
         pool_excess = %pool_excess,
         metadosis_total = %metadosis_total,
-        total_gas = gas_sample_delta(g5, g0),
+        total_gas = gas_sample_delta(g4, g0),
         "emission_limit_daily handler completed"
     );
 
     Ok(())
 }
 
-/// Settlement state of one completed UTC day before its economic calculation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DaySettlement {
-    /// The day has not yet been allocated in `outbe-emission`.
-    Pending,
-    /// The day has already been allocated (`state == PROCESSING || state == COMPLETED`).
-    Settled,
-}
-
-/// Checks the settlement preconditions and the `EmissionDay` state of `prev_day`.
-fn day_settlement(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<DaySettlement> {
-    if !outbe_rewards::api::is_voting_complete(ctx, prev_day)? {
-        return Err(CycleError::SettlementBeforeParticipationWindowsClose.into());
-    }
-
-    let settled = outbe_emission::api::get_emission_day_record(ctx.storage.clone(), prev_day)
+/// Returns whether `prev_day` is already allocated (`state == PROCESSING || state == COMPLETED`).
+fn is_day_allocated(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<bool> {
+    let allocated = outbe_emission::api::get_emission_day_record(ctx.storage.clone(), prev_day)
         .map_err(|e| {
             tracing::error!(target: "outbe::cycle", step = "get_emission_day_record", prev_day, error = ?e, "emission_limit_daily step failed");
             e
@@ -300,21 +271,20 @@ fn day_settlement(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<DaySettlem
             rec.state == emission_day_state::PROCESSING
                 || rec.state == emission_day_state::COMPLETED
         });
-    if settled {
+    if allocated {
         tracing::debug!(
             target: "outbe::cycle",
             prev_day,
             block_number = ctx.block.block_number,
-            "emission_limit_daily: prev_day already settled - skipping (idempotent)"
+            "emission_limit_daily: prev_day already allocated - skipping (idempotent)"
         );
-        return Ok(DaySettlement::Settled);
     }
-    Ok(DaySettlement::Pending)
+    Ok(allocated)
 }
 
-/// Logs the calendar inputs of one settlement. The genesis UTC day read stays
-/// before the first gas sample of the settlement.
-fn trace_settlement_dates(ctx: &BlockRuntimeContext, prev_day: u32) {
+/// Logs the calendar inputs of one allocation. The genesis UTC day read stays
+/// before the first gas sample of the allocation.
+fn trace_allocation_dates(ctx: &BlockRuntimeContext, prev_day: u32) {
     let block_ts = ctx.block.timestamp;
     let current_day = timestamp_to_date_key(block_ts);
     let start_date = timestamp_to_date_key(ctx.block.genesis_timestamp);
@@ -325,12 +295,12 @@ fn trace_settlement_dates(ctx: &BlockRuntimeContext, prev_day: u32) {
         prev_day,
         start_date,
         block_number = ctx.block.block_number,
-        "emission_limit_daily dates"
+        "allocation dates"
     );
 }
 
 /// Returns the number of days from genesis to `prev_day`.
-fn day_number(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<u32> {
+fn emission_day_number(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<u32> {
     outbe_rewards::runtime::day_number_since_genesis(ctx, prev_day)
         .map_err(|e| {
             tracing::error!(target: "outbe::cycle", step = "day_number_since_genesis", prev_day, error = ?e, "emission_limit_daily step failed");
@@ -378,31 +348,10 @@ impl EmissionShares {
     }
 }
 
-/// Sends the terminal Metadosis remainder of `prev_day`. Then checks that
-/// Metadosis formed the day limit for `prev_day` with the same base limit.
-fn dispatch_terminal_remainder(
-    ctx: &BlockRuntimeContext,
-    prev_day: u32,
-    metadosis_total: U256,
-) -> Result<()> {
-    let prev_day_ts = date_key_to_utc_timestamp(prev_day).map_err(calendar_step_error)?;
-    wrap(
-        "set_metadosis_limit",
-        set_metadosis_limit(ctx, metadosis_total, prev_day_ts),
-    )?;
-    let emission_day = outbe_emission::api::get_emission_day_record(ctx.storage.clone(), prev_day)?
-        .ok_or(CycleError::AllocationWithoutMetadosisReceipt)?;
-    if emission_day.day == prev_day && U256::from(emission_day.metadosis_limit) == metadosis_total {
-        Ok(())
-    } else {
-        Err(CycleError::AllocationDisagreesWithMetadosisReceipt.into())
-    }
-}
-
 /// Processes the shared four-pool accrual budget and bounded owner cleanup.
-pub(crate) fn credit_reward_slice(ctx: &BlockRuntimeContext) -> Result<()> {
-    process_agent_rewards(ctx).map_err(|e| {
-        tracing::error!(target: "outbe::cycle", step = "process_agent_rewards", error = ?e, "protocol cycle step failed");
+pub(crate) fn process_agent_rewards(ctx: &BlockRuntimeContext) -> Result<()> {
+    outbe_agentreward::api::process_agent_rewards(ctx).map_err(|e| {
+        tracing::error!(target: "outbe::cycle", step = "process_agent_rewards", error = ?e, "agent reward step failed");
         e
     })
 }
@@ -435,12 +384,13 @@ pub(crate) fn run_advance_worldwide_days_step(
     }
 }
 
-fn run_allocate_emission_day_step(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
-    if day_settlement(ctx, day)? == DaySettlement::Settled {
-        return Ok(());
+/// Allocates `day` and returns it when Metadosis of `day` is to run in this run.
+fn run_allocate_emission_day_step(ctx: &BlockRuntimeContext, day: u32) -> Result<Option<u32>> {
+    if is_day_allocated(ctx, day)? {
+        return Ok(None);
     }
-    match settle_emission_day(ctx, day) {
-        Ok(()) => Ok(()),
+    match allocate_emission_limit(ctx, day) {
+        Ok(()) => Ok(Some(day)),
         Err(err) if is_recoverable_step_error(&err) => {
             tracing::warn!(
                 target: "outbe::cycle",
@@ -448,9 +398,9 @@ fn run_allocate_emission_day_step(ctx: &BlockRuntimeContext, day: u32) -> Result
                 block_number = ctx.block.block_number,
                 block_timestamp = ctx.block.timestamp,
                 error = ?err,
-                "settle_emission_day step reverted; routing day emission limit to PromisLimit"
+                "allocate_emission_limit step reverted; routing day emission limit to PromisLimit"
             );
-            record_failed_allocation_fallback(ctx, day)
+            record_failed_allocation_fallback(ctx, day).map(|()| None)
         }
         Err(err) => Err(err),
     }
@@ -458,7 +408,7 @@ fn run_allocate_emission_day_step(ctx: &BlockRuntimeContext, day: u32) -> Result
 
 fn record_failed_allocation_fallback(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
     ctx.storage.with_checkpoint(|| {
-        let day_num = day_number(ctx, day)?;
+        let day_num = emission_day_number(ctx, day)?;
         let cap = emission_limit_of_day(day_num);
         if day > outbe_rewards::api::get_last_sealed_day(&ctx.storage)? {
             outbe_rewards::api::seal_votes_and_fees(ctx, day)?;
@@ -479,11 +429,10 @@ fn record_failed_allocation_fallback(ctx: &BlockRuntimeContext, day: u32) -> Res
     })
 }
 
-fn run_metadosis_step(ctx: &BlockRuntimeContext) -> Result<()> {
-    let due_day = outbe_metadosis::commands::find_due_emission_day(ctx)?.map(|record| record.day);
+fn run_metadosis_step(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
     match ctx
         .storage
-        .with_checkpoint(|| outbe_metadosis::commands::start_metadosis(ctx))
+        .with_checkpoint(|| outbe_metadosis::commands::process_emission_day(ctx, day))
     {
         Ok(()) => Ok(()),
         Err(err) if is_recoverable_step_error(&err) => {
@@ -492,9 +441,10 @@ fn run_metadosis_step(ctx: &BlockRuntimeContext) -> Result<()> {
                 block_number = ctx.block.block_number,
                 block_timestamp = ctx.block.timestamp,
                 error = ?err,
-                "start_metadosis step reverted; routing metadosis limit to PromisLimit"
+                day,
+                "process_emission_day step reverted; routing metadosis limit to PromisLimit"
             );
-            due_day.map_or(Ok(()), |day| record_failed_metadosis_fallback(ctx, day))
+            record_failed_metadosis_fallback(ctx, day)
         }
         Err(err) => Err(err),
     }
@@ -505,32 +455,52 @@ fn record_failed_metadosis_fallback(ctx: &BlockRuntimeContext, day: u32) -> Resu
         .with_checkpoint(|| outbe_metadosis::commands::fail_metadosis(ctx, day))
 }
 
-/// Runs the single hourly protocol orchestration entry point (`OIP-00343`):
-/// 1. `settle_emission_day` (step A4) for the oldest unallocated day `E_next` in its own
+/// Runs the single hourly protocol orchestration entry point (`OIP-00343`). Until the votes of
+/// the day to allocate are sealed, it changes nothing and answers not ready.
+/// 1. `allocate_emission_limit` (step A4) for the oldest unallocated day `E_next` in its own
 ///    checkpoint with fallback to `record_failed_day_allocation` + `PromisLimit`.
 /// 2. `advance_worldwide_days` (step A6) once per UTC day at 00:00 UTC in its own checkpoint,
 ///    logging the cause and retrying on the next hour if it reverts.
-/// 3. `start_metadosis` (step A7) for the oldest `state == PROCESSING` day in its own checkpoint
+/// 3. `process_emission_day` (step A7) for the day that step A4 allocated, in its own checkpoint
 ///    with fallback to `record_metadosis_failed` + `PromisLimit`.
-pub fn run_protocol_cycle(ctx: &BlockRuntimeContext) -> Result<()> {
+pub fn process_emission_day(ctx: &BlockRuntimeContext) -> Result<Readiness> {
+    process_emission_day_steps(ctx).map_err(fail_block)
+}
+
+/// A revert that reaches the run comes from a step fallback or from code outside the step
+/// checkpoints. The runner would consume the slot and try the same day again, so it fails the block.
+fn fail_block(err: PrecompileError) -> PrecompileError {
+    match err {
+        err @ (PrecompileError::Revert(_) | PrecompileError::RevertBytes(_)) => {
+            PrecompileError::FatalWithCause(Box::new(err))
+        }
+        err => err,
+    }
+}
+
+fn process_emission_day_steps(ctx: &BlockRuntimeContext) -> Result<Readiness> {
     let block_utc_day = timestamp_to_date_key(ctx.block.timestamp);
     let active_utc_day = derive_active_utc_day(
         ctx.storage.clone(),
         ctx.block.genesis_timestamp,
         ctx.block.timestamp,
     )?;
-    let day_action = protocol_day_action(active_utc_day, block_utc_day)?;
-
-    match day_action {
-        ProtocolDayAction::SameDay => {}
-        ProtocolDayAction::SettlePrevious { day } => {
-            run_allocate_emission_day_step(ctx, day)?;
+    let day = day_to_allocate(active_utc_day, block_utc_day)?;
+    let allocated = match day {
+        None => None,
+        Some(day) => {
+            if !outbe_rewards::api::is_voting_complete(ctx, day)? {
+                return Ok(Readiness::NotReady);
+            }
+            run_allocate_emission_day_step(ctx, day)?
         }
-    }
+    };
 
     run_advance_worldwide_days_step(ctx, block_utc_day)?;
 
-    run_metadosis_step(ctx)?;
+    if let Some(day) = allocated {
+        run_metadosis_step(ctx, day)?;
+    }
 
     tracing::info!(
         target: "outbe::cycle",
@@ -538,20 +508,18 @@ pub fn run_protocol_cycle(ctx: &BlockRuntimeContext) -> Result<()> {
         block_timestamp = ctx.block.timestamp,
         active_utc_day,
         block_utc_day,
-        day_action = ?day_action,
-        "protocol cycle completed"
+        day_to_allocate = ?day,
+        "process_emission_day completed"
     );
-    Ok(())
+    Ok(Readiness::Done)
 }
 
 #[cfg(test)]
 pub(crate) fn run_emission_limit_daily(ctx: &BlockRuntimeContext) -> Result<()> {
-    settle_emission_day(
-        ctx,
-        outbe_primitives::time::previous_date_key(timestamp_to_date_key(ctx.block.timestamp))
-            .expect("date step"),
-    )?;
-    outbe_metadosis::commands::start_metadosis(ctx)
+    let day = outbe_primitives::time::previous_date_key(timestamp_to_date_key(ctx.block.timestamp))
+        .expect("date step");
+    allocate_emission_limit(ctx, day)?;
+    outbe_metadosis::commands::process_emission_day(ctx, day)
 }
 
 #[cfg(test)]

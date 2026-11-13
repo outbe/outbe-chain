@@ -68,11 +68,11 @@ fn a_timestamp_before_the_first_slot_yields_the_offset() {
 }
 
 #[test]
-fn only_current_state_scans_and_calendar_owned_protocol_cycle_coalesce() {
+fn only_current_state_scans_and_calendar_owned_process_emission_day_coalesce() {
     const COALESCING: [TriggerId; 7] = [
         TriggerId::CompleteAuctions,
         TriggerId::AdvanceAuctions,
-        TriggerId::ProtocolCycle,
+        TriggerId::ProcessEmissionDay,
         TriggerId::ScheduleNodCallPass,
         TriggerId::ScheduleCredisCallPass,
         TriggerId::ScheduleIntexCallPass,
@@ -99,7 +99,7 @@ fn dispatch_position(id: TriggerId) -> usize {
 #[test]
 fn advance_auctions_runs_after_emission_limit_1() {
     assert!(
-        dispatch_position(TriggerId::AdvanceAuctions) > dispatch_position(TriggerId::ProtocolCycle),
+        dispatch_position(TriggerId::AdvanceAuctions) > dispatch_position(TriggerId::ProcessEmissionDay),
         "advance_auctions must dispatch after emission_limit_1 so the same-slot brief starts the auction"
     );
 }
@@ -130,7 +130,10 @@ fn the_genesis_interval_leaves_the_clearing_poll_alone() {
         );
         #[cfg(not(feature = "e2e-test"))]
         assert_eq!(clearing.period_seconds(), 3_600);
-        assert_eq!(clearing.start_offset_seconds, OFFSET);
+        assert_eq!(
+            clearing.start_offset_seconds,
+            outbe_cycle::triggers::PROCESS_EMISSION_DAY_START_OFFSET_SECONDS
+        );
         assert!(!clearing.requires_accounting_window);
     }
 }
