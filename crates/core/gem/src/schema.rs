@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
+use outbe_core_common::series_id::SeriesId;
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::GEM_ADDRESS;
-use outbe_primitives::series_id::SeriesId;
 use outbe_primitives::time::{
     first_full_day, previous_date_key, timestamp_to_date_key, TimeError, WorldwideDay,
 };

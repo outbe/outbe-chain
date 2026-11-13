@@ -7,6 +7,7 @@ mod admission;
 mod authority;
 mod configuration;
 mod consensus;
+pub mod domain_rpc;
 mod errors;
 mod execution_runtime;
 mod identity;
@@ -17,6 +18,7 @@ mod radicle;
 mod shutdown;
 mod system_tx;
 mod tee;
+mod tee_canary_probe;
 mod upgrade;
 mod upgrade_monitor;
 mod upgrade_ports;
@@ -33,6 +35,8 @@ pub use launch::run_node;
 pub(crate) use launch::LaunchConfig;
 pub use metrics_recorder::install_outbe_prometheus_recorder;
 pub use system_tx::BLOCK_ORDER;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use tee_canary_probe::TributeCanaryProbe;
 pub use wiring::OutbeRuntime;
 
 #[cfg(test)]

@@ -216,7 +216,12 @@ fn forfeit_by_owner(
                 storage.clone(),
                 source,
                 amount,
-                super::auth(outbe_tee::protocol::GratisOp::Mint, source, amount, nonce),
+                super::auth(
+                    outbe_enclave::protocol::GratisOp::Mint,
+                    source,
+                    amount,
+                    nonce,
+                ),
             )?;
             let now = storage.now_secs()?;
             outbe_fidelity::api::cohort_in(
@@ -236,7 +241,7 @@ fn forfeit_by_owner(
                 source,
                 amount,
                 super::auth(
-                    outbe_tee::protocol::GratisOp::Pledge,
+                    outbe_enclave::protocol::GratisOp::Pledge,
                     source,
                     amount,
                     nonce + 1,
@@ -1466,7 +1471,7 @@ fn the_owners_forfeit_after_a_partial_settlement_burns_only_the_remainder() {
 fn bin_groups(
     credis: &CredisContract<'_>,
     record: &Credis,
-) -> Vec<outbe_primitives::series_id::SeriesId> {
+) -> Vec<outbe_core_common::series_id::SeriesId> {
     let bins = CallBins(credis, record.reference_currency);
     let bin = call_bins::price_to_bin(record.call_price_minor).unwrap();
     (0..call_bins::len(&bins, bin).unwrap())

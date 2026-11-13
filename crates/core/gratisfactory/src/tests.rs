@@ -8,13 +8,13 @@ use alloy_sol_types::{SolCall, SolEvent, SolInterface};
 
 use outbe_core_common::erc::ERC165_INTERFACE_ID;
 use outbe_enclave::gratis::{decrypt_balance, decrypt_pledged, derive_view_key};
+use outbe_enclave::protocol::{GratisOp, ModifyAuth};
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_primitives::addresses::{GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_system_common::units::checked_protocol_to_native;
-use outbe_tee::protocol::{GratisOp, ModifyAuth};
 
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_fidelity::{MAX_LEAGUE, MIN_LEAGUE};
@@ -682,8 +682,9 @@ fn encrypted_nod_mint_preserves_nonce_and_combined_fidelity_state() {
 }
 
 /// One second past the largest block timestamp that fits in `u64`.
-fn encrypted_nod(amount: U256) -> outbe_primitives::nod_encryption::EncryptedNodV1 {
-    use outbe_primitives::{nod_encryption::NodTermsV1, time::WorldwideDay};
+fn encrypted_nod(amount: U256) -> outbe_core_common::nod_encryption::EncryptedNodV1 {
+    use outbe_core_common::nod_encryption::NodTermsV1;
+    use outbe_primitives::time::WorldwideDay;
     let day = WorldwideDay::new(20250115);
     outbe_enclave::nod_encryption::encrypt_nod(
         &[0x5a; 32],
@@ -820,7 +821,7 @@ fn open_account(storage: &StorageHandle<'_>, account: Address) -> (U256, U256) {
     let balance = outbe_gratis::api::balance_ct(storage.clone(), account).unwrap();
     let pledged = outbe_gratis::api::pledged_ct(storage.clone(), account).unwrap();
     let balance =
-        outbe_tee::gratis_decrypt::decrypt_gratis_balance(&vk, account, &balance).unwrap();
+        outbe_enclave::gratis_decrypt::decrypt_gratis_balance(&vk, account, &balance).unwrap();
     // The pledged blob is bound to the pledged field, so the balance opener cannot read it.
     let pledged = if pledged.is_empty() {
         U256::ZERO
@@ -848,7 +849,7 @@ fn token_deltas(logs: &[alloy_primitives::LogData], account: Address) -> Vec<(bo
         };
         if let Some((mint, blob)) = opened {
             let amount =
-                outbe_tee::gratis_decrypt::decrypt_gratis_balance(&vk, account, &blob).unwrap();
+                outbe_enclave::gratis_decrypt::decrypt_gratis_balance(&vk, account, &blob).unwrap();
             deltas.push((mint, amount));
         }
     }

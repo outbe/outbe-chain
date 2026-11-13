@@ -7,8 +7,8 @@
 use alloy_primitives::{Address, U256};
 
 use outbe_core_common::deadline_queue;
+use outbe_core_common::series_id::SeriesId;
 use outbe_primitives::error::Result;
-use outbe_primitives::series_id::SeriesId;
 use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::indexed_list::{create_indexed, delete_indexed, IndexedList};
 use outbe_system_common::call_bins;

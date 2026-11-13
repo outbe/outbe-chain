@@ -1,7 +1,8 @@
 //! Cross-module API for the Nod entity store.
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::{error::Result, series_id::SeriesId, storage::StorageHandle};
+use outbe_core_common::series_id::SeriesId;
+use outbe_primitives::{error::Result, storage::StorageHandle};
 
 use crate::schema::{CallTerms, EffectiveState, NodContract, NodGroupState, NodItemState};
 
@@ -109,7 +110,7 @@ pub struct LysisSeriesSeal {
     pub entry_price_minor: U256,
     pub call_terms: Option<CallTerms>,
     pub unclaimed_tribute_count: u64,
-    pub unclaimed_tribute_load: outbe_primitives::nod_encryption::EncryptedNodGroupLoadV1,
+    pub unclaimed_tribute_load: outbe_core_common::nod_encryption::EncryptedNodGroupLoadV1,
 }
 
 /// Seals a Lysis series into its call group with its unclaimed Tributes and their exact load.
@@ -242,8 +243,8 @@ pub fn calculation_amount(item: &NodItemState) -> Result<U256> {
 
 /// Seals a settlement quote to the Nod owner's view key via the enclave.
 pub fn encrypt_quote_for_owner(
-    nod: &outbe_primitives::nod_encryption::EncryptedNodV1,
-    context: outbe_primitives::nod_encryption::NodQuoteContextV1,
+    nod: &outbe_core_common::nod_encryption::EncryptedNodV1,
+    context: outbe_core_common::nod_encryption::NodQuoteContextV1,
     payment_minor: U256,
 ) -> Result<Vec<u8>> {
     crate::enclave_client::encrypt_nod_quote(nod, context, payment_minor)
@@ -260,7 +261,7 @@ pub fn seal_series_load(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
     load_minor: U256,
-) -> Result<outbe_primitives::nod_encryption::EncryptedNodGroupLoadV1> {
+) -> Result<outbe_core_common::nod_encryption::EncryptedNodGroupLoadV1> {
     let scope = B256::right_padding_from(series_id.as_bytes());
     crate::enclave_client::seal_group_load(
         storage.chain_id()?,

@@ -15,10 +15,10 @@
 //! does not match the proof's public input. Such an offer is rejected. That is
 //! what keeps those two fields bound now that they no longer travel encrypted.
 
+use crate::protocol::{EncryptedTributeOffer, TributeZkExpectedHashes};
 use alloy_primitives::B256;
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
-use outbe_tee::protocol::{EncryptedTributeOffer, TributeZkExpectedHashes};
 use outbe_zk::claim::TributeDraftClaim;
 use outbe_zk::protocol::entity::Entity as EntityTrait;
 

@@ -1,13 +1,13 @@
 //! Stateless balance operations and pledged-collateral transitions.
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_primitives::addresses::GRATIS_ADDRESS;
-use outbe_primitives::error::Result;
-use outbe_primitives::storage::StorageHandle;
-use outbe_tee::protocol::{
+use outbe_enclave::protocol::{
     FidelityOpOutcome, FidelityOpSection, GratisOp, GratisOpRequest, GratisOpResult,
     GratisOpStatus, MineGratisFromPromisResultV1, ModifyAuth,
 };
+use outbe_primitives::addresses::GRATIS_ADDRESS;
+use outbe_primitives::error::Result;
+use outbe_primitives::storage::StorageHandle;
 
 use crate::enclave_client::apply_gratis_op;
 use crate::errors::{GratisError, GratisFatalError};
@@ -333,7 +333,7 @@ pub(crate) fn burn_pledged(
 
 pub(crate) fn mint_encrypted_nod(
     storage: StorageHandle<'_>,
-    nod: &outbe_primitives::nod_encryption::EncryptedNodV1,
+    nod: &outbe_core_common::nod_encryption::EncryptedNodV1,
     auth: ModifyAuth,
     fidelity: FidelityOpSection,
 ) -> Result<FidelityOpOutcome> {
@@ -343,7 +343,7 @@ pub(crate) fn mint_encrypted_nod(
     let gratis = Gratis::new(storage.clone());
     let op_nonce = auth.op_nonce;
     check_op_nonce(&gratis, nod.terms.owner, op_nonce)?;
-    let request = outbe_tee::nod_mine::MineEncryptedNodRequestV1 {
+    let request = outbe_enclave::nod_mine::MineEncryptedNodRequestV1 {
         nod: nod.clone(),
         current_balance: crate::state::account(&gratis, nod.terms.owner).balance_ct()?,
         modify_auth: auth,

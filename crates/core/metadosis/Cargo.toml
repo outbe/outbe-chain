@@ -23,6 +23,7 @@ alloy-sol-types.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+outbe-core-common.workspace = true
 outbe-nod = { workspace = true, features = ["test-enclave"] }
 outbe-tribute = { workspace = true, features = ["test-enclave", "test-utils"] }
 outbe-tributefactory = { workspace = true, features = ["test-utils"] }

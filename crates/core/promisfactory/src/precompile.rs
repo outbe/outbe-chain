@@ -33,7 +33,7 @@ pub fn dispatch(
         IPromisFactory::mineGratisCall::SELECTOR,
         0,
         5,
-        outbe_tee::offer_encrypt::ENCRYPTED_TEE_AMOUNT_LEN,
+        outbe_enclave::offer_encrypt::ENCRYPTED_TEE_AMOUNT_LEN,
     )?;
     dispatch_call(
         data,
@@ -50,11 +50,11 @@ pub fn dispatch(
                 }),
                 mineGratis(c) => mutate(&storage, c, caller, |sender, c| {
                     if c.encryptedPromisMinor.len()
-                        != outbe_tee::offer_encrypt::ENCRYPTED_TEE_AMOUNT_LEN
+                        != outbe_enclave::offer_encrypt::ENCRYPTED_TEE_AMOUNT_LEN
                     {
                         return Err(outbe_primitives::error::PrecompileError::Revert(format!(
                             "invalid bytes length: expected {}",
-                            outbe_tee::offer_encrypt::ENCRYPTED_TEE_AMOUNT_LEN
+                            outbe_enclave::offer_encrypt::ENCRYPTED_TEE_AMOUNT_LEN
                         )));
                     }
                     let promis_auth = ModifyAuth {

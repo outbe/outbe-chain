@@ -131,7 +131,7 @@ impl DeadlineHandler<B256> for NodForfeit<'_, '_> {
 }
 
 type ClosedSeriesEntry = (
-    outbe_primitives::series_id::SeriesId,
+    outbe_core_common::series_id::SeriesId,
     u16,
     u16,
     u32,

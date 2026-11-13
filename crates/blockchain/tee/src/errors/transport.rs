@@ -3,6 +3,74 @@
 use std::fmt;
 use thiserror::Error;
 
+use crate::tee_call::TeeAttestationError;
+
+/// Compact metric-only classification for application-layer attestation failures.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AttestationMetricClass {
+    /// Tribute offer or read/day attestation failure (`"tribute_offer_attestation"`).
+    TributeOffer,
+    /// Gratis ledger operation attestation failure (`"gratis_op_attestation"`).
+    GratisOp,
+    /// Promis ledger operation attestation failure (`"promis_op_attestation"`).
+    PromisOp,
+    /// Fidelity operation attestation failure (`"fidelity_attestation"`).
+    Fidelity,
+}
+
+impl AttestationMetricClass {
+    /// Stable Prometheus label for `outbe_tee_request_errors_total{class}`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TributeOffer => "tribute_offer_attestation",
+            Self::GratisOp => "gratis_op_attestation",
+            Self::PromisOp => "promis_op_attestation",
+            Self::Fidelity => "fidelity_attestation",
+        }
+    }
+
+    /// Human-readable subject prefix for display formatting.
+    #[must_use]
+    pub const fn context(self) -> &'static str {
+        match self {
+            Self::TributeOffer => "offer",
+            Self::GratisOp => "gratis-op",
+            Self::PromisOp => "promis-op",
+            Self::Fidelity => "fidelity",
+        }
+    }
+}
+
+/// Compact metric-only classification for deterministic application-layer rejections.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RejectionMetricClass {
+    /// Tribute state-source proof or context rejection (`"tribute_source_rejected"`).
+    TributeSource,
+    /// Encrypted NOD mint business rejection (`"nod_mint_rejected"`).
+    NodMint,
+}
+
+impl RejectionMetricClass {
+    /// Stable Prometheus label for `outbe_tee_request_errors_total{class}`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TributeSource => "tribute_source_rejected",
+            Self::NodMint => "nod_mint_rejected",
+        }
+    }
+
+    /// Human-readable prefix for display formatting.
+    #[must_use]
+    pub const fn context(self) -> &'static str {
+        match self {
+            Self::TributeSource => "Tribute source rejected",
+            Self::NodMint => "encrypted NOD mint rejected",
+        }
+    }
+}
+
 /// Errors returned by the host-side enclave transport and session layer.
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -40,25 +108,19 @@ pub enum TransportError {
     #[error("attestation verification failed: {0}")]
     Attestation(String),
 
-    /// Tribute offer attestation signature check failed.
-    #[error("offer attestation signature invalid: {0}")]
-    TributeOfferAttestation(String),
-
-    /// Gratis operation attestation signature check failed.
-    #[error("gratis-op attestation signature invalid: {0}")]
-    GratisOpAttestation(String),
-
-    /// Promis operation attestation signature check failed.
-    #[error("promis-op attestation signature invalid: {0}")]
-    PromisOpAttestation(String),
+    /// Application-layer payload attestation signature check failed.
+    #[error("{} attestation signature invalid: {cause}", metric.context())]
+    AppAttestation {
+        /// Metric counter classification (never used for control-flow branching).
+        metric: AttestationMetricClass,
+        /// Structured attestation verification failure cause.
+        #[source]
+        cause: TeeAttestationError,
+    },
 
     /// DCAP verification stream or response check failed.
     #[error("DCAP verification channel invalid: {0}")]
     DcapVerification(String),
-
-    /// Fidelity attestation signature check failed.
-    #[error("fidelity attestation signature invalid: {0}")]
-    FidelityAttestation(String),
 
     /// Attestation preimage JSON did not serialize. The source stays structured.
     #[error("attestation preimage serialization failed: {0}")]
@@ -72,13 +134,14 @@ pub enum TransportError {
     #[error("enclave returned error: {0}")]
     EnclaveError(String),
 
-    /// Tribute source verification rejected the supplied record.
-    #[error("Tribute source rejected: {0}")]
-    TributeSourceRejected(String),
-
-    /// Enclave rejected an encrypted NOD mint request.
-    #[error("encrypted NOD mint rejected: {0}")]
-    NodMintRejected(String),
+    /// Application-layer operation or state source was deterministically rejected.
+    #[error("{}: {reason}", metric.context())]
+    AppRejected {
+        /// Metric counter classification (never used for control-flow branching).
+        metric: RejectionMetricClass,
+        /// Rejection reason string.
+        reason: String,
+    },
 
     /// Reconnected enclave identity differed from the pinned identity.
     #[error("enclave identity mismatch after reconnect: {0}")]
@@ -92,6 +155,8 @@ pub enum TransportError {
     #[error("enclave unavailable: {0}")]
     Unavailable(String),
 }
+
+const _: () = assert!(std::mem::size_of::<TransportError>() <= 96);
 
 impl TransportError {
     /// Construct a [`Self::Codec`] error from a displayable value.
@@ -124,9 +189,24 @@ impl TransportError {
         super::TeeClientVerificationError::QuoteParse(error).into()
     }
 
-    /// Construct a [`Self::TributeOfferAttestation`] error from a displayable value.
-    pub fn tribute_offer_attestation(error: impl fmt::Display) -> Self {
-        Self::TributeOfferAttestation(error.to_string())
+    /// Construct a structured application-layer attestation failure, preserving
+    /// [`Self::AttestationPreimageSerialization`] when canonical JSON serialization fails.
+    pub fn app_attestation(metric: AttestationMetricClass, cause: TeeAttestationError) -> Self {
+        match cause {
+            TeeAttestationError::CanonicalJson(err) => Self::AttestationPreimageSerialization(err),
+            other => Self::AppAttestation {
+                metric,
+                cause: other,
+            },
+        }
+    }
+
+    /// Construct an application-layer deterministic rejection with a typed metric class.
+    pub fn app_rejected(metric: RejectionMetricClass, reason: impl fmt::Display) -> Self {
+        Self::AppRejected {
+            metric,
+            reason: reason.to_string(),
+        }
     }
 
     /// Construct a [`Self::DcapVerification`] error from a displayable value.
@@ -198,16 +278,12 @@ impl TransportError {
             Self::Noise(_) => "noise",
             Self::Handshake(_) => "handshake",
             Self::Attestation(_) => "attestation",
-            Self::TributeOfferAttestation(_) => "tribute_offer_attestation",
-            Self::GratisOpAttestation(_) => "gratis_op_attestation",
-            Self::PromisOpAttestation(_) => "promis_op_attestation",
+            Self::AppAttestation { metric, .. } => metric.as_str(),
             Self::DcapVerification(_) => "dcap_verification",
-            Self::FidelityAttestation(_) => "fidelity_attestation",
             Self::AttestationPreimageSerialization(_) => "attestation_preimage_serialization",
             Self::UnexpectedResponse => "unexpected_response",
             Self::EnclaveError(_) => "enclave_error",
-            Self::TributeSourceRejected(_) => "tribute_source_rejected",
-            Self::NodMintRejected(_) => "nod_mint_rejected",
+            Self::AppRejected { metric, .. } => metric.as_str(),
             Self::IdentityMismatch(_) => "identity_mismatch",
             Self::SessionRevoked(_) => "session_revoked",
             Self::Unavailable(_) => "unavailable",

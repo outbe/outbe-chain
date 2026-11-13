@@ -561,7 +561,10 @@ pub(crate) async fn start_runtime_workers(
         tokio::spawn(shutdown.track_task(
             "TEE canary worker",
             outbe_execution::tee_canary::run_tee_canary_worker(
-                outbe_execution::tee_canary::GlobalEnclaveRequester,
+                outbe_execution::tee_canary::TeeCanaryTarget::new(
+                    outbe_execution::tee_canary::GlobalEnclaveRequester,
+                    crate::tee_canary_probe::TributeCanaryProbe,
+                ),
                 outbe_execution::tee_canary::TeeCanaryConfig {
                     interval: std::time::Duration::from_secs(args.tee_canary_interval_secs),
                     failure_threshold: args.tee_canary_failure_threshold,

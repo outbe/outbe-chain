@@ -20,9 +20,9 @@
 // `clippy::` tool lints are accepted (ignored) by plain rustc.
 #![deny(clippy::float_arithmetic)]
 
+use crate::protocol::WorldwideDay;
 use alloy_primitives::{Address, B256, U256, U512};
 use outbe_system_common::units::SCALE_1E6_U256;
-use outbe_tee::protocol::WorldwideDay;
 
 use crate::errors::{ComputeError, EnclaveResult};
 
@@ -69,7 +69,7 @@ pub fn compute_token_id(
 ) -> EnclaveResult<B256> {
     // Validate the draft id (reject malformed input) but keep it out of the hash.
     parse_draft_id(draft_id)?;
-    Ok(outbe_primitives::wwd_entity_id::derive_poseidon_digest(
+    Ok(outbe_core_common::wwd_entity_id::derive_poseidon_digest(
         owner,
         worldwide_day,
     ))
@@ -290,7 +290,7 @@ mod tests {
         let owner = Address::repeat_byte(0x42);
         assert_eq!(
             compute_token_id(owner, DAY, DRAFT_A).unwrap(),
-            outbe_primitives::wwd_entity_id::derive_poseidon_digest(owner, DAY)
+            outbe_core_common::wwd_entity_id::derive_poseidon_digest(owner, DAY)
         );
     }
 }

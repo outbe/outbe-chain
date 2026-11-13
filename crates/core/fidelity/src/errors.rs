@@ -3,8 +3,8 @@
 use crate::precompile::IFidelity;
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolError;
+use outbe_enclave::protocol::EnclaveResponse;
 use outbe_primitives::error::PrecompileError;
-use outbe_tee::protocol::EnclaveResponse;
 use thiserror::Error;
 
 #[derive(Debug, Error)]

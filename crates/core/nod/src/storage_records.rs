@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, B256, U256};
+use outbe_core_common::series_id::SeriesId;
 use outbe_macros::storage_record;
-use outbe_primitives::series_id::SeriesId;
 use outbe_primitives::storage::indexed_list::{create_indexed, delete_indexed, IndexedList};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -66,8 +66,8 @@ impl From<StoredNod> for crate::NodItemState {
             reference_currency: item.reference_currency,
             issued_at: item.issued_at,
             is_settled: item.is_settled,
-            encrypted: outbe_primitives::nod_encryption::EncryptedNodV1 {
-                terms: outbe_primitives::nod_encryption::NodTermsV1 {
+            encrypted: outbe_core_common::nod_encryption::EncryptedNodV1 {
+                terms: outbe_core_common::nod_encryption::NodTermsV1 {
                     chain_id: item.chain_id,
                     nod_id: item.nod_id,
                     owner: item.owner,

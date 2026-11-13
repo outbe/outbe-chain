@@ -523,29 +523,9 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         | EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 { .. } => {
             CommandClass::KeylessOnboardingArtifact
         }
-        EnclaveRequest::ProcessTributeOfferBatch { .. }
-        | EnclaveRequest::ProcessEncryptedTributeOfferBatchV2 { .. }
-        | EnclaveRequest::ExecuteLysisFractionsV1 { .. }
-        | EnclaveRequest::MineEncryptedNodV1 { .. }
-        | EnclaveRequest::EncryptNodForTributeV1 { .. }
-        | EnclaveRequest::IssueNodFromTributeV1 { .. }
-        | EnclaveRequest::EncryptNodQuoteV1 { .. }
-        | EnclaveRequest::ApplyTributeDayOpV2 { .. }
-        | EnclaveRequest::ApplyNodGroupLoadOpV1 { .. } => CommandClass::Ready,
-        EnclaveRequest::ReadNodAmountV1 { .. }
-        | EnclaveRequest::ReadTributeAmountsV2 { .. }
-        | EnclaveRequest::ReadTributeDayAmountV2 { .. }
-        | EnclaveRequest::ReadTributeDayFractionsV1 { .. }
-        | EnclaveRequest::ReadNodGroupLoadV1 { .. } => CommandClass::Ready,
-        EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 { .. }
-        | EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 { .. }
-        | EnclaveRequest::ApplyGratisOp { .. }
-        | EnclaveRequest::ApplyPromisOp { .. }
-        | EnclaveRequest::MineGratisFromPromisV1 { .. }
-        | EnclaveRequest::ApplyFidelityCohortOp { .. }
-        | EnclaveRequest::SnapshotFidelityLeagues { .. }
-        | EnclaveRequest::QueryFidelityIndex { .. }
-        | EnclaveRequest::DeriveAccountKeys { .. } => CommandClass::Ready,
+        EnclaveRequest::Payload { .. }
+        | EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 { .. }
+        | EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 { .. } => CommandClass::Ready,
         EnclaveRequest::GetQuote { .. }
         | EnclaveRequest::GetInitializationChallenge
         | EnclaveRequest::Initialize { .. }

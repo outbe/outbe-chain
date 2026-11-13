@@ -16,7 +16,8 @@ use crate::{
     tee_attestation_v1::{
         AttestationEvidenceV1, AttestationMode, AttestationOperationV1, GramineDirectEvidenceV1,
         NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1, RegistrationIntentV1, ResourceScheduleV1,
-        TeeMeasurementRuleV1, TeePolicyV1, ValidatorNodeBindingV1, INTEL_QE_VENDOR_ID,
+        TeeMeasurementRuleV1, TeePolicyV1, TransitionKeyReadyProofV1, ValidatorNodeBindingV1,
+        INTEL_QE_VENDOR_ID,
     },
     tee_bootstrap_v2::{
         TeeBootstrapAuthorityV2, TeeBootstrapParticipantSubmissionV2, TeeBootstrapV2,
@@ -38,6 +39,32 @@ pub fn sign_node_host_hash_for_test(signer: &k256::ecdsa::SigningKey, hash: B256
     encoded[..64].copy_from_slice(signature.to_bytes().as_slice());
     encoded[64] = recovery.to_byte();
     encoded
+}
+
+/// Make a transition key-ready proof for `intent` and sign it with `signer`.
+/// The chain id, the genesis hash, and the transition nonce come from `intent`.
+pub fn signed_transition_key_ready_proof(
+    intent: &RegistrationIntentV1,
+    intent_hash: B256,
+    candidate_manifest_hash: B256,
+    resident_offer_public: [u8; 32],
+    signer: &ed25519_dalek::SigningKey,
+) -> TransitionKeyReadyProofV1 {
+    use ed25519_dalek::Signer as _;
+
+    let mut proof = TransitionKeyReadyProofV1 {
+        chain_id: intent.chain_id,
+        genesis_hash: intent.genesis_hash,
+        transition_intent_hash: intent_hash,
+        candidate_manifest_hash,
+        transition_nonce: intent.transition_nonce,
+        resident_offer_public,
+        candidate_attestation_signature: [0; 64],
+    };
+    proof.candidate_attestation_signature = signer
+        .sign(proof.signing_hash().unwrap().as_slice())
+        .to_bytes();
+    proof
 }
 
 pub fn gramine_direct_policy_v1(chain_id: u64, genesis_hash: B256) -> Result<TeePolicyV1, String> {

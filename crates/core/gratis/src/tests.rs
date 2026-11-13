@@ -8,9 +8,9 @@ use alloy_sol_types::{SolCall, SolEvent, SolInterface};
 use outbe_enclave::gratis::{
     decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
 };
+use outbe_enclave::protocol::{FidelityCohortOp, FidelityOpSection, GratisOp, ModifyAuth};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_tee::protocol::{FidelityCohortOp, FidelityOpSection, GratisOp, ModifyAuth};
 
 use crate::api;
 use crate::enclave_client::test_enclave;
@@ -463,7 +463,7 @@ fn burning_pledged_collateral_reports_the_supply_drop() {
 #[test]
 fn an_owner_result_that_differs_from_the_request_is_refused() {
     use crate::runtime::ensure_owner_result;
-    use outbe_tee::protocol::{GratisOpResult, GratisOpStatus};
+    use outbe_enclave::protocol::{GratisOpResult, GratisOpStatus};
     let result = |event_amount: u64, next_op_nonce: u64| GratisOpResult {
         status: GratisOpStatus::Applied,
         new_balance: vec![1],
@@ -511,8 +511,9 @@ fn an_owner_result_that_differs_from_the_request_is_refused() {
 fn encrypted_nod(
     amount: U256,
     nod_id_byte: u8,
-) -> outbe_primitives::nod_encryption::EncryptedNodV1 {
-    use outbe_primitives::{nod_encryption::NodTermsV1, time::WorldwideDay};
+) -> outbe_core_common::nod_encryption::EncryptedNodV1 {
+    use outbe_core_common::nod_encryption::NodTermsV1;
+    use outbe_primitives::time::WorldwideDay;
     outbe_enclave::nod_encryption::encrypt_nod(
         &[0x5a; 32],
         NodTermsV1 {
@@ -589,7 +590,7 @@ fn nod_mint_event_amount_differs_from_balance_and_opens_to_the_delta() {
         first_balance.as_slice()
     );
     assert_eq!(
-        outbe_tee::gratis_decrypt::decrypt_gratis_balance(
+        outbe_enclave::gratis_decrypt::decrypt_gratis_balance(
             &vk,
             alice(),
             &mined[0].encryptedAmountMinor
@@ -598,11 +599,12 @@ fn nod_mint_event_amount_differs_from_balance_and_opens_to_the_delta() {
         first_amount
     );
     assert_eq!(
-        outbe_tee::gratis_decrypt::decrypt_gratis_balance(&vk, alice(), &first_balance).unwrap(),
+        outbe_enclave::gratis_decrypt::decrypt_gratis_balance(&vk, alice(), &first_balance)
+            .unwrap(),
         first_amount
     );
 
-    let delta = outbe_tee::gratis_decrypt::decrypt_gratis_balance(
+    let delta = outbe_enclave::gratis_decrypt::decrypt_gratis_balance(
         &vk,
         alice(),
         &mined[1].encryptedAmountMinor,
@@ -611,7 +613,8 @@ fn nod_mint_event_amount_differs_from_balance_and_opens_to_the_delta() {
     assert_eq!(delta, second_amount);
     assert_ne!(delta, first_amount + second_amount);
     assert_eq!(
-        outbe_tee::gratis_decrypt::decrypt_gratis_balance(&vk, alice(), &second_balance).unwrap(),
+        outbe_enclave::gratis_decrypt::decrypt_gratis_balance(&vk, alice(), &second_balance)
+            .unwrap(),
         first_amount + second_amount
     );
 }

@@ -504,10 +504,10 @@ fn assert_real_zk_offer_with_key_source(
     .unwrap();
     let offer_public_key = PublicKey::from(&StaticSecret::from(PRIVATE_KEY)).to_bytes();
     let (cipher, nonce, ephemeral) =
-        outbe_tee::offer_encrypt::encrypt_tribute_offer(&offer_public_key, &payload).unwrap();
+        outbe_enclave::offer_encrypt::encrypt_tribute_offer(&offer_public_key, &payload).unwrap();
     let key = TributeOfferKeyMaterial {
         tribute_offer_private_key: &PRIVATE_KEY,
-        salt: &outbe_tee::OFFER_HKDF_SALT,
+        salt: &outbe_enclave::OFFER_HKDF_SALT,
     };
     let mut rng =
         <rand_commonware::rngs::StdRng as rand_commonware::SeedableRng>::from_seed([0x5a; 32]);
@@ -715,8 +715,8 @@ fn empty_su_hash_list_rejects_before_issuance_and_rewards() {
         ops::{self, sign_message},
         variant::MinSig,
     };
+    use outbe_enclave::protocol::{TributeOfferResult, TributeOfferStatus};
     use outbe_l2registry::L2RegistryContract;
-    use outbe_tee::protocol::{TributeOfferResult, TributeOfferStatus};
     use outbe_zk::demo_tribute::COMBINED_LEN as DEMO_TRIBUTE_COMBINED_LEN;
 
     const CALLER: Address = Address::repeat_byte(0x77);

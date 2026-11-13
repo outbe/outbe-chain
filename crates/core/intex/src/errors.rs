@@ -39,8 +39,8 @@ pub enum IntexError {
     BatchLengthMismatch,
 }
 
-impl From<outbe_primitives::series_id::InvalidSeriesId> for IntexError {
-    fn from(_: outbe_primitives::series_id::InvalidSeriesId) -> Self {
+impl From<outbe_core_common::series_id::InvalidSeriesId> for IntexError {
+    fn from(_: outbe_core_common::series_id::InvalidSeriesId) -> Self {
         Self::InvalidSeriesId
     }
 }

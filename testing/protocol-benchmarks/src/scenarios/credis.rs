@@ -5,6 +5,7 @@ use alloy_sol_types::{sol, SolCall};
 use outbe_credis::CredisContract;
 use outbe_credisfactory::precompile::ICredisFactory;
 use outbe_enclave::gratis::{decrypt_pledged, derive_modify_key, derive_view_key, modify_mac};
+use outbe_enclave::protocol::{GratisOp, ModifyAuth};
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_gratis::enclave_client::test_enclave as gratis_enclave;
 use outbe_oracle::schema::OracleContract;
@@ -15,7 +16,6 @@ use outbe_primitives::{
     time::{previous_date_key, timestamp_to_date_key},
 };
 use outbe_system_common::units::{checked_protocol_to_native, SCALE_1E6_U256};
-use outbe_tee::protocol::{GratisOp, ModifyAuth};
 use outbe_vaultrouter::{LiquidityReservation, VaultRouterContract};
 
 use super::support::{capture_execution, elapsed_ns};
@@ -185,7 +185,7 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
             reference_currency: REFERENCE_ISO,
             call_anchor_price_minor: oracle_rate(),
             source: ALICE,
-            series_id: outbe_primitives::series_id::SeriesId::for_pair(
+            series_id: outbe_core_common::series_id::SeriesId::for_pair(
                 closed_day,
                 ISSUANCE_ISO,
                 REFERENCE_ISO,

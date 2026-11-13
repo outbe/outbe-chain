@@ -3,10 +3,10 @@ use crate::{runtime, tests::*};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 use outbe_credis::{CredisContract, CredisState};
+use outbe_enclave::protocol::GratisOp;
 use outbe_gratisfactory::runtime::{cancel_pledge, pledge_of};
 use outbe_primitives::storage::StorageHandle;
 use outbe_promislimit::PromisLimitContract;
-use outbe_tee::protocol::GratisOp;
 use outbe_vaultrouter::VaultRouterContract;
 
 fn fidelity_of(storage: &StorageHandle<'_>, account: Address) -> Vec<u8> {
@@ -459,8 +459,8 @@ fn credis_series_lifecycle_emits_open_issue_settle_call_close_and_forfeit_events
     let open_in_series = |storage: &StorageHandle<'_>,
                           who: Address,
                           nonce: u64,
-                          shared_series: Option<outbe_primitives::series_id::SeriesId>|
-     -> (U256, outbe_primitives::series_id::SeriesId) {
+                          shared_series: Option<outbe_core_common::series_id::SeriesId>|
+     -> (U256, outbe_core_common::series_id::SeriesId) {
         let reservation_id = seed_reservation(storage, who, who, pledge_stables());
         let mut reservation =
             outbe_vaultrouter::api::reservation_of(storage, reservation_id).unwrap();
@@ -725,10 +725,10 @@ fn reservation_snapshots_call_profile_terms_and_called_settled_record_retains_ca
 #[test]
 fn a_called_series_settled_before_its_deadline_closes_with_zero_forfeit() {
     use alloy_sol_types::SolEvent;
+    use outbe_core_common::series_id::SeriesId;
     use outbe_credis::constants::CALL_LOOKBACK_DAYS;
     use outbe_credis::precompile::ICredis;
     use outbe_primitives::addresses::CREDIS_ADDRESS;
-    use outbe_primitives::series_id::SeriesId;
 
     let mut provider = env();
     let (id, series_id) = StorageHandle::enter(&mut provider, |storage| {

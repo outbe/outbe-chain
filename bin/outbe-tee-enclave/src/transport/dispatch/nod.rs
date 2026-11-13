@@ -1,16 +1,19 @@
 //! Network-key-only encrypted NOD commands.
-use super::tribute::{resident_chain_id, response};
+use super::{
+    requests::{DomainDispatchError, DomainDispatchResult},
+    tribute::{resident_chain_id, response},
+};
 use crate::{
     errors::{EnclaveResult, TeeError, TransportDispatchError},
     keys::EnclaveKeys,
     transport::SharedTributeOfferKey,
 };
 use alloy_primitives::B256;
-use outbe_primitives::{
+use outbe_core_common::{
     nod_encryption::{EncryptedNodGroupLoadV1, EncryptedNodV1, NodQuoteContextV1, NodTermsV1},
     tribute_encryption::EncryptedTributeV2,
 };
-use outbe_tee::{
+use outbe_enclave::{
     nod_mine::{
         self, IssueNodFromTributeRequestV1, MineEncryptedNodRequestV1, NodGroupLoadOpRequestV1,
     },
@@ -23,7 +26,7 @@ pub(super) fn mine(
     offer: &SharedTributeOfferKey,
     chain: B256,
     request: &MineEncryptedNodRequestV1,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     response((|| -> EnclaveResult<EnclaveResponse> {
         let key = offer
             .get()
@@ -66,11 +69,11 @@ pub(super) fn read_amount(
     offer: &SharedTributeOfferKey,
     chain: B256,
     nod: &EncryptedNodV1,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     let Some(key) = offer.get() else {
-        return EnclaveResponse::NotReady {
-            message: "no resident network key".into(),
-        };
+        return Err(DomainDispatchError::NotReady(
+            "no resident network key".into(),
+        ));
     };
     response((|| -> EnclaveResult<EnclaveResponse> {
         if nod.terms.chain_id != resident_chain_id(chain)? {
@@ -102,7 +105,7 @@ pub(super) fn encrypt_for_tribute(
     offer: &SharedTributeOfferKey,
     chain: B256,
     input: NodTributeInput<'_>,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     response((|| -> EnclaveResult<EnclaveResponse> {
         let key = offer
             .get()
@@ -144,7 +147,7 @@ pub(super) fn issue_from_tribute(
     offer: &SharedTributeOfferKey,
     chain: B256,
     request: &IssueNodFromTributeRequestV1,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     response((|| -> EnclaveResult<EnclaveResponse> {
         let key = offer
             .get()
@@ -182,7 +185,7 @@ pub(super) fn apply_group_load_op(
     offer: &SharedTributeOfferKey,
     chain: B256,
     request: &NodGroupLoadOpRequestV1,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     response((|| -> EnclaveResult<EnclaveResponse> {
         let key = offer
             .get()
@@ -211,11 +214,11 @@ pub(super) fn read_group_load(
     offer: &SharedTributeOfferKey,
     chain: B256,
     record: &EncryptedNodGroupLoadV1,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     let Some(key) = offer.get() else {
-        return EnclaveResponse::NotReady {
-            message: "no resident network key".into(),
-        };
+        return Err(DomainDispatchError::NotReady(
+            "no resident network key".into(),
+        ));
     };
     response((|| -> EnclaveResult<EnclaveResponse> {
         if record.chain_id != resident_chain_id(chain)? {
@@ -241,7 +244,7 @@ pub(super) fn encrypt_quote(
     offer: &SharedTributeOfferKey,
     chain: B256,
     (nod, context, payment_minor): (&EncryptedNodV1, &NodQuoteContextV1, alloy_primitives::U256),
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     response((|| -> EnclaveResult<EnclaveResponse> {
         let key = offer
             .get()

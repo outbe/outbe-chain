@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use outbe_tee::protocol::WorldwideDay;
+use crate::protocol::WorldwideDay;
 
 /// Error from canonical amount parsing, nominal math, and token ID derivation.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

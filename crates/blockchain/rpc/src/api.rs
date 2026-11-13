@@ -277,34 +277,12 @@ pub struct RadicleRepositoryInfo {
     pub repo_id: String,
     pub state: RadicleRepositoryStateInfo,
 }
-/// Sealed view + modify keys returned by `outbe_deriveKeys` and
-/// `outbe_deriveGratisKeys`.
-///
-/// The enclave derives the account's keys and seals them to the requester's
-/// ephemeral X25519 key: `sealed = AEAD(ECDHE(enclaveEphemeral, requesterEphemeral),
-/// view_key || modify_key)`. The client recovers `view_key || modify_key` with its
-/// ephemeral secret + `enclaveEphemeralPubkey`. Opaque to the node.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GratisKeysSealed {
-    pub sealed: alloy_primitives::Bytes,
-    pub nonce: alloy_primitives::Bytes,
-    pub enclave_ephemeral_pubkey: B256,
-}
 
 /// Outbe custom RPC namespace.
 ///
 /// Enable with `--http.api outbe`.
 #[rpc(server, namespace = "outbe")]
 pub trait OutbeApi {
-    /// Returns an encrypted Tribute and exact storage proof at the requested checkpoint.
-    #[method(name = "getTributeStateSource")]
-    async fn get_tribute_state_source(
-        &self,
-        subject: outbe_tee::tribute_source::TributeSourceSubject,
-        tribute_id: outbe_primitives::wwd_entity_id::WwdEntityId,
-    ) -> jsonrpsee::core::RpcResult<outbe_tee::tribute_source::TributeStateSource>;
-
     /// Export the network key only for a finalized upgrade candidate.
     #[method(name = "upgradeKeyV1")]
     async fn upgrade_key_v1(
@@ -316,35 +294,6 @@ pub trait OutbeApi {
     /// Returns information about all active validators.
     #[method(name = "getValidators")]
     async fn get_validators(&self) -> jsonrpsee::core::RpcResult<Vec<ValidatorInfo>>;
-
-    /// Derive the account's confidential view + modify keys for `ledger` (`Gratis`,
-    /// `Promis`, `Fidelity`, `Tribute`, or `Nod`) inside the enclave and return them
-    /// sealed to `ephemeralPubkey` (a client X25519 public key). This is off-chain key
-    /// delivery. It never touches consensus state.
-    ///
-    /// The caller MUST prove control of `account`: `signature` is an EIP-191
-    /// `personal_sign` over `"outbe/<ledger>/derive-keys/v1" || account ||
-    /// ephemeralPubkey`. The recovered signer must equal `account`. Without a
-    /// matching signature, the enclave never gets the request. Otherwise, anyone
-    /// could obtain any account's modify key.
-    #[method(name = "deriveKeys")]
-    async fn derive_keys(
-        &self,
-        ledger: outbe_tee::protocol::Ledger,
-        account: Address,
-        ephemeral_pubkey: B256,
-        signature: alloy_primitives::Bytes,
-    ) -> jsonrpsee::core::RpcResult<GratisKeysSealed>;
-
-    /// Deprecated alias for `deriveKeys(Gratis, ...)`, kept for existing Gratis
-    /// clients.
-    #[method(name = "deriveGratisKeys")]
-    async fn derive_gratis_keys(
-        &self,
-        account: Address,
-        ephemeral_pubkey: B256,
-        signature: alloy_primitives::Bytes,
-    ) -> jsonrpsee::core::RpcResult<GratisKeysSealed>;
 
     /// Returns detailed information about a single validator by address.
     #[method(name = "getValidator")]

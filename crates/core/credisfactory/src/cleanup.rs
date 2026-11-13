@@ -3,11 +3,11 @@
 
 use alloy_primitives::U256;
 use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
+use outbe_core_common::series_id::SeriesId;
 use outbe_credis::{CleanupQueue, CredisContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PassFailure, PrecompileError, Result},
-    series_id::SeriesId,
 };
 use outbe_system_common::pass_budget::PassBudget;
 

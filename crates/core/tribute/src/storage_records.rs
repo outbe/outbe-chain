@@ -31,8 +31,8 @@ pub struct StoredTribute {
     pub encrypted_amounts: Vec<u8>,
 }
 
-impl From<&outbe_primitives::tribute_encryption::EncryptedTributeV2> for StoredTribute {
-    fn from(body: &outbe_primitives::tribute_encryption::EncryptedTributeV2) -> Self {
+impl From<&outbe_core_common::tribute_encryption::EncryptedTributeV2> for StoredTribute {
+    fn from(body: &outbe_core_common::tribute_encryption::EncryptedTributeV2) -> Self {
         let context = &body.context;
         Self {
             tribute_id: context.tribute_id,
@@ -48,10 +48,10 @@ impl From<&outbe_primitives::tribute_encryption::EncryptedTributeV2> for StoredT
     }
 }
 
-impl From<StoredTribute> for outbe_primitives::tribute_encryption::EncryptedTributeV2 {
+impl From<StoredTribute> for outbe_core_common::tribute_encryption::EncryptedTributeV2 {
     fn from(body: StoredTribute) -> Self {
         Self {
-            context: outbe_primitives::tribute_encryption::TributeContextV2 {
+            context: outbe_core_common::tribute_encryption::TributeContextV2 {
                 chain_id: body.chain_id,
                 tribute_id: body.tribute_id,
                 owner: body.owner,

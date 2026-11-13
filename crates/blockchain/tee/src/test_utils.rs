@@ -127,3 +127,152 @@ pub fn canonical_dcap_collateral_fixture() -> Vec<DcapCollateralComponentV1> {
         })
         .collect()
 }
+
+/// Ephemeral loopback Noise-IK development enclave server for cross-crate unit tests.
+pub struct MockDevEnclaveServer {
+    pub endpoint: String,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Drop for MockDevEnclaveServer {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl MockDevEnclaveServer {
+    pub fn spawn(
+        attestation_pub: [u8; 32],
+        handler: impl Fn(crate::protocol::EnclaveRequest) -> crate::protocol::EnclaveResponse
+            + Send
+            + Sync
+            + 'static,
+    ) -> Self {
+        use std::net::TcpListener;
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let endpoint = listener.local_addr().expect("local addr").to_string();
+        listener.set_nonblocking(true).expect("nonblocking");
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_loop = Arc::clone(&stop);
+        let handler = Arc::new(handler);
+
+        let builder = snow::Builder::new(crate::NOISE_PARAMS.parse().expect("noise params"));
+        let kp = builder.generate_keypair().expect("keypair");
+        let noise_pub: [u8; 32] = kp.public.as_slice().try_into().expect("32-byte key");
+        let noise_priv = kp.private;
+
+        std::thread::spawn(move || {
+            while !stop_loop.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        let _ = stream.set_nonblocking(false);
+                        let h = Arc::clone(&handler);
+                        let np = noise_priv.clone();
+                        std::thread::spawn(move || {
+                            serve_mock_dev_conn(stream, &np, noise_pub, attestation_pub, &*h);
+                        });
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        Self { endpoint, stop }
+    }
+}
+
+fn serve_mock_dev_conn(
+    mut stream: std::net::TcpStream,
+    noise_priv: &[u8],
+    noise_pub: [u8; 32],
+    attestation_pub: [u8; 32],
+    handler: &(dyn Fn(crate::protocol::EnclaveRequest) -> crate::protocol::EnclaveResponse
+          + Send
+          + Sync),
+) {
+    use crate::codec::{decode_call, decode_request, encode_response, read_frame, write_frame};
+    use crate::protocol::{EnclaveRequest, EnclaveResponse};
+
+    let recipient = [0x0B; 32];
+    let Ok(qf) = read_frame(&mut stream) else {
+        return;
+    };
+    if !matches!(decode_request(&qf), Ok(EnclaveRequest::GetQuote { .. })) {
+        return;
+    }
+    let mut pre = Vec::with_capacity(96);
+    pre.extend_from_slice(&noise_pub);
+    pre.extend_from_slice(&recipient);
+    pre.extend_from_slice(&attestation_pub);
+    let quote = EnclaveResponse::Quote {
+        mrenclave: B256::repeat_byte(1),
+        mrsigner: B256::repeat_byte(2),
+        isv_svn: 1,
+        report_data: alloy_primitives::keccak256(&pre),
+        recipient_x25519_pub: recipient,
+        attestation_pub,
+        noise_static_pub: noise_pub,
+        quote_body: Vec::new(),
+        attestation: "none (mock-dev)".into(),
+    };
+    if write_frame(&mut stream, &encode_response(&quote).unwrap()).is_err() {
+        return;
+    }
+    let Ok(mut noise) = complete_mock_noise_handshake(&mut stream, noise_priv) else {
+        return;
+    };
+    while let Ok(frame) = read_frame(&mut stream) {
+        let mut pt = vec![0u8; frame.len()];
+        let Ok(n) = noise.read_message(&frame, &mut pt) else {
+            break;
+        };
+        let req = decode_call(&pt[..n]).expect("decode call").request;
+        let resp = if matches!(req, EnclaveRequest::GetPublicKeys) {
+            EnclaveResponse::PublicKeys {
+                offer_key_ready: true,
+                recipient_x25519_pub: recipient,
+                attestation_pub,
+                noise_static_pub: noise_pub,
+                tee_bls_pub: Vec::new(),
+                dkg_enc_pub: [0x0D; 32],
+                dkg_enc_sig: Vec::new(),
+            }
+        } else {
+            handler(req)
+        };
+        let plain = encode_response(&resp).expect("encode resp");
+        let mut ct = vec![0u8; plain.len() + 64];
+        let k = noise.write_message(&plain, &mut ct).expect("encrypt");
+        if write_frame(&mut stream, &ct[..k]).is_err() {
+            break;
+        }
+    }
+}
+
+fn complete_mock_noise_handshake(
+    stream: &mut std::net::TcpStream,
+    noise_priv: &[u8],
+) -> Result<snow::TransportState, crate::errors::TransportError> {
+    let mut hs = snow::Builder::new(crate::NOISE_PARAMS.parse().expect("params"))
+        .local_private_key(noise_priv)
+        .build_responder()
+        .map_err(|e| crate::errors::TransportError::Noise(e.to_string()))?;
+    let m1 = crate::codec::read_frame(stream)?;
+    let mut buf = [0u8; 1024];
+    hs.read_message(&m1, &mut buf)
+        .map_err(|e| crate::errors::TransportError::Noise(e.to_string()))?;
+    let n = hs
+        .write_message(&[], &mut buf)
+        .map_err(|e| crate::errors::TransportError::Noise(e.to_string()))?;
+    crate::codec::write_frame(stream, &buf[..n])?;
+    hs.into_transport_mode()
+        .map_err(|e| crate::errors::TransportError::Noise(e.to_string()))
+}

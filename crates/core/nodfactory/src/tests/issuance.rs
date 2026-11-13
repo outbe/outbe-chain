@@ -353,7 +353,7 @@ fn a_stranger_can_mine_with_the_owners_auth() {
 
 #[test]
 fn lysis_series_of_one_day_and_reference_share_one_call_group() {
-    use outbe_primitives::series_id::SeriesId;
+    use outbe_core_common::series_id::SeriesId;
     let _enclave = outbe_nod::test_support::scope();
     let mut world = World::new();
     let sealed_at = outbe_primitives::time::date_key_to_utc_timestamp(20_261_020).unwrap() + 3_600;
@@ -474,7 +474,7 @@ fn lysis_series_of_one_day_and_reference_share_one_call_group() {
     assert_eq!(issued[0].referenceCurrency, 840);
     assert_eq!(
         issued[0].payload.len(),
-        outbe_primitives::nod_encryption::NOD_BLOB_LEN
+        outbe_core_common::nod_encryption::NOD_BLOB_LEN
     );
     let opened_load = world.enter(|storage| {
         let item = nod_api::get_item(&storage, nod1).unwrap().unwrap();
@@ -487,7 +487,7 @@ fn lysis_series_of_one_day_and_reference_share_one_call_group() {
             item.owner,
         )
         .expect("owner view key");
-        outbe_tee::nod_decrypt::decrypt_nod_for_owner(&view_key, &item.encrypted)
+        outbe_enclave::nod_decrypt::decrypt_nod_for_owner(&view_key, &item.encrypted)
             .expect("open nod load")
     });
     assert_eq!(opened_load, U256::from(15));
@@ -549,7 +549,7 @@ fn lysis_series_of_one_day_and_reference_share_one_call_group() {
 
 #[test]
 fn series_group_stays_after_the_last_tribute_and_clears_on_close_group() {
-    use outbe_primitives::series_id::SeriesId;
+    use outbe_core_common::series_id::SeriesId;
     let _enclave = outbe_nod::test_support::scope();
     let mut world = World::new();
     let sealed_at = outbe_primitives::time::date_key_to_utc_timestamp(20_261_020).unwrap() + 3_600;

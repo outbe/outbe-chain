@@ -1,6 +1,6 @@
 //! Canonical keys for the NOD group-member index.
 use alloy_primitives::B256;
-use outbe_primitives::series_id::SeriesId;
+use outbe_core_common::series_id::SeriesId;
 
 /// Storage key for the `index`-th Nod parked in `group_key`.
 pub fn group_nod_key(group_key: B256, index: u32) -> B256 {

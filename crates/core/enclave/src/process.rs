@@ -24,7 +24,7 @@
 
 use alloy_primitives::{Address, B256, U256};
 
-use outbe_tee::protocol::{EncryptedTributeOffer, TributeOfferResult, TributeOfferStatus};
+use crate::protocol::{EncryptedTributeOffer, TributeOfferResult, TributeOfferStatus};
 
 use crate::compute::{compute_nominal, compute_token_id, parse_canonical_amount};
 use crate::crypto::ecdhe_tribute_offer_decrypt;
@@ -55,7 +55,7 @@ pub fn process_tribute_offer_batch(
         };
         results.push(result);
     }
-    let hash = outbe_tee::protocol::inputs_canonical_hash(offers);
+    let hash = crate::protocol::inputs_canonical_hash(offers);
     (results, hash)
 }
 
@@ -143,8 +143,8 @@ mod tests {
     use super::*;
     use crate::compute::compute_token_id;
     use crate::crypto::{chacha20poly1305_encrypt, hkdf_sha256};
+    use crate::protocol::{TributeZkContext, WorldwideDay};
     use outbe_system_common::units::SCALE_1E6_U256;
-    use outbe_tee::protocol::{TributeZkContext, WorldwideDay};
     use x25519_dalek::{PublicKey, StaticSecret};
 
     const OFFER_SK: [u8; 32] = [7u8; 32];
@@ -467,18 +467,18 @@ mod tests {
     fn inputs_hash_binds_zk_owner_and_chain_id() {
         let mut offer = make_tribute_offer(Address::repeat_byte(0xAB), GOOD_JSON);
         offer.zk_context = Some(zk_context());
-        let original = outbe_tee::protocol::inputs_canonical_hash(&[offer.clone()]);
+        let original = crate::protocol::inputs_canonical_hash(&[offer.clone()]);
 
         offer.zk_context.as_mut().unwrap().derived_owner = B256::from([0x02; 32]);
-        let different_owner = outbe_tee::protocol::inputs_canonical_hash(&[offer.clone()]);
+        let different_owner = crate::protocol::inputs_canonical_hash(&[offer.clone()]);
         assert_ne!(original, different_owner);
 
         offer.zk_context.as_mut().unwrap().chain_id += 1;
-        let different_chain = outbe_tee::protocol::inputs_canonical_hash(&[offer.clone()]);
+        let different_chain = crate::protocol::inputs_canonical_hash(&[offer.clone()]);
         assert_ne!(different_owner, different_chain);
 
         offer.zk_context.as_mut().unwrap().l2_chain_id += 1;
-        let different_l2 = outbe_tee::protocol::inputs_canonical_hash(&[offer]);
+        let different_l2 = crate::protocol::inputs_canonical_hash(&[offer]);
         assert_ne!(different_chain, different_l2);
     }
 
@@ -534,13 +534,13 @@ mod tests {
     fn inputs_hash_is_deterministic_and_input_bound() {
         let owner = Address::repeat_byte(0x03);
         let offers = vec![make_tribute_offer(owner, GOOD_JSON)];
-        let h1 = outbe_tee::protocol::inputs_canonical_hash(&offers);
-        let h2 = outbe_tee::protocol::inputs_canonical_hash(&offers);
+        let h1 = crate::protocol::inputs_canonical_hash(&offers);
+        let h2 = crate::protocol::inputs_canonical_hash(&offers);
         assert_eq!(h1, h2);
         // different reference currency -> different hash
         let mut other = offers.clone();
         other[0].reference_currency = 978;
-        assert_ne!(h1, outbe_tee::protocol::inputs_canonical_hash(&other));
+        assert_ne!(h1, crate::protocol::inputs_canonical_hash(&other));
     }
 
     /// The day, currency and price are node-resolved request inputs, so each has
@@ -549,7 +549,7 @@ mod tests {
     #[test]
     fn inputs_hash_binds_the_priced_request_fields() {
         let offers = vec![make_tribute_offer(Address::repeat_byte(0x05), GOOD_JSON)];
-        let base = outbe_tee::protocol::inputs_canonical_hash(&offers);
+        let base = crate::protocol::inputs_canonical_hash(&offers);
 
         for mutate in [
             (|o: &mut EncryptedTributeOffer| o.worldwide_day = NEXT_DAY) as fn(&mut _),
@@ -562,7 +562,7 @@ mod tests {
             mutate(&mut other[0]);
             assert_ne!(
                 base,
-                outbe_tee::protocol::inputs_canonical_hash(&other),
+                crate::protocol::inputs_canonical_hash(&other),
                 "a request field is missing from the canonical hash"
             );
         }

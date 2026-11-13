@@ -86,8 +86,8 @@ fn reconnect_and_probe_offer_key(
 ) -> std::result::Result<JoinOfferKeyState, TeeJoinAdmissionError> {
     if let Err(reconnect) = io.reconnect_exact() {
         return Err(TeeJoinAdmissionError::ReconnectFailed {
-            fault: error,
-            reconnect,
+            fault: Box::new(error),
+            reconnect: Box::new(reconnect),
         });
     }
     io.probe_offer_key()

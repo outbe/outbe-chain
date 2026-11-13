@@ -500,8 +500,8 @@ fn canonical_decoded<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use outbe_primitives::nod_encryption::{EncryptedNodV1, NodTermsV1, NOD_BLOB_LEN};
-    use outbe_primitives::tribute_encryption::{
+    use crate::nod_encryption::{EncryptedNodV1, NodTermsV1, NOD_BLOB_LEN};
+    use crate::tribute_encryption::{
         EncryptedTributeV2, TributeContextV2, TRIBUTE_AMOUNTS_BLOB_LEN,
     };
 

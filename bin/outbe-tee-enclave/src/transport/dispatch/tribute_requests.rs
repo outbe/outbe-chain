@@ -1,9 +1,13 @@
 //! Route requests within one domain family.
 
-use super::requests::RequestContext;
-use crate::transport::*;
+use outbe_enclave::protocol::{
+    tribute_offer_attestation_preimage, EnclaveRequest, EnclaveResponse,
+};
 
-pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> EnclaveResponse {
+use super::requests::{into_domain_response, DomainDispatchResult, RequestContext};
+use crate::process::process_tribute_offer_batch;
+
+pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> DomainDispatchResult {
     let RequestContext {
         keys,
         offer_key,
@@ -40,21 +44,19 @@ pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> Encl
             // Ed25519 attestation key. The host verifies this signature against the
             // attestation key it pinned from the quote. This proves that this attested
             // enclave produced the results and that the host did not substitute them.
-            let preimage = match outbe_tee::protocol::tribute_offer_attestation_preimage(
-                inputs_canonical_hash,
-                &results,
-            ) {
+            let preimage = match tribute_offer_attestation_preimage(inputs_canonical_hash, &results)
+            {
                 Ok(preimage) => preimage,
                 Err(error) => {
-                    return into_response(Err(crate::errors::TeeError::from(error)));
+                    return into_domain_response(Err(crate::errors::TeeError::from(error)));
                 }
             };
             let attestation_tag = keys.sign_attestation(&preimage).to_vec();
-            EnclaveResponse::TributeOfferBatch {
+            Ok(EnclaveResponse::TributeOfferBatch {
                 results,
                 inputs_canonical_hash,
                 attestation_tag,
-            }
+            })
         }
         _ => unreachable!("request family is checked by the exhaustive dispatcher"),
     }

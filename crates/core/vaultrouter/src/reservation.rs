@@ -6,13 +6,13 @@ use crate::{
 };
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
+use outbe_core_common::series_id::SeriesId;
 use outbe_oracle::{
     api::{self, current_vwap_snapshot, get_finalized_window_vwap},
     schema::OracleContract,
 };
 use outbe_primitives::{
     error::Result,
-    series_id::SeriesId,
     storage::StorageHandle,
     time::{first_full_day, previous_date_key, timestamp_to_date_key},
 };

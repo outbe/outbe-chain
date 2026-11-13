@@ -1,8 +1,6 @@
-#[path = "../../../../../testing/fixtures/transition_key_ready.rs"]
-mod transition_key_ready;
+use outbe_primitives::tee_test_utils::signed_transition_key_ready_proof;
 
 use super::*;
-use transition_key_ready::signed_transition_key_ready_proof;
 
 fn dcap_evidence_with_component_bytes(last_component_len: usize) -> AttestationEvidenceV1 {
     let intent = validator_intent(B256::repeat_byte(0x11));

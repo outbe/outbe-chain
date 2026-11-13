@@ -4,7 +4,6 @@ members = [
     "crates/runtime",
     # blockchain
     "crates/blockchain/macros",
-    "crates/blockchain/constants",
     "crates/blockchain/primitives",
     "crates/blockchain/evm",
     "crates/blockchain/consensus",
@@ -17,6 +16,7 @@ members = [
     "crates/blockchain/snapshot",
     "crates/blockchain/tee",
     # system
+    "crates/system/constants",
     "crates/system/common",
     "crates/system/validatorset",
     "crates/system/slashindicator",
@@ -89,7 +89,6 @@ default-members = [
     "crates/runtime",
     # blockchain
     "crates/blockchain/macros",
-    "crates/blockchain/constants",
     "crates/blockchain/primitives",
     "crates/blockchain/evm",
     "crates/blockchain/consensus",
@@ -102,6 +101,7 @@ default-members = [
     "crates/blockchain/snapshot",
     "crates/blockchain/tee",
     # system
+    "crates/system/constants",
     "crates/system/common",
     "crates/system/validatorset",
     "crates/system/slashindicator",
@@ -191,7 +191,6 @@ undocumented_unsafe_blocks = "deny"
 [workspace.dependencies]
 # Internal - blockchain
 outbe-macros = { path = "crates/blockchain/macros" }
-outbe-chain-constants = { path = "crates/blockchain/constants" }
 outbe-primitives = { path = "crates/blockchain/primitives" }
 outbe-evm = { path = "crates/blockchain/evm" }
 outbe-consensus = { path = "crates/blockchain/consensus" }
@@ -205,6 +204,7 @@ outbe-radicle = { path = "crates/blockchain/radicle" }
 outbe-snapshot = { path = "crates/blockchain/snapshot" }
 outbe-tee = { path = "crates/blockchain/tee", default-features = false }
 # Internal - system
+outbe-chain-constants = { path = "crates/system/constants" }
 outbe-system-common = { path = "crates/system/common" }
 outbe-validatorset = { path = "crates/system/validatorset" }
 outbe-slashindicator = { path = "crates/system/slashindicator" }

@@ -1,12 +1,13 @@
 //! Verify encrypted offer responses before the factory mutates chain state.
 
 use alloy_primitives::B256;
-use outbe_primitives::error::Result;
-use outbe_tee::{
+use outbe_enclave::{
+    consensus_domain_call,
     protocol::{EnclaveRequest, EnclaveResponse, EncryptedTributeOffer, TributeOfferStatus},
     tribute_v2::{self, EncryptedTributeOfferResultV2},
-    TransportError,
 };
+use outbe_primitives::error::Result;
+use outbe_tee::TransportError;
 
 use crate::errors::TributeFactoryError;
 
@@ -21,19 +22,13 @@ pub(crate) fn process_encrypted_offers(
     offers: &[EncryptedTributeOffer],
 ) -> Result<Vec<EncryptedTributeOfferResultV2>> {
     let expected_hash = tribute_v2::encrypted_offer_inputs_hash(chain_id, offers);
-    let (key, response) = outbe_tee::consensus_call(
+    let request = EnclaveRequest::ProcessEncryptedTributeOfferBatchV2 {
+        offers: offers.to_vec(),
+    };
+    let (key, response) = consensus_domain_call(
         "ProcessEncryptedTributeOfferBatchV2",
-        || {
-            outbe_tee::try_with_enclave(|session| {
-                let key = session.attestation_pub();
-                session
-                    .request(&EnclaveRequest::ProcessEncryptedTributeOfferBatchV2 {
-                        offers: offers.to_vec(),
-                    })
-                    .map(|response| (key, response))
-            })
-            .ok_or_else(|| TransportError::Unavailable("enclave session unavailable".into()))?
-        },
+        &request,
+        || TransportError::Unavailable("enclave session unavailable".into()),
         |key, response| match response {
             EnclaveResponse::EncryptedTributeOfferBatchV2 {
                 results,
@@ -74,9 +69,6 @@ pub(crate) fn process_encrypted_offers(
             },
             &key,
         ),
-        EnclaveResponse::Error { message } => {
-            Err(TributeFactoryError::EncryptedOfferEnclaveError(message).into())
-        }
         _ => Err(TributeFactoryError::UnexpectedEncryptedOfferResponse.into()),
     }
 }
@@ -151,10 +143,8 @@ mod tests {
     use super::*;
     use alloy_primitives::{Address, U256};
     use ed25519_dalek::{Signer, SigningKey};
-    use outbe_primitives::{
-        time::WorldwideDay,
-        tribute_encryption::{TributeAmountsV2, TributeContextV2},
-    };
+    use outbe_core_common::tribute_encryption::{TributeAmountsV2, TributeContextV2};
+    use outbe_primitives::time::WorldwideDay;
 
     struct Fixture {
         offer: EncryptedTributeOffer,
@@ -178,7 +168,7 @@ mod tests {
                 reference_scurve_minor: U256::from(300),
                 zk_context: None,
             };
-            let digest = outbe_primitives::wwd_entity_id::derive_poseidon_digest(owner, day);
+            let digest = outbe_core_common::wwd_entity_id::derive_poseidon_digest(owner, day);
             let body = outbe_enclave::tribute_encryption::encrypt_tribute(
                 &[7; 32],
                 TributeContextV2 {
@@ -256,7 +246,7 @@ mod tests {
     fn even_signed_results_cannot_replace_chain_resolved_context() {
         let fixture = Fixture::new();
         for mutate in [
-            (|body: &mut outbe_primitives::tribute_encryption::EncryptedTributeV2| {
+            (|body: &mut outbe_core_common::tribute_encryption::EncryptedTributeV2| {
                 body.context.chain_id += 1
             }) as fn(&mut _),
             |body| body.context.worldwide_day = WorldwideDay::new(20250116),

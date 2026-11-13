@@ -1,0 +1,299 @@
+//! Host transport and attestation checks for confidential balance operations.
+
+use alloy_primitives::B256;
+use outbe_primitives::error::{PrecompileError, Result};
+use outbe_tee::TransportError;
+
+use super::{
+    consensus_domain_call,
+    errors::BalanceClientError,
+    protocol::{
+        gratis_op_canonical_hash, mine_gratis_from_promis_canonical_hash, promis_op_canonical_hash,
+        EnclaveRequest, EnclaveResponse,
+    },
+    verification::{
+        verify_gratis_op_attestation, verify_mine_gratis_from_promis_attestation,
+        verify_promis_op_attestation,
+    },
+};
+
+#[derive(Clone, Copy)]
+enum BalanceOperation {
+    Gratis,
+    Promis,
+    MineGratisFromPromis,
+}
+
+impl BalanceOperation {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Gratis => "ApplyGratisOp",
+            Self::Promis => "ApplyPromisOp",
+            Self::MineGratisFromPromis => "MineGratisFromPromisV1",
+        }
+    }
+}
+
+/// Execute a balance request and check its canonical hash and attestation.
+pub fn execute_confidential_balance_op(request: EnclaveRequest) -> Result<EnclaveResponse> {
+    let (operation, expected_hash) = match &request {
+        EnclaveRequest::ApplyGratisOp { request } => {
+            (BalanceOperation::Gratis, gratis_op_canonical_hash(request))
+        }
+        EnclaveRequest::ApplyPromisOp { request } => {
+            (BalanceOperation::Promis, promis_op_canonical_hash(request))
+        }
+        EnclaveRequest::MineGratisFromPromisV1 { request } => (
+            BalanceOperation::MineGratisFromPromis,
+            mine_gratis_from_promis_canonical_hash(request),
+        ),
+        _ => return Err(BalanceClientError::NotConfidentialBalanceOperation.into()),
+    };
+    let (attestation_pub, response) = consensus_domain_call(
+        operation.name(),
+        &request,
+        || TransportError::Unavailable("tee_sidecar_unavailable".into()),
+        |key, response| {
+            validate_response(operation, expected_hash, key, response)
+                .map_err(|error| TransportError::Attestation(error.to_string()))
+        },
+    )
+    .map_err(request_failure)?;
+    validate_response(operation, expected_hash, &attestation_pub, &response)?;
+    Ok(response)
+}
+
+/// A balance op's `Error` answer only reports this enclave's state (no group key, session,
+/// readiness); input-driven refusals come back as a `Rejected` status instead.
+fn request_failure(error: TransportError) -> PrecompileError {
+    BalanceClientError::request_failure(error)
+}
+
+fn validate_response(
+    operation: BalanceOperation,
+    expected_hash: B256,
+    attestation_pub: &[u8; 32],
+    response: &EnclaveResponse,
+) -> Result<()> {
+    match (operation, response) {
+        (BalanceOperation::Gratis, EnclaveResponse::GratisOpApplied { result }) => {
+            let actual_hash = result.inputs_canonical_hash;
+            check_canonical_hash(expected_hash, actual_hash)?;
+            verify_gratis_op_attestation(
+                attestation_pub,
+                actual_hash,
+                result,
+                &result.attestation_tag,
+            )
+            .map_err(BalanceClientError::gratis_attestation_invalid)
+        }
+        (BalanceOperation::Promis, EnclaveResponse::PromisOpApplied { result }) => {
+            let actual_hash = result.inputs_canonical_hash;
+            check_canonical_hash(expected_hash, actual_hash)?;
+            verify_promis_op_attestation(
+                attestation_pub,
+                actual_hash,
+                result,
+                &result.attestation_tag,
+            )
+            .map_err(BalanceClientError::promis_attestation_invalid)
+        }
+        (
+            BalanceOperation::MineGratisFromPromis,
+            EnclaveResponse::GratisMinedFromPromisV1 { result },
+        ) => {
+            let actual_hash = result.inputs_canonical_hash;
+            check_canonical_hash(expected_hash, actual_hash)?;
+            verify_mine_gratis_from_promis_attestation(
+                attestation_pub,
+                actual_hash,
+                result,
+                &result.attestation_tag,
+            )
+            .map_err(BalanceClientError::promis_attestation_invalid)
+        }
+        _ => Err(BalanceClientError::unexpected_response(response)),
+    }
+}
+
+fn check_canonical_hash(expected_hash: B256, actual_hash: B256) -> Result<()> {
+    if actual_hash != expected_hash {
+        return Err(BalanceClientError::EnclaveNondeterminism.into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::U256;
+    use ed25519_dalek::{Signer, SigningKey};
+    use outbe_tee::{AttestationMetricClass, TeeAttestationError};
+
+    use super::*;
+    use crate::host::protocol::{
+        gratis_op_attestation_preimage, promis_op_attestation_preimage, GratisOpResult,
+        GratisOpStatus, PromisOpResult, PromisOpStatus,
+    };
+
+    fn gratis_result(hash: B256) -> GratisOpResult {
+        GratisOpResult {
+            status: GratisOpStatus::Applied,
+            new_balance: Vec::new(),
+            new_pledged: Vec::new(),
+            event_amount: U256::ZERO,
+            encrypted_event_amount: Vec::new(),
+            next_op_nonce: 0,
+            fidelity: None,
+            inputs_canonical_hash: hash,
+            attestation_tag: Vec::new(),
+        }
+    }
+
+    fn promis_result(hash: B256) -> PromisOpResult {
+        PromisOpResult {
+            status: PromisOpStatus::Applied,
+            new_balance: Vec::new(),
+            event_amount: U256::ZERO,
+            encrypted_event_amount: Vec::new(),
+            next_op_nonce: 0,
+            inputs_canonical_hash: hash,
+            attestation_tag: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn enclave_error_and_wrong_variant_precede_hash_validation() {
+        let hash = B256::repeat_byte(7);
+        let key = [0; 32];
+        assert!(matches!(
+            request_failure(TransportError::EnclaveError("denied".into())),
+            PrecompileError::EnclaveUnavailable(message) if message.contains("denied")
+        ));
+
+        let wrong_for_gratis = EnclaveResponse::PromisOpApplied {
+            result: Box::new(promis_result(B256::ZERO)),
+        };
+        let expected = format!("unexpected enclave response: {wrong_for_gratis:?}");
+        assert!(matches!(
+            validate_response(BalanceOperation::Gratis, hash, &key, &wrong_for_gratis),
+            Err(PrecompileError::EnclaveUnavailable(message)) if message == expected
+        ));
+        let wrong_for_promis = EnclaveResponse::GratisOpApplied {
+            result: Box::new(gratis_result(B256::ZERO)),
+        };
+        let expected = format!("unexpected enclave response: {wrong_for_promis:?}");
+        assert!(matches!(
+            validate_response(BalanceOperation::Promis, hash, &key, &wrong_for_promis),
+            Err(PrecompileError::EnclaveUnavailable(message)) if message == expected
+        ));
+    }
+
+    #[test]
+    fn an_enclave_refusal_or_outage_is_unavailable_and_a_bad_answer_is_unavailable() {
+        for error in [
+            TransportError::Unavailable("enclave is not initialized".into()),
+            TransportError::EnclaveError("no resident group key".into()),
+            TransportError::Noise("x".into()),
+            TransportError::Handshake("x".into()),
+            TransportError::SessionRevoked("x"),
+            TransportError::IdentityMismatch("x".into()),
+        ] {
+            assert!(matches!(
+                request_failure(error),
+                PrecompileError::EnclaveUnavailable(_)
+            ));
+        }
+        for error in [
+            TransportError::Codec("x".into()),
+            TransportError::UnexpectedResponse,
+            TransportError::app_attestation(
+                AttestationMetricClass::GratisOp,
+                TeeAttestationError::InvalidSignatureLength { actual: 1 },
+            ),
+        ] {
+            assert!(matches!(
+                request_failure(error),
+                PrecompileError::EnclaveUnavailable(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn canonical_hash_mismatch_precedes_attestation_verification() {
+        let expected_hash = B256::repeat_byte(7);
+        let key = [0; 32];
+        let responses = [
+            (
+                BalanceOperation::Gratis,
+                EnclaveResponse::GratisOpApplied {
+                    result: Box::new(gratis_result(B256::ZERO)),
+                },
+            ),
+            (
+                BalanceOperation::Promis,
+                EnclaveResponse::PromisOpApplied {
+                    result: Box::new(promis_result(B256::ZERO)),
+                },
+            ),
+        ];
+        for (operation, response) in responses {
+            assert!(matches!(
+                validate_response(operation, expected_hash, &key, &response),
+                Err(PrecompileError::EnclaveUnavailable(message)) if message == "tee_enclave_nondeterminism"
+            ));
+        }
+    }
+
+    #[test]
+    fn matching_hash_uses_operation_specific_attestation() {
+        let hash = B256::repeat_byte(7);
+        let key = [0; 32];
+        let gratis = EnclaveResponse::GratisOpApplied {
+            result: Box::new(gratis_result(hash)),
+        };
+        assert!(matches!(
+            validate_response(BalanceOperation::Gratis, hash, &key, &gratis),
+            Err(PrecompileError::EnclaveUnavailable(message))
+                if message.starts_with("tee_gratis_attestation_invalid:")
+        ));
+        let promis = EnclaveResponse::PromisOpApplied {
+            result: Box::new(promis_result(hash)),
+        };
+        assert!(matches!(
+            validate_response(BalanceOperation::Promis, hash, &key, &promis),
+            Err(PrecompileError::EnclaveUnavailable(message))
+                if message.starts_with("tee_promis_attestation_invalid:")
+        ));
+
+        let signer = SigningKey::from_bytes(&[7; 32]);
+        let attestation_pub = signer.verifying_key().to_bytes();
+        let mut gratis_result = gratis_result(hash);
+        gratis_result.attestation_tag = signer
+            .sign(&gratis_op_attestation_preimage(hash, &gratis_result).expect("gratis preimage"))
+            .to_bytes()
+            .to_vec();
+        assert!(validate_response(
+            BalanceOperation::Gratis,
+            hash,
+            &attestation_pub,
+            &EnclaveResponse::GratisOpApplied {
+                result: Box::new(gratis_result),
+            },
+        )
+        .is_ok());
+        let mut promis_result = promis_result(hash);
+        promis_result.attestation_tag = signer
+            .sign(&promis_op_attestation_preimage(hash, &promis_result).expect("promis preimage"))
+            .to_bytes()
+            .to_vec();
+        assert!(validate_response(
+            BalanceOperation::Promis,
+            hash,
+            &attestation_pub,
+            &EnclaveResponse::PromisOpApplied {
+                result: Box::new(promis_result),
+            },
+        )
+        .is_ok());
+    }
+}

@@ -65,6 +65,7 @@ outbe-stablecoinfactory.workspace = true
 outbe-stablecoinpolicy.workspace = true
 outbe-staking.workspace = true
 outbe-system-common.workspace = true
+outbe-enclave.workspace = true
 outbe-tee.workspace = true
 outbe-teeregistry = { workspace = true, features = ["tee-attestation-v1"] }
 outbe-tribute.workspace = true
@@ -85,9 +86,11 @@ commonware-macros.workspace = true
 commonware-runtime.workspace = true
 eyre.workspace = true
 hex.workspace = true
+jsonrpsee.workspace = true
 k256.workspace = true
 metrics.workspace = true
 metrics-exporter-prometheus.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 reth-chainspec.workspace = true
@@ -100,15 +103,16 @@ reth-node-metrics.workspace = true
 reth-primitives-traits.workspace = true
 reth-provider.workspace = true
 reth-rpc-server-types.workspace = true
+reth-trie.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
+x25519-dalek.workspace = true
 
 [dev-dependencies]
 metrics-process.workspace = true
-serde.workspace = true
 serde_yaml_ng.workspace = true
-outbe-enclave.workspace = true
+outbe-enclave = { workspace = true, features = ["engine", "test-utils"] }
 outbe-core-common.workspace = true
 outbe-runtime = { path = ".", features = ["test-hooks"] }
 alloy-consensus.workspace = true

@@ -54,7 +54,6 @@ tokio-util.workspace = true
 tracing.workspace = true
 futures.workspace = true
 metrics.workspace = true
-x25519-dalek.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
@@ -63,7 +62,6 @@ reth-engine-tree = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.
 reth-stages-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
 reth-static-file = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
 outbe-primitives = { workspace = true, features = ["test-utils"] }
-ed25519-dalek.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-node-core.workspace = true
 serde_json.workspace = true

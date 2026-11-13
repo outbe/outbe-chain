@@ -1,8 +1,8 @@
 use alloy_primitives::{Address, B256, U256};
+use outbe_core_common::wwd_entity_id::derive_poseidon_entity_id;
 use outbe_primitives::{
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     time::WorldwideDay,
-    wwd_entity_id::derive_poseidon_entity_id,
 };
 use outbe_tribute::{TributeContract, TributeData};
 
@@ -35,8 +35,8 @@ fn in_process_ready<R>(
         .unwrap()
 }
 
-fn encrypted_body() -> outbe_primitives::tribute_encryption::EncryptedTributeV2 {
-    use outbe_primitives::tribute_encryption::{TributeAmountsV2, TributeContextV2};
+fn encrypted_body() -> outbe_core_common::tribute_encryption::EncryptedTributeV2 {
+    use outbe_core_common::tribute_encryption::{TributeAmountsV2, TributeContextV2};
     let plain = tribute(Address::repeat_byte(0x73), 20_260_723);
     outbe_enclave::tribute_encryption::encrypt_tribute(
         &outbe_tribute::enclave_client::test_enclave::NETWORK_SECRET,

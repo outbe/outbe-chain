@@ -1,9 +1,10 @@
 //! Private arithmetic access to encrypted NOD amounts.
 use alloy_primitives::{B256, U256};
-use outbe_primitives::nod_encryption::{
+use outbe_core_common::nod_encryption::{
     EncryptedNodGroupLoadV1, EncryptedNodV1, NodQuoteContextV1,
 };
-use outbe_tee::{nod_mine::NodGroupLoadOpRequestV1, TransportError};
+use outbe_enclave::nod_mine::NodGroupLoadOpRequestV1;
+use outbe_tee::TransportError;
 
 pub(crate) fn read_amount(record: &EncryptedNodV1) -> Result<U256, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
@@ -11,7 +12,7 @@ pub(crate) fn read_amount(record: &EncryptedNodV1) -> Result<U256, TransportErro
         return outbe_enclave::nod_encryption::decrypt_nod(&test_enclave::NETWORK_SECRET, record)
             .map_err(crate::errors::enclave_transport_error);
     }
-    outbe_tee::nod_mine::read_nod_amount(record)
+    outbe_enclave::nod_mine::read_nod_amount(record).map_err(TransportError::from)
 }
 
 pub(crate) fn apply_group_load_operation(
@@ -25,7 +26,7 @@ pub(crate) fn apply_group_load_operation(
         )
         .map_err(crate::errors::enclave_transport_error);
     }
-    outbe_tee::nod_mine::apply_nod_group_load_operation(request)
+    outbe_enclave::nod_mine::apply_nod_group_load_operation(request).map_err(TransportError::from)
 }
 
 pub(crate) fn read_group_load(record: &EncryptedNodGroupLoadV1) -> Result<U256, TransportError> {
@@ -37,7 +38,7 @@ pub(crate) fn read_group_load(record: &EncryptedNodGroupLoadV1) -> Result<U256, 
         )
         .map_err(crate::errors::enclave_transport_error);
     }
-    outbe_tee::nod_mine::read_nod_group_load(record)
+    outbe_enclave::nod_mine::read_nod_group_load(record).map_err(TransportError::from)
 }
 
 pub(crate) fn seal_group_load(
@@ -76,7 +77,8 @@ pub(crate) fn encrypt_nod_quote(
         )
         .map_err(crate::errors::enclave_transport_error);
     }
-    outbe_tee::nod_mine::encrypt_nod_quote(nod, context, payment_minor)
+    outbe_enclave::nod_mine::encrypt_nod_quote(nod, context, payment_minor)
+        .map_err(TransportError::from)
 }
 
 /// In-process enclave stand-in for tests (this crate's tests and any downstream

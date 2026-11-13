@@ -3,8 +3,8 @@
 use crate::precompile::IGratis;
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolError;
+use outbe_enclave::protocol::EnclaveResponse;
 use outbe_primitives::error::PrecompileError;
-use outbe_tee::protocol::EnclaveResponse;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -47,7 +47,7 @@ pub enum GratisFatalError {
     #[error("unexpected enclave response: {0:?}")]
     UnexpectedEnclaveResponse(Box<EnclaveResponse>),
     #[error("encrypted NOD enclave operation failed: {0}")]
-    EncryptedNodEnclaveFailed(String),
+    EncryptedNodEnclaveFailed(#[source] outbe_enclave::EnclaveClientError),
     #[error("{0}")]
     TestEnclaveError(String),
     #[error("enclave dropped the fidelity section outcome")]
@@ -83,10 +83,12 @@ impl From<GratisFatalError> for PrecompileError {
     }
 }
 
-pub(crate) fn map_nod_transport_error(err: outbe_tee::TransportError) -> PrecompileError {
+pub(crate) fn map_nod_client_error(err: outbe_enclave::EnclaveClientError) -> PrecompileError {
     match err {
-        outbe_tee::TransportError::NodMintRejected(reason) => GratisError::Rejected(reason).into(),
-        other => GratisFatalError::EncryptedNodEnclaveFailed(other.to_string()).into(),
+        outbe_enclave::EnclaveClientError::NodMintRejected { reason } => {
+            GratisError::Rejected(reason).into()
+        }
+        other => GratisFatalError::EncryptedNodEnclaveFailed(other).into(),
     }
 }
 
@@ -97,5 +99,48 @@ pub(crate) fn map_test_enclave_error(err: outbe_enclave::errors::TeeError) -> Pr
             GratisError::Rejected(reason).into()
         }
         other => GratisFatalError::TestEnclaveError(other.to_string()).into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use outbe_enclave::EnclaveClientError;
+    use outbe_tee::{TeeAttestationError, TransportError};
+
+    #[test]
+    fn map_nod_client_error_dispatches_typed_rejection_to_revert_and_transport_to_unavailable() {
+        let rejected = map_nod_client_error(EnclaveClientError::NodMintRejected {
+            reason: "bad nod proof".into(),
+        });
+        let PrecompileError::RevertBytes(rejected_bytes) = rejected else {
+            panic!("expected RevertBytes, got {rejected:?}");
+        };
+        assert_eq!(
+            rejected_bytes,
+            Bytes::from(
+                IGratis::Rejected {
+                    value: "bad nod proof".into(),
+                }
+                .abi_encode()
+            )
+        );
+
+        let attestation = map_nod_client_error(EnclaveClientError::NodAttestation(
+            TeeAttestationError::InvalidSignatureLength { actual: 7 },
+        ));
+        assert!(matches!(
+            attestation,
+            PrecompileError::EnclaveUnavailable(msg)
+                if msg.contains("nod attestation signature invalid")
+        ));
+
+        let transport = map_nod_client_error(EnclaveClientError::Transport(
+            TransportError::Unavailable("sidecar offline".into()),
+        ));
+        assert!(matches!(
+            transport,
+            PrecompileError::EnclaveUnavailable(msg) if msg.contains("sidecar offline")
+        ));
     }
 }

@@ -4,7 +4,6 @@ mod finalization;
 mod tee;
 #[cfg(test)]
 mod tests;
-mod tribute_sources;
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use jsonrpsee::core::RpcResult;
@@ -25,8 +24,8 @@ use reth_provider::BlockIdReader;
 use std::sync::Arc;
 
 use crate::api::{
-    ConsensusStatusInfo, EmissionInfo, EpochInfo, FinalizationProof, GratisKeysSealed,
-    OutbeApiServer, ParticipationInfo, RadiclePeerInfo, RadiclePhaseErrorInfo, RadiclePhaseInfo,
+    ConsensusStatusInfo, EmissionInfo, EpochInfo, FinalizationProof, OutbeApiServer,
+    ParticipationInfo, RadiclePeerInfo, RadiclePhaseErrorInfo, RadiclePhaseInfo,
     RadicleRepositoryInfo, RadicleRepositoryStateInfo, RadicleStatusInfo, SlashConfig, SlashInfo,
     SyncStatusInfo, ValidatorDetailInfo, ValidatorInfo,
 };
@@ -174,94 +173,6 @@ impl<P> OutbeApiHandler<P> {
                 }
             }
         }
-    }
-
-    pub(crate) async fn derive_keys_checked(
-        &self,
-        ledger: outbe_tee::protocol::Ledger,
-        account: Address,
-        ephemeral_pubkey: B256,
-        signature: alloy_primitives::Bytes,
-    ) -> RpcResult<GratisKeysSealed> {
-        use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
-
-        // Prove that the caller controls `account` before the enclave derives its
-        // (secret) modify key. Recover the EIP-191 personal_sign signer over
-        // `"outbe/<ledger>/derive-keys/v1" || account || ephemeralPubkey`. Require
-        // the signer to equal `account`.
-        let sig65: [u8; 65] = signature.as_ref().try_into().map_err(|_| {
-            invalid_params_err(
-                crate::errors::RpcInvalidParamsError::InvalidSignatureLength(signature.len()),
-            )
-        })?;
-        // Recover the signer to reject unauthorized requests before the enclave round-trip.
-        // This adds defense in depth. The enclave also verifies the signature.
-        // A compromised host could bypass this check and reach the enclave transport directly.
-        // See the DeriveAccountKeys arm.
-        let prehash = outbe_tee::protocol::eip191_hash(
-            &outbe_tee::protocol::derive_account_keys_message(ledger, account, ephemeral_pubkey),
-        );
-        let recovered = outbe_primitives::tee_signatures::recover_signer(&prehash, &sig65)
-            .map_err(|e| {
-                invalid_params_err(
-                    crate::errors::RpcInvalidParamsError::signature_recovery_failed(e),
-                )
-            })?;
-        if recovered != account {
-            return Err(invalid_params_err(
-                crate::errors::RpcInvalidParamsError::SignatureSignerMismatch {
-                    recovered,
-                    account,
-                },
-            ));
-        }
-
-        // Off-chain key delivery through the process-global enclave client (no state).
-        // Pass `owner_sig` to the enclave so that the enclave enforces ownership in its
-        // own trust domain, not ours.
-        let response = outbe_tee::try_account_query(&EnclaveRequest::DeriveAccountKeys {
-            ledger,
-            account,
-            requester_ephemeral_pubkey: ephemeral_pubkey.0,
-            owner_sig: sig65.to_vec(),
-        })
-        .ok_or_else(|| internal_err(tee::PrivateExecutionUnavailable))?
-        .map_err(|e| {
-            internal_err(crate::errors::RpcInternalError::enclave_derive_account_keys_failed(e))
-        })?;
-        match response {
-            EnclaveResponse::AccountKeysSealed {
-                sealed,
-                nonce,
-                enclave_ephemeral_pubkey,
-                ..
-            } => Ok(GratisKeysSealed {
-                sealed: sealed.into(),
-                nonce: nonce.to_vec().into(),
-                enclave_ephemeral_pubkey: B256::from(enclave_ephemeral_pubkey),
-            }),
-            EnclaveResponse::Error { message } => Err(internal_err(
-                crate::errors::RpcInternalError::EnclaveError(message),
-            )),
-            other => Err(internal_err(
-                crate::errors::RpcInternalError::unexpected_enclave_response(other),
-            )),
-        }
-    }
-
-    pub(crate) async fn derive_gratis_keys_checked(
-        &self,
-        account: Address,
-        ephemeral_pubkey: B256,
-        signature: alloy_primitives::Bytes,
-    ) -> RpcResult<GratisKeysSealed> {
-        self.derive_keys_checked(
-            outbe_tee::protocol::Ledger::Gratis,
-            account,
-            ephemeral_pubkey,
-            signature,
-        )
-        .await
     }
 }
 
@@ -447,48 +358,6 @@ where
         + Sync
         + 'static,
 {
-    async fn get_tribute_state_source(
-        &self,
-        subject: outbe_tee::tribute_source::TributeSourceSubject,
-        tribute_id: outbe_primitives::wwd_entity_id::WwdEntityId,
-    ) -> RpcResult<outbe_tee::tribute_source::TributeStateSource> {
-        let provider = Arc::clone(&self.provider);
-        let chain_identity = self.chain_identity;
-        let reader = Arc::clone(&self.reader);
-        tokio::task::spawn_blocking(move || {
-            tribute_sources::serve(
-                &*provider,
-                chain_identity,
-                subject,
-                tribute_id,
-                reader.as_ref(),
-            )
-        })
-        .await
-        .map_err(|error| internal_err(format!("Tribute source worker failed: {error}")))?
-    }
-
-    async fn derive_keys(
-        &self,
-        ledger: outbe_tee::protocol::Ledger,
-        account: Address,
-        ephemeral_pubkey: B256,
-        signature: alloy_primitives::Bytes,
-    ) -> RpcResult<GratisKeysSealed> {
-        self.derive_keys_checked(ledger, account, ephemeral_pubkey, signature)
-            .await
-    }
-
-    async fn derive_gratis_keys(
-        &self,
-        account: Address,
-        ephemeral_pubkey: B256,
-        signature: alloy_primitives::Bytes,
-    ) -> RpcResult<GratisKeysSealed> {
-        self.derive_gratis_keys_checked(account, ephemeral_pubkey, signature)
-            .await
-    }
-
     async fn get_validators(&self) -> RpcResult<Vec<ValidatorInfo>> {
         self.with_latest_state(|storage| self.reader.validators(storage))
     }
@@ -656,14 +525,10 @@ fn internal_err(msg: impl std::fmt::Display) -> jsonrpsee::types::ErrorObject<'s
     )
 }
 
-fn invalid_params(msg: impl std::fmt::Display) -> jsonrpsee::types::ErrorObject<'static> {
+fn invalid_params_err(msg: impl std::fmt::Display) -> jsonrpsee::types::ErrorObject<'static> {
     jsonrpsee::types::ErrorObject::owned(
         jsonrpsee::types::error::INVALID_PARAMS_CODE,
         msg.to_string(),
         None::<()>,
     )
-}
-
-fn invalid_params_err(msg: impl std::fmt::Display) -> jsonrpsee::types::ErrorObject<'static> {
-    invalid_params(msg)
 }

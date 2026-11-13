@@ -27,8 +27,7 @@ outbe-primitives = { workspace = true, features = ["bench-utils"] }
 # in-process enclave engines; `test-enclave` is unioned into each dep for tests.
 outbe-gratis = { workspace = true, features = ["test-enclave", "test-utils"] }
 outbe-fidelity = { workspace = true, features = ["test-enclave"] }
-outbe-tee.workspace = true
-outbe-enclave.workspace = true
+outbe-enclave = { workspace = true, features = ["engine"] }
 base64.workspace = true
 serde_json.workspace = true
 outbe-vaultrouter = { workspace = true, features = ["test-utils"] }

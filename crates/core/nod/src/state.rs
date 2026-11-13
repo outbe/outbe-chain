@@ -1,7 +1,7 @@
 use alloy_primitives::{B256, U256};
 use outbe_core_common::deadline_queue;
+use outbe_core_common::series_id::SeriesId;
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::series_id::SeriesId;
 use outbe_system_common::call_bins;
 
 use crate::{
@@ -281,7 +281,7 @@ impl NodContract<'_> {
             .map_err(|_| NodError::EncryptedTermsMismatch)?;
         self.apply_group_open_load(
             group_key,
-            outbe_tee::nod_mine::NodGroupLoadOperationV1::AddSeriesLoad {
+            outbe_enclave::nod_mine::NodGroupLoadOperationV1::AddSeriesLoad {
                 series_load: Box::new(unclaimed_tribute_load),
             },
         )?;
@@ -383,11 +383,11 @@ impl NodContract<'_> {
         &self,
         bytes: Vec<u8>,
         expected_scope: B256,
-    ) -> Result<Option<outbe_primitives::nod_encryption::EncryptedNodGroupLoadV1>> {
+    ) -> Result<Option<outbe_core_common::nod_encryption::EncryptedNodGroupLoadV1>> {
         if bytes.is_empty() {
             return Ok(None);
         }
-        let record: outbe_primitives::nod_encryption::EncryptedNodGroupLoadV1 =
+        let record: outbe_core_common::nod_encryption::EncryptedNodGroupLoadV1 =
             postcard::from_bytes(&bytes).map_err(|_| NodError::EncryptedTermsMismatch)?;
         if record.scope != expected_scope
             || record.chain_id != self.storage.chain_id()?
@@ -401,7 +401,7 @@ impl NodContract<'_> {
     pub(crate) fn group_open_load_record(
         &self,
         group_key: B256,
-    ) -> Result<Option<outbe_primitives::nod_encryption::EncryptedNodGroupLoadV1>> {
+    ) -> Result<Option<outbe_core_common::nod_encryption::EncryptedNodGroupLoadV1>> {
         self.open_load_record(self.encrypted_group_open_load(group_key)?, group_key)
     }
 
@@ -409,7 +409,7 @@ impl NodContract<'_> {
         &self,
         group_key: B256,
         series_id: SeriesId,
-    ) -> Result<Option<outbe_primitives::nod_encryption::EncryptedNodGroupLoadV1>> {
+    ) -> Result<Option<outbe_core_common::nod_encryption::EncryptedNodGroupLoadV1>> {
         let gs_key = crate::index_keys::group_series_key(group_key, series_id);
         let scope = B256::right_padding_from(series_id.as_bytes());
         self.open_load_record(self.group_series_open_load_ct.bytes(&gs_key).read()?, scope)
@@ -417,7 +417,7 @@ impl NodContract<'_> {
 
     fn read_open_load_record(
         &self,
-        record: Option<outbe_primitives::nod_encryption::EncryptedNodGroupLoadV1>,
+        record: Option<outbe_core_common::nod_encryption::EncryptedNodGroupLoadV1>,
     ) -> Result<U256> {
         let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&self.storage)?;
         match record {
@@ -439,11 +439,11 @@ impl NodContract<'_> {
         &self,
         group_key: B256,
         scope: B256,
-        previous: Option<outbe_primitives::nod_encryption::EncryptedNodGroupLoadV1>,
-        operation: outbe_tee::nod_mine::NodGroupLoadOperationV1,
+        previous: Option<outbe_core_common::nod_encryption::EncryptedNodGroupLoadV1>,
+        operation: outbe_enclave::nod_mine::NodGroupLoadOperationV1,
     ) -> Result<Vec<u8>> {
         let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&self.storage)?;
-        let request = outbe_tee::nod_mine::NodGroupLoadOpRequestV1 {
+        let request = outbe_enclave::nod_mine::NodGroupLoadOpRequestV1 {
             chain_id: self.storage.chain_id()?,
             scope,
             previous,
@@ -468,7 +468,7 @@ impl NodContract<'_> {
     pub(crate) fn apply_group_open_load(
         &mut self,
         group_key: B256,
-        operation: outbe_tee::nod_mine::NodGroupLoadOperationV1,
+        operation: outbe_enclave::nod_mine::NodGroupLoadOperationV1,
     ) -> Result<()> {
         let previous = self.group_open_load_record(group_key)?;
         let bytes = self.apply_scoped_open_load(group_key, group_key, previous, operation)?;
@@ -479,7 +479,7 @@ impl NodContract<'_> {
         &mut self,
         group_key: B256,
         series_id: SeriesId,
-        operation: outbe_tee::nod_mine::NodGroupLoadOperationV1,
+        operation: outbe_enclave::nod_mine::NodGroupLoadOperationV1,
     ) -> Result<()> {
         let scope = B256::right_padding_from(series_id.as_bytes());
         let previous = self.series_open_load_record(group_key, series_id)?;
@@ -491,11 +491,11 @@ impl NodContract<'_> {
     pub(crate) fn add_nod_to_open_load(
         &mut self,
         group_key: B256,
-        nod: &outbe_primitives::nod_encryption::EncryptedNodV1,
+        nod: &outbe_core_common::nod_encryption::EncryptedNodV1,
     ) -> Result<()> {
         self.apply_group_open_load(
             group_key,
-            outbe_tee::nod_mine::NodGroupLoadOperationV1::AddNod {
+            outbe_enclave::nod_mine::NodGroupLoadOperationV1::AddNod {
                 nod: Box::new(nod.clone()),
             },
         )
@@ -505,12 +505,12 @@ impl NodContract<'_> {
         &mut self,
         group_key: B256,
         series_id: SeriesId,
-        nod: &outbe_primitives::nod_encryption::EncryptedNodV1,
+        nod: &outbe_core_common::nod_encryption::EncryptedNodV1,
     ) -> Result<()> {
         self.apply_series_open_load(
             group_key,
             series_id,
-            outbe_tee::nod_mine::NodGroupLoadOperationV1::AddNod {
+            outbe_enclave::nod_mine::NodGroupLoadOperationV1::AddNod {
                 nod: Box::new(nod.clone()),
             },
         )
@@ -519,11 +519,11 @@ impl NodContract<'_> {
     pub(crate) fn sub_nod_from_open_load(
         &mut self,
         group_key: B256,
-        nod: &outbe_primitives::nod_encryption::EncryptedNodV1,
+        nod: &outbe_core_common::nod_encryption::EncryptedNodV1,
     ) -> Result<()> {
         self.apply_group_open_load(
             group_key,
-            outbe_tee::nod_mine::NodGroupLoadOperationV1::SubNod {
+            outbe_enclave::nod_mine::NodGroupLoadOperationV1::SubNod {
                 nod: Box::new(nod.clone()),
             },
         )
@@ -533,12 +533,12 @@ impl NodContract<'_> {
         &mut self,
         group_key: B256,
         series_id: SeriesId,
-        nod: &outbe_primitives::nod_encryption::EncryptedNodV1,
+        nod: &outbe_core_common::nod_encryption::EncryptedNodV1,
     ) -> Result<()> {
         self.apply_series_open_load(
             group_key,
             series_id,
-            outbe_tee::nod_mine::NodGroupLoadOperationV1::SubNod {
+            outbe_enclave::nod_mine::NodGroupLoadOperationV1::SubNod {
                 nod: Box::new(nod.clone()),
             },
         )
@@ -547,7 +547,7 @@ impl NodContract<'_> {
     pub(crate) fn take_unpaid_load(&mut self, group_key: B256, load: U256) -> Result<()> {
         self.apply_group_open_load(
             group_key,
-            outbe_tee::nod_mine::NodGroupLoadOperationV1::AdjustTransient {
+            outbe_enclave::nod_mine::NodGroupLoadOperationV1::AdjustTransient {
                 load_minor: load,
                 add: false,
             },
@@ -563,7 +563,7 @@ impl NodContract<'_> {
         self.apply_series_open_load(
             group_key,
             series_id,
-            outbe_tee::nod_mine::NodGroupLoadOperationV1::AdjustTransient {
+            outbe_enclave::nod_mine::NodGroupLoadOperationV1::AdjustTransient {
                 load_minor: load,
                 add: false,
             },

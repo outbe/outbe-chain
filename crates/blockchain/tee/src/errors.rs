@@ -1,21 +1,18 @@
 //! Typed errors for the host-side TEE integration crate.
 
-mod balance;
 mod call_context;
 mod client_verification;
-mod crypto;
 mod dcap_fixture;
 mod host_collateral;
 mod protocol;
 mod quote;
 mod session;
 mod tee_attestation_activation;
+mod tee_crypto;
 mod transport;
 
-pub use balance::BalanceClientError;
 pub use call_context::{CallContextError, CallContextProviderError};
 pub use client_verification::{NodeHostRecordError, TeeClientVerificationError};
-pub use crypto::LocalCryptoError;
 pub use dcap_fixture::{DcapFixtureError, NativeQvlError};
 pub use host_collateral::HostCollateralError;
 pub use protocol::{
@@ -25,15 +22,19 @@ pub use protocol::{
 pub use quote::QuoteParseError;
 pub use session::DevIdentityMismatchError;
 pub use tee_attestation_activation::TeeAttestationActivationError;
-pub use transport::TransportError;
+pub use tee_crypto::TeeCryptoError;
+pub use transport::{AttestationMetricClass, RejectionMetricClass, TransportError};
 
 #[cfg(test)]
 mod tests {
-    use super::TransportError;
+    use super::{
+        AttestationMetricClass, RejectionMetricClass, TeeClientVerificationError, TransportError,
+    };
+    use crate::tee_call::TeeAttestationError;
 
     #[test]
-    fn a_missing_session_is_this_nodes_fault() {
-        let error = crate::tribute_client::read_tribute_amounts(&[]).unwrap_err();
+    fn a_missing_sidecar_is_this_nodes_fault() {
+        let error: TransportError = TeeClientVerificationError::TeeSidecarNotConfigured.into();
         assert!(matches!(error, TransportError::Unavailable(_)), "{error}");
         assert!(error.is_node_local());
         assert_eq!(error.metric_class(), "unavailable");
@@ -46,9 +47,14 @@ mod tests {
             TransportError::UnexpectedResponse,
             TransportError::Codec("x".into()),
             TransportError::Attestation("x".into()),
-            TransportError::NodMintRejected("x".into()),
+            TransportError::app_attestation(
+                AttestationMetricClass::TributeOffer,
+                TeeAttestationError::InvalidSignatureLength { actual: 1 },
+            ),
+            TransportError::app_rejected(RejectionMetricClass::NodMint, "x"),
         ] {
             assert!(!error.is_node_local(), "{error}");
+            assert!(!error.is_connection_fault(), "{error}");
         }
         for error in [
             TransportError::IoTimeout {

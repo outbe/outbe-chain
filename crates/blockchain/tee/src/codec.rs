@@ -10,11 +10,9 @@
 //!   - a raw Noise handshake message.
 //!
 //! This codec serializes messages with `postcard`, a compact binary serde format.
-//! The offer ciphertext rides as a length-prefixed raw byte string (1x) rather
-//! than a JSON number array (~4x under `serde_json`). Alloy
-//! `U256`/`Address`/`B256` serialize as raw bytes (non-human-readable serde)
-//! instead of hex strings. As a result, many more offers fit under the 64 KiB
-//! Noise frame per `ProcessTributeOfferBatch`.
+//! Byte buffers ride as length-prefixed raw byte strings rather than JSON number
+//! arrays, and Alloy `U256`/`Address`/`B256` serialize as raw bytes instead of
+//! hex strings so payloads fit compactly under the 64 KiB Noise frame cap.
 //! Both binaries are built from this crate, so encoder and decoder always agree.
 //! `decode_call` still accepts a context-less request.
 //! It tags that request `EnclaveContextKindV1::Legacy`.
@@ -128,8 +126,7 @@ pub fn decode_response(bytes: &[u8]) -> Result<EnclaveResponse, TransportError> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{EnclaveRequest, EncryptedTributeOffer, WorldwideDay};
-    use alloy_primitives::{Address, U256};
+    use crate::protocol::{EnclaveRequest, PayloadLane};
 
     #[test]
     fn health_status_encodes_its_counters_in_flat_field_order() {
@@ -182,7 +179,10 @@ mod tests {
             EnclaveRequest::DkgStartDealer {
                 ceremony_id: alloy_primitives::B256::ZERO,
             },
-            EnclaveRequest::ProcessTributeOfferBatch { offers: Vec::new() },
+            EnclaveRequest::Payload {
+                lane: PayloadLane::Execution,
+                payload: vec![1, 2, 3],
+            },
         ] {
             let bytes = encode_call(ctx, &request).unwrap();
             let decoded = decode_call(&bytes).unwrap();
@@ -211,20 +211,9 @@ mod tests {
 
     #[test]
     fn request_codec_roundtrip() {
-        let req = EnclaveRequest::ProcessTributeOfferBatch {
-            offers: vec![EncryptedTributeOffer {
-                owner: Address::repeat_byte(0xAB),
-                cipher_text: vec![9, 9, 9],
-                nonce: vec![1; 12],
-                ephemeral_pubkey: U256::from(12345u64),
-                worldwide_day: WorldwideDay::new(20250115),
-                tribute_currency: 840,
-                reference_currency: 840,
-                issuance_wwd_vwap_minor: U256::from(11u64),
-                reference_wwd_vwap_minor: U256::from(12u64),
-                reference_scurve_minor: U256::from(13u64),
-                zk_context: None,
-            }],
+        let req = EnclaveRequest::Payload {
+            lane: PayloadLane::Execution,
+            payload: vec![9, 9, 9],
         };
         let bytes = encode_request(&req).unwrap();
         assert_eq!(decode_request(&bytes).unwrap(), req);
@@ -266,6 +255,52 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn encode_call_enforces_exact_max_frame_minus_noise_tag_budget() {
+        let ctx = EnclaveCallContextV1::default();
+        // Probe with a 4-byte payload length varint (>= 16384 uses 3-byte varint in postcard).
+        let probe_len = 60_000usize;
+        let probe = encode_call(
+            ctx,
+            &EnclaveRequest::Payload {
+                lane: PayloadLane::Execution,
+                payload: vec![0xAB; probe_len],
+            },
+        )
+        .unwrap();
+        let exact_payload_len = probe_len + ((MAX_FRAME_LEN - 16) - probe.len());
+
+        let at_limit = encode_call(
+            ctx,
+            &EnclaveRequest::Payload {
+                lane: PayloadLane::Execution,
+                payload: vec![0xAB; exact_payload_len],
+            },
+        )
+        .expect("MAX_FRAME_LEN - 16 plaintext must fit Noise AEAD tag");
+        assert_eq!(at_limit.len(), MAX_FRAME_LEN - 16);
+        assert_eq!(
+            decode_call(&at_limit).unwrap().request,
+            EnclaveRequest::Payload {
+                lane: PayloadLane::Execution,
+                payload: vec![0xAB; exact_payload_len],
+            }
+        );
+
+        let over_limit = encode_call(
+            ctx,
+            &EnclaveRequest::Payload {
+                lane: PayloadLane::Execution,
+                payload: vec![0xAB; exact_payload_len + 1],
+            },
+        )
+        .expect_err("MAX_FRAME_LEN - 15 plaintext must fail before Noise encryption");
+        assert!(matches!(
+            over_limit,
+            TransportError::FrameTooLarge(size) if size == MAX_FRAME_LEN + 1
+        ));
+    }
+
     /// Postcard encodes an enum as a varint of its variant declaration index, so
     /// the on-wire index of every existing variant is part of the protocol. New
     /// variants may be appended ONLY at the tail of `EnclaveRequest` /
@@ -291,15 +326,13 @@ mod tests {
         let bytes = encode_request(&EnclaveRequest::GetPublicKeys).unwrap();
         assert_eq!(bytes, vec![6], "GetPublicKeys must stay wire variant 6");
 
-        // Consensus hot path: ProcessTributeOfferBatch is wire variant 22.
-        let bytes =
-            encode_request(&EnclaveRequest::ProcessTributeOfferBatch { offers: Vec::new() })
-                .unwrap();
-        assert_eq!(
-            bytes,
-            vec![22, 0],
-            "ProcessTributeOfferBatch must stay wire variant 22"
-        );
+        // Application-layer carrier: Payload is wire variant 35.
+        let bytes = encode_request(&EnclaveRequest::Payload {
+            lane: PayloadLane::Execution,
+            payload: Vec::new(),
+        })
+        .unwrap();
+        assert_eq!(bytes, vec![35, 0, 0], "Payload must stay wire variant 35");
     }
 
     #[test]
@@ -362,7 +395,7 @@ mod tests {
         };
         assert_eq!(
             encode_response(&resp).unwrap(),
-            [31, 7, 1, 128, 8, 128, 32, 10, 1, 2, 3, 5, 6, 4, 8, 9]
+            [24, 7, 1, 128, 8, 128, 32, 10, 1, 2, 3, 5, 6, 4, 8, 9]
         );
     }
 
@@ -370,18 +403,26 @@ mod tests {
     fn request_labels_are_unique_and_stable() {
         let labels = [
             EnclaveRequest::GetPublicKeys.label(),
-            EnclaveRequest::ProcessTributeOfferBatch { offers: Vec::new() }.label(),
+            EnclaveRequest::Payload {
+                lane: PayloadLane::Execution,
+                payload: Vec::new(),
+            }
+            .label(),
             EnclaveRequest::Health.label(),
         ];
         assert_eq!(labels[0], "get_public_keys");
-        assert_eq!(labels[1], "process_tribute_offer_batch");
+        assert_eq!(labels[1], "payload");
         assert_eq!(labels[2], "health");
     }
 
     #[test]
     fn idempotency_allowlist_is_pinned() {
         assert!(EnclaveRequest::GetPublicKeys.is_idempotent());
-        assert!(EnclaveRequest::ProcessTributeOfferBatch { offers: Vec::new() }.is_idempotent());
+        assert!(EnclaveRequest::Payload {
+            lane: PayloadLane::Execution,
+            payload: Vec::new(),
+        }
+        .is_idempotent());
         assert!(EnclaveRequest::Health.is_idempotent());
         assert!(!EnclaveRequest::OpenSession.is_idempotent());
         assert!(!EnclaveRequest::FinishDcapVerificationV1 {
