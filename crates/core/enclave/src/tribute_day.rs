@@ -3,13 +3,14 @@
 use std::collections::BTreeMap;
 
 use alloy_primitives::{B256, U256};
+use outbe_primitives::time::{EmissionDate, WorldwideDay};
 use outbe_primitives::tribute_day_encryption::{
-    EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1, EncryptedTributeLeagueAmountV1,
+    EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1,
 };
 use outbe_tee::tribute_day::{
-    day_operation_inputs_hash, league_operation_inputs_hash, lysis_fractions_inputs_hash,
-    LysisFractionsRequestV1, LysisFractionsResultV1, LysisSeriesLoadOutputV1, LysisTributeInputV1,
-    TributeDayOpRequestV2, TributeDayOperationV2, TributeLeagueOpRequestV1,
+    day_operation_inputs_hash, lysis_fractions_inputs_hash, LysisFractionsRequestV1,
+    LysisFractionsResultV1, LysisSeriesLoadOutputV1, LysisTributeInputV1, TributeDayOpRequestV2,
+    TributeDayOperationV2,
 };
 use ring::hmac;
 use zeroize::Zeroizing;
@@ -22,9 +23,6 @@ use crate::{
 
 const DAY_AMOUNT: SlotCipherDomain = SlotCipherDomain {
     nonce_info: b"outbe/tribute/day/nonce/v2",
-};
-const LEAGUE_AMOUNT: SlotCipherDomain = SlotCipherDomain {
-    nonce_info: b"outbe/tribute/league/nonce/v1",
 };
 const DAY_FRACTIONS: SlotCipherDomain = SlotCipherDomain {
     nonce_info: b"outbe/tribute/day-fractions/nonce/v1",
@@ -110,12 +108,6 @@ fn apply_amount(
             nominal_amount_minor,
             add,
         } => (*nominal_amount_minor, *add),
-        TributeDayOperationV2::Reset { expected_total } => {
-            if amount != *expected_total {
-                return Err(TributeDayRejectReason::DayRetirementAmountMismatch.into());
-            }
-            (*expected_total, false)
-        }
         TributeDayOperationV2::Freeze => return Ok(amount),
     };
     if add {
@@ -126,71 +118,15 @@ fn apply_amount(
     .ok_or_else(|| TributeDayRejectReason::DayNominalAmountOverflowOrUnderflow.into())
 }
 
-pub fn read_league_amount(
-    network_secret: &[u8; 32],
-    record: &EncryptedTributeLeagueAmountV1,
-) -> Result<U256> {
-    LEAGUE_AMOUNT
-        .slot(network_secret, record.crypto_slot(), 0)
-        .read_u256(record.version(), &record.encrypted_amount)
-}
-
-pub fn apply_league_operation(
-    network_secret: &[u8; 32],
-    tribute_state_key: &[u8; 32],
-    request: &TributeLeagueOpRequestV1,
-) -> Result<EncryptedTributeLeagueAmountV1> {
-    let (previous_version, amount) = match &request.previous {
-        None => (0, U256::ZERO),
-        Some(previous) => {
-            if previous.chain_id != request.chain_id
-                || previous.worldwide_day != request.worldwide_day
-                || previous.league != request.league
-            {
-                return Err(TributeDayRejectReason::InvalidLeaguePredecessor.into());
-            }
-            (
-                previous.version().ok_or(TeeError::DecryptFailed)?,
-                read_league_amount(network_secret, previous)?,
-            )
-        }
-    };
-    let day_req = TributeDayOpRequestV2 {
-        chain_id: request.chain_id,
-        worldwide_day: request.worldwide_day,
-        previous: None,
-        public_state_hash: request.public_state_hash,
-        operation: request.operation.clone(),
-    };
-    let next = apply_amount(tribute_state_key, &day_req, amount).map_err(|_| {
-        TeeError::from(TributeDayRejectReason::LeagueNominalAmountOverflowOrUnderflow)
-    })?;
-    let inputs_hash = league_operation_inputs_hash(request).map_err(|_| TeeError::EncryptFailed)?;
-    let mut record = EncryptedTributeLeagueAmountV1 {
-        chain_id: request.chain_id,
-        worldwide_day: request.worldwide_day,
-        league: request.league,
-        operation_hash: sign_operation_hash(
-            network_secret,
-            b"outbe/tribute/league-operation/v1",
-            inputs_hash,
-        ),
-        encrypted_amount: Vec::new(),
-    };
-    record.encrypted_amount = LEAGUE_AMOUNT
-        .slot(network_secret, record.crypto_slot(), 0)
-        .write_u256(previous_version, next)?;
-    Ok(record)
-}
-
 pub fn seal_day_fractions(
     network_secret: &[u8; 32],
-    (chain_id, emission_day, completed_at): (u64, u32, u64),
+    (chain_id, worldwide_day, emission_day, completed_at): (u64, WorldwideDay, EmissionDate, u64),
     inputs_hash: B256,
     fractions: &BTreeMap<u16, u64>,
 ) -> Result<EncryptedTributeDayFractionsV1> {
     let mut record = EncryptedTributeDayFractionsV1 {
         chain_id,
+        worldwide_day,
         emission_day,
         completed_at,
         operation_hash: sign_operation_hash(
@@ -252,7 +188,6 @@ type LysisEvaluation = (
     Option<U256>,
 );
 
-/// The priced Tributes of the day with their nominal, and their league groups.
 struct PricedTributes<'a> {
     tributes: Vec<(&'a LysisTributeInputV1, B256, U256)>,
     groups: LeagueGroupMap,
@@ -261,9 +196,20 @@ struct PricedTributes<'a> {
 }
 
 fn collect_priced_tributes<'a>(
+    network_secret: &[u8; 32],
     tribute_state_key: &[u8; 32],
     request: &'a LysisFractionsRequestV1,
 ) -> Result<PricedTributes<'a>> {
+    let day_nominal = &request.day_nominal;
+    if day_nominal.chain_id != request.chain_id
+        || day_nominal.worldwide_day != request.worldwide_day
+        || !day_nominal.frozen
+    {
+        return Err(TributeDayRejectReason::InvalidDayPredecessor.into());
+    }
+    let frozen_nominal = read_day_amount(network_secret, day_nominal)?;
+    let mut day_total = U256::ZERO;
+    let mut previous_id = None;
     let mut priced = PricedTributes {
         tributes: Vec::new(),
         groups: BTreeMap::new(),
@@ -277,10 +223,16 @@ fn collect_priced_tributes<'a>(
         {
             return Err(TributeDayRejectReason::TributeWrongDayOrChain.into());
         }
+        let tribute_id = input.tribute.context.tribute_id;
+        if previous_id.is_some_and(|previous| previous >= tribute_id) {
+            return Err(TributeDayRejectReason::LysisTributesDifferFromDayNominal.into());
+        }
+        previous_id = Some(tribute_id);
+        let nominal = decrypt_tribute(tribute_state_key, &input.tribute)?.nominal_amount_minor;
+        day_total = day_total.checked_add(nominal).ok_or_else(overflow)?;
         let Some(scope) = input.series_scope else {
             continue;
         };
-        let nominal = decrypt_tribute(tribute_state_key, &input.tribute)?.nominal_amount_minor;
         let group = priced
             .groups
             .entry(input.league.max(1))
@@ -290,6 +242,9 @@ fn collect_priced_tributes<'a>(
         priced.count = priced.count.checked_add(1).ok_or_else(overflow)?;
         priced.nominal = priced.nominal.checked_add(nominal).ok_or_else(overflow)?;
         priced.tributes.push((input, scope, nominal));
+    }
+    if day_total != frozen_nominal {
+        return Err(TributeDayRejectReason::LysisTributesDifferFromDayNominal.into());
     }
     Ok(priced)
 }
@@ -375,7 +330,7 @@ pub fn execute_lysis_fractions(
     nod_state_key: &[u8; 32],
     request: &LysisFractionsRequestV1,
 ) -> Result<LysisFractionsResultV1> {
-    let priced = collect_priced_tributes(tribute_state_key, request)?;
+    let priced = collect_priced_tributes(network_secret, tribute_state_key, request)?;
     let (gratis_demand_minor, lysis_limit_minor) =
         outbe_lysis::day_limit::lysis_limit_of_day(priced.nominal, request.metadosis_limit_minor)
             .ok_or(TributeDayRejectReason::LysisFractionComputationFailed)?;
@@ -397,7 +352,12 @@ pub fn execute_lysis_fractions(
     let inputs_hash = lysis_fractions_inputs_hash(request).map_err(|_| TeeError::EncryptFailed)?;
     let day_fractions = seal_day_fractions(
         network_secret,
-        (request.chain_id, request.emission_day, request.completed_at),
+        (
+            request.chain_id,
+            request.worldwide_day,
+            request.emission_day,
+            request.completed_at,
+        ),
         inputs_hash,
         &fractions,
     )?;

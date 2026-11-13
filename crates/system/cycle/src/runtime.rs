@@ -119,8 +119,8 @@ pub fn handle_cycle_tick_with_tasks(
 ///
 /// The typical case is a slow-running chain that produces blocks every few
 /// seconds. In that case the dispatcher is a near-noop on every block. It
-/// fires ProcessEmissionDay only on the first block whose timestamp crosses
-/// the next UTC-hour boundary.
+/// fires ProcessEmissionDay only on the first block at or past one second into
+/// the next UTC hour.
 pub fn run_due_tasks(ctx: &BlockRuntimeContext) -> Result<()> {
     run_due_tasks_with_specs(ctx, &active_tasks()?)
 }
@@ -189,7 +189,7 @@ fn run_due_tasks_inner(ctx: &BlockRuntimeContext, tasks: &[TaskSpec]) -> Result<
                     record_executed(ctx, spec, slot)?;
                     outcomes[index] = WalkOutcome::Executed;
                 }
-                Ok(Readiness::NotReady) => {}
+                Ok(Readiness::NotReady) => outcomes[index] = WalkOutcome::Pending,
                 Err(PrecompileError::TriggerBudgetExceeded {
                     consumed_gas,
                     budget_gas,

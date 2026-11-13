@@ -5,16 +5,15 @@
 //! fires at every slot `t` where `(t - offset) % period == 0`, on the
 //! first block whose timestamp is `>= t`. If `block.timestamp` jumps
 //! over multiple hourly slots, ProcessEmissionDay fires once for the most recent
-//! slot. It settles one oldest eligible completed day within the 64-day derived
-//! horizon. It never settles the current UTC day.
+//! slot. It allocates one oldest unallocated completed day within the 64-day derived
+//! horizon. It never allocates the current UTC day.
 //!
-//! [`tasks::TaskId::ProcessEmissionDay`] is aligned to UTC-hour boundaries
-//! (`period = 3_600`, `offset = 0` in production). Its handler derives the active
-//! UTC day from [`outbe_emission::schema::EmissionContract::emission_days`] and
-//! settles one eligible completed day per successful hourly slot.
-//! Then the handler invokes the existing Metadosis WWD flow exactly once.
+//! [`tasks::TaskId::ProcessEmissionDay`] fires one second into each UTC hour
+//! (`period = 3_600`, `offset = 1`). Its handler derives the active UTC day from
+//! [`outbe_emission::schema::EmissionContract::emission_days`], allocates it and runs its
+//! Metadosis. Until the votes of the day are sealed it answers not ready, and its dependents wait.
 //! A handler revert rolls its atomic work-budget scope back, records the slot, emits
-//! `CycleTaskFailed`, and the walk continues.
+//! `CycleTaskFailed`, and the walk continues. A revert of ProcessEmissionDay fails the block.
 //! Local work exhaustion rolls back the whole handler, emits `CycleTaskOverBudget`,
 //! and leaves both watermarks and due dependents pending for the next block.
 //! Capacity and dependency deferrals emit `CycleTaskDeferred` without attempting work.

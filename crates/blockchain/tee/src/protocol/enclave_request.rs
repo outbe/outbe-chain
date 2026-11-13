@@ -335,12 +335,6 @@ pub enum EnclaveRequest {
         #[serde(with = "canonical_onboarding_context")]
         context: GramineDirectDevOnboardingContextV1,
     },
-    ApplyTributeLeagueOpV1 {
-        request: Box<crate::tribute_day::TributeLeagueOpRequestV1>,
-    },
-    ReadTributeLeagueAmountV1 {
-        record: outbe_primitives::tribute_day_encryption::EncryptedTributeLeagueAmountV1,
-    },
     ExecuteLysisFractionsV1 {
         request: Box<crate::tribute_day::LysisFractionsRequestV1>,
     },
@@ -462,8 +456,6 @@ impl EnclaveRequest {
             Self::PrepareGramineDirectDevOnboardingArtifactV2 { .. } => {
                 "prepare_gramine_direct_dev_onboarding_artifact_v2"
             }
-            Self::ApplyTributeLeagueOpV1 { .. } => "apply_tribute_league_op_v1",
-            Self::ReadTributeLeagueAmountV1 { .. } => "read_tribute_league_amount_v1",
             Self::ExecuteLysisFractionsV1 { .. } => "execute_lysis_fractions_v1",
             Self::ReadTributeDayFractionsV1 { .. } => "read_tribute_day_fractions_v1",
             Self::IssueNodFromTributeV1 { .. } => "issue_nod_from_tribute_v1",
@@ -506,9 +498,7 @@ impl EnclaveRequest {
             | Self::Health
             | Self::PrepareGramineDirectDevOnboardingArtifactV1 { .. } => true,
             Self::PrepareGramineDirectDevOnboardingArtifactV2 { .. } => true,
-            Self::ApplyTributeLeagueOpV1 { .. }
-            | Self::ReadTributeLeagueAmountV1 { .. }
-            | Self::ExecuteLysisFractionsV1 { .. }
+            Self::ExecuteLysisFractionsV1 { .. }
             | Self::ReadTributeDayFractionsV1 { .. }
             | Self::IssueNodFromTributeV1 { .. }
             | Self::ApplyNodGroupLoadOpV1 { .. }
@@ -566,8 +556,6 @@ impl EnclaveRequest {
             | Self::ReadTributeAmountsV2 { .. }
             | Self::ApplyTributeDayOpV2 { .. }
             | Self::ReadTributeDayAmountV2 { .. }
-            | Self::ApplyTributeLeagueOpV1 { .. }
-            | Self::ReadTributeLeagueAmountV1 { .. }
             | Self::ExecuteLysisFractionsV1 { .. }
             | Self::ReadTributeDayFractionsV1 { .. } => Recorded,
             Self::BeginDcapVerificationV1 { .. }
@@ -614,30 +602,19 @@ impl EnclaveRequest {
 impl core::fmt::Debug for EnclaveRequest {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::ApplyTributeLeagueOpV1 { request } => f
-                .debug_struct("ApplyTributeLeagueOpV1")
-                .field("chain_id", &request.chain_id)
-                .field("worldwide_day", &request.worldwide_day)
-                .field("league", &request.league)
-                .field("operation", &"<redacted>")
-                .finish(),
-            Self::ReadTributeLeagueAmountV1 { record } => f
-                .debug_struct("ReadTributeLeagueAmountV1")
-                .field("chain_id", &record.chain_id)
-                .field("worldwide_day", &record.worldwide_day)
-                .field("league", &record.league)
-                .field("encrypted_amount", &"<redacted>")
-                .finish(),
             Self::ExecuteLysisFractionsV1 { request } => f
                 .debug_struct("ExecuteLysisFractionsV1")
                 .field("chain_id", &request.chain_id)
                 .field("worldwide_day", &request.worldwide_day)
+                .field("emission_day", &request.emission_day)
                 .field("completed_at", &request.completed_at)
+                .field("metadosis_limit_minor", &request.metadosis_limit_minor)
                 .field("tributes", &request.tributes.len())
                 .finish(),
             Self::ReadTributeDayFractionsV1 { record } => f
                 .debug_struct("ReadTributeDayFractionsV1")
                 .field("chain_id", &record.chain_id)
+                .field("worldwide_day", &record.worldwide_day)
                 .field("emission_day", &record.emission_day)
                 .field("completed_at", &record.completed_at)
                 .field("encrypted_fractions", &"<redacted>")

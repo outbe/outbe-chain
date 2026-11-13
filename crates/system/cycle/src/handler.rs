@@ -242,10 +242,7 @@ fn allocate_emission_limit_inner(ctx: &BlockRuntimeContext, prev_day: u32) -> Re
     )?;
 
     let g4 = gas(ctx);
-    tracing::debug!(target: "outbe::cycle::gas", step_gas = gas_sample_delta(g4, g3), cumulative = g4, "after day allocation record");
-
-    let g5 = gas(ctx);
-    tracing::debug!(target: "outbe::cycle::gas", step_gas = gas_sample_delta(g5, g4), cumulative = g5, total = gas_sample_delta(g5, g0), "completed");
+    tracing::debug!(target: "outbe::cycle::gas", step_gas = gas_sample_delta(g4, g3), cumulative = g4, total = gas_sample_delta(g4, g0), "after day allocation record");
 
     tracing::info!(
         target: "outbe::cycle",
@@ -256,7 +253,7 @@ fn allocate_emission_limit_inner(ctx: &BlockRuntimeContext, prev_day: u32) -> Re
         validator_topup = %validator_topup,
         pool_excess = %pool_excess,
         metadosis_total = %metadosis_total,
-        total_gas = gas_sample_delta(g5, g0),
+        total_gas = gas_sample_delta(g4, g0),
         "emission_limit_daily handler completed"
     );
 
@@ -354,7 +351,7 @@ impl EmissionShares {
 /// Processes the shared four-pool accrual budget and bounded owner cleanup.
 pub(crate) fn process_agent_rewards(ctx: &BlockRuntimeContext) -> Result<()> {
     outbe_agentreward::api::process_agent_rewards(ctx).map_err(|e| {
-        tracing::error!(target: "outbe::cycle", step = "process_agent_rewards", error = ?e, "process_emission_day step failed");
+        tracing::error!(target: "outbe::cycle", step = "process_agent_rewards", error = ?e, "agent reward step failed");
         e
     })
 }

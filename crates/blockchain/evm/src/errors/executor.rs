@@ -624,7 +624,7 @@ impl From<ExecutorValidationError> for BlockExecutionError {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum BurnedFeeSettlementError {
-    /// Deterministic validation failure during burned-fee settlement (e.g. `PromisLimitError::Overflow`).
+    /// Deterministic validation failure during burned-fee settlement.
     #[error("burned fee promis limit validation failed: {0}")]
     Validation(#[source] PrecompileError),
     /// Node-local storage or fatal precompile error during burned-fee settlement.

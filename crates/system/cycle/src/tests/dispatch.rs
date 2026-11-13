@@ -101,6 +101,15 @@ fn process_emission_day_keeps_midnight_slot_pending_until_late_reward_window_clo
         let ctx = runtime_context(block_ctx(11, GENESIS_TS + SECONDS_PER_DAY), handle);
         record_parent_with_late_voter(&ctx, hash, early, late);
     });
+    let advance_auctions = TaskId::AdvanceAuctions.as_u32();
+    let advance_slot = |handle: &outbe_primitives::storage::StorageHandle<'_>| {
+        handle
+            .contract::<Cycle<'_>>()
+            .last_executed_at
+            .read(&advance_auctions)
+            .unwrap()
+    };
+    let advance_before = storage.enter(|handle| advance_slot(&handle));
     for height in 11..=13 {
         storage.set_block_number(height);
         storage.enter(|handle| {
@@ -117,6 +126,7 @@ fn process_emission_day_keeps_midnight_slot_pending_until_late_reward_window_clo
                 GENESIS_TS + 60
             );
             assert!(!is_day_allocated(&ctx, 20240101));
+            assert_eq!(advance_slot(&ctx.storage), advance_before);
             if height == 13 {
                 // Real phase order: Cycle first, then final-slot credit and GC.
                 outbe_rewards::block_fees::record_late_vote(&ctx, hash, late, 3).unwrap();
@@ -138,6 +148,13 @@ fn process_emission_day_keeps_midnight_slot_pending_until_late_reward_window_clo
             cycle
                 .last_executed_block_number
                 .read(&EMISSION_LIMIT_1_ID)
+                .unwrap(),
+            14
+        );
+        assert_eq!(
+            cycle
+                .last_executed_block_number
+                .read(&advance_auctions)
                 .unwrap(),
             14
         );

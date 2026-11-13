@@ -5,6 +5,7 @@
 use alloy_primitives::{B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::{GEM_ADDRESS, PROMIS_LIMIT_ADDRESS};
+use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
@@ -271,73 +272,22 @@ fn a_group_that_outlives_its_day_is_retired_rather_than_left_in_front() {
     });
 }
 
-/// A gem whose forfeit fails remains in its group. The group moves to the next day,
-/// when the gem burns with its credit.
+/// A forfeit credit that overflows the Promis Limit fails the block.
 #[test]
-fn a_group_whose_member_fails_to_burn_is_deferred_and_burned_later() {
-    let mut provider = provider_at(T_NOW);
-    let (gem_id, load, retry) = StorageHandle::enter(&mut provider, |storage| {
-        let gem_id = mature_gem(&storage);
-        let load = item(&storage, gem_id).unwrap().promis_load_minor;
-        call_gem(&storage, gem_id, T_NOW);
-        let day = GemContract::deadline_day(T_NOW + 7 * SECONDS_PER_DAY);
-        // The credit overflows, so the forfeit reverts as a whole.
-        let mut limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
-        limit.checked_take_up_to(U256::MAX).unwrap();
-        limit.checked_credit(U256::MAX).unwrap();
-
-        let now = GemContract::day_end(day);
-        begin_block_at(&storage, now);
-
-        let retry = GemContract::deadline_day(now);
-        assert_eq!(gem_state(&storage, gem_id), GemState::Called as u8);
-        assert_eq!(
-            GemContract::new(storage.clone())
-                .first_expiry_day()
-                .unwrap(),
-            Some(retry)
-        );
-        (gem_id, load, retry)
-    });
-
-    StorageHandle::enter(&mut provider, |storage| {
-        outbe_promislimit::PromisLimitContract::new(storage.clone())
-            .checked_take_up_to(U256::MAX)
-            .unwrap();
-        begin_block_at(&storage, GemContract::day_end(retry));
-
-        assert!(item(&storage, gem_id).is_none());
-        assert_eq!(unallocated(&storage), load);
-    });
-}
-
-/// A group whose credit fails is deferred whole: none of its gems is credited or
-/// deleted until the credit fits, and then all of them at once.
-#[test]
-fn a_group_whose_credit_fails_is_deferred_whole() {
+fn a_forfeit_credit_that_overflows_the_promis_limit_fails_the_block() {
     with_storage(|storage| {
         let gems = gems_with_loads(storage, &[1, 1_000]);
         call_gem(storage, gems[0], T_NOW);
         let now = first_due_block(storage, gems[0]);
-        // Room for the small load's credit only, not the group's.
         let mut limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
         limit.checked_take_up_to(U256::MAX).unwrap();
-        limit
-            .checked_credit(U256::MAX - U256::from(500u64))
-            .unwrap();
+        limit.checked_credit(U256::MAX).unwrap();
 
-        begin_block_at(storage, now);
-        for gem_id in &gems {
-            assert_eq!(gem_state(storage, *gem_id), GemState::Called as u8);
-        }
-
-        limit.checked_take_up_to(U256::MAX).unwrap();
-        begin_block_at(
-            storage,
-            GemContract::day_end(GemContract::deadline_day(now)),
+        let failed = continue_sweeps(&block_ctx_at(storage, now)).unwrap_err();
+        assert!(
+            matches!(failed, PrecompileError::FatalWithCause(_)),
+            "{failed:?}"
         );
-        assert!(gems.iter().all(|gem_id| item(storage, *gem_id).is_none()));
-        assert_eq!(unallocated(storage), U256::from(1_001u64));
     });
 }
 

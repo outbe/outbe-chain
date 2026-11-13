@@ -3,16 +3,12 @@
 use alloy_primitives::{keccak256, B256, U256};
 use outbe_primitives::{
     error::Result,
-    time::WorldwideDay,
-    tribute_day_encryption::{
-        EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1, EncryptedTributeLeagueAmountV1,
-    },
+    time::{EmissionDate, WorldwideDay},
+    tribute_day_encryption::{EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1},
 };
-use outbe_tee::tribute_day::{
-    TributeDayOpRequestV2, TributeDayOperationV2, TributeLeagueOpRequestV1,
-};
+use outbe_tee::tribute_day::{TributeDayOpRequestV2, TributeDayOperationV2};
 
-use crate::{day_schema::StoredDayTotals, schema::day_league_key, DayTotals, TributeContract};
+use crate::{day_schema::StoredDayTotals, DayTotals, TributeContract};
 
 impl TributeContract<'_> {
     pub fn freeze_day_nominal(&self, totals: &DayTotals) -> Result<()> {
@@ -140,70 +136,13 @@ impl TributeContract<'_> {
         }
     }
 
-    pub fn encrypted_league_nominal(&self, day: WorldwideDay, league: u16) -> Result<Vec<u8>> {
-        self.fi_group_nominal_ct
-            .bytes(&day_league_key(day, league))
-            .read()
-    }
-
-    pub(crate) fn league_amount_record(
-        &self,
-        day: WorldwideDay,
-        league: u16,
-    ) -> Result<Option<EncryptedTributeLeagueAmountV1>> {
-        let bytes = self.encrypted_league_nominal(day, league)?;
-        self.decode_validated_record(
-            &bytes,
-            |record: &EncryptedTributeLeagueAmountV1, chain_id| {
-                record.worldwide_day == day
-                    && record.league == league
-                    && record.chain_id == chain_id
-                    && record.version().is_some()
-            },
-        )
-    }
-
-    pub(crate) fn league_nominal_amount(&self, day: WorldwideDay, league: u16) -> Result<U256> {
-        match self.league_amount_record(day, league)? {
-            None => Ok(U256::ZERO),
-            Some(record) => crate::enclave_client::read_league_amount(&record)
-                .map_err(|err| crate::errors::TributeError::DayEnclave(err).into()),
-        }
-    }
-
-    pub(crate) fn apply_league_amount(
-        &self,
-        day: WorldwideDay,
-        league: u16,
-        operation: TributeDayOperationV2,
-        public_state_hash: B256,
-    ) -> Result<()> {
-        let request = TributeLeagueOpRequestV1 {
-            chain_id: self.storage_handle().chain_id()?,
-            worldwide_day: day,
-            league,
-            previous: self.league_amount_record(day, league)?,
-            operation,
-            public_state_hash,
-        };
-        let record = crate::enclave_client::apply_league_operation(request)
-            .map_err(crate::errors::TributeError::DayEnclave)?;
-        if record.worldwide_day != day || record.league != league {
-            return Err(crate::errors::TributeError::DayResponseScopeMismatch.into());
-        }
-        let bytes = postcard::to_allocvec(&record).map_err(crate::errors::TributeError::from)?;
-        self.fi_group_nominal_ct
-            .bytes(&day_league_key(day, league))
-            .write(&bytes)
-    }
-
-    pub fn encrypted_day_fractions(&self, emission_day: u32) -> Result<Vec<u8>> {
+    pub fn encrypted_day_fractions(&self, emission_day: EmissionDate) -> Result<Vec<u8>> {
         self.day_fraction_map_ct.bytes(&emission_day).read()
     }
 
     pub(crate) fn day_fractions_record(
         &self,
-        emission_day: u32,
+        emission_day: EmissionDate,
     ) -> Result<Option<EncryptedTributeDayFractionsV1>> {
         let bytes = self.encrypted_day_fractions(emission_day)?;
         self.decode_validated_record(
@@ -218,7 +157,7 @@ impl TributeContract<'_> {
 
     pub(crate) fn store_day_fractions_record(
         &self,
-        emission_day: u32,
+        emission_day: EmissionDate,
         record: &EncryptedTributeDayFractionsV1,
     ) -> Result<()> {
         if record.emission_day != emission_day
@@ -230,9 +169,11 @@ impl TributeContract<'_> {
         self.day_fraction_map_ct.bytes(&emission_day).write(&bytes)
     }
 
-    /// The emission day whose Lysis covers the Tributes of `day`, once it is known.
-    pub(crate) fn lysis_emission_day(&self, day: WorldwideDay) -> Result<Option<u32>> {
-        Ok(Some(self.day_emission_day.read(&day)?).filter(|&emission_day| emission_day != 0))
+    pub(crate) fn lysis_emission_day(&self, day: WorldwideDay) -> Result<Option<EmissionDate>> {
+        Ok(
+            Some(self.day_emission_day.read(&day)?)
+                .filter(|emission_day| emission_day.value() != 0),
+        )
     }
 
     /// When the Lysis of the Tributes of `day` completed, or 0 before it did.

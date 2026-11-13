@@ -50,6 +50,7 @@ fn day_mutators_reject_a_missing_lease_without_writes() {
         assert_eq!(
             tc.compute_and_record_metadosis_fractions(
                 day,
+                outbe_primitives::time::EmissionDate::new(day.value()),
                 &Default::default(),
                 U256::from(1u64),
                 1

@@ -17,12 +17,6 @@ pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> Encl
         EnclaveRequest::ReadTributeDayAmountV2 { record } => {
             super::tribute_day::read(keys, offer_key, chain_id, &record)
         }
-        EnclaveRequest::ApplyTributeLeagueOpV1 { request } => {
-            super::tribute_day::apply_league(keys, offer_key, chain_id, &request)
-        }
-        EnclaveRequest::ReadTributeLeagueAmountV1 { record } => {
-            super::tribute_day::read_league(keys, offer_key, chain_id, &record)
-        }
         EnclaveRequest::ExecuteLysisFractionsV1 { request } => {
             super::tribute_day::execute_lysis_fractions(keys, offer_key, chain_id, &request)
         }

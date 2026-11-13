@@ -158,8 +158,21 @@ fn completed_event(provider: &HashMapStorageProvider) -> IMetadosis::MetadosisCo
 fn unpriced_tributes_stay_out_of_the_lysis_and_forfeit() {
     let priced = [(NOMINAL + 1, 840), (NOMINAL + 2, 840)];
     let mut priced_only = fixture_with_tributes(LIMIT, &priced);
-    let mut with_unpriced =
-        fixture_with_tributes(LIMIT, &[priced[0], priced[1], (NOMINAL + 3, 978)]);
+    let mut with_unpriced = fixture_with_tributes(
+        LIMIT,
+        &[priced[0], priced[1], (NOMINAL + 3, 978), (NOMINAL + 4, 826)],
+    );
+    // 826 has a VWAP for the emission day but none for the day before.
+    StorageHandle::enter(&mut with_unpriced, |storage| {
+        let index = outbe_oracle::api::register_pair(
+            storage.clone(),
+            outbe_oracle::api::AddressPair::new_coen_to(826),
+        )
+        .unwrap();
+        outbe_oracle::schema::OracleContract::new(storage)
+            .record_utc_day_vwap(DAY, index, U256::from(100u64))
+            .unwrap();
+    });
     run(&mut priced_only).unwrap();
     run(&mut with_unpriced).unwrap();
 
@@ -186,11 +199,15 @@ fn unpriced_tributes_stay_out_of_the_lysis_and_forfeit() {
     );
 
     StorageHandle::enter(&mut with_unpriced, |storage| {
-        let unpriced = outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(
-            Address::repeat_byte(3),
-            WWD,
-        );
-        TributeContract::new(storage).clean(unpriced).unwrap();
+        for owner in [3, 4] {
+            let unpriced = outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(
+                Address::repeat_byte(owner),
+                WWD,
+            );
+            TributeContract::new(storage.clone())
+                .clean(unpriced)
+                .unwrap();
+        }
     });
 }
 

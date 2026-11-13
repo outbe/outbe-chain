@@ -307,9 +307,9 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
         .filter_map(|log| IDesis::DesisLimitSet::decode_log(log).ok())
         .all(|ev| ev.data.emissionDay != 20_240_101));
 
-    // Now test Step 3 (`start_metadosis`) recoverable revert fallback (`MetadosisFailed(E, 1)`):
+    // Now test Step 3 (`process_emission_day`) recoverable revert fallback (`MetadosisFailed(E, 1)`):
     // Clear the WAA pending total so day 20240102 allocates cleanly, and pre-set Desis stage
-    // for 20240102 so `start_metadosis` reverts with `InvalidStageTransition`.
+    // for 20240102 so `process_emission_day` reverts with `InvalidStageTransition`.
     storage.set_block_number(3);
     storage.enter(|handle| {
         let ar = outbe_agentreward::AgentRewardContract::new(handle.clone());

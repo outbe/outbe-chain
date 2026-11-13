@@ -11,7 +11,6 @@ use crate::{
     schema::{EmissionDay, MetadosisContract},
 };
 
-/// The Lysis of one day, in protocol minor units.
 #[derive(Clone, Copy, Debug, Default)]
 struct LysisTotals {
     /// Nominal of the priced Tributes.
@@ -99,6 +98,7 @@ fn seal_lysis(ctx: &BlockRuntimeContext<'_>, emission_day: &EmissionDay) -> Resu
     let priced = priced_currencies(ctx, emission_day.day)?;
     let outcome = tribute.compute_and_record_metadosis_fractions(
         wwd,
+        outbe_primitives::time::EmissionDate::new(emission_day.day),
         &priced,
         emission_day.metadosis_limit_minor(),
         ctx.block.timestamp,
