@@ -9,7 +9,6 @@ fn sealed_emission_day(contract: &TributeContract<'_>, day: WorldwideDay) -> Res
 /// Reference currencies priced for the emission day, with their entry price.
 pub type PricedCurrencies = std::collections::BTreeMap<u16, U256>;
 
-/// What the Lysis seal of a day gives back, in protocol minor units.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LysisOutcome {
     /// Nominal of the priced Tributes.

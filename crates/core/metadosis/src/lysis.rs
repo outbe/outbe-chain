@@ -11,7 +11,6 @@ use crate::{
     schema::{EmissionDay, MetadosisContract},
 };
 
-/// The Lysis of one day, in protocol minor units.
 #[derive(Clone, Copy, Debug, Default)]
 struct LysisTotals {
     /// Nominal of the priced Tributes.

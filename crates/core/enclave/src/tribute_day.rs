@@ -188,7 +188,6 @@ type LysisEvaluation = (
     Option<U256>,
 );
 
-/// The priced Tributes of the day with their nominal, and their league groups.
 struct PricedTributes<'a> {
     tributes: Vec<(&'a LysisTributeInputV1, B256, U256)>,
     groups: LeagueGroupMap,
