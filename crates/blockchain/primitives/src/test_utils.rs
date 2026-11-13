@@ -185,8 +185,8 @@ pub fn sample_system_tx_tee_bootstrap() -> crate::tee_bootstrap_v2::TeeBootstrap
             key_epoch: 1,
             tribute_offer_epoch: 1,
             dkg_transcript_hash: B256::repeat_byte(0xB3),
-            tribute_offer_public_key: B256::repeat_byte(0xB4),
-            tribute_offer_group_public_key: Bytes::from(vec![0xB5; 96]),
+            network_encryption_public_key: B256::repeat_byte(0xB4),
+            network_encryption_group_public_key: Bytes::from(vec![0xB5; 96]),
         },
         collateral_pool: (1_u8..=8)
             .map(|kind| DcapCollateralComponentV1 {

@@ -54,7 +54,7 @@ pub(super) async fn ingest_onboarding_offer_key(
         enclave_id: ctx.enclave_id,
         intent_hash: ctx.intent_hash,
         recipient_x25519: ctx.recipient_x25519,
-        tribute_offer_public: ctx.expected_offer_pub,
+        network_encryption_public_key: ctx.expected_offer_pub,
         key_epoch: ctx.key_epoch,
         tribute_offer_epoch: ctx.tribute_offer_epoch,
     };

@@ -9,8 +9,19 @@ use crate::renewal::RenewEnclaveHook;
 use crate::{hyperlane, oracle};
 
 pub use outbe_primitives::zero_fee_types::{
-    ZeroFeeAuthorization, ZeroFeeCandidate, ZeroFeeHookId, ZeroFeePolicyError, ZeroFeeTransaction,
+    ZeroFeeAuthorization, ZeroFeeCandidate, ZeroFeeHookTag, ZeroFeePolicyError, ZeroFeeTransaction,
 };
+
+/// `Oracle.submitVote(ExchangeRateTuple[],GasTuple[])` zero-fee hook tag.
+pub const ORACLE_SUBMIT_VOTE_HOOK: ZeroFeeHookTag =
+    ZeroFeeHookTag::new(0, "OracleSubmitVote", Some(1));
+
+/// `HyperlaneController.submitCheckpoint(uint32,bytes32,uint32,bytes32,bytes)` zero-fee hook tag.
+pub const HYPERLANE_SUBMIT_CHECKPOINT_HOOK: ZeroFeeHookTag =
+    ZeroFeeHookTag::new(1, "HyperlaneSubmitCheckpoint", Some(1));
+
+/// Own-lease `TeeRegistry.renewEnclave` zero-fee hook tag.
+pub const RENEW_ENCLAVE_HOOK: ZeroFeeHookTag = ZeroFeeHookTag::new(2, "RenewEnclave", Some(1));
 
 #[cfg(test)]
 mod failure_code_tests {
@@ -19,7 +30,7 @@ mod failure_code_tests {
 
     fn all_variants() -> Vec<ZeroFeePolicyError> {
         vec![
-            ZeroFeePolicyError::UnknownHook(ZeroFeeHookId::OracleSubmitVote),
+            ZeroFeePolicyError::UnknownHook(ORACLE_SUBMIT_VOTE_HOOK),
             ZeroFeePolicyError::NonZeroValue,
             ZeroFeePolicyError::CalldataTooLarge { size: 0, limit: 0 },
             ZeroFeePolicyError::GasLimitTooHigh {
@@ -32,7 +43,7 @@ mod failure_code_tests {
             },
             ZeroFeePolicyError::MalformedCalldata(""),
             ZeroFeePolicyError::UnauthorizedSigner,
-            ZeroFeePolicyError::AlreadyVoted,
+            ZeroFeePolicyError::HookConflict(""),
             ZeroFeePolicyError::from(outbe_primitives::error::PrecompileError::Storage(
                 String::new(),
             )),
@@ -99,7 +110,7 @@ mod failure_code_tests {
 /// A deterministic hook that can waive native fee debit for a transaction class.
 pub trait ZeroFeeHook: Sync {
     /// Stable hook identifier.
-    fn id(&self) -> ZeroFeeHookId;
+    fn id(&self) -> ZeroFeeHookTag;
 
     /// Matches the stateless transaction envelope.
     ///
@@ -166,28 +177,29 @@ impl ZeroFeeRegistry {
 
 /// `Oracle.submitVote`: an active validator or its oracle delegate that has
 /// not voted in this period.
-static ORACLE_SUBMIT_VOTE_HOOK: ValidatorCallHook<IOracle::submitVoteCall> = ValidatorCallHook::new(
-    ZeroFeeHookId::OracleSubmitVote,
-    oracle::VOTE_ENVELOPE,
-    oracle::validate_oracle_submit_vote_state,
-);
+static ORACLE_SUBMIT_VOTE_VALIDATOR_HOOK: ValidatorCallHook<IOracle::submitVoteCall> =
+    ValidatorCallHook::new(
+        ORACLE_SUBMIT_VOTE_HOOK,
+        oracle::VOTE_ENVELOPE,
+        oracle::validate_oracle_submit_vote_state,
+    );
 
 /// `HyperlaneController.submitCheckpoint`: an active validator or its Hyperlane
 /// delegate.
-static HYPERLANE_SUBMIT_CHECKPOINT_HOOK: ValidatorCallHook<
+static HYPERLANE_SUBMIT_CHECKPOINT_VALIDATOR_HOOK: ValidatorCallHook<
     IHyperlaneController::submitCheckpointCall,
 > = ValidatorCallHook::new(
-    ZeroFeeHookId::HyperlaneSubmitCheckpoint,
+    HYPERLANE_SUBMIT_CHECKPOINT_HOOK,
     hyperlane::CHECKPOINT_ENVELOPE,
     |storage, signer| active_validator_for_role(storage, signer, ValidatorDelegateRole::Hyperlane),
 );
 
-static RENEW_ENCLAVE_HOOK: RenewEnclaveHook = RenewEnclaveHook;
+static RENEW_ENCLAVE_HOOK_IMPL: RenewEnclaveHook = RenewEnclaveHook;
 
 static ZERO_FEE_HOOKS: &[&dyn ZeroFeeHook] = &[
-    &ORACLE_SUBMIT_VOTE_HOOK,
-    &HYPERLANE_SUBMIT_CHECKPOINT_HOOK,
-    &RENEW_ENCLAVE_HOOK,
+    &ORACLE_SUBMIT_VOTE_VALIDATOR_HOOK,
+    &HYPERLANE_SUBMIT_CHECKPOINT_VALIDATOR_HOOK,
+    &RENEW_ENCLAVE_HOOK_IMPL,
 ];
 
 /// Returns the Outbe system zero-fee hook registry.

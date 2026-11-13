@@ -195,8 +195,8 @@ pub(in crate::transport) fn dispatch_with_label(
         | EnclaveRequest::DkgDealerReceiveAck { .. }
         | EnclaveRequest::DkgDealerFinalize { .. }
         | EnclaveRequest::DkgPlayerFinalize { .. }
-        | EnclaveRequest::DkgTributeOfferPartial { .. }
-        | EnclaveRequest::DkgFinalizeTributeOffer { .. }) => {
+        | EnclaveRequest::DkgNetworkKeyPartial { .. }
+        | EnclaveRequest::DkgFinalizeNetworkKey { .. }) => {
             (super::dkg_requests::dispatch(req, resident, dkg), None)
         }
     }

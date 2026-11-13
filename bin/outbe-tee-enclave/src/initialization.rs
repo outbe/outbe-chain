@@ -517,8 +517,8 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         | EnclaveRequest::DkgDealerReceiveAck { .. }
         | EnclaveRequest::DkgDealerFinalize { .. }
         | EnclaveRequest::DkgPlayerFinalize { .. }
-        | EnclaveRequest::DkgTributeOfferPartial { .. }
-        | EnclaveRequest::DkgFinalizeTributeOffer { .. } => CommandClass::FoundingKeyless,
+        | EnclaveRequest::DkgNetworkKeyPartial { .. }
+        | EnclaveRequest::DkgFinalizeNetworkKey { .. } => CommandClass::FoundingKeyless,
         EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 { .. }
         | EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 { .. } => {
             CommandClass::KeylessOnboardingArtifact
@@ -1326,11 +1326,11 @@ mod tests {
 
     #[test]
     fn founding_offer_finalization_is_keyless_only() {
-        let request = EnclaveRequest::DkgFinalizeTributeOffer {
+        let request = EnclaveRequest::DkgFinalizeNetworkKey {
             ceremony_id: B256::repeat_byte(0x91),
             sealed_partials: Vec::new(),
             chain_id: B256::repeat_byte(0x92),
-            tribute_offer_epoch: 0,
+            network_key_epoch: 0,
         };
         let class = command_class(&request);
         assert_eq!(class, CommandClass::FoundingKeyless);

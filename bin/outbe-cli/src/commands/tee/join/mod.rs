@@ -135,7 +135,7 @@ pub(super) async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> R
 
     let (validator_binding, validator_signature, node_binding_signature) =
         encode_signed_validator_binding(&policy, node_id_hash, &evm_signer, &node_signing_key)?;
-    let expected_offer_pub: [u8; 32] = finalized.tribute_offer_public.into();
+    let expected_offer_pub: [u8; 32] = finalized.network_encryption_public_key.into();
     let key_epoch = call_u256(client, ITeeRegistry::keyEpochCall {}.abi_encode())
         .await?
         .to::<u64>();

@@ -46,14 +46,15 @@ pub(crate) enum TeeIdentityError {
     #[error("connect enclave at {socket}: {source}")]
     ConnectEnclave {
         socket: String,
-        source: outbe_tee::TransportError,
+        #[source]
+        source: Box<outbe_tee::TransportError>,
     },
     /// The enclave returned an unexpected response to `GetPublicKeys`.
     #[error("expected enclave PublicKeys, got {0}")]
     UnexpectedPublicKeysResponse(String),
     /// The `GetPublicKeys` enclave request failed.
     #[error("enclave GetPublicKeys failed: {0}")]
-    GetPublicKeysFailed(outbe_tee::TransportError),
+    GetPublicKeysFailed(#[source] Box<outbe_tee::TransportError>),
     /// The permanent offer key in the enclave is not ready yet.
     #[error("enclave permanent offer key is not ready; onboarding recipient cannot be compared with chain state")]
     PermanentOfferKeyNotReady,

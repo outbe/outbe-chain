@@ -200,7 +200,7 @@ fn try_complete_exact_replay(
             recipient_x25519_pub,
             ..
         } if recipient_x25519_pub
-            == <B256 as Into<[u8; 32]>>::into(input.finalized.tribute_offer_public) =>
+            == <B256 as Into<[u8; 32]>>::into(input.finalized.network_encryption_public_key) =>
         {
             persist_authorized_join_admission_anchor_v1(
                 node_data_dir,

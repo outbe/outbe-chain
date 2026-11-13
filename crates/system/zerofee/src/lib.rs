@@ -80,8 +80,9 @@ pub use constants::{
     MIN_FREE_TX_MAX_FEE_PER_GAS, SPONSORED_GAS_PER_BLOCK,
 };
 pub use hooks::{
-    registry, ZeroFeeAuthorization, ZeroFeeCandidate, ZeroFeeHook, ZeroFeeHookId,
-    ZeroFeePolicyError, ZeroFeeRegistry, ZeroFeeTransaction,
+    registry, ZeroFeeAuthorization, ZeroFeeCandidate, ZeroFeeHook, ZeroFeeHookTag,
+    ZeroFeePolicyError, ZeroFeeRegistry, ZeroFeeTransaction, HYPERLANE_SUBMIT_CHECKPOINT_HOOK,
+    ORACLE_SUBMIT_VOTE_HOOK, RENEW_ENCLAVE_HOOK,
 };
 pub use outbe_primitives::addresses::ZEROFEE_ADDRESS;
 pub use runtime::{

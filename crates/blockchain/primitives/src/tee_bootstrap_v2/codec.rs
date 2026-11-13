@@ -24,10 +24,13 @@ pub(super) fn encode_body(payload: &TeeBootstrapV2) -> Result<Vec<u8>, CodecErro
     put_u64(&mut out, payload.authority.key_epoch);
     put_u64(&mut out, payload.authority.tribute_offer_epoch);
     out.extend_from_slice(payload.authority.dkg_transcript_hash.as_slice());
-    out.extend_from_slice(payload.authority.tribute_offer_public_key.as_slice());
+    out.extend_from_slice(payload.authority.network_encryption_public_key.as_slice());
     put_bytes_u32(
         &mut out,
-        payload.authority.tribute_offer_group_public_key.as_ref(),
+        payload
+            .authority
+            .network_encryption_group_public_key
+            .as_ref(),
     )?;
 
     put_len_u16(&mut out, payload.collateral_pool.len())?;
@@ -98,8 +101,8 @@ pub fn decode_canonical(input: &[u8]) -> Result<TeeBootstrapV2, CodecError> {
     let key_epoch = decoder.u64()?;
     let tribute_offer_epoch = decoder.u64()?;
     let dkg_transcript_hash = B256::from(decoder.array::<32>()?);
-    let tribute_offer_public_key = B256::from(decoder.array::<32>()?);
-    let tribute_offer_group_public_key = Bytes::copy_from_slice(
+    let network_encryption_public_key = B256::from(decoder.array::<32>()?);
+    let network_encryption_group_public_key = Bytes::copy_from_slice(
         decoder.bounded_bytes("TEE bootstrap group public key", MAX_GROUP_PUBLIC_KEY_BYTES)?,
     );
 
@@ -116,8 +119,8 @@ pub fn decode_canonical(input: &[u8]) -> Result<TeeBootstrapV2, CodecError> {
             key_epoch,
             tribute_offer_epoch,
             dkg_transcript_hash,
-            tribute_offer_public_key,
-            tribute_offer_group_public_key,
+            network_encryption_public_key,
+            network_encryption_group_public_key,
         },
         collateral_pool,
         participants,

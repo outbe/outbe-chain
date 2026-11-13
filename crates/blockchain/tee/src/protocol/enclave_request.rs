@@ -91,14 +91,14 @@ pub enum EnclaveRequest {
         ceremony_id: B256,
         signed_logs: Vec<Vec<u8>>,
     },
-    /// Seam F (offer key): threshold-sign the fixed offer message and seal partials to recipients.
-    DkgTributeOfferPartial { ceremony_id: B256 },
+    /// Seam F (network encryption key): threshold-sign the fixed network-key message and seal partials to recipients.
+    DkgNetworkKeyPartial { ceremony_id: B256 },
     /// Founding Seam F: finalize the initial group threshold signature and install the permanent keypair.
-    DkgFinalizeTributeOffer {
+    DkgFinalizeNetworkKey {
         ceremony_id: B256,
         sealed_partials: Vec<Vec<u8>>,
         chain_id: B256,
-        tribute_offer_epoch: u64,
+        network_key_epoch: u64,
     },
     /// Start one streaming finalized-admission verification rooted in the measured genesis committee.
     BeginDcapOnboardingArtifactIngestV1 {
@@ -227,8 +227,9 @@ impl EnclaveRequest {
             Self::DkgDealerReceiveAck { .. } => "dkg_dealer_receive_ack",
             Self::DkgDealerFinalize { .. } => "dkg_dealer_finalize",
             Self::DkgPlayerFinalize { .. } => "dkg_player_finalize",
-            Self::DkgTributeOfferPartial { .. } => "dkg_tribute_offer_partial",
-            Self::DkgFinalizeTributeOffer { .. } => "dkg_finalize_tribute_offer",
+            // Preserve stable Prometheus/log request labels across Rust variant renames.
+            Self::DkgNetworkKeyPartial { .. } => "dkg_tribute_offer_partial",
+            Self::DkgFinalizeNetworkKey { .. } => "dkg_finalize_tribute_offer",
             Self::BeginDcapOnboardingArtifactIngestV1 { .. } => {
                 "begin_dcap_onboarding_artifact_ingest_v1"
             }
@@ -292,8 +293,8 @@ impl EnclaveRequest {
             | Self::DkgDealerReceiveAck { .. }
             | Self::DkgDealerFinalize { .. }
             | Self::DkgPlayerFinalize { .. }
-            | Self::DkgTributeOfferPartial { .. }
-            | Self::DkgFinalizeTributeOffer { .. }
+            | Self::DkgNetworkKeyPartial { .. }
+            | Self::DkgFinalizeNetworkKey { .. }
             | Self::BeginDcapOnboardingArtifactIngestV1 { .. }
             | Self::DcapOnboardingArtifactChunkV1 { .. }
             | Self::CommitDcapOnboardingArtifactRecordV1 { .. }
@@ -329,8 +330,8 @@ impl EnclaveRequest {
             | Self::DkgDealerReceiveAck { .. }
             | Self::DkgDealerFinalize { .. }
             | Self::DkgPlayerFinalize { .. }
-            | Self::DkgTributeOfferPartial { .. }
-            | Self::DkgFinalizeTributeOffer { .. }
+            | Self::DkgNetworkKeyPartial { .. }
+            | Self::DkgFinalizeNetworkKey { .. }
             | Self::BeginDcapOnboardingArtifactIngestV1 { .. }
             | Self::DcapOnboardingArtifactChunkV1 { .. }
             | Self::CommitDcapOnboardingArtifactRecordV1 { .. }

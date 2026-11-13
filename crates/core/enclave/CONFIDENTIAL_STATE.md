@@ -83,7 +83,7 @@ Neither the note nor a source-bearing ciphertext is used as an issuance storage
 key. `balanceOf` and `pledgedOf` return 112-byte root-bound encrypted views for
 all accounts, including absent/zero accounts. Every view changes with the global
 Gratis root, preventing account discovery by comparing ciphertext updates.
-Rust helpers live in `outbe_tee::confidential`; MCP helpers live in `crypto.ts`.
+Rust helpers live in `outbe_enclave::confidential`; MCP helpers live in `crypto.ts`.
 
 The source is hidden during collateral execution, private storage access and
 balance queries. Public economic activity can still support correlation;

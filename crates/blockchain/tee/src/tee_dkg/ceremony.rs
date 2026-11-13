@@ -14,11 +14,11 @@ use super::{
 pub struct FoundingCeremonyParameters {
     pub participant_count: usize,
     pub chain_id: B256,
-    pub tribute_offer_epoch: u64,
+    pub network_key_epoch: u64,
 }
 
 /// Drive the founding ceremony and keep every secret operation in the enclave.
-/// All participants must supply acknowledgements, dealer logs and offer partials.
+/// All participants must supply acknowledgements, dealer logs and network-key partials.
 /// A cryptographic recovery quorum does not replace this founding policy.
 pub async fn run_tee_dkg_ceremony<C: EnclaveChannel, G: DkgGossip>(
     coord: &CeremonyCoordinator,
@@ -29,13 +29,13 @@ pub async fn run_tee_dkg_ceremony<C: EnclaveChannel, G: DkgGossip>(
     coord.open(enclave)?;
     let acknowledged = distribute_dealings(coord, enclave, gossip).await?;
     let collection = DealerCollection::new(coord, parameters.participant_count, acknowledged);
-    let (logs, offer_partials) = collection.collect(enclave, gossip).await?;
+    let (logs, network_key_partials) = collection.collect(enclave, gossip).await?;
     let mut outcome = coord.finalize_player(enclave, &logs)?;
-    let (public, group_public, identity_mismatches) = offer_partials
+    let (public, group_public, identity_mismatches) = network_key_partials
         .complete(coord, enclave, gossip, parameters)
         .await?;
-    outcome.tribute_offer_public = public;
-    outcome.tribute_offer_group_public_key = group_public;
+    outcome.network_encryption_public_key = public;
+    outcome.network_encryption_group_public_key = group_public;
     outcome.identity_mismatches = identity_mismatches;
     Ok(outcome)
 }
@@ -70,7 +70,7 @@ struct DealerCollection<'a> {
     finalized: bool,
     logs: BTreeMap<Vec<u8>, FinalizedLog>,
     ingested: BTreeSet<Vec<u8>>,
-    offer_partials: OfferPartials,
+    network_key_partials: NetworkKeyPartials,
 }
 
 impl<'a> DealerCollection<'a> {
@@ -86,7 +86,7 @@ impl<'a> DealerCollection<'a> {
             finalized: false,
             logs: BTreeMap::new(),
             ingested: BTreeSet::new(),
-            offer_partials: OfferPartials {
+            network_key_partials: NetworkKeyPartials {
                 recipient: coord.my_bls().to_vec(),
                 sealed: BTreeMap::new(),
                 identity_mismatches: 0,
@@ -98,7 +98,7 @@ impl<'a> DealerCollection<'a> {
         mut self,
         enclave: &mut C,
         gossip: &mut G,
-    ) -> Result<(Vec<FinalizedLog>, OfferPartials)> {
+    ) -> Result<(Vec<FinalizedLog>, NetworkKeyPartials)> {
         self.finalize_dealing(enclave, gossip).await?;
         while self.logs.len() < self.required {
             let Some((from, message)) = gossip.recv().await else {
@@ -107,12 +107,12 @@ impl<'a> DealerCollection<'a> {
                 ));
             };
             if from.as_slice() != message.claimed_sender() || !self.coord.is_allowed_sender(&from) {
-                self.offer_partials.identity_mismatches += 1;
+                self.network_key_partials.identity_mismatches += 1;
                 continue;
             }
             self.receive(message, enclave, gossip).await?;
         }
-        Ok((self.logs.into_values().collect(), self.offer_partials))
+        Ok((self.logs.into_values().collect(), self.network_key_partials))
     }
 
     async fn receive<C: EnclaveChannel, G: DkgGossip>(
@@ -129,8 +129,8 @@ impl<'a> DealerCollection<'a> {
             DkgWireMessage::FinalizedLog(log) => {
                 self.logs.entry(log.dealer_bls.clone()).or_insert(log);
             }
-            partial @ DkgWireMessage::TributeOfferPartial { .. } => {
-                self.offer_partials.record(partial);
+            partial @ DkgWireMessage::NetworkKeyPartial { .. } => {
+                self.network_key_partials.record(partial);
             }
         }
         Ok(())
@@ -181,15 +181,15 @@ impl<'a> DealerCollection<'a> {
 }
 
 /// Partials addressed to this enclave, including those received before recovery.
-struct OfferPartials {
+struct NetworkKeyPartials {
     recipient: Vec<u8>,
     sealed: BTreeMap<Vec<u8>, Vec<u8>>,
     identity_mismatches: usize,
 }
 
-impl OfferPartials {
+impl NetworkKeyPartials {
     fn record(&mut self, message: DkgWireMessage) {
-        if let DkgWireMessage::TributeOfferPartial {
+        if let DkgWireMessage::NetworkKeyPartial {
             signer_bls,
             recipient_bls,
             partial,
@@ -207,12 +207,12 @@ impl OfferPartials {
         enclave: &mut C,
         gossip: &mut G,
     ) -> Result<()> {
-        for (recipient_bls, partial) in coord.tribute_offer_partials_sealed(enclave)? {
+        for (recipient_bls, partial) in coord.network_key_partials_sealed(enclave)? {
             if recipient_bls == self.recipient {
                 self.sealed.insert(self.recipient.clone(), partial);
             } else {
                 gossip
-                    .broadcast(DkgWireMessage::TributeOfferPartial {
+                    .broadcast(DkgWireMessage::NetworkKeyPartial {
                         signer_bls: self.recipient.clone(),
                         recipient_bls,
                         partial,
@@ -244,11 +244,11 @@ impl OfferPartials {
             self.record(message);
         }
         let partials = self.sealed.into_values().collect::<Vec<_>>();
-        let (public, group_public) = coord.finalize_tribute_offer(
+        let (public, group_public) = coord.finalize_network_encryption_key(
             enclave,
             &partials,
             parameters.chain_id,
-            parameters.tribute_offer_epoch,
+            parameters.network_key_epoch,
         )?;
         Ok((public, group_public, self.identity_mismatches))
     }

@@ -187,13 +187,13 @@ where
                             )
                         }
                     };
-                    let (tribute_offer_public, tribute_offer_group_public_key) =
+                    let (network_encryption_public_key, network_encryption_group_public_key) =
                         crate::tee_bootstrap::run_tee_dkg_at_startup(
                             &mut enclave,
                             crate::tee_bootstrap::TeeDkgStartup {
                                 participant_count: n,
                                 network_binding: tee_policy.network_binding(),
-                                tribute_offer_epoch: 0,
+                                network_key_epoch: 0,
                             },
                             crate::tee_bootstrap::StartupGossipTransport {
                                 sender: dkg_sender,
@@ -205,8 +205,8 @@ where
                         .await
                         .map_err(crate::errors::StackEpochError::tee_dkg_ceremony_failed)?;
                     info!(
-                        tribute_offer_public = %B256::from(tribute_offer_public),
-                        "TEE DKG complete - shared tribute offer key derived"
+                        network_encryption_public_key = %B256::from(network_encryption_public_key),
+                        "TEE DKG complete - shared network encryption key derived"
                     );
                     let local_submission =
                         crate::tee_bootstrap::build_local_tee_bootstrap_submission_v2(
@@ -239,8 +239,10 @@ where
                         key_epoch: 0,
                         tribute_offer_epoch: 0,
                         dkg_transcript_hash: B256::ZERO,
-                        tribute_offer_public_key: B256::from(tribute_offer_public),
-                        tribute_offer_group_public_key: Bytes::from(tribute_offer_group_public_key),
+                        network_encryption_public_key: B256::from(network_encryption_public_key),
+                        network_encryption_group_public_key: Bytes::from(
+                            network_encryption_group_public_key,
+                        ),
                     };
                     let payload = crate::tee_bootstrap::run_tee_bootstrap_v2_at_startup(
                         crate::tee_bootstrap::TeeBootstrapStartup {
@@ -325,7 +327,7 @@ fn require_shareless_resident_offer_key() -> Result<()> {
     // validator certifies and replays the existing chain without threshold
     // authority and never reproduces genesis OST3. Its canonical EVM/BLS
     // identity may already be retained for the later DKG activation.
-    let resident_offer = outbe_tee::resident_offer_public_key_v1().wrap_err(
+    let resident_offer = outbe_tee::resident_network_encryption_public_key_v1().wrap_err(
         "verifier-join requires the permanent resident offer key before certified sync (no recovery or fallback)",
     )?;
     if resident_offer.is_zero() {

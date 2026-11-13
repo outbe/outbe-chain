@@ -224,14 +224,17 @@ pub fn run_tee_bootstrap_v1(
         .policy_hash()
         .map_err(TeeBootstrapError::cannot_hash_authoritative_policy)?;
     registry.write_bootstrap(&TeeBootstrapData {
-        tribute_offer_public_key: payload.authority.tribute_offer_public_key,
+        tribute_offer_public_key: payload.authority.network_encryption_public_key,
         policy_hash,
         key_epoch: payload.authority.key_epoch,
         tribute_offer_epoch: payload.authority.tribute_offer_epoch,
         dkg_transcript_hash: payload.authority.dkg_transcript_hash,
         committee_snapshot_block: payload.authority.committee_snapshot_block,
         committee_snapshot_hash,
-        tribute_offer_group_public_key: payload.authority.tribute_offer_group_public_key.clone(),
+        tribute_offer_group_public_key: payload
+            .authority
+            .network_encryption_group_public_key
+            .clone(),
     })
 }
 

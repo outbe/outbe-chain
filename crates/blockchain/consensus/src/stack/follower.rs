@@ -84,7 +84,7 @@ impl ValidatorBootstrap {
         let state = node.provider().state_by_block_hash(hash)?;
         let on_chain_offer =
             validators::read_tee_offer_public_from_state(self.protocol.as_ref(), &state)?;
-        let resident_offer = outbe_tee::resident_offer_public_key_state_v1()?;
+        let resident_offer = outbe_tee::resident_network_encryption_public_key_state_v1()?;
         let local_key_in_validator_set = validators::read_consensus_validators_at_block(
             self.protocol.as_ref(),
             node.provider(),
@@ -230,14 +230,14 @@ where
     // local probe. Do not skip it when a socket was configured.
     let tee_probe = crate::follow_transport::UpstreamRpcClient::new(&upstream)?;
     let tee_offer_public = tee_probe
-        .tribute_offer_public_key()
+        .network_encryption_public_key()
         .await
         .wrap_err("failed to probe the upstream for TEE-chain status (follower prerequisites)")?;
     if tee_offer_public.is_zero() {
         return Err(crate::errors::FollowerStackError::UpstreamMissingOst3OfferKey.into());
     }
     if !follower_skips_resident_offer_probe(&args) {
-        let resident_offer = outbe_tee::resident_offer_public_key_v1()
+        let resident_offer = outbe_tee::resident_network_encryption_public_key_v1()
             .wrap_err("failed to read the mandatory local enclave offer key")?;
         if resident_offer != tee_offer_public {
             return Err(crate::errors::FollowerStackError::LocalEnclaveOfferKeyMismatch.into());

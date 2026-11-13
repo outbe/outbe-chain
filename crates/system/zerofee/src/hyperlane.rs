@@ -18,5 +18,5 @@ pub(crate) const CHECKPOINT_ENVELOPE: ZeroFeeEnvelope = ZeroFeeEnvelope {
     min_max_fee_per_gas: MIN_ZERO_FEE_CHECKPOINT_MAX_FEE_PER_GAS,
     max_calldata_bytes: MAX_ZERO_FEE_CHECKPOINT_CALLDATA_BYTES,
     max_gas_limit: MAX_ZERO_FEE_CHECKPOINT_GAS_LIMIT,
-    malformed_reason: "submitCheckpoint(uint32,bytes32,uint32,bytes32,bytes) decode failed",
+    malformed_reason: "zero-fee oracle vote calldata is malformed: submitCheckpoint(uint32,bytes32,uint32,bytes32,bytes) decode failed",
 };

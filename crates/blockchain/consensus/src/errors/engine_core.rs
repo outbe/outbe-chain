@@ -106,15 +106,15 @@ pub enum FollowTransportError {
         /// Underlying error text.
         error: String,
     },
-    /// Indicates that the upstream eth_call for tributeOfferPublicKey failed.
-    #[error("upstream eth_call tributeOfferPublicKey failed: {0}")]
-    UpstreamTributeOfferPublicKeyCall(String),
+    /// Indicates that the upstream eth_call for the network encryption public key failed.
+    #[error("upstream eth_call network encryption public key failed: {0}")]
+    UpstreamNetworkEncryptionPublicKeyCall(String),
     /// Indicates that the upstream eth_call returned malformed hex data.
     #[error("malformed eth_call result from upstream: {0}")]
     MalformedEthCallResult(String),
-    /// Indicates that tributeOfferPublicKey returned an unexpected byte length.
-    #[error("upstream tributeOfferPublicKey returned {0} bytes instead of one ABI word")]
-    UnexpectedTributeOfferPublicKeyLength(usize),
+    /// Indicates that the network encryption public key query returned an unexpected byte length.
+    #[error("upstream network encryption public key returned {0} bytes instead of one ABI word")]
+    UnexpectedNetworkEncryptionPublicKeyLength(usize),
     /// Indicates that an upstream JSON-RPC request failed.
     #[error("upstream {method} RPC failed: {error}")]
     UpstreamRpcRequest {

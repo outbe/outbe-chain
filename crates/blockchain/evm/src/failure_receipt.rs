@@ -146,10 +146,10 @@ mod tests {
         );
     }
 
-    /// Code 108 (`AlreadyVoted`) - most common zero-fee oracle rejection.
+    /// Code 108 (`HookConflict`) - stateful zero-fee hook conflict rejection.
     #[test]
-    fn snapshot_zero_fee_already_voted_108() {
-        let reason = "zero-fee oracle vote already exists for validator";
+    fn snapshot_zero_fee_hook_conflict_108() {
+        let reason = "zero-fee hook conflict for authorized subject";
         let log = build_outbe_failure_log(
             address!("0x000000000000000000000000000000000000EE06"),
             108,

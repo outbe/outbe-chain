@@ -14,14 +14,17 @@ use outbe_tee::{
         EnclaveWitnessTapeV1, TxWitnessV1, WitnessExecutionMode, WitnessExecutionScope,
         WitnessPolicy, WitnessState,
     },
-    AttestationMetricClass, EnclaveClient, EnclaveSession, RejectionMetricClass,
-    TeeAttestationError, TransportError,
+    EnclaveClient, EnclaveSession, TeeAttestationError, TransportError,
 };
 
 use super::{
     authenticate::authenticate_request,
     canary_domain_request, consensus_domain_call, domain_session_call_on,
-    errors::{EnclaveClientError, LocalCryptoError, TributeSourceError},
+    errors::{
+        EnclaveClientError, LocalCryptoError, TributeSourceError, FIDELITY_ATTESTATION,
+        GRATIS_OP_ATTESTATION, NOD_MINT_REJECTED, PROMIS_OP_ATTESTATION, TRIBUTE_OFFER_ATTESTATION,
+        TRIBUTE_SOURCE_REJECTED,
+    },
     nod_mine::{self, MineEncryptedNodRequestV1, MineEncryptedNodResultV1},
     protocol::{
         fidelity_cohort_attestation_preimage, fidelity_cohort_canonical_hash,
@@ -843,9 +846,9 @@ fn non_recordable_signed_domain_response_verifies_on_wire_but_never_enters_witne
     assert!(matches!(
         swapped_err,
         TransportError::AppAttestation {
-            metric: outbe_tee::AttestationMetricClass::Fidelity,
+            descriptor,
             ..
-        }
+        } if descriptor == FIDELITY_ATTESTATION
     ));
 
     // Also verify consensus_domain_call rejects non-recordable ApplyFidelityCohortOp up front (fail-closed)
@@ -979,29 +982,23 @@ fn payload_lane_isolation_enforces_account_query_canary_and_execution_matrix() {
 #[test]
 fn metric_classes_and_local_crypto_error_messages_remain_exact() {
     let bad_sig = || TeeAttestationError::InvalidSignatureLength { actual: 3 };
-    for (class, expected) in [
-        (
-            AttestationMetricClass::TributeOffer,
-            "tribute_offer_attestation",
-        ),
-        (AttestationMetricClass::GratisOp, "gratis_op_attestation"),
-        (AttestationMetricClass::PromisOp, "promis_op_attestation"),
-        (AttestationMetricClass::Fidelity, "fidelity_attestation"),
+    for (descriptor, expected) in [
+        (TRIBUTE_OFFER_ATTESTATION, "tribute_offer_attestation"),
+        (GRATIS_OP_ATTESTATION, "gratis_op_attestation"),
+        (PROMIS_OP_ATTESTATION, "promis_op_attestation"),
+        (FIDELITY_ATTESTATION, "fidelity_attestation"),
     ] {
         assert_eq!(
-            TransportError::app_attestation(class, bad_sig()).metric_class(),
+            TransportError::app_attestation(descriptor, bad_sig()).metric_class(),
             expected
         );
     }
-    for (class, expected) in [
-        (
-            RejectionMetricClass::TributeSource,
-            "tribute_source_rejected",
-        ),
-        (RejectionMetricClass::NodMint, "nod_mint_rejected"),
+    for (descriptor, expected) in [
+        (TRIBUTE_SOURCE_REJECTED, "tribute_source_rejected"),
+        (NOD_MINT_REJECTED, "nod_mint_rejected"),
     ] {
         assert_eq!(
-            TransportError::app_rejected(class, "rejected").metric_class(),
+            TransportError::app_rejected(descriptor, "rejected").metric_class(),
             expected
         );
     }

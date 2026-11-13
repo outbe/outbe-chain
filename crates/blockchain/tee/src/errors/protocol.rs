@@ -116,10 +116,10 @@ pub enum TeeDkgUnexpectedResponseReason {
     DkgDealerFinalize,
     #[error("DkgPlayerFinalize")]
     DkgPlayerFinalize,
-    #[error("DkgTributeOfferPartial")]
-    DkgTributeOfferPartial,
-    #[error("DkgFinalizeTributeOffer")]
-    DkgFinalizeTributeOffer,
+    #[error("DkgNetworkKeyPartial")]
+    DkgNetworkKeyPartial,
+    #[error("DkgFinalizeNetworkKey")]
+    DkgFinalizeNetworkKey,
     #[error("gossip closed before ceremony completed")]
     GossipClosedBeforeCeremonyCompleted,
     #[error("gossip closed before founding offer-key finalization completed")]
@@ -136,8 +136,8 @@ impl TeeDkgUnexpectedResponseReason {
             Self::DkgDealerReceiveAck => "DkgDealerReceiveAck",
             Self::DkgDealerFinalize => "DkgDealerFinalize",
             Self::DkgPlayerFinalize => "DkgPlayerFinalize",
-            Self::DkgTributeOfferPartial => "DkgTributeOfferPartial",
-            Self::DkgFinalizeTributeOffer => "DkgFinalizeTributeOffer",
+            Self::DkgNetworkKeyPartial => "DkgNetworkKeyPartial",
+            Self::DkgFinalizeNetworkKey => "DkgFinalizeNetworkKey",
             Self::GossipClosedBeforeCeremonyCompleted => "gossip closed before ceremony completed",
             Self::GossipClosedBeforeOfferKeyFinalizationCompleted => {
                 "gossip closed before founding offer-key finalization completed"

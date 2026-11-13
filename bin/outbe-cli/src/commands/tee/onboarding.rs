@@ -187,7 +187,8 @@ fn exact_artifact(
             && context.node_id_hash == expected.node_id_hash
             && context.enclave_id == expected.enclave_id
             && context.recipient_x25519 == expected.recipient_x25519;
-        let offer_key_matches = context.tribute_offer_public == expected.tribute_offer_public
+        let offer_key_matches = context.tribute_offer_public
+            == expected.network_encryption_public_key
             && context.key_epoch == expected.key_epoch
             && context.tribute_offer_epoch == expected.tribute_offer_epoch;
         if !chain_matches || !registration_matches || !offer_key_matches {
@@ -328,7 +329,7 @@ mod tests {
             enclave_id: B256::repeat_byte(0x17),
             intent_hash: B256::repeat_byte(0x18),
             recipient_x25519: [0x19; 32],
-            tribute_offer_public: [0x1a; 32],
+            network_encryption_public_key: [0x1a; 32],
             key_epoch: 2,
             tribute_offer_epoch: 3,
         };
@@ -342,7 +343,7 @@ mod tests {
                 binding_id: B256::repeat_byte(0x1d),
                 policy_hash: B256::repeat_byte(0x1e),
                 recipient_x25519: expected.recipient_x25519,
-                tribute_offer_public: expected.tribute_offer_public,
+                tribute_offer_public: expected.network_encryption_public_key,
                 key_epoch: expected.key_epoch,
                 tribute_offer_epoch: expected.tribute_offer_epoch,
             },

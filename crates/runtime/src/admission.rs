@@ -474,7 +474,7 @@ where
         identity,
         anchors,
         || {
-            outbe_tee::resident_offer_public_key_state_v1()
+            outbe_tee::resident_network_encryption_public_key_state_v1()
                 .wrap_err("read the resident offer key for gated TEE lease admission")
         },
     )

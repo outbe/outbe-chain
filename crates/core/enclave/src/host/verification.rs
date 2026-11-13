@@ -1,27 +1,31 @@
 //! Domain Ed25519 attestation verification built over [`outbe_tee::tee_call`].
 
 use alloy_primitives::B256;
-use outbe_tee::{
-    tee_call::verify_enclave_attestation_lazy, AttestationMetricClass, TransportError,
-};
+use outbe_tee::{tee_call::verify_enclave_attestation_lazy, AppErrorDescriptor, TransportError};
 
-use super::protocol::{
-    fidelity_cohort_attestation_preimage, fidelity_query_attestation_preimage,
-    fidelity_snapshot_attestation_preimage, gratis_op_attestation_preimage,
-    mine_gratis_from_promis_attestation_preimage, promis_op_attestation_preimage,
-    tribute_offer_attestation_preimage, FidelityCohortResult, FidelityLeagueEntry,
-    FidelityQueryResult, GratisOpResult, MineGratisFromPromisResultV1, PromisOpResult,
-    TributeOfferResult,
+use super::{
+    errors::{
+        FIDELITY_ATTESTATION, GRATIS_OP_ATTESTATION, PROMIS_OP_ATTESTATION,
+        TRIBUTE_OFFER_ATTESTATION,
+    },
+    protocol::{
+        fidelity_cohort_attestation_preimage, fidelity_query_attestation_preimage,
+        fidelity_snapshot_attestation_preimage, gratis_op_attestation_preimage,
+        mine_gratis_from_promis_attestation_preimage, promis_op_attestation_preimage,
+        tribute_offer_attestation_preimage, FidelityCohortResult, FidelityLeagueEntry,
+        FidelityQueryResult, GratisOpResult, MineGratisFromPromisResultV1, PromisOpResult,
+        TributeOfferResult,
+    },
 };
 
 fn verify_domain_attestation(
     attestation_pub: &[u8; 32],
     tag: &[u8],
-    metric: AttestationMetricClass,
+    descriptor: AppErrorDescriptor,
     preimage: impl FnOnce() -> Result<Vec<u8>, serde_json::Error>,
 ) -> Result<(), TransportError> {
     verify_enclave_attestation_lazy(attestation_pub, tag, preimage)
-        .map_err(|cause| TransportError::app_attestation(metric, cause))
+        .map_err(|cause| TransportError::app_attestation(descriptor, cause))
 }
 
 /// Verify a per-offer attestation tag against the peer's session attestation public key.
@@ -31,12 +35,9 @@ pub fn verify_tribute_offer_attestation(
     results: &[TributeOfferResult],
     tag: &[u8],
 ) -> Result<(), TransportError> {
-    verify_domain_attestation(
-        attestation_pub,
-        tag,
-        AttestationMetricClass::TributeOffer,
-        || tribute_offer_attestation_preimage(inputs_canonical_hash, results),
-    )
+    verify_domain_attestation(attestation_pub, tag, TRIBUTE_OFFER_ATTESTATION, || {
+        tribute_offer_attestation_preimage(inputs_canonical_hash, results)
+    })
 }
 
 /// Verify a Gratis-op attestation tag against the peer's session attestation key.
@@ -46,12 +47,9 @@ pub fn verify_gratis_op_attestation(
     result: &GratisOpResult,
     tag: &[u8],
 ) -> Result<(), TransportError> {
-    verify_domain_attestation(
-        attestation_pub,
-        tag,
-        AttestationMetricClass::GratisOp,
-        || gratis_op_attestation_preimage(inputs_canonical_hash, result),
-    )
+    verify_domain_attestation(attestation_pub, tag, GRATIS_OP_ATTESTATION, || {
+        gratis_op_attestation_preimage(inputs_canonical_hash, result)
+    })
 }
 
 /// Verify a Promis-op attestation tag.
@@ -61,12 +59,9 @@ pub fn verify_promis_op_attestation(
     result: &PromisOpResult,
     tag: &[u8],
 ) -> Result<(), TransportError> {
-    verify_domain_attestation(
-        attestation_pub,
-        tag,
-        AttestationMetricClass::PromisOp,
-        || promis_op_attestation_preimage(inputs_canonical_hash, result),
-    )
+    verify_domain_attestation(attestation_pub, tag, PROMIS_OP_ATTESTATION, || {
+        promis_op_attestation_preimage(inputs_canonical_hash, result)
+    })
 }
 
 /// Verify a paired `MineGratisFromPromisV1` attestation tag.
@@ -76,12 +71,9 @@ pub fn verify_mine_gratis_from_promis_attestation(
     result: &MineGratisFromPromisResultV1,
     tag: &[u8],
 ) -> Result<(), TransportError> {
-    verify_domain_attestation(
-        attestation_pub,
-        tag,
-        AttestationMetricClass::PromisOp,
-        || mine_gratis_from_promis_attestation_preimage(inputs_canonical_hash, result),
-    )
+    verify_domain_attestation(attestation_pub, tag, PROMIS_OP_ATTESTATION, || {
+        mine_gratis_from_promis_attestation_preimage(inputs_canonical_hash, result)
+    })
 }
 
 /// Verify a standalone Fidelity cohort-op attestation tag.
@@ -91,12 +83,9 @@ pub fn verify_fidelity_cohort_attestation(
     result: &FidelityCohortResult,
     tag: &[u8],
 ) -> Result<(), TransportError> {
-    verify_domain_attestation(
-        attestation_pub,
-        tag,
-        AttestationMetricClass::Fidelity,
-        || fidelity_cohort_attestation_preimage(inputs_canonical_hash, result),
-    )
+    verify_domain_attestation(attestation_pub, tag, FIDELITY_ATTESTATION, || {
+        fidelity_cohort_attestation_preimage(inputs_canonical_hash, result)
+    })
 }
 
 /// Verify a Fidelity league-snapshot attestation tag.
@@ -106,12 +95,9 @@ pub fn verify_fidelity_snapshot_attestation(
     leagues: &[FidelityLeagueEntry],
     tag: &[u8],
 ) -> Result<(), TransportError> {
-    verify_domain_attestation(
-        attestation_pub,
-        tag,
-        AttestationMetricClass::Fidelity,
-        || fidelity_snapshot_attestation_preimage(inputs_canonical_hash, leagues),
-    )
+    verify_domain_attestation(attestation_pub, tag, FIDELITY_ATTESTATION, || {
+        fidelity_snapshot_attestation_preimage(inputs_canonical_hash, leagues)
+    })
 }
 
 /// Verify a Fidelity index-query attestation tag.
@@ -121,12 +107,9 @@ pub fn verify_fidelity_query_attestation(
     result: &FidelityQueryResult,
     tag: &[u8],
 ) -> Result<(), TransportError> {
-    verify_domain_attestation(
-        attestation_pub,
-        tag,
-        AttestationMetricClass::Fidelity,
-        || fidelity_query_attestation_preimage(inputs_canonical_hash, result),
-    )
+    verify_domain_attestation(attestation_pub, tag, FIDELITY_ATTESTATION, || {
+        fidelity_query_attestation_preimage(inputs_canonical_hash, result)
+    })
 }
 
 #[cfg(test)]
@@ -241,9 +224,9 @@ mod tests {
         assert!(matches!(
             &cross_promis,
             TransportError::AppAttestation {
-                metric: AttestationMetricClass::PromisOp,
-                cause: TeeAttestationError::SignatureMismatch(_),
-            }
+                descriptor,
+                source: TeeAttestationError::SignatureMismatch(_),
+            } if *descriptor == PROMIS_OP_ATTESTATION
         ));
 
         let cross_gratis = verify_gratis_op_attestation(&pk, hash, &gratis, &promis_tag)
@@ -262,9 +245,9 @@ mod tests {
         assert!(matches!(
             &bad_key,
             TransportError::AppAttestation {
-                metric: AttestationMetricClass::GratisOp,
-                cause: TeeAttestationError::InvalidPublicKey(_),
-            }
+                descriptor,
+                source: TeeAttestationError::InvalidPublicKey(_),
+            } if *descriptor == GRATIS_OP_ATTESTATION
         ));
 
         let bad_len = verify_promis_op_attestation(&pk, hash, &promis, &[0u8; 1])
@@ -272,9 +255,9 @@ mod tests {
         assert!(matches!(
             &bad_len,
             TransportError::AppAttestation {
-                metric: AttestationMetricClass::PromisOp,
-                cause: TeeAttestationError::InvalidSignatureLength { actual: 1 },
-            }
+                descriptor,
+                source: TeeAttestationError::InvalidSignatureLength { actual: 1 },
+            } if *descriptor == PROMIS_OP_ATTESTATION
         ));
     }
 

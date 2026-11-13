@@ -128,7 +128,7 @@ fn recover_saved_candidate(node_data_dir: &Path, views: &PreparationViews) -> Re
                 node_data_dir,
                 &durable,
                 &successor.policy,
-                active.tribute_offer_public,
+                active.network_encryption_public_key,
             )?;
             return Ok(true);
         }
@@ -207,7 +207,7 @@ fn persist_key_ready<R, N: UpgradeNodeSignerV1>(
         node_data_dir,
         evidence.intent(),
         proof,
-        active.tribute_offer_public.into(),
+        active.network_encryption_public_key.into(),
     )?;
     Ok(())
 }

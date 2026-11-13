@@ -11,7 +11,7 @@ use outbe_primitives::{
     transaction_call::TransactionCallFields,
     zero_fee_types::{
         BootstrapAccountView, BootstrapCandidate, BootstrapTransactionView, ZeroFeeAuthorization,
-        ZeroFeeCandidate, ZeroFeeHookId, ZeroFeePolicyError, ZeroFeeTransaction,
+        ZeroFeeCandidate, ZeroFeeHookTag, ZeroFeePolicyError, ZeroFeeTransaction,
     },
 };
 use reth_ethereum::TransactionSigned;
@@ -26,6 +26,9 @@ const TEST_HOOK_TARGET_A: Address = address!("0x00000000000000000000000000000000
 const TEST_HOOK_TARGET_B: Address = address!("0x000000000000000000000000000000000000EE14");
 const TEST_SPONSORED_TARGET_A: Address = address!("0x0000000000000000000000000000000000001100");
 const TEST_SPONSORED_TARGET_B: Address = address!("0x000000000000000000000000000000000000100B");
+const TEST_HOOK_A: ZeroFeeHookTag = ZeroFeeHookTag::new(0, "TestHookA", Some(1));
+const TEST_HOOK_B: ZeroFeeHookTag = ZeroFeeHookTag::new(1, "TestHookB", Some(1));
+const TEST_HOOK_C: ZeroFeeHookTag = ZeroFeeHookTag::new(2, "TestHookC", Some(1));
 
 fn pooled_tx(
     to: Address,
@@ -118,13 +121,9 @@ impl TxPoolZeroFeePolicy for ScriptedPolicy {
             ClassifyAnswer::None => Ok(None),
             ClassifyAnswer::HookWhenInputLongerThanSelector => {
                 let hook = match tx.call.to {
-                    Some(address) if address == TEST_HOOK_TARGET_A => {
-                        ZeroFeeHookId::OracleSubmitVote
-                    }
-                    Some(address) if address == TEST_HOOK_TARGET_B => {
-                        ZeroFeeHookId::HyperlaneSubmitCheckpoint
-                    }
-                    Some(address) if address == TEE_REGISTRY_ADDRESS => ZeroFeeHookId::RenewEnclave,
+                    Some(address) if address == TEST_HOOK_TARGET_A => TEST_HOOK_A,
+                    Some(address) if address == TEST_HOOK_TARGET_B => TEST_HOOK_B,
+                    Some(address) if address == TEE_REGISTRY_ADDRESS => TEST_HOOK_C,
                     _ => return Ok(None),
                 };
                 if tx.call.input.len() <= 4 {
@@ -331,9 +330,9 @@ fn zero_fee_hooks_order_above_any_fee_paying_transaction() {
     let payload = Bytes::from_static(&[1, 2, 3, 4, 5]);
 
     for (hook, target) in [
-        (ZeroFeeHookId::OracleSubmitVote, TEST_HOOK_TARGET_A),
-        (ZeroFeeHookId::HyperlaneSubmitCheckpoint, TEST_HOOK_TARGET_B),
-        (ZeroFeeHookId::RenewEnclave, TEE_REGISTRY_ADDRESS),
+        (TEST_HOOK_A, TEST_HOOK_TARGET_A),
+        (TEST_HOOK_B, TEST_HOOK_TARGET_B),
+        (TEST_HOOK_C, TEE_REGISTRY_ADDRESS),
     ] {
         assert_eq!(
             TxPoolZeroFeePolicy::priority_class(ordering.policy.as_ref(), hook),

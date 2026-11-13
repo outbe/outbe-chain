@@ -146,9 +146,9 @@ pub enum RegistryError<E = Infallible> {
     #[error("finalized TEE policy chain id does not match eth_chainId")]
     PolicyChainIdMismatch,
 
-    /// The finalized Registry returned a zero offer key.
-    #[error("finalized Registry tribute offer public key is zero")]
-    ZeroTributeOfferPublicKey,
+    /// The finalized Registry returned a zero threshold network encryption key.
+    #[error("finalized Registry network encryption public key is zero")]
+    ZeroNetworkEncryptionPublicKey,
 
     /// An unexpected Registry selector was called in tests.
     #[cfg(test)]
@@ -217,7 +217,7 @@ pub struct FinalizedRenewalChainViewV1 {
     pub schedule: TeeRenewalScheduleV1,
     pub policy: TeePolicyV1,
     pub binding: RenewalBindingV1,
-    pub tribute_offer_public: B256,
+    pub network_encryption_public_key: B256,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -226,7 +226,7 @@ pub struct FinalizedRegistryChainViewV1 {
     pub view: FinalizedRegistryViewV1,
     pub policy: TeePolicyV1,
     pub binding: Option<RenewalBindingV1>,
-    pub tribute_offer_public: B256,
+    pub network_encryption_public_key: B256,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -436,7 +436,7 @@ fn require_bound_renewal_view_v1<E>(
         schedule: view.schedule,
         policy: view.policy,
         binding,
-        tribute_offer_public: view.tribute_offer_public,
+        network_encryption_public_key: view.network_encryption_public_key,
     })
 }
 
@@ -526,7 +526,9 @@ pub async fn read_finalized_registry_view_v1<R: RegistryRpc + Sync>(
     } else {
         None
     };
-    let offer_bytes = rpc
+    // `ITeeRegistryV1.tributeOfferPublicKey()` (selector `0x1b640a92`) is the
+    // canonical V1 Solidity ABI getter for the threshold network encryption key.
+    let key_bytes = rpc
         .call_at(
             TEE_REGISTRY_ADDRESS,
             &ITeeRegistryV1::tributeOfferPublicKeyCall {}.abi_encode(),
@@ -534,17 +536,17 @@ pub async fn read_finalized_registry_view_v1<R: RegistryRpc + Sync>(
         )
         .await
         .map_err(|source| RegistryError::Rpc {
-            context: "read finalized tribute offer public key",
+            context: "read finalized network encryption public key",
             source,
         })?;
-    let offer = ITeeRegistryV1::tributeOfferPublicKeyCall::abi_decode_returns(&offer_bytes)
+    let key_word = ITeeRegistryV1::tributeOfferPublicKeyCall::abi_decode_returns(&key_bytes)
         .map_err(|source| RegistryError::AbiDecode {
-            context: "decode finalized tribute offer public key",
+            context: "decode finalized network encryption public key",
             source,
         })?;
-    let tribute_offer_public = B256::from(offer.to_be_bytes::<32>());
-    if tribute_offer_public.is_zero() {
-        return Err(RegistryError::ZeroTributeOfferPublicKey);
+    let network_encryption_public_key = B256::from(key_word.to_be_bytes::<32>());
+    if network_encryption_public_key.is_zero() {
+        return Err(RegistryError::ZeroNetworkEncryptionPublicKey);
     }
     Ok(FinalizedRegistryChainViewV1 {
         schedule,
@@ -558,7 +560,7 @@ pub async fn read_finalized_registry_view_v1<R: RegistryRpc + Sync>(
         },
         policy,
         binding,
-        tribute_offer_public,
+        network_encryption_public_key,
     })
 }
 
@@ -593,7 +595,7 @@ pub struct ExpectedOnboardingBindingV1 {
     pub enclave_id: B256,
     pub intent_hash: B256,
     pub recipient_x25519: [u8; 32],
-    pub tribute_offer_public: [u8; 32],
+    pub network_encryption_public_key: [u8; 32],
     pub key_epoch: u64,
     pub tribute_offer_epoch: u64,
 }

@@ -151,7 +151,7 @@ fn ceremony_driver_completes_over_in_memory_gossip() {
                     FoundingCeremonyParameters {
                         participant_count: N,
                         chain_id,
-                        tribute_offer_epoch: 0,
+                        network_key_epoch: 0,
                     },
                 )
                 .await
@@ -177,17 +177,17 @@ fn ceremony_driver_completes_over_in_memory_gossip() {
         assert_eq!(commitments.len(), N, "share commitments must be distinct");
 
         // Seam F over the real Noise-IK transport: every node derives the
-        // byte-identical shared offer public key (and a non-zero one).
-        let tribute_offer_pub = outcomes[0].tribute_offer_public;
+        // byte-identical shared network encryption public key (and a non-zero one).
+        let network_key_pub = outcomes[0].network_encryption_public_key;
         assert_ne!(
-            tribute_offer_pub, [0u8; 32],
-            "offer public key must be set by Seam F"
+            network_key_pub, [0u8; 32],
+            "network encryption public key must be set by Seam F"
         );
         assert!(
             outcomes
                 .iter()
-                .all(|o| o.tribute_offer_public == tribute_offer_pub),
-            "all driver tasks must derive the same offer public key",
+                .all(|o| o.network_encryption_public_key == network_key_pub),
+            "all driver tasks must derive the same network encryption public key",
         );
 
         for s in servers {

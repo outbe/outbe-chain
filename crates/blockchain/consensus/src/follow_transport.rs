@@ -173,15 +173,14 @@ impl UpstreamRpcClient {
 }
 
 impl UpstreamRpcClient {
-    /// Query the upstream's on-chain tribute offer public key
-    /// (`TeeRegistry.tributeOfferPublicKey()`, selector `0x1b640a92`). A non-zero
-    /// value means the chain is TEE-bootstrapped. Then a follower that re-executes
-    /// offer / enclave-registration txs needs a local enclave that holds the offer
-    /// key. This function reads the key from the UPSTREAM, not from the follower's
-    /// local state. The follower starts at genesis, where the bootstrap tx that
-    /// sets this key has not run yet. Thus a local read would spuriously report a
-    /// non-TEE chain.
-    pub async fn tribute_offer_public_key(&self) -> eyre::Result<alloy_primitives::B256> {
+    /// Query the upstream's on-chain threshold network encryption public key
+    /// (`TeeRegistry` selector `0x1b640a92`). A non-zero value means the chain is
+    /// TEE-bootstrapped. Then a follower that re-executes enclave-dependent txs
+    /// needs a local enclave that holds the key. This function reads the key from
+    /// the UPSTREAM, not from the follower's local state. The follower starts at
+    /// genesis, where the bootstrap tx that sets this key has not run yet. Thus a
+    /// local read would spuriously report a non-TEE chain.
+    pub async fn network_encryption_public_key(&self) -> eyre::Result<alloy_primitives::B256> {
         let call = serde_json::json!({
             "to": "0x000000000000000000000000000000000000ee0a",
             "data": "0x1b640a92",
@@ -191,7 +190,7 @@ impl UpstreamRpcClient {
             .request("eth_call", rpc_params![call, "latest"])
             .await
             .map_err(|e| {
-                crate::errors::FollowTransportError::UpstreamTributeOfferPublicKeyCall(
+                crate::errors::FollowTransportError::UpstreamNetworkEncryptionPublicKeyCall(
                     e.to_string(),
                 )
             })?;
@@ -199,7 +198,7 @@ impl UpstreamRpcClient {
             alloy_primitives::hex::decode(result.trim_start_matches("0x")).map_err(|e| {
                 crate::errors::FollowTransportError::MalformedEthCallResult(e.to_string())
             })?;
-        decode_tribute_offer_public_key(&bytes)
+        decode_network_encryption_public_key(&bytes)
     }
 
     /// Query the canonical block hash at `height` on the upstream endpoint via
@@ -303,11 +302,13 @@ impl RegistryRpc for UpstreamRpcClient {
     }
 }
 
-fn decode_tribute_offer_public_key(bytes: &[u8]) -> eyre::Result<B256> {
+fn decode_network_encryption_public_key(bytes: &[u8]) -> eyre::Result<B256> {
     if bytes.len() != 32 {
         return Err(
-            crate::errors::FollowTransportError::UnexpectedTributeOfferPublicKeyLength(bytes.len())
-                .into(),
+            crate::errors::FollowTransportError::UnexpectedNetworkEncryptionPublicKeyLength(
+                bytes.len(),
+            )
+            .into(),
         );
     }
     Ok(B256::from_slice(bytes))
@@ -458,10 +459,10 @@ impl TipSource for UpstreamRpcClient {
     }
 }
 
-/// Read the offer-key commitment from the selected certified upstream.
-pub async fn read_upstream_tribute_offer_public_key(url: &str) -> eyre::Result<B256> {
+/// Read the threshold network encryption public key commitment from the selected certified upstream.
+pub async fn read_upstream_network_encryption_public_key(url: &str) -> eyre::Result<B256> {
     UpstreamRpcClient::new(url)?
-        .tribute_offer_public_key()
+        .network_encryption_public_key()
         .await
 }
 
@@ -471,18 +472,18 @@ mod upstream_tests;
 
 #[cfg(test)]
 mod tests {
-    use super::decode_tribute_offer_public_key;
+    use super::decode_network_encryption_public_key;
     use alloy_primitives::B256;
 
     #[test]
     fn offer_key_rpc_word_is_exactly_32_bytes() {
         let expected = B256::repeat_byte(0x42);
         assert_eq!(
-            decode_tribute_offer_public_key(expected.as_slice()).unwrap(),
+            decode_network_encryption_public_key(expected.as_slice()).unwrap(),
             expected
         );
         for malformed in [vec![], vec![0x42; 31], vec![0x42; 33]] {
-            assert!(decode_tribute_offer_public_key(&malformed).is_err());
+            assert!(decode_network_encryption_public_key(&malformed).is_err());
         }
     }
 }
