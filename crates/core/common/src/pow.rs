@@ -157,9 +157,6 @@ mod tests {
     fn mining_pow_golden_vectors() {
         use alloy_primitives::{address, b256, B256};
 
-        assert_eq!(MiningDomain::Nod.tag(), b"OUTBE_NOD_MINING_V1");
-        assert_eq!(MiningDomain::Gem.tag(), b"OUTBE_GEM_MINING_V1");
-        assert_eq!(POW_DIFFICULTY, 2);
         let wide_id = b256!("0xffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100");
         for (domain, right_id, owner, nonce, hash, first_valid, first_valid_hash) in [
             (

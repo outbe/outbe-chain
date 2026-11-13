@@ -78,7 +78,6 @@ fn envelope_boundaries_fully_decode_calldata_and_require_zero_gas_limit() {
 
 #[test]
 fn nonce_is_block_number_times_max_plus_ordinal() {
-    assert_eq!(MAX_SYSTEM_TXS_PER_BLOCK, 32);
     assert_eq!(system_tx_nonce(1, 0).expect("nonce"), 32);
     assert_eq!(system_tx_nonce(200_600, 2).expect("nonce"), 6_419_202);
     assert_eq!(system_tx_nonce(2, 24).expect("nonce"), 88);

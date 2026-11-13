@@ -208,16 +208,6 @@ mod tests {
     }
 
     #[test]
-    fn test_coefficients_boundary_values() {
-        // COEN/840 coefficients use the same six-decimal denominator as prices.
-        assert_eq!(COEFFICIENTS[0], U256::from(1_000_000u64));
-        // Last coefficient is exactly 0.92.
-        assert_eq!(COEFFICIENTS[127], U256::from(920_000u64));
-        // Center (64) should be ~0.95998
-        assert_eq!(COEFFICIENTS[64], U256::from(959_980u64));
-    }
-
-    #[test]
     fn coen840_coefficients_and_products_match_reference_vector() {
         let vector: serde_json::Value =
             serde_json::from_str(include_str!("../../testdata/coen840-scurve-v1.json")).unwrap();

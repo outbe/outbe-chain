@@ -427,7 +427,6 @@ fn block1_envelopes_carry_zero_gas() {
 
 #[test]
 fn block_gas_limit_is_uniform_steady_32m_across_all_heights() {
-    assert_eq!(STEADY_BLOCK_GAS_LIMIT, 32_000_000);
     assert_eq!(protocol_block_gas_limit(0), STEADY_BLOCK_GAS_LIMIT);
     assert_eq!(protocol_block_gas_limit(1), STEADY_BLOCK_GAS_LIMIT);
     assert_eq!(protocol_block_gas_limit(2), STEADY_BLOCK_GAS_LIMIT);

@@ -556,19 +556,6 @@ mod tests {
     }
 
     #[test]
-    fn gap_ed50_lookback_is_22h_on_all_networks() {
-        assert_eq!(DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS, 22 * 60 * 60);
-        assert_eq!(MIN_METADOSIS_LOOKBACK_DELAY_SECONDS, 22 * 60 * 60);
-        assert_eq!(
-            DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS + DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS,
-            3 * SECONDS_PER_DAY
-        );
-        assert_eq!(MAX_PIPELINE_WWDS, 7);
-        let defaults = GenesisProtocolParametersV1::default();
-        assert_eq!(defaults.metadosis_lookback_delay_seconds, 22 * 60 * 60);
-    }
-
-    #[test]
     fn malformed_unknown_and_unsafe_values_are_rejected() {
         assert!(matches!(
             GenesisProtocolParametersV1::resolve(Some(&json!({

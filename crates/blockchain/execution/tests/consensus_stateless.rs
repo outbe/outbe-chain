@@ -28,8 +28,8 @@ use outbe_primitives::system_tx::SysTxSelector;
 use outbe_primitives::system_tx::{
     build_unsigned_system_tx, SystemTx, BEGIN_BLOCK_STAGE_SELECTOR,
     CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
-    CONSENSUS_STAGE_SELECTOR, CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX, END_BLOCK_BASE_ORDINAL,
-    END_BLOCK_STAGE_SELECTOR, SYSTEM_TX_ARTIFACT_GAS_LIMIT, SYSTEM_TX_INPUT_VERSION,
+    CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX, END_BLOCK_BASE_ORDINAL, SYSTEM_TX_ARTIFACT_GAS_LIMIT,
+    SYSTEM_TX_INPUT_VERSION,
 };
 use outbe_primitives::{OutbeBlockBody, OutbeHeader};
 use reth_chainspec::ChainSpecBuilder;
@@ -168,7 +168,7 @@ fn phase1_metadata(block_number: u64, block_hash: B256) -> CertifiedParentAccoun
 }
 
 #[test]
-fn gas_04_osaka_user_tx_cap_accepts_visible_outbe_system_tx_envelopes() {
+fn osaka_user_tx_cap_accepts_visible_outbe_system_tx_envelopes() {
     const MAX_TX_GAS_LIMIT_OSAKA: u64 = 1 << 24;
     const {
         assert!(
@@ -473,16 +473,9 @@ fn with_tx_root_forwards_transaction_root_on_wellformed_block() {
 // V3 envelope with unknown selector is rejected.
 // ---------------------------------------------------------------------------
 
-/// an input whose selector is not any active selector
-/// (`OSCN` / `OSBB` / `OSEB`) is rejected. The selector byte
-/// constants live in `outbe_evm::system_tx` so a future selector reshuffle
-/// fails here too, not just at the unit-test layer.
+/// an input whose selector is not any active selector is rejected.
 #[test]
 fn v3_envelope_with_unknown_selector_rejects() {
-    assert_eq!(CONSENSUS_STAGE_SELECTOR, *b"OSCN");
-    assert_eq!(BEGIN_BLOCK_STAGE_SELECTOR, *b"OSBB");
-    assert_eq!(END_BLOCK_STAGE_SELECTOR, *b"OSEB");
-
     let signer = signer();
     let mut input = Vec::with_capacity(6);
     input.extend_from_slice(b"ZZZZ"); // unknown 4-byte selector

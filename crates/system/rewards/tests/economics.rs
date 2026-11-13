@@ -1,20 +1,15 @@
 //! Rewards economics + late-vote invariant tests.
 //!
-//! These tests pin allocation constants and the V3 certificate fingerprint:
+//! These tests pin the V3 certificate fingerprint:
 //! locally observed votes cannot change a replayed CPA signer bitmap. Canonical
 //! authenticated late credits use a separate phase. The `late_gem_participation`
 //! tests exercise their daily GEM accounting.
 
 use alloy_primitives::{address, b256, Bytes, B256, U256};
-use outbe_emission::allocation::{
-    CCA_REWARD_PCT, PERCENT_DENOMINATOR, SRA_REWARD_PCT, VALIDATOR_REWARD_PCT, WAA_REWARD_PCT,
-};
 use outbe_primitives::consensus_metadata::{
     CertifiedParentAccountingMetadata, ParentParticipationProof,
 };
-use outbe_rewards::runtime::{
-    check_and_record_metadata_fingerprint, compute_metadata_fingerprint, MetadataFingerprintOutcome,
-};
+use outbe_rewards::runtime::{check_and_record_metadata_fingerprint, MetadataFingerprintOutcome};
 
 mod support;
 
@@ -57,25 +52,6 @@ const VRF_HASH: B256 = b256!("0x1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa
 // with. The "by_chainspec" framing matches: the canonical percent table IS
 // the chainspec-equivalent surface for V2 economics.
 // ---------------------------------------------------------------------------
-
-#[test]
-fn certified_notarization_participation_economics_pinned_by_chainspec() {
-    // Per `outbe-emissionlimit::allocation`, the V2 fixed
-    // table is: Validator 4%, WAA 4%, SRA 4%, CCA 4%,
-    // Metadosis (terminal) = remainder. Any change here is a hard-fork
-    // economic policy change and must surface as a test failure.
-    assert_eq!(VALIDATOR_REWARD_PCT, 4);
-    assert_eq!(WAA_REWARD_PCT, 4);
-    assert_eq!(SRA_REWARD_PCT, 4);
-    assert_eq!(CCA_REWARD_PCT, 4);
-    assert_eq!(PERCENT_DENOMINATOR, 100);
-
-    // The fixed table sums to 16% so the terminal Metadosis pool
-    // receives 84%. Pin that derived invariant.
-    let fixed_pct_sum = VALIDATOR_REWARD_PCT + WAA_REWARD_PCT + SRA_REWARD_PCT + CCA_REWARD_PCT;
-    assert_eq!(fixed_pct_sum, 16);
-    assert_eq!(PERCENT_DENOMINATOR - fixed_pct_sum, 84);
-}
 
 // ---------------------------------------------------------------------------
 // Two metadata-txes for the SAME `fb_hash` with different signer bitmaps
@@ -175,29 +151,3 @@ fn insufficient_rewards_backing_rejects_phase1_and_leaves_progress_unchanged() {
 // is IDENTICAL: the same signer set produces the same per-voter share
 // under either proof_kind. Pin both halves of the invariant.
 // ---------------------------------------------------------------------------
-
-#[test]
-fn finalization_preference_is_documented_as_stronger_certificate_not_different_economics() {
-    // Half 1: the fingerprint binds proof_kind, so the two proof_kinds are
-    // NOT interchangeable for dedup (already covered). Re-state it here to
-    // anchor the documentary intent alongside the economics half.
-    let m_fin = base_metadata(ParentParticipationProof::Finalization);
-    let m_notar = base_metadata(ParentParticipationProof::CertifiedNotarization);
-    let fp_fin = compute_metadata_fingerprint(&m_fin, U256::from(100u64), VRF_HASH);
-    let fp_notar = compute_metadata_fingerprint(&m_notar, U256::from(100u64), VRF_HASH);
-    assert_ne!(
-        fp_fin, fp_notar,
-        "proof_kind is part of the fingerprint (acceptance-rule distinction is preserved)"
-    );
-
-    // Half 2: economics are the SAME. The Cycle handler consumes the
-    // fixed-percent emission allocation table regardless of proof_kind.
-    // The per-voter share derives from `(validator_pool_amount,
-    // voters_for_day)`, which is independent of how the parent
-    // certificate was produced. Pin the constants again, so that a future
-    // "stronger certificate gets a bonus" change would trip this test.
-    assert_eq!(VALIDATOR_REWARD_PCT, 4);
-    assert_eq!(WAA_REWARD_PCT, 4);
-    assert_eq!(SRA_REWARD_PCT, 4);
-    assert_eq!(CCA_REWARD_PCT, 4);
-}

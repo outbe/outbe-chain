@@ -23,9 +23,6 @@ use outbe_validatorset::{
 
 #[test]
 fn vrf_material_version_zero_at_genesis_and_increments_by_one_per_reshare() {
-    // Genesis: pin the genesis value to 0.
-    assert_eq!(VRF_MATERIAL_VERSION_GENESIS, 0);
-
     // Five consecutive successful reshare activations: 0 -> 1 -> 2 -> 3 -> 4 -> 5.
     let mut v = VRF_MATERIAL_VERSION_GENESIS;
     for expected in 1..=5u64 {

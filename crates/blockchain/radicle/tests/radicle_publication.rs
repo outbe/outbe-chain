@@ -86,7 +86,6 @@ fn bounded_batch_exact_sizes_and_all_valid_counts_roundtrip() {
         batch(32).to_bytes().unwrap().len(),
         MAX_PUBLICATION_BATCH_LEN
     );
-    assert_eq!(MAX_PUBLICATION_BATCH_LEN, 3678);
     assert!(batch(0).to_bytes().is_err());
     assert!(batch(33).to_bytes().is_err());
 }

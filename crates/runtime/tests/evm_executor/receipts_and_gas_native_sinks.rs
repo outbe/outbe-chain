@@ -165,7 +165,7 @@ fn base_fee_is_burned_tip_reaches_rewards_and_promis_limit_receives_burned_fee()
 }
 
 #[test]
-fn gap_ed33_base_and_blob_fee_go_to_promis_limit() {
+fn base_and_blob_fee_go_to_promis_limit() {
     scenario_a_paid_reverted_and_declined_txs_settle_burned_base_fees();
     scenario_b_eip4844_blob_tx_settles_base_and_blob_fees();
     scenario_c_protocol_fee_waiver_burns_zero_under_nonzero_basefee();

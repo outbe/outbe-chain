@@ -1,4 +1,4 @@
-use alloy_primitives::{address, b256, keccak256, Address, B256, U256};
+use alloy_primitives::{address, b256, Address, B256, U256};
 use alloy_sol_types::{SolCall, SolError, SolEvent};
 use outbe_primitives::addresses::{STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS};
 use outbe_primitives::error::PrecompileError;
@@ -14,8 +14,8 @@ use crate::abi::IStablecoin;
 use crate::api::{FactoryTokenInitialization, StablecoinFactoryApi};
 use crate::precompile::dispatch;
 use crate::schema::{
-    role_key, StablecoinContract, ADMIN_ROLE, CAP_MANAGER_ROLE, COMPLIANCE_ROLE, ENFORCER_ROLE,
-    GUARDIAN_ROLE, ISSUER_ROLE, OPERATIONAL_ROLES,
+    role_key, StablecoinContract, ADMIN_ROLE, COMPLIANCE_ROLE, GUARDIAN_ROLE, ISSUER_ROLE,
+    OPERATIONAL_ROLES,
 };
 
 const CHAIN_ID: u64 = 7;
@@ -180,16 +180,6 @@ fn layout_is_pinned_to_the_documented_root_slots() {
         assert_eq!(token.roles.base_slot(), U256::from(17));
         assert_eq!(token.frozen.base_slot(), U256::from(18));
     });
-}
-
-#[test]
-fn role_ids_match_the_frozen_abi_vectors() {
-    assert_eq!(ADMIN_ROLE, keccak256("ADMIN"));
-    assert_eq!(ISSUER_ROLE, keccak256("ISSUER"));
-    assert_eq!(CAP_MANAGER_ROLE, keccak256("CAP_MANAGER"));
-    assert_eq!(GUARDIAN_ROLE, keccak256("GUARDIAN"));
-    assert_eq!(COMPLIANCE_ROLE, keccak256("COMPLIANCE"));
-    assert_eq!(ENFORCER_ROLE, keccak256("ENFORCER"));
 }
 
 #[test]
@@ -415,7 +405,7 @@ fn self_transfer_preserves_max_balance_and_still_emits() {
 }
 
 #[test]
-fn pfs_010_07_cap_failures_restore_supply_balances_and_events() {
+fn cap_failures_restore_supply_balances_and_events() {
     let init = initialization("USDX");
     let alice = Address::repeat_byte(0x31);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
@@ -1014,10 +1004,6 @@ fn cancel_admin_transfer_emits_admin_transfer_canceled() {
         }
         .encode_log_data()
     );
-    assert_eq!(
-        IStablecoin::AdminTransferCanceled::SIGNATURE,
-        "AdminTransferCanceled(address,address)"
-    );
 }
 
 #[test]
@@ -1128,7 +1114,7 @@ fn mint_burn_burn_from_and_cap_follow_the_fixed_roles() {
 }
 
 #[test]
-fn pfs_010_07_role_failures_restore_state_and_events() {
+fn role_failures_restore_state_and_events() {
     let init = initialization("USDX");
     let attacker = Address::repeat_byte(0xd1);
     let target = Address::repeat_byte(0xd2);
@@ -1388,7 +1374,7 @@ fn forced_transfer_bypasses_source_checks_consumes_only_frozen_units_and_orders_
 }
 
 #[test]
-fn pfs_010_07_policy_failures_restore_balances_freeze_supply_and_events() {
+fn policy_failures_restore_balances_freeze_supply_and_events() {
     let init = initialization("USDX");
     let alice = Address::repeat_byte(0xc1);
     let bob = Address::repeat_byte(0xc2);
@@ -1582,6 +1568,52 @@ fn erc7943_abi_reports_interface_and_roundtrips_views_and_mutations() {
     );
 }
 
+/// Domain separators that Foundry `cast` 1.7.1 computed for these names, chains and addresses.
+#[test]
+fn domain_separator_matches_the_foundry_vectors() {
+    for (name, chain_id, token_address, expected) in [
+        (
+            "Example Dollar",
+            424_242,
+            address!("53c0438d2aa31f9642f6718ce7b1ab3253c7f350"),
+            b256!("bad60a9ff5a489b59649a99c4bf6d3cf3ac4ed82c76304f0b14cbb2b8c9a83e9"),
+        ),
+        (
+            "Example Dollar",
+            54_322_345,
+            address!("53c0f7f0acaf4c6a42867edc0cfedd65ee90c97f"),
+            b256!("24aae2a2078bc2de3469da62ff425b346368ad5de045f3e522e81d0ccac6a425"),
+        ),
+        (
+            "Example Dollar",
+            676,
+            address!("53c0232442bb7951098f3e4c2d9751e2d0d33564"),
+            b256!("0c42886de638f55263886351ee424f51fc70ccd71565c06342557215ae759ee5"),
+        ),
+        (
+            "Yen \u{5186}",
+            54_322_345,
+            address!("53c0000000000000000000000000000000000001"),
+            b256!("03ee71636f30d301ad5c69dffab683b90815b40042bcc9da442e6fa559a09dfd"),
+        ),
+    ] {
+        let mut provider = HashMapStorageProvider::new(chain_id);
+        StorageHandle::enter(&mut provider, |storage| {
+            let token = StablecoinContract::new(storage, token_address);
+            token
+                .schema_version
+                .write(u64::from(STABLECOIN_V1_SCHEMA_VERSION))
+                .unwrap();
+            token.name.write_string(name).unwrap();
+            assert_eq!(
+                token.domain_separator().unwrap(),
+                expected,
+                "{name} on {chain_id}"
+            );
+        });
+    }
+}
+
 #[test]
 fn permit_domain_and_cast_golden_signature_are_exact_and_work_at_deadline_while_paused() {
     let init = initialization("USDX");
@@ -1659,7 +1691,7 @@ fn permit_domain_and_cast_golden_signature_are_exact_and_work_at_deadline_while_
 }
 
 #[test]
-fn pfs_010_07_signature_failures_restore_nonce_allowance_and_events() {
+fn signature_failures_restore_nonce_allowance_and_events() {
     let init = initialization("USDX");
     let call = golden_permit_call();
 

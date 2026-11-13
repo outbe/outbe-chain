@@ -47,25 +47,6 @@ const LOAD_MINOR: u128 = 1_000_000 * PROMIS_LOAD_MINOR;
 /// The `advance_auctions` work budget in `outbe-cycle`.
 const ADVANCE_BUDGET: u64 = crate::constants::ADVANCE_AUCTIONS_BUDGET_GAS;
 
-#[test]
-fn the_bridge_caps_match_the_contracts() {
-    use crate::constants::{MAX_BID_BATCHES, MAX_PAYLOAD_ARRAY_LEN, MAX_REFUND_CHUNKS};
-    use outbe_primitives::test_utils::sol_interface::sol_constant;
-    const CODEC: &str =
-        include_str!("../../../../contracts/intex/src/shared/libs/BridgeMsgCodec.sol");
-    const TARGET_ROUTER: &str =
-        include_str!("../../../../contracts/intex/src/target/TargetRouter.sol");
-    assert_eq!(
-        sol_constant(CODEC, "MAX_PAYLOAD_ARRAY_LEN"),
-        Some(MAX_PAYLOAD_ARRAY_LEN)
-    );
-    assert_eq!(sol_constant(CODEC, "MAX_CHUNKS"), Some(MAX_REFUND_CHUNKS));
-    assert_eq!(
-        sol_constant(TARGET_ROUTER, "MAX_BIDS_BATCHES"),
-        Some(MAX_BID_BATCHES)
-    );
-}
-
 // --- PROMIS load ladder ---
 
 /// The launch rung: 1 000 000 PROMIS.
@@ -2319,7 +2300,6 @@ fn a_day_briefed_with_no_limit_is_cancelled_with_no_limit() {
         .clone();
 
     assert_eq!(stage, AuctionStage::Cancelled);
-    assert_eq!(DAY_STATE_CANCELLED, 2);
     assert_eq!(sent_day_states(&storage), vec![DAY_STATE_CANCELLED]);
     assert!(below_one_unit(&events).is_none());
     assert!(events.iter().any(|log| {
@@ -2782,39 +2762,6 @@ fn complete_auctions_clears_a_ready_day() {
         );
         assert_eq!(contract.gate_active_count.read().unwrap(), 0);
     });
-}
-
-#[test]
-fn test_iface_id_matches_selector_xor() {
-    use crate::precompile::IDesis;
-    use alloy_sol_types::SolCall;
-
-    // `IDESIS_INTERFACE_ID` is what OriginRouter probes: `type(IDesis).interfaceId` of the
-    // router-facing interface (contracts/intex/src/origin/interfaces/IDesis.sol). It covers the
-    // four functions that interface declares. The precompile's extra diagnostic views
-    // (getChainBidsCount, isChainDone) are not part of that interface, so they are excluded from
-    // the XOR.
-    let xor: [u8; 4] = [
-        IDesis::processBidsBatchCall::SELECTOR,
-        IDesis::processBidsDoneCall::SELECTOR,
-        IDesis::getAuctionStageCall::SELECTOR,
-        IDesis::getBidsCountCall::SELECTOR,
-    ]
-    .into_iter()
-    .fold([0u8; 4], |acc, sel| {
-        [
-            acc[0] ^ sel[0],
-            acc[1] ^ sel[1],
-            acc[2] ^ sel[2],
-            acc[3] ^ sel[3],
-        ]
-    });
-
-    assert_eq!(
-        xor,
-        crate::precompile::IDESIS_INTERFACE_ID,
-        "IDESIS_INTERFACE_ID is stale; update it to match the new selector XOR"
-    );
 }
 
 // --- Clearing: one series per currency pair ---

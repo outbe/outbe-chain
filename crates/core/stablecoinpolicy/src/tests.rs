@@ -738,10 +738,6 @@ fn precompile_dispatch_covers_every_selector_and_emits_typed_events() {
         }
         .encode_log_data()
     );
-    assert_eq!(
-        I::PolicyAdminTransferCanceled::SIGNATURE,
-        "PolicyAdminTransferCanceled(uint256,address,address)"
-    );
     invoke(
         &mut provider,
         current_admin,

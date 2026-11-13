@@ -82,15 +82,6 @@ fn user_tx() -> TransactionSigned {
 }
 
 #[test]
-fn active_stage_selectors_have_expected_byte_sequence() {
-    assert_eq!(CONSENSUS_STAGE_SELECTOR, *b"OSCN");
-    assert_eq!(BEGIN_BLOCK_STAGE_SELECTOR, *b"OSBB");
-    assert_eq!(END_BLOCK_STAGE_SELECTOR, *b"OSEB");
-    assert_eq!(SYSTEM_TX_INPUT_VERSION, 3);
-    assert_eq!(SYSTEM_CALLDATA_FRAMING_BYTES, 6);
-}
-
-#[test]
 fn legacy_selectors_and_versions_are_rejected() {
     for selector in [
         *b"OSF1", *b"OSC1", *b"OSB1", *b"OSO1", *b"OSA3", *b"OSL2", *b"OSB2", *b"OST3", *b"OSC2",

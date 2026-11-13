@@ -37,7 +37,6 @@ mod tests {
             pending_tee_bootstrap: None,
             expected_tee_policy: None,
         };
-        assert_eq!(CredisFactoryModule::NAME, "credis_factory");
         assert!(CredisFactoryModule::build_payload(&ctx).unwrap().is_empty());
     }
 }

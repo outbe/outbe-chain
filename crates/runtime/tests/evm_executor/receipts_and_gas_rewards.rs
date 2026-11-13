@@ -4,7 +4,7 @@ use super::*;
 use outbe_rewards::precompile::IRewards;
 
 #[test]
-fn gap_ed31_block_fee_rest_uses_shared_function() {
+fn block_fee_rest_uses_shared_function() {
     assert_real_cpa_and_block_fee_transfer(false, false);
 }
 

@@ -317,7 +317,6 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut provider, |storage| {
             let ctx = BlockRuntimeContext::new(gas_context(100, 40), storage);
-            assert_eq!(NopModule::NAME, "nop");
             assert!(NopModule::begin_block(&ctx).is_ok());
             assert!(NopModule::end_block(&ctx).is_ok());
         });

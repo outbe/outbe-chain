@@ -100,7 +100,7 @@ fn init_genesis_day_creates_7_day_lookahead_with_bidirectional_links_and_closed_
 }
 
 #[test]
-fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_due_after_halt() {
+fn schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_due_after_halt() {
     with_storage(|storage| {
         let wwd_sep_01 = WorldwideDay::new(20260901);
         let genesis_ts = date_key_to_utc_timestamp(20260901).unwrap() + 12 * 3_600;
@@ -259,12 +259,6 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
 
 #[test]
 fn first_wwd_for_genesis_splits_3_or_4_empty_emission_days_across_noon_utc() {
-    assert_eq!(outbe_chain_constants::MAX_PIPELINE_WWDS, 7);
-    assert_eq!(
-        outbe_tributefactory::worldwideday::constants::MAX_PIPELINE_WWDS,
-        7
-    );
-    assert_eq!(crate::constants::MAX_PIPELINE_WWDS, 7);
     // Genesis on 2026-10-01 at 11:59 UTC -> first_wwd = 20260930 (G - 1),
     // offering_end on 20261004 (G + 3) -> 3 empty EmissionDays (20261001..=20261003).
     with_storage(|storage| {
@@ -461,7 +455,7 @@ fn wwd_lifecycle_gates_activation_on_forming_vwap_and_seals_on_close() {
 }
 
 #[test]
-fn gap_ed05_wwd_without_price_runs_as_empty_day() {
+fn wwd_without_price_runs_as_empty_day() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 64);
     install_test_enclaves();

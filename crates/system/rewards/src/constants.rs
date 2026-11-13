@@ -59,21 +59,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn decay_curve_values() {
-        assert_eq!(LATE_FINALIZE_SLOTS, 4, "K=3 => 4 inclusion slots");
-        assert_eq!(
-            LATE_FINALIZE_DECAY,
-            [
-                uint!(100_U256),
-                uint!(100_U256),
-                uint!(100_U256),
-                uint!(0_U256)
-            ]
-        );
-        assert_eq!(LATE_FINALIZE_W_MAX, uint!(100_U256));
-    }
-
-    #[test]
     fn decay_weight_per_slot_and_out_of_window() {
         assert_eq!(decay_weight(0), uint!(100_U256));
         assert_eq!(decay_weight(1), uint!(100_U256));

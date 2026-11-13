@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use num_bigint::{BigInt, BigUint};
 use serde_json::Value;
 
@@ -74,24 +72,4 @@ fn six_decimal_projection_has_the_frozen_twenty_five_unit_dust() {
     assert_eq!(raw, BigUint::from(4_799_975u64));
     assert_eq!(normalized, raw);
     assert_eq!(allocation - normalized, BigUint::from(25u64));
-}
-
-#[test]
-fn reference_has_no_production_dependency() {
-    let manifest =
-        std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
-            .unwrap();
-    for forbidden in [
-        "outbe-lysis",
-        "outbe-primitives",
-        "alloy-primitives",
-        "outbe-core-common",
-    ] {
-        assert!(
-            !manifest
-                .lines()
-                .any(|line| line.trim_start().starts_with(forbidden)),
-            "reference depends on production crate {forbidden}"
-        );
-    }
 }

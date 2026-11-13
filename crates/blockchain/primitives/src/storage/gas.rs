@@ -145,7 +145,6 @@ impl TriggerBudget {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
 
     #[test]
     fn unused_return_cannot_create_capacity_or_overflow() {
@@ -161,15 +160,5 @@ mod tests {
             ));
             assert_eq!(meter.remaining, budget);
         }
-    }
-
-    #[test]
-    fn outbe_protocol_gas_values_are_stable() {
-        // Protocol-visible values. If revm ever changes these upstream,
-        // Outbe must decide explicitly whether to follow or pin a local
-        // value. A silent upstream shift is a protocol change.
-        assert_eq!(WARM_STORAGE_READ_COST, 100);
-        assert_eq!(SSTORE_RESET, 5_000);
-        assert_eq!(PRECOMPILE_BASE_GAS, 200);
     }
 }

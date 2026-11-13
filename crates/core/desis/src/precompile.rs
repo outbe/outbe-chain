@@ -18,10 +18,25 @@ use crate::schema::BidData;
 /// without flipping the route fails the build.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
-/// Interface ID probed by `OriginRouter.wire` - `type(IDesis).interfaceId` of the
-/// router-facing interface in contracts/intex/src/origin/interfaces/IDesis.sol
-/// (XOR of its 4 function selectors).
-pub(crate) const IDESIS_INTERFACE_ID: [u8; 4] = [0x8c, 0xcd, 0x62, 0xc9];
+mod router_abi {
+    alloy_sol_types::sol!("../../../contracts/intex/src/origin/interfaces/IDesis.sol");
+}
+
+/// `type(IDesis).interfaceId` of the router-facing interface that `OriginRouter.wire` probes.
+pub(crate) const IDESIS_INTERFACE_ID: [u8; 4] = {
+    let selectors = router_abi::IDesis::IDesisCalls::SELECTORS;
+    let mut id = [0u8; 4];
+    let mut i = 0;
+    while i < selectors.len() {
+        let mut b = 0;
+        while b < 4 {
+            id[b] ^= selectors[i][b];
+            b += 1;
+        }
+        i += 1;
+    }
+    id
+};
 
 // Generated ABI methods follow the Solidity argument lists.
 #[allow(clippy::too_many_arguments)]
