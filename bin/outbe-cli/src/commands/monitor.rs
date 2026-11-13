@@ -44,12 +44,12 @@ pub enum MonitorCmd {
     },
     /// Fetch and display Prometheus metrics from the node's metrics endpoint.
     ///
-    /// Filters for `outbe_` prefixed metrics by default.
+    /// Filters for `reth_outbe_` or `outbe_` prefixed metrics by default.
     Metrics {
         /// Metrics endpoint URL (default: http://localhost:9001/metrics).
         #[arg(long, default_value = "http://localhost:9001/metrics")]
         endpoint: String,
-        /// Show all metrics, not just `outbe_` prefixed ones.
+        /// Show all metrics, not just `reth_outbe_` or `outbe_` prefixed ones.
         #[arg(long)]
         all: bool,
     },
@@ -343,12 +343,14 @@ async fn run_readiness(
 
 fn should_display_metric_line(line: &str, show_all: bool) -> bool {
     if show_all {
-        return true;
+        return !line.is_empty();
     }
-    if line.starts_with('#') {
-        return line.contains("outbe_");
-    }
-    line.starts_with("outbe_")
+    let name = if line.starts_with('#') {
+        line.split_whitespace().nth(2).unwrap_or_default()
+    } else {
+        line
+    };
+    name.starts_with("reth_outbe_") || name.starts_with("outbe_")
 }
 
 /// Fetch and display Prometheus metrics.
@@ -399,6 +401,64 @@ fn interpret_validator_status(status: u8) -> (&'static str, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_should_display_metric_line() {
+        let cases = [
+            ("reth_outbe_consensus_finalized_view 42", true, true),
+            ("outbe_consensus_finalized_view 42", true, true),
+            (
+                "# TYPE reth_outbe_consensus_finalized_view gauge",
+                true,
+                true,
+            ),
+            (
+                "# HELP reth_outbe_consensus_finalized_view Finalized view",
+                true,
+                true,
+            ),
+            ("# TYPE outbe_consensus_finalized_view gauge", true, true),
+            (
+                "# HELP outbe_consensus_finalized_view Finalized view",
+                true,
+                true,
+            ),
+            ("reth_sync_entities_processed 10", false, true),
+            ("# TYPE reth_sync_entities_processed gauge", false, true),
+            ("reth_process_resident_memory_bytes 123", false, true),
+            (
+                "# HELP reth_sync_entities_processed Mentions outbe_",
+                false,
+                true,
+            ),
+            (
+                "# HELP reth_sync_entities_processed Mentions reth_outbe_",
+                false,
+                true,
+            ),
+            ("# TYPE other_outbe_metric gauge", false, true),
+            (
+                "# CUSTOM reth_outbe_consensus_finalized_view Extra metadata",
+                true,
+                true,
+            ),
+            ("# outbe_ in arbitrary comment text", false, true),
+            ("#", false, true),
+            ("", false, false),
+        ];
+        for (line, filtered, all) in cases {
+            assert_eq!(
+                should_display_metric_line(line, false),
+                filtered,
+                "{line:?}"
+            );
+            assert_eq!(
+                should_display_metric_line(line, true),
+                all,
+                "--all: {line:?}"
+            );
+        }
+    }
 
     #[test]
     fn test_readiness_status_0_is_unknown() {

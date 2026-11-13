@@ -68,7 +68,7 @@ impl ParentProofSelector {
     /// Non-blocking: this method does not poll, does not sleep, and does not
     /// `await` anything except the in-process store lock. The proposer
     /// (handler) orchestrates any bounded remote fetch fallback. The proposer
-    /// also emits the `outbe_proposer_forfeit_total{reason="parent_proof_unavailable"}`
+    /// also emits the `outbe_consensus_proposer_forfeit_total{reason="parent_proof_unavailable"}`
     /// metric on the no-proof terminal.
     pub fn select_direct_parent_proof(
         &self,

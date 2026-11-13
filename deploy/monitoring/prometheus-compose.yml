@@ -13,4 +13,6 @@ scrape_configs:
         labels:
           chain: 'outbe'
           role: 'validator'
+    # Reth --metrics exports reth_outbe_<subsystem>_* and reth_process_* directly.
+    # No metric_relabel_configs is required.
     metrics_path: /metrics

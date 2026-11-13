@@ -9040,6 +9040,9 @@ dependencies = [
  "hex",
  "k256 0.13.4",
  "log",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "metrics-process",
  "outbe-agentreward",
  "outbe-ccaregistry",
  "outbe-chain-constants",
@@ -9116,6 +9119,7 @@ dependencies = [
  "reth-node-api",
  "reth-node-builder",
  "reth-node-core",
+ "reth-node-metrics",
  "reth-payload-primitives",
  "reth-primitives-traits",
  "reth-provider",
@@ -9127,12 +9131,14 @@ dependencies = [
  "reth-transaction-pool",
  "reth-trie",
  "revm",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
  "tracing",
+ "yaml_serde",
 ]
 
 [[package]]
@@ -9670,6 +9676,7 @@ dependencies = [
  "flate2",
  "outbe-primitives",
  "outbe-zk",
+ "quinn-udp",
  "reqwest 0.13.2",
  "sha2 0.10.9",
  "thiserror 2.0.18",
@@ -10546,16 +10553,16 @@ dependencies = [
 
 [[package]]
 name = "quinn-udp"
-version = "0.5.14"
+version = "0.5.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "addec6a0dcad8a8d96a771f815f0eaf55f9d1805756410b39f5fa81332574cbd"
+checksum = "af66907df18639dcf4db56ca65490cabc4b27a97dbadd96f2926cca73298f016"
 dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
  "socket2 0.6.3",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
