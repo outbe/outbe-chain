@@ -1,4 +1,4 @@
-//! Typed error definitions for the ProtocolCycle system precompile.
+//! Typed error definitions for the Cycle system precompile.
 
 use crate::ICycle;
 use alloy_primitives::Bytes;
@@ -21,15 +21,15 @@ impl From<AccountingProgressError> for CycleError {
     }
 }
 
-/// Represents errors returned by the ProtocolCycle runtime.
+/// Represents errors returned by the Cycle runtime.
 #[derive(Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CycleError {
-    #[error("ProtocolCycle received invalid UTC day: active={active}, block={block}")]
+    #[error("ProcessEmissionDay received invalid UTC day: active={active}, block={block}")]
     InvalidActiveUtcDay { active: u32, block: u32 },
-    #[error("ProtocolCycle received invalid UTC day: active={active}, block={block}")]
+    #[error("ProcessEmissionDay received invalid UTC day: active={active}, block={block}")]
     InvalidBlockUtcDay { active: u32, block: u32 },
-    #[error("ProtocolCycle active UTC day {active} is after block UTC day {block}")]
+    #[error("ProcessEmissionDay active UTC day {active} is after block UTC day {block}")]
     ActiveUtcDayAfterBlock { active: u32, block: u32 },
     #[error("native validator budget overflow")]
     NativeValidatorBudgetOverflow,

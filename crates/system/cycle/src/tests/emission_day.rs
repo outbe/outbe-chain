@@ -65,8 +65,8 @@ fn every_utc_day_is_an_emission_day() {
             };
             let ctx = runtime_context(block, handle);
             account_parent(&ctx, block_number);
-            dispatch_triggers(&ctx).unwrap();
-            crate::handler::credit_reward_slice(&ctx).unwrap();
+            run_due_tasks(&ctx).unwrap();
+            crate::handler::process_agent_rewards(&ctx).unwrap();
         });
         block_number += 1;
         ts += 3_600;
@@ -183,7 +183,7 @@ fn start_date_comes_from_genesis_block() {
             },
             handle.clone(),
         );
-        let err = crate::handler::run_protocol_cycle(&ctx_zero_genesis)
+        let err = crate::handler::process_emission_day(&ctx_zero_genesis)
             .expect_err("zero genesis_timestamp must fail");
         assert!(matches!(err, PrecompileError::Fatal(_)));
     });
@@ -198,7 +198,7 @@ fn start_date_comes_from_genesis_block() {
     storage.enter(|handle| {
         let fire_ts = GENESIS_TS + SECONDS_PER_DAY + 3_600;
         let ctx = dispatch_at(handle.clone(), 2, fire_ts);
-        crate::handler::credit_reward_slice(&ctx).unwrap();
+        crate::handler::process_agent_rewards(&ctx).unwrap();
         let record = outbe_emission::api::get_emission_day_record(handle, 20_240_101)
             .unwrap()
             .expect("genesis day must be allocated");
@@ -269,7 +269,7 @@ fn wwd_step_runs_once_a_day() {
         storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 8);
         storage.enter(|handle| {
             let ctx = dispatch_at(handle.clone(), block_no, midnight_ts);
-            crate::handler::credit_reward_slice(&ctx).unwrap();
+            crate::handler::process_agent_rewards(&ctx).unwrap();
             let expected_day = timestamp_to_date_key(midnight_ts);
             let factory = TributeFactoryContract::new(ctx.storage.clone());
             assert_eq!(factory.last_wwd_advance_day.read().unwrap(), expected_day);
@@ -340,7 +340,7 @@ fn wwd_step_runs_once_a_day() {
         storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 8);
         storage.enter(|handle| {
             let ctx = dispatch_at(handle.clone(), block_no, ts_hour);
-            crate::handler::credit_reward_slice(&ctx).unwrap();
+            crate::handler::process_agent_rewards(&ctx).unwrap();
             let factory = TributeFactoryContract::new(ctx.storage.clone());
             assert_eq!(factory.last_wwd_advance_day.read().unwrap(), 20_240_105);
             if hour == 13 {
@@ -459,7 +459,7 @@ fn wwd_step_runs_once_a_day() {
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 8);
     storage.enter(|handle| {
         let ctx = dispatch_at(handle.clone(), block_no, ts_day6_01h);
-        crate::handler::credit_reward_slice(&ctx).unwrap();
+        crate::handler::process_agent_rewards(&ctx).unwrap();
         let factory = TributeFactoryContract::new(ctx.storage.clone());
         assert_eq!(factory.last_wwd_advance_day.read().unwrap(), 20_240_106);
         assert!(

@@ -4,11 +4,11 @@
 //! `start_offset_seconds` phase relative to unix epoch zero. A trigger
 //! fires at every slot `t` where `(t - offset) % period == 0`, on the
 //! first block whose timestamp is `>= t`. If `block.timestamp` jumps
-//! over multiple hourly slots, ProtocolCycle fires once for the most recent
+//! over multiple hourly slots, ProcessEmissionDay fires once for the most recent
 //! slot. It settles one oldest eligible completed day within the 64-day derived
 //! horizon. It never settles the current UTC day.
 //!
-//! [`triggers::TriggerId::ProtocolCycle`] is aligned to UTC-hour boundaries
+//! [`triggers::TriggerId::ProcessEmissionDay`] is aligned to UTC-hour boundaries
 //! (`period = 3_600`, `offset = 0` in production). Its handler derives the active
 //! UTC day from [`outbe_emission::schema::EmissionContract::emission_days`] and
 //! settles one eligible completed day per successful hourly slot.

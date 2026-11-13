@@ -17,7 +17,7 @@ fn cycle_tick_runs_dispatcher() {
         run_cycle_tick(&ctx).unwrap();
 
         // Same as `first_encounter_anchors_without_firing`: handle_cycle_tick
-        // delegates to dispatch_triggers.
+        // delegates to run_due_tasks.
         assert_eq!(last_executed_at(&ctx), block_ts);
     });
 }
@@ -36,7 +36,7 @@ fn dispatcher_fires_advance_auctions_at_its_slot() {
         let cycle: Cycle<'_> = ctx_fire.storage.contract::<Cycle<'_>>();
         assert_eq!(
             cycle.last_executed_at.read(&advance_auctions_id).unwrap(),
-            GENESIS_TS + SECONDS_PER_DAY + PROTOCOL_CYCLE_START_OFFSET_SECONDS,
+            GENESIS_TS + SECONDS_PER_DAY + PROCESS_EMISSION_DAY_START_OFFSET_SECONDS,
             "coalesces the backlog to the latest slot at or before the block"
         );
         assert_eq!(
@@ -88,7 +88,7 @@ pub(super) fn record_parent_with_late_voter(
 }
 
 #[test]
-fn protocol_cycle_keeps_midnight_slot_pending_until_late_reward_window_closes() {
+fn process_emission_day_keeps_midnight_slot_pending_until_late_reward_window_closes() {
     let mut storage = cycle_storage();
     let hash = B256::repeat_byte(0x77);
     let early = Address::repeat_byte(0xB0);
@@ -109,7 +109,7 @@ fn protocol_cycle_keeps_midnight_slot_pending_until_late_reward_window_closes() 
                 handle,
             );
             account_parent(&ctx, height);
-            dispatch_triggers(&ctx).unwrap();
+            run_due_tasks(&ctx).unwrap();
             let cycle = ctx.storage.contract::<Cycle>();
             assert_eq!(active_utc_day(&ctx), 20240101);
             assert_eq!(
@@ -130,7 +130,7 @@ fn protocol_cycle_keeps_midnight_slot_pending_until_late_reward_window_closes() 
     storage.set_block_number(14);
     storage.enter(|handle| {
         let ctx = dispatch_at(handle, 14, GENESIS_TS + SECONDS_PER_DAY + 3);
-        crate::handler::credit_reward_slice(&ctx).unwrap();
+        crate::handler::process_agent_rewards(&ctx).unwrap();
         assert!(is_day_allocated(&ctx, 20240101));
         let cycle = ctx.storage.contract::<Cycle>();
         assert_eq!(active_utc_day(&ctx), 20240102);
@@ -150,7 +150,7 @@ fn protocol_cycle_keeps_midnight_slot_pending_until_late_reward_window_closes() 
         assert_eq!(validator_claimable(early), validator_claimable(late));
         assert!(validator_claimable(late) > U256::ZERO);
         let credited = validator_claimable(early);
-        dispatch_triggers(&ctx).unwrap();
+        run_due_tasks(&ctx).unwrap();
         assert_eq!(validator_claimable(early), credited);
     });
 }
@@ -174,7 +174,7 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
         // (GENESIS_TS + 86_400 + 1), not the block timestamp.
         assert_eq!(
             last_executed_at(&ctx_fire),
-            GENESIS_TS + SECONDS_PER_DAY + PROTOCOL_CYCLE_START_OFFSET_SECONDS
+            GENESIS_TS + SECONDS_PER_DAY + PROCESS_EMISSION_DAY_START_OFFSET_SECONDS
         );
 
         // No tributes for any AgentReward pool: all three WAA/SRA/CCA
@@ -303,7 +303,7 @@ fn next_day_cycle_settlement_pays_previous_utc_day_agent_activity() {
 
         let fire_ts = GENESIS_TS + SECONDS_PER_DAY + 60;
         let ctx_fire = dispatch_at(handle, 2, fire_ts);
-        crate::handler::credit_reward_slice(&ctx_fire).unwrap();
+        crate::handler::process_agent_rewards(&ctx_fire).unwrap();
 
         let agent_reward = outbe_agentreward::AgentRewardContract::new(ctx_fire.storage.clone());
         let wallet_claimable = agent_reward.get_claimable_reward(wallet).unwrap();
@@ -357,7 +357,7 @@ fn prepared_validator_topup_and_terminal_residue_conserve_the_allocation() {
         seed_daily_voters(&ctx, 20_240_101, &voters.map(|voter| (voter, 1)));
 
         run_emission_limit_daily(&ctx).unwrap();
-        crate::handler::credit_reward_slice(&ctx).unwrap();
+        crate::handler::process_agent_rewards(&ctx).unwrap();
 
         let validator_amount = day_zero_allocation(EmissionSinkId::Validator);
         let agent_reward = outbe_agentreward::AgentRewardContract::new(ctx.storage.clone());
@@ -481,7 +481,7 @@ fn terminal_dispatch_after(
         seed_fresh_reward_oracle(&fire);
         seed_daily_voters(&fire, 20_240_101, &TOPUP_VOTERS.map(|voter| (voter, 1)));
         before_dispatch(&fire);
-        dispatch_triggers(&fire)
+        run_due_tasks(&fire)
     });
     (storage, dispatched)
 }
@@ -541,7 +541,7 @@ fn topup_voters_claimable(ctx: &BlockRuntimeContext<'_>) -> U256 {
 #[test]
 fn failed_terminal_dispatch_takes_the_allocation_fallback() {
     let mut storage = failed_terminal_dispatch();
-    let recorded_at = topup_slot(TriggerId::ProtocolCycle);
+    let recorded_at = topup_slot(TriggerId::ProcessEmissionDay);
     for id in [
         EMISSION_LIMIT_1_ID,
         TriggerId::AdvanceAuctions.as_u32(),
@@ -619,13 +619,13 @@ fn failed_terminal_dispatch_is_not_retried() {
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
     let next_window = GENESIS_TS
         + SECONDS_PER_DAY
-        + crate::triggers::PROTOCOL_CYCLE_PERIOD_SECONDS
-        + PROTOCOL_CYCLE_START_OFFSET_SECONDS;
+        + crate::triggers::PROCESS_EMISSION_DAY_PERIOD_SECONDS
+        + PROCESS_EMISSION_DAY_START_OFFSET_SECONDS;
     storage.set_block_number(3);
     storage.enter(|handle| {
         let retry = runtime_context(block_ctx(3, next_window), handle);
         account_parent(&retry, 3);
-        dispatch_triggers(&retry).unwrap();
+        run_due_tasks(&retry).unwrap();
         assert_eq!(
             outbe_emission::api::get_emission_day_record(retry.storage.clone(), 20_240_101)
                 .unwrap()
@@ -670,7 +670,7 @@ fn invalid_active_utc_day_does_not_consume_the_slot_or_emit_failure() {
             handle,
         );
         account_parent(&fire, 2);
-        let err = dispatch_triggers(&fire).expect_err("invalid day must fail the block");
+        let err = run_due_tasks(&fire).expect_err("invalid day must fail the block");
         assert!(matches!(err, PrecompileError::Fatal(_)));
         assert_eq!(last_executed_at(&fire), GENESIS_TS + 60);
     });
@@ -683,7 +683,7 @@ fn storage_error_from_the_handler_does_not_consume_the_slot() {
     storage.fail_mutation_at(0);
     storage.enter(|handle| {
         let fire = runtime_context(block_ctx(2, TOPUP_FIRE_TS), handle);
-        let err = dispatch_triggers(&fire).expect_err("storage failure must fail the block");
+        let err = run_due_tasks(&fire).expect_err("storage failure must fail the block");
         assert!(matches!(err, PrecompileError::Storage(_)));
         assert_eq!(last_executed_at(&fire), GENESIS_TS + 60);
         assert!(!is_day_allocated(&fire, 20_240_101));
@@ -727,7 +727,7 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
 
         // First settlement of prev_day = 20240101: credits the pools + seals.
         run_emission_limit_daily(&ctx).unwrap();
-        crate::handler::credit_reward_slice(&ctx).unwrap();
+        crate::handler::process_agent_rewards(&ctx).unwrap();
         assert!(
             is_day_allocated(&ctx, 20_240_101),
             "first fire must seal prev_day"

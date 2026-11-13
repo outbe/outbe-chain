@@ -411,7 +411,7 @@ pub fn record_reward_pool_residue(
 }
 
 /// Finalizes an `EmissionDay` into `Completed` after verifying the conservation invariant.
-pub fn complete_emission_day(storage: StorageHandle<'_>, day: u32) -> Result<EmissionDay> {
+pub fn complete_day_emission_limit(storage: StorageHandle<'_>, day: u32) -> Result<EmissionDay> {
     let contract = EmissionContract::new(storage);
     let mut record = contract
         .emission_days
@@ -530,7 +530,7 @@ mod tests {
         .unwrap();
 
         // Cannot complete while metadosis_state is still Pending:
-        assert!(complete_emission_day(storage.clone(), day).is_err());
+        assert!(complete_day_emission_limit(storage.clone(), day).is_err());
 
         // Complete empty-day metadosis (routes 840 -> promis_limit):
         record_metadosis_completed(
@@ -546,7 +546,7 @@ mod tests {
         .unwrap();
 
         // Conservation holds: 40+40+40+40+0+840 == 1000
-        let completed = complete_emission_day(storage.clone(), day).unwrap();
+        let completed = complete_day_emission_limit(storage.clone(), day).unwrap();
         assert_eq!(completed.state, emission_day_state::COMPLETED);
         assert_eq!(completed.promis_limit, 840);
     }
@@ -569,7 +569,7 @@ mod tests {
         let shell = ensure_emission_day_shell(storage.clone(), day).unwrap();
         assert_eq!(shell.state, emission_day_state::PENDING);
         assert_emission_error(
-            complete_emission_day(storage.clone(), day).unwrap_err(),
+            complete_day_emission_limit(storage.clone(), day).unwrap_err(),
             EmissionError::InvalidStateTransition {
                 day,
                 from_state: emission_day_state::PENDING,
@@ -579,7 +579,7 @@ mod tests {
         let allocated = record_day_allocation(storage.clone(), day, amounts).unwrap();
         assert_eq!(allocated.state, emission_day_state::PROCESSING);
         record_metadosis_failed(storage.clone(), day).unwrap();
-        let completed = complete_emission_day(storage.clone(), day).unwrap();
+        let completed = complete_day_emission_limit(storage.clone(), day).unwrap();
         assert_eq!(completed.state, emission_day_state::COMPLETED);
 
         let failed_day = 20261002;
@@ -606,7 +606,7 @@ mod tests {
             expected,
         );
         assert_emission_error(
-            complete_emission_day(storage, unknown_state).unwrap_err(),
+            complete_day_emission_limit(storage, unknown_state).unwrap_err(),
             EmissionError::InvalidStateTransition {
                 day: unknown_state,
                 from_state: 3,
@@ -632,7 +632,7 @@ mod tests {
         let day = 20261001;
         record_day_allocation(storage.clone(), day, amounts).unwrap();
         record_metadosis_failed(storage.clone(), day).unwrap();
-        let completed = complete_emission_day(storage.clone(), day).unwrap();
+        let completed = complete_day_emission_limit(storage.clone(), day).unwrap();
         assert_eq!(completed.landed_sum(), Some(completed.emission_limit));
 
         let broken = 20261002;
@@ -649,7 +649,7 @@ mod tests {
             landed_sum: 101,
         };
 
-        let error = complete_emission_day(storage.clone(), broken).unwrap_err();
+        let error = complete_day_emission_limit(storage.clone(), broken).unwrap_err();
         assert_eq!(
             error.pass_failure(),
             outbe_primitives::error::PassFailure::Propagate
@@ -733,7 +733,7 @@ mod tests {
             if !settle_metadosis_first {
                 record_metadosis_failed(storage.clone(), day).unwrap();
             }
-            let completed = complete_emission_day(storage, day).unwrap();
+            let completed = complete_day_emission_limit(storage, day).unwrap();
             assert_eq!(completed.promis_limit, 72);
             assert_eq!(completed.landed_sum(), Some(100));
         }
@@ -901,7 +901,7 @@ mod tests {
 
         let canceled = record_metadosis_canceled(storage.clone(), day).unwrap();
         assert_eq!(canceled.metadosis_state, metadosis_state::CANCELLED);
-        let completed = complete_emission_day(storage.clone(), day).unwrap();
+        let completed = complete_day_emission_limit(storage.clone(), day).unwrap();
         assert_eq!(completed.state, emission_day_state::COMPLETED);
         assert_eq!(completed.metadosis_state, metadosis_state::CANCELLED);
 

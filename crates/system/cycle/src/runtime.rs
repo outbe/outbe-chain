@@ -105,10 +105,10 @@ pub fn handle_cycle_tick_with_triggers(
     if ctx.block.block_number == metadosis_genesis_activation_height {
         outbe_tributefactory::worldwideday::bootstrap_genesis_worldwide_days_command(ctx)?;
     }
-    let handler_gas = dispatch_triggers_inner(ctx, triggers)?;
+    let handler_gas = run_due_tasks_inner(ctx, triggers)?;
     #[cfg(not(feature = "test-utils"))]
     let _ = handler_gas;
-    crate::handler::credit_reward_slice(ctx)?;
+    crate::handler::process_agent_rewards(ctx)?;
     outbe_desis::process_cleanup(ctx.storage.clone())?;
     #[cfg(feature = "test-utils")]
     record_cycle_gas_sample(ctx, observation_before, handler_gas)?;
@@ -123,10 +123,10 @@ pub fn handle_cycle_tick_with_triggers(
 ///
 /// The typical case is a slow-running chain that produces blocks every few
 /// seconds. In that case the dispatcher is a near-noop on every block. It
-/// fires ProtocolCycle only on the first block whose timestamp crosses
+/// fires ProcessEmissionDay only on the first block whose timestamp crosses
 /// the next UTC-hour boundary.
-pub fn dispatch_triggers(ctx: &BlockRuntimeContext) -> Result<()> {
-    dispatch_triggers_with_specs(ctx, &active_triggers()?)
+pub fn run_due_tasks(ctx: &BlockRuntimeContext) -> Result<()> {
+    run_due_tasks_with_specs(ctx, &active_triggers()?)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -138,15 +138,12 @@ enum WalkOutcome {
 }
 
 /// Explicit scheduler for a supplied trigger table.
-pub fn dispatch_triggers_with_specs(
-    ctx: &BlockRuntimeContext,
-    triggers: &[TriggerSpec],
-) -> Result<()> {
-    let _ = dispatch_triggers_inner(ctx, triggers)?;
+pub fn run_due_tasks_with_specs(ctx: &BlockRuntimeContext, triggers: &[TriggerSpec]) -> Result<()> {
+    let _ = run_due_tasks_inner(ctx, triggers)?;
     Ok(())
 }
 
-fn dispatch_triggers_inner(ctx: &BlockRuntimeContext, triggers: &[TriggerSpec]) -> Result<u64> {
+fn run_due_tasks_inner(ctx: &BlockRuntimeContext, triggers: &[TriggerSpec]) -> Result<u64> {
     ctx.storage
         .metered_gas_remaining()?
         .ok_or(CycleError::InsufficientWorkCapacity)?;

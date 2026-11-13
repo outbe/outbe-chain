@@ -74,12 +74,15 @@ pub(crate) fn complete_metadosis(
         &metadosis.storage,
         emission_day.day,
     )? {
-        outbe_emission::api::complete_emission_day(metadosis.storage.clone(), emission_day.day)?;
+        outbe_emission::api::complete_day_emission_limit(
+            metadosis.storage.clone(),
+            emission_day.day,
+        )?;
     }
     Ok(())
 }
 
-pub(crate) fn cancel_emission_day(
+pub(crate) fn cancel_metadosis(
     metadosis: &mut MetadosisContract<'_>,
     day: u32,
     reason: u8,
@@ -91,7 +94,10 @@ pub(crate) fn cancel_emission_day(
             &metadosis.storage,
             record.day,
         )? {
-            outbe_emission::api::complete_emission_day(metadosis.storage.clone(), record.day)?;
+            outbe_emission::api::complete_day_emission_limit(
+                metadosis.storage.clone(),
+                record.day,
+            )?;
         }
     }
     metadosis.emit(IMetadosis::MetadosisCanceled {
@@ -115,7 +121,10 @@ pub(crate) fn fail_metadosis(
             &metadosis.storage,
             record.day,
         )? {
-            outbe_emission::api::complete_emission_day(metadosis.storage.clone(), record.day)?;
+            outbe_emission::api::complete_day_emission_limit(
+                metadosis.storage.clone(),
+                record.day,
+            )?;
         }
     }
     metadosis.emit(IMetadosis::MetadosisFailed {

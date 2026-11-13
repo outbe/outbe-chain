@@ -21,14 +21,15 @@ use outbe_validatorset::contract::ValidatorSet;
 
 use crate::schema::Cycle;
 use crate::triggers::{
-    last_fire_at, next_fire_at, TriggerId, ACTIVE_TRIGGERS, PROTOCOL_CYCLE_START_OFFSET_SECONDS,
+    last_fire_at, next_fire_at, TriggerId, ACTIVE_TRIGGERS,
+    PROCESS_EMISSION_DAY_START_OFFSET_SECONDS,
 };
 
 pub(super) const CHAIN_ID: u64 = 1;
 /// Genesis at midnight UTC of 2024-01-01.
 pub(super) const GENESIS_TS: u64 = 1_704_067_200;
 pub(super) use outbe_primitives::time::SECONDS_PER_DAY;
-pub(super) const EMISSION_LIMIT_1_ID: u32 = TriggerId::ProtocolCycle.as_u32();
+pub(super) const EMISSION_LIMIT_1_ID: u32 = TriggerId::ProcessEmissionDay.as_u32();
 
 pub(super) fn cycle_storage() -> HashMapStorageProvider {
     cycle_storage_for(CHAIN_ID)
@@ -179,8 +180,8 @@ pub(super) fn account_parent(ctx: &BlockRuntimeContext, block_number: u64) {
     }
 }
 
-pub(super) fn dispatch_triggers(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
-    crate::runtime::dispatch_triggers(ctx)
+pub(super) fn run_due_tasks(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
+    crate::runtime::run_due_tasks(ctx)
 }
 
 pub(super) fn run_cycle_tick(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
@@ -241,7 +242,7 @@ pub(super) fn anchor_with<'s>(
 ) -> BlockRuntimeContext<'s> {
     let ctx = genesis_block(handle, timestamp);
     seed(&ctx);
-    dispatch_triggers(&ctx).unwrap();
+    run_due_tasks(&ctx).unwrap();
     ctx
 }
 
@@ -254,7 +255,7 @@ pub(super) fn dispatch_at(
 ) -> BlockRuntimeContext<'_> {
     let ctx = runtime_context(block_ctx(block_number, timestamp), handle);
     account_parent(&ctx, block_number);
-    dispatch_triggers(&ctx).unwrap();
+    run_due_tasks(&ctx).unwrap();
     ctx
 }
 
@@ -284,7 +285,7 @@ pub(super) fn with_anchored_cycle(f: impl FnOnce(StorageHandle<'_>)) {
     storage.enter(f);
 }
 
-/// `last_executed_at` of the ProtocolCycle trigger.
+/// `last_executed_at` of the ProcessEmissionDay trigger.
 pub(super) fn last_executed_at(ctx: &BlockRuntimeContext<'_>) -> u64 {
     ctx.storage
         .contract::<Cycle<'_>>()

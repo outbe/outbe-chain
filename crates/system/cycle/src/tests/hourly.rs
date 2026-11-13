@@ -4,7 +4,7 @@ use super::*;
 use alloy_sol_types::SolEvent;
 
 #[test]
-fn hourly_protocol_cycle_executes_due_emission_day_at_metadosis_start() {
+fn hourly_process_emission_day_executes_due_emission_day_at_metadosis_start() {
     let mut storage = cycle_storage();
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 16);
     let (emission_day, fire_at) = storage.enter(|handle| {
@@ -55,7 +55,7 @@ fn hourly_protocol_cycle_executes_due_emission_day_at_metadosis_start() {
             allocated.state,
             outbe_emission::schema::emission_day_state::PROCESSING
         );
-        crate::handler::credit_reward_slice(&ctx).unwrap();
+        crate::handler::process_agent_rewards(&ctx).unwrap();
         let completed =
             outbe_emission::api::get_emission_day_record(ctx.storage.clone(), emission_day.day)
                 .unwrap()
@@ -71,7 +71,7 @@ fn hourly_protocol_cycle_executes_due_emission_day_at_metadosis_start() {
             )
             .unwrap()
         );
-        crate::handler::credit_reward_slice(&ctx).unwrap();
+        crate::handler::process_agent_rewards(&ctx).unwrap();
         assert_eq!(
             outbe_emission::api::get_emission_day_record(ctx.storage.clone(), emission_day.day)
                 .unwrap()
@@ -83,14 +83,14 @@ fn hourly_protocol_cycle_executes_due_emission_day_at_metadosis_start() {
         assert_eq!(
             cycle
                 .last_executed_at
-                .read(&TriggerId::ProtocolCycle.as_u32())
+                .read(&TriggerId::ProcessEmissionDay.as_u32())
                 .unwrap(),
             fire_at
         );
         assert_eq!(
             cycle
                 .last_executed_block_number
-                .read(&TriggerId::ProtocolCycle.as_u32())
+                .read(&TriggerId::ProcessEmissionDay.as_u32())
                 .unwrap(),
             20
         );
@@ -101,7 +101,7 @@ pub(super) fn seed_trigger_clock(handle: &StorageHandle<'_>, fire_at: u64) {
     let previous_hour = fire_at - 3_600;
     let cycle: Cycle<'_> = handle.contract::<Cycle<'_>>();
     for spec in ACTIVE_TRIGGERS {
-        let last = if spec.id == TriggerId::ProtocolCycle.as_u32() {
+        let last = if spec.id == TriggerId::ProcessEmissionDay.as_u32() {
             previous_hour
         } else {
             fire_at
@@ -142,7 +142,7 @@ fn run_hour(
     storage.enter(|handle| {
         let ctx = runtime_context(block_ctx(block_number, timestamp), handle);
         account_parent(&ctx, block_number);
-        dispatch_triggers(&ctx)
+        run_due_tasks(&ctx)
     })
 }
 
@@ -224,7 +224,7 @@ fn conservation_mismatch_fails_the_block() {
             .update(&record)
             .unwrap();
 
-        let error = crate::handler::credit_reward_slice(&ctx).unwrap_err();
+        let error = crate::handler::process_agent_rewards(&ctx).unwrap_err();
         assert!(matches!(
             error,
             outbe_primitives::error::PrecompileError::FatalWithCause(_)

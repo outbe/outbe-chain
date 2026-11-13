@@ -93,7 +93,7 @@ fn expected_cycle_entitlements() -> MetadosisMutationEntitlements {
 }
 
 #[test]
-fn protocol_cycle_entitles_genesis_initialization_at_block_one() {
+fn process_emission_day_entitles_genesis_initialization_at_block_one() {
     let data = encoded(SystemTx::BeginBlock { step_index: 8 });
     let granted = entitlements(MetadosisMutationCall {
         address: OUTBE_SYSTEM_TX_ADDRESS,
@@ -142,7 +142,7 @@ fn exact_production_causes_receive_only_their_purpose() {
 }
 
 #[test]
-fn protocol_cycle_grants_only_oldest_unallocated_day_after_a_multi_day_halt() {
+fn process_emission_day_grants_only_oldest_unallocated_day_after_a_multi_day_halt() {
     let block_day = outbe_primitives::time::timestamp_to_date_key(TEST_TIMESTAMP);
     let mut active_day = block_day;
     for _ in 0..6 {

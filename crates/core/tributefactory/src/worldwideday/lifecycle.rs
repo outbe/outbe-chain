@@ -182,7 +182,7 @@ fn create_open_worldwide_days(
     Ok(())
 }
 
-/// Command-bound entry point for `advance_worldwide_days` used by `outbe-cycle` during `ProtocolCycle`.
+/// Command-bound entry point for `advance_worldwide_days` used by `outbe-cycle` during `ProcessEmissionDay`.
 pub fn advance_worldwide_days_command(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     run_with_wwd_mutation_binding(
         ctx,

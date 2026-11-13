@@ -158,7 +158,7 @@ fn finish_job(
         .accrual_head
         .write(job.seq.checked_add(1).ok_or(AgentRewardError::InvalidJob)?)?;
     if pending == 1 && record.metadosis_state != outbe_emission::schema::metadosis_state::PENDING {
-        outbe_emission::api::complete_emission_day(ctx.storage.clone(), job.day)?;
+        outbe_emission::api::complete_day_emission_limit(ctx.storage.clone(), job.day)?;
     }
     Ok(())
 }

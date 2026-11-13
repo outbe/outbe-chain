@@ -4,7 +4,7 @@ use super::*;
 use crate::handler::MAX_REWARD_CATCHUP_DAYS;
 
 #[test]
-fn protocol_cycle_catches_up_one_oldest_day_per_hourly_run_after_a_multi_day_halt() {
+fn process_emission_day_catches_up_one_oldest_day_per_hourly_run_after_a_multi_day_halt() {
     let mut storage = cycle_storage();
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 32);
     storage.enter(|handle| {
@@ -79,7 +79,7 @@ fn catchup_horizon_bounds_backward_scan_to_max_reward_catchup_days() {
         );
         assert_eq!(active_utc_day(&ctx), expected_floor);
         account_parent(&ctx, 2);
-        dispatch_triggers(&ctx).unwrap();
+        run_due_tasks(&ctx).unwrap();
         assert_eq!(
             outbe_rewards::api::get_last_sealed_day(&handle).unwrap(),
             expected_floor
@@ -121,7 +121,7 @@ fn forward_seal_jump_waits_for_skipped_parent_late_votes() {
                 super::dispatch::record_parent_with_late_voter(&ctx, hash, early, late);
             }
             account_parent(&ctx, height);
-            dispatch_triggers(&ctx).unwrap();
+            run_due_tasks(&ctx).unwrap();
             assert_eq!(outbe_rewards::api::get_last_sealed_day(&handle).unwrap(), 0);
             if height == 12 {
                 outbe_rewards::block_fees::record_late_vote(&ctx, hash, late, 2).unwrap();
@@ -189,7 +189,7 @@ fn a_failed_allocation_whose_limit_cannot_reach_the_promis_limit_fails_the_block
         outbe_promislimit::PromisLimitContract::new(handle.clone())
             .checked_credit(U256::MAX)
             .unwrap();
-        let err = dispatch_triggers(&ctx).unwrap_err();
+        let err = run_due_tasks(&ctx).unwrap_err();
         assert!(
             matches!(
                 err,
@@ -229,7 +229,7 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
             )
             .unwrap();
 
-        dispatch_triggers(&ctx).unwrap();
+        run_due_tasks(&ctx).unwrap();
 
         let rec = outbe_emission::api::get_emission_day_record(handle.clone(), 20_240_101)
             .unwrap()
@@ -255,7 +255,7 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
         assert!(ar
             .increment_waa_tribute(20_240_101u32.into(), Address::repeat_byte(0x45))
             .is_err());
-        crate::handler::credit_reward_slice(&ctx).unwrap();
+        crate::handler::process_agent_rewards(&ctx).unwrap();
         assert_eq!(ar.waa_address_count.read(&20_240_101u32.into()).unwrap(), 0);
         assert_eq!(
             outbe_rewards::api::get_last_sealed_day(&handle).unwrap(),
@@ -332,7 +332,7 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
         let fire_ts = GENESIS_TS + 2 * SECONDS_PER_DAY + 3_600;
         let ctx = runtime_context(block_ctx(3, fire_ts), handle.clone());
         account_parent(&ctx, 3);
-        dispatch_triggers(&ctx).unwrap();
+        run_due_tasks(&ctx).unwrap();
 
         let rec = outbe_emission::api::get_emission_day_record(handle.clone(), 20_240_102)
             .unwrap()

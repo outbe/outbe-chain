@@ -5,7 +5,7 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 use crate::{
     constants::METADOSIS_CANCELED_NO_LIMIT,
-    lifecycle::cancel_emission_day,
+    lifecycle::cancel_metadosis,
     schema::{EmissionDay, MetadosisContract},
 };
 
@@ -31,7 +31,7 @@ pub(crate) fn process_ready_candidate(
 ) -> Result<()> {
     let limit_amount = emission_day.metadosis_limit_minor();
     if limit_amount.is_zero() {
-        return cancel_emission_day(metadosis, emission_day.day, METADOSIS_CANCELED_NO_LIMIT);
+        return cancel_metadosis(metadosis, emission_day.day, METADOSIS_CANCELED_NO_LIMIT);
     }
     crate::lysis::execute(metadosis, ctx, emission_day)
 }

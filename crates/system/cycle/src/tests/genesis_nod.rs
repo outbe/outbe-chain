@@ -385,7 +385,7 @@ fn issue_nod(
 
 /// Runs the Cycle dispatcher at `ctx`, then the Nod call slice.
 fn dispatch_and_call(ctx: &BlockRuntimeContext<'_>) -> outbe_primitives::error::Result<()> {
-    dispatch_triggers(ctx)?;
+    run_due_tasks(ctx)?;
     outbe_nodfactory::called::process_call_pass(ctx)?;
     Ok(())
 }
