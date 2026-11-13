@@ -815,3 +815,29 @@ fn empty_su_hash_list_rejects_before_issuance_and_rewards() {
 }
 
 mod wwd_storage;
+
+#[test]
+fn an_offer_after_the_offering_window_fails_on_an_unsealed_day() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_timestamp(U256::from(
+        date_key_to_utc_timestamp(20_260_803).unwrap() + 43_200,
+    ));
+    provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_offer_world(storage.clone(), &[TARGET_WWD_A]);
+        assert!(crate::worldwideday::is_offering_day(storage.clone(), TARGET_WWD_A).unwrap());
+        let offering_end = crate::worldwideday::worldwide_day(storage.clone(), TARGET_WWD_A)
+            .unwrap()
+            .unwrap()
+            .offering_end;
+
+        storage
+            .set_block_timestamp(U256::from(offering_end))
+            .unwrap();
+        assert!(!TributeContract::new(storage.clone())
+            .is_day_sealed(TARGET_WWD_A)
+            .unwrap());
+        assert!(!crate::worldwideday::is_offering_day(storage.clone(), TARGET_WWD_A).unwrap());
+    });
+}
