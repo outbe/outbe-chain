@@ -11,6 +11,10 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use walkdir::WalkDir;
 
+use outbe_primitives::tee_attestation_v1::{
+    AttestationMode, NetworkBindingV1, TeePolicyScheduleV1,
+};
+
 use crate::error::GenesisError;
 pub use crate::keys::ensure_reth_p2p_secret;
 use crate::seed_codec::parse_u64;
@@ -124,16 +128,65 @@ pub fn format_enode_host(host: &str) -> String {
 
 /// Determine whether the node should use `--tee-session-mode production-node-host`.
 pub fn uses_production_tee_session(config: &Value) -> bool {
-    let enclave_sgx = config
-        .get("enclave_sgx")
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
-    let is_dcap = config
+    config
         .get("tee")
         .and_then(|t| t.get("mode"))
         .and_then(Value::as_str)
-        == Some("dcap-required");
-    enclave_sgx || is_dcap
+        == Some("dcap-required")
+}
+
+fn direct_dev_network_binding(
+    config: &Value,
+    genesis_path: &Path,
+) -> Result<Option<String>, GenesisError> {
+    let mode = config
+        .get("tee")
+        .and_then(|tee| tee.get("mode"))
+        .and_then(Value::as_str);
+    if mode != Some("gramine-direct-dev") {
+        return Ok(None);
+    }
+
+    let chain_id = parse_u64(
+        config
+            .get("chain_id")
+            .ok_or_else(|| GenesisError::validation("chain_id is required"))?,
+    )?;
+    let genesis: Value = serde_json::from_slice(
+        &fs::read(genesis_path).map_err(|error| GenesisError::io(genesis_path, error))?,
+    )?;
+    let encoded = genesis
+        .pointer("/config/teeAttestationV1/policySchedule")
+        .and_then(Value::as_str)
+        .ok_or_else(|| GenesisError::validation("genesis has no TEE policy schedule"))?;
+    let bytes = hex::decode(encoded.strip_prefix("0x").unwrap_or(encoded)).map_err(|error| {
+        GenesisError::validation(format!("invalid TEE policy schedule: {error}"))
+    })?;
+    let schedule = TeePolicyScheduleV1::decode_canonical(&bytes).map_err(|error| {
+        GenesisError::validation(format!("invalid TEE policy schedule: {error}"))
+    })?;
+    let expected_chain_id = alloy_primitives::U256::from(chain_id).to_be_bytes::<32>();
+    if schedule.chain_id != expected_chain_id {
+        return Err(GenesisError::validation(
+            "genesis TEE policy chain id does not match chain_id",
+        ));
+    }
+    let policy = schedule.active_policy(1).map_err(|error| {
+        GenesisError::validation(format!("invalid genesis TEE policy: {error}"))
+    })?;
+    if policy.attestation_mode != AttestationMode::GramineDirectDev {
+        return Err(GenesisError::validation(
+            "gramine-direct-dev requires a GramineDirectDev genesis TEE policy",
+        ));
+    }
+    let binding = NetworkBindingV1 {
+        chain_id: schedule.chain_id,
+        genesis_hash: schedule.genesis_hash,
+        attestation_mode: policy.attestation_mode,
+    }
+    .encode_canonical()
+    .map_err(|error| GenesisError::validation(format!("encode network binding: {error}")))?;
+    Ok(Some(hex::encode(binding)))
 }
 
 pub(super) fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), GenesisError> {
@@ -212,6 +265,7 @@ fn write_validator_scripts(
     index: usize,
     validator: &Value,
     paths: &BundlePaths<'_>,
+    direct_dev_binding: Option<&str>,
 ) -> Result<(), GenesisError> {
     let directory = paths.output_dir.join(format!("validator-{index}"));
     fs::create_dir_all(&directory).map_err(|err| GenesisError::io(&directory, err))?;
@@ -226,7 +280,7 @@ fn write_validator_scripts(
 
     write_script(
         &directory.join("run-enclave.sh"),
-        &enclave_script(config, index, paths.base_dir)?,
+        &enclave_script(config, index, paths.base_dir, direct_dev_binding)?,
     )?;
     write_script(
         &directory.join("run-radicle.sh"),
@@ -343,8 +397,15 @@ pub fn render(
         base_dir: &base_dir,
         remote_keys_dir: &remote_keys_dir,
     };
+    let direct_dev_binding = direct_dev_network_binding(config, genesis_path)?;
     for (index, validator) in validators.iter().enumerate() {
-        write_validator_scripts(config, index, validator, &paths)?;
+        write_validator_scripts(
+            config,
+            index,
+            validator,
+            &paths,
+            direct_dev_binding.as_deref(),
+        )?;
     }
 
     stage_signed_enclave(config, output_dir)?;

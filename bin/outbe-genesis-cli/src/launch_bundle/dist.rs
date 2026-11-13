@@ -260,8 +260,8 @@ metrics `{metrics_port}`, Radicle status\n\
   absolute paths and regenerate)\n\
 - for `dcap-required`: SGX hardware exposing `/dev/sgx_enclave` and\n\
   `/dev/sgx_provision`, with `aesmd.service` running\n\
-- Docker is required only for the `gramine-direct-dev` fallback on a host\n\
-  without usable SGX hardware\n\
+- `outbe-tee-enclave-mock` on `PATH` (or `enclave_runner` pointing to it) for\n\
+  `gramine-direct-dev`; Docker, Gramine and SGX are not used in this mode\n\
 \n\
 ## 4. Start each machine\n\
 \n\
@@ -312,7 +312,7 @@ number and `validator list` shows four active validators.\n\
 | Component | Process | Notes |\n\
 |---|---|---|\n\
 | Execution + consensus | `outbe-chain node` | one binary, no Engine API split |\n\
-| TEE enclave | bundled `sgx/bin/outbe-tee-enclave-launch` | uses the shipped Gramine runtime on SGX; Docker is only the non-SGX development fallback |\n\
+| TEE enclave | bundled SGX launcher or `outbe-tee-enclave-mock` | selected explicitly by the genesis TEE policy; there is no runtime fallback |\n\
 | Radicle | `outbe-radicle` | validator startup requires its control socket |\n\
 | Price feeder | `outbe-feeder` | submits oracle votes |\n\
 \n\
