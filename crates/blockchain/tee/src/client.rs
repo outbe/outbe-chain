@@ -1014,13 +1014,6 @@ impl AuthorizedEnclaveClient {
         Ok(artifact)
     }
 
-    pub(crate) fn prepare_gramine_direct_dev_onboarding_artifact_v2_raw(
-        &mut self,
-        context: DcapOnboardingContextV1,
-    ) -> Result<EnclaveResponse, TransportError> {
-        self.request(&EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 { context })
-    }
-
     fn upload_dcap_verification_v1(
         &mut self,
         evidence: &[u8],
