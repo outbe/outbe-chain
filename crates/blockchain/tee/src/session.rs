@@ -398,15 +398,7 @@ impl EnclaveSession {
         &mut self,
         context: DcapOnboardingContextV1,
     ) -> Result<EnclaveResponse, TransportError> {
-        self.with_production_retry(
-            "prepare_gramine_direct_dev_onboarding_artifact_v2",
-            || {
-                TransportError::Unavailable(
-                    "development enclave client cannot issue DirectDev onboarding artifacts".into(),
-                )
-            },
-            |client| client.prepare_gramine_direct_dev_onboarding_artifact_v2_raw(context),
-        )
+        self.request(&EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 { context })
     }
 
     pub fn prepare_gramine_direct_dev_onboarding_artifact_v1(
