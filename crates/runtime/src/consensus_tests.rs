@@ -7,6 +7,11 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
+    time::Duration,
+};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{span, Event, Metadata, Subscriber};
@@ -34,7 +39,7 @@ fn disabled_exporter_does_not_record_metrics() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn bound_exporter_records_up() {
+fn bound_exporter_serves_openmetrics_and_records_up() {
     let tempdir = tempfile::tempdir().unwrap();
     let config =
         commonware_runtime::tokio::Config::default().with_storage_directory(tempdir.path());
@@ -52,6 +57,25 @@ fn bound_exporter_records_up() {
         .unwrap();
         assert!(handle.local_addr().ip().is_loopback());
         assert_ne!(handle.local_addr().port(), 0);
+        let response = tokio::time::timeout(Duration::from_secs(10), async {
+            let mut stream = TcpStream::connect(handle.local_addr()).await.unwrap();
+            stream
+                .write_all(b"GET /metrics HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                .await
+                .unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).await.unwrap();
+            response
+        })
+        .await
+        .expect("HTTP test exceeded its outer timeout");
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+        let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+        assert!(headers.lines().any(|line| line.eq_ignore_ascii_case(
+            "content-type: application/openmetrics-text; version=1.0.0; charset=utf-8"
+        )));
+        assert!(body.contains("runtime_tasks_running"), "{body}");
+        assert!(body.ends_with("# EOF\n"), "{body}");
         assert_exporter_gauge(snapshotter.snapshot(), 1.0);
         shutdown.cancel();
     });
