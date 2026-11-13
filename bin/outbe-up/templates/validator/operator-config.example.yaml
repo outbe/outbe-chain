@@ -11,6 +11,8 @@ network:
   use_local_defaults: false
 
 tee:
+  # Use gramine-direct-dev only for a dev/test network whose genesis TEE policy
+  # is also GramineDirectDev. It runs the bundled mock enclave without SGX/DCAP.
   runtime: bundled-sgx
   lease_duration_seconds: auto
 
