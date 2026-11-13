@@ -26,13 +26,11 @@ pub mod finalized_admission;
 pub mod gratis_decrypt;
 pub mod host_collateral;
 pub mod journal_storage;
-pub mod lysis;
 pub mod metrics;
 #[cfg(feature = "native-dcap")]
 pub mod native_qvl;
 pub mod nod_decrypt;
 pub mod nod_mine;
-pub mod nod_transport;
 pub mod node_host;
 pub mod offer_encrypt;
 mod owner_local_open;

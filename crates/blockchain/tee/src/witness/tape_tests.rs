@@ -8,10 +8,8 @@ use crate::tribute_day::LysisFractionsResultV1;
 use alloy_primitives::{B256, U256};
 use outbe_primitives::{
     nod_encryption::{EncryptedNodGroupLoadV1, EncryptedNodV1, NodTermsV1},
-    time::WorldwideDay,
-    tribute_day_encryption::{
-        EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1, EncryptedTributeLeagueAmountV1,
-    },
+    time::{EmissionDate, WorldwideDay},
+    tribute_day_encryption::{EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1},
     tribute_encryption::{EncryptedTributeV2, TributeAmountsV2},
     wwd_entity_id::WwdEntityId,
 };
@@ -176,32 +174,19 @@ fn entries() -> Vec<EnclaveWitnessEntryV1> {
             onboarding_artifact: vec![2],
             attestation_tag: tag.clone(),
         },
-        EnclaveWitnessEntryV1::TributeLeagueOpAppliedV1 {
-            record: EncryptedTributeLeagueAmountV1 {
-                chain_id: 1,
-                worldwide_day: WorldwideDay::new(20261028),
-                league: 100,
-                operation_hash: B256::ZERO,
-                encrypted_amount: vec![4],
-            },
-            inputs_canonical_hash: B256::ZERO,
-            attestation_tag: tag.clone(),
-        },
-        EnclaveWitnessEntryV1::TributeLeagueAmountReadV1 {
-            amount: U256::from(5),
-            inputs_canonical_hash: B256::ZERO,
-            attestation_tag: tag.clone(),
-        },
         EnclaveWitnessEntryV1::LysisFractionsExecutedV1 {
             result: Box::new(LysisFractionsResultV1 {
                 day_fractions: EncryptedTributeDayFractionsV1 {
                     chain_id: 1,
-                    worldwide_day: WorldwideDay::new(20261028),
+                    worldwide_day: WorldwideDay::new(20261027),
+                    emission_day: EmissionDate::new(20261028),
                     completed_at: 10,
                     operation_hash: B256::ZERO,
                     encrypted_fractions: vec![6],
                 },
                 total_nominal_minor: U256::from(7),
+                gratis_demand_minor: U256::from(2),
+                lysis_limit_minor: U256::from(2),
                 allocated_minor: U256::from(8),
                 zero_load_tribute_ids: vec![],
                 series_loads: vec![],
@@ -316,12 +301,6 @@ fn semantic_equality_ignores_only_attestation_tag() {
                 attestation_tag,
                 ..
             }
-            | EnclaveWitnessEntryV1::TributeLeagueOpAppliedV1 {
-                attestation_tag, ..
-            }
-            | EnclaveWitnessEntryV1::TributeLeagueAmountReadV1 {
-                attestation_tag, ..
-            }
             | EnclaveWitnessEntryV1::LysisFractionsExecutedV1 {
                 attestation_tag, ..
             }
@@ -400,14 +379,6 @@ fn mutate_commitment(entry: &mut EnclaveWitnessEntryV1) {
             ..
         }
         | EnclaveWitnessEntryV1::FidelityQueryRejected {
-            inputs_canonical_hash,
-            ..
-        }
-        | EnclaveWitnessEntryV1::TributeLeagueOpAppliedV1 {
-            inputs_canonical_hash,
-            ..
-        }
-        | EnclaveWitnessEntryV1::TributeLeagueAmountReadV1 {
             inputs_canonical_hash,
             ..
         }

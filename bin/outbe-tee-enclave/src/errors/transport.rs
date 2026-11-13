@@ -74,15 +74,6 @@ pub enum TransportDispatchError {
     /// The resident chain ID does not fit in u64.
     #[error("resident chain id exceeds u64")]
     ResidentChainIdExceedsU64,
-    /// The Lysis request chain ID does not match the resident chain.
-    #[error("Lysis chain mismatch")]
-    LysisChainMismatch,
-    /// Hashing the Lysis request inputs failed.
-    #[error("invalid NOD prepare inputs")]
-    InvalidLysisInputs,
-    /// Building the Lysis result attestation preimage failed.
-    #[error("invalid NOD prepare result")]
-    InvalidLysisResult,
     /// The NOD mine request chain ID does not match the resident chain.
     #[error("NOD mine chain mismatch")]
     NodMineChainMismatch,
@@ -143,18 +134,6 @@ pub enum TransportDispatchError {
     /// Building the NOD Tribute encryption attestation preimage failed.
     #[error("invalid NOD Tribute encryption result")]
     InvalidNodTributeEncryptResult,
-    /// The NOD transfer total size or payload is out of bounds.
-    #[error("invalid NOD transfer bounds")]
-    InvalidNodTransferBounds,
-    /// The NOD transfer chunk size or offset is out of bounds.
-    #[error("invalid NOD transfer chunk bounds")]
-    InvalidNodTransferChunkBounds,
-    /// Decoding the buffered NOD transfer request failed.
-    #[error("NOD transfer request encoding")]
-    NodTransferRequestEncoding,
-    /// The buffered NOD transfer command is not permitted on the transfer path.
-    #[error("NOD transfer command not permitted")]
-    NodTransferCommandNotPermitted,
     /// Onboarding artifact ingest requires an initialization manifest.
     #[error("onboarding ingest requires an initialization manifest")]
     OnboardingIngestRequiresManifest,

@@ -1,4 +1,4 @@
-use alloy_primitives::{address, Address, B256, U256};
+use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_primitives::addresses::TRIBUTE_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result as PrecompileResult};
@@ -25,27 +25,6 @@ fn in_process_ready<R>(
             binding, body,
         )
         .unwrap()
-}
-
-fn with_process_ready_tribute<R>(f: impl FnOnce(&mut TributeContract<'_>) -> R) -> R {
-    let mut provider = HashMapStorageProvider::new(1);
-    provider.enable_metadosis_mutation_frame(
-        outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
-    );
-    StorageHandle::enter(&mut provider, |storage| {
-        let _enclave = crate::enclave_client::test_enclave::scope();
-        let binding = outbe_primitives::storage::metadosis_process_ready_binding(
-            storage.chain_id().unwrap(),
-            storage.block_number().unwrap(),
-            storage.now_secs().unwrap(),
-        );
-        storage
-            .with_metadosis_mutation::<outbe_primitives::storage::MetadosisCycleLifecycle, _>(
-                binding,
-                || Ok(f(&mut TributeContract::new(storage.clone()))),
-            )
-            .unwrap()
-    })
 }
 
 fn with_tribute<R>(f: impl FnOnce(&mut TributeContract<'_>) -> R) -> R {
@@ -382,41 +361,6 @@ fn test_seal_day() {
             totals_after_rejected_mutations.tribute_nominal_total_minor,
             totals_before_seal.tribute_nominal_total_minor
         );
-    });
-}
-
-#[test]
-fn lysis_bulk_accounting_rejects_count_and_nominal_mismatch_before_zeroing() {
-    with_process_ready_tribute(|tc| {
-        let tribute = sample_tribute();
-        open_sample_day(tc);
-        tc.issue(&tribute).unwrap();
-        tc.seal_day(tribute.worldwide_day).unwrap();
-
-        assert!(tc
-            .consume_lysis_partition(tribute.worldwide_day, 2, tribute.nominal_amount_minor,)
-            .is_err());
-        assert!(tc
-            .consume_lysis_partition(
-                tribute.worldwide_day,
-                1,
-                tribute.nominal_amount_minor + U256::from(1),
-            )
-            .is_err());
-        let unchanged = tc.get_day_totals(tribute.worldwide_day).unwrap();
-        assert_eq!(unchanged.tribute_count, 1);
-        assert_eq!(
-            unchanged.tribute_nominal_total_minor,
-            tribute.nominal_amount_minor
-        );
-
-        tc.consume_lysis_partition(tribute.worldwide_day, 1, tribute.nominal_amount_minor)
-            .unwrap();
-        let completed = tc.get_day_totals(tribute.worldwide_day).unwrap();
-        assert!(completed.initialized);
-        assert!(completed.is_sealed);
-        assert_eq!(completed.tribute_count, 0);
-        assert_eq!(completed.tribute_nominal_total_minor, U256::ZERO);
     });
 }
 
@@ -831,56 +775,6 @@ fn failed_burn_transaction_restores_tribute_state_and_events() {
             });
             assert!(provider.get_events(TRIBUTE_ADDRESS).is_empty());
         }
-    });
-}
-
-#[test]
-fn encrypted_retirement_preserves_frozen_nominal_after_live_total_is_zero() {
-    with_process_ready_tribute(|tc| {
-        let plain = sample_tribute();
-        let context = outbe_primitives::tribute_encryption::TributeContextV2 {
-            chain_id: 1,
-            tribute_id: plain.tribute_id,
-            owner: plain.owner,
-            worldwide_day: plain.worldwide_day,
-            issuance_currency: plain.issuance_currency,
-            reference_currency: plain.reference_currency,
-            tribute_price_minor: plain.tribute_price_minor,
-            offer_input_hash: B256::repeat_byte(0x78),
-        };
-        let encrypted = outbe_enclave::tribute_encryption::encrypt_tribute(
-            &crate::enclave_client::test_enclave::NETWORK_SECRET,
-            context,
-            &outbe_primitives::tribute_encryption::TributeAmountsV2 {
-                issuance_amount_minor: plain.issuance_amount_minor,
-                nominal_amount_minor: plain.nominal_amount_minor,
-            },
-        )
-        .unwrap();
-        tc.issue_encrypted(&encrypted).unwrap();
-        tc.seal_day(plain.worldwide_day).unwrap();
-        tc.freeze_day_nominal(&tc.get_day_totals(plain.worldwide_day).unwrap())
-            .unwrap();
-        let frozen = tc.encrypted_day_nominal(plain.worldwide_day, true).unwrap();
-        tc.consume_lysis_partition_inner(plain.worldwide_day, 1, plain.nominal_amount_minor)
-            .unwrap();
-        assert_eq!(
-            tc.get_day_totals(plain.worldwide_day)
-                .unwrap()
-                .tribute_nominal_total_minor,
-            U256::ZERO
-        );
-        assert_eq!(
-            tc.day_nominal_amount(plain.worldwide_day, true).unwrap(),
-            plain.nominal_amount_minor
-        );
-        assert_eq!(
-            tc.encrypted_day_nominal(plain.worldwide_day, true).unwrap(),
-            frozen
-        );
-        assert!(tc
-            .consume_lysis_partition_inner(plain.worldwide_day, 1, plain.nominal_amount_minor)
-            .is_err());
     });
 }
 

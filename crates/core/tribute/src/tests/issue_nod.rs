@@ -9,19 +9,18 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::storage::{
     metadosis_process_ready_binding, MetadosisCycleLifecycle, MetadosisMutationPurposeTag,
 };
+use outbe_primitives::time::EmissionDate;
 
 // These fixtures share a chain that predates their December 2024 WorldwideDays.
 const GENESIS_TIMESTAMP: u64 = 1_733_011_200; // 2024-12-01 00:00 UTC
 
 /// The id `issueNod` gives the Tribute's Nod: the owner in the series of its price day.
 fn nod_id_of(tc: &TributeContract<'_>, tribute: &crate::schema::TributeData) -> U256 {
-    let completed_at = tc
-        .day_metadosis_completed_at
-        .read(&tribute.worldwide_day)
-        .unwrap();
     let series = outbe_primitives::series_id::SeriesId::for_pair(
-        tc.resolve_price_day(tribute.worldwide_day, completed_at)
-            .unwrap(),
+        tc.lysis_emission_day(tribute.worldwide_day)
+            .unwrap()
+            .unwrap()
+            .value(),
         tribute.issuance_currency,
         tribute.reference_currency,
     )
@@ -29,15 +28,49 @@ fn nod_id_of(tc: &TributeContract<'_>, tribute: &crate::schema::TributeData) -> 
     outbe_core_common::nod_rules::derive_nod_id(series, tribute.owner)
 }
 
-fn seed_entry_price(storage: &StorageHandle<'_>, iso: u16, utc_day: u32, vwap: U256) {
-    let index = outbe_oracle::api::register_pair(
+/// Seals the Lysis of `day` for its linked emission day, or the price day of `completed_at`.
+fn seal_lysis(
+    tc: &mut TributeContract<'_>,
+    day: outbe_primitives::time::WorldwideDay,
+    metadosis_limit: U256,
+    completed_at: u64,
+) -> outbe_primitives::error::Result<(U256, U256)> {
+    let storage = tc.storage_handle();
+    let emission_day = match tc.lysis_emission_day(day)? {
+        Some(emission_day) => emission_day,
+        None => EmissionDate::new(outbe_nod::openings::entry_price_day(completed_at).unwrap()),
+    };
+    let priced = outbe_oracle::api::priced_reference_currencies_of_day(
         storage.clone(),
-        outbe_oracle::api::AddressPair::new_coen_to(iso),
-    )
-    .unwrap();
-    outbe_oracle::schema::OracleContract::new(storage.clone())
-        .record_utc_day_vwap(utc_day, index, vwap)
-        .unwrap();
+        emission_day.value(),
+    )?
+    .into_iter()
+    .filter(|&(_, vwap)| outbe_nod::pricing::is_issuable_entry(vwap))
+    .collect();
+    let outcome = tc.compute_and_record_metadosis_fractions(
+        day,
+        emission_day,
+        &priced,
+        metadosis_limit,
+        completed_at,
+    )?;
+    Ok((outcome.nominal_minor, outcome.allocated_minor))
+}
+
+/// Prices `iso` on `utc_day` and on the day before it.
+fn seed_entry_price(storage: &StorageHandle<'_>, iso: u16, utc_day: u32, vwap: U256) {
+    let pair = outbe_oracle::api::AddressPair::new_coen_to(iso);
+    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+    let index = match oracle.pair_index_of(pair).unwrap() {
+        0 => outbe_oracle::api::register_pair(storage.clone(), pair).unwrap(),
+        index => index,
+    };
+    for day in [
+        outbe_primitives::time::previous_date_key(utc_day).unwrap(),
+        utc_day,
+    ] {
+        oracle.record_utc_day_vwap(day, index, vwap).unwrap();
+    }
 }
 
 fn test_day_league_fraction(
@@ -45,7 +78,10 @@ fn test_day_league_fraction(
     day: outbe_primitives::time::WorldwideDay,
     league: u16,
 ) -> u64 {
-    let Some(record) = tc.day_fractions_record(day).unwrap() else {
+    let Some(emission_day) = tc.lysis_emission_day(day).unwrap() else {
+        return 0;
+    };
+    let Some(record) = tc.day_fractions_record(emission_day).unwrap() else {
         return 0;
     };
     let fractions = crate::enclave_client::read_day_fractions(&record).unwrap();
@@ -84,12 +120,6 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
         assert_eq!(tc.get_league(t1.tribute_id).unwrap(), 100);
         assert_eq!(tc.get_league(t2.tribute_id).unwrap(), 4000);
 
-        // Stage 2: Verify fi_groups[wwd]
-        let groups = tc.get_fi_groups(day).unwrap();
-        assert_eq!(groups.len(), 2);
-        assert_eq!(groups.get(&100), Some(&(1, t1.nominal_amount_minor)));
-        assert_eq!(groups.get(&4000), Some(&(1, t2.nominal_amount_minor)));
-
         // Cannot issueNod before Metadosis has completed
         assert!(tc.issue_nod(owner1, t1.tribute_id).is_err());
 
@@ -109,7 +139,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
         );
         let (_total_nominal, allocated) = storage
             .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
-                tc.compute_and_record_metadosis_fractions(day, lysis_limit, base_ts)
+                seal_lysis(&mut tc, day, lysis_limit, base_ts)
             })
             .unwrap();
         assert!(test_day_league_fraction(&tc, day, 4000) > 0);
@@ -225,12 +255,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
             totals_after_t1.tribute_nominal_total_minor,
             t2.nominal_amount_minor
         );
-        let groups_after_t1 = tc.get_fi_groups(day).unwrap();
-        assert_eq!(groups_after_t1.len(), 1);
-        assert_eq!(
-            groups_after_t1.get(&4000),
-            Some(&(1, t2.nominal_amount_minor))
-        );
+        assert_eq!(tc.tribute_leagues.read(&t1.tribute_id).unwrap(), 0);
 
         // Calling issueNod a second time for the burned Tribute must fail
         assert!(
@@ -255,7 +280,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
         let totals_after_t2 = tc.get_day_totals(day).unwrap();
         assert_eq!(totals_after_t2.tribute_count, 0);
         assert!(totals_after_t2.tribute_nominal_total_minor.is_zero());
-        assert!(tc.get_fi_groups(day).unwrap().is_empty());
+        assert_eq!(tc.tribute_leagues.read(&t2.tribute_id).unwrap(), 0);
         assert!(outbe_nod::api::get_item(&storage, nod_id_of(&tc, &t1))
             .unwrap()
             .is_some());
@@ -306,11 +331,7 @@ fn a_series_unpriced_at_lysis_gives_no_nod_and_cleans_at_once() {
         );
         storage
             .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
-                tc.compute_and_record_metadosis_fractions(
-                    day,
-                    U256::from(500_000_000_000u64),
-                    completed_at,
-                )
+                seal_lysis(&mut tc, day, U256::from(500_000_000_000u64), completed_at)
             })
             .unwrap();
         storage
@@ -359,6 +380,163 @@ fn a_series_unpriced_at_lysis_gives_no_nod_and_cleans_at_once() {
 }
 
 #[test]
+fn lysis_keys_its_result_by_the_emission_day_and_binds_the_nod_to_it() {
+    let mut provider = HashMapStorageProvider::new(1);
+    let completed_at = 1_750_000_000u64;
+    provider.set_timestamp(U256::from(completed_at));
+    provider.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 6);
+    let tribute = sample_tribute();
+    let day = tribute.worldwide_day;
+    let mut other_tribute = sample_tribute();
+    let other_wwd = outbe_primitives::time::WorldwideDay::new(20241221);
+    set_day(&mut other_tribute, other_wwd);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let _enclave = crate::enclave_client::test_enclave::scope();
+        let mut tc = TributeContract::new(storage.clone());
+        let emission_day =
+            EmissionDate::new(outbe_nod::openings::entry_price_day(completed_at).unwrap());
+        let other_day = emission_day.next().unwrap();
+        for priced_day in [emission_day, other_day] {
+            seed_entry_price(&storage, 840, priced_day.value(), U256::from(2_000_000u64));
+        }
+        tc.issue_with_league(&tribute, Some(100)).unwrap();
+        tc.issue_with_league(&other_tribute, Some(100)).unwrap();
+        tc.day_emission_day.write(&other_wwd, other_day).unwrap();
+        let binding = metadosis_process_ready_binding(
+            storage.chain_id().unwrap(),
+            storage.block_number().unwrap(),
+            storage.now_secs().unwrap(),
+        );
+        for sealed in [day, other_wwd] {
+            in_process_ready(&storage, || tc.seal_day(sealed));
+            storage
+                .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
+                    seal_lysis(
+                        &mut tc,
+                        sealed,
+                        U256::from(500_000_000_000u64),
+                        completed_at,
+                    )
+                })
+                .unwrap();
+        }
+
+        assert_eq!(tc.lysis_emission_day(day).unwrap(), Some(emission_day));
+        assert_eq!(
+            tc.day_metadosis_completed_at.read(&emission_day).unwrap(),
+            completed_at
+        );
+        let wwd_as_day = EmissionDate::new(day.value());
+        assert_eq!(tc.day_metadosis_completed_at.read(&wwd_as_day).unwrap(), 0);
+        assert!(tc.encrypted_day_fractions(wwd_as_day).unwrap().is_empty());
+        let day_fractions = tc.day_fractions_record(emission_day).unwrap().unwrap();
+        assert_eq!(day_fractions.emission_day, emission_day);
+        assert_eq!(day_fractions.worldwide_day, day);
+
+        let record = tc.get_record(tribute.tribute_id).unwrap().unwrap();
+        let request_for = |fractions_day: EmissionDate| {
+            let series = outbe_primitives::series_id::SeriesId::for_pair(
+                fractions_day.value(),
+                tribute.issuance_currency,
+                tribute.reference_currency,
+            )
+            .unwrap();
+            outbe_tee::nod_mine::IssueNodFromTributeRequestV1 {
+                tribute: record.encrypted().unwrap().clone(),
+                day_fractions: tc.day_fractions_record(fractions_day).unwrap().unwrap(),
+                terms: outbe_primitives::nod_encryption::NodTermsV1 {
+                    chain_id: storage.chain_id().unwrap(),
+                    nod_id: outbe_core_common::nod_rules::derive_nod_id(series, tribute.owner),
+                    owner: tribute.owner,
+                    emission_day: fractions_day.value(),
+                    league_id: 100,
+                    issuance_currency: tribute.issuance_currency,
+                    reference_currency: tribute.reference_currency,
+                    entry_price_minor: U256::from(2_000_000u64),
+                },
+            }
+        };
+        let mut wrong_terms = request_for(emission_day);
+        wrong_terms.terms = request_for(other_day).terms;
+        let rejected = crate::enclave_client::issue_nod_from_tribute(wrong_terms).unwrap_err();
+        assert!(rejected.to_string().contains("NOD source terms mismatch"));
+        let other_days_fractions =
+            crate::enclave_client::issue_nod_from_tribute(request_for(other_day)).unwrap_err();
+        assert!(other_days_fractions
+            .to_string()
+            .contains("NOD source terms mismatch"));
+    });
+}
+
+#[test]
+fn the_enclave_refuses_a_lysis_list_that_differs_from_the_frozen_day_nominal() {
+    let mut provider = HashMapStorageProvider::new(1);
+    let completed_at = 1_750_000_000u64;
+    provider.set_timestamp(U256::from(completed_at));
+    provider.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 3);
+    let first = sample_tribute();
+    let mut second = sample_tribute();
+    set_owner(
+        &mut second,
+        address!("0x2222222222222222222222222222222222222222"),
+    );
+    let day = first.worldwide_day;
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let _enclave = crate::enclave_client::test_enclave::scope();
+        let mut tc = TributeContract::new(storage.clone());
+        tc.issue_with_league(&first, Some(100)).unwrap();
+        tc.issue_with_league(&second, Some(100)).unwrap();
+        in_process_ready(&storage, || tc.seal_day(day));
+        in_process_ready(&storage, || tc.freeze_day_nominal(&tc.get_day_totals(day)?));
+        let mut ids = [first.tribute_id, second.tribute_id];
+        ids.sort();
+        let inputs: Vec<_> = ids
+            .iter()
+            .map(|id| outbe_tee::tribute_day::LysisTributeInputV1 {
+                tribute: tc
+                    .get_record(*id)
+                    .unwrap()
+                    .unwrap()
+                    .encrypted()
+                    .unwrap()
+                    .clone(),
+                league: 100,
+                series_scope: None,
+            })
+            .collect();
+        let lysis = |tributes| {
+            crate::enclave_client::execute_lysis_fractions(
+                outbe_tee::tribute_day::LysisFractionsRequestV1 {
+                    chain_id: storage.chain_id().unwrap(),
+                    worldwide_day: day,
+                    emission_day: EmissionDate::new(20241221),
+                    completed_at,
+                    metadosis_limit_minor: U256::from(1_000u64),
+                    day_nominal: tc.day_amount_record(day, true).unwrap().unwrap(),
+                    tributes,
+                },
+            )
+        };
+
+        assert!(lysis(inputs.clone()).is_ok());
+        let (a, b) = (inputs[0].clone(), inputs[1].clone());
+        for tributes in [
+            vec![a.clone()],
+            vec![a.clone(), a.clone(), b.clone()],
+            vec![b, a],
+        ] {
+            let refused = lysis(tributes).unwrap_err();
+            assert!(
+                refused.to_string().contains("frozen day nominal"),
+                "{refused}"
+            );
+        }
+    });
+}
+
+#[test]
 fn series_sealing_zero_nod_forfeit_returns_unclaimed_load_and_enables_permissionless_clean() {
     use alloy_sol_types::SolCall;
 
@@ -391,7 +569,9 @@ fn series_sealing_zero_nod_forfeit_returns_unclaimed_load_and_enables_permission
         tc.issue_with_league(&t2, Some(100)).unwrap();
         in_process_ready(&storage, || tc.seal_day(day));
 
-        tc.day_emission_day.write(&day, emission_day_key).unwrap();
+        tc.day_emission_day
+            .write(&day, EmissionDate::new(emission_day_key))
+            .unwrap();
         let lysis_limit = U256::from(500_000_000_000u64);
         let binding = metadosis_process_ready_binding(
             storage.chain_id().unwrap(),
@@ -400,7 +580,7 @@ fn series_sealing_zero_nod_forfeit_returns_unclaimed_load_and_enables_permission
         );
         let (_fractions, allocated) = storage
             .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
-                tc.compute_and_record_metadosis_fractions(day, lysis_limit, base_ts)
+                seal_lysis(&mut tc, day, lysis_limit, base_ts)
             })
             .unwrap();
 
@@ -577,7 +757,9 @@ fn series_zero_minted_nods_automatic_breach_call_forfeit_and_clean() {
         tc.issue_with_league(&t_unquoted, Some(100)).unwrap();
         in_process_ready(&storage, || tc.seal_day(day));
 
-        tc.day_emission_day.write(&day, emission_day_key).unwrap();
+        tc.day_emission_day
+            .write(&day, EmissionDate::new(emission_day_key))
+            .unwrap();
         let lysis_limit = U256::from(500_000_000_000u64);
         let binding = metadosis_process_ready_binding(
             storage.chain_id().unwrap(),
@@ -586,7 +768,7 @@ fn series_zero_minted_nods_automatic_breach_call_forfeit_and_clean() {
         );
         let (_fractions, allocated) = storage
             .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
-                tc.compute_and_record_metadosis_fractions(day, lysis_limit, base_ts)
+                seal_lysis(&mut tc, day, lysis_limit, base_ts)
             })
             .unwrap();
 
@@ -755,11 +937,7 @@ fn clean_handles_settled_nod_aborted_emission_day_retired_fi_groups_and_zero_loa
         let binding = metadosis_process_ready_binding(1, 0, base_ts);
         let (_fracs, allocated) = storage
             .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
-                tc.compute_and_record_metadosis_fractions(
-                    day_zero_load,
-                    U256::from(100_000u64),
-                    base_ts,
-                )
+                seal_lysis(&mut tc, day_zero_load, U256::from(100_000u64), base_ts)
             })
             .unwrap();
         assert!(allocated <= U256::from(100_000u64));
@@ -786,7 +964,7 @@ fn clean_handles_settled_nod_aborted_emission_day_retired_fi_groups_and_zero_loa
         in_process_ready(&storage, || tc.seal_day(day_aborted));
         let aborted_emission_day = 20250112u32;
         tc.day_emission_day
-            .write(&day_aborted, aborted_emission_day)
+            .write(&day_aborted, EmissionDate::new(aborted_emission_day))
             .unwrap();
         outbe_emission::api::record_failed_day_allocation(
             storage.clone(),
@@ -800,22 +978,22 @@ fn clean_handles_settled_nod_aborted_emission_day_retired_fi_groups_and_zero_loa
         .abi_encode();
         crate::precompile::dispatch(storage.clone(), &clean_aborted, stranger, U256::ZERO).unwrap();
         assert!(tc.get_record(t_aborted.tribute_id).unwrap().is_none());
-        assert!(tc.get_fi_groups(day_aborted).unwrap().is_empty());
+        assert_eq!(tc.tribute_leagues.read(&t_aborted.tribute_id).unwrap(), 0);
 
-        // 4. P4.4h: ITribute.clean on a retired partition cleans fi_group_counts and fi_group_nominals
+        // 4. P4.4h: ITribute.clean on a retired partition cleans the Tribute league
         let mut t_retired = sample_tribute();
         set_owner(&mut t_retired, owner1);
         set_day(&mut t_retired, day_retired);
         tc.issue_with_league(&t_retired, Some(300)).unwrap();
         in_process_ready(&storage, || tc.seal_day(day_retired));
         tc.retired_days.write(&day_retired, true).unwrap();
-        assert!(!tc.get_fi_groups(day_retired).unwrap().is_empty());
+        assert_eq!(tc.tribute_leagues.read(&t_retired.tribute_id).unwrap(), 300);
         let clean_retired = crate::precompile::ITribute::cleanCall {
             tributeId: t_retired.tribute_id.to_u256(),
         }
         .abi_encode();
         crate::precompile::dispatch(storage.clone(), &clean_retired, stranger, U256::ZERO).unwrap();
-        assert!(tc.get_fi_groups(day_retired).unwrap().is_empty());
+        assert_eq!(tc.tribute_leagues.read(&t_retired.tribute_id).unwrap(), 0);
         t_normal.tribute_id.to_u256()
     });
 
@@ -865,7 +1043,7 @@ fn a_zero_load_tribute_stays_out_of_its_series_and_cleans_at_once() {
         let binding = metadosis_process_ready_binding(1, 0, base_ts);
         storage
             .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
-                tc.compute_and_record_metadosis_fractions(day, U256::from(100_000u64), base_ts)
+                seal_lysis(&mut tc, day, U256::from(100_000u64), base_ts)
             })
             .unwrap();
         let tiny_fraction = test_day_league_fraction(&tc, day, 100);
@@ -957,16 +1135,13 @@ fn multi_league_lysis_and_issue_nod_keep_league_nominals_fractions_and_loads_pri
             let binding = metadosis_process_ready_binding(1, 0, base_ts);
             storage
                 .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
-                    tc.compute_and_record_metadosis_fractions(
-                        day,
-                        U256::from(500_000_000u64),
-                        base_ts,
-                    )
+                    seal_lysis(&mut tc, day, U256::from(500_000_000u64), base_ts)
                 })
                 .unwrap();
 
+            outbe_emission::api::link_wwd(storage.clone(), price_day, day).unwrap();
             let totals_call = crate::precompile::ITribute::getDayTotalsCall {
-                worldwideDay: day.value(),
+                emissionDay: price_day,
             }
             .abi_encode();
             let totals_before = crate::precompile::ITribute::getDayTotalsCall::abi_decode_returns(
@@ -986,9 +1161,10 @@ fn multi_league_lysis_and_issue_nod_keep_league_nominals_fractions_and_loads_pri
             let open_load_ct_before = nod_contract.encrypted_group_open_load(group_key).unwrap();
             assert!(!open_load_ct_before.is_empty());
 
-            assert!(!tc.encrypted_league_nominal(day, 100).unwrap().is_empty());
-            assert!(!tc.encrypted_league_nominal(day, 200).unwrap().is_empty());
-            assert!(!tc.encrypted_day_fractions(day).unwrap().is_empty());
+            assert!(!tc
+                .encrypted_day_fractions(EmissionDate::new(price_day))
+                .unwrap()
+                .is_empty());
 
             let f1 = test_day_league_fraction(&tc, day, 100);
             let f2 = test_day_league_fraction(&tc, day, 200);

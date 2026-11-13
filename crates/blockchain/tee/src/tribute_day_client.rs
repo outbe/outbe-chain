@@ -4,16 +4,13 @@ use std::collections::BTreeMap;
 
 use alloy_primitives::U256;
 use outbe_primitives::tribute_day_encryption::{
-    EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1, EncryptedTributeLeagueAmountV1,
+    EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1,
 };
 
 use crate::{
     protocol::{EnclaveRequest, EnclaveResponse},
     tribute_client::request_local_enclave,
-    tribute_day::{
-        self, LysisFractionsRequestV1, LysisFractionsResultV1, TributeDayOpRequestV2,
-        TributeLeagueOpRequestV1,
-    },
+    tribute_day::{self, LysisFractionsRequestV1, LysisFractionsResultV1, TributeDayOpRequestV2},
     tribute_v2::verify_attestation,
     TransportError,
 };
@@ -75,11 +72,6 @@ fn request_amount_read(
             amount,
             inputs_canonical_hash,
             attestation_tag,
-        }
-        | EnclaveResponse::TributeLeagueAmountReadV1 {
-            amount,
-            inputs_canonical_hash,
-            attestation_tag,
         } => (amount, inputs_canonical_hash, attestation_tag),
         other => return Err(response_error(other)),
     };
@@ -102,58 +94,6 @@ pub fn read_day_amount(record: &EncryptedTributeDayAmountV2) -> Result<U256, Tra
     )
 }
 
-pub fn apply_league_operation(
-    request: TributeLeagueOpRequestV1,
-) -> Result<EncryptedTributeLeagueAmountV1, TransportError> {
-    let expected = tribute_day::league_operation_inputs_hash(&request).map_err(codec)?;
-    let chain_id = request.chain_id;
-    let day = request.worldwide_day;
-    let league = request.league;
-    let version = request
-        .previous
-        .as_ref()
-        .map_or(Some(1), |previous| previous.version()?.checked_add(1))
-        .ok_or(crate::errors::TeeClientVerificationError::InvalidTributeDayPredecessorVersion)?;
-    let (key, response) = request_local_enclave(EnclaveRequest::ApplyTributeLeagueOpV1 {
-        request: Box::new(request),
-    })?;
-    let EnclaveResponse::TributeLeagueOpAppliedV1 {
-        record,
-        inputs_canonical_hash,
-        attestation_tag,
-    } = response
-    else {
-        return Err(response_error(response));
-    };
-    let expected_identity = (chain_id, day, league, Some(version));
-    let returned_identity = (
-        record.chain_id,
-        record.worldwide_day,
-        record.league,
-        record.version(),
-    );
-    if expected != inputs_canonical_hash || returned_identity != expected_identity {
-        return Err(TransportError::EnclaveError(
-            "Tribute league response does not match request".into(),
-        ));
-    }
-    let preimage =
-        tribute_day::league_operation_attestation_preimage(expected, &record).map_err(codec)?;
-    verify_attestation(&key, &preimage, &attestation_tag)?;
-    Ok(record)
-}
-
-pub fn read_league_amount(record: &EncryptedTributeLeagueAmountV1) -> Result<U256, TransportError> {
-    request_amount_read(
-        tribute_day::league_read_inputs_hash(record),
-        EnclaveRequest::ReadTributeLeagueAmountV1 {
-            record: record.clone(),
-        },
-        tribute_day::league_read_attestation_preimage,
-        "Tribute league read response does not match request",
-    )
-}
-
 pub fn execute_lysis_fractions(
     request: LysisFractionsRequestV1,
 ) -> Result<LysisFractionsResultV1, TransportError> {
@@ -161,6 +101,7 @@ pub fn execute_lysis_fractions(
     let expected_identity = (
         request.chain_id,
         request.worldwide_day,
+        request.emission_day,
         request.completed_at,
         Some(1),
     );
@@ -178,6 +119,7 @@ pub fn execute_lysis_fractions(
     let returned_identity = (
         result.day_fractions.chain_id,
         result.day_fractions.worldwide_day,
+        result.day_fractions.emission_day,
         result.day_fractions.completed_at,
         result.day_fractions.version(),
     );

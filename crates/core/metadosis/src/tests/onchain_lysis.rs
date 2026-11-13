@@ -16,6 +16,11 @@ pub(crate) fn fixture() -> HashMapStorageProvider {
 }
 
 fn fixture_with_amounts(limit: u64, amounts: &[u64]) -> HashMapStorageProvider {
+    let tributes: Vec<(u64, u16)> = amounts.iter().map(|&amount| (amount, 840)).collect();
+    fixture_with_tributes(limit, &tributes)
+}
+
+fn fixture_with_tributes(limit: u64, tributes: &[(u64, u16)]) -> HashMapStorageProvider {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.set_block_number(10);
     provider.set_timestamp(U256::from(CLOCK));
@@ -54,7 +59,7 @@ fn fixture_with_amounts(limit: u64, amounts: &[u64]) -> HashMapStorageProvider {
                     );
                     ed.state = outbe_emission::schema::emission_day_state::PROCESSING;
                     metadosis.emission_days().create(&ed)?;
-                    for (index, amount) in amounts.iter().enumerate() {
+                    for (index, (amount, reference_currency)) in tributes.iter().enumerate() {
                         let owner = Address::repeat_byte(u8::try_from(index + 1).unwrap());
                         let amount = U256::from(*amount);
                         tribute.issue(&outbe_tribute::TributeData {
@@ -66,7 +71,7 @@ fn fixture_with_amounts(limit: u64, amounts: &[u64]) -> HashMapStorageProvider {
                             issuance_amount_minor: amount,
                             issuance_currency: 840,
                             nominal_amount_minor: amount,
-                            reference_currency: 840,
+                            reference_currency: *reference_currency,
                             tribute_price_minor: U256::from(2),
                         })?;
                     }
@@ -134,6 +139,72 @@ fn native_fraction_completion_keeps_tributes_for_owner_issue_nod() {
         assert!((1..=3u8).all(|byte| {
             outbe_nod::api::balance_of(&storage, Address::repeat_byte(byte)).unwrap() == 0
         }));
+    });
+}
+
+fn completed_event(provider: &HashMapStorageProvider) -> IMetadosis::MetadosisCompleted {
+    provider
+        .get_ordered_events()
+        .iter()
+        .find_map(|event| IMetadosis::MetadosisCompleted::decode_log(event).ok())
+        .expect("MetadosisCompleted")
+        .data
+}
+
+#[test]
+fn unpriced_tributes_stay_out_of_the_lysis_and_forfeit() {
+    let priced = [(NOMINAL + 1, 840), (NOMINAL + 2, 840)];
+    let mut priced_only = fixture_with_tributes(LIMIT, &priced);
+    let mut with_unpriced = fixture_with_tributes(
+        LIMIT,
+        &[priced[0], priced[1], (NOMINAL + 3, 978), (NOMINAL + 4, 826)],
+    );
+    // 826 has a VWAP for the emission day but none for the day before.
+    StorageHandle::enter(&mut with_unpriced, |storage| {
+        let index = outbe_oracle::api::register_pair(
+            storage.clone(),
+            outbe_oracle::api::AddressPair::new_coen_to(826),
+        )
+        .unwrap();
+        outbe_oracle::schema::OracleContract::new(storage)
+            .record_utc_day_vwap(DAY, index, U256::from(100u64))
+            .unwrap();
+    });
+    run(&mut priced_only).unwrap();
+    run(&mut with_unpriced).unwrap();
+
+    let expected = completed_event(&priced_only);
+    let actual = completed_event(&with_unpriced);
+    assert_eq!(actual.tributeNominalTotalMinor, U256::from(2 * NOMINAL + 3));
+    assert_eq!(
+        actual.tributeNominalTotalMinor,
+        expected.tributeNominalTotalMinor
+    );
+    assert_eq!(actual.lysisLimitMinor, expected.lysisLimitMinor);
+    assert_eq!(actual.lysisAllocationMinor, expected.lysisAllocationMinor);
+    let desis_limit = |provider: &mut HashMapStorageProvider| {
+        StorageHandle::enter(provider, |storage| {
+            outbe_emission::api::get_emission_day_record(storage, DAY)
+                .unwrap()
+                .unwrap()
+                .desis_limit
+        })
+    };
+    assert_eq!(
+        desis_limit(&mut with_unpriced),
+        desis_limit(&mut priced_only)
+    );
+
+    StorageHandle::enter(&mut with_unpriced, |storage| {
+        for owner in [3, 4] {
+            let unpriced = outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(
+                Address::repeat_byte(owner),
+                WWD,
+            );
+            TributeContract::new(storage.clone())
+                .clean(unpriced)
+                .unwrap();
+        }
     });
 }
 

@@ -46,9 +46,12 @@ fn arm_reference_price(storage: &StorageHandle, timestamp: u64) {
         outbe_primitives::time::timestamp_to_date_key(timestamp),
     )
     .expect("date step");
-    oracle
-        .record_utc_day_vwap(last_closed, index, U256::from(100u64))
-        .unwrap();
+    let day_before = outbe_primitives::time::previous_date_key(last_closed).expect("date step");
+    for day in [day_before, last_closed] {
+        oracle
+            .record_utc_day_vwap(day, index, U256::from(100u64))
+            .unwrap();
+    }
 }
 
 mod api;

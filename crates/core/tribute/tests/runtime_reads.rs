@@ -119,8 +119,10 @@ fn encrypted_issue_preserves_ciphertext_events_and_public_reads_without_enclave(
         assert!(contract.get_day_totals(record.worldwide_day).is_err());
         in_process_ready(&storage, || contract.seal_day(record.worldwide_day));
         assert!(contract.is_day_sealed(record.worldwide_day).unwrap());
+        let emission_day = record.worldwide_day.value();
+        outbe_emission::api::link_wwd(storage.clone(), emission_day, record.worldwide_day).unwrap();
         let call = ITribute::getDayTotalsCall {
-            worldwideDay: record.worldwide_day.value(),
+            emissionDay: emission_day,
         };
         let output = outbe_tribute::precompile::dispatch(
             storage,

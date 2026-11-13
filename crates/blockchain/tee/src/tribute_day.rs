@@ -5,10 +5,8 @@ use std::collections::BTreeMap;
 use alloy_primitives::{keccak256, B256, U256};
 use outbe_primitives::{
     nod_encryption::EncryptedNodGroupLoadV1,
-    time::WorldwideDay,
-    tribute_day_encryption::{
-        EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1, EncryptedTributeLeagueAmountV1,
-    },
+    time::{EmissionDate, WorldwideDay},
+    tribute_day_encryption::{EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1},
     tribute_encryption::EncryptedTributeV2,
     wwd_entity_id::WwdEntityId,
 };
@@ -25,9 +23,6 @@ pub enum TributeDayOperationV2 {
     AdjustTransient {
         nominal_amount_minor: U256,
         add: bool,
-    },
-    Reset {
-        expected_total: U256,
     },
     Freeze,
 }
@@ -76,49 +71,6 @@ pub fn day_read_attestation_preimage(inputs_hash: B256, amount: U256) -> Vec<u8>
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct TributeLeagueOpRequestV1 {
-    pub chain_id: u64,
-    pub worldwide_day: WorldwideDay,
-    pub league: u16,
-    pub previous: Option<EncryptedTributeLeagueAmountV1>,
-    pub public_state_hash: B256,
-    pub operation: TributeDayOperationV2,
-}
-
-pub fn league_operation_inputs_hash(
-    request: &TributeLeagueOpRequestV1,
-) -> Result<B256, serde_json::Error> {
-    let mut bytes = b"outbe/tribute/league-inputs/v1".to_vec();
-    bytes.extend_from_slice(&serde_json::to_vec(request)?);
-    Ok(keccak256(bytes))
-}
-
-pub fn league_operation_attestation_preimage(
-    inputs_hash: B256,
-    result: &EncryptedTributeLeagueAmountV1,
-) -> Result<Vec<u8>, serde_json::Error> {
-    let mut bytes = b"outbe/tribute/league-result/v1".to_vec();
-    bytes.extend_from_slice(inputs_hash.as_slice());
-    bytes.extend_from_slice(&serde_json::to_vec(result)?);
-    Ok(bytes)
-}
-
-pub fn league_read_inputs_hash(
-    record: &EncryptedTributeLeagueAmountV1,
-) -> Result<B256, serde_json::Error> {
-    let mut bytes = b"outbe/tribute/league-read/v1".to_vec();
-    bytes.extend_from_slice(&serde_json::to_vec(record)?);
-    Ok(keccak256(bytes))
-}
-
-pub fn league_read_attestation_preimage(inputs_hash: B256, amount: U256) -> Vec<u8> {
-    let mut bytes = b"outbe/tribute/league-read-result/v1".to_vec();
-    bytes.extend_from_slice(inputs_hash.as_slice());
-    bytes.extend_from_slice(&amount.to_be_bytes::<32>());
-    bytes
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct LysisTributeInputV1 {
     pub league: u16,
     pub series_scope: Option<B256>,
@@ -136,16 +88,23 @@ pub struct LysisSeriesLoadOutputV1 {
 pub struct LysisFractionsRequestV1 {
     pub chain_id: u64,
     pub worldwide_day: WorldwideDay,
+    pub emission_day: EmissionDate,
     pub completed_at: u64,
-    pub lysis_limit_minor: U256,
-    pub leagues: Vec<(u16, u32, EncryptedTributeLeagueAmountV1)>,
+    pub metadosis_limit_minor: U256,
+    /// The frozen nominal of every Tribute of the day, priced or not.
+    pub day_nominal: EncryptedTributeDayAmountV2,
+    /// Every Tribute of the day by ascending id. One without a series scope is unpriced: it is
+    /// left out of the groups and the nominal.
     pub tributes: Vec<LysisTributeInputV1>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct LysisFractionsResultV1 {
     pub day_fractions: EncryptedTributeDayFractionsV1,
+    /// Nominal of the priced Tributes.
     pub total_nominal_minor: U256,
+    pub gratis_demand_minor: U256,
+    pub lysis_limit_minor: U256,
     pub allocated_minor: U256,
     pub zero_load_tribute_ids: Vec<WwdEntityId>,
     pub series_loads: Vec<LysisSeriesLoadOutputV1>,
