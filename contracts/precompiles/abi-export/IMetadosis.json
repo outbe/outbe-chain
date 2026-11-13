@@ -204,11 +204,6 @@
   },
   {
     "type": "error",
-    "name": "LysisResultMismatch",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "OfferingWindowOverflow",
     "inputs": []
   },

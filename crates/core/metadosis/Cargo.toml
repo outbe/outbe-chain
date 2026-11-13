@@ -15,7 +15,6 @@ outbe-desis.workspace = true
 outbe-fidelity.workspace = true
 outbe-tribute.workspace = true
 outbe-tributefactory.workspace = true
-outbe-lysis.workspace = true
 outbe-nod.workspace = true
 outbe-promislimit.workspace = true
 outbe-oracle.workspace = true
@@ -28,7 +27,6 @@ outbe-nod = { workspace = true, features = ["test-enclave"] }
 outbe-tribute = { workspace = true, features = ["test-enclave", "test-utils"] }
 outbe-tributefactory = { workspace = true, features = ["test-utils"] }
 k256.workspace = true
-num-bigint.workspace = true
 proptest.workspace = true
 trybuild = "1"
 # Drive the confidential Fidelity league snapshot in tests via the in-process engine.

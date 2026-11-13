@@ -11,9 +11,6 @@ pub enum MetadosisStorageCorruptionError {
         expected_wwd: WorldwideDay,
         found_wwd: WorldwideDay,
     },
-
-    #[error("Metadosis full-precision demand overflow")]
-    FullPrecisionDemandOverflow,
 }
 
 impl From<MetadosisStorageCorruptionError> for PrecompileError {

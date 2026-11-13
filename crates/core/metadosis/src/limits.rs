@@ -35,7 +35,7 @@ impl LimitSplit {
         let promis_limit_credit = base_limit
             .checked_sub(lysis_limit_minor)
             .ok_or_else(invalid)?;
-        let desis_limit_minor = crate::settlement::desis_limit(
+        let desis_limit_minor = crate::process::desis_limit(
             nominal_total,
             lysis_limit_minor,
             base_limit,
@@ -80,6 +80,8 @@ pub(crate) struct LysisLimitInput {
     pub base_limit: U256,
     pub lysis_limit_minor: U256,
     pub nominal_total: U256,
+    /// What the Nods leave of the Lysis Limit; it goes back to the Promis Limit.
+    pub unused_lysis_minor: U256,
 }
 
 /// Reserve the successful day's allocation within the owning command checkpoint.
@@ -97,29 +99,29 @@ pub(crate) fn allocate_day_metadosis_limit(
     if !split.promis_limit_credit.is_zero() {
         PromisLimitContract::new(storage.clone()).checked_credit(split.promis_limit_credit)?;
     }
-    if !split.desis_limit_minor.is_zero() {
-        let mut promis = PromisLimitContract::new(storage);
-        if promis.checked_take(split.desis_limit_minor)?.is_none() {
-            return Err(MetadosisError::DesisLimitUnavailable {
-                desis_limit_minor: split.desis_limit_minor,
-                available: promis.promis_limit()?,
-            }
-            .into());
+    let mut promis = PromisLimitContract::new(storage);
+    if !split.desis_limit_minor.is_zero() && promis.checked_take(split.desis_limit_minor)?.is_none()
+    {
+        return Err(MetadosisError::DesisLimitUnavailable {
+            desis_limit_minor: split.desis_limit_minor,
+            available: promis.promis_limit()?,
         }
+        .into());
     }
+    promis.checked_credit(input.unused_lysis_minor)?;
     Ok(split)
 }
 
 /// Briefs Desis and returns the Desis Limit the auction holds. A limit that Desis
 /// returns goes back to the Promis Limit.
-pub(crate) fn apply_auction_brief(
+pub(crate) fn brief_auction(
     storage: StorageHandle<'_>,
     emission_day: u32,
     split: &LimitSplit,
 ) -> Result<U256> {
     let is_active = !split.desis_limit_minor.is_zero();
     storage.with_checkpoint(|| {
-        let receipt = outbe_desis::api::dispatch_auction_brief(
+        let receipt = outbe_desis::api::brief_auction(
             storage.clone(),
             outbe_desis::api::AuctionBrief {
                 emission_day: emission_day.into(),
@@ -167,6 +169,7 @@ mod tests {
                         base_limit: U256::from(base as u64),
                         lysis_limit_minor: U256::from(lysis as u64),
                         nominal_total: U256::from(nominal as u64),
+                        unused_lysis_minor: U256::ZERO,
                     },
                 )
                 .unwrap();
@@ -178,7 +181,7 @@ mod tests {
                     U256::from(remaining as u64)
                 );
                 let day = EmissionDate::new(20260101);
-                apply_auction_brief(storage.clone(), day.value(), &split).unwrap();
+                brief_auction(storage.clone(), day.value(), &split).unwrap();
                 let desis = outbe_desis::DesisContract::new(storage.clone());
                 assert_eq!(
                     desis.pending_desis_limit_minor.read(&day).unwrap(),
@@ -218,9 +221,10 @@ mod tests {
                             base_limit: base,
                             lysis_limit_minor: lysis,
                             nominal_total: nominal,
+                            unused_lysis_minor: U256::ZERO,
                         },
                     )?;
-                    apply_auction_brief(storage.clone(), 20260101, &split)
+                    brief_auction(storage.clone(), 20260101, &split)
                 })
             });
             assert!(result.is_err());
@@ -240,13 +244,14 @@ mod tests {
                     base_limit: base,
                     lysis_limit_minor: U256::ONE,
                     nominal_total: U256::MAX,
+                    unused_lysis_minor: U256::ZERO,
                 },
             )
             .unwrap();
             assert!(split.desis_limit_minor > U256::from(u128::MAX));
             let day = EmissionDate::new(20260101);
             assert_eq!(
-                apply_auction_brief(storage.clone(), day.value(), &split).unwrap(),
+                brief_auction(storage.clone(), day.value(), &split).unwrap(),
                 U256::ZERO
             );
             assert_eq!(

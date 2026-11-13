@@ -4,7 +4,6 @@ pragma solidity ^0.8.30;
 interface IMetadosis {
     error VwapMustBeNonZero();
     error InvalidLysisLimitSplit(uint256 dayLimit, uint256 lysisLimitMinor);
-    error LysisResultMismatch();
     error DesisLimitUnavailable(uint256 desisLimitMinor, uint256 available);
     error FormedDayLimitCannotBeReplaced();
     error UnknownWorldwideDayStatus();

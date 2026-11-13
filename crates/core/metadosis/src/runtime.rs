@@ -1,7 +1,7 @@
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 use crate::schema::MetadosisContract;
-use crate::{lifecycle, settlement::process_ready_candidate};
+use crate::{lifecycle, process::process_ready_candidate};
 
 pub fn start_metadosis(ctx: &BlockRuntimeContext) -> Result<()> {
     let mut metadosis = MetadosisContract::new(ctx.storage.clone());

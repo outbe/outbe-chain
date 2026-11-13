@@ -85,7 +85,7 @@ fn populated_auction(chain_count: u32) -> Calibration {
                 }
             }
             auction.day_bid_count.write(&day, chain_count * 2).unwrap();
-            outbe_desis::api::dispatch_auction_brief(
+            outbe_desis::api::brief_auction(
                 storage.clone(),
                 outbe_desis::api::AuctionBrief {
                     emission_day: EmissionDate::new(20240102),
@@ -138,7 +138,7 @@ fn calibration_live_auction_start() {
                 .utc_day_vwap_last_finalized
                 .write(20240101)
                 .unwrap();
-            outbe_desis::api::dispatch_auction_brief(
+            outbe_desis::api::brief_auction(
                 storage.clone(),
                 outbe_desis::api::AuctionBrief {
                     emission_day: EmissionDate::new(20240101),
@@ -280,7 +280,7 @@ fn due_auctions(steps: &[DueStep]) -> (u64, Vec<Log>) {
                 .unwrap();
             for step in steps {
                 if matches!(step, DueStep::Start) {
-                    outbe_desis::api::dispatch_auction_brief(
+                    outbe_desis::api::brief_auction(
                         storage.clone(),
                         outbe_desis::api::AuctionBrief {
                             emission_day: step.day(),
