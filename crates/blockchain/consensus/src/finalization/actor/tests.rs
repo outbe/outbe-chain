@@ -133,13 +133,19 @@ fn snapshot_alarm(snapshotter: &metrics_util::debugging::Snapshotter) -> (u64, u
     let mut saw_gauge = false;
     for (key, _, _, value) in &snapshot {
         match (key.key().name(), value) {
-            ("outbe_finalization_resolution_stalled_total", DebugValue::Counter(value)) => {
+            (
+                "outbe_consensus_finalization_resolution_stalled_total",
+                DebugValue::Counter(value),
+            ) => {
                 stalled = *value;
             }
-            ("outbe_finalization_divergence_suspected_total", DebugValue::Counter(value)) => {
+            (
+                "outbe_consensus_finalization_divergence_suspected_total",
+                DebugValue::Counter(value),
+            ) => {
                 divergence = *value;
             }
-            ("outbe_finalization_divergence_suspected", DebugValue::Gauge(value)) => {
+            ("outbe_consensus_finalization_divergence_suspected", DebugValue::Gauge(value)) => {
                 gauge = value.into_inner();
                 saw_gauge = true;
             }
@@ -147,13 +153,15 @@ fn snapshot_alarm(snapshotter: &metrics_util::debugging::Snapshotter) -> (u64, u
         }
     }
     if stalled > 0 {
-        metrics::counter!("outbe_finalization_resolution_stalled_total").increment(stalled);
+        metrics::counter!("outbe_consensus_finalization_resolution_stalled_total")
+            .increment(stalled);
     }
     if divergence > 0 {
-        metrics::counter!("outbe_finalization_divergence_suspected_total").increment(divergence);
+        metrics::counter!("outbe_consensus_finalization_divergence_suspected_total")
+            .increment(divergence);
     }
     if saw_gauge {
-        metrics::gauge!("outbe_finalization_divergence_suspected").set(gauge);
+        metrics::gauge!("outbe_consensus_finalization_divergence_suspected").set(gauge);
     }
     (stalled, divergence, gauge)
 }
@@ -378,23 +386,27 @@ fn read_degrade_metrics(snapshotter: &metrics_util::debugging::Snapshotter) -> D
     };
     for (key, _, _, value) in &snapshot {
         match (key.key().name(), value) {
-            ("outbe_finalization_snapshot_build_degraded_total", DebugValue::Counter(value)) => {
+            (
+                "outbe_consensus_finalization_snapshot_degraded_total",
+                DebugValue::Counter(value),
+            ) => {
                 metrics.snapshot_build_degraded = *value;
                 if *value > 0 {
-                    metrics::counter!("outbe_finalization_snapshot_build_degraded_total")
+                    metrics::counter!("outbe_consensus_finalization_snapshot_degraded_total")
                         .increment(*value);
                 }
             }
-            ("outbe_finalization_persist_degraded_total", DebugValue::Counter(value)) => {
+            ("outbe_consensus_finalization_persist_degraded_total", DebugValue::Counter(value)) => {
                 metrics.persist_degraded = *value;
                 if *value > 0 {
-                    metrics::counter!("outbe_finalization_persist_degraded_total")
+                    metrics::counter!("outbe_consensus_finalization_persist_degraded_total")
                         .increment(*value);
                 }
             }
-            ("outbe_finalization_persist_degraded", DebugValue::Gauge(value)) => {
+            ("outbe_consensus_finalization_persist_degraded", DebugValue::Gauge(value)) => {
                 metrics.persist_gauge = value.into_inner();
-                metrics::gauge!("outbe_finalization_persist_degraded").set(metrics.persist_gauge);
+                metrics::gauge!("outbe_consensus_finalization_persist_degraded")
+                    .set(metrics.persist_gauge);
             }
             _ => {}
         }

@@ -2,14 +2,14 @@
 //!
 //! When `recover_proof` returns `None` while the quorum threshold is
 //! met, the chain must NOT stall, and the proposer MUST forfeit the slot.
-//! The metric `outbe_proposer_forfeit_total{reason="vrf_recover_failed_under_quorum"}`
+//! The metric `outbe_consensus_proposer_forfeit_total{reason="vrf_recover_failed_under_quorum"}`
 //! is incremented to surface the event. This invariant is verified at the
 //! source level (metric wiring is present in `hybrid.rs::assemble`) and
 //! through the closed [`ProposerForfeitReason`] taxonomy.
 
 /// runtime test: when `record_vrf_recover_failed_under_quorum`
 /// is invoked, the
-/// `outbe_proposer_forfeit_total{reason="vrf_recover_failed_under_quorum"}`
+/// `outbe_consensus_proposer_forfeit_total{reason="vrf_recover_failed_under_quorum"}`
 /// counter increments by exactly 1. That invocation is the exact path that
 /// `hybrid.rs::assemble` triggers on the `recover_proof == None` under quorum
 /// branch. The test uses a
@@ -40,14 +40,14 @@ fn record_vrf_recover_failed_under_quorum_increments_proposer_forfeit_counter() 
     let entry = snapshot
         .iter()
         .find(|(key, _, _, _)| {
-            key.key().name() == "outbe_proposer_forfeit_total"
+            key.key().name() == "outbe_consensus_proposer_forfeit_total"
                 && key
                     .key()
                     .labels()
                     .any(|l| l.key() == "reason" && l.value() == "vrf_recover_failed_under_quorum")
         })
         .expect(
-            "outbe_proposer_forfeit_total{reason=\"vrf_recover_failed_under_quorum\"} \
+            "outbe_consensus_proposer_forfeit_total{reason=\"vrf_recover_failed_under_quorum\"} \
                  must be emitted by record_vrf_recover_failed_under_quorum",
         );
     match &entry.3 {
