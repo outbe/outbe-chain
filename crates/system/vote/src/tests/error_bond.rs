@@ -8,10 +8,8 @@
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
-use outbe_primitives::{
-    addresses::VOTE_ADDRESS,
-    storage::{hashmap::HashMapStorageProvider, StorageHandle},
-};
+use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+use outbe_system_common::addresses::VOTE_ADDRESS;
 
 use crate::{
     precompile::IVote,

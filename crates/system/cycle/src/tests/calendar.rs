@@ -6,7 +6,7 @@ use crate::handler::MAX_REWARD_CATCHUP_DAYS;
 #[test]
 fn process_emission_day_catches_up_one_oldest_day_per_hourly_run_after_a_multi_day_halt() {
     let mut storage = cycle_storage();
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 32);
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 32);
     storage.enter(|handle| {
         let anchor_ts = GENESIS_TS + 60;
         let anchor = genesis_block(handle.clone(), anchor_ts);
@@ -58,7 +58,7 @@ fn process_emission_day_catches_up_one_oldest_day_per_hourly_run_after_a_multi_d
 #[test]
 fn catchup_horizon_bounds_backward_scan_to_max_reward_catchup_days() {
     let mut storage = cycle_storage();
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 16);
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 16);
     storage.enter(|handle| {
         let anchor = genesis_block(handle.clone(), GENESIS_TS + 60);
         run_cycle_tick(&anchor).unwrap();
@@ -138,7 +138,7 @@ fn forward_seal_jump_waits_for_skipped_parent_late_votes() {
             );
         });
     }
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 4);
     storage.set_block_number(14);
     storage.enter(|handle| {
         let ctx = dispatch_at(handle.clone(), 14, restart_ts + 3);
@@ -204,7 +204,7 @@ fn a_failed_allocation_whose_limit_cannot_reach_the_promis_limit_fails_the_block
 #[test]
 fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_promis_limit() {
     let mut storage = cycle_storage();
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 32);
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 32);
     storage.enter(|handle| {
         let anchor = genesis_block(handle.clone(), GENESIS_TS + 60);
         run_cycle_tick(&anchor).unwrap();

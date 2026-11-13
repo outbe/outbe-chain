@@ -10,9 +10,9 @@ use outbe_core_common::erc::ERC165_INTERFACE_ID;
 use outbe_enclave::gratis::{decrypt_balance, decrypt_pledged, derive_view_key};
 use outbe_enclave::protocol::{GratisOp, ModifyAuth};
 use outbe_gratis::enclave_client::test_enclave;
-use outbe_primitives::addresses::{GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::{GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS};
 use outbe_system_common::time::SECONDS_PER_DAY;
 use outbe_system_common::units::checked_protocol_to_native;
 

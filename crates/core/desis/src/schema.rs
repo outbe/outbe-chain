@@ -2,7 +2,7 @@
 
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_macros::{contract, storage_schema};
-use outbe_primitives::addresses::DESIS_ADDRESS;
+use outbe_system_common::addresses::DESIS_ADDRESS;
 use outbe_system_common::time::EmissionDate;
 
 /// Auction lifecycle stage, in order: a day is `Briefed`, takes commits in `CommittingBids`,

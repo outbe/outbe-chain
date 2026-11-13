@@ -329,7 +329,7 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
     let validator_result = run();
     assert_eq!(proposer_result, validator_result);
     assert!(proposer_result.1.iter().any(|event| {
-        event.address == outbe_primitives::addresses::TRIBUTE_ADDRESS
+        event.address == outbe_system_common::addresses::TRIBUTE_ADDRESS
             && event.data.topics()[0]
                 == outbe_tribute::precompile::ITribute::TributeOffered::SIGNATURE_HASH
     }));
@@ -373,8 +373,8 @@ struct NodBodyFixture {
 }
 type SeededNodParent = (State<CacheDB<EmptyDBTyped<ProviderError>>>, B256);
 fn arm_direct_process_ready_budget() {
-    outbe_primitives::storage::direct::arm_next_direct_metadosis_frame_budget(
-        outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
+    outbe_primitives::storage::direct::arm_next_direct_scoped_frame_budget(
+        outbe_primitives::storage::MutationPurposeTag::CycleLifecycle,
         1,
     );
 }
@@ -383,14 +383,13 @@ fn with_process_ready_frame(
     storage: &outbe_primitives::storage::StorageHandle<'_>,
     body: impl FnOnce() -> outbe_primitives::error::Result<()>,
 ) -> outbe_primitives::error::Result<()> {
-    let binding = outbe_primitives::storage::metadosis_process_ready_binding(
+    let binding = outbe_system_common::metadosis_bindings::metadosis_process_ready_binding(
         storage.chain_id()?,
         storage.block_number()?,
         storage.now_secs()?,
     );
-    storage.with_metadosis_mutation::<outbe_primitives::storage::MetadosisCycleLifecycle, _>(
-        binding, body,
-    )
+    storage
+        .with_scoped_mutation::<outbe_primitives::storage::CycleLifecyclePurpose, _>(binding, body)
 }
 
 fn seed_nod_body_state(fixture: &NodBodyFixture) -> eyre::Result<SeededNodParent> {

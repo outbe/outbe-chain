@@ -389,7 +389,7 @@ mod tests {
     use alloy_primitives::address;
     use alloy_sol_types::SolEvent;
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
-    use outbe_primitives::storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag};
+    use outbe_primitives::storage::{hashmap::HashMapStorageProvider, MutationPurposeTag};
     use outbe_promislimit::PromisLimitContract;
     use outbe_system_common::time::WorldwideDay;
     use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
@@ -868,7 +868,7 @@ mod tests {
             );
         });
 
-        storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
+        storage.enable_scoped_mutation_frame(MutationPurposeTag::CycleLifecycle);
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(
                 BlockContext {

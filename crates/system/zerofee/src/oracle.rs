@@ -1,6 +1,7 @@
 use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
 use alloy_primitives::Address;
-use outbe_primitives::{addresses::ORACLE_ADDRESS, storage::StorageHandle};
+use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::ORACLE_ADDRESS;
 
 use crate::envelope::{active_validator_for_role, ZeroFeeEnvelope};
 use crate::hooks::ZeroFeePolicyError;

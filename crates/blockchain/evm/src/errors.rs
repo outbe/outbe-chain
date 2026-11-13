@@ -3,8 +3,8 @@
 use alloy_primitives::{Address, B256, U256};
 use core::fmt::Display;
 use outbe_primitives::{
-    error::PrecompileError, storage::MetadosisMutationEntitlements,
-    storage::MetadosisMutationPurposeTag,
+    error::PrecompileError,
+    storage::{MutationEntitlements, MutationPurposeTag},
 };
 
 /// Checks whether a parent subcall out-of-gas overrides a nested precompile result.
@@ -156,19 +156,19 @@ impl From<OutbePrecompileFatalError> for String {
 #[allow(clippy::large_enum_variant)]
 pub enum CtxStorageError {
     #[error(
-        "Metadosis mutation purpose is not entitled for this EVM call: purpose={purpose:?} binding={binding:#x} remaining={remaining:?}"
+        "scoped mutation purpose is not entitled for this EVM call: purpose={purpose:?} binding={binding:#x} remaining={remaining:?}"
     )]
-    MetadosisMutationPurposeNotEntitled {
-        purpose: MetadosisMutationPurposeTag,
+    ScopedMutationPurposeNotEntitled {
+        purpose: MutationPurposeTag,
         binding: B256,
-        remaining: Box<MetadosisMutationEntitlements>,
+        remaining: Box<MutationEntitlements>,
     },
-    #[error("Metadosis mutation frame is not active")]
-    MetadosisMutationFrameNotActive,
-    #[error("Metadosis mutation frame identity mismatch")]
-    MetadosisMutationFrameIdentityMismatch,
-    #[error("Metadosis mutation frame execution scope mismatch")]
-    MetadosisMutationFrameScopeMismatch,
+    #[error("scoped mutation frame is not active")]
+    ScopedMutationFrameNotActive,
+    #[error("scoped mutation frame identity mismatch")]
+    ScopedMutationFrameIdentityMismatch,
+    #[error("scoped mutation frame execution scope mismatch")]
+    ScopedMutationFrameScopeMismatch,
     #[error("insufficient balance for transfer from {from}: needs {amount}")]
     InsufficientBalanceForTransfer { from: Address, amount: U256 },
     #[error("insufficient balance for burn from {address}: has {balance} but needs {amount}")]
@@ -226,12 +226,10 @@ impl From<CtxStorageError> for PrecompileError {
         match error {
             CtxStorageError::InsufficientBalanceForTransfer { .. }
             | CtxStorageError::InsufficientBalanceForBurn { .. }
-            | CtxStorageError::MetadosisMutationPurposeNotEntitled { .. }
-            | CtxStorageError::MetadosisMutationFrameNotActive
-            | CtxStorageError::MetadosisMutationFrameIdentityMismatch
-            | CtxStorageError::MetadosisMutationFrameScopeMismatch => {
-                Self::Revert(error.to_string())
-            }
+            | CtxStorageError::ScopedMutationPurposeNotEntitled { .. }
+            | CtxStorageError::ScopedMutationFrameNotActive
+            | CtxStorageError::ScopedMutationFrameIdentityMismatch
+            | CtxStorageError::ScopedMutationFrameScopeMismatch => Self::Revert(error.to_string()),
             CtxStorageError::StorageOperation(_)
             | CtxStorageError::BlockHashFailed { .. }
             | CtxStorageError::TransferFailed(_)

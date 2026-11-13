@@ -22,14 +22,15 @@ fn in_process_ready<R>(
     storage: &StorageHandle<'_>,
     body: impl FnOnce() -> outbe_primitives::error::Result<R>,
 ) -> R {
-    use outbe_primitives::storage::{metadosis_process_ready_binding, MetadosisCycleLifecycle};
+    use outbe_primitives::storage::CycleLifecyclePurpose;
+    use outbe_system_common::metadosis_bindings::metadosis_process_ready_binding;
     let binding = metadosis_process_ready_binding(
         storage.chain_id().unwrap(),
         storage.block_number().unwrap(),
         storage.now_secs().unwrap(),
     );
     storage
-        .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, body)
+        .with_scoped_mutation::<CycleLifecyclePurpose, _>(binding, body)
         .unwrap()
 }
 
@@ -62,8 +63,8 @@ fn encrypted_issue_preserves_ciphertext_events_and_public_reads_without_enclave(
     use outbe_tribute::precompile::ITribute;
     let body = encrypted_body();
     let mut provider = HashMapStorageProvider::new(1);
-    provider.enable_metadosis_mutation_frames(
-        outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
+    provider.enable_scoped_mutation_frames(
+        outbe_primitives::storage::MutationPurposeTag::CycleLifecycle,
         2,
     );
     StorageHandle::enter(&mut provider, |storage| {
@@ -133,7 +134,7 @@ fn encrypted_issue_preserves_ciphertext_events_and_public_reads_without_enclave(
         assert_eq!(returned.tributeCount, 1);
         assert!(!returned.tributeNominalTotalMinor.is_empty());
     });
-    let events = provider.get_events(outbe_primitives::addresses::TRIBUTE_ADDRESS);
+    let events = provider.get_events(outbe_system_common::addresses::TRIBUTE_ADDRESS);
     let (raw_log, offered) = events
         .iter()
         .find_map(|event| {
@@ -159,8 +160,8 @@ fn encrypted_issue_preserves_ciphertext_events_and_public_reads_without_enclave(
 fn encrypted_issue_rejects_tampering_without_mutating_supply_or_day_amount() {
     let body = encrypted_body();
     let mut provider = HashMapStorageProvider::new(1);
-    provider.enable_metadosis_mutation_frame(
-        outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
+    provider.enable_scoped_mutation_frame(
+        outbe_primitives::storage::MutationPurposeTag::CycleLifecycle,
     );
     StorageHandle::enter(&mut provider, |storage| {
         let _enclave = outbe_tribute::enclave_client::test_enclave::scope();

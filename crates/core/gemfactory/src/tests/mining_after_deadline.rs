@@ -90,7 +90,7 @@ fn a_settled_gem_mines_after_the_settlement_deadline_while_its_unpaid_twin_is_re
         assert_eq!(decrypt_balance(&vk, ALICE, &blob).unwrap(), load);
     });
     let mined: Vec<_> = provider
-        .get_events(outbe_primitives::addresses::PROMIS_ADDRESS)
+        .get_events(outbe_system_common::addresses::PROMIS_ADDRESS)
         .iter()
         .filter_map(|log| {
             outbe_promis::precompile::IPromis::PromisMinedFromGem::decode_log_data(log).ok()

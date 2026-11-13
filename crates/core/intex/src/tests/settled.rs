@@ -3,7 +3,7 @@
 use super::*;
 use alloy_sol_types::SolEvent;
 use base64::{engine::general_purpose::STANDARD, Engine};
-use outbe_primitives::addresses::{INTEX_ADDRESS, INTEX_FACTORY_ADDRESS};
+use outbe_system_common::addresses::{INTEX_ADDRESS, INTEX_FACTORY_ADDRESS};
 
 fn other() -> Address {
     Address::repeat_byte(0xB2)

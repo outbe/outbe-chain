@@ -222,7 +222,7 @@ fn end_block_soft_fail_rolls_back_dirty_storage_writes_and_logs_preserving_earli
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
     )
     .with_evm_signer(signer);
-    let preserved_addr = outbe_primitives::addresses::NOD_FACTORY_ADDRESS;
+    let preserved_addr = outbe_system_common::addresses::NOD_FACTORY_ADDRESS;
     let preserved_slot = U256::from(0x1111u64);
     let preserved_val = U256::from(0x2222u64);
     let mut state =
@@ -249,7 +249,7 @@ fn end_block_soft_fail_rolls_back_dirty_storage_writes_and_logs_preserving_earli
     let gem_tx = config
         .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::EndBlock { step_index: 1 })
         .unwrap();
-    let dirty_addr = outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
+    let dirty_addr = outbe_system_common::addresses::GEM_FACTORY_ADDRESS;
     let dirty_slot = U256::from(0xDEAD_BEEFu64);
     let dirty_val = U256::from(0xCAFE_BABEu64);
     let dirty_topic = keccak256("DirtySoftFailEvent()");

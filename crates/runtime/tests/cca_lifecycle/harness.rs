@@ -15,12 +15,12 @@ pub(crate) use outbe_ccaregistry::{
 pub(crate) use outbe_evm::OutbeEvmFactory;
 pub(crate) use outbe_gemfactory::precompile::IGemFactory;
 pub(crate) use outbe_primitives::{
-    addresses::{
-        AGENT_REWARD_ADDRESS, CCA_REGISTRY_ADDRESS, GEM_ADDRESS, GEM_FACTORY_ADDRESS,
-        ORACLE_ADDRESS, PROMIS_LIMIT_ADDRESS,
-    },
     block::{BlockContext, BlockRuntimeContext},
     storage::{direct::DirectStorageProvider, StorageHandle},
+};
+pub(crate) use outbe_system_common::addresses::{
+    AGENT_REWARD_ADDRESS, CCA_REGISTRY_ADDRESS, GEM_ADDRESS, GEM_FACTORY_ADDRESS, ORACLE_ADDRESS,
+    PROMIS_LIMIT_ADDRESS,
 };
 pub(crate) use outbe_system_common::time::SECONDS_PER_DAY;
 pub(crate) use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};

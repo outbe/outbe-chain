@@ -106,13 +106,13 @@ fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
     stub_settlement_asset(&mut storage, SETTLEMENT_ASSET_18, 840, 18);
     // Every asset the tests pass in has a registered vault.
     storage.stub_sub_call_at_selector(
-        outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+        outbe_system_common::addresses::VAULT_ROUTER_ADDRESS,
         IVaultRouter::assetVaultsCountCall::SELECTOR,
         word(1),
     );
     // `deposit` reports minted shares.
     storage.stub_sub_call_at_selector(
-        outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+        outbe_system_common::addresses::VAULT_ROUTER_ADDRESS,
         IVaultRouter::depositCall::SELECTOR,
         word(1),
     );

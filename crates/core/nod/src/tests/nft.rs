@@ -92,7 +92,7 @@ fn transfer_logs_announce_issuance_and_removal() {
 
     let nod_id = body.nod_id;
     let transfers: Vec<(Address, Address, U256)> = provider
-        .get_events(outbe_primitives::addresses::NOD_ADDRESS)
+        .get_events(outbe_system_common::addresses::NOD_ADDRESS)
         .iter()
         .filter_map(|log| INod::Transfer::decode_log_data(log).ok())
         .map(|event| (event.from, event.to, event.tokenId))

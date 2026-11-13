@@ -2,7 +2,7 @@ use alloy_primitives::{Address, Bytes, B256};
 
 use crate::{
     reshare_artifact::{ConsensusHeaderArtifact, OutbeBlockArtifacts},
-    storage::MetadosisMutationEntitlements,
+    storage::MutationEntitlements,
     system_tx_context::{
         SystemTxBuildContext, SystemTxContext, SystemTxPayloadBuildError,
         SystemTxPayloadValidationError, SystemTxValidationContext,
@@ -184,7 +184,7 @@ impl From<MissingSystemTxContext> for PrecompileError {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct MetadosisEntitlementContext<'a> {
+pub struct MutationEntitlementContext<'a> {
     pub payload: &'a [u8],
     pub chain_id: u64,
     pub block_number: u64,
@@ -216,10 +216,8 @@ pub trait ProtocolModule {
         Ok(())
     }
 
-    fn mutation_entitlements(
-        _ctx: MetadosisEntitlementContext<'_>,
-    ) -> MetadosisMutationEntitlements {
-        MetadosisMutationEntitlements::NONE
+    fn mutation_entitlements(_ctx: MutationEntitlementContext<'_>) -> MutationEntitlements {
+        MutationEntitlements::NONE
     }
 
     fn begin_block(_ctx: &BlockRuntimeContext<'_>) -> Result<()> {

@@ -9,12 +9,12 @@ use outbe_intex::{
     SeriesId,
 };
 use outbe_primitives::{
-    addresses::INTEX_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     error::Result,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
 use outbe_promislimit::PromisLimitContract;
+use outbe_system_common::addresses::INTEX_ADDRESS;
 use outbe_system_common::time::EmissionDate;
 use outbe_system_common::time::SECONDS_PER_DAY_U32;
 

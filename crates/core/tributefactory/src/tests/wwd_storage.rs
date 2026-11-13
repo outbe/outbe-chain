@@ -2,10 +2,8 @@ use alloy_primitives::{Bytes, B256, U256};
 use alloy_sol_types::{SolError, SolEvent};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_primitives::storage::{
-    metadosis_process_ready_binding, MetadosisCycleLifecycle, MetadosisMutationPurposeTag,
-    StorageHandle,
-};
+use outbe_primitives::storage::{CycleLifecyclePurpose, MutationPurposeTag, StorageHandle};
+use outbe_system_common::metadosis_bindings::metadosis_process_ready_binding;
 use outbe_system_common::time::WorldwideDay;
 use outbe_tribute::TributeContract;
 
@@ -169,7 +167,7 @@ fn currency_price_unavailable_encodes_selector_and_pipeline_cap_and_historical_c
     assert!(matches!(err, PrecompileError::RevertBytes(bytes) if bytes == expected_bytes));
 
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    provider.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 30);
+    provider.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 30);
     StorageHandle::enter(&mut provider, |storage| {
         let binding = metadosis_process_ready_binding(
             storage.chain_id().unwrap(),
@@ -177,7 +175,7 @@ fn currency_price_unavailable_encodes_selector_and_pipeline_cap_and_historical_c
             storage.now_secs().unwrap(),
         );
         storage
-            .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
+            .with_scoped_mutation::<CycleLifecyclePurpose, _>(binding, || {
                 let mut factory = TributeFactoryContract::new(storage.clone());
                 let mut day_key = 20261001u32;
                 for _ in 0..crate::worldwideday::constants::MAX_PIPELINE_WWDS {
@@ -225,7 +223,7 @@ fn currency_price_unavailable_encodes_selector_and_pipeline_cap_and_historical_c
             storage.now_secs().unwrap(),
         );
         storage
-            .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding2, || {
+            .with_scoped_mutation::<CycleLifecyclePurpose, _>(binding2, || {
                 let mut factory = TributeFactoryContract::new(storage.clone());
                 crate::worldwideday::close_worldwide_day(&mut factory, filled)?;
                 assert!(!factory.pipeline_wwd.read_all()?.contains(&filled));
@@ -251,7 +249,8 @@ fn currency_price_unavailable_encodes_selector_and_pipeline_cap_and_historical_c
             })
             .unwrap();
     });
-    let factory_events = provider.get_events(outbe_primitives::addresses::TRIBUTE_FACTORY_ADDRESS);
+    let factory_events =
+        provider.get_events(outbe_system_common::addresses::TRIBUTE_FACTORY_ADDRESS);
     assert_eq!(
         factory_events.len(),
         crate::worldwideday::constants::MAX_PIPELINE_WWDS + 1
@@ -267,7 +266,7 @@ fn currency_price_unavailable_encodes_selector_and_pipeline_cap_and_historical_c
     assert_eq!(last_opened.formingEnd, hist_schedule.forming_end);
     assert_eq!(last_opened.offeringStart, hist_schedule.offerings_start);
     assert_eq!(last_opened.offeringEnd, hist_schedule.offering_end);
-    let tribute_events = provider.get_events(outbe_primitives::addresses::TRIBUTE_ADDRESS);
+    let tribute_events = provider.get_events(outbe_system_common::addresses::TRIBUTE_ADDRESS);
     assert_eq!(tribute_events.len(), 2);
     let sealed = outbe_tribute::precompile::ITribute::WorldwideDaySealed::decode_log_data(
         tribute_events.last().unwrap(),

@@ -126,7 +126,7 @@ pub(super) fn assert_dense_agent_accrual_pending(
         );
     }
     assert_eq!(
-        storage.balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)?,
+        storage.balance(outbe_system_common::addresses::AGENT_REWARD_ADDRESS)?,
         U256::ZERO,
         "GAS-05: AgentReward holds no native COEN"
     );

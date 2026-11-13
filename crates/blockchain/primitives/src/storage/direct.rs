@@ -12,19 +12,19 @@ use crate::block::BlockContext;
 use crate::error::{PrimitivesStorageError, Result};
 use crate::storage::PrecompileStorageProvider;
 #[cfg(feature = "test-utils")]
-use crate::storage::{MetadosisMutationEntitlements, MetadosisMutationPurposeTag};
+use crate::storage::{MutationEntitlements, MutationPurposeTag};
 
 #[cfg(feature = "test-utils")]
 std::thread_local! {
     static NEXT_DIRECT_FRAME_BUDGET: std::cell::Cell<
-        Option<(MetadosisMutationPurposeTag, u8)>,
+        Option<(MutationPurposeTag, u8)>,
     > = const { std::cell::Cell::new(None) };
 }
 
 /// Installs one lease budget for the next [`DirectStorageProvider::new`] on
 /// this thread. The constructor takes it. A later constructor stays denied.
 #[cfg(feature = "test-utils")]
-pub fn arm_next_direct_metadosis_frame_budget(purpose: MetadosisMutationPurposeTag, count: u8) {
+pub fn arm_next_direct_scoped_frame_budget(purpose: MutationPurposeTag, count: u8) {
     NEXT_DIRECT_FRAME_BUDGET.with(|slot| slot.set(Some((purpose, count))));
 }
 
@@ -61,11 +61,11 @@ pub struct DirectStorageProvider<'a, DB: StateDB> {
     /// Explicit fixture opt-in. Construction leaves this false, so begin,
     /// require, and finish keep the default denial.
     #[cfg(feature = "test-utils")]
-    metadosis_frames_enabled: bool,
+    scoped_frames_enabled: bool,
     #[cfg(feature = "test-utils")]
-    metadosis_mutation_entitlements: MetadosisMutationEntitlements,
+    scoped_mutation_entitlements: MutationEntitlements,
     #[cfg(feature = "test-utils")]
-    metadosis_mutation_active: Option<(MetadosisMutationPurposeTag, B256, u64, u64)>,
+    scoped_mutation_active: Option<(MutationPurposeTag, B256, u64, u64)>,
 }
 
 struct DirectSnapshot {
@@ -78,13 +78,10 @@ impl<'a, DB: StateDB> DirectStorageProvider<'a, DB> {
     /// Creates a new provider wrapping the given state and block context.
     pub fn new(state: &'a mut DB, ctx: BlockContext) -> Self {
         #[cfg(feature = "test-utils")]
-        let (metadosis_frames_enabled, metadosis_mutation_entitlements) = NEXT_DIRECT_FRAME_BUDGET
-            .with(|slot| match slot.take() {
-                Some((purpose, count)) => (
-                    true,
-                    MetadosisMutationEntitlements::repeated(purpose, count),
-                ),
-                None => (false, MetadosisMutationEntitlements::NONE),
+        let (scoped_frames_enabled, scoped_mutation_entitlements) =
+            NEXT_DIRECT_FRAME_BUDGET.with(|slot| match slot.take() {
+                Some((purpose, count)) => (true, MutationEntitlements::repeated(purpose, count)),
+                None => (false, MutationEntitlements::NONE),
             });
         Self {
             state,
@@ -95,11 +92,11 @@ impl<'a, DB: StateDB> DirectStorageProvider<'a, DB> {
             snapshots: Vec::new(),
             ctx,
             #[cfg(feature = "test-utils")]
-            metadosis_frames_enabled,
+            scoped_frames_enabled,
             #[cfg(feature = "test-utils")]
-            metadosis_mutation_entitlements,
+            scoped_mutation_entitlements,
             #[cfg(feature = "test-utils")]
-            metadosis_mutation_active: None,
+            scoped_mutation_active: None,
         }
     }
 
@@ -107,18 +104,13 @@ impl<'a, DB: StateDB> DirectStorageProvider<'a, DB> {
     /// This does not open a frame. A caller that never uses this method keeps
     /// the default denial.
     #[cfg(feature = "test-utils")]
-    pub fn enable_metadosis_mutation_frames(
-        &mut self,
-        purpose: MetadosisMutationPurposeTag,
-        count: u8,
-    ) {
+    pub fn enable_scoped_mutation_frames(&mut self, purpose: MutationPurposeTag, count: u8) {
         assert!(
-            self.metadosis_mutation_active.is_none(),
-            "cannot replace an active Metadosis mutation lease"
+            self.scoped_mutation_active.is_none(),
+            "cannot replace an active scoped mutation lease"
         );
-        self.metadosis_frames_enabled = true;
-        self.metadosis_mutation_entitlements =
-            MetadosisMutationEntitlements::repeated(purpose, count);
+        self.scoped_frames_enabled = true;
+        self.scoped_mutation_entitlements = MutationEntitlements::repeated(purpose, count);
     }
 
     fn effective_account_info(&mut self, address: Address) -> Result<AccountInfo>
@@ -262,65 +254,67 @@ where
     <DB as Database>::Error: std::fmt::Display,
 {
     #[cfg(feature = "test-utils")]
-    fn begin_metadosis_mutation_frame(
+    fn begin_scoped_mutation_frame(
         &mut self,
-        purpose: MetadosisMutationPurposeTag,
+        purpose: MutationPurposeTag,
         binding: B256,
         chain_id: u64,
         block_number: u64,
     ) -> Result<()> {
-        if !self.metadosis_frames_enabled {
-            return Err(PrimitivesStorageError::MetadosisMutationFrameUnavailable.into());
+        if !self.scoped_frames_enabled {
+            return Err(PrimitivesStorageError::ScopedMutationFrameUnavailable.into());
         }
-        if self.metadosis_mutation_active.is_some()
+        if self.scoped_mutation_active.is_some()
             || self.ctx.chain_id != chain_id
             || self.ctx.block_number != block_number
-            || !self
-                .metadosis_mutation_entitlements
-                .consume(purpose, binding)
+            || !self.scoped_mutation_entitlements.consume(purpose, binding)
         {
-            return Err(PrimitivesStorageError::TestProviderNoMatchingMetadosisLease.into());
+            return Err(PrimitivesStorageError::TestProviderNoMatchingScopedMutationLease.into());
         }
-        self.metadosis_mutation_active = Some((purpose, binding, chain_id, block_number));
+        self.scoped_mutation_active = Some((purpose, binding, chain_id, block_number));
         Ok(())
     }
 
     #[cfg(feature = "test-utils")]
-    fn require_metadosis_mutation_frame(
+    fn require_scoped_mutation_frame(
         &mut self,
-        purpose: MetadosisMutationPurposeTag,
+        purpose: MutationPurposeTag,
         binding: B256,
         chain_id: u64,
         block_number: u64,
     ) -> Result<()> {
-        if !self.metadosis_frames_enabled {
-            return Err(PrimitivesStorageError::MetadosisMutationFrameUnavailable.into());
+        if !self.scoped_frames_enabled {
+            return Err(PrimitivesStorageError::ScopedMutationFrameUnavailable.into());
         }
-        if self.metadosis_mutation_active != Some((purpose, binding, chain_id, block_number)) {
-            return Err(PrimitivesStorageError::TestProviderMetadosisLeaseIdentityMismatch.into());
+        if self.scoped_mutation_active != Some((purpose, binding, chain_id, block_number)) {
+            return Err(
+                PrimitivesStorageError::TestProviderScopedMutationLeaseIdentityMismatch.into(),
+            );
         }
         Ok(())
     }
 
     #[cfg(feature = "test-utils")]
-    fn finish_metadosis_mutation_frame(
+    fn finish_scoped_mutation_frame(
         &mut self,
-        purpose: MetadosisMutationPurposeTag,
+        purpose: MutationPurposeTag,
         binding: B256,
         _completed: bool,
     ) -> Result<()> {
-        if !self.metadosis_frames_enabled {
-            return Err(PrimitivesStorageError::MetadosisMutationFrameUnavailable.into());
+        if !self.scoped_frames_enabled {
+            return Err(PrimitivesStorageError::ScopedMutationFrameUnavailable.into());
         }
         let Some((active_purpose, active_binding, _, _)) =
-            self.metadosis_mutation_active.as_ref().copied()
+            self.scoped_mutation_active.as_ref().copied()
         else {
-            return Err(PrimitivesStorageError::TestProviderNoActiveMetadosisLease.into());
+            return Err(PrimitivesStorageError::TestProviderNoActiveScopedMutationLease.into());
         };
         if active_purpose != purpose || active_binding != binding {
-            return Err(PrimitivesStorageError::TestProviderMetadosisLeaseIdentityMismatch.into());
+            return Err(
+                PrimitivesStorageError::TestProviderScopedMutationLeaseIdentityMismatch.into(),
+            );
         }
-        self.metadosis_mutation_active = None;
+        self.scoped_mutation_active = None;
         Ok(())
     }
 
@@ -539,15 +533,14 @@ where
 }
 
 #[cfg(all(test, feature = "test-utils"))]
-mod metadosis_frame_tests {
+mod scoped_frame_tests {
     use alloy_primitives::{address, Address, B256, U256};
     use revm::database::{CacheDB, EmptyDB};
 
     use super::*;
     use crate::error::PrecompileError;
     use crate::storage::{
-        metadosis_process_ready_binding, MetadosisCycleLifecycle, MetadosisMutationPurposeTag,
-        StorageHandle,
+        scoped_block_binding, CycleLifecyclePurpose, MutationPurposeTag, StorageHandle,
     };
 
     const SLOT: U256 = U256::from_limbs([7, 0, 0, 0]);
@@ -579,23 +572,23 @@ mod metadosis_frame_tests {
         let mut db = CacheDB::new(EmptyDB::default());
         let mut direct = provider(&mut db);
         let binding = B256::repeat_byte(0x11);
-        let unavailable = "Metadosis mutation frame is not available";
-        assert!(denial(direct.begin_metadosis_mutation_frame(
-            MetadosisMutationPurposeTag::CycleLifecycle,
+        let unavailable = "scoped mutation frame is not available";
+        assert!(denial(direct.begin_scoped_mutation_frame(
+            MutationPurposeTag::CycleLifecycle,
             binding,
             42,
             9,
         ))
         .contains(unavailable));
-        assert!(denial(direct.require_metadosis_mutation_frame(
-            MetadosisMutationPurposeTag::CycleLifecycle,
+        assert!(denial(direct.require_scoped_mutation_frame(
+            MutationPurposeTag::CycleLifecycle,
             binding,
             42,
             9,
         ))
         .contains(unavailable));
-        assert!(denial(direct.finish_metadosis_mutation_frame(
-            MetadosisMutationPurposeTag::CycleLifecycle,
+        assert!(denial(direct.finish_scoped_mutation_frame(
+            MutationPurposeTag::CycleLifecycle,
             binding,
             true,
         ))
@@ -606,56 +599,66 @@ mod metadosis_frame_tests {
     fn opted_in_frame_checks_scope_nesting_binding_and_rolls_back() {
         let mut db = CacheDB::new(EmptyDB::default());
         let mut direct = provider(&mut db);
-        direct.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 1);
-        let wrong_chain = denial(direct.begin_metadosis_mutation_frame(
-            MetadosisMutationPurposeTag::CycleLifecycle,
+        direct.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 1);
+        let wrong_chain = denial(direct.begin_scoped_mutation_frame(
+            MutationPurposeTag::CycleLifecycle,
             B256::repeat_byte(0x22),
             7,
             9,
         ));
-        assert!(wrong_chain.contains("no matching Metadosis mutation lease"));
+        assert!(wrong_chain.contains("no matching scoped mutation lease"));
 
         StorageHandle::enter(&mut direct, |storage| {
-            let binding = metadosis_process_ready_binding(
+            let binding = scoped_block_binding(
+                b"TEST_STEP_READY_V1",
                 storage.chain_id()?,
                 storage.block_number()?,
                 storage.now_secs()?,
             );
-            storage.with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
+            let other_binding = scoped_block_binding(
+                b"TEST_STEP_INIT_V1",
+                storage.chain_id()?,
+                storage.block_number()?,
+                storage.now_secs()?,
+            );
+            storage.with_scoped_mutation::<CycleLifecyclePurpose, _>(binding, || {
                 storage.sstore(ACCOUNT, SLOT, U256::from(4))?;
-                let nested = storage
-                    .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || Ok(()));
-                assert!(denial(nested).contains("no matching Metadosis mutation lease"));
+                let nested =
+                    storage.with_scoped_mutation::<CycleLifecyclePurpose, _>(binding, || Ok(()));
+                assert!(denial(nested).contains("no matching scoped mutation lease"));
                 assert_eq!(storage.sload(ACCOUNT, SLOT)?, U256::from(4));
-                let mismatch = storage.require_metadosis_init_genesis();
+                let mismatch = storage.require_scoped_mutation_frame(
+                    MutationPurposeTag::CycleLifecycle,
+                    other_binding,
+                );
                 assert!(denial(mismatch).contains("lease identity mismatch"));
                 Ok(())
             })?;
             assert_eq!(storage.sload(ACCOUNT, SLOT)?, U256::from(4));
             let consumed =
-                storage.with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || Ok(()));
-            assert!(denial(consumed).contains("no matching Metadosis mutation lease"));
+                storage.with_scoped_mutation::<CycleLifecyclePurpose, _>(binding, || Ok(()));
+            assert!(denial(consumed).contains("no matching scoped mutation lease"));
             Ok::<_, PrecompileError>(())
         })
         .unwrap();
 
-        direct.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 1);
+        direct.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 1);
         StorageHandle::enter(&mut direct, |storage| {
-            let binding = metadosis_process_ready_binding(
+            let binding = scoped_block_binding(
+                b"TEST_STEP_READY_V1",
                 storage.chain_id()?,
                 storage.block_number()?,
                 storage.now_secs()?,
             );
-            let failed =
-                storage.with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
-                    storage.sstore(ACCOUNT, SLOT, U256::from(9))?;
-                    Err::<(), PrecompileError>(PrecompileError::Revert("stop".into()))
-                });
+            let failed = storage.with_scoped_mutation::<CycleLifecyclePurpose, _>(binding, || {
+                storage.sstore(ACCOUNT, SLOT, U256::from(9))?;
+                Err::<(), PrecompileError>(PrecompileError::Revert("stop".into()))
+            });
             assert!(failed.is_err());
             assert_eq!(storage.sload(ACCOUNT, SLOT)?, U256::from(4));
             let closed =
-                storage.with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || Ok(()));
-            assert!(denial(closed).contains("no matching Metadosis mutation lease"));
+                storage.with_scoped_mutation::<CycleLifecyclePurpose, _>(binding, || Ok(()));
+            assert!(denial(closed).contains("no matching scoped mutation lease"));
             Ok::<_, PrecompileError>(())
         })
         .unwrap();
@@ -663,12 +666,12 @@ mod metadosis_frame_tests {
 
     #[test]
     fn armed_constructor_budget_is_one_shot() {
-        arm_next_direct_metadosis_frame_budget(MetadosisMutationPurposeTag::CycleLifecycle, 1);
+        arm_next_direct_scoped_frame_budget(MutationPurposeTag::CycleLifecycle, 1);
         let mut first_db = CacheDB::new(EmptyDB::default());
         let mut first = provider(&mut first_db);
         first
-            .begin_metadosis_mutation_frame(
-                MetadosisMutationPurposeTag::CycleLifecycle,
+            .begin_scoped_mutation_frame(
+                MutationPurposeTag::CycleLifecycle,
                 B256::repeat_byte(0x31),
                 42,
                 9,
@@ -676,12 +679,12 @@ mod metadosis_frame_tests {
             .unwrap();
         let mut second_db = CacheDB::new(EmptyDB::default());
         let mut second = provider(&mut second_db);
-        assert!(denial(second.begin_metadosis_mutation_frame(
-            MetadosisMutationPurposeTag::CycleLifecycle,
+        assert!(denial(second.begin_scoped_mutation_frame(
+            MutationPurposeTag::CycleLifecycle,
             B256::repeat_byte(0x31),
             42,
             9,
         ))
-        .contains("Metadosis mutation frame is not available"));
+        .contains("scoped mutation frame is not available"));
     }
 }

@@ -3,7 +3,7 @@
 
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
-use outbe_primitives::addresses::INTEX_ADDRESS;
+use outbe_system_common::addresses::INTEX_ADDRESS;
 use outbe_system_common::call_breach::group_key;
 use outbe_system_common::time::{first_full_day, EmissionDate, TimeError};
 

@@ -7,10 +7,8 @@ use crate::{
     ICycle,
 };
 use alloy_sol_types::SolEvent;
-use outbe_primitives::{
-    addresses::CYCLE_ADDRESS,
-    error::{PrecompileError, Result},
-};
+use outbe_primitives::error::{PrecompileError, Result};
+use outbe_system_common::addresses::CYCLE_ADDRESS;
 
 const RECIPIENT: Address = Address::repeat_byte(0x91);
 const INDEPENDENT: Address = Address::repeat_byte(0x92);
@@ -161,7 +159,7 @@ fn rejects_zero_budget() {
 
 fn calendar_storage() -> HashMapStorageProvider {
     let mut storage = cycle_storage();
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 32);
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 32);
     storage.enter(|handle| {
         let ctx = genesis_block(handle, GENESIS_TS + 60);
         seed_fresh_reward_oracle(&ctx);

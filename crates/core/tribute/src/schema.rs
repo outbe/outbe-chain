@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, U256};
 use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_macros::{contract, storage_record, storage_schema};
-use outbe_primitives::addresses::TRIBUTE_ADDRESS;
+use outbe_system_common::addresses::TRIBUTE_ADDRESS;
 use outbe_system_common::time::{EmissionDate, WorldwideDay};
 use serde::{Deserialize, Serialize};
 

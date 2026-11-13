@@ -126,7 +126,7 @@ pub(super) fn cleanup_storage_config() -> outbe_evm::storage::CtxStorageProvider
         genesis_hash: B256::ZERO,
         genesis_timestamp: GENESIS,
         abort_bridge: Default::default(),
-        metadosis_mutation_entitlements: Default::default(),
+        scoped_mutation_entitlements: Default::default(),
     }
 }
 

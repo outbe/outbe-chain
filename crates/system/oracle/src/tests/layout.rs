@@ -14,8 +14,8 @@ use super::common::*;
 /// quote word directly and does not find it by sweeping slot numbers.
 #[test]
 fn pair_by_index_occupies_slot_43_as_a_two_word_value() {
-    use outbe_primitives::addresses::ORACLE_ADDRESS;
     use outbe_primitives::storage::types::StorageKey;
+    use outbe_system_common::addresses::ORACLE_ADDRESS;
 
     with_bare_oracle(|storage, oracle| {
         oracle
@@ -44,8 +44,8 @@ fn pair_by_index_occupies_slot_43_as_a_two_word_value() {
 
 #[test]
 fn worldwide_day_partial_aggregates_occupy_slots_70_through_73() {
-    use outbe_primitives::addresses::ORACLE_ADDRESS;
     use outbe_primitives::storage::types::StorageKey;
+    use outbe_system_common::addresses::ORACLE_ADDRESS;
 
     with_bare_oracle(|storage, oracle| {
         let pair = AddressPair::new_coen_to(840);
@@ -90,8 +90,8 @@ fn worldwide_day_partial_aggregates_occupy_slots_70_through_73() {
 /// reusable-free and the `#[slot(43)]` anchor keeps its meaning.
 #[test]
 fn retired_settlement_slots_stay_zero_after_genesis() {
-    use outbe_primitives::addresses::ORACLE_ADDRESS;
     use outbe_primitives::storage::types::StorageKey;
+    use outbe_system_common::addresses::ORACLE_ADDRESS;
 
     with_bare_oracle(|storage, oracle| {
         let config = crate::genesis::OracleGenesisConfig::default_config();
@@ -126,7 +126,7 @@ fn retired_settlement_slots_stay_zero_after_genesis() {
 #[test]
 fn slot_60_is_retired_and_policy_registry_occupies_slots_74_and_75() {
     use alloy_primitives::keccak256;
-    use outbe_primitives::addresses::ORACLE_ADDRESS;
+    use outbe_system_common::addresses::ORACLE_ADDRESS;
 
     with_bare_oracle(|storage, oracle| {
         let iso: u16 = 840;

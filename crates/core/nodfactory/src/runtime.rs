@@ -1,15 +1,15 @@
 //! NodFactory runtime: issuance, settlement, PoW-gated mining, event emission.
 //!
 //! All persistent Nod state lives in the entity store at
-//! [`outbe_primitives::addresses::NOD_ADDRESS`]. NodFactory mutates that
+//! [`outbe_system_common::addresses::NOD_ADDRESS`]. NodFactory mutates that
 //! state exclusively through [`outbe_nod::api`] and emits its own events at
 //! [`NOD_FACTORY_ADDRESS`].
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolEvent;
-use outbe_primitives::addresses::NOD_FACTORY_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::NOD_FACTORY_ADDRESS;
 
 use outbe_core_common::nod_encryption::EncryptedNodV1;
 use outbe_core_common::pow;

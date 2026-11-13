@@ -4,9 +4,9 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api, precompile::IGem, GemAddParams, GemContract};
-use outbe_primitives::addresses::GEM_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+use outbe_system_common::addresses::GEM_ADDRESS;
 
 const ISSUED_AT: u64 = 1_704_067_200;
 

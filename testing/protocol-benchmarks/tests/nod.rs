@@ -1,7 +1,7 @@
-use outbe_primitives::addresses::NOD_FACTORY_ADDRESS;
 use outbe_protocol_benchmarks::{
     run_scenario, scenarios::nod::NodScenario, GasLedger, Profile, RunConfig, StorageOperationKind,
 };
+use outbe_system_common::addresses::NOD_FACTORY_ADDRESS;
 
 #[test]
 fn direct_nod_creation_covers_single_and_typical_profiles() {

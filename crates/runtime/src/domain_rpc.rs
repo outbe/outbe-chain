@@ -8,7 +8,6 @@ use jsonrpsee::proc_macros::rpc;
 use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_enclave::tribute_source::{TributeSourceSubject, TributeStateSource};
 use outbe_primitives::{
-    addresses::TRIBUTE_ADDRESS,
     header::OutbeHeader,
     storage::{
         proof::AccountStorageProof,
@@ -16,6 +15,7 @@ use outbe_primitives::{
         StorageHandle,
     },
 };
+use outbe_system_common::addresses::TRIBUTE_ADDRESS;
 use reth_ethereum::primitives::AlloyBlockHeader as _;
 use reth_ethereum::storage::{
     HeaderProvider, StateProvider as _, StateProviderBox, StateProviderFactory,

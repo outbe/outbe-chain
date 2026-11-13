@@ -2,8 +2,8 @@
 
 use alloy_sol_types::SolEvent;
 use outbe_emission::allocation::EmissionSinkId;
-use outbe_primitives::addresses::CYCLE_ADDRESS;
 use outbe_primitives::error::PrecompileError;
+use outbe_system_common::addresses::CYCLE_ADDRESS;
 
 use super::*;
 
@@ -136,7 +136,7 @@ fn process_emission_day_keeps_midnight_slot_pending_until_late_reward_window_clo
             }
         });
     }
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 4);
     storage.set_block_number(14);
     storage.enter(|handle| {
         let ctx = dispatch_at(handle, 14, GENESIS_TS + SECONDS_PER_DAY + 3);
@@ -198,14 +198,14 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
         // allocations return to terminal Metadosis and no native COEN moves.
         let agent_reward_balance = ctx_fire
             .storage
-            .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+            .balance(outbe_system_common::addresses::AGENT_REWARD_ADDRESS)
             .unwrap();
         assert_eq!(agent_reward_balance, U256::ZERO);
 
         // No eligible CCA: its full allocation goes to terminal Metadosis.
         let cca = ctx_fire
             .storage
-            .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
+            .balance(outbe_system_common::addresses::CCA_REGISTRY_ADDRESS)
             .unwrap();
         assert_eq!(
             cca,
@@ -346,7 +346,7 @@ fn next_day_cycle_settlement_pays_previous_utc_day_agent_activity() {
         assert_eq!(
             ctx_fire
                 .storage
-                .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                .balance(outbe_system_common::addresses::AGENT_REWARD_ADDRESS)
                 .unwrap(),
             U256::ZERO,
             "AgentReward holds no native COEN"
@@ -403,7 +403,7 @@ fn prepared_validator_topup_and_terminal_residue_conserve_the_allocation() {
     });
     assert!(
         storage
-            .get_events(outbe_primitives::addresses::GEM_ADDRESS)
+            .get_events(outbe_system_common::addresses::GEM_ADDRESS)
             .is_empty(),
         "Cycle credits claims but does not mint Gems"
     );
@@ -490,7 +490,7 @@ fn terminal_dispatch_after(
         });
     });
 
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 0);
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 0);
     storage.set_block_number(2);
     let dispatched = storage.enter(|handle| {
         let fire = runtime_context(block_ctx(2, TOPUP_FIRE_TS), handle);
@@ -596,14 +596,14 @@ fn failed_terminal_dispatch_takes_the_allocation_fallback() {
         );
         assert_eq!(
             fire.storage
-                .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
+                .balance(outbe_system_common::addresses::CCA_REGISTRY_ADDRESS)
                 .unwrap(),
             outbe_ccaregistry::constants::BOND_REQUIREMENT,
             "CCA reward credit must roll back, preserving the bond"
         );
         assert_eq!(
             fire.storage
-                .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                .balance(outbe_system_common::addresses::AGENT_REWARD_ADDRESS)
                 .unwrap(),
             U256::ZERO
         );
@@ -633,7 +633,7 @@ fn failed_terminal_dispatch_is_not_retried() {
             .unwrap()
             .unwrap()
     });
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 4);
     let next_window = GENESIS_TS
         + SECONDS_PER_DAY
         + crate::triggers::PROCESS_EMISSION_DAY_PERIOD_SECONDS
@@ -760,7 +760,7 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
         let cca_after_first = cca_claimable();
         let metadosis_after_first = ctx
             .storage
-            .balance(outbe_primitives::addresses::METADOSIS_ADDRESS)
+            .balance(outbe_system_common::addresses::METADOSIS_ADDRESS)
             .unwrap();
         assert!(!cca_after_first.is_zero(), "first fire credited CCA");
 
@@ -774,7 +774,7 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
         );
         assert_eq!(
             ctx.storage
-                .balance(outbe_primitives::addresses::METADOSIS_ADDRESS)
+                .balance(outbe_system_common::addresses::METADOSIS_ADDRESS)
                 .unwrap(),
             metadosis_after_first,
             "terminal Metadosis must not be re-dispatched for the same prev_day"

@@ -256,7 +256,7 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
     let nod_id = world.issue(&input);
     world.register_reference_currency_asset(SETTLEMENT_ASSET);
     world.provider.stub_sub_call_at_selector(
-        outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+        outbe_system_common::addresses::VAULT_ROUTER_ADDRESS,
         IVaultRouter::assetVaultsCountCall::SELECTOR,
         Bytes::from(IVaultRouter::assetVaultsCountCall::abi_encode_returns(
             &U256::ZERO,

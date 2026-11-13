@@ -2,9 +2,9 @@
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
-use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_system_common::address_pair::AddressPair;
+use outbe_system_common::addresses::ORACLE_ADDRESS;
 
 use super::ballot::{
     apply_winners, credit_win, evaluate_pair, mark_participation, observation_count, pair_quorum,

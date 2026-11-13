@@ -1,10 +1,10 @@
 use alloy_primitives::{B256, U256};
-use outbe_primitives::addresses::SLASH_INDICATOR_ADDRESS;
 use outbe_slashindicator::constants::{
     DEFAULT_EVIDENCE_REWARD_PERCENT, DEFAULT_SLASH_AMOUNT_PERCENT, EVIDENCE_REWARD_PERCENT_SLOT,
     SLASH_AMOUNT_PERCENT_SLOT,
 };
 use outbe_slashindicator::runtime::admit_percent_word;
+use outbe_system_common::addresses::SLASH_INDICATOR_ADDRESS;
 
 use super::*;
 use crate::errors::LaunchError;

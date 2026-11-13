@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
-use outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS;
+use outbe_system_common::addresses::GRATIS_FACTORY_ADDRESS;
 
 /// Gratis pledged by `source` for one Credis reservation and not yet used.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

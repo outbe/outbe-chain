@@ -6,7 +6,7 @@ use alloy_primitives::{Address, Bytes, Log, B256, U256};
 use outbe_consensus::protocol_state::{
     EngineProtocolError, EngineProtocolState, EngineValidatorQuery, EngineValidatorRow,
 };
-use outbe_evm::precompiles::MetadosisMutationCall;
+use outbe_evm::precompiles::PrecompileMutationCall;
 use outbe_evm::{EvmRuntimeHost, UserTxFeePolicy};
 use outbe_execution::tee_remote_session::TeeSessionStateReader;
 use outbe_primitives::code_registry::{PatchApprovalRecord, PublicationReceipt, RepoId};
@@ -18,7 +18,7 @@ use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::radicle_genesis::GovernmentsDescriptor;
 use outbe_primitives::radicle_publication::PublicationBody;
 use outbe_primitives::reshare_artifact::{LateFinalizeCreditsArtifact, PerBlockCredit};
-use outbe_primitives::storage::{MetadosisMutationEntitlements, StorageHandle};
+use outbe_primitives::storage::{MutationEntitlements, StorageHandle};
 use outbe_primitives::system_tx_context::SystemTxExecutionContext;
 use outbe_primitives::tee_attestation_v1::{NodeIdV1, TeePolicyV1};
 use outbe_primitives::tee_registry_abi_v1::NodeEnclaveBindingV1;
@@ -48,6 +48,7 @@ impl OutbeRuntime {
     /// Returns the runtime host handle.
     #[must_use]
     pub fn new() -> Self {
+        debug_assert!(!crate::precompiles::outbe_exact_precompile_addresses().is_empty());
         Self
     }
 
@@ -173,7 +174,11 @@ impl EvmRuntimeHost for OutbeRuntime {
     }
 
     fn marker_addresses(&self) -> &'static [Address] {
-        &outbe_evm::executor::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES
+        &crate::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES
+    }
+
+    fn is_registered_precompile(&self, address: &Address) -> bool {
+        crate::precompiles::is_registered(address)
     }
 
     fn precompile_is_payable(&self, address: &Address) -> bool {
@@ -319,11 +324,8 @@ impl EvmRuntimeHost for OutbeRuntime {
             .map(|binding| binding.attestation_ed25519.0))
     }
 
-    fn mutation_entitlements(
-        &self,
-        call: MetadosisMutationCall<'_>,
-    ) -> MetadosisMutationEntitlements {
-        crate::system_tx::metadosis_mutation_entitlements(call)
+    fn mutation_entitlements(&self, call: PrecompileMutationCall<'_>) -> MutationEntitlements {
+        crate::system_tx::precompile_mutation_entitlements(call)
     }
 
     fn is_protocol_cycle_call(&self, address: Address, caller: Address, data: &[u8]) -> bool {
@@ -830,7 +832,7 @@ impl RadicleProtocolState for OutbeRuntime {
     ) -> std::result::Result<Option<U256>, RadicleProtocolError> {
         use alloy_sol_types::SolEvent as _;
         use outbe_vote::precompile::IVote;
-        if log.address == outbe_primitives::addresses::VOTE_ADDRESS
+        if log.address == outbe_system_common::addresses::VOTE_ADDRESS
             && log.data.topics().first() == Some(&IVote::ProposalApproved::SIGNATURE_HASH)
         {
             let event = IVote::ProposalApproved::decode_log_validate(log)?;

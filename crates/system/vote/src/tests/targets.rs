@@ -3,11 +3,11 @@
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolError;
 use outbe_primitives::{
-    addresses::{UPDATE_ADDRESS, VOTE_ADDRESS},
     block::{BlockContext, BlockRuntimeContext},
     error::{PrecompileError, Result},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
+use outbe_system_common::addresses::{UPDATE_ADDRESS, VOTE_ADDRESS};
 
 use crate::{
     constants::{MAX_PAYLOAD_BYTES, VOTING_WINDOW_BLOCKS},

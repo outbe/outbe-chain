@@ -45,7 +45,7 @@ mod group_scans {
     fn a_days_series_share_one_call_group() {
         use alloy_sol_types::SolEvent;
         use outbe_intex::precompile::IIntex;
-        use outbe_primitives::addresses::INTEX_ADDRESS;
+        use outbe_system_common::addresses::INTEX_ADDRESS;
 
         let mut storage = super::super::factory_provider();
         let ids: Vec<_> = ISSUANCES
@@ -141,7 +141,7 @@ mod group_scans {
     fn a_fully_settled_series_closes_with_zero_forfeit() {
         use alloy_sol_types::SolEvent;
         use outbe_intex::precompile::IIntex;
-        use outbe_primitives::addresses::INTEX_ADDRESS;
+        use outbe_system_common::addresses::INTEX_ADDRESS;
         use outbe_system_common::pass_budget::PassBudget;
 
         let mut storage = super::super::factory_provider();

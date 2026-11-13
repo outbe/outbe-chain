@@ -13,7 +13,7 @@ mod e2e;
 mod settlement;
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
-use outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS;
+use outbe_system_common::addresses::CREDIS_FACTORY_ADDRESS;
 
 use alloy_sol_types::SolCall;
 use outbe_credis::CredisContract;
@@ -24,10 +24,10 @@ use outbe_enclave::protocol::{GratisOp, ModifyAuth};
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_oracle::schema::OracleContract;
-use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 use outbe_system_common::units::{checked_protocol_to_native, SCALE_1E6_U256};
 use outbe_vaultrouter::{LiquidityReservation, VaultRouterContract};
@@ -675,7 +675,7 @@ pub fn env() -> HashMapStorageProvider {
             .unwrap();
         handle
             .increase_balance(
-                outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
+                outbe_system_common::addresses::CCA_REGISTRY_ADDRESS,
                 outbe_ccaregistry::constants::BOND_REQUIREMENT,
             )
             .unwrap();

@@ -12,8 +12,8 @@
 
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
-use outbe_primitives::addresses::CROSSCHAIN_BRIDGE_ADDRESS;
 use outbe_primitives::error::Result;
+use outbe_system_common::addresses::CROSSCHAIN_BRIDGE_ADDRESS;
 use outbe_system_common::vote_target::decode_stored_proposal_payload;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

@@ -2,6 +2,7 @@
 
 use alloy_primitives::U256;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
+use outbe_system_common::metadosis_bindings::MetadosisStorageExt;
 use outbe_tribute::{PricedCurrencies, TributeContract};
 
 use crate::{

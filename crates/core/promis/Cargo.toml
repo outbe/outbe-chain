@@ -10,13 +10,13 @@ outbe-core-common.workspace = true
 outbe-enclave.workspace = true
 outbe-macros.workspace = true
 outbe-primitives.workspace = true
+outbe-system-common.workspace = true
 outbe-tee.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-outbe-system-common.workspace = true
 alloy-primitives = { workspace = true, features = ["rand"] }
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 # Promis' own unit tests run the confidential path against the in-process engine.

@@ -1,6 +1,6 @@
 use super::*;
 
-use outbe_primitives::addresses::{AGENT_REWARD_ADDRESS, ZEROFEE_ADDRESS};
+use outbe_system_common::addresses::{AGENT_REWARD_ADDRESS, ZEROFEE_ADDRESS};
 
 pub(super) fn agent_reward_query_input() -> Vec<u8> {
     let selector = keccak256(b"getClaimableBalance(address)");

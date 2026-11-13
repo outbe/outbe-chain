@@ -4,14 +4,16 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use commonware_cryptography::bls12381::primitives::{ops, variant::MinSig};
 use outbe_l2registry::L2RegistryContract;
-use outbe_primitives::addresses::{L2_REGISTRY_ADDRESS, STABLECOIN_FACTORY_ADDRESS, VOTE_ADDRESS};
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext, ProtocolModule};
-use outbe_primitives::stablecoin_fork::STABLECOIN_CREATE_BOND;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_stablecoinfactory::StablecoinFactoryContract;
+use outbe_system_common::addresses::{
+    L2_REGISTRY_ADDRESS, STABLECOIN_FACTORY_ADDRESS, VOTE_ADDRESS,
+};
 use outbe_system_common::stablecoin::{
     encode_canonical_stablecoin_create, StablecoinCreatePayload,
 };
+use outbe_system_common::stablecoin_fork::STABLECOIN_CREATE_BOND;
 use outbe_validatorset::contract::ValidatorSet;
 
 use crate::abi::IVote;
@@ -32,7 +34,7 @@ const VALIDATOR_D: Address = Address::repeat_byte(0xa4);
 #[test]
 fn l2_registry_is_an_active_validator_vote_target() {
     let target = registry()
-        .lookup(outbe_primitives::addresses::L2_REGISTRY_ADDRESS)
+        .lookup(outbe_system_common::addresses::L2_REGISTRY_ADDRESS)
         .expect("L2Registry vote target must be active");
     assert_eq!(target.admission(), TargetAdmission::ActiveValidatorOnly);
 }

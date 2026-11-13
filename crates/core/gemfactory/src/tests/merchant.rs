@@ -122,7 +122,7 @@ fn a_storage_fault_in_the_position_sweep_fails_the_block() {
         seed_and_send(&storage, six_decimal_unit(), six_decimal_u128())
     });
 
-    provider.fail_mutation_at_address(outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS);
+    provider.fail_mutation_at_address(outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS);
     StorageHandle::enter(&mut provider, |storage| {
         let ctx = block_ctx(&storage, day_closed(T_NOW + POSITION_VALIDITY_SECONDS));
         assert!(matches!(

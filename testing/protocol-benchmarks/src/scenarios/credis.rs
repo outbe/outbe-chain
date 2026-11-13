@@ -9,10 +9,10 @@ use outbe_enclave::protocol::{GratisOp, ModifyAuth};
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_gratis::enclave_client::test_enclave as gratis_enclave;
 use outbe_oracle::schema::OracleContract;
-use outbe_primitives::{
-    addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS},
-    storage::{gas::PRECOMPILE_BASE_GAS, hashmap::HashMapStorageProvider, StorageHandle},
+use outbe_primitives::storage::{
+    gas::PRECOMPILE_BASE_GAS, hashmap::HashMapStorageProvider, StorageHandle,
 };
+use outbe_system_common::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_system_common::time::SECONDS_PER_DAY;
 use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 use outbe_system_common::units::{checked_protocol_to_native, SCALE_1E6_U256};
@@ -104,7 +104,7 @@ fn iso_word(iso: u16) -> Bytes {
 fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
     storage
         .increase_balance(
-            outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
+            outbe_system_common::addresses::CCA_REGISTRY_ADDRESS,
             outbe_ccaregistry::constants::BOND_REQUIREMENT,
         )
         .map_err(|error| error.to_string())?;

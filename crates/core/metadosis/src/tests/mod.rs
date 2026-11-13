@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, U256};
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_primitives::storage::{MetadosisMutationPurposeTag, StorageHandle};
+use outbe_primitives::storage::{MutationPurposeTag, StorageHandle};
 use outbe_tribute::TributeContract;
 
 use crate::precompile::IMetadosis;
@@ -16,7 +16,7 @@ const CHAIN_ID: u64 = 1;
 
 fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 64);
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 64);
     outbe_fidelity::enclave_client::test_enclave::install();
     outbe_tribute::enclave_client::test_enclave::install();
     StorageHandle::enter(&mut storage, |storage| f(storage.clone()))

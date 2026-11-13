@@ -98,14 +98,14 @@ pub(super) fn seed_offering_day(storage: StorageHandle<'_>) {
         forming_end + outbe_chain_constants::get_metadosis_lookback_delay_seconds();
     let offering_end =
         offerings_start + outbe_chain_constants::get_metadosis_offering_period_seconds();
-    let binding = outbe_primitives::storage::metadosis_process_ready_binding(
+    let binding = outbe_system_common::metadosis_bindings::metadosis_process_ready_binding(
         storage.chain_id().unwrap(),
         storage.block_number().unwrap(),
         storage.now_secs().unwrap(),
     );
     storage
         .clone()
-        .with_metadosis_mutation::<outbe_primitives::storage::MetadosisCycleLifecycle, _>(
+        .with_scoped_mutation::<outbe_primitives::storage::CycleLifecyclePurpose, _>(
             binding,
             || {
                 let mut factory = TributeFactoryContract::new(storage.clone());

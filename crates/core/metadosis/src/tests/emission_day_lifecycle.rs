@@ -401,7 +401,7 @@ fn wwd_lifecycle_gates_activation_on_forming_vwap_and_seals_on_close() {
 #[test]
 fn wwd_without_price_runs_as_empty_day() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    provider.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 64);
+    provider.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 64);
     install_test_enclaves();
     StorageHandle::enter(&mut provider, |storage| {
         let wwd = WorldwideDay::new(20261001);
@@ -527,7 +527,7 @@ fn wwd_without_price_runs_as_empty_day() {
 #[test]
 fn zero_metadosis_limit_cancels_day_with_reason_one_and_preserves_cancelled_state() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    provider.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 64);
+    provider.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 64);
     install_test_enclaves();
     StorageHandle::enter(&mut provider, |storage| {
         let emission_day = 20261001u32;

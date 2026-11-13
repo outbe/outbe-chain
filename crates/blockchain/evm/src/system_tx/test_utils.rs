@@ -1,10 +1,11 @@
 use super::{begin_step, consensus_step, end_step, BlockOrder};
 use alloy_primitives::Bytes;
 use outbe_primitives::{
-    block::ProtocolModule,
+    block::{MutationEntitlementContext, ProtocolModule},
     reshare_artifact::{
         encode_boundary_artifact, encode_late_finalize_credits_artifact, ConsensusHeaderArtifact,
     },
+    storage::{scoped_block_binding, MutationEntitlements, MutationPurposeTag},
     system_tx::binding::{
         validate_boundary_outcome_payload, validate_late_finalize_credits_payload,
         validate_parent_accounting_payload, validate_publication_payload,
@@ -133,11 +134,41 @@ macro_rules! empty_module {
         impl ProtocolModule for $module { const NAME: &'static str = $name; }
     )* };
 }
-empty_module!(ValidatorLiveness => "validator_liveness", Vote => "vote", Update => "update", EnclaveUpgradeDeadline => "enclave_upgrade_deadline", Rewards => "rewards", Staking => "staking", Oracle => "oracle", OracleSlash => "oracle_slash", HyperlaneSlash => "hyperlane_slash", NodFactory => "nod_factory", GemFactory => "gem_factory", IntexFactory => "intex_factory", CredisFactory => "credis_factory", GemCleanup => "gem_cleanup");
+empty_module!(
+    ValidatorLiveness => "validator_liveness",
+    Vote => "vote",
+    Update => "update",
+    EnclaveUpgradeDeadline => "enclave_upgrade_deadline",
+    Rewards => "rewards",
+    Staking => "staking",
+    TestBeginStep5 => "test_begin_5",
+    TestBeginStep6 => "test_begin_6",
+    TestBeginStep7 => "test_begin_7",
+    TestEndStep0 => "test_end_0",
+    TestEndStep1 => "test_end_1",
+    TestEndStep2 => "test_end_2",
+    TestEndStep3 => "test_end_3",
+    TestEndStep4 => "test_end_4",
+);
 struct CycleTick;
 impl ProtocolModule for CycleTick {
     const NAME: &'static str = "cycle_tick";
     const NEEDS_CYCLE_ACTIVE_UTC_DAY: bool = true;
+}
+
+fn test_end_entitlements(ctx: MutationEntitlementContext<'_>) -> MutationEntitlements {
+    if !ctx.payload.is_empty() {
+        return MutationEntitlements::NONE;
+    }
+    MutationEntitlements::exact(
+        MutationPurposeTag::CycleLifecycle,
+        scoped_block_binding(
+            b"TEST_END_STEP_V1",
+            ctx.chain_id,
+            ctx.block_number,
+            ctx.timestamp,
+        ),
+    )
 }
 
 /// Isolated lower-layer tests use real payload codecs and header/body binding checks.
@@ -167,16 +198,16 @@ pub const TEST_BLOCK_ORDER: BlockOrder = BlockOrder {
         begin_step::<EnclaveUpgradeDeadline>(),
         begin_step::<Rewards>(),
         begin_step::<Staking>(),
-        begin_step::<Oracle>().with_validators(),
-        begin_step::<OracleSlash>().soft_fail(),
-        begin_step::<HyperlaneSlash>().soft_fail(),
+        begin_step::<TestBeginStep5>().with_validators(),
+        begin_step::<TestBeginStep6>().soft_fail(),
+        begin_step::<TestBeginStep7>().soft_fail(),
         begin_step::<CycleTick>().with_validators(),
     ],
     end_block: &[
-        end_step::<NodFactory>().with_process_ready_entitlements(),
-        end_step::<GemFactory>().with_process_ready_entitlements(),
-        end_step::<IntexFactory>().with_process_ready_entitlements(),
-        end_step::<CredisFactory>().with_process_ready_entitlements(),
-        end_step::<GemCleanup>().with_process_ready_entitlements(),
+        end_step::<TestEndStep0>().with_mutation_entitlements(test_end_entitlements),
+        end_step::<TestEndStep1>().with_mutation_entitlements(test_end_entitlements),
+        end_step::<TestEndStep2>().with_mutation_entitlements(test_end_entitlements),
+        end_step::<TestEndStep3>().with_mutation_entitlements(test_end_entitlements),
+        end_step::<TestEndStep4>().with_mutation_entitlements(test_end_entitlements),
     ],
 };

@@ -24,7 +24,7 @@ fn ctx<'a>(storage: StorageHandle<'a>, height: u64) -> BlockRuntimeContext<'a> {
 fn originate(storage: &StorageHandle<'_>, address: Address, day: WorldwideDay, weight: U256) {
     let bond = outbe_ccaregistry::constants::BOND_REQUIREMENT;
     storage
-        .increase_balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS, bond)
+        .increase_balance(outbe_system_common::addresses::CCA_REGISTRY_ADDRESS, bond)
         .unwrap();
     outbe_ccaregistry::runtime::bond(storage.clone(), address, bond, "CCA".into()).unwrap();
     outbe_ccaregistry::api::credis_issued(storage, address, day.value(), weight).unwrap();
@@ -86,7 +86,7 @@ fn cca_that_left_gets_its_share() {
         );
         assert_eq!(
             storage
-                .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                .balance(outbe_system_common::addresses::AGENT_REWARD_ADDRESS)
                 .unwrap(),
             U256::ZERO
         );
@@ -189,7 +189,7 @@ fn a_thousand_positive_ccas_finish_in_four_blocks_and_survive_exit_during_proces
                     .unwrap();
                 let bond = outbe_ccaregistry::constants::BOND_REQUIREMENT;
                 storage
-                    .increase_balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS, bond)
+                    .increase_balance(outbe_system_common::addresses::CCA_REGISTRY_ADDRESS, bond)
                     .unwrap();
                 outbe_ccaregistry::runtime::bond(
                     storage.clone(),
@@ -781,13 +781,13 @@ fn each_worker_mutation_failure_preserves_committed_obligations_and_retries_once
         let mut provider = prepare();
         let committed = provider.storage.clone();
         let events = provider
-            .get_events(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+            .get_events(outbe_system_common::addresses::AGENT_REWARD_ADDRESS)
             .clone();
         provider.fail_after_mutation_at(failure);
         assert!(run(&mut provider).is_err(), "mutation {failure}");
         assert_eq!(provider.storage, committed, "mutation {failure}");
         assert_eq!(
-            provider.get_events(outbe_primitives::addresses::AGENT_REWARD_ADDRESS),
+            provider.get_events(outbe_system_common::addresses::AGENT_REWARD_ADDRESS),
             &events
         );
         provider.clear_mutation_failure();

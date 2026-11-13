@@ -1,55 +1,12 @@
-//! Compact exact-address routing for existing Outbe precompiles.
+//! Host-delegated route resolution and compile-time route validation for Outbe precompiles.
 //!
-//! This module owns only execution facts consumed by the dispatcher: exact address,
-//! dispatch adapter and base-gas function. Activation, persistence, warming,
-//! sponsorship and future address classes intentionally remain outside this table.
+//! All concrete precompile addresses, gas schedules, and dispatch handlers are owned
+//! by the runtime host implementation outside `outbe-evm`.
 
 use alloy_primitives::{Address, Bytes, U256};
-#[cfg(test)]
-use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
-use outbe_primitives::{addresses::*, error::Result, storage::StorageHandle};
-
-pub(crate) const EXACT_ADDRESSES: &[Address] = &[
-    GRATIS_ADDRESS,
-    GRATIS_FACTORY_ADDRESS,
-    PROMIS_ADDRESS,
-    PROMIS_FACTORY_ADDRESS,
-    TRIBUTE_ADDRESS,
-    NOD_ADDRESS,
-    NOD_FACTORY_ADDRESS,
-    GEM_ADDRESS,
-    GEM_FACTORY_ADDRESS,
-    INTEX_ADDRESS,
-    INTEX_FACTORY_ADDRESS,
-    DESIS_ADDRESS,
-    VAULT_ROUTER_ADDRESS,
-    CREDIS_ADDRESS,
-    CREDIS_FACTORY_ADDRESS,
-    CCA_REGISTRY_ADDRESS,
-    TRIBUTE_FACTORY_ADDRESS,
-    VALIDATOR_SET_ADDRESS,
-    SLASH_INDICATOR_ADDRESS,
-    STAKING_ADDRESS,
-    REWARDS_ADDRESS,
-    AGENT_REWARD_ADDRESS,
-    EMISSION_ADDRESS,
-    METADOSIS_ADDRESS,
-    FIDELITY_ADDRESS,
-    PROMIS_LIMIT_ADDRESS,
-    ORACLE_ADDRESS,
-    ZEROFEE_ADDRESS,
-    OUTBE_SYSTEM_TX_ADDRESS,
-    ZKPROOF_VERIFY_ADDRESS,
-    TEE_REGISTRY_ADDRESS,
-    L2_REGISTRY_ADDRESS,
-    HYPERLANE_CONTROLLER_ADDRESS,
-    CROSSCHAIN_BRIDGE_ADDRESS,
-    STABLECOIN_FACTORY_ADDRESS,
-    STABLECOIN_POLICY_REGISTRY_ADDRESS,
-    CODE_REGISTRY_ADDRESS,
-    VOTE_ADDRESS,
-    UPDATE_ADDRESS,
-];
+use outbe_primitives::{
+    addresses::is_reserved_dynamic_precompile_address, error::Result, storage::StorageHandle,
+};
 
 /// Whether a route may be credited native value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,15 +17,9 @@ pub(crate) enum ValuePolicy {
     Payable,
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct ExactRoute {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Route {
     address: Address,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) enum Route {
-    Exact(ExactRoute),
-    StablecoinClass,
 }
 
 pub(crate) struct RouteCall<'input> {
@@ -81,25 +32,15 @@ pub(crate) struct RouteCall<'input> {
 impl Route {
     /// The value policy the boundary applies to this route.
     pub(crate) fn value_policy(self, host: &dyn crate::EvmRuntimeHost) -> ValuePolicy {
-        match self {
-            Self::Exact(route) => {
-                if host.precompile_is_payable(&route.address) {
-                    ValuePolicy::Payable
-                } else {
-                    ValuePolicy::Reject
-                }
-            }
-            Self::StablecoinClass => ValuePolicy::Payable,
+        if host.precompile_is_payable(&self.address) {
+            ValuePolicy::Payable
+        } else {
+            ValuePolicy::Reject
         }
     }
 
     pub(crate) fn base_gas(self, host: &dyn crate::EvmRuntimeHost, input: &[u8]) -> u64 {
-        match self {
-            Self::Exact(route) => host.precompile_base_gas(&route.address, input),
-            Self::StablecoinClass => {
-                outbe_primitives::stablecoin_fork::STABLECOIN_V1_GAS.dispatch_base
-            }
-        }
+        host.precompile_base_gas(&self.address, input)
     }
 
     pub(crate) fn dispatch(
@@ -108,31 +49,14 @@ impl Route {
         storage: StorageHandle,
         call: RouteCall<'_>,
     ) -> Result<Bytes> {
-        let address = match self {
-            Self::Exact(route) => route.address,
-            Self::StablecoinClass => call.callee,
-        };
-        host.dispatch_precompile(storage, &address, call.data, call.caller, call.value)
+        debug_assert_eq!(self.address, call.callee);
+        host.dispatch_precompile(storage, &self.address, call.data, call.caller, call.value)
     }
 }
 
-#[cfg(test)]
-impl ExactRoute {
-    pub(crate) fn base_gas(self, host: &dyn crate::EvmRuntimeHost, input: &[u8]) -> u64 {
-        host.precompile_base_gas(&self.address, input)
-    }
-}
-
-pub(crate) fn lookup(address: &Address) -> Option<ExactRoute> {
-    EXACT_ADDRESSES
-        .contains(address)
-        .then_some(ExactRoute { address: *address })
-}
-
-pub(crate) fn resolve(address: &Address) -> Option<Route> {
-    lookup(address)
-        .map(Route::Exact)
-        .or_else(|| is_stablecoin_address(*address).then_some(Route::StablecoinClass))
+pub(crate) fn resolve(host: &dyn crate::EvmRuntimeHost, address: &Address) -> Option<Route> {
+    host.is_registered_precompile(address)
+        .then_some(Route { address: *address })
 }
 
 const fn addresses_equal(left: Address, right: Address) -> bool {
@@ -163,8 +87,8 @@ pub const fn assert_valid_production_routes(addresses: &[Address]) {
         if is_ethereum_precompile(addresses[index]) {
             panic!("Outbe exact route overlaps an Ethereum precompile");
         }
-        if is_stablecoin_address(addresses[index]) {
-            panic!("Outbe exact route overlaps the Stablecoin address class");
+        if is_reserved_dynamic_precompile_address(addresses[index]) {
+            panic!("Outbe exact route overlaps the reserved dynamic precompile class");
         }
         let mut other = index + 1;
         while other < addresses.len() {
@@ -177,71 +101,47 @@ pub const fn assert_valid_production_routes(addresses: &[Address]) {
     }
 }
 
-const _: () = assert_valid_production_routes(EXACT_ADDRESSES);
-
-#[cfg(test)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ValidationError {
-    Duplicate(Address),
-    EthereumOverlap(Address),
-}
-
-#[cfg(test)]
-fn validate_exact_addresses(addresses: &[Address]) -> std::result::Result<(), ValidationError> {
-    for (index, address) in addresses.iter().copied().enumerate() {
-        if is_ethereum_precompile(address) {
-            return Err(ValidationError::EthereumOverlap(address));
-        }
-        if addresses[index + 1..].contains(&address) {
-            return Err(ValidationError::Duplicate(address));
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use outbe_primitives::{
+        addresses::{CODE_REGISTRY_ADDRESS, RESERVED_DYNAMIC_PRECOMPILE_PREFIX},
+        storage::gas::PRECOMPILE_BASE_GAS,
+    };
 
     #[test]
-    fn production_exact_routes_validate() {
-        assert_eq!(validate_exact_addresses(EXACT_ADDRESSES), Ok(()));
-    }
-
-    #[test]
-    fn duplicate_and_ethereum_overlap_are_rejected() {
+    #[should_panic(expected = "duplicate Outbe exact route")]
+    fn duplicate_exact_route_is_rejected() {
         let duplicate = Address::repeat_byte(0x44);
-        assert_eq!(
-            validate_exact_addresses(&[duplicate, duplicate]),
-            Err(ValidationError::Duplicate(duplicate))
-        );
-
-        let ethereum = Address::with_last_byte(1);
-        assert_eq!(
-            validate_exact_addresses(&[ethereum]),
-            Err(ValidationError::EthereumOverlap(ethereum))
-        );
+        assert_valid_production_routes(&[duplicate, duplicate]);
     }
 
     #[test]
-    fn code_registry_route_uses_standard_base_gas() {
-        let route = lookup(&CODE_REGISTRY_ADDRESS).expect("CodeRegistry route");
+    #[should_panic(expected = "Outbe exact route overlaps an Ethereum precompile")]
+    fn ethereum_precompile_overlap_is_rejected() {
+        assert_valid_production_routes(&[Address::with_last_byte(1)]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Outbe exact route overlaps the reserved dynamic precompile class")]
+    fn reserved_dynamic_prefix_overlap_is_rejected() {
+        let mut dynamic = [0u8; 20];
+        dynamic[..2].copy_from_slice(&RESERVED_DYNAMIC_PRECOMPILE_PREFIX);
+        dynamic[19] = 0x11;
+        assert_valid_production_routes(&[Address::from(dynamic)]);
+    }
+
+    #[test]
+    fn stub_host_is_fail_closed_and_charges_standard_base_gas() {
         let host = crate::host::stub_host();
+        assert_eq!(resolve(host.as_ref(), &CODE_REGISTRY_ADDRESS), None);
+        let route = Route {
+            address: CODE_REGISTRY_ADDRESS,
+        };
         assert_eq!(route.base_gas(host.as_ref(), &[]), PRECOMPILE_BASE_GAS);
         assert_eq!(
             route.base_gas(host.as_ref(), &[0xde, 0xad, 0xbe, 0xef]),
             PRECOMPILE_BASE_GAS
         );
-    }
-
-    #[test]
-    fn stablecoin_class_address_resolves() {
-        let mut bytes = [0u8; 20];
-        bytes[..2].copy_from_slice(&STABLECOIN_ADDRESS_PREFIX);
-        bytes[19] = 0x11;
-        assert!(matches!(
-            resolve(&Address::from(bytes)),
-            Some(Route::StablecoinClass)
-        ));
     }
 }

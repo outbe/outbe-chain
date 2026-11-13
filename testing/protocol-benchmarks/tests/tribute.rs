@@ -1,10 +1,10 @@
 use alloy_primitives::{Address, B256};
 use alloy_sol_types::SolEvent;
-use outbe_primitives::addresses::TRIBUTE_ADDRESS;
 use outbe_protocol_benchmarks::{
     run_scenario, scenarios::tribute::TributeScenario, GasLedger, RunConfig, ScenarioReport,
     StorageOperationKind,
 };
+use outbe_system_common::addresses::TRIBUTE_ADDRESS;
 use outbe_tribute::precompile::ITribute;
 use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
 

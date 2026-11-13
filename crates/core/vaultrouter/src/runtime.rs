@@ -10,9 +10,9 @@
 
 use alloy_primitives::{Address, U256};
 
-use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_system_common::stablecoin::validate_currency_code;
 
 use crate::api::IVaultRouter;

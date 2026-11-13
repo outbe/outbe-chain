@@ -242,7 +242,7 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
     let mut provider = test_storage(Some(rate));
     // Override the blanket vault count: this asset has none.
     provider.stub_sub_call_at_selector(
-        outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+        outbe_system_common::addresses::VAULT_ROUTER_ADDRESS,
         IVaultRouter::assetVaultsCountCall::SELECTOR,
         word(0),
     );

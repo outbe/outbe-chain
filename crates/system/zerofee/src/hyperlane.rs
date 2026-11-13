@@ -1,5 +1,5 @@
 use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
-use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
+use outbe_system_common::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 
 use crate::envelope::ZeroFeeEnvelope;
 

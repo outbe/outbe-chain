@@ -206,9 +206,8 @@ fn runtime_order_matches_protocol_contract_and_lower_layer_order() {
         ))
     ));
     let orders = outbe_runtime::BLOCK_ORDER;
-    let describe = |step: &outbe_evm::system_tx::ProtocolStep| {
+    let describe_shape = |step: &outbe_evm::system_tx::ProtocolStep| {
         (
-            step.name,
             step.revert_fails_block,
             step.include_validator_snapshot,
             step.needs_cycle_active_utc_day,
@@ -227,11 +226,51 @@ fn runtime_order_matches_protocol_contract_and_lower_layer_order() {
         .chain(TEST_BLOCK_ORDER.end_block)
         .collect();
     assert_eq!(
+        runtime.iter().map(|step| step.name).collect::<Vec<_>>(),
+        vec![
+            "certified_parent_accounting",
+            "late_finalize_credits",
+            "boundary_outcome",
+            "tee_bootstrap",
+            "validator_liveness",
+            "radicle_publication",
+            "vote",
+            "update",
+            "enclave_upgrade_deadline",
+            "rewards",
+            "staking",
+            "oracle",
+            "oracle_slash",
+            "hyperlane_slash",
+            "cycle_tick",
+            "nod_factory",
+            "gem_factory",
+            "intex_factory",
+            "credis_factory",
+            "gem_cleanup",
+        ]
+    );
+    assert_eq!(
+        orders
+            .consensus
+            .iter()
+            .map(|step| step.name)
+            .collect::<Vec<_>>(),
+        TEST_BLOCK_ORDER
+            .consensus
+            .iter()
+            .map(|step| step.name)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
         runtime
             .iter()
-            .map(|step| describe(step))
+            .map(|step| describe_shape(step))
             .collect::<Vec<_>>(),
-        lower.iter().map(|step| describe(step)).collect::<Vec<_>>()
+        lower
+            .iter()
+            .map(|step| describe_shape(step))
+            .collect::<Vec<_>>()
     );
     for (regime, base) in [
         (

@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{PrecompileError, PrimitivesStorageError, Result};
 use crate::storage::{
-    MetadosisMutationEntitlements, MetadosisMutationPurposeTag, PrecompileStorageProvider,
-    StorageHandle, SubCallError, SubCallInput, SubCallOutput, SubCallStatus,
+    MutationEntitlements, MutationPurposeTag, PrecompileStorageProvider, StorageHandle,
+    SubCallError, SubCallInput, SubCallOutput, SubCallStatus,
 };
 
 #[cfg(feature = "bench-utils")]
@@ -92,8 +92,8 @@ pub struct HashMapStorageProvider {
     sub_call_selector_sequences: HashMap<(Address, [u8; 4]), VecDeque<Bytes>>,
     /// Every sub-call input in dispatch order, so tests can decode what was sent.
     sub_call_inputs: Vec<SubCallInput>,
-    metadosis_mutation_entitlements: MetadosisMutationEntitlements,
-    metadosis_mutation_active: Option<(MetadosisMutationPurposeTag, B256, u64, u64)>,
+    scoped_mutation_entitlements: MutationEntitlements,
+    scoped_mutation_active: Option<(MutationPurposeTag, B256, u64, u64)>,
     #[cfg(feature = "bench-utils")]
     storage_trace_enabled: bool,
     #[cfg(feature = "bench-utils")]
@@ -153,8 +153,8 @@ impl HashMapStorageProvider {
             sub_call_selector_stubs: HashMap::new(),
             sub_call_selector_sequences: HashMap::new(),
             sub_call_inputs: Vec::new(),
-            metadosis_mutation_entitlements: MetadosisMutationEntitlements::NONE,
-            metadosis_mutation_active: None,
+            scoped_mutation_entitlements: MutationEntitlements::NONE,
+            scoped_mutation_active: None,
             #[cfg(feature = "bench-utils")]
             storage_trace_enabled: false,
             #[cfg(feature = "bench-utils")]
@@ -187,28 +187,23 @@ impl HashMapStorageProvider {
         }
     }
 
-    /// Test-only provider entitlement for production-shaped Metadosis command
+    /// Test-only provider entitlement for production-shaped scoped command
     /// entrypoints. It grants one purpose and still rejects nested or mismatched
     /// leases before the command callback runs.
     #[doc(hidden)]
-    pub fn enable_metadosis_mutation_frame(&mut self, purpose: MetadosisMutationPurposeTag) {
-        self.enable_metadosis_mutation_frames(purpose, 1);
+    pub fn enable_scoped_mutation_frame(&mut self, purpose: MutationPurposeTag) {
+        self.enable_scoped_mutation_frames(purpose, 1);
     }
 
     /// Test-only fixed route budget for commands which execute a statically
     /// bounded sequence inside one simulated EVM dispatch.
     #[doc(hidden)]
-    pub fn enable_metadosis_mutation_frames(
-        &mut self,
-        purpose: MetadosisMutationPurposeTag,
-        count: u8,
-    ) {
+    pub fn enable_scoped_mutation_frames(&mut self, purpose: MutationPurposeTag, count: u8) {
         assert!(
-            self.metadosis_mutation_active.is_none(),
-            "cannot replace an active Metadosis mutation lease"
+            self.scoped_mutation_active.is_none(),
+            "cannot replace an active scoped mutation lease"
         );
-        self.metadosis_mutation_entitlements =
-            MetadosisMutationEntitlements::repeated(purpose, count);
+        self.scoped_mutation_entitlements = MutationEntitlements::repeated(purpose, count);
     }
 
     /// Opts the provider into stubbing `sub_call`: every dispatched sub-call
@@ -485,9 +480,9 @@ pub struct MutationPrefixViews<V> {
 }
 
 impl PrecompileStorageProvider for HashMapStorageProvider {
-    fn begin_metadosis_mutation_frame(
+    fn begin_scoped_mutation_frame(
         &mut self,
-        purpose: MetadosisMutationPurposeTag,
+        purpose: MutationPurposeTag,
         binding: B256,
         chain_id: u64,
         block_number: u64,
@@ -495,47 +490,49 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         if self.trigger_budget.is_some() {
             self.trigger_budget_status()?;
         }
-        if self.metadosis_mutation_active.is_some()
+        if self.scoped_mutation_active.is_some()
             || self.chain_id != chain_id
             || self.block_number != block_number
-            || !self
-                .metadosis_mutation_entitlements
-                .consume(purpose, binding)
+            || !self.scoped_mutation_entitlements.consume(purpose, binding)
         {
-            return Err(PrimitivesStorageError::TestProviderNoMatchingMetadosisLease.into());
+            return Err(PrimitivesStorageError::TestProviderNoMatchingScopedMutationLease.into());
         }
-        self.metadosis_mutation_active = Some((purpose, binding, chain_id, block_number));
+        self.scoped_mutation_active = Some((purpose, binding, chain_id, block_number));
         Ok(())
     }
 
-    fn require_metadosis_mutation_frame(
+    fn require_scoped_mutation_frame(
         &mut self,
-        purpose: MetadosisMutationPurposeTag,
+        purpose: MutationPurposeTag,
         binding: B256,
         chain_id: u64,
         block_number: u64,
     ) -> Result<()> {
-        if self.metadosis_mutation_active != Some((purpose, binding, chain_id, block_number)) {
-            return Err(PrimitivesStorageError::TestProviderMetadosisLeaseIdentityMismatch.into());
+        if self.scoped_mutation_active != Some((purpose, binding, chain_id, block_number)) {
+            return Err(
+                PrimitivesStorageError::TestProviderScopedMutationLeaseIdentityMismatch.into(),
+            );
         }
         Ok(())
     }
 
-    fn finish_metadosis_mutation_frame(
+    fn finish_scoped_mutation_frame(
         &mut self,
-        purpose: MetadosisMutationPurposeTag,
+        purpose: MutationPurposeTag,
         binding: B256,
         _completed: bool,
     ) -> Result<()> {
         let Some((active_purpose, active_binding, _, _)) =
-            self.metadosis_mutation_active.as_ref().copied()
+            self.scoped_mutation_active.as_ref().copied()
         else {
-            return Err(PrimitivesStorageError::TestProviderNoActiveMetadosisLease.into());
+            return Err(PrimitivesStorageError::TestProviderNoActiveScopedMutationLease.into());
         };
         if active_purpose != purpose || active_binding != binding {
-            return Err(PrimitivesStorageError::TestProviderMetadosisLeaseIdentityMismatch.into());
+            return Err(
+                PrimitivesStorageError::TestProviderScopedMutationLeaseIdentityMismatch.into(),
+            );
         }
-        self.metadosis_mutation_active = None;
+        self.scoped_mutation_active = None;
         Ok(())
     }
 
@@ -880,9 +877,9 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
 }
 
 #[cfg(test)]
-mod metadosis_mutation_frame_tests {
+mod scoped_mutation_frame_tests {
     use super::HashMapStorageProvider;
-    use crate::storage::{MetadosisMutationPurposeTag as Purpose, PrecompileStorageProvider};
+    use crate::storage::{MutationPurposeTag as Purpose, PrecompileStorageProvider};
     use alloy_primitives::B256;
 
     #[test]
@@ -891,19 +888,19 @@ mod metadosis_mutation_frame_tests {
         let binding = B256::repeat_byte(1);
         let mut provider = HashMapStorageProvider::new(7);
         provider.set_block_number(11);
-        provider.enable_metadosis_mutation_frame(purpose);
+        provider.enable_scoped_mutation_frame(purpose);
         provider
-            .begin_metadosis_mutation_frame(purpose, binding, 7, 11)
+            .begin_scoped_mutation_frame(purpose, binding, 7, 11)
             .unwrap();
 
         assert!(provider
-            .finish_metadosis_mutation_frame(purpose, B256::repeat_byte(2), false)
+            .finish_scoped_mutation_frame(purpose, B256::repeat_byte(2), false)
             .is_err());
         provider
-            .finish_metadosis_mutation_frame(purpose, binding, false)
+            .finish_scoped_mutation_frame(purpose, binding, false)
             .unwrap();
         assert!(provider
-            .begin_metadosis_mutation_frame(purpose, binding, 7, 11)
+            .begin_scoped_mutation_frame(purpose, binding, 7, 11)
             .is_err());
     }
 

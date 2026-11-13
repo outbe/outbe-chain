@@ -8,10 +8,8 @@ use outbe_core_common::addresses::INTEX_NFT1155_ADDRESS;
 use outbe_intex::precompile::IIntex;
 use outbe_intex::{CreateSeriesParams, IntexCallTrigger, SeriesId};
 use outbe_intexfactory::precompile::IIntexFactory;
-use outbe_primitives::{
-    addresses::{INTEX_ADDRESS, INTEX_FACTORY_ADDRESS},
-    storage::StorageHandle,
-};
+use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::{INTEX_ADDRESS, INTEX_FACTORY_ADDRESS};
 use outbe_system_common::time::EmissionDate;
 use outbe_vaultrouter::api::IVaultRouter::StablesSource;
 use settlement::{Quote, Rail, World, ASSET, OWNER, TIMESTAMP};

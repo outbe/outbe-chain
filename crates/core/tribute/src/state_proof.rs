@@ -5,7 +5,6 @@ use outbe_core_common::{
 };
 use outbe_primitives::storage::proof::FinalizedStateCheckpoint;
 use outbe_primitives::{
-    addresses::TRIBUTE_ADDRESS,
     error::{PrecompileError, Result},
     storage::{
         proof::{AccountStorageProof, StateProofLimits},
@@ -14,6 +13,7 @@ use outbe_primitives::{
         StorageHandle,
     },
 };
+use outbe_system_common::addresses::TRIBUTE_ADDRESS;
 use outbe_system_common::time::WorldwideDay;
 use serde::{Deserialize, Serialize};
 

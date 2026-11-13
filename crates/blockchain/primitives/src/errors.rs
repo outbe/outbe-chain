@@ -374,12 +374,12 @@ pub enum PrimitivesStorageError {
     BurnAccountLoadFailed { reason: String },
     #[error("burn set_balance failed: {reason}")]
     BurnSetBalanceFailed { reason: String },
-    #[error("test provider has no matching Metadosis mutation lease")]
-    TestProviderNoMatchingMetadosisLease,
-    #[error("test provider has no active Metadosis mutation lease")]
-    TestProviderNoActiveMetadosisLease,
-    #[error("test provider Metadosis mutation lease identity mismatch")]
-    TestProviderMetadosisLeaseIdentityMismatch,
+    #[error("test provider has no matching scoped mutation lease")]
+    TestProviderNoMatchingScopedMutationLease,
+    #[error("test provider has no active scoped mutation lease")]
+    TestProviderNoActiveScopedMutationLease,
+    #[error("test provider scoped mutation lease identity mismatch")]
+    TestProviderScopedMutationLeaseIdentityMismatch,
     #[error("insufficient balance: {from} has {balance} but needs {needed}")]
     InsufficientBalance {
         from: Address,
@@ -412,8 +412,8 @@ pub enum PrimitivesStorageError {
         balance: U256,
         needed: U256,
     },
-    #[error("Metadosis mutation frame is not available")]
-    MetadosisMutationFrameUnavailable,
+    #[error("scoped mutation frame is not available")]
+    ScopedMutationFrameUnavailable,
     #[error("{name} not found")]
     RecordNotFound { name: String },
     #[error("{name} already exists")]

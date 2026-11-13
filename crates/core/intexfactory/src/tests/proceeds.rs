@@ -100,8 +100,8 @@ fn coen_below_one_protocol_minor_carries_into_the_next_delivery() {
 
 #[test]
 fn proceeds_burn_under_the_proceeds_source() {
-    use outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS;
     use outbe_promislimit::{precompile::IPromisLimit, BurnSource};
+    use outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS;
 
     let mut storage = factory_provider();
     let amount = UNITS_PER_PROTOCOL_MINOR;

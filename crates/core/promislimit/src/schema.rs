@@ -1,6 +1,6 @@
 use alloy_primitives::U256;
 use outbe_macros::{contract, storage_schema};
-use outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS;
+use outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS;
 
 #[storage_schema]
 #[contract(addr = PROMIS_LIMIT_ADDRESS)]

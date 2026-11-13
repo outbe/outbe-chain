@@ -1,7 +1,7 @@
 //! Domain-specific elevated sponsored gas ceilings for EIP-7702 paymaster transactions.
 
 use alloy_primitives::Address;
-use outbe_primitives::addresses::TRIBUTE_FACTORY_ADDRESS;
+use outbe_system_common::addresses::TRIBUTE_FACTORY_ADDRESS;
 
 /// Maximum sponsored gas limit for `TributeFactory.offerTribute`.
 pub const FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT: u64 = 8_000_000;

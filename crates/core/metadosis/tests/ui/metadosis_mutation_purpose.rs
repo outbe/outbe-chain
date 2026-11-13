@@ -1,9 +1,9 @@
-use outbe_primitives::storage::{MetadosisMutationPurpose, MetadosisMutationPurposeTag};
+use outbe_primitives::storage::{MutationPurposeTag, ScopedMutationPurpose};
 
 struct ForgedPurpose;
 
-impl MetadosisMutationPurpose for ForgedPurpose {
-    const TAG: MetadosisMutationPurposeTag = MetadosisMutationPurposeTag::CycleLifecycle;
+impl ScopedMutationPurpose for ForgedPurpose {
+    const TAG: MutationPurposeTag = MutationPurposeTag::CycleLifecycle;
 }
 
 fn main() {}

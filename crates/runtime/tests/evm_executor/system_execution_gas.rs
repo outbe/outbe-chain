@@ -20,13 +20,23 @@ fn delayed_first_cycle_tick_starts_all_fresh_passes_at_chainspec_genesis() {
     });
     let mut db = cache_db_from_storage(seed);
     let marker = Bytecode::new_legacy([0xef].into());
-    outbe_evm::test_support::install_call_scan_markers(&mut db, &marker);
+    outbe_evm::test_support::install_call_scan_markers(
+        &mut db,
+        &[
+            outbe_system_common::addresses::NOD_ADDRESS,
+            outbe_system_common::addresses::GEM_ADDRESS,
+            outbe_system_common::addresses::GEM_FACTORY_ADDRESS,
+            outbe_system_common::addresses::INTEX_ADDRESS,
+            outbe_system_common::addresses::CREDIS_ADDRESS,
+        ],
+        &marker,
+    );
     for address in [
         outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
         ORACLE_ADDRESS,
-        outbe_primitives::addresses::METADOSIS_ADDRESS,
+        outbe_system_common::addresses::METADOSIS_ADDRESS,
         CYCLE_ADDRESS,
-        outbe_primitives::addresses::TRIBUTE_ADDRESS,
+        outbe_system_common::addresses::TRIBUTE_ADDRESS,
     ] {
         db.insert_account_info(
             address,

@@ -35,17 +35,15 @@ use outbe_oracle::{
     genesis::{init_from_genesis, OracleGenesisConfig},
     schema::OracleContract,
 };
-use outbe_primitives::{
-    addresses::{
-        AGENT_REWARD_ADDRESS, L2_REGISTRY_ADDRESS, METADOSIS_ADDRESS, ORACLE_ADDRESS,
-        TRIBUTE_ADDRESS, TRIBUTE_FACTORY_ADDRESS,
-    },
-    storage::{
-        hashmap::{HashMapStorageProvider, StorageTraceKind},
-        StorageHandle,
-    },
+use outbe_primitives::storage::{
+    hashmap::{HashMapStorageProvider, StorageTraceKind},
+    StorageHandle,
 };
 use outbe_system_common::address_pair::AddressPair;
+use outbe_system_common::addresses::{
+    AGENT_REWARD_ADDRESS, L2_REGISTRY_ADDRESS, METADOSIS_ADDRESS, ORACLE_ADDRESS, TRIBUTE_ADDRESS,
+    TRIBUTE_FACTORY_ADDRESS,
+};
 use outbe_system_common::time::date_key_to_utc_timestamp;
 use outbe_system_common::time::WorldwideDay;
 use outbe_tribute::TributeContract;
@@ -353,8 +351,8 @@ fn seeded_world(fixture: &Fixture) -> HashMapStorageProvider {
     provider.set_timestamp(U256::from(
         date_key_to_utc_timestamp(REWARD_UTC_DAY).unwrap() + 43_200,
     ));
-    provider.enable_metadosis_mutation_frames(
-        outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
+    provider.enable_scoped_mutation_frames(
+        outbe_primitives::storage::MutationPurposeTag::CycleLifecycle,
         1,
     );
     StorageHandle::enter(&mut provider, |storage| {

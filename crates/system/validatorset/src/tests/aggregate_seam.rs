@@ -37,8 +37,8 @@ fn two_registered() -> HashMapStorageProvider {
 /// Current bonded stake is Staking slot 3. ValidatorSet slot 7 stays empty.
 #[test]
 fn projection_reads_staking_amount_and_leaves_slot7_empty() {
-    use outbe_primitives::addresses::{STAKING_ADDRESS, VALIDATOR_SET_ADDRESS};
     use outbe_primitives::storage::types::Mapping;
+    use outbe_system_common::addresses::{STAKING_ADDRESS, VALIDATOR_SET_ADDRESS};
 
     let amount = U256::from(1_000u64);
     let mut storage = two_registered();

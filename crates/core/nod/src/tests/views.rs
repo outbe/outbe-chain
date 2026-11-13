@@ -175,7 +175,7 @@ fn settlement_updates_only_the_settled_nod() {
         .unwrap();
     });
 
-    let events = provider.get_events(outbe_primitives::addresses::NOD_ADDRESS);
+    let events = provider.get_events(outbe_system_common::addresses::NOD_ADDRESS);
     let batches: Vec<(U256, U256)> = events
         .iter()
         .filter_map(|log| INod::BatchMetadataUpdate::decode_log_data(log).ok())

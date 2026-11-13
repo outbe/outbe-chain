@@ -1,8 +1,8 @@
 use alloy_primitives::{Address, U256};
 use outbe_macros::contract;
-use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::storage::types::{Mapping, Slot, StorageVec};
 use outbe_system_common::address_pair::AddressPair;
+use outbe_system_common::addresses::ORACLE_ADDRESS;
 use outbe_system_common::time::WorldwideDay;
 pub use outbe_system_common::units::SCALE_1E18;
 

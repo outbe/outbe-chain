@@ -97,7 +97,7 @@ pub const MIN_FREE_TX_MAX_FEE_PER_GAS: u128 = MIN_PROTOCOL_BASE_FEE as u128;
 mod selector_tests {
     use super::*;
     use alloy_sol_types::SolCall;
-    use outbe_primitives::addresses::TRIBUTE_FACTORY_ADDRESS;
+    use outbe_system_common::addresses::TRIBUTE_FACTORY_ADDRESS;
 
     alloy_sol_types::sol!("../../../contracts/precompiles/src/ITributeFactory.sol");
 

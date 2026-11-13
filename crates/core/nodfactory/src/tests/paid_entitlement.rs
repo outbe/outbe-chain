@@ -215,7 +215,9 @@ fn settlement_leaves_fidelity_alone_and_mining_records_it() {
             .provider
             .storage
             .iter()
-            .filter(|((address, _), _)| *address == outbe_primitives::addresses::FIDELITY_ADDRESS)
+            .filter(|((address, _), _)| {
+                *address == outbe_system_common::addresses::FIDELITY_ADDRESS
+            })
             .map(|(slot, value)| (*slot, *value))
             .collect::<std::collections::BTreeMap<_, _>>()
     };
@@ -250,7 +252,7 @@ fn fidelity_persistence_failure_preserves_paid_entitlement_and_mint_nonce() {
     let nonce = world.pow_nonce(nod_id);
     world
         .provider
-        .fail_mutation_at_address(outbe_primitives::addresses::FIDELITY_ADDRESS);
+        .fail_mutation_at_address(outbe_system_common::addresses::FIDELITY_ADDRESS);
     let result = world.mine_gratis(api::MineGratisRequest {
         caller: input.owner,
         nod_id,

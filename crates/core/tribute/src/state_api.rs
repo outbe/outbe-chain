@@ -6,7 +6,7 @@ use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::StorageHandle,
 };
-use outbe_system_common::time::WorldwideDay;
+use outbe_system_common::{metadosis_bindings::MetadosisStorageExt, time::WorldwideDay};
 
 use crate::{
     errors::TributeError,

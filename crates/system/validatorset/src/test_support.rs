@@ -8,10 +8,10 @@
 //! semantic fixture seams without receiving raw storage-slot handles.
 
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::types::{Mapping, Slot};
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::STAKING_ADDRESS;
 
 use crate::{
     errors::ValidatorSetError,

@@ -18,9 +18,9 @@ use outbe_enclave::protocol::{
     MineGratisFromPromisStatusV1, ModifyAuth, PromisOp, PromisOpRequest, PromisOpResult,
     PromisOpStatus,
 };
-use outbe_primitives::addresses::PROMIS_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::PROMIS_ADDRESS;
 
 use crate::enclave_client::{apply_promis_op, mine_gratis_from_promis};
 use crate::errors::{PromisError, PromisFatalError};

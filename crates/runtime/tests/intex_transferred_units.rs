@@ -8,10 +8,8 @@ use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld
 use outbe_intex::precompile::IIntex;
 use outbe_intex::{CreateSeriesParams, IntexCallTrigger, SeriesId};
 use outbe_intexfactory::precompile::IIntexFactory;
-use outbe_primitives::{
-    addresses::{INTEX_ADDRESS, INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS},
-    storage::{SubCallOutput, SubCallStatus},
-};
+use outbe_primitives::storage::{SubCallOutput, SubCallStatus};
+use outbe_system_common::addresses::{INTEX_ADDRESS, INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_system_common::time::EmissionDate;
 use outbe_vaultrouter::{
     api::IVaultRouter::StablesSource,

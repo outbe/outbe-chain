@@ -6,7 +6,7 @@ use outbe_oracle::{
 };
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_primitives::storage::{MetadosisMutationPurposeTag, StorageHandle};
+use outbe_primitives::storage::{MutationPurposeTag, StorageHandle};
 use outbe_system_common::address_pair::AddressPair;
 use outbe_system_common::time::date_key_to_utc_timestamp;
 use outbe_system_common::time::WorldwideDay;
@@ -550,7 +550,7 @@ fn assert_real_zk_offer_with_key_source(
     provider.set_timestamp(U256::from(
         date_key_to_utc_timestamp(REWARD_DAY).unwrap() + 43_200,
     ));
-    provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
+    provider.enable_scoped_mutation_frame(MutationPurposeTag::CycleLifecycle);
 
     StorageHandle::enter(&mut provider, |storage| {
         seed_offer_world(storage.clone(), &[TARGET_WWD_A]);
@@ -744,7 +744,7 @@ fn empty_su_hash_list_rejects_before_issuance_and_rewards() {
     provider.set_timestamp(U256::from(
         date_key_to_utc_timestamp(20_260_803).unwrap() + 43_200,
     ));
-    provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
+    provider.enable_scoped_mutation_frame(MutationPurposeTag::CycleLifecycle);
     StorageHandle::enter(&mut provider, |storage| {
         seed_offer_world(storage.clone(), &[TARGET_WWD_A]);
         L2RegistryContract::new(storage)
@@ -822,7 +822,7 @@ fn an_offer_after_the_offering_window_fails_on_an_unsealed_day() {
     provider.set_timestamp(U256::from(
         date_key_to_utc_timestamp(20_260_803).unwrap() + 43_200,
     ));
-    provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
+    provider.enable_scoped_mutation_frame(MutationPurposeTag::CycleLifecycle);
 
     StorageHandle::enter(&mut provider, |storage| {
         seed_offer_world(storage.clone(), &[TARGET_WWD_A]);

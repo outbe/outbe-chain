@@ -441,14 +441,14 @@ fn burning_pledged_collateral_reports_the_supply_drop() {
     let vk = derive_view_key(&test_enclave::state_key(), alice()).unwrap();
     test_enclave::uninstall();
     let liquid_burned: Vec<_> = provider
-        .get_events(outbe_primitives::addresses::GRATIS_ADDRESS)
+        .get_events(outbe_system_common::addresses::GRATIS_ADDRESS)
         .iter()
         .filter_map(|log| IGratis::GratisBurned::decode_log_data(log).ok())
         .collect();
     assert!(liquid_burned.is_empty());
 
     let burned: Vec<_> = provider
-        .get_events(outbe_primitives::addresses::GRATIS_ADDRESS)
+        .get_events(outbe_system_common::addresses::GRATIS_ADDRESS)
         .iter()
         .filter_map(|log| IGratis::GratisBurnedFromPledge::decode_log_data(log).ok())
         .collect();
@@ -576,7 +576,7 @@ fn nod_mint_event_amount_differs_from_balance_and_opens_to_the_delta() {
         (first_balance, second_balance)
     });
     let mined: Vec<_> = provider
-        .get_events(outbe_primitives::addresses::GRATIS_ADDRESS)
+        .get_events(outbe_system_common::addresses::GRATIS_ADDRESS)
         .iter()
         .filter_map(|log| IGratis::GratisMinedFromNod::decode_log_data(log).ok())
         .collect();

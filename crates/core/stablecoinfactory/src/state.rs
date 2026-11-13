@@ -1,15 +1,15 @@
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_primitives::{
-    addresses::{STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_MARKER_CODE},
-    error::{PrecompileError, Result},
-    stablecoin_fork::STABLECOIN_LIST_PAGE_CAP,
-};
+use outbe_primitives::error::{PrecompileError, Result};
 use outbe_stablecoin::{
     FactoryTokenInitialization, StablecoinFactoryApi as StablecoinTokenFactoryApi,
 };
 use outbe_system_common::stablecoin::{
     decode_canonical_stablecoin_create, predict_stablecoin, validate_ticker,
+};
+use outbe_system_common::{
+    addresses::{STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_MARKER_CODE},
+    stablecoin_fork::STABLECOIN_LIST_PAGE_CAP,
 };
 use revm::state::Bytecode;
 

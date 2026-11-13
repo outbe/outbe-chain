@@ -142,7 +142,7 @@ pub(crate) fn cache_db_from_storage(
         .keys()
         .map(|(address, _)| *address)
         .chain(std::iter::once(
-            outbe_primitives::addresses::STAKING_ADDRESS,
+            outbe_system_common::addresses::STAKING_ADDRESS,
         ))
         .collect();
     addresses.sort_unstable();
@@ -253,7 +253,7 @@ fn test_register_active_with_stake(
     let total = staking.total_staked.read().unwrap();
     staking.total_staked.write(total + stake).unwrap();
     vs.storage
-        .increase_balance(outbe_primitives::addresses::STAKING_ADDRESS, stake)
+        .increase_balance(outbe_system_common::addresses::STAKING_ADDRESS, stake)
         .unwrap();
     vs.activate_validator_via_boundary_for_test(validator)
         .unwrap();
@@ -286,7 +286,7 @@ pub(crate) fn seed_registered_active_validator(
     let total = staking.total_staked.read().unwrap();
     staking.total_staked.write(total + minimum).unwrap();
     storage
-        .increase_balance(outbe_primitives::addresses::STAKING_ADDRESS, minimum)
+        .increase_balance(outbe_system_common::addresses::STAKING_ADDRESS, minimum)
         .unwrap();
     vs.activate_validator_via_boundary_for_test(validator)
         .unwrap();
@@ -329,7 +329,7 @@ pub(crate) fn register_and_activate_native(
     staking.total_staked.write(total + minimum).unwrap();
     validators
         .storage
-        .increase_balance(outbe_primitives::addresses::STAKING_ADDRESS, minimum)
+        .increase_balance(outbe_system_common::addresses::STAKING_ADDRESS, minimum)
         .unwrap();
     validators.mark_pending(validator).unwrap();
     validators.confirm_validator_ready(validator).unwrap();
@@ -387,8 +387,8 @@ fn state_with_active_proposer_fixture(
     let marker_code = Bytecode::new_legacy([0xef].into());
     for address in [
         outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
-        outbe_primitives::addresses::ORACLE_ADDRESS,
-        outbe_primitives::addresses::METADOSIS_ADDRESS,
+        outbe_system_common::addresses::ORACLE_ADDRESS,
+        outbe_system_common::addresses::METADOSIS_ADDRESS,
         outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
         CYCLE_ADDRESS,
     ] {
@@ -432,8 +432,8 @@ pub(super) fn state_with_active_proposer_and_funded_account_fixture(
     let marker_code = Bytecode::new_legacy([0xef].into());
     for address in [
         outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
-        outbe_primitives::addresses::ORACLE_ADDRESS,
-        outbe_primitives::addresses::METADOSIS_ADDRESS,
+        outbe_system_common::addresses::ORACLE_ADDRESS,
+        outbe_system_common::addresses::METADOSIS_ADDRESS,
         outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
     ] {
         db.insert_account_info(
@@ -520,8 +520,8 @@ pub(super) fn state_with_active_validators_seeded_at_block_with_cycle_frames(
         .unwrap();
     });
     if cycle_frames != 0 {
-        seed_storage.enable_metadosis_mutation_frames(
-            outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
+        seed_storage.enable_scoped_mutation_frames(
+            outbe_primitives::storage::MutationPurposeTag::CycleLifecycle,
             cycle_frames,
         );
     }
@@ -529,33 +529,33 @@ pub(super) fn state_with_active_validators_seeded_at_block_with_cycle_frames(
 
     let marker_addresses = [
         outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
-        outbe_primitives::addresses::ORACLE_ADDRESS,
+        outbe_system_common::addresses::ORACLE_ADDRESS,
         VOTE_ADDRESS,
         UPDATE_ADDRESS,
         STABLECOIN_FACTORY_ADDRESS,
         STABLECOIN_POLICY_REGISTRY_ADDRESS,
         CYCLE_ADDRESS,
-        outbe_primitives::addresses::DESIS_ADDRESS,
-        outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS,
+        outbe_system_common::addresses::DESIS_ADDRESS,
+        outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS,
         SLASH_INDICATOR_ADDRESS,
-        outbe_primitives::addresses::STAKING_ADDRESS,
+        outbe_system_common::addresses::STAKING_ADDRESS,
         outbe_primitives::addresses::REWARDS_ADDRESS,
-        outbe_primitives::addresses::AGENT_REWARD_ADDRESS,
-        outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
-        outbe_primitives::addresses::METADOSIS_ADDRESS,
+        outbe_system_common::addresses::AGENT_REWARD_ADDRESS,
+        outbe_system_common::addresses::CCA_REGISTRY_ADDRESS,
+        outbe_system_common::addresses::METADOSIS_ADDRESS,
         outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
-        outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS,
-        outbe_primitives::addresses::TRIBUTE_ADDRESS,
+        outbe_system_common::addresses::HYPERLANE_CONTROLLER_ADDRESS,
+        outbe_system_common::addresses::TRIBUTE_ADDRESS,
         NOD_ADDRESS,
-        outbe_primitives::addresses::GEM_ADDRESS,
-        outbe_primitives::addresses::GEM_FACTORY_ADDRESS,
-        outbe_primitives::addresses::INTEX_ADDRESS,
-        outbe_primitives::addresses::CREDIS_ADDRESS,
+        outbe_system_common::addresses::GEM_ADDRESS,
+        outbe_system_common::addresses::GEM_FACTORY_ADDRESS,
+        outbe_system_common::addresses::INTEX_ADDRESS,
+        outbe_system_common::addresses::CREDIS_ADDRESS,
         // marker allowlist: in production, `0xef` bytecode preserves the
         // accounting-progress marker account across EIP-161. So its seeded
         // slot survives as live state here too. Otherwise an empty account's
         // storage reads back as zero.
-        outbe_primitives::addresses::ACCOUNTING_PROGRESS_ADDRESS,
+        outbe_system_common::addresses::ACCOUNTING_PROGRESS_ADDRESS,
     ];
     // `cache_db_from_storage` carries storage slots but not balances, and the
     // marker-info insert below overwrites `AccountInfo`. Capture any balance a

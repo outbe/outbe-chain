@@ -169,7 +169,7 @@ fn calibration_live_auction_start() {
         false,
     );
     assert!(logs.iter().any(
-        |log| log.address == outbe_primitives::addresses::DESIS_ADDRESS
+        |log| log.address == outbe_system_common::addresses::DESIS_ADDRESS
             && log.data.topics().first()
                 == Some(&outbe_desis::precompile::IDesis::IntexAuctionCreated::SIGNATURE_HASH)
     ));

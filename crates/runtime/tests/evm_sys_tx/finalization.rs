@@ -236,20 +236,20 @@ fn finalization_rejects_non_parent_metadata_with_preloaded_summary() {
 
 #[test]
 fn accounting_progress_address_is_not_a_dispatching_precompile() {
-    use outbe_primitives::addresses::ACCOUNTING_PROGRESS_ADDRESS;
+    use outbe_system_common::addresses::ACCOUNTING_PROGRESS_ADDRESS;
     assert!(
-        !outbe_evm::precompiles::outbe_precompile_addresses()
+        !outbe_runtime::precompiles::outbe_exact_precompile_addresses()
             .contains(&ACCOUNTING_PROGRESS_ADDRESS),
         "ACCOUNTING_PROGRESS_ADDRESS must NOT be a registered dispatching precompile \
-         (outbe_precompile_addresses) - it is a system-only marker; user CALLs must not dispatch",
+         (outbe_exact_precompile_addresses) - it is a system-only marker; user CALLs must not dispatch",
     );
 }
 
 #[test]
 fn accounting_progress_address_is_eip161_preserved() {
-    use outbe_primitives::addresses::ACCOUNTING_PROGRESS_ADDRESS;
+    use outbe_system_common::addresses::ACCOUNTING_PROGRESS_ADDRESS;
     assert!(
-        outbe_evm::executor::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES
+        outbe_runtime::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES
             .contains(&ACCOUNTING_PROGRESS_ADDRESS),
         "INV3: ACCOUNTING_PROGRESS_ADDRESS must be in the executor's EIP-161 marker \
          allowlist (OUTBE_RUNTIME_MARKER_ADDRESSES) so slot 0 survives state-root cleanup",

@@ -11,7 +11,8 @@ use outbe_credis::{CredisContract, CredisState};
 
 use crate::rules::{self, Forfeit, IssueCredisParams};
 use outbe_gratisfactory::api as pledges;
-use outbe_primitives::{addresses::CREDIS_FACTORY_ADDRESS, error::Result, storage::StorageHandle};
+use outbe_primitives::{error::Result, storage::StorageHandle};
+use outbe_system_common::addresses::CREDIS_FACTORY_ADDRESS;
 use outbe_system_common::units::checked_protocol_to_native;
 use outbe_vaultrouter::LiquidityReservation;
 

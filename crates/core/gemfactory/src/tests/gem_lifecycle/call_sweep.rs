@@ -4,8 +4,8 @@
 use alloy_primitives::U256;
 use alloy_sol_types::SolEvent;
 use outbe_oracle::schema::OracleContract;
-use outbe_primitives::addresses::GEM_ADDRESS;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::GEM_ADDRESS;
 use outbe_system_common::pass_budget::{
     PassBudget, SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK,
 };

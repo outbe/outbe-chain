@@ -9,9 +9,9 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 use outbe_hyperlanecontroller::precompile::IHyperlaneController;
 use outbe_oracle::precompile::IOracle;
-use outbe_primitives::addresses::{HYPERLANE_CONTROLLER_ADDRESS, ORACLE_ADDRESS};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::transaction_call::TransactionCallFields;
+use outbe_system_common::addresses::{HYPERLANE_CONTROLLER_ADDRESS, ORACLE_ADDRESS};
 use outbe_validatorset::delegation::ValidatorDelegateRole;
 
 use crate::hooks::{

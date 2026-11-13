@@ -1,6 +1,6 @@
 use alloy_primitives::U256;
 use outbe_macros::{contract, storage_record, storage_schema};
-use outbe_primitives::addresses::EMISSION_ADDRESS;
+use outbe_system_common::addresses::EMISSION_ADDRESS;
 use outbe_system_common::time::WorldwideDay as WorldwideDayKey;
 
 /// Lifecycle state of an `EmissionDay` (OIP-00348).

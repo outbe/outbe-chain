@@ -16,7 +16,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_primitives::storage::{MetadosisMutationPurposeTag, StorageHandle};
+use outbe_primitives::storage::{MutationPurposeTag, StorageHandle};
 use outbe_validatorset::contract::ValidatorSet;
 
 use crate::schema::Cycle;
@@ -78,7 +78,7 @@ pub(super) fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
         outbe_oracle::api::register_pair(ctx.storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
     });
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 4);
     // This synthetic router accepts outbound messages and has no target chains.
     // Send callers ignore returndata; views receive the real targetsOf ABI shape.
     // Other addresses remain unsupported, so infrastructure failures still surface.
@@ -213,7 +213,7 @@ pub(super) fn seed_reward_cca(storage: &outbe_primitives::storage::StorageHandle
     let cca = Address::repeat_byte(0xc1);
     storage
         .increase_balance(
-            outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
+            outbe_system_common::addresses::CCA_REGISTRY_ADDRESS,
             outbe_ccaregistry::constants::BOND_REQUIREMENT,
         )
         .unwrap();

@@ -2,8 +2,8 @@ use alloy_primitives::{Address, B256};
 use commonware_codec::Encode;
 use commonware_cryptography::bls12381::primitives::group::G2;
 use outbe_macros::{contract, storage_record, storage_schema};
-use outbe_primitives::addresses::L2_REGISTRY_ADDRESS;
 use outbe_primitives::error::Result;
+use outbe_system_common::addresses::L2_REGISTRY_ADDRESS;
 
 /// Byte length of the EIP-2537 G2 public key used by all registry APIs.
 pub const BLS_PUBLIC_KEY_LEN: usize = 256;

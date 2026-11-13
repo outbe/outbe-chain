@@ -3,8 +3,8 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use outbe_core_common::wwd_entity_id::WwdEntityId;
-use outbe_primitives::addresses::GEM_ADDRESS;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::GEM_ADDRESS;
 use outbe_system_common::math::constants::REAL_ID_SHIFT;
 use outbe_system_common::math::tree_math;
 use outbe_system_common::time::SECONDS_PER_DAY;
@@ -653,7 +653,7 @@ fn settled_for_test_issues_a_paid_gem_and_counts_it_in_the_group() {
 
 #[test]
 fn one_group_calls_and_closes_each_series_pair() {
-    use outbe_primitives::addresses::GEM_ADDRESS;
+    use outbe_system_common::addresses::GEM_ADDRESS;
 
     let mut provider = provider_at(T_NOW);
     let expected = StorageHandle::enter(&mut provider, |storage| {

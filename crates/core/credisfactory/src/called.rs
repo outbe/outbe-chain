@@ -24,11 +24,11 @@ use outbe_core_common::series_id::SeriesId;
 use outbe_oracle::call_pass::{self, CallPass};
 use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::{
-    addresses::CREDIS_FACTORY_ADDRESS,
     block::BlockRuntimeContext,
     error::Result,
     storage::{dsl::Value, StorageHandle},
 };
+use outbe_system_common::addresses::CREDIS_FACTORY_ADDRESS;
 use outbe_system_common::{
     call_bins,
     call_breach::{BreachTerms, ScanTerms},

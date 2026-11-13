@@ -167,7 +167,7 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
     // generic validator fixture does not install this native precompile marker.
     let marker_code = Bytecode::new_legacy([0xef].into());
     state.database.insert_account_info(
-        outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS,
+        outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS,
         AccountInfo {
             code_hash: marker_code.hash_slow(),
             code: Some(marker_code),
@@ -375,7 +375,7 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
     let (burn_log, burn) = &burns[0];
     assert_eq!(
         burn_log.address,
-        outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS
+        outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS
     );
     assert_eq!(
         burn.source,

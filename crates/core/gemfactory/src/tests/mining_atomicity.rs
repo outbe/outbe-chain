@@ -136,7 +136,7 @@ fn a_mining_that_fails_after_any_write_keeps_the_settled_gem_and_mines_once_on_r
             );
         });
         let mined = provider
-            .get_events(outbe_primitives::addresses::PROMIS_ADDRESS)
+            .get_events(outbe_system_common::addresses::PROMIS_ADDRESS)
             .iter()
             .filter(|log| {
                 outbe_promis::precompile::IPromis::PromisMinedFromGem::decode_log_data(log).is_ok()

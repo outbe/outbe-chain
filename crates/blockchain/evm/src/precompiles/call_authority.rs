@@ -1,8 +1,8 @@
-//! Binds EVM command identity to native Metadosis mutation capabilities.
+//! Binds EVM command identity to native scoped mutation capabilities.
 use alloy_primitives::{Address, U256};
-use outbe_primitives::storage::MetadosisMutationEntitlements;
+use outbe_primitives::storage::MutationEntitlements;
 
-pub struct MetadosisMutationCall<'a> {
+pub struct PrecompileMutationCall<'a> {
     pub address: Address,
     pub data: &'a [u8],
     pub caller: Address,
@@ -14,9 +14,9 @@ pub struct MetadosisMutationCall<'a> {
     pub cycle_active_utc_day: Option<u32>,
 }
 
-pub(super) fn metadosis_mutation_entitlements(
+pub(super) fn precompile_mutation_entitlements(
     host: &dyn crate::EvmRuntimeHost,
-    call: MetadosisMutationCall<'_>,
-) -> MetadosisMutationEntitlements {
+    call: PrecompileMutationCall<'_>,
+) -> MutationEntitlements {
     host.mutation_entitlements(call)
 }

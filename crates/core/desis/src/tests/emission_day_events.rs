@@ -2,12 +2,12 @@
 
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::SolEvent;
-use outbe_primitives::addresses::DESIS_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_promislimit::PromisLimitContract;
+use outbe_system_common::addresses::DESIS_ADDRESS;
 
 use crate::constants::{
     CANCELED_BELOW_ONE_UNIT, CANCELED_LATE_START, CANCELED_LIMIT_OVERFLOW, CANCELED_NO_LIMIT,

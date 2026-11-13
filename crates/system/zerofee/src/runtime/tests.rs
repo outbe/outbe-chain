@@ -4,10 +4,12 @@ use alloy_eips::eip7702::Authorization;
 use alloy_primitives::{address, Address, Signature, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::{
-    addresses::{AGENT_REWARD_ADDRESS, TRIBUTE_FACTORY_ADDRESS, ZEROFEE_ADDRESS},
     consensus::{MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS, MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     transaction_call::TransactionCallFields,
+};
+use outbe_system_common::addresses::{
+    AGENT_REWARD_ADDRESS, TRIBUTE_FACTORY_ADDRESS, ZEROFEE_ADDRESS,
 };
 use outbe_system_common::time::SECONDS_PER_DAY;
 

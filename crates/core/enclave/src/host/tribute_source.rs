@@ -4,13 +4,11 @@ use alloy_primitives::{B256, U256};
 use outbe_core_common::{
     tribute_encryption::EncryptedTributeV2, wwd_entity_id::derive_poseidon_entity_id,
 };
-use outbe_primitives::{
-    addresses::TRIBUTE_ADDRESS,
-    storage::{
-        proof::{AccountStorageProof, StateProofLimits},
-        readonly::StorageReader,
-    },
+use outbe_primitives::storage::{
+    proof::{AccountStorageProof, StateProofLimits},
+    readonly::StorageReader,
 };
+use outbe_system_common::addresses::TRIBUTE_ADDRESS;
 use outbe_system_common::time::WorldwideDay;
 use outbe_tee::TransportError;
 use serde::{Deserialize, Serialize};

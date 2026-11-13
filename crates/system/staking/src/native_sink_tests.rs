@@ -2,11 +2,11 @@
 //! Promis Limit and stores any sub-protocol-minor remainder in `rest_minor`.
 
 use alloy_primitives::{address, Address, U256};
-use outbe_primitives::addresses::{
-    METADOSIS_ADDRESS, PROMIS_LIMIT_ADDRESS, REWARDS_ADDRESS, STAKING_ADDRESS,
-};
 use outbe_primitives::storage::StorageHandle;
 use outbe_promislimit::PromisLimitContract;
+use outbe_system_common::addresses::{
+    METADOSIS_ADDRESS, PROMIS_LIMIT_ADDRESS, REWARDS_ADDRESS, STAKING_ADDRESS,
+};
 use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 
 use crate::contract::Staking;

@@ -5,9 +5,9 @@ use outbe_core_common::markup::marked_up;
 use outbe_gem::{api as gem_api, CallTerms, GemAddParams, GemParams, GemView};
 use outbe_intex::{IntexState, SeriesId};
 use outbe_oracle::api::get_utc_day_vwap_for_iso;
-use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::GEM_FACTORY_ADDRESS;
 use outbe_system_common::stablecoin::iso_4217_alpha;
 use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 

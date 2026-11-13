@@ -369,7 +369,7 @@ pub(super) fn dual_currency_series(iso: u64) -> HashMapStorageProvider {
     );
     storage.stub_sub_call_at(crate::constants::ORIGIN_ROUTER_ADDRESS, word(0));
     storage.stub_sub_call_at_selector(
-        outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+        outbe_system_common::addresses::VAULT_ROUTER_ADDRESS,
         IVaultRouter::assetVaultsCountCall::SELECTOR,
         word(1),
     );

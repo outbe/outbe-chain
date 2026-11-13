@@ -137,7 +137,10 @@ fn claims_reject_exact_and_past_deadlines_without_issuing_gems() {
                 if pool == RewardPool::Cca {
                     let bond = outbe_ccaregistry::constants::BOND_REQUIREMENT;
                     storage
-                        .increase_balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS, bond)
+                        .increase_balance(
+                            outbe_system_common::addresses::CCA_REGISTRY_ADDRESS,
+                            bond,
+                        )
                         .unwrap();
                     outbe_ccaregistry::runtime::bond(
                         storage.clone(),
@@ -181,7 +184,7 @@ fn tiny_partial_claim_renews_only_its_pool_and_full_claim_clears_deadline() {
             if pool == RewardPool::Cca {
                 let bond = outbe_ccaregistry::constants::BOND_REQUIREMENT;
                 storage
-                    .increase_balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS, bond)
+                    .increase_balance(outbe_system_common::addresses::CCA_REGISTRY_ADDRESS, bond)
                     .unwrap();
                 outbe_ccaregistry::runtime::bond(storage.clone(), ALICE, bond, "Test CCA".into())
                     .unwrap();
@@ -288,7 +291,7 @@ fn failures_preserve_deadlines_and_return_accounting() {
         });
         assert_eq!(provider.storage, before);
         assert!(provider
-            .get_events(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+            .get_events(outbe_system_common::addresses::AGENT_REWARD_ADDRESS)
             .is_empty());
     }
 }

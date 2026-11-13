@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, U256};
 use outbe_macros::contract;
-use outbe_primitives::addresses::FIDELITY_ADDRESS;
 use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes};
+use outbe_system_common::addresses::FIDELITY_ADDRESS;
 use outbe_system_common::time::WorldwideDay;
 
 /// EVM storage layout for the Fidelity (RCFI) module.

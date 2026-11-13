@@ -28,7 +28,7 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
     use alloy_sol_types::SolCall;
     use outbe_evm::config::OutbeEvmConfig;
     use outbe_nodfactory::precompile::INodFactory;
-    use outbe_primitives::addresses::{NOD_FACTORY_ADDRESS, REWARDS_ADDRESS};
+    use outbe_system_common::addresses::{NOD_FACTORY_ADDRESS, REWARDS_ADDRESS};
     use outbe_system_common::time::WorldwideDay;
     use reth_evm::ConfigureEvm;
     use reth_primitives_traits::SignedTransaction as _;

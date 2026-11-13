@@ -122,7 +122,7 @@ fn slash_window_timestamp_overflow_preserves_all_validator_counters_for_retry() 
         staking.stake_amount.write(&penalized, stake).unwrap();
         staking.total_staked.write(stake).unwrap();
         storage
-            .set_balance(outbe_primitives::addresses::STAKING_ADDRESS, stake)
+            .set_balance(outbe_system_common::addresses::STAKING_ADDRESS, stake)
             .unwrap();
         for timestamp in [U256::from(u64::MAX) + U256::from(1), U256::MAX] {
             storage.set_block_timestamp(timestamp).unwrap();
@@ -141,7 +141,7 @@ fn slash_window_timestamp_overflow_preserves_all_validator_counters_for_retry() 
             assert_eq!(staking.get_stake(penalized).unwrap(), stake);
             assert_eq!(
                 storage
-                    .balance(outbe_primitives::addresses::STAKING_ADDRESS)
+                    .balance(outbe_system_common::addresses::STAKING_ADDRESS)
                     .unwrap(),
                 stake
             );
@@ -253,7 +253,7 @@ fn slash_window_rolls_back_slash_state_when_force_exit_fails() {
         staking.total_staked.write(stake).unwrap();
         oracle
             .storage
-            .set_balance(outbe_primitives::addresses::STAKING_ADDRESS, stake)
+            .set_balance(outbe_system_common::addresses::STAKING_ADDRESS, stake)
             .unwrap();
 
         oracle.increment_miss(&validator).unwrap();
@@ -273,7 +273,7 @@ fn slash_window_rolls_back_slash_state_when_force_exit_fails() {
         assert_eq!(
             oracle
                 .storage
-                .balance(outbe_primitives::addresses::STAKING_ADDRESS)
+                .balance(outbe_system_common::addresses::STAKING_ADDRESS)
                 .unwrap(),
             stake
         );
@@ -308,7 +308,7 @@ fn slash_window_rolls_back_the_forced_exit_when_slashing_fails() {
         staking.total_staked.write(stake).unwrap();
         oracle
             .storage
-            .set_balance(outbe_primitives::addresses::STAKING_ADDRESS, U256::ZERO)
+            .set_balance(outbe_system_common::addresses::STAKING_ADDRESS, U256::ZERO)
             .unwrap();
 
         oracle.increment_miss(&validator).unwrap();

@@ -10,15 +10,12 @@ use commonware_cryptography::bls12381;
 use commonware_utils::ordered::Set;
 use outbe_consensus::proof::notarize_namespace;
 use outbe_evm::{test_support::seed_storage, OutbeEvmFactory};
-use outbe_primitives::{
-    addresses::{
-        PROMIS_LIMIT_ADDRESS, SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS, VALIDATOR_SET_ADDRESS,
-    },
-    chain::CHAIN_ID,
-    storage::StorageHandle,
-};
+use outbe_primitives::{chain::CHAIN_ID, storage::StorageHandle};
 use outbe_slashindicator::{precompile::ISlashIndicator, schema::SlashIndicator};
 use outbe_staking::{contract::Staking, precompile::IStaking};
+use outbe_system_common::addresses::{
+    PROMIS_LIMIT_ADDRESS, SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS, VALIDATOR_SET_ADDRESS,
+};
 use outbe_validatorset::{
     contract::ValidatorSet,
     state::{CommitteeEntry, CommitteeSnapshot},

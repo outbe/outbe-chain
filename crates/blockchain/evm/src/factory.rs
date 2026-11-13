@@ -129,6 +129,7 @@ pub struct OutbeEvm<DB: Database, I, PRECOMPILE = EthPrecompiles> {
     >,
     inspect: bool,
     abort_bridge: crate::precompiles::ExecutionAbortBridge,
+    runtime_host: Option<std::sync::Arc<dyn crate::EvmRuntimeHost>>,
     owned_by_executor: bool,
     precompiles_mut_called: bool,
     witness_state: Option<std::sync::Arc<std::sync::Mutex<outbe_tee::witness::WitnessState>>>,
@@ -150,6 +151,7 @@ pub fn outbe_evm<DB: Database, I, PRECOMPILE>(
         inner: evm,
         inspect,
         abort_bridge: crate::precompiles::ExecutionAbortBridge::default(),
+        runtime_host: None,
         owned_by_executor: false,
         precompiles_mut_called: false,
         witness_state: None,
@@ -202,10 +204,11 @@ impl<DB: Database, I, PRECOMPILE> OutbeEvm<DB, I, PRECOMPILE> {
         let call = self.abort_bridge.begin_call();
         self.inner.ctx.set_tx(tx);
         let mut handler: ReservedNamespaceHandler<_, EVMError<DB::Error>> = Default::default();
+        let host = self.runtime_host.as_deref();
         let output = if self.inspect {
-            handler.inspect_run(&mut NativeDelegationEvm(&mut self.inner))
+            handler.inspect_run(&mut NativeDelegationEvm(&mut self.inner, host))
         } else {
-            handler.run(&mut NativeDelegationEvm(&mut self.inner))
+            handler.run(&mut NativeDelegationEvm(&mut self.inner, host))
         };
         let state = self.inner.finalize();
         Ok(ResultAndState::new(call.finish(output)?, state))
@@ -315,8 +318,10 @@ where
                 .ctx
                 .set_tx(TxEnv::new_system_tx_with_caller(caller, contract, data));
             let mut handler: MainnetHandler<_, EVMError<DB::Error>, EthFrame> = Default::default();
-            let result =
-                call.finish(handler.run_system_call(&mut NativeDelegationEvm(&mut self.inner)))?;
+            let result = call.finish(handler.run_system_call(&mut NativeDelegationEvm(
+                &mut self.inner,
+                self.runtime_host.as_deref(),
+            )))?;
             return Ok(ResultAndState::new(result, self.inner.finalize()));
         }
 
@@ -365,8 +370,10 @@ where
         self.inner.ctx.set_tx(tx);
         let mut handler: MainnetHandler<_, EVMError<DB::Error>, EthFrame> =
             MainnetHandler::default();
-        let result =
-            call.finish(handler.run_system_call(&mut NativeDelegationEvm(&mut self.inner)))?;
+        let result = call.finish(handler.run_system_call(&mut NativeDelegationEvm(
+            &mut self.inner,
+            self.runtime_host.as_deref(),
+        )))?;
         let state = self.inner.finalize();
         Ok(ResultAndState::new(result, state))
     }
@@ -518,6 +525,7 @@ impl EvmFactory for OutbeEvmFactory {
 
         let mut evm = outbe_evm(evm, false);
         evm.abort_bridge = abort_bridge;
+        evm.runtime_host = Some(std::sync::Arc::clone(&self.runtime_host));
         evm
     }
 
@@ -530,11 +538,13 @@ impl EvmFactory for OutbeEvmFactory {
         let evm = self.create_evm(db, input);
 
         let abort_bridge = evm.abort_bridge.clone();
+        let runtime_host = evm.runtime_host.clone();
         let owned_by_executor = evm.owned_by_executor;
         let precompiles_mut_called = evm.precompiles_mut_called;
         let witness_state = evm.witness_state.clone();
         let mut evm = outbe_evm(evm.into_inner().with_inspector(inspector), true);
         evm.abort_bridge = abort_bridge;
+        evm.runtime_host = runtime_host;
         evm.owned_by_executor = owned_by_executor;
         evm.precompiles_mut_called = precompiles_mut_called;
         evm.witness_state = witness_state;

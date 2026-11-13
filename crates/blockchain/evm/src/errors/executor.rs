@@ -620,18 +620,18 @@ impl From<ExecutorValidationError> for BlockExecutionError {
     }
 }
 
-/// Typed error returned when settling accumulated block burned fees to `PromisLimitContract`.
+/// Typed error returned when settling accumulated block burned fees through the runtime host.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum BurnedFeeSettlementError {
     /// Deterministic validation failure during burned-fee settlement.
-    #[error("burned fee promis limit validation failed: {0}")]
+    #[error("burned fee settlement validation failed: {0}")]
     Validation(#[source] PrecompileError),
     /// Node-local storage or fatal precompile error during burned-fee settlement.
-    #[error("burned fee promis limit internal failure: {0}")]
+    #[error("burned fee settlement internal failure: {0}")]
     Internal(#[source] PrecompileError),
     /// Storage flush failure after burned-fee settlement.
-    #[error("burned fee promis limit flush failed: {0}")]
+    #[error("burned fee settlement flush failed: {0}")]
     Flush(#[source] PrecompileError),
 }
 

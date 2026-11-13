@@ -1,266 +1,58 @@
 use alloy_primitives::{address, Address};
 
-/// Gratis token precompile address.
-pub const GRATIS_ADDRESS: Address = address!("0x0000000000000000000000000000000000001003");
-
-/// Gratis factory precompile address.
-pub const GRATIS_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000002003");
-
-/// Promis token precompile address.
-pub const PROMIS_ADDRESS: Address = address!("0x0000000000000000000000000000000000001337");
-
-/// Promis factory precompile address (orchestrator: mint/burn orchestration via
-/// cross-module API, `mineCoen` on the ABI). Wraps the Promis token at
-/// [`PROMIS_ADDRESS`], records Fidelity cohorts, and mints native COEN on
-/// `mineCoen`. Carries no persistent storage of its own.
-pub const PROMIS_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000002337");
-
-/// Tribute NFT precompile address.
-pub const TRIBUTE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001101");
-
-/// Nod NFT precompile address.
-pub const NOD_ADDRESS: Address = address!("0x0000000000000000000000000000000000001006");
-
-/// Nod factory precompile address (orchestrator: issuance via cross-module
-/// API, `mineGratis` ABI). State lives in the Nod entity store at
-/// [`NOD_ADDRESS`]. NodFactory carries no persistent storage of its own.
-pub const NOD_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001007");
-
-/// Gem NFT precompile address. ERC-721 non-transferable registry.
-pub const GEM_ADDRESS: Address = address!("0x0000000000000000000000000000000000001013");
-
-/// Intex address. Canonical, cross-chain Intex series ledger
-/// (identity + lifecycle). Writes are Rust-to-Rust only (IntexFactory). The
-/// precompile at this address dispatches read-only series views for off-chain
-/// observability.
-pub const INTEX_ADDRESS: Address = address!("0x0000000000000000000000000000000000001014");
-
-/// IntexFactory address. Drives Intex issuance, the autonomous
-/// Issued->Called lifecycle, and two-step settlement. Series state is
-/// written to [`INTEX_ADDRESS`].
-pub const INTEX_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001015");
-
-/// Gem factory precompile address (orchestrator: `issue_gem` via cross-module
-/// API, `settleGem` / `minePromis` on the ABI). Per-Gem state lives at
-/// [`GEM_ADDRESS`]. GemFactory carries module-stats storage.
-pub const GEM_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000002013");
-
-/// Credis precompile address.
-pub const CREDIS_ADDRESS: Address = address!("0x000000000000000000000000000000000000100A");
-
-/// Credis factory precompile address.
-pub const CREDIS_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001009");
-
-/// Tribute factory precompile address.
-pub const TRIBUTE_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001100");
-
-/// Agent reward precompile address.
-pub const AGENT_REWARD_ADDRESS: Address = address!("0x000000000000000000000000000000000000100B");
-
-/// Fidelity precompile address.
-pub const FIDELITY_ADDRESS: Address = address!("0x000000000000000000000000000000000000100C");
-
-/// Emission precompile address (`IEmission`).
-pub const EMISSION_ADDRESS: Address = address!("0x000000000000000000000000000000000000100D");
-
-/// Legacy alias for [`EMISSION_ADDRESS`].
-pub const EMISSION_LIMIT_ADDRESS: Address = EMISSION_ADDRESS;
-
-/// Metadosis precompile address. Its registered dispatch serves public view
-/// methods (for example `getWorldwideDay`) to any caller. It also routes the
-/// `submitLysisResult` result-vote selector.
-pub const METADOSIS_ADDRESS: Address = address!("0x000000000000000000000000000000000000100E");
-
-/// Promis limit precompile address. Its registered dispatch serves the public
-/// view method `promisLimit` to any caller.
-pub const PROMIS_LIMIT_ADDRESS: Address = address!("0x000000000000000000000000000000000000100F");
-
-/// Cycle precompile address (system-only). Hosts the storage of the
-/// code-defined trigger registry (`outbe_cycle::schema::Cycle`). The hourly
-/// `ProcessEmissionDay` trigger runs `outbe_cycle::handler::process_emission_day`.
-pub const CYCLE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001010");
-
-/// Checkout Credis Agent registry precompile. Holds agent bonds and daily CCA
-/// emission rewards, and exposes agent standing (`ICcaRegistry.getCcaState`).
-/// See `outbe_ccaregistry::precompile`.
-pub const CCA_REGISTRY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001011");
-
 // ---------------------------------------------------------------------------
-// Validator infrastructure precompiles (0xEE00 range)
+// Protocol core chain addresses
 // ---------------------------------------------------------------------------
 
 /// Validator set management precompile address.
 pub const VALIDATOR_SET_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE00");
 
-/// Slash indicator precompile address.
-pub const SLASH_INDICATOR_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE01");
-
-/// Staking precompile address.
-pub const STAKING_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE02");
-
 /// Rewards precompile address.
 pub const REWARDS_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE03");
 
-/// Accounting progress marker address.
-///
-/// Holds persistent V2 Phase 1 accounting progress (slot 0 =
-/// `last_accounted_block_number: u64`). System-only: there is **no** EVM
-/// precompile dispatch registered at this address, so user transactions
-/// CALLing it execute as no-op accounts. Only the V2 executor Phase 1 path
-/// may write slot 0. The executor's EIP-161 marker-bytecode allowlist
-/// includes the address, so the slot survives state-root computation across
-/// all blocks.
-pub const ACCOUNTING_PROGRESS_ADDRESS: Address =
-    address!("0x000000000000000000000000000000000000EE04");
-
-/// Oracle precompile address.
-pub const ORACLE_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE05");
-
 /// Log emitter address for zero-fee policy rejections.
 ///
-/// When the executor rejects a zero-fee user transaction (e.g.
-/// `Oracle.submitVote`) at stateless classification or stateful
-/// authorization time, it includes the transaction in the block. The
-/// transaction gets a `status=0` receipt that carries one
-/// `OutbeFailure(code, reason)` log emitted from this address. No EVM
-/// execution and no state mutation happen at this address. It is purely a
-/// logical namespace for `eth_getLogs` filtering. The matching log builder, the `OutbeFailure`
-/// event definition, and the zero-fee error -> code mapping live in
-/// `outbe-evm` and `outbe-zerofee` respectively.
+/// When the executor rejects a zero-fee user transaction at stateless
+/// classification or stateful authorization time, it includes the transaction
+/// in the block with a `status=0` receipt carrying one `OutbeFailure(code, reason)`
+/// log emitted from this address. No EVM execution and no state mutation happen
+/// at this address; it is a logical namespace for `eth_getLogs` filtering.
 pub const ZERO_FEE_POLICY_LOG_ADDRESS: Address =
     address!("0x000000000000000000000000000000000000EE06");
 
-/// UltraHonkKeccak proof verifier precompile address (stateless).
-///
-/// Input is `abi.encode(bytes32 circuit_hash, bytes proof)`. The
-/// precompile does a lookup of `circuit_hash` in the shipped L2 tribute table from
-/// `outbe-zk`. It then dispatches verification to the
-/// Barretenberg FFI in `outbe-zk-backend`. Output is 32
-/// bytes: `0x..01` on a valid proof. It is `0x..00` for an unknown circuit
-/// hash or a proof that the verifier rejects. Malformed ABI input, a nonzero
-/// call value, and a verifier-backend error revert.
-pub const ZKPROOF_VERIFY_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE08");
-
 /// ZeroFee paymaster precompile address (stateful).
 ///
-/// Acts as the EIP-7702 delegation target for "void sponsorship". Users
-/// who delegate their EOA to this address may submit up to
-/// `FREE_TX_DAILY_LIMIT` (8) free transactions per UTC day. Hard envelope
-/// limits cap each of these transactions (`gas_limit`, `calldata_size`,
-/// `value == 0`, `to in SPONSORED_TARGET_WHITELIST`). The contract holds a
-/// single `Mapping<Address, u64>` packing `(date_key: u32, count: u32)` per
-/// signer. The reset on day flip is lazy.
-///
-/// View ABI (see `contracts/precompiles/src/IZeroFee.sol` for the authoritative
-/// definition). It has two methods. Both are anchored to the current
-/// block's UTC day, so callers never supply or reconcile the day themselves:
-///   - `authorizeSponsorship(address signer) view returns (bool)` -
-///     `true` if `signer` would be admitted to the sponsored path for
-///     this block (mirrors the executor pre-fee gate: not self,
-///     `balance > 0`, `count < FREE_TX_DAILY_LIMIT` for today).
-///   - `getCounter(address signer) view returns (uint32 day, uint32 count)` -
-///     the effective `(day, count)` for today with the lazy day-reset
-///     already applied (`day` = today, `count` = 0 if the stored slot
-///     is from an earlier day).
-///
-/// The raw packed slot (`date_key << 32 | count`) is readable via
-/// `eth_getStorageAt(ZEROFEE_ADDRESS, slot)` for anyone who needs the
-/// pre-reset value. It is not a precompile method. Only the executor pre-fee
-/// hook invokes the mutating `record_use`. The ABI deliberately does not
-/// expose it, so an attacker cannot burn their own quota via an unrelated
-/// sub-call.
-///
-/// This address holds no native balance. The executor's pre-fee hook simply
-/// skips fee debit when it detects EIP-7702 delegation to this address.
+/// Acts as the EIP-7702 delegation target for void sponsorship. Users who
+/// delegate their EOA to this address may submit sponsored transactions within
+/// configured daily and envelope limits. This address holds no native balance;
+/// the executor's pre-fee hook skips fee debit when EIP-7702 delegation to this
+/// address is authorized.
 pub const ZEROFEE_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE09");
 
-/// TEE Registry precompile (storage-backed KV).
+/// TEE Registry precompile address (storage-backed KV).
 ///
-/// Records the per-validator TEE registration bundle and the global
-/// `tribute_offer_public_key`. The `TeeBootstrap` system transaction writes the
-/// offer key once, natively through `StorageHandle::contract`, not via the
-/// public ABI. The public ABI has view methods (clients fetch the offer key via
-/// `eth_call`). It also has caller-bound mutating methods:
-/// - `registerEnclave`
-/// - `renewEnclave`
-/// - `replaceEnclaveBinding`
-/// - `transitionEnclaveMeasurement`
-/// - `prepareEnclaveUpgrade`
+/// Records per-validator TEE registration bundles and the global threshold
+/// `network_encryption_public_key`. The `TeeBootstrap` system transaction writes
+/// the network encryption key once through `StorageHandle::contract`, while the
+/// public ABI exposes view methods and caller-bound enclave lifecycle methods.
 pub const TEE_REGISTRY_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE0A");
 
 /// On-chain upgrade governance precompile address.
 ///
-/// Hosts proposal/vote state and the active protocol version. Callable
-/// dispatch is registered at `UPDATE_ADDRESS`. Lifecycle activation is wired later.
-/// It also runs approved `upgradeContracts` proposals through
-/// `CROSSCHAIN_BRIDGE_ADDRESS`.
+/// Hosts proposal/vote state and the active protocol version.
 pub const UPDATE_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE0B");
-
-/// Generic on-chain vote precompile address.
-///
-/// Hosts reusable proposal/voting state. Callable dispatch is registered
-/// at `VOTE_ADDRESS`.
-pub const VOTE_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE0C");
-
-/// L2 network registry precompile (storage-backed).
-///
-/// Records each L2's operator address and BLS MinSig group public key (G2,
-/// 96 bytes), keyed by non-zero `chain_id`. `TributeFactory.offerTribute` always
-/// requires a valid root signature and ZK proof from a registered operator.
-/// Registration is governance-only; removal requires the registered owner.
-pub const L2_REGISTRY_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE0E");
-
-/// Stablecoin Factory precompile address.
-///
-/// The public EVM surface is read-only. Creation is available only through the
-/// compile-time Vote target adapter.
-pub const STABLECOIN_FACTORY_ADDRESS: Address =
-    address!("0x000000000000000000000000000000000000EE0F");
-
-/// Shared stablecoin Policy Registry precompile address.
-pub const STABLECOIN_POLICY_REGISTRY_ADDRESS: Address =
-    address!("0x000000000000000000000000000000000000EE10");
 
 /// CodeRegistry precompile address: permissionless append-only registry of
 /// public Heartwood repository ids and approved code-change receipts.
 pub const CODE_REGISTRY_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE11");
 
-/// HyperlaneController precompile address (stateful).
-///
-/// The Hyperlane infrastructure of the owner: the validator set in
-/// the ISMs, liveness, and the domain table. It owns no contract. It asks
-/// `CROSSCHAIN_BRIDGE_ADDRESS` to run its owner calls through `callLocal` and
-/// `callRemote`. Its vote target adds and removes the Hyperlane chains. See
-/// `outbe-hyperlanecontroller`.
-pub const HYPERLANE_CONTROLLER_ADDRESS: Address =
-    address!("0x000000000000000000000000000000000000EE14");
+/// Genesis-reserved two-byte class for dynamic precompile accounts.
+pub const RESERVED_DYNAMIC_PRECOMPILE_PREFIX: [u8; 2] = [0x53, 0xc0];
 
-/// CrosschainBridge precompile address (stateful).
-///
-/// The owner of every multi-chain contract: the ERC-7786 hub, its
-/// gateway adapters, the token bridges and the Hyperlane core contracts
-/// (Mailbox, ProxyAdmin, IGP, ProtocolFee, InterchainAccountRouter, storage
-/// multisig ISM). Through its Interchain Account, it also owns the same
-/// contracts on remote chains. `fund` is the only payable selector (float that
-/// pays ICA fees). It has no vote target: the Update `upgradeContracts` vote
-/// upgrades and configures the contracts through it. See
-/// `outbe-crosschainbridge`.
-pub const CROSSCHAIN_BRIDGE_ADDRESS: Address =
-    address!("0x000000000000000000000000000000000000EE15");
-
-/// Genesis-reserved two-byte class for dynamic stablecoin token addresses.
-pub const STABLECOIN_ADDRESS_PREFIX: [u8; 2] = [0x53, 0xc0];
-
-/// Exact marker bytecode installed at stablecoin fixed and dynamic precompile accounts.
-///
-/// The nonempty legacy byte preserves state under EIP-161 and supports introspection;
-/// native Rust dispatch, not this byte, implements the account.
-pub const STABLECOIN_MARKER_CODE: [u8; 1] = [0xef];
-
-/// Returns whether an address belongs to the reserved dynamic stablecoin class.
-pub const fn is_stablecoin_address(address: Address) -> bool {
-    address.0 .0[0] == STABLECOIN_ADDRESS_PREFIX[0]
-        && address.0 .0[1] == STABLECOIN_ADDRESS_PREFIX[1]
+/// Returns whether an address belongs to the reserved dynamic precompile class.
+pub const fn is_reserved_dynamic_precompile_address(address: Address) -> bool {
+    address.0 .0[0] == RESERVED_DYNAMIC_PRECOMPILE_PREFIX[0]
+        && address.0 .0[1] == RESERVED_DYNAMIC_PRECOMPILE_PREFIX[1]
 }
 
 /// System address used for system-only calls (block hooks).
@@ -280,8 +72,7 @@ pub const OUTBE_SYSTEM_TX_ADDRESS: Address = address!("0xff000000000000000000000
 // ---------------------------------------------------------------------------
 //
 // These addresses hold canonical third-party runtime bytecode pre-allocated at
-// genesis. They execute as ordinary EVM accounts under standard semantics. The
-// precompile lookup in `OutbeEvmFactory::create_evm` does not intercept them.
+// genesis. They execute as ordinary EVM accounts under standard semantics.
 
 /// Arachnid deterministic CREATE2 deployer.
 ///
@@ -306,14 +97,3 @@ pub const ENTRY_POINT_V07_ADDRESS: Address = address!("0x0000000071727De22E5E9d8
 /// `new SenderCreator()`).
 pub const SENDER_CREATOR_V07_ADDRESS: Address =
     address!("0xEFC2c1444eBCC4Db75e7613d20C6a62fF67A167C");
-
-/// Desis precompile address. Runs the Intex auction and clearing engine
-/// (bid ingestion, reveal, clearing, issuance handoff to IntexFactory).
-pub const DESIS_ADDRESS: Address = address!("0x0000000000000000000000000000000000001016");
-
-/// VaultRouter precompile address. Reserve liquidity router: registers
-/// ERC-4626 vaults per asset.
-pub const VAULT_ROUTER_ADDRESS: Address = address!("0x0000000000000000000000000000000000001017");
-
-// 0x0000000000000000000000000000000000001018 is retired; never reassign it.
-// Cutover requires a new genesis or no pending Vote proposals targeting it.

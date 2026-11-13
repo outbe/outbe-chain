@@ -1,7 +1,7 @@
 use alloy_primitives::B256;
 use outbe_primitives::{
     error::Result,
-    storage::{MetadosisMutationPurpose, StorageHandle},
+    storage::{ScopedMutationPurpose, StorageHandle},
 };
 use outbe_tributefactory::worldwideday::ValidatedWwdAggregate;
 
@@ -13,10 +13,10 @@ pub(crate) fn commit_transition<P, R>(
     effect: impl FnOnce(StorageHandle<'_>) -> Result<R>,
 ) -> Result<R>
 where
-    P: MetadosisMutationPurpose,
+    P: ScopedMutationPurpose,
 {
     let command_storage = storage.clone();
-    storage.with_metadosis_mutation::<P, R>(binding, || {
+    storage.with_scoped_mutation::<P, R>(binding, || {
         ValidatedWwdAggregate::load_and_validate(command_storage.clone())?;
         let result = effect(command_storage.clone())?;
         ValidatedWwdAggregate::load_and_validate(command_storage)?;

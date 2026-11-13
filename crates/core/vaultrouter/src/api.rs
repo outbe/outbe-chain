@@ -4,9 +4,9 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{sol, SolCall};
 
-use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
 
 use crate::errors::VaultRouterError;
 

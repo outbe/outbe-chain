@@ -769,7 +769,7 @@ fn brief_auction_duplicate_propagates_without_committed_failure_event() {
         assert_eq!(contract.sched_active_count.read().unwrap(), 1);
     });
 
-    let logs = storage.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
+    let logs = storage.get_events(outbe_system_common::addresses::DESIS_ADDRESS);
     assert_eq!(logs.len(), 1, "the rejected duplicate emits nothing");
     assert!(is_desis_limit_set(&logs[0]));
 }
@@ -809,7 +809,7 @@ fn brief_auction_oversized_limit_returns_typed_rejection() {
         );
     });
 
-    let logs = storage.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
+    let logs = storage.get_events(outbe_system_common::addresses::DESIS_ADDRESS);
     assert_eq!(
         overflow_limit_events(logs),
         vec![
@@ -865,7 +865,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
             AuctionStage::Cancelled
         );
     });
-    let logs = provider.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
+    let logs = provider.get_events(outbe_system_common::addresses::DESIS_ADDRESS);
     assert_eq!(
         overflow_limit_events(logs),
         vec![
@@ -913,7 +913,7 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
         )
         .is_err());
     });
-    let logs = provider.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
+    let logs = provider.get_events(outbe_system_common::addresses::DESIS_ADDRESS);
     assert_eq!(logs.len(), 1, "only the accepted brief emits");
     assert!(is_desis_limit_set(&logs[0]));
 }
@@ -1100,7 +1100,7 @@ fn start_at(
         )
     });
     let cancelled_late = storage
-        .get_events(outbe_primitives::addresses::DESIS_ADDRESS)
+        .get_events(outbe_system_common::addresses::DESIS_ADDRESS)
         .iter()
         .any(|log| {
             IDesis::IntexAuctionCanceled::decode_log_data(log)
@@ -1436,7 +1436,7 @@ fn a_started_day_with_no_result_fails_at_its_last_clearing_time_without_a_messag
         "a failed day sends nothing to the other chains"
     );
     let failed = storage
-        .get_events(outbe_primitives::addresses::DESIS_ADDRESS)
+        .get_events(outbe_system_common::addresses::DESIS_ADDRESS)
         .iter()
         .find_map(|log| IDesis::IntexAuctionFailed::decode_log_data(log).ok())
         .expect("IntexAuctionFailed");
@@ -2066,7 +2066,7 @@ fn start_day(
         )
     });
     let events = storage
-        .get_events(outbe_primitives::addresses::DESIS_ADDRESS)
+        .get_events(outbe_system_common::addresses::DESIS_ADDRESS)
         .clone();
     (stage, unallocated, events)
 }
@@ -2114,7 +2114,7 @@ fn the_load_steps_on_a_day_the_new_load_cancels() {
         );
         assert_eq!(contract.promis_load_exponent.read().unwrap(), 13);
     });
-    let events = storage.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
+    let events = storage.get_events(outbe_system_common::addresses::DESIS_ADDRESS);
     let cancelled = below_one_unit(events).expect("IntexAuctionCanceled below one unit");
     assert_eq!(cancelled.emissionDay, NEXT_EMISSION_DAY.value());
     assert_eq!(cancelled.reason, crate::constants::CANCELED_BELOW_ONE_UNIT);
@@ -2238,7 +2238,7 @@ fn a_failed_day_records_a_zero_desis_allocation() {
         runtime::schedule_tick(&s, ANCHOR + 3 * SECONDS_PER_DAY).unwrap();
     });
 
-    let events = storage.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
+    let events = storage.get_events(outbe_system_common::addresses::DESIS_ADDRESS);
     let records = allocation_records(events);
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].amountMinor, U256::ZERO);
@@ -2296,7 +2296,7 @@ fn a_day_briefed_with_no_limit_is_cancelled_with_no_limit() {
             .unwrap()
     });
     let events = storage
-        .get_events(outbe_primitives::addresses::DESIS_ADDRESS)
+        .get_events(outbe_system_common::addresses::DESIS_ADDRESS)
         .clone();
 
     assert_eq!(stage, AuctionStage::Cancelled);
@@ -2618,7 +2618,7 @@ fn clearing_reports_the_desis_allocation_and_the_unused_limit() {
         assert_eq!(clear(&s).issued_units, 1);
     });
 
-    let logs = storage.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
+    let logs = storage.get_events(outbe_system_common::addresses::DESIS_ADDRESS);
     let records = allocation_records(logs);
     assert_eq!(
         records.len(),
@@ -2687,7 +2687,7 @@ fn force_clear_skips_missing_chain_after_deadline() {
     assert_eq!(cleared, AuctionStage::Completed);
 
     // The missing chain is reported skipped.
-    let desis_addr = outbe_primitives::addresses::DESIS_ADDRESS;
+    let desis_addr = outbe_system_common::addresses::DESIS_ADDRESS;
     let skip_sig = IDesis::BidsExpired::SIGNATURE_HASH;
     let found = storage.get_events(desis_addr).iter().any(|log| {
         log.topics().first() == Some(&skip_sig)
@@ -3126,7 +3126,7 @@ fn ignored_reasons(storage: &HashMapStorageProvider) -> Vec<u8> {
     use alloy_sol_types::SolEvent;
     let sig = crate::precompile::IDesis::BidsIgnored::SIGNATURE_HASH;
     storage
-        .get_events(outbe_primitives::addresses::DESIS_ADDRESS)
+        .get_events(outbe_system_common::addresses::DESIS_ADDRESS)
         .iter()
         .filter(|log| log.topics().first() == Some(&sig))
         .map(|log| {

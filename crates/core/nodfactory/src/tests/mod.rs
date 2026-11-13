@@ -8,10 +8,10 @@ use outbe_nod::{
     api as nod_api, constants::CALL_NOTICE_PERIOD, precompile::INod, NodContract, NodIssueParams,
 };
 use outbe_primitives::{
-    addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS},
     error::PrecompileError,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
+use outbe_system_common::addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS};
 use outbe_system_common::time::WorldwideDay;
 use outbe_system_common::units::SCALE_1E6_U64;
 use outbe_vaultrouter::settlement::SettlementPayment;
@@ -127,14 +127,14 @@ impl World {
         provider.set_timestamp(U256::from(1_700_000_000));
 
         provider.stub_sub_call_at_selector(
-            outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+            outbe_system_common::addresses::VAULT_ROUTER_ADDRESS,
             IVaultRouter::assetVaultsCountCall::SELECTOR,
             Bytes::from(IVaultRouter::assetVaultsCountCall::abi_encode_returns(
                 &U256::ONE,
             )),
         );
         provider.stub_sub_call_at_selector(
-            outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+            outbe_system_common::addresses::VAULT_ROUTER_ADDRESS,
             IVaultRouter::depositCall::SELECTOR,
             Bytes::from(IVaultRouter::depositCall::abi_encode_returns(&U256::ONE)),
         );

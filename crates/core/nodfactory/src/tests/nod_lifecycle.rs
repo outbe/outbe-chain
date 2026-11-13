@@ -8,10 +8,10 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_oracle::{api::AddressPair, schema::OracleContract};
 use outbe_primitives::{
-    addresses::NOD_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
+use outbe_system_common::addresses::NOD_ADDRESS;
 use outbe_system_common::math::constants::MAX_BIN_ID;
 use outbe_system_common::pass_budget::{
     PassBudget, SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK,
@@ -2052,7 +2052,7 @@ fn a_node_local_failure_while_forfeiting_fails_the_slice() {
         register(&storage, ISO);
         arm_lapsed(&storage, &[(0x81, 3, false)]).0
     });
-    provider.fail_mutation_at_address(outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS);
+    provider.fail_mutation_at_address(outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS);
     let result = StorageHandle::enter(&mut provider, |storage| forfeit_pass(&storage, past));
     provider.clear_mutation_failure();
     assert!(matches!(
@@ -2173,7 +2173,7 @@ fn a_call_pass_announces_one_batch_metadata_update() {
     });
 
     let batches: Vec<(U256, U256)> = provider
-        .get_events(outbe_primitives::addresses::NOD_ADDRESS)
+        .get_events(outbe_system_common::addresses::NOD_ADDRESS)
         .iter()
         .filter_map(|log| {
             outbe_nod::precompile::INod::BatchMetadataUpdate::decode_log_data(log).ok()

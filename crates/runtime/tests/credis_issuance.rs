@@ -15,12 +15,12 @@ use outbe_oracle::{
     test_support::{publish_day_type_rate, record_finalized_day_vwap},
 };
 use outbe_primitives::{
-    addresses::{
-        CCA_REGISTRY_ADDRESS, CREDIS_FACTORY_ADDRESS, GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS,
-        VAULT_ROUTER_ADDRESS,
-    },
     chain::CHAIN_ID,
     storage::{StorageHandle, SubCallInput, SubCallStatus},
+};
+use outbe_system_common::addresses::{
+    CCA_REGISTRY_ADDRESS, CREDIS_FACTORY_ADDRESS, GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS,
+    VAULT_ROUTER_ADDRESS,
 };
 use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 use outbe_vaultrouter::{
@@ -538,7 +538,7 @@ fn settle_successful_issuance(
     out: &outbe_primitives::storage::SubCallOutput,
 ) -> eyre::Result<()> {
     use outbe_credis::precompile::ICredis;
-    use outbe_primitives::addresses::CREDIS_ADDRESS;
+    use outbe_system_common::addresses::CREDIS_ADDRESS;
     let credis_id = ICredisFactory::issueCredisCall::abi_decode_returns(&out.returndata)?.credisId;
     call!(
         evm,
@@ -644,7 +644,7 @@ fn assert_payment_credis_and_pledge_unchanged(
     evm: &mut EvmWorld,
     observation: &PaymentObservation,
 ) -> eyre::Result<()> {
-    use outbe_primitives::addresses::CREDIS_ADDRESS;
+    use outbe_system_common::addresses::CREDIS_ADDRESS;
     assert_eq!(
         call!(
             evm,

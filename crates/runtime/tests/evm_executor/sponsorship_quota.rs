@@ -1,7 +1,9 @@
 //! Sponsorship quota is part of the block state only when the transaction is.
 
 use alloy_evm::block::CommitChanges;
-use outbe_primitives::addresses::{AGENT_REWARD_ADDRESS, TRIBUTE_FACTORY_ADDRESS, ZEROFEE_ADDRESS};
+use outbe_system_common::addresses::{
+    AGENT_REWARD_ADDRESS, TRIBUTE_FACTORY_ADDRESS, ZEROFEE_ADDRESS,
+};
 use outbe_zerofee::precompile::IZeroFee::SponsorshipAuthorized;
 
 use super::*;

@@ -39,11 +39,6 @@ use outbe_evm::{
     },
 };
 use outbe_nod::{precompile::INod, NodContract, NodItemState};
-use outbe_primitives::addresses::{
-    CYCLE_ADDRESS, NOD_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS, REWARDS_ADDRESS,
-    SLASH_INDICATOR_ADDRESS, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS,
-    STAKING_ADDRESS, UPDATE_ADDRESS, VOTE_ADDRESS,
-};
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::consensus::{ConsensusExecutionBridge, GenesisValidator, GenesisValidators};
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
@@ -51,7 +46,6 @@ use outbe_primitives::reshare_artifact::{
     decode_outbe_block_artifacts, encode_outbe_block_artifacts, ConsensusHeaderArtifact,
     ExecutionSummaryArtifact, OutbeBlockArtifacts,
 };
-use outbe_primitives::stablecoin_fork::STABLECOIN_CREATE_BOND;
 use outbe_primitives::storage::{
     direct::DirectStorageProvider, hashmap::HashMapStorageProvider, StorageHandle,
 };
@@ -59,9 +53,15 @@ use outbe_primitives::tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID;
 use outbe_primitives::OutbeHeader;
 use outbe_stablecoin::StablecoinContract;
 use outbe_stablecoinfactory::{precompile::IStablecoinFactory, StablecoinFactoryContract};
+use outbe_system_common::addresses::{
+    CYCLE_ADDRESS, NOD_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS, REWARDS_ADDRESS,
+    SLASH_INDICATOR_ADDRESS, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS,
+    STAKING_ADDRESS, UPDATE_ADDRESS, VOTE_ADDRESS,
+};
 use outbe_system_common::stablecoin::{
     encode_canonical_stablecoin_create, StablecoinCreatePayload,
 };
+use outbe_system_common::stablecoin_fork::STABLECOIN_CREATE_BOND;
 use outbe_system_common::time::WorldwideDay;
 use outbe_tee::witness::decode_witness_payload_v1;
 use outbe_tribute::{TributeContract, TributeData};

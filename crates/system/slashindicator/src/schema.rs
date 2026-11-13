@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256};
 use outbe_macros::contract;
-use outbe_primitives::addresses::SLASH_INDICATOR_ADDRESS;
 use outbe_primitives::storage::types::{Mapping, Slot};
+use outbe_system_common::addresses::SLASH_INDICATOR_ADDRESS;
 
 /// EVM storage layout for the SlashIndicator precompile.
 ///

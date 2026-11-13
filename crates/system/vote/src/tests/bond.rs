@@ -1,9 +1,9 @@
 use alloy_primitives::U256;
 use alloy_sol_types::SolError;
-use outbe_primitives::addresses::{UPDATE_ADDRESS, VOTE_ADDRESS};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::dsl::StorageRecord;
 use outbe_primitives::storage::types::StorageKey;
+use outbe_system_common::addresses::{UPDATE_ADDRESS, VOTE_ADDRESS};
 
 use crate::errors::VoteError;
 use crate::precompile::IVote;

@@ -28,7 +28,6 @@ pub mod radicle_publication;
 pub mod reshare_artifact;
 pub mod runtime_audit_v1;
 pub mod signer;
-pub mod stablecoin_fork;
 pub mod storage;
 pub mod system_tx;
 pub mod system_tx_context;

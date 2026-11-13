@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolError};
 
-use outbe_primitives::addresses::VOTE_ADDRESS;
+use crate::addresses::VOTE_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::dsl::{Map, RecordEntry, StorageRecord};
