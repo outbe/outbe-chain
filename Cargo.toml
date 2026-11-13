@@ -376,6 +376,8 @@ postcard = { version = "1", default-features = false, features = ["use-std"] }
 clap = { version = "4", features = ["derive", "env"] }
 jsonrpsee = { version = "0.26", features = ["server", "macros"] }
 reqwest = { version = "0.12", features = ["json"] }
+# Security floor for RUSTSEC-2026-0538 (via reqwest 0.13 -> quinn)
+quinn-udp = "0.5.16"
 
 # Runtime
 rand = "0.8"
