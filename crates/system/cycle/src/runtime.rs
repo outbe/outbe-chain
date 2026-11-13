@@ -13,10 +13,9 @@ use outbe_primitives::{
 };
 
 use crate::errors::CycleError;
-use crate::handler::{protocol_day_action, ProtocolDayAction};
 use crate::schema::Cycle;
 use crate::state::{accounting_gate_blocks, EvmAccountingProgress};
-use crate::triggers::{active_triggers, last_fire_at, next_fire_at, TriggerId, TriggerSpec};
+use crate::triggers::{active_triggers, last_fire_at, next_fire_at, Readiness, TriggerSpec};
 use crate::ICycle;
 
 /// Protocol module for the begin-block cycle step.
@@ -193,10 +192,11 @@ fn dispatch_triggers_inner(ctx: &BlockRuntimeContext, triggers: &[TriggerSpec]) 
             #[cfg(feature = "test-utils")]
             TRIGGER_GAS_SAMPLES.with(|samples| samples.borrow_mut().push((spec.id, consumed)));
             match result {
-                Ok(()) => {
+                Ok(Readiness::Done) => {
                     record_executed(ctx, spec, slot)?;
                     outcomes[index] = WalkOutcome::Executed;
                 }
+                Ok(Readiness::NotReady) => {}
                 Err(PrecompileError::TriggerBudgetExceeded {
                     consumed_gas,
                     budget_gas,
@@ -334,7 +334,7 @@ fn due_slot(ctx: &BlockRuntimeContext, spec: &TriggerSpec) -> Result<Option<DueS
         spec.start_offset_seconds,
         last_executed_at,
     )?;
-    if block_ts < scheduled_at || slot_deferred(ctx, spec, &cycle)? {
+    if block_ts < scheduled_at || slot_deferred(ctx, spec)? {
         return Ok(None);
     }
 
@@ -368,7 +368,7 @@ fn anchor_first_encounter(ctx: &BlockRuntimeContext, spec: &TriggerSpec) -> Resu
 
 /// Returns `true` when a due slot of `spec` must stay pending until a later
 /// block. The deferral changes no state.
-fn slot_deferred(ctx: &BlockRuntimeContext, spec: &TriggerSpec, cycle: &Cycle<'_>) -> Result<bool> {
+fn slot_deferred(ctx: &BlockRuntimeContext, spec: &TriggerSpec) -> Result<bool> {
     // refuse to fire a gated trigger until Phase 1
     // has accounted the parent block. Under the V2 reorder,
     // Phase 1 commits BEFORE Phase 2 (`CycleTick`). Thus
@@ -388,33 +388,5 @@ fn slot_deferred(ctx: &BlockRuntimeContext, spec: &TriggerSpec, cycle: &Cycle<'_
         );
         return Ok(true);
     }
-    protocol_cycle_awaits_late_window(ctx, spec, cycle)
-}
-
-/// At midnight, keep the protocol slot pending until the previous day's final
-/// late-vote window has executed. Other triggers retain their own cadence.
-/// This gate uses no sleep or wall-clock timer.
-fn protocol_cycle_awaits_late_window(
-    ctx: &BlockRuntimeContext,
-    spec: &TriggerSpec,
-    _cycle: &Cycle<'_>,
-) -> Result<bool> {
-    if spec.id != TriggerId::ProtocolCycle.as_u32() {
-        return Ok(false);
-    }
-    let active_utc_day = crate::handler::derive_active_utc_day(
-        ctx.storage.clone(),
-        ctx.block.genesis_timestamp,
-        ctx.block.timestamp,
-    )?;
-    let day_action = protocol_day_action(
-        active_utc_day,
-        outbe_primitives::time::timestamp_to_date_key(ctx.block.timestamp),
-    )?;
-    match day_action {
-        ProtocolDayAction::SettlePrevious { day } => {
-            Ok(!outbe_rewards::api::is_voting_complete(ctx, day)?)
-        }
-        ProtocolDayAction::SameDay => Ok(false),
-    }
+    Ok(false)
 }

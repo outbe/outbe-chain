@@ -73,6 +73,14 @@ pub struct TriggerSpec {
     pub handler: TriggerHandler,
 }
 
+/// What a task answers when it runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Readiness {
+    Done,
+    /// The task changed nothing; the runner keeps its slot and runs it in the next block.
+    NotReady,
+}
+
 #[derive(Clone, Copy)]
 pub enum TriggerHandler {
     #[cfg(test)]
@@ -131,18 +139,19 @@ impl TriggerSpec {
 }
 
 impl TriggerHandler {
-    pub(crate) fn run(self, ctx: &BlockRuntimeContext) -> Result<()> {
-        match self {
+    pub(crate) fn run(self, ctx: &BlockRuntimeContext) -> Result<Readiness> {
+        let done = match self {
             #[cfg(test)]
             Self::Test(handler) => handler(ctx),
-            Self::ProtocolCycle => crate::handler::run_protocol_cycle(ctx),
+            Self::ProtocolCycle => return crate::handler::run_protocol_cycle(ctx),
             Self::ScheduleIntexCallPass => outbe_intexfactory::called::schedule_call_pass(ctx),
             Self::AdvanceAuctions => outbe_desis::advance_auctions(ctx),
             Self::ScheduleGemCallPass => outbe_gemfactory::called::schedule_call_pass(ctx),
             Self::CompleteAuctions => outbe_desis::complete_auctions(ctx),
             Self::ScheduleCredisCallPass => outbe_credisfactory::called::schedule_call_pass(ctx),
             Self::ScheduleNodCallPass => outbe_nodfactory::called::schedule_call_pass(ctx),
-        }
+        };
+        done.map(|()| Readiness::Done)
     }
 }
 

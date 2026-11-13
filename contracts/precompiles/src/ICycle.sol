@@ -9,7 +9,6 @@ interface ICycle {
     error InvalidBlockUtcDay(uint32 active, uint32 blockDay);
     error ActiveUtcDayAfterBlock(uint32 active, uint32 blockDay);
     error NativeValidatorBudgetOverflow();
-    error SettlementBeforeParticipationWindowsClose();
     error DailySettledWithoutMetadosisReceipt();
     error MetadosisReceiptWithoutDailySettled();
     error MetadosisTerminalOverflow();

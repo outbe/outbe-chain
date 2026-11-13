@@ -25,7 +25,7 @@ use outbe_primitives::{
     },
 };
 
-use crate::{errors::CycleError, schema::Cycle, ICycle};
+use crate::{errors::CycleError, schema::Cycle, triggers::Readiness, ICycle};
 
 /// Maximum number of completed UTC days that `derive_active_utc_day` scans backward
 /// and catches up (one oldest unsettled day per block, OIP-00343).
@@ -285,12 +285,8 @@ enum DaySettlement {
     Settled,
 }
 
-/// Checks the settlement preconditions and the `EmissionDay` state of `prev_day`.
+/// Reads the `EmissionDay` state of `prev_day`.
 fn day_settlement(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<DaySettlement> {
-    if !outbe_rewards::api::is_voting_complete(ctx, prev_day)? {
-        return Err(CycleError::SettlementBeforeParticipationWindowsClose.into());
-    }
-
     let settled = outbe_emission::api::get_emission_day_record(ctx.storage.clone(), prev_day)
         .map_err(|e| {
             tracing::error!(target: "outbe::cycle", step = "get_emission_day_record", prev_day, error = ?e, "emission_limit_daily step failed");
@@ -505,14 +501,15 @@ fn record_failed_metadosis_fallback(ctx: &BlockRuntimeContext, day: u32) -> Resu
         .with_checkpoint(|| outbe_metadosis::commands::fail_metadosis(ctx, day))
 }
 
-/// Runs the single hourly protocol orchestration entry point (`OIP-00343`):
+/// Runs the single hourly protocol orchestration entry point (`OIP-00343`). Until the votes of
+/// the day to allocate are sealed, it changes nothing and answers not ready.
 /// 1. `settle_emission_day` (step A4) for the oldest unallocated day `E_next` in its own
 ///    checkpoint with fallback to `record_failed_day_allocation` + `PromisLimit`.
 /// 2. `advance_worldwide_days` (step A6) once per UTC day at 00:00 UTC in its own checkpoint,
 ///    logging the cause and retrying on the next hour if it reverts.
 /// 3. `start_metadosis` (step A7) for the oldest `state == PROCESSING` day in its own checkpoint
 ///    with fallback to `record_metadosis_failed` + `PromisLimit`.
-pub fn run_protocol_cycle(ctx: &BlockRuntimeContext) -> Result<()> {
+pub fn run_protocol_cycle(ctx: &BlockRuntimeContext) -> Result<Readiness> {
     run_protocol_cycle_steps(ctx).map_err(fail_block)
 }
 
@@ -527,7 +524,7 @@ fn fail_block(err: PrecompileError) -> PrecompileError {
     }
 }
 
-fn run_protocol_cycle_steps(ctx: &BlockRuntimeContext) -> Result<()> {
+fn run_protocol_cycle_steps(ctx: &BlockRuntimeContext) -> Result<Readiness> {
     let block_utc_day = timestamp_to_date_key(ctx.block.timestamp);
     let active_utc_day = derive_active_utc_day(
         ctx.storage.clone(),
@@ -539,6 +536,9 @@ fn run_protocol_cycle_steps(ctx: &BlockRuntimeContext) -> Result<()> {
     match day_action {
         ProtocolDayAction::SameDay => {}
         ProtocolDayAction::SettlePrevious { day } => {
+            if !outbe_rewards::api::is_voting_complete(ctx, day)? {
+                return Ok(Readiness::NotReady);
+            }
             run_allocate_emission_day_step(ctx, day)?;
         }
     }
@@ -556,7 +556,7 @@ fn run_protocol_cycle_steps(ctx: &BlockRuntimeContext) -> Result<()> {
         day_action = ?day_action,
         "protocol cycle completed"
     );
-    Ok(())
+    Ok(Readiness::Done)
 }
 
 #[cfg(test)]

@@ -33,8 +33,6 @@ pub enum CycleError {
     ActiveUtcDayAfterBlock { active: u32, block: u32 },
     #[error("native validator budget overflow")]
     NativeValidatorBudgetOverflow,
-    #[error("Cycle settlement before reward participation windows close")]
-    SettlementBeforeParticipationWindowsClose,
     #[error("Cycle daily_settled marker has no Metadosis day-limit semantic receipt")]
     DailySettledWithoutMetadosisReceipt,
     #[error("Metadosis day-limit semantic receipt has no Cycle daily_settled marker")]
@@ -108,9 +106,6 @@ impl From<CycleError> for PrecompileError {
             CycleError::NativeValidatorBudgetOverflow => PrecompileError::RevertBytes(Bytes::from(
                 ICycle::NativeValidatorBudgetOverflow {}.abi_encode(),
             )),
-            CycleError::SettlementBeforeParticipationWindowsClose => PrecompileError::RevertBytes(
-                Bytes::from(ICycle::SettlementBeforeParticipationWindowsClose {}.abi_encode()),
-            ),
             CycleError::DailySettledWithoutMetadosisReceipt => PrecompileError::RevertBytes(
                 Bytes::from(ICycle::DailySettledWithoutMetadosisReceipt {}.abi_encode()),
             ),
@@ -222,10 +217,6 @@ mod tests {
             (
                 CycleError::NativeValidatorBudgetOverflow,
                 ICycle::NativeValidatorBudgetOverflow::SELECTOR,
-            ),
-            (
-                CycleError::SettlementBeforeParticipationWindowsClose,
-                ICycle::SettlementBeforeParticipationWindowsClose::SELECTOR,
             ),
             (
                 CycleError::DailySettledWithoutMetadosisReceipt,
