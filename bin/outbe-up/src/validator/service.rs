@@ -33,8 +33,27 @@ pub fn enclave() -> Result<()> {
             command.current_dir(&sgx);
             command
         }
+        "gramine-direct-dev" => {
+            let root = Path::new(process::ROOT);
+            let network_binding = required_env("OUTBE_DEV_NETWORK_BINDING")?;
+            let mut command = Command::new(root.join("outbe-tee-enclave-mock"));
+            command
+                .current_dir(root)
+                .env(
+                    "TEE_DEV_DKG_SEED",
+                    private_hex(&root.join("tee/dev-dkg-seed.hex"))?,
+                )
+                .env(
+                    "TEE_DEV_OFFER_SECRET",
+                    private_hex(&root.join("tee/dev-offer-secret.hex"))?,
+                )
+                .args(["--dev-network-binding", &network_binding]);
+            command
+        }
         _ => {
-            bail!("OUTBE_ENCLAVE_RUNTIME must be system-gramine or bundled-sgx");
+            bail!(
+                "OUTBE_ENCLAVE_RUNTIME must be system-gramine, bundled-sgx, or gramine-direct-dev"
+            );
         }
     };
     let tee_dir = if runtime == "bundled-sgx" {
@@ -171,6 +190,24 @@ fn required_env(name: &str) -> Result<String> {
         .ok()
         .filter(|value| !value.is_empty())
         .ok_or_else(|| eyre::eyre!("missing environment variable: {name}"))
+}
+
+fn private_hex(path: &Path) -> Result<String> {
+    let value = fs::read_to_string(path).wrap_err_with(|| {
+        format!(
+            "failed to read development enclave secret: {}",
+            path.display()
+        )
+    })?;
+    ensure!(
+        value.len() == 64
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+        "development enclave secret is not canonical: {}",
+        path.display()
+    );
+    Ok(value)
 }
 
 fn valid_key(value: &str) -> bool {

@@ -21,6 +21,7 @@ const ENV_KEYS: &[&str] = &[
     "OUTBE_CONSENSUS_PEERS",
     "OUTBE_CONSENSUS_EXTRA_ARGS",
     "OUTBE_ENCLAVE_RUNTIME",
+    "OUTBE_DEV_NETWORK_BINDING",
     "OUTBE_CHAIN_ID",
 ];
 
@@ -34,7 +35,7 @@ pub fn run() -> Result<()> {
     let environment = read_environment(&env_path)?;
     validate_environment(&environment)?;
     validate_runtime(root, &environment)?;
-    validate_bundle(root)?;
+    validate_bundle(root, &environment)?;
 
     if environment["OUTBE_ENCLAVE_RUNTIME"] == "system-gramine" {
         install_system_gramine_paths(root)?;
@@ -103,11 +104,12 @@ fn read_environment(path: &Path) -> Result<BTreeMap<String, String>> {
             "duplicate validator.env key: {name}"
         );
     }
-    for name in ENV_KEYS
-        .iter()
-        .copied()
-        .filter(|name| !matches!(*name, "OUTBE_CONSENSUS_EXTRA_ARGS"))
-    {
+    for name in ENV_KEYS.iter().copied().filter(|name| {
+        !matches!(
+            *name,
+            "OUTBE_CONSENSUS_EXTRA_ARGS" | "OUTBE_DEV_NETWORK_BINDING"
+        )
+    }) {
         ensure!(
             values.get(name).is_some_and(|value| !value.is_empty()),
             "missing {name} in validator.env"
@@ -154,6 +156,15 @@ fn validate_environment(values: &BTreeMap<String, String>) -> Result<()> {
         !peers.is_empty() && peers.iter().all(|peer| valid_peer(peer)),
         "OUTBE_CONSENSUS_PEERS is invalid"
     );
+    if values["OUTBE_ENCLAVE_RUNTIME"] == "gramine-direct-dev" {
+        ensure!(
+            values["OUTBE_DEV_NETWORK_BINDING"].len() == 132
+                && values["OUTBE_DEV_NETWORK_BINDING"]
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit()),
+            "OUTBE_DEV_NETWORK_BINDING must be a canonical 66-byte hex value"
+        );
+    }
     Ok(())
 }
 
@@ -180,14 +191,21 @@ fn validate_runtime(root: &Path, environment: &BTreeMap<String, String>) -> Resu
                 required_file(&root.join("sgx").join(relative))?;
             }
         }
+        "gramine-direct-dev" => {
+            required_executable(&root.join("outbe-tee-enclave-mock"))?;
+            canonical_key(&root.join("tee/dev-dkg-seed.hex"))?;
+            canonical_key(&root.join("tee/dev-offer-secret.hex"))?;
+        }
         _ => {
-            bail!("OUTBE_ENCLAVE_RUNTIME must be system-gramine or bundled-sgx");
+            bail!(
+                "OUTBE_ENCLAVE_RUNTIME must be system-gramine, bundled-sgx, or gramine-direct-dev"
+            );
         }
     }
     Ok(())
 }
 
-fn validate_bundle(root: &Path) -> Result<()> {
+fn validate_bundle(root: &Path, environment: &BTreeMap<String, String>) -> Result<()> {
     required_file(&root.join("genesis.json"))?;
     for name in [
         "outbe-up",
@@ -196,9 +214,12 @@ fn validate_bundle(root: &Path) -> Result<()> {
         "outbe-keygen",
         "outbe-feeder",
         "outbe-radicle",
-        "outbe-tee-enclave",
     ] {
         required_executable(&root.join(name))?;
+    }
+    match environment["OUTBE_ENCLAVE_RUNTIME"].as_str() {
+        "gramine-direct-dev" => required_executable(&root.join("outbe-tee-enclave-mock"))?,
+        _ => required_executable(&root.join("outbe-tee-enclave"))?,
     }
     Ok(())
 }
