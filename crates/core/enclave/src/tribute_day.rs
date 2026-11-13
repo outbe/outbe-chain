@@ -197,9 +197,20 @@ struct PricedTributes<'a> {
 }
 
 fn collect_priced_tributes<'a>(
+    network_secret: &[u8; 32],
     tribute_state_key: &[u8; 32],
     request: &'a LysisFractionsRequestV1,
 ) -> Result<PricedTributes<'a>> {
+    let day_nominal = &request.day_nominal;
+    if day_nominal.chain_id != request.chain_id
+        || day_nominal.worldwide_day != request.worldwide_day
+        || !day_nominal.frozen
+    {
+        return Err(TributeDayRejectReason::InvalidDayPredecessor.into());
+    }
+    let frozen_nominal = read_day_amount(network_secret, day_nominal)?;
+    let mut day_total = U256::ZERO;
+    let mut previous_id = None;
     let mut priced = PricedTributes {
         tributes: Vec::new(),
         groups: BTreeMap::new(),
@@ -213,10 +224,16 @@ fn collect_priced_tributes<'a>(
         {
             return Err(TributeDayRejectReason::TributeWrongDayOrChain.into());
         }
+        let tribute_id = input.tribute.context.tribute_id;
+        if previous_id.is_some_and(|previous| previous >= tribute_id) {
+            return Err(TributeDayRejectReason::LysisTributesDifferFromDayNominal.into());
+        }
+        previous_id = Some(tribute_id);
+        let nominal = decrypt_tribute(tribute_state_key, &input.tribute)?.nominal_amount_minor;
+        day_total = day_total.checked_add(nominal).ok_or_else(overflow)?;
         let Some(scope) = input.series_scope else {
             continue;
         };
-        let nominal = decrypt_tribute(tribute_state_key, &input.tribute)?.nominal_amount_minor;
         let group = priced
             .groups
             .entry(input.league.max(1))
@@ -226,6 +243,9 @@ fn collect_priced_tributes<'a>(
         priced.count = priced.count.checked_add(1).ok_or_else(overflow)?;
         priced.nominal = priced.nominal.checked_add(nominal).ok_or_else(overflow)?;
         priced.tributes.push((input, scope, nominal));
+    }
+    if day_total != frozen_nominal {
+        return Err(TributeDayRejectReason::LysisTributesDifferFromDayNominal.into());
     }
     Ok(priced)
 }
@@ -311,7 +331,7 @@ pub fn execute_lysis_fractions(
     nod_state_key: &[u8; 32],
     request: &LysisFractionsRequestV1,
 ) -> Result<LysisFractionsResultV1> {
-    let priced = collect_priced_tributes(tribute_state_key, request)?;
+    let priced = collect_priced_tributes(network_secret, tribute_state_key, request)?;
     let (gratis_demand_minor, lysis_limit_minor) =
         outbe_lysis::day_limit::lysis_limit_of_day(priced.nominal, request.metadosis_limit_minor)
             .ok_or(TributeDayRejectReason::LysisFractionComputationFailed)?;

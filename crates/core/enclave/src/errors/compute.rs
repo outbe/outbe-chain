@@ -217,6 +217,8 @@ pub enum TributeDayRejectReason {
     InvalidDayFractionsRecord,
     #[error("Lysis fraction computation failed")]
     LysisFractionComputationFailed,
+    #[error("Lysis Tributes differ from the frozen day nominal")]
+    LysisTributesDifferFromDayNominal,
     #[error("invalid Nod group load predecessor")]
     InvalidNodGroupLoadPredecessor,
     #[error("Nod group load overflow or underflow")]

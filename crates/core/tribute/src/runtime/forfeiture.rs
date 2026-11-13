@@ -36,7 +36,9 @@ fn collect_lysis_tributes(
 )> {
     let mut tributes = Vec::new();
     let mut series_meta = SeriesMetaMap::new();
-    for tribute_id in contract.get_tribute_ids_by_day(day)? {
+    let mut tribute_ids = contract.get_tribute_ids_by_day(day)?;
+    tribute_ids.sort();
+    for tribute_id in tribute_ids {
         let Some(record) = crate::state_api::get_retained_record(storage, tribute_id)? else {
             continue;
         };
@@ -103,6 +105,9 @@ pub(super) fn compute_and_record_metadosis_fractions(
         Some(_) => {}
         None => contract.day_emission_day.write(&day, emission_day)?,
     }
+    let day_nominal = contract
+        .day_amount_record(day, true)?
+        .ok_or(TributeError::InvalidEncryptedDayIdentity)?;
     let (tributes, series_meta) =
         collect_lysis_tributes(contract, &storage, day, emission_day, priced)?;
     let result = crate::enclave_client::execute_lysis_fractions(
@@ -112,6 +117,7 @@ pub(super) fn compute_and_record_metadosis_fractions(
             emission_day,
             metadosis_limit_minor,
             completed_at,
+            day_nominal,
             tributes,
         },
     )

@@ -91,7 +91,10 @@ pub struct LysisFractionsRequestV1 {
     pub emission_day: EmissionDate,
     pub completed_at: u64,
     pub metadosis_limit_minor: U256,
-    /// A Tribute without a series scope is unpriced: it is left out of the groups and the nominal.
+    /// The frozen nominal of every Tribute of the day, priced or not.
+    pub day_nominal: EncryptedTributeDayAmountV2,
+    /// Every Tribute of the day by ascending id. One without a series scope is unpriced: it is
+    /// left out of the groups and the nominal.
     pub tributes: Vec<LysisTributeInputV1>,
 }
 

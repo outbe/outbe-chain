@@ -470,6 +470,73 @@ fn lysis_keys_its_result_by_the_emission_day_and_binds_the_nod_to_it() {
 }
 
 #[test]
+fn the_enclave_refuses_a_lysis_list_that_differs_from_the_frozen_day_nominal() {
+    let mut provider = HashMapStorageProvider::new(1);
+    let completed_at = 1_750_000_000u64;
+    provider.set_timestamp(U256::from(completed_at));
+    provider.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 3);
+    let first = sample_tribute();
+    let mut second = sample_tribute();
+    set_owner(
+        &mut second,
+        address!("0x2222222222222222222222222222222222222222"),
+    );
+    let day = first.worldwide_day;
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let _enclave = crate::enclave_client::test_enclave::scope();
+        let mut tc = TributeContract::new(storage.clone());
+        tc.issue_with_league(&first, Some(100)).unwrap();
+        tc.issue_with_league(&second, Some(100)).unwrap();
+        in_process_ready(&storage, || tc.seal_day(day));
+        in_process_ready(&storage, || tc.freeze_day_nominal(&tc.get_day_totals(day)?));
+        let mut ids = [first.tribute_id, second.tribute_id];
+        ids.sort();
+        let inputs: Vec<_> = ids
+            .iter()
+            .map(|id| outbe_tee::tribute_day::LysisTributeInputV1 {
+                tribute: tc
+                    .get_record(*id)
+                    .unwrap()
+                    .unwrap()
+                    .encrypted()
+                    .unwrap()
+                    .clone(),
+                league: 100,
+                series_scope: None,
+            })
+            .collect();
+        let lysis = |tributes| {
+            crate::enclave_client::execute_lysis_fractions(
+                outbe_tee::tribute_day::LysisFractionsRequestV1 {
+                    chain_id: storage.chain_id().unwrap(),
+                    worldwide_day: day,
+                    emission_day: EmissionDate::new(20241221),
+                    completed_at,
+                    metadosis_limit_minor: U256::from(1_000u64),
+                    day_nominal: tc.day_amount_record(day, true).unwrap().unwrap(),
+                    tributes,
+                },
+            )
+        };
+
+        assert!(lysis(inputs.clone()).is_ok());
+        let (a, b) = (inputs[0].clone(), inputs[1].clone());
+        for tributes in [
+            vec![a.clone()],
+            vec![a.clone(), a.clone(), b.clone()],
+            vec![b, a],
+        ] {
+            let refused = lysis(tributes).unwrap_err();
+            assert!(
+                refused.to_string().contains("frozen day nominal"),
+                "{refused}"
+            );
+        }
+    });
+}
+
+#[test]
 fn series_sealing_zero_nod_forfeit_returns_unclaimed_load_and_enables_permissionless_clean() {
     use alloy_sol_types::SolCall;
 
