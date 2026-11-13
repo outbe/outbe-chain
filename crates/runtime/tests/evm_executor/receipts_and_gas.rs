@@ -490,7 +490,7 @@ fn cycle_tick_gas_regression_exercises_dense_agentreward_state() {
         "Cycle calibration: validators={DENSE_VALIDATOR_COUNT}, addresses_per_pool={DENSE_ADDRESS_COUNT}, gross={gross_gas}, net={net_gas}, visible={cycle_gas}"
     );
     let samples = outbe_cycle::runtime::take_task_gas_samples();
-    eprintln!("Dense simultaneous trigger gross: {samples:?}");
+    eprintln!("Dense simultaneous task gross: {samples:?}");
     eprintln!(
         "Dense Cycle body: {:?}",
         outbe_cycle::runtime::take_cycle_gas_samples()

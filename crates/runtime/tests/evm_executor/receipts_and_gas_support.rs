@@ -433,7 +433,7 @@ pub(super) fn run_prefix_checked(
         assert!(gross >= handlers);
     }
     eprintln!(
-        "CALIBRATION {label}: phases={phases:?}, triggers={samples:?}, body={body:?}, aggregate={}",
+        "CALIBRATION {label}: phases={phases:?}, tasks={samples:?}, body={body:?}, aggregate={}",
         executor.system_tx_gross_gas
     );
     assert!(
@@ -445,7 +445,7 @@ pub(super) fn run_prefix_checked(
         .flat_map(|receipt| receipt.logs.clone())
         .collect();
     if verify_deferred {
-        assert_deferred_trigger_logs(&logs, &samples, block, executor.system_tx_gross_gas);
+        assert_deferred_task_logs(&logs, &samples, block, executor.system_tx_gross_gas);
         let receipts_before = executor.receipts().len();
         let gross_before = executor.system_tx_gross_gas;
         executor
@@ -616,7 +616,7 @@ pub(crate) fn queue_accepted_cleanup(storage: StorageHandle<'_>, chains: u32) {
     auction.queue_intake_cleanup(day).unwrap();
 }
 
-fn assert_deferred_trigger_logs(
+fn assert_deferred_task_logs(
     logs: &[Log],
     samples: &[(u32, u64)],
     block: u64,
