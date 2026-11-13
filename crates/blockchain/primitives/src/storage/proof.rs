@@ -41,7 +41,7 @@ pub struct StateProofLimits {
     pub max_bytes: usize,
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum StateProofError {
     #[error("state proof opens a different account")]
     WrongAccount,

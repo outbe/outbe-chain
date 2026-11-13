@@ -1,5 +1,8 @@
 //! Network-key-only encrypted NOD commands.
-use super::tribute::{resident_chain_id, response};
+use super::{
+    requests::{DomainDispatchError, DomainDispatchResult},
+    tribute::{resident_chain_id, response},
+};
 use crate::{
     errors::{EnclaveResult, TeeError, TransportDispatchError},
     keys::EnclaveKeys,
@@ -23,7 +26,7 @@ pub(super) fn mine(
     offer: &SharedTributeOfferKey,
     chain: B256,
     request: &MineEncryptedNodRequestV1,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     response((|| -> EnclaveResult<EnclaveResponse> {
         let key = offer
             .get()
@@ -66,11 +69,11 @@ pub(super) fn read_amount(
     offer: &SharedTributeOfferKey,
     chain: B256,
     nod: &EncryptedNodV1,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     let Some(key) = offer.get() else {
-        return EnclaveResponse::NotReady {
-            message: "no resident network key".into(),
-        };
+        return Err(DomainDispatchError::NotReady(
+            "no resident network key".into(),
+        ));
     };
     response((|| -> EnclaveResult<EnclaveResponse> {
         if nod.terms.chain_id != resident_chain_id(chain)? {
@@ -102,7 +105,7 @@ pub(super) fn encrypt_for_tribute(
     offer: &SharedTributeOfferKey,
     chain: B256,
     input: NodTributeInput<'_>,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     response((|| -> EnclaveResult<EnclaveResponse> {
         let key = offer
             .get()
@@ -144,7 +147,7 @@ pub(super) fn issue_from_tribute(
     offer: &SharedTributeOfferKey,
     chain: B256,
     request: &IssueNodFromTributeRequestV1,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     response((|| -> EnclaveResult<EnclaveResponse> {
         let key = offer
             .get()
@@ -182,7 +185,7 @@ pub(super) fn apply_group_load_op(
     offer: &SharedTributeOfferKey,
     chain: B256,
     request: &NodGroupLoadOpRequestV1,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     response((|| -> EnclaveResult<EnclaveResponse> {
         let key = offer
             .get()
@@ -211,11 +214,11 @@ pub(super) fn read_group_load(
     offer: &SharedTributeOfferKey,
     chain: B256,
     record: &EncryptedNodGroupLoadV1,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     let Some(key) = offer.get() else {
-        return EnclaveResponse::NotReady {
-            message: "no resident network key".into(),
-        };
+        return Err(DomainDispatchError::NotReady(
+            "no resident network key".into(),
+        ));
     };
     response((|| -> EnclaveResult<EnclaveResponse> {
         if record.chain_id != resident_chain_id(chain)? {
@@ -241,7 +244,7 @@ pub(super) fn encrypt_quote(
     offer: &SharedTributeOfferKey,
     chain: B256,
     (nod, context, payment_minor): (&EncryptedNodV1, &NodQuoteContextV1, alloy_primitives::U256),
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     response((|| -> EnclaveResult<EnclaveResponse> {
         let key = offer
             .get()
@@ -278,7 +281,7 @@ pub(super) fn execute_lysis(
     offer: &SharedTributeOfferKey,
     chain: B256,
     request: &outbe_enclave::lysis::LysisRequest,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     response((|| -> EnclaveResult<EnclaveResponse> {
         let key = offer
             .get()
@@ -332,7 +335,7 @@ mod tests {
         let chain = B256::from(alloy_primitives::U256::ONE);
         assert!(matches!(
             execute_lysis(&keys, &offer, chain, &request),
-            EnclaveResponse::Error { .. }
+            Err(DomainDispatchError::Error(_))
         ));
         assert!(offer
             .set(DerivedTributeOfferKey::for_test(
@@ -344,7 +347,7 @@ mod tests {
             .is_ok());
         assert!(matches!(
             execute_lysis(&keys, &offer, B256::ZERO, &request),
-            EnclaveResponse::Error { .. }
+            Err(DomainDispatchError::Error(_))
         ));
         let response = crate::transport::dispatch_domain(
             EnclaveRequest::ExecuteLysis {
@@ -353,7 +356,8 @@ mod tests {
             &keys,
             &offer,
             chain,
-        );
+        )
+        .expect("ready encrypted Nods");
         let EnclaveResponse::LysisExecuted {
             result,
             inputs_canonical_hash,
@@ -405,7 +409,7 @@ mod tests {
         let EnclaveResponse::LysisRejected {
             inputs_canonical_hash,
             attestation_tag,
-        } = execute_lysis(&keys, &offer, chain, &request)
+        } = execute_lysis(&keys, &offer, chain, &request).expect("signed calculation rejection")
         else {
             panic!("expected signed calculation rejection");
         };
@@ -428,7 +432,7 @@ mod tests {
         request.tributes.last_mut().unwrap().encrypted_amounts[20] ^= 1;
         assert!(matches!(
             execute_lysis(&keys, &offer, chain, &request),
-            EnclaveResponse::Error { .. }
+            Err(DomainDispatchError::Error(_))
         ));
     }
 }

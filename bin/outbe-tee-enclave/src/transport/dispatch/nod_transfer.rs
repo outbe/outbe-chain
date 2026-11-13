@@ -1,4 +1,5 @@
 //! Bounded temporary transfer buffers, never economic authority or key caches.
+use super::requests::{DomainDispatchError, DomainDispatchResult};
 use crate::{
     errors::{EnclaveResult, TransportDispatchError},
     keys::EnclaveKeys,
@@ -9,6 +10,7 @@ use outbe_enclave::{
     nod_transport::{MAX_TRANSFER_BYTES, TRANSFER_CHUNK_BYTES},
     protocol::{EnclaveRequest, EnclaveResponse},
 };
+use outbe_tee::protocol::EnclaveResponse as WireResponse;
 use std::{
     collections::BTreeMap,
     sync::{Mutex, OnceLock},
@@ -27,10 +29,8 @@ fn store() -> std::sync::MutexGuard<'static, BTreeMap<B256, Transfer>> {
         .lock()
         .unwrap_or_else(|poison| poison.into_inner())
 }
-fn error(message: impl std::fmt::Display) -> EnclaveResponse {
-    EnclaveResponse::Error {
-        message: message.to_string(),
-    }
+fn error(message: impl std::fmt::Display) -> DomainDispatchResult {
+    Err(DomainDispatchError::Error(message.to_string()))
 }
 fn check_chunk_bounds(total: usize, offset: usize, bytes: &[u8]) -> EnclaveResult<()> {
     if total == 0 || total > MAX_TRANSFER_BYTES || bytes.is_empty() {
@@ -45,7 +45,7 @@ fn check_chunk_bounds(total: usize, offset: usize, bytes: &[u8]) -> EnclaveResul
     }
     Ok(())
 }
-pub(super) fn append(id: B256, total: u32, offset: u32, bytes: &[u8]) -> EnclaveResponse {
+pub(super) fn append(id: B256, total: u32, offset: u32, bytes: &[u8]) -> DomainDispatchResult {
     let total = total as usize;
     let offset = offset as usize;
     if let Err(message) = check_chunk_bounds(total, offset, bytes) {
@@ -81,27 +81,27 @@ pub(super) fn append(id: B256, total: u32, offset: u32, bytes: &[u8]) -> Enclave
         return error("NOD transfer chunk mismatch");
     }
     entry.touched = Instant::now();
-    EnclaveResponse::NodTransferAckV1 {
+    Ok(EnclaveResponse::NodTransferAckV1 {
         id,
         next_offset: (offset + bytes.len()) as u32,
-    }
+    })
 }
 pub(super) fn execute(
     id: B256,
     keys: &EnclaveKeys,
     offer: &SharedTributeOfferKey,
     chain: B256,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     let mut transfers = store();
     let Some(entry) = transfers.get_mut(&id) else {
         return error("NOD transfer missing");
     };
     if let Some(output) = &entry.output {
-        return EnclaveResponse::NodTransferReadyV1 {
+        return Ok(EnclaveResponse::NodTransferReadyV1 {
             id,
             total: output.len() as u32,
             digest: keccak256(output),
-        };
+        });
     }
     if entry.input.len() != entry.total || keccak256(&entry.input) != id {
         return error("NOD transfer request mismatch");
@@ -123,26 +123,35 @@ pub(super) fn execute(
         digest: keccak256(&output),
     };
     entry.output = Some(output);
-    ready
+    Ok(ready)
 }
 fn dispatch_request(
     input: &[u8],
     keys: &EnclaveKeys,
     offer: &SharedTributeOfferKey,
     chain: B256,
-) -> EnclaveResult<EnclaveResponse> {
+) -> EnclaveResult<WireResponse> {
     let request: EnclaveRequest = match serde_json::from_slice(input) {
         Ok(request) => request,
         Err(_) => return Err(TransportDispatchError::NodTransferRequestEncoding.into()),
     };
     match request {
         EnclaveRequest::ExecuteLysis { request } => {
-            Ok(super::nod::execute_lysis(keys, offer, chain, &request))
+            match super::nod::execute_lysis(keys, offer, chain, &request) {
+                Ok(domain_resp) => {
+                    Ok(domain_resp
+                        .into_wire_response()
+                        .unwrap_or_else(|err| WireResponse::Error {
+                            message: err.to_string(),
+                        }))
+                }
+                Err(err) => Ok(err.into_wire_response()),
+            }
         }
         _ => Err(TransportDispatchError::NodTransferCommandNotPermitted.into()),
     }
 }
-pub(super) fn read(id: B256, offset: u32) -> EnclaveResponse {
+pub(super) fn read(id: B256, offset: u32) -> DomainDispatchResult {
     let mut transfers = store();
     let Some(entry) = transfers.get_mut(&id) else {
         return error("NOD transfer missing");
@@ -155,15 +164,15 @@ pub(super) fn read(id: B256, offset: u32) -> EnclaveResponse {
         return error("NOD transfer offset outside result");
     }
     entry.touched = Instant::now();
-    EnclaveResponse::NodTransferOutputV1 {
+    Ok(EnclaveResponse::NodTransferOutputV1 {
         id,
         offset,
         bytes: output[start..(start + TRANSFER_CHUNK_BYTES).min(output.len())].to_vec(),
-    }
+    })
 }
-pub(super) fn discard(id: B256) -> EnclaveResponse {
+pub(super) fn discard(id: B256) -> DomainDispatchResult {
     store().remove(&id);
-    EnclaveResponse::NodTransferDiscardedV1 { id }
+    Ok(EnclaveResponse::NodTransferDiscardedV1 { id })
 }
 
 #[cfg(test)]
@@ -184,15 +193,15 @@ mod tests {
             let id = keccak256(bytes);
             assert!(matches!(
                 append(id, bytes.len() as u32, 0, bytes),
-                EnclaveResponse::NodTransferAckV1 { .. }
+                Ok(EnclaveResponse::NodTransferAckV1 { .. })
             ));
             for _ in 0..2 {
                 assert!(matches!(
                     execute(id, &keys, &offer, B256::ZERO),
-                    EnclaveResponse::Error { message } if message == expected
+                    Err(DomainDispatchError::Error(message)) if message == expected
                 ));
             }
-            discard(id);
+            let _ = discard(id);
         }
     }
 
@@ -201,11 +210,11 @@ mod tests {
         let invalid = B256::repeat_byte(0x65);
         assert!(matches!(
             append(invalid, (MAX_TRANSFER_BYTES + 1) as u32, 0, &[1]),
-            EnclaveResponse::Error { .. }
+            Err(DomainDispatchError::Error(_))
         ));
         assert!(matches!(
             append(invalid, 100_000, 0, &vec![1; TRANSFER_CHUNK_BYTES + 1]),
-            EnclaveResponse::Error { .. }
+            Err(DomainDispatchError::Error(_))
         ));
         let mut input = crate::lysis_fixture::fixture();
         input.tributes[0].encrypted_amounts = vec![255; 70_000];
@@ -219,37 +228,41 @@ mod tests {
             let offset = (index * TRANSFER_CHUNK_BYTES) as u32;
             assert!(matches!(
                 append(id, bytes.len() as u32, offset, chunk),
-                EnclaveResponse::NodTransferAckV1 { .. }
+                Ok(EnclaveResponse::NodTransferAckV1 { .. })
             ));
             assert!(matches!(
                 append(id, bytes.len() as u32, offset, chunk),
-                EnclaveResponse::NodTransferAckV1 { .. }
+                Ok(EnclaveResponse::NodTransferAckV1 { .. })
             ));
         }
         assert!(matches!(
             append(id, bytes.len() as u32, 0, &[0]),
-            EnclaveResponse::Error { .. }
+            Err(DomainDispatchError::Error(_))
         ));
         let keys = EnclaveKeys::new([0x43; 32], None).unwrap();
         let offer: SharedTributeOfferKey = Arc::new(OnceLock::new());
         let (total, digest) = match execute(id, &keys, &offer, B256::ZERO) {
-            EnclaveResponse::NodTransferReadyV1 { total, digest, .. } => (total, digest),
+            Ok(EnclaveResponse::NodTransferReadyV1 { total, digest, .. }) => (total, digest),
             response => panic!("expected transfer result, got {response:?}"),
         };
-        assert!(
-            matches!(execute(id,&keys,&offer,B256::ZERO),EnclaveResponse::NodTransferReadyV1 {total:t,digest:d,..} if t==total&&d==digest)
-        );
+        assert!(matches!(
+            execute(id, &keys, &offer, B256::ZERO),
+            Ok(EnclaveResponse::NodTransferReadyV1 { total: t, digest: d, .. }) if t == total && d == digest
+        ));
         let output = match read(id, 0) {
-            EnclaveResponse::NodTransferOutputV1 { bytes, .. } => bytes,
+            Ok(EnclaveResponse::NodTransferOutputV1 { bytes, .. }) => bytes,
             response => panic!("expected output chunk, got {response:?}"),
         };
         assert_eq!(keccak256(&output), digest);
         assert!(matches!(
-            serde_json::from_slice::<EnclaveResponse>(&output).unwrap(),
-            EnclaveResponse::Error { .. }
+            serde_json::from_slice::<WireResponse>(&output).unwrap(),
+            WireResponse::Error { .. }
         ));
-        assert!(matches!(read(id, total), EnclaveResponse::Error { .. }));
-        discard(id);
-        assert!(matches!(read(id, 0), EnclaveResponse::Error { .. }));
+        assert!(matches!(
+            read(id, total),
+            Err(DomainDispatchError::Error(_))
+        ));
+        let _ = discard(id);
+        assert!(matches!(read(id, 0), Err(DomainDispatchError::Error(_))));
     }
 }

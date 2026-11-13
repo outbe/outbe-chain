@@ -5,31 +5,70 @@ use thiserror::Error;
 
 use crate::tee_call::TeeAttestationError;
 
-/// Structured payload attestation failure boxed inside [`TransportError::PayloadAttestation`]
-/// so `size_of::<TransportError>()` stays compact (`<= 32` bytes).
-#[derive(Debug, Error)]
-#[error("{context} attestation signature invalid: {cause}")]
-pub struct PayloadAttestationError {
-    /// Human-readable domain context prefix.
-    pub context: &'static str,
-    /// Stable `outbe_tee_request_errors_total{class}` counter label.
-    pub metric_class: &'static str,
-    /// Structured attestation failure cause.
-    #[source]
-    pub cause: TeeAttestationError,
+/// Compact metric-only classification for application-layer attestation failures.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AttestationMetricClass {
+    /// Tribute offer or read/day attestation failure (`"tribute_offer_attestation"`).
+    TributeOffer,
+    /// Gratis ledger operation attestation failure (`"gratis_op_attestation"`).
+    GratisOp,
+    /// Promis ledger operation attestation failure (`"promis_op_attestation"`).
+    PromisOp,
+    /// Fidelity operation attestation failure (`"fidelity_attestation"`).
+    Fidelity,
 }
 
-/// Structured application-layer deterministic rejection boxed inside
-/// [`TransportError::PayloadRejected`] so `size_of::<TransportError>()` stays compact.
-#[derive(Debug, Error)]
-#[error("{context}: {reason}")]
-pub struct PayloadRejectedError {
-    /// Human-readable domain prefix.
-    pub context: &'static str,
-    /// Stable `outbe_tee_request_errors_total{class}` counter label.
-    pub metric_class: &'static str,
-    /// Rejection reason string.
-    pub reason: String,
+impl AttestationMetricClass {
+    /// Stable Prometheus label for `outbe_tee_request_errors_total{class}`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TributeOffer => "tribute_offer_attestation",
+            Self::GratisOp => "gratis_op_attestation",
+            Self::PromisOp => "promis_op_attestation",
+            Self::Fidelity => "fidelity_attestation",
+        }
+    }
+
+    /// Human-readable subject prefix for display formatting.
+    #[must_use]
+    pub const fn context(self) -> &'static str {
+        match self {
+            Self::TributeOffer => "offer",
+            Self::GratisOp => "gratis-op",
+            Self::PromisOp => "promis-op",
+            Self::Fidelity => "fidelity",
+        }
+    }
+}
+
+/// Compact metric-only classification for deterministic application-layer rejections.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RejectionMetricClass {
+    /// Tribute state-source proof or context rejection (`"tribute_source_rejected"`).
+    TributeSource,
+    /// Encrypted NOD mint business rejection (`"nod_mint_rejected"`).
+    NodMint,
+}
+
+impl RejectionMetricClass {
+    /// Stable Prometheus label for `outbe_tee_request_errors_total{class}`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TributeSource => "tribute_source_rejected",
+            Self::NodMint => "nod_mint_rejected",
+        }
+    }
+
+    /// Human-readable prefix for display formatting.
+    #[must_use]
+    pub const fn context(self) -> &'static str {
+        match self {
+            Self::TributeSource => "Tribute source rejected",
+            Self::NodMint => "encrypted NOD mint rejected",
+        }
+    }
 }
 
 /// Errors returned by the host-side enclave transport and session layer.
@@ -70,8 +109,14 @@ pub enum TransportError {
     Attestation(String),
 
     /// Application-layer payload attestation signature check failed.
-    #[error(transparent)]
-    PayloadAttestation(#[from] Box<PayloadAttestationError>),
+    #[error("{} attestation signature invalid: {cause}", metric.context())]
+    AppAttestation {
+        /// Metric counter classification (never used for control-flow branching).
+        metric: AttestationMetricClass,
+        /// Structured attestation verification failure cause.
+        #[source]
+        cause: TeeAttestationError,
+    },
 
     /// DCAP verification stream or response check failed.
     #[error("DCAP verification channel invalid: {0}")]
@@ -90,8 +135,13 @@ pub enum TransportError {
     EnclaveError(String),
 
     /// Application-layer operation or state source was deterministically rejected.
-    #[error(transparent)]
-    PayloadRejected(#[from] Box<PayloadRejectedError>),
+    #[error("{}: {reason}", metric.context())]
+    AppRejected {
+        /// Metric counter classification (never used for control-flow branching).
+        metric: RejectionMetricClass,
+        /// Rejection reason string.
+        reason: String,
+    },
 
     /// Reconnected enclave identity differed from the pinned identity.
     #[error("enclave identity mismatch after reconnect: {0}")]
@@ -106,7 +156,7 @@ pub enum TransportError {
     Unavailable(String),
 }
 
-const _: () = assert!(std::mem::size_of::<TransportError>() <= 32);
+const _: () = assert!(std::mem::size_of::<TransportError>() <= 96);
 
 impl TransportError {
     /// Construct a [`Self::Codec`] error from a displayable value.
@@ -141,32 +191,22 @@ impl TransportError {
 
     /// Construct a structured application-layer attestation failure, preserving
     /// [`Self::AttestationPreimageSerialization`] when canonical JSON serialization fails.
-    pub fn payload_attestation(
-        context: &'static str,
-        metric_class: &'static str,
-        cause: TeeAttestationError,
-    ) -> Self {
+    pub fn app_attestation(metric: AttestationMetricClass, cause: TeeAttestationError) -> Self {
         match cause {
             TeeAttestationError::CanonicalJson(err) => Self::AttestationPreimageSerialization(err),
-            other => Self::PayloadAttestation(Box::new(PayloadAttestationError {
-                context,
-                metric_class,
+            other => Self::AppAttestation {
+                metric,
                 cause: other,
-            })),
+            },
         }
     }
 
-    /// Construct an application-layer deterministic rejection with a stable metric class.
-    pub fn payload_rejected(
-        context: &'static str,
-        metric_class: &'static str,
-        reason: impl fmt::Display,
-    ) -> Self {
-        Self::PayloadRejected(Box::new(PayloadRejectedError {
-            context,
-            metric_class,
+    /// Construct an application-layer deterministic rejection with a typed metric class.
+    pub fn app_rejected(metric: RejectionMetricClass, reason: impl fmt::Display) -> Self {
+        Self::AppRejected {
+            metric,
             reason: reason.to_string(),
-        }))
+        }
     }
 
     /// Construct a [`Self::DcapVerification`] error from a displayable value.
@@ -238,12 +278,12 @@ impl TransportError {
             Self::Noise(_) => "noise",
             Self::Handshake(_) => "handshake",
             Self::Attestation(_) => "attestation",
-            Self::PayloadAttestation(inner) => inner.metric_class,
+            Self::AppAttestation { metric, .. } => metric.as_str(),
             Self::DcapVerification(_) => "dcap_verification",
             Self::AttestationPreimageSerialization(_) => "attestation_preimage_serialization",
             Self::UnexpectedResponse => "unexpected_response",
             Self::EnclaveError(_) => "enclave_error",
-            Self::PayloadRejected(inner) => inner.metric_class,
+            Self::AppRejected { metric, .. } => metric.as_str(),
             Self::IdentityMismatch(_) => "identity_mismatch",
             Self::SessionRevoked(_) => "session_revoked",
             Self::Unavailable(_) => "unavailable",

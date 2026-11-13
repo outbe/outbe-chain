@@ -27,13 +27,31 @@ pub fn dispatch(
     )
 }
 
+/// Typed failure returned by application-domain dispatch before wire framing.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DomainDispatchError {
+    Error(String),
+    NotReady(String),
+}
+
+impl DomainDispatchError {
+    pub(in crate::transport) fn into_wire_response(self) -> EnclaveResponse {
+        match self {
+            Self::Error(message) => EnclaveResponse::Error { message },
+            Self::NotReady(message) => EnclaveResponse::NotReady { message },
+        }
+    }
+}
+
+pub type DomainDispatchResult = Result<DomainResponse, DomainDispatchError>;
+
 /// Dispatch an application-domain request directly against resident enclave keys.
 pub fn dispatch_domain(
     req: DomainRequest,
     keys: &EnclaveKeys,
     offer_key: &SharedTributeOfferKey,
     chain_id: alloy_primitives::B256,
-) -> DomainResponse {
+) -> DomainDispatchResult {
     dispatch_domain_with_context(
         req,
         RequestContext {
@@ -209,19 +227,23 @@ fn dispatch_payload(
             Some(label),
         );
     }
-    let domain_resp = dispatch_domain_with_context(domain_req, resident);
-    let wire_resp = domain_resp
-        .into_wire_response()
-        .unwrap_or_else(|err| EnclaveResponse::Error {
-            message: err.to_string(),
-        });
+    let wire_resp = match dispatch_domain_with_context(domain_req, resident) {
+        Ok(domain_resp) => {
+            domain_resp
+                .into_wire_response()
+                .unwrap_or_else(|err| EnclaveResponse::Error {
+                    message: err.to_string(),
+                })
+        }
+        Err(err) => err.into_wire_response(),
+    };
     (wire_resp, Some(label))
 }
 
 fn dispatch_domain_with_context(
     req: DomainRequest,
     resident: RequestContext<'_>,
-) -> DomainResponse {
+) -> DomainDispatchResult {
     match req {
         req @ (DomainRequest::ExecuteLysis { .. }
         | DomainRequest::MineEncryptedNodV1 { .. }
@@ -268,10 +290,12 @@ pub(in crate::transport) fn into_response(
     })
 }
 
+pub(in crate::transport) fn domain_error(message: impl std::fmt::Display) -> DomainDispatchError {
+    DomainDispatchError::Error(message.to_string())
+}
+
 pub(in crate::transport) fn into_domain_response(
     result: crate::errors::Result<DomainResponse>,
-) -> DomainResponse {
-    result.unwrap_or_else(|e| DomainResponse::Error {
-        message: e.to_string(),
-    })
+) -> DomainDispatchResult {
+    result.map_err(domain_error)
 }

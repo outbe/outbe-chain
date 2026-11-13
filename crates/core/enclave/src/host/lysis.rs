@@ -3,11 +3,15 @@
 use alloy_primitives::{B256, U256};
 use outbe_core_common::{nod_encryption::EncryptedNodV1, tribute_encryption::EncryptedTributeV2};
 use outbe_primitives::time::WorldwideDay;
-use outbe_tee::TransportError;
+use outbe_tee::{
+    tee_call::verify_enclave_attestation, AttestationMetricClass, EnclaveSession, TransportError,
+};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    protocol::FidelitySnapshotRequest,
+    domain_session_call, domain_session_call_on,
+    errors::EnclaveClientError,
+    protocol::{EnclaveRequest, EnclaveResponse, FidelitySnapshotRequest},
     response_auth::{attestation, hash},
 };
 
@@ -68,4 +72,85 @@ pub fn rejection_preimage(inputs: B256) -> Vec<u8> {
     let mut bytes = b"outbe/lysis/calculation-rejected".to_vec();
     bytes.extend_from_slice(inputs.as_slice());
     bytes
+}
+
+fn verify_lysis_response(
+    expected: B256,
+    key: &[u8; 32],
+    response: &EnclaveResponse,
+) -> Result<(), TransportError> {
+    let (actual, preimage, tag) = match response {
+        EnclaveResponse::LysisExecuted {
+            result,
+            inputs_canonical_hash,
+            attestation_tag,
+        } => (
+            *inputs_canonical_hash,
+            result_preimage(expected, result)?,
+            attestation_tag.as_slice(),
+        ),
+        EnclaveResponse::LysisRejected {
+            inputs_canonical_hash,
+            attestation_tag,
+        } => (
+            *inputs_canonical_hash,
+            rejection_preimage(expected),
+            attestation_tag.as_slice(),
+        ),
+        _ => return Err(TransportError::UnexpectedResponse),
+    };
+    if actual != expected {
+        return Err(TransportError::Attestation(
+            "lysis inputs canonical hash mismatch".into(),
+        ));
+    }
+    verify_enclave_attestation(key, &preimage, tag).map_err(|cause| {
+        TransportError::app_attestation(AttestationMetricClass::TributeOffer, cause)
+    })
+}
+
+/// Execute confidential Lysis on `session` over the non-consensus session seam.
+///
+/// Returns `Ok(Some(result))` on `LysisExecuted` and `Ok(None)` on an authenticated
+/// `LysisRejected`.
+pub fn execute_lysis_on_session(
+    session: &mut EnclaveSession,
+    request: LysisRequest,
+) -> Result<Option<LysisResult>, EnclaveClientError> {
+    let expected = inputs_hash(&request)?;
+    let domain_req = EnclaveRequest::ExecuteLysis {
+        request: Box::new(request),
+    };
+    let (_, response) = domain_session_call_on(session, &domain_req, |key, response| {
+        verify_lysis_response(expected, key, response)
+    })?;
+    match response {
+        EnclaveResponse::LysisExecuted { result, .. } => Ok(Some(*result)),
+        EnclaveResponse::LysisRejected { .. } => Ok(None),
+        _ => Err(TransportError::UnexpectedResponse.into()),
+    }
+}
+
+/// Execute confidential Lysis against the process-global execution session.
+///
+/// Returns `None` only when no enclave session is installed.
+pub fn execute_lysis(
+    request: LysisRequest,
+) -> Option<Result<Option<LysisResult>, EnclaveClientError>> {
+    let expected = match inputs_hash(&request) {
+        Ok(expected) => expected,
+        Err(err) => return Some(Err(err.into())),
+    };
+    let domain_req = EnclaveRequest::ExecuteLysis {
+        request: Box::new(request),
+    };
+    let result = domain_session_call(&domain_req, |key, response| {
+        verify_lysis_response(expected, key, response)
+    })?;
+    Some(match result {
+        Ok((_, EnclaveResponse::LysisExecuted { result, .. })) => Ok(Some(*result)),
+        Ok((_, EnclaveResponse::LysisRejected { .. })) => Ok(None),
+        Ok((_, _)) => Err(TransportError::UnexpectedResponse.into()),
+        Err(err) => Err(err.into()),
+    })
 }

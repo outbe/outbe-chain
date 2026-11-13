@@ -1,14 +1,15 @@
 //! Typed errors for host-side enclave clients, offer encryption, and owner-local decryption.
 
-use alloy_primitives::{Address, U256};
 use outbe_primitives::error::PrecompileError;
-use outbe_tee::{tee_decrypt::V2BalanceDomain, TeeCryptoError, TransportError};
+use outbe_tee::{
+    AttestationMetricClass, RejectionMetricClass, TeeAttestationError, TransportError,
+};
 use thiserror::Error;
 
 use super::protocol::EnclaveResponse;
 
 /// Errors returned by [`crate::balance_client::execute_confidential_balance_op`].
-#[derive(Clone, Debug, PartialEq, Eq, Error)]
+#[derive(Debug, Error)]
 pub enum BalanceClientError {
     /// Request variant is not a Gratis or Promis balance operation.
     #[error("request is not a confidential balance operation")]
@@ -20,19 +21,19 @@ pub enum BalanceClientError {
 
     /// Enclave sidecar failed with a node-local or enclave-state error.
     #[error("tee_sidecar_unavailable: {0}")]
-    SidecarRequestUnavailable(String),
+    SidecarRequestUnavailable(#[source] TransportError),
 
     /// Enclave request failed with a deterministic protocol error.
     #[error("enclave request failed: {0}")]
-    RequestFailed(String),
+    RequestFailed(#[source] TransportError),
 
     /// Gratis attestation signature check failed.
     #[error("tee_gratis_attestation_invalid: {0}")]
-    GratisAttestationInvalid(String),
+    GratisAttestationInvalid(#[source] TransportError),
 
     /// Promis attestation signature check failed.
     #[error("tee_promis_attestation_invalid: {0}")]
-    PromisAttestationInvalid(String),
+    PromisAttestationInvalid(#[source] TransportError),
 
     /// Enclave returned an explicit operation error.
     #[error("enclave {operation} error: {message}")]
@@ -53,23 +54,29 @@ pub enum BalanceClientError {
 }
 
 impl BalanceClientError {
+    /// Classify a transport failure while preserving the structured [`TransportError`] cause.
+    #[must_use]
+    pub fn from_request_failure(error: TransportError) -> Self {
+        if error.is_node_local() || matches!(error, TransportError::EnclaveError(_)) {
+            Self::SidecarRequestUnavailable(error)
+        } else {
+            Self::RequestFailed(error)
+        }
+    }
+
     /// Convert a transport failure into the corresponding precompile error.
     pub fn request_failure(error: TransportError) -> PrecompileError {
-        if error.is_node_local() || matches!(error, TransportError::EnclaveError(_)) {
-            Self::SidecarRequestUnavailable(error.to_string()).into()
-        } else {
-            Self::RequestFailed(error.to_string()).into()
-        }
+        Self::from_request_failure(error).into()
     }
 
     /// Convert a Gratis attestation failure into a fatal precompile error.
     pub fn gratis_attestation_invalid(error: TransportError) -> PrecompileError {
-        Self::GratisAttestationInvalid(error.to_string()).into()
+        Self::GratisAttestationInvalid(error).into()
     }
 
     /// Convert a Promis attestation failure into a fatal precompile error.
     pub fn promis_attestation_invalid(error: TransportError) -> PrecompileError {
-        Self::PromisAttestationInvalid(error.to_string()).into()
+        Self::PromisAttestationInvalid(error).into()
     }
 
     /// Convert an enclave operation error response into an unavailable precompile error.
@@ -126,10 +133,10 @@ pub enum TributeSourceError {
 
     /// Underlying MPT account/storage proof verification failed.
     #[error("{0}")]
-    ProofVerification(String),
+    ProofVerification(#[from] outbe_primitives::storage::proof::StateProofError),
 }
 
-/// Typed host-client errors for domain NOD and Tribute enclave operations.
+/// Typed host-client errors for domain enclave operations.
 #[derive(Debug, Error)]
 pub enum EnclaveClientError {
     /// Enclave deterministically rejected an encrypted NOD mint operation.
@@ -144,10 +151,39 @@ pub enum EnclaveClientError {
     TributeSourceRejected(#[from] TributeSourceError),
 
     /// Tribute day or league predecessor record carried an invalid/overflowing version.
-    #[error("invalid Tribute day predecessor version")]
-    InvalidTributeDayPredecessorVersion,
+    #[error("invalid Tribute day predecessor version: expected {expected}, got {actual}")]
+    InvalidTributeDayPredecessorVersion {
+        /// Minimum expected predecessor version.
+        expected: u8,
+        /// Actual predecessor version byte observed.
+        actual: u8,
+    },
 
-    /// Underlying enclave transport, codec, or attestation error.
+    /// Tribute offer or Tribute V2 attestation signature check failed.
+    #[error("offer attestation signature invalid: {0}")]
+    TributeOfferAttestation(#[source] TeeAttestationError),
+
+    /// Tribute day or league attestation signature check failed.
+    #[error("tribute-day attestation signature invalid: {0}")]
+    TributeDayAttestation(#[source] TeeAttestationError),
+
+    /// Gratis ledger operation attestation signature check failed.
+    #[error("gratis-op attestation signature invalid: {0}")]
+    GratisOpAttestation(#[source] TeeAttestationError),
+
+    /// Promis ledger operation attestation signature check failed.
+    #[error("promis-op attestation signature invalid: {0}")]
+    PromisOpAttestation(#[source] TeeAttestationError),
+
+    /// Fidelity operation attestation signature check failed.
+    #[error("fidelity attestation signature invalid: {0}")]
+    FidelityAttestation(#[source] TeeAttestationError),
+
+    /// NOD operation attestation signature check failed.
+    #[error("nod attestation signature invalid: {0}")]
+    NodAttestation(#[source] TeeAttestationError),
+
+    /// Underlying enclave transport or codec error.
     #[error(transparent)]
     Transport(#[from] TransportError),
 }
@@ -156,13 +192,29 @@ impl From<EnclaveClientError> for TransportError {
     fn from(error: EnclaveClientError) -> Self {
         match error {
             EnclaveClientError::NodMintRejected { reason } => {
-                Self::payload_rejected("encrypted NOD mint rejected", "nod_mint_rejected", reason)
+                Self::app_rejected(RejectionMetricClass::NodMint, reason)
             }
             EnclaveClientError::TributeSourceRejected(cause) => {
-                Self::payload_rejected("Tribute source rejected", "tribute_source_rejected", cause)
+                Self::app_rejected(RejectionMetricClass::TributeSource, cause)
             }
-            EnclaveClientError::InvalidTributeDayPredecessorVersion => {
-                Self::EnclaveError("invalid Tribute day predecessor version".into())
+            EnclaveClientError::InvalidTributeDayPredecessorVersion { expected, actual } => {
+                Self::EnclaveError(format!(
+                    "invalid Tribute day predecessor version: expected {expected}, got {actual}"
+                ))
+            }
+            EnclaveClientError::TributeOfferAttestation(cause)
+            | EnclaveClientError::TributeDayAttestation(cause)
+            | EnclaveClientError::NodAttestation(cause) => {
+                Self::app_attestation(AttestationMetricClass::TributeOffer, cause)
+            }
+            EnclaveClientError::GratisOpAttestation(cause) => {
+                Self::app_attestation(AttestationMetricClass::GratisOp, cause)
+            }
+            EnclaveClientError::PromisOpAttestation(cause) => {
+                Self::app_attestation(AttestationMetricClass::PromisOp, cause)
+            }
+            EnclaveClientError::FidelityAttestation(cause) => {
+                Self::app_attestation(AttestationMetricClass::Fidelity, cause)
             }
             EnclaveClientError::Transport(err) => err,
         }
@@ -300,66 +352,6 @@ impl LocalCryptoError {
             Self::InvalidTributeAmountLength => "invalid Tribute amount length",
         }
     }
-
-    /// Map a domain-neutral [`TeeCryptoError`] from client-side sealing into [`Self`].
-    #[must_use]
-    pub const fn from_tee_encrypt(error: TeeCryptoError) -> Self {
-        match error {
-            TeeCryptoError::RngFailure => Self::OfferEncryptionRngFailure,
-            TeeCryptoError::HkdfExpand => Self::HkdfExpand,
-            TeeCryptoError::HkdfFill => Self::HkdfFill,
-            TeeCryptoError::AeadKey => Self::AeadKey,
-            TeeCryptoError::AeadSeal => Self::AeadSeal,
-            TeeCryptoError::InvalidEnvelope
-            | TeeCryptoError::DecryptionFailed
-            | TeeCryptoError::InvalidPlaintextLength { .. } => Self::AeadSeal,
-        }
-    }
-
-    /// Map a domain-neutral [`TeeCryptoError`] from Fidelity `FID2` opening into [`Self`].
-    #[must_use]
-    pub const fn from_fidelity_v2(error: TeeCryptoError) -> Self {
-        match error {
-            TeeCryptoError::InvalidEnvelope => Self::InvalidFidelityCohortEnvelope,
-            TeeCryptoError::HkdfExpand => Self::HkdfExpand,
-            TeeCryptoError::HkdfFill => Self::HkdfFill,
-            TeeCryptoError::AeadKey => Self::InvalidFidelityViewKey,
-            TeeCryptoError::DecryptionFailed
-            | TeeCryptoError::RngFailure
-            | TeeCryptoError::AeadSeal
-            | TeeCryptoError::InvalidPlaintextLength { .. } => Self::FidelityCohortDecryptionFailed,
-        }
-    }
-
-    /// Map a domain-neutral [`TeeCryptoError`] from NOD counter-slot opening into [`Self`].
-    #[must_use]
-    pub const fn from_nod_counter_slot(error: TeeCryptoError) -> Self {
-        match error {
-            TeeCryptoError::InvalidEnvelope => Self::InvalidNodEncoding,
-            TeeCryptoError::HkdfExpand => Self::HkdfExpand,
-            TeeCryptoError::HkdfFill => Self::HkdfFill,
-            TeeCryptoError::AeadKey => Self::InvalidNodAmountKey,
-            TeeCryptoError::InvalidPlaintextLength { .. } => Self::InvalidNodAmountLength,
-            TeeCryptoError::DecryptionFailed
-            | TeeCryptoError::RngFailure
-            | TeeCryptoError::AeadSeal => Self::NodAmountDecryptionFailed,
-        }
-    }
-
-    /// Map a domain-neutral [`TeeCryptoError`] from Tribute counter-slot opening into [`Self`].
-    #[must_use]
-    pub const fn from_tribute_counter_slot(error: TeeCryptoError) -> Self {
-        match error {
-            TeeCryptoError::InvalidEnvelope => Self::InvalidTributeEncoding,
-            TeeCryptoError::HkdfExpand => Self::HkdfExpand,
-            TeeCryptoError::HkdfFill => Self::HkdfFill,
-            TeeCryptoError::AeadKey => Self::InvalidTributeAmountKey,
-            TeeCryptoError::InvalidPlaintextLength { .. } => Self::InvalidTributeAmountLength,
-            TeeCryptoError::DecryptionFailed
-            | TeeCryptoError::RngFailure
-            | TeeCryptoError::AeadSeal => Self::TributeAmountDecryptionFailed,
-        }
-    }
 }
 
 impl std::ops::Deref for LocalCryptoError {
@@ -403,61 +395,5 @@ impl From<LocalCryptoError> for &'static str {
 impl From<LocalCryptoError> for String {
     fn from(error: LocalCryptoError) -> Self {
         error.as_str().to_owned()
-    }
-}
-
-/// Shared descriptor mapping a V2 confidential `U256` balance domain onto [`LocalCryptoError`].
-#[derive(Clone, Copy)]
-pub(crate) struct V2LedgerSpec {
-    domain: V2BalanceDomain<'static>,
-    invalid_balance: LocalCryptoError,
-    invalid_view_key: LocalCryptoError,
-    decryption_failed: LocalCryptoError,
-    invalid_length: LocalCryptoError,
-}
-
-impl V2LedgerSpec {
-    pub(crate) const GRATIS: Self = Self {
-        domain: V2BalanceDomain::new(
-            b"GRA2",
-            b"outbe/gratis/amount-key/v2",
-            b"outbe/gratis/amount-nonce/v2",
-        ),
-        invalid_balance: LocalCryptoError::InvalidGratisBalance,
-        invalid_view_key: LocalCryptoError::InvalidGratisViewKey,
-        decryption_failed: LocalCryptoError::GratisBalanceDecryptionFailed,
-        invalid_length: LocalCryptoError::InvalidGratisAmountLength,
-    };
-
-    pub(crate) const PROMIS: Self = Self {
-        domain: V2BalanceDomain::new(
-            b"PRO2",
-            b"outbe/promis/amount-key/v2",
-            b"outbe/promis/amount-nonce/v2",
-        ),
-        invalid_balance: LocalCryptoError::InvalidPromisBalance,
-        invalid_view_key: LocalCryptoError::InvalidPromisViewKey,
-        decryption_failed: LocalCryptoError::PromisBalanceDecryptionFailed,
-        invalid_length: LocalCryptoError::InvalidPromisAmountLength,
-    };
-
-    pub(crate) fn open_u256(
-        self,
-        view_key: &[u8; 32],
-        account: Address,
-        blob: &[u8],
-    ) -> Result<U256, LocalCryptoError> {
-        self.domain
-            .open_u256(view_key, account, blob)
-            .map_err(|err| match err {
-                TeeCryptoError::InvalidEnvelope => self.invalid_balance,
-                TeeCryptoError::HkdfExpand => LocalCryptoError::HkdfExpand,
-                TeeCryptoError::HkdfFill => LocalCryptoError::HkdfFill,
-                TeeCryptoError::AeadKey => self.invalid_view_key,
-                TeeCryptoError::InvalidPlaintextLength { .. } => self.invalid_length,
-                TeeCryptoError::DecryptionFailed
-                | TeeCryptoError::RngFailure
-                | TeeCryptoError::AeadSeal => self.decryption_failed,
-            })
     }
 }

@@ -4,10 +4,10 @@ use outbe_enclave::protocol::{
     tribute_offer_attestation_preimage, EnclaveRequest, EnclaveResponse,
 };
 
-use super::requests::{into_domain_response, RequestContext};
+use super::requests::{into_domain_response, DomainDispatchResult, RequestContext};
 use crate::process::process_tribute_offer_batch;
 
-pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> EnclaveResponse {
+pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> DomainDispatchResult {
     let RequestContext {
         keys,
         offer_key,
@@ -58,11 +58,11 @@ pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> Encl
                 }
             };
             let attestation_tag = keys.sign_attestation(&preimage).to_vec();
-            EnclaveResponse::TributeOfferBatch {
+            Ok(EnclaveResponse::TributeOfferBatch {
                 results,
                 inputs_canonical_hash,
                 attestation_tag,
-            }
+            })
         }
         _ => unreachable!("request family is checked by the exhaustive dispatcher"),
     }

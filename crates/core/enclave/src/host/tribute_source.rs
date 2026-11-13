@@ -92,11 +92,11 @@ impl TributeStateSource {
         let verified = self
             .proof
             .verify(TRIBUTE_ADDRESS, subject.checkpoint.state_root, limits)
-            .map_err(|err| TributeSourceError::ProofVerification(err.to_string()))?;
+            .map_err(TributeSourceError::from)?;
         for (slot, expected) in &self.expected_words {
             if verified
                 .read_storage(TRIBUTE_ADDRESS, *slot)
-                .map_err(|err| TributeSourceError::ProofVerification(err.to_string()))?
+                .map_err(|_| TributeSourceError::SlotSetMismatch)?
                 != *expected
             {
                 return Err(TributeSourceError::WordMismatch.into());

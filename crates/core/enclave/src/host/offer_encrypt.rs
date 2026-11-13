@@ -2,9 +2,17 @@
 //! [`outbe_tee::tee_encrypt`].
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_tee::tee_encrypt::{tee_encrypt, tee_encrypt_with, EncryptDomain, ExplicitNonceKey};
+use outbe_tee::{
+    tee_encrypt::{tee_encrypt, tee_encrypt_with, TeeEncryptMaterial},
+    TeeCryptoError,
+};
 
-use super::{errors::LocalCryptoError, OFFER_HKDF_SALT};
+use super::errors::LocalCryptoError;
+
+/// Protocol-fixed 32-byte HKDF-SHA256 salt for Tribute offer and confidential amount ECDHE.
+///
+/// Value: ASCII `"outbe/tribute/offer-salt/v1"`, zero-padded to 32 bytes.
+pub const OFFER_HKDF_SALT: [u8; 32] = *b"outbe/tribute/offer-salt/v1\0\0\0\0\0";
 
 /// HKDF info string binding the derived key to the tribute-offer domain.
 pub const OFFER_HKDF_INFO: &[u8] = b"tribute-factory-encryption";
@@ -28,6 +36,19 @@ pub const ENCRYPTED_TEE_AMOUNT_LEN: usize = 32 + 12 + 32 + 16;
 /// `(cipher_text, nonce, ephemeral_pub)` produced by [`encrypt_tribute_offer`].
 pub type EncryptedOfferParts = (Vec<u8>, [u8; 12], [u8; 32]);
 
+const fn map_encrypt_error(error: TeeCryptoError) -> LocalCryptoError {
+    match error {
+        TeeCryptoError::RngFailure => LocalCryptoError::OfferEncryptionRngFailure,
+        TeeCryptoError::HkdfExpand => LocalCryptoError::HkdfExpand,
+        TeeCryptoError::HkdfFill => LocalCryptoError::HkdfFill,
+        TeeCryptoError::AeadKey => LocalCryptoError::AeadKey,
+        TeeCryptoError::AeadSeal
+        | TeeCryptoError::InvalidEnvelope
+        | TeeCryptoError::DecryptionFailed
+        | TeeCryptoError::InvalidPlaintextLength { .. } => LocalCryptoError::AeadSeal,
+    }
+}
+
 /// Encrypt a `U256` `mineGratis` amount to `tee_pub`.
 pub fn encrypt_tee_amount(
     tee_pub: &[u8; 32],
@@ -38,10 +59,11 @@ pub fn encrypt_tee_amount(
     let info = promis_mine_key_info(chain_id, account);
     let sealed = tee_encrypt(
         tee_pub,
-        EncryptDomain::new(&OFFER_HKDF_SALT, &info),
+        &OFFER_HKDF_SALT,
+        &info,
         &amount.to_be_bytes::<32>(),
     )
-    .map_err(LocalCryptoError::from_tee_encrypt)?;
+    .map_err(map_encrypt_error)?;
     sealed
         .to_wire_bytes()
         .try_into()
@@ -57,17 +79,28 @@ pub fn encrypt_tee_amount_with(
     nonce: [u8; 12],
 ) -> Result<[u8; ENCRYPTED_TEE_AMOUNT_LEN], LocalCryptoError> {
     let info = promis_mine_key_info(chain_id, account);
-    let sealed = tee_encrypt_with(
+    let ephemeral_pub =
+        x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(ephemeral_secret))
+            .to_bytes();
+    let ciphertext = tee_encrypt_with(
         tee_pub,
-        EncryptDomain::new(&OFFER_HKDF_SALT, &info),
-        ExplicitNonceKey::new(ephemeral_secret, nonce),
+        TeeEncryptMaterial {
+            ephemeral_secret,
+            nonce,
+            hkdf_salt: &OFFER_HKDF_SALT,
+            domain_info: &info,
+        },
         &amount.to_be_bytes::<32>(),
     )
-    .map_err(LocalCryptoError::from_tee_encrypt)?;
-    sealed
-        .to_wire_bytes()
-        .try_into()
-        .map_err(|_| LocalCryptoError::AeadSeal)
+    .map_err(map_encrypt_error)?;
+    let mut out = [0u8; ENCRYPTED_TEE_AMOUNT_LEN];
+    if ciphertext.len() != 48 {
+        return Err(LocalCryptoError::AeadSeal);
+    }
+    out[..32].copy_from_slice(&ephemeral_pub);
+    out[32..44].copy_from_slice(&nonce);
+    out[44..].copy_from_slice(&ciphertext);
+    Ok(out)
 }
 
 /// Encrypt `plaintext` to `offer_pub` with a fresh ephemeral key and nonce.
@@ -76,12 +109,8 @@ pub fn encrypt_tribute_offer(
     offer_pub: &[u8; 32],
     plaintext: &[u8],
 ) -> Result<EncryptedOfferParts, LocalCryptoError> {
-    let sealed = tee_encrypt(
-        offer_pub,
-        EncryptDomain::new(&OFFER_HKDF_SALT, OFFER_HKDF_INFO),
-        plaintext,
-    )
-    .map_err(LocalCryptoError::from_tee_encrypt)?;
+    let sealed = tee_encrypt(offer_pub, &OFFER_HKDF_SALT, OFFER_HKDF_INFO, plaintext)
+        .map_err(map_encrypt_error)?;
     Ok((sealed.ciphertext, sealed.nonce, sealed.ephemeral_pub))
 }
 
@@ -92,14 +121,17 @@ pub fn encrypt_tribute_offer_with(
     nonce: [u8; 12],
     plaintext: &[u8],
 ) -> Result<Vec<u8>, LocalCryptoError> {
-    let sealed = tee_encrypt_with(
+    tee_encrypt_with(
         offer_pub,
-        EncryptDomain::new(&OFFER_HKDF_SALT, OFFER_HKDF_INFO),
-        ExplicitNonceKey::new(eph_sk, nonce),
+        TeeEncryptMaterial {
+            ephemeral_secret: eph_sk,
+            nonce,
+            hkdf_salt: &OFFER_HKDF_SALT,
+            domain_info: OFFER_HKDF_INFO,
+        },
         plaintext,
     )
-    .map_err(LocalCryptoError::from_tee_encrypt)?;
-    Ok(sealed.ciphertext)
+    .map_err(map_encrypt_error)
 }
 
 /// The known-plaintext canary/bench offer payload: 1 SU hash and ISO 4217 code 999.

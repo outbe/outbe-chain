@@ -9,7 +9,9 @@
 //!   `process`, `encrypted_tribute_offer`, `zk_claim`, `seal`, `crypto`).
 //! - `dev-keys` feature: fixed test/dev group signatures and chain constants (`dev`).
 
+#[cfg(any(test, feature = "engine"))]
 pub mod errors;
+#[cfg(feature = "host")]
 pub mod host;
 
 #[cfg(any(test, feature = "engine"))]
@@ -59,36 +61,44 @@ pub mod zk_claim;
 #[cfg(test)]
 mod lysis_fixture;
 
+#[cfg(feature = "host")]
 pub use host::{
-    balance_client, canary_domain_request, consensus_domain_call, fidelity_decrypt, gratis_decrypt,
-    nod_decrypt, nod_transport, offer_encrypt, promis_decrypt, protocol,
-    request_authorized_enclave_client, request_authorized_enclave_client_on_lane,
-    request_enclave_client, request_enclave_client_on_lane, request_enclave_session,
-    request_enclave_session_on_lane, request_runtime_enclave_client, response_auth, tribute_client,
-    tribute_day_client, tribute_decrypt, tribute_source, tribute_v2, try_domain_account_query,
-    try_with_domain_enclave, verification, verify_fidelity_cohort_attestation,
-    verify_fidelity_query_attestation, verify_fidelity_snapshot_attestation,
-    verify_gratis_op_attestation, verify_mine_gratis_from_promis_attestation,
-    verify_promis_op_attestation, verify_tribute_offer_attestation, BalanceClientError,
-    EnclaveClientError, LocalCryptoError, TributeSourceError, OFFER_HKDF_SALT,
+    balance_client, canary_domain_request, consensus_domain_call, decrypt_promis_balance,
+    domain_session_call, domain_session_call_on, fidelity_decrypt, gratis_decrypt, nod_decrypt,
+    nod_transport, offer_encrypt, promis_decrypt, protocol, request_authorized_enclave_client,
+    request_authorized_enclave_client_on_lane, request_enclave_client,
+    request_enclave_client_on_lane, request_enclave_session, request_enclave_session_on_lane,
+    request_runtime_enclave_client, response_auth, tribute_client, tribute_day_client,
+    tribute_decrypt, tribute_source, tribute_v2, try_domain_account_query, try_with_domain_enclave,
+    verification, verify_fidelity_cohort_attestation, verify_fidelity_query_attestation,
+    verify_fidelity_snapshot_attestation, verify_gratis_op_attestation,
+    verify_mine_gratis_from_promis_attestation, verify_promis_op_attestation,
+    verify_tribute_offer_attestation, BalanceClientError, EnclaveClientError, LocalCryptoError,
+    TributeSourceError, OFFER_HKDF_SALT,
 };
 
 /// Confidential Lysis protocol types, preimages, and (with `engine`) execution.
+#[cfg(any(test, feature = "host", feature = "engine"))]
 pub mod lysis {
+    #[cfg(feature = "host")]
     pub use crate::host::lysis::*;
     #[cfg(any(test, feature = "engine"))]
     pub use crate::lysis_engine::*;
 }
 
 /// Confidential NOD mining protocol types, host client, and (with `engine`) execution.
+#[cfg(any(test, feature = "host", feature = "engine"))]
 pub mod nod_mine {
+    #[cfg(feature = "host")]
     pub use crate::host::nod_mine::*;
     #[cfg(any(test, feature = "engine"))]
     pub use crate::nod_mine_engine::*;
 }
 
 /// Encrypted Tribute day arithmetic protocol types and (with `engine`) execution.
+#[cfg(any(test, feature = "host", feature = "engine"))]
 pub mod tribute_day {
+    #[cfg(feature = "host")]
     pub use crate::host::tribute_day::*;
     #[cfg(any(test, feature = "engine"))]
     pub use crate::tribute_day_engine::*;

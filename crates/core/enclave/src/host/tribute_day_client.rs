@@ -6,7 +6,7 @@ use alloy_primitives::{B256, U256};
 use outbe_core_common::tribute_day_encryption::{
     EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1, EncryptedTributeLeagueAmountV1,
 };
-use outbe_tee::TransportError;
+use outbe_tee::{tee_call::verify_enclave_attestation, TransportError};
 
 use super::{
     errors::EnclaveClientError,
@@ -16,13 +16,33 @@ use super::{
         self, LysisFractionsRequestV1, LysisFractionsResultV1, TributeDayOpRequestV2,
         TributeLeagueOpRequestV1,
     },
-    tribute_v2::verify_attestation,
 };
+
+fn next_predecessor_version(previous_version: Option<u64>) -> Result<u64, EnclaveClientError> {
+    let prev = previous_version.ok_or(EnclaveClientError::InvalidTributeDayPredecessorVersion {
+        expected: 1,
+        actual: 0,
+    })?;
+    prev.checked_add(1)
+        .ok_or(EnclaveClientError::InvalidTributeDayPredecessorVersion {
+            expected: 1,
+            actual: u8::try_from(prev).unwrap_or(u8::MAX),
+        })
+}
+
+fn verify_day_attestation(
+    key: &[u8; 32],
+    preimage: &[u8],
+    tag: &[u8],
+) -> Result<(), EnclaveClientError> {
+    verify_enclave_attestation(key, preimage, tag)
+        .map_err(EnclaveClientError::TributeDayAttestation)
+}
 
 /// Apply an arithmetic or freeze transition to an encrypted Tribute day accumulator.
 pub fn apply_day_operation(
     request: TributeDayOpRequestV2,
-) -> Result<EncryptedTributeDayAmountV2, TransportError> {
+) -> Result<EncryptedTributeDayAmountV2, EnclaveClientError> {
     let expected = tribute_day::day_operation_inputs_hash(&request).map_err(codec)?;
     let chain_id = request.chain_id;
     let day = request.worldwide_day;
@@ -30,13 +50,10 @@ pub fn apply_day_operation(
         request.operation,
         tribute_day::TributeDayOperationV2::Freeze
     );
-    let version = request
-        .previous
-        .as_ref()
-        .map_or(Some(1), |previous| previous.version()?.checked_add(1))
-        .ok_or_else(|| {
-            TransportError::from(EnclaveClientError::InvalidTributeDayPredecessorVersion)
-        })?;
+    let version = match request.previous.as_ref() {
+        None => 1,
+        Some(previous) => next_predecessor_version(previous.version())?,
+    };
     let (key, response) = request_local_enclave(EnclaveRequest::ApplyTributeDayOpV2 {
         request: Box::new(request),
     })?;
@@ -46,7 +63,7 @@ pub fn apply_day_operation(
         attestation_tag,
     } = response
     else {
-        return Err(response_error(response));
+        return Err(TransportError::UnexpectedResponse.into());
     };
     let expected_identity = (chain_id, day, frozen, Some(version));
     let returned_identity = (
@@ -58,11 +75,12 @@ pub fn apply_day_operation(
     if expected != inputs_canonical_hash || returned_identity != expected_identity {
         return Err(TransportError::EnclaveError(
             "Tribute day response does not match request".into(),
-        ));
+        )
+        .into());
     }
     let preimage =
         tribute_day::day_operation_attestation_preimage(expected, &record).map_err(codec)?;
-    verify_attestation(&key, &preimage, &attestation_tag)?;
+    verify_day_attestation(&key, &preimage, &attestation_tag)?;
     Ok(record)
 }
 
@@ -71,7 +89,7 @@ fn request_amount_read(
     request: EnclaveRequest,
     preimage_fn: fn(B256, U256) -> Vec<u8>,
     mismatch_msg: &'static str,
-) -> Result<U256, TransportError> {
+) -> Result<U256, EnclaveClientError> {
     let expected = expected.map_err(codec)?;
     let (key, response) = request_local_enclave(request)?;
     let (amount, inputs_canonical_hash, attestation_tag) = match response {
@@ -85,18 +103,18 @@ fn request_amount_read(
             inputs_canonical_hash,
             attestation_tag,
         } => (amount, inputs_canonical_hash, attestation_tag),
-        other => return Err(response_error(other)),
+        _ => return Err(TransportError::UnexpectedResponse.into()),
     };
     if expected != inputs_canonical_hash {
-        return Err(TransportError::EnclaveError(mismatch_msg.into()));
+        return Err(TransportError::EnclaveError(mismatch_msg.into()).into());
     }
     let preimage = preimage_fn(expected, amount);
-    verify_attestation(&key, &preimage, &attestation_tag)?;
+    verify_day_attestation(&key, &preimage, &attestation_tag)?;
     Ok(amount)
 }
 
 /// Read the decrypted nominal total of an encrypted Tribute day accumulator.
-pub fn read_day_amount(record: &EncryptedTributeDayAmountV2) -> Result<U256, TransportError> {
+pub fn read_day_amount(record: &EncryptedTributeDayAmountV2) -> Result<U256, EnclaveClientError> {
     request_amount_read(
         tribute_day::day_read_inputs_hash(record),
         EnclaveRequest::ReadTributeDayAmountV2 {
@@ -110,18 +128,15 @@ pub fn read_day_amount(record: &EncryptedTributeDayAmountV2) -> Result<U256, Tra
 /// Apply an arithmetic transition to an encrypted per-league Tribute day accumulator.
 pub fn apply_league_operation(
     request: TributeLeagueOpRequestV1,
-) -> Result<EncryptedTributeLeagueAmountV1, TransportError> {
+) -> Result<EncryptedTributeLeagueAmountV1, EnclaveClientError> {
     let expected = tribute_day::league_operation_inputs_hash(&request).map_err(codec)?;
     let chain_id = request.chain_id;
     let day = request.worldwide_day;
     let league = request.league;
-    let version = request
-        .previous
-        .as_ref()
-        .map_or(Some(1), |previous| previous.version()?.checked_add(1))
-        .ok_or_else(|| {
-            TransportError::from(EnclaveClientError::InvalidTributeDayPredecessorVersion)
-        })?;
+    let version = match request.previous.as_ref() {
+        None => 1,
+        Some(previous) => next_predecessor_version(previous.version())?,
+    };
     let (key, response) = request_local_enclave(EnclaveRequest::ApplyTributeLeagueOpV1 {
         request: Box::new(request),
     })?;
@@ -131,7 +146,7 @@ pub fn apply_league_operation(
         attestation_tag,
     } = response
     else {
-        return Err(response_error(response));
+        return Err(TransportError::UnexpectedResponse.into());
     };
     let expected_identity = (chain_id, day, league, Some(version));
     let returned_identity = (
@@ -143,16 +158,19 @@ pub fn apply_league_operation(
     if expected != inputs_canonical_hash || returned_identity != expected_identity {
         return Err(TransportError::EnclaveError(
             "Tribute league response does not match request".into(),
-        ));
+        )
+        .into());
     }
     let preimage =
         tribute_day::league_operation_attestation_preimage(expected, &record).map_err(codec)?;
-    verify_attestation(&key, &preimage, &attestation_tag)?;
+    verify_day_attestation(&key, &preimage, &attestation_tag)?;
     Ok(record)
 }
 
 /// Read the decrypted nominal total of an encrypted per-league Tribute day accumulator.
-pub fn read_league_amount(record: &EncryptedTributeLeagueAmountV1) -> Result<U256, TransportError> {
+pub fn read_league_amount(
+    record: &EncryptedTributeLeagueAmountV1,
+) -> Result<U256, EnclaveClientError> {
     request_amount_read(
         tribute_day::league_read_inputs_hash(record),
         EnclaveRequest::ReadTributeLeagueAmountV1 {
@@ -166,7 +184,7 @@ pub fn read_league_amount(record: &EncryptedTributeLeagueAmountV1) -> Result<U25
 /// Execute confidential Lysis fraction settlement for a completed WorldwideDay.
 pub fn execute_lysis_fractions(
     request: LysisFractionsRequestV1,
-) -> Result<LysisFractionsResultV1, TransportError> {
+) -> Result<LysisFractionsResultV1, EnclaveClientError> {
     let expected = tribute_day::lysis_fractions_inputs_hash(&request).map_err(codec)?;
     let expected_identity = (
         request.chain_id,
@@ -183,7 +201,7 @@ pub fn execute_lysis_fractions(
         attestation_tag,
     } = response
     else {
-        return Err(response_error(response));
+        return Err(TransportError::UnexpectedResponse.into());
     };
     let returned_identity = (
         result.day_fractions.chain_id,
@@ -194,18 +212,19 @@ pub fn execute_lysis_fractions(
     if expected != inputs_canonical_hash || returned_identity != expected_identity {
         return Err(TransportError::EnclaveError(
             "Lysis fractions response does not match request".into(),
-        ));
+        )
+        .into());
     }
     let preimage =
         tribute_day::lysis_fractions_attestation_preimage(expected, &result).map_err(codec)?;
-    verify_attestation(&key, &preimage, &attestation_tag)?;
+    verify_day_attestation(&key, &preimage, &attestation_tag)?;
     Ok(*result)
 }
 
 /// Read decrypted per-league Lysis fractions from an encrypted day-fractions record.
 pub fn read_day_fractions(
     record: &EncryptedTributeDayFractionsV1,
-) -> Result<BTreeMap<u16, u64>, TransportError> {
+) -> Result<BTreeMap<u16, u64>, EnclaveClientError> {
     let expected = tribute_day::day_fractions_read_inputs_hash(record).map_err(codec)?;
     let (key, response) = request_local_enclave(EnclaveRequest::ReadTributeDayFractionsV1 {
         record: record.clone(),
@@ -216,26 +235,20 @@ pub fn read_day_fractions(
         attestation_tag,
     } = response
     else {
-        return Err(response_error(response));
+        return Err(TransportError::UnexpectedResponse.into());
     };
     if expected != inputs_canonical_hash {
         return Err(TransportError::EnclaveError(
             "Tribute day fractions read response does not match request".into(),
-        ));
+        )
+        .into());
     }
     let preimage = tribute_day::day_fractions_read_attestation_preimage(expected, &fractions)
         .map_err(codec)?;
-    verify_attestation(&key, &preimage, &attestation_tag)?;
+    verify_day_attestation(&key, &preimage, &attestation_tag)?;
     Ok(fractions)
 }
 
-fn codec(error: serde_json::Error) -> TransportError {
-    TransportError::Codec(error.to_string())
-}
-
-fn response_error(response: EnclaveResponse) -> TransportError {
-    match response {
-        EnclaveResponse::Error { message } => TransportError::EnclaveError(message),
-        _ => TransportError::UnexpectedResponse,
-    }
+fn codec(error: serde_json::Error) -> EnclaveClientError {
+    TransportError::codec(error).into()
 }

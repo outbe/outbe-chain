@@ -1,7 +1,10 @@
 //! Operation-specific preimage verification for the shared confidential read/transform client.
 
 use alloy_primitives::{B256, U256};
-use outbe_tee::TransportError;
+use outbe_tee::{
+    tee_call::{verify_signed_rejection, SignedRejectionRef},
+    AttestationMetricClass, TeeAttestationError, TransportError,
+};
 
 use super::{
     nod_mine,
@@ -134,16 +137,24 @@ pub(crate) fn authenticate_request(
             },
         ) => {
             let expected = nod_mine::inputs_hash(request).map_err(TransportError::codec)?;
-            let preimage =
-                response_auth::attestation(b"outbe/nod/mint-rejected/v1", expected, reason)
-                    .map_err(TransportError::codec)?;
-            AttestedClaim {
-                expected,
-                actual: *inputs_canonical_hash,
-                preimage,
-                attestation_tag,
-            }
-            .verify(key)
+            verify_signed_rejection(
+                key,
+                SignedRejectionRef {
+                    domain: b"outbe/nod/mint-rejected/v1",
+                    expected_inputs_hash: expected,
+                    actual_inputs_hash: *inputs_canonical_hash,
+                    reason,
+                    tag: attestation_tag,
+                },
+            )
+            .map_err(|cause| match cause {
+                TeeAttestationError::InputsHashMismatch { .. } => {
+                    TransportError::Attestation("witness request commitment mismatch".into())
+                }
+                other => {
+                    TransportError::app_attestation(AttestationMetricClass::TributeOffer, other)
+                }
+            })
         }
         (
             Q::ReadNodAmountV1 { nod },

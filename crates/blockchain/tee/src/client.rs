@@ -81,6 +81,16 @@ pub struct EnclaveClient {
     raw_quote: EnclaveResponse,
 }
 
+#[cfg(test)]
+impl EnclaveClient {
+    pub(crate) fn set_read_timeout_for_test(&mut self, timeout: std::time::Duration) {
+        match &mut self.stream {
+            Transport::Unix(stream) => stream.set_read_timeout(Some(timeout)).expect("timeout"),
+            Transport::Tcp(stream) => stream.set_read_timeout(Some(timeout)).expect("timeout"),
+        }
+    }
+}
+
 /// Persistent Noise IK initiator identity authorized by one enclave manifest.
 /// The private bytes are zeroized on drop. This API never exposes them.
 #[derive(Clone)]

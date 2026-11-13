@@ -69,9 +69,6 @@ pub(crate) fn process_encrypted_offers(
             },
             &key,
         ),
-        EnclaveResponse::Error { message } => {
-            Err(TributeFactoryError::EncryptedOfferEnclaveError(message).into())
-        }
         _ => Err(TributeFactoryError::UnexpectedEncryptedOfferResponse.into()),
     }
 }

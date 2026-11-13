@@ -2,12 +2,15 @@
 
 use alloy_primitives::B256;
 use outbe_tee::{
-    tee_call::{canonical_attestation_preimage, canonical_domain_hash},
-    TransportError,
+    tee_call::{
+        canonical_attestation_preimage, canonical_domain_hash, verify_signed_rejection,
+        SignedRejectionRef,
+    },
+    TeeAttestationError, TransportError,
 };
 use serde::Serialize;
 
-use super::{errors::EnclaveClientError, protocol::EnclaveResponse, tribute_v2};
+use super::{errors::EnclaveClientError, protocol::EnclaveResponse};
 
 /// Compute `keccak256(domain || serde_json::to_vec(value))`.
 pub fn hash<T: Serialize + ?Sized>(domain: &[u8], value: &T) -> Result<B256, serde_json::Error> {
@@ -23,40 +26,17 @@ pub fn attestation<T: Serialize + ?Sized>(
     canonical_attestation_preimage(domain, inputs, value)
 }
 
-pub(crate) struct RejectionSubject<'a> {
-    domain: &'a [u8],
-    expected: B256,
-    reason: &'a str,
-}
-
-impl<'a> RejectionSubject<'a> {
-    pub(crate) const fn new(domain: &'a [u8], expected: B256, reason: &'a str) -> Self {
-        Self {
-            domain,
-            expected,
-            reason,
-        }
-    }
-}
-
-pub(crate) fn verify_rejection(
-    key: &[u8; 32],
-    subject: RejectionSubject<'_>,
-    tag: &[u8],
-) -> Result<(), TransportError> {
-    let preimage = attestation(subject.domain, subject.expected, subject.reason).map_err(codec)?;
-    tribute_v2::verify_attestation(key, &preimage, tag)
-}
-
 /// The reason and the enclave tag of one rejection response.
 struct SignedRejection {
+    actual_inputs_hash: B256,
     reason: String,
     attestation_tag: Vec<u8>,
 }
 
 impl SignedRejection {
-    fn new(reason: String, attestation_tag: Vec<u8>) -> Self {
+    fn new(actual_inputs_hash: B256, reason: String, attestation_tag: Vec<u8>) -> Self {
         Self {
+            actual_inputs_hash,
             reason,
             attestation_tag,
         }
@@ -84,11 +64,22 @@ impl NodRejectionKind {
         expected: B256,
         rejection: SignedRejection,
     ) -> Result<T, EnclaveClientError> {
-        verify_rejection(
+        verify_signed_rejection(
             key,
-            RejectionSubject::new(self.domain, expected, &rejection.reason),
-            &rejection.attestation_tag,
-        )?;
+            SignedRejectionRef {
+                domain: self.domain,
+                expected_inputs_hash: expected,
+                actual_inputs_hash: rejection.actual_inputs_hash,
+                reason: &rejection.reason,
+                tag: &rejection.attestation_tag,
+            },
+        )
+        .map_err(|cause| match cause {
+            TeeAttestationError::InputsHashMismatch { .. } => {
+                EnclaveClientError::Transport(TransportError::UnexpectedResponse)
+            }
+            other => EnclaveClientError::NodAttestation(other),
+        })?;
         Err((self.error)(rejection.reason))
     }
 }
@@ -110,15 +101,14 @@ pub(crate) enum NodOperation {
 impl NodOperation {
     /// Ends the response match of this operation after its success arm. A
     /// rejection that this operation accepts and that answers `expected` is
-    /// verified and returned as its typed error. An enclave error is returned
-    /// unchanged. Every other response is unexpected.
+    /// verified and returned as its typed error. Every other response is unexpected.
     pub(crate) fn reject_or_unexpected<T>(
         self,
         key: &[u8; 32],
         expected: B256,
         response: EnclaveResponse,
     ) -> Result<T, EnclaveClientError> {
-        let (kind, inputs_canonical_hash, rejection) = match (self, response) {
+        let (kind, rejection) = match (self, response) {
             (
                 Self::Mine,
                 EnclaveResponse::EncryptedNodMintRejectedV1 {
@@ -128,17 +118,10 @@ impl NodOperation {
                 },
             ) => (
                 MINT_REJECTED,
-                inputs_canonical_hash,
-                SignedRejection::new(reason, attestation_tag),
+                SignedRejection::new(inputs_canonical_hash, reason, attestation_tag),
             ),
-            (_, EnclaveResponse::Error { message }) => {
-                return Err(TransportError::EnclaveError(message).into())
-            }
             _ => return Err(TransportError::UnexpectedResponse.into()),
         };
-        if inputs_canonical_hash != expected {
-            return Err(TransportError::UnexpectedResponse.into());
-        }
         kind.reject(key, expected, rejection)
     }
 }
@@ -151,9 +134,12 @@ pub(crate) fn codec(error: serde_json::Error) -> TransportError {
 mod rejection_tests {
     use alloy_primitives::B256;
     use ed25519_dalek::{Signer, SigningKey};
-    use outbe_tee::TransportError;
+    use outbe_tee::{
+        tee_call::{verify_signed_rejection, SignedRejectionRef},
+        TeeAttestationError,
+    };
 
-    use super::{attestation, verify_rejection, RejectionSubject};
+    use super::attestation;
 
     const LYSIS: &[u8] = b"outbe/lysis/rejected";
     const MINT: &[u8] = b"outbe/nod/mint-rejected/v1";
@@ -178,33 +164,42 @@ mod rejection_tests {
             expected_lysis
         );
 
-        assert!(verify_rejection(
+        let base = SignedRejectionRef {
+            domain: LYSIS,
+            expected_inputs_hash: expected,
+            actual_inputs_hash: expected,
+            reason,
+            tag: &lysis_tag,
+        };
+        assert!(verify_signed_rejection(&public, base).is_ok());
+        assert!(verify_signed_rejection(
             &public,
-            RejectionSubject::new(LYSIS, expected, reason),
-            &lysis_tag
-        )
-        .is_ok());
-        assert!(verify_rejection(
-            &public,
-            RejectionSubject::new(MINT, expected, reason),
-            &mint_tag
+            SignedRejectionRef {
+                domain: MINT,
+                tag: &mint_tag,
+                ..base
+            }
         )
         .is_ok());
         assert!(matches!(
-            verify_rejection(
+            verify_signed_rejection(
                 &public,
-                RejectionSubject::new(MINT, expected, reason),
-                &lysis_tag
+                SignedRejectionRef {
+                    domain: MINT,
+                    ..base
+                }
             ),
-            Err(TransportError::PayloadAttestation(_))
+            Err(TeeAttestationError::SignatureMismatch(_))
         ));
         assert!(matches!(
-            verify_rejection(
+            verify_signed_rejection(
                 &public,
-                RejectionSubject::new(LYSIS, expected, reason),
-                &mint_tag
+                SignedRejectionRef {
+                    tag: &mint_tag,
+                    ..base
+                }
             ),
-            Err(TransportError::PayloadAttestation(_))
+            Err(TeeAttestationError::SignatureMismatch(_))
         ));
     }
 
@@ -219,20 +214,35 @@ mod rejection_tests {
         for domain in [LYSIS, MINT] {
             let signed = attestation(domain, signed_hash, reason).unwrap();
             let tag = signer.sign(&signed).to_bytes();
+            let valid = SignedRejectionRef {
+                domain,
+                expected_inputs_hash: signed_hash,
+                actual_inputs_hash: signed_hash,
+                reason,
+                tag: &tag,
+            };
 
-            assert!(verify_rejection(
-                &public,
-                RejectionSubject::new(domain, signed_hash, reason),
-                &tag
-            )
-            .is_ok());
+            assert!(verify_signed_rejection(&public, valid).is_ok());
             assert!(matches!(
-                verify_rejection(
+                verify_signed_rejection(
                     &public,
-                    RejectionSubject::new(domain, different_hash, reason),
-                    &tag
+                    SignedRejectionRef {
+                        expected_inputs_hash: different_hash,
+                        ..valid
+                    }
                 ),
-                Err(TransportError::PayloadAttestation(_))
+                Err(TeeAttestationError::InputsHashMismatch { .. })
+            ));
+            assert!(matches!(
+                verify_signed_rejection(
+                    &public,
+                    SignedRejectionRef {
+                        expected_inputs_hash: different_hash,
+                        actual_inputs_hash: different_hash,
+                        ..valid
+                    }
+                ),
+                Err(TeeAttestationError::SignatureMismatch(_))
             ));
         }
     }
@@ -284,12 +294,7 @@ mod response_tests {
                     ))
                 ));
             } else if wrong_domain {
-                assert!(matches!(
-                    result,
-                    Err(EnclaveClientError::Transport(
-                        TransportError::PayloadAttestation(_)
-                    ))
-                ));
+                assert!(matches!(result, Err(EnclaveClientError::NodAttestation(_))));
             } else {
                 assert!(matches!(
                     result,
@@ -306,17 +311,6 @@ mod response_tests {
             Err(EnclaveClientError::Transport(
                 TransportError::UnexpectedResponse
             ))
-        ));
-        assert!(matches!(
-            NodOperation::Mine.reject_or_unexpected::<()>(
-                &key,
-                expected,
-                EnclaveResponse::Error {
-                    message: "local failure".into()
-                },
-            ),
-            Err(EnclaveClientError::Transport(TransportError::EnclaveError(message)))
-                if message == "local failure"
         ));
     }
 }

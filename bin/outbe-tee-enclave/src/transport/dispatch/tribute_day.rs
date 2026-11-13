@@ -7,7 +7,10 @@ use outbe_enclave::{
     tribute_day::{self, LysisFractionsRequestV1, TributeDayOpRequestV2, TributeLeagueOpRequestV1},
 };
 
-use super::tribute::{resident_chain_id, response};
+use super::{
+    requests::DomainDispatchResult,
+    tribute::{resident_chain_id, response},
+};
 use crate::{
     errors::{EnclaveResult, TransportDispatchError},
     keys::EnclaveKeys,
@@ -41,7 +44,7 @@ pub(super) fn apply(
     offer_key: &SharedTributeOfferKey,
     chain: B256,
     request: &TributeDayOpRequestV2,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     dispatch_tribute_op(
         (keys, offer_key, chain, request.chain_id),
         |secret, tribute_key| crate::tribute_day::apply_day_operation(secret, tribute_key, request),
@@ -60,7 +63,7 @@ pub(super) fn read(
     offer_key: &SharedTributeOfferKey,
     chain: B256,
     record: &EncryptedTributeDayAmountV2,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     dispatch_amount_read(
         (keys, offer_key, chain, record.chain_id),
         |secret| crate::tribute_day::read_day_amount(secret, record),
@@ -79,7 +82,7 @@ pub(super) fn apply_league(
     offer_key: &SharedTributeOfferKey,
     chain: B256,
     request: &TributeLeagueOpRequestV1,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     dispatch_tribute_op(
         (keys, offer_key, chain, request.chain_id),
         |secret, tribute_key| {
@@ -102,7 +105,7 @@ pub(super) fn read_league(
     offer_key: &SharedTributeOfferKey,
     chain: B256,
     record: &EncryptedTributeLeagueAmountV1,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     dispatch_amount_read(
         (keys, offer_key, chain, record.chain_id),
         |secret| crate::tribute_day::read_league_amount(secret, record),
@@ -124,7 +127,7 @@ fn dispatch_tribute_op<R>(
     hash_fn: impl FnOnce() -> Result<B256, serde_json::Error>,
     preimage_fn: fn(B256, &R) -> Result<Vec<u8>, serde_json::Error>,
     wrap_fn: fn(R, B256, Vec<u8>) -> EnclaveResponse,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     response((|| -> EnclaveResult<EnclaveResponse> {
         let derived = require_resident_key(offer_key, chain, request_chain_id)?;
         let tribute_state_key = derive_tribute_key(derived, chain)?;
@@ -148,7 +151,7 @@ fn dispatch_amount_read(
     hash_fn: impl FnOnce() -> Result<B256, serde_json::Error>,
     preimage_fn: fn(B256, alloy_primitives::U256) -> Vec<u8>,
     wrap_fn: fn(alloy_primitives::U256, B256, Vec<u8>) -> EnclaveResponse,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     response((|| -> EnclaveResult<EnclaveResponse> {
         let derived = require_resident_key(offer_key, chain, record_chain_id)?;
         let amount = read_fn(derived.secret())
@@ -169,7 +172,7 @@ pub(super) fn execute_lysis_fractions(
     offer_key: &SharedTributeOfferKey,
     chain: B256,
     request: &LysisFractionsRequestV1,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     response((|| -> EnclaveResult<EnclaveResponse> {
         let derived = require_resident_key(offer_key, chain, request.chain_id)?;
         let tribute_state_key = derive_tribute_key(derived, chain)?;
@@ -201,7 +204,7 @@ pub(super) fn read_day_fractions(
     offer_key: &SharedTributeOfferKey,
     chain: B256,
     record: &EncryptedTributeDayFractionsV1,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     response((|| -> EnclaveResult<EnclaveResponse> {
         let derived = require_resident_key(offer_key, chain, record.chain_id)?;
         let fractions = crate::tribute_day::read_day_fractions(derived.secret(), record)

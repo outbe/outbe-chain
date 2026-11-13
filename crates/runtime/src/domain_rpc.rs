@@ -79,8 +79,6 @@ enum DomainRpcInternalError {
     PrivateExecutionUnavailable,
     #[error("enclave DeriveAccountKeys failed: {0}")]
     EnclaveDeriveAccountKeysFailed(String),
-    #[error("enclave error: {0}")]
-    EnclaveError(String),
     #[error("unexpected enclave response: {0}")]
     UnexpectedEnclaveResponse(String),
     #[error("state read failed: {0}")]
@@ -129,11 +127,41 @@ impl StorageReader for RethStateReader<'_> {
     }
 }
 
+pub(crate) const OUTBE_RPC_NAMESPACE: &str = "outbe";
+
+pub(crate) fn merge_outbe_rpc_modules(
+    infra: impl Into<jsonrpsee::Methods>,
+    domain: impl Into<jsonrpsee::Methods>,
+) -> Result<jsonrpsee::RpcModule<()>, jsonrpsee::core::RegisterMethodError> {
+    let mut merged = jsonrpsee::RpcModule::new(());
+    merged.merge(infra)?;
+    merged.merge(domain)?;
+    Ok(merged)
+}
+
+pub(crate) fn register_outbe_rpc_if_configured(
+    modules: &mut reth_ethereum::rpc::builder::TransportRpcModules,
+    infra: impl Into<jsonrpsee::Methods>,
+    domain: impl Into<jsonrpsee::Methods>,
+) -> Result<(), jsonrpsee::core::RegisterMethodError> {
+    let merged = merge_outbe_rpc_modules(infra, domain)?;
+    modules.merge_if_module_configured(
+        crate::RethRpcModule::Other(OUTBE_RPC_NAMESPACE.to_owned()),
+        merged,
+    )
+}
+
+type AccountQueryFn =
+    fn(
+        &outbe_enclave::protocol::EnclaveRequest,
+    ) -> Option<Result<outbe_enclave::protocol::EnclaveResponse, outbe_tee::TransportError>>;
+
 /// Runtime handler serving domain RPC methods in the `outbe_*` namespace.
 #[derive(Clone)]
 pub(crate) struct OutbeDomainRpcHandler<P> {
     provider: Arc<P>,
     chain_identity: Option<(u64, B256)>,
+    account_query: AccountQueryFn,
 }
 
 impl<P> OutbeDomainRpcHandler<P> {
@@ -142,7 +170,15 @@ impl<P> OutbeDomainRpcHandler<P> {
         Self {
             provider,
             chain_identity: Some(chain_identity),
+            account_query: outbe_enclave::try_domain_account_query,
         }
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    fn with_account_query(mut self, account_query: AccountQueryFn) -> Self {
+        self.account_query = account_query;
+        self
     }
 
     pub(crate) async fn derive_keys_checked(
@@ -178,19 +214,18 @@ impl<P> OutbeDomainRpcHandler<P> {
             ));
         }
 
-        let response =
-            outbe_enclave::try_domain_account_query(&EnclaveRequest::DeriveAccountKeys {
-                ledger,
-                account,
-                requester_ephemeral_pubkey: ephemeral_pubkey.0,
-                owner_sig: sig65.to_vec(),
-            })
-            .ok_or_else(|| internal_err(DomainRpcInternalError::PrivateExecutionUnavailable))?
-            .map_err(|error| {
-                internal_err(DomainRpcInternalError::EnclaveDeriveAccountKeysFailed(
-                    error.to_string(),
-                ))
-            })?;
+        let response = (self.account_query)(&EnclaveRequest::DeriveAccountKeys {
+            ledger,
+            account,
+            requester_ephemeral_pubkey: ephemeral_pubkey.0,
+            owner_sig: sig65.to_vec(),
+        })
+        .ok_or_else(|| internal_err(DomainRpcInternalError::PrivateExecutionUnavailable))?
+        .map_err(|error| {
+            internal_err(DomainRpcInternalError::EnclaveDeriveAccountKeysFailed(
+                error.to_string(),
+            ))
+        })?;
 
         match response {
             EnclaveResponse::AccountKeysSealed {
@@ -203,9 +238,6 @@ impl<P> OutbeDomainRpcHandler<P> {
                 nonce: nonce.to_vec().into(),
                 enclave_ephemeral_pubkey: B256::from(enclave_ephemeral_pubkey),
             }),
-            EnclaveResponse::Error { message } => {
-                Err(internal_err(DomainRpcInternalError::EnclaveError(message)))
-            }
             other => Err(internal_err(
                 DomainRpcInternalError::UnexpectedEnclaveResponse(format!("{other:?}")),
             )),
@@ -493,7 +525,8 @@ mod tests {
 
     #[tokio::test]
     async fn derive_keys_rejects_cross_domain_signature_replay() {
-        let handler = OutbeDomainRpcHandler::new(Arc::new(()), (1, B256::repeat_byte(0x11)));
+        let handler = OutbeDomainRpcHandler::new(Arc::new(()), (1, B256::repeat_byte(0x11)))
+            .with_account_query(|_| None);
         let signer = OutbeEvmSigner::from_secret_bytes([0x42; 32]).expect("signer");
         let owner = signer.address();
         let ephemeral_pubkey = B256::repeat_byte(0x22);
@@ -577,21 +610,129 @@ mod tests {
             runtime as Arc<dyn outbe_rpc::state_reader::OutbeRpcStateReader>,
         );
         let domain = OutbeDomainRpcHandler::new(provider, (1, B256::repeat_byte(0xAA)));
-        let mut rpc_module = infra.into_rpc();
-        rpc_module
-            .merge(domain.into_rpc())
+        let rpc_module = merge_outbe_rpc_modules(infra.into_rpc(), domain.into_rpc())
             .expect("infra and domain outbe_* RPC modules must merge cleanly");
 
         let names: std::collections::BTreeSet<&str> = rpc_module.method_names().collect();
-        for expected in [
-            "outbe_getTributeStateSource",
-            "outbe_deriveKeys",
-            "outbe_deriveGratisKeys",
-            "outbe_getValidators",
+        let expected: std::collections::BTreeSet<&str> = [
             "outbe_consensusStatus",
+            "outbe_deriveGratisKeys",
+            "outbe_deriveKeys",
+            "outbe_getConsensusBlock",
+            "outbe_getEmissionInfo",
+            "outbe_getEpochInfo",
+            "outbe_getFinalityProof",
+            "outbe_getFinalization",
+            "outbe_getParticipation",
+            "outbe_getSlashConfig",
+            "outbe_getSlashInfo",
+            "outbe_getStake",
+            "outbe_getTributeStateSource",
+            "outbe_getValidator",
+            "outbe_getValidators",
+            "outbe_getVrfSeed",
+            "outbe_radiclePeers",
+            "outbe_radicleRepositories",
+            "outbe_radicleStatus",
+            "outbe_syncStatus",
+            "outbe_teeRenewalScheduleV1",
             "outbe_upgradeKeyV1",
-        ] {
-            assert!(names.contains(expected), "missing RPC method {expected}");
-        }
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(expected.len(), 22);
+        assert_eq!(names, expected);
+    }
+
+    #[test]
+    fn disabled_outbe_namespace_registers_zero_methods() {
+        let provider: Arc<
+            NoopProvider<reth_chainspec::ChainSpec<OutbeHeader>, outbe_primitives::OutbePrimitives>,
+        > = Arc::new(NoopProvider::new(Arc::new(
+            reth_chainspec::ChainSpec::default(),
+        )));
+        let runtime = Arc::new(crate::OutbeRuntime::new());
+        let infra = outbe_rpc::OutbeApiHandler::new(
+            Arc::clone(&provider),
+            runtime as Arc<dyn outbe_rpc::state_reader::OutbeRpcStateReader>,
+        );
+        let domain = OutbeDomainRpcHandler::new(provider, (1, B256::repeat_byte(0xAA)));
+
+        let mut unconfigured = reth_ethereum::rpc::builder::TransportRpcModules::default();
+        register_outbe_rpc_if_configured(&mut unconfigured, infra.into_rpc(), domain.into_rpc())
+            .expect("unconfigured namespace must not error");
+        assert!(unconfigured
+            .methods_by_module(crate::RethRpcModule::Other(OUTBE_RPC_NAMESPACE.to_owned()))
+            .method_names()
+            .next()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn derive_keys_and_gratis_alias_route_over_account_query_lane_end_to_end() {
+        use outbe_enclave::protocol::{EnclaveRequest as DomReq, EnclaveResponse as DomResp};
+        use outbe_tee::protocol::{EnclaveRequest as WireReq, EnclaveResponse as WireResp};
+
+        let lanes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let lanes_loop = Arc::clone(&lanes);
+        let server = outbe_tee::test_utils::MockDevEnclaveServer::spawn([0xAA; 32], move |req| {
+            let WireReq::Payload { lane, payload } = req else {
+                return WireResp::Ack;
+            };
+            lanes_loop.lock().unwrap().push(lane);
+            let DomReq::DeriveAccountKeys { account, .. } =
+                DomReq::decode_wire_canonical(&payload).unwrap()
+            else {
+                panic!("unexpected domain request on account query");
+            };
+            DomResp::AccountKeysSealed {
+                account,
+                sealed: vec![0x5A; 80],
+                nonce: [0x6B; 12],
+                enclave_ephemeral_pubkey: [0x7C; 32],
+            }
+            .into_wire_response()
+            .unwrap()
+        });
+
+        let client = outbe_tee::EnclaveClient::connect_endpoint(&server.endpoint).unwrap();
+        outbe_tee::install_enclave_client(client, server.endpoint.clone()).expect("install once");
+
+        let provider: Arc<
+            NoopProvider<reth_chainspec::ChainSpec<OutbeHeader>, outbe_primitives::OutbePrimitives>,
+        > = Arc::new(NoopProvider::new(Arc::new(
+            reth_chainspec::ChainSpec::default(),
+        )));
+        let domain = OutbeDomainRpcHandler::new(provider, (1, B256::repeat_byte(0xAA))).into_rpc();
+
+        let signer = OutbeEvmSigner::from_secret_bytes([0x55; 32]).unwrap();
+        let owner = signer.address();
+        let eph = B256::repeat_byte(0x33);
+
+        let nod_hash = eip191_hash(&derive_account_keys_message(Ledger::Nod, owner, eph));
+        let nod_sig = Bytes::copy_from_slice(&signer.sign_hash(&nod_hash).unwrap());
+        let nod_sealed: GratisKeysSealed = domain
+            .call("outbe_deriveKeys", (Ledger::Nod, owner, eph, nod_sig))
+            .await
+            .expect("outbe_deriveKeys over AccountQuery");
+        assert_eq!(nod_sealed.sealed, Bytes::from(vec![0x5A; 80]));
+        assert_eq!(nod_sealed.nonce, Bytes::from(vec![0x6B; 12]));
+        assert_eq!(nod_sealed.enclave_ephemeral_pubkey, B256::repeat_byte(0x7C));
+
+        let gratis_hash = eip191_hash(&derive_account_keys_message(Ledger::Gratis, owner, eph));
+        let gratis_sig = Bytes::copy_from_slice(&signer.sign_hash(&gratis_hash).unwrap());
+        let gratis_sealed: GratisKeysSealed = domain
+            .call("outbe_deriveGratisKeys", (owner, eph, gratis_sig))
+            .await
+            .expect("outbe_deriveGratisKeys over AccountQuery");
+        assert_eq!(gratis_sealed.sealed, Bytes::from(vec![0x5A; 80]));
+
+        assert_eq!(
+            *lanes.lock().unwrap(),
+            vec![
+                outbe_tee::protocol::PayloadLane::AccountQuery,
+                outbe_tee::protocol::PayloadLane::AccountQuery,
+            ]
+        );
     }
 }

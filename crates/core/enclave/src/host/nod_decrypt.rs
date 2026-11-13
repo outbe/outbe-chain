@@ -4,9 +4,25 @@ use alloy_primitives::U256;
 use outbe_core_common::nod_encryption::{
     EncryptedNodV1, NodQuoteContextV1, NOD_AMOUNT_NONCE_INFO, NOD_BLOB_LEN, NOD_QUOTE_NONCE_INFO,
 };
-use outbe_tee::tee_decrypt::{tee_decrypt_counter_slot, CounterSlotInput};
+use outbe_tee::{
+    tee_decrypt::{tee_decrypt_counter_slot, CounterSlotContext},
+    TeeCryptoError,
+};
 
 use super::errors::LocalCryptoError;
+
+const fn map_nod_error(error: TeeCryptoError) -> LocalCryptoError {
+    match error {
+        TeeCryptoError::InvalidEnvelope => LocalCryptoError::InvalidNodEncoding,
+        TeeCryptoError::HkdfExpand => LocalCryptoError::HkdfExpand,
+        TeeCryptoError::HkdfFill => LocalCryptoError::HkdfFill,
+        TeeCryptoError::AeadKey => LocalCryptoError::InvalidNodAmountKey,
+        TeeCryptoError::InvalidPlaintextLength { .. } => LocalCryptoError::InvalidNodAmountLength,
+        TeeCryptoError::DecryptionFailed
+        | TeeCryptoError::RngFailure
+        | TeeCryptoError::AeadSeal => LocalCryptoError::NodAmountDecryptionFailed,
+    }
+}
 
 /// Open an [`EncryptedNodV1`] amount with the owner's `Ledger::Nod` view key.
 pub fn decrypt_nod_for_owner(
@@ -19,16 +35,19 @@ pub fn decrypt_nod_for_owner(
     let context_digest = nod.context_digest();
     let key_info = nod.amount_key_info();
     let crypto_slot = nod.crypto_slot();
-    open_nod_u256(
+    let opened = tee_decrypt_counter_slot(
         view_key,
-        CounterSlotInput {
+        CounterSlotContext {
             context_digest: context_digest.as_slice(),
             key_info: &key_info,
             crypto_slot: crypto_slot.as_slice(),
             nonce_info: NOD_AMOUNT_NONCE_INFO,
-            versioned_blob: &nod.encrypted_gratis_amount,
         },
+        &nod.encrypted_gratis_amount,
     )
+    .map_err(map_nod_error)?;
+    let amount = opened.try_into_array::<32>().map_err(map_nod_error)?;
+    Ok(U256::from_be_bytes(amount))
 }
 
 /// Alias preserved for callers matching NOD decryption errors.
@@ -46,27 +65,18 @@ pub fn decrypt_nod_quote_for_owner(
     let context_digest = context.context_digest();
     let key_info = context.quote_key_info();
     let crypto_slot = context.crypto_slot();
-    open_nod_u256(
+    let opened = tee_decrypt_counter_slot(
         view_key,
-        CounterSlotInput {
+        CounterSlotContext {
             context_digest: context_digest.as_slice(),
             key_info: &key_info,
             crypto_slot: crypto_slot.as_slice(),
             nonce_info: NOD_QUOTE_NONCE_INFO,
-            versioned_blob: encrypted_payment,
         },
+        encrypted_payment,
     )
-}
-
-fn open_nod_u256(
-    view_key: &[u8; 32],
-    input: CounterSlotInput<'_>,
-) -> Result<U256, LocalCryptoError> {
-    let opened = tee_decrypt_counter_slot(view_key, input)
-        .map_err(LocalCryptoError::from_nod_counter_slot)?;
-    let amount = opened
-        .try_into_array::<32>()
-        .map_err(LocalCryptoError::from_nod_counter_slot)?;
+    .map_err(map_nod_error)?;
+    let amount = opened.try_into_array::<32>().map_err(map_nod_error)?;
     Ok(U256::from_be_bytes(amount))
 }
 

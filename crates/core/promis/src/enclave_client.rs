@@ -65,9 +65,6 @@ pub(crate) fn apply_promis_op(req: PromisOpRequest) -> Result<PromisOpResult> {
 
     let result = match response {
         EnclaveResponse::PromisOpApplied { result } => *result,
-        EnclaveResponse::Error { message } => {
-            return Err(PromisFatalError::EnclaveOpError(message).into())
-        }
         other => return Err(PromisFatalError::UnexpectedEnclaveResponse(Box::new(other)).into()),
     };
 

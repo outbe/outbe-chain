@@ -39,7 +39,7 @@ fn account_key_authorization_cannot_cross_ledger_domains() {
                 requester_ephemeral_pubkey: ephemeral,
                 owner_sig: signature.clone(),
             }),
-            DomainResponse::Error { message }
+            Err(DomainDispatchError::Error(message))
                 if message == "DeriveAccountKeys: owner signature does not control account"
         ));
     }
@@ -145,7 +145,7 @@ fn derive_account_keys_requires_owner_sig() {
         requester_ephemeral_pubkey: ephemeral,
         owner_sig: good,
     }) {
-        DomainResponse::AccountKeysSealed { account: a, .. } => assert_eq!(a, account),
+        Ok(DomainResponse::AccountKeysSealed { account: a, .. }) => assert_eq!(a, account),
         other => panic!("expected AccountKeysSealed, got {other:?}"),
     }
 
@@ -162,7 +162,7 @@ fn derive_account_keys_requires_owner_sig() {
                 requester_ephemeral_pubkey: ephemeral,
                 owner_sig: forged,
             }),
-            DomainResponse::Error { .. }
+            Err(DomainDispatchError::Error(_))
         ),
         "keys must not be released without a signature by `account`"
     );
@@ -186,7 +186,7 @@ fn derive_account_keys_ephemeral_binding() {
                 requester_ephemeral_pubkey: e2,
                 owner_sig: sig_over_e1,
             }),
-            DomainResponse::Error { .. }
+            Err(DomainDispatchError::Error(_))
         ),
         "owner_sig must bind the requester ephemeral (no cross-target replay)"
     );
@@ -203,12 +203,12 @@ fn unseal_derived_view_key(
     let ephemeral =
         x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(secret)).to_bytes();
     let owner_sig = owner_sig_for_ledger(ledger, owner, account, ephemeral);
-    let DomainResponse::AccountKeysSealed {
+    let Ok(DomainResponse::AccountKeysSealed {
         sealed,
         nonce,
         enclave_ephemeral_pubkey,
         ..
-    } = enclave.call_domain(DomainRequest::DeriveAccountKeys {
+    }) = enclave.call_domain(DomainRequest::DeriveAccountKeys {
         ledger,
         account,
         requester_ephemeral_pubkey: ephemeral,
@@ -280,7 +280,7 @@ fn derive_account_keys_opens_tribute_and_nod_ciphertexts_from_dispatchers() {
     let recipient_pub = enclave.offer_key.get().expect("resident").public();
     let offer = sample_encrypted_offer(&recipient_pub, owner_addr, day);
 
-    let DomainResponse::EncryptedTributeOfferBatchV2 { results, .. } =
+    let Ok(DomainResponse::EncryptedTributeOfferBatchV2 { results, .. }) =
         enclave.call_domain(DomainRequest::ProcessEncryptedTributeOfferBatchV2 {
             offers: vec![offer],
         })
@@ -311,7 +311,7 @@ fn derive_account_keys_opens_tribute_and_nod_ciphertexts_from_dispatchers() {
         issuance_currency: 840,
         reference_currency: 978,
     };
-    let DomainResponse::NodEncryptedForTributeV1 { nod, .. } =
+    let Ok(DomainResponse::NodEncryptedForTributeV1 { nod, .. }) =
         enclave.call_domain(DomainRequest::EncryptNodForTributeV1 {
             tribute: Box::new(tribute),
             terms,

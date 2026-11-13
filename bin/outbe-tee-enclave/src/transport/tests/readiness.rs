@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, U256};
 use outbe_core_common::nod_encryption::{EncryptedNodV1, NodTermsV1};
-use outbe_enclave::protocol::{EnclaveRequest as DomainRequest, EnclaveResponse as DomainResponse};
+use outbe_enclave::protocol::EnclaveRequest as DomainRequest;
 use outbe_primitives::time::WorldwideDay;
 use outbe_tee::protocol::PayloadLane;
 
@@ -54,7 +54,7 @@ fn a_keyless_enclave_or_an_expired_lease_is_not_ready() {
         B256::from(testnet_chain_word()),
     );
     assert!(
-        matches!(response, DomainResponse::NotReady { message } if message == "no resident network key")
+        matches!(response, Err(DomainDispatchError::NotReady(message)) if message == "no resident network key")
     );
 }
 

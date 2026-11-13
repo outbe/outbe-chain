@@ -2,9 +2,9 @@
 
 use outbe_enclave::protocol::{EnclaveRequest, EnclaveResponse};
 
-use super::requests::{into_domain_response, RequestContext};
+use super::requests::{domain_error, into_domain_response, DomainDispatchResult, RequestContext};
 
-pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> EnclaveResponse {
+pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> DomainDispatchResult {
     match req {
         EnclaveRequest::ApplyGratisOp { request } => apply_gratis(context, request),
         EnclaveRequest::ApplyFidelityCohortOp { request } => apply_fidelity(context, request),
@@ -42,7 +42,7 @@ struct AccountKeyRequest {
 fn apply_gratis(
     context: RequestContext<'_>,
     request: Box<outbe_enclave::protocol::GratisOpRequest>,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     let RequestContext {
         keys,
         offer_key,
@@ -53,18 +53,12 @@ fn apply_gratis(
     // signature as the offer key. The key is identical on every enclave, so
     // the re-encrypted state is byte-identical (consensus determinism).
     let Some(derived) = offer_key.get() else {
-        return EnclaveResponse::Error {
-            message: "ApplyGratisOp: no resident group key (DKG not complete)".to_string(),
-        };
+        return Err(domain_error(
+            "ApplyGratisOp: no resident group key (DKG not complete)",
+        ));
     };
-    let state_key = match crate::gratis::derive_gratis_state_key(derived.group_sig(), chain_id, 0) {
-        Ok(k) => k,
-        Err(e) => {
-            return EnclaveResponse::Error {
-                message: e.to_string(),
-            };
-        }
-    };
+    let state_key = crate::gratis::derive_gratis_state_key(derived.group_sig(), chain_id, 0)
+        .map_err(domain_error)?;
     let mut result = crate::gratis::apply_op(&state_key, &request);
     // Co-located Fidelity cohort section. This arm applies it atomically with
     // the Gratis op under the section's own independent key domain. A failing section
@@ -103,15 +97,15 @@ fn apply_gratis(
         Err(error) => return into_domain_response(Err(crate::errors::TeeError::from(error))),
     };
     result.attestation_tag = keys.sign_attestation(&preimage).to_vec();
-    EnclaveResponse::GratisOpApplied {
+    Ok(EnclaveResponse::GratisOpApplied {
         result: Box::new(result),
-    }
+    })
 }
 
 fn apply_fidelity(
     context: RequestContext<'_>,
     request: Box<outbe_enclave::protocol::FidelityCohortRequest>,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     fidelity_request(context, "ApplyFidelityCohortOp", |key| {
         let mut result = crate::fidelity::apply_cohort_op(key, &request)?;
         let preimage = outbe_enclave::protocol::fidelity_cohort_attestation_preimage(
@@ -128,7 +122,7 @@ fn apply_fidelity(
 fn snapshot_fidelity(
     context: RequestContext<'_>,
     request: Box<outbe_enclave::protocol::FidelitySnapshotRequest>,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     fidelity_request(context, "SnapshotFidelityLeagues", |key| {
         let leagues = crate::fidelity::snapshot_leagues(key, &request)?;
         let inputs_canonical_hash =
@@ -149,25 +143,16 @@ fn snapshot_fidelity(
 fn query_fidelity(
     context: RequestContext<'_>,
     request: Box<outbe_enclave::protocol::FidelityQueryRequest>,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     let inputs_canonical_hash = outbe_enclave::protocol::fidelity_query_canonical_hash(&request);
     let Some(derived) = context.offer_key.get() else {
-        return EnclaveResponse::Error {
-            message: "QueryFidelityIndex: no resident group key (DKG not complete)".into(),
-        };
+        return Err(domain_error(
+            "QueryFidelityIndex: no resident group key (DKG not complete)",
+        ));
     };
-    let state_key = match crate::fidelity::derive_fidelity_state_key(
-        derived.group_sig(),
-        context.chain_id,
-        0,
-    ) {
-        Ok(key) => key,
-        Err(error) => {
-            return EnclaveResponse::Error {
-                message: error.to_string(),
-            }
-        }
-    };
+    let state_key =
+        crate::fidelity::derive_fidelity_state_key(derived.group_sig(), context.chain_id, 0)
+            .map_err(domain_error)?;
     match crate::fidelity::query_index(&state_key, context.chain_id, &request) {
         Ok(mut result) => {
             let preimage = match outbe_enclave::protocol::fidelity_query_attestation_preimage(
@@ -180,29 +165,23 @@ fn query_fidelity(
                 }
             };
             result.attestation_tag = context.keys.sign_attestation(&preimage).to_vec();
-            EnclaveResponse::FidelityIndexQueried {
+            Ok(EnclaveResponse::FidelityIndexQueried {
                 result: Box::new(result),
-            }
+            })
         }
         Err(error) => {
             let reason = error.to_string();
-            let preimage = match outbe_enclave::response_auth::attestation(
+            let preimage = outbe_enclave::response_auth::attestation(
                 b"outbe/fidelity/query-rejected/v1",
                 inputs_canonical_hash,
                 &reason,
-            ) {
-                Ok(preimage) => preimage,
-                Err(error) => {
-                    return EnclaveResponse::Error {
-                        message: error.to_string(),
-                    }
-                }
-            };
-            EnclaveResponse::FidelityQueryRejected {
+            )
+            .map_err(domain_error)?;
+            Ok(EnclaveResponse::FidelityQueryRejected {
                 inputs_canonical_hash,
                 reason,
                 attestation_tag: context.keys.sign_attestation(&preimage).to_vec(),
-            }
+            })
         }
     }
 }
@@ -210,7 +189,7 @@ fn query_fidelity(
 fn apply_promis(
     context: RequestContext<'_>,
     request: Box<outbe_enclave::protocol::PromisOpRequest>,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     let RequestContext {
         keys,
         offer_key,
@@ -220,18 +199,12 @@ fn apply_promis(
     // Same resident-key derivation + attestation as ApplyGratisOp, over the
     // independent Promis key domain (mint/burn on an encrypted balance).
     let Some(derived) = offer_key.get() else {
-        return EnclaveResponse::Error {
-            message: "ApplyPromisOp: no resident group key (DKG not complete)".to_string(),
-        };
+        return Err(domain_error(
+            "ApplyPromisOp: no resident group key (DKG not complete)",
+        ));
     };
-    let state_key = match crate::promis::derive_promis_state_key(derived.group_sig(), chain_id, 0) {
-        Ok(k) => k,
-        Err(e) => {
-            return EnclaveResponse::Error {
-                message: e.to_string(),
-            };
-        }
-    };
+    let state_key = crate::promis::derive_promis_state_key(derived.group_sig(), chain_id, 0)
+        .map_err(domain_error)?;
     let mut result = crate::promis::apply_op(&state_key, &request);
     let preimage = match outbe_enclave::protocol::promis_op_attestation_preimage(
         result.inputs_canonical_hash,
@@ -241,15 +214,15 @@ fn apply_promis(
         Err(error) => return into_domain_response(Err(crate::errors::TeeError::from(error))),
     };
     result.attestation_tag = keys.sign_attestation(&preimage).to_vec();
-    EnclaveResponse::PromisOpApplied {
+    Ok(EnclaveResponse::PromisOpApplied {
         result: Box::new(result),
-    }
+    })
 }
 
 fn mine_gratis_from_promis(
     context: RequestContext<'_>,
     request: Box<outbe_enclave::protocol::MineGratisFromPromisRequestV1>,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     let RequestContext {
         keys,
         offer_key,
@@ -257,37 +230,17 @@ fn mine_gratis_from_promis(
         ..
     } = context;
     let Some(derived) = offer_key.get() else {
-        return EnclaveResponse::Error {
-            message: "MineGratisFromPromisV1: no resident group key (DKG not complete)".to_string(),
-        };
+        return Err(domain_error(
+            "MineGratisFromPromisV1: no resident group key (DKG not complete)",
+        ));
     };
-    let promis_state_key =
-        match crate::promis::derive_promis_state_key(derived.group_sig(), chain_id, 0) {
-            Ok(k) => k,
-            Err(e) => {
-                return EnclaveResponse::Error {
-                    message: e.to_string(),
-                }
-            }
-        };
-    let gratis_state_key =
-        match crate::gratis::derive_gratis_state_key(derived.group_sig(), chain_id, 0) {
-            Ok(k) => k,
-            Err(e) => {
-                return EnclaveResponse::Error {
-                    message: e.to_string(),
-                }
-            }
-        };
+    let promis_state_key = crate::promis::derive_promis_state_key(derived.group_sig(), chain_id, 0)
+        .map_err(domain_error)?;
+    let gratis_state_key = crate::gratis::derive_gratis_state_key(derived.group_sig(), chain_id, 0)
+        .map_err(domain_error)?;
     let fidelity_state_key =
-        match crate::fidelity::derive_fidelity_state_key(derived.group_sig(), chain_id, 0) {
-            Ok(k) => k,
-            Err(e) => {
-                return EnclaveResponse::Error {
-                    message: e.to_string(),
-                }
-            }
-        };
+        crate::fidelity::derive_fidelity_state_key(derived.group_sig(), chain_id, 0)
+            .map_err(domain_error)?;
     let mut result = crate::promis::apply_mine_gratis(
         crate::promis::MineGratisKeys {
             offer_secret: derived.secret(),
@@ -305,12 +258,15 @@ fn mine_gratis_from_promis(
         Err(error) => return into_domain_response(Err(crate::errors::TeeError::from(error))),
     };
     result.attestation_tag = keys.sign_attestation(&preimage).to_vec();
-    EnclaveResponse::GratisMinedFromPromisV1 {
+    Ok(EnclaveResponse::GratisMinedFromPromisV1 {
         result: Box::new(result),
-    }
+    })
 }
 
-fn derive_account_keys(context: RequestContext<'_>, request: AccountKeyRequest) -> EnclaveResponse {
+fn derive_account_keys(
+    context: RequestContext<'_>,
+    request: AccountKeyRequest,
+) -> DomainDispatchResult {
     let RequestContext {
         offer_key,
         chain_id,
@@ -326,9 +282,9 @@ fn derive_account_keys(context: RequestContext<'_>, request: AccountKeyRequest) 
     // execution): derive the account's view + modify keys and seal them to
     // the requester's ephemeral X25519 key.
     let Some(derived) = offer_key.get() else {
-        return EnclaveResponse::Error {
-            message: "DeriveAccountKeys: no resident group key (DKG not complete)".to_string(),
-        };
+        return Err(domain_error(
+            "DeriveAccountKeys: no resident group key (DKG not complete)",
+        ));
     };
     // Prove the caller controls `account` INSIDE the enclave before releasing
     // its (secret) view/modify keys. The host RPC recovers the same signature
@@ -337,9 +293,9 @@ fn derive_account_keys(context: RequestContext<'_>, request: AccountKeyRequest) 
     // host's. Same shared preimage + recover_signer the host uses (one impl, no
     // divergence).
     let Ok(sig65) = <[u8; 65]>::try_from(owner_sig.as_slice()) else {
-        return EnclaveResponse::Error {
-            message: "DeriveAccountKeys: owner signature must be 65 bytes".to_string(),
-        };
+        return Err(domain_error(
+            "DeriveAccountKeys: owner signature must be 65 bytes",
+        ));
     };
     let prehash = outbe_enclave::protocol::eip191_hash(
         &outbe_enclave::protocol::derive_account_keys_message(
@@ -351,9 +307,9 @@ fn derive_account_keys(context: RequestContext<'_>, request: AccountKeyRequest) 
     match outbe_primitives::tee_signatures::recover_signer(&prehash, &sig65) {
         Ok(signer) if signer == account => {}
         _ => {
-            return EnclaveResponse::Error {
-                message: "DeriveAccountKeys: owner signature does not control account".to_string(),
-            };
+            return Err(domain_error(
+                "DeriveAccountKeys: owner signature does not control account",
+            ));
         }
     }
     let sealed = (|| -> crate::errors::Result<crate::crypto::EncryptedShare> {
@@ -366,28 +322,25 @@ fn derive_account_keys(context: RequestContext<'_>, request: AccountKeyRequest) 
         plaintext[32..].copy_from_slice(modify_key.as_slice());
         crate::crypto::encrypt_share(&requester_ephemeral_pubkey, plaintext.as_slice())
     })();
-    match sealed {
-        Ok(blob) => EnclaveResponse::AccountKeysSealed {
+    sealed
+        .map(|blob| EnclaveResponse::AccountKeysSealed {
             account,
             sealed: blob.ciphertext,
             nonce: blob.nonce,
             enclave_ephemeral_pubkey: blob.ephemeral_pub,
-        },
-        Err(e) => EnclaveResponse::Error {
-            message: e.to_string(),
-        },
-    }
+        })
+        .map_err(domain_error)
 }
 
 fn fidelity_request(
     context: RequestContext<'_>,
     operation: &str,
     apply: impl FnOnce(&[u8; 32]) -> crate::errors::Result<EnclaveResponse>,
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     let Some(derived) = context.offer_key.get() else {
-        return EnclaveResponse::Error {
-            message: format!("{operation}: no resident group key (DKG not complete)"),
-        };
+        return Err(domain_error(format!(
+            "{operation}: no resident group key (DKG not complete)"
+        )));
     };
     into_domain_response(
         crate::fidelity::derive_fidelity_state_key(derived.group_sig(), context.chain_id, 0)
@@ -444,7 +397,8 @@ mod tests {
                 initialization,
             },
             Box::new(request),
-        );
+        )
+        .expect("typed refusal");
         let EnclaveResponse::FidelityQueryRejected {
             inputs_canonical_hash,
             reason,

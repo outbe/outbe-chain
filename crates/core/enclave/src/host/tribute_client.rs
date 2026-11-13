@@ -1,11 +1,12 @@
 //! Private, authenticated enclave reads for existing calculation consumers.
 
 use outbe_core_common::tribute_encryption::{EncryptedTributeV2, TributeAmountsV2};
-use outbe_tee::TransportError;
+use outbe_tee::{tee_call::verify_enclave_attestation, TransportError};
 
 use super::{
     authenticate::authenticate_request,
     consensus_domain_call,
+    errors::EnclaveClientError,
     protocol::{EnclaveRequest, EnclaveResponse},
     tribute_v2,
 };
@@ -14,7 +15,7 @@ use super::{
 /// using this transient calculation view. Public projections retain ciphertext.
 pub fn read_tribute_amounts(
     tributes: &[EncryptedTributeV2],
-) -> Result<Vec<TributeAmountsV2>, TransportError> {
+) -> Result<Vec<TributeAmountsV2>, EnclaveClientError> {
     let inputs_hash =
         tribute_v2::tribute_read_inputs_hash(tributes).map_err(TransportError::codec)?;
     let (attestation_pub, response) =
@@ -30,15 +31,16 @@ pub fn read_tribute_amounts(
             if inputs_canonical_hash != inputs_hash || amounts.len() != tributes.len() {
                 return Err(TransportError::EnclaveError(
                     "Tribute read response does not match request".into(),
-                ));
+                )
+                .into());
             }
             let preimage = tribute_v2::tribute_read_attestation_preimage(inputs_hash, &amounts)
                 .map_err(TransportError::codec)?;
-            tribute_v2::verify_attestation(&attestation_pub, &preimage, &attestation_tag)?;
+            verify_enclave_attestation(&attestation_pub, &preimage, &attestation_tag)
+                .map_err(EnclaveClientError::TributeOfferAttestation)?;
             Ok(amounts)
         }
-        EnclaveResponse::Error { message } => Err(TransportError::EnclaveError(message)),
-        _ => Err(TransportError::UnexpectedResponse),
+        _ => Err(TransportError::UnexpectedResponse.into()),
     }
 }
 
@@ -60,6 +62,11 @@ pub fn set_test_local_enclave_hook(hook: Option<TestLocalEnclaveHook>) {
     TEST_LOCAL_ENCLAVE_HOOK.with(|slot| {
         *slot.borrow_mut() = hook;
     });
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+pub(crate) fn has_test_local_enclave_hook() -> bool {
+    TEST_LOCAL_ENCLAVE_HOOK.with(|slot| slot.borrow().is_some())
 }
 
 #[cfg(any(test, feature = "test-utils"))]

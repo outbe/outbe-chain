@@ -296,12 +296,6 @@ mod enclave_responses {
         }
     }
 
-    fn enclave_error() -> EnclaveResponse {
-        EnclaveResponse::Error {
-            message: "boom".into(),
-        }
-    }
-
     fn cohort(tag_flip: bool) -> FidelityCohortResult {
         let mut result = FidelityCohortResult {
             outcome: FidelityOpOutcome {
@@ -382,7 +376,13 @@ mod enclave_responses {
         assert!(fatal(validate(HASH, cohort_response(cohort(true))))
             .starts_with("tee_fidelity_attestation_invalid: "));
         assert_eq!(
-            fatal(validate(HASH, enclave_error())),
+            fatal(Err::<(), _>(
+                crate::enclave_client::map_consensus_error(
+                    "ApplyFidelityCohortOp",
+                    outbe_tee::TransportError::EnclaveError("boom".into()),
+                )
+                .into()
+            )),
             "enclave ApplyFidelityCohortOp error: boom"
         );
         assert!(fatal(validate(HASH, query_response(query(false))))
@@ -435,7 +435,13 @@ mod enclave_responses {
         assert!(fatal(validate(HASH, snapshot(HASH, true)))
             .starts_with("tee_fidelity_attestation_invalid: "));
         assert_eq!(
-            fatal(validate(HASH, enclave_error())),
+            fatal(Err::<(), _>(
+                crate::enclave_client::map_consensus_error(
+                    "SnapshotFidelityLeagues",
+                    outbe_tee::TransportError::EnclaveError("boom".into()),
+                )
+                .into()
+            )),
             "enclave SnapshotFidelityLeagues error: boom"
         );
         assert!(fatal(validate(HASH, cohort_response(cohort(false))))
@@ -462,7 +468,13 @@ mod enclave_responses {
         assert!(fatal(validate(HASH, query_response(query(true))))
             .starts_with("tee_fidelity_attestation_invalid: "));
         assert_eq!(
-            fatal(validate(HASH, enclave_error())),
+            fatal(Err::<(), _>(
+                crate::enclave_client::map_consensus_error(
+                    "QueryFidelityIndex",
+                    outbe_tee::TransportError::EnclaveError("boom".into()),
+                )
+                .into()
+            )),
             "enclave QueryFidelityIndex error: boom"
         );
         assert!(fatal(validate(HASH, snapshot(HASH, false)))

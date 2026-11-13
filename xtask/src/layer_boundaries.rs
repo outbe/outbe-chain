@@ -6,6 +6,7 @@ use std::{
 
 mod deps;
 mod lexer;
+mod lexer_strings;
 mod scanner;
 
 #[cfg(test)]

@@ -224,6 +224,12 @@ jobs:
             echo "error: test-enclave feature is enabled in default workspace production dependency graph" >&2
             exit 1
           fi
+          for forbidden in dev-keys test-utils; do
+            if grep -Eq "outbe-enclave feature \"${forbidden}\"" <<<"${default_tree}"; then
+              echo "error: outbe-enclave feature \"${forbidden}\" is enabled in default workspace production dependency graph" >&2
+              exit 1
+            fi
+          done
           prod_tree="$(cargo tree --locked --package outbe-chain --features outbe-chain/production-enclave -e=features,no-dev)"
           if grep -Eq 'feature "test-enclave"' <<<"${prod_tree}"; then
             echo "error: test-enclave feature is enabled when outbe-chain/production-enclave is set" >&2

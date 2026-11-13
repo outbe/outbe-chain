@@ -16,7 +16,7 @@ fn tribute_v2_commands_require_the_installed_network_key() {
         },
     ] {
         let response = dispatch_domain(request, &keys, &keyless, B256::from(testnet_chain_word()));
-        let DomainResponse::Error { message } = response else {
+        let Err(DomainDispatchError::Error(message)) = response else {
             panic!("keyless command succeeded")
         };
         assert_eq!(message, "no resident network key");
@@ -59,11 +59,11 @@ fn private_reads_use_the_common_key_across_enclave_identities_and_bind_the_respo
             &offer_key,
             B256::from(alloy_primitives::U256::from(chain_id)),
         );
-        let DomainResponse::TributeAmountsReadV2 {
+        let Ok(DomainResponse::TributeAmountsReadV2 {
             amounts,
             inputs_canonical_hash,
             attestation_tag,
-        } = response
+        }) = response
         else {
             panic!("installed-key read failed: {response:?}")
         };
@@ -100,7 +100,7 @@ fn private_reads_use_the_common_key_across_enclave_identities_and_bind_the_respo
             &offer_key,
             B256::from(alloy_primitives::U256::from(chain_id + 1)),
         );
-        assert!(matches!(wrong_chain, DomainResponse::Error { .. }));
+        assert!(matches!(wrong_chain, Err(DomainDispatchError::Error(_))));
     }
 }
 
@@ -178,7 +178,7 @@ fn private_day_commands_require_ready_local_authority_and_installed_network_key(
             B256::from(testnet_chain_word()),
         );
         assert!(
-            matches!(response, DomainResponse::Error { message } if message == "no resident network key")
+            matches!(response, Err(DomainDispatchError::Error(message)) if message == "no resident network key")
         );
     }
 }
@@ -196,11 +196,11 @@ fn day_transforms_and_private_reads_are_signed_and_bound_to_the_resident_chain()
         };
         let chain = B256::from(alloy_primitives::U256::from(request.chain_id));
         let response = dispatch_domain(command.clone(), &keys, &offer_key, chain);
-        let DomainResponse::TributeDayOpAppliedV2 {
+        let Ok(DomainResponse::TributeDayOpAppliedV2 {
             record,
             inputs_canonical_hash,
             attestation_tag,
-        } = response
+        }) = response
         else {
             panic!("day transform failed")
         };
@@ -223,11 +223,11 @@ fn day_transforms_and_private_reads_are_signed_and_bound_to_the_resident_chain()
             record: record.clone(),
         };
         let response = dispatch_domain(read.clone(), &keys, &offer_key, chain);
-        let DomainResponse::TributeDayAmountReadV2 {
+        let Ok(DomainResponse::TributeDayAmountReadV2 {
             amount,
             inputs_canonical_hash,
             attestation_tag,
-        } = response
+        }) = response
         else {
             panic!("day read failed")
         };
@@ -254,7 +254,7 @@ fn day_transforms_and_private_reads_are_signed_and_bound_to_the_resident_chain()
                     &offer_key,
                     B256::from(alloy_primitives::U256::from(request.chain_id + 1))
                 ),
-                DomainResponse::Error { .. }
+                Err(DomainDispatchError::Error(_))
             ));
         }
     }

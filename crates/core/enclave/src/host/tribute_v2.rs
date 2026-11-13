@@ -2,7 +2,7 @@
 
 use alloy_primitives::{keccak256, B256};
 use outbe_core_common::tribute_encryption::{EncryptedTributeV2, TributeAmountsV2};
-use outbe_tee::{tee_call::verify_enclave_attestation, TransportError};
+use outbe_tee::{tee_call::verify_enclave_attestation, AttestationMetricClass, TransportError};
 use serde::{Deserialize, Serialize};
 
 use super::protocol::{
@@ -92,6 +92,6 @@ pub fn verify_attestation(
     tag: &[u8],
 ) -> Result<(), TransportError> {
     verify_enclave_attestation(attestation_pub, preimage, tag).map_err(|cause| {
-        TransportError::payload_attestation("offer", "tribute_offer_attestation", cause)
+        TransportError::app_attestation(AttestationMetricClass::TributeOffer, cause)
     })
 }

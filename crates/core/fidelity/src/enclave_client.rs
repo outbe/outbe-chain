@@ -15,7 +15,10 @@ use outbe_enclave::protocol::{
     FidelitySnapshotRequest,
 };
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_tee::TransportError;
+use outbe_tee::{
+    tee_call::{verify_signed_rejection, SignedRejectionRef},
+    AttestationMetricClass, TeeAttestationError, TransportError,
+};
 
 use crate::errors::FidelityFatalError;
 
@@ -87,13 +90,13 @@ pub(crate) fn query_index(req: FidelityQueryRequest) -> Result<FidelityQueryResu
 }
 
 fn call_enclave<T: AttestedAnswer>(expected_hash: B256, request: EnclaveRequest) -> Result<T> {
-    let (attestation_pub, response) = outbe_enclave::try_with_domain_enclave(&request).ok_or(
-        FidelityFatalError::SidecarUnavailable {
-            context: T::OPERATION,
-        },
-    )?;
-    let response =
-        response.map_err(|e| FidelityFatalError::sidecar_request_failed(T::OPERATION, e))?;
+    let (attestation_pub, response) = outbe_enclave::domain_session_call(&request, |key, resp| {
+        authenticate_answer::<T>(expected_hash, key, resp)
+    })
+    .ok_or(FidelityFatalError::SidecarUnavailable {
+        context: T::OPERATION,
+    })?
+    .map_err(|error| map_consensus_error(T::OPERATION, error))?;
     validate_answer(expected_hash, &attestation_pub, response)
 }
 
@@ -187,19 +190,26 @@ fn verify_query_rejection(
     reason: &str,
     tag: &[u8],
 ) -> core::result::Result<(), TransportError> {
-    if inputs_hash != expected_hash {
-        return Err(TransportError::UnexpectedResponse);
-    }
-    let preimage = outbe_enclave::response_auth::attestation(
-        b"outbe/fidelity/query-rejected/v1",
-        expected_hash,
-        reason,
+    verify_signed_rejection(
+        key,
+        SignedRejectionRef {
+            domain: b"outbe/fidelity/query-rejected/v1",
+            expected_inputs_hash: expected_hash,
+            actual_inputs_hash: inputs_hash,
+            reason,
+            tag,
+        },
     )
-    .map_err(TransportError::codec)?;
-    outbe_enclave::tribute_v2::verify_attestation(key, &preimage, tag)
+    .map_err(|cause| match cause {
+        TeeAttestationError::InputsHashMismatch { .. } => TransportError::UnexpectedResponse,
+        other => TransportError::app_attestation(AttestationMetricClass::Fidelity, other),
+    })
 }
 
-fn map_consensus_error(operation: &'static str, error: TransportError) -> FidelityFatalError {
+pub(crate) fn map_consensus_error(
+    operation: &'static str,
+    error: TransportError,
+) -> FidelityFatalError {
     match error {
         TransportError::EnclaveError(message) => FidelityFatalError::EnclaveOpError {
             context: operation,
@@ -270,15 +280,8 @@ pub(crate) fn validate_answer<T: AttestedAnswer>(
     Ok(answer)
 }
 
-fn failed_response(operation: &'static str, response: EnclaveResponse) -> PrecompileError {
-    match response {
-        EnclaveResponse::Error { message } => FidelityFatalError::EnclaveOpError {
-            context: operation,
-            message,
-        }
-        .into(),
-        other => FidelityFatalError::UnexpectedEnclaveResponse(Box::new(other)).into(),
-    }
+fn failed_response(_operation: &'static str, response: EnclaveResponse) -> PrecompileError {
+    FidelityFatalError::UnexpectedEnclaveResponse(Box::new(response)).into()
 }
 
 /// A Fidelity enclave answer that carries its canonical input hash and attestation tag.

@@ -25,6 +25,7 @@ use metrics::{counter, gauge, histogram};
 use outbe_tee::canary::{TeeEnclaveHealthChannel, TeeEnclaveHealthSnapshot, TeeEnclaveHealthState};
 use outbe_tee::errors::TransportError;
 use outbe_tee::protocol::{EnclaveHealthStatusV1, EnclaveRequest, EnclaveResponse};
+use outbe_tee::CallMeta;
 use tokio_util::sync::CancellationToken;
 
 /// How many consecutive skipped ticks (probe still in flight) before the
@@ -43,6 +44,16 @@ pub struct TeeCanaryConfig {
 /// against a scripted fake instead of the global.
 pub trait EnclaveRequester: Send + Sync + 'static {
     fn request(&self, req: &EnclaveRequest) -> Result<EnclaveResponse, TransportError>;
+    /// Send a canary request with explicit [`CallMeta`] so opaque `Payload` probes preserve
+    /// their exact domain `op` metric label.
+    fn request_with_meta(
+        &self,
+        meta: CallMeta,
+        req: &EnclaveRequest,
+    ) -> Result<EnclaveResponse, TransportError> {
+        let _ = meta;
+        self.request(req)
+    }
     /// The pinned enclave attestation key. It is `None` when no session is installed.
     fn attestation_pub(&self) -> Option<[u8; 32]>;
 }
@@ -77,6 +88,14 @@ impl EnclaveRequester for GlobalEnclaveRequester {
         outbe_tee::client_global::canary_request(req)
     }
 
+    fn request_with_meta(
+        &self,
+        meta: CallMeta,
+        req: &EnclaveRequest,
+    ) -> Result<EnclaveResponse, TransportError> {
+        outbe_tee::client_global::canary_request_with_meta(meta, req)
+    }
+
     fn attestation_pub(&self) -> Option<[u8; 32]> {
         outbe_tee::client_global::canary_attestation_pub()
     }
@@ -98,6 +117,20 @@ impl<R: EnclaveRequester> EnclaveRequester for ShutdownAwareRequester<R> {
             )));
         }
         self.inner.request(req)
+    }
+
+    fn request_with_meta(
+        &self,
+        meta: CallMeta,
+        req: &EnclaveRequest,
+    ) -> Result<EnclaveResponse, TransportError> {
+        if self.shutdown.is_cancelled() {
+            return Err(TransportError::Io(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "canary stopped",
+            )));
+        }
+        self.inner.request_with_meta(meta, req)
     }
 
     fn attestation_pub(&self) -> Option<[u8; 32]> {

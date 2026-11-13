@@ -200,11 +200,10 @@ where
                         provider,
                         (proof_chain_id, genesis_hash),
                     );
-                    let mut outbe_rpc_module = outbe_api.into_rpc();
-                    outbe_rpc_module.merge(domain_api.into_rpc())?;
-                    ctx.modules.merge_if_module_configured(
-                        RethRpcModule::Other("outbe".to_owned()),
-                        outbe_rpc_module,
+                    crate::domain_rpc::register_outbe_rpc_if_configured(
+                        ctx.modules,
+                        outbe_api.into_rpc(),
+                        domain_api.into_rpc(),
                     )?;
                     info!("outbe_* RPC namespace registered where configured");
                     Ok(())

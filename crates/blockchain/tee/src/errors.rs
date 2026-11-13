@@ -23,11 +23,13 @@ pub use quote::QuoteParseError;
 pub use session::DevIdentityMismatchError;
 pub use tee_attestation_activation::TeeAttestationActivationError;
 pub use tee_crypto::TeeCryptoError;
-pub use transport::{PayloadAttestationError, PayloadRejectedError, TransportError};
+pub use transport::{AttestationMetricClass, RejectionMetricClass, TransportError};
 
 #[cfg(test)]
 mod tests {
-    use super::{TeeClientVerificationError, TransportError};
+    use super::{
+        AttestationMetricClass, RejectionMetricClass, TeeClientVerificationError, TransportError,
+    };
     use crate::tee_call::TeeAttestationError;
 
     #[test]
@@ -45,14 +47,14 @@ mod tests {
             TransportError::UnexpectedResponse,
             TransportError::Codec("x".into()),
             TransportError::Attestation("x".into()),
-            TransportError::payload_attestation(
-                "payload",
-                "payload_attestation",
+            TransportError::app_attestation(
+                AttestationMetricClass::TributeOffer,
                 TeeAttestationError::InvalidSignatureLength { actual: 1 },
             ),
-            TransportError::payload_rejected("payload rejected", "payload_rejected", "x"),
+            TransportError::app_rejected(RejectionMetricClass::NodMint, "x"),
         ] {
             assert!(!error.is_node_local(), "{error}");
+            assert!(!error.is_connection_fault(), "{error}");
         }
         for error in [
             TransportError::IoTimeout {

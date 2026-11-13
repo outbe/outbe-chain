@@ -6,7 +6,7 @@ use outbe_core_common::{
     tribute_day_encryption::EncryptedTributeDayFractionsV1,
     tribute_encryption::EncryptedTributeV2,
 };
-use outbe_tee::TransportError;
+use outbe_tee::{tee_call::verify_enclave_attestation, TransportError};
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -14,8 +14,15 @@ use super::{
     protocol::{EnclaveRequest, EnclaveResponse, FidelityOpOutcome, FidelityOpSection, ModifyAuth},
     response_auth::{self, codec, NodOperation},
     tribute_client::request_local_enclave,
-    tribute_v2,
 };
+
+fn verify_nod_attestation(
+    key: &[u8; 32],
+    preimage: &[u8],
+    tag: &[u8],
+) -> Result<(), EnclaveClientError> {
+    verify_enclave_attestation(key, preimage, tag).map_err(EnclaveClientError::NodAttestation)
+}
 
 /// Request to mine Gratis from an encrypted NOD record.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -74,7 +81,7 @@ pub fn mine_encrypted_nod(
             if result.inputs_canonical_hash == expected =>
         {
             let preimage = result_preimage(&result).map_err(codec)?;
-            tribute_v2::verify_attestation(&key, &preimage, &result.attestation_tag)?;
+            verify_nod_attestation(&key, &preimage, &result.attestation_tag)?;
             Ok(*result)
         }
         response => NodOperation::Mine.reject_or_unexpected(&key, expected, response),
@@ -100,12 +107,12 @@ fn verify_attested_output<T: Serialize>(
     domain: &[u8],
     expected: B256,
     (output, inputs_canonical_hash, attestation_tag): (T, B256, Vec<u8>),
-) -> Result<T, TransportError> {
+) -> Result<T, EnclaveClientError> {
     if inputs_canonical_hash != expected {
-        return Err(TransportError::UnexpectedResponse);
+        return Err(TransportError::UnexpectedResponse.into());
     }
     let preimage = response_auth::attestation(domain, expected, &output).map_err(codec)?;
-    tribute_v2::verify_attestation(key, &preimage, &attestation_tag)?;
+    verify_nod_attestation(key, &preimage, &attestation_tag)?;
     Ok(output)
 }
 
@@ -113,7 +120,7 @@ fn request_read_u256(
     expected: Result<B256, serde_json::Error>,
     request: EnclaveRequest,
     preimage_fn: fn(B256, U256) -> Vec<u8>,
-) -> Result<U256, TransportError> {
+) -> Result<U256, EnclaveClientError> {
     let expected = expected.map_err(codec)?;
     let (key, response) = request_local_enclave(request)?;
     let (amount, inputs_canonical_hash, attestation_tag) = match response {
@@ -127,18 +134,17 @@ fn request_read_u256(
             inputs_canonical_hash,
             attestation_tag,
         } => (amount, inputs_canonical_hash, attestation_tag),
-        EnclaveResponse::Error { message } => return Err(TransportError::EnclaveError(message)),
-        _ => return Err(TransportError::UnexpectedResponse),
+        _ => return Err(TransportError::UnexpectedResponse.into()),
     };
     if inputs_canonical_hash != expected {
-        return Err(TransportError::UnexpectedResponse);
+        return Err(TransportError::UnexpectedResponse.into());
     }
-    tribute_v2::verify_attestation(&key, &preimage_fn(expected, amount), &attestation_tag)?;
+    verify_nod_attestation(&key, &preimage_fn(expected, amount), &attestation_tag)?;
     Ok(amount)
 }
 
 /// Read the decrypted Gratis amount inside an [`EncryptedNodV1`].
-pub fn read_nod_amount(nod: &EncryptedNodV1) -> Result<U256, TransportError> {
+pub fn read_nod_amount(nod: &EncryptedNodV1) -> Result<U256, EnclaveClientError> {
     request_read_u256(
         nod_read_hash(nod),
         EnclaveRequest::ReadNodAmountV1 { nod: nod.clone() },
@@ -151,7 +157,7 @@ fn verify_created_nod(
     domain: &[u8],
     expected: B256,
     response: EnclaveResponse,
-) -> Result<EncryptedNodV1, TransportError> {
+) -> Result<EncryptedNodV1, EnclaveClientError> {
     match response {
         EnclaveResponse::NodEncryptedForTributeV1 {
             nod,
@@ -163,8 +169,7 @@ fn verify_created_nod(
             expected,
             (nod, inputs_canonical_hash, attestation_tag),
         ),
-        EnclaveResponse::Error { message } => Err(TransportError::EnclaveError(message)),
-        _ => Err(TransportError::UnexpectedResponse),
+        _ => Err(TransportError::UnexpectedResponse.into()),
     }
 }
 
@@ -173,7 +178,7 @@ pub fn encrypt_nod_for_tribute(
     tribute: &EncryptedTributeV2,
     terms: NodTermsV1,
     amount: U256,
-) -> Result<EncryptedNodV1, TransportError> {
+) -> Result<EncryptedNodV1, EnclaveClientError> {
     let expected = response_auth::hash(
         b"outbe/nod/tribute-create-inputs/v1",
         &(tribute, &terms, amount),
@@ -217,7 +222,7 @@ pub enum IssueNodFromTributeOutcomeV1 {
 /// Issue an encrypted NOD from a Tribute and settled day fractions via the local enclave.
 pub fn issue_nod_from_tribute(
     request: IssueNodFromTributeRequestV1,
-) -> Result<IssueNodFromTributeOutcomeV1, TransportError> {
+) -> Result<IssueNodFromTributeOutcomeV1, EnclaveClientError> {
     let expected =
         response_auth::hash(b"outbe/nod/issue-from-tribute-inputs/v1", &request).map_err(codec)?;
     let (key, response) = request_local_enclave(EnclaveRequest::IssueNodFromTributeV1 {
@@ -234,8 +239,7 @@ pub fn issue_nod_from_tribute(
             expected,
             (outcome, inputs_canonical_hash, attestation_tag),
         ),
-        EnclaveResponse::Error { message } => Err(TransportError::EnclaveError(message)),
-        _ => Err(TransportError::UnexpectedResponse),
+        _ => Err(TransportError::UnexpectedResponse.into()),
     }
 }
 
@@ -297,7 +301,7 @@ pub fn nod_group_load_attestation_preimage(
 /// Apply an arithmetic transition to an [`EncryptedNodGroupLoadV1`] record.
 pub fn apply_nod_group_load_operation(
     request: NodGroupLoadOpRequestV1,
-) -> Result<EncryptedNodGroupLoadV1, TransportError> {
+) -> Result<EncryptedNodGroupLoadV1, EnclaveClientError> {
     let expected = nod_group_load_inputs_hash(&request).map_err(codec)?;
     let chain_id = request.chain_id;
     let scope = request.scope;
@@ -320,11 +324,10 @@ pub fn apply_nod_group_load_operation(
             && record.version() == Some(version) =>
         {
             let preimage = nod_group_load_attestation_preimage(expected, &record).map_err(codec)?;
-            tribute_v2::verify_attestation(&key, &preimage, &attestation_tag)?;
+            verify_nod_attestation(&key, &preimage, &attestation_tag)?;
             Ok(record)
         }
-        EnclaveResponse::Error { message } => Err(TransportError::EnclaveError(message)),
-        _ => Err(TransportError::UnexpectedResponse),
+        _ => Err(TransportError::UnexpectedResponse.into()),
     }
 }
 
@@ -345,7 +348,7 @@ pub fn nod_group_load_read_preimage(inputs: B256, amount: U256) -> Vec<u8> {
 }
 
 /// Read the decrypted load total inside an [`EncryptedNodGroupLoadV1`].
-pub fn read_nod_group_load(record: &EncryptedNodGroupLoadV1) -> Result<U256, TransportError> {
+pub fn read_nod_group_load(record: &EncryptedNodGroupLoadV1) -> Result<U256, EnclaveClientError> {
     request_read_u256(
         nod_group_load_read_hash(record),
         EnclaveRequest::ReadNodGroupLoadV1 {
@@ -360,7 +363,7 @@ pub fn encrypt_nod_quote(
     nod: &EncryptedNodV1,
     context: NodQuoteContextV1,
     payment_minor: U256,
-) -> Result<Vec<u8>, TransportError> {
+) -> Result<Vec<u8>, EnclaveClientError> {
     let expected = response_auth::hash(
         b"outbe/nod/quote-encrypt-inputs/v1",
         &(nod, &context, payment_minor),
@@ -382,7 +385,6 @@ pub fn encrypt_nod_quote(
             expected,
             (encrypted_payment, inputs_canonical_hash, attestation_tag),
         ),
-        EnclaveResponse::Error { message } => Err(TransportError::EnclaveError(message)),
-        _ => Err(TransportError::UnexpectedResponse),
+        _ => Err(TransportError::UnexpectedResponse.into()),
     }
 }

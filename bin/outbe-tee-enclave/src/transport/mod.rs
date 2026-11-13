@@ -58,7 +58,9 @@ mod session;
 #[cfg(test)]
 mod tests;
 
-pub use dispatch::requests::{dispatch, dispatch_domain};
+pub use dispatch::requests::{
+    dispatch, dispatch_domain, DomainDispatchError, DomainDispatchResult,
+};
 
 pub use offer_key::{
     unseal_tribute_offer_and_group_sig_on_boot, DerivedTributeOfferKey, SharedTributeOfferKey,

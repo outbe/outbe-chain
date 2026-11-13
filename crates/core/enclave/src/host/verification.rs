@@ -1,7 +1,9 @@
 //! Domain Ed25519 attestation verification built over [`outbe_tee::tee_call`].
 
 use alloy_primitives::B256;
-use outbe_tee::{tee_call::verify_enclave_attestation_lazy, TransportError};
+use outbe_tee::{
+    tee_call::verify_enclave_attestation_lazy, AttestationMetricClass, TransportError,
+};
 
 use super::protocol::{
     fidelity_cohort_attestation_preimage, fidelity_query_attestation_preimage,
@@ -15,11 +17,11 @@ use super::protocol::{
 fn verify_domain_attestation(
     attestation_pub: &[u8; 32],
     tag: &[u8],
-    (context, metric_class): (&'static str, &'static str),
+    metric: AttestationMetricClass,
     preimage: impl FnOnce() -> Result<Vec<u8>, serde_json::Error>,
 ) -> Result<(), TransportError> {
     verify_enclave_attestation_lazy(attestation_pub, tag, preimage)
-        .map_err(|cause| TransportError::payload_attestation(context, metric_class, cause))
+        .map_err(|cause| TransportError::app_attestation(metric, cause))
 }
 
 /// Verify a per-offer attestation tag against the peer's session attestation public key.
@@ -32,7 +34,7 @@ pub fn verify_tribute_offer_attestation(
     verify_domain_attestation(
         attestation_pub,
         tag,
-        ("offer", "tribute_offer_attestation"),
+        AttestationMetricClass::TributeOffer,
         || tribute_offer_attestation_preimage(inputs_canonical_hash, results),
     )
 }
@@ -47,7 +49,7 @@ pub fn verify_gratis_op_attestation(
     verify_domain_attestation(
         attestation_pub,
         tag,
-        ("gratis-op", "gratis_op_attestation"),
+        AttestationMetricClass::GratisOp,
         || gratis_op_attestation_preimage(inputs_canonical_hash, result),
     )
 }
@@ -62,7 +64,7 @@ pub fn verify_promis_op_attestation(
     verify_domain_attestation(
         attestation_pub,
         tag,
-        ("promis-op", "promis_op_attestation"),
+        AttestationMetricClass::PromisOp,
         || promis_op_attestation_preimage(inputs_canonical_hash, result),
     )
 }
@@ -77,7 +79,7 @@ pub fn verify_mine_gratis_from_promis_attestation(
     verify_domain_attestation(
         attestation_pub,
         tag,
-        ("promis-op", "promis_op_attestation"),
+        AttestationMetricClass::PromisOp,
         || mine_gratis_from_promis_attestation_preimage(inputs_canonical_hash, result),
     )
 }
@@ -92,7 +94,7 @@ pub fn verify_fidelity_cohort_attestation(
     verify_domain_attestation(
         attestation_pub,
         tag,
-        ("fidelity", "fidelity_attestation"),
+        AttestationMetricClass::Fidelity,
         || fidelity_cohort_attestation_preimage(inputs_canonical_hash, result),
     )
 }
@@ -107,7 +109,7 @@ pub fn verify_fidelity_snapshot_attestation(
     verify_domain_attestation(
         attestation_pub,
         tag,
-        ("fidelity", "fidelity_attestation"),
+        AttestationMetricClass::Fidelity,
         || fidelity_snapshot_attestation_preimage(inputs_canonical_hash, leagues),
     )
 }
@@ -122,7 +124,7 @@ pub fn verify_fidelity_query_attestation(
     verify_domain_attestation(
         attestation_pub,
         tag,
-        ("fidelity", "fidelity_attestation"),
+        AttestationMetricClass::Fidelity,
         || fidelity_query_attestation_preimage(inputs_canonical_hash, result),
     )
 }
@@ -238,9 +240,10 @@ mod tests {
         assert_eq!(cross_promis.metric_class(), "promis_op_attestation");
         assert!(matches!(
             &cross_promis,
-            TransportError::PayloadAttestation(inner)
-                if inner.context == "promis-op"
-                    && matches!(inner.cause, TeeAttestationError::SignatureMismatch(_))
+            TransportError::AppAttestation {
+                metric: AttestationMetricClass::PromisOp,
+                cause: TeeAttestationError::SignatureMismatch(_),
+            }
         ));
 
         let cross_gratis = verify_gratis_op_attestation(&pk, hash, &gratis, &promis_tag)
@@ -258,18 +261,20 @@ mod tests {
             .expect_err("bad key precedes tag length");
         assert!(matches!(
             &bad_key,
-            TransportError::PayloadAttestation(inner)
-                if inner.context == "gratis-op"
-                    && matches!(inner.cause, TeeAttestationError::InvalidPublicKey(_))
+            TransportError::AppAttestation {
+                metric: AttestationMetricClass::GratisOp,
+                cause: TeeAttestationError::InvalidPublicKey(_),
+            }
         ));
 
         let bad_len = verify_promis_op_attestation(&pk, hash, &promis, &[0u8; 1])
             .expect_err("bad tag length");
         assert!(matches!(
             &bad_len,
-            TransportError::PayloadAttestation(inner)
-                if inner.context == "promis-op"
-                    && matches!(inner.cause, TeeAttestationError::InvalidSignatureLength { actual: 1 })
+            TransportError::AppAttestation {
+                metric: AttestationMetricClass::PromisOp,
+                cause: TeeAttestationError::InvalidSignatureLength { actual: 1 },
+            }
         ));
     }
 

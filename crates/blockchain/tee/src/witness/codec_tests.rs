@@ -131,3 +131,43 @@ fn bound_includes_prefix_and_rejects_payload_over_outer_tlv_limit() {
         Err(WitnessCodecError::PayloadTooLarge)
     ));
 }
+
+#[test]
+fn encode_rejects_raw_over_max_raw_len_and_compressed_over_extra_data_budget() {
+    // 1. Highly compressible payload exceeding MAX_RAW_LEN (262_144) must fail with RawTooLarge.
+    let raw_oversized = EnclaveWitnessTapeV1 {
+        prefix: vec![EnclaveWitnessEntryV1::Payload {
+            payload: vec![0u8; 262_200],
+            inputs_canonical_hash: alloy_primitives::B256::ZERO,
+            attestation_tag: vec![1u8; 64],
+        }],
+        txs: Vec::new(),
+    };
+    assert!(matches!(
+        encode_witness_payload_v1(&raw_oversized),
+        Err(WitnessCodecError::RawTooLarge)
+    ));
+
+    // 2. Incompressible payload under MAX_RAW_LEN whose zstd frame exceeds MAX_EXTRA_DATA_LEN - 10.
+    let mut state = 0x9E37_79B9_7F4A_7C15u64;
+    let incompressible: Vec<u8> = (0..70_000)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state & 0xFF) as u8
+        })
+        .collect();
+    let payload_oversized = EnclaveWitnessTapeV1 {
+        prefix: vec![EnclaveWitnessEntryV1::Payload {
+            payload: incompressible,
+            inputs_canonical_hash: alloy_primitives::B256::ZERO,
+            attestation_tag: vec![2u8; 64],
+        }],
+        txs: Vec::new(),
+    };
+    assert!(matches!(
+        encode_witness_payload_v1(&payload_oversized),
+        Err(WitnessCodecError::PayloadTooLarge)
+    ));
+}

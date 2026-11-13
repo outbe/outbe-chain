@@ -85,19 +85,79 @@ pub enum TeeAttestationError {
     UnexpectedResponseVariant,
 }
 
-/// Borrowed inputs for [`verify_signed_rejection`].
-#[derive(Clone, Copy, Debug)]
-pub struct SignedRejectionRef<'a> {
-    /// Domain-separation prefix for this rejection kind.
-    pub domain: &'a [u8],
-    /// Expected canonical hash of the request inputs.
-    pub expected_inputs_hash: B256,
-    /// Actual canonical hash echoed in the rejection response.
-    pub actual_inputs_hash: B256,
-    /// Human-readable rejection reason signed by the enclave.
-    pub reason: &'a str,
-    /// 64-byte Ed25519 signature over `(domain || expected_inputs_hash || json(reason))`.
-    pub attestation_tag: &'a [u8],
+/// Execute a witness-recorded consensus enclave call, failing closed if `!meta.recordable`.
+pub fn tee_consensus_call(
+    meta: CallMeta,
+    request: &crate::protocol::EnclaveRequest,
+    missing_sidecar_err: impl FnOnce() -> crate::TransportError,
+    authenticate: impl Fn(
+        &[u8; 32],
+        &crate::protocol::EnclaveResponse,
+    ) -> Result<(), crate::TransportError>,
+) -> Result<([u8; 32], crate::protocol::EnclaveResponse), crate::TransportError> {
+    if !meta.recordable {
+        return Err(crate::TransportError::Codec(
+            "non-recordable call routed to tee_consensus_call".into(),
+        ));
+    }
+    consensus_call(
+        meta.label,
+        || {
+            let (session_key, wire_result) = crate::try_with_enclave(|session| {
+                (
+                    session.attestation_pub(),
+                    session.request_with_meta(meta, request),
+                )
+            })
+            .ok_or_else(missing_sidecar_err)?;
+            Ok((session_key, wire_result?))
+        },
+        authenticate,
+    )
+}
+
+/// Execute a non-consensus session operation on `session` and authenticate the response.
+///
+/// Fails closed if `meta.recordable` is `true` so consensus-recorded calls never
+/// bypass the block witness tape.
+pub fn tee_session_call_on(
+    session: &mut crate::EnclaveSession,
+    meta: CallMeta,
+    request: &crate::protocol::EnclaveRequest,
+    authenticate: impl FnOnce(
+        &[u8; 32],
+        &crate::protocol::EnclaveResponse,
+    ) -> Result<(), crate::TransportError>,
+) -> Result<([u8; 32], crate::protocol::EnclaveResponse), crate::TransportError> {
+    if meta.recordable {
+        return Err(crate::TransportError::Codec(
+            "recordable call routed to non-consensus tee_session_call".into(),
+        ));
+    }
+    let key = session.attestation_pub();
+    let response = session.request_with_meta(meta, request)?;
+    authenticate(&key, &response)?;
+    Ok((key, response))
+}
+
+/// Execute a non-consensus session operation against the process-global execution session
+/// and authenticate the response before returning it.
+///
+/// Returns `None` only when no enclave session is installed.
+pub fn tee_session_call(
+    meta: CallMeta,
+    request: &crate::protocol::EnclaveRequest,
+    authenticate: impl FnOnce(
+        &[u8; 32],
+        &crate::protocol::EnclaveResponse,
+    ) -> Result<(), crate::TransportError>,
+) -> Option<Result<([u8; 32], crate::protocol::EnclaveResponse), crate::TransportError>> {
+    if meta.recordable {
+        return Some(Err(crate::TransportError::Codec(
+            "recordable call routed to non-consensus tee_session_call".into(),
+        )));
+    }
+    crate::try_with_enclave(|session| tee_session_call_on(session, meta, request, authenticate))
 }
 
 /// Compute `keccak256(domain || serde_json::to_vec(value))`.
@@ -158,7 +218,22 @@ pub fn verify_enclave_attestation_lazy(
         .map_err(TeeAttestationError::SignatureMismatch)
 }
 
-/// Verify an authenticated rejection response bound to `expected_inputs_hash` and `domain`.
+/// Borrowed parameters for verifying an authenticated enclave rejection via [`verify_signed_rejection`].
+#[derive(Clone, Copy, Debug)]
+pub struct SignedRejectionRef<'a> {
+    /// Domain separation tag prefix of the signed rejection preimage.
+    pub domain: &'a [u8],
+    /// Canonical commitment hash computed locally from the request.
+    pub expected_inputs_hash: B256,
+    /// Canonical commitment hash echoed by the enclave rejection response.
+    pub actual_inputs_hash: B256,
+    /// Deterministic rejection reason string signed by the enclave.
+    pub reason: &'a str,
+    /// 64-byte Ed25519 signature tag attached to the rejection response.
+    pub tag: &'a [u8],
+}
+
+/// Verify an authenticated rejection response bound to `rejection.expected_inputs_hash` and `rejection.domain`.
 pub fn verify_signed_rejection(
     attestation_pub: &[u8; 32],
     rejection: SignedRejectionRef<'_>,
@@ -169,12 +244,13 @@ pub fn verify_signed_rejection(
             actual: rejection.actual_inputs_hash,
         });
     }
-    let preimage = canonical_attestation_preimage(
-        rejection.domain,
-        rejection.expected_inputs_hash,
-        rejection.reason,
-    )?;
-    verify_enclave_attestation(attestation_pub, &preimage, rejection.attestation_tag)
+    verify_enclave_attestation_lazy(attestation_pub, rejection.tag, || {
+        canonical_attestation_preimage(
+            rejection.domain,
+            rejection.expected_inputs_hash,
+            rejection.reason,
+        )
+    })
 }
 
 #[cfg(test)]
@@ -200,7 +276,7 @@ mod tests {
                 expected_inputs_hash: hash,
                 actual_inputs_hash: hash,
                 reason,
-                attestation_tag: &tag,
+                tag: &tag,
             },
         )
         .expect("matching domain and hash verify");
@@ -213,7 +289,7 @@ mod tests {
                     expected_inputs_hash: hash,
                     actual_inputs_hash: hash,
                     reason,
-                    attestation_tag: &tag,
+                    tag: &tag,
                 },
             ),
             Err(TeeAttestationError::SignatureMismatch(_))
@@ -228,7 +304,7 @@ mod tests {
                     expected_inputs_hash: hash,
                     actual_inputs_hash: other_hash,
                     reason,
-                    attestation_tag: &tag,
+                    tag: &tag,
                 },
             ),
             Err(TeeAttestationError::InputsHashMismatch { .. })
@@ -238,5 +314,23 @@ mod tests {
             verify_enclave_attestation(&pubkey, &preimage, &tag[..63]),
             Err(TeeAttestationError::InvalidSignatureLength { actual: 63 })
         ));
+    }
+
+    #[test]
+    fn tee_consensus_call_and_session_call_fail_closed_on_mismatched_recordable_flag() {
+        let req = crate::protocol::EnclaveRequest::Health;
+        let err = tee_consensus_call(
+            CallMeta::session_only("health"),
+            &req,
+            || crate::TransportError::Unavailable("none".into()),
+            |_, _| Ok(()),
+        )
+        .unwrap_err();
+        assert!(matches!(err, crate::TransportError::Codec(_)));
+
+        let session_err = tee_session_call(CallMeta::recorded("recorded_op"), &req, |_, _| Ok(()))
+            .expect("returns fail-closed error even without installed session")
+            .unwrap_err();
+        assert!(matches!(session_err, crate::TransportError::Codec(_)));
     }
 }

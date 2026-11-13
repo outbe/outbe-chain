@@ -3,52 +3,14 @@
 //! Recipe:
 //! 1. Ephemeral X25519 keypair.
 //! 2. ECDHE shared secret with `recipient_x25519_pub`.
-//! 3. `HKDF-SHA256(salt = domain.salt, ikm = shared_secret, info = domain.info)`.
+//! 3. `HKDF-SHA256(salt = hkdf_salt, ikm = shared_secret, info = domain_info)`.
 //! 4. ChaCha20Poly1305 with empty AAD.
 //!
 //! This module contains zero enclave-resident secrets and zero domain knowledge.
 
 use crate::errors::TeeCryptoError;
 
-/// Domain-separation parameters for [`tee_encrypt`] and [`tee_encrypt_with`].
-#[derive(Clone, Copy, Debug)]
-pub struct EncryptDomain<'a> {
-    /// Public HKDF-SHA256 salt providing domain separation.
-    pub salt: &'a [u8],
-    /// Domain-binding HKDF info bytes.
-    pub info: &'a [u8],
-}
-
-impl<'a> EncryptDomain<'a> {
-    /// Construct a new HKDF domain descriptor.
-    #[must_use]
-    pub const fn new(salt: &'a [u8], info: &'a [u8]) -> Self {
-        Self { salt, info }
-    }
-}
-
-/// Explicit ephemeral key and AEAD nonce for deterministic sealing in tests,
-/// benchmarks, and callers that manage their own CSPRNG.
-#[derive(Clone, Copy, Debug)]
-pub struct ExplicitNonceKey {
-    /// 32-byte X25519 ephemeral secret scalar.
-    pub ephemeral_secret: [u8; 32],
-    /// 12-byte ChaCha20Poly1305 nonce.
-    pub nonce: [u8; 12],
-}
-
-impl ExplicitNonceKey {
-    /// Construct an explicit `(ephemeral_secret, nonce)` pair.
-    #[must_use]
-    pub const fn new(ephemeral_secret: [u8; 32], nonce: [u8; 12]) -> Self {
-        Self {
-            ephemeral_secret,
-            nonce,
-        }
-    }
-}
-
-/// Sealed envelope produced by [`tee_encrypt`] and [`tee_encrypt_with`].
+/// Sealed envelope produced by [`tee_encrypt`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TeeSealedEnvelope {
     /// 32-byte X25519 ephemeral public key (`ephemeral_secret * G`).
@@ -71,38 +33,58 @@ impl TeeSealedEnvelope {
     }
 }
 
+/// Deterministic encryption material and HKDF domain binding for [`tee_encrypt_with`].
+#[derive(Clone, Copy, Debug)]
+pub struct TeeEncryptMaterial<'a> {
+    /// Explicit 32-byte X25519 ephemeral secret scalar.
+    pub ephemeral_secret: [u8; 32],
+    /// Explicit 12-byte ChaCha20Poly1305 nonce.
+    pub nonce: [u8; 12],
+    /// HKDF-SHA256 salt.
+    pub hkdf_salt: &'a [u8],
+    /// HKDF-SHA256 domain separation info string.
+    pub domain_info: &'a [u8],
+}
+
 /// Seal `plaintext` to `recipient_x25519_pub` using fresh OS randomness.
 pub fn tee_encrypt(
     recipient_x25519_pub: &[u8; 32],
-    domain: EncryptDomain<'_>,
+    hkdf_salt: &[u8],
+    domain_info: &[u8],
     plaintext: &[u8],
 ) -> Result<TeeSealedEnvelope, TeeCryptoError> {
     let (ephemeral_secret, nonce) = random_ephemeral_and_nonce()?;
-    tee_encrypt_with(
+    let ephemeral_pub =
+        x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(ephemeral_secret))
+            .to_bytes();
+    let ciphertext = tee_encrypt_with(
         recipient_x25519_pub,
-        domain,
-        ExplicitNonceKey::new(ephemeral_secret, nonce),
+        TeeEncryptMaterial {
+            ephemeral_secret,
+            nonce,
+            hkdf_salt,
+            domain_info,
+        },
         plaintext,
-    )
-}
-
-/// Deterministic variant of [`tee_encrypt`] with an explicit ephemeral secret and nonce.
-pub fn tee_encrypt_with(
-    recipient_x25519_pub: &[u8; 32],
-    domain: EncryptDomain<'_>,
-    key_nonce: ExplicitNonceKey,
-    plaintext: &[u8],
-) -> Result<TeeSealedEnvelope, TeeCryptoError> {
-    let eph_secret = x25519_dalek::StaticSecret::from(key_nonce.ephemeral_secret);
-    let ephemeral_pub = x25519_dalek::PublicKey::from(&eph_secret).to_bytes();
-    let shared = eph_secret.diffie_hellman(&x25519_dalek::PublicKey::from(*recipient_x25519_pub));
-    let key = hkdf_sha256(domain.salt, shared.as_bytes(), domain.info)?;
-    let ciphertext = chacha20poly1305_encrypt(&key, &key_nonce.nonce, plaintext)?;
+    )?;
     Ok(TeeSealedEnvelope {
         ephemeral_pub,
-        nonce: key_nonce.nonce,
+        nonce,
         ciphertext,
     })
+}
+
+/// Deterministic variant of [`tee_encrypt`] with an explicit ephemeral secret and nonce,
+/// returning the raw ChaCha20Poly1305 `ciphertext || tag` bytes.
+pub fn tee_encrypt_with(
+    recipient_x25519_pub: &[u8; 32],
+    material: TeeEncryptMaterial<'_>,
+    plaintext: &[u8],
+) -> Result<Vec<u8>, TeeCryptoError> {
+    let eph_secret = x25519_dalek::StaticSecret::from(material.ephemeral_secret);
+    let shared = eph_secret.diffie_hellman(&x25519_dalek::PublicKey::from(*recipient_x25519_pub));
+    let key = hkdf_sha256(material.hkdf_salt, shared.as_bytes(), material.domain_info)?;
+    chacha20poly1305_encrypt(&key, &material.nonce, plaintext)
 }
 
 /// Draw a fresh 32-byte X25519 ephemeral secret and 12-byte AEAD nonce from the OS CSPRNG.
@@ -174,50 +156,58 @@ mod tests {
     fn tee_encrypt_roundtrips_with_recipient_x25519_secret_and_rejects_wrong_domain() {
         let recipient_sk = x25519_dalek::StaticSecret::from([0x21; 32]);
         let recipient_pub = x25519_dalek::PublicKey::from(&recipient_sk).to_bytes();
-        let domain = EncryptDomain::new(b"outbe/test/salt/v1", b"outbe/test/info/v1");
+        let salt = b"outbe/test/salt/v1";
+        let info = b"outbe/test/info/v1";
         let plaintext = b"domain-neutral-envelope";
+        let eph_sk_bytes = [0x33; 32];
+        let nonce = [0x44; 12];
+        let eph_pub =
+            x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(eph_sk_bytes))
+                .to_bytes();
 
-        let sealed = tee_encrypt_with(
+        let ciphertext = tee_encrypt_with(
             &recipient_pub,
-            domain,
-            ExplicitNonceKey::new([0x33; 32], [0x44; 12]),
+            TeeEncryptMaterial {
+                ephemeral_secret: eph_sk_bytes,
+                nonce,
+                hkdf_salt: salt,
+                domain_info: info,
+            },
             plaintext,
         )
         .expect("deterministic encrypt");
-        assert_eq!(sealed.ciphertext.len(), plaintext.len() + 16);
-        assert_eq!(sealed.to_wire_bytes().len(), 32 + 12 + plaintext.len() + 16);
+        assert_eq!(ciphertext.len(), plaintext.len() + 16);
 
-        let shared =
-            recipient_sk.diffie_hellman(&x25519_dalek::PublicKey::from(sealed.ephemeral_pub));
-        let key = hkdf_sha256(domain.salt, shared.as_bytes(), domain.info).unwrap();
+        let shared = recipient_sk.diffie_hellman(&x25519_dalek::PublicKey::from(eph_pub));
+        let key = hkdf_sha256(salt, shared.as_bytes(), info).unwrap();
         let opening =
             aead::LessSafeKey::new(aead::UnboundKey::new(&aead::CHACHA20_POLY1305, &key).unwrap());
-        let mut opened = sealed.ciphertext.clone();
+        let mut opened = ciphertext.clone();
         let plain = opening
             .open_in_place(
-                aead::Nonce::assume_unique_for_key(sealed.nonce),
+                aead::Nonce::assume_unique_for_key(nonce),
                 aead::Aad::empty(),
                 &mut opened,
             )
             .expect("recipient opens sealed envelope");
         assert_eq!(plain, plaintext);
 
-        let wrong_key =
-            hkdf_sha256(domain.salt, shared.as_bytes(), b"outbe/test/wrong/v1").unwrap();
+        let wrong_key = hkdf_sha256(salt, shared.as_bytes(), b"outbe/test/wrong/v1").unwrap();
         let wrong_opening = aead::LessSafeKey::new(
             aead::UnboundKey::new(&aead::CHACHA20_POLY1305, &wrong_key).unwrap(),
         );
-        let mut wrong_buf = sealed.ciphertext.clone();
+        let mut wrong_buf = ciphertext.clone();
         assert!(wrong_opening
             .open_in_place(
-                aead::Nonce::assume_unique_for_key(sealed.nonce),
+                aead::Nonce::assume_unique_for_key(nonce),
                 aead::Aad::empty(),
                 &mut wrong_buf,
             )
             .is_err());
 
-        let fresh = tee_encrypt(&recipient_pub, domain, plaintext).expect("random encrypt");
-        assert_eq!(fresh.ciphertext.len(), sealed.ciphertext.len());
+        let fresh = tee_encrypt(&recipient_pub, salt, info, plaintext).expect("random encrypt");
+        assert_eq!(fresh.ciphertext.len(), ciphertext.len());
+        assert_eq!(fresh.to_wire_bytes().len(), 32 + 12 + plaintext.len() + 16);
         assert_ne!(fresh.ephemeral_pub, [0u8; 32]);
     }
 }

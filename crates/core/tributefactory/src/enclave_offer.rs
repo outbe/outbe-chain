@@ -123,7 +123,12 @@ pub fn process_tribute_offer_batch_via_enclave(
     };
     let (attestation_pub, response) =
         try_with_domain_enclave(&request).ok_or(TributeFactoryError::TeeSidecarUnavailable)?;
-    let response = response.map_err(TributeFactoryError::sidecar_unavailable)?;
+    let response = response.map_err(|error| match error {
+        outbe_tee::TransportError::EnclaveError(message) => {
+            TributeFactoryError::EnclaveBatchError(message)
+        }
+        other => TributeFactoryError::sidecar_unavailable(other),
+    })?;
 
     match response {
         DomainResponse::TributeOfferBatch {
@@ -137,9 +142,6 @@ pub fn process_tribute_offer_batch_via_enclave(
             &attestation_pub,
             &attestation_tag,
         ),
-        DomainResponse::Error { message } => {
-            Err(TributeFactoryError::EnclaveBatchError(message).into())
-        }
         other => Err(TributeFactoryError::UnexpectedEnclaveResponse(Box::new(other)).into()),
     }
 }

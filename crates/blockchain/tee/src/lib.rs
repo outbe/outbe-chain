@@ -63,8 +63,9 @@ pub use client_global::{
 #[cfg(feature = "native-dcap")]
 pub use dcap_v1::{dcap_collateral_validity_window_v1, DcapCollateralValidityWindowV1};
 pub use errors::{
-    CallContextError, CallContextProviderError, DcapFixtureError, DevIdentityMismatchError,
-    PayloadAttestationError, PayloadRejectedError, QuoteParseError, TeeCryptoError, TransportError,
+    AttestationMetricClass, CallContextError, CallContextProviderError, DcapFixtureError,
+    DevIdentityMismatchError, QuoteParseError, RejectionMetricClass, TeeCryptoError,
+    TransportError,
 };
 pub use host_collateral::acquire_dcap_collateral_v1;
 pub use node_host::{
@@ -87,7 +88,10 @@ pub use remote_session::{
     RemoteSessionExpectationV1, RpcTrustedRemoteSessionV1,
 };
 pub use session::EnclaveSession;
-pub use tee_call::{CallMeta, TeeAttestationError};
+pub use tee_call::{
+    tee_consensus_call, tee_session_call, tee_session_call_on, verify_signed_rejection, CallMeta,
+    SignedRejectionRef, TeeAttestationError,
+};
 pub use tee_dkg::{CeremonyCoordinator, CeremonyOutcome, EnclaveChannel};
 
 /// Noise pattern for the node <-> enclave channel: **IK** (the responder/enclave

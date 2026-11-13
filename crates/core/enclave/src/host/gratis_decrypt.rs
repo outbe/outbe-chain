@@ -2,7 +2,10 @@
 
 use alloy_primitives::{Address, U256};
 
-use super::errors::{LocalCryptoError, V2LedgerSpec};
+use super::{
+    errors::LocalCryptoError,
+    v2_balance_decrypt::{decrypt_v2_balance, V2BalanceLedger},
+};
 
 /// Open a `GRA2` Gratis balance envelope with the account's Gratis view key.
 pub fn decrypt_gratis_balance(
@@ -10,5 +13,5 @@ pub fn decrypt_gratis_balance(
     account: Address,
     blob: &[u8],
 ) -> Result<U256, LocalCryptoError> {
-    V2LedgerSpec::GRATIS.open_u256(view_key, account, blob)
+    decrypt_v2_balance(V2BalanceLedger::Gratis, view_key, account, blob)
 }

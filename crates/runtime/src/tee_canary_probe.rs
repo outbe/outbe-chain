@@ -107,17 +107,16 @@ fn decrypt_canary(requester: &dyn EnclaveRequester, offer_pub: &[u8; 32]) -> Can
         Ok(offers) => offers,
         Err(outcome) => return outcome,
     };
-    let wire_req = match (DomainRequest::ProcessTributeOfferBatch {
+    let domain_req = DomainRequest::ProcessTributeOfferBatch {
         offers: offers.clone(),
-    })
-    .encode_wire(PayloadLane::Canary)
-    {
+    };
+    let wire_req = match domain_req.encode_wire(PayloadLane::Canary) {
         Ok(wire_req) => wire_req,
         Err(error) => return CanaryTickOutcome::decrypt_transport_failure(&error),
     };
     let started = SystemTime::now();
     let response = requester
-        .request(&wire_req)
+        .request_with_meta(domain_req.call_meta(), &wire_req)
         .and_then(|wire_resp| DomainResponse::from_wire_response(&wire_resp));
     let latency_ms = SystemTime::now()
         .duration_since(started)
@@ -246,6 +245,17 @@ mod tests {
             let mut script = self.script.lock().expect("script lock");
             let (expected, response) = script.remove(0);
             assert_eq!(expected, req.label(), "unexpected request order");
+            response
+        }
+
+        fn request_with_meta(
+            &self,
+            meta: outbe_tee::CallMeta,
+            _: &EnclaveRequest,
+        ) -> Result<EnclaveResponse, TransportError> {
+            let mut script = self.script.lock().expect("script lock");
+            let (expected, response) = script.remove(0);
+            assert_eq!(expected, meta.label, "unexpected request meta label");
             response
         }
 
@@ -407,7 +417,7 @@ mod tests {
         .expect("encode bad batch");
         let fake = ScriptedRequester::new(vec![
             ("get_public_keys", Ok(public_keys_ready())),
-            ("payload", Ok(bad_batch)),
+            ("process_tribute_offer_batch", Ok(bad_batch)),
         ]);
         let (outcome, _, _) = run_canary_probe(&fake, &TributeCanaryProbe, Some(false));
         match outcome {

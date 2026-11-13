@@ -112,9 +112,6 @@ fn validate_response(
             )
             .map_err(BalanceClientError::promis_attestation_invalid)
         }
-        (_, EnclaveResponse::Error { message }) => Err(
-            BalanceClientError::enclave_operation_error(operation.name(), message),
-        ),
         _ => Err(BalanceClientError::unexpected_response(response)),
     }
 }
@@ -130,7 +127,7 @@ fn check_canonical_hash(expected_hash: B256, actual_hash: B256) -> Result<()> {
 mod tests {
     use alloy_primitives::U256;
     use ed25519_dalek::{Signer, SigningKey};
-    use outbe_tee::TeeAttestationError;
+    use outbe_tee::{AttestationMetricClass, TeeAttestationError};
 
     use super::*;
     use crate::host::protocol::{
@@ -168,19 +165,10 @@ mod tests {
     fn enclave_error_and_wrong_variant_precede_hash_validation() {
         let hash = B256::repeat_byte(7);
         let key = [0; 32];
-        let response = EnclaveResponse::Error {
-            message: "denied".into(),
-        };
-        for (operation, name) in [
-            (BalanceOperation::Gratis, "ApplyGratisOp"),
-            (BalanceOperation::Promis, "ApplyPromisOp"),
-        ] {
-            let expected = format!("enclave {name} error: denied");
-            assert!(matches!(
-                validate_response(operation, hash, &key, &response),
-                Err(PrecompileError::EnclaveUnavailable(message)) if message == expected
-            ));
-        }
+        assert!(matches!(
+            request_failure(TransportError::EnclaveError("denied".into())),
+            PrecompileError::EnclaveUnavailable(message) if message.contains("denied")
+        ));
 
         let wrong_for_gratis = EnclaveResponse::PromisOpApplied {
             result: Box::new(promis_result(B256::ZERO)),
@@ -218,9 +206,8 @@ mod tests {
         for error in [
             TransportError::Codec("x".into()),
             TransportError::UnexpectedResponse,
-            TransportError::payload_attestation(
-                "gratis-op",
-                "gratis_op_attestation",
+            TransportError::app_attestation(
+                AttestationMetricClass::GratisOp,
                 TeeAttestationError::InvalidSignatureLength { actual: 1 },
             ),
         ] {

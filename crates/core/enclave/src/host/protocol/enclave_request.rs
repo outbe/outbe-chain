@@ -156,36 +156,17 @@ impl EnclaveRequest {
     /// True when the operation participates in the block's consensus witness tape.
     #[must_use]
     pub const fn is_recordable(&self) -> bool {
-        match self {
-            Self::ApplyGratisOp { .. }
-            | Self::ApplyPromisOp { .. }
-            | Self::SnapshotFidelityLeagues { .. }
-            | Self::QueryFidelityIndex { .. }
-            | Self::MineEncryptedNodV1 { .. }
-            | Self::ReadNodAmountV1 { .. }
-            | Self::EncryptNodForTributeV1 { .. }
-            | Self::ProcessEncryptedTributeOfferBatchV2 { .. }
-            | Self::ReadTributeAmountsV2 { .. }
-            | Self::ApplyTributeDayOpV2 { .. }
-            | Self::ReadTributeDayAmountV2 { .. }
-            | Self::ApplyTributeLeagueOpV1 { .. }
-            | Self::ReadTributeLeagueAmountV1 { .. }
-            | Self::ExecuteLysisFractionsV1 { .. }
-            | Self::ReadTributeDayFractionsV1 { .. }
-            | Self::IssueNodFromTributeV1 { .. }
-            | Self::ApplyNodGroupLoadOpV1 { .. }
-            | Self::ReadNodGroupLoadV1 { .. }
-            | Self::EncryptNodQuoteV1 { .. }
-            | Self::MineGratisFromPromisV1 { .. } => true,
+        !matches!(
+            self,
             Self::ProcessTributeOfferBatch { .. }
-            | Self::DeriveAccountKeys { .. }
-            | Self::ApplyFidelityCohortOp { .. }
-            | Self::NodTransferChunkV1 { .. }
-            | Self::ExecuteNodTransferV1 { .. }
-            | Self::ReadNodTransferV1 { .. }
-            | Self::DiscardNodTransferV1 { .. }
-            | Self::ExecuteLysis { .. } => false,
-        }
+                | Self::DeriveAccountKeys { .. }
+                | Self::ApplyFidelityCohortOp { .. }
+                | Self::NodTransferChunkV1 { .. }
+                | Self::ExecuteNodTransferV1 { .. }
+                | Self::ReadNodTransferV1 { .. }
+                | Self::DiscardNodTransferV1 { .. }
+                | Self::ExecuteLysis { .. }
+        )
     }
 
     /// Enforce strict transport-lane isolation on both host and enclave.

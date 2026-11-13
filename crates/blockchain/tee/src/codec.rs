@@ -255,6 +255,52 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn encode_call_enforces_exact_max_frame_minus_noise_tag_budget() {
+        let ctx = EnclaveCallContextV1::default();
+        // Probe with a 4-byte payload length varint (>= 16384 uses 3-byte varint in postcard).
+        let probe_len = 60_000usize;
+        let probe = encode_call(
+            ctx,
+            &EnclaveRequest::Payload {
+                lane: PayloadLane::Execution,
+                payload: vec![0xAB; probe_len],
+            },
+        )
+        .unwrap();
+        let exact_payload_len = probe_len + ((MAX_FRAME_LEN - 16) - probe.len());
+
+        let at_limit = encode_call(
+            ctx,
+            &EnclaveRequest::Payload {
+                lane: PayloadLane::Execution,
+                payload: vec![0xAB; exact_payload_len],
+            },
+        )
+        .expect("MAX_FRAME_LEN - 16 plaintext must fit Noise AEAD tag");
+        assert_eq!(at_limit.len(), MAX_FRAME_LEN - 16);
+        assert_eq!(
+            decode_call(&at_limit).unwrap().request,
+            EnclaveRequest::Payload {
+                lane: PayloadLane::Execution,
+                payload: vec![0xAB; exact_payload_len],
+            }
+        );
+
+        let over_limit = encode_call(
+            ctx,
+            &EnclaveRequest::Payload {
+                lane: PayloadLane::Execution,
+                payload: vec![0xAB; exact_payload_len + 1],
+            },
+        )
+        .expect_err("MAX_FRAME_LEN - 15 plaintext must fail before Noise encryption");
+        assert!(matches!(
+            over_limit,
+            TransportError::FrameTooLarge(size) if size == MAX_FRAME_LEN + 1
+        ));
+    }
+
     /// Postcard encodes an enum as a varint of its variant declaration index, so
     /// the on-wire index of every existing variant is part of the protocol. New
     /// variants may be appended ONLY at the tail of `EnclaveRequest` /

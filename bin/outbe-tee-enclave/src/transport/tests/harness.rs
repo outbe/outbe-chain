@@ -88,7 +88,7 @@ impl Enclave {
     pub(in crate::transport::tests) fn call_domain(
         &mut self,
         req: outbe_enclave::protocol::EnclaveRequest,
-    ) -> outbe_enclave::protocol::EnclaveResponse {
+    ) -> DomainDispatchResult {
         dispatch_domain(req, &self.keys, &self.offer_key, self.chain_id)
     }
 

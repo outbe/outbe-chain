@@ -28,7 +28,7 @@ pub(crate) fn apply_day_operation(
     }) {
         return result.map_err(crate::errors::enclave_transport_error);
     }
-    outbe_enclave::tribute_day_client::apply_day_operation(request)
+    outbe_enclave::tribute_day_client::apply_day_operation(request).map_err(TransportError::from)
 }
 
 pub(crate) fn apply_league_operation(
@@ -40,7 +40,7 @@ pub(crate) fn apply_league_operation(
     }) {
         return result.map_err(crate::errors::enclave_transport_error);
     }
-    outbe_enclave::tribute_day_client::apply_league_operation(request)
+    outbe_enclave::tribute_day_client::apply_league_operation(request).map_err(TransportError::from)
 }
 
 pub(crate) fn read_league_amount(
@@ -52,7 +52,7 @@ pub(crate) fn read_league_amount(
     {
         return result.map_err(crate::errors::enclave_transport_error);
     }
-    outbe_enclave::tribute_day_client::read_league_amount(record)
+    outbe_enclave::tribute_day_client::read_league_amount(record).map_err(TransportError::from)
 }
 
 pub(crate) fn execute_lysis_fractions(
@@ -65,6 +65,7 @@ pub(crate) fn execute_lysis_fractions(
         return result.map_err(crate::errors::enclave_transport_error);
     }
     outbe_enclave::tribute_day_client::execute_lysis_fractions(request)
+        .map_err(TransportError::from)
 }
 
 #[cfg(test)]
@@ -77,7 +78,7 @@ pub(crate) fn read_day_fractions(
     {
         return result.map_err(crate::errors::enclave_transport_error);
     }
-    outbe_enclave::tribute_day_client::read_day_fractions(record)
+    outbe_enclave::tribute_day_client::read_day_fractions(record).map_err(TransportError::from)
 }
 
 pub(crate) fn seal_day_fractions(
@@ -117,7 +118,7 @@ pub(crate) fn issue_nod_from_tribute(
     }) {
         return result.map_err(crate::errors::enclave_transport_error);
     }
-    outbe_enclave::nod_mine::issue_nod_from_tribute(request)
+    outbe_enclave::nod_mine::issue_nod_from_tribute(request).map_err(TransportError::from)
 }
 
 pub(crate) fn read_day_amount(
@@ -129,7 +130,7 @@ pub(crate) fn read_day_amount(
     {
         return result.map_err(crate::errors::enclave_transport_error);
     }
-    outbe_enclave::tribute_day_client::read_day_amount(record)
+    outbe_enclave::tribute_day_client::read_day_amount(record).map_err(TransportError::from)
 }
 
 pub(crate) fn read_amounts(
@@ -141,7 +142,8 @@ pub(crate) fn read_amounts(
     }) {
         return result.map_err(crate::errors::enclave_transport_error);
     }
-    outbe_enclave::tribute_client::read_tribute_amounts(std::slice::from_ref(record))?
+    outbe_enclave::tribute_client::read_tribute_amounts(std::slice::from_ref(record))
+        .map_err(TransportError::from)?
         .into_iter()
         .next()
         .ok_or(TransportError::UnexpectedResponse)

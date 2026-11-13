@@ -8,19 +8,21 @@ use ed25519_dalek::{Signer, SigningKey};
 use outbe_core_common::nod_encryption::{EncryptedNodV1, NodTermsV1};
 use outbe_tee::{
     call_context::{ContextScope, EnclaveCallContextV1, EnclaveContextKindV1},
-    protocol::{EnclaveResponse as WireResponse, PayloadLane},
+    protocol::{EnclaveRequest as WireRequest, EnclaveResponse as WireResponse, PayloadLane},
     witness::{
         set_witness_policy_for_test, BlockWitnessFault, EnclaveWitnessEntryV1,
         EnclaveWitnessTapeV1, TxWitnessV1, WitnessExecutionMode, WitnessExecutionScope,
         WitnessPolicy, WitnessState,
     },
+    AttestationMetricClass, EnclaveClient, EnclaveSession, RejectionMetricClass,
     TeeAttestationError, TransportError,
 };
 
 use super::{
     authenticate::authenticate_request,
-    consensus_domain_call,
+    canary_domain_request, consensus_domain_call, domain_session_call_on,
     errors::{EnclaveClientError, LocalCryptoError, TributeSourceError},
+    lysis::{execute_lysis_on_session, LysisRequest, LysisResult},
     nod_mine::{self, MineEncryptedNodRequestV1, MineEncryptedNodResultV1},
     protocol::{
         fidelity_query_attestation_preimage, fidelity_query_canonical_hash,
@@ -28,11 +30,13 @@ use super::{
         mine_gratis_from_promis_attestation_preimage, mine_gratis_from_promis_canonical_hash,
         promis_op_attestation_preimage, promis_op_canonical_hash, EnclaveRequest, EnclaveResponse,
         FidelityCohortOp, FidelityOpOutcome, FidelityOpSection, FidelityQueryRequest,
-        FidelityQueryResult, GratisOp, GratisOpRequest, GratisOpResult, GratisOpStatus, Ledger,
-        MineGratisFromPromisRequestV1, MineGratisFromPromisResultV1, MineGratisFromPromisStatusV1,
-        ModifyAuth, PromisOp, PromisOpRequest, PromisOpResult, PromisOpStatus,
+        FidelityQueryResult, FidelitySnapshotRequest, GratisOp, GratisOpRequest, GratisOpResult,
+        GratisOpStatus, Ledger, MineGratisFromPromisRequestV1, MineGratisFromPromisResultV1,
+        MineGratisFromPromisStatusV1, ModifyAuth, PromisOp, PromisOpRequest, PromisOpResult,
+        PromisOpStatus,
     },
     tribute_client::set_test_local_enclave_hook,
+    try_domain_account_query,
     verification::{
         verify_fidelity_query_attestation, verify_gratis_op_attestation,
         verify_mine_gratis_from_promis_attestation, verify_promis_op_attestation,
@@ -639,6 +643,123 @@ fn non_canonical_payload_bytes_latch_tape_invalid_on_replay_and_verifier() {
                 Some(BlockWitnessFault::TapeInvalid)
             );
         }
+
+        // ProposerRecord must latch LocalUnavailable when the enclave emits malformed Payload bytes
+        set_witness_policy_for_test(Some(WitnessPolicy::EnclaveBacked));
+        let proposer_state = Arc::new(Mutex::new({
+            let mut ws = WitnessState::new(
+                WitnessExecutionMode::ProposerRecord,
+                Some(leader_pub),
+                EnclaveWitnessTapeV1::default(),
+            );
+            ws.tx_index = Some(0);
+            ws
+        }));
+        let wire_bad = WireResponse::Payload {
+            recordable: true,
+            payload: bad_entry_payload(&bad_entry),
+            inputs_canonical_hash: hash,
+            attestation_tag: sig.clone(),
+        };
+        let proposer_res = {
+            let _ctx = enter_execution_witness(Arc::clone(&proposer_state));
+            outbe_tee::consensus_call(
+                enclave_req.label(),
+                || Ok((leader_pub, wire_bad)),
+                |_, wire| EnclaveResponse::from_wire_response(wire).map(|_| ()),
+            )
+        };
+        assert!(proposer_res.is_err());
+        assert_eq!(
+            proposer_state.lock().unwrap().first_witness_fault,
+            Some(BlockWitnessFault::LocalUnavailable)
+        );
+    }
+
+    // ProposerRecord also latches LocalUnavailable if enclave returns a non-recordable domain response
+    set_witness_policy_for_test(Some(WitnessPolicy::EnclaveBacked));
+    let non_rec_state = Arc::new(Mutex::new({
+        let mut ws = WitnessState::new(
+            WitnessExecutionMode::ProposerRecord,
+            Some(leader_pub),
+            EnclaveWitnessTapeV1::default(),
+        );
+        ws.tx_index = Some(0);
+        ws
+    }));
+    let lysis_res = LysisResult {
+        nods: Vec::new(),
+        total_nominal_minor: U256::from(10u64),
+        unused_lysis_limit_minor: U256::ZERO,
+    };
+    let lysis_preimage = super::lysis::result_preimage(hash, &lysis_res).unwrap();
+    let lysis_tag = leader_sk.sign(&lysis_preimage).to_bytes().to_vec();
+    set_test_local_enclave_hook(Some(Arc::new(move |_| {
+        Ok((
+            leader_pub,
+            EnclaveResponse::LysisExecuted {
+                result: Box::new(lysis_res.clone()),
+                inputs_canonical_hash: hash,
+                attestation_tag: lysis_tag.clone(),
+            },
+        ))
+    })));
+    let non_rec_err = {
+        let _ctx = enter_execution_witness(Arc::clone(&non_rec_state));
+        consensus_domain_call(
+            enclave_req.label(),
+            &enclave_req,
+            || TransportError::Unavailable("missing".into()),
+            |_, _| Ok(()),
+        )
+    };
+    assert!(non_rec_err.is_err());
+    assert_eq!(
+        non_rec_state.lock().unwrap().first_witness_fault,
+        Some(BlockWitnessFault::LocalUnavailable)
+    );
+}
+
+fn bad_entry_payload(entry: &EnclaveWitnessEntryV1) -> Vec<u8> {
+    match entry {
+        EnclaveWitnessEntryV1::Payload { payload, .. } => payload.clone(),
+        _ => unreachable!(),
+    }
+}
+
+fn spawn_mock_dev_enclave(
+    attestation_pub: [u8; 32],
+    handler: impl Fn(PayloadLane, EnclaveRequest) -> Result<EnclaveResponse, String>
+        + Send
+        + Sync
+        + 'static,
+) -> outbe_tee::test_utils::MockDevEnclaveServer {
+    outbe_tee::test_utils::MockDevEnclaveServer::spawn(attestation_pub, move |wire_req| {
+        let WireRequest::Payload { lane, payload } = wire_req else {
+            return WireResponse::Ack;
+        };
+        let req = EnclaveRequest::decode_wire_canonical(&payload).unwrap();
+        match handler(lane, req) {
+            Ok(resp) => resp.into_wire_response().unwrap(),
+            Err(message) => WireResponse::Error { message },
+        }
+    })
+}
+
+fn sample_lysis_request(timestamp: u64) -> LysisRequest {
+    LysisRequest {
+        chain_id: 1,
+        worldwide_day: outbe_primitives::time::WorldwideDay::new(20250115),
+        emission_day: 20250115,
+        timestamp,
+        lysis_limit_minor: U256::from(5_000u64),
+        tributes: Vec::new(),
+        fidelity: FidelitySnapshotRequest {
+            timestamp,
+            first_qualified_start: 20250115,
+            entries: Vec::new(),
+        },
+        entry_prices: Vec::new(),
     }
 }
 
@@ -646,19 +767,21 @@ fn non_canonical_payload_bytes_latch_tape_invalid_on_replay_and_verifier() {
 fn non_recordable_signed_lysis_response_verifies_on_wire_but_never_enters_witness_tape() {
     let signer = SigningKey::from_bytes(&[0x81; 32]);
     let pubkey = signer.verifying_key().to_bytes();
-    let inputs_hash = B256::repeat_byte(0x91);
-    let result = super::lysis::LysisResult {
+    let req_good = sample_lysis_request(1_700_000_000);
+    let req_swapped = sample_lysis_request(1_700_000_001);
+    let fixed_hash = super::lysis::inputs_hash(&req_good).unwrap();
+    let expected_result = LysisResult {
         nods: Vec::new(),
         total_nominal_minor: U256::from(1_000u64),
         unused_lysis_limit_minor: U256::from(200u64),
     };
-    let preimage = super::lysis::result_preimage(inputs_hash, &result).unwrap();
-    let tag = signer.sign(&preimage).to_bytes().to_vec();
+    let preimage = super::lysis::result_preimage(fixed_hash, &expected_result).unwrap();
+    let fixed_tag = signer.sign(&preimage).to_bytes().to_vec();
 
     let domain_resp = EnclaveResponse::LysisExecuted {
-        result: Box::new(result),
-        inputs_canonical_hash: inputs_hash,
-        attestation_tag: tag,
+        result: Box::new(expected_result.clone()),
+        inputs_canonical_hash: fixed_hash,
+        attestation_tag: fixed_tag.clone(),
     };
     assert!(!domain_resp.is_recordable());
 
@@ -671,30 +794,87 @@ fn non_recordable_signed_lysis_response_verifies_on_wire_but_never_enters_witnes
         }
     ));
     // Non-recordable Payload MUST fail conversion into EnclaveWitnessEntryV1!
-    assert!(EnclaveWitnessEntryV1::try_from(wire.clone()).is_err());
+    assert!(EnclaveWitnessEntryV1::try_from(wire).is_err());
 
-    // Round-trips cleanly on direct session call and preserves Ed25519 signature verification
-    let decoded = EnclaveResponse::from_wire_response(&wire).unwrap();
-    assert_eq!(decoded, domain_resp);
-    let EnclaveResponse::LysisExecuted {
-        result: decoded_res,
-        inputs_canonical_hash: decoded_hash,
-        attestation_tag: decoded_tag,
-    } = decoded
-    else {
-        panic!("expected LysisExecuted");
+    // Exercise live execute_lysis_on_session / domain_session_call_on -> tee_session_call_on:
+    // 1. Matching request verifies Ed25519 signature and returns Some(result)
+    // 2. Swapped request (different timestamp -> different inputs_hash) is rejected!
+    let mock_resp = domain_resp.clone();
+    let server = spawn_mock_dev_enclave(pubkey, move |lane, _req| {
+        assert_eq!(lane, PayloadLane::Execution);
+        Ok(mock_resp.clone())
+    });
+    let client = EnclaveClient::connect_endpoint(&server.endpoint).unwrap();
+    let mut session = EnclaveSession::development(client, server.endpoint.clone()).unwrap();
+
+    let verified = execute_lysis_on_session(&mut session, req_good)
+        .expect("valid signed LysisExecuted must succeed on session call");
+    assert_eq!(verified, Some(expected_result));
+
+    let swapped_err = execute_lysis_on_session(&mut session, req_swapped)
+        .expect_err("swapped request must be rejected on tee_session_call_on");
+    assert!(matches!(
+        swapped_err,
+        EnclaveClientError::Transport(TransportError::Attestation(_))
+    ));
+
+    // Also verify consensus_domain_call rejects non-recordable LysisRequest up front (fail-closed)
+    let non_rec_req = EnclaveRequest::ExecuteLysis {
+        request: Box::new(sample_lysis_request(1_700_000_002)),
     };
-    let verify_preimage = super::lysis::result_preimage(decoded_hash, &decoded_res).unwrap();
-    super::tribute_v2::verify_attestation(&pubkey, &verify_preimage, &decoded_tag).unwrap();
-
-    // Tampered input hash fails verification
-    let wrong_preimage =
-        super::lysis::result_preimage(B256::repeat_byte(0x92), &decoded_res).unwrap();
-    assert!(super::tribute_v2::verify_attestation(&pubkey, &wrong_preimage, &decoded_tag).is_err());
+    assert!(domain_session_call_on(&mut session, &non_rec_req, |_, _| Ok(())).is_ok());
+    assert!(consensus_domain_call(
+        non_rec_req.label(),
+        &non_rec_req,
+        || TransportError::Unavailable("missing".into()),
+        |_, _| Ok(()),
+    )
+    .is_err());
 }
 
 #[test]
 fn payload_lane_isolation_enforces_account_query_canary_and_execution_matrix() {
+    let signer = SigningKey::from_bytes(&[0x93; 32]);
+    let pubkey = signer.verifying_key().to_bytes();
+    let observed_lanes = Arc::new(Mutex::new(Vec::new()));
+    let lanes_clone = Arc::clone(&observed_lanes);
+
+    let server = spawn_mock_dev_enclave(pubkey, move |lane, req| {
+        lanes_clone.lock().unwrap().push((lane, req.label()));
+        match req {
+            EnclaveRequest::DeriveAccountKeys { account, .. } => {
+                Ok(EnclaveResponse::AccountKeysSealed {
+                    account,
+                    sealed: vec![0xAA; 80],
+                    nonce: [0xBB; 12],
+                    enclave_ephemeral_pubkey: [0xCC; 32],
+                })
+            }
+            EnclaveRequest::ProcessTributeOfferBatch { .. } => {
+                let hash = B256::repeat_byte(0x41);
+                let pre = super::protocol::tribute_offer_attestation_preimage(hash, &[]).unwrap();
+                Ok(EnclaveResponse::TributeOfferBatch {
+                    results: Vec::new(),
+                    inputs_canonical_hash: hash,
+                    attestation_tag: signer.sign(&pre).to_bytes().to_vec(),
+                })
+            }
+            EnclaveRequest::ProcessEncryptedTributeOfferBatchV2 { .. } => {
+                let hash = B256::repeat_byte(0x42);
+                let pre =
+                    super::tribute_v2::encrypted_offer_attestation_preimage(hash, &[]).unwrap();
+                Ok(EnclaveResponse::EncryptedTributeOfferBatchV2 {
+                    results: Vec::new(),
+                    inputs_canonical_hash: hash,
+                    attestation_tag: signer.sign(&pre).to_bytes().to_vec(),
+                })
+            }
+            other => Err(format!("unexpected request {}", other.label())),
+        }
+    });
+    let client = EnclaveClient::connect_endpoint(&server.endpoint).unwrap();
+    let _ = outbe_tee::install_enclave_client(client, server.endpoint.clone());
+
     let derive = EnclaveRequest::DeriveAccountKeys {
         ledger: Ledger::Gratis,
         account: Address::repeat_byte(0x11),
@@ -705,43 +885,84 @@ fn payload_lane_isolation_enforces_account_query_canary_and_execution_matrix() {
     assert!(derive.encode_wire(PayloadLane::Execution).is_err());
     assert!(derive.encode_wire(PayloadLane::Canary).is_err());
 
+    // Live try_domain_account_query accepts DeriveAccountKeys and rejects state-mutating / offer requests!
+    let sealed = try_domain_account_query(&derive)
+        .expect("installed enclave")
+        .expect("DeriveAccountKeys allowed on AccountQuery");
+    assert!(matches!(sealed, EnclaveResponse::AccountKeysSealed { .. }));
+
+    let gratis_req = EnclaveRequest::ApplyGratisOp {
+        request: Box::new(GratisOpRequest {
+            op: GratisOp::Mint,
+            chain_id: B256::repeat_byte(1),
+            account: Address::repeat_byte(2),
+            amount: U256::ONE,
+            current_balance: Vec::new(),
+            current_pledged: Vec::new(),
+            modify_auth: sample_modify_auth(),
+            fidelity: None,
+        }),
+    };
     let offer_v1 = EnclaveRequest::ProcessTributeOfferBatch { offers: Vec::new() };
     let offer_v2 = EnclaveRequest::ProcessEncryptedTributeOfferBatchV2 { offers: Vec::new() };
-    for offer_req in [&offer_v1, &offer_v2] {
-        assert!(offer_req.encode_wire(PayloadLane::Execution).is_ok());
-        assert!(offer_req.encode_wire(PayloadLane::Canary).is_ok());
-        assert!(offer_req.encode_wire(PayloadLane::AccountQuery).is_err());
-    }
+
+    assert!(try_domain_account_query(&gratis_req).unwrap().is_err());
+    assert!(try_domain_account_query(&offer_v2).unwrap().is_err());
+
+    // Live canary_domain_request accepts offer batches on Canary and rejects ApplyGratisOp & DeriveAccountKeys!
+    assert!(canary_domain_request(&offer_v1).is_ok());
+    assert!(canary_domain_request(&offer_v2).is_ok());
+    assert!(canary_domain_request(&gratis_req).is_err());
+    assert!(canary_domain_request(&derive).is_err());
 
     let discard = EnclaveRequest::DiscardNodTransferV1 { id: B256::ZERO };
     assert!(discard.encode_wire(PayloadLane::Execution).is_ok());
-    assert!(discard.encode_wire(PayloadLane::Canary).is_err());
-    assert!(discard.encode_wire(PayloadLane::AccountQuery).is_err());
+    assert!(canary_domain_request(&discard).is_err());
+    assert!(try_domain_account_query(&discard).unwrap().is_err());
+
+    let lanes = observed_lanes.lock().unwrap().clone();
+    assert_eq!(
+        lanes,
+        vec![
+            (PayloadLane::AccountQuery, "derive_account_keys"),
+            (PayloadLane::Canary, "process_tribute_offer_batch"),
+            (
+                PayloadLane::Canary,
+                "process_encrypted_tribute_offer_batch_v2"
+            ),
+        ]
+    );
 }
 
 #[test]
 fn metric_classes_and_local_crypto_error_messages_remain_exact() {
     let bad_sig = || TeeAttestationError::InvalidSignatureLength { actual: 3 };
-    assert_eq!(
-        TransportError::payload_attestation("offer", "tribute_offer_attestation", bad_sig())
-            .metric_class(),
-        "tribute_offer_attestation"
-    );
-    assert_eq!(
-        TransportError::payload_attestation("gratis-op", "gratis_op_attestation", bad_sig())
-            .metric_class(),
-        "gratis_op_attestation"
-    );
-    assert_eq!(
-        TransportError::payload_attestation("promis-op", "promis_op_attestation", bad_sig())
-            .metric_class(),
-        "promis_op_attestation"
-    );
-    assert_eq!(
-        TransportError::payload_attestation("fidelity", "fidelity_attestation", bad_sig())
-            .metric_class(),
-        "fidelity_attestation"
-    );
+    for (class, expected) in [
+        (
+            AttestationMetricClass::TributeOffer,
+            "tribute_offer_attestation",
+        ),
+        (AttestationMetricClass::GratisOp, "gratis_op_attestation"),
+        (AttestationMetricClass::PromisOp, "promis_op_attestation"),
+        (AttestationMetricClass::Fidelity, "fidelity_attestation"),
+    ] {
+        assert_eq!(
+            TransportError::app_attestation(class, bad_sig()).metric_class(),
+            expected
+        );
+    }
+    for (class, expected) in [
+        (
+            RejectionMetricClass::TributeSource,
+            "tribute_source_rejected",
+        ),
+        (RejectionMetricClass::NodMint, "nod_mint_rejected"),
+    ] {
+        assert_eq!(
+            TransportError::app_rejected(class, "rejected").metric_class(),
+            expected
+        );
+    }
 
     let source_err = TransportError::from(EnclaveClientError::TributeSourceRejected(
         TributeSourceError::ContextMismatch,

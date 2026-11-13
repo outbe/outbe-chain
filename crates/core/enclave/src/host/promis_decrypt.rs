@@ -2,7 +2,10 @@
 
 use alloy_primitives::{Address, U256};
 
-use super::errors::{LocalCryptoError, V2LedgerSpec};
+use super::{
+    errors::LocalCryptoError,
+    v2_balance_decrypt::{decrypt_v2_balance, V2BalanceLedger},
+};
 
 /// Open a `PRO2` Promis balance envelope with the account's Promis view key.
 pub fn decrypt_promis_balance(
@@ -10,5 +13,5 @@ pub fn decrypt_promis_balance(
     account: Address,
     blob: &[u8],
 ) -> Result<U256, LocalCryptoError> {
-    V2LedgerSpec::PROMIS.open_u256(view_key, account, blob)
+    decrypt_v2_balance(V2BalanceLedger::Promis, view_key, account, blob)
 }

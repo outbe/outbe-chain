@@ -15,7 +15,7 @@
 use outbe_enclave::protocol::{EnclaveRequest, EnclaveResponse, GratisOpRequest, GratisOpResult};
 use outbe_primitives::error::Result;
 
-use crate::errors::{map_nod_transport_error, GratisFatalError};
+use crate::errors::{map_nod_client_error, GratisFatalError};
 
 /// Run one Gratis op inside the enclave and validate the response.
 ///
@@ -165,5 +165,5 @@ pub(crate) fn mine_encrypted_nod(
     if let Some(result) = test_enclave::try_mine(&request) {
         return result;
     }
-    outbe_enclave::nod_mine::mine_encrypted_nod(request).map_err(map_nod_transport_error)
+    outbe_enclave::nod_mine::mine_encrypted_nod(request).map_err(map_nod_client_error)
 }

@@ -235,53 +235,24 @@ pub enum EnclaveResponse {
     GratisMinedFromPromisV1 {
         result: Box<MineGratisFromPromisResultV1>,
     },
-    Error {
-        message: String,
-    },
-    NotReady {
-        message: String,
-    },
 }
 
 impl EnclaveResponse {
     /// True when this response variant is recorded on the block's consensus witness tape.
     #[must_use]
     pub const fn is_recordable(&self) -> bool {
-        match self {
-            Self::GratisOpApplied { .. }
-            | Self::PromisOpApplied { .. }
-            | Self::FidelityLeaguesSnapshotted { .. }
-            | Self::FidelityIndexQueried { .. }
-            | Self::FidelityQueryRejected { .. }
-            | Self::NodEncryptedForTributeV1 { .. }
-            | Self::EncryptedNodMintRejectedV1 { .. }
-            | Self::EncryptedNodMinedV1 { .. }
-            | Self::NodAmountReadV1 { .. }
-            | Self::EncryptedTributeOfferBatchV2 { .. }
-            | Self::TributeAmountsReadV2 { .. }
-            | Self::TributeDayOpAppliedV2 { .. }
-            | Self::TributeDayAmountReadV2 { .. }
-            | Self::TributeLeagueOpAppliedV1 { .. }
-            | Self::TributeLeagueAmountReadV1 { .. }
-            | Self::LysisFractionsExecutedV1 { .. }
-            | Self::TributeDayFractionsReadV1 { .. }
-            | Self::NodIssuedFromTributeV1 { .. }
-            | Self::NodGroupLoadOpAppliedV1 { .. }
-            | Self::NodGroupLoadReadV1 { .. }
-            | Self::NodQuoteEncryptedV1 { .. }
-            | Self::GratisMinedFromPromisV1 { .. } => true,
+        !matches!(
+            self,
             Self::TributeOfferBatch { .. }
-            | Self::FidelityCohortApplied { .. }
-            | Self::AccountKeysSealed { .. }
-            | Self::LysisRejected { .. }
-            | Self::LysisExecuted { .. }
-            | Self::NodTransferAckV1 { .. }
-            | Self::NodTransferReadyV1 { .. }
-            | Self::NodTransferOutputV1 { .. }
-            | Self::NodTransferDiscardedV1 { .. }
-            | Self::Error { .. }
-            | Self::NotReady { .. } => false,
-        }
+                | Self::FidelityCohortApplied { .. }
+                | Self::AccountKeysSealed { .. }
+                | Self::LysisRejected { .. }
+                | Self::LysisExecuted { .. }
+                | Self::NodTransferAckV1 { .. }
+                | Self::NodTransferReadyV1 { .. }
+                | Self::NodTransferOutputV1 { .. }
+                | Self::NodTransferDiscardedV1 { .. }
+        )
     }
 
     /// True when this response carries an `inputs_canonical_hash` and Ed25519 `attestation_tag`.
@@ -294,346 +265,232 @@ impl EnclaveResponse {
                 | Self::NodTransferReadyV1 { .. }
                 | Self::NodTransferOutputV1 { .. }
                 | Self::NodTransferDiscardedV1 { .. }
-                | Self::Error { .. }
-                | Self::NotReady { .. }
         )
+    }
+
+    fn signed_parts(&self) -> Option<(B256, &[u8])> {
+        match self {
+            Self::GratisOpApplied { result } => {
+                Some((result.inputs_canonical_hash, &result.attestation_tag))
+            }
+            Self::PromisOpApplied { result } => {
+                Some((result.inputs_canonical_hash, &result.attestation_tag))
+            }
+            Self::FidelityCohortApplied { result } => {
+                Some((result.inputs_canonical_hash, &result.attestation_tag))
+            }
+            Self::FidelityIndexQueried { result } => {
+                Some((result.inputs_canonical_hash, &result.attestation_tag))
+            }
+            Self::EncryptedNodMinedV1 { result } => {
+                Some((result.inputs_canonical_hash, &result.attestation_tag))
+            }
+            Self::GratisMinedFromPromisV1 { result } => {
+                Some((result.inputs_canonical_hash, &result.attestation_tag))
+            }
+            Self::TributeOfferBatch {
+                inputs_canonical_hash,
+                attestation_tag,
+                ..
+            }
+            | Self::FidelityLeaguesSnapshotted {
+                inputs_canonical_hash,
+                attestation_tag,
+                ..
+            }
+            | Self::NodEncryptedForTributeV1 {
+                inputs_canonical_hash,
+                attestation_tag,
+                ..
+            }
+            | Self::EncryptedNodMintRejectedV1 {
+                inputs_canonical_hash,
+                attestation_tag,
+                ..
+            }
+            | Self::LysisRejected {
+                inputs_canonical_hash,
+                attestation_tag,
+            }
+            | Self::LysisExecuted {
+                inputs_canonical_hash,
+                attestation_tag,
+                ..
+            }
+            | Self::NodAmountReadV1 {
+                inputs_canonical_hash,
+                attestation_tag,
+                ..
+            }
+            | Self::EncryptedTributeOfferBatchV2 {
+                inputs_canonical_hash,
+                attestation_tag,
+                ..
+            }
+            | Self::TributeAmountsReadV2 {
+                inputs_canonical_hash,
+                attestation_tag,
+                ..
+            }
+            | Self::TributeDayOpAppliedV2 {
+                inputs_canonical_hash,
+                attestation_tag,
+                ..
+            }
+            | Self::TributeDayAmountReadV2 {
+                inputs_canonical_hash,
+                attestation_tag,
+                ..
+            }
+            | Self::FidelityQueryRejected {
+                inputs_canonical_hash,
+                attestation_tag,
+                ..
+            }
+            | Self::TributeLeagueOpAppliedV1 {
+                inputs_canonical_hash,
+                attestation_tag,
+                ..
+            }
+            | Self::TributeLeagueAmountReadV1 {
+                inputs_canonical_hash,
+                attestation_tag,
+                ..
+            }
+            | Self::LysisFractionsExecutedV1 {
+                inputs_canonical_hash,
+                attestation_tag,
+                ..
+            }
+            | Self::TributeDayFractionsReadV1 {
+                inputs_canonical_hash,
+                attestation_tag,
+                ..
+            }
+            | Self::NodIssuedFromTributeV1 {
+                inputs_canonical_hash,
+                attestation_tag,
+                ..
+            }
+            | Self::NodGroupLoadOpAppliedV1 {
+                inputs_canonical_hash,
+                attestation_tag,
+                ..
+            }
+            | Self::NodGroupLoadReadV1 {
+                inputs_canonical_hash,
+                attestation_tag,
+                ..
+            }
+            | Self::NodQuoteEncryptedV1 {
+                inputs_canonical_hash,
+                attestation_tag,
+                ..
+            } => Some((*inputs_canonical_hash, attestation_tag)),
+            Self::AccountKeysSealed { .. }
+            | Self::NodTransferAckV1 { .. }
+            | Self::NodTransferReadyV1 { .. }
+            | Self::NodTransferOutputV1 { .. }
+            | Self::NodTransferDiscardedV1 { .. } => None,
+        }
+    }
+
+    fn signed_tag_mut(&mut self) -> Option<&mut Vec<u8>> {
+        match self {
+            Self::GratisOpApplied { result } => Some(&mut result.attestation_tag),
+            Self::PromisOpApplied { result } => Some(&mut result.attestation_tag),
+            Self::FidelityCohortApplied { result } => Some(&mut result.attestation_tag),
+            Self::FidelityIndexQueried { result } => Some(&mut result.attestation_tag),
+            Self::EncryptedNodMinedV1 { result } => Some(&mut result.attestation_tag),
+            Self::GratisMinedFromPromisV1 { result } => Some(&mut result.attestation_tag),
+            Self::TributeOfferBatch {
+                attestation_tag, ..
+            }
+            | Self::FidelityLeaguesSnapshotted {
+                attestation_tag, ..
+            }
+            | Self::NodEncryptedForTributeV1 {
+                attestation_tag, ..
+            }
+            | Self::EncryptedNodMintRejectedV1 {
+                attestation_tag, ..
+            }
+            | Self::LysisRejected {
+                attestation_tag, ..
+            }
+            | Self::LysisExecuted {
+                attestation_tag, ..
+            }
+            | Self::NodAmountReadV1 {
+                attestation_tag, ..
+            }
+            | Self::EncryptedTributeOfferBatchV2 {
+                attestation_tag, ..
+            }
+            | Self::TributeAmountsReadV2 {
+                attestation_tag, ..
+            }
+            | Self::TributeDayOpAppliedV2 {
+                attestation_tag, ..
+            }
+            | Self::TributeDayAmountReadV2 {
+                attestation_tag, ..
+            }
+            | Self::FidelityQueryRejected {
+                attestation_tag, ..
+            }
+            | Self::TributeLeagueOpAppliedV1 {
+                attestation_tag, ..
+            }
+            | Self::TributeLeagueAmountReadV1 {
+                attestation_tag, ..
+            }
+            | Self::LysisFractionsExecutedV1 {
+                attestation_tag, ..
+            }
+            | Self::TributeDayFractionsReadV1 {
+                attestation_tag, ..
+            }
+            | Self::NodIssuedFromTributeV1 {
+                attestation_tag, ..
+            }
+            | Self::NodGroupLoadOpAppliedV1 {
+                attestation_tag, ..
+            }
+            | Self::NodGroupLoadReadV1 {
+                attestation_tag, ..
+            }
+            | Self::NodQuoteEncryptedV1 {
+                attestation_tag, ..
+            } => Some(attestation_tag),
+            Self::AccountKeysSealed { .. }
+            | Self::NodTransferAckV1 { .. }
+            | Self::NodTransferReadyV1 { .. }
+            | Self::NodTransferOutputV1 { .. }
+            | Self::NodTransferDiscardedV1 { .. } => None,
+        }
     }
 
     /// Return the canonical input commitment carried by this response (`B256::ZERO` if unsigned).
     #[must_use]
     pub fn inputs_canonical_hash(&self) -> B256 {
-        match self {
-            Self::GratisOpApplied { result } => result.inputs_canonical_hash,
-            Self::PromisOpApplied { result } => result.inputs_canonical_hash,
-            Self::FidelityCohortApplied { result } => result.inputs_canonical_hash,
-            Self::FidelityIndexQueried { result } => result.inputs_canonical_hash,
-            Self::EncryptedNodMinedV1 { result } => result.inputs_canonical_hash,
-            Self::GratisMinedFromPromisV1 { result } => result.inputs_canonical_hash,
-            Self::TributeOfferBatch {
-                inputs_canonical_hash,
-                ..
-            }
-            | Self::FidelityLeaguesSnapshotted {
-                inputs_canonical_hash,
-                ..
-            }
-            | Self::NodEncryptedForTributeV1 {
-                inputs_canonical_hash,
-                ..
-            }
-            | Self::EncryptedNodMintRejectedV1 {
-                inputs_canonical_hash,
-                ..
-            }
-            | Self::LysisRejected {
-                inputs_canonical_hash,
-                ..
-            }
-            | Self::LysisExecuted {
-                inputs_canonical_hash,
-                ..
-            }
-            | Self::NodAmountReadV1 {
-                inputs_canonical_hash,
-                ..
-            }
-            | Self::EncryptedTributeOfferBatchV2 {
-                inputs_canonical_hash,
-                ..
-            }
-            | Self::TributeAmountsReadV2 {
-                inputs_canonical_hash,
-                ..
-            }
-            | Self::TributeDayOpAppliedV2 {
-                inputs_canonical_hash,
-                ..
-            }
-            | Self::TributeDayAmountReadV2 {
-                inputs_canonical_hash,
-                ..
-            }
-            | Self::FidelityQueryRejected {
-                inputs_canonical_hash,
-                ..
-            }
-            | Self::TributeLeagueOpAppliedV1 {
-                inputs_canonical_hash,
-                ..
-            }
-            | Self::TributeLeagueAmountReadV1 {
-                inputs_canonical_hash,
-                ..
-            }
-            | Self::LysisFractionsExecutedV1 {
-                inputs_canonical_hash,
-                ..
-            }
-            | Self::TributeDayFractionsReadV1 {
-                inputs_canonical_hash,
-                ..
-            }
-            | Self::NodIssuedFromTributeV1 {
-                inputs_canonical_hash,
-                ..
-            }
-            | Self::NodGroupLoadOpAppliedV1 {
-                inputs_canonical_hash,
-                ..
-            }
-            | Self::NodGroupLoadReadV1 {
-                inputs_canonical_hash,
-                ..
-            }
-            | Self::NodQuoteEncryptedV1 {
-                inputs_canonical_hash,
-                ..
-            } => *inputs_canonical_hash,
-            Self::AccountKeysSealed { .. }
-            | Self::NodTransferAckV1 { .. }
-            | Self::NodTransferReadyV1 { .. }
-            | Self::NodTransferOutputV1 { .. }
-            | Self::NodTransferDiscardedV1 { .. }
-            | Self::Error { .. }
-            | Self::NotReady { .. } => B256::ZERO,
-        }
+        self.signed_parts()
+            .map_or(B256::ZERO, |(inputs_hash, _)| inputs_hash)
     }
 
     /// Borrow the response's Ed25519 attestation signature (`&[]` if unsigned or stripped).
     #[must_use]
     pub fn attestation_tag(&self) -> &[u8] {
-        match self {
-            Self::GratisOpApplied { result } => &result.attestation_tag,
-            Self::PromisOpApplied { result } => &result.attestation_tag,
-            Self::FidelityCohortApplied { result } => &result.attestation_tag,
-            Self::FidelityIndexQueried { result } => &result.attestation_tag,
-            Self::EncryptedNodMinedV1 { result } => &result.attestation_tag,
-            Self::GratisMinedFromPromisV1 { result } => &result.attestation_tag,
-            Self::TributeOfferBatch {
-                attestation_tag, ..
-            }
-            | Self::FidelityLeaguesSnapshotted {
-                attestation_tag, ..
-            }
-            | Self::NodEncryptedForTributeV1 {
-                attestation_tag, ..
-            }
-            | Self::EncryptedNodMintRejectedV1 {
-                attestation_tag, ..
-            }
-            | Self::LysisRejected {
-                attestation_tag, ..
-            }
-            | Self::LysisExecuted {
-                attestation_tag, ..
-            }
-            | Self::NodAmountReadV1 {
-                attestation_tag, ..
-            }
-            | Self::EncryptedTributeOfferBatchV2 {
-                attestation_tag, ..
-            }
-            | Self::TributeAmountsReadV2 {
-                attestation_tag, ..
-            }
-            | Self::TributeDayOpAppliedV2 {
-                attestation_tag, ..
-            }
-            | Self::TributeDayAmountReadV2 {
-                attestation_tag, ..
-            }
-            | Self::FidelityQueryRejected {
-                attestation_tag, ..
-            }
-            | Self::TributeLeagueOpAppliedV1 {
-                attestation_tag, ..
-            }
-            | Self::TributeLeagueAmountReadV1 {
-                attestation_tag, ..
-            }
-            | Self::LysisFractionsExecutedV1 {
-                attestation_tag, ..
-            }
-            | Self::TributeDayFractionsReadV1 {
-                attestation_tag, ..
-            }
-            | Self::NodIssuedFromTributeV1 {
-                attestation_tag, ..
-            }
-            | Self::NodGroupLoadOpAppliedV1 {
-                attestation_tag, ..
-            }
-            | Self::NodGroupLoadReadV1 {
-                attestation_tag, ..
-            }
-            | Self::NodQuoteEncryptedV1 {
-                attestation_tag, ..
-            } => attestation_tag,
-            Self::AccountKeysSealed { .. }
-            | Self::NodTransferAckV1 { .. }
-            | Self::NodTransferReadyV1 { .. }
-            | Self::NodTransferOutputV1 { .. }
-            | Self::NodTransferDiscardedV1 { .. }
-            | Self::Error { .. }
-            | Self::NotReady { .. } => &[],
-        }
+        self.signed_parts().map_or(&[], |(_, tag)| tag)
     }
 
     fn take_attestation_tag(&mut self) -> Vec<u8> {
-        match self {
-            Self::GratisOpApplied { result } => core::mem::take(&mut result.attestation_tag),
-            Self::PromisOpApplied { result } => core::mem::take(&mut result.attestation_tag),
-            Self::FidelityCohortApplied { result } => core::mem::take(&mut result.attestation_tag),
-            Self::FidelityIndexQueried { result } => core::mem::take(&mut result.attestation_tag),
-            Self::EncryptedNodMinedV1 { result } => core::mem::take(&mut result.attestation_tag),
-            Self::GratisMinedFromPromisV1 { result } => {
-                core::mem::take(&mut result.attestation_tag)
-            }
-            Self::TributeOfferBatch {
-                attestation_tag, ..
-            }
-            | Self::FidelityLeaguesSnapshotted {
-                attestation_tag, ..
-            }
-            | Self::NodEncryptedForTributeV1 {
-                attestation_tag, ..
-            }
-            | Self::EncryptedNodMintRejectedV1 {
-                attestation_tag, ..
-            }
-            | Self::LysisRejected {
-                attestation_tag, ..
-            }
-            | Self::LysisExecuted {
-                attestation_tag, ..
-            }
-            | Self::NodAmountReadV1 {
-                attestation_tag, ..
-            }
-            | Self::EncryptedTributeOfferBatchV2 {
-                attestation_tag, ..
-            }
-            | Self::TributeAmountsReadV2 {
-                attestation_tag, ..
-            }
-            | Self::TributeDayOpAppliedV2 {
-                attestation_tag, ..
-            }
-            | Self::TributeDayAmountReadV2 {
-                attestation_tag, ..
-            }
-            | Self::FidelityQueryRejected {
-                attestation_tag, ..
-            }
-            | Self::TributeLeagueOpAppliedV1 {
-                attestation_tag, ..
-            }
-            | Self::TributeLeagueAmountReadV1 {
-                attestation_tag, ..
-            }
-            | Self::LysisFractionsExecutedV1 {
-                attestation_tag, ..
-            }
-            | Self::TributeDayFractionsReadV1 {
-                attestation_tag, ..
-            }
-            | Self::NodIssuedFromTributeV1 {
-                attestation_tag, ..
-            }
-            | Self::NodGroupLoadOpAppliedV1 {
-                attestation_tag, ..
-            }
-            | Self::NodGroupLoadReadV1 {
-                attestation_tag, ..
-            }
-            | Self::NodQuoteEncryptedV1 {
-                attestation_tag, ..
-            } => core::mem::take(attestation_tag),
-            Self::AccountKeysSealed { .. }
-            | Self::NodTransferAckV1 { .. }
-            | Self::NodTransferReadyV1 { .. }
-            | Self::NodTransferOutputV1 { .. }
-            | Self::NodTransferDiscardedV1 { .. }
-            | Self::Error { .. }
-            | Self::NotReady { .. } => Vec::new(),
-        }
+        self.signed_tag_mut().map_or_else(Vec::new, core::mem::take)
     }
 
     fn set_attestation_tag(&mut self, tag: Vec<u8>) {
-        match self {
-            Self::GratisOpApplied { result } => result.attestation_tag = tag,
-            Self::PromisOpApplied { result } => result.attestation_tag = tag,
-            Self::FidelityCohortApplied { result } => result.attestation_tag = tag,
-            Self::FidelityIndexQueried { result } => result.attestation_tag = tag,
-            Self::EncryptedNodMinedV1 { result } => result.attestation_tag = tag,
-            Self::GratisMinedFromPromisV1 { result } => result.attestation_tag = tag,
-            Self::TributeOfferBatch {
-                attestation_tag, ..
-            }
-            | Self::FidelityLeaguesSnapshotted {
-                attestation_tag, ..
-            }
-            | Self::NodEncryptedForTributeV1 {
-                attestation_tag, ..
-            }
-            | Self::EncryptedNodMintRejectedV1 {
-                attestation_tag, ..
-            }
-            | Self::LysisRejected {
-                attestation_tag, ..
-            }
-            | Self::LysisExecuted {
-                attestation_tag, ..
-            }
-            | Self::NodAmountReadV1 {
-                attestation_tag, ..
-            }
-            | Self::EncryptedTributeOfferBatchV2 {
-                attestation_tag, ..
-            }
-            | Self::TributeAmountsReadV2 {
-                attestation_tag, ..
-            }
-            | Self::TributeDayOpAppliedV2 {
-                attestation_tag, ..
-            }
-            | Self::TributeDayAmountReadV2 {
-                attestation_tag, ..
-            }
-            | Self::FidelityQueryRejected {
-                attestation_tag, ..
-            }
-            | Self::TributeLeagueOpAppliedV1 {
-                attestation_tag, ..
-            }
-            | Self::TributeLeagueAmountReadV1 {
-                attestation_tag, ..
-            }
-            | Self::LysisFractionsExecutedV1 {
-                attestation_tag, ..
-            }
-            | Self::TributeDayFractionsReadV1 {
-                attestation_tag, ..
-            }
-            | Self::NodIssuedFromTributeV1 {
-                attestation_tag, ..
-            }
-            | Self::NodGroupLoadOpAppliedV1 {
-                attestation_tag, ..
-            }
-            | Self::NodGroupLoadReadV1 {
-                attestation_tag, ..
-            }
-            | Self::NodQuoteEncryptedV1 {
-                attestation_tag, ..
-            } => *attestation_tag = tag,
-            Self::AccountKeysSealed { .. }
-            | Self::NodTransferAckV1 { .. }
-            | Self::NodTransferReadyV1 { .. }
-            | Self::NodTransferOutputV1 { .. }
-            | Self::NodTransferDiscardedV1 { .. }
-            | Self::Error { .. }
-            | Self::NotReady { .. } => {}
+        if let Some(slot) = self.signed_tag_mut() {
+            *slot = tag;
         }
     }
 
@@ -643,81 +500,93 @@ impl EnclaveResponse {
     /// before `postcard` encoding so `Payload.payload` is byte-identical across
     /// proposers and verifiers holding distinct Ed25519 attestation keys.
     pub fn into_wire_response(mut self) -> Result<WireResponse, TransportError> {
-        match self {
-            Self::Error { message } => Ok(WireResponse::Error { message }),
-            Self::NotReady { message } => Ok(WireResponse::NotReady { message }),
-            _ => {
-                let recordable = self.is_recordable();
-                let inputs_canonical_hash = self.inputs_canonical_hash();
-                let attestation_tag = self.take_attestation_tag();
-                let payload = postcard::to_allocvec(&self).map_err(TransportError::codec)?;
-                Ok(WireResponse::Payload {
-                    recordable,
-                    payload,
-                    inputs_canonical_hash,
-                    attestation_tag,
-                })
-            }
-        }
+        let recordable = self.is_recordable();
+        let inputs_canonical_hash = self.inputs_canonical_hash();
+        let attestation_tag = self.take_attestation_tag();
+        let payload = postcard::to_allocvec(&self).map_err(TransportError::codec)?;
+        Ok(WireResponse::Payload {
+            recordable,
+            payload,
+            inputs_canonical_hash,
+            attestation_tag,
+        })
     }
 
     /// Strictly decode and canonically verify a [`WireResponse`] back into [`Self`].
     pub fn from_wire_response(wire: &WireResponse) -> Result<Self, TransportError> {
         match wire {
-            WireResponse::Error { message } => Ok(Self::Error {
-                message: message.clone(),
-            }),
-            WireResponse::NotReady { message } => Ok(Self::NotReady {
-                message: message.clone(),
-            }),
+            WireResponse::Error { message } => Err(TransportError::EnclaveError(message.clone())),
+            WireResponse::NotReady { message } => Err(TransportError::Unavailable(message.clone())),
             WireResponse::Payload {
                 recordable,
                 payload,
                 inputs_canonical_hash,
                 attestation_tag,
-            } => {
-                let (mut decoded, rest) =
-                    postcard::take_from_bytes::<Self>(payload).map_err(TransportError::codec)?;
-                if !rest.is_empty() {
-                    return Err(TransportError::Codec(
-                        "trailing bytes in enclave response payload".into(),
-                    ));
-                }
-                if matches!(decoded, Self::Error { .. } | Self::NotReady { .. }) {
-                    return Err(TransportError::Codec(
-                        "control response wrapped inside Payload".into(),
-                    ));
-                }
-                if !decoded.attestation_tag().is_empty() {
-                    return Err(TransportError::Codec(
-                        "non-empty inner attestation_tag in enclave payload".into(),
-                    ));
-                }
-                let reencoded = postcard::to_allocvec(&decoded).map_err(TransportError::codec)?;
-                if reencoded != *payload {
-                    return Err(TransportError::Codec(
-                        "non-canonical enclave response payload".into(),
-                    ));
-                }
-                if decoded.is_recordable() != *recordable
-                    || decoded.inputs_canonical_hash() != *inputs_canonical_hash
-                {
-                    return Err(TransportError::Codec(
-                        "enclave response payload metadata mismatch".into(),
-                    ));
-                }
-                if !decoded.is_signed_domain_response()
-                    && (!inputs_canonical_hash.is_zero() || !attestation_tag.is_empty())
-                {
-                    return Err(TransportError::Codec(
-                        "unsigned enclave payload carries commitment or tag".into(),
-                    ));
-                }
-                decoded.set_attestation_tag(attestation_tag.clone());
-                Ok(decoded)
-            }
+            } => Self::decode_wire_payload(
+                *recordable,
+                payload,
+                *inputs_canonical_hash,
+                attestation_tag,
+            ),
             _ => Err(TransportError::UnexpectedResponse),
         }
+    }
+
+    fn decode_wire_payload(
+        recordable: bool,
+        payload: &[u8],
+        inputs_canonical_hash: B256,
+        attestation_tag: &[u8],
+    ) -> Result<Self, TransportError> {
+        let mut decoded = Self::decode_canonical_tag_free(payload)?;
+        Self::verify_wire_metadata(&decoded, recordable, inputs_canonical_hash, attestation_tag)?;
+        decoded.set_attestation_tag(attestation_tag.to_vec());
+        Ok(decoded)
+    }
+
+    fn decode_canonical_tag_free(payload: &[u8]) -> Result<Self, TransportError> {
+        let (decoded, rest) =
+            postcard::take_from_bytes::<Self>(payload).map_err(TransportError::codec)?;
+        if !rest.is_empty() {
+            return Err(TransportError::Codec(
+                "trailing bytes in enclave response payload".into(),
+            ));
+        }
+        if !decoded.attestation_tag().is_empty() {
+            return Err(TransportError::Codec(
+                "non-empty inner attestation_tag in enclave payload".into(),
+            ));
+        }
+        let reencoded = postcard::to_allocvec(&decoded).map_err(TransportError::codec)?;
+        if reencoded != payload {
+            return Err(TransportError::Codec(
+                "non-canonical enclave response payload".into(),
+            ));
+        }
+        Ok(decoded)
+    }
+
+    fn verify_wire_metadata(
+        decoded: &Self,
+        recordable: bool,
+        inputs_canonical_hash: B256,
+        attestation_tag: &[u8],
+    ) -> Result<(), TransportError> {
+        if decoded.is_recordable() != recordable
+            || decoded.inputs_canonical_hash() != inputs_canonical_hash
+        {
+            return Err(TransportError::Codec(
+                "enclave response payload metadata mismatch".into(),
+            ));
+        }
+        if !decoded.is_signed_domain_response()
+            && (!inputs_canonical_hash.is_zero() || !attestation_tag.is_empty())
+        {
+            return Err(TransportError::Codec(
+                "unsigned enclave payload carries commitment or tag".into(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -792,11 +661,6 @@ impl core::fmt::Debug for EnclaveResponse {
                 .debug_struct("NodQuoteEncryptedV1")
                 .field("encrypted_payment", &"<redacted>")
                 .field("inputs_canonical_hash", inputs_canonical_hash)
-                .finish(),
-            Self::Error { message } => f.debug_struct("Error").field("message", message).finish(),
-            Self::NotReady { message } => f
-                .debug_struct("NotReady")
-                .field("message", message)
                 .finish(),
             _ => f.debug_struct("EnclaveResponse").finish_non_exhaustive(),
         }

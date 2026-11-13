@@ -7,6 +7,7 @@ use outbe_enclave::{
     tribute_v2,
 };
 
+use super::requests::{domain_error, DomainDispatchResult};
 use crate::{
     errors::{EnclaveResult, TransportDispatchError},
     keys::EnclaveKeys,
@@ -18,7 +19,7 @@ pub(super) fn process_offers(
     offer_key: &SharedTributeOfferKey,
     chain: B256,
     offers: &[EncryptedTributeOffer],
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     let result = (|| -> EnclaveResult<EnclaveResponse> {
         let derived = offer_key
             .get()
@@ -52,7 +53,7 @@ pub(super) fn read_amounts(
     offer_key: &SharedTributeOfferKey,
     chain: B256,
     tributes: &[EncryptedTributeV2],
-) -> EnclaveResponse {
+) -> DomainDispatchResult {
     let result = (|| -> EnclaveResult<EnclaveResponse> {
         let derived = offer_key
             .get()
@@ -93,8 +94,6 @@ pub(super) fn resident_chain_id(chain: B256) -> EnclaveResult<u64> {
     Ok(chain.to())
 }
 
-pub(super) fn response(result: EnclaveResult<EnclaveResponse>) -> EnclaveResponse {
-    result.unwrap_or_else(|message| EnclaveResponse::Error {
-        message: message.to_string(),
-    })
+pub(super) fn response(result: EnclaveResult<EnclaveResponse>) -> DomainDispatchResult {
+    result.map_err(domain_error)
 }
