@@ -23,8 +23,7 @@ pub(super) struct Admission {
 impl Admission {
     pub fn push(&mut self, key: SignerKey, queued: Queued) -> bool {
         if self.ids.contains(&queued.id) {
-            metrics::counter!("outbe_finalize_verify_admission_total", "result" => "duplicate")
-                .increment(1);
+            crate::metrics::record_finalize_verify_admission("duplicate");
             return false;
         }
         // New work can replace the oldest item in its own full bucket. In
@@ -80,8 +79,7 @@ impl Admission {
             self.queues.remove(&key);
             self.ready.retain(|scheduled| *scheduled != key);
         }
-        metrics::counter!("outbe_finalize_verify_admission_total", "result" => "evicted")
-            .increment(1);
+        crate::metrics::record_finalize_verify_admission("evicted");
         true
     }
 
@@ -105,8 +103,7 @@ impl Admission {
     }
 
     fn record_depth(&self) {
-        metrics::gauge!("outbe_finalize_verify_queued_votes").set(self.ids.len() as f64);
-        metrics::gauge!("outbe_finalize_verify_queued_bytes").set(self.bytes as f64);
+        crate::metrics::record_finalize_verify_queue_depth(self.ids.len(), self.bytes);
     }
 
     #[cfg(test)]

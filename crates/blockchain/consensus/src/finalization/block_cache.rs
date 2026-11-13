@@ -30,7 +30,7 @@ pub const BLOCK_CACHE_MAX_ENTRIES: usize = 1024;
 /// finalization actor (evicts on finalize). Cloning shares the same underlying
 /// `Arc<Mutex<..>>`. The inner `BTreeMap` is never exposed, so every access goes
 /// through one of the named operations below. These operations centralize
-/// lock-poison recovery and the `outbe_block_cache_size` metric.
+/// lock-poison recovery and the `outbe_consensus_block_cache_entries` metric.
 #[derive(Clone, Default)]
 pub struct BlockCache {
     inner: Arc<StdMutex<BTreeMap<Digest, ConsensusBlock>>>,
@@ -237,7 +237,7 @@ mod tests {
 
     #[test]
     fn insert_block_cache_bounded_emits_size_metric() {
-        // Verifies the helper emits `outbe_block_cache_size` on every
+        // Verifies the helper emits `outbe_consensus_block_cache_entries` on every
         // insert. Uses a thread-local recorder so the assertion is
         // independent of the global recorder used in production.
         use metrics_util::debugging::{DebugValue, DebuggingRecorder};
@@ -255,8 +255,8 @@ mod tests {
         let snapshot = snapshotter.snapshot().into_vec();
         let entry = snapshot
             .iter()
-            .find(|(key, _, _, _)| key.key().name() == "outbe_block_cache_size")
-            .expect("outbe_block_cache_size gauge should be emitted");
+            .find(|(key, _, _, _)| key.key().name() == "outbe_consensus_block_cache_entries")
+            .expect("outbe_consensus_block_cache_entries gauge should be emitted");
         // Final gauge value reflects post-3rd-insert size = 3.
         match &entry.3 {
             DebugValue::Gauge(v) => {
