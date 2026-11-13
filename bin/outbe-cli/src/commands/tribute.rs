@@ -46,10 +46,10 @@ pub enum TributeCmd {
         /// Tribute token ID (`0x`-hex)
         token_id: U256,
     },
-    /// Show aggregate totals for a WorldwideDay
+    /// Show aggregate totals for an emission day
     DayTotals {
-        /// WorldwideDay value
-        worldwide_day: WorldwideDay,
+        /// Emission day, `YYYYMMDD`
+        emission_day: u32,
     },
     /// Show tribute token IDs owned by an address
     ByOwner {
@@ -122,7 +122,7 @@ impl TributeCmd {
     pub async fn run(self, client: &(impl Rpc + Sync), private_key: Option<&str>) -> Result<()> {
         match self {
             Self::Show { token_id } => show(client, token_id).await,
-            Self::DayTotals { worldwide_day } => day_totals(client, worldwide_day).await,
+            Self::DayTotals { emission_day } => day_totals(client, emission_day).await,
             Self::ByOwner { owner } => by_owner(client, owner).await,
             Self::Owner { token_id } => owner(client, token_id).await,
             Self::Offer(args) => offer(client, private_key, *args).await,
@@ -148,10 +148,10 @@ async fn fetch_token_uri(client: &(impl Rpc + Sync), token_id: U256) -> Result<S
 
 async fn fetch_day_totals(
     client: &(impl Rpc + Sync),
-    worldwide_day: WorldwideDay,
+    emission_day: u32,
 ) -> Result<DayTotalsReturn> {
     let call = ITribute::getDayTotalsCall {
-        worldwideDay: worldwide_day.into(),
+        emissionDay: emission_day,
     };
     let result = client.eth_call(TRIBUTE_ADDR, &call.abi_encode()).await?;
     Ok(ITribute::getDayTotalsCall::abi_decode_returns(&result)?)
@@ -182,10 +182,10 @@ async fn show(client: &(impl Rpc + Sync), token_id: U256) -> Result<()> {
     Ok(())
 }
 
-async fn day_totals(client: &(impl Rpc + Sync), worldwide_day: WorldwideDay) -> Result<()> {
-    let ret = fetch_day_totals(client, worldwide_day).await?;
+async fn day_totals(client: &(impl Rpc + Sync), emission_day: u32) -> Result<()> {
+    let ret = fetch_day_totals(client, emission_day).await?;
 
-    println!("WorldwideDay:           {}", worldwide_day);
+    println!("Emission day:           {}", emission_day);
     println!("Tribute Count:          {}", ret.tributeCount);
     println!("Encrypted Nominal:      {}", ret.tributeNominalTotalMinor);
     println!("Sealed:                 {}", ret.isSealed);
@@ -474,7 +474,7 @@ mod tests {
     async fn test_fetch_day_totals_returns_expected_values() {
         let mock = tribute_mock();
 
-        let result = fetch_day_totals(&mock, 20241220u32.into()).await.unwrap();
+        let result = fetch_day_totals(&mock, 20241220).await.unwrap();
         assert_eq!(result.tributeCount, 2);
         assert_eq!(result.tributeNominalTotalMinor, Bytes::from(vec![0x53; 56]));
         assert!(result.isSealed);

@@ -6,7 +6,7 @@
 //! ```
 //!
 //! ```compile_fail
-//! use outbe_metadosis::runtime::start_metadosis;
+//! use outbe_metadosis::runtime::process_emission_day;
 //! ```
 //!
 //! ```compile_fail
@@ -29,7 +29,6 @@ mod lysis;
 pub mod precompile;
 mod runtime;
 mod schema;
-mod settlement;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_support;
 

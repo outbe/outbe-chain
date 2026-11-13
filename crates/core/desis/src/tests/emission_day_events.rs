@@ -271,7 +271,7 @@ fn an_oversized_brief_cancels_in_order_and_a_second_brief_is_rejected() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |s| {
         assert!(matches!(
-            crate::api::dispatch_auction_brief(
+            crate::api::brief_auction(
                 s.clone(),
                 crate::api::AuctionBrief {
                     emission_day: EMISSION_DAY,
@@ -288,7 +288,7 @@ fn an_oversized_brief_cancels_in_order_and_a_second_brief_is_rejected() {
                 .unwrap(),
             AuctionStage::Cancelled
         );
-        assert!(crate::api::dispatch_auction_brief(
+        assert!(crate::api::brief_auction(
             s.clone(),
             crate::api::AuctionBrief {
                 emission_day: EMISSION_DAY,

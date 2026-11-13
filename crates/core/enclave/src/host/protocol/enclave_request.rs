@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use outbe_tee::{
     protocol::{EnclaveRequest as WireRequest, PayloadLane},
     CallMeta, TransportError,
@@ -47,22 +47,6 @@ pub enum EnclaveRequest {
         terms: outbe_core_common::nod_encryption::NodTermsV1,
         amount: U256,
     },
-    NodTransferChunkV1 {
-        id: B256,
-        total: u32,
-        offset: u32,
-        bytes: Vec<u8>,
-    },
-    ExecuteNodTransferV1 {
-        id: B256,
-    },
-    ReadNodTransferV1 {
-        id: B256,
-        offset: u32,
-    },
-    DiscardNodTransferV1 {
-        id: B256,
-    },
     ProcessEncryptedTributeOfferBatchV2 {
         offers: Vec<EncryptedTributeOffer>,
     },
@@ -74,15 +58,6 @@ pub enum EnclaveRequest {
     },
     ReadTributeDayAmountV2 {
         record: outbe_core_common::tribute_day_encryption::EncryptedTributeDayAmountV2,
-    },
-    ExecuteLysis {
-        request: Box<crate::host::lysis::LysisRequest>,
-    },
-    ApplyTributeLeagueOpV1 {
-        request: Box<crate::host::tribute_day::TributeLeagueOpRequestV1>,
-    },
-    ReadTributeLeagueAmountV1 {
-        record: outbe_core_common::tribute_day_encryption::EncryptedTributeLeagueAmountV1,
     },
     ExecuteLysisFractionsV1 {
         request: Box<crate::host::tribute_day::LysisFractionsRequestV1>,
@@ -124,19 +99,12 @@ impl EnclaveRequest {
             Self::MineEncryptedNodV1 { .. } => "mine_encrypted_nod_v1",
             Self::ReadNodAmountV1 { .. } => "read_nod_amount_v1",
             Self::EncryptNodForTributeV1 { .. } => "encrypt_nod_for_tribute_v1",
-            Self::NodTransferChunkV1 { .. } => "nod_transfer_chunk_v1",
-            Self::ExecuteNodTransferV1 { .. } => "execute_nod_transfer_v1",
-            Self::ReadNodTransferV1 { .. } => "read_nod_transfer_v1",
-            Self::DiscardNodTransferV1 { .. } => "discard_nod_transfer_v1",
             Self::ProcessEncryptedTributeOfferBatchV2 { .. } => {
                 "process_encrypted_tribute_offer_batch_v2"
             }
             Self::ReadTributeAmountsV2 { .. } => "read_tribute_amounts_v2",
             Self::ApplyTributeDayOpV2 { .. } => "apply_tribute_day_op_v2",
             Self::ReadTributeDayAmountV2 { .. } => "read_tribute_day_amount_v2",
-            Self::ExecuteLysis { .. } => "execute_lysis",
-            Self::ApplyTributeLeagueOpV1 { .. } => "apply_tribute_league_op_v1",
-            Self::ReadTributeLeagueAmountV1 { .. } => "read_tribute_league_amount_v1",
             Self::ExecuteLysisFractionsV1 { .. } => "execute_lysis_fractions_v1",
             Self::ReadTributeDayFractionsV1 { .. } => "read_tribute_day_fractions_v1",
             Self::IssueNodFromTributeV1 { .. } => "issue_nod_from_tribute_v1",
@@ -161,11 +129,6 @@ impl EnclaveRequest {
             Self::ProcessTributeOfferBatch { .. }
                 | Self::DeriveAccountKeys { .. }
                 | Self::ApplyFidelityCohortOp { .. }
-                | Self::NodTransferChunkV1 { .. }
-                | Self::ExecuteNodTransferV1 { .. }
-                | Self::ReadNodTransferV1 { .. }
-                | Self::DiscardNodTransferV1 { .. }
-                | Self::ExecuteLysis { .. }
         )
     }
 
@@ -234,32 +197,20 @@ impl EnclaveRequest {
 impl core::fmt::Debug for EnclaveRequest {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::ApplyTributeLeagueOpV1 { request } => f
-                .debug_struct("ApplyTributeLeagueOpV1")
-                .field("chain_id", &request.chain_id)
-                .field("worldwide_day", &request.worldwide_day)
-                .field("league", &request.league)
-                .field("operation", &"<redacted>")
-                .finish(),
-            Self::ReadTributeLeagueAmountV1 { record } => f
-                .debug_struct("ReadTributeLeagueAmountV1")
-                .field("chain_id", &record.chain_id)
-                .field("worldwide_day", &record.worldwide_day)
-                .field("league", &record.league)
-                .field("encrypted_amount", &"<redacted>")
-                .finish(),
             Self::ExecuteLysisFractionsV1 { request } => f
                 .debug_struct("ExecuteLysisFractionsV1")
                 .field("chain_id", &request.chain_id)
                 .field("worldwide_day", &request.worldwide_day)
+                .field("emission_day", &request.emission_day)
                 .field("completed_at", &request.completed_at)
-                .field("leagues", &request.leagues.len())
+                .field("metadosis_limit_minor", &request.metadosis_limit_minor)
                 .field("tributes", &request.tributes.len())
                 .finish(),
             Self::ReadTributeDayFractionsV1 { record } => f
                 .debug_struct("ReadTributeDayFractionsV1")
                 .field("chain_id", &record.chain_id)
                 .field("worldwide_day", &record.worldwide_day)
+                .field("emission_day", &record.emission_day)
                 .field("completed_at", &record.completed_at)
                 .field("encrypted_fractions", &"<redacted>")
                 .finish(),

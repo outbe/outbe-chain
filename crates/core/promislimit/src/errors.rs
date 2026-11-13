@@ -6,7 +6,7 @@ use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
-/// Revert errors that the PromisLimit runtime returns.
+/// Errors that the PromisLimit runtime returns. An overflow fails the block.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum PromisLimitError {
@@ -26,7 +26,7 @@ impl From<PromisLimitError> for PrecompileError {
     fn from(err: PromisLimitError) -> Self {
         use IPromisLimit as I;
         match err {
-            PromisLimitError::Overflow => revert_with(I::Overflow {}),
+            err @ PromisLimitError::Overflow => PrecompileError::FatalWithCause(Box::new(err)),
             PromisLimitError::Underflow => revert_with(I::Underflow {}),
             PromisLimitError::UnauthorizedBurnCaller {
                 caller,

@@ -250,7 +250,7 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
         let error = executor
             .execute_transaction(late_tx)
             .expect_err("invalid configuration must reject mandatory LateFinalizeCredits");
-        assert_late_credit_revert(&error, invalid_slash_percent);
+        assert_late_credit_failure(&error, invalid_slash_percent);
         assert_eq!(executor.receipts(), before_late.as_slice());
         drop(executor);
 
@@ -458,14 +458,22 @@ fn assert_rewards_bloom(receipt: &Receipt, log: &Log) {
     }
 }
 
-fn assert_late_credit_revert(error: &BlockExecutionError, invalid_slash_percent: bool) {
+fn assert_late_credit_failure(error: &BlockExecutionError, invalid_slash_percent: bool) {
     use alloy_sol_types::SolError;
     use outbe_slashindicator::precompile::ISlashIndicator;
+    let message = error.to_string();
+    if !invalid_slash_percent {
+        assert!(
+            matches!(error, alloy_evm::block::BlockExecutionError::Internal(_)),
+            "{message}"
+        );
+        assert!(message.contains("promis limit overflow"), "{message}");
+        return;
+    }
     assert!(matches!(
         error,
         alloy_evm::block::BlockExecutionError::Validation(_)
     ));
-    let message = error.to_string();
     assert!(
         message.contains("critical system tx late_finalize_credits did not succeed"),
         "{message}"
@@ -478,13 +486,7 @@ fn assert_late_credit_revert(error: &BlockExecutionError, invalid_slash_percent:
         }
         .abi_encode(),
     );
-    if invalid_slash_percent {
-        assert!(message.contains(&format!("{expected:?}")), "{message}");
-    } else {
-        let overflow =
-            Bytes::from(outbe_promislimit::precompile::IPromisLimit::Overflow {}.abi_encode());
-        assert!(message.contains(&format!("{overflow:?}")), "{message}");
-    }
+    assert!(message.contains(&format!("{expected:?}")), "{message}");
 }
 
 fn assert_unchanged_staking(

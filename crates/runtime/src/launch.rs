@@ -26,6 +26,9 @@ where
 
     let mut cli = Cli::<P, ConsensusArgs, V>::parse();
     apply_outbe_gas_price_oracle_defaults(&mut cli.command);
+    if command_requires_crs(&cli.command) {
+        let _ = crate::metrics_recorder::install_outbe_prometheus_recorder()?;
+    }
 
     // Initialize the hash-pinned Barretenberg global CRS before block
     // execution. Tribute admission is consensus-critical, so a node that

@@ -245,24 +245,15 @@ fn dispatch_domain_with_context(
     resident: RequestContext<'_>,
 ) -> DomainDispatchResult {
     match req {
-        req @ (DomainRequest::ExecuteLysis { .. }
-        | DomainRequest::MineEncryptedNodV1 { .. }
+        req @ (DomainRequest::MineEncryptedNodV1 { .. }
         | DomainRequest::ReadNodAmountV1 { .. }
         | DomainRequest::EncryptNodForTributeV1 { .. }
         | DomainRequest::IssueNodFromTributeV1 { .. }
         | DomainRequest::ApplyNodGroupLoadOpV1 { .. }
         | DomainRequest::ReadNodGroupLoadV1 { .. }
-        | DomainRequest::EncryptNodQuoteV1 { .. }
-        | DomainRequest::NodTransferChunkV1 { .. }
-        | DomainRequest::ExecuteNodTransferV1 { .. }
-        | DomainRequest::ReadNodTransferV1 { .. }
-        | DomainRequest::DiscardNodTransferV1 { .. }) => {
-            super::nod_requests::dispatch(req, resident)
-        }
+        | DomainRequest::EncryptNodQuoteV1 { .. }) => super::nod_requests::dispatch(req, resident),
         req @ (DomainRequest::ApplyTributeDayOpV2 { .. }
         | DomainRequest::ReadTributeDayAmountV2 { .. }
-        | DomainRequest::ApplyTributeLeagueOpV1 { .. }
-        | DomainRequest::ReadTributeLeagueAmountV1 { .. }
         | DomainRequest::ExecuteLysisFractionsV1 { .. }
         | DomainRequest::ReadTributeDayFractionsV1 { .. }
         | DomainRequest::ProcessEncryptedTributeOfferBatchV2 { .. }

@@ -13,10 +13,9 @@ use outbe_primitives::{
 };
 
 use crate::errors::CycleError;
-use crate::handler::{protocol_day_action, ProtocolDayAction};
 use crate::schema::Cycle;
 use crate::state::{accounting_gate_blocks, EvmAccountingProgress};
-use crate::triggers::{active_triggers, last_fire_at, next_fire_at, TriggerId, TriggerSpec};
+use crate::triggers::{active_triggers, last_fire_at, next_fire_at, Readiness, TriggerSpec};
 use crate::ICycle;
 
 /// Protocol module for the begin-block cycle step.
@@ -106,10 +105,10 @@ pub fn handle_cycle_tick_with_triggers(
     if ctx.block.block_number == metadosis_genesis_activation_height {
         outbe_tributefactory::worldwideday::bootstrap_genesis_worldwide_days_command(ctx)?;
     }
-    let handler_gas = dispatch_triggers_inner(ctx, triggers)?;
+    let handler_gas = run_due_tasks_inner(ctx, triggers)?;
     #[cfg(not(feature = "test-utils"))]
     let _ = handler_gas;
-    crate::handler::credit_reward_slice(ctx)?;
+    crate::handler::process_agent_rewards(ctx)?;
     outbe_desis::process_cleanup(ctx.storage.clone())?;
     #[cfg(feature = "test-utils")]
     record_cycle_gas_sample(ctx, observation_before, handler_gas)?;
@@ -124,10 +123,10 @@ pub fn handle_cycle_tick_with_triggers(
 ///
 /// The typical case is a slow-running chain that produces blocks every few
 /// seconds. In that case the dispatcher is a near-noop on every block. It
-/// fires ProtocolCycle only on the first block whose timestamp crosses
-/// the next UTC-hour boundary.
-pub fn dispatch_triggers(ctx: &BlockRuntimeContext) -> Result<()> {
-    dispatch_triggers_with_specs(ctx, &active_triggers()?)
+/// fires ProcessEmissionDay only on the first block at or past one second into
+/// the next UTC hour.
+pub fn run_due_tasks(ctx: &BlockRuntimeContext) -> Result<()> {
+    run_due_tasks_with_specs(ctx, &active_triggers()?)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -139,15 +138,12 @@ enum WalkOutcome {
 }
 
 /// Explicit scheduler for a supplied trigger table.
-pub fn dispatch_triggers_with_specs(
-    ctx: &BlockRuntimeContext,
-    triggers: &[TriggerSpec],
-) -> Result<()> {
-    let _ = dispatch_triggers_inner(ctx, triggers)?;
+pub fn run_due_tasks_with_specs(ctx: &BlockRuntimeContext, triggers: &[TriggerSpec]) -> Result<()> {
+    let _ = run_due_tasks_inner(ctx, triggers)?;
     Ok(())
 }
 
-fn dispatch_triggers_inner(ctx: &BlockRuntimeContext, triggers: &[TriggerSpec]) -> Result<u64> {
+fn run_due_tasks_inner(ctx: &BlockRuntimeContext, triggers: &[TriggerSpec]) -> Result<u64> {
     ctx.storage
         .metered_gas_remaining()?
         .ok_or(CycleError::InsufficientWorkCapacity)?;
@@ -193,10 +189,11 @@ fn dispatch_triggers_inner(ctx: &BlockRuntimeContext, triggers: &[TriggerSpec]) 
             #[cfg(feature = "test-utils")]
             TRIGGER_GAS_SAMPLES.with(|samples| samples.borrow_mut().push((spec.id, consumed)));
             match result {
-                Ok(()) => {
+                Ok(Readiness::Done) => {
                     record_executed(ctx, spec, slot)?;
                     outcomes[index] = WalkOutcome::Executed;
                 }
+                Ok(Readiness::NotReady) => outcomes[index] = WalkOutcome::Pending,
                 Err(PrecompileError::TriggerBudgetExceeded {
                     consumed_gas,
                     budget_gas,
@@ -334,7 +331,7 @@ fn due_slot(ctx: &BlockRuntimeContext, spec: &TriggerSpec) -> Result<Option<DueS
         spec.start_offset_seconds,
         last_executed_at,
     )?;
-    if block_ts < scheduled_at || slot_deferred(ctx, spec, &cycle)? {
+    if block_ts < scheduled_at || slot_deferred(ctx, spec)? {
         return Ok(None);
     }
 
@@ -368,7 +365,7 @@ fn anchor_first_encounter(ctx: &BlockRuntimeContext, spec: &TriggerSpec) -> Resu
 
 /// Returns `true` when a due slot of `spec` must stay pending until a later
 /// block. The deferral changes no state.
-fn slot_deferred(ctx: &BlockRuntimeContext, spec: &TriggerSpec, cycle: &Cycle<'_>) -> Result<bool> {
+fn slot_deferred(ctx: &BlockRuntimeContext, spec: &TriggerSpec) -> Result<bool> {
     // refuse to fire a gated trigger until Phase 1
     // has accounted the parent block. Under the V2 reorder,
     // Phase 1 commits BEFORE Phase 2 (`CycleTick`). Thus
@@ -388,33 +385,5 @@ fn slot_deferred(ctx: &BlockRuntimeContext, spec: &TriggerSpec, cycle: &Cycle<'_
         );
         return Ok(true);
     }
-    protocol_cycle_awaits_late_window(ctx, spec, cycle)
-}
-
-/// At midnight, keep the protocol slot pending until the previous day's final
-/// late-vote window has executed. Other triggers retain their own cadence.
-/// This gate uses no sleep or wall-clock timer.
-fn protocol_cycle_awaits_late_window(
-    ctx: &BlockRuntimeContext,
-    spec: &TriggerSpec,
-    _cycle: &Cycle<'_>,
-) -> Result<bool> {
-    if spec.id != TriggerId::ProtocolCycle.as_u32() {
-        return Ok(false);
-    }
-    let active_utc_day = crate::handler::derive_active_utc_day(
-        ctx.storage.clone(),
-        ctx.block.genesis_timestamp,
-        ctx.block.timestamp,
-    )?;
-    let day_action = protocol_day_action(
-        active_utc_day,
-        outbe_primitives::time::timestamp_to_date_key(ctx.block.timestamp),
-    )?;
-    match day_action {
-        ProtocolDayAction::SettlePrevious { day } => {
-            Ok(!outbe_rewards::api::is_voting_complete(ctx, day)?)
-        }
-        ProtocolDayAction::SameDay => Ok(false),
-    }
+    Ok(false)
 }

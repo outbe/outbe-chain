@@ -1,10 +1,10 @@
 use alloy_primitives::B256;
 use outbe_core_common::tribute_day_encryption::{
-    EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1, EncryptedTributeLeagueAmountV1,
+    EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1,
 };
 use outbe_enclave::{
     protocol::EnclaveResponse,
-    tribute_day::{self, LysisFractionsRequestV1, TributeDayOpRequestV2, TributeLeagueOpRequestV1},
+    tribute_day::{self, LysisFractionsRequestV1, TributeDayOpRequestV2},
 };
 
 use super::{
@@ -73,50 +73,6 @@ pub(super) fn read(
             amount,
             inputs_canonical_hash,
             attestation_tag,
-        },
-    )
-}
-
-pub(super) fn apply_league(
-    keys: &EnclaveKeys,
-    offer_key: &SharedTributeOfferKey,
-    chain: B256,
-    request: &TributeLeagueOpRequestV1,
-) -> DomainDispatchResult {
-    dispatch_tribute_op(
-        (keys, offer_key, chain, request.chain_id),
-        |secret, tribute_key| {
-            crate::tribute_day::apply_league_operation(secret, tribute_key, request)
-        },
-        || tribute_day::league_operation_inputs_hash(request),
-        tribute_day::league_operation_attestation_preimage,
-        |record, inputs_canonical_hash, attestation_tag| {
-            EnclaveResponse::TributeLeagueOpAppliedV1 {
-                record,
-                inputs_canonical_hash,
-                attestation_tag,
-            }
-        },
-    )
-}
-
-pub(super) fn read_league(
-    keys: &EnclaveKeys,
-    offer_key: &SharedTributeOfferKey,
-    chain: B256,
-    record: &EncryptedTributeLeagueAmountV1,
-) -> DomainDispatchResult {
-    dispatch_amount_read(
-        (keys, offer_key, chain, record.chain_id),
-        |secret| crate::tribute_day::read_league_amount(secret, record),
-        || tribute_day::league_read_inputs_hash(record),
-        tribute_day::league_read_attestation_preimage,
-        |amount, inputs_canonical_hash, attestation_tag| {
-            EnclaveResponse::TributeLeagueAmountReadV1 {
-                amount,
-                inputs_canonical_hash,
-                attestation_tag,
-            }
         },
     )
 }

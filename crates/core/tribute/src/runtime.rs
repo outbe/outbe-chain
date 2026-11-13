@@ -1,12 +1,13 @@
 mod forfeiture;
+pub use forfeiture::{LysisOutcome, PricedCurrencies};
 
 use alloy_primitives::U256;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::{EmissionDate, WorldwideDay};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 
-use crate::errors::{date_step_error, TributeError};
+use crate::errors::TributeError;
 use crate::precompile::ITribute;
 use crate::schema::TributeContract;
 
@@ -20,63 +21,11 @@ pub enum RetirementOutcome {
 }
 
 impl TributeContract<'_> {
-    /// Applies ADR-011's one bulk accounting transition after every verified
-    /// Tribute in the sealed WWD has produced exactly one Nod.
-    pub fn consume_lysis_partition(
-        &mut self,
-        day: WorldwideDay,
-        verified_count: u32,
-        verified_nominal: alloy_primitives::U256,
-    ) -> Result<()> {
-        self.storage_handle().require_metadosis_process_ready()?;
-        self.consume_lysis_partition_inner(day, verified_count, verified_nominal)
-    }
-
-    pub(crate) fn consume_lysis_partition_inner(
-        &mut self,
-        day: WorldwideDay,
-        verified_count: u32,
-        verified_nominal: alloy_primitives::U256,
-    ) -> Result<()> {
-        let mut totals = self.get_day_totals(day)?;
-        if !totals.initialized
-            || !totals.is_sealed
-            || totals.tribute_count != verified_count
-            || totals.tribute_nominal_total_minor != verified_nominal
-        {
-            return Err(TributeError::LysisInputMismatch.into());
-        }
-        self.reset_day_nominal(&totals)?;
-        totals.tribute_count = 0;
-        totals.tribute_nominal_total_minor = alloy_primitives::U256::ZERO;
-        self.store_day_totals(&totals)
-    }
-
-    /// Retires a sealed empty day in the same state checkpoint as completion.
+    /// Retires an empty day in the same state checkpoint as completion.
     pub fn retire_completed_partition(&mut self, day: WorldwideDay) -> Result<RetirementOutcome> {
         let storage = self.storage_handle();
         storage.require_metadosis_process_ready()?;
         storage.with_checkpoint(|| self.retire_completed_partition_inner(day))
-    }
-
-    /// Retires a sealed empty day when OFFERING was never opened.
-    pub fn retire_empty_missed_offering_partition(
-        &mut self,
-        day: WorldwideDay,
-    ) -> Result<RetirementOutcome> {
-        let storage = self.storage_handle();
-        storage.require_metadosis_process_ready()?;
-        storage.with_checkpoint(|| {
-            let totals = self.get_day_totals(day)?;
-            if !totals.initialized
-                || !totals.is_sealed
-                || totals.tribute_count != 0
-                || !totals.tribute_nominal_total_minor.is_zero()
-            {
-                return Err(TributeError::MissedOfferingRequiresSealedEmptyPartition.into());
-            }
-            self.retire_completed_partition_inner(day)
-        })
     }
 
     pub(crate) fn retire_completed_partition_inner(
@@ -133,50 +82,21 @@ impl TributeContract<'_> {
         Ok(())
     }
 
-    /// Records the Stage 3 Metadosis league fractions for `day` as a sealed enclave record.
-    pub fn record_metadosis_fractions(
-        &mut self,
-        day: WorldwideDay,
-        fractions: &std::collections::BTreeMap<u16, u64>,
-        completed_at: u64,
-    ) -> Result<()> {
-        self.storage_handle().require_metadosis_process_ready()?;
-        let chain_id = self.storage_handle().chain_id()?;
-        let mut context = b"outbe/tribute/record-fractions/v1".to_vec();
-        context.extend_from_slice(&day.value().to_be_bytes());
-        context.extend_from_slice(&completed_at.to_be_bytes());
-        let sealed = crate::enclave_client::seal_day_fractions(
-            chain_id,
-            day,
-            completed_at,
-            alloy_primitives::keccak256(context),
-            fractions,
-        )
-        .map_err(TributeError::DayEnclave)?;
-        self.day_metadosis_completed_at.write(&day, completed_at)?;
-        self.store_day_fractions_record(day, &sealed)?;
-        Ok(())
-    }
-
-    /// Resolves the Oracle UTC day (`emission_day`) that prices `day`.
-    pub fn resolve_price_day(&self, day: WorldwideDay, completed_at: u64) -> Result<u32> {
-        forfeiture::resolve_price_day(self, day, completed_at)
-    }
-
-    /// Computes league fractions from `fi_group_nominal_ct[day]` and `lysis_limit_minor`
-    /// inside the enclave, stores the sealed fraction map along with `completed_at`,
-    /// seals series unclaimed loads, and returns `(total_nominal_minor, total_allocated_minor)`.
+    /// Seals the Lysis of emission day `emission_day` over the priced Tributes of `day`.
     pub fn compute_and_record_metadosis_fractions(
         &mut self,
         day: WorldwideDay,
-        lysis_limit_minor: U256,
+        emission_day: EmissionDate,
+        priced: &PricedCurrencies,
+        metadosis_limit_minor: U256,
         completed_at: u64,
-    ) -> Result<(U256, U256)> {
+    ) -> Result<LysisOutcome> {
         self.storage_handle().require_metadosis_process_ready()?;
         forfeiture::compute_and_record_metadosis_fractions(
             self,
-            day,
-            lysis_limit_minor,
+            (day, emission_day),
+            priced,
+            metadosis_limit_minor,
             completed_at,
         )
     }

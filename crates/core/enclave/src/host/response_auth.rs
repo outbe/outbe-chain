@@ -306,7 +306,12 @@ mod response_tests {
             NodOperation::Mine.reject_or_unexpected::<()>(
                 &key,
                 expected,
-                EnclaveResponse::NodTransferDiscardedV1 { id: B256::ZERO },
+                EnclaveResponse::AccountKeysSealed {
+                    account: alloy_primitives::Address::ZERO,
+                    sealed: Vec::new(),
+                    nonce: [0; 12],
+                    enclave_ephemeral_pubkey: [0; 32],
+                },
             ),
             Err(EnclaveClientError::Transport(
                 TransportError::UnexpectedResponse

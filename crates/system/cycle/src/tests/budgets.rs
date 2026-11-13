@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::{
-    runtime::{dispatch_triggers_with_specs, handle_cycle_tick_with_triggers},
+    runtime::{handle_cycle_tick_with_triggers, run_due_tasks_with_specs},
     triggers::{TriggerHandler, TriggerSpec},
     ICycle,
 };
@@ -55,14 +55,14 @@ fn storage(ids: &[u32]) -> HashMapStorageProvider {
 }
 
 fn dispatch(ctx: &BlockRuntimeContext, specs: &[TriggerSpec]) -> Result<()> {
-    dispatch_triggers_with_specs(ctx, specs)
+    run_due_tasks_with_specs(ctx, specs)
 }
 
 #[test]
 fn over_budget_rolls_back_and_propagates_pending_then_retries_once_next_block() {
     let mut storage = storage(&[0, 1, 2, 4]);
     let mut advance = spec(2, 100, independent);
-    advance.depends_on = &[TriggerId::ProtocolCycle];
+    advance.depends_on = &[TriggerId::ProcessEmissionDay];
     let mut clearing = spec(4, 100, independent);
     clearing.depends_on = &[TriggerId::AdvanceAuctions];
     let mut specs = [
@@ -135,7 +135,7 @@ fn over_budget_rolls_back_and_propagates_pending_then_retries_once_next_block() 
 fn ordinary_reverts_consume_dependencies_but_fatal_errors_stop_the_walk() {
     let mut storage = storage(&[0, 1, 2]);
     let mut dependent = spec(2, 100, independent);
-    dependent.depends_on = &[TriggerId::ProtocolCycle];
+    dependent.depends_on = &[TriggerId::ProcessEmissionDay];
     storage.enter(|handle| {
         let ctx = runtime_context(block_ctx(2, GENESIS_TS + 61), handle);
         dispatch(&ctx, &[spec(0, 100, ordinary_revert), dependent]).unwrap();
@@ -185,10 +185,10 @@ fn late_protocol_exhaustion_rolls_back_calendar_and_allocation_then_retries_acro
         account_parent(&ctx, 2);
         let before = ctx.storage.gas_used().unwrap();
         ctx.storage
-            .with_trigger_budget(50_000_000, || crate::handler::run_protocol_cycle(&ctx))
+            .with_trigger_budget(50_000_000, || crate::handler::process_emission_day(&ctx))
             .unwrap();
         complete_gas = ctx.storage.gas_used().unwrap() - before;
-        assert!(is_day_settled(&ctx, 20_240_101));
+        assert!(is_day_allocated(&ctx, 20_240_101));
     });
     assert!(complete_gas > 1);
     let protocol = |budget| {
@@ -197,7 +197,7 @@ fn late_protocol_exhaustion_rolls_back_calendar_and_allocation_then_retries_acro
             "protocol",
             (3_600, 0),
             budget,
-            TriggerHandler::ProtocolCycle,
+            TriggerHandler::ProcessEmissionDay,
         )
         .unwrap()
     };
@@ -220,7 +220,7 @@ fn late_protocol_exhaustion_rolls_back_calendar_and_allocation_then_retries_acro
             height_before
         );
         assert_eq!(active_utc_day(&ctx), 20_240_101);
-        assert!(!is_day_settled(&ctx, 20_240_101));
+        assert!(!is_day_allocated(&ctx, 20_240_101));
         assert!(
             outbe_emission::api::get_emission_day_record(ctx.storage.clone(), 20_240_101)
                 .unwrap()
@@ -257,8 +257,8 @@ fn late_protocol_exhaustion_rolls_back_calendar_and_allocation_then_retries_acro
         account_parent(&ctx, 3);
         let triggers = [protocol(50_000_000)];
         dispatch(&ctx, &triggers).unwrap();
-        assert!(is_day_settled(&ctx, 20_240_101));
-        assert!(!is_day_settled(&ctx, 20_240_102));
+        assert!(is_day_allocated(&ctx, 20_240_101));
+        assert!(!is_day_allocated(&ctx, 20_240_102));
         assert_eq!(active_utc_day(&ctx), 20_240_102);
         let settled =
             outbe_emission::api::get_emission_day_record(ctx.storage.clone(), 20_240_101).unwrap();
@@ -282,7 +282,7 @@ fn non_due_prerequisites_do_not_block_and_unmetered_provider_cannot_run_scopes()
     )
     .unwrap();
     let mut dependent = spec(2, 100, independent);
-    dependent.depends_on = &[TriggerId::ProtocolCycle];
+    dependent.depends_on = &[TriggerId::ProcessEmissionDay];
     storage.enter(|handle| {
         let ctx = runtime_context(block_ctx(2, GENESIS_TS + 61), handle);
         dispatch(&ctx, &[prerequisite, dependent]).unwrap();

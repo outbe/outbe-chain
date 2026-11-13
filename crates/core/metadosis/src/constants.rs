@@ -19,9 +19,6 @@ pub const METADOSIS_DELAY_AFTER_OFFERING_HOURS: u64 = 12;
 /// Fresh-devnet production creates at most one WorldwideDay per UTC day.
 pub const WWD_CREATION_CADENCE_HOURS: u64 = 24;
 
-/// Symbolic rate: 32% of tribute nominal -> gratis demand.
-pub const SYMBOLIC_RATE: u64 = 32;
-
 /// Maximum WWD records kept in the canonical historical retention queue.
 pub const MAX_RECORDS_KEPT: usize = 365;
 

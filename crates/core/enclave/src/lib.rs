@@ -5,7 +5,7 @@
 //!   owner-local decryption (`*_decrypt`) over `outbe-tee`'s domain-neutral
 //!   `Payload` transport and witness tape.
 //! - `engine` feature: secret-bearing in-enclave business logic (`gratis`,
-//!   `promis`, `fidelity`, `lysis`, `tribute_day`, `nod_encryption`, `nod_mine`,
+//!   `promis`, `fidelity`, `tribute_day`, `nod_encryption`, `nod_mine`,
 //!   `process`, `encrypted_tribute_offer`, `zk_claim`, `seal`, `crypto`).
 //! - `dev-keys` feature: fixed test/dev group signatures and chain constants (`dev`).
 
@@ -33,9 +33,6 @@ pub mod gratis;
 #[cfg(any(test, feature = "engine"))]
 pub mod gratis_cipher;
 #[cfg(any(test, feature = "engine"))]
-#[path = "lysis.rs"]
-mod lysis_engine;
-#[cfg(any(test, feature = "engine"))]
 pub mod nod_encryption;
 #[cfg(any(test, feature = "engine"))]
 #[path = "nod_mine.rs"]
@@ -58,14 +55,11 @@ pub mod tribute_encryption;
 #[cfg(any(test, feature = "engine"))]
 pub mod zk_claim;
 
-#[cfg(test)]
-mod lysis_fixture;
-
 #[cfg(feature = "host")]
 pub use host::{
     balance_client, canary_domain_request, consensus_domain_call, decrypt_promis_balance,
     domain_session_call, domain_session_call_on, fidelity_decrypt, gratis_decrypt, nod_decrypt,
-    nod_transport, offer_encrypt, promis_decrypt, protocol, request_authorized_enclave_client,
+    offer_encrypt, promis_decrypt, protocol, request_authorized_enclave_client,
     request_authorized_enclave_client_on_lane, request_enclave_client,
     request_enclave_client_on_lane, request_enclave_session, request_enclave_session_on_lane,
     request_runtime_enclave_client, response_auth, tribute_client, tribute_day_client,
@@ -76,15 +70,6 @@ pub use host::{
     verify_tribute_offer_attestation, BalanceClientError, EnclaveClientError, LocalCryptoError,
     TributeSourceError, OFFER_HKDF_SALT,
 };
-
-/// Confidential Lysis protocol types, preimages, and (with `engine`) execution.
-#[cfg(any(test, feature = "host", feature = "engine"))]
-pub mod lysis {
-    #[cfg(feature = "host")]
-    pub use crate::host::lysis::*;
-    #[cfg(any(test, feature = "engine"))]
-    pub use crate::lysis_engine::*;
-}
 
 /// Confidential NOD mining protocol types, host client, and (with `engine`) execution.
 #[cfg(any(test, feature = "host", feature = "engine"))]

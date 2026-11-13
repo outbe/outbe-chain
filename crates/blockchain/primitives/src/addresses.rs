@@ -77,7 +77,7 @@ pub const PROMIS_LIMIT_ADDRESS: Address = address!("0x00000000000000000000000000
 
 /// Cycle precompile address (system-only). Hosts the storage of the
 /// code-defined trigger registry (`outbe_cycle::schema::Cycle`). The hourly
-/// `ProtocolCycle` trigger runs `outbe_cycle::handler::run_protocol_cycle`.
+/// `ProcessEmissionDay` trigger runs `outbe_cycle::handler::process_emission_day`.
 pub const CYCLE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001010");
 
 /// Checkout Credis Agent registry precompile. Holds agent bonds and daily CCA

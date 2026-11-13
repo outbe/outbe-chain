@@ -53,7 +53,7 @@ pub struct AuctionBrief {
 /// priced at auction start, not here. Only a limit outside Desis' `u128` auction
 /// domain is a committed rejection. Invalid state, timestamp overflow,
 /// storage/index/event faults and corruption propagate as `Err`.
-pub fn dispatch_auction_brief(
+pub fn brief_auction(
     storage: StorageHandle<'_>,
     brief: AuctionBrief,
 ) -> Result<AuctionBriefReceipt> {

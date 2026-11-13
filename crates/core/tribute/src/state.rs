@@ -107,6 +107,7 @@ impl TributeContract<'_> {
         Ok(())
     }
 
+    #[cfg(any(test, feature = "test-enclave"))]
     pub(crate) fn store_day_totals(&mut self, totals: &DayTotals) -> Result<()> {
         if totals.tribute_nominal_total_minor
             != self.day_nominal_amount(totals.worldwide_day, false)?
@@ -185,69 +186,6 @@ impl TributeContract<'_> {
         }
         let league = self.tribute_leagues.read(&tribute_id)?;
         Ok(league.max(1))
-    }
-
-    pub fn get_fi_groups(
-        &self,
-        day: WorldwideDay,
-    ) -> Result<std::collections::BTreeMap<u16, (u32, alloy_primitives::U256)>> {
-        let mut groups = std::collections::BTreeMap::new();
-        for league in self.day_active_leagues.list(&day).read_all()? {
-            let key = crate::schema::day_league_key(day, league);
-            let count = (self.fi_group_counts.read(&key)? & 0xFFFF_FFFF) as u32;
-            if count > 0 {
-                let nominal = self.league_nominal_amount(day, league)?;
-                groups.insert(league, (count, nominal));
-            }
-        }
-        Ok(groups)
-    }
-
-    pub(crate) fn adjust_fi_group(
-        &mut self,
-        record: &TributeRecord,
-        league: u16,
-        add: bool,
-    ) -> Result<()> {
-        const IN_ACTIVE_LIST_BIT: u64 = 1u64 << 32;
-        let day = record.worldwide_day;
-        let key = crate::schema::day_league_key(day, league);
-        let packed = self.fi_group_counts.read(&key)?;
-        let prev_count = (packed & 0xFFFF_FFFF) as u32;
-        let next_count = if add {
-            if (packed & IN_ACTIVE_LIST_BIT) == 0 {
-                self.day_active_leagues.list(&day).push(league)?;
-            }
-            prev_count
-                .checked_add(1)
-                .ok_or(TributeError::DayCountOverflowOrUnderflow)?
-        } else {
-            prev_count
-                .checked_sub(1)
-                .ok_or(TributeError::DayCountOverflowOrUnderflow)?
-        };
-        let operation = match record.encrypted() {
-            Some(tribute) => outbe_enclave::tribute_day::TributeDayOperationV2::Adjust {
-                tribute: Box::new(tribute.clone()),
-                add,
-            },
-            None => outbe_enclave::tribute_day::TributeDayOperationV2::AdjustTransient {
-                nominal_amount_minor: calculation_view(record)?.nominal_amount_minor,
-                add,
-            },
-        };
-        let mut context = b"outbe/tribute/league-count/v1".to_vec();
-        context.extend_from_slice(&day.value().to_be_bytes());
-        context.extend_from_slice(&league.to_be_bytes());
-        context.extend_from_slice(&next_count.to_be_bytes());
-        self.apply_league_amount(day, league, operation, keccak256(context))?;
-        let next_packed = if add {
-            IN_ACTIVE_LIST_BIT | u64::from(next_count)
-        } else {
-            (packed & IN_ACTIVE_LIST_BIT) | u64::from(next_count)
-        };
-        self.fi_group_counts.write(&key, next_packed)?;
-        Ok(())
     }
 }
 

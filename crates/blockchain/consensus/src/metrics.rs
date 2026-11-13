@@ -1,8 +1,11 @@
 //! Prometheus metrics for Outbe consensus.
 //!
-//! Reth's `--metrics` endpoint exposes these metrics. They use the global
-//! `metrics` crate recorder. They need no setup other than reth's built-in
-//! Prometheus exporter.
+//! Follow `crates/runtime/src/metrics_recorder.rs`: `outbe_<subsystem>_*`,
+//! counters end in `_total`, millisecond histograms in `_ms`, and gauges
+//! never end in `_total` or `_count`.
+//!
+//! Reth's `--metrics` endpoint exposes these metrics through the global
+//! `metrics` crate recorder configured by the runtime's metrics recorder.
 
 use metrics::{counter, gauge, histogram};
 pub use outbe_simplex::metrics::*;
@@ -11,38 +14,38 @@ use tracing::debug;
 
 /// Record a block proposed by this node.
 pub fn record_block_proposed(block_number: u64) {
-    counter!("outbe_blocks_proposed_total").increment(1);
-    gauge!("outbe_proposed_height").set(block_number as f64);
+    counter!("outbe_consensus_blocks_proposed_total").increment(1);
+    gauge!("outbe_consensus_proposed_height").set(block_number as f64);
 }
 
 /// Record a finalized Simplex view.
 pub fn record_block_finalized(view: u64, signers: usize, total: usize) {
-    gauge!("outbe_finalized_view").set(view as f64);
-    gauge!("outbe_validator_count").set(total as f64);
+    gauge!("outbe_consensus_finalized_view").set(view as f64);
+    gauge!("outbe_consensus_committee_validators").set(total as f64);
 
     if total > 0 {
         let rate = signers as f64 / total as f64;
-        gauge!("outbe_participation_rate").set(rate);
+        gauge!("outbe_consensus_participation_ratio").set(rate);
     }
 }
 
 /// Record skipped views (missed proposers).
 pub fn record_views_skipped(count: u64) {
-    counter!("outbe_views_skipped_total").increment(count);
+    counter!("outbe_consensus_views_skipped_total").increment(count);
 }
 
 /// Record the highest Simplex view this node has observed activity for.
 ///
-/// Unlike `outbe_finalized_view` (which freezes during a stall), this gauge
+/// Unlike `outbe_consensus_finalized_view` (which freezes during a stall), this gauge
 /// advances on every view-bearing activity: notarize/certify/finalize votes and
 /// nullification certificates. Thus it keeps moving while a view-timeout storm
 /// nullifies views without finalizing any. The gap
-/// `outbe_current_view - outbe_finalized_view` is the primary consensus-stall
+/// `outbe_consensus_current_view - outbe_consensus_finalized_view` is the primary consensus-stall
 /// signal. A sustained non-zero gap means views are advancing but nothing is
 /// finalizing. The call is cheap (one atomic gauge set). It is safe to call on the
 /// voter task.
 pub fn record_current_view(view: u64) {
-    gauge!("outbe_current_view").set(view as f64);
+    gauge!("outbe_consensus_current_view").set(view as f64);
 }
 
 /// Record a nullified (view-timed-out / skipped) Simplex view.
@@ -50,14 +53,14 @@ pub fn record_current_view(view: u64) {
 /// The counter increments when a `Nullification` certificate is observed. A rising
 /// rate means leaders repeatedly fail to deliver proposals in time (network
 /// turbulence, an offline/byzantine leader run, or a liveness fault).
-/// `outbe_finalized_view` alone cannot show this.
+/// `outbe_consensus_finalized_view` alone cannot show this.
 pub fn record_view_nullified() {
-    counter!("outbe_views_nullified_total").increment(1);
+    counter!("outbe_consensus_views_nullified_total").increment(1);
 }
 
 /// Record a finalized event dropped before block resolution.
 pub fn record_finalization_dropped(reason: FinalizationDropReason) {
-    counter!("outbe_finalization_dropped_total", "reason" => reason.label()).increment(1);
+    counter!("outbe_consensus_finalization_dropped_total", "reason" => reason.label()).increment(1);
 }
 
 /// Record a full marshal-resolution retry cycle that exhausted without
@@ -69,7 +72,7 @@ pub fn record_finalization_dropped(reason: FinalizationDropReason) {
 /// network-wide or local state has diverged. Investigate it, because the actor
 /// (correctly) cannot advance finalization past an unresolved block.
 pub fn record_finalization_resolution_stalled() {
-    counter!("outbe_finalization_resolution_stalled_total").increment(1);
+    counter!("outbe_consensus_finalization_resolution_stalled_total").increment(1);
 }
 
 /// Raise the suspected-local-divergence alarm for one stall episode.
@@ -77,13 +80,13 @@ pub fn record_finalization_resolution_stalled() {
 /// The counter counts episodes. The gauge stays at `1.0` until
 /// [`record_finalization_divergence_cleared`] runs.
 pub fn record_finalization_divergence_suspected() {
-    counter!("outbe_finalization_divergence_suspected_total").increment(1);
-    gauge!("outbe_finalization_divergence_suspected").set(1.0);
+    counter!("outbe_consensus_finalization_divergence_suspected_total").increment(1);
+    gauge!("outbe_consensus_finalization_divergence_suspected").set(1.0);
 }
 
 /// Clear the suspected-divergence gauge after the stalled block resolves.
 pub fn record_finalization_divergence_cleared() {
-    gauge!("outbe_finalization_divergence_suspected").set(0.0);
+    gauge!("outbe_consensus_finalization_divergence_suspected").set(0.0);
 }
 
 /// Count a committee-snapshot build failure on the finalization path.
@@ -91,7 +94,7 @@ pub fn record_finalization_divergence_cleared() {
 /// The actor skips the finalization-slot write and the late-finalize rekey.
 /// The validator stays up.
 pub fn record_finalization_snapshot_build_degraded() {
-    counter!("outbe_finalization_snapshot_build_degraded_total").increment(1);
+    counter!("outbe_consensus_finalization_snapshot_degraded_total").increment(1);
 }
 
 /// Count an exhausted parent-cert store retry budget and latch the degraded gauge.
@@ -99,13 +102,13 @@ pub fn record_finalization_snapshot_build_degraded() {
 /// The gauge stays at `1.0` until [`record_finalization_persist_recovered`] runs
 /// for a cycle whose finalization write and both prunes succeeded.
 pub fn record_finalization_persist_degraded() {
-    counter!("outbe_finalization_persist_degraded_total").increment(1);
-    gauge!("outbe_finalization_persist_degraded").set(1.0);
+    counter!("outbe_consensus_finalization_persist_degraded_total").increment(1);
+    gauge!("outbe_consensus_finalization_persist_degraded").set(1.0);
 }
 
 /// Clear the parent-cert persist degraded gauge after a fully successful store cycle.
 pub fn record_finalization_persist_recovered() {
-    gauge!("outbe_finalization_persist_degraded").set(0.0);
+    gauge!("outbe_consensus_finalization_persist_degraded").set(0.0);
 }
 
 /// Record a pre-finalization canonical-head reorg at the same height.
@@ -113,38 +116,38 @@ pub fn record_finalization_persist_recovered() {
 /// This is expected on view timeout / leader rotation. A sustained non-zero rate
 /// indicates network turbulence (frequent view changes near the tip).
 pub fn record_executor_head_flip() {
-    counter!("outbe_executor_head_flip_total").increment(1);
+    counter!("outbe_consensus_executor_head_flip_total").increment(1);
 }
 
 /// Record a rejected `update_head` at finalized height with a hash that
 /// conflicts with the committed finalized hash. Non-zero is a protocol alarm.
 pub fn record_executor_head_finalized_conflict() {
-    counter!("outbe_executor_head_finalized_conflict_total").increment(1);
+    counter!("outbe_consensus_executor_head_finalized_conflict_total").increment(1);
 }
 
 /// Record a canonical-head move to a strictly lower height
 /// (parent switch onto a shorter pre-finalization branch).
 pub fn record_executor_head_rollback() {
-    counter!("outbe_executor_head_rollback_total").increment(1);
+    counter!("outbe_consensus_executor_head_rollback_total").increment(1);
 }
 
 /// Record an attempted finalized rewrite at the current finalized height
 /// with a different digest. The executor's monotonic guard always ignores it.
 /// A non-zero value is a protocol-invariant alarm and must be investigated.
 pub fn record_executor_finalized_conflict() {
-    counter!("outbe_executor_finalized_conflict_total").increment(1);
+    counter!("outbe_consensus_executor_finalized_conflict_total").increment(1);
 }
 
 /// Record a stale finalize delivery below the committed finalized height.
 /// It is always ignored. A non-zero value indicates duplicate or out-of-order
 /// marshal delivery and is mostly informational.
 pub fn record_executor_finalized_stale() {
-    counter!("outbe_executor_finalized_stale_total").increment(1);
+    counter!("outbe_consensus_executor_finalized_stale_total").increment(1);
 }
 
 /// Record the current epoch number.
 pub fn record_epoch(epoch: u64) {
-    gauge!("outbe_epoch_number").set(epoch as f64);
+    gauge!("outbe_consensus_epoch").set(epoch as f64);
 }
 
 /// Record the Commonware P2P peer-manager *tracked peer-set* size.
@@ -154,10 +157,10 @@ pub fn record_epoch(epoch: u64) {
 /// connections. The commonware network layer does not expose a live-connection
 /// count at this seam. Operators must read it as membership, not connectivity.
 /// It does not drop when peers disconnect, so it is not a stall/partition
-/// signal on its own. Pair it with `outbe_current_view` vs `outbe_finalized_view`
+/// signal on its own. Pair it with `outbe_consensus_current_view` vs `outbe_consensus_finalized_view`
 /// for liveness diagnosis.
 pub fn record_commonware_p2p_active_peers(count: usize) {
-    gauge!("commonware_p2p_tracked_peer_set_size").set(count as f64);
+    gauge!("outbe_consensus_tracked_peers").set(count as f64);
 }
 
 /// Record consensus tip vs Reth provider canonical-state readiness.
@@ -171,18 +174,13 @@ pub fn record_consensus_reth_state(
     let readiness_gap =
         consensus_reth_readiness_gap_blocks(consensus_tip_height, reth_head_height, hash_match);
 
-    gauge!("outbe_consensus_tip_block_height").set(consensus_tip_height as f64);
-    gauge!("outbe_reth_provider_head_block_height").set(reth_head_height as f64);
+    gauge!("outbe_consensus_tip_height").set(consensus_tip_height as f64);
+    gauge!("outbe_consensus_reth_head_height").set(reth_head_height as f64);
     gauge!("outbe_consensus_ahead_blocks").set(consensus_ahead as f64);
-    gauge!("outbe_reth_ahead_blocks").set(reth_ahead as f64);
-    gauge!("outbe_consensus_reth_height_diff")
+    gauge!("outbe_consensus_reth_ahead_blocks").set(reth_ahead as f64);
+    gauge!("outbe_consensus_reth_height_diff_blocks")
         .set(signed_height_diff(consensus_tip_height, reth_head_height) as f64);
-    gauge!("outbe_consensus_reth_tip_hash_match").set(if hash_match { 1.0 } else { 0.0 });
-    gauge!("outbe_consensus_tip_available_in_reth_provider").set(if hash_match {
-        1.0
-    } else {
-        0.0
-    });
+    gauge!("outbe_consensus_reth_tip_hash_matched").set(if hash_match { 1.0 } else { 0.0 });
     gauge!("outbe_consensus_reth_readiness_gap_blocks").set(readiness_gap as f64);
 }
 
@@ -214,7 +212,7 @@ pub fn record_dkg_status(status: u8) {
 
 /// Record a DKG reshare completion event.
 pub fn record_reshare_completed() {
-    counter!("outbe_reshares_completed_total").increment(1);
+    counter!("outbe_dkg_reshares_completed_total").increment(1);
 }
 
 /// Record validators whose individual DKG/reshare share was publicly REVEALED
@@ -236,7 +234,7 @@ pub fn record_dkg_revealed_shares(count: usize) {
 }
 
 /// The closed set of byzantine-equivocation kinds. Each carries its own telemetry
-/// label, so the `outbe_byzantine_evidence_total{type=...}` metric and the
+/// label, so the `outbe_consensus_byzantine_evidence_total{kind=...}` metric and the
 /// `outbe::slashing::equivocation` warn! field can only ever take one of these
 /// three values. This closes the unbounded label-cardinality hole that a free
 /// `&str` parameter left open on a slashing-path counter.
@@ -248,7 +246,7 @@ pub enum EquivocationKind {
 }
 
 impl EquivocationKind {
-    /// The stable telemetry label (metric `type` value and warn! field). These
+    /// The stable telemetry label (metric `kind` value and warn! field). These
     /// strings are an external, operator-facing surface. Do not change them.
     pub const fn label(self) -> &'static str {
         match self {
@@ -261,11 +259,11 @@ impl EquivocationKind {
 
 /// Record a byzantine evidence detection event under its typed, closed-set label.
 pub fn record_byzantine_evidence(kind: EquivocationKind) {
-    counter!("outbe_byzantine_evidence_total", "type" => kind.label()).increment(1);
+    counter!("outbe_consensus_byzantine_evidence_total", "kind" => kind.label()).increment(1);
 }
 
 /// Reason a finalized event was dropped before block resolution. Closed set so the
-/// `outbe_finalization_dropped_total{reason=...}` label cannot drift or typo.
+/// `outbe_consensus_finalization_dropped_total{reason=...}` label cannot drift or typo.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FinalizationDropReason {
     MailboxClosed,
@@ -287,7 +285,7 @@ impl FinalizationDropReason {
 }
 
 /// Reason the reporter dropped an `Activity::Certification` before
-/// persistence. Closed set behind `outbe_certification_dropped_total{reason=...}`.
+/// persistence. Closed set behind `outbe_consensus_certification_dropped_total{reason=...}`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CertificationDropReason {
     QueueFull,
@@ -355,47 +353,47 @@ impl DkgBoundaryUnavailableReason {
 /// A non-zero value is a hard alarm: an unverifiable proof reached the finalized
 /// certificate and will fail the next height's mandatory V2 verify.
 pub fn record_finalized_cert_invalid_vrf_proof() {
-    counter!("outbe_finalized_cert_invalid_vrf_proof_total").increment(1);
+    counter!("outbe_consensus_finalized_cert_invalid_vrf_proof_total").increment(1);
 }
 
 /// Builder included exact-parent metadata in the Phase 1 system transaction.
 pub fn record_parent_cert_included() {
-    counter!("outbe_parent_cert_included_total").increment(1);
+    counter!("outbe_consensus_parent_cert_included_total").increment(1);
 }
 
 /// Builder produced a valid block without an eligible exact-parent certificate.
 pub fn record_parent_cert_missing() {
-    counter!("outbe_parent_cert_missing_total").increment(1);
+    counter!("outbe_consensus_parent_cert_missing_total").increment(1);
 }
 
 /// Current exact-parent certificate handoff store entry count.
 pub fn record_parent_cert_store_size(size: usize) {
-    gauge!("outbe_parent_cert_store_size").set(size as f64);
+    gauge!("outbe_consensus_parent_cert_store_entries").set(size as f64);
 }
 
 /// Current `block_cache` entry count. Sampled on every bounded insert.
 /// This lets operators verify that the cap is enforced and alert on cache
 /// growth that approaches `BLOCK_CACHE_MAX_ENTRIES`.
 pub fn record_block_cache_size(size: usize) {
-    gauge!("outbe_block_cache_size").set(size as f64);
+    gauge!("outbe_consensus_block_cache_entries").set(size as f64);
 }
 
 /// Exact-parent certificate records dropped by age prune.
 pub fn record_parent_cert_record_pruned(count: usize) {
     if count > 0 {
-        counter!("outbe_parent_cert_record_pruned_total").increment(count as u64);
+        counter!("outbe_consensus_parent_cert_pruned_total").increment(count as u64);
     }
 }
 
 /// Current height minus oldest retained exact-parent certificate record.
 pub fn record_parent_cert_retained_depth(depth: u64) {
-    gauge!("outbe_parent_cert_retained_depth").set(depth as f64);
+    gauge!("outbe_consensus_parent_cert_retained_depth_blocks").set(depth as f64);
 }
 
 /// `Activity::Certification` admitted by the reporter and persisted to the
 /// certified-parent proof store.
 pub fn record_certification_persisted() {
-    counter!("outbe_certification_persisted_total").increment(1);
+    counter!("outbe_consensus_certification_persisted_total").increment(1);
 }
 
 /// `Activity::Certification` dropped by the reporter before persistence.
@@ -403,13 +401,15 @@ pub fn record_certification_persisted() {
 /// - `"verify_failed"` - Notarization signature did not verify.
 /// - `"store_error"` - durable proof-store write returned an error.
 pub fn record_certification_dropped(reason: CertificationDropReason) {
-    counter!("outbe_certification_dropped_total", "reason" => reason.label()).increment(1);
+    counter!("outbe_consensus_certification_dropped_total", "reason" => reason.label())
+        .increment(1);
 }
 
 /// Deterministic proposer-forfeit metric. See
 /// [`crate::forfeit::ProposerForfeitReason`] for the closed reason set.
 pub fn record_proposer_forfeit(reason: crate::forfeit::ProposerForfeitReason) {
-    counter!("outbe_proposer_forfeit_total", "reason" => reason.label().to_string()).increment(1);
+    counter!("outbe_consensus_proposer_forfeit_total", "reason" => reason.label().to_string())
+        .increment(1);
 }
 
 /// Convenience: proposer forfeit because no direct
@@ -421,32 +421,33 @@ pub fn record_parent_proof_unavailable_forfeit() {
 
 /// Proposer could not find a usable Phase 1 parent proof for the exact parent.
 pub fn record_phase1_parent_proof_unavailable() {
-    counter!("outbe_phase1_parent_proof_unavailable_total").increment(1);
+    counter!("outbe_consensus_phase1_parent_proof_unavailable_total").increment(1);
 }
 
 /// The proposer's in-process selection store missed the direct-parent
 /// proof, but it was recovered from marshal's durable finalization archive.
 /// This avoided a slot forfeit (post-restart / late-join / finalization lag).
 pub fn record_parent_proof_recovered_from_marshal() {
-    counter!("outbe_parent_proof_recovered_from_marshal_total").increment(1);
+    counter!("outbe_consensus_phase1_parent_proof_marshal_recovered_total").increment(1);
 }
 
 /// Proposer used a locally observed certified-notarization witness after the
 /// bounded finalization wait expired.
 pub fn record_phase1_used_cn_fallback(epoch: u64, view: u64) {
     debug!(epoch, view, "phase 1 used certified-notarization fallback");
-    counter!("outbe_phase1_used_cn_fallback_total").increment(1);
+    counter!("outbe_consensus_phase1_cn_fallback_total").increment(1);
 }
 
 /// Time spent waiting for the finalization slot before either finalization won
 /// or CN fallback was used.
 pub fn record_phase1_finalization_wait_ms(duration: Duration) {
-    histogram!("outbe_phase1_finalization_wait_ms").record(duration.as_secs_f64() * 1000.0);
+    histogram!("outbe_consensus_phase1_finalization_wait_ms")
+        .record(duration.as_secs_f64() * 1000.0);
 }
 
 /// Finalization arrived after a CN witness had already been observed.
 pub fn record_phase1_finalization_record_arrived_after_cn(duration: Duration) {
-    histogram!("outbe_phase1_finalization_record_arrived_after_cn_ms")
+    histogram!("outbe_consensus_phase1_finalization_after_cn_ms")
         .record(duration.as_secs_f64() * 1000.0);
 }
 
@@ -476,25 +477,49 @@ pub fn record_genesis_dkg_boundary_not_ready_forfeit() {
 /// Real build + marshal cost of a proposal (elapsed since the proposer's
 /// closure-level `propose_start`), before any min-block-time floor pad.
 pub fn record_block_build_time(duration: Duration) {
-    histogram!("outbe_block_build_time_ms").record(duration.as_secs_f64() * 1000.0);
+    histogram!("outbe_consensus_block_build_duration_ms").record(duration.as_secs_f64() * 1000.0);
 }
 
 /// Floor pad the proposer sleeps to reach `min_block_time` (the intended pad, or
 /// `0` on the case-C / floor-already-met no-wait path). This lets operators see,
 /// per block, how much of the cadence is real build vs. liveness pacing.
 pub fn record_block_wait_time(duration: Duration) {
-    histogram!("outbe_block_wait_time_ms").record(duration.as_secs_f64() * 1000.0);
+    histogram!("outbe_consensus_block_wait_duration_ms").record(duration.as_secs_f64() * 1000.0);
+}
+
+/// Record a finalize-vote admission outcome.
+pub fn record_finalize_verify_admission(result: &'static str) {
+    counter!("outbe_consensus_finalize_verify_admission_total", "result" => result).increment(1);
+}
+
+/// Record a finalize-vote verification outcome.
+pub fn record_finalize_verify_verification(result: &'static str) {
+    counter!("outbe_consensus_finalize_verify_verification_total", "result" => result).increment(1);
+}
+
+/// Current queued finalize-vote count and encoded byte size.
+pub fn record_finalize_verify_queue_depth(votes: usize, bytes: usize) {
+    gauge!("outbe_consensus_finalize_verify_queued_votes").set(votes as f64);
+    gauge!("outbe_consensus_finalize_verify_queued_bytes").set(bytes as f64);
+}
+
+/// Current observed finalize-vote count and encoded byte size.
+pub fn record_finalize_verify_observed(votes: usize, bytes: usize) {
+    gauge!("outbe_consensus_finalize_verify_observed_votes").set(votes as f64);
+    gauge!("outbe_consensus_finalize_verify_observed_bytes").set(bytes as f64);
 }
 
 #[cfg(test)]
 mod tests {
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
     use super::{
         consensus_reth_readiness_gap_blocks, CertificationDropReason, DkgBoundaryDecision,
         DkgBoundaryUnavailableReason, EquivocationKind, FinalizationDropReason,
     };
 
     /// Pins the byzantine-evidence telemetry labels. These strings are an external,
-    /// operator-facing surface (the `outbe_byzantine_evidence_total{type=...}` metric
+    /// operator-facing surface (the `outbe_consensus_byzantine_evidence_total{kind=...}` metric
     /// and the `outbe::slashing::equivocation` warn! field). They are shared with
     /// dashboards, so a change must be deliberate, not an accidental rename.
     #[test]
@@ -514,7 +539,7 @@ mod tests {
     }
 
     /// Pins the drop/decision telemetry labels. They are an external operator-facing
-    /// surface (`outbe_finalization_dropped_total`, `outbe_certification_dropped_total`,
+    /// surface (`outbe_consensus_finalization_dropped_total`, `outbe_consensus_certification_dropped_total`,
     /// `outbe_dkg_boundary_requirement_total`, `outbe_dkg_boundary_unavailable_total`).
     /// A change must be deliberate, not an accidental rename.
     #[test]
@@ -577,5 +602,125 @@ mod tests {
     #[test]
     fn readiness_gap_marks_same_height_hash_mismatch_as_nonzero() {
         assert_eq!(consensus_reth_readiness_gap_blocks(203, 203, false), 1);
+    }
+
+    #[test]
+    fn byzantine_evidence_uses_kind_label() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            super::record_byzantine_evidence(EquivocationKind::ConflictingFinalize);
+        });
+        let snapshot = snapshotter.snapshot().into_vec();
+        assert_eq!(snapshot.len(), 1);
+        let (key, _, _, value) = &snapshot[0];
+        assert_eq!(key.key().name(), "outbe_consensus_byzantine_evidence_total");
+        assert_eq!(
+            key.key().labels().collect::<Vec<_>>(),
+            vec![&metrics::Label::new("kind", "conflicting_finalize")]
+        );
+        assert_eq!(*value, DebugValue::Counter(1));
+    }
+
+    #[test]
+    fn vrf_partial_drop_uses_reason_and_signer_labels() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            super::record_vrf_partial_drop("invalid", 7);
+        });
+        let snapshot = snapshotter.snapshot().into_vec();
+        assert_eq!(snapshot.len(), 1);
+        let (key, _, _, value) = &snapshot[0];
+        assert_eq!(key.key().name(), "outbe_vrf_partial_dropped_total");
+        assert_eq!(
+            key.key().labels().collect::<Vec<_>>(),
+            vec![
+                &metrics::Label::new("reason", "invalid"),
+                &metrics::Label::new("signer", "7"),
+            ]
+        );
+        assert_eq!(*value, DebugValue::Counter(1));
+    }
+
+    #[test]
+    fn reth_state_emits_canonical_gauges_without_duplicate() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            super::record_consensus_reth_state(203, 201, true);
+        });
+        let values: std::collections::BTreeMap<_, _> = snapshotter
+            .snapshot()
+            .into_vec()
+            .into_iter()
+            .map(|(key, _, _, value)| (key.key().name().to_string(), value))
+            .collect();
+        let expected = [
+            ("outbe_consensus_tip_height", 203.0),
+            ("outbe_consensus_reth_head_height", 201.0),
+            ("outbe_consensus_ahead_blocks", 2.0),
+            ("outbe_consensus_reth_ahead_blocks", 0.0),
+            ("outbe_consensus_reth_height_diff_blocks", 2.0),
+            ("outbe_consensus_reth_tip_hash_matched", 1.0),
+            ("outbe_consensus_reth_readiness_gap_blocks", 0.0),
+        ];
+        assert_eq!(values.len(), expected.len());
+        for (name, value) in expected {
+            assert_eq!(values.get(name), Some(&DebugValue::Gauge(value.into())));
+        }
+    }
+
+    #[test]
+    fn finalize_verify_helpers_preserve_counts_labels_and_depths() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            super::record_finalize_verify_admission("queued");
+            super::record_finalize_verify_admission("queued");
+            super::record_finalize_verify_verification("valid");
+            super::record_finalize_verify_queue_depth(4, 512);
+            super::record_finalize_verify_queue_depth(2, 256);
+            super::record_finalize_verify_observed(3, 768);
+        });
+        let snapshot = snapshotter.snapshot().into_vec();
+        assert_eq!(snapshot.len(), 6);
+        let counters = [
+            (
+                "outbe_consensus_finalize_verify_admission_total",
+                "queued",
+                2,
+            ),
+            (
+                "outbe_consensus_finalize_verify_verification_total",
+                "valid",
+                1,
+            ),
+        ];
+        for (name, result, count) in counters {
+            let (key, _, _, value) = snapshot
+                .iter()
+                .find(|(key, _, _, _)| key.key().name() == name)
+                .expect("finalize verification counter emitted");
+            assert_eq!(
+                key.key().labels().collect::<Vec<_>>(),
+                vec![&metrics::Label::new("result", result)]
+            );
+            assert_eq!(*value, DebugValue::Counter(count));
+        }
+        let gauges = [
+            ("outbe_consensus_finalize_verify_queued_votes", 2.0),
+            ("outbe_consensus_finalize_verify_queued_bytes", 256.0),
+            ("outbe_consensus_finalize_verify_observed_votes", 3.0),
+            ("outbe_consensus_finalize_verify_observed_bytes", 768.0),
+        ];
+        for (name, expected) in gauges {
+            let (key, _, _, value) = snapshot
+                .iter()
+                .find(|(key, _, _, _)| key.key().name() == name)
+                .expect("finalize verification gauge emitted");
+            assert_eq!(key.key().labels().count(), 0);
+            assert_eq!(*value, DebugValue::Gauge(expected.into()));
+        }
     }
 }

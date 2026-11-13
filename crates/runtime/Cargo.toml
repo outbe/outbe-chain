@@ -88,6 +88,8 @@ eyre.workspace = true
 hex.workspace = true
 jsonrpsee.workspace = true
 k256.workspace = true
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -97,6 +99,7 @@ reth-cli-runner.workspace = true
 reth-ethereum = { workspace = true, features = ["node", "cli"] }
 reth-node-builder.workspace = true
 reth-node-core.workspace = true
+reth-node-metrics.workspace = true
 reth-primitives-traits.workspace = true
 reth-provider.workspace = true
 reth-rpc-server-types.workspace = true
@@ -107,6 +110,8 @@ tracing.workspace = true
 x25519-dalek.workspace = true
 
 [dev-dependencies]
+metrics-process.workspace = true
+serde_yaml_ng.workspace = true
 outbe-enclave = { workspace = true, features = ["engine", "test-utils"] }
 outbe-core-common.workspace = true
 outbe-runtime = { path = ".", features = ["test-hooks"] }
@@ -126,7 +131,7 @@ reth-revm.workspace = true
 reth-storage-api.workspace = true
 reth-tasks.workspace = true
 reth-tracing.workspace = true
-reth-transaction-pool.workspace = true
+reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 alloy-evm.workspace = true
 commonware-codec.workspace = true
 commonware-p2p.workspace = true

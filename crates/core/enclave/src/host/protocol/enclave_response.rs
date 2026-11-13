@@ -133,15 +133,6 @@ pub enum EnclaveResponse {
         inputs_canonical_hash: B256,
         attestation_tag: Vec<u8>,
     },
-    LysisRejected {
-        inputs_canonical_hash: B256,
-        attestation_tag: Vec<u8>,
-    },
-    LysisExecuted {
-        result: Box<crate::host::lysis::LysisResult>,
-        inputs_canonical_hash: B256,
-        attestation_tag: Vec<u8>,
-    },
     EncryptedNodMinedV1 {
         result: Box<crate::host::nod_mine::MineEncryptedNodResultV1>,
     },
@@ -149,23 +140,6 @@ pub enum EnclaveResponse {
         amount: U256,
         inputs_canonical_hash: B256,
         attestation_tag: Vec<u8>,
-    },
-    NodTransferAckV1 {
-        id: B256,
-        next_offset: u32,
-    },
-    NodTransferReadyV1 {
-        id: B256,
-        total: u32,
-        digest: B256,
-    },
-    NodTransferOutputV1 {
-        id: B256,
-        offset: u32,
-        bytes: Vec<u8>,
-    },
-    NodTransferDiscardedV1 {
-        id: B256,
     },
     EncryptedTributeOfferBatchV2 {
         results: Vec<crate::host::tribute_v2::EncryptedTributeOfferResultV2>,
@@ -190,16 +164,6 @@ pub enum EnclaveResponse {
     FidelityQueryRejected {
         inputs_canonical_hash: B256,
         reason: String,
-        attestation_tag: Vec<u8>,
-    },
-    TributeLeagueOpAppliedV1 {
-        record: outbe_core_common::tribute_day_encryption::EncryptedTributeLeagueAmountV1,
-        inputs_canonical_hash: B256,
-        attestation_tag: Vec<u8>,
-    },
-    TributeLeagueAmountReadV1 {
-        amount: U256,
-        inputs_canonical_hash: B256,
         attestation_tag: Vec<u8>,
     },
     LysisFractionsExecutedV1 {
@@ -246,26 +210,13 @@ impl EnclaveResponse {
             Self::TributeOfferBatch { .. }
                 | Self::FidelityCohortApplied { .. }
                 | Self::AccountKeysSealed { .. }
-                | Self::LysisRejected { .. }
-                | Self::LysisExecuted { .. }
-                | Self::NodTransferAckV1 { .. }
-                | Self::NodTransferReadyV1 { .. }
-                | Self::NodTransferOutputV1 { .. }
-                | Self::NodTransferDiscardedV1 { .. }
         )
     }
 
     /// True when this response carries an `inputs_canonical_hash` and Ed25519 `attestation_tag`.
     #[must_use]
     pub const fn is_signed_domain_response(&self) -> bool {
-        !matches!(
-            self,
-            Self::AccountKeysSealed { .. }
-                | Self::NodTransferAckV1 { .. }
-                | Self::NodTransferReadyV1 { .. }
-                | Self::NodTransferOutputV1 { .. }
-                | Self::NodTransferDiscardedV1 { .. }
-        )
+        !matches!(self, Self::AccountKeysSealed { .. })
     }
 
     fn signed_parts(&self) -> Option<(B256, &[u8])> {
@@ -308,15 +259,6 @@ impl EnclaveResponse {
                 attestation_tag,
                 ..
             }
-            | Self::LysisRejected {
-                inputs_canonical_hash,
-                attestation_tag,
-            }
-            | Self::LysisExecuted {
-                inputs_canonical_hash,
-                attestation_tag,
-                ..
-            }
             | Self::NodAmountReadV1 {
                 inputs_canonical_hash,
                 attestation_tag,
@@ -343,16 +285,6 @@ impl EnclaveResponse {
                 ..
             }
             | Self::FidelityQueryRejected {
-                inputs_canonical_hash,
-                attestation_tag,
-                ..
-            }
-            | Self::TributeLeagueOpAppliedV1 {
-                inputs_canonical_hash,
-                attestation_tag,
-                ..
-            }
-            | Self::TributeLeagueAmountReadV1 {
                 inputs_canonical_hash,
                 attestation_tag,
                 ..
@@ -387,11 +319,7 @@ impl EnclaveResponse {
                 attestation_tag,
                 ..
             } => Some((*inputs_canonical_hash, attestation_tag)),
-            Self::AccountKeysSealed { .. }
-            | Self::NodTransferAckV1 { .. }
-            | Self::NodTransferReadyV1 { .. }
-            | Self::NodTransferOutputV1 { .. }
-            | Self::NodTransferDiscardedV1 { .. } => None,
+            Self::AccountKeysSealed { .. } => None,
         }
     }
 
@@ -415,12 +343,6 @@ impl EnclaveResponse {
             | Self::EncryptedNodMintRejectedV1 {
                 attestation_tag, ..
             }
-            | Self::LysisRejected {
-                attestation_tag, ..
-            }
-            | Self::LysisExecuted {
-                attestation_tag, ..
-            }
             | Self::NodAmountReadV1 {
                 attestation_tag, ..
             }
@@ -437,12 +359,6 @@ impl EnclaveResponse {
                 attestation_tag, ..
             }
             | Self::FidelityQueryRejected {
-                attestation_tag, ..
-            }
-            | Self::TributeLeagueOpAppliedV1 {
-                attestation_tag, ..
-            }
-            | Self::TributeLeagueAmountReadV1 {
                 attestation_tag, ..
             }
             | Self::LysisFractionsExecutedV1 {
@@ -463,11 +379,7 @@ impl EnclaveResponse {
             | Self::NodQuoteEncryptedV1 {
                 attestation_tag, ..
             } => Some(attestation_tag),
-            Self::AccountKeysSealed { .. }
-            | Self::NodTransferAckV1 { .. }
-            | Self::NodTransferReadyV1 { .. }
-            | Self::NodTransferOutputV1 { .. }
-            | Self::NodTransferDiscardedV1 { .. } => None,
+            Self::AccountKeysSealed { .. } => None,
         }
     }
 
@@ -593,25 +505,6 @@ impl EnclaveResponse {
 impl core::fmt::Debug for EnclaveResponse {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::TributeLeagueOpAppliedV1 {
-                record,
-                inputs_canonical_hash,
-                ..
-            } => f
-                .debug_struct("TributeLeagueOpAppliedV1")
-                .field("worldwide_day", &record.worldwide_day)
-                .field("league", &record.league)
-                .field("encrypted_amount", &"<redacted>")
-                .field("inputs_canonical_hash", inputs_canonical_hash)
-                .finish(),
-            Self::TributeLeagueAmountReadV1 {
-                inputs_canonical_hash,
-                ..
-            } => f
-                .debug_struct("TributeLeagueAmountReadV1")
-                .field("amount", &"<redacted>")
-                .field("inputs_canonical_hash", inputs_canonical_hash)
-                .finish(),
             Self::LysisFractionsExecutedV1 {
                 inputs_canonical_hash,
                 ..

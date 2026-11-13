@@ -41,12 +41,15 @@ pub fn dispatch(
             ownerOf(c) => view(c, |c| tribute.owner_of(WwdEntityId::from(c.tributeId))),
             tokenURI(c) => view(c, |c| tribute.token_uri(WwdEntityId::from(c.tributeId))),
             getDayTotals(c) => view(c, |c| {
-                let day = c.worldwideDay.into();
+                let day =
+                    outbe_emission::api::get_emission_day_record(storage.clone(), c.emissionDay)?
+                        .map(|record| record.wwd)
+                        .unwrap_or_else(|| outbe_primitives::time::WorldwideDay::new(0));
                 let dt = tribute
                     .day_totals
                     .get(day)?
                     .unwrap_or_else(|| crate::day_schema::StoredDayTotals::with_key(day));
-                let encrypted = if tribute.day_metadosis_completed_at.read(&day)? != 0 {
+                let encrypted = if tribute.lysis_completed_at(day)? != 0 {
                     let frozen = tribute.encrypted_day_nominal(day, true)?;
                     if frozen.is_empty() {
                         tribute.encrypted_day_nominal(day, false)?

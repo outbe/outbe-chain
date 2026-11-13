@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use alloy_primitives::{B256, U256};
 use outbe_core_common::tribute_day_encryption::{
-    EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1, EncryptedTributeLeagueAmountV1,
+    EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1,
 };
 use outbe_tee::{tee_call::verify_enclave_attestation, TransportError};
 
@@ -12,10 +12,7 @@ use super::{
     errors::EnclaveClientError,
     protocol::{EnclaveRequest, EnclaveResponse},
     tribute_client::request_local_enclave,
-    tribute_day::{
-        self, LysisFractionsRequestV1, LysisFractionsResultV1, TributeDayOpRequestV2,
-        TributeLeagueOpRequestV1,
-    },
+    tribute_day::{self, LysisFractionsRequestV1, LysisFractionsResultV1, TributeDayOpRequestV2},
 };
 
 fn next_predecessor_version(previous_version: Option<u64>) -> Result<u64, EnclaveClientError> {
@@ -97,11 +94,6 @@ fn request_amount_read(
             amount,
             inputs_canonical_hash,
             attestation_tag,
-        }
-        | EnclaveResponse::TributeLeagueAmountReadV1 {
-            amount,
-            inputs_canonical_hash,
-            attestation_tag,
         } => (amount, inputs_canonical_hash, attestation_tag),
         _ => return Err(TransportError::UnexpectedResponse.into()),
     };
@@ -125,62 +117,6 @@ pub fn read_day_amount(record: &EncryptedTributeDayAmountV2) -> Result<U256, Enc
     )
 }
 
-/// Apply an arithmetic transition to an encrypted per-league Tribute day accumulator.
-pub fn apply_league_operation(
-    request: TributeLeagueOpRequestV1,
-) -> Result<EncryptedTributeLeagueAmountV1, EnclaveClientError> {
-    let expected = tribute_day::league_operation_inputs_hash(&request).map_err(codec)?;
-    let chain_id = request.chain_id;
-    let day = request.worldwide_day;
-    let league = request.league;
-    let version = match request.previous.as_ref() {
-        None => 1,
-        Some(previous) => next_predecessor_version(previous.version())?,
-    };
-    let (key, response) = request_local_enclave(EnclaveRequest::ApplyTributeLeagueOpV1 {
-        request: Box::new(request),
-    })?;
-    let EnclaveResponse::TributeLeagueOpAppliedV1 {
-        record,
-        inputs_canonical_hash,
-        attestation_tag,
-    } = response
-    else {
-        return Err(TransportError::UnexpectedResponse.into());
-    };
-    let expected_identity = (chain_id, day, league, Some(version));
-    let returned_identity = (
-        record.chain_id,
-        record.worldwide_day,
-        record.league,
-        record.version(),
-    );
-    if expected != inputs_canonical_hash || returned_identity != expected_identity {
-        return Err(TransportError::EnclaveError(
-            "Tribute league response does not match request".into(),
-        )
-        .into());
-    }
-    let preimage =
-        tribute_day::league_operation_attestation_preimage(expected, &record).map_err(codec)?;
-    verify_day_attestation(&key, &preimage, &attestation_tag)?;
-    Ok(record)
-}
-
-/// Read the decrypted nominal total of an encrypted per-league Tribute day accumulator.
-pub fn read_league_amount(
-    record: &EncryptedTributeLeagueAmountV1,
-) -> Result<U256, EnclaveClientError> {
-    request_amount_read(
-        tribute_day::league_read_inputs_hash(record),
-        EnclaveRequest::ReadTributeLeagueAmountV1 {
-            record: record.clone(),
-        },
-        tribute_day::league_read_attestation_preimage,
-        "Tribute league read response does not match request",
-    )
-}
-
 /// Execute confidential Lysis fraction settlement for a completed WorldwideDay.
 pub fn execute_lysis_fractions(
     request: LysisFractionsRequestV1,
@@ -189,6 +125,7 @@ pub fn execute_lysis_fractions(
     let expected_identity = (
         request.chain_id,
         request.worldwide_day,
+        request.emission_day,
         request.completed_at,
         Some(1),
     );
@@ -206,6 +143,7 @@ pub fn execute_lysis_fractions(
     let returned_identity = (
         result.day_fractions.chain_id,
         result.day_fractions.worldwide_day,
+        result.day_fractions.emission_day,
         result.day_fractions.completed_at,
         result.day_fractions.version(),
     );

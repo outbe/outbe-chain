@@ -1524,27 +1524,14 @@ fn mixed_group_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_mined()
         assert_eq!(scan(storage, at), 1);
         let past = at + NOTICE + CLOSED_DAY_DELAY;
         finalize_through(storage, past);
-        // A failed Promis credit leaves the group whole for the retry.
-        let mut limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
-        limit.checked_take_up_to(U256::MAX).unwrap();
-        limit.checked_credit(U256::MAX).unwrap();
-        assert_eq!(scan(storage, past), 0);
-        assert_eq!(nod.group_nod_count.read(&key).unwrap(), 2);
-        assert!(api::get_item(storage, items[0].nod_id).unwrap().is_some());
-        assert!(api::get_item(storage, items[2].nod_id).unwrap().is_some());
-        assert_eq!(reserve(storage), U256::MAX);
-        limit.checked_take_up_to(U256::MAX).unwrap();
-        // The failed group retries at the next UTC midnight.
-        let retry = outbe_core_common::deadline_queue::day_end(
-            outbe_core_common::deadline_queue::deadline_day(past).unwrap(),
-        );
-        finalize_through(storage, retry);
-        assert_eq!(scan(storage, retry), 1);
-        let expected = outbe_nod::api::calculation_amount(&items[0]).unwrap()
+        let before = reserve(storage);
+        assert_eq!(scan(storage, past), 1);
+        let expected = before
+            + outbe_nod::api::calculation_amount(&items[0]).unwrap()
             + outbe_nod::api::calculation_amount(&items[2]).unwrap();
         assert_eq!(reserve(storage), expected);
         assert!(!is_queued(storage, key), "no unpaid member is left to burn");
-        assert_eq!(scan(storage, retry), 0);
+        assert_eq!(scan(storage, past), 0);
         assert_eq!(reserve(storage), expected);
         let group = api::get_group(storage, id).unwrap().unwrap();
         assert_eq!(group.settled_nods, 1);

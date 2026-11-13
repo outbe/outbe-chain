@@ -22,24 +22,26 @@ use super::{
     authenticate::authenticate_request,
     canary_domain_request, consensus_domain_call, domain_session_call_on,
     errors::{EnclaveClientError, LocalCryptoError, TributeSourceError},
-    lysis::{execute_lysis_on_session, LysisRequest, LysisResult},
     nod_mine::{self, MineEncryptedNodRequestV1, MineEncryptedNodResultV1},
     protocol::{
+        fidelity_cohort_attestation_preimage, fidelity_cohort_canonical_hash,
         fidelity_query_attestation_preimage, fidelity_query_canonical_hash,
-        gratis_op_attestation_preimage, gratis_op_canonical_hash,
+        gratis_op_attestation_preimage, gratis_op_canonical_hash, inputs_canonical_hash,
         mine_gratis_from_promis_attestation_preimage, mine_gratis_from_promis_canonical_hash,
-        promis_op_attestation_preimage, promis_op_canonical_hash, EnclaveRequest, EnclaveResponse,
-        FidelityCohortOp, FidelityOpOutcome, FidelityOpSection, FidelityQueryRequest,
-        FidelityQueryResult, FidelitySnapshotRequest, GratisOp, GratisOpRequest, GratisOpResult,
-        GratisOpStatus, Ledger, MineGratisFromPromisRequestV1, MineGratisFromPromisResultV1,
-        MineGratisFromPromisStatusV1, ModifyAuth, PromisOp, PromisOpRequest, PromisOpResult,
-        PromisOpStatus,
+        promis_op_attestation_preimage, promis_op_canonical_hash,
+        tribute_offer_attestation_preimage, EnclaveRequest, EnclaveResponse, FidelityCohortOp,
+        FidelityCohortRequest, FidelityCohortResult, FidelityOpOutcome, FidelityOpSection,
+        FidelityQueryRequest, FidelityQueryResult, FidelitySnapshotRequest, GratisOp,
+        GratisOpRequest, GratisOpResult, GratisOpStatus, Ledger, MineGratisFromPromisRequestV1,
+        MineGratisFromPromisResultV1, MineGratisFromPromisStatusV1, ModifyAuth, PromisOp,
+        PromisOpRequest, PromisOpResult, PromisOpStatus,
     },
     tribute_client::set_test_local_enclave_hook,
     try_domain_account_query,
     verification::{
-        verify_fidelity_query_attestation, verify_gratis_op_attestation,
-        verify_mine_gratis_from_promis_attestation, verify_promis_op_attestation,
+        verify_fidelity_cohort_attestation, verify_fidelity_query_attestation,
+        verify_gratis_op_attestation, verify_mine_gratis_from_promis_attestation,
+        verify_promis_op_attestation, verify_tribute_offer_attestation,
     },
 };
 
@@ -687,20 +689,15 @@ fn non_canonical_payload_bytes_latch_tape_invalid_on_replay_and_verifier() {
         ws.tx_index = Some(0);
         ws
     }));
-    let lysis_res = LysisResult {
-        nods: Vec::new(),
-        total_nominal_minor: U256::from(10u64),
-        unused_lysis_limit_minor: U256::ZERO,
-    };
-    let lysis_preimage = super::lysis::result_preimage(hash, &lysis_res).unwrap();
-    let lysis_tag = leader_sk.sign(&lysis_preimage).to_bytes().to_vec();
+    let offer_preimage = tribute_offer_attestation_preimage(hash, &[]).unwrap();
+    let offer_tag = leader_sk.sign(&offer_preimage).to_bytes().to_vec();
     set_test_local_enclave_hook(Some(Arc::new(move |_| {
         Ok((
             leader_pub,
-            EnclaveResponse::LysisExecuted {
-                result: Box::new(lysis_res.clone()),
+            EnclaveResponse::TributeOfferBatch {
+                results: Vec::new(),
                 inputs_canonical_hash: hash,
-                attestation_tag: lysis_tag.clone(),
+                attestation_tag: offer_tag.clone(),
             },
         ))
     })));
@@ -746,42 +743,41 @@ fn spawn_mock_dev_enclave(
     })
 }
 
-fn sample_lysis_request(timestamp: u64) -> LysisRequest {
-    LysisRequest {
-        chain_id: 1,
-        worldwide_day: outbe_primitives::time::WorldwideDay::new(20250115),
-        emission_day: 20250115,
-        timestamp,
-        lysis_limit_minor: U256::from(5_000u64),
-        tributes: Vec::new(),
-        fidelity: FidelitySnapshotRequest {
+fn sample_cohort_request(timestamp: u64) -> FidelityCohortRequest {
+    FidelityCohortRequest {
+        chain_id: B256::repeat_byte(0x01),
+        account: Address::repeat_byte(0x22),
+        amount: U256::from(1_000u64),
+        section: FidelityOpSection {
+            op: FidelityCohortOp::In,
             timestamp,
-            first_qualified_start: 20250115,
-            entries: Vec::new(),
+            first_qualified_start: 1_699_000_000,
+            current_blob: vec![0xaa, 0xbb],
         },
-        entry_prices: Vec::new(),
     }
 }
 
 #[test]
-fn non_recordable_signed_lysis_response_verifies_on_wire_but_never_enters_witness_tape() {
+fn non_recordable_signed_domain_response_verifies_on_wire_but_never_enters_witness_tape() {
     let signer = SigningKey::from_bytes(&[0x81; 32]);
     let pubkey = signer.verifying_key().to_bytes();
-    let req_good = sample_lysis_request(1_700_000_000);
-    let req_swapped = sample_lysis_request(1_700_000_001);
-    let fixed_hash = super::lysis::inputs_hash(&req_good).unwrap();
-    let expected_result = LysisResult {
-        nods: Vec::new(),
-        total_nominal_minor: U256::from(1_000u64),
-        unused_lysis_limit_minor: U256::from(200u64),
-    };
-    let preimage = super::lysis::result_preimage(fixed_hash, &expected_result).unwrap();
-    let fixed_tag = signer.sign(&preimage).to_bytes().to_vec();
-
-    let domain_resp = EnclaveResponse::LysisExecuted {
-        result: Box::new(expected_result.clone()),
+    let req_good = sample_cohort_request(1_700_000_000);
+    let req_swapped = sample_cohort_request(1_700_000_001);
+    let fixed_hash = fidelity_cohort_canonical_hash(&req_good);
+    let mut expected_result = FidelityCohortResult {
+        outcome: FidelityOpOutcome {
+            new_blob: vec![1, 2, 3],
+            qualified_start_initialized: Some(1_700_000_000),
+            league: 2,
+        },
         inputs_canonical_hash: fixed_hash,
-        attestation_tag: fixed_tag.clone(),
+        attestation_tag: Vec::new(),
+    };
+    let preimage = fidelity_cohort_attestation_preimage(fixed_hash, &expected_result).unwrap();
+    expected_result.attestation_tag = signer.sign(&preimage).to_bytes().to_vec();
+
+    let domain_resp = EnclaveResponse::FidelityCohortApplied {
+        result: Box::new(expected_result.clone()),
     };
     assert!(!domain_resp.is_recordable());
 
@@ -796,9 +792,6 @@ fn non_recordable_signed_lysis_response_verifies_on_wire_but_never_enters_witnes
     // Non-recordable Payload MUST fail conversion into EnclaveWitnessEntryV1!
     assert!(EnclaveWitnessEntryV1::try_from(wire).is_err());
 
-    // Exercise live execute_lysis_on_session / domain_session_call_on -> tee_session_call_on:
-    // 1. Matching request verifies Ed25519 signature and returns Some(result)
-    // 2. Swapped request (different timestamp -> different inputs_hash) is rejected!
     let mock_resp = domain_resp.clone();
     let server = spawn_mock_dev_enclave(pubkey, move |lane, _req| {
         assert_eq!(lane, PayloadLane::Execution);
@@ -807,20 +800,57 @@ fn non_recordable_signed_lysis_response_verifies_on_wire_but_never_enters_witnes
     let client = EnclaveClient::connect_endpoint(&server.endpoint).unwrap();
     let mut session = EnclaveSession::development(client, server.endpoint.clone()).unwrap();
 
-    let verified = execute_lysis_on_session(&mut session, req_good)
-        .expect("valid signed LysisExecuted must succeed on session call");
-    assert_eq!(verified, Some(expected_result));
+    let good_enclave_req = EnclaveRequest::ApplyFidelityCohortOp {
+        request: Box::new(req_good.clone()),
+    };
+    let verified = domain_session_call_on(&mut session, &good_enclave_req, |key, resp| {
+        let EnclaveResponse::FidelityCohortApplied { result } = resp else {
+            return Err(TransportError::UnexpectedResponse);
+        };
+        verify_fidelity_cohort_attestation(
+            key,
+            fidelity_cohort_canonical_hash(&req_good),
+            result,
+            &result.attestation_tag,
+        )
+    })
+    .expect("valid signed FidelityCohortApplied must succeed on session call");
+    assert_eq!(
+        verified,
+        (
+            pubkey,
+            EnclaveResponse::FidelityCohortApplied {
+                result: Box::new(expected_result)
+            }
+        )
+    );
 
-    let swapped_err = execute_lysis_on_session(&mut session, req_swapped)
-        .expect_err("swapped request must be rejected on tee_session_call_on");
+    let swapped_enclave_req = EnclaveRequest::ApplyFidelityCohortOp {
+        request: Box::new(req_swapped.clone()),
+    };
+    let swapped_err = domain_session_call_on(&mut session, &swapped_enclave_req, |key, resp| {
+        let EnclaveResponse::FidelityCohortApplied { result } = resp else {
+            return Err(TransportError::UnexpectedResponse);
+        };
+        verify_fidelity_cohort_attestation(
+            key,
+            fidelity_cohort_canonical_hash(&req_swapped),
+            result,
+            &result.attestation_tag,
+        )
+    })
+    .expect_err("swapped request must be rejected on tee_session_call_on");
     assert!(matches!(
         swapped_err,
-        EnclaveClientError::Transport(TransportError::Attestation(_))
+        TransportError::AppAttestation {
+            metric: outbe_tee::AttestationMetricClass::Fidelity,
+            ..
+        }
     ));
 
-    // Also verify consensus_domain_call rejects non-recordable LysisRequest up front (fail-closed)
-    let non_rec_req = EnclaveRequest::ExecuteLysis {
-        request: Box::new(sample_lysis_request(1_700_000_002)),
+    // Also verify consensus_domain_call rejects non-recordable ApplyFidelityCohortOp up front (fail-closed)
+    let non_rec_req = EnclaveRequest::ApplyFidelityCohortOp {
+        request: Box::new(sample_cohort_request(1_700_000_002)),
     };
     assert!(domain_session_call_on(&mut session, &non_rec_req, |_, _| Ok(())).is_ok());
     assert!(consensus_domain_call(
@@ -830,6 +860,12 @@ fn non_recordable_signed_lysis_response_verifies_on_wire_but_never_enters_witnes
         |_, _| Ok(()),
     )
     .is_err());
+
+    // Exercise inputs_canonical_hash + verify_tribute_offer_attestation for non-recordable TributeOfferBatch too
+    let offer_hash = inputs_canonical_hash(&[]);
+    let offer_pre = tribute_offer_attestation_preimage(offer_hash, &[]).unwrap();
+    let offer_sig = signer.sign(&offer_pre).to_bytes();
+    verify_tribute_offer_attestation(&pubkey, offer_hash, &[], &offer_sig).unwrap();
 }
 
 #[test]
@@ -915,10 +951,16 @@ fn payload_lane_isolation_enforces_account_query_canary_and_execution_matrix() {
     assert!(canary_domain_request(&gratis_req).is_err());
     assert!(canary_domain_request(&derive).is_err());
 
-    let discard = EnclaveRequest::DiscardNodTransferV1 { id: B256::ZERO };
-    assert!(discard.encode_wire(PayloadLane::Execution).is_ok());
-    assert!(canary_domain_request(&discard).is_err());
-    assert!(try_domain_account_query(&discard).unwrap().is_err());
+    let exec_only = EnclaveRequest::SnapshotFidelityLeagues {
+        request: Box::new(FidelitySnapshotRequest {
+            timestamp: 1_700_000_000,
+            first_qualified_start: 20250115,
+            entries: Vec::new(),
+        }),
+    };
+    assert!(exec_only.encode_wire(PayloadLane::Execution).is_ok());
+    assert!(canary_domain_request(&exec_only).is_err());
+    assert!(try_domain_account_query(&exec_only).unwrap().is_err());
 
     let lanes = observed_lanes.lock().unwrap().clone();
     assert_eq!(

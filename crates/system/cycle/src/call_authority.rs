@@ -8,7 +8,7 @@ use outbe_primitives::storage::{
 };
 use outbe_primitives::time::{date_key_to_utc_timestamp, timestamp_to_date_key};
 
-use crate::handler::{self, ProtocolDayAction};
+use crate::handler;
 
 /// Entitlements carried by the protocol cycle step.
 pub fn cycle_tick_entitlements(
@@ -29,10 +29,10 @@ pub fn cycle_tick_entitlements(
         return entitlements;
     };
     let block_utc_day = timestamp_to_date_key(timestamp);
-    let Ok(day_action) = handler::protocol_day_action(active_utc_day, block_utc_day) else {
+    let Ok(day_to_allocate) = handler::day_to_allocate(active_utc_day, block_utc_day) else {
         return entitlements;
     };
-    if let ProtocolDayAction::SettlePrevious { day } = day_action {
+    if let Some(day) = day_to_allocate {
         if let Ok(day_ts) = date_key_to_utc_timestamp(day) {
             entitlements = entitlements.union(MetadosisMutationEntitlements::exact(
                 Purpose::CycleLifecycle,

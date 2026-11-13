@@ -268,7 +268,7 @@ impl TransportError {
         )
     }
 
-    /// Return the stable label for the `outbe_tee_request_errors_total{class}` counter.
+    /// Return the stable label for the `outbe_tee_client_request_errors_total{class}` counter.
     pub fn metric_class(&self) -> &'static str {
         match self {
             Self::Io(_) => "io",

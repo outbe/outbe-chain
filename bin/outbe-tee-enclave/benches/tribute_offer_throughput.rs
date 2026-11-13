@@ -58,7 +58,7 @@ fn key_material() -> TributeOfferKeyMaterial<'static> {
 }
 
 /// Encrypt one offer exactly as a client would, via the shared recipe in
-/// `outbe_tee::offer_encrypt` (also used by `outbe-cli` and the node's canary).
+/// `outbe_enclave::offer_encrypt` (also used by `outbe-cli` and the node's canary).
 /// This is the client's cost, done outside the timed region.
 fn make_offer(owner: Address) -> EncryptedTributeOffer {
     let eph_sk = [9u8; 32];

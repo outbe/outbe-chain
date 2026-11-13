@@ -38,6 +38,9 @@ pub enum TributeError {
     #[error("Tribute day enclave: Tribute day response scope mismatch")]
     DayResponseScopeMismatch,
 
+    #[error("Tribute day is linked to another emission day")]
+    LysisEmissionDayMismatch,
+
     #[error("invalid encrypted Tribute encoding")]
     InvalidEncryptedEncoding,
 
@@ -46,12 +49,6 @@ pub enum TributeError {
 
     #[error("{0}")]
     CalculationView(String),
-
-    #[error("Lysis input count/nominal does not match sealed Tribute DayTotals")]
-    LysisInputMismatch,
-
-    #[error("MissedOffering requires a sealed empty Tribute partition")]
-    MissedOfferingRequiresSealedEmptyPartition,
 
     #[error("Tribute WWD is not completed and empty")]
     WorldwideDayNotCompletedAndEmpty,
@@ -145,11 +142,10 @@ impl From<TributeError> for PrecompileError {
             TributeError::InvalidEncryptedDayIdentity
             | TributeError::InvalidEncryptedEncoding
             | TributeError::ChainIdentityMismatch
-            | TributeError::LysisInputMismatch
-            | TributeError::MissedOfferingRequiresSealedEmptyPartition
             | TributeError::DayMetadataDiffersFromEncryptedAmount
             | TributeError::SealedDayMetadataDiffersFromEncryptedAmount
             | TributeError::DayCountOverflowOrUnderflow
+            | TributeError::LysisEmissionDayMismatch
             | TributeError::DayAmountCodec(_) => PrecompileError::BodyReadCorruption(message),
             TributeError::TributeNotFound => revert_with(I::TributeNotFound {}),
             TributeError::TributeAlreadyExists => revert_with(I::TributeAlreadyExists {}),

@@ -27,9 +27,6 @@ pub enum MetadosisError {
         lysis_limit_minor: U256,
     },
 
-    #[error("on-chain Lysis input or result mismatch")]
-    LysisResultMismatch,
-
     #[error(
         "Metadosis business failure: Desis Limit {desis_limit_minor} exceeds the {available} the Promis Limit holds"
     )]
@@ -55,7 +52,6 @@ impl From<MetadosisError> for PrecompileError {
                 dayLimit: day_limit,
                 lysisLimitMinor: lysis_limit_minor,
             }),
-            MetadosisError::LysisResultMismatch => revert_with(I::LysisResultMismatch {}),
             MetadosisError::DesisLimitUnavailable {
                 desis_limit_minor,
                 available,

@@ -97,7 +97,6 @@ pub fn issue_encrypted_with_league(
         };
         contract.bump_day_bucket_record(&record, true)?;
         contract.tribute_leagues.write(&record.tribute_id, league)?;
-        contract.adjust_fi_group(&record, league, true)?;
         contract.insert_state_record(&StoredTribute::from(body))?;
         contract.emit(ITribute::TributeOffered {
             tributeId: record.tribute_id.to_u256(),
@@ -150,7 +149,6 @@ pub fn burn_loaded(storage: &StorageHandle<'_>, loaded: LoadedTribute) -> Result
         contract.bump_day_bucket_record(&record, false)?;
         let league = contract.tribute_leagues.read(&record.tribute_id)?;
         if league != 0 {
-            contract.adjust_fi_group(&record, league, false)?;
             contract.tribute_leagues.clear(&record.tribute_id)?;
         }
         contract.delete_state_record(record.tribute_id)?;
@@ -168,15 +166,11 @@ pub fn retire_completed_day(storage: &StorageHandle<'_>, day: WorldwideDay) -> R
         if contract.retired_days.read(&day)? {
             return Ok(false);
         }
-        let totals = contract
+        let has_tributes = contract
             .day_totals
             .get(day)?
-            .ok_or(TributeError::WorldwideDayNotCompletedAndEmpty)?;
-        if !totals.initialized
-            || !totals.is_sealed
-            || totals.tribute_count != 0
-            || !contract.day_nominal_amount(day, false)?.is_zero()
-        {
+            .is_some_and(|totals| totals.tribute_count != 0);
+        if has_tributes || !contract.day_nominal_amount(day, false)?.is_zero() {
             return Err(TributeError::WorldwideDayNotCompletedAndEmpty.into());
         }
         contract.retired_days.write(&day, true)?;

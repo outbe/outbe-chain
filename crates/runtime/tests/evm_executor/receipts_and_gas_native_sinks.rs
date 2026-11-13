@@ -6,13 +6,12 @@ use super::receipts_and_gas_support::*;
 use super::*;
 use alloy_consensus::{TxEip4844, TxLegacy};
 use alloy_eips::eip4844::{DATA_GAS_PER_BLOB, VERSIONED_HASH_VERSION_KZG};
-use alloy_evm::block::{BlockExecutionError, BlockValidationError, CommitChanges};
-use alloy_sol_types::SolError;
+use alloy_evm::block::{BlockExecutionError, CommitChanges};
 use outbe_evm::errors::BurnedFeeSettlementError;
 use outbe_primitives::{
     addresses::PROMIS_LIMIT_ADDRESS, error::PrecompileError, storage::direct::DirectStorageProvider,
 };
-use outbe_promislimit::{precompile::IPromisLimit, PromisLimitContract};
+use outbe_promislimit::PromisLimitContract;
 use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 use revm::context_interface::block::BlobExcessGasAndPrice;
 use std::sync::Mutex;
@@ -169,7 +168,7 @@ fn base_and_blob_fee_go_to_promis_limit() {
     scenario_a_paid_reverted_and_declined_txs_settle_burned_base_fees();
     scenario_b_eip4844_blob_tx_settles_base_and_blob_fees();
     scenario_c_protocol_fee_waiver_burns_zero_under_nonzero_basefee();
-    scenario_d_promis_limit_overflow_fails_block_validation_with_typed_error();
+    scenario_d_promis_limit_overflow_fails_the_block_with_typed_error();
     scenario_e_proposer_state_hook_pre_freeze_idempotence_and_validator_parity();
 }
 
@@ -687,7 +686,7 @@ fn scenario_c_protocol_fee_waiver_burns_zero_under_nonzero_basefee() {
     .unwrap();
 }
 
-fn scenario_d_promis_limit_overflow_fails_block_validation_with_typed_error() {
+fn scenario_d_promis_limit_overflow_fails_the_block_with_typed_error() {
     let chain_spec = cancun_chain_spec();
     let receipt_builder = reth_ethereum::evm::RethReceiptBuilder::default();
     let config = OutbeEvmConfig::new(
@@ -755,42 +754,36 @@ fn scenario_d_promis_limit_overflow_fails_block_validation_with_typed_error() {
         .execute_transaction(tx)
         .expect("paid tx should execute before end-of-block settlement");
 
-    let expected_revert = Bytes::from(IPromisLimit::Overflow {}.abi_encode());
-
-    let assert_overflow_validation_err = |err: &BlockExecutionError| match err {
-        BlockExecutionError::Validation(BlockValidationError::Other(inner)) => {
+    let assert_overflow_fails_block = |err: &BlockExecutionError| match err {
+        BlockExecutionError::Internal(inner) => {
             let settlement_err = inner
-                .downcast_ref::<BurnedFeeSettlementError>()
-                .expect("validation error must downcast to BurnedFeeSettlementError");
+                .downcast_other::<BurnedFeeSettlementError>()
+                .expect("internal error must downcast to BurnedFeeSettlementError");
             assert!(
                 matches!(
                     settlement_err,
-                    BurnedFeeSettlementError::Validation(PrecompileError::RevertBytes(bytes))
-                        if bytes == &expected_revert
+                    BurnedFeeSettlementError::Internal(PrecompileError::FatalWithCause(cause))
+                        if matches!(
+                            cause.downcast_ref::<outbe_promislimit::errors::PromisLimitError>(),
+                            Some(outbe_promislimit::errors::PromisLimitError::Overflow)
+                        )
                 ),
-                "expected Validation(RevertBytes(Overflow)), got {settlement_err:?}"
-            );
-            let source = std::error::Error::source(inner.as_ref())
-                .and_then(|s| s.downcast_ref::<PrecompileError>())
-                .expect("Error::source must preserve PrecompileError");
-            assert!(
-                matches!(source, PrecompileError::RevertBytes(bytes) if bytes == &expected_revert)
+                "expected Internal(FatalWithCause(Overflow)), got {settlement_err:?}"
             );
         }
-        other => panic!("expected BlockExecutionError::Validation(Other), got {other:?}"),
+        other => panic!("expected BlockExecutionError::Internal, got {other:?}"),
     };
 
     let prep_err = executor
         .prepare_final_header_artifacts(0)
-        .expect_err("overflow in prepare_final_header_artifacts must fail block validation");
-    assert_overflow_validation_err(&prep_err);
+        .expect_err("overflow in prepare_final_header_artifacts must fail the block");
+    assert_overflow_fails_block(&prep_err);
 
-    // Because settlement failed before setting burned_fees_settled, finish() also fails deterministically
-    // and preserves the full BurnedFeeSettlementError::Validation(RevertBytes(Overflow)) source chain.
+    // Settlement failed before setting burned_fees_settled, so finish() fails the same way.
     let Err(finish_err) = executor.finish() else {
-        panic!("overflow in finish() must fail block validation");
+        panic!("overflow in finish() must fail the block");
     };
-    assert_overflow_validation_err(&finish_err);
+    assert_overflow_fails_block(&finish_err);
 }
 
 fn scenario_e_proposer_state_hook_pre_freeze_idempotence_and_validator_parity() {

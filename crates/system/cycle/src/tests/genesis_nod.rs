@@ -49,7 +49,7 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
             outbe_primitives::time::timestamp_to_date_key(ctx_fire.block.genesis_timestamp);
         assert_eq!(genesis_day, 20_240_101, "start_date = day D");
         assert!(
-            is_day_settled(&ctx_fire, genesis_day),
+            is_day_allocated(&ctx_fire, genesis_day),
             "CycleTick must settle genesis day (day_number=0)"
         );
     });
@@ -385,7 +385,7 @@ fn issue_nod(
 
 /// Runs the Cycle dispatcher at `ctx`, then the Nod call slice.
 fn dispatch_and_call(ctx: &BlockRuntimeContext<'_>) -> outbe_primitives::error::Result<()> {
-    dispatch_triggers(ctx)?;
+    run_due_tasks(ctx)?;
     outbe_nodfactory::called::process_call_pass(ctx)?;
     Ok(())
 }

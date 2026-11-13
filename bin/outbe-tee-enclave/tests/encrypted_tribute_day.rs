@@ -73,15 +73,6 @@ fn encrypted_day_issue_burn_freeze_and_retirement_preserve_frozen_history() {
         read_day_amount(&secret, &frozen).unwrap(),
         U256::from(50_000_000)
     );
-    request.operation = TributeDayOperationV2::Reset {
-        expected_total: U256::from(50_000_000),
-    };
-    let retired = apply_day_operation(&secret, &tribute_key, &request).unwrap();
-    assert_eq!(read_day_amount(&secret, &retired).unwrap(), U256::ZERO);
-    assert_eq!(
-        read_day_amount(&secret, &frozen).unwrap(),
-        U256::from(50_000_000)
-    );
     request.previous = Some(frozen);
     assert!(apply_day_operation(&secret, &tribute_key, &request).is_err());
 }
@@ -174,29 +165,22 @@ fn exact_predecessor_and_public_state_change_the_deterministic_write_context() {
 }
 
 #[test]
-fn overflow_and_mismatched_retirement_fail_without_replacing_previous_state() {
+fn an_overflow_fails_without_replacing_previous_state() {
     let secret = [7; 32];
     let request = day_request(U256::MAX);
     let previous = apply_day_operation(&secret, &secret, &request).unwrap();
-    for operation in [
-        TributeDayOperationV2::AdjustTransient {
-            nominal_amount_minor: U256::from(1),
-            add: true,
-        },
-        TributeDayOperationV2::Reset {
-            expected_total: U256::ZERO,
-        },
-    ] {
-        assert!(apply_day_operation(
-            &secret,
-            &secret,
-            &TributeDayOpRequestV2 {
-                previous: Some(previous.clone()),
-                operation,
-                ..request.clone()
-            }
-        )
-        .is_err());
-        assert_eq!(read_day_amount(&secret, &previous).unwrap(), U256::MAX);
-    }
+    assert!(apply_day_operation(
+        &secret,
+        &secret,
+        &TributeDayOpRequestV2 {
+            previous: Some(previous.clone()),
+            operation: TributeDayOperationV2::AdjustTransient {
+                nominal_amount_minor: U256::from(1),
+                add: true,
+            },
+            ..request.clone()
+        }
+    )
+    .is_err());
+    assert_eq!(read_day_amount(&secret, &previous).unwrap(), U256::MAX);
 }

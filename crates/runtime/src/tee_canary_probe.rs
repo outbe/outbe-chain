@@ -24,7 +24,7 @@ const CANARY_CURRENCY: u16 = 999;
 
 /// Known-plaintext Tribute offer batch probe executed on the canary lane.
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct TributeCanaryProbe;
+pub struct TributeCanaryProbe;
 
 impl TeeCanaryProbe for TributeCanaryProbe {
     fn probe_decrypt(

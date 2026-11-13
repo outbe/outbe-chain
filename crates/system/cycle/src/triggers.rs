@@ -17,7 +17,7 @@ use crate::errors::CycleError;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum TriggerId {
-    ProtocolCycle = 0,
+    ProcessEmissionDay = 0,
     ScheduleIntexCallPass = 1,
     AdvanceAuctions = 2,
     ScheduleGemCallPass = 3,
@@ -60,7 +60,7 @@ pub struct TriggerSpec {
     /// Default for the canonical protocol-cycle trigger is `true`.
     pub requires_accounting_window: bool,
     /// When `true` a backlog collapses to the latest due slot instead of
-    /// replaying every missed one. ProtocolCycle owns its UTC-day decision,
+    /// replaying every missed one. ProcessEmissionDay owns its UTC-day decision,
     /// so replaying every missed hourly slot would duplicate orchestration.
     pub coalesces_backlog: bool,
     /// Triggers whose failure in the current walk blocks this trigger.
@@ -73,11 +73,19 @@ pub struct TriggerSpec {
     pub handler: TriggerHandler,
 }
 
+/// What a task answers when it runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Readiness {
+    Done,
+    /// The task changed nothing; the runner keeps its slot and runs it in the next block.
+    NotReady,
+}
+
 #[derive(Clone, Copy)]
 pub enum TriggerHandler {
     #[cfg(test)]
     Test(fn(&BlockRuntimeContext<'_>) -> Result<()>),
-    ProtocolCycle,
+    ProcessEmissionDay,
     ScheduleIntexCallPass,
     AdvanceAuctions,
     ScheduleGemCallPass,
@@ -131,18 +139,19 @@ impl TriggerSpec {
 }
 
 impl TriggerHandler {
-    pub(crate) fn run(self, ctx: &BlockRuntimeContext) -> Result<()> {
-        match self {
+    pub(crate) fn run(self, ctx: &BlockRuntimeContext) -> Result<Readiness> {
+        let done = match self {
             #[cfg(test)]
             Self::Test(handler) => handler(ctx),
-            Self::ProtocolCycle => crate::handler::run_protocol_cycle(ctx),
+            Self::ProcessEmissionDay => return crate::handler::process_emission_day(ctx),
             Self::ScheduleIntexCallPass => outbe_intexfactory::called::schedule_call_pass(ctx),
             Self::AdvanceAuctions => outbe_desis::advance_auctions(ctx),
             Self::ScheduleGemCallPass => outbe_gemfactory::called::schedule_call_pass(ctx),
             Self::CompleteAuctions => outbe_desis::complete_auctions(ctx),
             Self::ScheduleCredisCallPass => outbe_credisfactory::called::schedule_call_pass(ctx),
             Self::ScheduleNodCallPass => outbe_nodfactory::called::schedule_call_pass(ctx),
-        }
+        };
+        done.map(|()| Readiness::Done)
     }
 }
 
@@ -175,8 +184,11 @@ macro_rules! const_spec {
     };
 }
 
-/// Hourly cadence of the canonical protocol cycle.
-pub const PROTOCOL_CYCLE_PERIOD_SECONDS: u64 = 3_600;
+/// Hourly cadence of `process_emission_day`.
+pub const PROCESS_EMISSION_DAY_PERIOD_SECONDS: u64 = 3_600;
+/// `process_emission_day` runs from one second into each hour, so Metadosis of E is no earlier
+/// than 00:00:01 of E+1. The auction tasks share the offset to land in the slot of the brief.
+pub const PROCESS_EMISSION_DAY_START_OFFSET_SECONDS: u64 = 1;
 
 /// Active trigger table in permanent numeric-id order.
 /// The dispatcher walks this array in order inside one block.
@@ -184,7 +196,7 @@ pub const PROTOCOL_CYCLE_PERIOD_SECONDS: u64 = 3_600;
 /// Any other handler error stops the walk.
 /// A due trigger whose dependency failed in this walk records its slot
 /// and does not run.
-/// AdvanceAuctions must stay after ProtocolCycle.
+/// AdvanceAuctions must stay after ProcessEmissionDay.
 /// Same-slot brief and auction order depends on that sequence.
 ///
 /// Budgets use measured successful gross maxima from
@@ -196,7 +208,7 @@ pub const PROTOCOL_CYCLE_PERIOD_SECONDS: u64 = 3_600;
 /// `advance_auctions` takes the step bounds of Desis, measured on the deployed bridge.
 pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 7], CycleError> {
     Ok([
-        // ProtocolCycle settles a contiguous completed UTC day. It MUST
+        // ProcessEmissionDay settles a contiguous completed UTC day. It MUST
         // observe the parent block's Phase 1 accounting before it fires.
         // Otherwise validator-pool top-ups and daily-fee reads would
         // race the parent-finalization tx.
@@ -204,11 +216,14 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 7], CycleEr
         // collapse to one execution at the latest due boundary.
         {
             let mut spec = const_spec!(TriggerSpec::new(
-                TriggerId::ProtocolCycle.as_u32(),
-                "protocol_cycle",
-                (PROTOCOL_CYCLE_PERIOD_SECONDS, 0),
+                TriggerId::ProcessEmissionDay.as_u32(),
+                "process_emission_day",
+                (
+                    PROCESS_EMISSION_DAY_PERIOD_SECONDS,
+                    PROCESS_EMISSION_DAY_START_OFFSET_SECONDS
+                ),
                 1_526_000,
-                TriggerHandler::ProtocolCycle,
+                TriggerHandler::ProcessEmissionDay,
             ));
             spec.requires_accounting_window = true;
             spec.coalesces_backlog = true;
@@ -230,7 +245,7 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 7], CycleEr
             spec.coalesces_backlog = true;
             spec
         },
-        // Gated like `protocol_cycle`, so the brief it writes and this start
+        // Gated like `process_emission_day`, so the brief it writes and this start
         // land in the same slot.
         // A poll, not a calendar slot. The handler reads the block clock and
         // sweeps every scheduled day. So replaying a missed slot does nothing
@@ -241,13 +256,16 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 7], CycleEr
             let mut spec = const_spec!(TriggerSpec::new(
                 TriggerId::AdvanceAuctions.as_u32(),
                 "advance_auctions",
-                (ADVANCE_AUCTIONS_PERIOD_SECONDS, 0),
+                (
+                    ADVANCE_AUCTIONS_PERIOD_SECONDS,
+                    PROCESS_EMISSION_DAY_START_OFFSET_SECONDS
+                ),
                 outbe_desis::constants::ADVANCE_AUCTIONS_BUDGET_GAS,
                 TriggerHandler::AdvanceAuctions,
             ));
             spec.requires_accounting_window = true;
             spec.coalesces_backlog = true;
-            spec.depends_on = &[TriggerId::ProtocolCycle];
+            spec.depends_on = &[TriggerId::ProcessEmissionDay];
             spec
         },
         // Reads finalized oracle VWAP history to force-call gems. It has
@@ -275,7 +293,10 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 7], CycleEr
             let mut spec = const_spec!(TriggerSpec::new(
                 TriggerId::CompleteAuctions.as_u32(),
                 "complete_auctions",
-                (ADVANCE_AUCTIONS_PERIOD_SECONDS, 0),
+                (
+                    ADVANCE_AUCTIONS_PERIOD_SECONDS,
+                    PROCESS_EMISSION_DAY_START_OFFSET_SECONDS
+                ),
                 10_333_000,
                 TriggerHandler::CompleteAuctions,
             ));

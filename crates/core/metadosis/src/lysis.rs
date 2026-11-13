@@ -1,90 +1,88 @@
 //! Executes one sealed WorldwideDay linked to a due EmissionDay.
 
-use outbe_primitives::{
-    block::BlockRuntimeContext,
-    error::{PrecompileError, Result},
-    time::WorldwideDay,
-};
-use outbe_promislimit::PromisLimitContract;
-use outbe_tribute::TributeContract;
+use alloy_primitives::U256;
+use outbe_primitives::{block::BlockRuntimeContext, error::Result};
+use outbe_tribute::{PricedCurrencies, TributeContract};
 
 use crate::{
     lifecycle::complete_metadosis,
-    limits::{allocate_day_metadosis_limit, apply_auction_brief, LysisLimitInput},
+    limits::{allocate_day_metadosis_limit, brief_auction, LysisLimitInput},
     precompile::IMetadosis,
     schema::{EmissionDay, MetadosisContract},
-    settlement::MetadosisCalculation,
 };
 
-fn mismatch() -> PrecompileError {
-    crate::errors::MetadosisError::LysisResultMismatch.into()
+#[derive(Clone, Copy, Debug, Default)]
+struct LysisTotals {
+    /// Nominal of the priced Tributes.
+    nominal_minor: U256,
+    gratis_demand_minor: U256,
+    lysis_limit_minor: U256,
+    /// What the Nods of the day take of the Lysis Limit.
+    used_minor: U256,
+    unused_minor: U256,
 }
 
-struct SettlementCompletion {
-    total_nominal_minor: alloy_primitives::U256,
-    used: alloy_primitives::U256,
-    unused: alloy_primitives::U256,
+impl LysisTotals {
+    fn new(outcome: outbe_tribute::LysisOutcome) -> Self {
+        let used_minor = outcome.allocated_minor.min(outcome.lysis_limit_minor);
+        Self {
+            nominal_minor: outcome.nominal_minor,
+            gratis_demand_minor: outcome.gratis_demand_minor,
+            lysis_limit_minor: outcome.lysis_limit_minor,
+            used_minor,
+            unused_minor: outcome.lysis_limit_minor - used_minor,
+        }
+    }
 }
 
-fn finalize_lysis_settlement(
+fn record_completion(
     metadosis: &mut MetadosisContract<'_>,
     ctx: &BlockRuntimeContext<'_>,
     emission_day: &EmissionDay,
-    calculation: MetadosisCalculation,
-    completion: SettlementCompletion,
+    totals: &LysisTotals,
+    desis_limit: U256,
 ) -> Result<()> {
-    let storage = ctx.storage.clone();
-    let split = allocate_day_metadosis_limit(
-        storage.clone(),
-        LysisLimitInput {
-            base_limit: emission_day.metadosis_limit_minor(),
-            lysis_limit_minor: calculation.lysis_limit_minor,
-            nominal_total: completion.total_nominal_minor,
-        },
-    )?;
-    if completion
-        .used
-        .checked_add(split.desis_limit_minor)
-        .is_none_or(|allocation| allocation > completion.total_nominal_minor)
-    {
-        return Err(mismatch());
-    }
-    PromisLimitContract::new(storage.clone()).checked_credit(completion.unused)?;
-    let desis_limit = apply_auction_brief(storage, emission_day.day, &split)?;
-    let promis_limit_added = emission_day
-        .metadosis_limit_minor()
-        .checked_sub(completion.used)
+    let metadosis_limit = emission_day.metadosis_limit_minor();
+    let promis_limit_added = metadosis_limit
+        .checked_sub(totals.used_minor)
         .ok_or(outbe_emission::errors::EmissionError::AmountOverflow)?;
     let updated = outbe_emission::api::record_metadosis_completed(
         metadosis.storage.clone(),
         emission_day.day,
         outbe_emission::api::MetadosisCompletedAmounts {
-            lysis_limit: calculation.lysis_limit_minor,
+            lysis_limit: totals.lysis_limit_minor,
             desis_limit,
-            nods: completion.used,
+            nods: totals.used_minor,
             promis_limit_added,
         },
     )?;
     complete_metadosis(metadosis, &updated)?;
     metadosis.emit(IMetadosis::MetadosisCompleted {
         emissionDay: emission_day.day,
-        tributeNominalTotalMinor: completion.total_nominal_minor,
-        gratisDemandMinor: calculation.gratis_demand,
-        dayGratisLimitMinor: calculation.day_gratis_limit_minor,
-        lysisLimitMinor: calculation.lysis_limit_minor,
-        unusedLysisLimitMinor: completion.unused,
-        lysisAllocationMinor: completion.used,
-        promisLimitReturnedMinor: completion.unused,
+        tributeNominalTotalMinor: totals.nominal_minor,
+        gratisDemandMinor: totals.gratis_demand_minor,
+        dayGratisLimitMinor: metadosis_limit,
+        lysisLimitMinor: totals.lysis_limit_minor,
+        unusedLysisLimitMinor: totals.unused_minor,
+        lysisAllocationMinor: totals.used_minor,
+        promisLimitReturnedMinor: totals.unused_minor,
         status: "COMPLETED".into(),
         blockNumber: ctx.block.block_number,
     })
 }
 
-fn settle_partition(
-    ctx: &BlockRuntimeContext<'_>,
-    wwd: WorldwideDay,
-    lysis_limit_minor: alloy_primitives::U256,
-) -> Result<SettlementCompletion> {
+/// Reference currencies priced for `day`, filtered by the Nod entry bound.
+fn priced_currencies(ctx: &BlockRuntimeContext<'_>, day: u32) -> Result<PricedCurrencies> {
+    Ok(
+        outbe_oracle::api::priced_reference_currencies_of_day(ctx.storage.clone(), day)?
+            .into_iter()
+            .filter(|&(_, vwap)| outbe_nod::pricing::is_issuable_entry(vwap))
+            .collect(),
+    )
+}
+
+fn seal_lysis(ctx: &BlockRuntimeContext<'_>, emission_day: &EmissionDay) -> Result<LysisTotals> {
+    let wwd = emission_day.wwd;
     let mut tribute = TributeContract::new(ctx.storage.clone());
     let totals = match wwd.value() {
         0 => None,
@@ -94,37 +92,37 @@ fn settle_partition(
         if wwd.value() != 0 {
             tribute.retire_completed_partition(wwd)?;
         }
-        return Ok(SettlementCompletion {
-            total_nominal_minor: alloy_primitives::U256::ZERO,
-            used: alloy_primitives::U256::ZERO,
-            unused: lysis_limit_minor,
-        });
+        return Ok(LysisTotals::default());
     };
-    if !totals.is_sealed || !totals.initialized {
-        return Err(mismatch());
-    }
     tribute.freeze_day_nominal(&totals)?;
-    let (_, onchain_allocated_minor) = tribute.compute_and_record_metadosis_fractions(
+    let priced = priced_currencies(ctx, emission_day.day)?;
+    let outcome = tribute.compute_and_record_metadosis_fractions(
         wwd,
-        lysis_limit_minor,
+        outbe_primitives::time::EmissionDate::new(emission_day.day),
+        &priced,
+        emission_day.metadosis_limit_minor(),
         ctx.block.timestamp,
     )?;
     outbe_fidelity::api::finalize_wwd_max_fidelity(ctx.storage.clone(), wwd, ctx.block.timestamp)?;
-    let used = onchain_allocated_minor.min(lysis_limit_minor);
-    Ok(SettlementCompletion {
-        total_nominal_minor: totals.tribute_nominal_total_minor,
-        used,
-        unused: lysis_limit_minor.saturating_sub(used),
-    })
+    Ok(LysisTotals::new(outcome))
 }
 
 pub(crate) fn execute(
     metadosis: &mut MetadosisContract<'_>,
     ctx: &BlockRuntimeContext<'_>,
     emission_day: &EmissionDay,
-    calculation: MetadosisCalculation,
 ) -> Result<()> {
     ctx.storage.require_metadosis_process_ready()?;
-    let completion = settle_partition(ctx, emission_day.wwd, calculation.lysis_limit_minor)?;
-    finalize_lysis_settlement(metadosis, ctx, emission_day, calculation, completion)
+    let totals = seal_lysis(ctx, emission_day)?;
+    let split = allocate_day_metadosis_limit(
+        ctx.storage.clone(),
+        LysisLimitInput {
+            base_limit: emission_day.metadosis_limit_minor(),
+            lysis_limit_minor: totals.lysis_limit_minor,
+            nominal_total: totals.nominal_minor,
+            unused_lysis_minor: totals.unused_minor,
+        },
+    )?;
+    let desis_limit = brief_auction(ctx.storage.clone(), emission_day.day, &split)?;
+    record_completion(metadosis, ctx, emission_day, &totals, desis_limit)
 }

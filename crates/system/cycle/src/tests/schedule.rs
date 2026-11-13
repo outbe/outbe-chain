@@ -111,7 +111,7 @@ fn dispatch_propagates_schedule_overflow_instead_of_skipping_the_trigger() {
             .write(&EMISSION_LIMIT_1_ID, u64::MAX)
             .unwrap();
 
-        let err = dispatch_triggers(&ctx).expect_err("schedule overflow must reach the caller");
+        let err = run_due_tasks(&ctx).expect_err("schedule overflow must reach the caller");
         let PrecompileError::RevertBytes(bytes) = err else {
             panic!("expected typed revert bytes, got {err:?}");
         };
@@ -119,9 +119,9 @@ fn dispatch_propagates_schedule_overflow_instead_of_skipping_the_trigger() {
             .expect("overflow payload");
         assert_eq!(
             decoded.period,
-            crate::triggers::PROTOCOL_CYCLE_PERIOD_SECONDS
+            crate::triggers::PROCESS_EMISSION_DAY_PERIOD_SECONDS
         );
-        assert_eq!(decoded.offset, 0);
+        assert_eq!(decoded.offset, PROCESS_EMISSION_DAY_START_OFFSET_SECONDS);
         assert_eq!(decoded.timestamp, u64::MAX);
         assert_eq!(
             cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
@@ -141,7 +141,7 @@ fn only_the_two_auction_edges_declare_a_dependency() {
     let specs = active_triggers().expect("nonzero interval");
     assert!(specs[0].depends_on.is_empty());
     assert!(specs[1].depends_on.is_empty());
-    assert_eq!(specs[2].depends_on, &[TriggerId::ProtocolCycle]);
+    assert_eq!(specs[2].depends_on, &[TriggerId::ProcessEmissionDay]);
     assert!(specs[3].depends_on.is_empty());
     assert_eq!(specs[4].depends_on, &[TriggerId::AdvanceAuctions]);
     assert!(specs[5].depends_on.is_empty());
@@ -197,7 +197,7 @@ fn first_encounter_anchors_without_firing() {
 #[test]
 fn block_1_cycle_tick_creates_genesis_worldwide_day() {
     // Production regression: at block 1 the daily Cycle trigger only anchors.
-    // It never invokes `start_metadosis`. So `handle_cycle_tick`
+    // It never invokes `process_emission_day`. So `handle_cycle_tick`
     // must itself create the genesis metadosis worldwide day. Before the fix
     // the active-WWD set was empty until the first block past the next UTC
     // midnight.
@@ -277,7 +277,7 @@ fn does_not_fire_before_next_slot_after_anchor() {
     with_anchored_cycle(|handle| {
         // Block at 00:59:59 UTC - still before the next slot.
         let ctx_before = runtime_context(block_ctx(2, GENESIS_TS + 3_600 - 1), handle.clone());
-        dispatch_triggers(&ctx_before).unwrap();
+        run_due_tasks(&ctx_before).unwrap();
 
         assert_eq!(
             last_executed_at(&ctx_before),
@@ -299,7 +299,7 @@ fn fires_at_first_block_past_next_slot() {
         let cycle: Cycle<'_> = ctx_fire.storage.contract::<Cycle<'_>>();
         assert_eq!(
             cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
-            GENESIS_TS + 3_600,
+            GENESIS_TS + 3_600 + PROCESS_EMISSION_DAY_START_OFFSET_SECONDS,
             "last_executed_at must be the slot, not block.timestamp"
         );
         assert_eq!(
@@ -347,11 +347,12 @@ fn multi_slot_gap_fires_only_for_latest_slot_after_anchor() {
     storage.enter(|handle| {
         // Missed hourly scheduler slots collapse to one execution at the latest
         // due boundary. Calendar policy then forfeits this multi-day gap.
-        let ctx_fire = dispatch_at(handle, 2, GENESIS_TS + 4 * SECONDS_PER_DAY);
+        let fire_at = GENESIS_TS + 4 * SECONDS_PER_DAY + PROCESS_EMISSION_DAY_START_OFFSET_SECONDS;
+        let ctx_fire = dispatch_at(handle, 2, fire_at);
 
         assert_eq!(
             last_executed_at(&ctx_fire),
-            GENESIS_TS + 4 * SECONDS_PER_DAY,
+            fire_at,
             "multi-slot gap fires once at the latest due hourly slot"
         );
     });
