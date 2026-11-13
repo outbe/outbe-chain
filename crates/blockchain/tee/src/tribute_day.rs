@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use alloy_primitives::{keccak256, B256, U256};
 use outbe_primitives::{
     nod_encryption::EncryptedNodGroupLoadV1,
-    time::WorldwideDay,
+    time::{EmissionDate, WorldwideDay},
     tribute_day_encryption::{
         EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1, EncryptedTributeLeagueAmountV1,
     },
@@ -136,8 +136,7 @@ pub struct LysisSeriesLoadOutputV1 {
 pub struct LysisFractionsRequestV1 {
     pub chain_id: u64,
     pub worldwide_day: WorldwideDay,
-    /// The emission day E that keys the sealed fractions.
-    pub emission_day: u32,
+    pub emission_day: EmissionDate,
     pub completed_at: u64,
     pub metadosis_limit_minor: U256,
     /// A Tribute without a series scope is unpriced: it is left out of the groups and the nominal.

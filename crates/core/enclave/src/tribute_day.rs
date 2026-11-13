@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use alloy_primitives::{B256, U256};
+use outbe_primitives::time::EmissionDate;
 use outbe_primitives::tribute_day_encryption::{
     EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1, EncryptedTributeLeagueAmountV1,
 };
@@ -185,7 +186,7 @@ pub fn apply_league_operation(
 
 pub fn seal_day_fractions(
     network_secret: &[u8; 32],
-    (chain_id, emission_day, completed_at): (u64, u32, u64),
+    (chain_id, emission_day, completed_at): (u64, EmissionDate, u64),
     inputs_hash: B256,
     fractions: &BTreeMap<u16, u64>,
 ) -> Result<EncryptedTributeDayFractionsV1> {

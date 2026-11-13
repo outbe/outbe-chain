@@ -160,7 +160,7 @@ pub fn issue_nod_from_tribute(
     if issued_terms != source_terms
         || canonical_id != Ok(terms.nod_id)
         || request.day_fractions.chain_id != terms.chain_id
-        || request.day_fractions.emission_day != terms.emission_day
+        || request.day_fractions.emission_day.value() != terms.emission_day
     {
         return Err(TeeError::TributeOfferReject(
             "NOD source terms mismatch".into(),

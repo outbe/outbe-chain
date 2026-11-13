@@ -1,15 +1,9 @@
 use super::*;
 
-pub(super) fn resolve_price_day(
-    contract: &TributeContract<'_>,
-    day: WorldwideDay,
-    completed_at: u64,
-) -> Result<u32> {
-    let recorded = contract.day_emission_day.read(&day)?;
-    if recorded != 0 {
-        return Ok(recorded);
-    }
-    outbe_nod::openings::entry_price_day(completed_at).map_err(date_step_error)
+fn sealed_emission_day(contract: &TributeContract<'_>, day: WorldwideDay) -> Result<EmissionDate> {
+    Ok(contract
+        .lysis_emission_day(day)?
+        .ok_or(TributeError::MetadosisNotCompleted)?)
 }
 
 /// Reference currencies priced for the emission day, with their entry price.
@@ -34,7 +28,7 @@ fn collect_lysis_tributes(
     contract: &TributeContract<'_>,
     storage: &StorageHandle<'_>,
     day: WorldwideDay,
-    price_day: u32,
+    price_day: EmissionDate,
     priced: &PricedCurrencies,
 ) -> Result<(
     Vec<outbe_tee::tribute_day::LysisTributeInputV1>,
@@ -65,7 +59,7 @@ fn collect_lysis_tributes(
 /// The series of a priced Tribute. A Tribute whose reference currency is not priced has none.
 fn resolve_tribute_series_scope(
     record: &crate::TributeRecord,
-    price_day: u32,
+    price_day: EmissionDate,
     priced: &PricedCurrencies,
     series_meta: &mut SeriesMetaMap,
 ) -> Result<Option<alloy_primitives::B256>> {
@@ -89,7 +83,7 @@ fn resolve_tribute_series_scope(
 
 pub(super) fn compute_and_record_metadosis_fractions(
     contract: &mut TributeContract<'_>,
-    day: WorldwideDay,
+    (day, emission_day): (WorldwideDay, EmissionDate),
     priced: &PricedCurrencies,
     metadosis_limit_minor: U256,
     completed_at: u64,
@@ -102,27 +96,30 @@ pub(super) fn compute_and_record_metadosis_fractions(
         let totals = contract.get_day_totals(day)?;
         contract.freeze_day_nominal(&totals)?;
     }
-    let price_day = resolve_price_day(contract, day, completed_at)?;
+    match contract.lysis_emission_day(day)? {
+        Some(linked) if linked != emission_day => {
+            return Err(TributeError::LysisEmissionDayMismatch.into())
+        }
+        Some(_) => {}
+        None => contract.day_emission_day.write(&day, emission_day)?,
+    }
     let (tributes, series_meta) =
-        collect_lysis_tributes(contract, &storage, day, price_day, priced)?;
+        collect_lysis_tributes(contract, &storage, day, emission_day, priced)?;
     let result = crate::enclave_client::execute_lysis_fractions(
         outbe_tee::tribute_day::LysisFractionsRequestV1 {
             chain_id: storage.chain_id()?,
             worldwide_day: day,
-            emission_day: price_day,
+            emission_day,
             metadosis_limit_minor,
             completed_at,
             tributes,
         },
     )
     .map_err(TributeError::DayEnclave)?;
-    if contract.lysis_emission_day(day)?.is_none() {
-        contract.day_emission_day.write(&day, price_day)?;
-    }
     contract
         .day_metadosis_completed_at
-        .write(&price_day, completed_at)?;
-    contract.store_day_fractions_record(price_day, &result.day_fractions)?;
+        .write(&emission_day, completed_at)?;
+    contract.store_day_fractions_record(emission_day, &result.day_fractions)?;
     for zero_id in &result.zero_load_tribute_ids {
         contract.tribute_lysis_zero_load.write(zero_id, true)?;
     }
@@ -155,12 +152,12 @@ pub(super) fn compute_and_record_metadosis_fractions(
 
 /// The Nod series of a Tribute's emission day and currencies.
 fn series_of(
-    price_day: u32,
+    price_day: EmissionDate,
     issuance_currency: u16,
     reference_currency: u16,
 ) -> Result<outbe_primitives::series_id::SeriesId> {
     outbe_primitives::series_id::SeriesId::for_pair(
-        price_day,
+        price_day.value(),
         issuance_currency,
         reference_currency,
     )
@@ -172,7 +169,7 @@ fn require_issuable_tribute(
     storage: &StorageHandle<'_>,
     caller: alloy_primitives::Address,
     tribute_id: WwdEntityId,
-) -> Result<(crate::TributeRecord, u64)> {
+) -> Result<crate::TributeRecord> {
     let day = tribute_id.worldwide_day();
     if contract.retired_days.read(&day)? {
         return Err(TributeError::TributeNotFound.into());
@@ -195,7 +192,7 @@ fn require_issuable_tribute(
         )
         .into());
     }
-    Ok((record, completed_at))
+    Ok(record)
 }
 
 fn unwrap_issued_nod(
@@ -221,17 +218,14 @@ pub(super) fn issue_nod_from_tribute(
     let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
     storage.with_checkpoint(|| {
         let day = tribute_id.worldwide_day();
-        let (record, completed_at) =
-            require_issuable_tribute(contract, &storage, caller, tribute_id)?;
+        let record = require_issuable_tribute(contract, &storage, caller, tribute_id)?;
         let raw_league = contract.tribute_leagues.read(&tribute_id)?;
-        let emission_day = contract
-            .lysis_emission_day(day)?
-            .ok_or(TributeError::MetadosisNotCompleted)?;
+        let emission_day = sealed_emission_day(contract, day)?;
         let day_fractions = contract
             .day_fractions_record(emission_day)?
             .ok_or(TributeError::MetadosisNotCompleted)?;
         let (series_id, gratis_day_price) =
-            resolve_series_and_price(contract, &storage, &record, completed_at)?;
+            resolve_series_and_price(&storage, &record, emission_day)?;
         let encrypted_tribute = record
             .encrypted()
             .ok_or(TributeError::InvalidEncryptedEncoding)?;
@@ -267,15 +261,12 @@ pub(super) fn issue_nod_from_tribute(
     })
 }
 
-/// The Tribute's series and the entry price Lysis sealed on it. A series Lysis left unsealed, its
-/// price then unquoted, gives no Nod: its load already went back to the Promis Limit.
+/// The Tribute's series and the entry price Lysis sealed on it. A series Lysis left unsealed gives no Nod.
 fn resolve_series_and_price(
-    contract: &TributeContract<'_>,
     storage: &StorageHandle<'_>,
     record: &crate::TributeRecord,
-    completed_at: u64,
+    price_day: EmissionDate,
 ) -> Result<(outbe_primitives::series_id::SeriesId, U256)> {
-    let price_day = resolve_price_day(contract, record.worldwide_day, completed_at)?;
     let series_id = series_of(
         price_day,
         record.issuance_currency,
@@ -351,26 +342,25 @@ fn check_tribute_forfeited(
     let day = record.worldwide_day;
     let completed_at = contract.lysis_completed_at(day)?;
     if completed_at == 0 {
-        let recorded = contract.day_emission_day.read(&day)?;
-        if recorded == 0 {
+        let Some(recorded) = contract.lysis_emission_day(day)? else {
             return Ok((false, None));
-        }
-        let is_aborted = outbe_emission::api::get_emission_day_record(storage.clone(), recorded)?
-            .is_some_and(|e| {
-                matches!(
-                    e.metadosis_state,
-                    outbe_emission::schema::metadosis_state::CANCELLED
-                        | outbe_emission::schema::metadosis_state::FAILED
-                )
-            });
+        };
+        let is_aborted =
+            outbe_emission::api::get_emission_day_record(storage.clone(), recorded.value())?
+                .is_some_and(|e| {
+                    matches!(
+                        e.metadosis_state,
+                        outbe_emission::schema::metadosis_state::CANCELLED
+                            | outbe_emission::schema::metadosis_state::FAILED
+                    )
+                });
         return Ok((is_aborted, None));
     }
     if contract.tribute_lysis_zero_load.read(&record.tribute_id)? {
         return Ok((true, None));
     }
-    let price_day = resolve_price_day(contract, day, completed_at)?;
     let series_id = series_of(
-        price_day,
+        sealed_emission_day(contract, day)?,
         record.issuance_currency,
         record.reference_currency,
     )?;

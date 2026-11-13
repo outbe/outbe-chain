@@ -632,7 +632,9 @@ impl core::fmt::Debug for EnclaveRequest {
                 .debug_struct("ExecuteLysisFractionsV1")
                 .field("chain_id", &request.chain_id)
                 .field("worldwide_day", &request.worldwide_day)
+                .field("emission_day", &request.emission_day)
                 .field("completed_at", &request.completed_at)
+                .field("metadosis_limit_minor", &request.metadosis_limit_minor)
                 .field("tributes", &request.tributes.len())
                 .finish(),
             Self::ReadTributeDayFractionsV1 { record } => f

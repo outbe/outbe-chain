@@ -8,7 +8,7 @@ use crate::tribute_day::LysisFractionsResultV1;
 use alloy_primitives::{B256, U256};
 use outbe_primitives::{
     nod_encryption::{EncryptedNodGroupLoadV1, EncryptedNodV1, NodTermsV1},
-    time::WorldwideDay,
+    time::{EmissionDate, WorldwideDay},
     tribute_day_encryption::{
         EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1, EncryptedTributeLeagueAmountV1,
     },
@@ -196,7 +196,7 @@ fn entries() -> Vec<EnclaveWitnessEntryV1> {
             result: Box::new(LysisFractionsResultV1 {
                 day_fractions: EncryptedTributeDayFractionsV1 {
                     chain_id: 1,
-                    emission_day: 20261028,
+                    emission_day: EmissionDate::new(20261028),
                     completed_at: 10,
                     operation_hash: B256::ZERO,
                     encrypted_fractions: vec![6],

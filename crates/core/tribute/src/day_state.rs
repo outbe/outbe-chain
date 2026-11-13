@@ -3,7 +3,7 @@
 use alloy_primitives::{keccak256, B256, U256};
 use outbe_primitives::{
     error::Result,
-    time::WorldwideDay,
+    time::{EmissionDate, WorldwideDay},
     tribute_day_encryption::{
         EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1, EncryptedTributeLeagueAmountV1,
     },
@@ -197,13 +197,13 @@ impl TributeContract<'_> {
             .write(&bytes)
     }
 
-    pub fn encrypted_day_fractions(&self, emission_day: u32) -> Result<Vec<u8>> {
+    pub fn encrypted_day_fractions(&self, emission_day: EmissionDate) -> Result<Vec<u8>> {
         self.day_fraction_map_ct.bytes(&emission_day).read()
     }
 
     pub(crate) fn day_fractions_record(
         &self,
-        emission_day: u32,
+        emission_day: EmissionDate,
     ) -> Result<Option<EncryptedTributeDayFractionsV1>> {
         let bytes = self.encrypted_day_fractions(emission_day)?;
         self.decode_validated_record(
@@ -218,7 +218,7 @@ impl TributeContract<'_> {
 
     pub(crate) fn store_day_fractions_record(
         &self,
-        emission_day: u32,
+        emission_day: EmissionDate,
         record: &EncryptedTributeDayFractionsV1,
     ) -> Result<()> {
         if record.emission_day != emission_day
@@ -230,9 +230,11 @@ impl TributeContract<'_> {
         self.day_fraction_map_ct.bytes(&emission_day).write(&bytes)
     }
 
-    /// The emission day whose Lysis covers the Tributes of `day`, once it is known.
-    pub(crate) fn lysis_emission_day(&self, day: WorldwideDay) -> Result<Option<u32>> {
-        Ok(Some(self.day_emission_day.read(&day)?).filter(|&emission_day| emission_day != 0))
+    pub(crate) fn lysis_emission_day(&self, day: WorldwideDay) -> Result<Option<EmissionDate>> {
+        Ok(
+            Some(self.day_emission_day.read(&day)?)
+                .filter(|emission_day| emission_day.value() != 0),
+        )
     }
 
     /// When the Lysis of the Tributes of `day` completed, or 0 before it did.

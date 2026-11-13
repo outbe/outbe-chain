@@ -1,6 +1,6 @@
 //! Typed fresh-devnet genesis adaptation for cross-crate test harnesses.
 
-use outbe_primitives::time::{timestamp_to_date_key, WorldwideDay};
+use outbe_primitives::time::{timestamp_to_date_key, EmissionDate, WorldwideDay};
 use outbe_primitives::{error::Result, storage::StorageHandle};
 use outbe_tribute::TributeContract;
 
@@ -148,7 +148,7 @@ impl GenesisOperation {
         let tribute = TributeContract::new(contract.storage.clone());
         tribute
             .day_emission_day
-            .write(&day.worldwide_day, day.day)?;
+            .write(&day.worldwide_day, EmissionDate::new(day.day))?;
         Ok(Some(true))
     }
 

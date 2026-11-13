@@ -4,10 +4,10 @@ pub use forfeiture::{LysisOutcome, PricedCurrencies};
 use alloy_primitives::U256;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::{EmissionDate, WorldwideDay};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 
-use crate::errors::{date_step_error, TributeError};
+use crate::errors::TributeError;
 use crate::precompile::ITribute;
 use crate::schema::TributeContract;
 
@@ -82,18 +82,11 @@ impl TributeContract<'_> {
         Ok(())
     }
 
-    /// Records the Stage 3 Metadosis league fractions for `day` as a sealed enclave record.
-    /// Resolves the Oracle UTC day (`emission_day`) that prices `day`.
-    pub fn resolve_price_day(&self, day: WorldwideDay, completed_at: u64) -> Result<u32> {
-        forfeiture::resolve_price_day(self, day, completed_at)
-    }
-
-    /// Seals the Lysis of `day` in the enclave over its priced Tributes: the enclave takes the
-    /// Lysis Limit of their nominal under `metadosis_limit_minor`, the fractions are stored with
-    /// `completed_at`, and the series loads are sealed. Unpriced Tributes get no series.
+    /// Seals the Lysis of emission day `emission_day` over the priced Tributes of `day`.
     pub fn compute_and_record_metadosis_fractions(
         &mut self,
         day: WorldwideDay,
+        emission_day: EmissionDate,
         priced: &PricedCurrencies,
         metadosis_limit_minor: U256,
         completed_at: u64,
@@ -101,7 +94,7 @@ impl TributeContract<'_> {
         self.storage_handle().require_metadosis_process_ready()?;
         forfeiture::compute_and_record_metadosis_fractions(
             self,
-            day,
+            (day, emission_day),
             priced,
             metadosis_limit_minor,
             completed_at,

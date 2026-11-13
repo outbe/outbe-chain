@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::TRIBUTE_ADDRESS;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::{EmissionDate, WorldwideDay};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use serde::{Deserialize, Serialize};
 
@@ -116,13 +116,13 @@ pub struct TributeContract {
         outbe_primitives::storage::dsl::Map<u64, outbe_primitives::storage::dsl::Bytes>,
     #[attribute(order = 19)]
     pub day_fraction_map_ct:
-        outbe_primitives::storage::dsl::Map<u32, outbe_primitives::storage::dsl::Bytes>,
+        outbe_primitives::storage::dsl::Map<EmissionDate, outbe_primitives::storage::dsl::Bytes>,
     #[attribute(order = 20)]
     pub tribute_lysis_zero_load: outbe_primitives::storage::dsl::Map<WwdEntityId, bool>,
     #[attribute(order = 21)]
-    pub day_metadosis_completed_at: outbe_primitives::storage::dsl::Map<u32, u64>,
+    pub day_metadosis_completed_at: outbe_primitives::storage::dsl::Map<EmissionDate, u64>,
     #[attribute(order = 22)]
-    pub day_emission_day: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
+    pub day_emission_day: outbe_primitives::storage::dsl::Map<WorldwideDay, EmissionDate>,
 }
 
 pub const fn day_league_key(day: WorldwideDay, league: u16) -> u64 {
