@@ -20,7 +20,7 @@ use crate::errors::{EnclaveResult, RunError};
 use crate::keys::EnclaveKeys;
 use crate::seal::EnclaveBootConfig;
 use crate::transport::{serve, serve_tcp, ServerContext};
-use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
+use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1, NodeIdV1};
 
 /// Per-binary behavior knobs. The production binary uses [`RunOpts::prod`]. The
 /// dev mock binary has its feature-gated constructor. The private field prevents
@@ -102,6 +102,11 @@ fn run_with_args(opts: RunOpts, args: &[String]) -> Result<(), i32> {
                 2
             },
         )?;
+    let development_node_id =
+        resolve_development_node_id(args, opts.is_mock()).map_err(|error| {
+            eprintln!("outbe-tee-enclave: development node identity failed: {error}");
+            2
+        })?;
 
     let attest = crate::gramine::attestation_type();
     log_attestation_banner(&attest);
@@ -114,8 +119,13 @@ fn run_with_args(opts: RunOpts, args: &[String]) -> Result<(), i32> {
     let offer_key: crate::transport::SharedTributeOfferKey =
         std::sync::Arc::new(std::sync::OnceLock::new());
 
-    let initialization =
-        build_initialization_state(opts, development_network_binding, boot.clone(), &keys)?;
+    let initialization = build_initialization_state(
+        opts,
+        development_network_binding,
+        development_node_id,
+        boot.clone(),
+        &keys,
+    )?;
     restore_sealed_offer_key(boot.as_deref(), &initialization, &offer_key)?;
 
     // Resident chain id. When the initialization state has a network binding
@@ -213,6 +223,7 @@ fn init_enclave_keys(opts: RunOpts, args: &[String]) -> Result<(EnclaveKeys, &'s
 fn build_initialization_state(
     opts: RunOpts,
     development_network_binding: Option<NetworkBindingV1>,
+    development_node_id: Option<NodeIdV1>,
     boot: Option<std::sync::Arc<EnclaveBootConfig>>,
     keys: &EnclaveKeys,
 ) -> Result<crate::initialization::InitializationState, i32> {
@@ -221,10 +232,11 @@ fn build_initialization_state(
         return Ok(crate::initialization::factory::development_for_network(
             development_network_binding.expect("mock binding was required above"),
             keys,
+            development_node_id,
         ));
     }
     #[cfg(not(feature = "mock"))]
-    let _ = (opts, development_network_binding);
+    let _ = (opts, development_network_binding, development_node_id);
     let Some(boot) = boot else {
         eprintln!(
             "outbe-tee-enclave: production mode requires --tee-dir for write-once node authorization"
@@ -374,6 +386,32 @@ fn resolve_development_network_binding(
         return Err(RunError::DevNetworkBindingChainIdMismatch.into());
     }
     Ok(Some(binding))
+}
+
+fn resolve_development_node_id(args: &[String], mock: bool) -> Result<Option<NodeIdV1>, String> {
+    let encoded = arg_value(args, "--dev-reth-p2p-public");
+    if !mock {
+        return encoded
+            .is_none()
+            .then_some(None)
+            .ok_or_else(|| "--dev-reth-p2p-public is accepted only by the mock binary".to_owned());
+    }
+    let Some(encoded) = encoded else {
+        return Ok(None);
+    };
+    let bytes = hex::decode(encoded.strip_prefix("0x").unwrap_or(&encoded))
+        .map_err(|error| format!("decode --dev-reth-p2p-public hex: {error}"))?;
+    let reth_p2p_public: [u8; 33] = bytes.try_into().map_err(|bytes: Vec<u8>| {
+        format!(
+            "--dev-reth-p2p-public must be 33 bytes, got {}",
+            bytes.len()
+        )
+    })?;
+    let node_id = NodeIdV1 { reth_p2p_public };
+    node_id
+        .encode_canonical()
+        .map_err(|error| format!("invalid --dev-reth-p2p-public: {error}"))?;
+    Ok(Some(node_id))
 }
 
 /// Resolve the one seed backing every persistent enclave identity key.
@@ -591,7 +629,8 @@ mod tests {
     use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
 
     use super::{
-        is_loopback_endpoint, resolve_development_network_binding, resolve_enclave_identity_seed,
+        is_loopback_endpoint, resolve_development_network_binding, resolve_development_node_id,
+        resolve_enclave_identity_seed,
     };
 
     fn development_binding(mode: AttestationMode) -> NetworkBindingV1 {
@@ -648,6 +687,22 @@ mod tests {
         )
         .unwrap_err();
         assert!(chain_error.contains("does not match --chain-id"));
+    }
+
+    #[test]
+    fn mock_node_identity_accepts_a_canonical_compressed_key() {
+        let encoded = "0279be667ef9dcbbac55a06295ce870b07029bfcdB2dce28d959f2815b16f81798";
+        let node_id = resolve_development_node_id(
+            &[
+                "outbe-tee-enclave-mock".to_owned(),
+                "--dev-reth-p2p-public".to_owned(),
+                encoded.to_owned(),
+            ],
+            true,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(hex::encode(node_id.reth_p2p_public), encoded.to_lowercase());
     }
 
     #[test]

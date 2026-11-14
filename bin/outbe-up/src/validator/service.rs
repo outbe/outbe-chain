@@ -7,6 +7,8 @@ use std::{
 };
 
 use eyre::{bail, ensure, Context, Result};
+use k256::ecdsa::SigningKey;
+use zeroize::Zeroizing;
 
 use crate::{support::process, validator::rpc::RpcClient};
 
@@ -36,6 +38,7 @@ pub fn enclave() -> Result<()> {
         "gramine-direct-dev" => {
             let root = Path::new(process::ROOT);
             let network_binding = required_env("OUTBE_DEV_NETWORK_BINDING")?;
+            let reth_p2p_public = compressed_public_key(&root.join("keys/reth-p2p-secret.hex"))?;
             let mut command = Command::new(root.join("outbe-tee-enclave-mock"));
             command
                 .current_dir(root)
@@ -47,7 +50,12 @@ pub fn enclave() -> Result<()> {
                     "TEE_DEV_OFFER_SECRET",
                     private_hex(&root.join("tee/dev-offer-secret.hex"))?,
                 )
-                .args(["--dev-network-binding", &network_binding]);
+                .args([
+                    "--dev-network-binding",
+                    &network_binding,
+                    "--dev-reth-p2p-public",
+                    &reth_p2p_public,
+                ]);
             command
         }
         _ => {
@@ -208,6 +216,20 @@ fn private_hex(path: &Path) -> Result<String> {
         path.display()
     );
     Ok(value)
+}
+
+fn compressed_public_key(path: &Path) -> Result<String> {
+    let encoded = Zeroizing::new(
+        fs::read_to_string(path)
+            .wrap_err_with(|| format!("failed to read Reth P2P key: {}", path.display()))?,
+    );
+    let mut secret = Zeroizing::new([0_u8; 32]);
+    hex::decode_to_slice(encoded.trim(), secret.as_mut())
+        .wrap_err("Reth P2P key is not 32-byte hex")?;
+    let signing = SigningKey::from_slice(secret.as_ref()).wrap_err("invalid Reth P2P key")?;
+    Ok(hex::encode(
+        signing.verifying_key().to_encoded_point(true).as_bytes(),
+    ))
 }
 
 fn valid_key(value: &str) -> bool {

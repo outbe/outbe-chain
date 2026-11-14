@@ -50,7 +50,7 @@ pub fn serve_connection_for_network_test<S: EnclaveTransportStream>(
     network_binding: outbe_primitives::tee_attestation_v1::NetworkBindingV1,
 ) -> Result<(), TransportError> {
     let initialization =
-        crate::initialization::factory::development_for_network(network_binding, keys);
+        crate::initialization::factory::development_for_network(network_binding, keys, None);
     serve_connection_with(stream, keys, offer_key, None, &initialization)
 }
 
