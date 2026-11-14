@@ -59,6 +59,8 @@ fn render_fixture(root: &Path, overrides: Option<Value>) -> (PathBuf, PathBuf) {
         fs::write(dir.join("evm-key.hex"), format!("{:064x}\n", index + 1)).expect("write evm key");
     }
     let genesis = output_dir.join("genesis.json");
+    fs::create_dir_all(output_dir.join("crs")).expect("mkdir crs");
+    fs::write(output_dir.join("crs/bn254_g1.dat"), b"fixture").expect("write crs fixture");
     let tee_policy = initial_tee_policy_v1(
         InitialTeeProfileV1::GramineDirectDev,
         424242,
@@ -289,6 +291,7 @@ fn distribution_archives_and_signed_enclave_staging() {
             .collect();
         let joined = names.join("\n");
         for required in [
+            "crs/bn254_g1.dat",
             "genesis.json",
             "reth-bootnodes.txt",
             &format!("validator-{index}"),

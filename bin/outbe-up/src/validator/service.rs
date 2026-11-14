@@ -127,7 +127,7 @@ pub fn feeder() -> Result<()> {
 }
 
 pub async fn wait_enclave(timeout: u64) -> Result<()> {
-    wait_for("TEE enclave", timeout, || async {
+    wait_for("TEE enclave", timeout, None, || async {
         tokio::net::TcpStream::connect(ENCLAVE_ADDRESS)
             .await
             .map(|_| ())
@@ -140,6 +140,7 @@ pub async fn wait_validator_dependencies(timeout: u64) -> Result<()> {
     wait_for(
         "TEE enclave and Radicle control socket",
         timeout,
+        None,
         || async {
             let metadata =
                 fs::metadata(RADICLE_SOCKET).wrap_err("Radicle control socket is absent")?;
@@ -161,7 +162,11 @@ pub async fn wait_rpc(timeout: u64) -> Result<()> {
         .parse::<u64>()
         .wrap_err("OUTBE_CHAIN_ID must be a positive decimal integer")?;
     let rpc = RpcClient::new(LOCAL_RPC)?;
-    wait_for("local validator RPC", timeout, || async {
+    let main_pid = env::var("MAINPID")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|pid| *pid > 0);
+    wait_for("local validator RPC", timeout, main_pid, || async {
         let actual = rpc.chain_id().await?;
         ensure!(
             actual == expected,
@@ -172,7 +177,12 @@ pub async fn wait_rpc(timeout: u64) -> Result<()> {
     .await
 }
 
-async fn wait_for<F, Fut>(description: &str, timeout: u64, mut probe: F) -> Result<()>
+async fn wait_for<F, Fut>(
+    description: &str,
+    timeout: u64,
+    watched_pid: Option<u32>,
+    mut probe: F,
+) -> Result<()>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<()>>,
@@ -184,6 +194,11 @@ where
             Ok(Err(error)) => error.to_string(),
             Err(_) => "probe timed out".to_owned(),
         };
+        if watched_pid.is_some_and(|pid| !Path::new("/proc").join(pid.to_string()).exists()) {
+            bail!(
+                "outbe-chain exited before {description} became ready: {last_error}; inspect the service journal"
+            );
+        }
         if Instant::now() >= deadline {
             bail!("timed out waiting for {description}: {last_error}");
         }
@@ -241,4 +256,19 @@ fn valid_address(value: &str) -> bool {
     value.len() == 42
         && value.starts_with("0x")
         && value[2..].bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn wait_stops_when_watched_process_has_exited() {
+        let error = wait_for("test RPC", 60, Some(u32::MAX), || async {
+            Err(eyre::eyre!("RPC unavailable"))
+        })
+        .await
+        .expect_err("missing process must stop the wait");
+        assert!(error.to_string().contains("outbe-chain exited"));
+    }
 }

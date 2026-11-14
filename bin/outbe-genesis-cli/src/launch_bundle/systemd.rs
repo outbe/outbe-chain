@@ -305,6 +305,12 @@ note() {{ printf '  %-42s %s\\n' \"$1\" \"$2\"; }}\n\
 \n\
 note \"genesis sha256\" \"$(sha256sum genesis.json | cut -c1-16)\"\n\
 echo \"  ^ genesis must be identical on every machine\"\n\
+crs=crs/bn254_g1.dat\n\
+if [ -f \"$crs\" ] && printf '%s  %s\\n' \\\n+  '9fd9fad54cfdc61ec309e818fe7bbddad1ca7dde72cc9b1afd126b744f887078' \"$crs\" \\\n+  | sha256sum -c - >/dev/null 2>&1; then\n\
+  note \"BN254 CRS\" \"verified\"\n\
+else\n\
+  note \"BN254 CRS\" \"MISSING or checksum mismatch\"; fail=1\n\
+fi\n\
 \n\
 {enclave_check}\n\
 \n\

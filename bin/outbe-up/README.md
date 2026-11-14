@@ -3,6 +3,8 @@
 `outbe-up` prepares and promotes a joining Outbe validator from a self-contained operator bundle.
 The bundle carries the matching `outbe-up` binary; systemd units and service helper logic are
 compiled into that binary so they cannot drift from the lifecycle implementation.
+It also carries the pinned `crs/bn254_g1.dat`; `prepare` verifies its canonical SHA-256 before
+publishing the bundle under `/opt/outbe-chain`.
 
 ```text
 sudo outbe-up validator prepare --bundle <operator-bundle.tar.zst> --config <operator-config.yaml>
