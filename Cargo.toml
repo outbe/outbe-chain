@@ -76,6 +76,7 @@ members = [
     # testing
     "testing/lysis-v1-reference",
     "testing/protocol-benchmarks",
+    # zk
     "crates/zk/poseidon",
     "crates/zk/outbe-zk",
     "crates/zk/outbe-zk-backend",
@@ -147,6 +148,7 @@ default-members = [
     "crates/core/stablecoin",
     "crates/core/stablecoinfactory",
     "crates/core/common",
+    "crates/core/enclave",
     # binaries
     "bin/outbe-up",
     "bin/outbe-chain",
@@ -189,6 +191,8 @@ warnings = "deny"
 undocumented_unsafe_blocks = "deny"
 
 [workspace.dependencies]
+# Internal - runtime
+outbe-runtime = { path = "crates/runtime" }
 # Internal - blockchain
 outbe-macros = { path = "crates/blockchain/macros" }
 outbe-primitives = { path = "crates/blockchain/primitives" }
@@ -199,7 +203,6 @@ outbe-engine = { path = "crates/blockchain/engine" }
 outbe-rpc = { path = "crates/blockchain/rpc" }
 outbe-txpool = { path = "crates/blockchain/txpool" }
 outbe-execution = { path = "crates/blockchain/execution" }
-outbe-runtime = { path = "crates/runtime" }
 outbe-radicle = { path = "crates/blockchain/radicle" }
 outbe-snapshot = { path = "crates/blockchain/snapshot" }
 outbe-tee = { path = "crates/blockchain/tee", default-features = false }
@@ -214,7 +217,6 @@ outbe-oracle = { path = "crates/system/oracle" }
 outbe-zerofee = { path = "crates/system/zerofee" }
 outbe-emission = { path = "crates/system/emission" }
 outbe-cycle = { path = "crates/system/cycle" }
-outbe-tee-enclave = { path = "bin/outbe-tee-enclave" }
 outbe-teeregistry = { path = "crates/system/teeregistry" }
 outbe-l2registry = { path = "crates/system/l2registry" }
 outbe-hyperlanecontroller = { path = "crates/system/hyperlanecontroller" }
@@ -258,7 +260,9 @@ outbe-stablecoinpolicy = { path = "crates/core/stablecoinpolicy" }
 outbe-stablecoin = { path = "crates/core/stablecoin" }
 outbe-stablecoinfactory = { path = "crates/core/stablecoinfactory" }
 outbe-core-common = { path = "crates/core/common" }
+# Internal - binaries
 outbe-genesis-cli = { path = "bin/outbe-genesis-cli" }
+outbe-tee-enclave = { path = "bin/outbe-tee-enclave" }
 
 # Alloy - core (alloy-rs/core): stays on 1.x
 alloy-primitives = { version = "=1.6.1", default-features = false }
