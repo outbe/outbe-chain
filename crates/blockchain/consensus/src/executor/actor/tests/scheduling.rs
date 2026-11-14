@@ -65,7 +65,7 @@ fn run_live_loop_propagates_fatal_executor_error() {
         let block = executor_test_block(7, 0x77);
         let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
         let engine = ConsensusEngineHandle::new(engine_tx);
-        let (mailbox_tx, mailbox_rx) = futures::channel::mpsc::unbounded();
+        let (mailbox_tx, mailbox_rx) = crate::executor::Mailbox::channel();
 
         let mut actor = super::ExecutorActor {
             context: context.child("test"),
@@ -99,7 +99,7 @@ fn run_live_loop_propagates_fatal_executor_error() {
 
         let (ack, _waiter) = Exact::handle();
         mailbox_tx
-            .unbounded_send(crate::executor::ingress::Message::MarshalUpdate(Box::new(
+            .send(crate::executor::ingress::Message::MarshalUpdate(Box::new(
                 Update::Block(block.into(), ack),
             )))
             .expect("mailbox send must succeed");
@@ -116,80 +116,95 @@ fn run_live_loop_propagates_fatal_executor_error() {
 
 #[test]
 fn mailbox_updates_are_processed_before_ready_heartbeat() {
-    commonware_runtime::deterministic::Runner::default().start(|context| async move {
-        let genesis = B256::repeat_byte(0x01);
-        let first = B256::repeat_byte(0x11);
-        let second = B256::repeat_byte(0x22);
-        let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
-        let engine = ConsensusEngineHandle::new(engine_tx);
-        let (mailbox_tx, mailbox_rx) = futures::channel::mpsc::unbounded();
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
 
-        let mut actor = super::ExecutorActor {
-            context: context.child("test"),
-            engine,
-            genesis_hash: genesis,
-            state: LastCanonicalized::new(genesis),
-            mailbox_rx,
-            execution_finalized_height_tx: None,
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    metrics::with_local_recorder(&recorder, || {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
+            let genesis = B256::repeat_byte(0x01);
+            let first = B256::repeat_byte(0x11);
+            let second = B256::repeat_byte(0x22);
+            let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
+            let engine = ConsensusEngineHandle::new(engine_tx);
+            let (mailbox_tx, mailbox_rx) = crate::executor::Mailbox::channel();
 
-            finalized_execution_barrier: None,
-            ancestry_readiness: None,
-            fcu_heartbeat_interval: std::time::Duration::ZERO,
-            next_fcu_heartbeat_deadline: context.current(),
-            pending_finalized_subscriptions: std::collections::BTreeMap::new(),
-            verification: Default::default(),
-        };
+            let mut actor = super::ExecutorActor {
+                context: context.child("test"),
+                engine,
+                genesis_hash: genesis,
+                state: LastCanonicalized::new(genesis),
+                mailbox_rx,
+                execution_finalized_height_tx: None,
 
-        for (height, digest) in [
-            (Height::new(1), Digest(first)),
-            (Height::new(2), Digest(second)),
-        ] {
-            let (response, _rx) = commonware_utils::channel::oneshot::channel();
-            mailbox_tx
-                .unbounded_send(crate::executor::ingress::Message::CanonicalizeHead(
-                    crate::executor::ingress::CanonicalizeHead {
-                        height,
-                        digest,
-                        response,
-                    },
-                ))
-                .expect("test mailbox send must succeed");
-        }
-
-        let actor_task = context.child("actor_task").spawn(move |_ctx| async move {
-            actor
-                .run_live_loop()
-                .await
-                .expect("live loop must exit cleanly on mailbox close");
-        });
-
-        let mut heads = Vec::new();
-        for _ in 0..3 {
-            let Some(message) = engine_rx.recv().await else {
-                panic!("engine channel closed before expected FCUs");
+                finalized_execution_barrier: None,
+                ancestry_readiness: None,
+                fcu_heartbeat_interval: std::time::Duration::ZERO,
+                next_fcu_heartbeat_deadline: context.current(),
+                pending_finalized_subscriptions: std::collections::BTreeMap::new(),
+                verification: Default::default(),
             };
-            match message {
-                BeaconEngineMessage::ForkchoiceUpdated {
-                    state,
-                    payload_attrs,
-                    tx,
-                    ..
-                } => {
-                    assert!(payload_attrs.is_none());
-                    heads.push(state.head_block_hash);
-                    tx.send(Ok(OnForkChoiceUpdated::valid(PayloadStatus::from_status(
-                        PayloadStatusEnum::Valid,
-                    ))))
-                    .expect("test engine response receiver must be alive");
-                }
-                other => panic!("unexpected engine message: {other:?}"),
-            }
-        }
 
-        assert_eq!(heads, vec![first, second, second]);
-        drop(mailbox_tx);
-        actor_task.await.expect("actor task must complete");
+            for (height, digest) in [
+                (Height::new(1), Digest(first)),
+                (Height::new(2), Digest(second)),
+            ] {
+                let (response, _rx) = commonware_utils::channel::oneshot::channel();
+                mailbox_tx
+                    .send(crate::executor::ingress::Message::CanonicalizeHead(
+                        crate::executor::ingress::CanonicalizeHead {
+                            height,
+                            digest,
+                            response,
+                        },
+                    ))
+                    .expect("test mailbox send must succeed");
+            }
+
+            let actor_task = context.child("actor_task").spawn(move |_ctx| async move {
+                actor
+                    .run_live_loop()
+                    .await
+                    .expect("live loop must exit cleanly on mailbox close");
+            });
+
+            let mut heads = Vec::new();
+            for _ in 0..3 {
+                let Some(message) = engine_rx.recv().await else {
+                    panic!("engine channel closed before expected FCUs");
+                };
+                match message {
+                    BeaconEngineMessage::ForkchoiceUpdated {
+                        state,
+                        payload_attrs,
+                        tx,
+                        ..
+                    } => {
+                        assert!(payload_attrs.is_none());
+                        heads.push(state.head_block_hash);
+                        tx.send(Ok(OnForkChoiceUpdated::valid(PayloadStatus::from_status(
+                            PayloadStatusEnum::Valid,
+                        ))))
+                        .expect("test engine response receiver must be alive");
+                    }
+                    other => panic!("unexpected engine message: {other:?}"),
+                }
+            }
+
+            assert_eq!(heads, vec![first, second, second]);
+            drop(mailbox_tx);
+            actor_task.await.expect("actor task must complete");
+        });
     });
+    let snapshot = snapshotter.snapshot().into_vec();
+    let (_, _, _, value) = snapshot
+        .iter()
+        .find(|(key, _, _, _)| key.key().name() == "outbe_consensus_executor_queue_wait_ms")
+        .expect("live executor dequeue records queue wait");
+    let DebugValue::Histogram(samples) = value else {
+        panic!("queue wait must be a histogram");
+    };
+    assert_eq!(samples.len(), 2);
 }
 
 #[test]

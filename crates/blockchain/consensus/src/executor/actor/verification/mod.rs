@@ -61,6 +61,8 @@ pub(super) enum Event {
 pub(super) struct VerificationWork {
     queued: BTreeMap<Round, Verification>,
     convergence: Option<Walk>,
+    convergence_target_height: Option<Height>,
+    observed_finalized_height: Height,
     pending_round: Option<Round>,
     next_id: u64,
     execution: Option<BoxFuture<'static, Delivery>>,
@@ -106,6 +108,14 @@ impl VerificationWork {
     ) -> Option<(Height, Digest)> {
         if !self.accepts_parent(&parent) {
             return None;
+        }
+        if parent
+            .block
+            .as_ref()
+            .filter(|b| b.digest() == parent.digest && b.number() == parent.height.get())
+            .is_some()
+        {
+            self.convergence_target_height = Some(parent.height);
         }
         let previous_round = self.pending_round;
         self.pending_round = Some(parent.round);
@@ -159,6 +169,7 @@ impl VerificationWork {
         }
         self.finalized_round = Some(round);
         self.network_finalized = Some((height, digest));
+        self.observe_finalized_height(height);
         self.queued.retain(|candidate, request| {
             if *candidate <= round {
                 request.walk.budget.cancel();
@@ -167,6 +178,27 @@ impl VerificationWork {
                 true
             }
         });
+    }
+
+    pub(super) fn observe_finalized_height(&mut self, height: Height) {
+        self.observed_finalized_height = self.observed_finalized_height.max(height);
+    }
+
+    pub(super) fn record_progress(&self, head_height: Height, finalized_height: Height) {
+        use crate::metrics::executor::{
+            record_executor_convergence_depth_blocks, record_executor_finalization_lag_blocks,
+        };
+        record_executor_finalization_lag_blocks(
+            self.observed_finalized_height
+                .get()
+                .saturating_sub(finalized_height.get()),
+        );
+        if let Some(target) = self.convergence_target_height {
+            // Block heights fit comfortably within i64::MAX; this signed delta is metric-only.
+            record_executor_convergence_depth_blocks(
+                target.get() as i64 - head_height.get() as i64,
+            );
+        }
     }
 
     pub(super) fn reconcile(&mut self, finalized: (Height, Digest)) {
@@ -230,7 +262,14 @@ impl VerificationWork {
                         PayloadStatusEnum::Valid,
                     )))
                 } else {
-                    ExecutionStatus::from_engine(engine.new_payload(execution_data).await, digest)
+                    let started = std::time::Instant::now();
+                    let result = engine.new_payload(execution_data).await;
+                    if matches!(owner, Owner::Verification(_)) {
+                        crate::metrics::executor::record_block_verify_execution_ms(
+                            started.elapsed(),
+                        );
+                    }
+                    ExecutionStatus::from_engine(result, digest)
                 };
                 Delivery {
                     request: ExecutionRequest {
@@ -295,5 +334,90 @@ impl Verification {
 impl Event {
     fn from_progress(result: eyre::Result<()>) -> Self {
         result.map_or_else(Event::Failed, |_| Event::Changed)
+    }
+}
+
+#[cfg(test)]
+mod telemetry_tests {
+    use super::*;
+    use commonware_consensus::types::{Epoch, View};
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+    use outbe_primitives::OutbeHeader;
+    use reth_ethereum::{node::api::BeaconEngineMessage, primitives::SealedBlock, Block};
+
+    #[test]
+    fn engine_call_timing_is_emitted_only_for_verification_owner() {
+        let round = Round::new(Epoch::new(0), View::new(4));
+        for owner in [Owner::Verification(round), Owner::Convergence] {
+            let recorder = DebuggingRecorder::new();
+            let snapshotter = recorder.snapshotter();
+            metrics::with_local_recorder(&recorder, || {
+                futures::executor::block_on(async {
+                    let mut block = Block::default();
+                    block.header.number = 55;
+                    let block = Arc::new(ConsensusBlock::from_sealed(SealedBlock::seal_slow(
+                        block.map_header(OutbeHeader::new),
+                    )));
+                    let mut work = VerificationWork::default();
+                    let (response, _receiver) = futures::channel::oneshot::channel();
+                    match owner {
+                        Owner::Verification(_) => work.queue(VerifyBlock {
+                            request: VerificationRequest {
+                                round,
+                                block,
+                                parent: None,
+                                epoch_fence: ApplicationEpochFence::new(Epoch::new(0)),
+                                execution_read_budget: ExecutionReadBudget::new(),
+                            },
+                            response,
+                        }),
+                        Owner::Convergence => {
+                            work.record_parent(
+                                PendingParent {
+                                    round,
+                                    height: Height::new(block.number()),
+                                    digest: block.digest(),
+                                    block: Some(block),
+                                    epoch_fence: ApplicationEpochFence::new(Epoch::new(0)),
+                                },
+                                (Height::zero(), Digest::ZERO),
+                            );
+                        }
+                    }
+                    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+                    work.schedule(&EngineHandle::new(tx));
+                    let reply = async {
+                        let Some(BeaconEngineMessage::NewPayload { tx, .. }) = rx.recv().await
+                        else {
+                            panic!("expected engine new_payload call");
+                        };
+                        tx.send(Ok(PayloadStatus::from_status(PayloadStatusEnum::Valid)))
+                            .expect("execution receiver remains alive");
+                    };
+                    let (event, ()) = futures::join!(work.next_event(), reply);
+                    let Event::Delivered(delivery) = event else {
+                        panic!("expected engine delivery");
+                    };
+                    assert_eq!(
+                        matches!(delivery.request.owner, Owner::Verification(_)),
+                        matches!(owner, Owner::Verification(_))
+                    );
+                    assert!(
+                        matches!(delivery.status.unwrap(), ExecutionStatus::Completed(status) if status.is_valid())
+                    );
+                });
+            });
+            let snapshot = snapshotter.snapshot().into_vec();
+            let metric = snapshot.iter().find(|(key, _, _, _)| {
+                key.key().name() == "outbe_consensus_block_verify_execution_ms"
+            });
+            match owner {
+                Owner::Verification(_) => {
+                    let (_, _, _, value) = metric.expect("verification engine call is timed");
+                    assert!(matches!(value, DebugValue::Histogram(samples) if samples.len() == 1));
+                }
+                Owner::Convergence => assert!(metric.is_none(), "convergence is not verification"),
+            }
+        }
     }
 }
