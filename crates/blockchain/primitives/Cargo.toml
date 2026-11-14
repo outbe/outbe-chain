@@ -17,6 +17,7 @@ alloy-rlp.workspace = true
 alloy-sol-types.workspace = true
 alloy-evm.workspace = true
 bytes.workspace = true
+metrics.workspace = true
 reth-ethereum-primitives = { workspace = true, features = ["serde"] }
 reth-ethereum-engine-primitives.workspace = true
 reth-codecs.workspace = true
@@ -53,6 +54,7 @@ zeroize.workspace = true
 hex.workspace = true
 
 [dev-dependencies]
+metrics-util = "0.20"
 rand-commonware.workspace = true
 outbe-primitives = { path = ".", features = ["test-utils", "tee-attestation-v1", "bench-utils"] }
 alloy-primitives = { workspace = true, features = ["rand"] }

@@ -8769,6 +8769,8 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "k256 0.13.4",
+ "metrics",
+ "metrics-util",
  "outbe-macros",
  "outbe-primitives",
  "proptest",
