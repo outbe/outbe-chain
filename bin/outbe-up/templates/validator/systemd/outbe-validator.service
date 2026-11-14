@@ -12,6 +12,7 @@ User=outbe
 Group=outbe
 EnvironmentFile=/opt/outbe-chain/validator.env
 Environment=RUST_MIN_STACK=16777216
+Environment=BB_CRS_PATH=/opt/outbe-chain/crs/bn254_g1.dat
 ExecStartPre=@OUTBE_UP@ internal wait-validator-dependencies
 ExecStart=/opt/outbe-chain/outbe-chain node \
   --tee-session-mode production-node-host \
