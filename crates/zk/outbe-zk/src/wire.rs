@@ -2,6 +2,8 @@
 //!
 //! Circuit-specific layouts live next to the generated Noir types.
 
+#![deny(clippy::arithmetic_side_effects)]
+
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 
@@ -81,9 +83,11 @@ pub fn decode_verify_call(input: &[u8]) -> Result<VerifyCall<'_>, ProofMarshalin
         return Err(MalformedAbiReason::PayloadTruncated.into());
     }
 
-    let padding = (32 - length % 32) % 32;
-    let encoded_end = data_end
-        .checked_add(padding)
+    let padded_len = length
+        .checked_next_multiple_of(32)
+        .ok_or(MalformedAbiReason::PaddingOverflow)?;
+    let encoded_end = header_end
+        .checked_add(padded_len)
         .ok_or(MalformedAbiReason::PaddingOverflow)?;
     if input.len() != encoded_end {
         return Err(MalformedAbiReason::NonCanonicalTotalLength.into());
@@ -115,7 +119,7 @@ pub fn decode_public_words<const N: usize>(
             actual: count,
         });
     }
-    let public_end = 4 + N * 32;
+    let public_end = const { 4 + N * 32 };
     if combined_proof.len() < public_end {
         return Err(ProofMarshalingError::TruncatedPublicInputs {
             expected: public_end,
@@ -161,7 +165,10 @@ fn is_canonical_field_word(word: &[u8; 32]) -> bool {
     let field = Fr::from_be_bytes_mod_order(word);
     let bytes = field.into_bigint().to_bytes_be();
     let mut canonical = [0u8; 32];
-    canonical[32 - bytes.len()..].copy_from_slice(&bytes);
+    let Some(start) = 32usize.checked_sub(bytes.len()) else {
+        return false;
+    };
+    canonical[start..].copy_from_slice(&bytes);
     canonical == *word
 }
 
@@ -175,8 +182,10 @@ mod test_support {
 }
 
 #[cfg(test)]
+#[allow(clippy::arithmetic_side_effects)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use test_support::u64_word;
 
     fn abi_encode(circuit_hash: [u8; 32], proof: &[u8]) -> Vec<u8> {
@@ -187,6 +196,37 @@ mod tests {
         out.extend_from_slice(proof);
         out.resize(out.len() + (32 - proof.len() % 32) % 32, 0);
         out
+    }
+
+    fn boundary_u64_strategy() -> impl Strategy<Value = u64> {
+        prop_oneof![
+            Just(0u64),
+            Just(1),
+            Just(31),
+            Just(32),
+            Just(33),
+            Just(63),
+            Just(64),
+            Just(65),
+            Just(95),
+            Just(96),
+            (u64::from(u32::MAX) - 1)..=(u64::from(u32::MAX) + 1),
+            (u64::MAX - 128)..=u64::MAX,
+            any::<u64>(),
+        ]
+    }
+
+    fn boundary_word_strategy() -> impl Strategy<Value = [u8; 32]> {
+        prop_oneof![
+            boundary_u64_strategy().prop_map(u64_word),
+            (0usize..24, 1u8..=u8::MAX, boundary_u64_strategy()).prop_map(
+                |(hi_idx, hi_byte, lo)| {
+                    let mut word = u64_word(lo);
+                    word[hi_idx] = hi_byte;
+                    word
+                }
+            ),
+        ]
     }
 
     #[test]
@@ -205,12 +245,48 @@ mod tests {
             decode_verify_call(&[0u8; 32]),
             Err(ProofMarshalingError::InputTooShort(32))
         );
-        for offset in [65u64, 96, u64::MAX] {
+        for offset in [65u64, 96, u64::MAX - 31, u64::MAX - 15, u64::MAX] {
             let mut encoded = abi_encode([0; 32], &[0; 32]);
             encoded[56..64].copy_from_slice(&offset.to_be_bytes());
             assert_eq!(
                 decode_verify_call(&encoded),
                 Err(ProofMarshalingError::MalformedAbi("non-canonical offset"))
+            );
+        }
+
+        let mut oversized_offset = abi_encode([0; 32], &[0; 32]);
+        oversized_offset[32] = 1;
+        assert_eq!(
+            decode_verify_call(&oversized_offset),
+            Err(ProofMarshalingError::MalformedAbi("offset too large"))
+        );
+    }
+
+    #[test]
+    fn verify_call_rejects_overflowing_and_oversized_lengths() {
+        let mut oversized_length = abi_encode([0; 32], &[0; 32]);
+        oversized_length[64] = 1;
+        assert_eq!(
+            decode_verify_call(&oversized_length),
+            Err(ProofMarshalingError::MalformedAbi("length too large"))
+        );
+
+        #[cfg(target_pointer_width = "64")]
+        {
+            for length in [u64::MAX - 95, u64::MAX - 31, u64::MAX - 15, u64::MAX] {
+                let mut encoded = abi_encode([0; 32], &[0; 32]);
+                encoded[88..96].copy_from_slice(&length.to_be_bytes());
+                assert_eq!(
+                    decode_verify_call(&encoded),
+                    Err(ProofMarshalingError::MalformedAbi("length overflow"))
+                );
+            }
+
+            let mut max_in_range = abi_encode([0; 32], &[0; 32]);
+            max_in_range[88..96].copy_from_slice(&(u64::MAX - 96).to_be_bytes());
+            assert_eq!(
+                decode_verify_call(&max_in_range),
+                Err(ProofMarshalingError::MalformedAbi("payload truncated"))
             );
         }
     }
@@ -285,6 +361,49 @@ mod tests {
 
         for (error, expected) in cases {
             assert_eq!(error.to_string(), expected);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn proptest_decode_verify_call_never_panics_on_arbitrary_bytes(
+            raw in proptest::collection::vec(any::<u8>(), 0..=512),
+        ) {
+            if let Ok(decoded) = decode_verify_call(&raw) {
+                prop_assert_eq!(abi_encode(decoded.circuit_hash, decoded.combined_proof), raw);
+            }
+        }
+
+        #[test]
+        fn proptest_decode_verify_call_rejects_mutated_offset_and_length_words(
+            circuit_hash in any::<[u8; 32]>(),
+            proof in proptest::collection::vec(any::<u8>(), 0..=160),
+            mutate_length_word in any::<bool>(),
+            replacement in boundary_word_strategy(),
+        ) {
+            let mut encoded = abi_encode(circuit_hash, &proof);
+            let slot_range = if mutate_length_word { 64..96 } else { 32..64 };
+            encoded[slot_range].copy_from_slice(&replacement);
+
+            let result = decode_verify_call(&encoded);
+            let payload_cap = encoded.len() - 96;
+            let valid_len = read_u64_be_padded(&encoded[64..96])
+                .and_then(|len| usize::try_from(len).ok())
+                .filter(|&len| {
+                    let padded = len.div_ceil(32).checked_mul(32);
+                    padded == Some(payload_cap)
+                        && encoded[96 + len..].iter().all(|&byte| byte == 0)
+                });
+            let expected_ok = encoded[32..64] == u64_word(64) && valid_len.is_some();
+
+            if expected_ok {
+                let len = valid_len.unwrap();
+                let decoded = result.expect("canonical encoding must decode");
+                prop_assert_eq!(decoded.circuit_hash, circuit_hash);
+                prop_assert_eq!(decoded.combined_proof, &encoded[96..96 + len]);
+            } else {
+                prop_assert!(result.is_err());
+            }
         }
     }
 }

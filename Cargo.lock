@@ -9407,6 +9407,7 @@ dependencies = [
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-validatorset",
+ "proptest",
  "tempfile",
  "thiserror 2.0.18",
 ]
@@ -9663,6 +9664,7 @@ dependencies = [
  "blake2 0.10.6",
  "hex-literal",
  "outbe-poseidon",
+ "proptest",
  "serde_json",
  "thiserror 2.0.18",
  "tiny-keccak",
