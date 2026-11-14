@@ -136,40 +136,31 @@ where
         // participant's enclave key, so collection does not finish early.
         while collected.ids.len() < n {
             commonware_macros::select! {
-                            recv = self.receiver.recv() => {
-                                match recv {
-                                    Ok((from, raw)) => {
-                                        let Some((id, bytes)) = receive_delivery(&mut self.delivery, &from, raw.as_ref()) else { continue; };
-                                        let _ = send_observed(
-            &mut self.sender,
-            ObservedSend {
-            channel: P2pChannel::TeeDkg,
-            recipients: Recipients::One(from.clone()),
-            expected_peers: Some(1),
-            bytes: ack_envelope(id),
-            priority: true,
-            },
-            );
-                                        self.handle_identity_frame(IdentityFrame { from, bytes }, &mut collected)?;
-                                    }
-                                    Err(_) => {
-                                        return Err(crate::errors::TeeBootstrapError::IdentityGossipClosedBeforeAllCollected(n).into());
-                                    }
-                                }
-                            },
-                            _ = self.clock.sleep(POLL) => {
-                                // Timeout with no new identity: re-announce so peers that
-                                // registered the round late still receive us. Bound the wait.
-                                idle_ticks += 1;
-                                if idle_ticks > 120 {
-                                    return Err(crate::errors::TeeBootstrapError::IdentityExchangeTimedOut {
-                                        collected: collected.ids.len(),
-                                        expected: n,
-                                    }.into());
-                                }
-                                delivery::retry_delivery(&mut self.sender, &mut self.delivery);
-                            },
+                recv = self.receiver.recv() => {
+                    match recv {
+                        Ok((from, raw)) => {
+                            let Some((id, bytes)) = receive_delivery(&mut self.delivery, &from, raw.as_ref()) else { continue; };
+                            delivery::send_ack(&mut self.sender, P2pChannel::TeeDkg, from.clone(), id);
+                            self.handle_identity_frame(IdentityFrame { from, bytes }, &mut collected)?;
                         }
+                        Err(_) => {
+                            return Err(crate::errors::TeeBootstrapError::IdentityGossipClosedBeforeAllCollected(n).into());
+                        }
+                    }
+                },
+                _ = self.clock.sleep(POLL) => {
+                    // Timeout with no new identity: re-announce so peers that
+                    // registered the round late still receive us. Bound the wait.
+                    idle_ticks += 1;
+                    if idle_ticks > 120 {
+                        return Err(crate::errors::TeeBootstrapError::IdentityExchangeTimedOut {
+                            collected: collected.ids.len(),
+                            expected: n,
+                        }.into());
+                    }
+                    delivery::retry_delivery(&mut self.sender, &mut self.delivery);
+                },
+            }
         }
         Ok(request.announcements(collected.ids))
     }

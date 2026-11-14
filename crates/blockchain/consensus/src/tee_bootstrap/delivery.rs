@@ -1,5 +1,6 @@
 use super::*;
 use crate::metrics::p2p::{record_tee_bootstrap_pending, send_observed, ObservedSend, P2pChannel};
+use commonware_p2p::LimitedSender;
 
 #[derive(Debug)]
 pub(super) struct PendingDelivery {
@@ -223,6 +224,24 @@ pub(super) fn ack_envelope(id: B256) -> Vec<u8> {
     ack.push(DELIVERY_ACK);
     ack.extend_from_slice(id.as_slice());
     ack
+}
+
+pub(super) fn send_ack<S: LimitedSender<PublicKey = bls12381::PublicKey>>(
+    sender: &mut S,
+    channel: P2pChannel,
+    peer: bls12381::PublicKey,
+    id: B256,
+) {
+    let _ = send_observed(
+        sender,
+        ObservedSend {
+            channel,
+            recipients: Recipients::One(peer),
+            expected_peers: Some(1),
+            bytes: super::ack_envelope(id),
+            priority: true,
+        },
+    );
 }
 
 /// Authenticate the transport peer before decoding or recording its receipt.

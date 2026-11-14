@@ -44,29 +44,20 @@ where
         const RETRY_POLL: std::time::Duration = std::time::Duration::from_millis(750);
         loop {
             commonware_macros::select! {
-                            recv = self.receiver.recv() => {
-                                return match recv {
-                                    Ok((from, raw)) => {
-                                        let Some((id, payload)) = receive_delivery(&mut self.delivery, &from, raw.as_ref()) else { continue; };
-                                        let _ = send_observed(
-            &mut self.sender,
-            ObservedSend {
-            channel: P2pChannel::TeeBootstrap,
-            recipients: Recipients::One(from),
-            expected_peers: Some(1),
-            bytes: ack_envelope(id),
-            priority: true,
-            },
-            );
-                                        Some(payload.to_vec())
-                                    }
-                                    Err(_) => None,
-                                };
-                            },
-                            _ = self.clock.sleep(RETRY_POLL) => {
-                                delivery::retry_delivery(&mut self.sender, &mut self.delivery);
-                            },
+                recv = self.receiver.recv() => {
+                    return match recv {
+                        Ok((from, raw)) => {
+                            let Some((id, payload)) = receive_delivery(&mut self.delivery, &from, raw.as_ref()) else { continue; };
+                            delivery::send_ack(&mut self.sender, P2pChannel::TeeBootstrap, from, id);
+                            Some(payload.to_vec())
                         }
+                        Err(_) => None,
+                    };
+                },
+                _ = self.clock.sleep(RETRY_POLL) => {
+                    delivery::retry_delivery(&mut self.sender, &mut self.delivery);
+                },
+            }
         }
     }
 }
@@ -182,38 +173,29 @@ where
         const RETRY_POLL: std::time::Duration = std::time::Duration::from_millis(750);
         loop {
             commonware_macros::select! {
-                            recv = self.receiver.recv() => {
-                                let (from, raw) = recv.ok()?;
-                                let Some((id, bytes)) = receive_delivery(&mut self.delivery, &from, raw.as_ref()) else { continue; };
-                                let _ = send_observed(
-            &mut self.sender,
-            ObservedSend {
-            channel: P2pChannel::TeeDkg,
-            recipients: Recipients::One(from.clone()),
-            expected_peers: Some(1),
-            bytes: ack_envelope(id),
-            priority: true,
-            },
-            );
-                                match bytes.first().copied() {
-                                    Some(DKG_ENV_CEREMONY) => match DkgWireMessage::from_bytes(&bytes[1..]) {
-                                        Ok(msg) => {
-                                            let Some(sender_tee_bls) = self.sender_to_tee_bls.get(&from).cloned() else {
-                                                continue;
-                                            };
-                                            return Some((sender_tee_bls, msg));
-                                        }
-                                        Err(_) => continue,
-                                    },
-                                    // Late identity announcement (a peer still in its exchange phase).
-                                    // Ignore it and keep reading.
-                                    _ => continue,
-                                }
-                            },
-                            _ = self.clock.sleep(RETRY_POLL) => {
-                                delivery::retry_delivery(&mut self.sender, &mut self.delivery);
-                            },
-                        }
+                recv = self.receiver.recv() => {
+                    let (from, raw) = recv.ok()?;
+                    let Some((id, bytes)) = receive_delivery(&mut self.delivery, &from, raw.as_ref()) else { continue; };
+                    delivery::send_ack(&mut self.sender, P2pChannel::TeeDkg, from.clone(), id);
+                    match bytes.first().copied() {
+                        Some(DKG_ENV_CEREMONY) => match DkgWireMessage::from_bytes(&bytes[1..]) {
+                            Ok(msg) => {
+                                let Some(sender_tee_bls) = self.sender_to_tee_bls.get(&from).cloned() else {
+                                    continue;
+                                };
+                                return Some((sender_tee_bls, msg));
+                            }
+                            Err(_) => continue,
+                        },
+                        // Late identity announcement (a peer still in its exchange phase).
+                        // Ignore it and keep reading.
+                        _ => continue,
+                    }
+                },
+                _ = self.clock.sleep(RETRY_POLL) => {
+                    delivery::retry_delivery(&mut self.sender, &mut self.delivery);
+                },
+            }
         }
     }
 }

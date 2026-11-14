@@ -47,7 +47,8 @@ mod identity_phase_regression {
             self.peers.clone()
         }
 
-        fn send(self, message: impl Into<IoBufs> + Send, _: bool) -> Unreliable<Feedback> {
+        fn send(self, message: impl Into<IoBufs> + Send, priority: bool) -> Unreliable<Feedback> {
+            assert!(priority, "delivery sends preserve high priority");
             self.sent
                 .lock()
                 .unwrap()
@@ -74,6 +75,24 @@ mod identity_phase_regression {
                 sent: self.sent.clone(),
             })
         }
+    }
+
+    #[test]
+    fn delivery_ack_preserves_recipient_bytes_and_priority() {
+        let peer = bls12381::PrivateKey::from_seed(701).public_key();
+        let sent = Sent::default();
+        let mut sender = RecordingSender {
+            peers: vec![peer.clone()],
+            sent: sent.clone(),
+        };
+        let id = B256::repeat_byte(0x71);
+        crate::tee_bootstrap::delivery::send_ack(
+            &mut sender,
+            crate::metrics::p2p::P2pChannel::TeeDkg,
+            peer.clone(),
+            id,
+        );
+        assert_eq!(*sent.lock().unwrap(), vec![(vec![peer], ack_envelope(id))]);
     }
 
     #[derive(Debug)]
