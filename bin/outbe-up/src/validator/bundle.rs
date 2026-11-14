@@ -14,10 +14,8 @@ use sha2::{Digest, Sha256};
 use crate::validator::config::sha256;
 
 pub const MANIFEST_NAME: &str = "operator-manifest.json";
-pub const CRS_PATH: &str = "crs/bn254_g1.dat";
 const MANIFEST_VERSION: u32 = 1;
 const MAX_MANIFEST_BYTES: u64 = 16 * 1024 * 1024;
-const CRS_SPEC_JSON: &str = include_str!("../../../../release/bn254-g1-srs-v1.json");
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -38,16 +36,6 @@ pub struct ManifestFile {
 pub struct ExtractedBundle {
     pub directory: tempfile::TempDir,
     pub archive_sha256: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CrsSpec {
-    version: u32,
-    file_name: String,
-    url: String,
-    size: u64,
-    sha256: String,
 }
 
 impl OperatorManifest {
@@ -217,28 +205,6 @@ pub fn digest_file(path: &Path) -> Result<String> {
         digest.update(&buffer[..count]);
     }
     Ok(hex::encode(digest.finalize()))
-}
-
-pub fn verify_crs(root: &Path) -> Result<()> {
-    let spec: CrsSpec = serde_json::from_str(CRS_SPEC_JSON)?;
-    ensure!(
-        spec.version == 1 && spec.file_name == "bn254_g1.dat" && spec.url.starts_with("https://"),
-        "invalid bundled BN254 CRS spec"
-    );
-    let path = root.join(CRS_PATH);
-    let metadata =
-        fs::metadata(&path).wrap_err_with(|| format!("missing bundle file: {}", path.display()))?;
-    ensure!(
-        metadata.is_file() && metadata.len() == spec.size,
-        "invalid BN254 CRS size: {}",
-        path.display()
-    );
-    ensure!(
-        digest_file(&path)? == spec.sha256,
-        "BN254 CRS checksum mismatch: {}",
-        path.display()
-    );
-    Ok(())
 }
 
 fn copy_digest(reader: &mut impl Read, writer: &mut impl Write) -> Result<String> {

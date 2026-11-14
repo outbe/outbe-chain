@@ -22,7 +22,6 @@ pub async fn run(bundle_path: &Path, config_path: &Path) -> Result<()> {
     progress.stage("verifying every operator bundle file");
     let extracted = bundle::verify_and_extract(bundle_path, Path::new("/opt"))?;
     verify_bootstrap_binary(extracted.directory.path())?;
-    bundle::verify_crs(extracted.directory.path())?;
 
     progress.stage("validating operator configuration and remote network");
     let (config, config_sha256) = OperatorConfig::read(config_path)?;

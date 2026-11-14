@@ -77,8 +77,6 @@ pub fn run_create_genesis_with_min_stake(
         }
     }
 
-    launch_bundle::stage_crs(output.parent().unwrap_or_else(|| Path::new(".")))?;
-
     let chain_binary = resolve_binary(&config, "chain_binary", "outbe-chain")?;
     let keygen_binary = resolve_binary(&config, "keygen_binary", "outbe-keygen")?;
     let validators = discover_validators(&config, &keys_dir, &keygen_binary)?;
