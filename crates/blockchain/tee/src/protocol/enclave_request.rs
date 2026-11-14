@@ -227,9 +227,8 @@ impl EnclaveRequest {
             Self::DkgDealerReceiveAck { .. } => "dkg_dealer_receive_ack",
             Self::DkgDealerFinalize { .. } => "dkg_dealer_finalize",
             Self::DkgPlayerFinalize { .. } => "dkg_player_finalize",
-            // Preserve stable Prometheus/log request labels across Rust variant renames.
-            Self::DkgNetworkKeyPartial { .. } => "dkg_tribute_offer_partial",
-            Self::DkgFinalizeNetworkKey { .. } => "dkg_finalize_tribute_offer",
+            Self::DkgNetworkKeyPartial { .. } => "dkg_network_key_partial",
+            Self::DkgFinalizeNetworkKey { .. } => "dkg_finalize_network_key",
             Self::BeginDcapOnboardingArtifactIngestV1 { .. } => {
                 "begin_dcap_onboarding_artifact_ingest_v1"
             }
