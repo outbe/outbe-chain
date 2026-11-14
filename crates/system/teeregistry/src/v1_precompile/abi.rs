@@ -1,4 +1,7 @@
 //! Borrowed canonical ABI validation before policy reads or verifier execution.
+
+#![deny(clippy::arithmetic_side_effects)]
+
 use crate::errors::{RegisterAbiError, TeeRegistryError};
 use alloy_sol_types::SolCall;
 use outbe_primitives::{
@@ -43,16 +46,15 @@ pub(super) fn preflight_evidence_mutator_call(data: &[u8]) -> Result<RegisterPre
 }
 
 fn mutator_head(data: &[u8]) -> Result<MutatorAbiHead<'_>> {
-    const MUTATOR_HEAD_WORDS: usize = 3;
-    const REGISTER_HEAD_WORDS: usize = 6;
+    const MUTATOR_HEAD_LEN: usize = 3 * 32;
+    const REGISTER_HEAD_LEN: usize = 6 * 32;
     let is_register =
         data.get(..4) == Some(ITeeRegistryV1::registerEnclaveCall::SELECTOR.as_slice());
-    let head_words = if is_register {
-        REGISTER_HEAD_WORDS
+    let head_len = if is_register {
+        REGISTER_HEAD_LEN
     } else {
-        MUTATOR_HEAD_WORDS
+        MUTATOR_HEAD_LEN
     };
-    let head_len = head_words * 32;
 
     let args = data
         .get(4..)
@@ -233,8 +235,7 @@ fn dynamic_bytes(args: &[u8], offset: usize) -> Result<(&[u8], usize)> {
         .get(length_word_end..value_end)
         .ok_or_else(|| invalid_register_abi(RegisterAbiError::TruncatedDynamicValue))?;
     let padded_length = length
-        .checked_add(31)
-        .map(|length| length / 32 * 32)
+        .checked_next_multiple_of(32)
         .ok_or_else(|| invalid_register_abi(RegisterAbiError::DynamicPaddingOverflow))?;
     let padded_end = length_word_end
         .checked_add(padded_length)
@@ -251,14 +252,15 @@ fn dynamic_bytes(args: &[u8], offset: usize) -> Result<(&[u8], usize)> {
 }
 
 fn abi_usize(word: &[u8]) -> Result<usize> {
-    let width = core::mem::size_of::<usize>();
-    if word.len() != 32 || word[..32 - width].iter().any(|byte| *byte != 0) {
+    const WIDTH: usize = core::mem::size_of::<usize>();
+    const UPPER_ZERO_BYTES: usize = 32 - WIDTH;
+    if word.len() != 32 || word[..UPPER_ZERO_BYTES].iter().any(|byte| *byte != 0) {
         return Err(invalid_register_abi(
             RegisterAbiError::AbiIntegerExceedsHostUsize,
         ));
     }
-    let mut value = [0_u8; core::mem::size_of::<usize>()];
-    value.copy_from_slice(&word[32 - width..]);
+    let mut value = [0_u8; WIDTH];
+    value.copy_from_slice(&word[UPPER_ZERO_BYTES..]);
     Ok(usize::from_be_bytes(value))
 }
 
