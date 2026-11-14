@@ -184,8 +184,29 @@ pub fn development() -> InitializationState {
 #[cfg(feature = "mock")]
 pub fn development_for_network(
     network_binding: outbe_primitives::tee_attestation_v1::NetworkBindingV1,
+    keys: &EnclaveKeys,
 ) -> InitializationState {
     let mut state = development();
     state.mock_network_binding = Some(network_binding);
+    state.stored = Mutex::new(Some(StoredInitialization {
+        manifest: EnclaveInitializationManifestV1 {
+            chain_id: network_binding.chain_id,
+            genesis_hash: network_binding.genesis_hash,
+            attestation_mode: network_binding.attestation_mode,
+            node_id: outbe_primitives::tee_attestation_v1::NodeIdV1 {
+                reth_p2p_public: [
+                    0x02, 0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0, 0x62, 0x95,
+                    0xce, 0x87, 0x0b, 0x07, 0x02, 0x9b, 0xfc, 0xdb, 0x2d, 0xce, 0x28, 0xd9, 0x59,
+                    0xf2, 0x81, 0x5b, 0x16, 0xf8, 0x17, 0x98,
+                ],
+            },
+            initialization_challenge: [0xDD; 32],
+            node_host_noise_x25519: keys.noise_public(),
+            recipient_x25519: keys.tribute_offer_public(),
+            attestation_ed25519: keys.attestation_pub(),
+            noise_responder_x25519: keys.noise_public(),
+        },
+        loaded_from_seal: false,
+    }));
     state
 }

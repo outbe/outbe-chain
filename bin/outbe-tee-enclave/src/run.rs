@@ -220,6 +220,7 @@ fn build_initialization_state(
     if opts.is_mock() {
         return Ok(crate::initialization::factory::development_for_network(
             development_network_binding.expect("mock binding was required above"),
+            keys,
         ));
     }
     #[cfg(not(feature = "mock"))]
