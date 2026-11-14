@@ -69,6 +69,8 @@ tee:
 # Ports. Founders sit on separate machines, so they all share one layout;
 # pin a single validator's consensus port inline instead (`- 10.0.0.3:31555`).
 # consensus_p2p_port: 30400
+# Enable only when consensus peers use private/RFC1918 addresses.
+# consensus_use_local_defaults: false
 # reth_p2p_port: 30303
 # reth_discv5_port: 31303
 # rpc_port: 8545

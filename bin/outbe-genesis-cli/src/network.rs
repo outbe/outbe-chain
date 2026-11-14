@@ -57,7 +57,7 @@ pub const TEE_KEYS: [&str; 6] = [
     "minimum_tcb_evaluation_data_number",
 ];
 
-const STATIC_TOP_LEVEL_KEYS: [&str; 39] = [
+const STATIC_TOP_LEVEL_KEYS: [&str; 40] = [
     "network",
     "validators",
     "keys_dir",
@@ -67,6 +67,7 @@ const STATIC_TOP_LEVEL_KEYS: [&str; 39] = [
     "chain_binary",
     "keygen_binary",
     "consensus_p2p_port",
+    "consensus_use_local_defaults",
     "gas_limit",
     "timestamp",
     "epoch_length_blocks",

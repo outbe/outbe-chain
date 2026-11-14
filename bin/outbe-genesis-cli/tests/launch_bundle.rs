@@ -367,7 +367,17 @@ fn caddy_systemd_units_tee_renewal_and_enclave_modes() {
         fs::read_to_string(output_dir.join("validator-2").join("run-node.sh")).expect("node2");
     assert!(node2.contains("--nat extip:10.0.0.3"));
     assert!(node2.contains("--consensus.storage-dir"));
+    assert!(!node2.contains("--consensus.use-local-defaults"));
     assert!(node2.contains("--tee-session-mode production-node-host"));
+
+    let tmp_private = tempfile::tempdir().expect("tmp_private");
+    let (_, out_private) = render_fixture(
+        tmp_private.path(),
+        Some(json!({"consensus_use_local_defaults": true})),
+    );
+    let node_private =
+        fs::read_to_string(out_private.join("validator-2/run-node.sh")).expect("node_private");
+    assert!(node_private.contains("--consensus.use-local-defaults"));
 
     let enclave0 = fs::read_to_string(output_dir.join("validator-0").join("run-enclave.sh"))
         .expect("enclave0");
