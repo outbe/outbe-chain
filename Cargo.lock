@@ -8422,7 +8422,6 @@ dependencies = [
  "hex",
  "k256 0.13.4",
  "outbe-primitives",
- "outbe-system-common",
  "rand_core 0.6.4",
  "serde",
  "serde_json",

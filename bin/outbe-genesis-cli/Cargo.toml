@@ -21,7 +21,6 @@ flate2.workspace = true
 hex.workspace = true
 k256.workspace = true
 outbe-primitives.workspace = true
-outbe-system-common.workspace = true
 rand_core.workspace = true
 serde.workspace = true
 serde_json.workspace = true

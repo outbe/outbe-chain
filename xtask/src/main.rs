@@ -351,10 +351,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::CheckLayerBoundaries { repo_root } => {
-            let root = match repo_root {
-                Some(path) => path,
-                None => sgx::repository_root()?,
-            };
+            let root = repo_root.unwrap_or_else(default_workspace_root);
             let report = layer_boundaries::check_layer_boundaries(&root)?;
             println!(
                 "crates/blockchain layer boundaries ok: {} packages, {} Rust source files, {} verified inclusions",
@@ -724,4 +721,12 @@ fn run_toolchain_command(default_repo_root: &Path, command: ToolchainCommand) ->
             }
         }
     }
+}
+
+fn default_workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(1)
+        .expect("xtask is one level below the repository root")
+        .to_owned()
 }
