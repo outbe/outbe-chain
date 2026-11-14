@@ -7,6 +7,11 @@
 //! Reth's `--metrics` endpoint exposes these metrics through the global
 //! `metrics` crate recorder configured by the runtime's metrics recorder.
 
+pub mod executor;
+pub mod p2p;
+pub mod propose;
+pub mod verify;
+
 use metrics::{counter, gauge, histogram};
 pub use outbe_simplex::metrics::*;
 use std::time::Duration;
