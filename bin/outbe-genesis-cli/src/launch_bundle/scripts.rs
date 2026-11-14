@@ -18,6 +18,7 @@ pub fn enclave_script(
     index: usize,
     base_dir: &str,
     direct_dev_binding: Option<&str>,
+    direct_dev_node_id: Option<&str>,
 ) -> Result<String, GenesisError> {
     let mode = config
         .get("tee")
@@ -35,7 +36,7 @@ pub fn enclave_script(
     let validator_dir = format!("{base_dir}/validator-{index}");
     let validator_tee = format!("{validator_dir}/tee");
 
-    if mode == "dcap-required" {
+    if uses_production_tee_session(config) {
         let default_enclave_dir = format!("{base_dir}/sgx");
         let enclave_dir = config
             .get("enclave_dir")
@@ -46,9 +47,27 @@ pub fn enclave_script(
             .get("enclave_runner")
             .and_then(Value::as_str)
             .unwrap_or(&default_enclave_runner);
+        if mode != "dcap-required" {
+            return Ok(format!(
+                "\n# TEE enclave under gramine-sgx on the host.\n\
+# The node refuses to start until this answers on {endpoint}.\n\
+mkdir -p {q_val_tee}\n\
+\n\
+[ -e /dev/sgx_enclave ] \\\n  || {{ echo \"missing /dev/sgx_enclave: SGX driver not loaded\" >&2; exit 1; }}\n\
+\n\
+cd {q_enclave_dir}\n\
+exec {q_runner} \\\n\
+  --socket {q_endpoint} \\\n\
+  --tee-dir /var/lib/outbe/tee \\\n\
+  --chain-id {chain_id_hex}\n",
+                q_val_tee = quote(&validator_tee),
+                q_enclave_dir = quote(enclave_dir),
+                q_runner = quote(enclave_runner),
+                q_endpoint = quote(&endpoint),
+            ));
+        }
         return Ok(format!(
-            "\n# TEE enclave under gramine-sgx, on the host. Requires the SGX driver\n\
-# (/dev/sgx_enclave, /dev/sgx_provision) and a running aesmd.service.\n\
+            "\n# TEE enclave under gramine-sgx on the host.\n\
 # The node refuses to start until this answers on {endpoint}.\n\
 mkdir -p {q_val_tee}\n\
 \n\
@@ -73,6 +92,9 @@ exec {q_runner} \\\n\
     let binding = direct_dev_binding.ok_or_else(|| {
         GenesisError::validation("gramine-direct-dev requires a genesis network binding")
     })?;
+    let node_id = direct_dev_node_id.ok_or_else(|| {
+        GenesisError::validation("gramine-direct-dev requires a Reth P2P node identity")
+    })?;
     let enclave_runner = config
         .get("enclave_runner")
         .and_then(Value::as_str)
@@ -85,6 +107,7 @@ mkdir -p {q_val_tee}\n\
 \n\
 exec {q_runner} \\\n\
   --dev-network-binding {q_binding} \\\n\
+  --dev-reth-p2p-public {q_node_id} \\\n\
   --socket {q_endpoint} \\\n\
   --dkg-seed {dkg_seed} \\\n\
   --tee-dir {q_val_tee} \\\n\
@@ -92,6 +115,7 @@ exec {q_runner} \\\n\
         q_val_tee = quote(&validator_tee),
         q_runner = quote(enclave_runner),
         q_binding = quote(binding),
+        q_node_id = quote(node_id),
         q_endpoint = quote(&endpoint),
     ))
 }
@@ -497,7 +521,7 @@ echo \"validator-{index} started:\"\n\
 echo \"  node:    logs/node.log    (pid $(cat node.pid))\"\n\
 echo \"  radicle: logs/radicle.log (pid $(cat radicle.pid))\"\n\
 echo \"  feeder:  logs/feeder.log  (pid $(cat feeder.pid))\"\n\
-echo \"  enclave: docker logs outbe-enclave-{index}\"\n",
+echo \"  enclave: logs/enclave.log (pid $(cat enclave.pid))\"\n",
         quote(&directory)
     ))
 }
@@ -516,8 +540,7 @@ for name in feeder node radicle enclave; do\n\
     fi\n\
     rm -f \"$name.pid\"\n\
   fi\n\
-done\n\
-docker stop outbe-enclave-{index} >/dev/null 2>&1 && echo \"stopped enclave\" || true\n",
+done\n",
         quote(&directory)
     )
 }

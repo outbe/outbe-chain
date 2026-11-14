@@ -232,7 +232,7 @@ fn build_initialization_state(
         return Ok(crate::initialization::factory::development_for_network(
             development_network_binding.expect("mock binding was required above"),
             keys,
-            development_node_id,
+            development_node_id.expect("mock node id was required above"),
         ));
     }
     #[cfg(not(feature = "mock"))]
@@ -396,9 +396,9 @@ fn resolve_development_node_id(args: &[String], mock: bool) -> Result<Option<Nod
             .then_some(None)
             .ok_or_else(|| "--dev-reth-p2p-public is accepted only by the mock binary".to_owned());
     }
-    let Some(encoded) = encoded else {
-        return Ok(None);
-    };
+    let encoded = encoded.ok_or_else(|| {
+        "mock binary requires --dev-reth-p2p-public for the validator identity".to_owned()
+    })?;
     let bytes = hex::decode(encoded.strip_prefix("0x").unwrap_or(&encoded))
         .map_err(|error| format!("decode --dev-reth-p2p-public hex: {error}"))?;
     let reth_p2p_public: [u8; 33] = bytes.try_into().map_err(|bytes: Vec<u8>| {
@@ -703,6 +703,12 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(hex::encode(node_id.reth_p2p_public), encoded.to_lowercase());
+    }
+
+    #[test]
+    fn mock_node_identity_is_required() {
+        let error = resolve_development_node_id(&[], true).unwrap_err();
+        assert!(error.contains("requires --dev-reth-p2p-public"));
     }
 
     #[test]

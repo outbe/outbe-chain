@@ -21,6 +21,7 @@ const ENV_KEYS: &[&str] = &[
     "OUTBE_CONSENSUS_PEERS",
     "OUTBE_CONSENSUS_EXTRA_ARGS",
     "OUTBE_ENCLAVE_RUNTIME",
+    "OUTBE_TEE_SESSION_MODE",
     "OUTBE_DEV_NETWORK_BINDING",
     "OUTBE_CHAIN_ID",
 ];
@@ -156,7 +157,7 @@ fn validate_environment(values: &BTreeMap<String, String>) -> Result<()> {
         !peers.is_empty() && peers.iter().all(|peer| valid_peer(peer)),
         "OUTBE_CONSENSUS_PEERS is invalid"
     );
-    if values["OUTBE_ENCLAVE_RUNTIME"] == "gramine-direct-dev" {
+    if values["OUTBE_ENCLAVE_RUNTIME"] == "mock" {
         ensure!(
             values["OUTBE_DEV_NETWORK_BINDING"].len() == 132
                 && values["OUTBE_DEV_NETWORK_BINDING"]
@@ -165,6 +166,19 @@ fn validate_environment(values: &BTreeMap<String, String>) -> Result<()> {
             "OUTBE_DEV_NETWORK_BINDING must be a canonical 66-byte hex value"
         );
     }
+    let expected_session = match values["OUTBE_ENCLAVE_RUNTIME"].as_str() {
+        "mock" => "development",
+        "system-gramine" | "bundled-sgx" => "production-node-host",
+        _ => {
+            return Err(eyre::eyre!(
+                "OUTBE_ENCLAVE_RUNTIME must be system-gramine, bundled-sgx, or mock"
+            ));
+        }
+    };
+    ensure!(
+        values["OUTBE_TEE_SESSION_MODE"] == expected_session,
+        "OUTBE_TEE_SESSION_MODE does not match OUTBE_ENCLAVE_RUNTIME"
+    );
     Ok(())
 }
 
@@ -191,15 +205,13 @@ fn validate_runtime(root: &Path, environment: &BTreeMap<String, String>) -> Resu
                 required_file(&root.join("sgx").join(relative))?;
             }
         }
-        "gramine-direct-dev" => {
+        "mock" => {
             required_executable(&root.join("outbe-tee-enclave-mock"))?;
             canonical_key(&root.join("tee/dev-dkg-seed.hex"))?;
             canonical_key(&root.join("tee/dev-offer-secret.hex"))?;
         }
         _ => {
-            bail!(
-                "OUTBE_ENCLAVE_RUNTIME must be system-gramine, bundled-sgx, or gramine-direct-dev"
-            );
+            bail!("OUTBE_ENCLAVE_RUNTIME must be system-gramine, bundled-sgx, or mock");
         }
     }
     Ok(())
@@ -218,7 +230,7 @@ fn validate_bundle(root: &Path, environment: &BTreeMap<String, String>) -> Resul
         required_executable(&root.join(name))?;
     }
     match environment["OUTBE_ENCLAVE_RUNTIME"].as_str() {
-        "gramine-direct-dev" => required_executable(&root.join("outbe-tee-enclave-mock"))?,
+        "mock" => required_executable(&root.join("outbe-tee-enclave-mock"))?,
         _ => required_executable(&root.join("outbe-tee-enclave"))?,
     }
     Ok(())

@@ -47,12 +47,14 @@ tee:
 # remote_base_dir: /opt/outbe
 # remote_keys_dir: /opt/outbe/keys
 
-# Dev lane only: optional absolute path to `outbe-tee-enclave-mock`.
+# Hardware-free dev lane only:
+# enclave_sgx: false
+# Optional absolute path to `outbe-tee-enclave-mock`.
 # enclave_runner: /opt/outbe/outbe-tee-enclave-mock
-# Production (dcap-required) runs gramine-sgx on the host instead - point
-# these at the release enclave checkout on each machine.
+# With the default `enclave_sgx: true`, both TEE policies run the signed
+# gramine-sgx bundle. Point these at its checkout on each machine.
 # enclave_dir: /opt/outbe-chain/enclave
-# enclave_runner: /opt/outbe/sgx/bin/outbe-tee-enclave-launch
+# `enclave_runner` can also override the bundled SGX launcher.
 
 # Binaries on the validator machines; default to PATH lookups.
 # node_binary: outbe-chain

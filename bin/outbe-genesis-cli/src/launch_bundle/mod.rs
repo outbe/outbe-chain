@@ -128,17 +128,25 @@ pub fn format_enode_host(host: &str) -> String {
 
 /// Determine whether the node should use `--tee-session-mode production-node-host`.
 pub fn uses_production_tee_session(config: &Value) -> bool {
-    config
+    let enclave_sgx = config
+        .get("enclave_sgx")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let is_dcap = config
         .get("tee")
         .and_then(|t| t.get("mode"))
         .and_then(Value::as_str)
-        == Some("dcap-required")
+        == Some("dcap-required");
+    enclave_sgx || is_dcap
 }
 
 fn direct_dev_network_binding(
     config: &Value,
     genesis_path: &Path,
 ) -> Result<Option<String>, GenesisError> {
+    if uses_production_tee_session(config) {
+        return Ok(None);
+    }
     let mode = config
         .get("tee")
         .and_then(|tee| tee.get("mode"))
@@ -187,6 +195,26 @@ fn direct_dev_network_binding(
     .encode_canonical()
     .map_err(|error| GenesisError::validation(format!("encode network binding: {error}")))?;
     Ok(Some(hex::encode(binding)))
+}
+
+fn compressed_reth_p2p_public(node_id: &str) -> Result<String, GenesisError> {
+    let uncompressed = hex::decode(node_id)
+        .map_err(|error| GenesisError::validation(format!("invalid Reth P2P node id: {error}")))?;
+    if uncompressed.len() != 64 {
+        return Err(GenesisError::validation(format!(
+            "Reth P2P node id must be 64 bytes, got {}",
+            uncompressed.len()
+        )));
+    }
+    let prefix = if uncompressed[63] & 1 == 0 {
+        0x02
+    } else {
+        0x03
+    };
+    let mut compressed = [0_u8; 33];
+    compressed[0] = prefix;
+    compressed[1..].copy_from_slice(&uncompressed[..32]);
+    Ok(hex::encode(compressed))
 }
 
 pub(super) fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), GenesisError> {
@@ -266,6 +294,7 @@ fn write_validator_scripts(
     validator: &Value,
     paths: &BundlePaths<'_>,
     direct_dev_binding: Option<&str>,
+    direct_dev_node_id: Option<&str>,
 ) -> Result<(), GenesisError> {
     let directory = paths.output_dir.join(format!("validator-{index}"));
     fs::create_dir_all(&directory).map_err(|err| GenesisError::io(&directory, err))?;
@@ -280,7 +309,13 @@ fn write_validator_scripts(
 
     write_script(
         &directory.join("run-enclave.sh"),
-        &enclave_script(config, index, paths.base_dir, direct_dev_binding)?,
+        &enclave_script(
+            config,
+            index,
+            paths.base_dir,
+            direct_dev_binding,
+            direct_dev_node_id,
+        )?,
     )?;
     write_script(
         &directory.join("run-radicle.sh"),
@@ -372,8 +407,10 @@ pub fn render(
 
     let reth_p2p_port = port_of(config, "reth_p2p_port")?;
     let mut enodes = Vec::with_capacity(validators.len());
+    let mut reth_p2p_public_keys = Vec::with_capacity(validators.len());
     for (index, validator) in validators.iter().enumerate() {
         let node_id = ensure_reth_p2p_secret(&keys_dir.join(format!("validator-{index}")))?;
+        reth_p2p_public_keys.push(compressed_reth_p2p_public(&node_id)?);
         let p2p_address = validator
             .get("p2p_address")
             .and_then(Value::as_str)
@@ -405,6 +442,9 @@ pub fn render(
             validator,
             &paths,
             direct_dev_binding.as_deref(),
+            direct_dev_binding
+                .as_ref()
+                .map(|_| reth_p2p_public_keys[index].as_str()),
         )?;
     }
 

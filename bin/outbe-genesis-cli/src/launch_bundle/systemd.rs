@@ -265,12 +265,7 @@ pub fn preflight_script(
         .unwrap_or(&default_enclave_dir);
     let manifest = quote(&format!("{enclave_dir}/outbe-tee-enclave.manifest.sgx"));
     let signature = quote(&format!("{enclave_dir}/outbe-tee-enclave.sig"));
-    let mode = config
-        .get("tee")
-        .and_then(|tee| tee.get("mode"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| GenesisError::validation("tee.mode is required"))?;
-    let enclave_check = if mode == "dcap-required" {
+    let enclave_check = if super::uses_production_tee_session(config) {
         format!(
             "manifest={manifest}\n\
 signature={signature}\n\
