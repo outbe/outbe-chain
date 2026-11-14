@@ -12,10 +12,10 @@
 //! (verify-then-discard). It also has the same `tee_sidecar_unavailable` failure mode
 //! when no enclave is configured.
 
+use outbe_enclave::protocol::{EnclaveRequest, EnclaveResponse, GratisOpRequest, GratisOpResult};
 use outbe_primitives::error::Result;
-use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse, GratisOpRequest, GratisOpResult};
 
-use crate::errors::{map_nod_transport_error, GratisFatalError};
+use crate::errors::{map_nod_client_error, GratisFatalError};
 
 /// Run one Gratis op inside the enclave and validate the response.
 ///
@@ -32,7 +32,7 @@ pub(crate) fn apply_gratis_op(req: GratisOpRequest) -> Result<GratisOpResult> {
         return Ok(result);
     }
 
-    match outbe_tee::balance_client::execute_confidential_balance_op(
+    match outbe_enclave::balance_client::execute_confidential_balance_op(
         EnclaveRequest::ApplyGratisOp {
             request: Box::new(req),
         },
@@ -91,18 +91,18 @@ pub mod test_enclave {
     /// Builds an authorization with the installed fixture key and operation nonce.
     pub fn modify_auth(
         operation: outbe_enclave::gratis::ModifyOperation,
-    ) -> outbe_tee::protocol::ModifyAuth {
+    ) -> outbe_enclave::protocol::ModifyAuth {
         let key =
             outbe_enclave::gratis::derive_modify_key(&state_key(), operation.account).unwrap();
-        outbe_tee::protocol::ModifyAuth {
+        outbe_enclave::protocol::ModifyAuth {
             mac: outbe_enclave::gratis::modify_mac(&key, &operation),
             op_nonce: operation.op_nonce,
         }
     }
 
     pub(crate) fn try_mine(
-        request: &outbe_tee::nod_mine::MineEncryptedNodRequestV1,
-    ) -> Option<Result<outbe_tee::nod_mine::MineEncryptedNodResultV1>> {
+        request: &outbe_enclave::nod_mine::MineEncryptedNodRequestV1,
+    ) -> Option<Result<outbe_enclave::nod_mine::MineEncryptedNodResultV1>> {
         STATE_KEY.with(|key| {
             key.borrow().map(|state_key| {
                 let fidelity_key = outbe_enclave::fidelity::derive_fidelity_state_key(
@@ -125,7 +125,7 @@ pub mod test_enclave {
                 // co-located fidelity cohort section under the INDEPENDENT
                 // fidelity key. That key is the shared dev fidelity identity, so a
                 // folded mint writes a blob that the fidelity stand-in can later read.
-                if let (outbe_tee::protocol::GratisOpStatus::Applied, Some(section)) =
+                if let (outbe_enclave::protocol::GratisOpStatus::Applied, Some(section)) =
                     (&result.status, &req.fidelity)
                 {
                     let fidelity_key = outbe_enclave::fidelity::derive_fidelity_state_key(
@@ -159,11 +159,11 @@ pub mod test_enclave {
 }
 
 pub(crate) fn mine_encrypted_nod(
-    request: outbe_tee::nod_mine::MineEncryptedNodRequestV1,
-) -> Result<outbe_tee::nod_mine::MineEncryptedNodResultV1> {
+    request: outbe_enclave::nod_mine::MineEncryptedNodRequestV1,
+) -> Result<outbe_enclave::nod_mine::MineEncryptedNodResultV1> {
     #[cfg(any(test, feature = "test-enclave"))]
     if let Some(result) = test_enclave::try_mine(&request) {
         return result;
     }
-    outbe_tee::nod_mine::mine_encrypted_nod(request).map_err(map_nod_transport_error)
+    outbe_enclave::nod_mine::mine_encrypted_nod(request).map_err(map_nod_client_error)
 }

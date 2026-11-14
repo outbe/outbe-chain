@@ -1,11 +1,12 @@
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::{nod_encryption::NodTermsV1, time::WorldwideDay};
-use outbe_tee::{
+use outbe_core_common::nod_encryption::NodTermsV1;
+use outbe_enclave::{
     nod_mine::MineEncryptedNodRequestV1,
     protocol::{
         FidelityCohortOp, FidelityOpSection, GratisOp, GratisOpRequest, GratisOpStatus, ModifyAuth,
     },
 };
+use outbe_primitives::time::WorldwideDay;
 use outbe_tee_enclave::{gratis, nod_encryption::encrypt_nod, nod_mine};
 
 #[test]
@@ -62,7 +63,7 @@ fn private_mine_replays_exactly_and_preserves_other_gratis_writers() {
     assert!(!first.fidelity.new_blob.is_empty());
     let standalone = outbe_tee_enclave::fidelity::apply_cohort_op(
         &fidelity_key,
-        &outbe_tee::protocol::FidelityCohortRequest {
+        &outbe_enclave::protocol::FidelityCohortRequest {
             chain_id: chain,
             account,
             amount: U256::ONE,
@@ -85,8 +86,12 @@ fn private_mine_replays_exactly_and_preserves_other_gratis_writers() {
     assert!(nod_mine::apply(&network, &key, &fidelity_key, &resumed).is_ok());
     let view_key = gratis::derive_view_key(&key, account).unwrap();
     assert_eq!(
-        outbe_tee::gratis_decrypt::decrypt_gratis_balance(&view_key, account, &first.new_balance)
-            .unwrap(),
+        outbe_enclave::gratis_decrypt::decrypt_gratis_balance(
+            &view_key,
+            account,
+            &first.new_balance
+        )
+        .unwrap(),
         amount
     );
     let encoded = serde_json::to_value(&first).unwrap();

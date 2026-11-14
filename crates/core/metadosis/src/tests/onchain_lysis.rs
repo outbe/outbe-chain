@@ -63,7 +63,7 @@ fn fixture_with_tributes(limit: u64, tributes: &[(u64, u16)]) -> HashMapStorageP
                         let owner = Address::repeat_byte(u8::try_from(index + 1).unwrap());
                         let amount = U256::from(*amount);
                         tribute.issue(&outbe_tribute::TributeData {
-                            tribute_id: outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(
+                            tribute_id: outbe_core_common::wwd_entity_id::derive_poseidon_entity_id(
                                 owner, WWD,
                             ),
                             owner,
@@ -200,7 +200,7 @@ fn unpriced_tributes_stay_out_of_the_lysis_and_forfeit() {
 
     StorageHandle::enter(&mut with_unpriced, |storage| {
         for owner in [3, 4] {
-            let unpriced = outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(
+            let unpriced = outbe_core_common::wwd_entity_id::derive_poseidon_entity_id(
                 Address::repeat_byte(owner),
                 WWD,
             );
@@ -312,7 +312,7 @@ fn failed_metadosis_forfeits_tributes() {
             let mut tribute = TributeContract::new(storage.clone());
             for byte in 1..=3u8 {
                 tribute
-                    .clean(outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(
+                    .clean(outbe_core_common::wwd_entity_id::derive_poseidon_entity_id(
                         Address::repeat_byte(byte),
                         WWD,
                     ))

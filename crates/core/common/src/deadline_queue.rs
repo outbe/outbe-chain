@@ -7,8 +7,8 @@
 
 use alloy_primitives::{keccak256, B256, U256};
 
+use crate::series_id::{SeriesId, SERIES_ID_LEN};
 use outbe_primitives::error::{PassFailure, PrecompileError, Result};
-use outbe_primitives::series_id::{SeriesId, SERIES_ID_LEN};
 use outbe_primitives::storage::dsl::{Map, Value};
 use outbe_primitives::storage::types::{Storable, StorageKey};
 use outbe_primitives::storage::StorageHandle;

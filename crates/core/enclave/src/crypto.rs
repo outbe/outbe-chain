@@ -3,9 +3,9 @@
 //! Responsibilities:
 //!
 //! 1. **Offer decryption primitive** - the inverse of the client encryption in
-//!    `outbe_tee::offer_encrypt`: ECDHE(X25519) + HKDF-SHA256 +
+//!    `crate::offer_encrypt`: ECDHE(X25519) + HKDF-SHA256 +
 //!    ChaCha20Poly1305 with the same `b"tribute-factory-encryption"` info
-//!    label (`outbe_tee::offer_encrypt::OFFER_HKDF_INFO`).
+//!    label (`crate::offer_encrypt::OFFER_HKDF_INFO`).
 //!
 //! 2. **Tribute-offer-key derivation** - DKG group threshold signature -> HKDF ->
 //!    tribute-offer X25519 keypair, resident in each enclave so every validator
@@ -27,7 +27,7 @@ use outbe_tee::dcap_protocol::{DcapOnboardingArtifactV1, DcapOnboardingContextV1
 use crate::errors::{Result, TeeError};
 
 /// HKDF info label for the offer encryption key. MUST match
-/// `outbe_tee::offer_encrypt::OFFER_HKDF_INFO` for byte-identical decryption.
+/// `crate::offer_encrypt::OFFER_HKDF_INFO` for byte-identical decryption.
 const OFFER_AEAD_INFO: &[u8] = b"tribute-factory-encryption";
 /// HKDF info label for deriving the offer X25519 secret from the root seed.
 const OFFER_X25519_INFO: &[u8] = b"outbe/tribute/offer-x25519/v1";
@@ -142,7 +142,7 @@ pub fn chacha20poly1305_encrypt(
 /// Offer decryption primitive: ECDHE(static_secret, ephemeral_pubkey) ->
 /// HKDF-SHA256(salt, shared, info) -> ChaCha20Poly1305 decrypt.
 ///
-/// This is the inverse of `outbe_tee::offer_encrypt::encrypt_tribute_offer`.
+/// This is the inverse of `crate::offer_encrypt::encrypt_tribute_offer`.
 /// This function returns raw plaintext. Payload parsing is a later slice.
 pub fn ecdhe_tribute_offer_decrypt(
     tribute_offer_private_key: &[u8; 32],
@@ -161,9 +161,9 @@ pub fn ecdhe_tribute_offer_decrypt(
 }
 
 /// Decrypt a 92-byte `ephemeral_pub(32) || nonce(12) || ciphertext(48)` amount
-/// envelope sealed via [`outbe_tee::offer_encrypt::encrypt_tee_amount`].
+/// envelope sealed via [`crate::offer_encrypt::encrypt_tee_amount`].
 ///
-/// The key uses [`outbe_tee::offer_encrypt::promis_mine_key_info`] and
+/// The key uses [`crate::offer_encrypt::promis_mine_key_info`] and
 /// ChaCha20Poly1305 with empty AAD.
 pub fn decrypt_tee_amount(
     tribute_offer_private_key: &[u8; 32],
@@ -171,15 +171,15 @@ pub fn decrypt_tee_amount(
     chain_id: B256,
     account: Address,
 ) -> Result<alloy_primitives::U256> {
-    if encrypted_amount.len() != outbe_tee::offer_encrypt::ENCRYPTED_TEE_AMOUNT_LEN {
+    if encrypted_amount.len() != crate::offer_encrypt::ENCRYPTED_TEE_AMOUNT_LEN {
         return Err(TeeError::DecryptFailed);
     }
     let mut eph_pub = [0u8; 32];
     eph_pub.copy_from_slice(&encrypted_amount[..32]);
-    let info = outbe_tee::offer_encrypt::promis_mine_key_info(chain_id, account);
+    let info = crate::offer_encrypt::promis_mine_key_info(chain_id, account);
     let plaintext = Zeroizing::new(ecdhe_offer_decrypt(
         tribute_offer_private_key,
-        (&outbe_tee::OFFER_HKDF_SALT, &info),
+        (&crate::OFFER_HKDF_SALT, &info),
         &eph_pub,
         &encrypted_amount[32..44],
         &encrypted_amount[44..],
@@ -440,7 +440,7 @@ pub fn x25519_public(secret: &[u8; 32]) -> [u8; 32] {
 mod tests {
     use super::*;
 
-    /// The shared client-side encryptor (`outbe_tee::offer_encrypt`, used by
+    /// The shared client-side encryptor (`crate::offer_encrypt`, used by
     /// outbe-cli, the bench and the node canary) must round-trip with THIS
     /// decrypt path byte-for-byte. The canary asserts exactly this in prod.
     #[test]
@@ -449,8 +449,8 @@ mod tests {
         let offer_pub = x25519_public(&offer_sk);
         let eph_sk = [9u8; 32];
         let nonce = [1u8; 12];
-        let plaintext = outbe_tee::offer_encrypt::canary_offer_json(20250115);
-        let cipher_text = outbe_tee::offer_encrypt::encrypt_tribute_offer_with(
+        let plaintext = crate::offer_encrypt::canary_offer_json(20250115);
+        let cipher_text = crate::offer_encrypt::encrypt_tribute_offer_with(
             &offer_pub,
             eph_sk,
             nonce,
@@ -460,7 +460,7 @@ mod tests {
         let eph_pub = x25519_public(&eph_sk);
         let decrypted = ecdhe_tribute_offer_decrypt(
             &offer_sk,
-            &outbe_tee::OFFER_HKDF_SALT,
+            &crate::OFFER_HKDF_SALT,
             &eph_pub,
             &nonce,
             &cipher_text,
@@ -742,7 +742,7 @@ mod tests {
         let alice = Address::repeat_byte(0x22);
         let eve = Address::repeat_byte(0x33);
         let amount = alloy_primitives::U256::from(1000u64);
-        let encrypted = outbe_tee::offer_encrypt::encrypt_tee_amount_with(
+        let encrypted = crate::offer_encrypt::encrypt_tee_amount_with(
             &offer_pub,
             (chain, alice),
             amount,

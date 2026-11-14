@@ -1,4 +1,8 @@
 //! Stateless NOD encryption under the `NOD` confidential domain.
+use crate::host::nod_mine::{
+    nod_group_load_inputs_hash, IssueNodFromTributeOutcomeV1, IssueNodFromTributeRequestV1,
+    NodGroupLoadOpRequestV1, NodGroupLoadOperationV1,
+};
 use crate::{
     confidential::{SlotCipherDomain, NOD},
     crypto::hkdf_sha256,
@@ -6,16 +10,12 @@ use crate::{
     tribute_encryption::decrypt_tribute,
 };
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::{
+use outbe_core_common::{
     nod_encryption::{
         EncryptedNodGroupLoadV1, EncryptedNodV1, NodQuoteContextV1, NodTermsV1,
         NOD_AMOUNT_NONCE_INFO, NOD_QUOTE_NONCE_INFO,
     },
     tribute_encryption::EncryptedTributeV2,
-};
-use outbe_tee::nod_mine::{
-    nod_group_load_inputs_hash, IssueNodFromTributeOutcomeV1, IssueNodFromTributeRequestV1,
-    NodGroupLoadOpRequestV1, NodGroupLoadOperationV1,
 };
 use ring::hmac;
 use zeroize::Zeroizing;

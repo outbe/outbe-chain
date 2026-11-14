@@ -16,9 +16,6 @@ alloy-rpc-types-eth.workspace = true
 alloy-rlp.workspace = true
 alloy-sol-types.workspace = true
 alloy-evm.workspace = true
-ark-bn254.workspace = true
-ark-ff.workspace = true
-outbe-poseidon.workspace = true
 bytes.workspace = true
 reth-ethereum-primitives = { workspace = true, features = ["serde"] }
 reth-ethereum-engine-primitives.workspace = true
@@ -52,6 +49,7 @@ time.workspace = true
 tokio = { workspace = true, features = ["sync", "time"] }
 # Validator EVM signer (system-tx signing key). Lives here so consensus does
 # not need an `outbe-evm` dep just for the signer type.
+ed25519-dalek = { workspace = true, optional = true }
 k256.workspace = true
 zeroize.workspace = true
 hex.workspace = true
@@ -73,7 +71,7 @@ consensus = ["dep:commonware-consensus", "dep:commonware-p2p"]
 bench-utils = []
 # Retarget the Intex CREATE3 addresses at the throwaway e2e set. Never in a release build.
 e2e-test = []
-test-utils = ["dep:alloy-trie"]
+test-utils = ["dep:alloy-trie", "dep:ed25519-dalek"]
 tee-attestation-v1 = []
 
 [lints]

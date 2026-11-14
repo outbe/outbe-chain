@@ -1,43 +1,30 @@
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::B256;
 
-use super::{
-    EncryptedTributeOffer, FidelityCohortRequest, FidelityQueryRequest, FidelitySnapshotRequest,
-    GramineDirectDevOnboardingContextV1, GratisOpRequest, Ledger, MineGratisFromPromisRequestV1,
-    ParticipantAnnounce, PromisOpRequest,
-};
+use super::{GramineDirectDevOnboardingContextV1, ParticipantAnnounce, PayloadLane};
 
+/// Infrastructure requests sent from the node to the enclave, plus the opaque
+/// [`Self::Payload`] carrier for upper-layer application protocols.
 #[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EnclaveRequest {
     /// Development-only pre-handshake quote. The production server
     /// rejects this variant and never routes it after initialization.
     GetQuote { nonce: [u8; 32] },
-    /// Production pre-handshake discovery for an uninitialized enclave. Returns
-    /// one challenge plus the persistent enclave public keys that the node
-    /// identity signs. The enclave rejects it after initialization is committed.
+    /// Production pre-handshake discovery for an uninitialized enclave.
     GetInitializationChallenge,
-    /// Production pre-handshake initialization authorization. `manifest` is the
-    /// canonical `EnclaveInitializationManifestV1`. `node_signature` is a
-    /// recoverable secp256k1 signature (`r || s || v`). The following Noise IK
-    /// message 1 must authenticate the exact NodeHost key in the manifest.
+    /// Production pre-handshake initialization authorization.
     Initialize {
         manifest: Vec<u8>,
         node_signature: Vec<u8>,
     },
-    /// Production pre-handshake marker for an already initialized enclave. The
-    /// responder returns nothing until the following Noise IK message 1 proves
-    /// possession of the sealed NodeHost static key.
+    /// Production pre-handshake marker for an already initialized enclave.
     OpenSession,
-    /// Production pre-handshake marker for one previously authorized remote
-    /// source NodeHost. The enclave consumes the ticket before Noise message 1.
-    /// That message must prove the exact initiator static stored under this id.
+    /// Production pre-handshake marker for one previously authorized remote source NodeHost.
     OpenRemoteSessionV1 { ticket_id: B256 },
     /// Noise-IK handshake message.
     SessionHandshake { noise_msg: Vec<u8> },
-    /// Return the enclave's public keys (recipient X25519, attestation, Noise
-    /// static, tribute-BLS).
+    /// Return the enclave's public keys.
     GetPublicKeys,
-    /// Local-owner command that installs one bounded, one-use remote Noise
-    /// admission previously derived from exact finalized Registry state.
+    /// Local-owner command that installs one bounded, one-use remote Noise admission.
     AuthorizeRemoteSessionV1 {
         ticket_id: B256,
         initiator_static_x25519: [u8; 32],
@@ -45,32 +32,18 @@ pub enum EnclaveRequest {
         deadline: u64,
         finalized_block_hash: B256,
     },
-    /// Generate a fresh DCAP quote for the exact canonical registration,
-    /// renewal or transition intent. Production accepts this only inside an
-    /// authenticated NodeHost session and only when the intent matches the
-    /// sealed identity. A transition additionally returns a purpose-bound
-    /// proof that this enclave has the permanent offer key resident.
+    /// Generate a fresh DCAP quote for the exact canonical registration, renewal or transition intent.
     GenerateDcapQuote { intent: Vec<u8> },
     /// Sign one exact GramineDirectDev registration intent inside the enclave.
-    /// The development transport accepts this command. An authenticated
-    /// production NodeHost session also accepts it when the enclave itself
-    /// detects SGX with remote attestation disabled. It never returns an SGX
-    /// quote or hardware-attestation claim.
     SignRegistrationIntentDevV1 { intent: Vec<u8> },
-
-    /// Start one bounded, request-committed DCAP verification upload. Evidence
-    /// and policy bytes follow in strictly sequential chunks on this same
-    /// authenticated Noise session.
+    /// Start one bounded, request-committed DCAP verification upload.
     BeginDcapVerificationV1 {
         request_hash: B256,
         evidence_len: u32,
         policy_len: u32,
         block_timestamp: u64,
     },
-    /// Start the dedicated `RegisterEnclave` verify-and-seal flow. Unlike the
-    /// generic verifier, this request commits both authorization signatures and
-    /// exact Registry offer-key epochs before the enclave accepts any evidence
-    /// bytes.
+    /// Start the dedicated `RegisterEnclave` verify-and-seal flow.
     BeginDcapOnboardingVerificationV1 {
         request_hash: B256,
         evidence_len: u32,
@@ -90,28 +63,15 @@ pub enum EnclaveRequest {
     },
     /// Finish the exact upload and run the full enclave-resident verifier.
     FinishDcapVerificationV1 { request_hash: B256 },
-
-    /// Open a TEE DKG ceremony session inside the enclave. Each `participants[i]`
-    /// bundles a BLS identity, its announced X25519 share-encryption key, and the
-    /// owner's signature binding the two. Thus the untrusted host cannot mis-pair
-    /// or duplicate enc keys. The enclave:
-    /// 1. verifies every binding.
-    /// 2. rejects duplicate enc keys.
-    /// 3. builds the ceremony `Info` from the BLS set.
-    /// 4. captures the enc keys so that it can seal dealings to recipients.
-    ///
-    /// The host relays `ParticipantAnnounce` values from
-    /// `DkgParticipantAnnounceV1`. It does not take them from `PublicKeys`.
+    /// Open a TEE DKG ceremony session inside the enclave.
     DkgOpen {
         ceremony_id: B256,
         round: u64,
         participants: Vec<ParticipantAnnounce>,
     },
-    /// Seam A: deal + seal per-player shares. Returns the public commitment and
-    /// one opaque sealed share per participant.
+    /// Seam A: deal + seal per-player shares.
     DkgStartDealer { ceremony_id: B256 },
-    /// Seam B: open + verify an incoming sealed dealing inside the enclave. The
-    /// host relays the opaque `sealed_share` without decrypting it.
+    /// Seam B: open + verify an incoming sealed dealing inside the enclave.
     DkgPlayerIngest {
         ceremony_id: B256,
         dealer_bls: Vec<u8>,
@@ -126,47 +86,21 @@ pub enum EnclaveRequest {
     },
     /// Seam D: finalize this enclave's dealing into a signed dealer log.
     DkgDealerFinalize { ceremony_id: B256 },
-    /// Seam E: verify the collected signed dealer logs and recover this enclave's
-    /// local threshold share (committed inside the enclave). Returns the public
-    /// group key and the share commitment.
+    /// Seam E: verify collected signed dealer logs and recover this enclave's local threshold share.
     DkgPlayerFinalize {
         ceremony_id: B256,
         signed_logs: Vec<Vec<u8>>,
     },
-    /// Seam F (offer key): threshold-sign the fixed offer message with this
-    /// enclave's recovered share. Then **seal the partial to every recipient
-    /// enclave's X25519 key** (one ciphertext per participant). The host relays
-    /// only the opaque ciphertexts. It never sees a plaintext partial, so it
-    /// cannot recover the group signature (and hence the offer key) itself.
-    /// Requires `DkgPlayerFinalize` first.
+    /// Seam F (offer key): threshold-sign the fixed offer message and seal partials to recipients.
     DkgTributeOfferPartial { ceremony_id: B256 },
-    /// Founding Seam F: finalize the initial group threshold signature from the
-    /// sealed partials addressed to THIS enclave (decrypted in-SGX). Then install
-    /// the one permanent offer X25519 keypair. The capability matrix permits
-    /// this request only to a keyless Validator. It is not a lost-key recovery
-    /// or post-genesis replacement surface. Releases the ceremony session.
+    /// Founding Seam F: finalize the initial group threshold signature and install the permanent keypair.
     DkgFinalizeTributeOffer {
         ceremony_id: B256,
-        /// Sealed partials addressed to this enclave (one `EncryptedShare` blob per
-        /// signer). The enclave decrypts them with its X25519 share-decryption
-        /// secret.
         sealed_partials: Vec<Vec<u8>>,
         chain_id: B256,
         tribute_offer_epoch: u64,
     },
-
-    /// Decrypt a batch of offers, apply each one's node-resolved price, and
-    /// return the canonical Tribute results. Each `EncryptedTributeOffer` is
-    /// self-contained (its own owner, day, currencies and price), so the batch is
-    /// simply a list. A single transaction carries one offer today. The list
-    /// prepares for multi-offer txs. This is the sole offer-processing
-    /// entrypoint. The enclave decrypts, applies the price, computes economics +
-    /// Poseidon `token_id`, and returns `TributeOfferResult`.
-    ProcessTributeOfferBatch { offers: Vec<EncryptedTributeOffer> },
-
-    /// Start one streaming finalized-admission verification rooted in the
-    /// measured genesis committee. The enclave retains only the current
-    /// committee. Transition records follow on this authenticated session.
+    /// Start one streaming finalized-admission verification rooted in the measured genesis committee.
     BeginDcapOnboardingArtifactIngestV1 {
         request_hash: B256,
         artifact: Vec<u8>,
@@ -183,103 +117,27 @@ pub enum EnclaveRequest {
         offset: u32,
         bytes: Vec<u8>,
     },
-    /// Verify the current complete record. Transition records advance and prune
-    /// the committee cursor. The admission record authenticates Registry state.
+    /// Verify the current complete record.
     CommitDcapOnboardingArtifactRecordV1 {
         request_hash: B256,
         kind: crate::finalized_admission::FinalizedAdmissionRecordKindV1,
     },
-    /// After a verified admission record, decrypt,
-    /// durably seal, and only finally activate the resident offer key.
+    /// Decrypt, durably seal, and activate the resident offer key after verified admission.
     FinishDcapOnboardingArtifactIngestV1 { request_hash: B256 },
-
-    /// Apply a Gratis write op over encrypted per-account state. The enclave:
-    /// 1. derives the resident `gratis_state_key` from the same group signature
-    ///    as the offer key.
-    /// 2. decrypts the supplied blobs.
-    /// 3. enforces balance invariants + modify-key authorization.
-    /// 4. re-encrypts deterministically.
-    ///
-    /// This is a consensus path (called inside precompile `dispatch`, re-executed
-    /// by every validator).
-    ApplyGratisOp { request: Box<GratisOpRequest> },
-
-    /// Like [`EnclaveRequest::ApplyGratisOp`] but for the confidential Promis
-    /// ledger (mint/burn over an encrypted balance). Consensus path, re-executed
-    /// by every validator.
-    ApplyPromisOp { request: Box<PromisOpRequest> },
-
-    /// Off-chain key delivery: derive `account`'s view + modify keys for `ledger`
-    /// from the matching resident state key. Then seal them to the requester's
-    /// ephemeral X25519 key. NOT a consensus path. Served only over RPC, never
-    /// during block execution.
-    ///
-    /// `owner_sig` is the 65-byte (`r||s||v`) EIP-191 `personal_sign` signature by
-    /// `account` over `derive_account_keys_message(ledger, account,
-    /// requester_ephemeral_pubkey)`. The enclave recovers it and rejects unless the
-    /// signer equals `account`, so the enclave releases the keys only to the account
-    /// owner. The trust boundary is the enclave. It is not the (untrusted) host RPC,
-    /// which also checks the signature as a fast reject. Carried as `Vec<u8>` because
-    /// serde does not derive for `[u8; 65]`. The enclave validates the length.
-    DeriveAccountKeys {
-        ledger: Ledger,
-        account: Address,
-        requester_ephemeral_pubkey: [u8; 32],
-        owner_sig: Vec<u8>,
-    },
-
-    /// Apply a standalone Fidelity cohort mutation (`In`/`Out`) over encrypted
-    /// per-account state, on its own round-trip. Consensus path, re-executed by
-    /// every validator. See [`FidelityCohortRequest`].
-    ApplyFidelityCohortOp { request: Box<FidelityCohortRequest> },
-
-    /// Batch-decrypt cohort blobs and return one plaintext league per owner. This
-    /// is metadosis's once-per-WWD Fidelity snapshot. Consensus path (Metadosis
-    /// preparation step in begin-block, re-executed by every validator).
-    SnapshotFidelityLeagues {
-        request: Box<FidelitySnapshotRequest>,
-    },
-
-    /// Owner-authorized read of one account's RCFI/league over its encrypted
-    /// cohorts (signed, expiring authorization, see [`FidelityQueryRequest`]).
-    /// Consensus path when executed by a transaction; also served via `eth_call`.
-    QueryFidelityIndex { request: Box<FidelityQueryRequest> },
-
-    /// Read-only health/telemetry probe: uptime, request counters, offer-key
-    /// readiness and self-observed heap usage. Never touches keys or sealed
-    /// state. NOT a consensus path. Served to the local NodeHost only.
-    ///
-    /// WIRE-COMPAT LAW: the codec encodes enums by variant declaration index
-    /// (postcard). Thus:
-    /// - append new variants ONLY at the tail of `EnclaveRequest` /
-    ///   `EnclaveResponse`.
-    /// - never add, remove or reorder fields of existing wire structs.
-    ///
-    /// Deployment order for a new variant: enclave binary first, node second.
+    /// Read-only health/telemetry probe.
     Health,
-    /// Ask this initialized enclave to produce its exact ceremony-scoped DKG
-    /// participant announcement. `participant_bls` is canonicalized and bound
-    /// into both the ceremony id and signature inside the enclave.
+    /// Produce this initialized enclave's exact ceremony-scoped DKG participant announcement.
     DkgParticipantAnnounceV1 {
         ceremony_id: B256,
         round: u64,
         participant_bls: Vec<Vec<u8>>,
     },
-    /// Produce a deterministic offer-key onboarding artifact for one exact
-    /// GramineDirectDev registration. Only an initialized local NodeHost can use
-    /// this request, and only when both conditions are true:
-    /// - its sealed network binding selected GramineDirectDev.
-    /// - its permanent offer key is already resident.
-    ///
-    /// The recipient still must prove finalized TeeRegistry admission before it
-    /// can install the key.
+    /// Produce a deterministic offer-key onboarding artifact for one exact GramineDirectDev registration.
     PrepareGramineDirectDevOnboardingArtifactV1 {
         request_hash: B256,
         context: Vec<u8>,
     },
-    /// Install an exact finalized DirectDev onboarding artifact into this
-    /// initialized keyless enclave. The CLI exposes this only after the exact
-    /// registration transaction and TeeRegistry binding are finalized.
+    /// Install an exact finalized DirectDev onboarding artifact into this initialized keyless enclave.
     IngestGramineDirectDevOnboardingArtifactV1 {
         artifact: Vec<u8>,
         expected_intent_hash: B256,
@@ -287,10 +145,11 @@ pub enum EnclaveRequest {
         expected_key_epoch: u64,
         expected_tribute_offer_epoch: u64,
     },
-    /// Appended wire variant. Proves resident-key readiness without a DCAP quote.
+    /// Prove resident-key readiness without a DCAP quote.
     GenerateTransitionEvidenceDevV1 { intent: Vec<u8> },
-    /// Revoke pre-boundary remote tickets and open sessions. Owner-only and monotonic.
+    /// Revoke pre-boundary remote tickets and open sessions.
     RetireRemoteSessionsV1 { activation_height: u64 },
+    /// Authorize remote session with retirement height.
     AuthorizeRemoteSessionV2 {
         ticket_id: B256,
         initiator_static_x25519: [u8; 32],
@@ -299,65 +158,20 @@ pub enum EnclaveRequest {
         finalized_block_hash: B256,
         retirement_height: u64,
     },
-    /// Upgrade transfer uses finalized pending-candidate proofs in both directions.
-    /// Export carries a canonical placeholder artifact with the recipient context.
+    /// Upgrade transfer using finalized pending-candidate proofs.
     BeginUpgradeKeyTransferV1 {
         request_hash: B256,
         artifact: Vec<u8>,
         anchor_outcome: Vec<u8>,
         export: bool,
     },
-    MineEncryptedNodV1 {
-        request: Box<crate::nod_mine::MineEncryptedNodRequestV1>,
-    },
-    ReadNodAmountV1 {
-        nod: outbe_primitives::nod_encryption::EncryptedNodV1,
-    },
-    EncryptNodForTributeV1 {
-        tribute: Box<outbe_primitives::tribute_encryption::EncryptedTributeV2>,
-        terms: outbe_primitives::nod_encryption::NodTermsV1,
-        amount: U256,
-    },
-    /// Creator-owned encrypted Tribute records; requires the installed network key.
-    ProcessEncryptedTributeOfferBatchV2 { offers: Vec<EncryptedTributeOffer> },
-    /// Private calculation bridge for authenticated NodeHost consumers.
-    ReadTributeAmountsV2 {
-        tributes: Vec<outbe_primitives::tribute_encryption::EncryptedTributeV2>,
-    },
-    ApplyTributeDayOpV2 {
-        request: Box<crate::tribute_day::TributeDayOpRequestV2>,
-    },
-    ReadTributeDayAmountV2 {
-        record: outbe_primitives::tribute_day_encryption::EncryptedTributeDayAmountV2,
-    },
     /// Prepare a DirectDev onboarding artifact from the typed canonical context.
     PrepareGramineDirectDevOnboardingArtifactV2 {
         #[serde(with = "canonical_onboarding_context")]
         context: GramineDirectDevOnboardingContextV1,
     },
-    ExecuteLysisFractionsV1 {
-        request: Box<crate::tribute_day::LysisFractionsRequestV1>,
-    },
-    ReadTributeDayFractionsV1 {
-        record: outbe_primitives::tribute_day_encryption::EncryptedTributeDayFractionsV1,
-    },
-    IssueNodFromTributeV1 {
-        request: Box<crate::nod_mine::IssueNodFromTributeRequestV1>,
-    },
-    ApplyNodGroupLoadOpV1 {
-        request: Box<crate::nod_mine::NodGroupLoadOpRequestV1>,
-    },
-    ReadNodGroupLoadV1 {
-        record: outbe_primitives::nod_encryption::EncryptedNodGroupLoadV1,
-    },
-    EncryptNodQuoteV1 {
-        nod: Box<outbe_primitives::nod_encryption::EncryptedNodV1>,
-        context: outbe_primitives::nod_encryption::NodQuoteContextV1,
-        payment_minor: U256,
-    },
-    MineGratisFromPromisV1 {
-        request: Box<MineGratisFromPromisRequestV1>,
-    },
+    /// Opaque application-layer request envelope routed to the upper-layer enclave protocol.
+    Payload { lane: PayloadLane, payload: Vec<u8> },
 }
 
 mod canonical_onboarding_context {
@@ -391,16 +205,6 @@ impl EnclaveRequest {
     /// both the node client and the enclave server. Never wire data.
     pub const fn label(&self) -> &'static str {
         match self {
-            Self::MineEncryptedNodV1 { .. } => "mine_encrypted_nod_v1",
-            Self::ReadNodAmountV1 { .. } => "read_nod_amount_v1",
-            Self::EncryptNodForTributeV1 { .. } => "encrypt_nod_for_tribute_v1",
-            Self::ApplyTributeDayOpV2 { .. } => "apply_tribute_day_op_v2",
-            Self::ReadTributeDayAmountV2 { .. } => "read_tribute_day_amount_v2",
-            Self::ProcessEncryptedTributeOfferBatchV2 { .. } => {
-                "process_encrypted_tribute_offer_batch_v2"
-            }
-            Self::ReadTributeAmountsV2 { .. } => "read_tribute_amounts_v2",
-            Self::BeginUpgradeKeyTransferV1 { .. } => "begin_upgrade_key_transfer_v1",
             Self::GetQuote { .. } => "get_quote",
             Self::GetInitializationChallenge => "get_initialization_challenge",
             Self::Initialize { .. } => "initialize",
@@ -411,9 +215,6 @@ impl EnclaveRequest {
             Self::AuthorizeRemoteSessionV1 { .. } => "authorize_remote_session_v1",
             Self::GenerateDcapQuote { .. } => "generate_dcap_quote",
             Self::SignRegistrationIntentDevV1 { .. } => "sign_registration_intent_dev_v1",
-            Self::GenerateTransitionEvidenceDevV1 { .. } => "generate_transition_evidence_dev_v1",
-            Self::RetireRemoteSessionsV1 { .. } => "retire_remote_sessions_v1",
-            Self::AuthorizeRemoteSessionV2 { .. } => "authorize_remote_session_v2",
             Self::BeginDcapVerificationV1 { .. } => "begin_dcap_verification_v1",
             Self::BeginDcapOnboardingVerificationV1 { .. } => {
                 "begin_dcap_onboarding_verification_v1"
@@ -421,7 +222,6 @@ impl EnclaveRequest {
             Self::DcapVerificationChunkV1 { .. } => "dcap_verification_chunk_v1",
             Self::FinishDcapVerificationV1 { .. } => "finish_dcap_verification_v1",
             Self::DkgOpen { .. } => "dkg_open",
-            Self::DkgParticipantAnnounceV1 { .. } => "dkg_participant_announce_v1",
             Self::DkgStartDealer { .. } => "dkg_start_dealer",
             Self::DkgPlayerIngest { .. } => "dkg_player_ingest",
             Self::DkgDealerReceiveAck { .. } => "dkg_dealer_receive_ack",
@@ -429,7 +229,6 @@ impl EnclaveRequest {
             Self::DkgPlayerFinalize { .. } => "dkg_player_finalize",
             Self::DkgTributeOfferPartial { .. } => "dkg_tribute_offer_partial",
             Self::DkgFinalizeTributeOffer { .. } => "dkg_finalize_tribute_offer",
-            Self::ProcessTributeOfferBatch { .. } => "process_tribute_offer_batch",
             Self::BeginDcapOnboardingArtifactIngestV1 { .. } => {
                 "begin_dcap_onboarding_artifact_ingest_v1"
             }
@@ -440,71 +239,40 @@ impl EnclaveRequest {
             Self::FinishDcapOnboardingArtifactIngestV1 { .. } => {
                 "finish_dcap_onboarding_artifact_ingest_v1"
             }
-            Self::ApplyGratisOp { .. } => "apply_gratis_op",
-            Self::ApplyPromisOp { .. } => "apply_promis_op",
-            Self::DeriveAccountKeys { .. } => "derive_account_keys",
-            Self::ApplyFidelityCohortOp { .. } => "apply_fidelity_cohort_op",
-            Self::SnapshotFidelityLeagues { .. } => "snapshot_fidelity_leagues",
-            Self::QueryFidelityIndex { .. } => "query_fidelity_index",
             Self::Health => "health",
+            Self::DkgParticipantAnnounceV1 { .. } => "dkg_participant_announce_v1",
             Self::PrepareGramineDirectDevOnboardingArtifactV1 { .. } => {
                 "prepare_gramine_direct_dev_onboarding_artifact_v1"
             }
             Self::IngestGramineDirectDevOnboardingArtifactV1 { .. } => {
                 "ingest_gramine_direct_dev_onboarding_artifact_v1"
             }
+            Self::GenerateTransitionEvidenceDevV1 { .. } => "generate_transition_evidence_dev_v1",
+            Self::RetireRemoteSessionsV1 { .. } => "retire_remote_sessions_v1",
+            Self::AuthorizeRemoteSessionV2 { .. } => "authorize_remote_session_v2",
+            Self::BeginUpgradeKeyTransferV1 { .. } => "begin_upgrade_key_transfer_v1",
             Self::PrepareGramineDirectDevOnboardingArtifactV2 { .. } => {
                 "prepare_gramine_direct_dev_onboarding_artifact_v2"
             }
-            Self::ExecuteLysisFractionsV1 { .. } => "execute_lysis_fractions_v1",
-            Self::ReadTributeDayFractionsV1 { .. } => "read_tribute_day_fractions_v1",
-            Self::IssueNodFromTributeV1 { .. } => "issue_nod_from_tribute_v1",
-            Self::ApplyNodGroupLoadOpV1 { .. } => "apply_nod_group_load_op_v1",
-            Self::ReadNodGroupLoadV1 { .. } => "read_nod_group_load_v1",
-            Self::EncryptNodQuoteV1 { .. } => "encrypt_nod_quote_v1",
-            Self::MineGratisFromPromisV1 { .. } => "mine_gratis_from_promis_v1",
+            Self::Payload { .. } => "payload",
         }
     }
 
     /// True when re-sending this request after a lost response cannot
-    /// double-apply enclave state. The request is pure or deterministic, so the
-    /// reconnect-and-retry path may re-send it once. State-mutating requests must
-    /// never be re-sent implicitly. These include initialization, DKG
-    /// seams, artifact ingestion, session admission and the multi-frame DCAP
-    /// upload. The exhaustive match forces every future variant to make this
-    /// choice.
+    /// double-apply enclave state. Application-layer [`Self::Payload`] callers
+    /// supply explicit [`crate::tee_call::CallMeta`] when overriding retry behavior.
     pub const fn is_idempotent(&self) -> bool {
         match self {
             Self::GetQuote { .. }
-            | Self::MineEncryptedNodV1 { .. }
-            | Self::ReadNodAmountV1 { .. }
-            | Self::EncryptNodForTributeV1 { .. }
-            | Self::ProcessEncryptedTributeOfferBatchV2 { .. }
-            | Self::ReadTributeAmountsV2 { .. }
-            | Self::ApplyTributeDayOpV2 { .. }
-            | Self::ReadTributeDayAmountV2 { .. }
             | Self::GetPublicKeys
             | Self::GenerateDcapQuote { .. }
             | Self::SignRegistrationIntentDevV1 { .. }
             | Self::GenerateTransitionEvidenceDevV1 { .. }
             | Self::RetireRemoteSessionsV1 { .. }
-            | Self::ProcessTributeOfferBatch { .. }
-            | Self::ApplyGratisOp { .. }
-            | Self::ApplyPromisOp { .. }
-            | Self::DeriveAccountKeys { .. }
-            | Self::ApplyFidelityCohortOp { .. }
-            | Self::SnapshotFidelityLeagues { .. }
-            | Self::QueryFidelityIndex { .. }
             | Self::Health
-            | Self::PrepareGramineDirectDevOnboardingArtifactV1 { .. } => true,
-            Self::PrepareGramineDirectDevOnboardingArtifactV2 { .. } => true,
-            Self::ExecuteLysisFractionsV1 { .. }
-            | Self::ReadTributeDayFractionsV1 { .. }
-            | Self::IssueNodFromTributeV1 { .. }
-            | Self::ApplyNodGroupLoadOpV1 { .. }
-            | Self::ReadNodGroupLoadV1 { .. }
-            | Self::EncryptNodQuoteV1 { .. }
-            | Self::MineGratisFromPromisV1 { .. } => true,
+            | Self::PrepareGramineDirectDevOnboardingArtifactV1 { .. }
+            | Self::PrepareGramineDirectDevOnboardingArtifactV2 { .. }
+            | Self::Payload { .. } => true,
             Self::BeginUpgradeKeyTransferV1 { .. }
             | Self::GetInitializationChallenge
             | Self::Initialize { .. }
@@ -534,38 +302,18 @@ impl EnclaveRequest {
         }
     }
 
-    /// Classify each request for consensus witness recording. Stream fragments
-    /// are recorded only as their single logical completion response.
+    /// Classify each infrastructure request for consensus witness recording.
+    /// Application-layer [`Self::Payload`] recording is governed by the inner
+    /// protocol's [`crate::tee_call::CallMeta::recordable`] contract.
     pub const fn consensus_witness_kind(&self) -> super::ConsensusWitnessKind {
         use super::ConsensusWitnessKind::{NonConsensus, Recorded, StreamFrame};
         match self {
-            Self::ApplyGratisOp { .. }
-            | Self::ApplyPromisOp { .. }
-            | Self::MineGratisFromPromisV1 { .. }
-            | Self::SnapshotFidelityLeagues { .. }
-            | Self::QueryFidelityIndex { .. }
-            | Self::PrepareGramineDirectDevOnboardingArtifactV2 { .. } => Recorded,
-            Self::MineEncryptedNodV1 { .. }
-            | Self::ReadNodAmountV1 { .. }
-            | Self::EncryptNodForTributeV1 { .. }
-            | Self::IssueNodFromTributeV1 { .. }
-            | Self::ApplyNodGroupLoadOpV1 { .. }
-            | Self::ReadNodGroupLoadV1 { .. }
-            | Self::EncryptNodQuoteV1 { .. } => Recorded,
-            Self::ProcessEncryptedTributeOfferBatchV2 { .. }
-            | Self::ReadTributeAmountsV2 { .. }
-            | Self::ApplyTributeDayOpV2 { .. }
-            | Self::ReadTributeDayAmountV2 { .. }
-            | Self::ExecuteLysisFractionsV1 { .. }
-            | Self::ReadTributeDayFractionsV1 { .. } => Recorded,
+            Self::PrepareGramineDirectDevOnboardingArtifactV2 { .. } => Recorded,
             Self::BeginDcapVerificationV1 { .. }
             | Self::BeginDcapOnboardingVerificationV1 { .. }
             | Self::DcapVerificationChunkV1 { .. }
             | Self::FinishDcapVerificationV1 { .. } => StreamFrame,
-            Self::DeriveAccountKeys { .. }
-            | Self::ApplyFidelityCohortOp { .. }
-            | Self::ProcessTributeOfferBatch { .. }
-            | Self::GetQuote { .. }
+            Self::GetQuote { .. }
             | Self::GetInitializationChallenge
             | Self::Initialize { .. }
             | Self::OpenSession
@@ -594,7 +342,8 @@ impl EnclaveRequest {
             | Self::GenerateTransitionEvidenceDevV1 { .. }
             | Self::RetireRemoteSessionsV1 { .. }
             | Self::AuthorizeRemoteSessionV2 { .. }
-            | Self::BeginUpgradeKeyTransferV1 { .. } => NonConsensus,
+            | Self::BeginUpgradeKeyTransferV1 { .. }
+            | Self::Payload { .. } => NonConsensus,
         }
     }
 }
@@ -602,54 +351,10 @@ impl EnclaveRequest {
 impl core::fmt::Debug for EnclaveRequest {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::ExecuteLysisFractionsV1 { request } => f
-                .debug_struct("ExecuteLysisFractionsV1")
-                .field("chain_id", &request.chain_id)
-                .field("worldwide_day", &request.worldwide_day)
-                .field("emission_day", &request.emission_day)
-                .field("completed_at", &request.completed_at)
-                .field("metadosis_limit_minor", &request.metadosis_limit_minor)
-                .field("tributes", &request.tributes.len())
-                .finish(),
-            Self::ReadTributeDayFractionsV1 { record } => f
-                .debug_struct("ReadTributeDayFractionsV1")
-                .field("chain_id", &record.chain_id)
-                .field("worldwide_day", &record.worldwide_day)
-                .field("emission_day", &record.emission_day)
-                .field("completed_at", &record.completed_at)
-                .field("encrypted_fractions", &"<redacted>")
-                .finish(),
-            Self::IssueNodFromTributeV1 { request } => f
-                .debug_struct("IssueNodFromTributeV1")
-                .field("nod_id", &request.terms.nod_id)
-                .field("owner", &request.terms.owner)
-                .field("tribute", &"<redacted>")
-                .field("day_fractions", &"<redacted>")
-                .finish(),
-            Self::ApplyNodGroupLoadOpV1 { request } => f
-                .debug_struct("ApplyNodGroupLoadOpV1")
-                .field("chain_id", &request.chain_id)
-                .field("scope", &request.scope)
-                .field("operation", &"<redacted>")
-                .finish(),
-            Self::ReadNodGroupLoadV1 { record } => f
-                .debug_struct("ReadNodGroupLoadV1")
-                .field("chain_id", &record.chain_id)
-                .field("scope", &record.scope)
-                .field("encrypted_load", &"<redacted>")
-                .finish(),
-            Self::EncryptNodQuoteV1 { context, .. } => f
-                .debug_struct("EncryptNodQuoteV1")
-                .field("nod_id", &context.nod_id)
-                .field("owner", &context.owner)
-                .field("asset", &context.asset)
-                .field("payment_minor", &"<redacted>")
-                .finish(),
-            Self::MineGratisFromPromisV1 { request } => f
-                .debug_struct("MineGratisFromPromisV1")
-                .field("chain_id", &request.chain_id)
-                .field("account", &request.account)
-                .field("encrypted_promis_amount", &"<redacted>")
+            Self::Payload { lane, payload } => f
+                .debug_struct("Payload")
+                .field("lane", lane)
+                .field("payload_len", &payload.len())
                 .finish(),
             other => f
                 .debug_struct("EnclaveRequest")
@@ -662,7 +367,7 @@ impl core::fmt::Debug for EnclaveRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{ConsensusWitnessKind, FidelityQueryRequest};
+    use crate::protocol::ConsensusWitnessKind;
 
     fn onboarding_context() -> GramineDirectDevOnboardingContextV1 {
         GramineDirectDevOnboardingContextV1 {
@@ -681,47 +386,36 @@ mod tests {
     }
 
     #[test]
-    fn appended_request_preserves_wire_ordinals_and_round_trips_canonical_context() {
+    fn wire_ordinals_and_canonical_context_round_trip() {
         let legacy = EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 {
             request_hash: B256::ZERO,
             context: vec![],
         };
-        let appended = EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 {
+        let v2 = EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 {
             context: onboarding_context(),
         };
-        assert_eq!(postcard::to_allocvec(&legacy).unwrap()[0], 35);
-        assert_eq!(postcard::to_allocvec(&appended).unwrap()[0], 48);
-        let encoded = postcard::to_allocvec(&appended).unwrap();
+        let payload = EnclaveRequest::Payload {
+            lane: PayloadLane::Execution,
+            payload: vec![1, 2, 3],
+        };
+        assert_eq!(postcard::to_allocvec(&legacy).unwrap()[0], 28);
+        assert_eq!(postcard::to_allocvec(&v2).unwrap()[0], 34);
+        assert_eq!(postcard::to_allocvec(&payload).unwrap()[0], 35);
+        let encoded = postcard::to_allocvec(&v2).unwrap();
         assert_eq!(
             postcard::from_bytes::<EnclaveRequest>(&encoded).unwrap(),
-            appended
+            v2
         );
     }
 
     #[test]
     fn consensus_witness_classifier_marks_recorded_stream_and_non_consensus_requests() {
-        let query = EnclaveRequest::QueryFidelityIndex {
-            request: Box::new(FidelityQueryRequest {
-                chain_id: B256::ZERO,
-                account: Address::ZERO,
-                cohort_blob: vec![],
-                query_timestamp: 0,
-                block_timestamp: 0,
-                first_qualified_start: 0,
-                expiry: 0,
-                owner_sig: vec![],
-            }),
-        };
         let stream = EnclaveRequest::DcapVerificationChunkV1 {
             request_hash: B256::ZERO,
             offset: 0,
             bytes: vec![],
         };
         let non_consensus = EnclaveRequest::Health;
-        assert_eq!(
-            query.consensus_witness_kind(),
-            ConsensusWitnessKind::Recorded
-        );
         assert_eq!(
             stream.consensus_witness_kind(),
             ConsensusWitnessKind::StreamFrame

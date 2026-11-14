@@ -7,10 +7,14 @@ publish.workspace = true
 
 [dependencies]
 outbe-system-common.workspace = true
-alloy-primitives.workspace = true
+alloy-primitives = { workspace = true, features = ["serde"] }
+ark-bn254.workspace = true
+ark-ff.workspace = true
 base64.workspace = true
+outbe-poseidon.workspace = true
 outbe-primitives.workspace = true
 ring.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 

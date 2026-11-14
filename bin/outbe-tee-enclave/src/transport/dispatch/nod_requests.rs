@@ -1,9 +1,10 @@
 //! Route requests within one domain family.
 
-use super::requests::RequestContext;
-use crate::transport::*;
+use outbe_enclave::protocol::EnclaveRequest;
 
-pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> EnclaveResponse {
+use super::requests::{DomainDispatchResult, RequestContext};
+
+pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> DomainDispatchResult {
     let RequestContext {
         keys,
         offer_key,

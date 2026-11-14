@@ -411,7 +411,7 @@ pub(crate) fn complete_gramine_direct_dev_onboarding_response_v2(
             };
         }
     };
-    let preimage = match outbe_tee::response_auth::attestation(
+    let preimage = match outbe_tee::tee_call::canonical_attestation_preimage(
         b"outbe/tee/gramine-direct-dev-onboarding-result/v2",
         request_hash,
         &onboarding_artifact,
@@ -863,13 +863,13 @@ mod tests {
             panic!("V2 DirectDev onboarding failed: {response_v2:?}");
         };
         assert_eq!(v2_hash, request_hash);
-        let preimage = outbe_tee::response_auth::attestation(
+        let preimage = outbe_tee::tee_call::canonical_attestation_preimage(
             b"outbe/tee/gramine-direct-dev-onboarding-result/v2",
             v2_hash,
             &v2_artifact,
         )
         .unwrap();
-        outbe_tee::tribute_v2::verify_attestation(
+        outbe_tee::tee_call::verify_enclave_attestation(
             &source_keys.attestation_pub(),
             &preimage,
             &attestation_tag,

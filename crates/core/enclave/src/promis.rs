@@ -10,7 +10,7 @@
 
 use alloy_primitives::{Address, B256, U256};
 
-use outbe_tee::protocol::{
+use crate::protocol::{
     GratisOp, GratisOpRequest, GratisOpStatus, MineGratisFromPromisRequestV1,
     MineGratisFromPromisResultV1, MineGratisFromPromisStatusV1, PromisOp, PromisOpRequest,
     PromisOpResult, PromisOpStatus,
@@ -91,7 +91,7 @@ fn rejected_promis_op(reason: PromisRejectReason) -> PromisOpResult {
 /// and fills `attestation_tag`. Business rejections come back as
 /// `PromisOpStatus::Rejected` (-> precompile revert), never a panic.
 pub fn apply_op(state_key: &[u8; 32], req: &PromisOpRequest) -> PromisOpResult {
-    let inputs_canonical_hash = outbe_tee::protocol::promis_op_canonical_hash(req);
+    let inputs_canonical_hash = crate::protocol::promis_op_canonical_hash(req);
     let mut result = match apply_op_inner(state_key, req) {
         Ok(r) => r,
         Err(reason) => rejected_promis_op(reason),
@@ -144,7 +144,7 @@ fn apply_op_inner(
         .op_nonce
         .checked_add(1)
         .ok_or(PromisRejectReason::ModifyNonceExhausted)?;
-    let input_hash = outbe_tee::protocol::promis_op_canonical_hash(req);
+    let input_hash = crate::protocol::promis_op_canonical_hash(req);
 
     match req.op {
         PromisOp::Mint => {
@@ -226,7 +226,7 @@ pub fn apply_mine_gratis(
     keys: MineGratisKeys<'_>,
     req: &MineGratisFromPromisRequestV1,
 ) -> MineGratisFromPromisResultV1 {
-    let inputs_canonical_hash = outbe_tee::protocol::mine_gratis_from_promis_canonical_hash(req);
+    let inputs_canonical_hash = crate::protocol::mine_gratis_from_promis_canonical_hash(req);
     let amount = match crate::crypto::decrypt_tee_amount(
         keys.offer_secret,
         &req.encrypted_promis_amount,
@@ -308,7 +308,7 @@ pub fn apply_mine_gratis(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use outbe_tee::protocol::ModifyAuth;
+    use crate::protocol::ModifyAuth;
 
     const CHAIN: B256 = B256::repeat_byte(0xC2);
 
@@ -541,8 +541,8 @@ mod tests {
     #[test]
     fn modify_mac_matches_the_known_answer_vectors() {
         use crate::confidential::GRATIS;
+        use crate::protocol::GratisOp;
         use alloy_primitives::{address, b256};
-        use outbe_tee::protocol::GratisOp;
 
         let key = [0x5a; 32];
         let chain_one = B256::from(U256::from(1u64));

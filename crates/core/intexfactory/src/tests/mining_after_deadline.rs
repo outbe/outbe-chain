@@ -6,7 +6,7 @@ use alloy_sol_types::SolEvent;
 use outbe_enclave::promis::{
     decrypt_balance, derive_modify_key, derive_view_key, modify_mac, ModifyOperation,
 };
-use outbe_tee::protocol::PromisOp;
+use outbe_enclave::protocol::PromisOp;
 use outbe_vaultrouter::settlement::SettlementPayment;
 
 const RELAYER: Address = Address::repeat_byte(0x5e);

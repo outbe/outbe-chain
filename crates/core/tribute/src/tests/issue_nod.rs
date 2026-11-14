@@ -16,7 +16,7 @@ const GENESIS_TIMESTAMP: u64 = 1_733_011_200; // 2024-12-01 00:00 UTC
 
 /// The id `issueNod` gives the Tribute's Nod: the owner in the series of its price day.
 fn nod_id_of(tc: &TributeContract<'_>, tribute: &crate::schema::TributeData) -> U256 {
-    let series = outbe_primitives::series_id::SeriesId::for_pair(
+    let series = outbe_core_common::series_id::SeriesId::for_pair(
         tc.lysis_emission_day(tribute.worldwide_day)
             .unwrap()
             .unwrap()
@@ -224,7 +224,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
         )
         .unwrap();
         let owner_decrypted =
-            outbe_tee::nod_decrypt::decrypt_nod_for_owner(&nod_view_key, &nod_item.encrypted)
+            outbe_enclave::nod_decrypt::decrypt_nod_for_owner(&nod_view_key, &nod_item.encrypted)
                 .expect("owner must decrypt real encrypted Nod");
         let enclave_decrypted = outbe_enclave::nod_encryption::decrypt_nod(
             &crate::enclave_client::test_enclave::NETWORK_SECRET,
@@ -234,7 +234,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
         assert!(!owner_decrypted.is_zero());
         assert_eq!(owner_decrypted, enclave_decrypted);
         assert!(
-            outbe_tee::nod_decrypt::decrypt_nod_for_owner(&[0x78; 32], &nod_item.encrypted,)
+            outbe_enclave::nod_decrypt::decrypt_nod_for_owner(&[0x78; 32], &nod_item.encrypted,)
                 .is_err(),
             "wrong view key must fail ChaCha20-Poly1305 authentication"
         );
@@ -436,16 +436,16 @@ fn lysis_keys_its_result_by_the_emission_day_and_binds_the_nod_to_it() {
 
         let record = tc.get_record(tribute.tribute_id).unwrap().unwrap();
         let request_for = |fractions_day: EmissionDate| {
-            let series = outbe_primitives::series_id::SeriesId::for_pair(
+            let series = outbe_core_common::series_id::SeriesId::for_pair(
                 fractions_day.value(),
                 tribute.issuance_currency,
                 tribute.reference_currency,
             )
             .unwrap();
-            outbe_tee::nod_mine::IssueNodFromTributeRequestV1 {
+            outbe_enclave::nod_mine::IssueNodFromTributeRequestV1 {
                 tribute: record.encrypted().unwrap().clone(),
                 day_fractions: tc.day_fractions_record(fractions_day).unwrap().unwrap(),
-                terms: outbe_primitives::nod_encryption::NodTermsV1 {
+                terms: outbe_core_common::nod_encryption::NodTermsV1 {
                     chain_id: storage.chain_id().unwrap(),
                     nod_id: outbe_core_common::nod_rules::derive_nod_id(series, tribute.owner),
                     owner: tribute.owner,
@@ -494,7 +494,7 @@ fn the_enclave_refuses_a_lysis_list_that_differs_from_the_frozen_day_nominal() {
         ids.sort();
         let inputs: Vec<_> = ids
             .iter()
-            .map(|id| outbe_tee::tribute_day::LysisTributeInputV1 {
+            .map(|id| outbe_enclave::tribute_day::LysisTributeInputV1 {
                 tribute: tc
                     .get_record(*id)
                     .unwrap()
@@ -508,7 +508,7 @@ fn the_enclave_refuses_a_lysis_list_that_differs_from_the_frozen_day_nominal() {
             .collect();
         let lysis = |tributes| {
             crate::enclave_client::execute_lysis_fractions(
-                outbe_tee::tribute_day::LysisFractionsRequestV1 {
+                outbe_enclave::tribute_day::LysisFractionsRequestV1 {
                     chain_id: storage.chain_id().unwrap(),
                     worldwide_day: day,
                     emission_day: EmissionDate::new(20241221),
@@ -586,7 +586,7 @@ fn series_sealing_zero_nod_forfeit_returns_unclaimed_load_and_enables_permission
 
         let group_key = outbe_nod::api::series_group(
             &storage,
-            outbe_primitives::series_id::SeriesId::for_pair(emission_day_key, 840, 840).unwrap(),
+            outbe_core_common::series_id::SeriesId::for_pair(emission_day_key, 840, 840).unwrap(),
         )
         .unwrap()
         .expect("the 840 series is sealed");
@@ -775,7 +775,7 @@ fn series_zero_minted_nods_automatic_breach_call_forfeit_and_clean() {
         // Unquoted 978 must not have sealed a series; 840 sealed a 0-Nod series with 2 Tributes
         assert!(outbe_nod::api::series_group(
             &storage,
-            outbe_primitives::series_id::SeriesId::for_pair(emission_day_key, 840, 978).unwrap(),
+            outbe_core_common::series_id::SeriesId::for_pair(emission_day_key, 840, 978).unwrap(),
         )
         .unwrap()
         .is_none());
@@ -789,7 +789,7 @@ fn series_zero_minted_nods_automatic_breach_call_forfeit_and_clean() {
 
         let group_key = outbe_nod::api::series_group(
             &storage,
-            outbe_primitives::series_id::SeriesId::for_pair(emission_day_key, 840, 840).unwrap(),
+            outbe_core_common::series_id::SeriesId::for_pair(emission_day_key, 840, 840).unwrap(),
         )
         .unwrap()
         .expect("the 840 series is sealed");
@@ -1052,7 +1052,7 @@ fn a_zero_load_tribute_stays_out_of_its_series_and_cleans_at_once() {
             "the tiny Tribute's load rounds to zero"
         );
 
-        let series = outbe_primitives::series_id::SeriesId::for_pair(price_day, 840, 840).unwrap();
+        let series = outbe_core_common::series_id::SeriesId::for_pair(price_day, 840, 840).unwrap();
         let group = outbe_nod::api::series_group(&storage, series)
             .unwrap()
             .expect("the normal Tribute seals the series");
@@ -1153,7 +1153,7 @@ fn multi_league_lysis_and_issue_nod_keep_league_nominals_fractions_and_loads_pri
             assert!(totals_before.isSealed);
 
             let series =
-                outbe_primitives::series_id::SeriesId::for_pair(price_day, 840, 840).unwrap();
+                outbe_core_common::series_id::SeriesId::for_pair(price_day, 840, 840).unwrap();
             let group_key = outbe_nod::api::series_group(&storage, series)
                 .unwrap()
                 .unwrap();
@@ -1203,9 +1203,11 @@ fn multi_league_lysis_and_issue_nod_keep_league_nominals_fractions_and_loads_pri
             )
             .unwrap();
             let load1 =
-                outbe_tee::nod_decrypt::decrypt_nod_for_owner(&view_key1, &rec1.encrypted).unwrap();
+                outbe_enclave::nod_decrypt::decrypt_nod_for_owner(&view_key1, &rec1.encrypted)
+                    .unwrap();
             let load2 =
-                outbe_tee::nod_decrypt::decrypt_nod_for_owner(&view_key2, &rec2.encrypted).unwrap();
+                outbe_enclave::nod_decrypt::decrypt_nod_for_owner(&view_key2, &rec2.encrypted)
+                    .unwrap();
             assert_eq!(
                 load1,
                 t1.nominal_amount_minor * U256::from(f1) / U256::from(1_000_000u64)
@@ -1277,9 +1279,9 @@ fn multi_league_lysis_and_issue_nod_keep_league_nominals_fractions_and_loads_pri
             owner1,
         )
         .unwrap();
-        let decrypted_quote = outbe_tee::nod_decrypt::decrypt_nod_quote_for_owner(
+        let decrypted_quote = outbe_enclave::nod_decrypt::decrypt_nod_quote_for_owner(
             &view_key1,
-            &outbe_primitives::nod_encryption::NodQuoteContextV1 {
+            &outbe_core_common::nod_encryption::NodQuoteContextV1 {
                 chain_id: 1,
                 nod_id: nod1_id,
                 owner: owner1,

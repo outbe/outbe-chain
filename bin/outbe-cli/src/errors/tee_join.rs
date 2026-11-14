@@ -13,8 +13,8 @@ pub(crate) enum TeeJoinAdmissionError {
     /// Reconnecting to the exact enclave after a connection fault failed.
     #[error("finalized-admission connection fault ({fault}); exact reconnect failed: {reconnect}")]
     ReconnectFailed {
-        fault: outbe_tee::TransportError,
-        reconnect: outbe_tee::TransportError,
+        fault: Box<outbe_tee::TransportError>,
+        reconnect: Box<outbe_tee::TransportError>,
     },
     /// Probing the offer key state after reconnecting failed.
     #[error("finalized-admission connection fault ({fault}); authenticated recovery probe failed: {probe}")]

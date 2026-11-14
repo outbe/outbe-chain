@@ -3,10 +3,9 @@ use crate::precompile::INod;
 use crate::schema::{CallTerms, NodContract, NodGroupState, NodItemState};
 use crate::storage_records::{StoredNod, StoredNodEntryExt};
 use alloy_primitives::{Address, B256, U256};
+use outbe_core_common::{nod_encryption::NOD_BLOB_LEN, series_id::SeriesId};
 use outbe_primitives::{
     error::{PrecompileError, Result},
-    nod_encryption::NOD_BLOB_LEN,
-    series_id::SeriesId,
     storage::StorageHandle,
 };
 

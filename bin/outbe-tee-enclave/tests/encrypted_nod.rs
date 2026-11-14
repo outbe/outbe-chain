@@ -1,11 +1,12 @@
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::{
+use outbe_core_common::{
     nod_encryption::NodTermsV1,
-    time::WorldwideDay,
+    series_id::SeriesId,
     tribute_encryption::{TributeAmountsV2, TributeContextV2},
-    wwd_entity_id::WwdEntityId,
+    wwd_entity_id::{derive_poseidon_digest, derive_poseidon_entity_id},
 };
-use outbe_tee::nod_decrypt::decrypt_nod_for_owner;
+use outbe_enclave::nod_decrypt::decrypt_nod_for_owner;
+use outbe_primitives::{time::WorldwideDay, wwd_entity_id::WwdEntityId};
 use outbe_tee_enclave::{
     nod_encryption::{decrypt_nod, derive_view_key, encrypt_nod_for_tribute},
     tribute_encryption::encrypt_tribute,
@@ -38,7 +39,7 @@ fn self_contained_nod_rederives_keys_and_separates_divergent_amounts() {
     let terms = NodTermsV1 {
         chain_id: 54322345,
         nod_id: outbe_core_common::nod_rules::derive_nod_id(
-            outbe_primitives::series_id::SeriesId::for_pair(day.value(), 840, 978).unwrap(),
+            SeriesId::for_pair(day.value(), 840, 978).unwrap(),
             owner_address,
         ),
         owner: owner_address,
@@ -49,16 +50,14 @@ fn self_contained_nod_rederives_keys_and_separates_divergent_amounts() {
         reference_currency: 978,
     };
     for invalid_id in [
-        U256::from_be_bytes(
-            outbe_primitives::wwd_entity_id::derive_poseidon_digest(owner_address, day).0,
-        ),
-        outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(owner_address, day).to_u256(),
+        U256::from_be_bytes(derive_poseidon_digest(owner_address, day).0),
+        derive_poseidon_entity_id(owner_address, day).to_u256(),
         outbe_core_common::nod_rules::derive_nod_id(
-            outbe_primitives::series_id::SeriesId::for_pair(day.value(), 840, 978).unwrap(),
+            SeriesId::for_pair(day.value(), 840, 978).unwrap(),
             Address::repeat_byte(9),
         ),
         outbe_core_common::nod_rules::derive_nod_id(
-            outbe_primitives::series_id::SeriesId::for_pair(20250116, 840, 978).unwrap(),
+            SeriesId::for_pair(20250116, 840, 978).unwrap(),
             owner_address,
         ),
     ] {

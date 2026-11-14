@@ -1,4 +1,7 @@
 use alloy_primitives::{B256, U256};
+use outbe_core_common::{
+    tribute_encryption::EncryptedTributeV2, wwd_entity_id::derive_poseidon_entity_id,
+};
 use outbe_primitives::storage::proof::FinalizedStateCheckpoint;
 use outbe_primitives::{
     addresses::TRIBUTE_ADDRESS,
@@ -10,8 +13,6 @@ use outbe_primitives::{
         StorageHandle,
     },
     time::WorldwideDay,
-    tribute_encryption::EncryptedTributeV2,
-    wwd_entity_id::derive_poseidon_entity_id,
     wwd_entity_id::WwdEntityId,
 };
 use serde::{Deserialize, Serialize};
@@ -40,7 +41,7 @@ pub fn retained_source_binding(
             return Err(invalid("retained Tribute source does not match its index"));
         }
     }
-    outbe_tee::tribute_source::source_binding(tribute, index, &words)
+    outbe_enclave::tribute_source::source_binding(tribute, index, &words)
         .map_err(|error| invalid(error.to_string()))
 }
 
@@ -50,7 +51,7 @@ pub type TributeSourceWords = (EncryptedTributeV2, u32, Vec<(B256, U256)>);
 /// Reads the encrypted tribute record, its day index, and expected storage words for `tribute_id`.
 pub fn read_tribute_source_words(
     storage: StorageHandle<'_>,
-    subject: &outbe_tee::tribute_source::TributeSourceSubject,
+    subject: &outbe_enclave::tribute_source::TributeSourceSubject,
     tribute_id: WwdEntityId,
 ) -> Result<TributeSourceWords> {
     let record = crate::state_api::get_retained_record(&storage, tribute_id)?
@@ -79,8 +80,8 @@ pub struct TributeStateProofSubject {
     pub tribute_count: u32,
 }
 
-impl From<outbe_tee::tribute_source::TributeSourceSubject> for TributeStateProofSubject {
-    fn from(source: outbe_tee::tribute_source::TributeSourceSubject) -> Self {
+impl From<outbe_enclave::tribute_source::TributeSourceSubject> for TributeStateProofSubject {
+    fn from(source: outbe_enclave::tribute_source::TributeSourceSubject) -> Self {
         Self {
             checkpoint: FinalizedStateCheckpoint {
                 block_number: source.checkpoint.block_number,
@@ -198,8 +199,8 @@ impl TributeRecordStateProof {
         &self,
         contract: &TributeContract<'_>,
         subject: &TributeStateProofSubject,
-    ) -> Result<outbe_tee::tribute_source::TributeStateSource> {
-        Ok(outbe_tee::tribute_source::TributeStateSource {
+    ) -> Result<outbe_enclave::tribute_source::TributeStateSource> {
+        Ok(outbe_enclave::tribute_source::TributeStateSource {
             tribute: self.tribute.clone(),
             day_index: self.day_index,
             expected_words: expected_record_words(

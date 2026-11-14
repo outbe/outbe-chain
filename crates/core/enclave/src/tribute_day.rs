@@ -3,21 +3,21 @@
 use std::collections::BTreeMap;
 
 use alloy_primitives::{B256, U256};
-use outbe_primitives::time::{EmissionDate, WorldwideDay};
-use outbe_primitives::tribute_day_encryption::{
+use outbe_core_common::tribute_day_encryption::{
     EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1,
 };
-use outbe_tee::tribute_day::{
-    day_operation_inputs_hash, lysis_fractions_inputs_hash, LysisFractionsRequestV1,
-    LysisFractionsResultV1, LysisSeriesLoadOutputV1, LysisTributeInputV1, TributeDayOpRequestV2,
-    TributeDayOperationV2,
-};
+use outbe_primitives::time::{EmissionDate, WorldwideDay};
 use ring::hmac;
 use zeroize::Zeroizing;
 
 use crate::{
     confidential::SlotCipherDomain,
     errors::{Result, TeeError, TributeDayRejectReason},
+    host::tribute_day::{
+        day_operation_inputs_hash, lysis_fractions_inputs_hash, LysisFractionsRequestV1,
+        LysisFractionsResultV1, LysisSeriesLoadOutputV1, LysisTributeInputV1,
+        TributeDayOpRequestV2, TributeDayOperationV2,
+    },
     tribute_encryption::decrypt_tribute,
 };
 
@@ -183,7 +183,7 @@ fn sum_allocated_gratis_from_groups(
 
 type LeagueGroupMap = BTreeMap<u16, (u32, U256)>;
 type LysisEvaluation = (
-    Vec<outbe_primitives::wwd_entity_id::WwdEntityId>,
+    Vec<outbe_core_common::wwd_entity_id::WwdEntityId>,
     Vec<LysisSeriesLoadOutputV1>,
     Option<U256>,
 );

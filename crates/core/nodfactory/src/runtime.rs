@@ -11,12 +11,12 @@ use outbe_primitives::addresses::NOD_FACTORY_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
+use outbe_core_common::nod_encryption::EncryptedNodV1;
 use outbe_core_common::pow;
+use outbe_core_common::series_id::SeriesId;
 use outbe_nod::api as nod_api;
 use outbe_nod::api::{LoadedNodGroup, LoadedNodItem};
 use outbe_nod::schema::{CallTerms, NodItemState};
-use outbe_primitives::nod_encryption::EncryptedNodV1;
-use outbe_primitives::series_id::SeriesId;
 
 use crate::errors::{date_step_error, NodFactoryError};
 use crate::precompile::INodFactory;
@@ -36,7 +36,7 @@ pub struct LysisSeriesInput {
     pub reference_currency: u16,
     pub entry_price_minor: U256,
     pub unclaimed_tribute_count: u64,
-    pub unclaimed_tribute_load: outbe_primitives::nod_encryption::EncryptedNodGroupLoadV1,
+    pub unclaimed_tribute_load: outbe_core_common::nod_encryption::EncryptedNodGroupLoadV1,
 }
 
 pub(crate) fn issue_nod_at(
@@ -369,7 +369,7 @@ pub fn quote_settlement(
     let snapshot_id = quote.snapshot_id();
     let encrypted = nod_api::encrypt_quote_for_owner(
         &item.body().encrypted,
-        outbe_primitives::nod_encryption::NodQuoteContextV1 {
+        outbe_core_common::nod_encryption::NodQuoteContextV1 {
             chain_id: storage.chain_id()?,
             nod_id,
             owner: item.body().owner,

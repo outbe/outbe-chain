@@ -3,9 +3,10 @@
 
 use alloy_primitives::U256;
 use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
+use outbe_core_common::series_id::SeriesId;
 use outbe_credis::precompile::ICredis;
 use outbe_credis::{CredisContract, ForfeitQueue};
-use outbe_primitives::{block::BlockRuntimeContext, error::Result, series_id::SeriesId};
+use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 use outbe_system_common::pass_budget::PassBudget;
 
 pub(crate) fn forfeit_through(

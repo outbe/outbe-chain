@@ -7,16 +7,19 @@ use std::thread;
 use alloy_primitives::{Address, U256};
 use x25519_dalek::{PublicKey, StaticSecret};
 
-use outbe_tee::protocol::{
-    EnclaveRequest, EnclaveResponse, EncryptedTributeOffer, TributeOfferStatus, WorldwideDay,
+use outbe_enclave::protocol::{
+    EnclaveRequest as DomainRequest, EnclaveResponse as DomainResponse, EncryptedTributeOffer,
+    TributeOfferStatus, WorldwideDay,
 };
+use outbe_enclave::request_enclave_client;
+use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 use outbe_tee::EnclaveClient;
 use outbe_tee_enclave::crypto::{chacha20poly1305_encrypt, hkdf_sha256};
 use outbe_tee_enclave::keys::EnclaveKeys;
 use outbe_tee_enclave::transport::serve_connection;
 
 const OFFER_SECRET: [u8; 32] = [7u8; 32];
-const OFFER_SALT: [u8; 32] = outbe_tee::OFFER_HKDF_SALT;
+const OFFER_SALT: [u8; 32] = outbe_enclave::OFFER_HKDF_SALT;
 
 const GOOD_JSON: &str = r#"{
     "creator": "alice",
@@ -164,13 +167,15 @@ fn handshake_and_offer_roundtrip_over_uds() {
     let owner = Address::repeat_byte(0xAB);
     let price = U256::from(2_000_000u64); // 2.0 COEN/840
     let offer = encrypt_offer(tribute_offer_public, owner, price);
-    match client
-        .request(&EnclaveRequest::ProcessTributeOfferBatch {
+    match request_enclave_client(
+        &mut client,
+        &DomainRequest::ProcessTributeOfferBatch {
             offers: vec![offer],
-        })
-        .unwrap()
+        },
+    )
+    .unwrap()
     {
-        EnclaveResponse::TributeOfferBatch { results, .. } => {
+        DomainResponse::TributeOfferBatch { results, .. } => {
             assert_eq!(results.len(), 1);
             assert_eq!(results[0].status, TributeOfferStatus::Created);
             assert_eq!(results[0].owner, owner);
@@ -323,13 +328,15 @@ fn transport_throughput_offers_per_sec() {
         })
         .collect();
 
-    let send = |client: &mut EnclaveClient| match client
-        .request(&EnclaveRequest::ProcessTributeOfferBatch {
+    let send = |client: &mut EnclaveClient| match request_enclave_client(
+        client,
+        &DomainRequest::ProcessTributeOfferBatch {
             offers: batch.clone(),
-        })
-        .unwrap()
+        },
+    )
+    .unwrap()
     {
-        EnclaveResponse::TributeOfferBatch { results, .. } => assert_eq!(results.len(), BATCH),
+        DomainResponse::TributeOfferBatch { results, .. } => assert_eq!(results.len(), BATCH),
         other => panic!("unexpected response: {other:?}"),
     };
 

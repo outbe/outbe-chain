@@ -1,10 +1,11 @@
 use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
+use outbe_core_common::wwd_entity_id::derive_poseidon_entity_id;
 use outbe_primitives::addresses::TRIBUTE_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result as PrecompileResult};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::wwd_entity_id::{derive_poseidon_entity_id, WwdEntityId};
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::{TributeContract, TributeData};
 

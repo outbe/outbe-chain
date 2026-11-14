@@ -1,11 +1,11 @@
 use super::*;
 use alloy_primitives::{B256, U256};
 use ed25519_dalek::{Signer, SigningKey};
-use outbe_tee::protocol::EnclaveResponse;
+use outbe_enclave::protocol::EnclaveResponse;
 use std::sync::Arc;
 
 fn sign_nod_read(key: &SigningKey, inputs_hash: B256, amount: U256) -> EnclaveResponse {
-    let preimage = outbe_tee::nod_mine::nod_read_preimage(inputs_hash, amount);
+    let preimage = outbe_enclave::nod_mine::nod_read_preimage(inputs_hash, amount);
     let sig = key.sign(&preimage);
     EnclaveResponse::NodAmountReadV1 {
         amount,
@@ -150,46 +150,47 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
         state
     };
 
-    let make_enclave_hook = |sk: SigningKey| -> outbe_tee::tribute_client::TestLocalEnclaveHook {
-        let pk = sk.verifying_key().to_bytes();
-        Arc::new(move |req| match req {
-            outbe_tee::protocol::EnclaveRequest::ReadNodAmountV1 { nod } => {
-                let hash = outbe_tee::nod_mine::nod_read_hash(nod)
+    let make_enclave_hook =
+        |sk: SigningKey| -> outbe_enclave::tribute_client::TestLocalEnclaveHook {
+            let pk = sk.verifying_key().to_bytes();
+            Arc::new(move |req| match req {
+                outbe_enclave::protocol::EnclaveRequest::ReadNodAmountV1 { nod } => {
+                    let hash = outbe_enclave::nod_mine::nod_read_hash(nod)
+                        .map_err(outbe_tee::TransportError::codec)?;
+                    let resp = sign_nod_read(&sk, hash, U256::from(1_000_000u64));
+                    Ok((pk, resp))
+                }
+                outbe_enclave::protocol::EnclaveRequest::EncryptNodQuoteV1 {
+                    nod,
+                    context,
+                    payment_minor,
+                } => {
+                    let inputs_canonical_hash = outbe_enclave::response_auth::hash(
+                        b"outbe/nod/quote-encrypt-inputs/v1",
+                        &(nod.as_ref(), context, *payment_minor),
+                    )
                     .map_err(outbe_tee::TransportError::codec)?;
-                let resp = sign_nod_read(&sk, hash, U256::from(1_000_000u64));
-                Ok((pk, resp))
-            }
-            outbe_tee::protocol::EnclaveRequest::EncryptNodQuoteV1 {
-                nod,
-                context,
-                payment_minor,
-            } => {
-                let inputs_canonical_hash = outbe_tee::response_auth::hash(
-                    b"outbe/nod/quote-encrypt-inputs/v1",
-                    &(nod.as_ref(), context, *payment_minor),
-                )
-                .map_err(outbe_tee::TransportError::codec)?;
-                let encrypted_payment =
-                    vec![0x42u8; outbe_primitives::nod_encryption::NOD_BLOB_LEN];
-                let preimage = outbe_tee::response_auth::attestation(
-                    b"outbe/nod/quote-encrypt-result/v1",
-                    inputs_canonical_hash,
-                    &encrypted_payment,
-                )
-                .map_err(outbe_tee::TransportError::codec)?;
-                let sig = sk.sign(&preimage);
-                Ok((
-                    pk,
-                    EnclaveResponse::NodQuoteEncryptedV1 {
-                        encrypted_payment,
+                    let encrypted_payment =
+                        vec![0x42u8; outbe_core_common::nod_encryption::NOD_BLOB_LEN];
+                    let preimage = outbe_enclave::response_auth::attestation(
+                        b"outbe/nod/quote-encrypt-result/v1",
                         inputs_canonical_hash,
-                        attestation_tag: sig.to_bytes().to_vec(),
-                    },
-                ))
-            }
-            _ => Err(outbe_tee::TransportError::UnexpectedResponse),
-        })
-    };
+                        &encrypted_payment,
+                    )
+                    .map_err(outbe_tee::TransportError::codec)?;
+                    let sig = sk.sign(&preimage);
+                    Ok((
+                        pk,
+                        EnclaveResponse::NodQuoteEncryptedV1 {
+                            encrypted_payment,
+                            inputs_canonical_hash,
+                            attestation_tag: sig.to_bytes().to_vec(),
+                        },
+                    ))
+                }
+                _ => Err(outbe_tee::TransportError::UnexpectedResponse),
+            })
+        };
 
     let chain_spec = test_chain_spec();
     let config = OutbeEvmConfig::new(
@@ -248,7 +249,7 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
     outbe_tee::witness::set_witness_policy_for_test(Some(
         outbe_tee::witness::WitnessPolicy::EnclaveBacked,
     ));
-    outbe_tee::tribute_client::set_test_local_enclave_hook(Some(make_enclave_hook(
+    outbe_enclave::tribute_client::set_test_local_enclave_hook(Some(make_enclave_hook(
         leader_sk.clone(),
     )));
     let proposer_out = run_block_in_mode(false, Bytes::new());
@@ -261,7 +262,9 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
     assert_eq!(decoded_tape.txs[0].tx_index, begin.len() as u32);
 
     // 2. VerifierWithEnclave (validator with distinct enclave key validator_sk)
-    outbe_tee::tribute_client::set_test_local_enclave_hook(Some(make_enclave_hook(validator_sk)));
+    outbe_enclave::tribute_client::set_test_local_enclave_hook(Some(make_enclave_hook(
+        validator_sk,
+    )));
     let verifier_enclave_out = run_block_in_mode(true, proposer_out.2.clone());
     assert_eq!(proposer_out, verifier_enclave_out);
 
@@ -269,7 +272,7 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
     outbe_tee::witness::set_witness_policy_for_test(Some(
         outbe_tee::witness::WitnessPolicy::ReplayOnly,
     ));
-    outbe_tee::tribute_client::set_test_local_enclave_hook(None);
+    outbe_enclave::tribute_client::set_test_local_enclave_hook(None);
     let verifier_replay_out = run_block_in_mode(true, proposer_out.2.clone());
     assert_eq!(proposer_out, verifier_replay_out);
 
@@ -324,6 +327,6 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
     }
 
     outbe_evm::executor::witness::clear_detached_trace_witness();
-    outbe_tee::tribute_client::set_test_local_enclave_hook(None);
+    outbe_enclave::tribute_client::set_test_local_enclave_hook(None);
     outbe_tee::witness::set_witness_policy_for_test(None);
 }

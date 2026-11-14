@@ -2,11 +2,11 @@ use std::time::Instant;
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_enclave::confidential::ModifyOperation;
+use outbe_enclave::protocol::{FidelityCohortOp, GratisOp, ModifyAuth, PromisOp};
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_gratis::enclave_client::test_enclave as gratis_enclave;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_promis::enclave_client::test_enclave as promis_enclave;
-use outbe_tee::protocol::{FidelityCohortOp, GratisOp, ModifyAuth, PromisOp};
 
 use super::support::{capture_execution, elapsed_ns};
 use crate::{

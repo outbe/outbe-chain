@@ -21,13 +21,13 @@
 
 use alloy_primitives::{Address, B256, U256};
 
-use outbe_fidelity_math::{league_from_rcfi, t_dec, RcfiAccumulator};
-use outbe_tee::protocol::{
+use crate::protocol::{
     eip191_hash, fidelity_cohort_canonical_hash, fidelity_query_auth_message,
     fidelity_query_canonical_hash, FidelityCohortOp, FidelityCohortRequest, FidelityCohortResult,
     FidelityLeagueEntry, FidelityOpOutcome, FidelityOpSection, FidelityQueryRequest,
     FidelityQueryResult, FidelitySnapshotRequest,
 };
+use outbe_fidelity_math::{league_from_rcfi, t_dec, RcfiAccumulator};
 
 use crate::confidential::FIDELITY;
 use crate::errors::{FidelityEnclaveError, Result};
@@ -477,20 +477,17 @@ mod tests {
             .derive_view_key(&key, alice())
             .unwrap();
         let (_, state) = read_state(&view_key, alice(), &one.new_blob).unwrap();
-        let plaintext = outbe_tee::fidelity_decrypt::decrypt_fidelity_cohorts(
-            &view_key,
-            alice(),
-            &one.new_blob,
-        )
-        .unwrap();
+        let plaintext =
+            crate::fidelity_decrypt::decrypt_fidelity_cohorts(&view_key, alice(), &one.new_blob)
+                .unwrap();
         assert_eq!(CohortState::decode(&plaintext).unwrap(), state);
-        assert!(outbe_tee::fidelity_decrypt::decrypt_fidelity_cohorts(
+        assert!(crate::fidelity_decrypt::decrypt_fidelity_cohorts(
             &[9; 32],
             alice(),
             &one.new_blob
         )
         .is_err());
-        assert!(outbe_tee::fidelity_decrypt::decrypt_fidelity_cohorts(
+        assert!(crate::fidelity_decrypt::decrypt_fidelity_cohorts(
             &view_key,
             Address::repeat_byte(9),
             &one.new_blob
@@ -532,7 +529,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            outbe_tee::fidelity_decrypt::decrypt_fidelity_cohorts(&vk, alice(), &blob).unwrap(),
+            crate::fidelity_decrypt::decrypt_fidelity_cohorts(&vk, alice(), &blob).unwrap(),
             state.encode_padded().unwrap(),
         );
         let blob_hex = hex::encode(&blob);
@@ -720,12 +717,12 @@ mod tests {
             timestamp: 1_000_000 + 50 * DAY,
             first_qualified_start: FIRST_DAY,
             entries: vec![
-                outbe_tee::protocol::FidelitySnapshotEntry {
+                crate::protocol::FidelitySnapshotEntry {
                     owner: alice(),
                     cohort_blob: minted.new_blob,
                 },
                 // Bob has no cohort state. He gets the league floor, not an error.
-                outbe_tee::protocol::FidelitySnapshotEntry {
+                crate::protocol::FidelitySnapshotEntry {
                     owner: bob,
                     cohort_blob: Vec::new(),
                 },

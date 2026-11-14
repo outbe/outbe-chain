@@ -30,6 +30,7 @@ radicle-crypto = { workspace = true, features = ["ssh"] }
 outbe-zerofee.workspace = true
 outbe-zk.workspace = true
 # TEE enclave client + wire protocol (the `tee join` offer-key registration).
+outbe-enclave.workspace = true
 outbe-tee = { workspace = true, features = ["native-dcap"] }
 outbe-update.workspace = true
 

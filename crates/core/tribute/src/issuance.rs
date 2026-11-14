@@ -8,7 +8,7 @@ impl TributeContract<'_> {
     /// Stores the exact encrypted record returned by the enclave.
     pub fn issue_encrypted(
         &mut self,
-        body: &outbe_primitives::tribute_encryption::EncryptedTributeV2,
+        body: &outbe_core_common::tribute_encryption::EncryptedTributeV2,
     ) -> Result<()> {
         crate::state_api::issue_encrypted(&self.storage_handle(), body)
     }
@@ -16,7 +16,7 @@ impl TributeContract<'_> {
     /// Stores the encrypted record with an explicit league (`1..=4096`).
     pub fn issue_encrypted_with_league(
         &mut self,
-        body: &outbe_primitives::tribute_encryption::EncryptedTributeV2,
+        body: &outbe_core_common::tribute_encryption::EncryptedTributeV2,
         league: Option<u16>,
     ) -> Result<()> {
         crate::state_api::issue_encrypted_with_league(&self.storage_handle(), body, league)

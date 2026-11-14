@@ -1103,9 +1103,13 @@ fn a_keyless_enclave_answers_not_ready_and_a_forbidden_command_answers_error() {
         decode_response(&reply[..len]).unwrap()
     };
     assert!(matches!(
-        ask(EnclaveRequest::ReadTributeAmountsV2 {
-            tributes: Vec::new()
-        }),
+        ask(
+            outbe_enclave::protocol::EnclaveRequest::ReadTributeAmountsV2 {
+                tributes: Vec::new()
+            }
+            .encode_wire(outbe_tee::protocol::PayloadLane::Execution)
+            .unwrap()
+        ),
         EnclaveResponse::NotReady { message } if message == "command denied by enclave state matrix"
     ));
     assert!(matches!(

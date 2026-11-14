@@ -24,11 +24,14 @@
 use std::path::Path;
 
 use alloy_primitives::B256;
-use outbe_primitives::error::PrecompileError;
-use outbe_tee::protocol::{
-    EnclaveRequest, EnclaveResponse, EncryptedTributeOffer, TributeOfferResult,
+use outbe_enclave::protocol::{
+    EnclaveRequest as DomainRequest, EnclaveResponse as DomainResponse, EncryptedTributeOffer,
+    TributeOfferResult, TributeOfferStatus,
 };
-use outbe_tee::{verify_tribute_offer_attestation, EnclaveClient};
+use outbe_enclave::{try_with_domain_enclave, verify_tribute_offer_attestation};
+use outbe_primitives::error::PrecompileError;
+use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
+use outbe_tee::EnclaveClient;
 
 use crate::errors::{EnclaveInitError, TributeFactoryError};
 
@@ -115,18 +118,20 @@ pub fn process_tribute_offer_batch_via_enclave(
     // Route through the process-global enclave session (shared with the TEE registry
     // seal). Pin the attestation key from the installed identity before the
     // call. `None` means no client is configured -> typed `tee_sidecar_unavailable`.
-    let (attestation_pub, response) = outbe_tee::try_with_enclave(|session| {
-        let attestation_pub = session.attestation_pub();
-        let response = session.request(&EnclaveRequest::ProcessTributeOfferBatch {
-            offers: offers.to_vec(),
-        });
-        (attestation_pub, response)
-    })
-    .ok_or(TributeFactoryError::TeeSidecarUnavailable)?;
-    let response = response.map_err(TributeFactoryError::sidecar_unavailable)?;
+    let request = DomainRequest::ProcessTributeOfferBatch {
+        offers: offers.to_vec(),
+    };
+    let (attestation_pub, response) =
+        try_with_domain_enclave(&request).ok_or(TributeFactoryError::TeeSidecarUnavailable)?;
+    let response = response.map_err(|error| match error {
+        outbe_tee::TransportError::EnclaveError(message) => {
+            TributeFactoryError::EnclaveBatchError(message)
+        }
+        other => TributeFactoryError::sidecar_unavailable(other),
+    })?;
 
     match response {
-        EnclaveResponse::TributeOfferBatch {
+        DomainResponse::TributeOfferBatch {
             results,
             inputs_canonical_hash,
             attestation_tag,
@@ -137,9 +142,6 @@ pub fn process_tribute_offer_batch_via_enclave(
             &attestation_pub,
             &attestation_tag,
         ),
-        EnclaveResponse::Error { message } => {
-            Err(TributeFactoryError::EnclaveBatchError(message).into())
-        }
         other => Err(TributeFactoryError::UnexpectedEnclaveResponse(Box::new(other)).into()),
     }
 }
@@ -159,7 +161,7 @@ fn validate_tribute_offer_batch_response(
     attestation_pub: &[u8; 32],
     attestation_tag: &[u8],
 ) -> Result<Vec<TributeOfferResult>, PrecompileError> {
-    let expected = outbe_tee::protocol::inputs_canonical_hash(offers);
+    let expected = outbe_enclave::protocol::inputs_canonical_hash(offers);
     if inputs_canonical_hash != expected {
         return Err(TributeFactoryError::InputsCanonicalHashMismatch.into());
     }
@@ -186,10 +188,7 @@ fn validate_effective_reference_prices(
         .into());
     }
     for (offer, result) in offers.iter().zip(results) {
-        if !matches!(
-            result.status,
-            outbe_tee::protocol::TributeOfferStatus::Created
-        ) {
+        if !matches!(result.status, TributeOfferStatus::Created) {
             continue;
         }
         let expected = offer
@@ -206,7 +205,7 @@ fn validate_effective_reference_prices(
 mod tests {
     use super::*;
     use alloy_primitives::{Address, U256};
-    use outbe_tee::protocol::WorldwideDay;
+    use outbe_enclave::protocol::{inputs_canonical_hash, WorldwideDay};
 
     const NEXT_DAY: WorldwideDay = WorldwideDay::new(20250116);
 
@@ -237,7 +236,7 @@ mod tests {
             wallet_addresses: Vec::new(),
             sra_addresses: Vec::new(),
             zk_expected_hashes: None,
-            status: outbe_tee::protocol::TributeOfferStatus::Created,
+            status: TributeOfferStatus::Created,
         }
     }
 
@@ -267,10 +266,7 @@ mod tests {
         let offers = vec![sample_tribute_offer()];
         let wrong_hash = B256::repeat_byte(0xFF);
         // Sanity: the wrong hash really differs from the canonical recompute.
-        assert_ne!(
-            wrong_hash,
-            outbe_tee::protocol::inputs_canonical_hash(&offers)
-        );
+        assert_ne!(wrong_hash, inputs_canonical_hash(&offers));
 
         let err =
             validate_tribute_offer_batch_response(&offers, Vec::new(), wrong_hash, &[0u8; 32], &[])
@@ -297,7 +293,7 @@ mod tests {
         ] {
             let mut other = offers.clone();
             mutate(&mut other[0]);
-            let hash_of_other = outbe_tee::protocol::inputs_canonical_hash(&other);
+            let hash_of_other = inputs_canonical_hash(&other);
 
             let err = validate_tribute_offer_batch_response(
                 &offers,

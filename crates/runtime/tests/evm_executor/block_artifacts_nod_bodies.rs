@@ -246,7 +246,8 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
     let proposer = test_evm_signer().address();
     let day = WorldwideDay::new(20_260_716);
     let tribute_owner = Address::repeat_byte(0x31);
-    let tribute_id = outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(tribute_owner, day);
+    let tribute_id =
+        outbe_core_common::wwd_entity_id::derive_poseidon_entity_id(tribute_owner, day);
     let nod_owner = Address::repeat_byte(0x32);
     let nod_id = outbe_nod::test_support::nod_id_of(nod_owner, day.value(), 840, 978);
     let issued_at = issued_at_on_protocol_floor(15);

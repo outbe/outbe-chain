@@ -1,9 +1,12 @@
+use outbe_core_common::{
+    tribute_encryption::{EncryptedTributeV2, TRIBUTE_AMOUNTS_BLOB_LEN},
+    wwd_entity_id::derive_poseidon_entity_id,
+};
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::StorageHandle,
     time::WorldwideDay,
-    tribute_encryption::{EncryptedTributeV2, TRIBUTE_AMOUNTS_BLOB_LEN},
-    wwd_entity_id::{derive_poseidon_entity_id, WwdEntityId},
+    wwd_entity_id::WwdEntityId,
 };
 
 use crate::{
@@ -179,10 +182,8 @@ pub fn retire_completed_day(storage: &StorageHandle<'_>, day: WorldwideDay) -> R
 mod tests {
     use super::*;
     use alloy_primitives::{Address, B256, U256};
-    use outbe_primitives::{
-        storage::hashmap::HashMapStorageProvider,
-        tribute_encryption::{TributeAmountsV2, TributeContextV2},
-    };
+    use outbe_core_common::tribute_encryption::{TributeAmountsV2, TributeContextV2};
+    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 
     #[test]
     fn state_tribute_rejects_invalid_lengths_before_loading_payloads() {

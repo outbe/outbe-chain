@@ -10,23 +10,33 @@ use outbe_tee::{
 };
 use reth_ethereum::node::api::ConfigureEvm;
 
-fn sign_nod_read(key: &SigningKey, inputs_hash: B256, amount: U256) -> EnclaveResponse {
-    let preimage = outbe_tee::nod_mine::nod_read_preimage(inputs_hash, amount);
+const TEST_PAYLOAD_READ_TAG: &[u8] = b"outbe/tee/evm-witness-test-read/v1";
+
+fn sign_payload_read(key: &SigningKey, inputs_hash: B256, amount: U256) -> EnclaveResponse {
+    let payload = amount.to_be_bytes::<32>().to_vec();
+    let preimage = outbe_tee::tee_call::canonical_attestation_preimage(
+        TEST_PAYLOAD_READ_TAG,
+        inputs_hash,
+        &payload,
+    )
+    .unwrap();
     let sig = key.sign(&preimage);
-    EnclaveResponse::NodAmountReadV1 {
-        amount,
+    EnclaveResponse::Payload {
+        recordable: true,
+        payload,
         inputs_canonical_hash: inputs_hash,
         attestation_tag: sig.to_bytes().to_vec(),
     }
 }
 
-fn verify_nod_read(
+fn verify_payload_read(
     pub_key: &[u8; 32],
     expected_hash: B256,
     response: &EnclaveResponse,
 ) -> Result<(), TransportError> {
-    let EnclaveResponse::NodAmountReadV1 {
-        amount,
+    let EnclaveResponse::Payload {
+        recordable: true,
+        payload,
         inputs_canonical_hash,
         attestation_tag,
     } = response
@@ -36,8 +46,14 @@ fn verify_nod_read(
     if *inputs_canonical_hash != expected_hash {
         return Err(TransportError::Attestation("hash mismatch".into()));
     }
-    let preimage = outbe_tee::nod_mine::nod_read_preimage(expected_hash, *amount);
-    outbe_tee::tribute_v2::verify_attestation(pub_key, &preimage, attestation_tag)
+    let preimage = outbe_tee::tee_call::canonical_attestation_preimage(
+        TEST_PAYLOAD_READ_TAG,
+        expected_hash,
+        payload,
+    )
+    .map_err(TransportError::AttestationPreimageSerialization)?;
+    outbe_tee::tee_call::verify_enclave_attestation(pub_key, &preimage, attestation_tag)
+        .map_err(TransportError::attestation)
 }
 
 #[test]
@@ -66,7 +82,7 @@ fn block_one_and_mandatory_prefix_worst_case_fixture_fits_budget() {
 
     let mut tape = EnclaveWitnessTapeV1::default();
     for idx in 0..8u8 {
-        let resp = sign_nod_read(
+        let resp = sign_payload_read(
             &leader_sk,
             B256::repeat_byte(idx.wrapping_add(1)),
             U256::from(1000u64 + u64::from(idx)),
@@ -135,15 +151,17 @@ fn proposer_record_verifier_with_enclave_and_verifier_replay_roundtrip() {
             || {
                 Ok((
                     leader_pk,
-                    sign_nod_read(&leader_sk, prefix_hash, U256::from(42)),
+                    sign_payload_read(&leader_sk, prefix_hash, U256::from(42)),
                 ))
             },
-            |pk, r| verify_nod_read(pk, prefix_hash, r),
+            |pk, r| verify_payload_read(pk, prefix_hash, r),
         )
         .unwrap();
-        assert!(
-            matches!(resp, EnclaveResponse::NodAmountReadV1 { amount, .. } if amount == U256::from(42))
-        );
+        assert!(matches!(
+            resp,
+            EnclaveResponse::Payload { ref payload, .. }
+                if payload.as_slice() == U256::from(42).to_be_bytes::<32>()
+        ));
     }
     {
         let mut guard = proposer_state.lock().unwrap();
@@ -159,10 +177,10 @@ fn proposer_record_verifier_with_enclave_and_verifier_replay_roundtrip() {
             || {
                 Ok((
                     leader_pk,
-                    sign_nod_read(&leader_sk, tx_hash, U256::from(99)),
+                    sign_payload_read(&leader_sk, tx_hash, U256::from(99)),
                 ))
             },
-            |pk, r| verify_nod_read(pk, tx_hash, r),
+            |pk, r| verify_payload_read(pk, tx_hash, r),
         )
         .unwrap();
     }
@@ -196,10 +214,10 @@ fn proposer_record_verifier_with_enclave_and_verifier_replay_roundtrip() {
             || {
                 Ok((
                     validator_pk,
-                    sign_nod_read(&validator_sk, prefix_hash, U256::from(42)),
+                    sign_payload_read(&validator_sk, prefix_hash, U256::from(42)),
                 ))
             },
-            |pk, r| verify_nod_read(pk, prefix_hash, r),
+            |pk, r| verify_payload_read(pk, prefix_hash, r),
         )
         .unwrap();
     }
@@ -216,10 +234,10 @@ fn proposer_record_verifier_with_enclave_and_verifier_replay_roundtrip() {
             || {
                 Ok((
                     validator_pk,
-                    sign_nod_read(&validator_sk, tx_hash, U256::from(99)),
+                    sign_payload_read(&validator_sk, tx_hash, U256::from(99)),
                 ))
             },
-            |pk, r| verify_nod_read(pk, tx_hash, r),
+            |pk, r| verify_payload_read(pk, tx_hash, r),
         )
         .unwrap();
     }
@@ -241,7 +259,7 @@ fn proposer_record_verifier_with_enclave_and_verifier_replay_roundtrip() {
         consensus_call(
             "prefix_read",
             || panic!("VerifierReplay must never call local transport"),
-            |pk, r| verify_nod_read(pk, prefix_hash, r),
+            |pk, r| verify_payload_read(pk, prefix_hash, r),
         )
         .unwrap();
     }
@@ -255,12 +273,14 @@ fn proposer_record_verifier_with_enclave_and_verifier_replay_roundtrip() {
         let (_, resp) = consensus_call(
             "tx_read",
             || panic!("VerifierReplay must never call local transport"),
-            |pk, r| verify_nod_read(pk, tx_hash, r),
+            |pk, r| verify_payload_read(pk, tx_hash, r),
         )
         .unwrap();
-        assert!(
-            matches!(resp, EnclaveResponse::NodAmountReadV1 { amount, .. } if amount == U256::from(99))
-        );
+        assert!(matches!(
+            resp,
+            EnclaveResponse::Payload { ref payload, .. }
+                if payload.as_slice() == U256::from(99).to_be_bytes::<32>()
+        ));
     }
     assert!(OutbeBlockExecutor::<()>::check_witness_commit_allowed_with(
         Some(&replay_state),
@@ -326,7 +346,7 @@ fn verifier_unconsumed_tx_witness_entries_latch_tape_invalid_on_commit_check() {
     let leader_sk = SigningKey::from_bytes(&[0x61; 32]);
     let leader_pk = leader_sk.verifying_key().to_bytes();
     let base_extra = encode_outbe_block_artifacts(&OutbeBlockArtifacts::default()).unwrap();
-    let resp = sign_nod_read(&leader_sk, B256::repeat_byte(0x62), U256::from(1));
+    let resp = sign_payload_read(&leader_sk, B256::repeat_byte(0x62), U256::from(1));
     let tape = EnclaveWitnessTapeV1 {
         prefix: Vec::new(),
         txs: vec![TxWitnessV1 {
@@ -385,9 +405,11 @@ fn evm_transact_witness_scope_covers_rpc_direct_prewarm_and_detached_trace() {
     let hash0 = B256::repeat_byte(0x72);
     let hash2 = B256::repeat_byte(0x73);
     let entry0 =
-        EnclaveWitnessEntryV1::try_from(sign_nod_read(&leader_sk, hash0, U256::from(11))).unwrap();
+        EnclaveWitnessEntryV1::try_from(sign_payload_read(&leader_sk, hash0, U256::from(11)))
+            .unwrap();
     let entry2 =
-        EnclaveWitnessEntryV1::try_from(sign_nod_read(&leader_sk, hash2, U256::from(22))).unwrap();
+        EnclaveWitnessEntryV1::try_from(sign_payload_read(&leader_sk, hash2, U256::from(22)))
+            .unwrap();
 
     outbe_tee::witness::set_witness_policy_for_test(Some(
         outbe_tee::witness::WitnessPolicy::ReplayOnly,
@@ -409,7 +431,7 @@ fn evm_transact_witness_scope_covers_rpc_direct_prewarm_and_detached_trace() {
             let err = consensus_call(
                 "prewarm_call",
                 || panic!("prewarm must not reach transport"),
-                |pk, r| verify_nod_read(pk, hash0, r),
+                |pk, r| verify_payload_read(pk, hash0, r),
             )
             .unwrap_err();
             assert!(err.is_node_local());
@@ -433,7 +455,7 @@ fn evm_transact_witness_scope_covers_rpc_direct_prewarm_and_detached_trace() {
             let err = consensus_call(
                 "rpc_direct_keyless",
                 || panic!("keyless RpcDirect must not reach transport"),
-                |pk, r| verify_nod_read(pk, hash0, r),
+                |pk, r| verify_payload_read(pk, hash0, r),
             )
             .unwrap_err();
             assert!(err.to_string().contains("PrivateExecutionUnavailable"));
@@ -473,12 +495,14 @@ fn evm_transact_witness_scope_covers_rpc_direct_prewarm_and_detached_trace() {
         let (_, resp) = consensus_call(
             "trace_tx0",
             || panic!("VerifierReplay must not reach transport"),
-            |pk, r| verify_nod_read(pk, hash0, r),
+            |pk, r| verify_payload_read(pk, hash0, r),
         )
         .unwrap();
-        assert!(
-            matches!(resp, EnclaveResponse::NodAmountReadV1 { amount, .. } if amount == U256::from(11))
-        );
+        assert!(matches!(
+            resp,
+            EnclaveResponse::Payload { ref payload, .. }
+                if payload.as_slice() == U256::from(11).to_be_bytes::<32>()
+        ));
     });
     // tx_index = 1 (no enclave calls)
     super::with_evm_transact_witness_scope(
@@ -506,12 +530,14 @@ fn evm_transact_witness_scope_covers_rpc_direct_prewarm_and_detached_trace() {
             let (_, resp) = consensus_call(
                 "trace_tx2",
                 || panic!("VerifierReplay must not reach transport"),
-                |pk, r| verify_nod_read(pk, hash2, r),
+                |pk, r| verify_payload_read(pk, hash2, r),
             )
             .unwrap();
-            assert!(
-                matches!(resp, EnclaveResponse::NodAmountReadV1 { amount, .. } if amount == U256::from(22))
-            );
+            assert!(matches!(
+                resp,
+                EnclaveResponse::Payload { ref payload, .. }
+                    if payload.as_slice() == U256::from(22).to_be_bytes::<32>()
+            ));
         },
     );
     assert_eq!(trace_state.lock().unwrap().tx_cursor, 2);

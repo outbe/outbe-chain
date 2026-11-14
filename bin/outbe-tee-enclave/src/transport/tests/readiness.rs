@@ -1,10 +1,11 @@
+use alloy_primitives::{Address, U256};
+use outbe_core_common::nod_encryption::{EncryptedNodV1, NodTermsV1};
+use outbe_enclave::protocol::EnclaveRequest as DomainRequest;
+use outbe_primitives::time::WorldwideDay;
+use outbe_tee::protocol::PayloadLane;
+
 use crate::initialization::CommandDenial;
 use crate::transport::tests::*;
-use alloy_primitives::{Address, U256};
-use outbe_primitives::{
-    nod_encryption::{EncryptedNodV1, NodTermsV1},
-    time::WorldwideDay,
-};
 
 fn encrypted_nod() -> EncryptedNodV1 {
     let day = WorldwideDay::new(20250115);
@@ -24,13 +25,16 @@ fn encrypted_nod() -> EncryptedNodV1 {
 #[test]
 fn a_keyless_enclave_or_an_expired_lease_is_not_ready() {
     let enclave = Enclave::new(0x51);
-    let read = EnclaveRequest::ReadNodAmountV1 {
+    let read = DomainRequest::ReadNodAmountV1 {
         nod: encrypted_nod(),
     };
+    let read_wire = read.encode_wire(PayloadLane::Execution).unwrap();
     assert_eq!(
-        enclave
-            .initialization
-            .authorize_command(&read, false, SessionAuthorityV1::LocalNodeHost),
+        enclave.initialization.authorize_command(
+            &read_wire,
+            false,
+            SessionAuthorityV1::LocalNodeHost
+        ),
         Err(CommandDenial::NotReady(
             "command denied by enclave state matrix"
         ))
@@ -43,15 +47,14 @@ fn a_keyless_enclave_or_an_expired_lease_is_not_ready() {
         ),
         Err(CommandDenial::NotReady("remote session lease expired"))
     );
-    let response = dispatch(
+    let response = dispatch_domain(
         read,
         &enclave.keys,
-        &mut DkgSessionStore::new(),
         &Arc::new(OnceLock::new()),
         B256::from(testnet_chain_word()),
     );
     assert!(
-        matches!(response, EnclaveResponse::NotReady { message } if message == "no resident network key")
+        matches!(response, Err(DomainDispatchError::NotReady(message)) if message == "no resident network key")
     );
 }
 
@@ -85,11 +88,14 @@ fn a_command_this_state_never_allows_is_forbidden() {
         ),
         Err(CommandDenial::Forbidden(_))
     ));
+    let read_wire = DomainRequest::ReadNodAmountV1 {
+        nod: encrypted_nod(),
+    }
+    .encode_wire(PayloadLane::Execution)
+    .unwrap();
     assert!(matches!(
         enclave.initialization.authorize_command(
-            &EnclaveRequest::ReadNodAmountV1 {
-                nod: encrypted_nod()
-            },
+            &read_wire,
             true,
             SessionAuthorityV1::RemoteActiveNode { deadline: u64::MAX }
         ),

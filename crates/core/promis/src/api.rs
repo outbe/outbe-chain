@@ -6,7 +6,7 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 pub use crate::runtime::MineGratisInput;
-pub use outbe_tee::protocol::{FidelityOpSection, MineGratisFromPromisResultV1, ModifyAuth};
+pub use outbe_enclave::protocol::{FidelityOpSection, MineGratisFromPromisResultV1, ModifyAuth};
 
 use crate::runtime;
 use crate::schema::Promis;

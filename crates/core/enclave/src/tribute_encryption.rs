@@ -1,7 +1,7 @@
 //! Enclave-resident Tribute encryption under the `TRIBUTE` confidential domain.
 
 use alloy_primitives::{Address, B256};
-use outbe_primitives::tribute_encryption::{
+use outbe_core_common::tribute_encryption::{
     EncryptedTributeV2, TributeAmountsV2, TributeContextV2, TRIBUTE_AMOUNT_NONCE_INFO,
 };
 use zeroize::Zeroizing;

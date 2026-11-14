@@ -1,7 +1,8 @@
 //! Pure NOD identities shared by issuance and offchain calculation.
 use crate::errors::NodError;
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::{error::Result, series_id::SeriesId, time::TimeError};
+use outbe_core_common::series_id::SeriesId;
+use outbe_primitives::{error::Result, time::TimeError};
 
 /// The call group of a Nod issued at `issued_at`: its first full day, its call price and
 /// the currency that price is quoted in.

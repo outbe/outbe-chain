@@ -3,11 +3,11 @@
 //! NOD issuance outputs were regenerated with enclave encryption for Keccak256 NOD IDs.
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::tee_signatures::recover_signer;
-use outbe_tee::protocol::{
+use outbe_enclave::protocol::{
     derive_account_keys_message, eip191_hash, fidelity_query_auth_message, GratisOp, Ledger,
     PromisOp,
 };
+use outbe_primitives::tee_signatures::recover_signer;
 use outbe_tee_enclave::crypto::{decrypt_share, encrypt_share_deterministic, EncryptedShare};
 use outbe_tee_enclave::{gratis, promis};
 use serde_json::Value;
@@ -124,8 +124,8 @@ fn mcp_modify_macs_match_the_enclave() {
 
 #[test]
 fn mcp_opens_the_balances_the_enclave_writes() {
-    use outbe_tee::gratis_decrypt::decrypt_gratis_balance;
-    use outbe_tee::promis_decrypt::decrypt_promis_balance;
+    use outbe_enclave::gratis_decrypt::decrypt_gratis_balance;
+    use outbe_enclave::promis_decrypt::decrypt_promis_balance;
     use outbe_tee_enclave::{
         confidential::BalanceTransition,
         gratis_cipher::{read_amount, write_amount},
@@ -193,8 +193,8 @@ fn mcp_opens_the_balances_the_enclave_writes() {
 
 #[test]
 fn mcp_opens_the_nod_amount_the_enclave_encrypts() {
-    use outbe_primitives::nod_encryption::NodTermsV1;
-    use outbe_tee::nod_decrypt::decrypt_nod_for_owner;
+    use outbe_core_common::nod_encryption::NodTermsV1;
+    use outbe_enclave::nod_decrypt::decrypt_nod_for_owner;
     use outbe_tee_enclave::nod_encryption::{derive_view_key, encrypt_nod};
 
     let all = vectors();
@@ -204,7 +204,7 @@ fn mcp_opens_the_nod_amount_the_enclave_encrypts() {
     let terms = NodTermsV1 {
         chain_id: v["chainId"].as_str().unwrap().parse().unwrap(),
         nod_id: outbe_core_common::nod_rules::derive_nod_id(
-            outbe_primitives::series_id::SeriesId::for_pair(
+            outbe_core_common::series_id::SeriesId::for_pair(
                 v["emissionDay"].as_u64().unwrap() as u32,
                 v["issuanceCurrency"].as_u64().unwrap() as u16,
                 v["referenceCurrency"].as_u64().unwrap() as u16,

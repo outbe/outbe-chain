@@ -23,6 +23,8 @@ use commonware_cryptography::bls12381::primitives::{
     ops::{self, sign_message},
     variant::MinSig,
 };
+use outbe_enclave::protocol::TributePublicInputs as DemoTributePublicInputs;
+use outbe_enclave::OFFER_HKDF_SALT;
 use outbe_enclave::{
     crypto::ecdhe_tribute_offer_decrypt,
     process::{process_tribute_offer_batch, TributeOfferKeyMaterial},
@@ -46,8 +48,6 @@ use outbe_primitives::{
     time::date_key_to_utc_timestamp,
 };
 use outbe_system_common::address_pair::AddressPair;
-use outbe_tee::protocol::TributePublicInputs as DemoTributePublicInputs;
-use outbe_tee::OFFER_HKDF_SALT;
 use outbe_tribute::TributeContract;
 use outbe_tributefactory::bench_support::{execute_offer_with_processor, BenchOfferInput};
 use outbe_zk::claim::TributeDraftClaim;
@@ -180,7 +180,7 @@ fn build_fixture() -> Fixture {
     let ephemeral_secret = [0x44; 32];
     let ephemeral_pubkey = X25519PublicKey::from(&StaticSecret::from(ephemeral_secret)).to_bytes();
     let nonce = [0x55; 12];
-    let cipher_text = outbe_tee::offer_encrypt::encrypt_tribute_offer_with(
+    let cipher_text = outbe_enclave::offer_encrypt::encrypt_tribute_offer_with(
         &offer_public,
         ephemeral_secret,
         nonce,
@@ -448,7 +448,7 @@ fn measure_encrypt_ms(plaintext: &[u8]) -> f64 {
     let offer_public = X25519PublicKey::from(&StaticSecret::from(OFFER_PRIVATE_KEY)).to_bytes();
     let started = Instant::now();
     black_box(
-        outbe_tee::offer_encrypt::encrypt_tribute_offer_with(
+        outbe_enclave::offer_encrypt::encrypt_tribute_offer_with(
             &offer_public,
             [0x44; 32],
             [0x55; 12],

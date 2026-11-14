@@ -3,16 +3,18 @@ mod prepare;
 use crate::offer_result::ProcessedOffer;
 use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_agentreward::AgentRewardContract;
+use outbe_core_common::wwd_entity_id::derive_poseidon_digest;
+#[cfg(any(test, feature = "bench-utils"))]
+use outbe_enclave::protocol::TributeOfferResult;
+use outbe_enclave::protocol::{
+    EncryptedTributeOffer, TributeOfferStatus, TributePublicInputs, TributeZkContext,
+    TributeZkExpectedHashes,
+};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::time::timestamp_to_date_key;
 use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::wwd_entity_id::{derive_poseidon_digest, WwdEntityId};
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_system_common::stablecoin::validate_currency_code;
-#[cfg(any(test, feature = "bench-utils"))]
-use outbe_tee::protocol::TributeOfferResult;
-use outbe_tee::protocol::{
-    EncryptedTributeOffer, TributeOfferStatus, TributePublicInputs, TributeZkContext,
-};
 use outbe_tribute::TributeContract;
 use outbe_zk::wire::{decode_public_words, read_u64_be_padded};
 use outbe_zk_backend::barretenberg::{Barretenberg, RawVerifier};
@@ -224,7 +226,7 @@ fn validate_zk_result(
     zk_proof: &[u8],
     verification_key: &[u8],
     public: TributePublicInputs,
-    expected: Option<&outbe_tee::protocol::TributeZkExpectedHashes>,
+    expected: Option<&TributeZkExpectedHashes>,
 ) -> Result<()> {
     let expected = expected.ok_or(TributeFactoryError::ZkPublicInputMismatch {
         field: "tee_expected_hashes",
@@ -319,7 +321,6 @@ pub(crate) fn validate_agent_reward_addresses(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use outbe_tee::protocol::TributeZkExpectedHashes;
     use outbe_zk::demo_tribute::COMBINED_LEN as DEMO_TRIBUTE_COMBINED_LEN;
 
     fn verification_key() -> &'static [u8] {

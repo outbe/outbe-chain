@@ -21,8 +21,7 @@ thiserror.workspace = true
 # Drive the confidential Gratis path in tests via the in-process enclave engine.
 outbe-gratis = { workspace = true, features = ["test-enclave"] }
 outbe-fidelity = { workspace = true, features = ["test-enclave"] }
-outbe-tee.workspace = true
-outbe-enclave.workspace = true
+outbe-enclave = { workspace = true, features = ["engine"] }
 
 [features]
 default = []

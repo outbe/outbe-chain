@@ -26,6 +26,9 @@ struct ServerScript {
     /// Drop the connection after serving this many post-handshake requests
     /// (0 = unlimited).
     drop_after_requests: AtomicU64,
+    /// Stall the next post-handshake response by this many milliseconds so a
+    /// short socket read timeout triggers `TransportError::IoTimeout`.
+    stall_next_ms: AtomicU64,
     /// Answer every non-GetPublicKeys request with `EnclaveResponse::Error`.
     error_mode: std::sync::atomic::AtomicBool,
     /// Labels of every post-handshake request served, across connections.
@@ -190,6 +193,10 @@ impl FakeEnclave {
             let drop_after = self.script.drop_after_requests.load(Ordering::Relaxed);
             if drop_after != 0 && served_here > drop_after {
                 return Ok(()); // simulate a mid-session connection loss
+            }
+            let stall_ms = self.script.stall_next_ms.swap(0, Ordering::Relaxed);
+            if stall_ms > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(stall_ms));
             }
             let response = self.scripted_response(&request)?;
             Self::write_encrypted_response(stream, noise, &response)?;
@@ -650,6 +657,59 @@ fn multi_frame_dcap_requests_are_guarded() {
             .request(&request)
             .expect_err("guarded before sending any frame");
         assert!(matches!(error, TransportError::DcapVerification(_)));
+    }
+    server.stop.store(true, Ordering::Relaxed);
+}
+
+#[test]
+fn initialize_and_dkg_open_are_not_retried_after_io_timeout() {
+    let script = ready_script();
+    let enclave = Arc::new(FakeEnclave::generate(Arc::clone(&script)));
+    let server = spawn_server(Arc::clone(&enclave));
+    let mut session = connect_session(&server);
+
+    for (expected_label, request) in [
+        (
+            "initialize",
+            EnclaveRequest::Initialize {
+                manifest: vec![0xAA; 8],
+                node_signature: vec![0xBB; 65],
+            },
+        ),
+        (
+            "dkg_open",
+            EnclaveRequest::DkgOpen {
+                ceremony_id: alloy_primitives::B256::repeat_byte(0x44),
+                round: 1,
+                participants: Vec::new(),
+            },
+        ),
+    ] {
+        assert!(!request.is_idempotent());
+        if let Some(crate::client_global::RuntimeEnclaveClient::Development(client)) =
+            session.client.as_mut()
+        {
+            client.set_read_timeout_for_test(std::time::Duration::from_millis(25));
+        }
+        script.stall_next_ms.store(80, Ordering::Relaxed);
+        let before_generation = session.generation();
+        let err = session
+            .request(&request)
+            .expect_err("non-idempotent request must fail on IoTimeout without retry");
+        assert!(
+            matches!(err, TransportError::IoTimeout { .. }),
+            "expected IoTimeout, got {err:?}"
+        );
+        let served = script.served.lock().expect("served").clone();
+        assert_eq!(
+            served.iter().filter(|l| **l == expected_label).count(),
+            1,
+            "{expected_label} must never be retried after IoTimeout: {served:?}"
+        );
+        assert!(
+            session.generation() > before_generation,
+            "session must reconnect cleanly for subsequent requests"
+        );
     }
     server.stop.store(true, Ordering::Relaxed);
 }

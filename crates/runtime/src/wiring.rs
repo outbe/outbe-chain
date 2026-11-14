@@ -23,19 +23,17 @@ use outbe_primitives::system_tx_context::SystemTxExecutionContext;
 use outbe_primitives::tee_attestation_v1::{NodeIdV1, TeePolicyV1};
 use outbe_primitives::tee_registry_abi_v1::NodeEnclaveBindingV1;
 use outbe_primitives::validator_dto::{EpochSnapshot, ValidatorRecord};
-use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::zero_fee_types::{
     BootstrapAccountView, BootstrapCandidate, BootstrapTransactionView, SponsorshipAuthorization,
     ZeroFeeAuthorization, ZeroFeeCandidate, ZeroFeePolicyError, ZeroFeeTransaction,
 };
 use outbe_radicle::protocol_state::{RadicleProtocolError, RadicleProtocolState};
-use outbe_rpc::state_reader::{OutbeRpcStateReader, TributeWords};
+use outbe_rpc::state_reader::OutbeRpcStateReader;
 use outbe_rpc::{
     EpochInfo, ParticipationInfo, SlashConfig, SlashInfo, ValidatorDetailInfo, ValidatorInfo,
 };
 use outbe_tee::dcap_protocol::DcapOnboardingContextV1;
 use outbe_tee::tee_attestation_activation::TeeAttestationChainSpecStateV1;
-use outbe_tee::tribute_source::TributeSourceSubject;
 use outbe_txpool::TxPoolZeroFeePolicy;
 use {
     outbe_evm::system_tx::BlockOrder,
@@ -514,15 +512,6 @@ impl OutbeRpcStateReader for OutbeRuntime {
             missed_blocks: participation.missed_blocks,
             missed_votes: participation.missed_votes,
         })
-    }
-
-    fn tribute_words(
-        &self,
-        storage: StorageHandle<'_>,
-        subject: &TributeSourceSubject,
-        tribute_id: WwdEntityId,
-    ) -> Result<TributeWords> {
-        outbe_tribute::state_proof::read_tribute_source_words(storage, subject, tribute_id)
     }
 
     fn live_upgrade_candidate(

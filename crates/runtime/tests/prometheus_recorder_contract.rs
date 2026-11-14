@@ -460,15 +460,19 @@ fn assert_expression_regressions(rendered: &str, types: &HashMap<&str, &str>) {
 mod canary {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
-    use outbe_execution::tee_canary::{run_tee_canary_worker, EnclaveRequester, TeeCanaryConfig};
+    use outbe_enclave::protocol::{
+        inputs_canonical_hash, tribute_offer_attestation_preimage, EnclaveRequest as DomainRequest,
+        EnclaveResponse as DomainResponse, EncryptedTributeOffer, TributeOfferResult,
+        TributeOfferStatus,
+    };
+    use outbe_execution::tee_canary::{
+        run_tee_canary_worker, EnclaveRequester, TeeCanaryConfig, TeeCanaryTarget,
+    };
+    use outbe_runtime::TributeCanaryProbe;
     use outbe_tee::{
         canary::{TeeEnclaveHealthChannel, TeeEnclaveHealthState},
         errors::TransportError,
-        protocol::{
-            inputs_canonical_hash, tribute_offer_attestation_preimage, EnclaveHealthStatusV1,
-            EnclaveRequest, EnclaveResponse, EncryptedTributeOffer, TributeOfferResult,
-            TributeOfferStatus,
-        },
+        protocol::{EnclaveHealthStatusV1, EnclaveRequest, EnclaveResponse},
     };
     use tokio_util::sync::CancellationToken;
 
@@ -481,10 +485,13 @@ mod canary {
             let shutdown = CancellationToken::new();
             let period = Duration::from_secs(60);
             let worker = tokio::spawn(run_tee_canary_worker(
-                FakeEnclaveRequester {
-                    fail,
-                    key: SigningKey::from_bytes(&[9; 32]),
-                },
+                TeeCanaryTarget::new(
+                    FakeEnclaveRequester {
+                        fail,
+                        key: SigningKey::from_bytes(&[9; 32]),
+                    },
+                    TributeCanaryProbe,
+                ),
                 TeeCanaryConfig {
                     interval: period,
                     failure_threshold: 1,
@@ -533,11 +540,16 @@ mod canary {
                     dkg_enc_pub: [0x0D; 32],
                     dkg_enc_sig: Vec::new(),
                 }),
-                EnclaveRequest::ProcessTributeOfferBatch { offers, .. } if !self.fail => {
-                    Ok(self.batch(offers))
-                }
-                EnclaveRequest::ProcessTributeOfferBatch { .. } => {
-                    Err(TransportError::EnclaveError("scripted failure".into()))
+                EnclaveRequest::Payload { payload, .. } => {
+                    match DomainRequest::decode_wire_canonical(payload)? {
+                        DomainRequest::ProcessTributeOfferBatch { offers } if !self.fail => {
+                            self.batch(&offers)
+                        }
+                        DomainRequest::ProcessTributeOfferBatch { .. } => {
+                            Err(TransportError::EnclaveError("scripted failure".into()))
+                        }
+                        other => panic!("unexpected canary domain request: {other:?}"),
+                    }
                 }
                 _ => panic!("unexpected canary request: {request:?}"),
             }
@@ -549,7 +561,10 @@ mod canary {
     }
 
     impl FakeEnclaveRequester {
-        fn batch(&self, offers: &[EncryptedTributeOffer]) -> EnclaveResponse {
+        fn batch(
+            &self,
+            offers: &[EncryptedTributeOffer],
+        ) -> Result<EnclaveResponse, TransportError> {
             let results = vec![TributeOfferResult {
                 token_id: B256::repeat_byte(1),
                 owner: offers[0].owner,
@@ -565,11 +580,12 @@ mod canary {
             let hash = inputs_canonical_hash(offers);
             let preimage =
                 tribute_offer_attestation_preimage(hash, &results).expect("attestation preimage");
-            EnclaveResponse::TributeOfferBatch {
+            DomainResponse::TributeOfferBatch {
                 results,
                 inputs_canonical_hash: hash,
                 attestation_tag: self.key.sign(&preimage).to_bytes().to_vec(),
             }
+            .into_wire_response()
         }
     }
 

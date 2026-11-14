@@ -396,9 +396,9 @@ fn quote_settlement_dispatch() {
         input.owner,
     )
     .unwrap();
-    let decrypted = outbe_tee::nod_decrypt::decrypt_nod_quote_for_owner(
+    let decrypted = outbe_enclave::nod_decrypt::decrypt_nod_quote_for_owner(
         &view_key,
-        &outbe_primitives::nod_encryption::NodQuoteContextV1 {
+        &outbe_core_common::nod_encryption::NodQuoteContextV1 {
             chain_id: 1,
             nod_id,
             owner: input.owner,

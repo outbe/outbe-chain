@@ -175,6 +175,7 @@ where
                 let radicle_status = radicle_status_for_rpc.clone();
                 let tee_enclave_health = tee_canary_status_for_rpc.clone();
                 move |ctx| {
+                    use crate::domain_rpc::OutbeDomainApiServer as _;
                     use outbe_rpc::OutbeApiServer as _;
                     let provider = Arc::new(ctx.provider().clone());
                     let context_provider = Arc::clone(&provider);
@@ -198,9 +199,14 @@ where
                     )
                     .with_radicle_status(radicle_status.clone())
                     .with_tee_enclave_health(tee_enclave_health.clone());
-                    ctx.modules.merge_if_module_configured(
-                        RethRpcModule::Other("outbe".to_owned()),
+                    let domain_api = crate::domain_rpc::OutbeDomainRpcHandler::new(
+                        provider,
+                        (proof_chain_id, genesis_hash),
+                    );
+                    crate::domain_rpc::register_outbe_rpc_if_configured(
+                        ctx.modules,
                         outbe_api.into_rpc(),
+                        domain_api.into_rpc(),
                     )?;
                     info!("outbe_* RPC namespace registered where configured");
                     Ok(())

@@ -68,7 +68,7 @@ impl CallStamp {
     }
 }
 
-pub use outbe_primitives::series_id::{SeriesId, SERIES_ID_LEN};
+pub use outbe_core_common::series_id::{SeriesId, SERIES_ID_LEN};
 
 /// Identity parameters captured once at series creation.
 ///

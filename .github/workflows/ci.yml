@@ -224,6 +224,12 @@ jobs:
             echo "error: test-enclave feature is enabled in default workspace production dependency graph" >&2
             exit 1
           fi
+          for forbidden in dev-keys test-utils; do
+            if grep -Eq "outbe-enclave feature \"${forbidden}\"" <<<"${default_tree}"; then
+              echo "error: outbe-enclave feature \"${forbidden}\" is enabled in default workspace production dependency graph" >&2
+              exit 1
+            fi
+          done
           prod_tree="$(cargo tree --locked --package outbe-chain --features outbe-chain/production-enclave -e=features,no-dev)"
           if grep -Eq 'feature "test-enclave"' <<<"${prod_tree}"; then
             echo "error: test-enclave feature is enabled when outbe-chain/production-enclave is set" >&2
@@ -237,6 +243,29 @@ jobs:
             fi
             if grep -Eq "${crate} feature \"test-enclave\"" <<<"${crate_features}"; then
               echo "error: ${crate} has feature \"test-enclave\" enabled under outbe-chain/production-enclave" >&2
+              exit 1
+            fi
+          done
+          for pkg in outbe-chain outbe-cli; do
+            enclave_features="$(cargo tree --locked --package "${pkg}" -e=features,no-dev -i outbe-enclave --depth 1)"
+            for forbidden in engine dev-keys test-utils; do
+              if grep -Eq "outbe-enclave feature \"${forbidden}\"" <<<"${enclave_features}"; then
+                echo "error: outbe-enclave feature \"${forbidden}\" is enabled in ${pkg} production dependency graph" >&2
+                exit 1
+              fi
+            done
+          done
+          prod_enclave_features="$(cargo tree --locked --package outbe-chain --features outbe-chain/production-enclave -e=features,no-dev -i outbe-enclave --depth 1)"
+          for forbidden in engine dev-keys test-utils; do
+            if grep -Eq "outbe-enclave feature \"${forbidden}\"" <<<"${prod_enclave_features}"; then
+              echo "error: outbe-enclave feature \"${forbidden}\" is enabled under outbe-chain/production-enclave" >&2
+              exit 1
+            fi
+          done
+          sidecar_enclave_features="$(cargo tree --locked --package outbe-tee-enclave -e=features,no-dev -i outbe-enclave --depth 1)"
+          for forbidden in dev-keys test-utils; do
+            if grep -Eq "outbe-enclave feature \"${forbidden}\"" <<<"${sidecar_enclave_features}"; then
+              echo "error: outbe-enclave feature \"${forbidden}\" is enabled in outbe-tee-enclave production dependency graph" >&2
               exit 1
             fi
           done
@@ -254,6 +283,8 @@ jobs:
             exit 1
           fi
           echo "consensus dependency boundary: OK"
+      - name: Enforce crates/blockchain layer boundaries
+        run: cargo xtask check-layer-boundaries
 
   # Non-blocking audit jobs (continue-on-error). Promote to required after the
   # first clean run on main.

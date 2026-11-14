@@ -1,8 +1,8 @@
 //! Cross-module API for the Gem entity store.
 
 use alloy_primitives::{Address, B256, U256};
+use outbe_core_common::series_id::SeriesId;
 use outbe_primitives::error::Result;
-use outbe_primitives::series_id::SeriesId;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::first_full_day;
 use outbe_system_common::call_breach::group_key;

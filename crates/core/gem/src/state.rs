@@ -1,8 +1,8 @@
 use alloy_primitives::{keccak256, B256, U256};
 
 use outbe_core_common::deadline_queue;
+use outbe_core_common::series_id::SeriesId;
 use outbe_primitives::error::Result;
-use outbe_primitives::series_id::SeriesId;
 use outbe_system_common::call_bins;
 
 use crate::{

@@ -1,8 +1,8 @@
 use alloy_primitives::{keccak256, Address};
+#[cfg(any(test, feature = "test-enclave"))]
+use outbe_core_common::wwd_entity_id::derive_poseidon_entity_id;
 use outbe_primitives::error::Result;
 use outbe_primitives::time::WorldwideDay;
-#[cfg(any(test, feature = "test-enclave"))]
-use outbe_primitives::wwd_entity_id::derive_poseidon_entity_id;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::errors::TributeError;
@@ -135,11 +135,11 @@ impl TributeContract<'_> {
         }
         .ok_or(TributeError::DayCountOverflowOrUnderflow)?;
         let operation = match record.encrypted() {
-            Some(tribute) => outbe_tee::tribute_day::TributeDayOperationV2::Adjust {
+            Some(tribute) => outbe_enclave::tribute_day::TributeDayOperationV2::Adjust {
                 tribute: Box::new(tribute.clone()),
                 add,
             },
-            None => outbe_tee::tribute_day::TributeDayOperationV2::AdjustTransient {
+            None => outbe_enclave::tribute_day::TributeDayOperationV2::AdjustTransient {
                 nominal_amount_minor: calculation_view(record)?.nominal_amount_minor,
                 add,
             },

@@ -5,16 +5,13 @@
 //! Emission percent is a constant shared with the emission crate and does not
 //! read chain state.
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 #[cfg(test)]
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::tribute_encryption::EncryptedTributeV2;
 use outbe_primitives::validator_dto::EpochSnapshot;
-use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_tee::dcap_protocol::DcapOnboardingContextV1;
-use outbe_tee::tribute_source::TributeSourceSubject;
 
 use crate::api::{
     EmissionInfo, EpochInfo, ParticipationInfo, SlashConfig, SlashInfo, ValidatorDetailInfo,
@@ -23,9 +20,6 @@ use crate::api::{
 
 /// Validator reward percent. Locked to the emission allocation constant by a test.
 const VALIDATOR_REWARD_PERCENT: u64 = 4;
-
-/// Encrypted tribute, its day index, and the storage words a proof must cover.
-pub type TributeWords = (EncryptedTributeV2, u32, Vec<(B256, U256)>);
 
 /// Object-safe chain reads for the RPC handler.
 pub trait OutbeRpcStateReader: Send + Sync {
@@ -68,14 +62,6 @@ pub trait OutbeRpcStateReader: Send + Sync {
             fee_escrow_address: outbe_primitives::addresses::REWARDS_ADDRESS,
         }
     }
-
-    /// Encrypted tribute, day index, and the storage words a proof must cover.
-    fn tribute_words(
-        &self,
-        storage: StorageHandle<'_>,
-        subject: &TributeSourceSubject,
-        tribute_id: WwdEntityId,
-    ) -> Result<TributeWords>;
 
     /// Whether `context` is the live finalized upgrade candidate.
     fn live_upgrade_candidate(
@@ -128,15 +114,6 @@ impl OutbeRpcStateReader for ClosedRpcReader {
     }
 
     fn participation(&self, _: StorageHandle<'_>, _: Address) -> Result<ParticipationInfo> {
-        closed()
-    }
-
-    fn tribute_words(
-        &self,
-        _: StorageHandle<'_>,
-        _: &TributeSourceSubject,
-        _: WwdEntityId,
-    ) -> Result<TributeWords> {
         closed()
     }
 

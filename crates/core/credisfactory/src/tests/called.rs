@@ -35,7 +35,10 @@ fn is_deleted(storage: &StorageHandle<'_>, credis_id: U256) -> bool {
         .unwrap()
 }
 
-fn group_of(storage: &StorageHandle<'_>, credis_id: U256) -> outbe_primitives::series_id::SeriesId {
+fn group_of(
+    storage: &StorageHandle<'_>,
+    credis_id: U256,
+) -> outbe_core_common::series_id::SeriesId {
     CredisContract::new(storage.clone())
         .get_credis(credis_id)
         .unwrap()
@@ -711,7 +714,7 @@ fn open_on_fixture_anchor(storage: &StorageHandle<'_>, owner: Address, nonce: u6
     let router = outbe_vaultrouter::VaultRouterContract::new(storage.clone());
     let mut reservation = router.reservations.get(reservation_id).unwrap().unwrap();
     reservation.call_anchor_price_minor = oracle_rate();
-    reservation.series_id = outbe_primitives::series_id::SeriesId::for_pair(
+    reservation.series_id = outbe_core_common::series_id::SeriesId::for_pair(
         last_closed_day(now_of(storage)),
         ISSUANCE_ISO,
         REFERENCE_ISO,
@@ -734,7 +737,7 @@ fn cursor_of(storage: &StorageHandle<'_>) -> u32 {
     outbe_system_common::call_bins::unpack_cursor(packed).1
 }
 
-fn is_indexed(storage: &StorageHandle<'_>, group: outbe_primitives::series_id::SeriesId) -> bool {
+fn is_indexed(storage: &StorageHandle<'_>, group: outbe_core_common::series_id::SeriesId) -> bool {
     CredisContract::new(storage.clone())
         .call_series_slot
         .read(&group)
@@ -1001,7 +1004,7 @@ fn call_by_hand(storage: &StorageHandle<'_>, ids: &[U256], called_at: u64) {
     }
 }
 
-fn queued_at(storage: &StorageHandle<'_>, group: outbe_primitives::series_id::SeriesId) -> u64 {
+fn queued_at(storage: &StorageHandle<'_>, group: outbe_core_common::series_id::SeriesId) -> u64 {
     CredisContract::new(storage.clone())
         .called_series_slot
         .read(&group)
@@ -1010,7 +1013,7 @@ fn queued_at(storage: &StorageHandle<'_>, group: outbe_primitives::series_id::Se
 
 fn cleanup_queued_at(
     storage: &StorageHandle<'_>,
-    group: outbe_primitives::series_id::SeriesId,
+    group: outbe_core_common::series_id::SeriesId,
 ) -> u64 {
     CredisContract::new(storage.clone())
         .cleanup_series_slot

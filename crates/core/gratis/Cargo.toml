@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 outbe-system-common.workspace = true
 outbe-core-common.workspace = true
+outbe-enclave.workspace = true
 outbe-macros.workspace = true
 outbe-primitives.workspace = true
 outbe-tee.workspace = true
@@ -15,16 +16,11 @@ alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
 
-# In-process enclave engine for the `test-enclave` seam (see enclave_client.rs).
-# Optional: pulled in only when a downstream crate enables `test-enclave` to
-# drive the confidential Gratis path without a real SGX sidecar.
-outbe-enclave = { workspace = true, optional = true }
-
 [dev-dependencies]
 alloy-primitives = { workspace = true, features = ["rand"] }
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 # Gratis' own unit tests run the confidential path against the in-process engine.
-outbe-enclave.workspace = true
+outbe-enclave = { workspace = true, features = ["engine", "dev-keys"] }
 
 [features]
 default = []
@@ -34,7 +30,7 @@ test-utils = ["outbe-primitives/test-utils"]
 production-enclave = []
 # Exposes the in-process enclave stand-in so other crates' tests can drive the
 # confidential Gratis path (mirrors gratispool's old `test-helpers`).
-test-enclave = ["dep:outbe-enclave"]
+test-enclave = ["outbe-enclave/engine", "outbe-enclave/dev-keys"]
 
 [lints]
 workspace = true

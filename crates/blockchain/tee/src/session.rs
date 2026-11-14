@@ -209,7 +209,13 @@ impl EnclaveSession {
         self.request(request)
     }
 
-    pub fn request(&mut self, req: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
+    /// Send an operation with explicit call metadata (`label` for telemetry and
+    /// `idempotent` for bounded session retry).
+    pub fn request_with_meta(
+        &mut self,
+        meta: crate::tee_call::CallMeta,
+        req: &EnclaveRequest,
+    ) -> Result<EnclaveResponse, TransportError> {
         let _call_context =
             crate::call_context::ContextScope::enter(crate::call_context::resolve()?);
         ensure_single_frame_request(req)?;
@@ -219,28 +225,40 @@ impl EnclaveSession {
         if self.client.is_none() {
             self.reconnect()?;
         }
-        let first_err = match self.request_connected(req) {
+        let first_err = match self.request_connected(meta, req) {
             Ok(response) => return Ok(response),
             Err(error) if !error.is_connection_fault() => return Err(error),
             Err(error) => error,
         };
         self.client = None;
         self.reconnect()?;
-        if !req.is_idempotent() {
+        if !meta.idempotent {
             // The reconnect healed the session for the next caller. But this
             // request may already have executed inside the enclave. Surface the
             // original fault instead of risking a double apply.
             return Err(first_err);
         }
-        self.request_connected(req)
+        self.request_connected(meta, req)
+    }
+
+    pub fn request(&mut self, req: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
+        self.request_with_meta(
+            crate::tee_call::CallMeta {
+                label: req.label(),
+                idempotent: req.is_idempotent(),
+                recordable: false,
+            },
+            req,
+        )
     }
 
     fn request_connected(
         &mut self,
+        meta: crate::tee_call::CallMeta,
         req: &EnclaveRequest,
     ) -> Result<EnclaveResponse, TransportError> {
         match self.client.as_mut() {
-            Some(client) => client.request(req),
+            Some(client) => client.request_with_meta(meta, req),
             // Reconnect either installs a client or errors. Keep the impossible
             // missing-client path structured instead of panicking.
             None => Err(TransportError::Unavailable(

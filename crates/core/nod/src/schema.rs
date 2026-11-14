@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
+use outbe_core_common::series_id::SeriesId;
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::NOD_ADDRESS;
-use outbe_primitives::series_id::SeriesId;
 use outbe_primitives::time::{first_full_day, TimeError, WorldwideDay};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use serde::{Deserialize, Serialize};
@@ -40,7 +40,7 @@ pub struct NodItemState {
 
     pub owner: Address,
 
-    pub encrypted: outbe_primitives::nod_encryption::EncryptedNodV1,
+    pub encrypted: outbe_core_common::nod_encryption::EncryptedNodV1,
 
     /// The emission day and currencies of the Tribute the Nod comes from.
     pub series_id: SeriesId,

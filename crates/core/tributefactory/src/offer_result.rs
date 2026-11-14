@@ -1,7 +1,7 @@
 //! Factory input independent of the confidential body's encoding.
 
 use alloy_primitives::B256;
-use outbe_tee::{
+use outbe_enclave::{
     protocol::{TributeOfferStatus, TributeZkExpectedHashes},
     tribute_v2::EncryptedTributeOfferResultV2,
 };
@@ -33,8 +33,8 @@ impl From<EncryptedTributeOfferResultV2> for ProcessedOffer {
 
 #[cfg(any(test, feature = "bench-utils"))]
 pub(crate) fn legacy_fixture(
-    offer: &outbe_tee::protocol::EncryptedTributeOffer,
-    result: outbe_tee::protocol::TributeOfferResult,
+    offer: &outbe_enclave::protocol::EncryptedTributeOffer,
+    result: outbe_enclave::protocol::TributeOfferResult,
 ) -> outbe_primitives::error::Result<ProcessedOffer> {
     if result.owner != offer.owner && matches!(result.status, TributeOfferStatus::Created) {
         return Err(crate::errors::TributeFactoryError::InvalidCanonicalIdentity.into());

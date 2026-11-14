@@ -63,8 +63,8 @@ pub enum GemError {
     SubSeriesOverflow,
 }
 
-impl From<outbe_primitives::series_id::InvalidSeriesId> for GemError {
-    fn from(_: outbe_primitives::series_id::InvalidSeriesId) -> Self {
+impl From<outbe_core_common::series_id::InvalidSeriesId> for GemError {
+    fn from(_: outbe_core_common::series_id::InvalidSeriesId) -> Self {
         Self::InvalidSeriesId
     }
 }

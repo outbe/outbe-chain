@@ -1,25 +1,20 @@
 //! V2 offer processing: creator ownership and encrypted canonical amounts.
 
-use alloy_primitives::{Address, B256};
-use outbe_primitives::{
-    tribute_encryption::{TributeAmountsV2, TributeContextV2},
-    wwd_entity_id::WwdEntityId,
-};
-use outbe_tee::{
-    protocol::{EncryptedTributeOffer, TributeOfferStatus},
-    tribute_v2::{encrypted_offer_inputs_hash, EncryptedTributeOfferResultV2},
-};
-use zeroize::Zeroizing;
-
 use crate::{
     compute::{compute_nominal, compute_token_id, parse_canonical_amount},
     crypto::ecdhe_tribute_offer_decrypt,
     errors::{EnclaveResult, PayloadError, ProcessError},
     payload::{self, TributeInputPayload},
     process::TributeOfferKeyMaterial,
+    protocol::{EncryptedTributeOffer, TributeOfferStatus},
     tribute_encryption::encrypt_tribute,
+    tribute_v2::{encrypted_offer_inputs_hash, EncryptedTributeOfferResultV2},
     zk_claim::derive_expected_hashes,
 };
+use alloy_primitives::{Address, B256};
+use outbe_core_common::tribute_encryption::{TributeAmountsV2, TributeContextV2};
+use outbe_primitives::wwd_entity_id::WwdEntityId;
+use zeroize::Zeroizing;
 
 pub fn process_encrypted_tribute_offer_batch(
     key: &TributeOfferKeyMaterial<'_>,
