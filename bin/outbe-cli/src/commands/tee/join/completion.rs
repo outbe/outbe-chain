@@ -120,9 +120,6 @@ fn ingest_gramine_direct_dev_artifact(
     artifact: Vec<u8>,
     ctx: &OnboardingIngestContext<'_>,
 ) -> Result<[u8; 32]> {
-    if ctx.authorized_node_data_dir.is_none() {
-        return Err(TeeJoinCompletionError::GramineDirectDevMissingNodeHostState.into());
-    }
     match enclave.request(
         &EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 {
             artifact,

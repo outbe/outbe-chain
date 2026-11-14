@@ -7,6 +7,8 @@ use std::{
 };
 
 use eyre::{bail, ensure, Context, Result};
+use k256::ecdsa::SigningKey;
+use zeroize::Zeroizing;
 
 use crate::{support::process, validator::rpc::RpcClient};
 
@@ -33,8 +35,31 @@ pub fn enclave() -> Result<()> {
             command.current_dir(&sgx);
             command
         }
+        "mock" => {
+            let root = Path::new(process::ROOT);
+            let network_binding = required_env("OUTBE_DEV_NETWORK_BINDING")?;
+            let reth_p2p_public = compressed_public_key(&root.join("keys/reth-p2p-secret.hex"))?;
+            let mut command = Command::new(root.join("outbe-tee-enclave-mock"));
+            command
+                .current_dir(root)
+                .env(
+                    "TEE_DEV_DKG_SEED",
+                    private_hex(&root.join("tee/dev-dkg-seed.hex"))?,
+                )
+                .env(
+                    "TEE_DEV_OFFER_SECRET",
+                    private_hex(&root.join("tee/dev-offer-secret.hex"))?,
+                )
+                .args([
+                    "--dev-network-binding",
+                    &network_binding,
+                    "--dev-reth-p2p-public",
+                    &reth_p2p_public,
+                ]);
+            command
+        }
         _ => {
-            bail!("OUTBE_ENCLAVE_RUNTIME must be system-gramine or bundled-sgx");
+            bail!("OUTBE_ENCLAVE_RUNTIME must be system-gramine, bundled-sgx, or mock");
         }
     };
     let tee_dir = if runtime == "bundled-sgx" {
@@ -102,7 +127,7 @@ pub fn feeder() -> Result<()> {
 }
 
 pub async fn wait_enclave(timeout: u64) -> Result<()> {
-    wait_for("TEE enclave", timeout, || async {
+    wait_for("TEE enclave", timeout, None, || async {
         tokio::net::TcpStream::connect(ENCLAVE_ADDRESS)
             .await
             .map(|_| ())
@@ -115,6 +140,7 @@ pub async fn wait_validator_dependencies(timeout: u64) -> Result<()> {
     wait_for(
         "TEE enclave and Radicle control socket",
         timeout,
+        None,
         || async {
             let metadata =
                 fs::metadata(RADICLE_SOCKET).wrap_err("Radicle control socket is absent")?;
@@ -136,7 +162,11 @@ pub async fn wait_rpc(timeout: u64) -> Result<()> {
         .parse::<u64>()
         .wrap_err("OUTBE_CHAIN_ID must be a positive decimal integer")?;
     let rpc = RpcClient::new(LOCAL_RPC)?;
-    wait_for("local validator RPC", timeout, || async {
+    let main_pid = env::var("MAINPID")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|pid| *pid > 0);
+    wait_for("local validator RPC", timeout, main_pid, || async {
         let actual = rpc.chain_id().await?;
         ensure!(
             actual == expected,
@@ -147,7 +177,12 @@ pub async fn wait_rpc(timeout: u64) -> Result<()> {
     .await
 }
 
-async fn wait_for<F, Fut>(description: &str, timeout: u64, mut probe: F) -> Result<()>
+async fn wait_for<F, Fut>(
+    description: &str,
+    timeout: u64,
+    watched_pid: Option<u32>,
+    mut probe: F,
+) -> Result<()>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<()>>,
@@ -159,6 +194,11 @@ where
             Ok(Err(error)) => error.to_string(),
             Err(_) => "probe timed out".to_owned(),
         };
+        if watched_pid.is_some_and(|pid| !Path::new("/proc").join(pid.to_string()).exists()) {
+            bail!(
+                "outbe-chain exited before {description} became ready: {last_error}; inspect the service journal"
+            );
+        }
         if Instant::now() >= deadline {
             bail!("timed out waiting for {description}: {last_error}");
         }
@@ -173,6 +213,38 @@ fn required_env(name: &str) -> Result<String> {
         .ok_or_else(|| eyre::eyre!("missing environment variable: {name}"))
 }
 
+fn private_hex(path: &Path) -> Result<String> {
+    let value = fs::read_to_string(path).wrap_err_with(|| {
+        format!(
+            "failed to read development enclave secret: {}",
+            path.display()
+        )
+    })?;
+    ensure!(
+        value.len() == 64
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+        "development enclave secret is not canonical: {}",
+        path.display()
+    );
+    Ok(value)
+}
+
+fn compressed_public_key(path: &Path) -> Result<String> {
+    let encoded = Zeroizing::new(
+        fs::read_to_string(path)
+            .wrap_err_with(|| format!("failed to read Reth P2P key: {}", path.display()))?,
+    );
+    let mut secret = Zeroizing::new([0_u8; 32]);
+    hex::decode_to_slice(encoded.trim(), secret.as_mut())
+        .wrap_err("Reth P2P key is not 32-byte hex")?;
+    let signing = SigningKey::from_slice(secret.as_ref()).wrap_err("invalid Reth P2P key")?;
+    Ok(hex::encode(
+        signing.verifying_key().to_encoded_point(true).as_bytes(),
+    ))
+}
+
 fn valid_key(value: &str) -> bool {
     value.len() == 64
         && value
@@ -184,4 +256,19 @@ fn valid_address(value: &str) -> bool {
     value.len() == 42
         && value.starts_with("0x")
         && value[2..].bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn wait_stops_when_watched_process_has_exited() {
+        let error = wait_for("test RPC", 60, Some(u32::MAX), || async {
+            Err(eyre::eyre!("RPC unavailable"))
+        })
+        .await
+        .expect_err("missing process must stop the wait");
+        assert!(error.to_string().contains("outbe-chain exited"));
+    }
 }

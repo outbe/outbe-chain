@@ -9520,6 +9520,7 @@ dependencies = [
  "hex",
  "indicatif",
  "k256 0.13.4",
+ "outbe-primitives",
  "outbe-snapshot",
  "rand 0.8.6",
  "reqwest 0.12.28",

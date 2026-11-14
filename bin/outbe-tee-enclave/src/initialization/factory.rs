@@ -178,14 +178,30 @@ pub fn development() -> InitializationState {
     }
 }
 
-/// Hardware-free transport tests still exercise the exact network-bound DKG
+/// Hardware-free development runs still exercise the exact network-bound DKG
 /// protocol. This constructor exists only in mock builds and cannot create a
 /// production authorization or sealed state.
 #[cfg(feature = "mock")]
 pub fn development_for_network(
     network_binding: outbe_primitives::tee_attestation_v1::NetworkBindingV1,
+    keys: &EnclaveKeys,
+    node_id: outbe_primitives::tee_attestation_v1::NodeIdV1,
 ) -> InitializationState {
     let mut state = development();
     state.mock_network_binding = Some(network_binding);
+    state.stored = Mutex::new(Some(StoredInitialization {
+        manifest: EnclaveInitializationManifestV1 {
+            chain_id: network_binding.chain_id,
+            genesis_hash: network_binding.genesis_hash,
+            attestation_mode: network_binding.attestation_mode,
+            node_id,
+            initialization_challenge: [0xDD; 32],
+            node_host_noise_x25519: keys.noise_public(),
+            recipient_x25519: keys.tribute_offer_public(),
+            attestation_ed25519: keys.attestation_pub(),
+            noise_responder_x25519: keys.noise_public(),
+        },
+        loaded_from_seal: false,
+    }));
     state
 }

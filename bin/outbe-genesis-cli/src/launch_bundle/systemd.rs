@@ -265,17 +265,9 @@ pub fn preflight_script(
         .unwrap_or(&default_enclave_dir);
     let manifest = quote(&format!("{enclave_dir}/outbe-tee-enclave.manifest.sgx"));
     let signature = quote(&format!("{enclave_dir}/outbe-tee-enclave.sig"));
-    Ok(format!(
-        "\n# Read-only pre-launch check for validator {index}. Exits non-zero on anything\n\
-# that would make the network fail after start rather than before.\n\
-cd {}\n\
-fail=0\n\
-note() {{ printf '  %-42s %s\\n' \"$1\" \"$2\"; }}\n\
-\n\
-note \"genesis sha256\" \"$(sha256sum genesis.json | cut -c1-16)\"\n\
-echo \"  ^ genesis must be identical on every machine\"\n\
-\n\
-manifest={manifest}\n\
+    let enclave_check = if super::uses_production_tee_session(config) {
+        format!(
+            "manifest={manifest}\n\
 signature={signature}\n\
 if [ -f \"$manifest\" ] && [ -f \"$signature\" ]; then\n\
   note \"enclave manifest sha256\" \"$(sha256sum \"$manifest\" | cut -c1-16)\"\n\
@@ -287,7 +279,33 @@ if [ -f \"$manifest\" ] && [ -f \"$signature\" ]; then\n\
   echo \"  ^ enclave artifacts must match across machines\"\n\
 else\n\
   note \"enclave artifacts\" \"MISSING manifest or signature\"; fail=1\n\
-fi\n\
+fi\n"
+        )
+    } else {
+        let runner = config
+            .get("enclave_runner")
+            .and_then(Value::as_str)
+            .unwrap_or("outbe-tee-enclave-mock");
+        format!(
+            "runner={}\n\
+if [ -x \"$runner\" ] || command -v \"$runner\" >/dev/null 2>&1; then\n\
+  note \"development enclave\" \"outbe-tee-enclave-mock\"\n\
+else\n\
+  note \"development enclave\" \"MISSING $runner\"; fail=1\n\
+fi\n",
+            quote(runner)
+        )
+    };
+    Ok(format!(
+        "\n# Read-only pre-launch check for validator {index}. Exits non-zero on anything\n\
+# that would make the network fail after start rather than before.\n\
+cd {}\n\
+fail=0\n\
+note() {{ printf '  %-42s %s\\n' \"$1\" \"$2\"; }}\n\
+\n\
+note \"genesis sha256\" \"$(sha256sum genesis.json | cut -c1-16)\"\n\
+echo \"  ^ genesis must be identical on every machine\"\n\
+{enclave_check}\n\
 \n\
 # State from an earlier genesis belongs to a different chain; the node refuses to start on it.\n\
 for stale in validator-{index}/data validator-{index}/consensus tee; do\n\

@@ -596,6 +596,26 @@ fn enclave_error_response_does_not_reconnect() {
 }
 
 #[test]
+fn development_session_can_prepare_direct_dev_onboarding_artifact() {
+    let script = ready_script();
+    let server = spawn_server(Arc::new(FakeEnclave::generate(Arc::clone(&script))));
+    let mut session = connect_session(&server);
+    let context = crate::test_utils::onboarding_context_fixture([1, 2, 3, 4, 5, 6, 7, 8, 9], 1, 2);
+
+    let response = session
+        .prepare_gramine_direct_dev_onboarding_artifact_v2_raw(context)
+        .expect("development DirectDev request");
+
+    assert!(matches!(response, EnclaveResponse::Ack));
+    assert!(script
+        .served
+        .lock()
+        .unwrap()
+        .contains(&"prepare_gramine_direct_dev_onboarding_artifact_v2"));
+    server.stop.store(true, Ordering::Relaxed);
+}
+
+#[test]
 fn poison_recovery_forces_one_clean_reconnect() {
     let script = ready_script();
     let enclave = Arc::new(FakeEnclave::generate(Arc::clone(&script)));

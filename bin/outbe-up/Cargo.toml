@@ -18,6 +18,7 @@ hex.workspace = true
 indicatif.workspace = true
 k256.workspace = true
 outbe-snapshot.workspace = true
+outbe-primitives = { workspace = true, features = ["tee-attestation-v1"] }
 rand.workspace = true
 reqwest.workspace = true
 rustix.workspace = true

@@ -216,8 +216,8 @@ every machine, because each founder runs on its own host.\n\
 ## 1. Copy the per-validator archive to each machine\n\
 \n\
 The generator writes one self-contained archive per machine under `dist/`. Each\n\
-archive contains the shared genesis and bootnodes, the bundled SGX runtime,\n\
-systemd units and installer, launch scripts, and **only that validator's** keys.\n\
+archive contains the shared genesis and bootnodes, systemd units and installer,\n\
+launch scripts, the selected enclave runtime, and **only that validator's** keys.\n\
 \n\
 ```bash\n\
 # From the generated output directory, for machine N (0..3):\n\
@@ -258,10 +258,10 @@ metrics `{metrics_port}`, Radicle status\n\
 - the `outbe-chain`, `outbe-radicle` and `outbe-feeder` binaries on `PATH`\n\
   (or set `node_binary`, `radicle_binary` and `feeder_binary` in the yaml to\n\
   absolute paths and regenerate)\n\
-- for `dcap-required`: SGX hardware exposing `/dev/sgx_enclave` and\n\
-  `/dev/sgx_provision`, with `aesmd.service` running\n\
-- Docker is required only for the `gramine-direct-dev` fallback on a host\n\
-  without usable SGX hardware\n\
+- when `enclave_sgx` is enabled: SGX hardware exposing `/dev/sgx_enclave`\n\
+- for `dcap-required`: also `/dev/sgx_provision` and `aesmd.service`\n\
+- `outbe-tee-enclave-mock` on `PATH` (or `enclave_runner` pointing to it) only\n\
+  when `enclave_sgx: false`; otherwise the signed SGX runtime is used\n\
 \n\
 ## 4. Start each machine\n\
 \n\
@@ -273,9 +273,9 @@ sudo {base_dir}/install-systemd.sh N\n\
 \n\
 `install-systemd.sh` installs one templated unit per role, starts them in\n\
 dependency order, and enables the daily TEE renewal timer for a NodeHost SGX\n\
-session. The services recover after clean or failed exits. `preflight.sh` is\n\
-read-only: run it first and compare the genesis and enclave digests it prints\n\
-across all four machines - they must be identical.\n\
+session. The services recover after clean or failed exits. `preflight.sh`\n\
+is read-only: run it first and compare the genesis digest it prints across all\n\
+four machines. When SGX is enabled, compare the enclave digest too.\n\
 \n\
 `start-all.sh` starts the components in dependency order - configured storage, enclave,\n\
 Radicle sidecar, node, feeder - and writes pids and logs into\n\
@@ -312,7 +312,7 @@ number and `validator list` shows four active validators.\n\
 | Component | Process | Notes |\n\
 |---|---|---|\n\
 | Execution + consensus | `outbe-chain node` | one binary, no Engine API split |\n\
-| TEE enclave | bundled `sgx/bin/outbe-tee-enclave-launch` | uses the shipped Gramine runtime on SGX; Docker is only the non-SGX development fallback |\n\
+| TEE enclave | bundled SGX launcher or `outbe-tee-enclave-mock` | selected explicitly with `enclave_sgx`; there is no runtime fallback |\n\
 | Radicle | `outbe-radicle` | validator startup requires its control socket |\n\
 | Price feeder | `outbe-feeder` | submits oracle votes |\n\
 \n\

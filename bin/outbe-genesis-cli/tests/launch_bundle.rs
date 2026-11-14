@@ -5,6 +5,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use alloy_primitives::B256;
 use flate2::read::GzDecoder;
 use outbe_genesis_cli::launch_bundle::{
     feeder_config, feeder_pairs, radicle_script, render, DEFAULT_MAX_VALIDATORS,
@@ -12,6 +13,9 @@ use outbe_genesis_cli::launch_bundle::{
 };
 use outbe_genesis_cli::network::profiles_dir;
 use outbe_genesis_cli::stages::build_seed;
+use outbe_primitives::tee_genesis_v1::{
+    initial_tee_policy_v1, tee_attestation_v1_genesis_field, InitialTeeProfileV1,
+};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -55,7 +59,20 @@ fn render_fixture(root: &Path, overrides: Option<Value>) -> (PathBuf, PathBuf) {
         fs::write(dir.join("evm-key.hex"), format!("{:064x}\n", index + 1)).expect("write evm key");
     }
     let genesis = output_dir.join("genesis.json");
-    fs::write(&genesis, r#"{"config":{"chainId":424242}}"#).expect("write genesis");
+    let tee_policy = initial_tee_policy_v1(
+        InitialTeeProfileV1::GramineDirectDev,
+        424242,
+        B256::repeat_byte(0x42),
+    )
+    .expect("dev tee policy");
+    let genesis_json = json!({
+        "config": {
+            "chainId": 424242,
+            "teeAttestationV1": tee_attestation_v1_genesis_field(&tee_policy)
+                .expect("tee genesis field"),
+        }
+    });
+    fs::write(&genesis, serde_json::to_vec(&genesis_json).unwrap()).expect("write genesis");
     let mut config = minimal_config(&keys_dir.display().to_string());
     if let Some(extra) = overrides {
         config = merge_obj(config, extra);
@@ -116,6 +133,12 @@ fn render_writes_valid_bash_scripts_and_stable_bootnodes() {
             assert!(status.success(), "bash -n failed for {name}");
         }
         assert!(directory.join("feeder.toml").is_file());
+
+        let start_all = fs::read_to_string(directory.join("start-all.sh")).expect("start-all");
+        assert!(start_all.contains("logs/enclave.log (pid $(cat enclave.pid))"));
+        assert!(!start_all.contains("docker"));
+        let stop_all = fs::read_to_string(directory.join("stop-all.sh")).expect("stop-all");
+        assert!(!stop_all.contains("docker"));
     }
 
     let first_bootnodes =
@@ -344,13 +367,27 @@ fn caddy_systemd_units_tee_renewal_and_enclave_modes() {
         fs::read_to_string(output_dir.join("validator-2").join("run-node.sh")).expect("node2");
     assert!(node2.contains("--nat extip:10.0.0.3"));
     assert!(node2.contains("--consensus.storage-dir"));
+    assert!(!node2.contains("--consensus.use-local-defaults"));
     assert!(node2.contains("--tee-session-mode production-node-host"));
+
+    let tmp_private = tempfile::tempdir().expect("tmp_private");
+    let (_, out_private) = render_fixture(
+        tmp_private.path(),
+        Some(json!({"consensus_use_local_defaults": true})),
+    );
+    let node_private =
+        fs::read_to_string(out_private.join("validator-2/run-node.sh")).expect("node_private");
+    assert!(node_private.contains("--consensus.use-local-defaults"));
 
     let enclave0 = fs::read_to_string(output_dir.join("validator-0").join("run-enclave.sh"))
         .expect("enclave0");
-    assert!(enclave0.contains("--dkg-seed"));
-    assert!(enclave0.contains("unattested"));
-
+    assert!(enclave0.contains("outbe-tee-enclave-launch"));
+    assert!(enclave0.contains("/dev/sgx_enclave"));
+    assert!(!enclave0.contains("--dev-network-binding"));
+    assert!(!enclave0.contains("docker run"));
+    let preflight =
+        fs::read_to_string(output_dir.join("validator-0/preflight.sh")).expect("preflight");
+    assert!(preflight.contains("MISSING manifest or signature"));
     // Mock enclave mode (`enclave_sgx: false`)
     let tmp_mock = tempfile::tempdir().expect("tmp_mock");
     let (_, out_mock) = render_fixture(tmp_mock.path(), Some(json!({"enclave_sgx": false})));
@@ -360,6 +397,16 @@ fn caddy_systemd_units_tee_renewal_and_enclave_modes() {
     let install_mock =
         fs::read_to_string(out_mock.join("install-systemd.sh")).expect("install_mock");
     assert!(!install_mock.contains("enable --now \"outbe-tee-renew@$INDEX.timer\""));
+    let enclave_mock =
+        fs::read_to_string(out_mock.join("validator-0/run-enclave.sh")).expect("enclave_mock");
+    assert!(enclave_mock.contains("outbe-tee-enclave-mock"));
+    assert!(enclave_mock.contains("--dev-network-binding"));
+    assert!(enclave_mock.contains("--dev-reth-p2p-public"));
+    assert!(enclave_mock.contains("--dkg-seed"));
+    let preflight_mock =
+        fs::read_to_string(out_mock.join("validator-0/preflight.sh")).expect("preflight_mock");
+    assert!(preflight_mock.contains("development enclave"));
+    assert!(!preflight_mock.contains("MISSING manifest or signature"));
 
     // Production DCAP mode
     let tmp_dcap = tempfile::tempdir().expect("tmp_dcap");
