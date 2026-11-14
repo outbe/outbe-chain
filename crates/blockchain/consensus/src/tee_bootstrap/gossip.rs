@@ -1,4 +1,5 @@
 use super::*;
+use crate::metrics::p2p::{send_observed, ObservedSend, P2pChannel};
 
 /// Owned Commonware channel, runtime clock and permitted remote delivery peers
 /// for one startup ceremony. The ceremony supplies its own delivery scope.
@@ -26,7 +27,16 @@ where
 {
     async fn broadcast(&mut self, bytes: Vec<u8>) -> Result<(), CeremonyError> {
         let envelope = self.delivery.envelope(Recipients::All, bytes)?;
-        let _ = self.sender.send(Recipients::All, envelope, true);
+        let _ = send_observed(
+            &mut self.sender,
+            ObservedSend {
+                channel: P2pChannel::TeeBootstrap,
+                recipients: Recipients::All,
+                expected_peers: Some(self.delivery.expected_peers(&Recipients::All)),
+                bytes: envelope,
+                priority: true,
+            },
+        );
         Ok(())
     }
 
@@ -34,20 +44,29 @@ where
         const RETRY_POLL: std::time::Duration = std::time::Duration::from_millis(750);
         loop {
             commonware_macros::select! {
-                recv = self.receiver.recv() => {
-                    return match recv {
-                        Ok((from, raw)) => {
-                            let Some((id, payload)) = receive_delivery(&mut self.delivery, &from, raw.as_ref()) else { continue; };
-                            let _ = self.sender.send(Recipients::One(from), ack_envelope(id), true);
-                            Some(payload.to_vec())
+                            recv = self.receiver.recv() => {
+                                return match recv {
+                                    Ok((from, raw)) => {
+                                        let Some((id, payload)) = receive_delivery(&mut self.delivery, &from, raw.as_ref()) else { continue; };
+                                        let _ = send_observed(
+            &mut self.sender,
+            ObservedSend {
+            channel: P2pChannel::TeeBootstrap,
+            recipients: Recipients::One(from),
+            expected_peers: Some(1),
+            bytes: ack_envelope(id),
+            priority: true,
+            },
+            );
+                                        Some(payload.to_vec())
+                                    }
+                                    Err(_) => None,
+                                };
+                            },
+                            _ = self.clock.sleep(RETRY_POLL) => {
+                                delivery::retry_delivery(&mut self.sender, &mut self.delivery);
+                            },
                         }
-                        Err(_) => None,
-                    };
-                },
-                _ = self.clock.sleep(RETRY_POLL) => {
-                    delivery::retry_delivery(&mut self.sender, &mut self.delivery);
-                },
-            }
         }
     }
 }
@@ -101,7 +120,11 @@ where
             sender_to_tee_bls: BTreeMap::new(),
             buffered: VecDeque::new(),
             early_signed_identities: BTreeMap::new(),
-            delivery: new_delivery_tracker(scope, transport.allowed_remote_peers),
+            delivery: delivery::new_channel_delivery_tracker(
+                scope,
+                transport.allowed_remote_peers,
+                P2pChannel::TeeDkg,
+            ),
         }
     }
 
@@ -114,7 +137,17 @@ where
         env.push(DKG_ENV_CEREMONY);
         env.extend_from_slice(&msg.to_bytes());
         let envelope = self.delivery.envelope(recipients.clone(), env)?;
-        let _ = self.sender.send(recipients, envelope, true);
+        let expected_peers = Some(self.delivery.expected_peers(&recipients));
+        let _ = send_observed(
+            &mut self.sender,
+            ObservedSend {
+                channel: P2pChannel::TeeDkg,
+                recipients,
+                expected_peers,
+                bytes: envelope,
+                priority: true,
+            },
+        );
         Ok(())
     }
 }
@@ -149,29 +182,38 @@ where
         const RETRY_POLL: std::time::Duration = std::time::Duration::from_millis(750);
         loop {
             commonware_macros::select! {
-                recv = self.receiver.recv() => {
-                    let (from, raw) = recv.ok()?;
-                    let Some((id, bytes)) = receive_delivery(&mut self.delivery, &from, raw.as_ref()) else { continue; };
-                    let _ = self.sender.send(Recipients::One(from.clone()), ack_envelope(id), true);
-                    match bytes.first().copied() {
-                        Some(DKG_ENV_CEREMONY) => match DkgWireMessage::from_bytes(&bytes[1..]) {
-                            Ok(msg) => {
-                                let Some(sender_tee_bls) = self.sender_to_tee_bls.get(&from).cloned() else {
-                                    continue;
-                                };
-                                return Some((sender_tee_bls, msg));
-                            }
-                            Err(_) => continue,
-                        },
-                        // Late identity announcement (a peer still in its exchange phase).
-                        // Ignore it and keep reading.
-                        _ => continue,
-                    }
-                },
-                _ = self.clock.sleep(RETRY_POLL) => {
-                    delivery::retry_delivery(&mut self.sender, &mut self.delivery);
-                },
-            }
+                            recv = self.receiver.recv() => {
+                                let (from, raw) = recv.ok()?;
+                                let Some((id, bytes)) = receive_delivery(&mut self.delivery, &from, raw.as_ref()) else { continue; };
+                                let _ = send_observed(
+            &mut self.sender,
+            ObservedSend {
+            channel: P2pChannel::TeeDkg,
+            recipients: Recipients::One(from.clone()),
+            expected_peers: Some(1),
+            bytes: ack_envelope(id),
+            priority: true,
+            },
+            );
+                                match bytes.first().copied() {
+                                    Some(DKG_ENV_CEREMONY) => match DkgWireMessage::from_bytes(&bytes[1..]) {
+                                        Ok(msg) => {
+                                            let Some(sender_tee_bls) = self.sender_to_tee_bls.get(&from).cloned() else {
+                                                continue;
+                                            };
+                                            return Some((sender_tee_bls, msg));
+                                        }
+                                        Err(_) => continue,
+                                    },
+                                    // Late identity announcement (a peer still in its exchange phase).
+                                    // Ignore it and keep reading.
+                                    _ => continue,
+                                }
+                            },
+                            _ = self.clock.sleep(RETRY_POLL) => {
+                                delivery::retry_delivery(&mut self.sender, &mut self.delivery);
+                            },
+                        }
         }
     }
 }

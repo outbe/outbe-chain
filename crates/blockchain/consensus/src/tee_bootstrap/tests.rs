@@ -522,3 +522,66 @@ fn assert_delivery_drained(tracker: &mut DeliveryTracker) {
     assert!(tracker.pending.is_empty());
     assert!(tracker.retry_batch().is_empty());
 }
+
+#[test]
+fn bootstrap_pending_gauges_follow_delivery_lifecycle() {
+    use super::delivery::new_channel_delivery_tracker;
+    use crate::metrics::p2p::P2pChannel;
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    let assert_pending = |messages: f64, bytes: f64| {
+        let snapshot = snapshotter.snapshot().into_vec();
+        assert_eq!(snapshot.len(), 2);
+        for (name, expected) in [
+            ("outbe_p2p_tee_bootstrap_pending_messages", messages),
+            ("outbe_p2p_tee_bootstrap_pending_bytes", bytes),
+        ] {
+            let (key, _, _, value) = snapshot
+                .iter()
+                .find(|(key, _, _, _)| key.key().name() == name)
+                .expect("pending gauge emitted");
+            assert_eq!(key.key().labels().count(), 0);
+            assert_eq!(*value, DebugValue::Gauge(expected.into()));
+            // Snapshots consume gauges; reseed sentinels to detect writes by TeeDkg.
+            metrics::gauge!(name).set(expected);
+        }
+    };
+    metrics::with_local_recorder(&recorder, || {
+        let peer = bls12381::PrivateKey::from_seed(501).public_key();
+        let mut tracker = new_delivery_tracker(B256::ZERO, [peer.clone()].into_iter().collect());
+        let first = tracker
+            .envelope(Recipients::One(peer.clone()), vec![1])
+            .unwrap();
+        assert_pending(1.0, first.len() as f64);
+        let mut dkg = new_channel_delivery_tracker(
+            B256::ZERO,
+            [peer.clone()].into_iter().collect(),
+            P2pChannel::TeeDkg,
+        );
+        let dkg_envelope = dkg
+            .envelope(Recipients::One(peer.clone()), vec![9, 10, 11])
+            .unwrap();
+        assert_pending(1.0, first.len() as f64);
+        let (_, dkg_id, _) = dkg.decode(&dkg_envelope).unwrap();
+        dkg.acknowledge(&peer, dkg_id);
+        assert_pending(1.0, first.len() as f64);
+        dkg.envelope(Recipients::All, vec![8; 7]).unwrap();
+        drop(dkg);
+        assert_pending(1.0, first.len() as f64);
+        let second = tracker
+            .envelope(Recipients::One(peer.clone()), vec![2, 3])
+            .unwrap();
+        assert_pending(2.0, (first.len() + second.len()) as f64);
+        let (_, id, _) = tracker.decode(&first).unwrap();
+        tracker.acknowledge(&peer, id);
+        assert_pending(1.0, second.len() as f64);
+        let (_, id, _) = tracker.decode(&second).unwrap();
+        tracker.acknowledge(&peer, id);
+        assert_pending(0.0, 0.0);
+        tracker.envelope(Recipients::All, vec![4]).unwrap();
+        drop(tracker);
+        assert_pending(0.0, 0.0);
+    });
+}
