@@ -211,6 +211,12 @@ pub fn node_script(
     } else {
         ""
     };
+    let local_consensus_defaults = config
+        .get("consensus_use_local_defaults")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        .then_some("  --consensus.use-local-defaults \\\n")
+        .unwrap_or_default();
     let validator_keys = format!("{keys_dir}/validator-{index}");
     let validator_dir = format!("{base_dir}/validator-{index}");
     let radicle_home = format!("{validator_keys}/radicle");
@@ -246,6 +252,7 @@ exec {q_binary} node \\\n\
   --consensus.signing-key \"$KEYS/signing-key.hex\" \\\n\
   --validator.evm-key \"$KEYS/evm-key.hex\" \\\n\
   --consensus.listen-addr 0.0.0.0:{consensus_port} \\\n\
+{local_consensus_defaults}\
   --consensus.storage-dir {q_consensus} \\\n\
   --radicle.control-socket {q_radicle_sock} \\\n\
   --radicle.status-address 127.0.0.1:{radicle_status_port} \\\n\
