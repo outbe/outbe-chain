@@ -7,6 +7,8 @@
 # Wire metrics: Reth --metrics adds reth_ to emitted names
 # (reth_outbe_<subsystem>_* and reth_process_*).
 # Source metrics:
+#   - reth_outbe_consensus_metrics_exporter_up
+#       consensus exporter startup bind status (1=bound, 0=bind failed).
 #   - reth_outbe_consensus_block_cache_entries
 #       process-local block_cache entry count
 #       (emitted from `crates/blockchain/consensus/src/metrics.rs`
@@ -35,6 +37,18 @@ groups:
   - name: outbe-chain.consensus
     interval: 30s
     rules:
+      - alert: OutbeConsensusMetricsExporterBindFailed
+        expr: reth_outbe_consensus_metrics_exporter_up == 0
+        for: 1m
+        labels:
+          severity: warning
+          subsystem: consensus
+        annotations:
+          summary: "consensus metrics exporter failed to bind on {{ $labels.instance }}"
+          description: |
+            --consensus.metrics-addr failed to bind at startup while consensus
+            continues running. Check the configured address and port availability.
+
       # Soft warning: cache approaching the hard cap. Indicates either
       # a sustained wedge (no finalization advancing) or fork spam.
       - alert: OutbeBlockCacheNearCap

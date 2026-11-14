@@ -28,6 +28,9 @@ impl ApplicationShutdownError {
 /// Represents CLI argument validation errors.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ArgsError {
+    /// Indicates that `--consensus.metrics-addr` was set without an active consensus runtime role.
+    #[error("--consensus.metrics-addr requires --validator or --upstream")]
+    ConsensusMetricsRequireConsensusRole,
     /// Indicates that DcapRequired policy rejects the development enclave session.
     #[error("DcapRequired forbids the development enclave session")]
     DcapRequiredForbidsDevSession,

@@ -7,6 +7,7 @@ mod admission;
 mod authority;
 mod configuration;
 mod consensus;
+pub mod consensus_metrics;
 pub mod domain_rpc;
 mod errors;
 mod execution_runtime;

@@ -25,15 +25,15 @@ impl reth_cli::chainspec::ChainSpecParser for ExplicitFixtureChainSpecParser {
     }
 }
 
+type FixtureCli = reth_ethereum::cli::interface::Cli<
+    ExplicitFixtureChainSpecParser,
+    outbe_consensus::args::ConsensusArgs,
+    super::OutbeRpcModuleValidator,
+>;
+
 #[test]
 fn only_node_execution_requires_the_crs() {
     install_cli_defaults_for_test();
-    type FixtureCli = reth_ethereum::cli::interface::Cli<
-        ExplicitFixtureChainSpecParser,
-        outbe_consensus::args::ConsensusArgs,
-        super::OutbeRpcModuleValidator,
-    >;
-
     let node =
         <FixtureCli as clap::Parser>::try_parse_from(["outbe-chain", "node", "--chain", "mainnet"])
             .expect("explicit fixture node chain");
@@ -48,4 +48,30 @@ fn only_node_execution_requires_the_crs() {
     ])
     .expect("explicit fixture database chain");
     assert!(!super::command_requires_crs(&database.command));
+}
+
+#[test]
+fn node_parses_optional_consensus_metrics_address() {
+    install_cli_defaults_for_test();
+    let default =
+        <FixtureCli as clap::Parser>::try_parse_from(["outbe-chain", "node", "--chain", "mainnet"])
+            .expect("fixture node without consensus metrics");
+    let configured = <FixtureCli as clap::Parser>::try_parse_from([
+        "outbe-chain",
+        "node",
+        "--chain",
+        "mainnet",
+        "--consensus.metrics-addr",
+        "127.0.0.1:9091",
+    ])
+    .expect("fixture node with consensus metrics");
+    for (cli, expected) in [
+        (default, None),
+        (configured, Some("127.0.0.1:9091".parse().unwrap())),
+    ] {
+        let reth_ethereum::cli::interface::Commands::Node(node) = cli.command else {
+            panic!("expected node command");
+        };
+        assert_eq!(node.ext.metrics_address, expected);
+    }
 }
