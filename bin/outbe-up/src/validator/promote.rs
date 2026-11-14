@@ -52,12 +52,18 @@ pub async fn run() -> Result<()> {
         );
     }
 
-    progress.stage("starting enclave and completing TEE admission");
+    if journal.tee_join_complete {
+        progress.stage("resuming completed TEE admission");
+    } else {
+        progress.stage("starting enclave and completing TEE admission");
+    }
     process::systemctl(&["start", ENCLAVE_SERVICE])?;
-    ensure_join_identity(&mut journal, &remote).await?;
-    run_tee_join(&journal).await?;
-    journal.tee_join_complete = true;
-    journal.save()?;
+    if !journal.tee_join_complete {
+        ensure_join_identity(&mut journal, &remote).await?;
+        run_tee_join(&journal).await?;
+        journal.tee_join_complete = true;
+        journal.save()?;
+    }
 
     if !record.registered {
         progress.stage("bonding the network minimum stake");
