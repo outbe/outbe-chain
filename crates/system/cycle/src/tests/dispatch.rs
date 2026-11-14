@@ -425,6 +425,15 @@ fn zero_total_validator_participation_routes_the_pool_without_halting() {
         run_emission_limit_daily(&ctx).unwrap();
 
         assert!(is_day_allocated(&ctx, 20_240_101));
+        // No pool has a weight on the day, so each one goes to Metadosis.
+        let record = outbe_emission::api::get_emission_day_record(ctx.storage.clone(), 20_240_101)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (record.validators, record.waa, record.sra, record.cca),
+            (0, 0, 0, 0)
+        );
+        assert_eq!(record.metadosis_limit, record.emission_limit);
         let agent_reward = outbe_agentreward::AgentRewardContract::new(ctx.storage.clone());
         for voter in voters {
             assert_eq!(
