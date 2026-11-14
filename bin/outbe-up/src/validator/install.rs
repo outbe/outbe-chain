@@ -10,7 +10,7 @@ use walkdir::WalkDir;
 
 use crate::{
     support::process,
-    validator::{assets, path_text},
+    validator::{assets, bundle, path_text},
 };
 
 const ENV_KEYS: &[&str] = &[
@@ -219,6 +219,7 @@ fn validate_runtime(root: &Path, environment: &BTreeMap<String, String>) -> Resu
 
 fn validate_bundle(root: &Path, environment: &BTreeMap<String, String>) -> Result<()> {
     required_file(&root.join("genesis.json"))?;
+    required_file(&root.join(bundle::CRS_PATH))?;
     for name in [
         "outbe-up",
         "outbe-chain",
