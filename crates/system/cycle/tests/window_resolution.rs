@@ -9,7 +9,7 @@
 //!
 //! Each `<period>_boundary_cycle_runs_after_parent_accounted` test
 //! covers a different period (hour, day, week, month). The test constructs
-//! a synthetic gated `TriggerSpec`. It asserts that `accounting_gate_blocks`
+//! a synthetic gated `TaskSpec`. It asserts that `accounting_gate_blocks`
 //! returns `false` after the parent height is written to the accounting slot.
 //!
 //! `phase1_accounts_parent_before_cycle_tick` is a structural check on
@@ -22,7 +22,7 @@ use outbe_cycle::{
     read_last_accounted_block_number, record_phase1_progress,
     schema::Accounting,
     state::{accounting_gate_blocks, resolve_accounting_window, AccountingWindow},
-    triggers::{TriggerHandler, TriggerSpec},
+    tasks::{TaskHandler, TaskSpec},
     ICycle,
 };
 use outbe_primitives::{
@@ -40,13 +40,13 @@ use outbe_primitives::time::SECONDS_PER_DAY as DAY;
 const WEEK: u64 = 7 * DAY;
 const MONTH: u64 = 30 * DAY;
 
-fn gated_spec(period_seconds: u64) -> TriggerSpec {
-    let mut spec = TriggerSpec::new(
+fn gated_spec(period_seconds: u64) -> TaskSpec {
+    let mut spec = TaskSpec::new(
         4242,
         "test_gated",
         (period_seconds, 0),
         100,
-        TriggerHandler::ScheduleIntexCallPass,
+        TaskHandler::ScheduleIntexCallPass,
     )
     .expect("test period is nonzero");
     spec.requires_accounting_window = true;
@@ -54,13 +54,13 @@ fn gated_spec(period_seconds: u64) -> TriggerSpec {
     spec
 }
 
-fn ungated_spec(period_seconds: u64) -> TriggerSpec {
-    let mut spec = TriggerSpec::new(
+fn ungated_spec(period_seconds: u64) -> TaskSpec {
+    let mut spec = TaskSpec::new(
         4243,
         "test_ungated",
         (period_seconds, 0),
         100,
-        TriggerHandler::ScheduleIntexCallPass,
+        TaskHandler::ScheduleIntexCallPass,
     )
     .expect("test period is nonzero");
     spec.requires_accounting_window = false;
@@ -117,7 +117,7 @@ impl AccountingProgressView for StubProgress {
 
 // ---------------------------------------------------------------------------
 // Boundary tests across hour / day / week / month periods.
-// Each builds a synthetic gated trigger, seeds `last_accounted == B - 1`,
+// Each builds a synthetic gated task, seeds `last_accounted == B - 1`,
 // and asserts the gate does NOT block.
 // ---------------------------------------------------------------------------
 
@@ -177,7 +177,7 @@ fn month_boundary_cycle_runs_after_parent_accounted() {
 }
 
 // ---------------------------------------------------------------------------
-// A gated trigger must NOT fire when `last_accounted <
+// A gated task must NOT fire when `last_accounted <
 // window.end_inclusive`.
 // ---------------------------------------------------------------------------
 
@@ -211,7 +211,7 @@ fn cycle_job_blocks_when_window_end_not_accounted() {
 }
 
 // ---------------------------------------------------------------------------
-// (Scope 4): ungated trigger fires regardless of accounting.
+// (Scope 4): ungated task fires regardless of accounting.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -225,13 +225,13 @@ fn cycle_job_without_accounting_window_runs_on_schedule() {
     assert!(window.is_none(), "ungated spec must resolve to no window");
 
     // The gate must return `false` (i.e., "do not block") for ungated
-    // triggers regardless of progress. This includes a deliberately-stale
-    // `last_accounted = 0` reader that would block any gated trigger.
+    // tasks regardless of progress. This includes a deliberately-stale
+    // `last_accounted = 0` reader that would block any gated task.
     let progress = StubProgress(0);
     let blocked = accounting_gate_blocks(&spec, &progress, &block).unwrap();
     assert!(
         !blocked,
-        "ungated trigger must never be blocked by the accounting gate"
+        "ungated task must never be blocked by the accounting gate"
     );
 }
 
@@ -241,7 +241,7 @@ fn cycle_job_without_accounting_window_runs_on_schedule() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn genesis_bootstrap_resolves_to_no_window_for_gated_trigger() {
+fn genesis_bootstrap_resolves_to_no_window_for_gated_task() {
     let spec = gated_spec(DAY);
     for block_number in [0u64, 1] {
         let block = block_ctx(block_number, DAY);
@@ -255,7 +255,7 @@ fn genesis_bootstrap_resolves_to_no_window_for_gated_trigger() {
         let blocked = accounting_gate_blocks(&spec, &StubProgress(0), &block).unwrap();
         assert!(
             !blocked,
-            "genesis bootstrap gate must never block trigger (block {block_number})"
+            "genesis bootstrap gate must never block task (block {block_number})"
         );
     }
 }
@@ -599,12 +599,12 @@ proptest! {
         block_ts in 86_400u64..2_000_000_000,
     ) {
         let offset = offset_raw % period;
-        let mut spec = TriggerSpec::new(
+        let mut spec = TaskSpec::new(
             99,
             "proptest",
             (period, offset),
             100,
-            TriggerHandler::ScheduleIntexCallPass,
+            TaskHandler::ScheduleIntexCallPass,
         )
         .expect("period is at least 60");
         spec.requires_accounting_window = true;

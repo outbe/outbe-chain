@@ -363,12 +363,12 @@ fn cycle_tick_utc_boundary_gas_usage() {
         cycle_tick_receipt.success,
         "CycleTick must succeed, not OOG"
     );
-    let cycle_event = keccak256("CycleTriggerExecuted(uint32,uint64,uint64,uint64)");
+    let cycle_event = keccak256("CycleTaskExecuted(uint32,uint64,uint64,uint64)");
     assert!(
         cycle_tick_receipt.logs.iter().any(|log| {
             log.address == CYCLE_ADDRESS && log.data.topics().first() == Some(&cycle_event)
         }),
-        "CycleTriggerExecuted must be present in the system-tx receipt logs"
+        "CycleTaskExecuted must be present in the system-tx receipt logs"
     );
     assert_eq!(
         cycle_tick_receipt.cumulative_gas_used, visible_gas,
@@ -384,7 +384,7 @@ fn tee_expiry_worst_case_active_sweep_fits_cycle_tick_budget() {
 
 #[test]
 fn cycle_tick_gas_regression_exercises_dense_agentreward_state() {
-    outbe_cycle::runtime::take_trigger_gas_samples();
+    outbe_cycle::runtime::take_task_gas_samples();
     outbe_cycle::runtime::take_cycle_gas_samples();
     const GENESIS_TS: u64 = 1_704_067_200;
     use outbe_system_common::time::SECONDS_PER_DAY;
@@ -414,7 +414,7 @@ fn cycle_tick_gas_regression_exercises_dense_agentreward_state() {
                 "GAS-05 fixture must start with zero carry-over"
             );
             seed_cycle_tick_genesis(storage.clone(), GENESIS_TS, proposer).unwrap();
-            for spec in outbe_cycle::triggers::ACTIVE_TRIGGERS {
+            for spec in outbe_cycle::tasks::ACTIVE_TASKS {
                 outbe_cycle::schema::Cycle::new(storage.clone())
                     .last_executed_at
                     .write(&spec.id, GENESIS_TS + 60)
@@ -489,13 +489,13 @@ fn cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     eprintln!(
         "Cycle calibration: validators={DENSE_VALIDATOR_COUNT}, addresses_per_pool={DENSE_ADDRESS_COUNT}, gross={gross_gas}, net={net_gas}, visible={cycle_gas}"
     );
-    let samples = outbe_cycle::runtime::take_trigger_gas_samples();
-    eprintln!("Dense simultaneous trigger gross: {samples:?}");
+    let samples = outbe_cycle::runtime::take_task_gas_samples();
+    eprintln!("Dense simultaneous task gross: {samples:?}");
     eprintln!(
         "Dense Cycle body: {:?}",
         outbe_cycle::runtime::take_cycle_gas_samples()
     );
-    assert_eq!(samples.len(), outbe_cycle::triggers::ACTIVE_TRIGGERS.len());
+    assert_eq!(samples.len(), outbe_cycle::tasks::ACTIVE_TASKS.len());
 
     let cycle_receipt = executor
         .receipts()

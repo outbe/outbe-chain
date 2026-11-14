@@ -1,7 +1,7 @@
 [
   {
     "type": "event",
-    "name": "CycleTriggerDeferred",
+    "name": "CycleTaskDeferred",
     "inputs": [
       {
         "name": "id",
@@ -32,7 +32,7 @@
   },
   {
     "type": "event",
-    "name": "CycleTriggerExecuted",
+    "name": "CycleTaskExecuted",
     "inputs": [
       {
         "name": "id",
@@ -63,7 +63,7 @@
   },
   {
     "type": "event",
-    "name": "CycleTriggerFailed",
+    "name": "CycleTaskFailed",
     "inputs": [
       {
         "name": "id",
@@ -94,7 +94,7 @@
   },
   {
     "type": "event",
-    "name": "CycleTriggerOverBudget",
+    "name": "CycleTaskOverBudget",
     "inputs": [
       {
         "name": "id",
@@ -271,7 +271,7 @@
   },
   {
     "type": "error",
-    "name": "ZeroTriggerPeriod",
+    "name": "ZeroTaskPeriod",
     "inputs": []
   }
 ]

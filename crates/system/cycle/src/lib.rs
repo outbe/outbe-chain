@@ -1,22 +1,22 @@
-//! Cycle - deterministic trigger registry and calendar orchestrator.
+//! Cycle - deterministic task registry and calendar orchestrator.
 //!
-//! Each `TriggerSpec` declares a `period_seconds` and a
-//! `start_offset_seconds` phase relative to unix epoch zero. A trigger
+//! Each `TaskSpec` declares a `period_seconds` and a
+//! `start_offset_seconds` phase relative to unix epoch zero. A task
 //! fires at every slot `t` where `(t - offset) % period == 0`, on the
 //! first block whose timestamp is `>= t`. If `block.timestamp` jumps
 //! over multiple hourly slots, ProcessEmissionDay fires once for the most recent
 //! slot. It allocates one oldest unallocated completed day within the 64-day derived
 //! horizon. It never allocates the current UTC day.
 //!
-//! [`triggers::TriggerId::ProcessEmissionDay`] fires one second into each UTC hour
+//! [`tasks::TaskId::ProcessEmissionDay`] fires one second into each UTC hour
 //! (`period = 3_600`, `offset = 1`). Its handler derives the active UTC day from
 //! [`outbe_emission::schema::EmissionContract::emission_days`], allocates it and runs its
 //! Metadosis. Until the votes of the day are sealed it answers not ready, and its dependents wait.
 //! A handler revert rolls its atomic work-budget scope back, records the slot, emits
-//! `CycleTriggerFailed`, and the walk continues. A revert of ProcessEmissionDay fails the block.
-//! Local work exhaustion rolls back the whole handler, emits `CycleTriggerOverBudget`,
+//! `CycleTaskFailed`, and the walk continues. A revert of ProcessEmissionDay fails the block.
+//! Local work exhaustion rolls back the whole handler, emits `CycleTaskOverBudget`,
 //! and leaves both watermarks and due dependents pending for the next block.
-//! Capacity and dependency deferrals emit `CycleTriggerDeferred` without attempting work.
+//! Capacity and dependency deferrals emit `CycleTaskDeferred` without attempting work.
 //! Fatal and other handler errors leave the slot unchanged and return
 //! to the caller. CycleTick rejects the block on those errors.
 //! A recorded slot waits for its next scheduled window.
@@ -54,7 +54,7 @@ pub mod handler;
 pub mod runtime;
 pub mod schema;
 pub mod state;
-pub mod triggers;
+pub mod tasks;
 
 pub use outbe_rewards::accounting::AccountingProgressError;
 pub use runtime::CycleModule;

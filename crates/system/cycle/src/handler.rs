@@ -24,7 +24,7 @@ use outbe_system_common::time::{
     date_key_to_utc_timestamp, next_date_key, previous_date_key, timestamp_to_date_key, TimeError,
 };
 
-use crate::{errors::CycleError, schema::Cycle, triggers::Readiness, ICycle};
+use crate::{errors::CycleError, schema::Cycle, tasks::Readiness, ICycle};
 
 /// Maximum number of completed UTC days that `derive_active_utc_day` scans backward
 /// and catches up (one oldest unallocated day per hourly run, OIP-00343).

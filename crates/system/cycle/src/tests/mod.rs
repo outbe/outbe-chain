@@ -6,11 +6,11 @@
 //! and the genesis-anchor interaction with Rewards.
 //!
 //! The dispatcher uses a lazy first-encounter anchor: on the very
-//! first block it sees a trigger, it writes
+//! first block it sees a task, it writes
 //! `last_executed_at = block_ts` instead of firing. This anchors the
 //! schedule at the chain's deployment instant. The first real fire then
 //! happens at the *next* slot strictly after that anchor. Without
-//! this, every chain would fire its daily trigger on block 1 because
+//! this, every chain would fire its daily task on block 1 because
 //! `block_ts >> 86_400` is always true on a real chain.
 
 use alloy_primitives::{Address, B256, U256};
@@ -20,16 +20,15 @@ use outbe_primitives::storage::{MutationPurposeTag, StorageHandle};
 use outbe_validatorset::contract::ValidatorSet;
 
 use crate::schema::Cycle;
-use crate::triggers::{
-    last_fire_at, next_fire_at, TriggerId, ACTIVE_TRIGGERS,
-    PROCESS_EMISSION_DAY_START_OFFSET_SECONDS,
+use crate::tasks::{
+    last_fire_at, next_fire_at, TaskId, ACTIVE_TASKS, PROCESS_EMISSION_DAY_START_OFFSET_SECONDS,
 };
 
 pub(super) const CHAIN_ID: u64 = 1;
 /// Genesis at midnight UTC of 2024-01-01.
 pub(super) const GENESIS_TS: u64 = 1_704_067_200;
 pub(super) use outbe_system_common::time::SECONDS_PER_DAY;
-pub(super) const EMISSION_LIMIT_1_ID: u32 = TriggerId::ProcessEmissionDay.as_u32();
+pub(super) const EMISSION_LIMIT_1_ID: u32 = TaskId::ProcessEmissionDay.as_u32();
 
 pub(super) fn cycle_storage() -> HashMapStorageProvider {
     cycle_storage_for(CHAIN_ID)
@@ -168,7 +167,7 @@ pub(super) fn seed_daily_voters(ctx: &BlockRuntimeContext, day: u32, voters: &[(
 }
 
 /// Writes the parent height into the accounting slot for tests that fire a
-/// trigger at `block_number >= 2`. This is fixture setup. It does not call
+/// task at `block_number >= 2`. This is fixture setup. It does not call
 /// the progress recorder.
 pub(super) fn account_parent(ctx: &BlockRuntimeContext, block_number: u64) {
     if block_number >= 2 {
@@ -228,7 +227,7 @@ pub(super) fn seed_reward_cca(storage: &outbe_primitives::storage::StorageHandle
 }
 
 /// Runs the first dispatcher block (block 1 at `timestamp`) after the genesis
-/// anchor. Every trigger anchors at `timestamp` without firing.
+/// anchor. Every task anchors at `timestamp` without firing.
 pub(super) fn anchor_at(handle: StorageHandle<'_>, timestamp: u64) -> BlockRuntimeContext<'_> {
     anchor_with(handle, timestamp, |_| {})
 }
@@ -285,7 +284,7 @@ pub(super) fn with_anchored_cycle(f: impl FnOnce(StorageHandle<'_>)) {
     storage.enter(f);
 }
 
-/// `last_executed_at` of the ProcessEmissionDay trigger.
+/// `last_executed_at` of the ProcessEmissionDay task.
 pub(super) fn last_executed_at(ctx: &BlockRuntimeContext<'_>) -> u64 {
     ctx.storage
         .contract::<Cycle<'_>>()

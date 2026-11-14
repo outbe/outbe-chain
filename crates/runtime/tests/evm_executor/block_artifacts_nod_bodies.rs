@@ -417,15 +417,12 @@ fn seed_called_nod(storage: StorageHandle<'_>, fixture: &NodBodyFixture) -> eyre
         group_key,
         outbe_nod::api::settlement_deadline_of(1, notice),
     )?;
-    seed_nod_daily_trigger(storage, fixture)?;
+    seed_nod_daily_task(storage, fixture)?;
 
     Ok(())
 }
 
-fn seed_nod_daily_trigger(
-    storage: StorageHandle<'_>,
-    _fixture: &NodBodyFixture,
-) -> eyre::Result<()> {
+fn seed_nod_daily_task(storage: StorageHandle<'_>, _fixture: &NodBodyFixture) -> eyre::Result<()> {
     let (.., pair_index) = outbe_oracle::api::require_coen_pair(storage.clone(), 840)?;
     let previous_day = outbe_system_common::time::previous_date_key(
         outbe_system_common::time::timestamp_to_date_key(TEST_BLOCK_TIMESTAMP_BASE + 2),
@@ -437,7 +434,7 @@ fn seed_nod_daily_trigger(
     outbe_cycle::schema::Cycle::new(storage.clone())
         .last_executed_at
         .write(
-            &outbe_cycle::triggers::TriggerId::ScheduleNodCallPass.as_u32(),
+            &outbe_cycle::tasks::TaskId::ScheduleNodCallPass.as_u32(),
             TEST_BLOCK_TIMESTAMP_BASE - SECONDS_PER_DAY,
         )?;
 

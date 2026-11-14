@@ -9,7 +9,7 @@
 //! explicit gate. The gate catches these regressions at the dispatcher boundary:
 //!
 //! * a regression that reorders Phase 1 vs Phase 2.
-//! * a regression that adds a Cycle trigger that reads validator-pool state
+//! * a regression that adds a Cycle task that reads validator-pool state
 //!   racing the parent-finalization tx.
 //!
 //! ## Resolution contract
@@ -18,7 +18,7 @@
 //! `(spec.period_seconds(), spec.start_offset_seconds, block.timestamp,
 //! block.block_number)`. It returns:
 //!
-//! * `None` when the trigger opted out of accounting gating
+//! * `None` when the task opted out of accounting gating
 //!   (`spec.requires_accounting_window == false`) OR when the chain has
 //!   not yet produced a Phase-1-eligible block (genesis bootstrap:
 //!   `block_number <= GENESIS_BOOTSTRAP_BLOCK_NUMBER = 1`).
@@ -42,13 +42,13 @@ use outbe_primitives::{
 };
 use outbe_system_common::accounting_progress::AccountingProgressView;
 
-use crate::triggers::TriggerSpec;
+use crate::tasks::TaskSpec;
 
 pub use outbe_rewards::accounting::{
     read_last_accounted_block_number, record_phase1_progress, AccountingProgressError,
 };
 
-/// deterministic accounting window for a Cycle trigger.
+/// deterministic accounting window for a Cycle task.
 ///
 /// The dispatcher's eligibility check is `last_accounted_block_number
 /// >= end_inclusive`. `start_block` is informational.
@@ -59,25 +59,25 @@ pub struct AccountingWindow {
     /// `block.timestamp`. The gate ignores this field.
     pub start_block: u64,
     /// Last block whose Phase 1 accounting must have committed before the
-    /// trigger may fire. For all current triggers this equals the parent
+    /// task may fire. For all current tasks this equals the parent
     /// block number (`block.block_number - 1`).
     pub end_inclusive: u64,
 }
 
 /// pure window resolver. See module docs for the contract.
 ///
-/// Returns `None` for ungated triggers (`requires_accounting_window ==
+/// Returns `None` for ungated tasks (`requires_accounting_window ==
 /// false`) and for genesis-bootstrap blocks (block number <= 1), where
 /// there is no V2 Phase 1 commit to gate on.
 pub fn resolve_accounting_window(
-    spec: &TriggerSpec,
+    spec: &TaskSpec,
     block: &BlockContext,
 ) -> Option<AccountingWindow> {
     if !spec.requires_accounting_window {
         return None;
     }
     // V2 genesis bootstrap: block 0 and block 1 do not
-    // run Phase 1, so there is nothing to gate on. Allow the trigger
+    // run Phase 1, so there is nothing to gate on. Allow the task
     // through (the dispatcher's existing first-encounter anchor still
     // defers the first real fire to the next slot).
     if block.block_number <= 1 {
@@ -109,10 +109,10 @@ pub fn resolve_accounting_window(
 
 /// returns `true` when the dispatcher must defer firing
 /// `spec` because Phase 1 has not yet committed accounting up through
-/// `window.end_inclusive`. Returns `false` for ungated triggers and for
-/// gated triggers whose accounting has caught up.
+/// `window.end_inclusive`. Returns `false` for ungated tasks and for
+/// gated tasks whose accounting has caught up.
 pub fn accounting_gate_blocks(
-    spec: &TriggerSpec,
+    spec: &TaskSpec,
     progress: &dyn AccountingProgressView,
     block: &BlockContext,
 ) -> Result<bool> {

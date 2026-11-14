@@ -1,22 +1,22 @@
-//! Code-defined trigger registry.
+//! Code-defined task registry.
 //!
-//! The code declares triggers as `const` data. There is no on-chain
-//! registration path. Adding, removing, or re-parameterizing a trigger
+//! The code declares tasks as `const` data. There is no on-chain
+//! registration path. Adding, removing, or re-parameterizing a task
 //! is a hard-fork-coordinated code change. The dispatcher in
 //! [`crate::runtime`] iterates this slice on every block. It fires each
-//! trigger that has reached its next slot.
+//! task that has reached its next slot.
 
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 use crate::errors::CycleError;
 
-/// Stable on-chain identifier for each trigger. The module emits it as
-/// the indexed `id` in [`crate::ICycle::CycleTriggerExecuted`] and
-/// [`crate::ICycle::CycleTriggerFailed`], and persists it in the
+/// Stable on-chain identifier for each task. The module emits it as
+/// the indexed `id` in [`crate::ICycle::CycleTaskExecuted`] and
+/// [`crate::ICycle::CycleTaskFailed`], and persists it in the
 /// [`crate::schema::Cycle`] mappings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
-pub enum TriggerId {
+pub enum TaskId {
     ProcessEmissionDay = 0,
     ScheduleIntexCallPass = 1,
     AdvanceAuctions = 2,
@@ -26,16 +26,16 @@ pub enum TriggerId {
     ScheduleNodCallPass = 6,
 }
 
-impl TriggerId {
+impl TaskId {
     pub const fn as_u32(self) -> u32 {
         self as u32
     }
 }
 
-/// One trigger's static configuration plus its handler function
+/// One task's static configuration plus its handler function
 /// pointer. Handlers receive only typed, read-only body capabilities.
 #[derive(Clone, Copy)]
-pub struct TriggerSpec {
+pub struct TaskSpec {
     pub id: u32,
     pub label: &'static str,
     /// Slot length in seconds. `period_seconds = 86_400` => daily.
@@ -57,20 +57,20 @@ pub struct TriggerSpec {
     /// (e.g., a job that does NOT depend on parent accounting state), the
     /// handler runs on its own schedule. It does not consult
     /// [`outbe_system_common::accounting_progress::AccountingProgressView`].
-    /// Default for the canonical protocol-cycle trigger is `true`.
+    /// Default for the canonical protocol-cycle task is `true`.
     pub requires_accounting_window: bool,
     /// When `true` a backlog collapses to the latest due slot instead of
     /// replaying every missed one. ProcessEmissionDay owns its UTC-day decision,
     /// so replaying every missed hourly slot would duplicate orchestration.
     pub coalesces_backlog: bool,
-    /// Triggers whose failure in the current walk blocks this trigger.
-    /// Empty means the trigger is independent. The dispatcher reads this
-    /// only after the trigger is due.
-    pub depends_on: &'static [TriggerId],
+    /// Tasks whose failure in the current walk blocks this task.
+    /// Empty means the task is independent. The dispatcher reads this
+    /// only after the task is due.
+    pub depends_on: &'static [TaskId],
     /// Handler invoked when a slot fires. A revert rolls back the handler
     /// checkpoint. The dispatcher then records the slot. Any other error
     /// leaves `last_executed_at` unchanged.
-    pub handler: TriggerHandler,
+    pub handler: TaskHandler,
 }
 
 /// What a task answers when it runs.
@@ -82,7 +82,7 @@ pub enum Readiness {
 }
 
 #[derive(Clone, Copy)]
-pub enum TriggerHandler {
+pub enum TaskHandler {
     #[cfg(test)]
     Test(fn(&BlockRuntimeContext<'_>) -> Result<()>),
     ProcessEmissionDay,
@@ -94,25 +94,25 @@ pub enum TriggerHandler {
     ScheduleNodCallPass,
 }
 
-impl TriggerSpec {
+impl TaskSpec {
     /// Builds a schedule with a required nonzero gross work allowance.
     /// Cadence is `(period_seconds, start_offset_seconds)`, both in UTC seconds.
     /// Zero periods and zero work allowances are rejected.
     /// `start_offset_seconds >= period_seconds` stays valid.
     /// The two behavior flags start false. `depends_on` starts empty.
-    /// The trigger table and fixtures set them.
+    /// The task table and fixtures set them.
     pub const fn new(
         id: u32,
         label: &'static str,
         (period_seconds, start_offset_seconds): (u64, u64),
         work_budget_gas: u64,
-        handler: TriggerHandler,
+        handler: TaskHandler,
     ) -> core::result::Result<Self, CycleError> {
         if period_seconds == 0 {
-            return Err(CycleError::ZeroTriggerPeriod);
+            return Err(CycleError::ZeroTaskPeriod);
         }
         if work_budget_gas == 0 {
-            return Err(CycleError::ZeroTriggerWorkBudget);
+            return Err(CycleError::ZeroTaskWorkBudget);
         }
         Ok(Self {
             id,
@@ -138,7 +138,7 @@ impl TriggerSpec {
     }
 }
 
-impl TriggerHandler {
+impl TaskHandler {
     pub(crate) fn run(self, ctx: &BlockRuntimeContext) -> Result<Readiness> {
         let done = match self {
             #[cfg(test)]
@@ -190,11 +190,11 @@ pub const PROCESS_EMISSION_DAY_PERIOD_SECONDS: u64 = 3_600;
 /// than 00:00:01 of E+1. The auction tasks share the offset to land in the slot of the brief.
 pub const PROCESS_EMISSION_DAY_START_OFFSET_SECONDS: u64 = 1;
 
-/// Active trigger table in permanent numeric-id order.
+/// Active task table in permanent numeric-id order.
 /// The dispatcher walks this array in order inside one block.
 /// A handler revert records the slot and continues the walk.
 /// Any other handler error stops the walk.
-/// A due trigger whose dependency failed in this walk records its slot
+/// A due task whose dependency failed in this walk records its slot
 /// and does not run.
 /// AdvanceAuctions must stay after ProcessEmissionDay.
 /// Same-slot brief and auction order depends on that sequence.
@@ -206,7 +206,7 @@ pub const PROCESS_EMISSION_DAY_START_OFFSET_SECONDS: u64 = 1;
 /// The supported nested bridge profile performs calldata copy/hash, persistent
 /// reads/writes, logs, and a real relay call. It is not a universal contract bound.
 /// `advance_auctions` takes the step bounds of Desis, measured on the deployed bridge.
-pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 7], CycleError> {
+pub const fn active_tasks() -> core::result::Result<[TaskSpec; 7], CycleError> {
     Ok([
         // ProcessEmissionDay settles a contiguous completed UTC day. It MUST
         // observe the parent block's Phase 1 accounting before it fires.
@@ -215,15 +215,15 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 7], CycleEr
         // The handler owns the calendar decision, so missed hourly slots
         // collapse to one execution at the latest due boundary.
         {
-            let mut spec = const_spec!(TriggerSpec::new(
-                TriggerId::ProcessEmissionDay.as_u32(),
+            let mut spec = const_spec!(TaskSpec::new(
+                TaskId::ProcessEmissionDay.as_u32(),
                 "process_emission_day",
                 (
                     PROCESS_EMISSION_DAY_PERIOD_SECONDS,
                     PROCESS_EMISSION_DAY_START_OFFSET_SECONDS
                 ),
                 1_526_000,
-                TriggerHandler::ProcessEmissionDay,
+                TaskHandler::ProcessEmissionDay,
             ));
             spec.requires_accounting_window = true;
             spec.coalesces_backlog = true;
@@ -234,12 +234,12 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 7], CycleEr
         // The sweeps take their day from the block clock, so a missed slot
         // would only walk the same day again.
         {
-            let mut spec = const_spec!(TriggerSpec::new(
-                TriggerId::ScheduleIntexCallPass.as_u32(),
+            let mut spec = const_spec!(TaskSpec::new(
+                TaskId::ScheduleIntexCallPass.as_u32(),
                 "schedule_intex_call_pass",
                 (CALL_SWEEP_PERIOD_SECONDS, 0),
                 202_000,
-                TriggerHandler::ScheduleIntexCallPass,
+                TaskHandler::ScheduleIntexCallPass,
             ));
             spec.requires_accounting_window = false;
             spec.coalesces_backlog = true;
@@ -253,19 +253,19 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 7], CycleEr
         // The handler stops before a day whose due steps the rest cannot pay for,
         // and the next run starts with that day.
         {
-            let mut spec = const_spec!(TriggerSpec::new(
-                TriggerId::AdvanceAuctions.as_u32(),
+            let mut spec = const_spec!(TaskSpec::new(
+                TaskId::AdvanceAuctions.as_u32(),
                 "advance_auctions",
                 (
                     ADVANCE_AUCTIONS_PERIOD_SECONDS,
                     PROCESS_EMISSION_DAY_START_OFFSET_SECONDS
                 ),
                 outbe_desis::constants::ADVANCE_AUCTIONS_BUDGET_GAS,
-                TriggerHandler::AdvanceAuctions,
+                TaskHandler::AdvanceAuctions,
             ));
             spec.requires_accounting_window = true;
             spec.coalesces_backlog = true;
-            spec.depends_on = &[TriggerId::ProcessEmissionDay];
+            spec.depends_on = &[TaskId::ProcessEmissionDay];
             spec
         },
         // Reads finalized oracle VWAP history to force-call gems. It has
@@ -273,12 +273,12 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 7], CycleEr
         // The sweeps take their day from the block clock, so a missed slot
         // would only walk the same day again.
         {
-            let mut spec = const_spec!(TriggerSpec::new(
-                TriggerId::ScheduleGemCallPass.as_u32(),
+            let mut spec = const_spec!(TaskSpec::new(
+                TaskId::ScheduleGemCallPass.as_u32(),
                 "schedule_gem_call_pass",
                 (CALL_SWEEP_PERIOD_SECONDS, 0),
                 202_000,
-                TriggerHandler::ScheduleGemCallPass,
+                TaskHandler::ScheduleGemCallPass,
             ));
             spec.requires_accounting_window = false;
             spec.coalesces_backlog = true;
@@ -290,19 +290,19 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 7], CycleEr
         // list. It has no dependency on the parent block's settlement accounting.
         // A poll has nothing to replay: a gap collapses to one clearing sweep.
         {
-            let mut spec = const_spec!(TriggerSpec::new(
-                TriggerId::CompleteAuctions.as_u32(),
+            let mut spec = const_spec!(TaskSpec::new(
+                TaskId::CompleteAuctions.as_u32(),
                 "complete_auctions",
                 (
                     ADVANCE_AUCTIONS_PERIOD_SECONDS,
                     PROCESS_EMISSION_DAY_START_OFFSET_SECONDS
                 ),
                 10_333_000,
-                TriggerHandler::CompleteAuctions,
+                TaskHandler::CompleteAuctions,
             ));
             spec.requires_accounting_window = false;
             spec.coalesces_backlog = true;
-            spec.depends_on = &[TriggerId::AdvanceAuctions];
+            spec.depends_on = &[TaskId::AdvanceAuctions];
             spec
         },
         // Reads finalized oracle VWAP history to call credis
@@ -311,12 +311,12 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 7], CycleEr
         // The sweep takes its day from the block clock, so a missed slot
         // would only schedule the same day again.
         {
-            let mut spec = const_spec!(TriggerSpec::new(
-                TriggerId::ScheduleCredisCallPass.as_u32(),
+            let mut spec = const_spec!(TaskSpec::new(
+                TaskId::ScheduleCredisCallPass.as_u32(),
                 "schedule_credis_call_pass",
                 (CALL_SWEEP_PERIOD_SECONDS, 0),
                 202_000,
-                TriggerHandler::ScheduleCredisCallPass,
+                TaskHandler::ScheduleCredisCallPass,
             ));
             spec.requires_accounting_window = false;
             spec.coalesces_backlog = true;
@@ -325,12 +325,12 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 7], CycleEr
         // Schedules the latest completed UTC day for the call sweep.
         // Missed slots would schedule the same day against the current clock.
         {
-            let mut spec = const_spec!(TriggerSpec::new(
-                TriggerId::ScheduleNodCallPass.as_u32(),
+            let mut spec = const_spec!(TaskSpec::new(
+                TaskId::ScheduleNodCallPass.as_u32(),
                 "schedule_nod_call_pass",
                 (CALL_SWEEP_PERIOD_SECONDS, 0),
                 202_000,
-                TriggerHandler::ScheduleNodCallPass,
+                TaskHandler::ScheduleNodCallPass,
             ));
             spec.requires_accounting_window = false;
             spec.coalesces_backlog = true;
@@ -339,14 +339,14 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 7], CycleEr
     ])
 }
 
-pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 7] = match active_triggers() {
+pub const ACTIVE_TASK_ARRAY: [TaskSpec; 7] = match active_tasks() {
     Ok(specs) => specs,
-    Err(_) => panic!("trigger periods and calibrated work budgets must be nonzero"),
+    Err(_) => panic!("task periods and calibrated work budgets must be nonzero"),
 };
-pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &ACTIVE_TRIGGER_ARRAY;
+pub const ACTIVE_TASKS: &[TaskSpec] = &ACTIVE_TASK_ARRAY;
 
 /// Returns the next slot strictly greater than `last_executed_at`.
-/// A zero period returns [`CycleError::ZeroTriggerPeriod`].
+/// A zero period returns [`CycleError::ZeroTaskPeriod`].
 /// Pure function: same `(period, offset, last)` tuple always returns
 /// the same slot. Monotonically non-decreasing in `last_executed_at`
 /// (and strictly increasing for `last_executed_at` past the first
@@ -362,7 +362,7 @@ pub const fn next_fire_at(
     last_executed_at: u64,
 ) -> core::result::Result<u64, CycleError> {
     if period == 0 {
-        return Err(CycleError::ZeroTriggerPeriod);
+        return Err(CycleError::ZeroTaskPeriod);
     }
     if last_executed_at < offset {
         return Ok(offset);
@@ -389,9 +389,9 @@ const fn schedule_overflow(period: u64, offset: u64, timestamp: u64) -> CycleErr
 }
 
 /// Returns the latest slot at or before `block_ts`. Recording this instead of
-/// the first due slot collapses a backlog for a poll-style trigger. The next
+/// the first due slot collapses a backlog for a poll-style task. The next
 /// call then sees a slot in the future and stops re-firing.
-/// A zero period returns [`CycleError::ZeroTriggerPeriod`].
+/// A zero period returns [`CycleError::ZeroTaskPeriod`].
 /// A positive period cannot overflow `u64` when `block_ts >= offset`.
 pub const fn last_fire_at(
     period: u64,
@@ -399,7 +399,7 @@ pub const fn last_fire_at(
     block_ts: u64,
 ) -> core::result::Result<u64, CycleError> {
     if period == 0 {
-        return Err(CycleError::ZeroTriggerPeriod);
+        return Err(CycleError::ZeroTaskPeriod);
     }
     if block_ts < offset {
         return Ok(offset);
@@ -416,9 +416,9 @@ mod protocol_parameter_tests {
         let maxima = [
             381_500u64, 50_300, 991_492, 50_300, 2_583_089, 50_300, 50_300,
         ];
-        let triggers = active_triggers().expect("calibrated trigger table");
+        let tasks = active_tasks().expect("calibrated task table");
         let mut total = 0u64;
-        for (spec, measured) in triggers.iter().zip(maxima) {
+        for (spec, measured) in tasks.iter().zip(maxima) {
             let rounded = measured
                 .checked_mul(4)
                 .and_then(|gas| gas.checked_add(999))
@@ -426,8 +426,8 @@ mod protocol_parameter_tests {
                 .and_then(|units| units.checked_mul(1_000))
                 .expect("measured handler headroom fits u64");
             assert!(spec.work_budget_gas() > 0);
-            if spec.id != TriggerId::AdvanceAuctions.as_u32() {
-                assert_eq!(spec.work_budget_gas(), rounded, "trigger {}", spec.id);
+            if spec.id != TaskId::AdvanceAuctions.as_u32() {
+                assert_eq!(spec.work_budget_gas(), rounded, "task {}", spec.id);
             }
             total = total
                 .checked_add(spec.work_budget_gas())
