@@ -283,6 +283,8 @@ jobs:
             exit 1
           fi
           echo "consensus dependency boundary: OK"
+      - name: Trust the container checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Enforce crates/blockchain layer boundaries
         run: cargo xtask check-layer-boundaries
 
