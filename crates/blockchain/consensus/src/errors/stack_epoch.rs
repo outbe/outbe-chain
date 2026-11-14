@@ -399,27 +399,6 @@ pub enum StackEpochError {
     #[error("recovered future DKG handoff collided with an existing subchannel stash")]
     RecoveredFutureDkgHandoffSubchannelCollision,
 
-    /// Indicates that the executor actor task failed.
-    #[error("executor actor task failed: {reason}")]
-    ExecutorActorTaskFailed {
-        /// Task failure description.
-        reason: String,
-    },
-
-    /// Indicates that the application handler task failed.
-    #[error("application handler task failed: {reason}")]
-    ApplicationHandlerTaskFailed {
-        /// Task failure description.
-        reason: String,
-    },
-
-    /// Indicates that the finalization actor task failed.
-    #[error("finalization actor task failed: {reason}")]
-    FinalizationActorTaskFailed {
-        /// Task failure description.
-        reason: String,
-    },
-
     /// Indicates that the peer manager actor exited unexpectedly.
     #[error("peer manager actor exited: {reason}")]
     PeerManagerActorExited {
@@ -662,27 +641,6 @@ pub enum StackEpochError {
 }
 
 impl StackEpochError {
-    /// Creates an error when the executor actor task fails.
-    pub fn executor_actor_task_failed(error: impl std::fmt::Debug) -> Self {
-        Self::ExecutorActorTaskFailed {
-            reason: format!("{error:?}"),
-        }
-    }
-
-    /// Creates an error when the application handler task fails.
-    pub fn application_handler_task_failed(error: impl std::fmt::Debug) -> Self {
-        Self::ApplicationHandlerTaskFailed {
-            reason: format!("{error:?}"),
-        }
-    }
-
-    /// Creates an error when the finalization actor task fails.
-    pub fn finalization_actor_task_failed(error: impl std::fmt::Debug) -> Self {
-        Self::FinalizationActorTaskFailed {
-            reason: format!("{error:?}"),
-        }
-    }
-
     /// Creates an error when the peer manager actor exits.
     pub fn peer_manager_actor_exited(error: impl std::fmt::Debug) -> Self {
         Self::PeerManagerActorExited {

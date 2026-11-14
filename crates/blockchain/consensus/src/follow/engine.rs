@@ -176,6 +176,7 @@ where
     );
 
     // -- 5. Start the driver: walk the marshal forward to the upstream tip ---
+    let driver_stopped = context.stopped();
     let driver = Driver::new(
         context.child("follow_driver"),
         driver::Config {
@@ -187,13 +188,14 @@ where
     let mut driver_handle = driver.start();
     let driver_exit = async move {
         tokio::select! {
+            biased;
             () = wait_for_cancel(&mut driver_cancel) => {
                 driver_handle.abort();
                 let _ = driver_handle.await;
+                Ok(())
             },
-            _ = &mut driver_handle => {},
+            result = &mut driver_handle => await_driver_exit(result, &driver_cancel, driver_stopped),
         }
-        Ok::<(), eyre::Report>(())
     };
 
     info!("follower engine started; syncing from upstream");
@@ -210,6 +212,17 @@ async fn wait_for_cancel(rx: &mut tokio::sync::watch::Receiver<bool>) {
             break;
         }
     }
+}
+
+fn await_driver_exit(
+    outcome: std::result::Result<(), commonware_runtime::Error>,
+    driver_cancel: &tokio::sync::watch::Receiver<bool>,
+    driver_stopped: commonware_runtime::signal::Signal,
+) -> Result<()> {
+    if outcome.is_ok() && (*driver_cancel.borrow() || driver_stopped.now_or_never().is_some()) {
+        return Ok(());
+    }
+    Err(crate::supervision::unexpected_actor_exit("follow_driver", outcome).into())
 }
 
 async fn await_marshal_exit(
@@ -616,9 +629,61 @@ where
 
 #[cfg(test)]
 mod shutdown_tests {
-    use super::await_marshal_exit;
-    use commonware_runtime::{signal::Signaler, Error};
+    use super::{await_driver_exit, await_marshal_exit};
+    use commonware_runtime::{
+        deterministic, signal::Signaler, Error, Runner as _, Spawner as _, Supervisor as _,
+    };
     use futures::FutureExt as _;
+
+    #[test]
+    fn runtime_stop_allows_clean_driver_exit_without_cancel() {
+        deterministic::Runner::default().start(|context| async move {
+            let stopped = context.stopped();
+            let driver = context.child("test_driver").spawn(|ctx| async move {
+                ctx.stopped().await.unwrap();
+            });
+            let (_cancel, cancel) = tokio::sync::watch::channel(false);
+            let stop = context.stop(0, Some(std::time::Duration::from_secs(1)));
+            futures::pin_mut!(stop);
+            assert!(stop.as_mut().now_or_never().is_none());
+            await_driver_exit(driver.await, &cancel, stopped).unwrap();
+            stop.await.unwrap();
+        });
+    }
+
+    #[test]
+    fn clean_driver_exit_without_stop_is_fatal() {
+        deterministic::Runner::default().start(|context| async move {
+            let stopped = context.stopped();
+            let (_cancel, cancel) = tokio::sync::watch::channel(false);
+            let driver = context.child("test_driver").spawn(|_| async {});
+            let error = await_driver_exit(driver.await, &cancel, stopped).unwrap_err();
+            assert!(matches!(
+                error.downcast_ref::<crate::supervision::SupervisedActorError>(),
+                Some(crate::supervision::SupervisedActorError::UnexpectedExit {
+                    actor: "follow_driver"
+                })
+            ));
+        });
+    }
+
+    #[test]
+    fn cancelled_driver_exit_is_clean_but_task_failure_is_fatal() {
+        let (_cancel, cancel) = tokio::sync::watch::channel(true);
+        let (_signaler, signal) = Signaler::new();
+        await_driver_exit(Ok(()), &cancel, signal).unwrap();
+        let (signaler, signal) = Signaler::new();
+        let stopped = signaler.signal(0);
+        let error = await_driver_exit(Err(Error::Exited), &cancel, signal).unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<crate::supervision::SupervisedActorError>(),
+            Some(crate::supervision::SupervisedActorError::TaskFailed {
+                source: Error::Exited,
+                ..
+            })
+        ));
+        drop(stopped);
+    }
 
     #[tokio::test]
     async fn promotion_allows_clean_marshal_exit_without_runtime_stop() {
