@@ -211,7 +211,11 @@ pub async fn maintain_outbe_pool<Provider, Pool>(
     let mut ticker = tokio::time::interval_at(started_at + period, period);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut last_tip_timestamp = None;
-    tracing::info!(target: "outbe::txpool", "pending staleness eviction active");
+    tracing::info!(
+        target: "outbe::txpool",
+        staleness_interval_secs = config.staleness_interval_secs,
+        "pending staleness eviction active"
+    );
     loop {
         tokio::select! {
             notification = stream.next() => {
@@ -260,7 +264,12 @@ fn observe_notification<Pool: TransactionPool>(
             .filter(|tx| !outbe_primitives::system_tx::is_reserved_system_tx(*tx))
             .count();
         gauge!("outbe_txpool_block_user_txs").set(user_txs as f64);
-        if let Some(kind) = tracker.observe_block(block.number(), user_txs, pool.pool_size()) {
+        if let Some(kind) = tracker.observe_block(
+            block.number(),
+            block.timestamp(),
+            user_txs,
+            pool.pool_size(),
+        ) {
             counter!("outbe_txpool_inclusion_alarms_total", "kind" => kind.as_label()).increment(1);
             tracing::warn!(target: "outbe::txpool", kind = kind.as_label(),
                 block_number = block.number(), "pool transactions not included in canonical blocks");
@@ -757,7 +766,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn stalled_stream_updates_tip_age_and_pool_size_and_eof_terminates() {
+    async fn stalled_stream_updates_tip_age_every_five_seconds_and_stops_on_eof() {
         use metrics_util::debugging::{DebugValue, DebuggingRecorder};
         use reth_transaction_pool::test_utils::testing_pool;
         let (sender, receiver) = tokio::sync::broadcast::channel(8);
@@ -787,11 +796,13 @@ mod tests {
             ))
             .is_none()
         );
-        assert_eq!(
-            recorded_metrics(&recorder)
-                .get(&Key::from_name("outbe_txpool_canonical_tip_age_seconds")),
-            Some(&DebugValue::Gauge(0.0.into()))
-        );
+        let initial_age = match recorded_metrics(&recorder)
+            .get(&Key::from_name("outbe_txpool_canonical_tip_age_seconds"))
+        {
+            Some(DebugValue::Gauge(age)) => age.into_inner(),
+            value => panic!("expected initial canonical tip age gauge, got {value:?}"),
+        };
+        assert!(initial_age <= 1.0);
         for elapsed in [5, 10] {
             tokio::time::advance(Duration::from_secs(5)).await;
             assert!(
@@ -803,7 +814,9 @@ mod tests {
             let values = recorded_metrics(&recorder);
             assert_eq!(
                 values.get(&Key::from_name("outbe_txpool_canonical_tip_age_seconds")),
-                Some(&DebugValue::Gauge(f64::from(elapsed).into()))
+                Some(&DebugValue::Gauge(
+                    (initial_age + f64::from(elapsed)).into()
+                ))
             );
             assert_eq!(
                 values.get(&Key::from_name("outbe_txpool_pending_snapshot_txs")),
