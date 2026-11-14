@@ -40,6 +40,9 @@ async fn prometheus_recorder_contract() {
     emit_tee_client();
     canary::emit_ticks().await;
     emit_txpool().await;
+    emit_follower();
+    emit_p2p();
+    emit_evm();
     metrics_process::Collector::default().collect();
     let rendered = recorder.handle().render();
     assert_eq!(validate_outbe_metric_taxonomy(&rendered), Ok(()));
@@ -244,6 +247,20 @@ async fn emit_txpool() {
     assert_eq!(run_staleness_tick(&pool, &mut tracker, 110).len(), 1);
 }
 
+// shortcut: use test emitters until production follower and P2P emitters exist.
+fn emit_follower() {
+    metrics::gauge!("outbe_follower_upstream_tip_known").set(1.0);
+}
+
+fn emit_p2p() {
+    metrics::counter!("outbe_p2p_send_rate_limited_total", "channel" => "dkg").increment(1);
+}
+
+fn emit_evm() {
+    outbe_evm::executor::record_zero_fee_soft_failure_metric();
+    outbe_evm::executor::record_zero_fee_cap_exceeded_metric();
+}
+
 fn metric_types(rendered: &str) -> HashMap<&str, &str> {
     rendered
         .lines()
@@ -270,6 +287,20 @@ fn assert_subsystems(rendered: &str, types: &HashMap<&str, &str>) {
     }
     assert!(rendered.contains("reth_outbe_radicle_voting_gate_signer_allowed 1"));
     assert!(rendered.contains("reth_outbe_tee_canary_failures_total 1"));
+    assert_eq!(types["reth_outbe_follower_upstream_tip_known"], "gauge");
+    assert_eq!(types["reth_outbe_p2p_send_rate_limited_total"], "counter");
+    assert_eq!(
+        types["reth_outbe_evm_zero_fee_soft_failures_total"],
+        "counter"
+    );
+    assert_eq!(
+        types["reth_outbe_evm_zero_fee_cap_exceeded_total"],
+        "counter"
+    );
+    assert!(rendered.contains("reth_outbe_follower_upstream_tip_known 1"));
+    assert!(rendered.contains("reth_outbe_p2p_send_rate_limited_total{channel=\"dkg\"} 1"));
+    assert!(rendered.contains("reth_outbe_evm_zero_fee_soft_failures_total 1"));
+    assert!(rendered.contains("reth_outbe_evm_zero_fee_cap_exceeded_total 1"));
 }
 
 fn assert_latency_buckets(rendered: &str, types: &HashMap<&str, &str>) {

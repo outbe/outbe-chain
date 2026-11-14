@@ -1,5 +1,15 @@
 use super::*;
 
+/// Record one zero-fee soft-failure accepted within the block budget.
+pub fn record_zero_fee_soft_failure_metric() {
+    metrics::counter!("outbe_evm_zero_fee_soft_failures_total").increment(1);
+}
+
+/// Record one zero-fee soft-failure rejected by the block cap.
+pub fn record_zero_fee_cap_exceeded_metric() {
+    metrics::counter!("outbe_evm_zero_fee_cap_exceeded_total").increment(1);
+}
+
 /// Exact transaction-validation reason used to defer sponsorship to a later block.
 pub const SPONSORED_BLOCK_BUDGET_EXCEEDED: &str = "sponsored block budget exceeded";
 
@@ -161,6 +171,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         tx_hash: B256,
     ) -> Result<(), BlockExecutionError> {
         if self.zero_fee_soft_failures >= Self::MAX_ZERO_FEE_SOFT_FAILURES_PER_BLOCK {
+            record_zero_fee_cap_exceeded_metric();
             let reason = format!(
                 "zero-fee soft-failure cap ({}) exceeded for this block; tx rejected to bound \
                  block stuffing",
@@ -174,6 +185,114 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             ));
         }
         self.zero_fee_soft_failures = self.zero_fee_soft_failures.saturating_add(1);
+        record_zero_fee_soft_failure_metric();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+    #[test]
+    fn zero_fee_soft_failure_metrics_respect_block_cap() {
+        // DebuggingRecorder snapshots drain counters, so inspect each scenario once.
+        for (try_over_cap, expected_cap_exceeded) in [(false, 0), (true, 1)] {
+            let recorder = DebuggingRecorder::new();
+            let snapshotter = recorder.snapshotter();
+            metrics::with_local_recorder(&recorder, || {
+                with_executor(|mut executor| {
+                    for _ in 0..64 {
+                        executor
+                            .record_zero_fee_soft_failure(B256::ZERO)
+                            .expect("soft-failure within budget");
+                    }
+                    if try_over_cap {
+                        let hash = B256::repeat_byte(1);
+                        assert!(matches!(
+                            executor.record_zero_fee_soft_failure(hash),
+                            Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
+                                hash: rejected_hash, ..
+                            })) if rejected_hash == hash
+                        ));
+                    }
+                    assert_eq!(executor.zero_fee_soft_failures, 64);
+                });
+            });
+            let snapshot = snapshotter.snapshot().into_vec();
+            for (name, expected) in [
+                ("outbe_evm_zero_fee_soft_failures_total", 64),
+                (
+                    "outbe_evm_zero_fee_cap_exceeded_total",
+                    expected_cap_exceeded,
+                ),
+            ] {
+                let value = snapshot
+                    .iter()
+                    .find(|(key, _, _, _)| key.key().name() == name)
+                    .map(|(_, _, _, value)| match value {
+                        DebugValue::Counter(count) => *count,
+                        other => panic!("expected counter {name}, got {other:?}"),
+                    })
+                    .unwrap_or(0);
+                assert_eq!(value, expected, "{name}");
+            }
+        }
+    }
+
+    fn with_executor(f: impl FnOnce(OutbeBlockExecutor<'_, ()>)) {
+        let chain_spec = Arc::new(
+            reth_chainspec::MAINNET
+                .as_ref()
+                .clone()
+                .map_header(OutbeHeader::new),
+        );
+        let receipt_builder = RethReceiptBuilder::default();
+        // Soft-failure accounting never executes EVM transactions.
+        let inner = EthBlockExecutor::new(
+            (),
+            alloy_evm::eth::EthBlockExecutionCtx {
+                parent_hash: B256::ZERO,
+                parent_beacon_block_root: None,
+                ommers: &[],
+                withdrawals: None,
+                extra_data: Bytes::new(),
+                tx_count_hint: None,
+                slot_number: None,
+            },
+            &chain_spec,
+            &receipt_builder,
+        );
+        f(OutbeBlockExecutor::new(
+            inner,
+            BlockExecutorInputs {
+                identity: BlockExecutionIdentity {
+                    block_extra_data: Bytes::new(),
+                    validate_execution_summary: false,
+                    block_hash: None,
+                    block_state_root: None,
+                    parent_hash: B256::ZERO,
+                },
+                system_plan: BlockSystemPlan {
+                    expected_begin_system_txs: Vec::new(),
+                    system_layout_error: None,
+                    proposer_evm_address: None,
+                    execute_outbe_block_hooks: false,
+                    prebuilt_phase1_tx: None,
+                    pending_tee_bootstrap: None,
+                },
+                parent_accounting: ParentAccountingInputs {
+                    accounted_parent_artifact_provider: None,
+                    parent_consensus_metadata: None,
+                    parent_artifact_hint: None,
+                },
+                dependencies: BlockExecutionDependencies {
+                    bridge: None,
+                    evm_signer: None,
+                    runtime_host: crate::host::stub_host(),
+                },
+            },
+        ));
     }
 }

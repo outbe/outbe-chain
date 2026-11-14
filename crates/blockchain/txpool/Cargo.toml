@@ -28,6 +28,7 @@ futures.workspace = true
 metrics.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+tokio = { workspace = true, features = ["time", "macros", "sync"] }
 
 [dev-dependencies]
 alloy-signer.workspace = true

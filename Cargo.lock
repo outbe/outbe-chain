@@ -8238,6 +8238,8 @@ dependencies = [
  "eyre",
  "hex",
  "k256 0.13.4",
+ "metrics",
+ "metrics-util",
  "outbe-evm",
  "outbe-primitives",
  "outbe-tee",
