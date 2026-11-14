@@ -21,7 +21,7 @@
 //! Metrics use `outbe_txpool_*`: gauges count transactions with `_txs`, and
 //! counters end in `_total`. See `crates/runtime/src/metrics_recorder.rs`.
 
-use std::collections::HashSet;
+use std::{collections::HashSet, time::Duration};
 
 use alloy_consensus::BlockHeader as _;
 use alloy_primitives::B256;
@@ -39,12 +39,18 @@ pub struct OutbePoolMaintainConfig {
     /// snapshots, so the effective pending TTL is one to two intervals. Must be
     /// non-zero (CLI validation enforces this).
     pub staleness_interval_secs: u64,
+    /// Minimum block interval, reserved for inclusion-stall telemetry.
+    pub min_block_time: Duration,
+    /// Queued transaction lifetime, reserved for inclusion-stall telemetry.
+    pub queued_lifetime: Duration,
 }
 
 impl Default for OutbePoolMaintainConfig {
     fn default() -> Self {
         Self {
             staleness_interval_secs: 600,
+            min_block_time: Duration::from_secs(2),
+            queued_lifetime: Duration::from_secs(120),
         }
     }
 }
@@ -205,12 +211,19 @@ mod tests {
             atomic::{AtomicU64, Ordering},
             Arc, Mutex,
         },
-        time::Duration,
     };
 
     use metrics::{
         Counter, Gauge, Histogram, Key, KeyName, Metadata, Recorder, SharedString, Unit,
     };
+
+    #[test]
+    fn maintenance_config_defaults() {
+        let config = OutbePoolMaintainConfig::default();
+        assert_eq!(config.staleness_interval_secs, 600);
+        assert_eq!(config.min_block_time, Duration::from_secs(2));
+        assert_eq!(config.queued_lifetime, Duration::from_secs(120));
+    }
 
     #[derive(Default)]
     struct TestRecorder {
