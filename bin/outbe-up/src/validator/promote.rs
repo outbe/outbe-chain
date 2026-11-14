@@ -150,7 +150,7 @@ async fn run_tee_join(journal: &Journal) -> Result<()> {
         .expect("valid_until was saved")
         .to_string();
     let mut args = vec!["tee", "join", "--enclave-socket", "127.0.0.1:17000"];
-    if !matches!(journal.config.tee.runtime, EnclaveRuntime::GramineDirectDev) {
+    if !matches!(journal.config.tee.runtime, EnclaveRuntime::Mock) {
         args.extend(["--node-data-dir", "/opt/outbe-chain/validator-0/data"]);
     }
     args.extend([

@@ -133,6 +133,12 @@ fn render_writes_valid_bash_scripts_and_stable_bootnodes() {
             assert!(status.success(), "bash -n failed for {name}");
         }
         assert!(directory.join("feeder.toml").is_file());
+
+        let start_all = fs::read_to_string(directory.join("start-all.sh")).expect("start-all");
+        assert!(start_all.contains("logs/enclave.log (pid $(cat enclave.pid))"));
+        assert!(!start_all.contains("docker"));
+        let stop_all = fs::read_to_string(directory.join("stop-all.sh")).expect("stop-all");
+        assert!(!stop_all.contains("docker"));
     }
 
     let first_bootnodes =
@@ -233,11 +239,7 @@ fn distribution_archives_and_signed_enclave_staging() {
 
     let (_, output_dir) = render_fixture(
         tmp.path(),
-        Some(json!({
-            "chain_id": 54322345,
-            "tee": {"mode": "dcap-required"},
-            "signed_enclave_dir": signed_dir.display().to_string(),
-        })),
+        Some(json!({"signed_enclave_dir": signed_dir.display().to_string()})),
     );
 
     let staged = output_dir.join("sgx");
@@ -359,24 +361,23 @@ fn caddy_systemd_units_tee_renewal_and_enclave_modes() {
     assert!(timer.contains("Persistent=true"));
     let install_systemd =
         fs::read_to_string(output_dir.join("install-systemd.sh")).expect("install-systemd");
-    assert!(!install_systemd.contains("enable --now \"outbe-tee-renew@$INDEX.timer\""));
+    assert!(install_systemd.contains("enable --now \"outbe-tee-renew@$INDEX.timer\""));
 
     let node2 =
         fs::read_to_string(output_dir.join("validator-2").join("run-node.sh")).expect("node2");
     assert!(node2.contains("--nat extip:10.0.0.3"));
     assert!(node2.contains("--consensus.storage-dir"));
-    assert!(!node2.contains("--tee-session-mode production-node-host"));
+    assert!(node2.contains("--tee-session-mode production-node-host"));
 
     let enclave0 = fs::read_to_string(output_dir.join("validator-0").join("run-enclave.sh"))
         .expect("enclave0");
-    assert!(enclave0.contains("outbe-tee-enclave-mock"));
-    assert!(enclave0.contains("--dev-network-binding"));
-    assert!(enclave0.contains("--dkg-seed"));
+    assert!(enclave0.contains("outbe-tee-enclave-launch"));
+    assert!(enclave0.contains("/dev/sgx_enclave"));
+    assert!(!enclave0.contains("--dev-network-binding"));
     assert!(!enclave0.contains("docker run"));
     let preflight =
         fs::read_to_string(output_dir.join("validator-0/preflight.sh")).expect("preflight");
-    assert!(preflight.contains("development enclave"));
-    assert!(!preflight.contains("MISSING manifest or signature"));
+    assert!(preflight.contains("MISSING manifest or signature"));
     // Mock enclave mode (`enclave_sgx: false`)
     let tmp_mock = tempfile::tempdir().expect("tmp_mock");
     let (_, out_mock) = render_fixture(tmp_mock.path(), Some(json!({"enclave_sgx": false})));
@@ -386,6 +387,16 @@ fn caddy_systemd_units_tee_renewal_and_enclave_modes() {
     let install_mock =
         fs::read_to_string(out_mock.join("install-systemd.sh")).expect("install_mock");
     assert!(!install_mock.contains("enable --now \"outbe-tee-renew@$INDEX.timer\""));
+    let enclave_mock =
+        fs::read_to_string(out_mock.join("validator-0/run-enclave.sh")).expect("enclave_mock");
+    assert!(enclave_mock.contains("outbe-tee-enclave-mock"));
+    assert!(enclave_mock.contains("--dev-network-binding"));
+    assert!(enclave_mock.contains("--dev-reth-p2p-public"));
+    assert!(enclave_mock.contains("--dkg-seed"));
+    let preflight_mock =
+        fs::read_to_string(out_mock.join("validator-0/preflight.sh")).expect("preflight_mock");
+    assert!(preflight_mock.contains("development enclave"));
+    assert!(!preflight_mock.contains("MISSING manifest or signature"));
 
     // Production DCAP mode
     let tmp_dcap = tempfile::tempdir().expect("tmp_dcap");

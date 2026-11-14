@@ -82,7 +82,7 @@ impl LeaseDuration {
 pub enum EnclaveRuntime {
     BundledSgx,
     SystemGramine,
-    GramineDirectDev,
+    Mock,
 }
 
 impl EnclaveRuntime {
@@ -90,7 +90,14 @@ impl EnclaveRuntime {
         match self {
             Self::BundledSgx => "bundled-sgx",
             Self::SystemGramine => "system-gramine",
-            Self::GramineDirectDev => "gramine-direct-dev",
+            Self::Mock => "mock",
+        }
+    }
+
+    pub const fn session_mode(self) -> &'static str {
+        match self {
+            Self::Mock => "development",
+            Self::BundledSgx | Self::SystemGramine => "production-node-host",
         }
     }
 }
@@ -133,7 +140,7 @@ impl OperatorConfig {
             ""
         };
         let development_binding = match self.tee.runtime {
-            EnclaveRuntime::GramineDirectDev => {
+            EnclaveRuntime::Mock => {
                 write_development_secrets(root)?;
                 development_network_binding(root, self.network.chain_id)?
             }
@@ -148,6 +155,7 @@ impl OperatorConfig {
                 "OUTBE_CONSENSUS_PEERS=\"{}\"\n",
                 "OUTBE_CONSENSUS_EXTRA_ARGS=\"{}\"\n",
                 "OUTBE_ENCLAVE_RUNTIME=\"{}\"\n",
+                "OUTBE_TEE_SESSION_MODE=\"{}\"\n",
                 "OUTBE_DEV_NETWORK_BINDING=\"{}\"\n",
                 "OUTBE_CHAIN_ID=\"{}\"\n"
             ),
@@ -158,6 +166,7 @@ impl OperatorConfig {
             self.network.consensus_peers.join(","),
             extra,
             self.tee.runtime.as_env(),
+            self.tee.runtime.session_mode(),
             development_binding,
             self.network.chain_id,
         );
@@ -210,13 +219,13 @@ impl OperatorConfig {
         if let LeaseDuration::Seconds(seconds) = self.tee.lease_duration_seconds {
             ensure!(seconds > 0, "tee.lease_duration_seconds must be positive");
         }
-        if matches!(self.tee.runtime, EnclaveRuntime::GramineDirectDev) {
+        if matches!(self.tee.runtime, EnclaveRuntime::Mock) {
             ensure!(
                 outbe_primitives::tee_genesis_v1::is_attestation_mode_allowed_for_chain_id(
                     self.network.chain_id,
                     AttestationMode::GramineDirectDev,
                 ),
-                "tee.runtime=gramine-direct-dev is forbidden for network.chain_id={}",
+                "tee.runtime=mock is forbidden for network.chain_id={}",
                 self.network.chain_id
             );
         }
@@ -251,7 +260,7 @@ fn development_network_binding(root: &Path, chain_id: u64) -> Result<String> {
         .wrap_err("genesis TEE policy has no active policy at height 1")?;
     ensure!(
         policy.attestation_mode == AttestationMode::GramineDirectDev,
-        "tee.runtime=gramine-direct-dev requires a GramineDirectDev genesis TEE policy"
+        "tee.runtime=mock requires a GramineDirectDev genesis TEE policy"
     );
     Ok(hex::encode(
         NetworkBindingV1 {
@@ -371,7 +380,20 @@ feeder:
     }
 
     #[test]
-    fn direct_dev_runtime_is_limited_to_development_networks() {
+    fn runtime_selects_the_expected_session_mode() {
+        assert_eq!(EnclaveRuntime::Mock.session_mode(), "development");
+        assert_eq!(
+            EnclaveRuntime::BundledSgx.session_mode(),
+            "production-node-host"
+        );
+        assert_eq!(
+            EnclaveRuntime::SystemGramine.session_mode(),
+            "production-node-host"
+        );
+    }
+
+    #[test]
+    fn mock_runtime_is_limited_to_development_networks() {
         let config = |chain_id| {
             serde_yaml_ng::from_str::<OperatorConfig>(&format!(
                 r#"
@@ -383,7 +405,7 @@ network:
   bootnodes: ["enode://abc@192.0.2.1:30303"]
   consensus_peers: ["{}@192.0.2.1:30400"]
 tee:
-  runtime: gramine-direct-dev
+  runtime: mock
   lease_duration_seconds: auto
 feeder:
   public_toml: |

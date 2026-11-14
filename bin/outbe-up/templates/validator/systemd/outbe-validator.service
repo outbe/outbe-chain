@@ -15,6 +15,7 @@ Environment=RUST_MIN_STACK=16777216
 Environment=BB_CRS_PATH=/opt/outbe-chain/crs/bn254_g1.dat
 ExecStartPre=@OUTBE_UP@ internal wait-validator-dependencies
 ExecStart=/opt/outbe-chain/outbe-chain node \
+  --tee-session-mode ${OUTBE_TEE_SESSION_MODE} \
   --chain /opt/outbe-chain/genesis.json \
   --datadir /opt/outbe-chain/validator-0/data \
   --engine.persistence-threshold 0 \

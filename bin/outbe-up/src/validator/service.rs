@@ -35,7 +35,7 @@ pub fn enclave() -> Result<()> {
             command.current_dir(&sgx);
             command
         }
-        "gramine-direct-dev" => {
+        "mock" => {
             let root = Path::new(process::ROOT);
             let network_binding = required_env("OUTBE_DEV_NETWORK_BINDING")?;
             let reth_p2p_public = compressed_public_key(&root.join("keys/reth-p2p-secret.hex"))?;
@@ -59,9 +59,7 @@ pub fn enclave() -> Result<()> {
             command
         }
         _ => {
-            bail!(
-                "OUTBE_ENCLAVE_RUNTIME must be system-gramine, bundled-sgx, or gramine-direct-dev"
-            );
+            bail!("OUTBE_ENCLAVE_RUNTIME must be system-gramine, bundled-sgx, or mock");
         }
     };
     let tee_dir = if runtime == "bundled-sgx" {

@@ -20,8 +20,8 @@ restores a verified snapshot and synchronizes a keyless full node. `promote` per
 bonds the network minimum stake, switches the same data directory to validator mode, and submits
 validator readiness. DKG activation continues in the background and is visible through `status`.
 
-For dev/test networks created with a `GramineDirectDev` genesis TEE policy, set
-`tee.runtime: gramine-direct-dev`. The operator bundle must then carry
+For hardware-free dev/test networks created with a `GramineDirectDev` genesis TEE policy, set
+`tee.runtime: mock`. The operator bundle must then carry
 `outbe-tee-enclave-mock`; no SGX hardware, AESM, DCAP, Gramine, or Docker is required. This mode is
 unattested and must never be used for production or mainnet.
 
