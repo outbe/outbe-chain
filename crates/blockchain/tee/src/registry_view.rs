@@ -597,7 +597,7 @@ pub struct ExpectedOnboardingBindingV1 {
     pub recipient_x25519: [u8; 32],
     pub network_encryption_public_key: [u8; 32],
     pub key_epoch: u64,
-    pub tribute_offer_epoch: u64,
+    pub network_encryption_epoch: u64,
 }
 
 #[cfg(test)]

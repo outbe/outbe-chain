@@ -168,7 +168,7 @@ pub enum EnclaveResponse {
     /// One-time onboarding result.
     FinalizedAdmissionIngestedV1 {
         request_hash: B256,
-        tribute_offer_public: [u8; 32],
+        network_encryption_public: [u8; 32],
     },
     Error {
         message: String,
@@ -187,7 +187,7 @@ pub enum EnclaveResponse {
         onboarding_artifact: Vec<u8>,
     },
     GramineDirectDevOnboardingArtifactIngestedV1 {
-        tribute_offer_public: [u8; 32],
+        network_encryption_public: [u8; 32],
     },
     TransitionEvidenceDevV1 {
         evidence: Vec<u8>,

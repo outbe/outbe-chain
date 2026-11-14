@@ -231,7 +231,7 @@ fn tee_payload_v1(
             committee_snapshot_hash,
             committee_snapshot_block: block_number,
             key_epoch: 0,
-            tribute_offer_epoch: 0,
+            network_encryption_epoch: 0,
             dkg_transcript_hash: B256::ZERO,
             network_encryption_public_key: B256::repeat_byte(0x23),
             network_encryption_group_public_key: Bytes::from(vec![0x24; 96]),

@@ -232,12 +232,12 @@ pub enum ValidatorsError {
     /// Indicates that checking a pending validator set change failed.
     #[error("failed to check pending set change: {0}")]
     CheckPendingSetChange(String),
-    /// Indicates that reading the TEE offer public key failed.
-    #[error("failed to read tee offer public key: {0}")]
-    ReadTeeOfferPublicKey(String),
-    /// Indicates that reading the TEE offer epoch failed.
-    #[error("failed to read tee offer epoch: {0}")]
-    ReadTeeOfferEpoch(String),
+    /// Indicates that reading the TEE network encryption public key failed.
+    #[error("failed to read TEE network encryption public key: {0}")]
+    ReadNetworkEncryptionPublicKey(#[source] PrecompileError),
+    /// Indicates that reading the TEE network encryption epoch failed.
+    #[error("failed to read TEE network encryption epoch: {0}")]
+    ReadNetworkEncryptionEpoch(#[source] PrecompileError),
     /// Indicates that reading the validator TEE recipient X25519 key failed.
     #[error("failed to read tee recipient_x25519: {0}")]
     ReadTeeRecipientX25519(String),

@@ -1345,9 +1345,9 @@ mod tests {
             artifact: vec![0x11; 300],
             anchor_outcome: vec![0x14; 300],
             expected_intent_hash: B256::repeat_byte(0x12),
-            expected_tribute_offer_public: [0x13; 32],
+            expected_network_encryption_public: [0x13; 32],
             expected_key_epoch: 0,
-            expected_tribute_offer_epoch: 0,
+            expected_network_encryption_epoch: 0,
         });
         assert_eq!(purpose_bound, CommandClass::KeylessOnboardingArtifact);
         assert!(command_allowed_for_environment(purpose_bound, false, false).is_ok());

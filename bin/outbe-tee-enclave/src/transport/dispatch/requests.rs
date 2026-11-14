@@ -153,17 +153,17 @@ pub(in crate::transport) fn dispatch_with_label(
         EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 {
             artifact,
             expected_intent_hash,
-            expected_tribute_offer_public,
+            expected_network_encryption_public,
             expected_key_epoch,
-            expected_tribute_offer_epoch,
+            expected_network_encryption_epoch,
         } => (
             complete_gramine_direct_dev_onboarding_ingest_response(
                 OnboardingArtifactExpectations {
                     artifact: &artifact,
                     expected_intent_hash,
-                    expected_tribute_offer_public,
+                    expected_tribute_offer_public: expected_network_encryption_public,
                     expected_key_epoch,
-                    expected_tribute_offer_epoch,
+                    expected_tribute_offer_epoch: expected_network_encryption_epoch,
                 },
                 keys,
                 offer_key,

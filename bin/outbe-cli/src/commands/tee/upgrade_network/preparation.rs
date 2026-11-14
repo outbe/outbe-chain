@@ -241,9 +241,9 @@ impl<R: Rpc + Sync> NetworkPreparation<'_, R> {
             binding_id,
             policy_hash: intent.policy_hash,
             recipient_x25519: intent.recipient_x25519,
-            tribute_offer_public: active.network_encryption_public_key.0,
+            network_encryption_public: active.network_encryption_public_key.0,
             key_epoch: scalar_at(rpc, ITeeRegistryV1::keyEpochCall {}.abi_encode(), &tag).await?,
-            tribute_offer_epoch: scalar_at(
+            network_encryption_epoch: scalar_at(
                 rpc,
                 ITeeRegistryV1::tributeOfferEpochCall {}.abi_encode(),
                 &tag,

@@ -264,9 +264,12 @@ fn expected_upgrade_claims(
         return Err(FinalizedAdmissionError::UpgradeAuthorizationAbsentOrExpired.into());
     }
     Ok(vec![
-        (slots[0], U256::from_be_bytes(context.tribute_offer_public)),
+        (
+            slots[0],
+            U256::from_be_bytes(context.network_encryption_public),
+        ),
         (slots[1], U256::from(context.key_epoch)),
-        (slots[2], U256::from(context.tribute_offer_epoch)),
+        (slots[2], U256::from(context.network_encryption_epoch)),
         (slots[3], U256::from_be_bytes(context.context_hash().0)),
         (slots[4], expiry),
         (slots[5], source),
@@ -292,9 +295,12 @@ fn expected_registry_claims(
         return Err(FinalizedAdmissionError::RegistryLeaseNotLive.into());
     }
     Ok(vec![
-        (slots[0], U256::from_be_bytes(context.tribute_offer_public)),
+        (
+            slots[0],
+            U256::from_be_bytes(context.network_encryption_public),
+        ),
         (slots[1], U256::from(context.key_epoch)),
-        (slots[2], U256::from(context.tribute_offer_epoch)),
+        (slots[2], U256::from(context.network_encryption_epoch)),
         (slots[3], U256::from_be_bytes(context.enclave_id.0)),
         (slots[4], U256::from_be_bytes(context.binding_id.0)),
         (slots[5], U256::from_be_bytes(context.intent_hash.0)),
@@ -332,9 +338,9 @@ mod tests {
             binding_id: B256::repeat_byte(0x1a),
             policy_hash: B256::repeat_byte(0x1b),
             recipient_x25519: [0x15; 32],
-            tribute_offer_public: [0x16; 32],
+            network_encryption_public: [0x16; 32],
             key_epoch: 17,
-            tribute_offer_epoch: 18,
+            network_encryption_epoch: 18,
         }
     }
 
@@ -566,9 +572,9 @@ mod tests {
         };
         let values = if upgrade {
             [
-                U256::from_be_bytes(context.tribute_offer_public),
+                U256::from_be_bytes(context.network_encryption_public),
                 U256::from(context.key_epoch),
-                U256::from(context.tribute_offer_epoch),
+                U256::from(context.network_encryption_epoch),
                 U256::from_be_bytes(context.context_hash().0),
                 U256::from(2_000_u64),
                 U256::from(123_u64),
@@ -578,9 +584,9 @@ mod tests {
             ]
         } else {
             [
-                U256::from_be_bytes(context.tribute_offer_public),
+                U256::from_be_bytes(context.network_encryption_public),
                 U256::from(context.key_epoch),
-                U256::from(context.tribute_offer_epoch),
+                U256::from(context.network_encryption_epoch),
                 U256::from_be_bytes(context.enclave_id.0),
                 U256::from_be_bytes(context.binding_id.0),
                 U256::from_be_bytes(context.intent_hash.0),

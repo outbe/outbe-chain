@@ -175,7 +175,7 @@ fn fixture() -> TeeBootstrapV2 {
             committee_snapshot_hash: B256::repeat_byte(0x21),
             committee_snapshot_block: 1,
             key_epoch: 1,
-            tribute_offer_epoch: 1,
+            network_encryption_epoch: 1,
             dkg_transcript_hash: B256::repeat_byte(0x22),
             network_encryption_public_key: B256::repeat_byte(0x23),
             network_encryption_group_public_key: Bytes::from(vec![0x24; 96]),
@@ -548,7 +548,7 @@ fn seven_validator_bootstrap_fits_block1_layout() {
 fn assembly_reuses_existing_authority_and_deduplicates_complete_submissions() {
     let mut expected = fixture();
     expected.authority.key_epoch = 0;
-    expected.authority.tribute_offer_epoch = 0;
+    expected.authority.network_encryption_epoch = 0;
     expected.authority.dkg_transcript_hash = B256::ZERO;
     let submissions = expected
         .participants

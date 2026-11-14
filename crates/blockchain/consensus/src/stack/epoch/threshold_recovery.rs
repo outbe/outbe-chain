@@ -96,8 +96,9 @@ where
         .public_keys
         .iter()
         .any(|key| key == &local_consensus_key);
-    let on_chain_offer = validators::read_tee_offer_public_at_latest(protocol, node.provider())
-        .wrap_err("failed to read canonical offer key before threshold work")?;
+    let on_chain_offer =
+        validators::read_network_encryption_public_at_latest(protocol, node.provider())
+            .wrap_err("failed to read canonical offer key before threshold work")?;
     let resident_offer = outbe_tee::resident_network_encryption_public_key_state_v1()
         .wrap_err("failed to read enclave offer-key readiness before threshold work")?;
     validate_offer_key_before_threshold_work(

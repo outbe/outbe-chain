@@ -588,11 +588,11 @@ impl EngineProtocolState for OutbeRuntime {
         outbe_validatorset::contract::ValidatorSet::new(storage).has_pending_set_change()
     }
 
-    fn tee_offer_public(&self, storage: StorageHandle<'_>) -> Result<B256> {
+    fn network_encryption_public(&self, storage: StorageHandle<'_>) -> Result<B256> {
         outbe_teeregistry::TeeRegistry::new(storage).offer_public_key()
     }
 
-    fn tee_offer_epoch(&self, storage: StorageHandle<'_>) -> Result<u64> {
+    fn network_encryption_epoch(&self, storage: StorageHandle<'_>) -> Result<u64> {
         outbe_teeregistry::TeeRegistry::new(storage).tribute_offer_epoch()
     }
 

@@ -90,7 +90,7 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// tx after `BoundaryOutcome`. It does this identically to
     /// `build_begin_system_txs`, so the body that the proposer signs matches the
     /// inputs that the executor expects. It is `None` on the validator path (the
-    /// body carries it via `expected_begin_system_txs`) and until the tribute-DKG
+    /// body carries it via `expected_begin_system_txs`) and until the TEE-DKG
     /// bootstrap producer supplies a payload.
     pub pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>,
     /// Explicit 4-stage block execution state machine (`ConsensusStage -> BeginBlock -> MidBlock -> EndBlock -> Completed`).

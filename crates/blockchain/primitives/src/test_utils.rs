@@ -183,7 +183,7 @@ pub fn sample_system_tx_tee_bootstrap() -> crate::tee_bootstrap_v2::TeeBootstrap
             committee_snapshot_hash: B256::repeat_byte(0xB2),
             committee_snapshot_block: 1,
             key_epoch: 1,
-            tribute_offer_epoch: 1,
+            network_encryption_epoch: 1,
             dkg_transcript_hash: B256::repeat_byte(0xB3),
             network_encryption_public_key: B256::repeat_byte(0xB4),
             network_encryption_group_public_key: Bytes::from(vec![0xB5; 96]),

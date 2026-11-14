@@ -386,7 +386,7 @@ pub fn encrypt_onboarding_artifact_v1(
     group_signature: &[u8],
 ) -> Result<DcapOnboardingArtifactV1> {
     let sender = StaticSecret::from(*sender_offer_secret);
-    if PublicKey::from(&sender).to_bytes() != context.tribute_offer_public {
+    if PublicKey::from(&sender).to_bytes() != context.network_encryption_public {
         return Err(TeeError::Dkg(
             "onboarding context offer public does not match resident key".into(),
         ));
@@ -417,7 +417,8 @@ pub fn decrypt_onboarding_artifact_v1(
     if recipient_public != artifact.context.recipient_x25519 {
         return Err(TeeError::DecryptFailed);
     }
-    let shared = recipient.diffie_hellman(&PublicKey::from(artifact.context.tribute_offer_public));
+    let shared =
+        recipient.diffie_hellman(&PublicKey::from(artifact.context.network_encryption_public));
     let (key, expected_nonce) =
         onboarding_aead_material(artifact.context.context_hash(), shared.as_bytes())?;
     if artifact.nonce != expected_nonce {
@@ -482,9 +483,9 @@ mod tests {
             binding_id: B256::repeat_byte(0x26),
             policy_hash: B256::repeat_byte(0x27),
             recipient_x25519,
-            tribute_offer_public,
+            network_encryption_public: tribute_offer_public,
             key_epoch: 3,
-            tribute_offer_epoch: 4,
+            network_encryption_epoch: 4,
         }
     }
 

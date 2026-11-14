@@ -429,14 +429,14 @@ impl outbe_consensus::protocol_state::EngineProtocolState for ClosedEngineState 
         closed()
     }
 
-    fn tee_offer_public(
+    fn network_encryption_public(
         &self,
         _: outbe_primitives::storage::StorageHandle<'_>,
     ) -> outbe_primitives::error::Result<alloy_primitives::B256> {
         closed()
     }
 
-    fn tee_offer_epoch(
+    fn network_encryption_epoch(
         &self,
         _: outbe_primitives::storage::StorageHandle<'_>,
     ) -> outbe_primitives::error::Result<u64> {

@@ -22,7 +22,7 @@ pub(super) fn encode_body(payload: &TeeBootstrapV2) -> Result<Vec<u8>, CodecErro
     out.extend_from_slice(payload.authority.committee_snapshot_hash.as_slice());
     put_u64(&mut out, payload.authority.committee_snapshot_block);
     put_u64(&mut out, payload.authority.key_epoch);
-    put_u64(&mut out, payload.authority.tribute_offer_epoch);
+    put_u64(&mut out, payload.authority.network_encryption_epoch);
     out.extend_from_slice(payload.authority.dkg_transcript_hash.as_slice());
     out.extend_from_slice(payload.authority.network_encryption_public_key.as_slice());
     put_bytes_u32(
@@ -99,7 +99,7 @@ pub fn decode_canonical(input: &[u8]) -> Result<TeeBootstrapV2, CodecError> {
     let committee_snapshot_hash = B256::from(decoder.array::<32>()?);
     let committee_snapshot_block = decoder.u64()?;
     let key_epoch = decoder.u64()?;
-    let tribute_offer_epoch = decoder.u64()?;
+    let network_encryption_epoch = decoder.u64()?;
     let dkg_transcript_hash = B256::from(decoder.array::<32>()?);
     let network_encryption_public_key = B256::from(decoder.array::<32>()?);
     let network_encryption_group_public_key = Bytes::copy_from_slice(
@@ -117,7 +117,7 @@ pub fn decode_canonical(input: &[u8]) -> Result<TeeBootstrapV2, CodecError> {
             committee_snapshot_hash,
             committee_snapshot_block,
             key_epoch,
-            tribute_offer_epoch,
+            network_encryption_epoch,
             dkg_transcript_hash,
             network_encryption_public_key,
             network_encryption_group_public_key,

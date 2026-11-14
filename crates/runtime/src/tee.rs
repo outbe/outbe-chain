@@ -234,9 +234,11 @@ fn local_tee_admission_ready_v1(
     ) {
         return Ok((false, admission));
     }
-    let on_chain_offer =
-        outbe_consensus::validators::read_tee_offer_public_at_latest(protocol, &node.provider)
-            .wrap_err("read the canonical offer key for the TEE lease guard")?;
+    let on_chain_offer = outbe_consensus::validators::read_network_encryption_public_at_latest(
+        protocol,
+        &node.provider,
+    )
+    .wrap_err("read the canonical offer key for the TEE lease guard")?;
     let resident_offer = outbe_tee::resident_network_encryption_public_key_state_v1()
         .wrap_err("read the resident offer key for the TEE lease guard")?;
     Ok((

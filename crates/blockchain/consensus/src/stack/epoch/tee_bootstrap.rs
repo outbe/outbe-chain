@@ -54,7 +54,7 @@ where
     // On a fresh chain (no executed blocks yet), this validator must run the TEE
     // enclave sidecar selected by the mandatory block-1 genesis policy:
     //   1. run the TEE DKG ceremony so the committee's enclaves collaboratively
-    //      derive the shared tribute offer key. Seam F: a group threshold
+    //      derive the shared network encryption key. Seam F: a group threshold
     //      signature over a fixed message -> HKDF -> X25519. The key is
     //      byte-identical on every honest node, and the secret stays resident in
     //      each enclave. Then:
@@ -237,7 +237,7 @@ where
                         committee_snapshot_hash,
                         committee_snapshot_block: 1,
                         key_epoch: 0,
-                        tribute_offer_epoch: 0,
+                        network_encryption_epoch: 0,
                         dkg_transcript_hash: B256::ZERO,
                         network_encryption_public_key: B256::from(network_encryption_public_key),
                         network_encryption_group_public_key: Bytes::from(
@@ -354,8 +354,9 @@ fn verify_restarted_validator_holds_chain_offer_key(
     // pre-V1 delivery protocol.
     let _my_validator = proposer_evm_address
         .ok_or(crate::errors::StackEpochError::ActiveValidatorStartupRequiresEvmIdentity)?;
-    let on_chain_offer = validators::read_tee_offer_public_at_latest(protocol, node.provider())
-        .wrap_err("failed to read the mandatory on-chain TEE offer key")?;
+    let on_chain_offer =
+        validators::read_network_encryption_public_at_latest(protocol, node.provider())
+            .wrap_err("failed to read the mandatory on-chain TEE offer key")?;
     if on_chain_offer.is_zero() {
         return Err(
             crate::errors::StackEpochError::MandatoryOst3MissingOnChainOfferKeyAfterBlock1.into(),

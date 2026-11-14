@@ -227,7 +227,7 @@ pub fn run_tee_bootstrap_v1(
         tribute_offer_public_key: payload.authority.network_encryption_public_key,
         policy_hash,
         key_epoch: payload.authority.key_epoch,
-        tribute_offer_epoch: payload.authority.tribute_offer_epoch,
+        tribute_offer_epoch: payload.authority.network_encryption_epoch,
         dkg_transcript_hash: payload.authority.dkg_transcript_hash,
         committee_snapshot_block: payload.authority.committee_snapshot_block,
         committee_snapshot_hash,

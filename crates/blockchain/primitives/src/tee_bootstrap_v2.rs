@@ -76,7 +76,7 @@ pub struct TeeBootstrapAuthorityV2 {
     pub committee_snapshot_hash: B256,
     pub committee_snapshot_block: u64,
     pub key_epoch: u64,
-    pub tribute_offer_epoch: u64,
+    pub network_encryption_epoch: u64,
     pub dkg_transcript_hash: B256,
     pub network_encryption_public_key: B256,
     pub network_encryption_group_public_key: Bytes,
