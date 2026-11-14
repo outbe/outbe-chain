@@ -28,7 +28,7 @@ pub(super) const CHAIN_ID: u64 = 1;
 /// Genesis at midnight UTC of 2024-01-01.
 pub(super) const GENESIS_TS: u64 = 1_704_067_200;
 pub(super) use outbe_system_common::time::SECONDS_PER_DAY;
-pub(super) const EMISSION_LIMIT_1_ID: u32 = TriggerId::ProcessEmissionDay.as_u32();
+pub(super) const EMISSION_LIMIT_1_ID: u32 = TaskId::ProcessEmissionDay.as_u32();
 
 pub(super) fn cycle_storage() -> HashMapStorageProvider {
     cycle_storage_for(CHAIN_ID)

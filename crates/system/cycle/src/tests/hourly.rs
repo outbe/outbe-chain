@@ -126,7 +126,7 @@ fn due_emission_day_fixture() -> (HashMapStorageProvider, u32, u64) {
         (ed.day, ed.metadosis_start.div_ceil(3_600) * 3_600)
     });
     storage.enter(|handle| {
-        seed_trigger_clock(&handle, fire_at);
+        seed_task_clock(&handle, fire_at);
         let prev_day = outbe_system_common::time::previous_date_key(day).expect("date step");
         outbe_emission::api::record_failed_day_allocation(handle, prev_day, U256::ZERO).unwrap();
     });
