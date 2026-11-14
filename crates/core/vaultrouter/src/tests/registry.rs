@@ -1,7 +1,7 @@
 //! Vault registration records, paged asset enumeration, and declared-error reverts.
 
-use outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS;
 use outbe_primitives::storage::SubCallInput;
+use outbe_system_common::addresses::CREDIS_FACTORY_ADDRESS;
 
 use super::*;
 use crate::errors::SettlementError;

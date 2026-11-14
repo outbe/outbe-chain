@@ -9,7 +9,7 @@ use outbe_credis::runtime::effective_state;
 use outbe_credis::{Credis, CredisContract, CredisState};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{timestamp_to_date_key, SECONDS_PER_DAY};
+use outbe_system_common::time::{timestamp_to_date_key, SECONDS_PER_DAY};
 
 use crate::called::emit;
 use crate::errors::CredisFactoryError;
@@ -21,7 +21,7 @@ fn reward_day(storage: &StorageHandle<'_>) -> Result<u32> {
 }
 
 pub(crate) fn date_step_error(
-    err: outbe_primitives::time::TimeError,
+    err: outbe_system_common::time::TimeError,
 ) -> outbe_primitives::error::PrecompileError {
     match err.date_step() {
         Some((kind, date_key)) => CredisError::DateStep { kind, date_key }.into(),
@@ -107,7 +107,7 @@ pub fn issue(credis: &mut CredisContract<'_>, mut params: IssueCredisParams) -> 
     }
     if params.call_start_day == 0 {
         params.call_start_day =
-            outbe_primitives::time::first_full_day(params.issued_at).map_err(date_step_error)?;
+            outbe_system_common::time::first_full_day(params.issued_at).map_err(date_step_error)?;
     }
     if params.call_window_seconds == 0 {
         let call_terms = outbe_credis::config::read(&credis.storage)?;

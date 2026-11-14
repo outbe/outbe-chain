@@ -9,7 +9,6 @@ use alloy_sol_types::SolCall;
 use outbe_intex::SeriesId;
 use outbe_oracle::call_pass::{self, CallPass};
 use outbe_oracle::call_window::CallWindow;
-use outbe_primitives::time::EmissionDate;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PassFailure, Result},
@@ -18,6 +17,7 @@ use outbe_primitives::{
 use outbe_system_common::call_bins::{self, Visit};
 use outbe_system_common::day_pass::PinnedDay;
 use outbe_system_common::pass_budget::PassBudget;
+use outbe_system_common::time::EmissionDate;
 
 use crate::constants::{MAX_SERIES_PER_MARK, ORIGIN_ROUTER_ADDRESS};
 use crate::schema::IntexFactoryContract;
@@ -76,7 +76,7 @@ impl<'storage> CallPass<'storage> for IntexCallPass<'storage> {
         _phase: u8,
         budget: &mut PassBudget,
     ) -> Result<outbe_system_common::day_pass::Progress> {
-        let pinned_ts = outbe_primitives::time::date_key_to_utc_timestamp(pinned_day)
+        let pinned_ts = outbe_system_common::time::date_key_to_utc_timestamp(pinned_day)
             .map_err(crate::errors::date_step_error)?;
         let through_day = outbe_core_common::deadline_queue::deadline_day(pinned_ts)?;
         crate::forfeited::forfeit_through(ctx, through_day, budget)

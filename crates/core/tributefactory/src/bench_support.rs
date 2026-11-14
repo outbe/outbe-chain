@@ -4,8 +4,8 @@
 //! benchmark exercise the same crate-private processor-injection seam as unit
 //! tests. That seam does not become part of TributeFactory's product API.
 
+use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_enclave::protocol::{EncryptedTributeOffer, TributeOfferResult};
-use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::StorageHandle,

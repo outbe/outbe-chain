@@ -423,7 +423,7 @@ fn begin_block_soft_fail_rolls_back_dirty_storage_writes_and_logs_preserving_ear
     }
 
     let oracle_slash_tx = system_txs.next().expect("OracleSlash tx at index 8");
-    let dirty_addr = outbe_primitives::addresses::ORACLE_ADDRESS;
+    let dirty_addr = outbe_system_common::addresses::ORACLE_ADDRESS;
     let dirty_slot = U256::from(0xDEAD_BEEFu64);
     let dirty_val = U256::from(0xCAFE_BABEu64);
     let dirty_topic = keccak256("DirtySoftFailEvent()");

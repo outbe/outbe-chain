@@ -129,7 +129,7 @@ fn dispatch_propagates_schedule_overflow_instead_of_skipping_the_trigger() {
         );
     });
     assert!(storage
-        .get_events(outbe_primitives::addresses::CYCLE_ADDRESS)
+        .get_events(outbe_system_common::addresses::CYCLE_ADDRESS)
         .iter()
         .all(|log| crate::ICycle::CycleTriggerFailed::decode_log_data(log).is_err()));
 }
@@ -338,7 +338,7 @@ fn does_not_refire_within_same_slot() {
 fn multi_slot_gap_fires_only_for_latest_slot_after_anchor() {
     // Anchor, then jump 3 slots ahead in one block.
     let mut storage = cycle_storage();
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 10);
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 10);
     storage.enter(|handle| {
         let anchor_ts = GENESIS_TS + 60;
         anchor_at(handle.clone(), anchor_ts);

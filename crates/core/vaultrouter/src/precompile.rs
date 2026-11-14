@@ -126,7 +126,7 @@ pub fn dispatch(
                 runtime::reserve_stables(storage.clone(), sender, c)
             }),
             releaseReservation(c) => mutate(&storage, c, caller, |sender, c| {
-                if sender != outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS {
+                if sender != outbe_system_common::addresses::CREDIS_FACTORY_ADDRESS {
                     return Err(crate::errors::VaultRouterError::Unauthorized.into());
                 }
                 let target = runtime::registered_liquidity_target(&storage, sender)?;

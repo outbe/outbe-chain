@@ -1,7 +1,7 @@
 //! Typed fresh-devnet genesis adaptation for cross-crate test harnesses.
 
-use outbe_primitives::time::{timestamp_to_date_key, EmissionDate, WorldwideDay};
 use outbe_primitives::{error::Result, storage::StorageHandle};
+use outbe_system_common::time::{timestamp_to_date_key, EmissionDate, WorldwideDay};
 use outbe_tribute::TributeContract;
 
 use crate::schema::TributeFactoryContract;

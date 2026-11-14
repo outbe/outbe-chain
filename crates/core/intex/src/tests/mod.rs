@@ -4,8 +4,8 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::EmissionDate;
-use outbe_primitives::time::SECONDS_PER_DAY_U32;
+use outbe_system_common::time::EmissionDate;
+use outbe_system_common::time::SECONDS_PER_DAY_U32;
 
 use crate::api;
 use crate::config;

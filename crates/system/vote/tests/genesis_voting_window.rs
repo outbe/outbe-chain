@@ -1,11 +1,11 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolError, SolEvent};
 use outbe_primitives::{
-    addresses::{UPDATE_ADDRESS, VOTE_ADDRESS},
     block::BlockRuntimeContext,
     error::Result,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
+use outbe_system_common::addresses::{UPDATE_ADDRESS, VOTE_ADDRESS};
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_vote::{
     handlers::{TargetExecutionOutcome, VoteTargetContext},

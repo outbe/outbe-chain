@@ -3,7 +3,6 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 use outbe_evm::{sub_call, OutbeEvmFactory};
 use outbe_primitives::{
-    addresses::{STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_MARKER_CODE},
     block::BlockContext,
     storage::{
         direct::DirectStorageProvider, StorageHandle, SubCallError, SubCallInput, SubCallStatus,
@@ -14,6 +13,9 @@ use outbe_stablecoin::{
     precompile::IStablecoin,
 };
 use outbe_stablecoinfactory::{FactoryReservation, StablecoinFactoryApi as RegistryApi};
+use outbe_system_common::addresses::{
+    STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_MARKER_CODE,
+};
 use outbe_system_common::stablecoin::{predict_stablecoin, StablecoinCreatePayload};
 use reth_ethereum::evm::primitives::EvmEnv;
 use revm::{

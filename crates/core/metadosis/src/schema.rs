@@ -1,5 +1,5 @@
 use outbe_macros::{contract, storage_schema};
-use outbe_primitives::addresses::METADOSIS_ADDRESS;
+use outbe_system_common::addresses::METADOSIS_ADDRESS;
 
 pub use outbe_emission::schema::{EmissionContract, EmissionDay};
 

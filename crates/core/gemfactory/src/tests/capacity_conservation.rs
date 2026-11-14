@@ -2,14 +2,14 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use outbe_intex::SeriesId;
-use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::{
-    addresses::GEM_FACTORY_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     error::Result,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
 use outbe_promislimit::PromisLimitContract;
+use outbe_system_common::addresses::GEM_FACTORY_ADDRESS;
+use outbe_system_common::time::SECONDS_PER_DAY;
 
 use crate::{positions_expired, schema::GemPosition, GemFactoryContract};
 
@@ -93,8 +93,8 @@ fn daily_position_expiry_preserves_hour_topics() {
 fn daily_pass_shares_series_and_position_allowance_across_reentry() {
     use alloy_primitives::B256;
     use outbe_gem::GemContract;
-    use outbe_primitives::time::timestamp_to_date_key;
     use outbe_system_common::pass_budget::SWEEP_WRITES_PER_BLOCK;
+    use outbe_system_common::time::timestamp_to_date_key;
     let mut p = world();
     StorageHandle::enter(&mut p, |s| {
         outbe_oracle::schema::OracleContract::new(s.clone())

@@ -1,10 +1,8 @@
 use alloy_primitives::Address;
 use alloy_sol_types::SolEvent;
 use outbe_nod::{api, precompile::INod};
-use outbe_primitives::{
-    addresses::NOD_ADDRESS,
-    storage::{hashmap::HashMapStorageProvider, StorageHandle},
-};
+use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+use outbe_system_common::addresses::NOD_ADDRESS;
 
 /// The fixtures key their groups by the production call rate.
 fn seed_production_profile(storage: &StorageHandle<'_>) {

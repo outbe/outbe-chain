@@ -1,7 +1,7 @@
 use super::*;
 
 use super::lifecycle::{fill_days, setup_pair};
-use outbe_primitives::time::SECONDS_PER_DAY_U32;
+use outbe_system_common::time::SECONDS_PER_DAY_U32;
 
 /// Well past issuance: the closed day before it is one every seeded series held in full.
 const MATURE_TS: u64 = ISSUED_AT + 21 * DAY + 1;
@@ -72,7 +72,7 @@ fn a_called_series_reports_its_settlement_deadline() {
     });
 
     let events: Vec<_> = storage
-        .get_events(outbe_primitives::addresses::INTEX_ADDRESS)
+        .get_events(outbe_system_common::addresses::INTEX_ADDRESS)
         .iter()
         .filter_map(|log| {
             outbe_intex::precompile::IIntex::IntexSeriesCalled::decode_log_data(log).ok()
@@ -734,7 +734,7 @@ fn a_group_requeued_at_retirement_is_expired_and_credited_once() {
     });
 
     let forfeited = provider
-        .get_events(outbe_primitives::addresses::INTEX_ADDRESS)
+        .get_events(outbe_system_common::addresses::INTEX_ADDRESS)
         .iter()
         .filter_map(|log| {
             outbe_intex::precompile::IIntex::IntexSeriesClosed::decode_log_data(log).ok()

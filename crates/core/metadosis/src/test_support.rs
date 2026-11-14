@@ -1,5 +1,6 @@
 //! Native predecessor fixtures for cross-crate Metadosis tests.
-use outbe_primitives::{error::Result, storage::StorageHandle, time::WorldwideDay};
+use outbe_primitives::{error::Result, storage::StorageHandle};
+use outbe_system_common::time::WorldwideDay;
 
 pub fn fresh_devnet_sentinel_is_pristine(
     storage: StorageHandle<'_>,

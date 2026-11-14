@@ -6,25 +6,11 @@ use alloy_consensus::Transaction;
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_primitives::{Address, B256, U256};
 
-use crate::addresses::TRIBUTE_FACTORY_ADDRESS;
 use crate::error::PrecompileError;
 use crate::transaction_call::TransactionCallFields;
 
 /// Maximum gas limit for the one-time self-authorized EIP-7702 bootstrap.
 pub const FREE_TX_BOOTSTRAP_GAS_LIMIT: u64 = 100_000;
-
-/// Maximum sponsored gas limit for `TributeFactory.offerTribute`.
-pub const FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT: u64 = 8_000_000;
-
-/// `offerTribute(bytes,bytes,uint256,uint32,uint16,uint16,bytes,uint32,string,bytes,bytes,bytes)`.
-const OFFER_TRIBUTE_SELECTOR: [u8; 4] = [0x7c, 0x65, 0xe0, 0x88];
-
-/// Operation-specific sponsored gas ceilings, keyed by `(target, selector)`.
-pub const ELEVATED_SPONSORED_GAS: &[(Address, [u8; 4], u64)] = &[(
-    TRIBUTE_FACTORY_ADDRESS,
-    OFFER_TRIBUTE_SELECTOR,
-    FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT,
-)];
 
 /// A minimal transaction view for zero-fee hooks.
 #[derive(Clone, Copy)]
@@ -54,22 +40,49 @@ impl<'a> ZeroFeeTransaction<'a> {
     }
 }
 
-/// Stable identifier for a registered zero-fee hook.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ZeroFeeHookId {
-    /// `Oracle.submitVote(ExchangeRateTuple[])`.
-    OracleSubmitVote,
-    /// `HyperlaneController.submitCheckpoint(uint32,bytes32,uint32,bytes32,bytes)`.
-    HyperlaneSubmitCheckpoint,
-    /// Own-lease `TeeRegistry.renewEnclave`.
-    RenewEnclave,
+/// Opaque identifier and pool-ordering metadata for a registered zero-fee hook.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ZeroFeeHookTag {
+    id: u8,
+    name: &'static str,
+    priority_class: Option<u8>,
+}
+
+impl ZeroFeeHookTag {
+    /// Construct a zero-fee hook tag with an opaque ID, name, and optional pool priority class.
+    #[must_use]
+    pub const fn new(id: u8, name: &'static str, priority_class: Option<u8>) -> Self {
+        Self {
+            id,
+            name,
+            priority_class,
+        }
+    }
+
+    /// Stable numeric hook identifier within the active registry.
+    #[must_use]
+    pub const fn id(self) -> u8 {
+        self.id
+    }
+
+    /// Human-readable hook name for diagnostics and error formatting.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        self.name
+    }
+
+    /// Reserved txpool ordering class (`None` keeps normal tip priority).
+    #[must_use]
+    pub const fn priority_class(self) -> Option<u8> {
+        self.priority_class
+    }
 }
 
 /// A transaction that matched a hook's stateless zero-fee envelope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ZeroFeeCandidate {
     /// Matching hook.
-    pub hook: ZeroFeeHookId,
+    pub hook: ZeroFeeHookTag,
     /// Recovered transaction signer.
     pub signer: Address,
     /// Canonical node hash carried by an own-lease renewal. Other hooks leave this zero.
@@ -78,7 +91,7 @@ pub struct ZeroFeeCandidate {
 
 impl ZeroFeeCandidate {
     /// Creates a zero-fee candidate for a matching hook.
-    pub const fn new(hook: ZeroFeeHookId, signer: Address) -> Self {
+    pub const fn new(hook: ZeroFeeHookTag, signer: Address) -> Self {
         Self {
             hook,
             signer,
@@ -91,7 +104,7 @@ impl ZeroFeeCandidate {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ZeroFeeAuthorization {
     /// Hook that authorized the fee waiver.
-    pub hook: ZeroFeeHookId,
+    pub hook: ZeroFeeHookTag,
     /// Hook-specific account represented by the signer.
     pub subject: Address,
 }
@@ -119,8 +132,8 @@ impl From<PrecompileError> for ZeroFeeStorageError {
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum ZeroFeePolicyError {
     /// The zero-fee envelope targets an unknown hook.
-    #[error("unknown zero-fee hook: {0:?}")]
-    UnknownHook(ZeroFeeHookId),
+    #[error("unknown zero-fee hook: {}", .0.name())]
+    UnknownHook(ZeroFeeHookTag),
     /// The transaction targets a zero-fee method but carries native value.
     #[error("zero-fee transaction must not transfer native value")]
     NonZeroValue,
@@ -148,15 +161,15 @@ pub enum ZeroFeePolicyError {
         /// Minimum accepted fee cap.
         minimum: u128,
     },
-    /// The transaction selector matched, but ABI decoding failed.
-    #[error("zero-fee oracle vote calldata is malformed: {0}")]
+    /// The transaction selector matched, but ABI decoding or canonical framing failed.
+    #[error("{0}")]
     MalformedCalldata(&'static str),
     /// The signer is not authorized to use this zero-fee policy.
     #[error("zero-fee signer is not authorized for this transaction hook")]
     UnauthorizedSigner,
-    /// The represented validator already submitted an oracle vote this period.
-    #[error("zero-fee oracle vote already exists for validator")]
-    AlreadyVoted,
+    /// Stateful hook-specific conflict rejected the fee waiver.
+    #[error("{0}")]
+    HookConflict(&'static str),
     /// Stateful precompile storage read failed.
     #[error("zero-fee policy storage read failed: {0}")]
     Storage(#[from] ZeroFeeStorageError),
@@ -217,7 +230,7 @@ impl ZeroFeePolicyError {
             Self::FeeCapTooLow { .. } => 105,
             Self::MalformedCalldata(_) => 106,
             Self::UnauthorizedSigner => 107,
-            Self::AlreadyVoted => 108,
+            Self::HookConflict(_) => 108,
             Self::Storage(_) => 109,
             Self::FreeTxDailyExhausted { .. } => 110,
             Self::FreeTxDailyContractCreationForbidden => 112,

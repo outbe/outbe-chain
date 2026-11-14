@@ -1,7 +1,7 @@
 use super::*;
 use crate::api;
 use alloy_sol_types::SolEvent;
-use outbe_primitives::time::{date_key_to_utc_timestamp, next_date_key, WorldwideDay};
+use outbe_system_common::time::{date_key_to_utc_timestamp, next_date_key, WorldwideDay};
 
 fn advance_at(storage: &StorageHandle<'_>, timestamp: u64, genesis_timestamp: u64) {
     storage.set_block_timestamp(U256::from(timestamp)).unwrap();
@@ -197,7 +197,7 @@ fn schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_due_after_
         assert_eq!(completed.wwd, wwd_sep_01);
         assert_eq!(completed.state, metadosis_state::COMPLETED);
         let desis = outbe_desis::schema::DesisContract::new(storage);
-        let briefed = outbe_primitives::time::EmissionDate::new(20260905);
+        let briefed = outbe_system_common::time::EmissionDate::new(20260905);
         assert_eq!(
             desis.auction_stage.read(&briefed).unwrap(),
             outbe_desis::schema::AuctionStage::Briefed as u8
@@ -401,7 +401,7 @@ fn wwd_lifecycle_gates_activation_on_forming_vwap_and_seals_on_close() {
 #[test]
 fn wwd_without_price_runs_as_empty_day() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    provider.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 64);
+    provider.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 64);
     install_test_enclaves();
     StorageHandle::enter(&mut provider, |storage| {
         let wwd = WorldwideDay::new(20261001);
@@ -527,7 +527,7 @@ fn wwd_without_price_runs_as_empty_day() {
 #[test]
 fn zero_metadosis_limit_cancels_day_with_reason_one_and_preserves_cancelled_state() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    provider.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 64);
+    provider.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 64);
     install_test_enclaves();
     StorageHandle::enter(&mut provider, |storage| {
         let emission_day = 20261001u32;

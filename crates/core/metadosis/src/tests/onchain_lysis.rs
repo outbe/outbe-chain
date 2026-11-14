@@ -1,9 +1,7 @@
 use super::*;
 use alloy_sol_types::SolEvent;
-use outbe_primitives::{
-    addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS},
-    time::WorldwideDay,
-};
+use outbe_system_common::addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS};
+use outbe_system_common::time::WorldwideDay;
 
 const WWD: WorldwideDay = WorldwideDay::new(20260920);
 const DAY: u32 = 20261014;
@@ -24,7 +22,7 @@ fn fixture_with_tributes(limit: u64, tributes: &[(u64, u16)]) -> HashMapStorageP
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.set_block_number(10);
     provider.set_timestamp(U256::from(CLOCK));
-    provider.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 8);
+    provider.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 8);
     outbe_tribute::enclave_client::test_enclave::install();
     outbe_fidelity::enclave_client::test_enclave::install();
     StorageHandle::enter(&mut provider, |storage| {
@@ -37,14 +35,14 @@ fn fixture_with_tributes(limit: u64, tributes: &[(u64, u16)]) -> HashMapStorageP
             forming_end + outbe_chain_constants::get_metadosis_lookback_delay_seconds();
         let offering_end =
             offerings_start + outbe_chain_constants::get_metadosis_offering_period_seconds();
-        let binding = outbe_primitives::storage::metadosis_process_ready_binding(
+        let binding = outbe_system_common::metadosis_bindings::metadosis_process_ready_binding(
             storage.chain_id().unwrap(),
             storage.block_number().unwrap(),
             storage.now_secs().unwrap(),
         );
         storage
             .clone()
-            .with_metadosis_mutation::<outbe_primitives::storage::MetadosisCycleLifecycle, _>(
+            .with_scoped_mutation::<outbe_primitives::storage::CycleLifecyclePurpose, _>(
                 binding,
                 || {
                     let mut factory = TributeFactoryContract::new(storage.clone());
@@ -242,7 +240,7 @@ fn native_completion_credits_the_unused_lysis_limit_once() {
             .metadosis_limit_minor();
         let desis = outbe_desis::schema::DesisContract::new(storage.clone())
             .pending_desis_limit_minor
-            .read(&outbe_primitives::time::EmissionDate::new(DAY))
+            .read(&outbe_system_common::time::EmissionDate::new(DAY))
             .unwrap();
         let after = outbe_promislimit::PromisLimitContract::new(storage)
             .promis_limit()
@@ -266,7 +264,7 @@ fn native_completion_briefs_the_emission_day() {
     run(&mut provider).unwrap();
     StorageHandle::enter(&mut provider, |storage| {
         let desis = outbe_desis::schema::DesisContract::new(storage);
-        let day = outbe_primitives::time::EmissionDate::new(DAY);
+        let day = outbe_system_common::time::EmissionDate::new(DAY);
         assert_eq!(
             desis.auction_stage.read(&day).unwrap(),
             outbe_desis::schema::AuctionStage::Briefed as u8
@@ -415,7 +413,7 @@ fn one_rule_for_metadosis_limit() {
             assert_eq!(record.metadosis_state, metadosis_state::COMPLETED);
             let desis = outbe_desis::schema::DesisContract::new(storage.clone())
                 .pending_desis_limit_minor
-                .read(&outbe_primitives::time::EmissionDate::new(DAY))
+                .read(&outbe_system_common::time::EmissionDate::new(DAY))
                 .unwrap();
             let after = outbe_promislimit::PromisLimitContract::new(storage)
                 .promis_limit()

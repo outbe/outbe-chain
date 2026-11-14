@@ -10,6 +10,7 @@ outbe-agentreward.workspace = true
 outbe-chain-constants.workspace = true
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-system-common.workspace = true
 outbe-emission.workspace = true
 outbe-desis.workspace = true
 outbe-fidelity.workspace = true

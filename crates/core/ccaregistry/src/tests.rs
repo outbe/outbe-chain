@@ -7,10 +7,8 @@ use crate::{
 };
 use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::SolCall;
-use outbe_primitives::{
-    addresses::CCA_REGISTRY_ADDRESS,
-    storage::{hashmap::HashMapStorageProvider, StorageHandle},
-};
+use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+use outbe_system_common::addresses::CCA_REGISTRY_ADDRESS;
 
 const ALICE: Address = address!("00000000000000000000000000000000000000a1");
 const BOB: Address = address!("00000000000000000000000000000000000000b1");

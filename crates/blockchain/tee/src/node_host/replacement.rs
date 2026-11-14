@@ -134,10 +134,10 @@ impl ReplacementCandidateEnclaveV1 {
     pub fn finish_finalized_admission_v1(
         &mut self,
         request_hash: B256,
-        expected_tribute_offer_public: [u8; 32],
+        expected_network_encryption_public: [u8; 32],
     ) -> Result<[u8; 32], TransportError> {
         self.client
-            .finish_finalized_admission_v1(request_hash, expected_tribute_offer_public)
+            .finish_finalized_admission_v1(request_hash, expected_network_encryption_public)
     }
 
     pub fn sign_registration_intent_dev_v1(

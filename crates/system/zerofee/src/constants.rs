@@ -19,9 +19,8 @@
 use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
 use outbe_primitives::system_tx::STEADY_BLOCK_GAS_LIMIT;
 
-pub use outbe_primitives::zero_fee_types::{
-    ELEVATED_SPONSORED_GAS, FREE_TX_BOOTSTRAP_GAS_LIMIT, FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT,
-};
+pub use crate::sponsorship::{ELEVATED_SPONSORED_GAS, FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT};
+pub use outbe_primitives::zero_fee_types::FREE_TX_BOOTSTRAP_GAS_LIMIT;
 
 /// Maximum number of sponsored free transactions per signer per UTC day.
 pub const FREE_TX_DAILY_LIMIT: u32 = 8;
@@ -98,7 +97,7 @@ pub const MIN_FREE_TX_MAX_FEE_PER_GAS: u128 = MIN_PROTOCOL_BASE_FEE as u128;
 mod selector_tests {
     use super::*;
     use alloy_sol_types::SolCall;
-    use outbe_primitives::addresses::TRIBUTE_FACTORY_ADDRESS;
+    use outbe_system_common::addresses::TRIBUTE_FACTORY_ADDRESS;
 
     alloy_sol_types::sol!("../../../contracts/precompiles/src/ITributeFactory.sol");
 

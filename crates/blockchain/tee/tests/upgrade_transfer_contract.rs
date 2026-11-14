@@ -59,7 +59,7 @@ fn reply(request: &EnclaveRequest, hash: B256, export: bool) -> EnclaveResponse 
         EnclaveRequest::FinishDcapOnboardingArtifactIngestV1 { .. } => {
             EnclaveResponse::FinalizedAdmissionIngestedV1 {
                 request_hash: hash,
-                tribute_offer_public: [0xe1; 32],
+                network_encryption_public: [0xe1; 32],
             }
         }
         _ => panic!("unexpected request in upgrade transfer"),
@@ -222,10 +222,10 @@ fn transfer_preserves_exact_record_order_offsets_bytes_and_terminal_mode() {
             }
             EnclaveResponse::FinalizedAdmissionIngestedV1 {
                 request_hash,
-                tribute_offer_public,
+                network_encryption_public,
             } if !export => {
                 assert_eq!(request_hash, hash);
-                assert_eq!(tribute_offer_public, [0xe1; 32]);
+                assert_eq!(network_encryption_public, [0xe1; 32]);
             }
             _ => panic!("wrong terminal response"),
         }
@@ -283,7 +283,7 @@ fn transfer_rejects_wrong_chunk_offset_commit_kind_and_terminal_mode() {
                         },
                         5 => EnclaveResponse::FinalizedAdmissionIngestedV1 {
                             request_hash: hash,
-                            tribute_offer_public: [0xe1; 32],
+                            network_encryption_public: [0xe1; 32],
                         },
                         _ => unreachable!(),
                     })

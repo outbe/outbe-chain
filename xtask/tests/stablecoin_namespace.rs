@@ -67,10 +67,13 @@ fn seed_predeploy_rejects_both_stablecoin_fixed_addresses() {
             )
             .unwrap();
         }
-        let addresses = root.join("crates/blockchain/primitives/src");
-        fs::create_dir_all(&addresses).unwrap();
+        let bc_addresses = root.join("crates/blockchain/primitives/src");
+        fs::create_dir_all(&bc_addresses).unwrap();
+        fs::write(bc_addresses.join("addresses.rs"), "// protocol addresses\n").unwrap();
+        let sys_addresses = root.join("crates/system/common/src");
+        fs::create_dir_all(&sys_addresses).unwrap();
         fs::write(
-            addresses.join("addresses.rs"),
+            sys_addresses.join("addresses.rs"),
             concat!(
                 "const FACTORY: Address = address!(\"0x000000000000000000000000000000000000ee0f\");\n",
                 "const POLICY: Address = address!(\"0x000000000000000000000000000000000000ee10\");\n"

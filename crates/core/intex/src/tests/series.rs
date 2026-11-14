@@ -1,7 +1,7 @@
 //! Series records: create, read, call and enumerate.
 
 use super::*;
-use outbe_primitives::time::SECONDS_PER_DAY_U32;
+use outbe_system_common::time::SECONDS_PER_DAY_U32;
 
 #[test]
 fn create_then_read_round_trip() {

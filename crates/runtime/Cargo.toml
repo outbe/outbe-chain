@@ -15,6 +15,7 @@ production-enclave = [
     "outbe-nod/production-enclave",
 ]
 e2e-test = [
+    "outbe-core-common/e2e-test",
     "outbe-desis/e2e-test",
     "outbe-intexfactory/e2e-test",
     "outbe-cycle/e2e-test",
@@ -31,6 +32,7 @@ outbe-ccaregistry.workspace = true
 outbe-chain-constants.workspace = true
 outbe-coderegistry.workspace = true
 outbe-consensus.workspace = true
+outbe-core-common.workspace = true
 outbe-credis.workspace = true
 outbe-credisfactory.workspace = true
 outbe-crosschainbridge.workspace = true
@@ -113,7 +115,6 @@ x25519-dalek.workspace = true
 metrics-process.workspace = true
 serde_yaml_ng.workspace = true
 outbe-enclave = { workspace = true, features = ["engine", "test-utils"] }
-outbe-core-common.workspace = true
 outbe-runtime = { path = ".", features = ["test-hooks"] }
 alloy-consensus.workspace = true
 alloy-trie.workspace = true

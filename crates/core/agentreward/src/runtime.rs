@@ -7,7 +7,7 @@ use outbe_core_common::markup::marked_down;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
+use outbe_system_common::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 
 impl AgentRewardContract<'_> {
     /// Increments WAA (wallet) tribute count for an address on `day`.

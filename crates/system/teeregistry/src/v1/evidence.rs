@@ -388,9 +388,9 @@ impl TeeRegistry<'_> {
                 block_timestamp: consensus_timestamp,
                 node_signature,
                 enclave_signature,
-                expected_tribute_offer_public: offer_public.0,
+                expected_network_encryption_public: offer_public.0,
                 key_epoch: self.key_epoch()?,
-                tribute_offer_epoch: self.tribute_offer_epoch()?,
+                network_encryption_epoch: self.tribute_offer_epoch()?,
             },
         )
         .map_err(TeeRegistryError::dcap_onboarding_verifier_unavailable)?;
@@ -469,9 +469,9 @@ impl TeeRegistry<'_> {
                 binding_id: intent.binding_id,
                 policy_hash: intent.policy_hash,
                 recipient_x25519: intent.recipient_x25519,
-                tribute_offer_public: offer_public.0,
+                network_encryption_public: offer_public.0,
                 key_epoch: self.key_epoch()?,
-                tribute_offer_epoch: self.tribute_offer_epoch()?,
+                network_encryption_epoch: self.tribute_offer_epoch()?,
             };
             let _enclave_context =
                 outbe_tee::call_context::ContextScope::from_storage(&self.storage)?;
@@ -498,9 +498,9 @@ impl TeeRegistry<'_> {
         context: &DcapOnboardingContextV1,
         expected_offer_public: B256,
     ) -> Result<bool> {
-        Ok(context.tribute_offer_public == expected_offer_public.0
+        Ok(context.network_encryption_public == expected_offer_public.0
             && context.key_epoch == self.key_epoch()?
-            && context.tribute_offer_epoch == self.tribute_offer_epoch()?)
+            && context.network_encryption_epoch == self.tribute_offer_epoch()?)
     }
     fn onboarding_binding_matches_v1(
         &self,

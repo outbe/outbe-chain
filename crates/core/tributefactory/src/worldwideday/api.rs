@@ -1,5 +1,5 @@
-use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{error::Result, storage::StorageHandle};
+use outbe_system_common::time::WorldwideDay;
 use outbe_tribute::TributeContract;
 
 use crate::schema::TributeFactoryContract;

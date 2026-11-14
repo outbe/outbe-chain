@@ -151,7 +151,7 @@ fn sealed_inputs_require_completed_day_and_later_than_window_close() {
 #[test]
 fn seal_watermark_validates_days_and_retains_calendar_catchup_policy() {
     use crate::test_support::{block_ctx, with_block, GENESIS_TS, SECONDS_PER_DAY};
-    use outbe_primitives::time::{date_key_to_utc_timestamp, next_date_key};
+    use outbe_system_common::time::{date_key_to_utc_timestamp, next_date_key};
 
     with_block(20, GENESIS_TS + SECONDS_PER_DAY, |ctx| {
         assert_eq!(get_last_sealed_day(&ctx.storage).unwrap(), 0);

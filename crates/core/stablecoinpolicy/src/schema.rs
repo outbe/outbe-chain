@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
-use outbe_primitives::addresses::STABLECOIN_POLICY_REGISTRY_ADDRESS;
 use outbe_primitives::storage::types::{StorageKey, StorageSet};
+use outbe_system_common::addresses::STABLECOIN_POLICY_REGISTRY_ADDRESS;
 
 use crate::errors::PolicyRegistryError;
 

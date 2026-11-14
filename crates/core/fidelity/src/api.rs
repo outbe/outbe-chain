@@ -85,7 +85,7 @@ pub fn apply_fidelity_outcome(
 /// Returns the fixed `max_fidelity` for `wwd` (`WWD - 1` ceiling).
 pub fn max_fidelity_for_wwd(
     storage: StorageHandle<'_>,
-    wwd: outbe_primitives::time::WorldwideDay,
+    wwd: outbe_system_common::time::WorldwideDay,
 ) -> Result<U256> {
     FidelityContract::new(storage).max_fidelity_for_wwd(wwd)
 }
@@ -93,7 +93,7 @@ pub fn max_fidelity_for_wwd(
 /// Locks and returns the fixed `max_fidelity` for `wwd`.
 pub fn ensure_wwd_max_fidelity(
     storage: StorageHandle<'_>,
-    wwd: outbe_primitives::time::WorldwideDay,
+    wwd: outbe_system_common::time::WorldwideDay,
 ) -> Result<U256> {
     FidelityContract::new(storage).ensure_wwd_max_fidelity(wwd)
 }
@@ -102,7 +102,7 @@ pub fn ensure_wwd_max_fidelity(
 /// of `wwd`, and records `user_rcfi` into `wwd_running_max_fidelity[wwd]`.
 pub fn league_from_rcfi_for_wwd(
     storage: StorageHandle<'_>,
-    wwd: outbe_primitives::time::WorldwideDay,
+    wwd: outbe_system_common::time::WorldwideDay,
     user_rcfi: U256,
 ) -> Result<u16> {
     FidelityContract::new(storage).league_from_rcfi_for_wwd(wwd, user_rcfi)
@@ -113,7 +113,7 @@ pub fn league_from_rcfi_for_wwd(
 pub fn league_for_wwd(
     storage: StorageHandle<'_>,
     account: Address,
-    wwd: outbe_primitives::time::WorldwideDay,
+    wwd: outbe_system_common::time::WorldwideDay,
     timestamp: u64,
 ) -> Result<u16> {
     FidelityContract::new(storage).league_for_wwd(account, wwd, timestamp)
@@ -123,7 +123,7 @@ pub fn league_for_wwd(
 /// into `max_fidelity_prev` for the next WWD.
 pub fn finalize_wwd_max_fidelity(
     storage: StorageHandle<'_>,
-    wwd: outbe_primitives::time::WorldwideDay,
+    wwd: outbe_system_common::time::WorldwideDay,
     timestamp: u64,
 ) -> Result<U256> {
     FidelityContract::new(storage).finalize_wwd_max_fidelity(wwd, timestamp)

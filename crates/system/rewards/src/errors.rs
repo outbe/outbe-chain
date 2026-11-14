@@ -1,7 +1,7 @@
 use alloy_primitives::B256;
 use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
-use outbe_primitives::time::TimeError;
+use outbe_system_common::time::TimeError;
 use thiserror::Error;
 
 alloy_sol_types::sol! {

@@ -39,9 +39,9 @@ pub struct FinalizedAdmissionBeginInputV1<'a> {
     pub artifact: &'a [u8],
     pub anchor_outcome: &'a [u8],
     pub expected_intent_hash: B256,
-    pub expected_tribute_offer_public: [u8; 32],
+    pub expected_network_encryption_public: [u8; 32],
     pub expected_key_epoch: u64,
-    pub expected_tribute_offer_epoch: u64,
+    pub expected_network_encryption_epoch: u64,
 }
 
 pub struct FinalizedAdmissionIngestInputV1<'a> {
@@ -60,9 +60,9 @@ pub fn onboarding_artifact_ingest_request_hash_v1(
         artifact,
         anchor_outcome,
         expected_intent_hash,
-        expected_tribute_offer_public,
+        expected_network_encryption_public,
         expected_key_epoch,
-        expected_tribute_offer_epoch,
+        expected_network_encryption_epoch,
     } = input;
     if artifact.len() > MAX_DCAP_ONBOARDING_ARTIFACT_BYTES
         || anchor_outcome.len() > MAX_COMMITTEE_OUTCOME_BYTES
@@ -80,9 +80,9 @@ pub fn onboarding_artifact_ingest_request_hash_v1(
     preimage.extend_from_slice(&anchor_len.to_be_bytes());
     preimage.extend_from_slice(keccak256(anchor_outcome).as_slice());
     preimage.extend_from_slice(expected_intent_hash.as_slice());
-    preimage.extend_from_slice(&expected_tribute_offer_public);
+    preimage.extend_from_slice(&expected_network_encryption_public);
     preimage.extend_from_slice(&expected_key_epoch.to_be_bytes());
-    preimage.extend_from_slice(&expected_tribute_offer_epoch.to_be_bytes());
+    preimage.extend_from_slice(&expected_network_encryption_epoch.to_be_bytes());
     Ok(keccak256(preimage))
 }
 
@@ -158,9 +158,9 @@ pub fn upgrade_key_transfer_request_hash_v1(
         artifact,
         anchor_outcome: anchor,
         expected_intent_hash: context.intent_hash,
-        expected_tribute_offer_public: context.tribute_offer_public,
+        expected_network_encryption_public: context.network_encryption_public,
         expected_key_epoch: context.key_epoch,
-        expected_tribute_offer_epoch: context.tribute_offer_epoch,
+        expected_network_encryption_epoch: context.network_encryption_epoch,
     })?;
     let mut bytes = b"outbe/tee/upgrade-key-transfer/v1".to_vec();
     bytes.push(u8::from(export));
@@ -652,9 +652,9 @@ mod tests {
             artifact: &artifact,
             anchor_outcome: &anchor,
             expected_intent_hash: B256::repeat_byte(0x41),
-            expected_tribute_offer_public: [0x51; 32],
+            expected_network_encryption_public: [0x51; 32],
             expected_key_epoch: 6,
-            expected_tribute_offer_epoch: 7,
+            expected_network_encryption_epoch: 7,
         };
         let original = onboarding_artifact_ingest_request_hash_v1(input).unwrap();
 
@@ -677,7 +677,7 @@ mod tests {
                 ..input
             },
             FinalizedAdmissionBeginInputV1 {
-                expected_tribute_offer_public: [0x52; 32],
+                expected_network_encryption_public: [0x52; 32],
                 ..input
             },
             FinalizedAdmissionBeginInputV1 {
@@ -685,7 +685,7 @@ mod tests {
                 ..input
             },
             FinalizedAdmissionBeginInputV1 {
-                expected_tribute_offer_epoch: 8,
+                expected_network_encryption_epoch: 8,
                 ..input
             },
             FinalizedAdmissionBeginInputV1 {

@@ -7,13 +7,11 @@ use alloy_primitives::{address, Bytes, Signature};
 use alloy_signer::SignerSync as _;
 use alloy_signer_local::PrivateKeySigner;
 use outbe_primitives::{
-    addresses::{
-        HYPERLANE_CONTROLLER_ADDRESS, ORACLE_ADDRESS, TEE_REGISTRY_ADDRESS, ZEROFEE_ADDRESS,
-    },
+    addresses::{TEE_REGISTRY_ADDRESS, ZEROFEE_ADDRESS},
     transaction_call::TransactionCallFields,
     zero_fee_types::{
         BootstrapAccountView, BootstrapCandidate, BootstrapTransactionView, ZeroFeeAuthorization,
-        ZeroFeeCandidate, ZeroFeeHookId, ZeroFeePolicyError, ZeroFeeTransaction,
+        ZeroFeeCandidate, ZeroFeeHookTag, ZeroFeePolicyError, ZeroFeeTransaction,
     },
 };
 use reth_ethereum::TransactionSigned;
@@ -24,6 +22,13 @@ use std::sync::Arc;
 const CHAIN_ID: u64 = 1;
 const NON_VALIDATOR_SIGNER: Address = address!("0x9999999999999999999999999999999999999999");
 const GRANTED_SELECTOR: [u8; 4] = [0x11, 0x22, 0x33, 0x44];
+const TEST_HOOK_TARGET_A: Address = address!("0x000000000000000000000000000000000000EE05");
+const TEST_HOOK_TARGET_B: Address = address!("0x000000000000000000000000000000000000EE14");
+const TEST_SPONSORED_TARGET_A: Address = address!("0x0000000000000000000000000000000000001100");
+const TEST_SPONSORED_TARGET_B: Address = address!("0x000000000000000000000000000000000000100B");
+const TEST_HOOK_A: ZeroFeeHookTag = ZeroFeeHookTag::new(0, "TestHookA", Some(1));
+const TEST_HOOK_B: ZeroFeeHookTag = ZeroFeeHookTag::new(1, "TestHookB", Some(1));
+const TEST_HOOK_C: ZeroFeeHookTag = ZeroFeeHookTag::new(2, "TestHookC", Some(1));
 
 fn pooled_tx(
     to: Address,
@@ -116,11 +121,9 @@ impl TxPoolZeroFeePolicy for ScriptedPolicy {
             ClassifyAnswer::None => Ok(None),
             ClassifyAnswer::HookWhenInputLongerThanSelector => {
                 let hook = match tx.call.to {
-                    Some(address) if address == ORACLE_ADDRESS => ZeroFeeHookId::OracleSubmitVote,
-                    Some(address) if address == HYPERLANE_CONTROLLER_ADDRESS => {
-                        ZeroFeeHookId::HyperlaneSubmitCheckpoint
-                    }
-                    Some(address) if address == TEE_REGISTRY_ADDRESS => ZeroFeeHookId::RenewEnclave,
+                    Some(address) if address == TEST_HOOK_TARGET_A => TEST_HOOK_A,
+                    Some(address) if address == TEST_HOOK_TARGET_B => TEST_HOOK_B,
+                    Some(address) if address == TEE_REGISTRY_ADDRESS => TEST_HOOK_C,
                     _ => return Ok(None),
                 };
                 if tx.call.input.len() <= 4 {
@@ -327,12 +330,9 @@ fn zero_fee_hooks_order_above_any_fee_paying_transaction() {
     let payload = Bytes::from_static(&[1, 2, 3, 4, 5]);
 
     for (hook, target) in [
-        (ZeroFeeHookId::OracleSubmitVote, ORACLE_ADDRESS),
-        (
-            ZeroFeeHookId::HyperlaneSubmitCheckpoint,
-            HYPERLANE_CONTROLLER_ADDRESS,
-        ),
-        (ZeroFeeHookId::RenewEnclave, TEE_REGISTRY_ADDRESS),
+        (TEST_HOOK_A, TEST_HOOK_TARGET_A),
+        (TEST_HOOK_B, TEST_HOOK_TARGET_B),
+        (TEST_HOOK_C, TEE_REGISTRY_ADDRESS),
     ] {
         assert_eq!(
             TxPoolZeroFeePolicy::priority_class(ordering.policy.as_ref(), hook),
@@ -350,7 +350,7 @@ fn malformed_zero_fee_marker_gets_no_pool_priority() {
         classify: ClassifyAnswer::HookWhenInputLongerThanSelector,
         ..ScriptedPolicy::default()
     }));
-    for target in [ORACLE_ADDRESS, HYPERLANE_CONTROLLER_ADDRESS] {
+    for target in [TEST_HOOK_TARGET_A, TEST_HOOK_TARGET_B] {
         let malformed = pooled_tx(
             target,
             Bytes::copy_from_slice(&GRANTED_SELECTOR),
@@ -450,7 +450,7 @@ fn decision_not_sponsored_when_delegated_elsewhere() {
     let out = sponsorship_decision(
         &script,
         NON_VALIDATOR_SIGNER,
-        Some(ORACLE_ADDRESS),
+        Some(TEST_HOOK_TARGET_A),
         &bare_view(NON_VALIDATOR_SIGNER),
     )
     .expect("foreign delegation must not error");
@@ -509,8 +509,6 @@ fn decision_rejects_self_sponsorship() {
 
 #[test]
 fn pool_selector_controls_sponsored_balance_waiver_and_paid_fallback() {
-    use outbe_primitives::addresses::TRIBUTE_FACTORY_ADDRESS;
-
     let gas_limit = 600_000;
     let funded_balance = U256::from(gas_limit) * U256::from(MIN_PROTOCOL_BASE_FEE);
     for (input, account_balance, sponsored) in [
@@ -527,7 +525,7 @@ fn pool_selector_controls_sponsored_balance_waiver_and_paid_fallback() {
         ),
     ] {
         let transaction = pooled_tx_with_gas(
-            TRIBUTE_FACTORY_ADDRESS,
+            TEST_SPONSORED_TARGET_A,
             input,
             MIN_PROTOCOL_BASE_FEE as u128,
             0,
@@ -572,10 +570,8 @@ fn pool_selector_controls_sponsored_balance_waiver_and_paid_fallback() {
 
 #[test]
 fn pool_admits_delegated_sponsored_tx_without_a_quota_read() {
-    use outbe_primitives::addresses::AGENT_REWARD_ADDRESS;
-
     let transaction = pooled_tx_with_gas(
-        AGENT_REWARD_ADDRESS,
+        TEST_SPONSORED_TARGET_B,
         Bytes::new(),
         MIN_PROTOCOL_BASE_FEE as u128,
         0,

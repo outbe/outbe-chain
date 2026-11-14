@@ -4,9 +4,9 @@
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
-use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_system_common::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 
 use crate::liveness::LIVENESS_WINDOW_BLOCKS;
 use crate::precompile::IHyperlaneController;

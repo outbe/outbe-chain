@@ -92,7 +92,7 @@ pub(super) async fn provision(
         finality::wait_for_finalized_prepare(rpc, &relay, &durable, timeout).await?;
     match classify_join_offer_key_state(
         candidate.request(&EnclaveRequest::GetPublicKeys)?,
-        context.tribute_offer_public,
+        context.network_encryption_public,
     )? {
         JoinOfferKeyState::ReadyExact => {}
         JoinOfferKeyState::ReadyMismatch => {
@@ -110,7 +110,7 @@ pub(super) async fn provision(
                 return Err(TeeUpgradeNetworkError::SourceRecipientMismatch.into());
             }
             let response = candidate.ingest_upgrade_key_v1(&proof, &artifact)?;
-            if !matches!(response, EnclaveResponse::FinalizedAdmissionIngestedV1 { tribute_offer_public, .. } if tribute_offer_public == context.tribute_offer_public)
+            if !matches!(response, EnclaveResponse::FinalizedAdmissionIngestedV1 { network_encryption_public, .. } if network_encryption_public == context.network_encryption_public)
             {
                 return Err(TeeUpgradeNetworkError::UnexpectedInstalledNetworkKey.into());
             }

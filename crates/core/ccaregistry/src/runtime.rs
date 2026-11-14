@@ -7,7 +7,8 @@ use crate::{
     state::validate_state,
 };
 use alloy_primitives::{Address, U256};
-use outbe_primitives::{addresses::CCA_REGISTRY_ADDRESS, error::Result, storage::StorageHandle};
+use outbe_primitives::{error::Result, storage::StorageHandle};
+use outbe_system_common::addresses::CCA_REGISTRY_ADDRESS;
 
 /// The payable EVM boundary has already credited `amount` to CCA_REGISTRY_ADDRESS.
 pub fn bond(storage: StorageHandle<'_>, caller: Address, amount: U256, name: String) -> Result<()> {

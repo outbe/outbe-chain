@@ -5,9 +5,9 @@ use outbe_enclave::protocol::{
     FidelityOpOutcome, FidelityOpSection, GratisOp, GratisOpRequest, GratisOpResult,
     GratisOpStatus, MineGratisFromPromisResultV1, ModifyAuth,
 };
-use outbe_primitives::addresses::GRATIS_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::GRATIS_ADDRESS;
 
 use crate::enclave_client::apply_gratis_op;
 use crate::errors::{GratisError, GratisFatalError};

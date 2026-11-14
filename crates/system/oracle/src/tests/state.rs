@@ -356,8 +356,8 @@ fn get_exchange_rate_reverts_for_an_unregistered_pair() {
 /// pass every behavioural test above while silently orphaning every seeded rate.
 #[test]
 fn the_rate_columns_are_keyed_by_the_registry_index() {
-    use outbe_primitives::addresses::ORACLE_ADDRESS;
     use outbe_primitives::storage::types::StorageKey;
+    use outbe_system_common::addresses::ORACLE_ADDRESS;
 
     with_bare_oracle(|storage, oracle| {
         let index = oracle

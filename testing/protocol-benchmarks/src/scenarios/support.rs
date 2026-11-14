@@ -3,15 +3,15 @@ use std::time::Instant;
 
 use alloy_primitives::Address;
 use outbe_intexfactory::constants::ORIGIN_ROUTER_ADDRESS;
-use outbe_primitives::{
-    addresses::{
-        CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, FIDELITY_ADDRESS, GEM_ADDRESS, GEM_FACTORY_ADDRESS,
-        GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS, INTEX_ADDRESS, INTEX_FACTORY_ADDRESS,
-        METADOSIS_ADDRESS, NOD_ADDRESS, NOD_FACTORY_ADDRESS, ORACLE_ADDRESS, PROMIS_ADDRESS,
-        PROMIS_FACTORY_ADDRESS, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS,
-        TRIBUTE_ADDRESS, TRIBUTE_FACTORY_ADDRESS, VALIDATOR_SET_ADDRESS, VAULT_ROUTER_ADDRESS,
-    },
-    storage::hashmap::{HashMapStorageProvider, StorageTraceKind, StorageTraceOperation},
+use outbe_primitives::storage::hashmap::{
+    HashMapStorageProvider, StorageTraceKind, StorageTraceOperation,
+};
+use outbe_system_common::addresses::{
+    CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, FIDELITY_ADDRESS, GEM_ADDRESS, GEM_FACTORY_ADDRESS,
+    GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS, INTEX_ADDRESS, INTEX_FACTORY_ADDRESS,
+    METADOSIS_ADDRESS, NOD_ADDRESS, NOD_FACTORY_ADDRESS, ORACLE_ADDRESS, PROMIS_ADDRESS,
+    PROMIS_FACTORY_ADDRESS, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS,
+    TRIBUTE_ADDRESS, TRIBUTE_FACTORY_ADDRESS, VALIDATOR_SET_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
 use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
 
@@ -174,7 +174,7 @@ pub(crate) fn aggregate_events(events: &[alloy_primitives::Log]) -> Vec<EventCou
 }
 
 fn module_name(address: Address) -> &'static str {
-    if outbe_primitives::addresses::is_stablecoin_address(address) {
+    if outbe_system_common::addresses::is_stablecoin_address(address) {
         return "stablecoin";
     }
     match address {

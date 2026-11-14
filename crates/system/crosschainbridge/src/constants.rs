@@ -1,5 +1,5 @@
 use alloy_primitives::Address;
-use outbe_primitives::addresses::{HYPERLANE_CONTROLLER_ADDRESS, UPDATE_ADDRESS};
+use outbe_system_common::addresses::{HYPERLANE_CONTROLLER_ADDRESS, UPDATE_ADDRESS};
 
 /// Precompiles that may make the owner call a contract through `callLocal` and
 /// `callRemote`:

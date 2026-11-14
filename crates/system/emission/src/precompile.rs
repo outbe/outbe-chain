@@ -65,7 +65,7 @@ mod tests {
     use crate::schema::{emission_day_state, metadosis_state, EmissionDay};
     use alloy_sol_types::SolCall;
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
-    use outbe_primitives::time::WorldwideDay;
+    use outbe_system_common::time::WorldwideDay;
 
     #[test]
     fn get_emission_day_returns_all_fields_and_reverts_when_missing() {

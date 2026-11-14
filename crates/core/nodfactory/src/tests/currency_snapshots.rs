@@ -34,7 +34,7 @@ fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
     world.publish_coen_rate(978, U256::from(SCALE_1E6_U64));
 
     let quoted = world.enter(|storage| {
-        use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
+        use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
         let day = previous_date_key(timestamp_to_date_key(storage.now_secs().unwrap()))
             .expect("date step");
         let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 978)
@@ -256,7 +256,7 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
     let nod_id = world.issue(&input);
     world.register_reference_currency_asset(SETTLEMENT_ASSET);
     world.provider.stub_sub_call_at_selector(
-        outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+        outbe_system_common::addresses::VAULT_ROUTER_ADDRESS,
         IVaultRouter::assetVaultsCountCall::SELECTOR,
         Bytes::from(IVaultRouter::assetVaultsCountCall::abi_encode_returns(
             &U256::ZERO,

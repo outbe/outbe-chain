@@ -5,68 +5,22 @@ use thiserror::Error;
 
 use crate::tee_call::TeeAttestationError;
 
-/// Compact metric-only classification for application-layer attestation failures.
+/// Domain-supplied metric label and display context for an application-layer enclave error.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AttestationMetricClass {
-    /// Tribute offer or read/day attestation failure (`"tribute_offer_attestation"`).
-    TributeOffer,
-    /// Gratis ledger operation attestation failure (`"gratis_op_attestation"`).
-    GratisOp,
-    /// Promis ledger operation attestation failure (`"promis_op_attestation"`).
-    PromisOp,
-    /// Fidelity operation attestation failure (`"fidelity_attestation"`).
-    Fidelity,
-}
-
-impl AttestationMetricClass {
-    /// Stable Prometheus label for `outbe_tee_request_errors_total{class}`.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::TributeOffer => "tribute_offer_attestation",
-            Self::GratisOp => "gratis_op_attestation",
-            Self::PromisOp => "promis_op_attestation",
-            Self::Fidelity => "fidelity_attestation",
-        }
-    }
-
+pub struct AppErrorDescriptor {
+    /// Stable Prometheus label for `outbe_tee_client_request_errors_total{class}`.
+    pub metric_class: &'static str,
     /// Human-readable subject prefix for display formatting.
-    #[must_use]
-    pub const fn context(self) -> &'static str {
-        match self {
-            Self::TributeOffer => "offer",
-            Self::GratisOp => "gratis-op",
-            Self::PromisOp => "promis-op",
-            Self::Fidelity => "fidelity",
-        }
-    }
+    pub context: &'static str,
 }
 
-/// Compact metric-only classification for deterministic application-layer rejections.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RejectionMetricClass {
-    /// Tribute state-source proof or context rejection (`"tribute_source_rejected"`).
-    TributeSource,
-    /// Encrypted NOD mint business rejection (`"nod_mint_rejected"`).
-    NodMint,
-}
-
-impl RejectionMetricClass {
-    /// Stable Prometheus label for `outbe_tee_request_errors_total{class}`.
+impl AppErrorDescriptor {
+    /// Construct a domain error descriptor with a stable metric label and display context.
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::TributeSource => "tribute_source_rejected",
-            Self::NodMint => "nod_mint_rejected",
-        }
-    }
-
-    /// Human-readable prefix for display formatting.
-    #[must_use]
-    pub const fn context(self) -> &'static str {
-        match self {
-            Self::TributeSource => "Tribute source rejected",
-            Self::NodMint => "encrypted NOD mint rejected",
+    pub const fn new(metric_class: &'static str, context: &'static str) -> Self {
+        Self {
+            metric_class,
+            context,
         }
     }
 }
@@ -109,13 +63,13 @@ pub enum TransportError {
     Attestation(String),
 
     /// Application-layer payload attestation signature check failed.
-    #[error("{} attestation signature invalid: {cause}", metric.context())]
+    #[error("{}: {source}", descriptor.context)]
     AppAttestation {
-        /// Metric counter classification (never used for control-flow branching).
-        metric: AttestationMetricClass,
+        /// Metric counter classification and display context (never used for control-flow branching).
+        descriptor: AppErrorDescriptor,
         /// Structured attestation verification failure cause.
         #[source]
-        cause: TeeAttestationError,
+        source: TeeAttestationError,
     },
 
     /// DCAP verification stream or response check failed.
@@ -135,10 +89,10 @@ pub enum TransportError {
     EnclaveError(String),
 
     /// Application-layer operation or state source was deterministically rejected.
-    #[error("{}: {reason}", metric.context())]
+    #[error("{}: {reason}", descriptor.context)]
     AppRejected {
-        /// Metric counter classification (never used for control-flow branching).
-        metric: RejectionMetricClass,
+        /// Metric counter classification and display context (never used for control-flow branching).
+        descriptor: AppErrorDescriptor,
         /// Rejection reason string.
         reason: String,
     },
@@ -156,7 +110,7 @@ pub enum TransportError {
     Unavailable(String),
 }
 
-const _: () = assert!(std::mem::size_of::<TransportError>() <= 96);
+const _: () = assert!(std::mem::size_of::<TransportError>() <= 112);
 
 impl TransportError {
     /// Construct a [`Self::Codec`] error from a displayable value.
@@ -191,20 +145,20 @@ impl TransportError {
 
     /// Construct a structured application-layer attestation failure, preserving
     /// [`Self::AttestationPreimageSerialization`] when canonical JSON serialization fails.
-    pub fn app_attestation(metric: AttestationMetricClass, cause: TeeAttestationError) -> Self {
-        match cause {
+    pub fn app_attestation(descriptor: AppErrorDescriptor, source: TeeAttestationError) -> Self {
+        match source {
             TeeAttestationError::CanonicalJson(err) => Self::AttestationPreimageSerialization(err),
             other => Self::AppAttestation {
-                metric,
-                cause: other,
+                descriptor,
+                source: other,
             },
         }
     }
 
-    /// Construct an application-layer deterministic rejection with a typed metric class.
-    pub fn app_rejected(metric: RejectionMetricClass, reason: impl fmt::Display) -> Self {
+    /// Construct an application-layer deterministic rejection with a typed error descriptor.
+    pub fn app_rejected(descriptor: AppErrorDescriptor, reason: impl fmt::Display) -> Self {
         Self::AppRejected {
-            metric,
+            descriptor,
             reason: reason.to_string(),
         }
     }
@@ -278,12 +232,12 @@ impl TransportError {
             Self::Noise(_) => "noise",
             Self::Handshake(_) => "handshake",
             Self::Attestation(_) => "attestation",
-            Self::AppAttestation { metric, .. } => metric.as_str(),
+            Self::AppAttestation { descriptor, .. } => descriptor.metric_class,
             Self::DcapVerification(_) => "dcap_verification",
             Self::AttestationPreimageSerialization(_) => "attestation_preimage_serialization",
             Self::UnexpectedResponse => "unexpected_response",
             Self::EnclaveError(_) => "enclave_error",
-            Self::AppRejected { metric, .. } => metric.as_str(),
+            Self::AppRejected { descriptor, .. } => descriptor.metric_class,
             Self::IdentityMismatch(_) => "identity_mismatch",
             Self::SessionRevoked(_) => "session_revoked",
             Self::Unavailable(_) => "unavailable",

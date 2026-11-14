@@ -7,17 +7,19 @@
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_oracle::{api::AddressPair, schema::OracleContract};
-use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::{
-    addresses::NOD_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
-    time::{date_key_to_utc_timestamp, first_full_day, previous_date_key, timestamp_to_date_key},
 };
+use outbe_system_common::addresses::NOD_ADDRESS;
 use outbe_system_common::math::constants::MAX_BIN_ID;
 use outbe_system_common::pass_budget::{
     PassBudget, SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK,
+};
+use outbe_system_common::time::WorldwideDay;
+use outbe_system_common::time::SECONDS_PER_DAY_U32;
+use outbe_system_common::time::{
+    date_key_to_utc_timestamp, first_full_day, previous_date_key, timestamp_to_date_key,
 };
 
 use outbe_nod::{
@@ -32,7 +34,7 @@ use outbe_nod::{
 
 const CHAIN_ID: u64 = 1;
 const BLOCK_NUMBER: u64 = 42;
-use outbe_primitives::time::SECONDS_PER_DAY as DAY;
+use outbe_system_common::time::SECONDS_PER_DAY as DAY;
 /// The notice period a group seals at issuance, in the width these tests
 /// do timestamp arithmetic in.
 const NOTICE: u64 = CALL_NOTICE_PERIOD as u64;
@@ -1763,7 +1765,7 @@ fn a_running_call_sweep_keeps_its_day() {
         assert_eq!(called_at(storage, item.group_key), later);
         assert_eq!(
             nod.call_sweep_day.read().unwrap(),
-            outbe_primitives::time::next_date_key(day).expect("date step"),
+            outbe_system_common::time::next_date_key(day).expect("date step"),
             "only the pinned day ran at this height"
         );
     });
@@ -2050,7 +2052,7 @@ fn a_node_local_failure_while_forfeiting_fails_the_slice() {
         register(&storage, ISO);
         arm_lapsed(&storage, &[(0x81, 3, false)]).0
     });
-    provider.fail_mutation_at_address(outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS);
+    provider.fail_mutation_at_address(outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS);
     let result = StorageHandle::enter(&mut provider, |storage| forfeit_pass(&storage, past));
     provider.clear_mutation_failure();
     assert!(matches!(
@@ -2171,7 +2173,7 @@ fn a_call_pass_announces_one_batch_metadata_update() {
     });
 
     let batches: Vec<(U256, U256)> = provider
-        .get_events(outbe_primitives::addresses::NOD_ADDRESS)
+        .get_events(outbe_system_common::addresses::NOD_ADDRESS)
         .iter()
         .filter_map(|log| {
             outbe_nod::precompile::INod::BatchMetadataUpdate::decode_log_data(log).ok()

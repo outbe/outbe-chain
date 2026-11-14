@@ -1,7 +1,7 @@
 //! Persisted day metadata. Amounts live only in the encrypted byte mappings.
 
 use outbe_macros::storage_record;
-use outbe_primitives::time::WorldwideDay;
+use outbe_system_common::time::WorldwideDay;
 
 #[storage_record(exists_field = initialized)]
 pub struct StoredDayTotals {

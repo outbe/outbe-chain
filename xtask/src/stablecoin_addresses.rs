@@ -1,8 +1,30 @@
 use super::{
     CheckedAddressClass, PlannedAddressClass, PlannedAddressClasses, StablecoinAddressManifest,
 };
-use eyre::{bail, eyre, Result, WrapErr};
-use std::{collections::BTreeSet, fs, path::Path};
+use eyre::{bail, Result, WrapErr};
+use std::{
+    collections::BTreeSet,
+    fs,
+    path::{Path, PathBuf},
+};
+
+#[derive(Debug, thiserror::Error)]
+pub(super) enum DeclaredAddressesError {
+    #[error("failed to read {path}: {source}", path = path.display())]
+    Read {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("truncated address! literal in {path}", path = path.display())]
+    TruncatedLiteral { path: PathBuf },
+    #[error("invalid EVM address `{value}` in {path}", path = path.display())]
+    InvalidAddress { path: PathBuf, value: String },
+    #[error("duplicate address! literal 0x{address} in {path}", path = path.display())]
+    DuplicateAddress { path: PathBuf, address: String },
+    #[error("stablecoin fixed address 0x{address} is missing from declared address modules")]
+    MissingFixedAddress { address: String },
+}
 
 pub(super) fn load_planned_classes(
     repo_root: &Path,
@@ -70,20 +92,66 @@ fn require_disjoint_classes(checked: &[CheckedAddressClass]) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn address_literals(source: &str) -> Result<Vec<String>> {
+const DECLARED_ADDRESS_FILES: [&str; 2] = [
+    "crates/blockchain/primitives/src/addresses.rs",
+    "crates/system/common/src/addresses.rs",
+];
+
+pub(super) fn collect_declared_addresses(
+    repo_root: &Path,
+    required_fixed: &[&str],
+) -> std::result::Result<BTreeSet<String>, DeclaredAddressesError> {
+    let mut unique = BTreeSet::new();
+    for rel in DECLARED_ADDRESS_FILES {
+        let path = repo_root.join(rel);
+        let source = fs::read_to_string(&path).map_err(|source| DeclaredAddressesError::Read {
+            path: path.clone(),
+            source,
+        })?;
+        for address in address_literals(&path, &source)? {
+            if !unique.insert(address.clone()) {
+                return Err(DeclaredAddressesError::DuplicateAddress { path, address });
+            }
+        }
+    }
+    for &required in required_fixed {
+        if !unique.contains(required) {
+            return Err(DeclaredAddressesError::MissingFixedAddress {
+                address: required.to_owned(),
+            });
+        }
+    }
+    Ok(unique)
+}
+
+fn address_literals(
+    path: &Path,
+    source: &str,
+) -> std::result::Result<Vec<String>, DeclaredAddressesError> {
     let marker = "address!(\"0x";
     let mut remaining = source;
     let mut addresses = Vec::new();
     while let Some(offset) = remaining.find(marker) {
         let start = offset + marker.len();
         let end = start + 40;
-        let value = remaining
-            .get(start..end)
-            .ok_or_else(|| eyre!("truncated address! literal"))?;
-        addresses.push(canonical_address(value)?);
-        remaining = remaining
-            .get(end..)
-            .ok_or_else(|| eyre!("truncated addresses source"))?;
+        let value =
+            remaining
+                .get(start..end)
+                .ok_or_else(|| DeclaredAddressesError::TruncatedLiteral {
+                    path: path.to_path_buf(),
+                })?;
+        let canonical =
+            canonical_address(value).map_err(|_| DeclaredAddressesError::InvalidAddress {
+                path: path.to_path_buf(),
+                value: value.to_owned(),
+            })?;
+        addresses.push(canonical);
+        remaining =
+            remaining
+                .get(end..)
+                .ok_or_else(|| DeclaredAddressesError::TruncatedLiteral {
+                    path: path.to_path_buf(),
+                })?;
     }
     Ok(addresses)
 }

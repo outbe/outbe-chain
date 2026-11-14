@@ -91,8 +91,6 @@ pub use inputs::{
     ParentAccountingInputs,
 };
 
-pub use boundary::marker_addresses;
-
 #[cfg(any(test, feature = "test-hooks", feature = "test-utils"))]
 pub use boundary::apply_boundary_outcome;
 pub use boundary::prepare_boundary_epoch_counters;

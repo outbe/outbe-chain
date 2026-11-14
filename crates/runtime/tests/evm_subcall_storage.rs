@@ -8,8 +8,7 @@ use outbe_evm::storage::{CtxStorageProvider, CtxStorageProviderConfig, Reentranc
 use outbe_evm::EvmRuntimeHost;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::{
-    MetadosisMutationEntitlements, PrecompileStorageProvider, SubCallError, SubCallInput,
-    SubCallStatus,
+    MutationEntitlements, PrecompileStorageProvider, SubCallError, SubCallInput, SubCallStatus,
 };
 use revm::context_interface::journaled_state::account::JournaledAccountTr as _;
 use revm::context_interface::ContextTr as _;
@@ -327,7 +326,7 @@ fn provider<DB: Database + Debug>(
 
             abort_bridge: Default::default(),
 
-            metadosis_mutation_entitlements: MetadosisMutationEntitlements::NONE,
+            scoped_mutation_entitlements: MutationEntitlements::NONE,
         },
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
     )

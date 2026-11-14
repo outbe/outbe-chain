@@ -10,7 +10,7 @@ use revm::{primitives::hardfork::SpecId, Database};
 
 mod call_authority;
 pub(crate) mod routes;
-pub use call_authority::MetadosisMutationCall;
+pub use call_authority::PrecompileMutationCall;
 mod cancellation;
 pub use cancellation::ExecutionAbortBridge;
 mod dispatch;
@@ -23,16 +23,6 @@ mod value_policy;
 pub use outcome::map_outbe_precompile_result;
 pub use routes::assert_valid_production_routes;
 pub(crate) use sub_call_provider::OutbeSubCallPrecompiles;
-
-/// Returns the list of outbe precompile addresses registered by
-/// [`extend_outbe_precompiles`].
-///
-/// Lookup and enumeration are generated from the same compact declaration in
-/// [`routes`], so dispatch-recognized exact routes cannot be omitted
-/// from this list.
-pub const fn outbe_precompile_addresses() -> &'static [Address] {
-    routes::EXACT_ADDRESSES
-}
 
 /// Immutable protocol context shared by every Outbe precompile dispatch.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -114,9 +104,10 @@ pub fn extend_outbe_precompiles<DB>(
         tee_attestation_v1,
     } = execution_context;
     let OutbePrecompileRuntime { abort_bridge } = runtime;
+    let handles_host = std::sync::Arc::clone(&host);
     precompiles.set_ctx_dispatch_hook(
-        // handles: claim every outbe address.
-        |addr: &Address| routes::resolve(addr).is_some(),
+        // handles: claim every registered runtime precompile address.
+        move |addr: &Address| handles_host.is_registered_precompile(addr),
         // dispatch: ctx_ptr is `*mut EthEvmContext<DB>` (cast in our caller, see
         // `PrecompileProvider::run` in the fork's `precompiles.rs`).
         move |ctx_ptr, inputs| {

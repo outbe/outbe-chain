@@ -6,9 +6,9 @@
 
 use alloy_primitives::{keccak256, B256, U256};
 
+use crate::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::dsl::Map;
-use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
 /// The call terms one right was sealed with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -189,8 +189,8 @@ mod tests {
 
     #[test]
     fn a_midnight_issue_and_a_later_one_that_day_share_one_group() {
-        let midnight = outbe_primitives::time::first_full_day(1_773_100_800).expect("date step");
-        let later = outbe_primitives::time::first_full_day(1_773_100_802).expect("date step");
+        let midnight = crate::time::first_full_day(1_773_100_800).expect("date step");
+        let later = crate::time::first_full_day(1_773_100_802).expect("date step");
         assert_eq!(
             group_key(midnight, U256::from(4_560_000), 840),
             group_key(later, U256::from(4_560_000), 840)

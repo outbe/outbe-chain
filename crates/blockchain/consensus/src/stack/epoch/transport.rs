@@ -139,8 +139,8 @@ where
 
     // Register the one-time TEE DKG channel (only when a TEE enclave sidecar is
     // configured). It carries the enclave identity exchange, the dealer/player
-    // gossip, and the offer-key partial-signature round. That round derives the
-    // shared tribute offer key at startup. Register it before `network.start()`.
+    // gossip, and the network-key partial-signature round. That round derives the
+    // shared network encryption key at startup. Register it before `network.start()`.
     let mut tee_dkg_channel = args
         .tee_enclave_socket
         .as_ref()

@@ -10,7 +10,7 @@ use outbe_primitives::{
     storage::StorageHandle,
     zero_fee_types::{
         BootstrapAccountView, BootstrapCandidate, BootstrapTransactionView, ZeroFeeAuthorization,
-        ZeroFeeCandidate, ZeroFeeHookId, ZeroFeePolicyError, ZeroFeeTransaction,
+        ZeroFeeCandidate, ZeroFeeHookTag, ZeroFeePolicyError, ZeroFeeTransaction,
     },
 };
 /// Classifies and authorizes zero-fee transactions for the pool.
@@ -26,14 +26,9 @@ pub trait TxPoolZeroFeePolicy: Send + Sync + std::fmt::Debug {
 
     /// Reserved ordering class for a hook that must outrank the tip market.
     ///
-    /// The match stays exhaustive so a new hook makes an explicit ordering
-    /// decision. `None` keeps the normal tip priority.
-    fn priority_class(&self, hook: ZeroFeeHookId) -> Option<u8> {
-        match hook {
-            ZeroFeeHookId::OracleSubmitVote => Some(1),
-            ZeroFeeHookId::HyperlaneSubmitCheckpoint => Some(1),
-            ZeroFeeHookId::RenewEnclave => Some(1),
-        }
+    /// `None` keeps the normal tip priority.
+    fn priority_class(&self, hook: ZeroFeeHookTag) -> Option<u8> {
+        hook.priority_class()
     }
 
     /// Stateful authorization for a candidate returned by [`Self::classify`].

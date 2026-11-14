@@ -77,9 +77,9 @@ where
         Ok(())
     }
 
-    /// Settles accumulated block burned fees (`current_block_burned_fees`) to `PromisLimitContract`
-    /// using `SYSTEM_ADDRESS` and `BurnSource::BaseFee`, then flushes storage to the underlying
-    /// `State` so any attached `OnStateHook` receives the transition before parallel root freeze.
+    /// Settles accumulated block burned fees (`current_block_burned_fees`) through the runtime
+    /// host, then flushes storage to the underlying `State` so any attached `OnStateHook`
+    /// receives the transition before parallel root freeze.
     pub fn settle_block_burned_fees(&mut self) -> Result<(), BlockExecutionError> {
         use crate::errors::BurnedFeeSettlementError;
         use outbe_primitives::error::PrecompileError;

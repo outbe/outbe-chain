@@ -4,12 +4,12 @@
 
 use alloy_primitives::{B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_primitives::addresses::{GEM_ADDRESS, PROMIS_LIMIT_ADDRESS};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::SECONDS_PER_DAY;
-use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
+use outbe_system_common::addresses::{GEM_ADDRESS, PROMIS_LIMIT_ADDRESS};
 use outbe_system_common::pass_budget::SWEEP_WRITES_PER_BLOCK;
+use outbe_system_common::time::SECONDS_PER_DAY;
+use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 
 use super::*;
 use outbe_gem::config::GemParams;

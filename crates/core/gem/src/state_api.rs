@@ -201,9 +201,8 @@ mod tests {
     use super::*;
     use alloy_primitives::U256;
     use alloy_sol_types::SolError;
-    use outbe_primitives::{
-        error::PrecompileError, storage::hashmap::HashMapStorageProvider, time::WorldwideDay,
-    };
+    use outbe_primitives::{error::PrecompileError, storage::hashmap::HashMapStorageProvider};
+    use outbe_system_common::time::WorldwideDay;
 
     #[test]
     fn state_only_gem_settlement_rejects_stale_handles_and_burns_atomically() {

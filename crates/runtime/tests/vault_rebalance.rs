@@ -24,8 +24,8 @@
 use alloy_primitives::{keccak256, Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolError, SolEvent};
 use outbe_evm::test_support::{seed_storage, EvmWorld};
-use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::storage::{SubCallOutput, SubCallStatus};
+use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_vaultrouter::api::IVaultRouter;
 use outbe_vaultrouter::schema::ApprovedVaultAction;
 use outbe_vaultrouter::VaultRouterContract;
@@ -95,7 +95,7 @@ fn seeded_db(register_from: bool, register_to: bool, asset_reverts: bool) -> Cac
     seed_storage(&mut database, 1, CCA, |storage| {
         storage
             .increase_balance(
-                outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
+                outbe_system_common::addresses::CCA_REGISTRY_ADDRESS,
                 outbe_ccaregistry::constants::BOND_REQUIREMENT,
             )
             .unwrap();
@@ -345,7 +345,7 @@ fn pending_removal_world() -> EvmWorld {
     seed_storage(&mut db, 1, CCA, |storage| {
         storage
             .increase_balance(
-                outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
+                outbe_system_common::addresses::CCA_REGISTRY_ADDRESS,
                 outbe_ccaregistry::constants::BOND_REQUIREMENT,
             )
             .unwrap();

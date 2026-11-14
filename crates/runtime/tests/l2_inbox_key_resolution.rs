@@ -20,10 +20,10 @@ use outbe_l2registry::{
     api::ZK_MERKLE_ROOT_NAMESPACE, precompile::IL2Registry, public_key, schema::L2RegistryContract,
 };
 use outbe_primitives::{
-    addresses::{L2_REGISTRY_ADDRESS, TRIBUTE_FACTORY_ADDRESS},
     block::BlockContext,
     storage::{direct::DirectStorageProvider, StorageHandle},
 };
+use outbe_system_common::addresses::{L2_REGISTRY_ADDRESS, TRIBUTE_FACTORY_ADDRESS};
 use outbe_tributefactory::precompile::ITributeFactory;
 use reth_ethereum::evm::primitives::EvmEnv;
 use revm::{

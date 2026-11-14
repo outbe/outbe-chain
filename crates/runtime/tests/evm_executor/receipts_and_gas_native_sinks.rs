@@ -8,10 +8,9 @@ use alloy_consensus::{TxEip4844, TxLegacy};
 use alloy_eips::eip4844::{DATA_GAS_PER_BLOB, VERSIONED_HASH_VERSION_KZG};
 use alloy_evm::block::{BlockExecutionError, CommitChanges};
 use outbe_evm::errors::BurnedFeeSettlementError;
-use outbe_primitives::{
-    addresses::PROMIS_LIMIT_ADDRESS, error::PrecompileError, storage::direct::DirectStorageProvider,
-};
+use outbe_primitives::{error::PrecompileError, storage::direct::DirectStorageProvider};
 use outbe_promislimit::PromisLimitContract;
+use outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS;
 use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 use revm::context_interface::block::BlobExcessGasAndPrice;
 use std::sync::Mutex;

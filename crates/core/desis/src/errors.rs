@@ -4,7 +4,8 @@ use crate::constants::MAX_TARGET_CHAINS;
 use crate::precompile::IDesis;
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolError;
-use outbe_primitives::{error::PrecompileError, time::EmissionDate};
+use outbe_primitives::error::PrecompileError;
+use outbe_system_common::time::EmissionDate;
 use thiserror::Error;
 
 /// Errors that the Desis runtime returns.
@@ -76,7 +77,7 @@ pub enum DesisError {
 }
 
 pub(crate) fn date_step_error(
-    err: outbe_primitives::time::TimeError,
+    err: outbe_system_common::time::TimeError,
 ) -> outbe_primitives::error::PrecompileError {
     match err.date_step() {
         Some((kind, date_key)) => DesisError::DateStep { kind, date_key }.into(),

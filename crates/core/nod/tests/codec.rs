@@ -3,12 +3,12 @@ use outbe_core_common::entity_codec::{
     decode_stored_nod_group_v1, decode_stored_nod_item_v1, encode_nod_group_v1, encode_nod_item_v1,
     StoredBody,
 };
+use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_nod::{
     canonical_group, canonical_item, from_canonical_group, from_canonical_item, NodGroupState,
     NodItemState,
 };
-use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::wwd_entity_id::WwdEntityId;
+use outbe_system_common::time::WorldwideDay;
 
 fn entity(seed: U256, _worldwide_day: WorldwideDay) -> U256 {
     seed

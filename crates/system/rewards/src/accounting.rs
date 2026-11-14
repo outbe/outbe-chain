@@ -2,10 +2,10 @@
 
 use alloy_sol_types::SolError;
 use outbe_macros::contract;
-use outbe_primitives::addresses::ACCOUNTING_PROGRESS_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::types::Slot;
+use outbe_system_common::addresses::ACCOUNTING_PROGRESS_ADDRESS;
 use thiserror::Error;
 
 alloy_sol_types::sol! {

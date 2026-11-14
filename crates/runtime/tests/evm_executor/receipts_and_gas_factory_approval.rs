@@ -118,7 +118,7 @@ fn assert_token_marker(
             .expect("created token marker")
             .original_bytes()
             .as_ref(),
-        outbe_primitives::addresses::STABLECOIN_MARKER_CODE
+        outbe_system_common::addresses::STABLECOIN_MARKER_CODE
     );
 }
 

@@ -8,11 +8,11 @@ pub struct TeeBootstrapStartup<'a> {
     pub evm_signer: &'a OutbeEvmSigner,
 }
 
-/// Committee size and network namespace for the startup offer-key ceremony.
+/// Committee size and network namespace for the startup network-key ceremony.
 pub struct TeeDkgStartup {
     pub participant_count: usize,
     pub network_binding: outbe_primitives::tee_attestation_v1::NetworkBindingV1,
-    pub tribute_offer_epoch: u64,
+    pub network_key_epoch: u64,
 }
 
 /// Bind the generic OST3 coordinator to the dedicated bounded Commonware
@@ -44,7 +44,7 @@ where
     scope.extend_from_slice(policy_hash.as_slice());
     scope.extend_from_slice(authority.committee_snapshot_hash.as_slice());
     scope.extend_from_slice(&authority.committee_snapshot_block.to_be_bytes());
-    scope.extend_from_slice(authority.tribute_offer_public_key.as_slice());
+    scope.extend_from_slice(authority.network_encryption_public_key.as_slice());
     let mut gossip = CommonwareBootstrapGossip {
         sender: transport.sender,
         receiver: transport.receiver,
@@ -63,21 +63,21 @@ where
     .await
 }
 
-/// Run the one-time TEE DKG ceremony at startup and return the **shared offer
-/// public key** derived from the group threshold signature (Seam F). This function:
+/// Run the one-time TEE DKG ceremony at startup and return the **shared network
+/// encryption public key** derived from the group threshold signature (Seam F).
+/// This function:
 ///
 /// 1. Exchanges enclave identities across the committee.
-/// 2. Drives the dealer/player ceremony and the offer-key partial-signature round
+/// 2. Drives the dealer/player ceremony and the network-key partial-signature round
 ///    entirely through the enclave seams.
-/// 3. Returns the byte-identical `tribute_offer_public` that every honest node derives.
+/// 3. Returns the byte-identical `network_encryption_public_key` that every honest node derives.
 ///
 /// The caller connects the enclave and passes the connected `client`.
 ///
-/// The offer *secret* never leaves the enclave. It is stored resident there and
-/// used to decrypt offers.
+/// The secret never leaves the enclave. It is stored resident there.
 ///
 /// The request's participant count is the committee size. Its network binding
-/// and offer epoch bind the derived offer key. This function runs before
+/// and key epoch bind the derived key. This function runs before
 /// [`run_tee_bootstrap_v2_at_startup`], whose OST3 payload registers the
 /// returned key on-chain at block 1.
 pub async fn run_tee_dkg_at_startup<E, S, R, C>(
@@ -94,7 +94,7 @@ where
     let TeeDkgStartup {
         participant_count: n,
         network_binding,
-        tribute_offer_epoch,
+        network_key_epoch,
     } = request;
     let my_bls = match client
         .request(&EnclaveRequest::GetPublicKeys)
@@ -112,7 +112,7 @@ where
 
     let mut dkg_scope = Vec::with_capacity(32 + 8 + 7);
     dkg_scope.extend_from_slice(chain_id.as_slice());
-    dkg_scope.extend_from_slice(&tribute_offer_epoch.to_be_bytes());
+    dkg_scope.extend_from_slice(&network_key_epoch.to_be_bytes());
     dkg_scope.extend_from_slice(b"tee-dkg");
     let mut gossip = CommonwareDkgGossip::new(transport, keccak256(dkg_scope));
     let PreparedDkg {
@@ -137,7 +137,7 @@ where
         FoundingCeremonyParameters {
             participant_count: n,
             chain_id,
-            tribute_offer_epoch,
+            network_key_epoch,
         },
     )
     .await
@@ -151,8 +151,8 @@ where
     }
 
     Ok((
-        outcome.tribute_offer_public,
-        outcome.tribute_offer_group_public_key,
+        outcome.network_encryption_public_key,
+        outcome.network_encryption_group_public_key,
     ))
 }
 

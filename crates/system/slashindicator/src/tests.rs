@@ -1,12 +1,14 @@
 use alloy_primitives::{address, b256, Address, LogData, B256, U256, U512};
 use alloy_sol_types::{SolError, SolEvent};
-use outbe_primitives::addresses::{PROMIS_LIMIT_ADDRESS, SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::finalized_guard_ring::{test_ring_hash, RingPosition};
 use outbe_primitives::storage::hashmap::{HashMapStorageProvider, MutationPrefixViews};
 use outbe_primitives::storage::StorageHandle;
 use outbe_promislimit::PromisLimitContract;
 use outbe_staking::contract::Staking;
+use outbe_system_common::addresses::{
+    PROMIS_LIMIT_ADDRESS, SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS,
+};
 use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::test_support::test_lifecycle_of;

@@ -14,8 +14,11 @@ use revm::{
 };
 
 /// Scoped execution adapter. It never changes account code or precompile dispatch.
-pub(crate) struct NativeDelegationEvm<E>(pub(crate) E);
-impl<E: EvmTr<Frame = EthFrame>> EvmTr for NativeDelegationEvm<E> {
+pub(crate) struct NativeDelegationEvm<'a, E>(
+    pub(crate) E,
+    pub(crate) Option<&'a dyn crate::EvmRuntimeHost>,
+);
+impl<E: EvmTr<Frame = EthFrame>> EvmTr for NativeDelegationEvm<'_, E> {
     type Context = E::Context;
     type Instructions = E::Instructions;
     type Precompiles = E::Precompiles;
@@ -48,9 +51,12 @@ impl<E: EvmTr<Frame = EthFrame>> EvmTr for NativeDelegationEvm<E> {
         if spec.is_enabled_in(SpecId::PRAGUE) {
             if let FrameInput::Call(inputs) = &mut init.frame_input {
                 // A direct native call keeps its normal ABI dispatch. The route
-                // namespace includes the reserved stablecoin class, independent
-                // of whether an individual token has been issued.
-                if crate::precompiles::routes::resolve(&inputs.bytecode_address).is_none() {
+                // namespace includes the reserved dynamic precompile class,
+                // independent of whether an individual account has been initialized.
+                if !self
+                    .1
+                    .is_some_and(|host| host.is_registered_precompile(&inputs.bytecode_address))
+                {
                     // Inspect the original account, not resolved bytecode or
                     // target_address (which differs for CALLCODE/DELEGATECALL).
                     let delegate = {
@@ -67,7 +73,8 @@ impl<E: EvmTr<Frame = EthFrame>> EvmTr for NativeDelegationEvm<E> {
                             .and_then(Bytecode::eip7702_address)
                     };
                     if delegate.is_some_and(|address| {
-                        crate::precompiles::routes::resolve(&address).is_some()
+                        self.1
+                            .is_some_and(|host| host.is_registered_precompile(&address))
                     }) {
                         // Follow exactly one designator. Revm still owns value
                         // transfer, checkpoints, gas and the empty-code result.
@@ -94,7 +101,7 @@ impl<E: EvmTr<Frame = EthFrame>> EvmTr for NativeDelegationEvm<E> {
 
 // Keep the default inspector frame methods: they call this adapter after
 // inspector callbacks, whereas forwarding them would bypass normalization.
-impl<E> revm::inspector::InspectorEvmTr for NativeDelegationEvm<&mut E>
+impl<E> revm::inspector::InspectorEvmTr for NativeDelegationEvm<'_, &mut E>
 where
     E: revm::inspector::InspectorEvmTr<Frame = EthFrame>,
 {

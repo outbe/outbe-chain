@@ -9,6 +9,7 @@ publish.workspace = true
 outbe-enclave.workspace = true
 outbe-macros.workspace = true
 outbe-primitives.workspace = true
+outbe-system-common.workspace = true
 outbe-tee.workspace = true
 outbe-fidelity-math.workspace = true
 alloy-primitives.workspace = true

@@ -2,18 +2,17 @@ use super::SystemTx;
 use alloy_primitives::Bytes;
 use outbe_primitives::{
     block::{
-        BlockHeightRegime, BlockRuntimeContext, BlockSystemFlags, MetadosisEntitlementContext,
+        BlockHeightRegime, BlockRuntimeContext, BlockSystemFlags, MutationEntitlementContext,
         ProtocolModule,
     },
     error::Result,
-    storage::{
-        metadosis_process_ready_binding, MetadosisMutationEntitlements, MetadosisMutationPurposeTag,
-    },
+    storage::MutationEntitlements,
     system_tx_context::{
         SystemTxBuildContext, SystemTxPayloadBuildError, SystemTxPayloadValidationError,
         SystemTxValidationContext,
     },
 };
+
 #[derive(Clone, Copy, Debug)]
 pub struct ProtocolStep {
     pub name: &'static str,
@@ -27,24 +26,12 @@ pub struct ProtocolStep {
         &[u8],
         &SystemTxValidationContext<'_>,
     ) -> std::result::Result<(), SystemTxPayloadValidationError>,
-    pub mutation_entitlements: fn(MetadosisEntitlementContext<'_>) -> MetadosisMutationEntitlements,
+    pub mutation_entitlements: fn(MutationEntitlementContext<'_>) -> MutationEntitlements,
     pub run: fn(&BlockRuntimeContext<'_>) -> Result<()>,
 }
 
 fn always_active(_: BlockHeightRegime, _: BlockSystemFlags) -> bool {
     true
-}
-
-fn process_ready_entitlements(
-    ctx: MetadosisEntitlementContext<'_>,
-) -> MetadosisMutationEntitlements {
-    if !ctx.payload.is_empty() {
-        return MetadosisMutationEntitlements::NONE;
-    }
-    MetadosisMutationEntitlements::exact(
-        MetadosisMutationPurposeTag::CycleLifecycle,
-        metadosis_process_ready_binding(ctx.chain_id, ctx.block_number, ctx.timestamp),
-    )
 }
 
 pub const fn consensus_step<M: ProtocolModule>() -> ProtocolStep {
@@ -80,23 +67,27 @@ pub const fn end_step<M: ProtocolModule>() -> ProtocolStep {
 }
 
 impl ProtocolStep {
-    pub const fn with_process_ready_entitlements(mut self) -> Self {
-        self.mutation_entitlements = process_ready_entitlements;
+    #[must_use]
+    pub const fn with_mutation_entitlements(
+        mut self,
+        f: fn(MutationEntitlementContext<'_>) -> MutationEntitlements,
+    ) -> Self {
+        self.mutation_entitlements = f;
         self
     }
-}
 
-impl ProtocolStep {
     #[must_use]
     pub const fn with_validators(mut self) -> Self {
         self.include_validator_snapshot = true;
         self
     }
+
     #[must_use]
     pub const fn soft_fail(mut self) -> Self {
         self.revert_fails_block = false;
         self
     }
+
     #[must_use]
     pub const fn active_when(
         mut self,
@@ -134,11 +125,31 @@ impl BlockOrder {
 mod tests {
     use super::*;
     use alloy_primitives::B256;
-    use outbe_primitives::reshare_artifact::OutbeBlockArtifacts;
+    use outbe_primitives::{
+        reshare_artifact::OutbeBlockArtifacts,
+        storage::{scoped_block_binding, MutationPurposeTag},
+    };
+
     struct NopModule;
     impl ProtocolModule for NopModule {
         const NAME: &'static str = "nop";
     }
+
+    fn test_step_entitlements(ctx: MutationEntitlementContext<'_>) -> MutationEntitlements {
+        if !ctx.payload.is_empty() {
+            return MutationEntitlements::NONE;
+        }
+        MutationEntitlements::exact(
+            MutationPurposeTag::CycleLifecycle,
+            scoped_block_binding(
+                b"TEST_END_STEP_V1",
+                ctx.chain_id,
+                ctx.block_number,
+                ctx.timestamp,
+            ),
+        )
+    }
+
     #[test]
     fn protocol_steps_copy_metadata_and_default_to_no_mutation_authority() {
         let artifacts = OutbeBlockArtifacts::default();
@@ -157,7 +168,7 @@ mod tests {
             parent_hash: B256::ZERO,
             artifacts: &artifacts,
         };
-        let authority = MetadosisEntitlementContext {
+        let authority = MutationEntitlementContext {
             payload: &[],
             chain_id: 1,
             block_number: 2,
@@ -180,23 +191,23 @@ mod tests {
             ));
             assert_eq!(
                 (step.mutation_entitlements)(authority),
-                MetadosisMutationEntitlements::NONE
+                MutationEntitlements::NONE
             );
         }
-        let process = end_step::<NopModule>().with_process_ready_entitlements();
+        let process = end_step::<NopModule>().with_mutation_entitlements(test_step_entitlements);
         assert_eq!(
             (process.mutation_entitlements)(authority),
-            MetadosisMutationEntitlements::exact(
-                MetadosisMutationPurposeTag::CycleLifecycle,
-                metadosis_process_ready_binding(1, 2, 11)
+            MutationEntitlements::exact(
+                MutationPurposeTag::CycleLifecycle,
+                scoped_block_binding(b"TEST_END_STEP_V1", 1, 2, 11),
             )
         );
         assert_eq!(
-            (process.mutation_entitlements)(MetadosisEntitlementContext {
+            (process.mutation_entitlements)(MutationEntitlementContext {
                 payload: b"bad",
                 ..authority
             }),
-            MetadosisMutationEntitlements::NONE
+            MutationEntitlements::NONE
         );
         let cycle = crate::system_tx::TEST_BLOCK_ORDER.begin_block[8];
         assert!(cycle.needs_cycle_active_utc_day);

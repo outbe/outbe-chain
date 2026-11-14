@@ -1,9 +1,9 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolInterface;
 use outbe_core_common::erc::ERC165_INTERFACE_ID;
+use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_primitives::dispatch::{dispatch_call, metadata, mutate, view};
 use outbe_primitives::error::Result;
-use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::schema::TributeContract;
 
@@ -44,7 +44,7 @@ pub fn dispatch(
                 let day =
                     outbe_emission::api::get_emission_day_record(storage.clone(), c.emissionDay)?
                         .map(|record| record.wwd)
-                        .unwrap_or_else(|| outbe_primitives::time::WorldwideDay::new(0));
+                        .unwrap_or_else(|| outbe_system_common::time::WorldwideDay::new(0));
                 let dt = tribute
                     .day_totals
                     .get(day)?

@@ -7,9 +7,9 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 use outbe_core_common::settlement::{settlement_cost_units, PaymentCurrency};
 use outbe_oracle::api::{settlement_fx_rates, VwapSnapshotId};
-use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
 
 pub use outbe_core_common::settlement::{SettlementCost, SettlementPayment};
 

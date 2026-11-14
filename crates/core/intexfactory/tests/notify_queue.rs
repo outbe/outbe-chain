@@ -17,13 +17,13 @@ use outbe_intexfactory::notify::{
 };
 use outbe_intexfactory::precompile::IIntexFactory::IntexSeriesCallNoticeFailed;
 use outbe_intexfactory::IntexFactoryContract;
-use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::types::Storable;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::EmissionDate;
+use outbe_system_common::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_system_common::pass_budget::SWEEP_WRITES_PER_BLOCK;
+use outbe_system_common::time::EmissionDate;
 
 const CHAIN_ID: u64 = 1;
 const NOW: u64 = 1_700_000_000;

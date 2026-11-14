@@ -2,13 +2,13 @@
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
-use outbe_primitives::addresses::GEM_ADDRESS;
+use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::SECONDS_PER_DAY;
-use outbe_primitives::time::SECONDS_PER_DAY_U32;
-use outbe_primitives::wwd_entity_id::WwdEntityId;
+use outbe_system_common::addresses::GEM_ADDRESS;
 use outbe_system_common::math::constants::REAL_ID_SHIFT;
 use outbe_system_common::math::tree_math;
+use outbe_system_common::time::SECONDS_PER_DAY;
+use outbe_system_common::time::SECONDS_PER_DAY_U32;
 
 use super::*;
 use outbe_gem::config::GemParams;
@@ -263,7 +263,7 @@ fn a_group_holds_the_gems_of_one_first_full_day_call_price_and_currency() {
         assert_eq!(
             group,
             outbe_system_common::call_breach::group_key(
-                outbe_primitives::time::first_full_day(T_NOW).expect("date step"),
+                outbe_system_common::time::first_full_day(T_NOW).expect("date step"),
                 view(storage, gems[0]).terms.call_price_minor,
                 USD
             )
@@ -314,7 +314,7 @@ fn a_midnight_gem_and_a_later_one_that_day_share_one_group() {
                 .full_day_after_issue
                 .value()
         };
-        let expected_day = outbe_primitives::time::first_full_day(midnight).expect("date step");
+        let expected_day = outbe_system_common::time::first_full_day(midnight).expect("date step");
         assert_eq!(group_day(first), expected_day);
         assert_eq!(group_day(later), expected_day);
     });
@@ -653,7 +653,7 @@ fn settled_for_test_issues_a_paid_gem_and_counts_it_in_the_group() {
 
 #[test]
 fn one_group_calls_and_closes_each_series_pair() {
-    use outbe_primitives::addresses::GEM_ADDRESS;
+    use outbe_system_common::addresses::GEM_ADDRESS;
 
     let mut provider = provider_at(T_NOW);
     let expected = StorageHandle::enter(&mut provider, |storage| {

@@ -113,9 +113,9 @@ impl OnboardingArtifactUploadSessionV1 {
                         artifact: &artifact,
                         anchor_outcome: &anchor_outcome,
                         expected_intent_hash: context.intent_hash,
-                        expected_tribute_offer_public: context.tribute_offer_public,
+                        expected_network_encryption_public: context.network_encryption_public,
                         expected_key_epoch: context.key_epoch,
-                        expected_tribute_offer_epoch: context.tribute_offer_epoch,
+                        expected_network_encryption_epoch: context.network_encryption_epoch,
                     })
                     .map_err(OnboardingUploadError::other)?;
                 self.begin(
@@ -125,9 +125,9 @@ impl OnboardingArtifactUploadSessionV1 {
                         artifact,
                         anchor_outcome,
                         expected_intent_hash: context.intent_hash,
-                        expected_tribute_offer_public: context.tribute_offer_public,
+                        expected_tribute_offer_public: context.network_encryption_public,
                         expected_key_epoch: context.key_epoch,
-                        expected_tribute_offer_epoch: context.tribute_offer_epoch,
+                        expected_tribute_offer_epoch: context.network_encryption_epoch,
                     },
                 )?;
                 let mut upload = self
@@ -146,9 +146,9 @@ impl OnboardingArtifactUploadSessionV1 {
                 artifact,
                 anchor_outcome,
                 expected_intent_hash,
-                expected_tribute_offer_public,
+                expected_network_encryption_public,
                 expected_key_epoch,
-                expected_tribute_offer_epoch,
+                expected_network_encryption_epoch,
             } => self.begin(
                 descriptor.ok_or(OnboardingUploadError::IngestRequiresNetworkDescriptor)?,
                 BeginUploadInput {
@@ -156,9 +156,9 @@ impl OnboardingArtifactUploadSessionV1 {
                     artifact,
                     anchor_outcome,
                     expected_intent_hash,
-                    expected_tribute_offer_public,
+                    expected_tribute_offer_public: expected_network_encryption_public,
                     expected_key_epoch,
-                    expected_tribute_offer_epoch,
+                    expected_tribute_offer_epoch: expected_network_encryption_epoch,
                 },
             ),
             EnclaveRequest::DcapOnboardingArtifactChunkV1 {
@@ -204,9 +204,9 @@ impl OnboardingArtifactUploadSessionV1 {
         let decoded = DcapOnboardingArtifactV1::decode_canonical(&artifact)
             .map_err(|_| OnboardingUploadError::ArtifactNotCanonical)?;
         if decoded.context.intent_hash != expected_intent_hash
-            || decoded.context.tribute_offer_public != expected_tribute_offer_public
+            || decoded.context.network_encryption_public != expected_tribute_offer_public
             || decoded.context.key_epoch != expected_key_epoch
-            || decoded.context.tribute_offer_epoch != expected_tribute_offer_epoch
+            || decoded.context.network_encryption_epoch != expected_tribute_offer_epoch
         {
             return Err(OnboardingUploadError::ArtifactRegistryValuesMismatch.into());
         }
@@ -214,9 +214,9 @@ impl OnboardingArtifactUploadSessionV1 {
             artifact: &artifact,
             anchor_outcome: &anchor_outcome,
             expected_intent_hash,
-            expected_tribute_offer_public,
+            expected_network_encryption_public: expected_tribute_offer_public,
             expected_key_epoch,
-            expected_tribute_offer_epoch,
+            expected_network_encryption_epoch: expected_tribute_offer_epoch,
         })
         .map_err(OnboardingUploadError::other)?;
         if computed != request_hash {
@@ -373,9 +373,9 @@ mod tests {
             binding_id: B256::repeat_byte(0x15),
             policy_hash: B256::repeat_byte(0x16),
             recipient_x25519: [0x17; 32],
-            tribute_offer_public: [0x18; 32],
+            network_encryption_public: [0x18; 32],
             key_epoch: 19,
-            tribute_offer_epoch: 20,
+            network_encryption_epoch: 20,
         };
         let descriptor = TrustedNetworkDescriptorV1 {
             network_binding: NetworkBindingV1 {
@@ -398,9 +398,9 @@ mod tests {
                 artifact: &artifact,
                 anchor_outcome: &anchor,
                 expected_intent_hash: context.intent_hash,
-                expected_tribute_offer_public: context.tribute_offer_public,
+                expected_network_encryption_public: context.network_encryption_public,
                 expected_key_epoch: context.key_epoch,
-                expected_tribute_offer_epoch: context.tribute_offer_epoch,
+                expected_network_encryption_epoch: context.network_encryption_epoch,
             })
             .unwrap();
         let mut session = OnboardingArtifactUploadSessionV1::default();
@@ -411,9 +411,9 @@ mod tests {
                     artifact,
                     anchor_outcome: anchor,
                     expected_intent_hash: context.intent_hash,
-                    expected_tribute_offer_public: context.tribute_offer_public,
+                    expected_network_encryption_public: context.network_encryption_public,
                     expected_key_epoch: context.key_epoch,
-                    expected_tribute_offer_epoch: context.tribute_offer_epoch,
+                    expected_network_encryption_epoch: context.network_encryption_epoch,
                 },
                 Some(&descriptor),
             ),

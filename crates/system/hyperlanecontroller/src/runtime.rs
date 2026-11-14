@@ -1,8 +1,8 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
-use outbe_primitives::addresses::CROSSCHAIN_BRIDGE_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::CROSSCHAIN_BRIDGE_ADDRESS;
 
 use crate::errors::HyperlaneControllerError;
 use crate::ism::accept_remote_ism;

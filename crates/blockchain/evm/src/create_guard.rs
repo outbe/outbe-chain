@@ -1,11 +1,11 @@
-//! Genesis-active reservation of the Stablecoin dynamic address class.
+//! Genesis-active reservation of the dynamic precompile address class.
 //!
 //! The guard deliberately reuses revm's normal `CreateCollision` path.  Once the
 //! guard derives and warms a reserved destination, it redirects the create input
 //! to the already-existing caller account.  revm then performs its normal nonce
 //! bump, collision result, gas accounting and journal handling.
 
-use outbe_primitives::addresses::is_stablecoin_address;
+use outbe_primitives::addresses::is_reserved_dynamic_precompile_address;
 use revm::{
     context::{Cfg, ContextTr, Database, JournalTr, LocalContextTr},
     context_interface::journaled_state::account::JournaledAccountTr,
@@ -115,7 +115,7 @@ where
     let caller = inputs.caller();
     let nonce = ctx.journal_mut().load_account_mut(caller)?.nonce();
     let destination = inputs.created_address(nonce);
-    if !is_stablecoin_address(destination) {
+    if !is_reserved_dynamic_precompile_address(destination) {
         return Ok(());
     }
 
@@ -156,7 +156,7 @@ where
         return result;
     };
     let destination = inputs.created_address(caller_info.account.nonce);
-    if is_stablecoin_address(destination) {
+    if is_reserved_dynamic_precompile_address(destination) {
         // As in revm's normal collision path, warm the real attempted address.
         // The host context retains a database failure, which aborts execution.
         let _ = context

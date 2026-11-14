@@ -81,8 +81,8 @@ fn dispatch_cycle_tick_records_preloaded_proposer() {
     let mut provider = configured_storage(1, 1_700_000_000);
     provider.enable_production_storage_gas_metering();
     provider.set_gas_limit(outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT);
-    provider.enable_metadosis_mutation_frame(
-        outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
+    provider.enable_scoped_mutation_frame(
+        outbe_primitives::storage::MutationPurposeTag::CycleLifecycle,
     );
     provider.enter(|storage| {
         let input = SystemTx::BeginBlock { step_index: 8 }.encode().unwrap();

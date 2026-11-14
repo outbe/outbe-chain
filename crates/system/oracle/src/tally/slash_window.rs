@@ -3,8 +3,8 @@
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
-use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::error::Result;
+use outbe_system_common::addresses::ORACLE_ADDRESS;
 
 use super::MAX_ORACLE_SLASH_WINDOW_VALIDATORS;
 use crate::errors::OracleError;

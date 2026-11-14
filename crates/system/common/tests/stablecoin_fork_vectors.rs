@@ -1,4 +1,4 @@
-use outbe_primitives::stablecoin_fork::stablecoin_v1_budget_for_measurement;
+use outbe_system_common::stablecoin_fork::stablecoin_v1_budget_for_measurement;
 
 #[test]
 fn benchmark_margin_rounds_up_and_detects_overflow() {

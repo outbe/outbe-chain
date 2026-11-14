@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_macros::{contract, storage_schema};
-use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 use outbe_primitives::storage::keys::address_u32_key;
+use outbe_system_common::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 
 /// EVM storage layout for the Hyperlane controller.
 ///

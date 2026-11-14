@@ -3,8 +3,8 @@
 //! two thirds of the rounds of the whole window.
 
 use alloy_primitives::U256;
-use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_system_common::address_pair::AddressPair;
+use outbe_system_common::time::SECONDS_PER_DAY;
 
 use crate::schema::OracleContract;
 
@@ -359,7 +359,7 @@ fn day_vwap_for(
     snapshots_in: impl Fn(u64) -> u64,
 ) -> Option<U256> {
     let day = ATOMIC_DAY_START;
-    let utc_day = outbe_primitives::time::timestamp_to_date_key(day);
+    let utc_day = outbe_system_common::time::timestamp_to_date_key(day);
     let mut result = None;
     with_storage_at(day + SECONDS_PER_DAY + 60, |storage| {
         let mut oracle = OracleContract::new(storage.clone());

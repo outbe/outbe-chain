@@ -3,10 +3,11 @@
 use alloy_primitives::{B256, U256};
 use outbe_tee::{
     tee_call::{verify_signed_rejection, SignedRejectionRef},
-    AttestationMetricClass, TeeAttestationError, TransportError,
+    TeeAttestationError, TransportError,
 };
 
 use super::{
+    errors::TRIBUTE_OFFER_ATTESTATION,
     nod_mine,
     protocol::{EnclaveRequest, EnclaveResponse},
     response_auth, tribute_day, tribute_v2,
@@ -151,9 +152,7 @@ pub(crate) fn authenticate_request(
                 TeeAttestationError::InputsHashMismatch { .. } => {
                     TransportError::Attestation("witness request commitment mismatch".into())
                 }
-                other => {
-                    TransportError::app_attestation(AttestationMetricClass::TributeOffer, other)
-                }
+                other => TransportError::app_attestation(TRIBUTE_OFFER_ATTESTATION, other),
             })
         }
         (

@@ -17,8 +17,6 @@ pub mod error;
 pub mod errors;
 pub mod filesystem;
 pub mod header;
-#[cfg(unix)]
-pub mod local_record;
 pub mod payload;
 pub mod projection;
 #[cfg(feature = "consensus")]
@@ -30,7 +28,6 @@ pub mod radicle_publication;
 pub mod reshare_artifact;
 pub mod runtime_audit_v1;
 pub mod signer;
-pub mod stablecoin_fork;
 pub mod storage;
 pub mod system_tx;
 pub mod system_tx_context;
@@ -48,7 +45,6 @@ pub mod time;
 pub mod transaction_call;
 pub mod validator_dto;
 pub mod validators;
-pub mod wwd_entity_id;
 pub mod zero_fee_types;
 
 pub use header::{

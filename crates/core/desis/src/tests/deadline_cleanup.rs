@@ -122,7 +122,7 @@ fn deadline_retirement_fits_budget_for_1088_and_64_accepted_bids() {
             calls_before,
             "retirement never queries or calls the router"
         );
-        let logs = provider.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
+        let logs = provider.get_events(outbe_system_common::addresses::DESIS_ADDRESS);
         assert_eq!(
             logs.iter()
                 .filter(|log| IDesis::IntexAuctionFailed::decode_log_data(log).is_ok())

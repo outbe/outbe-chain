@@ -52,9 +52,9 @@ pub struct DcapOnboardingContextV1 {
     pub binding_id: B256,
     pub policy_hash: B256,
     pub recipient_x25519: [u8; 32],
-    pub tribute_offer_public: [u8; 32],
+    pub network_encryption_public: [u8; 32],
     pub key_epoch: u64,
-    pub tribute_offer_epoch: u64,
+    pub network_encryption_epoch: u64,
 }
 
 impl DcapOnboardingContextV1 {
@@ -70,9 +70,9 @@ impl DcapOnboardingContextV1 {
         encoded.extend_from_slice(self.binding_id.as_slice());
         encoded.extend_from_slice(self.policy_hash.as_slice());
         encoded.extend_from_slice(&self.recipient_x25519);
-        encoded.extend_from_slice(&self.tribute_offer_public);
+        encoded.extend_from_slice(&self.network_encryption_public);
         encoded.extend_from_slice(&self.key_epoch.to_be_bytes());
-        encoded.extend_from_slice(&self.tribute_offer_epoch.to_be_bytes());
+        encoded.extend_from_slice(&self.network_encryption_epoch.to_be_bytes());
         debug_assert_eq!(encoded.len(), DCAP_ONBOARDING_CONTEXT_BYTES);
         encoded
     }
@@ -94,9 +94,9 @@ impl DcapOnboardingContextV1 {
             binding_id: B256::from(decoder.array::<32>()?),
             policy_hash: B256::from(decoder.array::<32>()?),
             recipient_x25519: decoder.array()?,
-            tribute_offer_public: decoder.array()?,
+            network_encryption_public: decoder.array()?,
             key_epoch: decoder.u64_be()?,
-            tribute_offer_epoch: decoder.u64_be()?,
+            network_encryption_epoch: decoder.u64_be()?,
         };
         decoder.finish()?;
         if value.binding_id.is_zero() || value.policy_hash.is_zero() {
@@ -474,9 +474,9 @@ pub struct RegistrationVerificationRequest<'a> {
     pub block_timestamp: u64,
     pub node_signature: &'a [u8; 65],
     pub enclave_signature: &'a [u8; 64],
-    pub expected_tribute_offer_public: [u8; 32],
+    pub expected_network_encryption_public: [u8; 32],
     pub key_epoch: u64,
-    pub tribute_offer_epoch: u64,
+    pub network_encryption_epoch: u64,
 }
 
 /// Commit to the exact purpose-bound onboarding verifier inputs. This is a
@@ -491,9 +491,9 @@ pub fn dcap_onboarding_request_hash(
         block_timestamp,
         node_signature,
         enclave_signature,
-        expected_tribute_offer_public,
+        expected_network_encryption_public,
         key_epoch,
-        tribute_offer_epoch,
+        network_encryption_epoch,
     } = request;
     if evidence.len() > MAX_ATTESTATION_EVIDENCE_BYTES {
         return Err(DcapRejectCodeV1::EvidenceNonCanonical);
@@ -522,9 +522,9 @@ pub fn dcap_onboarding_request_hash(
     preimage.extend_from_slice(&block_timestamp.to_be_bytes());
     preimage.extend_from_slice(node_signature);
     preimage.extend_from_slice(enclave_signature);
-    preimage.extend_from_slice(&expected_tribute_offer_public);
+    preimage.extend_from_slice(&expected_network_encryption_public);
     preimage.extend_from_slice(&key_epoch.to_be_bytes());
-    preimage.extend_from_slice(&tribute_offer_epoch.to_be_bytes());
+    preimage.extend_from_slice(&network_encryption_epoch.to_be_bytes());
     Ok(keccak256(preimage))
 }
 
@@ -737,9 +737,9 @@ mod tests {
             block_timestamp: timestamp,
             node_signature: &node_signature,
             enclave_signature: &enclave_signature,
-            expected_tribute_offer_public: offer_public,
+            expected_network_encryption_public: offer_public,
             key_epoch: 9,
-            tribute_offer_epoch: 10,
+            network_encryption_epoch: 10,
         };
         let request = dcap_onboarding_request_hash(input).unwrap();
 
@@ -756,7 +756,7 @@ mod tests {
         assert_ne!(
             request,
             dcap_onboarding_request_hash(RegistrationVerificationRequest {
-                tribute_offer_epoch: 11,
+                network_encryption_epoch: 11,
                 ..input
             })
             .unwrap()

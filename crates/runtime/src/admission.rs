@@ -474,7 +474,7 @@ where
         identity,
         anchors,
         || {
-            outbe_tee::resident_offer_public_key_state_v1()
+            outbe_tee::resident_network_encryption_public_key_state_v1()
                 .wrap_err("read the resident offer key for gated TEE lease admission")
         },
     )
@@ -574,12 +574,13 @@ where
         }
         LocalTeeRuntimeAdmissionV1::Rejected(_) => Ok(validator_now),
         LocalTeeRuntimeAdmissionV1::Ready { .. } => {
-            let on_chain_offer = outbe_consensus::validators::read_tee_offer_public_at_block(
-                protocol,
-                provider,
-                finalized.hash,
-            )
-            .wrap_err("read the canonical offer key for gated TEE lease admission")?;
+            let on_chain_offer =
+                outbe_consensus::validators::read_network_encryption_public_at_block(
+                    protocol,
+                    provider,
+                    finalized.hash,
+                )
+                .wrap_err("read the canonical offer key for gated TEE lease admission")?;
             let Some(resident_offer) = (!on_chain_offer.is_zero())
                 .then(read_resident_offer)
                 .transpose()?

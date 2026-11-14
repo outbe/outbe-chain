@@ -6,7 +6,8 @@ use outbe_primitives::block::ProtocolModule;
 #[test]
 fn l2_registration_conflict_is_atomic_with_the_outer_hook_batch() {
     use outbe_l2registry::L2RegistryContract;
-    use outbe_primitives::{addresses::L2_REGISTRY_ADDRESS, error::PrecompileError};
+    use outbe_primitives::error::PrecompileError;
+    use outbe_system_common::addresses::L2_REGISTRY_ADDRESS;
     use outbe_vote::schema::{BondState, ProposalStatus};
 
     const CREATED: u64 = 7;

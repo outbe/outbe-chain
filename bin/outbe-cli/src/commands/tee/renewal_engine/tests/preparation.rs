@@ -279,7 +279,7 @@ async fn direct_dev_prepare_builds_the_shared_calldata_and_relay_transaction() {
         schedule,
         policy,
         binding,
-        tribute_offer_public: B256::repeat_byte(0x5d),
+        network_encryption_public_key: B256::repeat_byte(0x5d),
     };
     let config = RenewalServiceConfigV1 {
         node_data_dir: tempfile::tempdir().unwrap().path().to_path_buf(),

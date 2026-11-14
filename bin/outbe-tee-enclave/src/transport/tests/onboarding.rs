@@ -331,9 +331,9 @@ fn gramine_direct_dev_onboarding_is_mode_gated_and_persists_before_activation() 
         binding_id: B256::repeat_byte(0x29),
         policy_hash: B256::repeat_byte(0x2a),
         recipient_x25519: target_manifest.recipient_x25519,
-        tribute_offer_public: resident.public(),
+        network_encryption_public: resident.public(),
         key_epoch: resident.key_epoch(),
-        tribute_offer_epoch: resident.tribute_offer_epoch(),
+        network_encryption_epoch: resident.tribute_offer_epoch(),
     };
     let prepared = complete_gramine_direct_dev_onboarding_response(
         context.context_hash(),
@@ -375,9 +375,9 @@ fn gramine_direct_dev_onboarding_is_mode_gated_and_persists_before_activation() 
     let request = EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 {
         artifact: onboarding_artifact.clone(),
         expected_intent_hash: context.intent_hash,
-        expected_tribute_offer_public: context.tribute_offer_public,
+        expected_network_encryption_public: context.network_encryption_public,
         expected_key_epoch: context.key_epoch,
-        expected_tribute_offer_epoch: context.tribute_offer_epoch,
+        expected_network_encryption_epoch: context.network_encryption_epoch,
     };
     assert_eq!(
         dcap_initialization.authorize_command(&request, false, SessionAuthorityV1::LocalNodeHost,),
@@ -394,9 +394,9 @@ fn gramine_direct_dev_onboarding_is_mode_gated_and_persists_before_activation() 
         OnboardingArtifactExpectations {
             artifact: &onboarding_artifact,
             expected_intent_hash: context.intent_hash,
-            expected_tribute_offer_public: context.tribute_offer_public,
+            expected_tribute_offer_public: context.network_encryption_public,
             expected_key_epoch: context.key_epoch,
-            expected_tribute_offer_epoch: context.tribute_offer_epoch,
+            expected_tribute_offer_epoch: context.network_encryption_epoch,
         },
         &target_keys,
         &target_offer_key,
@@ -404,15 +404,15 @@ fn gramine_direct_dev_onboarding_is_mode_gated_and_persists_before_activation() 
         Some(&target_initialization),
     );
     let EnclaveResponse::GramineDirectDevOnboardingArtifactIngestedV1 {
-        tribute_offer_public,
+        network_encryption_public,
     } = response
     else {
         panic!("DirectDev target rejected exact artifact: {response:?}");
     };
-    assert_eq!(tribute_offer_public, context.tribute_offer_public);
+    assert_eq!(network_encryption_public, context.network_encryption_public);
     assert_eq!(
         target_offer_key.get().map(DerivedTributeOfferKey::public),
-        Some(context.tribute_offer_public)
+        Some(context.network_encryption_public)
     );
     assert!(
         target_boot.sealed_root_path().exists(),
@@ -444,9 +444,9 @@ fn purpose_bound_target_derivation_requires_exact_manifest_context_and_nonce() {
         binding_id: B256::repeat_byte(0x39),
         policy_hash: B256::repeat_byte(0x3a),
         recipient_x25519: manifest.recipient_x25519,
-        tribute_offer_public: offer_public,
+        network_encryption_public: offer_public,
         key_epoch: 3,
-        tribute_offer_epoch: 4,
+        network_encryption_epoch: 4,
     };
     let artifact = crate::crypto::encrypt_onboarding_artifact_v1(&offer_secret, context, group_sig)
         .unwrap()
@@ -505,13 +505,13 @@ fn purpose_bound_target_derivation_requires_exact_manifest_context_and_nonce() {
     mutated.recipient_x25519 = [0x44; 32];
     reject_context(mutated);
     let mut mutated = context;
-    mutated.tribute_offer_public = [0x45; 32];
+    mutated.network_encryption_public = [0x45; 32];
     reject_context(mutated);
     let mut mutated = context;
     mutated.key_epoch = 5;
     reject_context(mutated);
     let mut mutated = context;
-    mutated.tribute_offer_epoch = 6;
+    mutated.network_encryption_epoch = 6;
     reject_context(mutated);
 
     assert!(derive_onboarding_offer_key_v1(
@@ -569,9 +569,9 @@ fn onboarding_cannot_decrypt_or_activate_before_finalized_admission_verifies() {
             binding_id: B256::repeat_byte(0x78),
             policy_hash: B256::repeat_byte(0x79),
             recipient_x25519: enclave.keys.tribute_offer_public(),
-            tribute_offer_public: [0x75; 32],
+            network_encryption_public: [0x75; 32],
             key_epoch: 0,
-            tribute_offer_epoch: 0,
+            network_encryption_epoch: 0,
         },
         nonce: [0x76; 12],
         ciphertext: vec![0x77; 112],

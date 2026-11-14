@@ -7,11 +7,11 @@ use crate::{
 };
 
 /// Runtime tag used by the execution provider to grant exactly one class of
-/// Metadosis mutation. The typed markers below keep command entrypoints from
+/// scoped state mutation. The typed markers below keep command entrypoints from
 /// accepting a lease issued for another cause.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
-pub enum MetadosisMutationPurposeTag {
+pub enum MutationPurposeTag {
     CycleLifecycle = 0,
 }
 
@@ -23,27 +23,27 @@ const PURPOSE_COUNT: usize = 1;
 const MAX_EXACT_BINDINGS_PER_PURPOSE: usize = 4;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct MetadosisMutationEntitlements {
+pub struct MutationEntitlements {
     unbound_counts: [u8; PURPOSE_COUNT],
     exact_bindings: [[Option<B256>; MAX_EXACT_BINDINGS_PER_PURPOSE]; PURPOSE_COUNT],
 }
 
-impl MetadosisMutationEntitlements {
+impl MutationEntitlements {
     pub const NONE: Self = Self {
         unbound_counts: [0; PURPOSE_COUNT],
         exact_bindings: [[None; MAX_EXACT_BINDINGS_PER_PURPOSE]; PURPOSE_COUNT],
     };
 
     #[must_use]
-    pub const fn only(purpose: MetadosisMutationPurposeTag) -> Self {
+    pub const fn only(purpose: MutationPurposeTag) -> Self {
         Self::repeated(purpose, 1)
     }
 
     /// Grants a fixed, route-owned number of sequential leases for one purpose.
     /// This exists because one authenticated system transaction can contain a
-    /// small, statically bounded sequence of distinct Metadosis commands.
+    /// small, statically bounded sequence of distinct scoped commands.
     #[must_use]
-    pub const fn repeated(purpose: MetadosisMutationPurposeTag, count: u8) -> Self {
+    pub const fn repeated(purpose: MutationPurposeTag, count: u8) -> Self {
         let mut counts = [0; PURPOSE_COUNT];
         counts[purpose as usize] = count;
         Self {
@@ -54,7 +54,7 @@ impl MetadosisMutationEntitlements {
 
     /// Grants one exact command identity for a provider-authenticated route.
     #[must_use]
-    pub const fn exact(purpose: MetadosisMutationPurposeTag, binding: B256) -> Self {
+    pub const fn exact(purpose: MutationPurposeTag, binding: B256) -> Self {
         let mut exact_bindings = [[None; MAX_EXACT_BINDINGS_PER_PURPOSE]; PURPOSE_COUNT];
         exact_bindings[purpose as usize][0] = Some(binding);
         Self {
@@ -87,7 +87,7 @@ impl MetadosisMutationEntitlements {
     }
 
     #[must_use]
-    pub const fn allows(self, purpose: MetadosisMutationPurposeTag) -> bool {
+    pub const fn allows(self, purpose: MutationPurposeTag) -> bool {
         self.unbound_counts[purpose as usize] != 0
             || has_exact_binding(self.exact_bindings[purpose as usize])
     }
@@ -95,7 +95,7 @@ impl MetadosisMutationEntitlements {
     /// Consumes one route entitlement. Exact route bindings take precedence.
     /// When the purpose has any exact bindings, this method rejects an unlisted
     /// caller-computed binding and does not consume another command's authority.
-    pub fn consume(&mut self, purpose: MetadosisMutationPurposeTag, binding: B256) -> bool {
+    pub fn consume(&mut self, purpose: MutationPurposeTag, binding: B256) -> bool {
         let exact = &mut self.exact_bindings[purpose as usize];
         if exact.iter().any(Option::is_some) {
             let Some(slot) = exact.iter_mut().find(|slot| **slot == Some(binding)) else {
@@ -112,7 +112,7 @@ impl MetadosisMutationEntitlements {
     }
 
     #[must_use]
-    pub fn expects(self, purpose: MetadosisMutationPurposeTag, binding: B256) -> bool {
+    pub fn expects(self, purpose: MutationPurposeTag, binding: B256) -> bool {
         self.exact_bindings[purpose as usize].contains(&Some(binding))
     }
 }
@@ -128,57 +128,15 @@ const fn has_exact_binding(bindings: [Option<B256>; MAX_EXACT_BINDINGS_PER_PURPO
     false
 }
 
+/// Computes a length-prefixed domain-separated binding digest over `(chain_id, block_number, timestamp)`.
 #[must_use]
-pub fn metadosis_init_genesis_binding(chain_id: u64, block_number: u64, timestamp: u64) -> B256 {
-    metadosis_block_binding(
-        b"METADOSIS_CREATE_DAY_V1",
-        chain_id,
-        block_number,
-        timestamp,
-    )
-}
-
-#[must_use]
-pub fn metadosis_cycle_allocation_binding(
-    chain_id: u64,
-    block_number: u64,
-    timestamp: u64,
-) -> B256 {
-    metadosis_block_binding(
-        b"METADOSIS_CYCLE_ALLOCATION_V1",
-        chain_id,
-        block_number,
-        timestamp,
-    )
-}
-
-#[must_use]
-pub fn metadosis_process_ready_binding(chain_id: u64, block_number: u64, timestamp: u64) -> B256 {
-    metadosis_block_binding(
-        b"METADOSIS_PROCESS_READY_V1",
-        chain_id,
-        block_number,
-        timestamp,
-    )
-}
-
-#[must_use]
-pub fn metadosis_advance_due_binding(chain_id: u64, block_number: u64, timestamp: u64) -> B256 {
-    metadosis_block_binding(
-        b"METADOSIS_ADVANCE_DUE_V1",
-        chain_id,
-        block_number,
-        timestamp,
-    )
-}
-
-fn metadosis_block_binding(
+pub fn scoped_block_binding(
     domain: &[u8],
     chain_id: u64,
     block_number: u64,
     timestamp: u64,
 ) -> B256 {
-    metadosis_command_binding(
+    scoped_command_binding(
         domain,
         &[
             &chain_id.to_be_bytes(),
@@ -188,7 +146,9 @@ fn metadosis_block_binding(
     )
 }
 
-fn metadosis_command_binding(domain: &[u8], fields: &[&[u8]]) -> B256 {
+/// Computes a length-prefixed domain-separated binding digest over `fields`.
+#[must_use]
+pub fn scoped_command_binding(domain: &[u8], fields: &[&[u8]]) -> B256 {
     let mut encoded = Vec::with_capacity(
         domain.len()
             + fields
@@ -208,9 +168,9 @@ mod sealed {
     pub trait Sealed {}
 }
 
-/// Sealed type-level purpose for a Metadosis mutation lease.
-pub trait MetadosisMutationPurpose: sealed::Sealed {
-    const TAG: MetadosisMutationPurposeTag;
+/// Sealed type-level purpose for a scoped mutation lease.
+pub trait ScopedMutationPurpose: sealed::Sealed {
+    const TAG: MutationPurposeTag;
 }
 
 macro_rules! define_purpose {
@@ -220,18 +180,18 @@ macro_rules! define_purpose {
 
         impl sealed::Sealed for $name {}
 
-        impl MetadosisMutationPurpose for $name {
-            const TAG: MetadosisMutationPurposeTag = MetadosisMutationPurposeTag::$tag;
+        impl ScopedMutationPurpose for $name {
+            const TAG: MutationPurposeTag = MutationPurposeTag::$tag;
         }
     };
 }
 
-define_purpose!(MetadosisCycleLifecycle, CycleLifecycle);
+define_purpose!(CycleLifecyclePurpose, CycleLifecycle);
 
 /// Non-cloneable, non-serializable, closure-bounded authority for exactly one
-/// Metadosis command class.
+/// scoped command class.
 ///
-/// Construction is private to [`StorageHandle::with_metadosis_mutation`]. The
+/// Construction is private to [`StorageHandle::with_scoped_mutation`]. The
 /// storage provider must independently grant the exact purpose for the current
 /// executor route before the callback runs. The lease is never passed to that
 /// callback. Callers cannot obtain the lease from a raw [`StorageHandle`].
@@ -239,30 +199,30 @@ define_purpose!(MetadosisCycleLifecycle, CycleLifecycle);
 /// A downstream crate cannot import or construct a lease:
 ///
 /// ```compile_fail
-/// use outbe_primitives::storage::MetadosisMutationLease;
+/// use outbe_primitives::storage::ScopedMutationLease;
 /// ```
 ///
 /// A raw storage handle cannot return the internal lease:
 ///
 /// ```compile_fail
 /// use alloy_primitives::B256;
-/// use outbe_primitives::storage::{MetadosisCycleLifecycle, StorageHandle};
+/// use outbe_primitives::storage::{CycleLifecyclePurpose, StorageHandle};
 ///
 /// fn escape(storage: StorageHandle<'_>) {
-///     let _escaped = storage.with_metadosis_mutation::<MetadosisCycleLifecycle, _>(
+///     let _escaped = storage.with_scoped_mutation::<CycleLifecyclePurpose, _>(
 ///         B256::ZERO,
 ///         |lease| Ok(lease),
 ///     );
 /// }
 /// ```
-struct MetadosisMutationLease<P: MetadosisMutationPurpose> {
+struct ScopedMutationLease<P: ScopedMutationPurpose> {
     binding: B256,
     chain_id: u64,
     block_number: u64,
     _purpose: PhantomData<P>,
 }
 
-impl<P: MetadosisMutationPurpose> MetadosisMutationLease<P> {
+impl<P: ScopedMutationPurpose> ScopedMutationLease<P> {
     fn new(binding: B256, chain_id: u64, block_number: u64) -> Self {
         Self {
             binding,
@@ -273,22 +233,22 @@ impl<P: MetadosisMutationPurpose> MetadosisMutationLease<P> {
     }
 }
 
-struct MetadosisMutationFrameGuard<'storage> {
+struct ScopedMutationFrameGuard<'storage> {
     storage: StorageHandle<'storage>,
-    purpose: MetadosisMutationPurposeTag,
+    purpose: MutationPurposeTag,
     binding: B256,
     closed: bool,
 }
 
-impl<'storage> MetadosisMutationFrameGuard<'storage> {
-    fn open<P: MetadosisMutationPurpose>(
+impl<'storage> ScopedMutationFrameGuard<'storage> {
+    fn open<P: ScopedMutationPurpose>(
         storage: &StorageHandle<'storage>,
         binding: B256,
         chain_id: u64,
         block_number: u64,
     ) -> Result<Self> {
         storage.with_provider(|provider| {
-            provider.begin_metadosis_mutation_frame(P::TAG, binding, chain_id, block_number)
+            provider.begin_scoped_mutation_frame(P::TAG, binding, chain_id, block_number)
         })?;
         Ok(Self {
             storage: storage.clone(),
@@ -301,38 +261,38 @@ impl<'storage> MetadosisMutationFrameGuard<'storage> {
     fn close(mut self, completed: bool) -> Result<()> {
         self.closed = true;
         self.storage.with_provider(|provider| {
-            provider.finish_metadosis_mutation_frame(self.purpose, self.binding, completed)
+            provider.finish_scoped_mutation_frame(self.purpose, self.binding, completed)
         })
     }
 }
 
-impl Drop for MetadosisMutationFrameGuard<'_> {
+impl Drop for ScopedMutationFrameGuard<'_> {
     fn drop(&mut self) {
         if !self.closed {
             let _ = self.storage.with_provider(|provider| {
-                provider.finish_metadosis_mutation_frame(self.purpose, self.binding, false)
+                provider.finish_scoped_mutation_frame(self.purpose, self.binding, false)
             });
         }
     }
 }
 
 impl<'storage> StorageHandle<'storage> {
-    /// Runs one purpose-bound Metadosis command in a provider-granted frame and
-    /// a journal checkpoint. The provider rejects nested Metadosis mutation
+    /// Runs one purpose-bound command in a provider-granted frame and
+    /// a journal checkpoint. The provider rejects nested scoped mutation
     /// before the callback (and therefore before aggregate reads).
-    pub fn with_metadosis_mutation<P, R>(
+    pub fn with_scoped_mutation<P, R>(
         &self,
         binding: B256,
         f: impl FnOnce() -> Result<R>,
     ) -> Result<R>
     where
-        P: MetadosisMutationPurpose,
+        P: ScopedMutationPurpose,
     {
         let chain_id = self.chain_id()?;
         let block_number = self.block_number()?;
         let checkpoint: CheckpointGuard<'storage> = self.checkpoint_guard()?;
-        let frame = MetadosisMutationFrameGuard::open::<P>(self, binding, chain_id, block_number)?;
-        let lease = MetadosisMutationLease::<P>::new(binding, chain_id, block_number);
+        let frame = ScopedMutationFrameGuard::open::<P>(self, binding, chain_id, block_number)?;
+        let lease = ScopedMutationLease::<P>::new(binding, chain_id, block_number);
         let outcome = f();
         // Keep the non-forgeable lease alive for the full command callback.
         let _ = (lease.binding, lease.chain_id, lease.block_number);
@@ -359,13 +319,13 @@ mod tests {
     fn matching_purpose_commits_and_binds_chain_and_block() {
         let mut provider = HashMapStorageProvider::new(42);
         provider.set_block_number(9);
-        provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
+        provider.enable_scoped_mutation_frame(MutationPurposeTag::CycleLifecycle);
         let binding = B256::repeat_byte(0x11);
 
         provider
             .enter(|storage| {
                 let command_storage = storage.clone();
-                storage.with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
+                storage.with_scoped_mutation::<CycleLifecyclePurpose, _>(binding, || {
                     assert_eq!(command_storage.chain_id()?, 42);
                     assert_eq!(command_storage.block_number()?, 9);
                     command_storage.sstore(OWNER, SLOT, U256::from(7))
@@ -379,11 +339,11 @@ mod tests {
     #[test]
     fn callback_error_reverts_the_entire_frame() {
         let mut provider = HashMapStorageProvider::new(1);
-        provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
+        provider.enable_scoped_mutation_frame(MutationPurposeTag::CycleLifecycle);
 
         let result = provider.enter(|storage| {
             let command_storage = storage.clone();
-            storage.with_metadosis_mutation::<MetadosisCycleLifecycle, ()>(
+            storage.with_scoped_mutation::<CycleLifecyclePurpose, ()>(
                 B256::repeat_byte(0x22),
                 || {
                     command_storage.sstore(OWNER, SLOT, U256::from(9))?;
@@ -399,17 +359,17 @@ mod tests {
     #[test]
     fn nested_mutation_rejects_before_nested_callback() {
         let mut provider = HashMapStorageProvider::new(1);
-        provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
+        provider.enable_scoped_mutation_frame(MutationPurposeTag::CycleLifecycle);
         let nested_called = Cell::new(false);
 
         provider
             .enter(|storage| {
                 let nested_storage = storage.clone();
-                storage.with_metadosis_mutation::<MetadosisCycleLifecycle, _>(
+                storage.with_scoped_mutation::<CycleLifecyclePurpose, _>(
                     B256::repeat_byte(0x44),
                     || {
                         let nested = nested_storage
-                            .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(
+                            .with_scoped_mutation::<CycleLifecyclePurpose, _>(
                                 B256::repeat_byte(0x45),
                                 || {
                                     nested_called.set(true);
@@ -429,11 +389,11 @@ mod tests {
     #[test]
     fn test_provider_entitlement_is_single_use_like_production() {
         let mut provider = HashMapStorageProvider::new(1);
-        provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
+        provider.enable_scoped_mutation_frame(MutationPurposeTag::CycleLifecycle);
 
         provider
             .enter(|storage| {
-                storage.with_metadosis_mutation::<MetadosisCycleLifecycle, _>(
+                storage.with_scoped_mutation::<CycleLifecyclePurpose, _>(
                     B256::repeat_byte(0x51),
                     || Ok(()),
                 )
@@ -442,7 +402,7 @@ mod tests {
 
         let called = Cell::new(false);
         let result = provider.enter(|storage| {
-            storage.with_metadosis_mutation::<MetadosisCycleLifecycle, _>(
+            storage.with_scoped_mutation::<CycleLifecyclePurpose, _>(
                 B256::repeat_byte(0x52),
                 || {
                     called.set(true);

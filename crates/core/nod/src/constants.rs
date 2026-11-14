@@ -1,4 +1,4 @@
-use outbe_primitives::time::SECONDS_PER_DAY_U32;
+use outbe_system_common::time::SECONDS_PER_DAY_U32;
 
 /// ERC-721 metadata surface values.
 pub const TOKEN_NAME: &str = "Nod";

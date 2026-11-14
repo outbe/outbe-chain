@@ -19,10 +19,22 @@ pub(super) struct DiscoveredInclusion {
     pub(super) raw_target: String,
 }
 
-pub(super) fn extract_inclusions(
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct DiscoveredStringLiteral {
+    pub(super) line: usize,
+    pub(super) value: String,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(super) struct ScanOutput {
+    pub(super) inclusions: Vec<DiscoveredInclusion>,
+    pub(super) string_literals: Vec<DiscoveredStringLiteral>,
+}
+
+pub(super) fn scan_source_items(
     source_file: &Path,
     src: &str,
-) -> Result<Vec<DiscoveredInclusion>, LayerBoundaryError> {
+) -> Result<ScanOutput, LayerBoundaryError> {
     Scanner::new(source_file, src).scan_all()
 }
 
@@ -39,17 +51,20 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    fn scan_all(&mut self) -> Result<Vec<DiscoveredInclusion>, LayerBoundaryError> {
-        let mut out = Vec::new();
+    fn scan_all(&mut self) -> Result<ScanOutput, LayerBoundaryError> {
+        let mut out = ScanOutput::default();
         while !self.lex.is_eof() {
             self.lex.skip_ws_and_comments();
             let Some(byte) = self.lex.peek() else {
                 break;
             };
             if byte == b'#' {
-                self.scan_hash(&mut out)?;
+                self.scan_hash(&mut out.inclusions)?;
             } else if is_ident_start(byte) && !self.lex.starts_literal_token() {
-                self.scan_identifier(&mut out)?;
+                self.scan_identifier(&mut out.inclusions)?;
+            } else if let Some((line, value)) = self.lex.try_read_any_string_literal() {
+                out.string_literals
+                    .push(DiscoveredStringLiteral { line, value });
             } else {
                 self.lex.skip_single_atom();
             }

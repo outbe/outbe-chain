@@ -3,10 +3,10 @@
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
-    storage::{
-        metadosis_advance_due_binding, metadosis_init_genesis_binding, MetadosisCycleLifecycle,
-        StorageHandle,
-    },
+    storage::{CycleLifecyclePurpose, StorageHandle},
+};
+use outbe_system_common::{
+    metadosis_bindings::{metadosis_advance_due_binding, metadosis_init_genesis_binding},
     time::{
         date_key_to_utc_timestamp, next_date_key, timestamp_to_date_key, WorldwideDay,
         SECONDS_PER_DAY, UTC_PLUS_14_OFFSET,
@@ -213,7 +213,7 @@ fn run_with_wwd_mutation_binding(
     let command_storage = ctx.storage.clone();
     ctx.storage
         .clone()
-        .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
+        .with_scoped_mutation::<CycleLifecyclePurpose, _>(binding, || {
             ValidatedWwdAggregate::load_and_validate(command_storage.clone())?;
             advance_worldwide_days(ctx)?;
             ValidatedWwdAggregate::load_and_validate(command_storage)?;

@@ -37,7 +37,7 @@ fn scurve_len_overflow_rejects_before_any_owner_write() {
         assert!(crate::scurve::store_scurve_entry(
             oracle,
             pair,
-            outbe_primitives::time::WorldwideDay::from_timestamp(ATOMIC_DAY_START),
+            outbe_system_common::time::WorldwideDay::from_timestamp(ATOMIC_DAY_START),
             coen_iso(125),
         )
         .is_err());

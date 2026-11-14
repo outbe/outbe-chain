@@ -1,9 +1,9 @@
 //! Scheduling of a pass that walks one closed UTC day at a time, every closed day in
 //! order.
 
+use crate::time::{next_date_key, previous_date_key, TimeError};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::dsl::Value;
-use outbe_primitives::time::{next_date_key, previous_date_key, TimeError};
 
 /// A pass step failed in storage or in the date helper.
 #[derive(Debug)]

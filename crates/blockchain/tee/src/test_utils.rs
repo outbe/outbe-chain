@@ -101,7 +101,7 @@ fn hash_triplet(seed: u8) -> [B256; 3] {
 pub fn onboarding_context_fixture(
     seeds: [u8; 9],
     key_epoch: u64,
-    tribute_offer_epoch: u64,
+    network_encryption_epoch: u64,
 ) -> DcapOnboardingContextV1 {
     let [chain, genesis, intent, node, enclave, binding, policy, recipient, offer] = seeds;
     DcapOnboardingContextV1 {
@@ -113,9 +113,9 @@ pub fn onboarding_context_fixture(
         binding_id: B256::repeat_byte(binding),
         policy_hash: B256::repeat_byte(policy),
         recipient_x25519: [recipient; 32],
-        tribute_offer_public: [offer; 32],
+        network_encryption_public: [offer; 32],
         key_epoch,
-        tribute_offer_epoch,
+        network_encryption_epoch,
     }
 }
 

@@ -76,10 +76,10 @@ pub struct TeeBootstrapAuthorityV2 {
     pub committee_snapshot_hash: B256,
     pub committee_snapshot_block: u64,
     pub key_epoch: u64,
-    pub tribute_offer_epoch: u64,
+    pub network_encryption_epoch: u64,
     pub dkg_transcript_hash: B256,
-    pub tribute_offer_public_key: B256,
-    pub tribute_offer_group_public_key: Bytes,
+    pub network_encryption_public_key: B256,
+    pub network_encryption_group_public_key: Bytes,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -183,12 +183,12 @@ impl TeeBootstrapV2 {
         let mut len = 4usize;
         checked_add_len(&mut len, 4)?;
         checked_add_len(&mut len, policy_len)?;
-        // committee hash + three epochs/heights + transcript hash + offer key
+        // committee hash + three epochs/heights + transcript hash + network encryption key
         checked_add_len(&mut len, 32 + 8 * 3 + 32 + 32)?;
         checked_add_len(&mut len, 4)?;
         checked_add_len(
             &mut len,
-            self.authority.tribute_offer_group_public_key.len(),
+            self.authority.network_encryption_group_public_key.len(),
         )?;
         checked_add_len(&mut len, 2)?;
         for component in &self.collateral_pool {

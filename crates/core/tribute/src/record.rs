@@ -5,8 +5,8 @@ use std::ops::Deref;
 use alloy_primitives::{Address, U256};
 use outbe_core_common::entity_codec::{CanonicalBodyError, StoredBody};
 use outbe_core_common::tribute_encryption::EncryptedTributeV2;
-use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::wwd_entity_id::WwdEntityId;
+use outbe_core_common::wwd_entity_id::WwdEntityId;
+use outbe_system_common::time::WorldwideDay;
 
 use crate::TributeData;
 

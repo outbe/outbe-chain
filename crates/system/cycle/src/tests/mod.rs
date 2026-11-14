@@ -16,7 +16,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_primitives::storage::{MetadosisMutationPurposeTag, StorageHandle};
+use outbe_primitives::storage::{MutationPurposeTag, StorageHandle};
 use outbe_validatorset::contract::ValidatorSet;
 
 use crate::schema::Cycle;
@@ -28,7 +28,7 @@ use crate::triggers::{
 pub(super) const CHAIN_ID: u64 = 1;
 /// Genesis at midnight UTC of 2024-01-01.
 pub(super) const GENESIS_TS: u64 = 1_704_067_200;
-pub(super) use outbe_primitives::time::SECONDS_PER_DAY;
+pub(super) use outbe_system_common::time::SECONDS_PER_DAY;
 pub(super) const EMISSION_LIMIT_1_ID: u32 = TriggerId::ProcessEmissionDay.as_u32();
 
 pub(super) fn cycle_storage() -> HashMapStorageProvider {
@@ -78,13 +78,13 @@ pub(super) fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
         outbe_oracle::api::register_pair(ctx.storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
     });
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 4);
     // This synthetic router accepts outbound messages and has no target chains.
     // Send callers ignore returndata; views receive the real targetsOf ABI shape.
     // Other addresses remain unsupported, so infrastructure failures still surface.
     use alloy_sol_types::SolValue;
     storage.stub_sub_call_at(
-        outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS,
+        outbe_desis::constants::ORIGIN_ROUTER_ADDRESS,
         (Vec::<u32>::new(),).abi_encode_params().into(),
     );
     storage.enable_production_storage_gas_metering();
@@ -137,8 +137,8 @@ pub(super) fn seed_fresh_reward_oracle(ctx: &BlockRuntimeContext) {
         .write(29_991_231)
         .unwrap();
     let (_, index) = outbe_oracle::api::require_coen_pair(ctx.storage.clone(), 840).unwrap();
-    let day = outbe_primitives::time::previous_date_key(
-        outbe_primitives::time::timestamp_to_date_key(ctx.block.timestamp),
+    let day = outbe_system_common::time::previous_date_key(
+        outbe_system_common::time::timestamp_to_date_key(ctx.block.timestamp),
     )
     .expect("date step");
     oracle
@@ -213,7 +213,7 @@ pub(super) fn seed_reward_cca(storage: &outbe_primitives::storage::StorageHandle
     let cca = Address::repeat_byte(0xc1);
     storage
         .increase_balance(
-            outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
+            outbe_system_common::addresses::CCA_REGISTRY_ADDRESS,
             outbe_ccaregistry::constants::BOND_REQUIREMENT,
         )
         .unwrap();

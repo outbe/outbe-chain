@@ -3,9 +3,9 @@
 use std::str::FromStr;
 
 use alloy_primitives::{Address, U256};
-use outbe_primitives::addresses::L2_REGISTRY_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
+use outbe_system_common::addresses::L2_REGISTRY_ADDRESS;
 use outbe_system_common::vote_target::{TargetExecutionOutcome, VoteTarget, VoteTargetContext};
 use serde::Deserialize;
 

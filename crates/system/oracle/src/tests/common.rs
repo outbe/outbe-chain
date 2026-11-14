@@ -6,7 +6,7 @@ use alloy_primitives::{address, Address, U256};
 use outbe_primitives::error::Result as PrecompileResult;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_system_common::time::SECONDS_PER_DAY;
 use outbe_system_common::units::checked_whole_coen_to_native;
 use outbe_validatorset::StakeProjection;
 
@@ -170,7 +170,7 @@ pub(super) fn write_snapshot_mutation(storage: StorageHandle<'_>) -> PrecompileR
 }
 
 pub(super) fn store_wwd_snapshot_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
-    let worldwide_day = outbe_primitives::time::WorldwideDay::from_timestamp(ATOMIC_DAY_START);
+    let worldwide_day = outbe_system_common::time::WorldwideDay::from_timestamp(ATOMIC_DAY_START);
     let start_time = worldwide_day.start_timestamp().unwrap();
     OracleContract::new(storage).store_worldwide_day_vwap_snapshot(
         worldwide_day,
@@ -182,7 +182,7 @@ pub(super) fn store_wwd_snapshot_mutation(storage: StorageHandle<'_>) -> Precomp
 
 pub(super) fn finalize_utc_day_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
     OracleContract::new(storage).finalize_utc_day_vwap(
-        outbe_primitives::time::timestamp_to_date_key(ATOMIC_DAY_START),
+        outbe_system_common::time::timestamp_to_date_key(ATOMIC_DAY_START),
     )
 }
 
@@ -190,7 +190,7 @@ pub(super) fn store_scurve_mutation(storage: StorageHandle<'_>) -> PrecompileRes
     crate::scurve::store_scurve_entry(
         &mut OracleContract::new(storage),
         pair_key(COEN, usd()),
-        outbe_primitives::time::WorldwideDay::from_timestamp(ATOMIC_DAY_START),
+        outbe_system_common::time::WorldwideDay::from_timestamp(ATOMIC_DAY_START),
         coen_iso(125),
     )
     .map(|_| ())

@@ -6,8 +6,8 @@ use outbe_intex::SeriesId;
 use outbe_oracle::api::AddressPair;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::previous_date_key;
-use outbe_primitives::time::EmissionDate;
+use outbe_system_common::time::previous_date_key;
+use outbe_system_common::time::EmissionDate;
 
 use crate::called;
 use outbe_intex::IntexContract;
@@ -18,7 +18,7 @@ const REFERENCE_ISO: u16 = 840;
 const LAST_DAY: u32 = 20260212;
 const WINDOW: u32 = 28;
 const THRESHOLD: u32 = 21;
-use outbe_primitives::time::SECONDS_PER_DAY as DAY_SECS;
+use outbe_system_common::time::SECONDS_PER_DAY as DAY_SECS;
 
 use super::with_factory as with_oracle;
 use super::{set_vwap, setup_pair};
@@ -182,7 +182,7 @@ fn a_group_issued_inside_the_window_counts_only_its_own_days() {
 }
 
 fn day_start(date_key: u32) -> u64 {
-    outbe_primitives::time::date_key_to_utc_timestamp(date_key).unwrap()
+    outbe_system_common::time::date_key_to_utc_timestamp(date_key).unwrap()
 }
 
 /// A series with the protocol call parameters and the given trigger.

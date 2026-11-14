@@ -45,7 +45,7 @@ pub(super) async fn pubkey(
         connect_committed_node_host_enclave(enclave_socket, node_data_dir).map_err(|source| {
             TeeIdentityError::ConnectEnclave {
                 socket: enclave_socket.to_owned(),
-                source,
+                source: Box::new(source),
             }
         })?;
     let (offer_key_ready, offer_pub, tee_bls_pub) = match enclave
@@ -60,7 +60,7 @@ pub(super) async fn pubkey(
         Ok(other) => {
             return Err(TeeIdentityError::UnexpectedPublicKeysResponse(format!("{other:?}")).into())
         }
-        Err(e) => return Err(TeeIdentityError::GetPublicKeysFailed(e).into()),
+        Err(e) => return Err(TeeIdentityError::GetPublicKeysFailed(Box::new(e)).into()),
     };
     println!(
         "enclave offer pubkey (recipient_x25519): 0x{}",

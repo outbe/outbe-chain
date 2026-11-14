@@ -1,12 +1,14 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolError, SolEvent};
 use outbe_primitives::{
-    addresses::{PROMIS_LIMIT_ADDRESS, UPDATE_ADDRESS, VOTE_ADDRESS},
     error::{PrecompileError, Result},
-    stablecoin_fork::MAX_PENDING_PUBLIC_BONDED_PROPOSALS,
     storage::StorageHandle,
 };
 use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
+use outbe_system_common::{
+    addresses::{PROMIS_LIMIT_ADDRESS, UPDATE_ADDRESS, VOTE_ADDRESS},
+    stablecoin_fork::MAX_PENDING_PUBLIC_BONDED_PROPOSALS,
+};
 
 use outbe_promislimit::{precompile::IPromisLimit, BurnSource, PromisLimitContract};
 

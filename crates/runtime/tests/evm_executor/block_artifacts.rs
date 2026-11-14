@@ -1,12 +1,12 @@
 use super::*;
-use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_system_common::time::SECONDS_PER_DAY;
 
 #[test]
 fn proposer_and_validator_state_matches_after_a_gem_issue() {
     use outbe_gem::precompile::IGem;
     use outbe_gemfactory::{precompile::IGemFactory, schema::GemPosition, GemFactoryContract};
-    use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
     use outbe_primitives::reshare_artifact::decode_outbe_block_artifacts;
+    use outbe_system_common::addresses::GEM_FACTORY_ADDRESS;
 
     outbe_chain_constants::initialize(None).unwrap();
     // The minimal parity variant issues a Gem from a seeded merchant position.
@@ -51,8 +51,8 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
                         merchant: Address(*user.signer()),
                         // Dated by the priced day, which floors the merchant gem.
                         source_series_id: outbe_intex::SeriesId::pack(
-                            outbe_primitives::time::previous_date_key(
-                                outbe_primitives::time::timestamp_to_date_key(block_ts),
+                            outbe_system_common::time::previous_date_key(
+                                outbe_system_common::time::timestamp_to_date_key(block_ts),
                             )
                             .unwrap(),
                             *b"USD",
@@ -153,7 +153,7 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
         assert!(state
             .bundle_state
             .state()
-            .contains_key(&outbe_primitives::addresses::GEM_ADDRESS));
+            .contains_key(&outbe_system_common::addresses::GEM_ADDRESS));
         assert_eq!(result.receipts.len(), signed_body.len() + 1 + 5);
         assert!(result.receipts.iter().all(|receipt| receipt.success));
         let logs = || {
@@ -161,7 +161,7 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
                 .receipts
                 .iter()
                 .flat_map(|receipt| &receipt.logs)
-                .filter(|log| log.address == outbe_primitives::addresses::GEM_ADDRESS)
+                .filter(|log| log.address == outbe_system_common::addresses::GEM_ADDRESS)
         };
         let gem = logs()
             .find_map(|log| IGem::Transfer::decode_log_data(&log.data).ok())

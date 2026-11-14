@@ -52,7 +52,7 @@ fn requeue_called(storage: &StorageHandle<'_>, series_id: SeriesId, close_at: u6
 
 fn reopen_day(storage: &StorageHandle<'_>, deadline: u64) -> Result<()> {
     let intex = outbe_intex::IntexContract::new(storage.clone());
-    let day = outbe_primitives::time::timestamp_to_date_key(deadline);
+    let day = outbe_system_common::time::timestamp_to_date_key(deadline);
     intex.call_sweep_day.write(day)?;
     intex
         .call_latest_day
@@ -72,7 +72,7 @@ pub(crate) fn dispatch(storage: &StorageHandle<'_>, data: &[u8]) -> Option<Resul
         return Some(guarded(storage, || {
             let yesterday = storage
                 .now_secs()?
-                .checked_sub(outbe_primitives::time::SECONDS_PER_DAY)
+                .checked_sub(outbe_system_common::time::SECONDS_PER_DAY)
                 .ok_or_else(|| {
                     outbe_primitives::error::PrecompileError::revert(
                         "no closed UTC day for test rescan",
@@ -108,7 +108,7 @@ fn seed_day_vwaps_for_test(
     // the pair's registry index, and the watermark the begin-block hook would move.
     // This adds nothing to the Oracle crate. It only writes data for the days the crate serves.
     use outbe_oracle::schema::OracleContract;
-    use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
+    use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 
     let oracle = OracleContract::new(storage.clone());
     let pair = outbe_oracle::api::AddressPair::new_coen_to(call.isoCode);

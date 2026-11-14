@@ -19,8 +19,8 @@ use outbe_primitives::{
     consensus_metadata::CertifiedParentAccountingMetadata,
     error::Result,
     storage::finalized_guard_ring::{FinalizedGuardRing, FINALIZED_GUARD_RETAIN},
-    time::timestamp_to_date_key,
 };
+use outbe_system_common::time::timestamp_to_date_key;
 
 use crate::errors::RewardsError;
 use crate::schema::Rewards;
@@ -618,7 +618,7 @@ mod tests {
 
             let days: Vec<u32> = events
                 .iter()
-                .map(|e| outbe_primitives::time::timestamp_to_date_key(e.fb_timestamp))
+                .map(|e| outbe_system_common::time::timestamp_to_date_key(e.fb_timestamp))
                 .collect::<std::collections::BTreeSet<_>>()
                 .into_iter()
                 .collect();

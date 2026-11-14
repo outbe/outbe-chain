@@ -4,10 +4,10 @@
 use alloy_primitives::{Address, LogData};
 use alloy_sol_types::SolEvent;
 
-use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::dsl::{Map, Set};
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
 
 use crate::api::IVaultRouter;
 use crate::errors::VaultRouterError;

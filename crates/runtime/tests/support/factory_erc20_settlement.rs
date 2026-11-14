@@ -7,10 +7,8 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::sol;
 use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
 use outbe_oracle::test_support::seed_trailing_vwap_window;
-use outbe_primitives::{
-    addresses::VAULT_ROUTER_ADDRESS,
-    storage::{StorageHandle, SubCallOutput, SubCallStatus},
-};
+use outbe_primitives::storage::{StorageHandle, SubCallOutput, SubCallStatus};
+use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_vaultrouter::{
     api::IVaultRouter::StablesSource,
     test_support::{register_source, register_vault},

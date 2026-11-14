@@ -2,7 +2,7 @@ use crate::precompile::ITributeFactory;
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
-use outbe_primitives::time::WorldwideDay;
+use outbe_system_common::time::WorldwideDay;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -31,7 +31,7 @@ fn revert_with<E: SolError>(error: E) -> PrecompileError {
     PrecompileError::RevertBytes(Bytes::from(error.abi_encode()))
 }
 
-pub(crate) fn date_step_error(err: outbe_primitives::time::TimeError) -> PrecompileError {
+pub(crate) fn date_step_error(err: outbe_system_common::time::TimeError) -> PrecompileError {
     match err.date_step() {
         Some((kind, date_key)) => WwdCallerError::DateStep { kind, date_key }.into(),
         None => PrecompileError::Fatal(err.to_string()),

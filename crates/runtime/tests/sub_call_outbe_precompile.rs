@@ -4,15 +4,15 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 use outbe_evm::sub_call;
 use outbe_nod::precompile::INod;
-use outbe_primitives::addresses::{
-    NOD_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS, UPDATE_ADDRESS,
-};
-use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     block::BlockContext,
     storage::{direct::DirectStorageProvider, StorageHandle, SubCallInput, SubCallStatus},
 };
 use outbe_stablecoinpolicy::precompile::IStablecoinPolicyRegistry;
+use outbe_system_common::addresses::{
+    NOD_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS, UPDATE_ADDRESS,
+};
+use outbe_system_common::time::WorldwideDay;
 use revm::{
     context::{ContextTr as _, LocalContextTr as _},
     database::{CacheDB, EmptyDB},

@@ -239,15 +239,17 @@ mod scalar {
     use super::*;
 
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-    pub struct StoredWord(pub u64);
+    pub struct StoredWord(pub u32);
 
     impl outbe_primitives::storage::types::StorableType for StoredWord {
         const SLOTS: usize = 1;
     }
 
     impl outbe_primitives::storage::types::Storable for StoredWord {
+        const BYTES: usize = 4;
+
         fn from_word(word: U256) -> Self {
-            Self(word.to::<u64>())
+            Self(word.to::<u32>())
         }
 
         fn to_word(&self) -> U256 {
@@ -255,11 +257,11 @@ mod scalar {
         }
     }
 
-    pub type WorldwideDay = StoredWord;
+    pub type PackedDateKey = StoredWord;
 }
 
 #[storage_record(exists_field = present)]
-pub struct WorldwideDay {
+pub struct PackedDateKey {
     #[key]
     pub id: u32,
     pub present: bool,
@@ -277,18 +279,18 @@ pub struct WorldwideDay {
 #[contract(addr = ADDRESS)]
 pub struct DayRecords {
     pub head: outbe_primitives::storage::dsl::Value<u64>,
-    pub records: outbe_primitives::storage::dsl::Map<u32, WorldwideDay>,
+    pub records: outbe_primitives::storage::dsl::Map<u32, PackedDateKey>,
     pub active: StorageSet<u32>,
     pub scalar_values: outbe_primitives::storage::dsl::Map<u32, scalar::StoredWord>,
-    pub aliased_values: outbe_primitives::storage::dsl::Map<u32, scalar::WorldwideDay>,
+    pub aliased_values: outbe_primitives::storage::dsl::Map<u32, scalar::PackedDateKey>,
     pub tail: outbe_primitives::storage::dsl::Value<u64>,
 }
 
 #[test]
 fn record_and_scalar_alias_with_same_name_keep_independent_storage() {
-    assert_eq!(<WorldwideDay as StorageRecord>::SLOTS, 10);
+    assert_eq!(<PackedDateKey as StorageRecord>::SLOTS, 10);
     assert_eq!(
-        <WorldwideDay as outbe_primitives::storage::types::StorableType>::SLOTS,
+        <PackedDateKey as outbe_primitives::storage::types::StorableType>::SLOTS,
         10,
     );
     let mut provider = HashMapStorageProvider::new(1);
@@ -299,7 +301,7 @@ fn record_and_scalar_alias_with_same_name_keep_independent_storage() {
         assert_eq!(contract.aliased_values.base_slot(), U256::from(14));
         assert_eq!(contract.tail.slot(), U256::from(15));
 
-        let mut record = WorldwideDay::with_key(20260109);
+        let mut record = PackedDateKey::with_key(20260109);
         record.present = true;
         record.forming_start = 1_700_000_000;
         let entry = contract.records.entry(record.id);
@@ -350,6 +352,9 @@ pub struct PackedRecord {
     pub active: bool,
     #[attribute(order = 6)]
     pub next_counter: u64,
+    #[attribute(order = 7)]
+    #[field(bytes = 4)]
+    pub date_key: scalar::PackedDateKey,
 }
 
 #[contract(addr = ADDRESS)]
@@ -362,7 +367,7 @@ pub struct PackedRecordContract {
 fn packed_storage_record_packs_subword_fields_without_clobbering() {
     // Slot 0: `principal` (U256, 32B)
     // Slot 1: `owner` (20B @ 0) + `timestamp` (8B @ 20) + `currency` (2B @ 28) + `status` (1B @ 30) + `active` (1B @ 31) = 32B
-    // Slot 2: `next_counter` (8B @ 0)
+    // Slot 2: `next_counter` (8B @ 0) + `date_key` (4B @ 8)
     assert_eq!(<PackedRecord as StorageRecord>::SLOTS, 3);
 
     let mut provider = HashMapStorageProvider::new(1);
@@ -379,9 +384,11 @@ fn packed_storage_record_packs_subword_fields_without_clobbering() {
         assert_eq!(entry.status().offset(), 30);
         assert_eq!(entry.active().offset(), 31);
         assert_eq!(entry.next_counter().offset(), 0);
+        assert_eq!(entry.date_key().offset(), 8);
         assert_eq!(entry.owner().slot(), entry.timestamp().slot());
         assert_eq!(entry.owner().slot(), entry.active().slot());
         assert_ne!(entry.owner().slot(), entry.next_counter().slot());
+        assert_eq!(entry.next_counter().slot(), entry.date_key().slot());
 
         let record = PackedRecord {
             id: 7,
@@ -392,6 +399,7 @@ fn packed_storage_record_packs_subword_fields_without_clobbering() {
             status: 3,
             active: true,
             next_counter: 99,
+            date_key: scalar::StoredWord(20_260_109),
         };
         entry.create(&record).unwrap();
         assert_eq!(entry.load().unwrap(), Some(record.clone()));
@@ -405,6 +413,7 @@ fn packed_storage_record_packs_subword_fields_without_clobbering() {
         assert_eq!(loaded.status, record.status);
         assert_eq!(loaded.active, record.active);
         assert_eq!(loaded.next_counter, record.next_counter);
+        assert_eq!(loaded.date_key, record.date_key);
 
         entry.delete().unwrap();
         assert!(!entry.exists().unwrap());

@@ -30,7 +30,7 @@ pub enum CredisError {
 
 #[cfg(any(test, feature = "e2e-test", feature = "test-utils"))]
 pub(crate) fn date_step_error(
-    err: outbe_primitives::time::TimeError,
+    err: outbe_system_common::time::TimeError,
 ) -> outbe_primitives::error::PrecompileError {
     match err.date_step() {
         Some((kind, date_key)) => CredisError::DateStep { kind, date_key }.into(),

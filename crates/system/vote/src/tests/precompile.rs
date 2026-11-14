@@ -1,10 +1,10 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolError, SolEvent};
 
-use outbe_primitives::addresses::{UPDATE_ADDRESS, VOTE_ADDRESS};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::{UPDATE_ADDRESS, VOTE_ADDRESS};
 
 use crate::precompile::{dispatch_with_handlers, IVote};
 use crate::schema::{BondState, ProposalStatus, Vote};

@@ -50,7 +50,7 @@ pub struct OutbeBlockExecutionCtx<'a> {
     /// already holds the artifact.
     pub parent_artifact_hint: Option<crate::executor::AccountedParentArtifact>,
     /// Optional one-time Phase 3b `TeeBootstrap` payload. The proposer's
-    /// tribute-DKG bootstrap producer supplies it once the ceremony completes and
+    /// TEE-DKG bootstrap producer supplies it once the ceremony completes and
     /// the `TeeRegistry` is still empty. `None` on every block until then and on
     /// the validator path (the body carries the bootstrap, read via
     /// `expected_begin_system_txs`). Flows into the executor and into
@@ -77,7 +77,7 @@ pub struct OutbeNextBlockEnvAttributes {
     /// for executor-side acceptance rules.
     pub parent_artifact_hint: Option<crate::executor::AccountedParentArtifact>,
     /// optional one-time Phase 3b `TeeBootstrap` payload from the proposer's
-    /// tribute-DKG bootstrap producer. Flows into
+    /// TEE-DKG bootstrap producer. Flows into
     /// [`OutbeBlockExecutionCtx::pending_tee_bootstrap`].
     pub pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>,
     /// Local request budget for synchronous off-chain body reads.

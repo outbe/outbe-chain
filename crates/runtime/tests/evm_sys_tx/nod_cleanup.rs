@@ -3,8 +3,8 @@ use super::*;
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_nod::precompile::INod;
 use outbe_nod::NodContract;
-use outbe_primitives::addresses::NOD_ADDRESS;
 use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_system_common::addresses::NOD_ADDRESS;
 
 const ISSUED_AT: u64 = 1_752_534_000;
 const EMISSION_DAY: u32 = 20_260_715;

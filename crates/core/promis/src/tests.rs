@@ -378,12 +378,12 @@ fn event_amount_differs_from_balance_and_opens_to_the_delta() {
         (first_balance, second_balance)
     });
     let first_mint: Vec<_> = provider
-        .get_events(outbe_primitives::addresses::PROMIS_ADDRESS)
+        .get_events(outbe_system_common::addresses::PROMIS_ADDRESS)
         .iter()
         .filter_map(|log| IPromis::PromisMinedFromGem::decode_log_data(log).ok())
         .collect();
     let second_mint: Vec<_> = provider
-        .get_events(outbe_primitives::addresses::PROMIS_ADDRESS)
+        .get_events(outbe_system_common::addresses::PROMIS_ADDRESS)
         .iter()
         .filter_map(|log| IPromis::PromisMinedFromIntex::decode_log_data(log).ok())
         .collect();
@@ -481,7 +481,7 @@ fn non_transferable_surface_emits_no_erc20_logs_and_rejects_total_supply() {
             "{message}"
         );
     });
-    let promis_logs = provider.get_events(outbe_primitives::addresses::PROMIS_ADDRESS);
+    let promis_logs = provider.get_events(outbe_system_common::addresses::PROMIS_ADDRESS);
     assert!(promis_logs
         .iter()
         .any(|log| { IPromis::PromisMinedFromGem::decode_log_data(log).is_ok() }));

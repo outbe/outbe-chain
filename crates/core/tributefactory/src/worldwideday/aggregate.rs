@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use outbe_primitives::time::{EmissionDate, WorldwideDay};
 use outbe_primitives::{error::Result, storage::StorageHandle};
+use outbe_system_common::time::{EmissionDate, WorldwideDay};
 use outbe_tribute::TributeContract;
 
 use crate::precompile::ITributeFactory;

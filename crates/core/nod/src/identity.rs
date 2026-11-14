@@ -2,7 +2,8 @@
 use crate::errors::NodError;
 use alloy_primitives::{Address, B256, U256};
 use outbe_core_common::series_id::SeriesId;
-use outbe_primitives::{error::Result, time::TimeError};
+use outbe_primitives::error::Result;
+use outbe_system_common::time::TimeError;
 
 /// The call group of a Nod issued at `issued_at`: its first full day, its call price and
 /// the currency that price is quoted in.
@@ -12,7 +13,7 @@ pub fn group_key(
     reference_currency: u16,
 ) -> std::result::Result<B256, TimeError> {
     Ok(outbe_system_common::call_breach::group_key(
-        outbe_primitives::time::first_full_day(issued_at)?,
+        outbe_system_common::time::first_full_day(issued_at)?,
         call_price_minor,
         reference_currency,
     ))

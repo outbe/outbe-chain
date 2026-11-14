@@ -27,8 +27,8 @@ pub const DKG_CHANNEL: u64 = 5;
 /// signature exchange), run once at startup like the DKG.
 pub const TEE_BOOTSTRAP_CHANNEL: u64 = 6;
 /// P2P channel for the one-time TEE DKG ceremony (enclave identity exchange +
-/// dealer/player gossip + offer-key partial-signature exchange). The ceremony runs
-/// once at startup to derive the shared tribute offer key. This channel is distinct
+/// dealer/player gossip + network-key partial-signature exchange). The ceremony runs
+/// once at startup to derive the shared network encryption key. This channel is distinct
 /// from the consensus DKG channel (5) and the TEE bootstrap channel (6).
 pub const TEE_DKG_CHANNEL: u64 = 7;
 /// Signed Radicle endpoint request/response channel.

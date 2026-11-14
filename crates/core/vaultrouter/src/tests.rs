@@ -10,10 +10,10 @@ use alloy_sol_types::{SolCall, SolError, SolEvent};
 
 use outbe_oracle::api::AddressPair;
 use outbe_oracle::schema::OracleContract;
-use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{Bytecode, StorageHandle};
+use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
 
 use crate::api::IVaultRouter;
 use crate::errors::VaultRouterError;
@@ -1912,8 +1912,8 @@ fn with_reservable_vault_at_block<R>(
             U256::ONE,
         )
         .unwrap();
-        let day = outbe_primitives::time::previous_date_key(
-            outbe_primitives::time::timestamp_to_date_key(1_700_000_000),
+        let day = outbe_system_common::time::previous_date_key(
+            outbe_system_common::time::timestamp_to_date_key(1_700_000_000),
         )
         .expect("date step");
         let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), USD_ISO_CODE)
@@ -2008,8 +2008,8 @@ fn a_reservation_needs_every_call_term() {
                 .is_zero());
         };
     with_reservable_vault(U256::from(100u64), |storage| {
-        let day = outbe_primitives::time::previous_date_key(
-            outbe_primitives::time::timestamp_to_date_key(1_700_000_000),
+        let day = outbe_system_common::time::previous_date_key(
+            outbe_system_common::time::timestamp_to_date_key(1_700_000_000),
         )
         .expect("date step");
         let oracle = OracleContract::new(storage.clone());
@@ -2070,8 +2070,8 @@ fn a_reservation_needs_every_call_term() {
 #[test]
 fn a_reservation_quotes_the_call_terms_in_its_reference_currency() {
     with_reservable_vault(U256::from(100u64), |storage| {
-        let day = outbe_primitives::time::previous_date_key(
-            outbe_primitives::time::timestamp_to_date_key(1_700_000_000),
+        let day = outbe_system_common::time::previous_date_key(
+            outbe_system_common::time::timestamp_to_date_key(1_700_000_000),
         )
         .expect("date step");
         outbe_oracle::api::register_pair(storage.clone(), AddressPair::new_coen_to(EUR_ISO_CODE))
@@ -2353,7 +2353,7 @@ fn reservations_are_gated_like_a_withdrawal() {
         let err =
             dispatch(storage.clone(), &release_call, target_account(), U256::ZERO).unwrap_err();
         assert_revert::<IVaultRouter::Unauthorized>(&err);
-        let factory = outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS;
+        let factory = outbe_system_common::addresses::CREDIS_FACTORY_ADDRESS;
         runtime::add_liquidity_target(storage.clone(), factory, 1).unwrap();
         let out = dispatch(storage.clone(), &release_call, factory, U256::ZERO).unwrap();
         assert_eq!(
@@ -2410,7 +2410,7 @@ fn has_liquidity_is_false_for_an_asset_without_a_vault() {
 fn bond_cca(storage: &StorageHandle<'_>) {
     let amount = outbe_ccaregistry::constants::BOND_REQUIREMENT;
     storage
-        .increase_balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS, amount)
+        .increase_balance(outbe_system_common::addresses::CCA_REGISTRY_ADDRESS, amount)
         .unwrap();
     outbe_ccaregistry::runtime::bond(storage.clone(), cca(), amount, "Test CCA".into()).unwrap();
 }
@@ -2484,8 +2484,8 @@ fn same_utc_day_reservations_share_series_id_including_midnight_and_next_day_ope
             U256::ONE,
         )
         .unwrap();
-        let day_0 = outbe_primitives::time::timestamp_to_date_key(midnight);
-        let prev_day = outbe_primitives::time::previous_date_key(day_0).unwrap();
+        let day_0 = outbe_system_common::time::timestamp_to_date_key(midnight);
+        let prev_day = outbe_system_common::time::previous_date_key(day_0).unwrap();
         let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), USD_ISO_CODE)
             .unwrap()
             .unwrap();
@@ -2526,7 +2526,7 @@ fn same_utc_day_reservations_share_series_id_including_midnight_and_next_day_ope
         assert_eq!(r_midnight.call_start_day, r_plus_1s.call_start_day);
         assert_eq!(
             r_midnight.call_start_day,
-            outbe_primitives::time::next_date_key(day_0).unwrap()
+            outbe_system_common::time::next_date_key(day_0).unwrap()
         );
         assert!(r_midnight.call_window_seconds > 0);
 

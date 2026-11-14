@@ -2,6 +2,7 @@
 
 extern crate self as outbe_core_common;
 
+pub mod addresses;
 pub mod deadline_queue;
 pub mod entity_codec;
 pub mod erc;

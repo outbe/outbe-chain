@@ -1,9 +1,10 @@
 use alloy_primitives::{Address, B256, U256};
+use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_macros::storage_record;
 #[cfg(test)]
 use outbe_primitives::storage::indexed_list::delete_indexed;
 use outbe_primitives::storage::indexed_list::{create_indexed, delete_loaded_indexed, IndexedList};
-use outbe_primitives::{time::WorldwideDay, wwd_entity_id::WwdEntityId};
+use outbe_system_common::time::WorldwideDay;
 
 /// Stored tribute. `tribute_price_minor` is the public six-decimal price.
 /// `encrypted_amounts` is ciphertext of the plaintext issuance and nominal.

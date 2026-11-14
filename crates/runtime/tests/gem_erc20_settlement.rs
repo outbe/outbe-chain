@@ -6,10 +6,8 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{precompile::IGem, GemAddParams};
 use outbe_gemfactory::precompile::IGemFactory;
-use outbe_primitives::{
-    addresses::{GEM_ADDRESS, GEM_FACTORY_ADDRESS},
-    storage::{StorageHandle, SubCallStatus},
-};
+use outbe_primitives::storage::{StorageHandle, SubCallStatus};
+use outbe_system_common::addresses::{GEM_ADDRESS, GEM_FACTORY_ADDRESS};
 use outbe_vaultrouter::api::IVaultRouter::StablesSource;
 use settlement::{Quote, Rail, World, ASSET, OWNER, TIMESTAMP};
 

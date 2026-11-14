@@ -171,6 +171,7 @@ where
             context.execution.spec_id(),
         );
     crate::create_guard::install(&mut instructions);
+    let host = std::sync::Arc::clone(&context.host);
     let precompiles = crate::precompiles::OutbeSubCallPrecompiles::<DB>::new(
         context.execution,
         context.runtime,
@@ -203,7 +204,7 @@ where
 
     // Canonical handler frame loop (revm-handler 43.0.2, Handler::run_exec_loop).
     let frame_result = run_exec_loop(
-        &mut crate::native_delegation::NativeDelegationEvm(&mut evm),
+        &mut crate::native_delegation::NativeDelegationEvm(&mut evm, Some(host.as_ref())),
         frame_input,
     )?;
 

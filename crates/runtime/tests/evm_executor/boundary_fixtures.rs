@@ -33,7 +33,7 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
         let total = staking.total_staked.read().unwrap();
         staking.total_staked.write(total + minimum).unwrap();
         storage
-            .increase_balance(outbe_primitives::addresses::STAKING_ADDRESS, minimum)
+            .increase_balance(outbe_system_common::addresses::STAKING_ADDRESS, minimum)
             .unwrap();
         vs.admit_validator_for_boundary_for_test(candidate).unwrap();
         seed_test_committee_snapshot(storage.clone(), &[(active, active_key)]);
@@ -68,7 +68,7 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
         },
     );
     db.insert_account_info(
-        outbe_primitives::addresses::ORACLE_ADDRESS,
+        outbe_system_common::addresses::ORACLE_ADDRESS,
         AccountInfo {
             code_hash: marker_code.hash_slow(),
             code: Some(marker_code.clone()),
@@ -76,7 +76,7 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
         },
     );
     db.insert_account_info(
-        outbe_primitives::addresses::METADOSIS_ADDRESS,
+        outbe_system_common::addresses::METADOSIS_ADDRESS,
         AccountInfo {
             code_hash: marker_code.hash_slow(),
             code: Some(marker_code.clone()),
@@ -91,7 +91,17 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
             ..Default::default()
         },
     );
-    outbe_evm::test_support::install_call_scan_markers(&mut db, &marker_code);
+    outbe_evm::test_support::install_call_scan_markers(
+        &mut db,
+        &[
+            outbe_system_common::addresses::NOD_ADDRESS,
+            outbe_system_common::addresses::GEM_ADDRESS,
+            outbe_system_common::addresses::GEM_FACTORY_ADDRESS,
+            outbe_system_common::addresses::INTEX_ADDRESS,
+            outbe_system_common::addresses::CREDIS_ADDRESS,
+        ],
+        &marker_code,
+    );
     State::builder()
         .with_database(db)
         .with_bundle_update()

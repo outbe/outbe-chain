@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_intex::SeriesId;
 use outbe_macros::{contract, storage_record, storage_schema};
-use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
+use outbe_system_common::addresses::GEM_FACTORY_ADDRESS;
 
 /// The terms a reward gem is issued on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

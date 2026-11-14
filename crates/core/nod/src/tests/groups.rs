@@ -21,7 +21,7 @@ fn group_key_binds_the_reference_currency() {
     assert_eq!(
         crate::identity::group_key(issued_at, call_price, USD).expect("date step"),
         outbe_system_common::call_breach::group_key(
-            outbe_primitives::time::first_full_day(issued_at).expect("date step"),
+            outbe_system_common::time::first_full_day(issued_at).expect("date step"),
             call_price,
             USD
         )

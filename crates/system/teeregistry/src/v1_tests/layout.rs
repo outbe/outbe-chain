@@ -56,9 +56,9 @@ fn finalized_admission_slot_contract_matches_the_physical_registry_layout() {
             binding_id: B256::repeat_byte(0x01),
             policy_hash: B256::repeat_byte(0x02),
             recipient_x25519: [0; 32],
-            tribute_offer_public: [0; 32],
+            network_encryption_public: [0; 32],
             key_epoch: 0,
-            tribute_offer_epoch: 0,
+            network_encryption_epoch: 0,
         };
         let direct = |slot: U256| B256::from(slot.to_be_bytes::<32>());
         let mapped = |slot: U256| {

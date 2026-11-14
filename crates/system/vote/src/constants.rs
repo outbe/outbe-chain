@@ -14,11 +14,12 @@ pub const QUORUM_DENOMINATOR: u64 = 3;
 
 /// Maximum number of proposals in the bounded pending index.
 pub const MAX_PENDING_PROPOSALS: u32 =
-    outbe_primitives::stablecoin_fork::STABLECOIN_V1_ABSOLUTE_VOTE_PENDING_CAP;
+    outbe_system_common::stablecoin_fork::STABLECOIN_V1_ABSOLUTE_VOTE_PENDING_CAP;
 
 // Public bonded proposals must leave pending slots for the other proposers.
 const _: () = assert!(
-    outbe_primitives::stablecoin_fork::MAX_PENDING_PUBLIC_BONDED_PROPOSALS < MAX_PENDING_PROPOSALS
+    outbe_system_common::stablecoin_fork::MAX_PENDING_PUBLIC_BONDED_PROPOSALS
+        < MAX_PENDING_PROPOSALS
 );
 
 /// Maximum pending proposals a single active validator may have open at once.

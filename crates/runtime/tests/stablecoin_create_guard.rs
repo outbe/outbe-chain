@@ -1,7 +1,7 @@
 use alloy_evm::{Evm as _, EvmFactory as _};
 use alloy_primitives::{Address, Bytes, U256};
 use outbe_evm::OutbeEvmFactory;
-use outbe_primitives::addresses::is_stablecoin_address;
+use outbe_system_common::addresses::is_stablecoin_address;
 use reth_ethereum::evm::primitives::EvmEnv;
 use revm::{
     context::{

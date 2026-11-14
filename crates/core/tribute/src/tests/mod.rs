@@ -1,11 +1,11 @@
 use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_core_common::wwd_entity_id::derive_poseidon_entity_id;
-use outbe_primitives::addresses::TRIBUTE_ADDRESS;
+use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_primitives::error::{PrecompileError, Result as PrecompileResult};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::wwd_entity_id::WwdEntityId;
+use outbe_system_common::addresses::TRIBUTE_ADDRESS;
 
 use crate::{TributeContract, TributeData};
 
@@ -16,22 +16,20 @@ fn in_process_ready<R>(
     storage: &StorageHandle<'_>,
     body: impl FnOnce() -> PrecompileResult<R>,
 ) -> R {
-    let binding = outbe_primitives::storage::metadosis_process_ready_binding(
+    let binding = outbe_system_common::metadosis_bindings::metadosis_process_ready_binding(
         storage.chain_id().unwrap(),
         storage.block_number().unwrap(),
         storage.now_secs().unwrap(),
     );
     storage
-        .with_metadosis_mutation::<outbe_primitives::storage::MetadosisCycleLifecycle, _>(
-            binding, body,
-        )
+        .with_scoped_mutation::<outbe_primitives::storage::CycleLifecyclePurpose, _>(binding, body)
         .unwrap()
 }
 
 fn with_tribute<R>(f: impl FnOnce(&mut TributeContract<'_>) -> R) -> R {
     let mut provider = HashMapStorageProvider::new(1);
-    provider.enable_metadosis_mutation_frame(
-        outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
+    provider.enable_scoped_mutation_frame(
+        outbe_primitives::storage::MutationPurposeTag::CycleLifecycle,
     );
     StorageHandle::enter(&mut provider, |storage| {
         let _enclave = crate::enclave_client::test_enclave::scope();
@@ -43,8 +41,8 @@ fn with_tribute<R>(f: impl FnOnce(&mut TributeContract<'_>) -> R) -> R {
 
 fn with_provider<R>(f: impl FnOnce(&mut HashMapStorageProvider) -> R) -> R {
     let mut provider = HashMapStorageProvider::new(1);
-    provider.enable_metadosis_mutation_frames(
-        outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
+    provider.enable_scoped_mutation_frames(
+        outbe_primitives::storage::MutationPurposeTag::CycleLifecycle,
         4,
     );
     f(&mut provider)
@@ -65,7 +63,7 @@ fn sample_tribute() -> TributeData {
     }
 }
 
-fn entity_id(seed: u64, day: outbe_primitives::time::WorldwideDay) -> WwdEntityId {
+fn entity_id(seed: u64, day: outbe_system_common::time::WorldwideDay) -> WwdEntityId {
     derive_poseidon_entity_id(alloy_primitives::Address::repeat_byte(seed as u8), day)
 }
 
@@ -74,7 +72,7 @@ fn set_owner(tribute: &mut TributeData, owner: alloy_primitives::Address) {
     tribute.tribute_id = derive_poseidon_entity_id(owner, tribute.worldwide_day);
 }
 
-fn set_day(tribute: &mut TributeData, day: outbe_primitives::time::WorldwideDay) {
+fn set_day(tribute: &mut TributeData, day: outbe_system_common::time::WorldwideDay) {
     tribute.worldwide_day = day;
     tribute.tribute_id = derive_poseidon_entity_id(tribute.owner, day);
 }
@@ -288,7 +286,7 @@ fn tribute_population_crosses_multiple_work_shards_without_a_total_cap() {
 
 fn assert_day_totals_match_fold(
     tc: &TributeContract<'_>,
-    day: outbe_primitives::time::WorldwideDay,
+    day: outbe_system_common::time::WorldwideDay,
     entries: &[(TributeData, bool)],
 ) {
     let mut count = 0_u32;

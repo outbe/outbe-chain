@@ -1,8 +1,8 @@
 use crate::errors::VoteError;
 use alloy_primitives::{Address, B256, U256};
 use outbe_macros::{contract, storage_schema};
-use outbe_primitives::addresses::VOTE_ADDRESS;
 use outbe_primitives::storage::{Storable, StorableType};
+use outbe_system_common::addresses::VOTE_ADDRESS;
 
 pub use outbe_system_common::vote_target::{
     read_proposal_status, read_vote_proposal, vote_proposals, ProposalRecord,

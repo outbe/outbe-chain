@@ -2,10 +2,8 @@
 use crate::precompile::ICcaRegistry;
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
-use outbe_primitives::{
-    addresses::CCA_REGISTRY_ADDRESS,
-    storage::types::{Storable, StorableType},
-};
+use outbe_primitives::storage::types::{Storable, StorableType};
+use outbe_system_common::addresses::CCA_REGISTRY_ADDRESS;
 
 #[derive(Debug, Clone)]
 #[storage_record(exists_field = name)]

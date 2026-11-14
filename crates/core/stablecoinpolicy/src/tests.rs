@@ -1,13 +1,13 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolError, SolEvent};
-use outbe_primitives::addresses::STABLECOIN_POLICY_REGISTRY_ADDRESS;
 use outbe_primitives::error::PrecompileError;
-use outbe_primitives::stablecoin_fork::{
-    STABLECOIN_LIST_PAGE_CAP, STABLECOIN_POLICY_MEMBER_BATCH_CAP,
-};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::types::StorageKey;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::STABLECOIN_POLICY_REGISTRY_ADDRESS;
+use outbe_system_common::stablecoin_fork::{
+    STABLECOIN_LIST_PAGE_CAP, STABLECOIN_POLICY_MEMBER_BATCH_CAP,
+};
 
 use crate::precompile::dispatch;
 use crate::precompile::IStablecoinPolicyRegistry as I;

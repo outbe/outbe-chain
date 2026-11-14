@@ -1,6 +1,6 @@
 use super::*;
 use crate::{handlers::TargetElectorate, ProposalSubmission};
-use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
+use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_vaultrouter::{api::IVaultRouter, VaultRouterContract};
 
 fn vault_payload(operation: &str, vault: Address) -> String {

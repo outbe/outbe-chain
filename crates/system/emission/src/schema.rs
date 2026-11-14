@@ -1,7 +1,7 @@
 use alloy_primitives::U256;
 use outbe_macros::{contract, storage_record, storage_schema};
-use outbe_primitives::addresses::EMISSION_ADDRESS;
-use outbe_primitives::time::WorldwideDay as WorldwideDayKey;
+use outbe_system_common::addresses::EMISSION_ADDRESS;
+use outbe_system_common::time::WorldwideDay as WorldwideDayKey;
 
 /// Lifecycle state of an `EmissionDay` (OIP-00348).
 pub mod emission_day_state {
@@ -35,6 +35,7 @@ pub struct EmissionDay {
     pub day: u32,
 
     #[attribute(order = 0)]
+    #[field(bytes = 4)]
     pub wwd: WorldwideDayKey,
 
     #[attribute(order = 1)]

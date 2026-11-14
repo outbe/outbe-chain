@@ -8,8 +8,8 @@ use eyre::Result;
 use crate::abi::{IOracle, ORACLE_ADDR};
 use crate::errors::OracleError;
 use crate::rpc::Rpc;
-use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_system_common::asset_type::AssetType;
+use outbe_system_common::time::SECONDS_PER_DAY;
 
 /// Parses an oracle asset from the operator-facing shorthand.
 ///

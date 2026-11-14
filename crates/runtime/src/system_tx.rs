@@ -2,14 +2,14 @@
 
 use alloy_primitives::{Address, Bytes, U256};
 use outbe_evm::errors::BeginBlockPrecompileError;
-use outbe_evm::precompiles::MetadosisMutationCall;
+use outbe_evm::precompiles::PrecompileMutationCall;
 use outbe_primitives::addresses::{OUTBE_SYSTEM_TX_ADDRESS, SYSTEM_ADDRESS};
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::reshare_artifact::{
     decode_boundary_artifact, encode_boundary_artifact, ConsensusHeaderArtifact,
 };
-use outbe_primitives::storage::{MetadosisMutationEntitlements, StorageHandle};
+use outbe_primitives::storage::{MutationEntitlements, MutationPurposeTag, StorageHandle};
 use outbe_primitives::system_tx::{
     binding::validate_boundary_outcome_payload, SystemTx, CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX,
     CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
@@ -21,11 +21,12 @@ use outbe_primitives::system_tx_context::{
     SystemTxPayloadValidationError, SystemTxValidationContext,
 };
 use outbe_primitives::tee_attestation_v1::TeePolicyV1;
+use outbe_system_common::metadosis_bindings::metadosis_process_ready_binding;
 use outbe_tee::tee_attestation_activation::TeeAttestationChainSpecStateV1;
 use {
     outbe_evm::system_tx::{begin_step, consensus_step, end_step, BlockOrder, ProtocolStep},
     outbe_primitives::block::{
-        BlockContext, BlockRuntimeContext, MetadosisEntitlementContext, ProtocolModule,
+        BlockContext, BlockRuntimeContext, MutationEntitlementContext, ProtocolModule,
     },
 };
 
@@ -110,12 +111,27 @@ pub const BEGIN_BLOCK_ORDER: &[ProtocolStep] = &[
     begin_step::<outbe_cycle::CycleModule>().with_validators(),
 ];
 
+fn process_ready_entitlements(ctx: MutationEntitlementContext<'_>) -> MutationEntitlements {
+    if !ctx.payload.is_empty() {
+        return MutationEntitlements::NONE;
+    }
+    MutationEntitlements::exact(
+        MutationPurposeTag::CycleLifecycle,
+        metadosis_process_ready_binding(ctx.chain_id, ctx.block_number, ctx.timestamp),
+    )
+}
+
 pub const END_BLOCK_ORDER: &[ProtocolStep] = &[
-    end_step::<outbe_nodfactory::NodFactoryModule>().with_process_ready_entitlements(),
-    end_step::<outbe_gemfactory::GemFactoryModule>().with_process_ready_entitlements(),
-    end_step::<outbe_intexfactory::IntexFactoryModule>().with_process_ready_entitlements(),
-    end_step::<outbe_credisfactory::CredisFactoryModule>().with_process_ready_entitlements(),
-    end_step::<outbe_gemfactory::GemCleanupModule>().with_process_ready_entitlements(),
+    end_step::<outbe_nodfactory::NodFactoryModule>()
+        .with_mutation_entitlements(process_ready_entitlements),
+    end_step::<outbe_gemfactory::GemFactoryModule>()
+        .with_mutation_entitlements(process_ready_entitlements),
+    end_step::<outbe_intexfactory::IntexFactoryModule>()
+        .with_mutation_entitlements(process_ready_entitlements),
+    end_step::<outbe_credisfactory::CredisFactoryModule>()
+        .with_mutation_entitlements(process_ready_entitlements),
+    end_step::<outbe_gemfactory::GemCleanupModule>()
+        .with_mutation_entitlements(process_ready_entitlements),
 ];
 
 pub const BLOCK_ORDER: BlockOrder = BlockOrder {
@@ -150,20 +166,18 @@ pub fn is_protocol_cycle_call(address: Address, caller: Address, data: &[u8]) ->
         && resolve_system_tx_step(data).is_some_and(|(step, _)| step.needs_cycle_active_utc_day)
 }
 
-pub fn metadosis_mutation_entitlements(
-    call: MetadosisMutationCall<'_>,
-) -> MetadosisMutationEntitlements {
+pub fn precompile_mutation_entitlements(call: PrecompileMutationCall<'_>) -> MutationEntitlements {
     if call.is_static
         || !call.value.is_zero()
         || call.address != OUTBE_SYSTEM_TX_ADDRESS
         || call.caller != SYSTEM_ADDRESS
     {
-        return MetadosisMutationEntitlements::NONE;
+        return MutationEntitlements::NONE;
     }
     let Some((step, payload)) = resolve_system_tx_step(call.data) else {
-        return MetadosisMutationEntitlements::NONE;
+        return MutationEntitlements::NONE;
     };
-    (step.mutation_entitlements)(MetadosisEntitlementContext {
+    (step.mutation_entitlements)(MutationEntitlementContext {
         payload: payload.as_ref(),
         chain_id: call.chain_id,
         block_number: call.block_number,

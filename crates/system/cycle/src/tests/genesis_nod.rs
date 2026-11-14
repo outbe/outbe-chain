@@ -14,7 +14,7 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
         // Block 1 at 10:00 - genesis block establishes start_date = day D.
         let ctx_anchor = genesis_block(handle.clone(), DAY_D_10AM);
         run_cycle_tick(&ctx_anchor).unwrap();
-        let canonical_wwd = outbe_primitives::time::WorldwideDay::new(20_240_102);
+        let canonical_wwd = outbe_system_common::time::WorldwideDay::new(20_240_102);
         assert!(
             outbe_metadosis::api::worldwide_day(ctx_anchor.storage.clone(), canonical_wwd)
                 .unwrap()
@@ -24,7 +24,7 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
     });
     storage.set_block_number(2);
     storage.enter(|handle| {
-        let canonical_wwd = outbe_primitives::time::WorldwideDay::new(20_240_102);
+        let canonical_wwd = outbe_system_common::time::WorldwideDay::new(20_240_102);
         // Block at 00:00:01 UTC day D+1 - CycleTick fires.
         // prev_day = D = start_date -> day_number_since_genesis = 0.
         let fire_ts = DAY_D_MIDNIGHT + SECONDS_PER_DAY + 1;
@@ -46,7 +46,7 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
         );
 
         let genesis_day =
-            outbe_primitives::time::timestamp_to_date_key(ctx_fire.block.genesis_timestamp);
+            outbe_system_common::time::timestamp_to_date_key(ctx_fire.block.genesis_timestamp);
         assert_eq!(genesis_day, 20_240_101, "start_date = day D");
         assert!(
             is_day_allocated(&ctx_fire, genesis_day),
@@ -57,7 +57,7 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
 
 #[test]
 fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
-    use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
+    use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 
     let midnight = GENESIS_TS + 40 * SECONDS_PER_DAY;
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
@@ -131,7 +131,7 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
 /// Runs a Nod call across a one-day halt: day D closes while no block is made, and the
 /// restart schedules only D+1. Returns the group's call and the sweep's newest day.
 fn call_across_a_halt(price_on_d: bool) -> (u64, u32, u64) {
-    use outbe_primitives::time::{next_date_key, previous_date_key, timestamp_to_date_key};
+    use outbe_system_common::time::{next_date_key, previous_date_key, timestamp_to_date_key};
 
     let midnight = GENESIS_TS + 40 * SECONDS_PER_DAY;
     let d = timestamp_to_date_key(midnight);
@@ -193,7 +193,7 @@ fn call_across_a_halt(price_on_d: bool) -> (u64, u32, u64) {
 /// only a sweep that walks the day the halt skipped calls the group.
 #[test]
 fn a_halt_does_not_skip_the_day_that_calls_a_nod_group() {
-    use outbe_primitives::time::{next_date_key, timestamp_to_date_key};
+    use outbe_system_common::time::{next_date_key, timestamp_to_date_key};
 
     let d = timestamp_to_date_key(GENESIS_TS + 40 * SECONDS_PER_DAY);
     let (called_at, latest, restart) = call_across_a_halt(true);
@@ -207,7 +207,7 @@ fn a_halt_does_not_skip_the_day_that_calls_a_nod_group() {
 
 #[test]
 fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
-    use outbe_primitives::time::timestamp_to_date_key;
+    use outbe_system_common::time::timestamp_to_date_key;
 
     let day_start = GENESIS_TS + 40 * SECONDS_PER_DAY;
     let deadline = day_start + 10 * 3_600;
@@ -322,7 +322,7 @@ fn seed_closed_day_prices<'s>(
     storage: &StorageHandle<'s>,
     midnight: u64,
 ) -> outbe_primitives::error::Result<(outbe_oracle::schema::OracleContract<'s>, u32)> {
-    use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
+    use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 
     // This fixture resumes an established parent whose earlier daily passes completed.
     let completed =
@@ -351,7 +351,7 @@ fn issue_nod(
     owner: Address,
     entry: u64,
 ) -> outbe_primitives::error::Result<B256> {
-    let worldwide_day = outbe_primitives::time::WorldwideDay::from_timestamp(GENESIS_TS);
+    let worldwide_day = outbe_system_common::time::WorldwideDay::from_timestamp(GENESIS_TS);
     let mut body = outbe_nod::test_support::item(
         outbe_nod::test_support::NodItemFixture {
             is_settled: false,

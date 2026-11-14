@@ -16,7 +16,8 @@ use alloy_primitives::Address;
 use alloy_sol_types::sol;
 #[allow(unused_imports)]
 use outbe_macros::{contract_dispatch, contract_public, contract_view};
-use outbe_primitives::{addresses::ZEROFEE_ADDRESS, error::Result, time::timestamp_to_date_key};
+use outbe_primitives::{addresses::ZEROFEE_ADDRESS, error::Result};
+use outbe_system_common::time::timestamp_to_date_key;
 
 use crate::{constants::FREE_TX_DAILY_LIMIT, schema::ZeroFeeContract};
 

@@ -452,8 +452,8 @@ where
     /// The latest-block view used here is necessarily stale relative to
     /// the block that is currently in construction. An earlier in-block tx
     /// can burn the quota of an admitted sponsored tx. Execution then
-    /// rejects that tx with a `status=0` receipt (same pattern as the
-    /// oracle `AlreadyVoted` flow).
+    /// rejects that tx with a `status=0` receipt (same pattern as a stateful
+    /// zero-fee `HookConflict` rejection).
     fn try_eip7702_sponsorship(
         &self,
         signer: Address,

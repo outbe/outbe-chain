@@ -2,8 +2,8 @@ use super::*;
 
 #[test]
 fn delayed_first_cycle_tick_starts_all_fresh_passes_at_chainspec_genesis() {
-    use outbe_primitives::time::{date_key_to_utc_timestamp, WorldwideDay};
     use outbe_system_common::pass_budget::BlockAllowance;
+    use outbe_system_common::time::{date_key_to_utc_timestamp, WorldwideDay};
 
     let genesis_ts = date_key_to_utc_timestamp(20_240_131).unwrap() + 86_390;
     let block_ts = date_key_to_utc_timestamp(20_240_203).unwrap() + 60;
@@ -20,13 +20,23 @@ fn delayed_first_cycle_tick_starts_all_fresh_passes_at_chainspec_genesis() {
     });
     let mut db = cache_db_from_storage(seed);
     let marker = Bytecode::new_legacy([0xef].into());
-    outbe_evm::test_support::install_call_scan_markers(&mut db, &marker);
+    outbe_evm::test_support::install_call_scan_markers(
+        &mut db,
+        &[
+            outbe_system_common::addresses::NOD_ADDRESS,
+            outbe_system_common::addresses::GEM_ADDRESS,
+            outbe_system_common::addresses::GEM_FACTORY_ADDRESS,
+            outbe_system_common::addresses::INTEX_ADDRESS,
+            outbe_system_common::addresses::CREDIS_ADDRESS,
+        ],
+        &marker,
+    );
     for address in [
         outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
         ORACLE_ADDRESS,
-        outbe_primitives::addresses::METADOSIS_ADDRESS,
+        outbe_system_common::addresses::METADOSIS_ADDRESS,
         CYCLE_ADDRESS,
-        outbe_primitives::addresses::TRIBUTE_ADDRESS,
+        outbe_system_common::addresses::TRIBUTE_ADDRESS,
     ] {
         db.insert_account_info(
             address,
@@ -566,7 +576,7 @@ fn critical_cycle_tick_revert_fails_block() {
 #[test]
 fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
     const GENESIS_TS: u64 = 1_704_067_200;
-    use outbe_primitives::time::SECONDS_PER_DAY;
+    use outbe_system_common::time::SECONDS_PER_DAY;
     const PREVIOUS_DAY: u32 = 20_240_101;
 
     #[derive(Debug, Eq, PartialEq)]

@@ -4,8 +4,8 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 use outbe_evm::sub_call;
 use outbe_evm::OutbeEvmFactory;
-use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::storage::{SubCallError, SubCallInput, SubCallStatus};
+use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_vaultrouter::api::IVaultRouter;
 use reth_ethereum::evm::primitives::EvmEnv;
 use revm::{
@@ -187,14 +187,15 @@ fn invalid_opcode_spends_the_child_allowance_and_retains_its_vm_reason() {
 
 #[test]
 fn gem_static_gate_and_nested_child_failures_settle_inside_evm() {
+    use outbe_core_common::addresses::INTEX_NFT1155_ADDRESS;
     use outbe_gemfactory::precompile::IGemFactory;
     use outbe_intex::{CreateSeriesParams, SeriesId};
     use outbe_primitives::{
-        addresses::{GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS},
         block::BlockContext,
         storage::{direct::DirectStorageProvider, StorageHandle},
-        time::EmissionDate,
     };
+    use outbe_system_common::addresses::GEM_FACTORY_ADDRESS;
+    use outbe_system_common::time::EmissionDate;
     use revm::context::{BlockEnv, CfgEnv, TxEnv};
     let sender = Address::repeat_byte(0xc0);
     let proxy = Address::repeat_byte(0xac);

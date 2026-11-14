@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     fmt, fs,
     path::{Path, PathBuf},
     process::Command,
@@ -7,10 +8,14 @@ use std::{
 mod deps;
 mod lexer;
 mod lexer_strings;
+mod path_literals;
 mod scanner;
+mod source_walk;
 
 #[cfg(test)]
-use deps::{find_resolved_tree_violations, inspect_metadata_edges, scan_blockchain_sources};
+use deps::{find_resolved_tree_violations, inspect_metadata_edges};
+#[cfg(test)]
+use source_walk::scan_blockchain_sources;
 #[cfg(test)]
 mod tests;
 
@@ -19,6 +24,36 @@ const BLOCKCHAIN_REL_DIR: &str = "crates/blockchain";
 const READ_ONLY_RELEASE_ALLOWLIST: [&str; 2] = [
     "release/project-toolchain-v1.json",
     "release/dcap-native-qvl-v1.json",
+];
+
+const VENDOR_PATH_ALLOWLIST: [&str; 4] = [
+    "vendor/alloy-evm",
+    "vendor/heartwood/crates/radicle",
+    "vendor/heartwood/crates/radicle-crypto",
+    "vendor/heartwood/crates/radicle-git-metadata",
+];
+
+const TRANSITIVE_VENDOR_PATH_ALLOWLIST: [&str; 10] = [
+    "vendor/alloy-evm",
+    "vendor/heartwood/crates/radicle",
+    "vendor/heartwood/crates/radicle-cob",
+    "vendor/heartwood/crates/radicle-core",
+    "vendor/heartwood/crates/radicle-crypto",
+    "vendor/heartwood/crates/radicle-dag",
+    "vendor/heartwood/crates/radicle-git-metadata",
+    "vendor/heartwood/crates/radicle-git-ref-format",
+    "vendor/heartwood/crates/radicle-localtime",
+    "vendor/heartwood/crates/radicle-oid",
+];
+
+const CARGO_TREE_BASE_ARGS: [&str; 7] = [
+    "tree",
+    "--locked",
+    "--all-features",
+    "-e",
+    "features,normal,build,dev",
+    "--prefix",
+    "none",
 ];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -93,6 +128,12 @@ pub enum LayerViolation {
         target_package: String,
         target_manifest: PathBuf,
     },
+    ForbiddenLocalPathDependency {
+        source_package: String,
+        kind: DependencyEdgeKind,
+        target_package: String,
+        resolved_path: PathBuf,
+    },
     ForbiddenResolvedTreeEdge {
         target_package: String,
     },
@@ -102,6 +143,11 @@ pub enum LayerViolation {
         directive: InclusionKind,
         raw_target: String,
         resolved_path: PathBuf,
+    },
+    ForbiddenCrossLayerPathLiteral {
+        source_file: PathBuf,
+        line: usize,
+        literal: String,
     },
 }
 
@@ -118,9 +164,19 @@ impl fmt::Display for LayerViolation {
                 "{source_package} has forbidden {kind} dependency on workspace package {target_package} ({})",
                 target_manifest.display()
             ),
+            Self::ForbiddenLocalPathDependency {
+                source_package,
+                kind,
+                target_package,
+                resolved_path,
+            } => write!(
+                f,
+                "{source_package} has forbidden {kind} local path dependency {target_package} ({})",
+                resolved_path.display()
+            ),
             Self::ForbiddenResolvedTreeEdge { target_package } => write!(
                 f,
-                "crates/blockchain resolved production tree reaches outside workspace package {target_package}"
+                "crates/blockchain resolved dependency tree reaches forbidden package {target_package}"
             ),
             Self::ForbiddenFileInclusion {
                 source_file,
@@ -133,6 +189,15 @@ impl fmt::Display for LayerViolation {
                 "{}:{line}: {directive} target {raw_target:?} resolves outside crates/blockchain ({})",
                 source_file.display(),
                 resolved_path.display()
+            ),
+            Self::ForbiddenCrossLayerPathLiteral {
+                source_file,
+                line,
+                literal,
+            } => write!(
+                f,
+                "{}:{line}: string literal {literal:?} references forbidden cross-layer path outside crates/blockchain",
+                source_file.display()
             ),
         }
     }
@@ -208,32 +273,17 @@ pub fn check_layer_boundaries(repo_root: &Path) -> Result<BoundaryReport, LayerB
     let (layout, mut violations) = deps::inspect_metadata_edges(&canonical_root, &metadata_json)?;
 
     if !layout.blockchain_packages.is_empty() {
-        let mut args = vec![
-            "tree",
-            "--locked",
-            "-e",
-            "features,no-dev",
-            "--prefix",
-            "none",
-        ];
-        let pkg_names: Vec<&str> = layout
-            .blockchain_packages
-            .iter()
-            .map(String::as_str)
-            .collect();
-        for pkg in &pkg_names {
-            args.push("-p");
-            args.push(pkg);
-        }
+        let args = build_cargo_tree_args(&layout.blockchain_packages);
         let tree_output = run_cargo(&canonical_root, &args)?;
         violations.extend(deps::find_resolved_tree_violations(
+            (&layout.repo_root, &layout.blockchain_root),
             &tree_output,
             &layout.outside_packages,
         ));
     }
 
     let (scanned_source_files, verified_inclusions, inclusion_violations) =
-        deps::scan_blockchain_sources(&layout.repo_root, &layout.blockchain_root)?;
+        source_walk::scan_blockchain_sources(&layout.repo_root, &layout.blockchain_root)?;
     violations.extend(inclusion_violations);
 
     if !violations.is_empty() {
@@ -245,6 +295,15 @@ pub fn check_layer_boundaries(repo_root: &Path) -> Result<BoundaryReport, LayerB
         scanned_source_files,
         verified_inclusions,
     })
+}
+
+pub(super) fn build_cargo_tree_args(blockchain_packages: &BTreeSet<String>) -> Vec<&str> {
+    let mut args = CARGO_TREE_BASE_ARGS.to_vec();
+    for pkg in blockchain_packages {
+        args.push("-p");
+        args.push(pkg.as_str());
+    }
+    args
 }
 
 pub(super) fn canonicalize_path(path: &Path) -> Result<PathBuf, LayerBoundaryError> {

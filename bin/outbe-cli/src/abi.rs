@@ -8,7 +8,7 @@ use alloy_sol_types::sol;
 
 pub use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1 as ITeeRegistry;
 
-pub use outbe_primitives::addresses::VOTE_ADDRESS;
+pub use outbe_system_common::addresses::VOTE_ADDRESS;
 
 // Precompile contract addresses
 pub const VALIDATOR_SET_ADDR: Address = address!("0x000000000000000000000000000000000000EE00");

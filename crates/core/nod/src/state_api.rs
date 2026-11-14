@@ -289,9 +289,8 @@ impl NodContract<'_> {
 mod tests {
     use super::*;
     use crate::{test_support, NodIssueParams};
-    use outbe_primitives::{
-        storage::hashmap::HashMapStorageProvider, time::date_key_to_utc_timestamp,
-    };
+    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+    use outbe_system_common::time::date_key_to_utc_timestamp;
 
     fn stored_fixture() -> StoredNod {
         let id = U256::from_be_bytes([7; 32]);

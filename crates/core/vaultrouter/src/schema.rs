@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
-use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::storage::types::{StorageKey, StorageSet};
+use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
 
 /// `StablesSource`/`StablesTarget` enum sentinel for "not set". Matches
 /// `IVaultRouter.StablesSource.Unknown == 0` and

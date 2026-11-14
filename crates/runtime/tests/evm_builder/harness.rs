@@ -333,7 +333,7 @@ pub(super) fn seed_active_validators(db: &mut TestDb, validators: &[Address]) {
             let total = staking.total_staked.read().unwrap();
             staking.total_staked.write(total + minimum).unwrap();
             storage
-                .increase_balance(outbe_primitives::addresses::STAKING_ADDRESS, minimum)
+                .increase_balance(outbe_system_common::addresses::STAKING_ADDRESS, minimum)
                 .unwrap();
             vs.mark_pending(*validator).unwrap();
             vs.confirm_validator_ready(*validator).unwrap();
@@ -345,9 +345,9 @@ pub(super) fn seed_active_validators(db: &mut TestDb, validators: &[Address]) {
             .unwrap();
     });
     db.insert_account_info(
-        outbe_primitives::addresses::STAKING_ADDRESS,
+        outbe_system_common::addresses::STAKING_ADDRESS,
         AccountInfo {
-            balance: metadosis_genesis.get_balance(outbe_primitives::addresses::STAKING_ADDRESS),
+            balance: metadosis_genesis.get_balance(outbe_system_common::addresses::STAKING_ADDRESS),
             ..Default::default()
         },
     );
@@ -359,8 +359,8 @@ pub(super) fn seed_active_validators(db: &mut TestDb, validators: &[Address]) {
     let marker_code = RevmBytecode::new_legacy([0xef].into());
     for address in [
         outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
-        outbe_primitives::addresses::ORACLE_ADDRESS,
-        outbe_primitives::addresses::METADOSIS_ADDRESS,
+        outbe_system_common::addresses::ORACLE_ADDRESS,
+        outbe_system_common::addresses::METADOSIS_ADDRESS,
     ] {
         db.insert_account_info(
             address,
@@ -371,7 +371,17 @@ pub(super) fn seed_active_validators(db: &mut TestDb, validators: &[Address]) {
             },
         );
     }
-    outbe_evm::test_support::install_call_scan_markers(db, &marker_code);
+    outbe_evm::test_support::install_call_scan_markers(
+        db,
+        &[
+            outbe_system_common::addresses::NOD_ADDRESS,
+            outbe_system_common::addresses::GEM_ADDRESS,
+            outbe_system_common::addresses::GEM_FACTORY_ADDRESS,
+            outbe_system_common::addresses::INTEX_ADDRESS,
+            outbe_system_common::addresses::CREDIS_ADDRESS,
+        ],
+        &marker_code,
+    );
 }
 
 pub(super) fn assert_seeded_validators(db: &mut TestDb, validators: &[Address]) {

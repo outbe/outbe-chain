@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
-use outbe_primitives::stablecoin_fork::{
+use outbe_system_common::stablecoin_fork::{
     STABLECOIN_LIST_PAGE_CAP, STABLECOIN_POLICY_MEMBER_BATCH_CAP,
 };
 

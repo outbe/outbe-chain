@@ -11,11 +11,8 @@ use outbe_oracle::{
     api::{self, current_vwap_snapshot, get_finalized_window_vwap},
     schema::OracleContract,
 };
-use outbe_primitives::{
-    error::Result,
-    storage::StorageHandle,
-    time::{first_full_day, previous_date_key, timestamp_to_date_key},
-};
+use outbe_primitives::{error::Result, storage::StorageHandle};
+use outbe_system_common::time::{first_full_day, previous_date_key, timestamp_to_date_key};
 use outbe_system_common::{math::scaled_math::checked_quote, units::MAX_ASSET_DECIMALS};
 pub(crate) fn quote(
     storage: &StorageHandle<'_>,

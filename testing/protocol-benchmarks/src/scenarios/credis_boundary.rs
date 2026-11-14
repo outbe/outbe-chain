@@ -2,10 +2,8 @@ use std::time::Instant;
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolValue};
-use outbe_primitives::{
-    addresses::CREDIS_FACTORY_ADDRESS,
-    storage::{hashmap::HashMapStorageProvider, StorageHandle},
-};
+use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+use outbe_system_common::addresses::CREDIS_FACTORY_ADDRESS;
 use outbe_vaultrouter::{api::IVaultRouter, test_support};
 
 use super::support::{capture_execution, elapsed_ns};
