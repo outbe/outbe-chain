@@ -34,7 +34,7 @@ fn pack_validator_archive(
             fs::copy(&item, &dst).map_err(|err| GenesisError::io(&dst, err))?;
         }
     }
-    for folder in ["crs", "systemd", "sgx"] {
+    for folder in ["systemd", "sgx"] {
         let src = output_dir.join(folder);
         if src.is_dir() {
             copy_dir_recursive(&src, &staging.join(folder))?;

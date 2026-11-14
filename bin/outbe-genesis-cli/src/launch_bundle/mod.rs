@@ -1,6 +1,5 @@
 //! Render the per-machine launch bundle that goes with a generated genesis.
 
-mod crs;
 pub mod dist;
 pub mod scripts;
 pub mod systemd;
@@ -20,7 +19,6 @@ use crate::error::GenesisError;
 pub use crate::keys::ensure_reth_p2p_secret;
 use crate::seed_codec::parse_u64;
 
-pub use self::crs::stage as stage_crs;
 pub use self::dist::{build_distribution, deploy_markdown};
 pub use self::scripts::{
     enclave_script, feeder_config, feeder_pairs, feeder_pairs_file, feeder_pairs_settings,

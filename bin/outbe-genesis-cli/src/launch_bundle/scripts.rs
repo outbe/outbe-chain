@@ -241,7 +241,6 @@ printf '%s' \"$(tr -d '[:space:]' < \"$KEYS/reth-p2p-secret.hex\")\" > \"$KEYS/r
 # A debug build needs a larger thread stack: block 1 lazily initializes k256's\n\
 # secp256k1 tables in an unoptimized frame that overflows reth's default.\n\
 export RUST_MIN_STACK=\"${{RUST_MIN_STACK:-16777216}}\"\n\
-export BB_CRS_PATH={q_crs}\n\
 \n\
 exec {q_binary} node \\\n\
   --validator \\\n\
@@ -275,7 +274,6 @@ exec {q_binary} node \\\n\
         q_data = quote(&format!("{validator_dir}/data")),
         q_logs = quote(&format!("{validator_dir}/logs")),
         q_binary = quote(binary),
-        q_crs = quote(&format!("{base_dir}/crs/bn254_g1.dat")),
         q_genesis = quote(&format!("{base_dir}/genesis.json")),
         q_consensus = quote(&format!("{validator_dir}/consensus")),
         q_radicle_sock = quote(&format!("{radicle_home}/node/outbe-control.sock")),
