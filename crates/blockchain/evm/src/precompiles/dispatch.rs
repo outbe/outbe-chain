@@ -1,6 +1,6 @@
 //! Executes an admitted call and settles its gas and typed outcome.
 use super::{
-    call_authority::{metadosis_mutation_entitlements, MetadosisMutationCall},
+    call_authority::{precompile_mutation_entitlements, PrecompileMutationCall},
     outcome::map_outbe_precompile_result_with_refund,
     routes,
     value_policy::{classify_boundary_value, BoundaryValue},
@@ -71,7 +71,7 @@ where
 {
     use revm::context_interface::{Block as _, ContextTr};
 
-    let Some(route) = routes::resolve(&inputs.bytecode_address) else {
+    let Some(route) = routes::resolve(runtime.host.as_ref(), &inputs.bytecode_address) else {
         return Ok(None);
     };
     let block_number = ctx.block().number().saturating_to::<u64>();
@@ -165,8 +165,8 @@ impl DispatchCall<'_> {
         &'a self,
         admission: &CallAdmission,
         cycle_active_utc_day: Option<u32>,
-    ) -> MetadosisMutationCall<'a> {
-        MetadosisMutationCall {
+    ) -> PrecompileMutationCall<'a> {
+        PrecompileMutationCall {
             address: self.inputs.bytecode_address,
             data: self.data.as_ref(),
             caller: self.inputs.caller,
@@ -195,7 +195,7 @@ impl DispatchCall<'_> {
 
             abort_bridge: runtime.abort_bridge.clone(),
 
-            metadosis_mutation_entitlements: metadosis_mutation_entitlements(
+            scoped_mutation_entitlements: precompile_mutation_entitlements(
                 self.host.as_ref(),
                 self.mutation_call(admission, None),
             ),
@@ -296,7 +296,7 @@ impl DispatchCall<'_> {
                     self.timestamp,
                 )?
             };
-            provider.replace_metadosis_mutation_entitlements(metadosis_mutation_entitlements(
+            provider.replace_scoped_mutation_entitlements(precompile_mutation_entitlements(
                 self.host.as_ref(),
                 self.mutation_call(admission, Some(active_utc_day)),
             ));

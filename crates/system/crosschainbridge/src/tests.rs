@@ -13,9 +13,9 @@ use outbe_hyperlanecontroller::sol_ext::{IInterchainAccountRouter, IOwnable, ISt
 use outbe_hyperlanecontroller::HyperlaneControllerContract;
 
 use crate::precompile::ICrosschainBridge::Call;
-use outbe_primitives::addresses::{CROSSCHAIN_BRIDGE_ADDRESS, HYPERLANE_CONTROLLER_ADDRESS};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::{CROSSCHAIN_BRIDGE_ADDRESS, HYPERLANE_CONTROLLER_ADDRESS};
 
 use crate::precompile::{dispatch, ICrosschainBridge};
 use crate::schema::CrosschainBridgeContract;

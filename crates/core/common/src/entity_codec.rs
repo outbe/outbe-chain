@@ -1,8 +1,8 @@
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::time::WorldwideDay;
+use outbe_system_common::time::WorldwideDay;
 use thiserror::Error;
 
-use outbe_primitives::wwd_entity_id::WwdEntityId;
+use crate::wwd_entity_id::WwdEntityId;
 
 mod nod_v1;
 pub use nod_v1::{

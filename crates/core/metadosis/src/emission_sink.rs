@@ -1,10 +1,7 @@
 use alloy_primitives::U256;
-use outbe_primitives::{
-    block::BlockRuntimeContext,
-    error::Result,
-    storage::{metadosis_cycle_allocation_binding, MetadosisCycleLifecycle},
-    time::date_key_to_utc_timestamp,
-};
+use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::CycleLifecyclePurpose};
+use outbe_system_common::metadosis_bindings::metadosis_cycle_allocation_binding;
+use outbe_system_common::time::date_key_to_utc_timestamp;
 
 use crate::precompile::IMetadosis;
 use crate::schema::MetadosisContract;
@@ -14,7 +11,7 @@ pub(crate) fn apply(ctx: &BlockRuntimeContext, day: u32, amount: U256) -> Result
     let day_ts = date_key_to_utc_timestamp(day).map_err(crate::lifecycle::date_step_error)?;
     let binding =
         metadosis_cycle_allocation_binding(ctx.block.chain_id, ctx.block.block_number, day_ts);
-    crate::commit::commit_transition::<MetadosisCycleLifecycle, _>(
+    crate::commit::commit_transition::<CycleLifecyclePurpose, _>(
         ctx.storage.clone(),
         binding,
         |_| {

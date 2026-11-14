@@ -3,8 +3,8 @@
 use crate::precompile::ITribute;
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolError;
+use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_primitives::error::PrecompileError;
-use outbe_primitives::wwd_entity_id::WwdEntityId;
 use thiserror::Error;
 
 /// Represents domain errors in the Tribute precompile and runtime.
@@ -108,7 +108,7 @@ pub enum TributeError {
     TributeSeriesInvalid,
 }
 
-pub(crate) fn date_step_error(err: outbe_primitives::time::TimeError) -> PrecompileError {
+pub(crate) fn date_step_error(err: outbe_system_common::time::TimeError) -> PrecompileError {
     match err.date_step() {
         Some((kind, date_key)) => TributeError::DateStep { kind, date_key }.into(),
         None => PrecompileError::Fatal(err.to_string()),

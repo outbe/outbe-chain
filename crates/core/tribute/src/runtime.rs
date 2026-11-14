@@ -2,10 +2,11 @@ mod forfeiture;
 pub use forfeiture::{LysisOutcome, PricedCurrencies};
 
 use alloy_primitives::U256;
+use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{EmissionDate, WorldwideDay};
-use outbe_primitives::wwd_entity_id::WwdEntityId;
+use outbe_system_common::metadosis_bindings::MetadosisStorageExt;
+use outbe_system_common::time::{EmissionDate, WorldwideDay};
 
 use crate::errors::TributeError;
 use crate::precompile::ITribute;
@@ -155,8 +156,8 @@ fn lease_identity_mismatch(error: &PrecompileError) -> bool {
     let PrecompileError::Revert(message) = error else {
         return false;
     };
-    message == "test provider Metadosis mutation lease identity mismatch"
-        || message == "Metadosis mutation frame identity mismatch"
+    message == "test provider scoped mutation lease identity mismatch"
+        || message == "scoped mutation frame identity mismatch"
 }
 
 /// Init-genesis, cycle allocation, advance-due, and process-ready create worldwide days.

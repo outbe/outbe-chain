@@ -249,7 +249,7 @@ fn finalized_vote_pages_are_bounded_canonical_and_tied_to_immutable_patch_approv
     let mut logs: Vec<_> = (1..=65)
         .rev()
         .map(|id| alloy_primitives::Log {
-            address: outbe_primitives::addresses::VOTE_ADDRESS,
+            address: outbe_system_common::addresses::VOTE_ADDRESS,
             data: event(id),
         })
         .collect();
@@ -319,7 +319,7 @@ fn finalized_vote_pages_are_bounded_canonical_and_tied_to_immutable_patch_approv
                 success: true,
                 cumulative_gas_used: 1,
                 logs: vec![alloy_primitives::Log {
-                    address: outbe_primitives::addresses::VOTE_ADDRESS,
+                    address: outbe_system_common::addresses::VOTE_ADDRESS,
                     data: malformed,
                 }],
             }],

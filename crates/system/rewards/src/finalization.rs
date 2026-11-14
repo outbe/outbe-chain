@@ -516,9 +516,9 @@ fn absentees_for_window(
 mod protocol_module_tests {
     use super::*;
     use outbe_primitives::{
-        block::{BlockHeightRegime, MetadosisEntitlementContext, ProtocolModule},
+        block::{BlockHeightRegime, MutationEntitlementContext, ProtocolModule},
         reshare_artifact::OutbeBlockArtifacts,
-        storage::MetadosisMutationEntitlements,
+        storage::MutationEntitlements,
         system_tx_context::{
             SystemTxBuildContext, SystemTxPayloadBuildError, SystemTxValidationContext,
         },
@@ -572,7 +572,7 @@ mod protocol_module_tests {
                 .unwrap()
                 .is_none()
         );
-        let context = MetadosisEntitlementContext {
+        let context = MutationEntitlementContext {
             payload: &payload,
             chain_id: 1,
             block_number: 2,
@@ -581,7 +581,7 @@ mod protocol_module_tests {
         };
         assert_eq!(
             LateFinalizeCreditsModule::mutation_entitlements(context),
-            MetadosisMutationEntitlements::NONE
+            MutationEntitlements::NONE
         );
         crate::test_support::with_block(2, crate::test_support::GENESIS_TS + 60, |mut ctx| {
             ctx.system_tx = Some(outbe_primitives::system_tx_context::SystemTxContext {

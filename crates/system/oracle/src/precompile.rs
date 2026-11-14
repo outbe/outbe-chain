@@ -9,14 +9,14 @@ use crate::schema::OracleContract;
 use crate::window::{active_vwap_policy, get_vwap_snapshot_id, VwapSnapshotId};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent, SolInterface};
-use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::dispatch::{dispatch_call, metadata, mutate_void, reject_value, view};
 use outbe_primitives::error::Result;
-use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_system_common::address_pair::AddressPair;
+use outbe_system_common::addresses::ORACLE_ADDRESS;
 use outbe_system_common::math::reference_price::pair_scales;
 use outbe_system_common::stablecoin::iso_4217_alpha;
+use outbe_system_common::time::WorldwideDay;
+use outbe_system_common::time::SECONDS_PER_DAY;
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here

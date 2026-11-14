@@ -54,9 +54,9 @@ pub(super) async fn ingest_onboarding_offer_key(
         enclave_id: ctx.enclave_id,
         intent_hash: ctx.intent_hash,
         recipient_x25519: ctx.recipient_x25519,
-        tribute_offer_public: ctx.expected_offer_pub,
+        network_encryption_public_key: ctx.expected_offer_pub,
         key_epoch: ctx.key_epoch,
-        tribute_offer_epoch: ctx.tribute_offer_epoch,
+        network_encryption_epoch: ctx.tribute_offer_epoch,
     };
     let finalized = await_finalized_onboarding_v1(
         &CliFinalityRpc(client),
@@ -127,14 +127,14 @@ fn ingest_gramine_direct_dev_artifact(
         &EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 {
             artifact,
             expected_intent_hash: ctx.intent_hash,
-            expected_tribute_offer_public: ctx.expected_offer_pub,
+            expected_network_encryption_public: ctx.expected_offer_pub,
             expected_key_epoch: ctx.key_epoch,
-            expected_tribute_offer_epoch: ctx.tribute_offer_epoch,
+            expected_network_encryption_epoch: ctx.tribute_offer_epoch,
         },
     )? {
         EnclaveResponse::GramineDirectDevOnboardingArtifactIngestedV1 {
-            tribute_offer_public,
-        } if tribute_offer_public == ctx.expected_offer_pub => Ok(tribute_offer_public),
+            network_encryption_public,
+        } if network_encryption_public == ctx.expected_offer_pub => Ok(network_encryption_public),
         other => Err(
             TeeJoinCompletionError::UnexpectedGramineDirectDevResponse(format!("{other:?}")).into(),
         ),

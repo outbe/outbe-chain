@@ -4,15 +4,15 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
 use clap::{Subcommand, ValueEnum};
 use eyre::{Result, WrapErr};
-use outbe_primitives::{
+use outbe_system_common::stablecoin::{
+    encode_canonical_stablecoin_create, predict_stablecoin, StablecoinCreatePayload,
+};
+use outbe_system_common::{
     addresses::{
         STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS,
         VOTE_ADDRESS,
     },
     stablecoin_fork::STABLECOIN_CREATE_BOND,
-};
-use outbe_system_common::stablecoin::{
-    encode_canonical_stablecoin_create, predict_stablecoin, StablecoinCreatePayload,
 };
 
 use crate::{

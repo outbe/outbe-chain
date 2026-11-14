@@ -9,13 +9,14 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 use outbe_hyperlanecontroller::precompile::IHyperlaneController;
 use outbe_oracle::precompile::IOracle;
-use outbe_primitives::addresses::{HYPERLANE_CONTROLLER_ADDRESS, ORACLE_ADDRESS};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::transaction_call::TransactionCallFields;
+use outbe_system_common::addresses::{HYPERLANE_CONTROLLER_ADDRESS, ORACLE_ADDRESS};
 use outbe_validatorset::delegation::ValidatorDelegateRole;
 
 use crate::hooks::{
-    ZeroFeeAuthorization, ZeroFeeCandidate, ZeroFeeHookId, ZeroFeePolicyError, ZeroFeeTransaction,
+    ZeroFeeAuthorization, ZeroFeeCandidate, ZeroFeeHookTag, ZeroFeePolicyError, ZeroFeeTransaction,
+    HYPERLANE_SUBMIT_CHECKPOINT_HOOK, ORACLE_SUBMIT_VOTE_HOOK,
 };
 use crate::test_support::activate_validator_with_delegate;
 
@@ -25,7 +26,7 @@ const STRANGER: Address = Address::repeat_byte(0x55);
 
 /// The envelope limits and a valid calldata sample of one hook.
 struct HookCase {
-    hook: ZeroFeeHookId,
+    hook: ZeroFeeHookTag,
     target: Address,
     selector: [u8; 4],
     valid_input: Vec<u8>,
@@ -76,7 +77,7 @@ fn waive_fee(
 fn hook_cases() -> Vec<HookCase> {
     vec![
         HookCase {
-            hook: ZeroFeeHookId::OracleSubmitVote,
+            hook: ORACLE_SUBMIT_VOTE_HOOK,
             target: ORACLE_ADDRESS,
             selector: IOracle::submitVoteCall::SELECTOR,
             valid_input: IOracle::submitVoteCall {
@@ -87,18 +88,18 @@ fn hook_cases() -> Vec<HookCase> {
             min_max_fee_per_gas: crate::oracle::MIN_ZERO_FEE_ORACLE_MAX_FEE_PER_GAS,
             max_calldata_bytes: crate::oracle::MAX_ZERO_FEE_ORACLE_CALLDATA_BYTES,
             max_gas_limit: crate::oracle::MAX_ZERO_FEE_ORACLE_GAS_LIMIT,
-            malformed_reason: "submitVote(ExchangeRateTuple[],GasTuple[]) decode failed",
+            malformed_reason: "zero-fee oracle vote calldata is malformed: submitVote(ExchangeRateTuple[],GasTuple[]) decode failed",
             delegate_role: ValidatorDelegateRole::Oracle,
         },
         HookCase {
-            hook: ZeroFeeHookId::HyperlaneSubmitCheckpoint,
+            hook: HYPERLANE_SUBMIT_CHECKPOINT_HOOK,
             target: HYPERLANE_CONTROLLER_ADDRESS,
             selector: IHyperlaneController::submitCheckpointCall::SELECTOR,
             valid_input: crate::test_support::checkpoint_calldata().to_vec(),
             min_max_fee_per_gas: crate::hyperlane::MIN_ZERO_FEE_CHECKPOINT_MAX_FEE_PER_GAS,
             max_calldata_bytes: crate::hyperlane::MAX_ZERO_FEE_CHECKPOINT_CALLDATA_BYTES,
             max_gas_limit: crate::hyperlane::MAX_ZERO_FEE_CHECKPOINT_GAS_LIMIT,
-            malformed_reason: "submitCheckpoint(uint32,bytes32,uint32,bytes32,bytes) decode failed",
+            malformed_reason: "zero-fee oracle vote calldata is malformed: submitCheckpoint(uint32,bytes32,uint32,bytes32,bytes) decode failed",
             delegate_role: ValidatorDelegateRole::Hyperlane,
         },
     ]
@@ -270,7 +271,7 @@ fn only_a_delegate_for_the_hook_role_acts_for_its_validator() {
 fn oracle_vote_waiver_ends_when_the_validator_has_voted() {
     let cases = hook_cases();
     let case = &cases[0];
-    assert_eq!(case.hook, ZeroFeeHookId::OracleSubmitVote);
+    assert_eq!(case.hook, ORACLE_SUBMIT_VOTE_HOOK);
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         activate_validator_with_delegate(
@@ -287,9 +288,14 @@ fn oracle_vote_waiver_ends_when_the_validator_has_voted() {
             .vote_exists
             .write(&VALIDATOR, true)
             .unwrap();
+        let err = waive_fee(storage, &tx).unwrap_err();
         assert_eq!(
-            waive_fee(storage, &tx),
-            Err(ZeroFeePolicyError::AlreadyVoted)
+            err,
+            ZeroFeePolicyError::HookConflict("zero-fee oracle vote already exists for validator")
+        );
+        assert_eq!(
+            err.to_string(),
+            "zero-fee oracle vote already exists for validator"
         );
     });
 }

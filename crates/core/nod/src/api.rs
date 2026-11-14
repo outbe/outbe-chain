@@ -104,7 +104,7 @@ pub fn add_series_nod(
 pub struct LysisSeriesSeal {
     pub series_id: SeriesId,
     pub group_key: B256,
-    pub full_day_after_issue: outbe_primitives::time::WorldwideDay,
+    pub full_day_after_issue: outbe_system_common::time::WorldwideDay,
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub entry_price_minor: U256,

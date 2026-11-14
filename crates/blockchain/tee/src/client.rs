@@ -639,7 +639,7 @@ impl AuthorizedEnclaveClient {
     ) -> Result<[u8; 32], TransportError> {
         let _call_context =
             crate::call_context::ContextScope::enter(crate::call_context::resolve()?);
-        let expected_tribute_offer_public = input.begin.expected_tribute_offer_public;
+        let expected_network_encryption_public = input.begin.expected_network_encryption_public;
         let request_hash = self.begin_finalized_admission_v1(input.begin)?;
         for transition in input.committee_transitions {
             self.upload_finalized_admission_record_v1(
@@ -653,7 +653,7 @@ impl AuthorizedEnclaveClient {
             crate::finalized_admission::FinalizedAdmissionRecordKindV1::Admission,
             input.finalized_admission_witness,
         )?;
-        self.finish_finalized_admission_v1(request_hash, expected_tribute_offer_public)
+        self.finish_finalized_admission_v1(request_hash, expected_network_encryption_public)
     }
 
     pub fn begin_finalized_admission_v1(
@@ -664,9 +664,9 @@ impl AuthorizedEnclaveClient {
             artifact,
             anchor_outcome,
             expected_intent_hash,
-            expected_tribute_offer_public,
+            expected_network_encryption_public,
             expected_key_epoch,
-            expected_tribute_offer_epoch,
+            expected_network_encryption_epoch,
         } = input;
         let request_hash = onboarding_artifact_ingest_request_hash_v1(input)
             .map_err(TransportError::dcap_verification)?;
@@ -675,9 +675,9 @@ impl AuthorizedEnclaveClient {
             artifact: artifact.to_vec(),
             anchor_outcome: anchor_outcome.to_vec(),
             expected_intent_hash,
-            expected_tribute_offer_public,
+            expected_network_encryption_public,
             expected_key_epoch,
-            expected_tribute_offer_epoch,
+            expected_network_encryption_epoch,
         })? {
             EnclaveResponse::DcapOnboardingArtifactIngestStartedV1 {
                 request_hash: echoed,
@@ -691,18 +691,18 @@ impl AuthorizedEnclaveClient {
     pub fn finish_finalized_admission_v1(
         &mut self,
         request_hash: B256,
-        expected_tribute_offer_public: [u8; 32],
+        expected_network_encryption_public: [u8; 32],
     ) -> Result<[u8; 32], TransportError> {
         match self.request_internal(&EnclaveRequest::FinishDcapOnboardingArtifactIngestV1 {
             request_hash,
         })? {
             EnclaveResponse::FinalizedAdmissionIngestedV1 {
                 request_hash: echoed,
-                tribute_offer_public,
+                network_encryption_public,
             } if echoed == request_hash
-                && tribute_offer_public == expected_tribute_offer_public =>
+                && network_encryption_public == expected_network_encryption_public =>
             {
-                Ok(tribute_offer_public)
+                Ok(network_encryption_public)
             }
             _ => Err(TransportError::DcapVerification(
                 "enclave finalized a different onboarding admission".into(),
@@ -932,9 +932,9 @@ impl AuthorizedEnclaveClient {
             block_timestamp,
             node_signature,
             enclave_signature,
-            expected_tribute_offer_public,
+            expected_network_encryption_public,
             key_epoch,
-            tribute_offer_epoch,
+            network_encryption_epoch,
         } = request;
         let request_hash = dcap_onboarding_request_hash(request).map_err(|code| {
             crate::errors::TeeClientVerificationError::InvalidOnboardingVerifierInputDimensions {
@@ -956,9 +956,9 @@ impl AuthorizedEnclaveClient {
                 block_timestamp,
                 node_signature: node_signature.to_vec(),
                 enclave_signature: enclave_signature.to_vec(),
-                expected_tribute_offer_public,
+                expected_network_encryption_public,
                 key_epoch,
-                tribute_offer_epoch,
+                network_encryption_epoch,
             },
         )?;
         Ok(response)

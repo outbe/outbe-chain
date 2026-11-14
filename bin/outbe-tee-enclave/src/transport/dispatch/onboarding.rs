@@ -63,7 +63,7 @@ pub(in crate::transport) fn complete_onboarding_artifact_ingest_response(
     }
     EnclaveResponse::FinalizedAdmissionIngestedV1 {
         request_hash: request.request_hash,
-        tribute_offer_public: public,
+        network_encryption_public: public,
     }
 }
 
@@ -90,9 +90,9 @@ fn complete_upgrade_key_export(
         let resident = offer_key
             .get()
             .ok_or(TransportDispatchError::SourceKeyUnavailable)?;
-        if resident.public() != context.tribute_offer_public
+        if resident.public() != context.network_encryption_public
             || resident.key_epoch() != context.key_epoch
-            || resident.tribute_offer_epoch() != context.tribute_offer_epoch
+            || resident.tribute_offer_epoch() != context.network_encryption_epoch
         {
             return Err(TransportDispatchError::SourceKeyMismatchCommitment.into());
         }
@@ -138,9 +138,11 @@ pub(in crate::transport) fn complete_gramine_direct_dev_onboarding_ingest_respon
         Ok(public)
     })();
     match result {
-        Ok(tribute_offer_public) => EnclaveResponse::GramineDirectDevOnboardingArtifactIngestedV1 {
-            tribute_offer_public,
-        },
+        Ok(network_encryption_public) => {
+            EnclaveResponse::GramineDirectDevOnboardingArtifactIngestedV1 {
+                network_encryption_public,
+            }
+        }
         Err(message) => EnclaveResponse::Error {
             message: message.to_string(),
         },
@@ -168,16 +170,16 @@ pub(in crate::transport) fn derive_onboarding_offer_key_v1(
     let (secret, public) = crate::crypto::derive_tribute_offer_secret_from_group_sig(
         group_sig.as_ref(),
         alloy_primitives::B256::from(context.chain_id),
-        context.tribute_offer_epoch,
+        context.network_encryption_epoch,
     )?;
-    if public != context.tribute_offer_public {
+    if public != context.network_encryption_public {
         return Err(crate::errors::TeeError::dkg_err(
             "onboarding artifact derives a different offer public key",
         ));
     }
     Ok(
         DerivedTributeOfferKey::from_parts(secret, public, group_sig)
-            .with_epochs(context.key_epoch, context.tribute_offer_epoch),
+            .with_epochs(context.key_epoch, context.network_encryption_epoch),
     )
 }
 
@@ -201,8 +203,8 @@ fn onboarding_context_matches(
         context.node_id_hash == manifest_node_id_hash && context.enclave_id == manifest_enclave_id;
     let matches_recipient = context.recipient_x25519 == manifest.recipient_x25519
         && context.recipient_x25519 == keys.tribute_offer_public();
-    let matches_offer = context.tribute_offer_public == expected.expected_tribute_offer_public
+    let matches_offer = context.network_encryption_public == expected.expected_tribute_offer_public
         && context.key_epoch == expected.expected_key_epoch
-        && context.tribute_offer_epoch == expected.expected_tribute_offer_epoch;
+        && context.network_encryption_epoch == expected.expected_tribute_offer_epoch;
     Ok(matches_network && matches_node && matches_recipient && matches_offer)
 }

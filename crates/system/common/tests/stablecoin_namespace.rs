@@ -1,15 +1,13 @@
 use std::str::FromStr;
 
 use alloy_primitives::{Address, B256};
-use outbe_primitives::{
-    addresses::{
-        is_stablecoin_address, STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS,
-        STABLECOIN_MARKER_CODE, STABLECOIN_POLICY_REGISTRY_ADDRESS,
-    },
-    chain::{
-        DEVNET_CHAIN_ID, DEVNET_CHAIN_NAME, MAINNET_CHAIN_ID, MAINNET_CHAIN_NAME, TESTNET_CHAIN_ID,
-        TESTNET_CHAIN_NAME,
-    },
+use outbe_primitives::chain::{
+    DEVNET_CHAIN_ID, DEVNET_CHAIN_NAME, MAINNET_CHAIN_ID, MAINNET_CHAIN_NAME, TESTNET_CHAIN_ID,
+    TESTNET_CHAIN_NAME,
+};
+use outbe_system_common::addresses::{
+    is_stablecoin_address, STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS,
+    STABLECOIN_MARKER_CODE, STABLECOIN_POLICY_REGISTRY_ADDRESS,
 };
 use outbe_system_common::stablecoin::{predict_stablecoin, stablecoin_token_id_preimage};
 use serde::Deserialize;

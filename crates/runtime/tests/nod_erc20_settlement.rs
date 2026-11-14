@@ -10,10 +10,10 @@ use outbe_gratis::enclave_client::test_enclave;
 use outbe_nod::{precompile::INod, NodIssueParams};
 use outbe_nodfactory::precompile::INodFactory;
 use outbe_primitives::{
-    addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS},
     chain::CHAIN_ID,
     storage::{StorageHandle, SubCallStatus},
 };
+use outbe_system_common::addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS};
 use outbe_vaultrouter::api::IVaultRouter::StablesSource;
 use settlement::{Quote, Rail, World, ASSET, FACTORY_FLOAT, OWNER, THIRD_PARTY};
 

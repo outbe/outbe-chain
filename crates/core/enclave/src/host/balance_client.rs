@@ -127,12 +127,15 @@ fn check_canonical_hash(expected_hash: B256, actual_hash: B256) -> Result<()> {
 mod tests {
     use alloy_primitives::U256;
     use ed25519_dalek::{Signer, SigningKey};
-    use outbe_tee::{AttestationMetricClass, TeeAttestationError};
+    use outbe_tee::TeeAttestationError;
 
     use super::*;
-    use crate::host::protocol::{
-        gratis_op_attestation_preimage, promis_op_attestation_preimage, GratisOpResult,
-        GratisOpStatus, PromisOpResult, PromisOpStatus,
+    use crate::host::{
+        errors::GRATIS_OP_ATTESTATION,
+        protocol::{
+            gratis_op_attestation_preimage, promis_op_attestation_preimage, GratisOpResult,
+            GratisOpStatus, PromisOpResult, PromisOpStatus,
+        },
     };
 
     fn gratis_result(hash: B256) -> GratisOpResult {
@@ -207,7 +210,7 @@ mod tests {
             TransportError::Codec("x".into()),
             TransportError::UnexpectedResponse,
             TransportError::app_attestation(
-                AttestationMetricClass::GratisOp,
+                GRATIS_OP_ATTESTATION,
                 TeeAttestationError::InvalidSignatureLength { actual: 1 },
             ),
         ] {

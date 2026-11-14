@@ -9,9 +9,9 @@
 //! parameters) belongs to the caller (IntexFactory).
 
 use alloy_primitives::{Address, U256};
-use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::INTEX_FACTORY_ADDRESS;
 
 use crate::errors::{date_step_error, IntexError};
 use crate::precompile::IIntex;

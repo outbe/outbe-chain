@@ -1,9 +1,9 @@
 use alloy_primitives::{Address, U256};
-use outbe_primitives::addresses::VOTE_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
-use outbe_primitives::stablecoin_fork::MAX_PENDING_PUBLIC_BONDED_PROPOSALS;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::VOTE_ADDRESS;
+use outbe_system_common::stablecoin_fork::MAX_PENDING_PUBLIC_BONDED_PROPOSALS;
 use outbe_validatorset::contract::ValidatorSet;
 
 use crate::constants::{

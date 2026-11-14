@@ -356,7 +356,8 @@ fn lysis_series_of_one_day_and_reference_share_one_call_group() {
     use outbe_core_common::series_id::SeriesId;
     let _enclave = outbe_nod::test_support::scope();
     let mut world = World::new();
-    let sealed_at = outbe_primitives::time::date_key_to_utc_timestamp(20_261_020).unwrap() + 3_600;
+    let sealed_at =
+        outbe_system_common::time::date_key_to_utc_timestamp(20_261_020).unwrap() + 3_600;
     let (nod1, called_at, deadline) = world.enter(|storage| {
         let seal = |series_id, issuance_currency, count, load: u64| {
             let sealed_load =
@@ -433,7 +434,7 @@ fn lysis_series_of_one_day_and_reference_share_one_call_group() {
                 timestamp: forfeit_ts,
                 chain_id: CHAIN_ID,
                 genesis_hash: alloy_primitives::B256::ZERO,
-                genesis_timestamp: deadline - outbe_primitives::time::SECONDS_PER_DAY,
+                genesis_timestamp: deadline - outbe_system_common::time::SECONDS_PER_DAY,
                 proposer: alloy_primitives::Address::ZERO,
                 validators: Vec::new(),
             },
@@ -552,7 +553,8 @@ fn series_group_stays_after_the_last_tribute_and_clears_on_close_group() {
     use outbe_core_common::series_id::SeriesId;
     let _enclave = outbe_nod::test_support::scope();
     let mut world = World::new();
-    let sealed_at = outbe_primitives::time::date_key_to_utc_timestamp(20_261_020).unwrap() + 3_600;
+    let sealed_at =
+        outbe_system_common::time::date_key_to_utc_timestamp(20_261_020).unwrap() + 3_600;
     world.enter(|storage| {
         let series_id = SeriesId::for_pair(20_261_019, 840, 840).unwrap();
         let sealed_load =

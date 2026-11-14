@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, U256};
 use outbe_macros::contract;
-use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::storage::types::{Mapping, Slot};
+use outbe_system_common::addresses::STAKING_ADDRESS;
 
 /// Maximum number of open unbonding entries for one validator.
 ///

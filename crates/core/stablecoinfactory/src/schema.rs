@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
-use outbe_primitives::addresses::STABLECOIN_FACTORY_ADDRESS;
-use outbe_primitives::stablecoin_fork::STABLECOIN_V1_SCHEMA_VERSION;
+use outbe_system_common::addresses::STABLECOIN_FACTORY_ADDRESS;
+use outbe_system_common::stablecoin_fork::STABLECOIN_V1_SCHEMA_VERSION;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[storage_record(exists_field = exists)]

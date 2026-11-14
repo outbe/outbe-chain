@@ -19,9 +19,9 @@ fn saved_prepare() -> Result<(
         binding_id: B256::repeat_byte(5),
         policy_hash: B256::repeat_byte(6),
         recipient_x25519: [7; 32],
-        tribute_offer_public: [8; 32],
+        network_encryption_public: [8; 32],
         key_epoch: 9,
-        tribute_offer_epoch: 10,
+        network_encryption_epoch: 10,
     };
     let calldata = vec![0x41, 0x42];
     let transaction = relay.sign_renewal(UnsignedRelayTransactionV1 {

@@ -4,7 +4,7 @@ use crate::precompile::ITributeFactory;
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
-use outbe_primitives::time::WorldwideDay;
+use outbe_system_common::time::WorldwideDay;
 use thiserror::Error;
 
 /// Errors that the Tribute factory precompile returns.

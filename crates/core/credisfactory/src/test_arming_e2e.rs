@@ -36,8 +36,8 @@ pub(crate) fn dispatch(storage: &StorageHandle<'_>, data: &[u8]) -> Option<Resul
     }
     if rescanClosedDayForTestCall::abi_decode(data).is_ok() {
         return Some(guarded(storage, || {
-            let day = outbe_primitives::time::previous_date_key(
-                outbe_primitives::time::timestamp_to_date_key(storage.now_secs()?),
+            let day = outbe_system_common::time::previous_date_key(
+                outbe_system_common::time::timestamp_to_date_key(storage.now_secs()?),
             )
             .map_err(date_step_error)?;
             reopen_day(storage, day)
@@ -52,7 +52,7 @@ fn guarded(storage: &StorageHandle<'_>, hook: impl FnOnce() -> Result<()>) -> Re
 }
 
 fn date_step_error(
-    err: outbe_primitives::time::TimeError,
+    err: outbe_system_common::time::TimeError,
 ) -> outbe_primitives::error::PrecompileError {
     match err.date_step() {
         Some((kind, date_key)) => {
@@ -78,7 +78,7 @@ fn backdate(storage: &StorageHandle<'_>, credis_id: U256, issued_at: u64) -> Res
         record.reference_currency,
     )?;
     let call_start_day =
-        outbe_primitives::time::first_full_day(issued_at).map_err(date_step_error)?;
+        outbe_system_common::time::first_full_day(issued_at).map_err(date_step_error)?;
     // `create_credis_record` books the original collateral. A backdated Credis keeps
     // only what is still outstanding in the series sum.
     let booked = record.gratis_minor;
@@ -106,7 +106,7 @@ fn requeue_called(storage: &StorageHandle<'_>, credis_id: U256, deadline: u64) -
         .write(&series, deadline.saturating_sub(notice).max(1))?;
     credis.remove_called(series)?;
     credis.push_called(series, deadline)?;
-    let day = outbe_primitives::time::timestamp_to_date_key(deadline);
+    let day = outbe_system_common::time::timestamp_to_date_key(deadline);
     reopen_day(storage, day)
 }
 

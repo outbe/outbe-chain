@@ -2,6 +2,7 @@
 //! Ciphertexts were generated independently with Python cryptography 41.0.7.
 
 use alloy_primitives::{hex, Address, B256, U256};
+use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_core_common::{
     nod_encryption::{EncryptedNodV1, NodTermsV1},
     tribute_encryption::{EncryptedTributeV2, TributeAmountsV2, TributeContextV2},
@@ -11,7 +12,7 @@ use outbe_enclave::{
     nod_decrypt::decrypt_nod_for_owner, promis_decrypt::decrypt_promis_balance,
     tribute_decrypt::decrypt_tribute_for_owner, LocalCryptoError,
 };
-use outbe_primitives::{time::WorldwideDay, wwd_entity_id::WwdEntityId};
+use outbe_system_common::time::WorldwideDay;
 
 const FIDELITY_BLOB: &str = "01020304050607084649443231313131313131313131313131313131313131313131313131313131313131316f227d375d26e7d0c69faf0aa386d6b2f7e739b4de99fc0828f54a8b22d4e223";
 const GRATIS_BLOB: &str = "111213141516171847524132515151515151515151515151515151515151515151515151515151515151515146185e002fe9d80f2f80daea54dcfbd2faa5ce7014252c82b2d6dccd3455cc7a79fdb10771779339ce5f26d6aa2f2027";

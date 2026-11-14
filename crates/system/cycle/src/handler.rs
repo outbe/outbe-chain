@@ -19,10 +19,9 @@ use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
     storage::StorageHandle,
-    time::{
-        date_key_to_utc_timestamp, next_date_key, previous_date_key, timestamp_to_date_key,
-        TimeError,
-    },
+};
+use outbe_system_common::time::{
+    date_key_to_utc_timestamp, next_date_key, previous_date_key, timestamp_to_date_key, TimeError,
 };
 
 use crate::{errors::CycleError, schema::Cycle, tasks::Readiness, ICycle};
@@ -80,7 +79,7 @@ pub fn derive_active_utc_day(
     let yesterday = previous_date_key(block_utc_day).map_err(calendar_step_error)?;
     let yesterday_ts = date_key_to_utc_timestamp(yesterday).map_err(calendar_step_error)?;
     let catchup_span_secs = u64::from(MAX_REWARD_CATCHUP_DAYS.saturating_sub(1))
-        * outbe_primitives::time::SECONDS_PER_DAY;
+        * outbe_system_common::time::SECONDS_PER_DAY;
     let catchup_floor = timestamp_to_date_key(yesterday_ts.saturating_sub(catchup_span_secs));
     let floor_day = start_date.max(catchup_floor);
     let d_allocated = latest_allocated_day_through(storage, yesterday, floor_day)?;
@@ -516,8 +515,9 @@ fn process_emission_day_steps(ctx: &BlockRuntimeContext) -> Result<Readiness> {
 
 #[cfg(test)]
 pub(crate) fn run_emission_limit_daily(ctx: &BlockRuntimeContext) -> Result<()> {
-    let day = outbe_primitives::time::previous_date_key(timestamp_to_date_key(ctx.block.timestamp))
-        .expect("date step");
+    let day =
+        outbe_system_common::time::previous_date_key(timestamp_to_date_key(ctx.block.timestamp))
+            .expect("date step");
     allocate_emission_limit(ctx, day)?;
     outbe_metadosis::commands::process_emission_day(ctx, day)
 }

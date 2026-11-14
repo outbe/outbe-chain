@@ -1,10 +1,10 @@
 use super::*;
 use alloy_primitives::address;
-use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::reshare_artifact::encode_boundary_artifact;
 use outbe_primitives::system_tx::CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_slashindicator::enforce_tee_lease_deadlines;
+use outbe_system_common::addresses::STAKING_ADDRESS;
 
 /// Same funded base the felony path burns by the admitted 8% (`1_000_000 * 8 / 100`).
 const FUNDED_STAKE: u64 = 1_000_000;

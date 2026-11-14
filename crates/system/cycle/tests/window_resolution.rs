@@ -26,12 +26,12 @@ use outbe_cycle::{
     ICycle,
 };
 use outbe_primitives::{
-    addresses::ACCOUNTING_PROGRESS_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     error::{PrecompileError, Result},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
 use outbe_system_common::accounting_progress::AccountingProgressView;
+use outbe_system_common::addresses::ACCOUNTING_PROGRESS_ADDRESS;
 use proptest::prelude::*;
 
 const CHAIN_ID: u64 = 1;
@@ -639,10 +639,10 @@ proptest! {
 fn cycle_module_entitlements_require_empty_payload_and_active_day() {
     use outbe_cycle::{call_authority::cycle_tick_entitlements, runtime::CycleModule};
     use outbe_primitives::{
-        block::{MetadosisEntitlementContext, ProtocolModule},
-        storage::MetadosisMutationEntitlements,
+        block::{MutationEntitlementContext, ProtocolModule},
+        storage::MutationEntitlements,
     };
-    let mut context = MetadosisEntitlementContext {
+    let mut context = MutationEntitlementContext {
         payload: &[],
         chain_id: CHAIN_ID,
         block_number: 2,
@@ -659,27 +659,26 @@ fn cycle_module_entitlements_require_empty_payload_and_active_day() {
     context.payload = &[1];
     assert_eq!(
         CycleModule::mutation_entitlements(context),
-        MetadosisMutationEntitlements::NONE
+        MutationEntitlements::NONE
     );
 }
 
 #[test]
 fn cycle_entitlements_preserve_genesis_and_unknown_day_bindings() {
     use outbe_cycle::call_authority::cycle_tick_entitlements;
-    use outbe_primitives::storage::{
-        metadosis_init_genesis_binding, MetadosisMutationEntitlements, MetadosisMutationPurposeTag,
-    };
+    use outbe_primitives::storage::{MutationEntitlements, MutationPurposeTag};
+    use outbe_system_common::metadosis_bindings::metadosis_init_genesis_binding;
     let timestamp = 1_704_067_200;
     assert_eq!(
         cycle_tick_entitlements(CHAIN_ID, 1, timestamp, None),
-        MetadosisMutationEntitlements::exact(
-            MetadosisMutationPurposeTag::CycleLifecycle,
+        MutationEntitlements::exact(
+            MutationPurposeTag::CycleLifecycle,
             metadosis_init_genesis_binding(CHAIN_ID, 1, timestamp)
         )
     );
     assert_eq!(
         cycle_tick_entitlements(CHAIN_ID, 2, timestamp, None),
-        MetadosisMutationEntitlements::NONE
+        MutationEntitlements::NONE
     );
     assert_eq!(
         cycle_tick_entitlements(CHAIN_ID, 2, timestamp, Some(0)),

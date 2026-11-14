@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256, U256, U512};
 use alloy_sol_types::SolEvent;
-use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::error::Result;
+use outbe_system_common::addresses::STAKING_ADDRESS;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::errors::ValidatorSetError;
 use outbe_validatorset::ValidatorLifecycle;

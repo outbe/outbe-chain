@@ -4,10 +4,10 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 
 use outbe_intex::{SeriesId, SERIES_ID_LEN};
-use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::EmissionDate;
+use outbe_system_common::addresses::INTEX_FACTORY_ADDRESS;
+use outbe_system_common::time::EmissionDate;
 
 use outbe_intex::{IntexContract, IntexState, SeriesRecord};
 use outbe_vaultrouter::settlement::{self, SettlementPayment};

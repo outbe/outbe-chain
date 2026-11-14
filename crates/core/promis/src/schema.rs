@@ -1,7 +1,7 @@
 use alloy_primitives::Address;
 use outbe_macros::contract;
-use outbe_primitives::addresses::PROMIS_ADDRESS;
 use outbe_primitives::storage::types::{Mapping, StorageBytes};
+use outbe_system_common::addresses::PROMIS_ADDRESS;
 
 /// EVM storage layout for the confidential Promis token.
 ///

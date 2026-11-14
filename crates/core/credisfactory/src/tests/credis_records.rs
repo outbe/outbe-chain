@@ -3,7 +3,7 @@ use alloy_sol_types::SolCall;
 use outbe_core_common::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{
+use outbe_system_common::time::{
     date_key_to_utc_timestamp, timestamp_to_date_key, worldwide_day_from_timestamp,
 };
 use outbe_system_common::units::SCALE_1E6_U256;
@@ -18,7 +18,7 @@ use outbe_credis::state::CallBins;
 use outbe_system_common::call_bins;
 
 const CHAIN_ID: u64 = 1;
-use outbe_primitives::time::SECONDS_PER_DAY as DAY;
+use outbe_system_common::time::SECONDS_PER_DAY as DAY;
 const ORIGINATED_AT: u64 = 1_700_000_000;
 
 // ---------------------------------------------------------------------------
@@ -80,7 +80,7 @@ fn credis_provider() -> HashMapStorageProvider {
             .unwrap();
         storage
             .increase_balance(
-                outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
+                outbe_system_common::addresses::CCA_REGISTRY_ADDRESS,
                 outbe_ccaregistry::constants::BOND_REQUIREMENT,
             )
             .unwrap();
@@ -149,7 +149,7 @@ fn open_pos(credis: &mut CredisContract<'_>) -> U256 {
 fn bond_test_cca(storage: &StorageHandle<'_>) {
     storage
         .increase_balance(
-            outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
+            outbe_system_common::addresses::CCA_REGISTRY_ADDRESS,
             outbe_ccaregistry::constants::BOND_REQUIREMENT,
         )
         .unwrap();
@@ -843,7 +843,7 @@ fn lifetime_interest_paid_sums_interest_only_and_principal_deltas() {
     });
 
     let applied: Vec<_> = provider
-        .get_events(outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS)
+        .get_events(outbe_system_common::addresses::CREDIS_FACTORY_ADDRESS)
         .iter()
         .filter_map(|log| {
             crate::precompile::ICredisFactory::CredisSettled::decode_log_data(log).ok()
@@ -912,7 +912,7 @@ fn rejected_settlement_leaves_lifetime_interest_and_emits_nothing() {
     });
 
     let applied: Vec<_> = provider
-        .get_events(outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS)
+        .get_events(outbe_system_common::addresses::CREDIS_FACTORY_ADDRESS)
         .iter()
         .filter_map(|log| {
             crate::precompile::ICredisFactory::CredisSettled::decode_log_data(log).ok()
@@ -1309,7 +1309,7 @@ fn a_fully_unpaid_forfeit_burns_all_collateral() {
     });
 
     let forfeits: Vec<_> = provider
-        .get_events(outbe_primitives::addresses::CREDIS_ADDRESS)
+        .get_events(outbe_system_common::addresses::CREDIS_ADDRESS)
         .iter()
         .filter_map(|log| ICredis::CredisForfeited::decode_log_data(log).ok())
         .collect();
@@ -1842,7 +1842,7 @@ fn precompile_interest_views_use_the_storage_timestamp() {
     let id = StorageHandle::enter(&mut storage, |handle| {
         handle
             .increase_balance(
-                outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
+                outbe_system_common::addresses::CCA_REGISTRY_ADDRESS,
                 outbe_ccaregistry::constants::BOND_REQUIREMENT,
             )
             .unwrap();
@@ -2190,7 +2190,7 @@ fn issuance_announces_the_mint() {
     });
 
     let transfers: Vec<(Address, Address, U256)> = provider
-        .get_events(outbe_primitives::addresses::CREDIS_ADDRESS)
+        .get_events(outbe_system_common::addresses::CREDIS_ADDRESS)
         .iter()
         .filter_map(|log| ICredis::Transfer::decode_log_data(log).ok())
         .map(|event| (event.from, event.to, event.tokenId))
@@ -2476,7 +2476,7 @@ fn metadata_update_marks_each_settlement() {
     });
 
     let updates: Vec<U256> = provider
-        .get_events(outbe_primitives::addresses::CREDIS_ADDRESS)
+        .get_events(outbe_system_common::addresses::CREDIS_ADDRESS)
         .iter()
         .filter_map(|log| ICredis::MetadataUpdate::decode_log_data(log).ok())
         .map(|event| event._tokenId)

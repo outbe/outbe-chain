@@ -44,13 +44,16 @@ fn has_committee_snapshot(payload: &TeeBootstrapV2) -> bool {
         && payload.authority.committee_snapshot_block != 0
 }
 
-fn has_offer_keys(payload: &TeeBootstrapV2) -> bool {
-    !payload.authority.tribute_offer_public_key.is_zero()
-        && !payload.authority.tribute_offer_group_public_key.is_empty()
+fn has_network_encryption_keys(payload: &TeeBootstrapV2) -> bool {
+    !payload.authority.network_encryption_public_key.is_zero()
+        && !payload
+            .authority
+            .network_encryption_group_public_key
+            .is_empty()
 }
 
 fn validate_authority_shape(payload: &TeeBootstrapV2) -> Result<(), CodecError> {
-    if !has_committee_snapshot(payload) || !has_offer_keys(payload) {
+    if !has_committee_snapshot(payload) || !has_network_encryption_keys(payload) {
         return Err(CodecError::NonCanonical(
             "TEE bootstrap contains a zero required authority",
         ));
@@ -58,7 +61,7 @@ fn validate_authority_shape(payload: &TeeBootstrapV2) -> Result<(), CodecError> 
     enforce_limit(
         "TEE bootstrap group public key",
         MAX_GROUP_PUBLIC_KEY_BYTES,
-        payload.authority.tribute_offer_group_public_key.len(),
+        payload.authority.network_encryption_group_public_key.len(),
     )?;
     enforce_limit(
         "TEE bootstrap collateral pool",

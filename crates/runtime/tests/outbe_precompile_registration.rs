@@ -3,10 +3,10 @@
 use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap, revm::handler::EthPrecompiles};
 use alloy_primitives::{Address, B256};
 use outbe_evm::precompiles::{
-    extend_outbe_precompiles, outbe_precompile_addresses, OutbePrecompileExecutionContext,
-    OutbePrecompileRuntime,
+    extend_outbe_precompiles, OutbePrecompileExecutionContext, OutbePrecompileRuntime,
 };
-use outbe_primitives::addresses::*;
+use outbe_runtime::precompiles::outbe_exact_precompile_addresses;
+use outbe_system_common::addresses::*;
 use revm::{
     database_interface::EmptyDB, handler::PrecompileProvider, primitives::hardfork::SpecId,
 };
@@ -69,7 +69,10 @@ fn build_extended_precompiles() -> PrecompilesMap {
 
 #[test]
 fn exact_enumeration_contains_every_characterized_route() {
-    assert_eq!(outbe_precompile_addresses(), &expected_exact_addresses());
+    assert_eq!(
+        outbe_exact_precompile_addresses(),
+        &expected_exact_addresses()
+    );
 }
 
 #[test]
@@ -113,7 +116,7 @@ fn warm_and_contains_behavior_remains_ethereum_only() {
 
 #[test]
 fn exact_routes_do_not_collide_with_ethereum_precompiles() {
-    for outbe in outbe_precompile_addresses() {
+    for outbe in outbe_exact_precompile_addresses() {
         for suffix in 1u8..=10 {
             assert_ne!(*outbe, Address::with_last_byte(suffix));
         }
@@ -122,7 +125,7 @@ fn exact_routes_do_not_collide_with_ethereum_precompiles() {
 
 #[test]
 fn exact_routes_have_no_duplicates() {
-    let addresses = outbe_precompile_addresses();
+    let addresses = outbe_exact_precompile_addresses();
     let mut sorted = addresses.to_vec();
     sorted.sort();
     sorted.dedup();
@@ -143,7 +146,7 @@ fn sponsored_whitelist_is_subset_of_exact_routes() {
 
     for target in SPONSORED_TARGET_WHITELIST {
         assert!(
-            outbe_precompile_addresses().contains(target),
+            outbe_exact_precompile_addresses().contains(target),
             "sponsored target {target:?} is not an exact Outbe route"
         );
     }
@@ -181,6 +184,6 @@ fn sponsored_whitelist_excludes_validator_entrypoints() {
 #[test]
 fn removed_hash_address_is_unregistered() {
     let address = alloy_primitives::address!("000000000000000000000000000000000000ee07");
-    assert!(!outbe_precompile_addresses().contains(&address));
+    assert!(!outbe_exact_precompile_addresses().contains(&address));
     assert!(build_extended_precompiles().get(&address).is_none());
 }

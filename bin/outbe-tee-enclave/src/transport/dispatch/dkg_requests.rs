@@ -74,7 +74,7 @@ pub(super) fn dispatch(
                 })
             }))
         }
-        EnclaveRequest::DkgTributeOfferPartial { ceremony_id } => {
+        EnclaveRequest::DkgNetworkKeyPartial { ceremony_id } => {
             into_response(dkg.get_mut(&ceremony_id.0).and_then(|s| {
                 let sealed = s
                     .tribute_offer_partials_sealed()?
@@ -86,14 +86,14 @@ pub(super) fn dispatch(
                         )
                     })
                     .collect();
-                Ok(EnclaveResponse::DkgTributeOfferPartial { sealed })
+                Ok(EnclaveResponse::DkgNetworkKeyPartial { sealed })
             }))
         }
-        EnclaveRequest::DkgFinalizeTributeOffer {
+        EnclaveRequest::DkgFinalizeNetworkKey {
             ceremony_id,
             sealed_partials,
             chain_id,
-            tribute_offer_epoch,
+            network_key_epoch,
         } => finalize_offer_key(
             context,
             dkg,
@@ -101,7 +101,7 @@ pub(super) fn dispatch(
                 ceremony_id,
                 sealed_partials,
                 chain_id,
-                tribute_offer_epoch,
+                tribute_offer_epoch: network_key_epoch,
             },
         ),
         _ => unreachable!("request family is checked by the exhaustive dispatcher"),
@@ -268,8 +268,8 @@ fn finalize_offer_key(
             }
             // Release the ceremony's resident secret state.
             dkg.remove(&ceremony_id.0);
-            EnclaveResponse::DkgTributeOfferKey {
-                tribute_offer_public: public,
+            EnclaveResponse::DkgNetworkEncryptionKey {
+                network_encryption_public_key: public,
                 group_public_key,
             }
         }

@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use alloy_primitives::U256;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
-use outbe_primitives::time::WorldwideDay;
+use outbe_system_common::time::WorldwideDay;
 
 use super::support::{capture_execution, elapsed_ns};
 use crate::{BenchmarkScenario, ExecutionClass, GasLedger, Observation, Profile, ScenarioMetadata};
@@ -47,8 +47,8 @@ impl BenchmarkScenario for MetadosisScenario {
         provider.enable_storage_trace();
         let event_offset = provider.get_ordered_events().len();
         let started = Instant::now();
-        provider.enable_metadosis_mutation_frames(
-            outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
+        provider.enable_scoped_mutation_frames(
+            outbe_primitives::storage::MutationPurposeTag::CycleLifecycle,
             1,
         );
         StorageHandle::enter(&mut provider, |storage| {

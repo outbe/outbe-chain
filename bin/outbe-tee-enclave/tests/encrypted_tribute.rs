@@ -2,10 +2,10 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_core_common::tribute_encryption::{
     EncryptedTributeV2, TributeAmountsV2, TributeContextV2,
 };
+use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_enclave::protocol::{EncryptedTributeOffer, TributeOfferStatus, TributeZkContext};
 use outbe_enclave::tribute_decrypt::decrypt_tribute_for_owner;
-use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::wwd_entity_id::WwdEntityId;
+use outbe_system_common::time::WorldwideDay;
 use outbe_tee_enclave::encrypted_tribute_offer::process_encrypted_tribute_offer_batch;
 use outbe_tee_enclave::process::TributeOfferKeyMaterial;
 use outbe_tee_enclave::tribute_encryption::{decrypt_tribute, derive_view_key, encrypt_tribute};

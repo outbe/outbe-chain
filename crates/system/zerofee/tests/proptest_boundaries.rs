@@ -13,8 +13,8 @@ use alloy_primitives::{address, Address, U256};
 use outbe_primitives::{
     addresses::ZEROFEE_ADDRESS,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
-    time::{previous_date_key, timestamp_to_date_key, SECONDS_PER_DAY},
 };
+use outbe_system_common::time::{previous_date_key, timestamp_to_date_key, SECONDS_PER_DAY};
 use outbe_zerofee::{
     authorize_sponsorship, pack_counter, record_sponsorship_use, ZeroFeeContract,
     ZeroFeePolicyError, FREE_TX_DAILY_LIMIT,

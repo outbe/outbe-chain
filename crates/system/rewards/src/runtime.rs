@@ -9,10 +9,11 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_primitives::proof::canonical_signer_set_hash;
 use outbe_primitives::{
-    block::BlockRuntimeContext,
-    consensus_metadata::CertifiedParentAccountingMetadata,
+    block::BlockRuntimeContext, consensus_metadata::CertifiedParentAccountingMetadata,
     error::Result,
-    time::{date_key_to_utc_timestamp, day_number_between, timestamp_to_date_key},
+};
+use outbe_system_common::time::{
+    date_key_to_utc_timestamp, day_number_between, timestamp_to_date_key,
 };
 
 use crate::errors::RewardsError;

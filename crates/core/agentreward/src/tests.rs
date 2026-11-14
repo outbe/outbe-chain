@@ -1,7 +1,7 @@
 use alloy_primitives::{address, Address, U256};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
+use outbe_system_common::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 
 use crate::schema::RewardPool as PoolKind;
 use crate::schema::{AgentRewardContract, DayIndex, RewardPool};
@@ -209,7 +209,7 @@ fn agentreward_dense_daily_distribution_completes_and_clears_indexes() {
         );
         assert_eq!(
             ctx.storage
-                .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                .balance(outbe_system_common::addresses::AGENT_REWARD_ADDRESS)
                 .unwrap(),
             U256::ZERO,
             "GAS-06: distribution mints no native COEN"
@@ -1190,7 +1190,7 @@ mod distribute_daily_tests {
                 assert_tribute_index_cleared(&contract, kind, recipients);
                 assert_eq!(
                     ctx.storage
-                        .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                        .balance(outbe_system_common::addresses::AGENT_REWARD_ADDRESS)
                         .unwrap(),
                     U256::ZERO
                 );
@@ -1297,7 +1297,7 @@ mod distribute_daily_tests {
             assert_eq!(excess, U256::from(500u64));
             assert_eq!(
                 ctx.storage
-                    .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                    .balance(outbe_system_common::addresses::AGENT_REWARD_ADDRESS)
                     .unwrap(),
                 U256::ZERO
             );
@@ -1312,7 +1312,7 @@ mod distribute_daily_tests {
             assert_eq!(excess, U256::from(700u64));
             assert_eq!(
                 ctx.storage
-                    .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                    .balance(outbe_system_common::addresses::AGENT_REWARD_ADDRESS)
                     .unwrap(),
                 U256::ZERO
             );
@@ -1327,13 +1327,13 @@ mod distribute_daily_tests {
             assert_eq!(excess, U256::from(400));
             assert_eq!(
                 ctx.storage
-                    .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
+                    .balance(outbe_system_common::addresses::CCA_REGISTRY_ADDRESS)
                     .unwrap(),
                 U256::ZERO
             );
             assert_eq!(
                 ctx.storage
-                    .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                    .balance(outbe_system_common::addresses::AGENT_REWARD_ADDRESS)
                     .unwrap(),
                 U256::ZERO
             );
@@ -1346,7 +1346,7 @@ mod distribute_daily_tests {
             let cca = address!("00000000000000000000000000000000000000a1");
             let bond = outbe_ccaregistry::constants::BOND_REQUIREMENT;
             ctx.storage
-                .increase_balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS, bond)
+                .increase_balance(outbe_system_common::addresses::CCA_REGISTRY_ADDRESS, bond)
                 .unwrap();
             outbe_ccaregistry::runtime::bond(ctx.storage.clone(), cca, bond, "Test CCA".into())
                 .unwrap();
@@ -1358,7 +1358,7 @@ mod distribute_daily_tests {
                 .unwrap();
             assert_eq!(
                 ctx.storage
-                    .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
+                    .balance(outbe_system_common::addresses::CCA_REGISTRY_ADDRESS)
                     .unwrap(),
                 bond
             );
@@ -1395,13 +1395,13 @@ mod distribute_daily_tests {
             assert_eq!(c2.get_claimable_reward(alice).unwrap(), U256::from(1000u64));
             assert_eq!(
                 ctx.storage
-                    .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
+                    .balance(outbe_system_common::addresses::CCA_REGISTRY_ADDRESS)
                     .unwrap(),
                 U256::ZERO
             );
             assert_eq!(
                 ctx.storage
-                    .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                    .balance(outbe_system_common::addresses::AGENT_REWARD_ADDRESS)
                     .unwrap(),
                 U256::ZERO
             );
@@ -1415,7 +1415,7 @@ mod distribute_daily_tests {
             assert_eq!(excess, U256::ZERO);
             assert_eq!(
                 ctx.storage
-                    .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                    .balance(outbe_system_common::addresses::AGENT_REWARD_ADDRESS)
                     .unwrap(),
                 U256::ZERO
             );
@@ -1451,7 +1451,7 @@ mod distribute_daily_tests {
             assert_eq!(claimable_total + excess, U256::from(2000u64));
             assert_eq!(
                 ctx.storage
-                    .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                    .balance(outbe_system_common::addresses::AGENT_REWARD_ADDRESS)
                     .unwrap(),
                 U256::ZERO
             );
@@ -1562,7 +1562,7 @@ fn accrual_and_claim_emit_their_events_for_any_pool() {
             .claim_reward(RewardPool::Waa, alice, U256::ZERO, (USD, USD))
             .unwrap()
     });
-    let logs = provider.get_events(outbe_primitives::addresses::AGENT_REWARD_ADDRESS);
+    let logs = provider.get_events(outbe_system_common::addresses::AGENT_REWARD_ADDRESS);
     let accrued: Vec<_> = logs
         .iter()
         .filter_map(|log| IAgentReward::RewardAccrued::decode_log_data(log).ok())
@@ -1615,7 +1615,7 @@ fn every_pool_day() -> HashMapStorageProvider {
         let cca = Address::repeat_byte(4);
         let bond = outbe_ccaregistry::constants::BOND_REQUIREMENT;
         storage
-            .increase_balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS, bond)
+            .increase_balance(outbe_system_common::addresses::CCA_REGISTRY_ADDRESS, bond)
             .unwrap();
         outbe_ccaregistry::runtime::bond(storage.clone(), cca, bond, "Test CCA".into()).unwrap();
         outbe_ccaregistry::api::credis_issued(&storage, cca, day.value(), U256::ONE).unwrap();
@@ -1715,7 +1715,7 @@ fn a_distribution_that_fails_after_any_write_reverts_and_credits_once_on_retry()
         let mut provider = every_pool_day();
         let slots = provider.storage.clone();
         let events = provider
-            .get_events(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+            .get_events(outbe_system_common::addresses::AGENT_REWARD_ADDRESS)
             .clone();
         provider.fail_after_mutation_at(failure_at);
         assert!(distribute(&mut provider).is_err(), "failure {failure_at}");
@@ -1724,7 +1724,7 @@ fn a_distribution_that_fails_after_any_write_reverts_and_credits_once_on_retry()
             "a write survived failure {failure_at}"
         );
         assert_eq!(
-            provider.get_events(outbe_primitives::addresses::AGENT_REWARD_ADDRESS),
+            provider.get_events(outbe_system_common::addresses::AGENT_REWARD_ADDRESS),
             &events,
             "failure {failure_at}"
         );
@@ -1734,7 +1734,7 @@ fn a_distribution_that_fails_after_any_write_reverts_and_credits_once_on_retry()
         assert_retry_credits(&mut provider, &expected, failure_at);
         assert_eq!(
             provider
-                .get_events(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                .get_events(outbe_system_common::addresses::AGENT_REWARD_ADDRESS)
                 .len(),
             expected.len(),
             "failure {failure_at}: one accrual event per credit"

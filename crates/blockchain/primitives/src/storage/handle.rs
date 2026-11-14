@@ -64,42 +64,16 @@ impl<'storage> StorageHandle<'storage> {
         result
     }
 
-    pub fn require_metadosis_process_ready(&self) -> Result<()> {
-        self.require_cycle_lifecycle(super::metadosis_process_ready_binding)
-    }
-
-    pub fn require_metadosis_init_genesis(&self) -> Result<()> {
-        self.require_cycle_lifecycle(super::metadosis_init_genesis_binding)
-    }
-
-    /// Allocation authority is bound to the target UTC day, not execution time.
-    pub fn require_metadosis_cycle_allocation(&self, timestamp: u64) -> Result<()> {
-        self.require_cycle_lifecycle_at(super::metadosis_cycle_allocation_binding, timestamp)
-    }
-
-    pub fn require_metadosis_advance_due(&self) -> Result<()> {
-        self.require_cycle_lifecycle(super::metadosis_advance_due_binding)
-    }
-
-    fn require_cycle_lifecycle(&self, binding_for: fn(u64, u64, u64) -> B256) -> Result<()> {
-        self.require_cycle_lifecycle_at(binding_for, self.now_secs()?)
-    }
-
-    fn require_cycle_lifecycle_at(
+    /// Requires the exact active scoped mutation frame for `(purpose, binding)`.
+    pub fn require_scoped_mutation_frame(
         &self,
-        binding_for: fn(u64, u64, u64) -> B256,
-        timestamp: u64,
+        purpose: super::MutationPurposeTag,
+        binding: B256,
     ) -> Result<()> {
         let chain_id = self.chain_id()?;
         let block_number = self.block_number()?;
-        let binding = binding_for(chain_id, block_number, timestamp);
         self.with_provider(|provider| {
-            provider.require_metadosis_mutation_frame(
-                super::MetadosisMutationPurposeTag::CycleLifecycle,
-                binding,
-                chain_id,
-                block_number,
-            )
+            provider.require_scoped_mutation_frame(purpose, binding, chain_id, block_number)
         })
     }
 
@@ -682,14 +656,14 @@ mod tests {
 
     #[test]
     fn trigger_budget_rollback_closes_authority_but_does_not_restore_entitlement() {
-        use crate::storage::{MetadosisCycleLifecycle, MetadosisMutationPurposeTag};
-        let purpose = MetadosisMutationPurposeTag::CycleLifecycle;
+        use crate::storage::{CycleLifecyclePurpose, MutationPurposeTag};
+        let purpose = MutationPurposeTag::CycleLifecycle;
         let binding = B256::repeat_byte(9);
         let mut provider = metered_provider(50_000);
-        provider.enable_metadosis_mutation_frame(purpose);
+        provider.enable_scoped_mutation_frame(purpose);
         provider.enter(|storage| {
             let result = storage.with_trigger_budget(5000, || {
-                storage.with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
+                storage.with_scoped_mutation::<CycleLifecyclePurpose, _>(binding, || {
                     storage.sstore(Address::ZERO, U256::ZERO, U256::ONE)?;
                     storage.deduct_gas(1)
                 })
@@ -705,10 +679,10 @@ mod tests {
         });
         // Cleanup removed the active lease, but the one-shot grant remains consumed.
         assert!(provider
-            .finish_metadosis_mutation_frame(purpose, binding, false)
+            .finish_scoped_mutation_frame(purpose, binding, false)
             .is_err());
         assert!(provider
-            .begin_metadosis_mutation_frame(purpose, binding, 1, 0)
+            .begin_scoped_mutation_frame(purpose, binding, 1, 0)
             .is_err());
     }
 

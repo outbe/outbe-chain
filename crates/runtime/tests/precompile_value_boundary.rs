@@ -17,12 +17,12 @@ use alloy_evm::{Evm as _, EvmFactory as _};
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolError};
 use outbe_evm::OutbeEvmFactory;
-use outbe_primitives::addresses::{
+use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+use outbe_staking::precompile::IStaking;
+use outbe_system_common::addresses::{
     GRATIS_ADDRESS, ORACLE_ADDRESS, STABLECOIN_ADDRESS_PREFIX, STAKING_ADDRESS,
     VALIDATOR_SET_ADDRESS, ZEROFEE_ADDRESS,
 };
-use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
-use outbe_staking::precompile::IStaking;
 use outbe_validatorset::contract::ValidatorSet;
 use reth_ethereum::evm::primitives::EvmEnv;
 use revm::{

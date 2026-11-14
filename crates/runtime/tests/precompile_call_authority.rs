@@ -3,18 +3,18 @@
 //! The production host decides which native mutation each envelope may perform.
 
 use alloy_primitives::{Address, Bytes, B256, U256};
-use outbe_evm::precompiles::MetadosisMutationCall;
+use outbe_evm::precompiles::PrecompileMutationCall;
 use outbe_evm::EvmRuntimeHost;
 use outbe_primitives::{
     addresses::{OUTBE_SYSTEM_TX_ADDRESS, SYSTEM_ADDRESS},
     consensus::{DkgBoundaryArtifact, ReshareResult},
     reshare_artifact::LateFinalizeCreditsArtifact,
-    storage::{
-        metadosis_advance_due_binding, metadosis_cycle_allocation_binding,
-        metadosis_init_genesis_binding, metadosis_process_ready_binding,
-        MetadosisMutationEntitlements, MetadosisMutationPurposeTag as Purpose,
-    },
+    storage::{MutationEntitlements, MutationPurposeTag as Purpose},
     system_tx::SystemTx,
+};
+use outbe_system_common::metadosis_bindings::{
+    metadosis_advance_due_binding, metadosis_cycle_allocation_binding,
+    metadosis_init_genesis_binding, metadosis_process_ready_binding,
 };
 
 const TEST_CHAIN_ID: u64 = 42;
@@ -48,19 +48,19 @@ fn boundary() -> DkgBoundaryArtifact {
     }
 }
 
-fn entitlements(call: MetadosisMutationCall<'_>) -> MetadosisMutationEntitlements {
+fn entitlements(call: PrecompileMutationCall<'_>) -> MutationEntitlements {
     outbe_runtime::OutbeRuntime::new().mutation_entitlements(call)
 }
 
-fn system_entitlements(input: SystemTx) -> MetadosisMutationEntitlements {
+fn system_entitlements(input: SystemTx) -> MutationEntitlements {
     let cycle_active_utc_day = matches!(input, SystemTx::BeginBlock { step_index: 8 }).then(|| {
-        outbe_primitives::time::previous_date_key(outbe_primitives::time::timestamp_to_date_key(
-            TEST_TIMESTAMP,
-        ))
+        outbe_system_common::time::previous_date_key(
+            outbe_system_common::time::timestamp_to_date_key(TEST_TIMESTAMP),
+        )
         .expect("date step")
     });
     let data = encoded(input);
-    entitlements(MetadosisMutationCall {
+    entitlements(PrecompileMutationCall {
         address: OUTBE_SYSTEM_TX_ADDRESS,
         data: data.as_ref(),
         caller: SYSTEM_ADDRESS,
@@ -73,20 +73,21 @@ fn system_entitlements(input: SystemTx) -> MetadosisMutationEntitlements {
     })
 }
 
-fn expected_cycle_entitlements() -> MetadosisMutationEntitlements {
-    let current_day = outbe_primitives::time::timestamp_to_date_key(TEST_TIMESTAMP);
-    let previous_day = outbe_primitives::time::previous_date_key(current_day).expect("date step");
+fn expected_cycle_entitlements() -> MutationEntitlements {
+    let current_day = outbe_system_common::time::timestamp_to_date_key(TEST_TIMESTAMP);
+    let previous_day =
+        outbe_system_common::time::previous_date_key(current_day).expect("date step");
     let allocation_timestamp =
-        outbe_primitives::time::date_key_to_utc_timestamp(previous_day).expect("date timestamp");
-    MetadosisMutationEntitlements::exact(
+        outbe_system_common::time::date_key_to_utc_timestamp(previous_day).expect("date timestamp");
+    MutationEntitlements::exact(
         Purpose::CycleLifecycle,
         metadosis_cycle_allocation_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, allocation_timestamp),
     )
-    .union(MetadosisMutationEntitlements::exact(
+    .union(MutationEntitlements::exact(
         Purpose::CycleLifecycle,
         metadosis_advance_due_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
     ))
-    .union(MetadosisMutationEntitlements::exact(
+    .union(MutationEntitlements::exact(
         Purpose::CycleLifecycle,
         metadosis_process_ready_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
     ))
@@ -95,7 +96,7 @@ fn expected_cycle_entitlements() -> MetadosisMutationEntitlements {
 #[test]
 fn process_emission_day_entitles_genesis_initialization_at_block_one() {
     let data = encoded(SystemTx::BeginBlock { step_index: 8 });
-    let granted = entitlements(MetadosisMutationCall {
+    let granted = entitlements(PrecompileMutationCall {
         address: OUTBE_SYSTEM_TX_ADDRESS,
         data: data.as_ref(),
         caller: SYSTEM_ADDRESS,
@@ -104,7 +105,7 @@ fn process_emission_day_entitles_genesis_initialization_at_block_one() {
         chain_id: TEST_CHAIN_ID,
         block_number: 1,
         timestamp: TEST_TIMESTAMP,
-        cycle_active_utc_day: Some(outbe_primitives::time::timestamp_to_date_key(
+        cycle_active_utc_day: Some(outbe_system_common::time::timestamp_to_date_key(
             TEST_TIMESTAMP,
         )),
     });
@@ -129,7 +130,7 @@ fn exact_production_causes_receive_only_their_purpose() {
             )
             .unwrap()
         }),
-        MetadosisMutationEntitlements::NONE,
+        MutationEntitlements::NONE,
     );
     assert_eq!(
         system_entitlements(SystemTx::Consensus {
@@ -137,19 +138,19 @@ fn exact_production_causes_receive_only_their_purpose() {
             payload: outbe_primitives::reshare_artifact::encode_boundary_artifact(&boundary())
                 .unwrap()
         }),
-        MetadosisMutationEntitlements::NONE,
+        MutationEntitlements::NONE,
     );
 }
 
 #[test]
 fn process_emission_day_grants_only_oldest_unallocated_day_after_a_multi_day_halt() {
-    let block_day = outbe_primitives::time::timestamp_to_date_key(TEST_TIMESTAMP);
+    let block_day = outbe_system_common::time::timestamp_to_date_key(TEST_TIMESTAMP);
     let mut active_day = block_day;
     for _ in 0..6 {
-        active_day = outbe_primitives::time::previous_date_key(active_day).expect("date step");
+        active_day = outbe_system_common::time::previous_date_key(active_day).expect("date step");
     }
     let data = encoded(SystemTx::BeginBlock { step_index: 8 });
-    let granted = entitlements(MetadosisMutationCall {
+    let granted = entitlements(PrecompileMutationCall {
         address: OUTBE_SYSTEM_TX_ADDRESS,
         data: data.as_ref(),
         caller: SYSTEM_ADDRESS,
@@ -166,20 +167,21 @@ fn process_emission_day_grants_only_oldest_unallocated_day_after_a_multi_day_hal
         metadosis_cycle_allocation_binding(
             TEST_CHAIN_ID,
             TEST_BLOCK_NUMBER,
-            outbe_primitives::time::date_key_to_utc_timestamp(active_day).expect("date timestamp"),
+            outbe_system_common::time::date_key_to_utc_timestamp(active_day)
+                .expect("date timestamp"),
         ),
     ));
-    let mut day = outbe_primitives::time::next_date_key(active_day).expect("date step");
+    let mut day = outbe_system_common::time::next_date_key(active_day).expect("date step");
     while day < block_day {
         assert!(!granted.expects(
             Purpose::CycleLifecycle,
             metadosis_cycle_allocation_binding(
                 TEST_CHAIN_ID,
                 TEST_BLOCK_NUMBER,
-                outbe_primitives::time::date_key_to_utc_timestamp(day).expect("date timestamp"),
+                outbe_system_common::time::date_key_to_utc_timestamp(day).expect("date timestamp"),
             ),
         ));
-        day = outbe_primitives::time::next_date_key(day).expect("date step");
+        day = outbe_system_common::time::next_date_key(day).expect("date step");
     }
     assert!(granted.expects(
         Purpose::CycleLifecycle,
@@ -226,7 +228,7 @@ fn route_or_envelope_mismatch_grants_no_mutation_authority() {
         ),
     ] {
         assert_eq!(
-            entitlements(MetadosisMutationCall {
+            entitlements(PrecompileMutationCall {
                 address,
                 data: cycle.as_ref(),
                 caller,
@@ -237,11 +239,11 @@ fn route_or_envelope_mismatch_grants_no_mutation_authority() {
                 timestamp: TEST_TIMESTAMP,
                 cycle_active_utc_day: None,
             }),
-            MetadosisMutationEntitlements::NONE
+            MutationEntitlements::NONE
         );
     }
     assert_eq!(
-        entitlements(MetadosisMutationCall {
+        entitlements(PrecompileMutationCall {
             address: OUTBE_SYSTEM_TX_ADDRESS,
             data: b"malformed",
             caller: SYSTEM_ADDRESS,
@@ -252,12 +254,12 @@ fn route_or_envelope_mismatch_grants_no_mutation_authority() {
             timestamp: TEST_TIMESTAMP,
             cycle_active_utc_day: None,
         }),
-        MetadosisMutationEntitlements::NONE
+        MutationEntitlements::NONE
     );
 
     assert_eq!(
         system_entitlements(SystemTx::BeginBlock { step_index: 6 }),
-        MetadosisMutationEntitlements::NONE,
+        MutationEntitlements::NONE,
     );
 }
 
@@ -291,6 +293,6 @@ fn noncanonical_late_credits_rejected_by_validation_and_authority() {
             step_index: CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX,
             payload: payload.into(),
         }),
-        MetadosisMutationEntitlements::NONE
+        MutationEntitlements::NONE
     );
 }

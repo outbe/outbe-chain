@@ -79,9 +79,9 @@ pub(crate) fn clearing_round_gas(
     let mut bids = CLEARING_MIN_BIDS;
     let mut day = emission_day.value();
     for _ in 0..CLEARING_HISTORY_DAYS {
-        day = match outbe_primitives::time::previous_date_key(day) {
+        day = match outbe_system_common::time::previous_date_key(day) {
             Ok(previous) => previous,
-            Err(outbe_primitives::time::TimeError::DateBeforeMinimum { .. }) => break,
+            Err(outbe_system_common::time::TimeError::DateBeforeMinimum { .. }) => break,
             Err(err) => return Err(crate::errors::date_step_error(err)),
         };
         let history_day = EmissionDate::new(day);

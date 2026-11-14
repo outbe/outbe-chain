@@ -20,11 +20,11 @@
 //!    silently revert.
 
 use alloy_primitives::Address;
+use outbe_genesis_cli::network::repo_root;
 use outbe_primitives::addresses::{
     CREATE2_DEPLOYER_ADDRESS, ENTRY_POINT_V07_ADDRESS, SENDER_CREATOR_V07_ADDRESS,
 };
 use serde_json::Value;
-use std::path::PathBuf;
 use std::str::FromStr;
 
 struct Predeploy {
@@ -51,15 +51,8 @@ const PREDEPLOYS: &[Predeploy] = &[
     },
 ];
 
-fn workspace_root() -> PathBuf {
-    let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    p.push("../../..");
-    p.canonicalize()
-        .expect("workspace root should canonicalize")
-}
-
 fn load_test_genesis_alloc() -> serde_json::Map<String, Value> {
-    let path = workspace_root().join("crates/blockchain/execution/tests/assets/genesis.json");
+    let path = repo_root().join("crates/blockchain/execution/tests/assets/genesis.json");
     let bytes = std::fs::read(&path).expect("test genesis.json should be readable");
     let v: Value = serde_json::from_slice(&bytes).expect("test genesis.json should parse");
     v["alloc"]
@@ -69,7 +62,7 @@ fn load_test_genesis_alloc() -> serde_json::Map<String, Value> {
 }
 
 fn load_bytecode(name: &str) -> String {
-    let path = workspace_root()
+    let path = repo_root()
         .join("contracts/predeploys")
         .join(format!("{name}.code.hex"));
     std::fs::read_to_string(&path)
@@ -79,7 +72,7 @@ fn load_bytecode(name: &str) -> String {
 }
 
 fn load_meta(name: &str) -> Value {
-    let path = workspace_root()
+    let path = repo_root()
         .join("contracts/predeploys")
         .join(format!("{name}.meta.json"));
     serde_json::from_slice(&std::fs::read(&path).expect("meta file should be readable"))

@@ -2,8 +2,8 @@
 //! their completion time.
 
 use alloy_primitives::{Address, U256};
-use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::error::Result;
+use outbe_system_common::addresses::STAKING_ADDRESS;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::{ValidatorLifecycle, ValidatorState};
 

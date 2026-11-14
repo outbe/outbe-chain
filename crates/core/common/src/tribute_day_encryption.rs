@@ -1,7 +1,7 @@
 //! Encrypted Tribute-owned daily amount records.
 
 use alloy_primitives::{keccak256, Address, B256};
-use outbe_primitives::time::{EmissionDate, WorldwideDay};
+use outbe_system_common::time::{EmissionDate, WorldwideDay};
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct EncryptedTributeDayAmountV2 {

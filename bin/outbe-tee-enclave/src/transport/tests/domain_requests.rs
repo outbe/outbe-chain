@@ -233,7 +233,7 @@ fn unseal_derived_view_key(
 fn sample_encrypted_offer(
     recipient_pub: &[u8; 32],
     owner: alloy_primitives::Address,
-    day: outbe_primitives::time::WorldwideDay,
+    day: outbe_system_common::time::WorldwideDay,
 ) -> outbe_enclave::protocol::EncryptedTributeOffer {
     use alloy_primitives::U256;
     let payload = serde_json::json!({
@@ -272,7 +272,7 @@ fn derive_account_keys_opens_tribute_and_nod_ciphertexts_from_dispatchers() {
     use outbe_core_common::{
         nod_encryption::NodTermsV1, series_id::SeriesId, tribute_encryption::TributeAmountsV2,
     };
-    use outbe_primitives::time::WorldwideDay;
+    use outbe_system_common::time::WorldwideDay;
 
     let mut enclave = resident_enclave(4);
     let (owner_sk, owner_addr) = evm_signer(7);

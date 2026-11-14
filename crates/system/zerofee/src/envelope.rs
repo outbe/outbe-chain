@@ -10,7 +10,7 @@ use outbe_validatorset::{
 };
 
 use crate::hooks::{
-    ZeroFeeAuthorization, ZeroFeeCandidate, ZeroFeeHook, ZeroFeeHookId, ZeroFeePolicyError,
+    ZeroFeeAuthorization, ZeroFeeCandidate, ZeroFeeHook, ZeroFeeHookTag, ZeroFeePolicyError,
     ZeroFeeTransaction,
 };
 
@@ -24,7 +24,7 @@ pub(crate) type ValidatorResolver =
 /// the validator that the signer represents. That validator is the subject
 /// of the fee waiver.
 pub(crate) struct ValidatorCallHook<C> {
-    id: ZeroFeeHookId,
+    id: ZeroFeeHookTag,
     envelope: ZeroFeeEnvelope,
     resolve_validator: ValidatorResolver,
     call: PhantomData<fn() -> C>,
@@ -32,7 +32,7 @@ pub(crate) struct ValidatorCallHook<C> {
 
 impl<C> ValidatorCallHook<C> {
     pub(crate) const fn new(
-        id: ZeroFeeHookId,
+        id: ZeroFeeHookTag,
         envelope: ZeroFeeEnvelope,
         resolve_validator: ValidatorResolver,
     ) -> Self {
@@ -46,7 +46,7 @@ impl<C> ValidatorCallHook<C> {
 }
 
 impl<C: SolCall> ZeroFeeHook for ValidatorCallHook<C> {
-    fn id(&self) -> ZeroFeeHookId {
+    fn id(&self) -> ZeroFeeHookTag {
         self.id
     }
 
@@ -96,7 +96,7 @@ impl ZeroFeeEnvelope {
     /// cap, value, calldata size, gas limit and decode checks in that order.
     pub(crate) fn classify<C: SolCall>(
         &self,
-        hook: ZeroFeeHookId,
+        hook: ZeroFeeHookTag,
         tx: &ZeroFeeTransaction<'_>,
     ) -> Result<Option<ZeroFeeCandidate>, ZeroFeePolicyError> {
         if !self.claims(tx, &C::SELECTOR) {

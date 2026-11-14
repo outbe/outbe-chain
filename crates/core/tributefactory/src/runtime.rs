@@ -4,6 +4,7 @@ use crate::offer_result::ProcessedOffer;
 use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_agentreward::AgentRewardContract;
 use outbe_core_common::wwd_entity_id::derive_poseidon_digest;
+use outbe_core_common::wwd_entity_id::WwdEntityId;
 #[cfg(any(test, feature = "bench-utils"))]
 use outbe_enclave::protocol::TributeOfferResult;
 use outbe_enclave::protocol::{
@@ -11,10 +12,9 @@ use outbe_enclave::protocol::{
     TributeZkExpectedHashes,
 };
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::time::timestamp_to_date_key;
-use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_system_common::stablecoin::validate_currency_code;
+use outbe_system_common::time::timestamp_to_date_key;
+use outbe_system_common::time::WorldwideDay;
 use outbe_tribute::TributeContract;
 use outbe_zk::wire::{decode_public_words, read_u64_be_padded};
 use outbe_zk_backend::barretenberg::{Barretenberg, RawVerifier};
@@ -486,7 +486,7 @@ mod reward_activity_tests {
     use alloy_sol_types::SolError;
     use outbe_agentreward::precompile::IAgentReward;
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
-    use outbe_primitives::time::date_key_to_utc_timestamp;
+    use outbe_system_common::time::date_key_to_utc_timestamp;
 
     const WALLET: Address = Address::repeat_byte(0x71);
     const SRA: Address = Address::repeat_byte(0x72);

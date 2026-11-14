@@ -70,17 +70,19 @@ pub mod precompile;
 mod renewal;
 pub mod runtime;
 pub mod schema;
+pub mod sponsorship;
 #[cfg(test)]
 mod test_support;
 
 pub use constants::{
-    FREE_TX_BOOTSTRAP_GAS_LIMIT, FREE_TX_DAILY_CALLDATA_BYTES, FREE_TX_DAILY_GAS_LIMIT,
-    FREE_TX_DAILY_LIMIT, FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT, MIN_FREE_TX_MAX_FEE_PER_GAS,
-    SPONSORED_GAS_PER_BLOCK,
+    ELEVATED_SPONSORED_GAS, FREE_TX_BOOTSTRAP_GAS_LIMIT, FREE_TX_DAILY_CALLDATA_BYTES,
+    FREE_TX_DAILY_GAS_LIMIT, FREE_TX_DAILY_LIMIT, FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT,
+    MIN_FREE_TX_MAX_FEE_PER_GAS, SPONSORED_GAS_PER_BLOCK,
 };
 pub use hooks::{
-    registry, ZeroFeeAuthorization, ZeroFeeCandidate, ZeroFeeHook, ZeroFeeHookId,
-    ZeroFeePolicyError, ZeroFeeRegistry, ZeroFeeTransaction,
+    registry, ZeroFeeAuthorization, ZeroFeeCandidate, ZeroFeeHook, ZeroFeeHookTag,
+    ZeroFeePolicyError, ZeroFeeRegistry, ZeroFeeTransaction, HYPERLANE_SUBMIT_CHECKPOINT_HOOK,
+    ORACLE_SUBMIT_VOTE_HOOK, RENEW_ENCLAVE_HOOK,
 };
 pub use outbe_primitives::addresses::ZEROFEE_ADDRESS;
 pub use runtime::{

@@ -3,7 +3,7 @@
 #[cfg(any(test, feature = "test-utils"))]
 use std::sync::Arc;
 
-use crate::precompiles::MetadosisMutationCall;
+use crate::precompiles::PrecompileMutationCall;
 use crate::tee_attestation_activation::TeeAttestationChainSpecStateV1;
 use alloy_primitives::{Address, Bytes, B256, U256};
 #[cfg(any(test, feature = "test-utils"))]
@@ -17,7 +17,7 @@ use outbe_primitives::{
     consensus_metadata::CertifiedParentAccountingMetadata,
     error::Result,
     reshare_artifact::{LateFinalizeCreditsArtifact, PerBlockCredit},
-    storage::{MetadosisMutationEntitlements, StorageHandle},
+    storage::{MutationEntitlements, StorageHandle},
     system_tx_context::SystemTxExecutionContext,
     zero_fee_types::{
         BootstrapAccountView, BootstrapCandidate, BootstrapTransactionView,
@@ -96,6 +96,8 @@ pub trait EvmRuntimeHost: std::fmt::Debug + Send + Sync {
     fn block_order(&self) -> crate::system_tx::BlockOrder;
     /// EIP-161 marker addresses preserved at the start of every block.
     fn marker_addresses(&self) -> &'static [Address];
+    /// Whether `address` resolves to an active native precompile route (exact or dynamic class).
+    fn is_registered_precompile(&self, address: &Address) -> bool;
     /// Whether an exact route may be credited native value.
     fn precompile_is_payable(&self, address: &Address) -> bool;
     /// Base gas charged before the precompile runs.
@@ -194,11 +196,8 @@ pub trait EvmRuntimeHost: std::fmt::Debug + Send + Sync {
         storage: StorageHandle<'_>,
         proposer: Address,
     ) -> Result<Option<[u8; 32]>>;
-    /// Metadosis entitlements for one precompile call.
-    fn mutation_entitlements(
-        &self,
-        call: MetadosisMutationCall<'_>,
-    ) -> MetadosisMutationEntitlements;
+    /// Scoped mutation entitlements for one precompile call.
+    fn mutation_entitlements(&self, call: PrecompileMutationCall<'_>) -> MutationEntitlements;
     /// True when `data` is a `CycleTick` from the system caller.
     fn is_protocol_cycle_call(&self, address: Address, caller: Address, data: &[u8]) -> bool;
     /// Active UTC day derived from genesis and the block timestamp.
@@ -287,23 +286,15 @@ impl EvmRuntimeHost for FailClosedHost {
     }
 
     fn marker_addresses(&self) -> &'static [Address] {
-        &crate::executor::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES
+        &[]
     }
 
-    fn precompile_is_payable(&self, address: &Address) -> bool {
-        use outbe_primitives::addresses::{
-            CCA_REGISTRY_ADDRESS, CREDIS_FACTORY_ADDRESS, CROSSCHAIN_BRIDGE_ADDRESS,
-            INTEX_FACTORY_ADDRESS, STAKING_ADDRESS, VOTE_ADDRESS,
-        };
-        const PAYABLE: &[Address] = &[
-            STAKING_ADDRESS,
-            INTEX_FACTORY_ADDRESS,
-            VOTE_ADDRESS,
-            CREDIS_FACTORY_ADDRESS,
-            CCA_REGISTRY_ADDRESS,
-            CROSSCHAIN_BRIDGE_ADDRESS,
-        ];
-        PAYABLE.contains(address)
+    fn is_registered_precompile(&self, _address: &Address) -> bool {
+        false
+    }
+
+    fn precompile_is_payable(&self, _address: &Address) -> bool {
+        false
     }
 
     fn precompile_base_gas(&self, _address: &Address, _input: &[u8]) -> u64 {
@@ -434,11 +425,8 @@ impl EvmRuntimeHost for FailClosedHost {
         Err(missing())
     }
 
-    fn mutation_entitlements(
-        &self,
-        _call: MetadosisMutationCall<'_>,
-    ) -> MetadosisMutationEntitlements {
-        MetadosisMutationEntitlements::NONE
+    fn mutation_entitlements(&self, _call: PrecompileMutationCall<'_>) -> MutationEntitlements {
+        MutationEntitlements::NONE
     }
 
     fn is_protocol_cycle_call(&self, _address: Address, _caller: Address, _data: &[u8]) -> bool {

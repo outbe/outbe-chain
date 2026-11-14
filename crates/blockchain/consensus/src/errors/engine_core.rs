@@ -106,15 +106,15 @@ pub enum FollowTransportError {
         /// Underlying error text.
         error: String,
     },
-    /// Indicates that the upstream eth_call for tributeOfferPublicKey failed.
-    #[error("upstream eth_call tributeOfferPublicKey failed: {0}")]
-    UpstreamTributeOfferPublicKeyCall(String),
+    /// Indicates that the upstream eth_call for the network encryption public key failed.
+    #[error("upstream eth_call network encryption public key failed: {0}")]
+    UpstreamNetworkEncryptionPublicKeyCall(String),
     /// Indicates that the upstream eth_call returned malformed hex data.
     #[error("malformed eth_call result from upstream: {0}")]
     MalformedEthCallResult(String),
-    /// Indicates that tributeOfferPublicKey returned an unexpected byte length.
-    #[error("upstream tributeOfferPublicKey returned {0} bytes instead of one ABI word")]
-    UnexpectedTributeOfferPublicKeyLength(usize),
+    /// Indicates that the network encryption public key query returned an unexpected byte length.
+    #[error("upstream network encryption public key returned {0} bytes instead of one ABI word")]
+    UnexpectedNetworkEncryptionPublicKeyLength(usize),
     /// Indicates that an upstream JSON-RPC request failed.
     #[error("upstream {method} RPC failed: {error}")]
     UpstreamRpcRequest {
@@ -232,12 +232,12 @@ pub enum ValidatorsError {
     /// Indicates that checking a pending validator set change failed.
     #[error("failed to check pending set change: {0}")]
     CheckPendingSetChange(String),
-    /// Indicates that reading the TEE offer public key failed.
-    #[error("failed to read tee offer public key: {0}")]
-    ReadTeeOfferPublicKey(String),
-    /// Indicates that reading the TEE offer epoch failed.
-    #[error("failed to read tee offer epoch: {0}")]
-    ReadTeeOfferEpoch(String),
+    /// Indicates that reading the TEE network encryption public key failed.
+    #[error("failed to read TEE network encryption public key: {0}")]
+    ReadNetworkEncryptionPublicKey(#[source] PrecompileError),
+    /// Indicates that reading the TEE network encryption epoch failed.
+    #[error("failed to read TEE network encryption epoch: {0}")]
+    ReadNetworkEncryptionEpoch(#[source] PrecompileError),
     /// Indicates that reading the validator TEE recipient X25519 key failed.
     #[error("failed to read tee recipient_x25519: {0}")]
     ReadTeeRecipientX25519(String),

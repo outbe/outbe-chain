@@ -1,6 +1,6 @@
 use alloy_primitives::Address;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
-use outbe_primitives::time::EmissionDate;
+use outbe_system_common::time::EmissionDate;
 
 use crate::{
     constants::ORIGIN_ROUTER_ADDRESS,

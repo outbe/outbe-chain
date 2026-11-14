@@ -182,9 +182,9 @@ fn dispatch_drives_full_dkg_ceremony_over_protocol() {
     // signature -> shared offer key.
     let mut all_sealed: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
     for e in enclaves.iter_mut() {
-        match e.call(EnclaveRequest::DkgTributeOfferPartial { ceremony_id }) {
-            EnclaveResponse::DkgTributeOfferPartial { sealed } => all_sealed.extend(sealed),
-            other => panic!("DkgTributeOfferPartial: {other:?}"),
+        match e.call(EnclaveRequest::DkgNetworkKeyPartial { ceremony_id }) {
+            EnclaveResponse::DkgNetworkKeyPartial { sealed } => all_sealed.extend(sealed),
+            other => panic!("DkgNetworkKeyPartial: {other:?}"),
         }
     }
 
@@ -196,23 +196,23 @@ fn dispatch_drives_full_dkg_ceremony_over_protocol() {
             .filter(|(recipient_bls, _)| *recipient_bls == participant_bls[i])
             .map(|(_, blob)| blob.clone())
             .collect();
-        match e.call(EnclaveRequest::DkgFinalizeTributeOffer {
+        match e.call(EnclaveRequest::DkgFinalizeNetworkKey {
             ceremony_id,
             sealed_partials,
             chain_id,
-            tribute_offer_epoch: 0,
+            network_key_epoch: 0,
         }) {
-            EnclaveResponse::DkgTributeOfferKey {
-                tribute_offer_public,
+            EnclaveResponse::DkgNetworkEncryptionKey {
+                network_encryption_public_key,
                 group_public_key,
             } => {
                 assert!(
                     !group_public_key.is_empty(),
                     "group public key must be emitted at founding offer finalization"
                 );
-                tribute_offer_keys.push(tribute_offer_public);
+                tribute_offer_keys.push(network_encryption_public_key);
             }
-            other => panic!("DkgFinalizeTributeOffer: {other:?}"),
+            other => panic!("DkgFinalizeNetworkKey: {other:?}"),
         }
     }
     // Every enclave derives the byte-identical shared offer public key.

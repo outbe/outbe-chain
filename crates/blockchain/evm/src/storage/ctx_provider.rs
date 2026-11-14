@@ -31,8 +31,8 @@ use core::fmt::Debug;
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::{
-        MetadosisMutationEntitlements, MetadosisMutationPurposeTag, PrecompileStorageProvider,
-        SubCallError, SubCallInput, SubCallOutput, SubCallStatus,
+        MutationEntitlements, MutationPurposeTag, PrecompileStorageProvider, SubCallError,
+        SubCallInput, SubCallOutput, SubCallStatus,
     },
 };
 use revm::{
@@ -149,7 +149,7 @@ pub struct CtxStorageProvider<'a, DB: Database + Debug> {
     /// executor host after construction. The default fails closed.
     host: std::sync::Arc<dyn crate::EvmRuntimeHost>,
 
-    /// One-shot authority for the active Metadosis mutation frame.
+    /// One-shot authority for the active scoped mutation frame.
     dispatch_frames: DispatchFrameAuthority,
     /// Active journal checkpoints `(token, raw_revm_checkpoint)` in LIFO order.
     checkpoints: Vec<(JournalCheckpoint, JournalCheckpoint, Option<i64>)>,
@@ -175,21 +175,21 @@ pub struct CtxStorageProviderConfig {
 
     pub abort_bridge: crate::precompiles::ExecutionAbortBridge,
 
-    pub metadosis_mutation_entitlements: MetadosisMutationEntitlements,
+    pub scoped_mutation_entitlements: MutationEntitlements,
 }
 
 struct DispatchFrameAuthority {
-    metadosis: MetadosisMutationFrameState,
+    scoped: ScopedMutationFrameState,
 }
 
 #[derive(Debug)]
-struct MetadosisMutationFrameState {
-    entitlements: MetadosisMutationEntitlements,
-    active: Option<(MetadosisMutationPurposeTag, B256, u64, u64)>,
+struct ScopedMutationFrameState {
+    entitlements: MutationEntitlements,
+    active: Option<(MutationPurposeTag, B256, u64, u64)>,
 }
 
-impl MetadosisMutationFrameState {
-    const fn new(entitlements: MetadosisMutationEntitlements) -> Self {
+impl ScopedMutationFrameState {
+    const fn new(entitlements: MutationEntitlements) -> Self {
         Self {
             entitlements,
             active: None,
@@ -198,14 +198,14 @@ impl MetadosisMutationFrameState {
 
     fn begin(
         &mut self,
-        purpose: MetadosisMutationPurposeTag,
+        purpose: MutationPurposeTag,
         binding: B256,
         chain_id: u64,
         block_number: u64,
     ) -> outbe_primitives::error::Result<()> {
         if self.active.is_some() || !self.entitlements.consume(purpose, binding) {
             return Err(
-                crate::errors::CtxStorageError::MetadosisMutationPurposeNotEntitled {
+                crate::errors::CtxStorageError::ScopedMutationPurposeNotEntitled {
                     purpose,
                     binding,
                     remaining: Box::new(self.entitlements),
@@ -219,16 +219,14 @@ impl MetadosisMutationFrameState {
 
     fn finish(
         &mut self,
-        purpose: MetadosisMutationPurposeTag,
+        purpose: MutationPurposeTag,
         binding: B256,
     ) -> outbe_primitives::error::Result<()> {
         let Some((active_purpose, active_binding, _, _)) = self.active.as_ref().copied() else {
-            return Err(crate::errors::CtxStorageError::MetadosisMutationFrameNotActive.into());
+            return Err(crate::errors::CtxStorageError::ScopedMutationFrameNotActive.into());
         };
         if active_purpose != purpose || active_binding != binding {
-            return Err(
-                crate::errors::CtxStorageError::MetadosisMutationFrameIdentityMismatch.into(),
-            );
+            return Err(crate::errors::CtxStorageError::ScopedMutationFrameIdentityMismatch.into());
         }
         self.active = None;
         Ok(())
@@ -258,7 +256,7 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
             host,
 
             dispatch_frames: DispatchFrameAuthority {
-                metadosis: MetadosisMutationFrameState::new(config.metadosis_mutation_entitlements),
+                scoped: ScopedMutationFrameState::new(config.scoped_mutation_entitlements),
             },
             checkpoints: Vec::new(),
             trigger_budget: None,
@@ -276,11 +274,8 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
         self.host = host;
     }
 
-    pub fn replace_metadosis_mutation_entitlements(
-        &mut self,
-        entitlements: MetadosisMutationEntitlements,
-    ) {
-        self.dispatch_frames.metadosis = MetadosisMutationFrameState::new(entitlements);
+    pub fn replace_scoped_mutation_entitlements(&mut self, entitlements: MutationEntitlements) {
+        self.dispatch_frames.scoped = ScopedMutationFrameState::new(entitlements);
     }
 }
 
@@ -291,9 +286,9 @@ fn internals<DB: Database + Debug>(ctx: &mut EthEvmContext<DB>) -> EvmInternals<
 }
 
 impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<'a, DB> {
-    fn begin_metadosis_mutation_frame(
+    fn begin_scoped_mutation_frame(
         &mut self,
-        purpose: MetadosisMutationPurposeTag,
+        purpose: MutationPurposeTag,
         binding: B256,
         chain_id: u64,
         block_number: u64,
@@ -304,36 +299,33 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         if ContextTr::cfg(self.ctx).chain_id() != chain_id
             || ContextTr::block(self.ctx).number().saturating_to::<u64>() != block_number
         {
-            return Err(crate::errors::CtxStorageError::MetadosisMutationFrameScopeMismatch.into());
+            return Err(crate::errors::CtxStorageError::ScopedMutationFrameScopeMismatch.into());
         }
         self.dispatch_frames
-            .metadosis
+            .scoped
             .begin(purpose, binding, chain_id, block_number)
     }
 
-    fn require_metadosis_mutation_frame(
+    fn require_scoped_mutation_frame(
         &mut self,
-        purpose: MetadosisMutationPurposeTag,
+        purpose: MutationPurposeTag,
         binding: B256,
         chain_id: u64,
         block_number: u64,
     ) -> outbe_primitives::error::Result<()> {
-        if self.dispatch_frames.metadosis.active != Some((purpose, binding, chain_id, block_number))
-        {
-            return Err(
-                crate::errors::CtxStorageError::MetadosisMutationFrameIdentityMismatch.into(),
-            );
+        if self.dispatch_frames.scoped.active != Some((purpose, binding, chain_id, block_number)) {
+            return Err(crate::errors::CtxStorageError::ScopedMutationFrameIdentityMismatch.into());
         }
         Ok(())
     }
 
-    fn finish_metadosis_mutation_frame(
+    fn finish_scoped_mutation_frame(
         &mut self,
-        purpose: MetadosisMutationPurposeTag,
+        purpose: MutationPurposeTag,
         binding: B256,
         _completed: bool,
     ) -> outbe_primitives::error::Result<()> {
-        self.dispatch_frames.metadosis.finish(purpose, binding)
+        self.dispatch_frames.scoped.finish(purpose, binding)
     }
 
     fn chain_id(&self) -> u64 {
@@ -606,17 +598,16 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
 }
 
 #[cfg(test)]
-mod metadosis_mutation_frame_tests {
-    use super::MetadosisMutationFrameState;
+mod scoped_mutation_frame_tests {
+    use super::ScopedMutationFrameState;
     use alloy_primitives::B256;
     use outbe_primitives::storage::{
-        metadosis_process_ready_binding, MetadosisMutationEntitlements,
-        MetadosisMutationPurposeTag as Purpose,
+        scoped_block_binding, MutationEntitlements, MutationPurposeTag as Purpose,
     };
 
     #[test]
     fn denied_route_cannot_open_frame() {
-        let mut denied = MetadosisMutationFrameState::new(MetadosisMutationEntitlements::NONE);
+        let mut denied = ScopedMutationFrameState::new(MutationEntitlements::NONE);
         assert!(denied
             .begin(Purpose::CycleLifecycle, B256::repeat_byte(1), 1, 2)
             .is_err());
@@ -626,8 +617,7 @@ mod metadosis_mutation_frame_tests {
     fn nesting_and_wrong_close_preserve_the_active_frame() {
         let purpose = Purpose::CycleLifecycle;
         let binding = B256::repeat_byte(3);
-        let mut frame =
-            MetadosisMutationFrameState::new(MetadosisMutationEntitlements::repeated(purpose, 2));
+        let mut frame = ScopedMutationFrameState::new(MutationEntitlements::repeated(purpose, 2));
         frame.begin(purpose, binding, 7, 11).unwrap();
 
         assert!(frame.begin(purpose, B256::repeat_byte(4), 7, 11).is_err());
@@ -642,8 +632,7 @@ mod metadosis_mutation_frame_tests {
     fn one_route_entitlement_cannot_be_reused() {
         let purpose = Purpose::CycleLifecycle;
         let binding = B256::repeat_byte(7);
-        let mut frame =
-            MetadosisMutationFrameState::new(MetadosisMutationEntitlements::only(purpose));
+        let mut frame = ScopedMutationFrameState::new(MutationEntitlements::only(purpose));
         frame.begin(purpose, binding, 7, 11).unwrap();
         frame.finish(purpose, binding).unwrap();
 
@@ -653,8 +642,7 @@ mod metadosis_mutation_frame_tests {
     #[test]
     fn exact_bounded_route_budget_is_consumed_one_lease_at_a_time() {
         let purpose = Purpose::CycleLifecycle;
-        let mut frame =
-            MetadosisMutationFrameState::new(MetadosisMutationEntitlements::repeated(purpose, 2));
+        let mut frame = ScopedMutationFrameState::new(MutationEntitlements::repeated(purpose, 2));
         for binding in [B256::repeat_byte(8), B256::repeat_byte(9)] {
             frame.begin(purpose, binding, 7, 11).unwrap();
             frame.finish(purpose, binding).unwrap();
@@ -665,12 +653,11 @@ mod metadosis_mutation_frame_tests {
     #[test]
     fn exact_authority_binding_rejects_mismatch_without_consuming_grant() {
         let purpose = Purpose::CycleLifecycle;
-        let expected = metadosis_process_ready_binding(7, 11, 12);
-        let wrong = metadosis_process_ready_binding(7, 11, 13);
+        let expected = scoped_block_binding(b"TEST_STEP_V1", 7, 11, 12);
+        let wrong = scoped_block_binding(b"TEST_STEP_V1", 7, 11, 13);
         assert_ne!(expected, wrong);
-        let mut frame = MetadosisMutationFrameState::new(MetadosisMutationEntitlements::exact(
-            purpose, expected,
-        ));
+        let mut frame =
+            ScopedMutationFrameState::new(MutationEntitlements::exact(purpose, expected));
 
         assert!(frame.begin(purpose, wrong, 7, 11).is_err());
         frame.begin(purpose, expected, 7, 11).unwrap();

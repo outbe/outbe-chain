@@ -23,7 +23,7 @@ fn begin_block_tallies_only_on_a_vote_period_boundary() {
 
         // 2020-01-02 keeps the 12-second gap. A block on 2020-01-01 makes the
         // zero watermark step 2019-12-31, and begin_block refuses that step.
-        let day = outbe_primitives::time::date_key_to_utc_timestamp(20_200_102).unwrap();
+        let day = outbe_system_common::time::date_key_to_utc_timestamp(20_200_102).unwrap();
         // Block 1: not a vote period boundary (period=2), no tally
         let runtime_ctx = BlockRuntimeContext::new(
             BlockContext {
@@ -122,7 +122,7 @@ fn slash_window_timestamp_overflow_preserves_all_validator_counters_for_retry() 
         staking.stake_amount.write(&penalized, stake).unwrap();
         staking.total_staked.write(stake).unwrap();
         storage
-            .set_balance(outbe_primitives::addresses::STAKING_ADDRESS, stake)
+            .set_balance(outbe_system_common::addresses::STAKING_ADDRESS, stake)
             .unwrap();
         for timestamp in [U256::from(u64::MAX) + U256::from(1), U256::MAX] {
             storage.set_block_timestamp(timestamp).unwrap();
@@ -141,7 +141,7 @@ fn slash_window_timestamp_overflow_preserves_all_validator_counters_for_retry() 
             assert_eq!(staking.get_stake(penalized).unwrap(), stake);
             assert_eq!(
                 storage
-                    .balance(outbe_primitives::addresses::STAKING_ADDRESS)
+                    .balance(outbe_system_common::addresses::STAKING_ADDRESS)
                     .unwrap(),
                 stake
             );
@@ -253,7 +253,7 @@ fn slash_window_rolls_back_slash_state_when_force_exit_fails() {
         staking.total_staked.write(stake).unwrap();
         oracle
             .storage
-            .set_balance(outbe_primitives::addresses::STAKING_ADDRESS, stake)
+            .set_balance(outbe_system_common::addresses::STAKING_ADDRESS, stake)
             .unwrap();
 
         oracle.increment_miss(&validator).unwrap();
@@ -273,7 +273,7 @@ fn slash_window_rolls_back_slash_state_when_force_exit_fails() {
         assert_eq!(
             oracle
                 .storage
-                .balance(outbe_primitives::addresses::STAKING_ADDRESS)
+                .balance(outbe_system_common::addresses::STAKING_ADDRESS)
                 .unwrap(),
             stake
         );
@@ -308,7 +308,7 @@ fn slash_window_rolls_back_the_forced_exit_when_slashing_fails() {
         staking.total_staked.write(stake).unwrap();
         oracle
             .storage
-            .set_balance(outbe_primitives::addresses::STAKING_ADDRESS, U256::ZERO)
+            .set_balance(outbe_system_common::addresses::STAKING_ADDRESS, U256::ZERO)
             .unwrap();
 
         oracle.increment_miss(&validator).unwrap();
@@ -341,9 +341,9 @@ fn begin_block_finalizes_the_closed_utc_day() {
         let day_d = 20260624u32;
         let day_d1 = 20260625u32;
         let day_d2 = 20260626u32;
-        let d_start = outbe_primitives::time::date_key_to_utc_timestamp(day_d).unwrap();
-        let d1_start = outbe_primitives::time::date_key_to_utc_timestamp(day_d1).unwrap();
-        let d2_start = outbe_primitives::time::date_key_to_utc_timestamp(day_d2).unwrap();
+        let d_start = outbe_system_common::time::date_key_to_utc_timestamp(day_d).unwrap();
+        let d1_start = outbe_system_common::time::date_key_to_utc_timestamp(day_d1).unwrap();
+        let d2_start = outbe_system_common::time::date_key_to_utc_timestamp(day_d2).unwrap();
 
         // Day D saw blocks in every hour and a snapshot in each one. The
         // first block of D+1 follows the last noted one.

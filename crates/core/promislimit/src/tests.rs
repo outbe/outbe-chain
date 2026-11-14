@@ -152,7 +152,7 @@ fn an_overflowing_credit_fails_the_block() {
 fn burn_to_promis_limit_accumulates_rest_across_sources_and_rolls_back_on_overflow() {
     use alloy_primitives::Address;
     use alloy_sol_types::{SolCall, SolEvent, SolValue};
-    use outbe_primitives::addresses::{
+    use outbe_system_common::addresses::{
         PROMIS_LIMIT_ADDRESS, STAKING_ADDRESS, SYSTEM_ADDRESS, VOTE_ADDRESS,
     };
     use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
@@ -319,12 +319,9 @@ fn burn_to_promis_limit_accumulates_rest_across_sources_and_rolls_back_on_overfl
 fn only_executor_gives_burned_amount() {
     use alloy_primitives::Bytes;
     use alloy_sol_types::SolError;
-    use outbe_primitives::{
-        addresses::{
-            INTEX_FACTORY_ADDRESS, PROMIS_LIMIT_ADDRESS, STAKING_ADDRESS, SYSTEM_ADDRESS,
-            VOTE_ADDRESS,
-        },
-        error::PrecompileError,
+    use outbe_primitives::error::PrecompileError;
+    use outbe_system_common::addresses::{
+        INTEX_FACTORY_ADDRESS, PROMIS_LIMIT_ADDRESS, STAKING_ADDRESS, SYSTEM_ADDRESS, VOTE_ADDRESS,
     };
     use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 

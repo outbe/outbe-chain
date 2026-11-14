@@ -1,7 +1,7 @@
 //! The read-only precompile.
 
 use super::*;
-use outbe_primitives::time::SECONDS_PER_DAY_U32;
+use outbe_system_common::time::SECONDS_PER_DAY_U32;
 
 #[test]
 fn precompile_series_data_round_trip() {

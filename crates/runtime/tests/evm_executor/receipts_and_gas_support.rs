@@ -126,7 +126,7 @@ pub(super) fn assert_dense_agent_accrual_pending(
         );
     }
     assert_eq!(
-        storage.balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)?,
+        storage.balance(outbe_system_common::addresses::AGENT_REWARD_ADDRESS)?,
         U256::ZERO,
         "GAS-05: AgentReward holds no native COEN"
     );
@@ -237,7 +237,7 @@ pub(super) fn assert_approved_factory_state(
     Ok(())
 }
 
-pub(crate) use outbe_primitives::time::{EmissionDate, SECONDS_PER_DAY};
+pub(crate) use outbe_system_common::time::{EmissionDate, SECONDS_PER_DAY};
 
 pub(super) const GENESIS: u64 = 1_704_067_200;
 pub(super) const POPULATION: usize = 256;
@@ -567,7 +567,7 @@ pub(super) fn accept_auction_batches(
         outbe_desis::precompile::dispatch(
             storage.clone(),
             &call.abi_encode(),
-            outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS,
+            outbe_core_common::addresses::ORIGIN_ROUTER_ADDRESS,
             U256::ZERO,
         )
         .unwrap();
@@ -581,7 +581,7 @@ pub(super) fn accept_auction_batches(
     outbe_desis::precompile::dispatch(
         storage.clone(),
         &done.abi_encode(),
-        outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS,
+        outbe_core_common::addresses::ORIGIN_ROUTER_ADDRESS,
         U256::ZERO,
     )
     .unwrap();
@@ -688,7 +688,7 @@ fn assert_deferred_state(
         }
         .abi_encode();
         let counter = U256::from_be_bytes(keccak256(first_result).0);
-        for address in [outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS, RELAY] {
+        for address in [outbe_core_common::addresses::ORIGIN_ROUTER_ADDRESS, RELAY] {
             assert_eq!(
                 storage.sload(address, counter).unwrap(),
                 U256::ZERO,

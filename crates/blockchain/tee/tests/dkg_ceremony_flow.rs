@@ -79,7 +79,7 @@ impl Script {
             FoundingCeremonyParameters {
                 participant_count: participants,
                 chain_id: CHAIN,
-                tribute_offer_epoch: 17,
+                network_key_epoch: 17,
             },
         )
         .await;
@@ -180,7 +180,7 @@ fn log(dealer: u8, byte: u8) -> DkgWireMessage {
 }
 
 fn partial(signer: u8, recipient: u8, byte: u8) -> DkgWireMessage {
-    DkgWireMessage::TributeOfferPartial {
+    DkgWireMessage::NetworkKeyPartial {
         signer_bls: vec![signer],
         recipient_bls: vec![recipient],
         partial: vec![byte],
@@ -258,24 +258,24 @@ fn recover_share(two_participants: bool) -> [Step; 2] {
             },
         ),
         request(
-            EnclaveRequest::DkgTributeOfferPartial {
+            EnclaveRequest::DkgNetworkKeyPartial {
                 ceremony_id: CEREMONY,
             },
-            EnclaveResponse::DkgTributeOfferPartial { sealed },
+            EnclaveResponse::DkgNetworkKeyPartial { sealed },
         ),
     ]
 }
 
 fn install_offer(partials: Vec<Vec<u8>>) -> Step {
     request(
-        EnclaveRequest::DkgFinalizeTributeOffer {
+        EnclaveRequest::DkgFinalizeNetworkKey {
             ceremony_id: CEREMONY,
             sealed_partials: partials,
             chain_id: CHAIN,
-            tribute_offer_epoch: 17,
+            network_key_epoch: 17,
         },
-        EnclaveResponse::DkgTributeOfferKey {
-            tribute_offer_public: [72; 32],
+        EnclaveResponse::DkgNetworkEncryptionKey {
+            network_encryption_public_key: [72; 32],
             group_public_key: vec![73],
         },
     )
@@ -291,8 +291,8 @@ fn assert_outcome_with_mismatches(outcome: CeremonyOutcome, identity_mismatches:
         CeremonyOutcome {
             group_public: vec![70],
             share_commitment: B256::repeat_byte(71),
-            tribute_offer_public: [72; 32],
-            tribute_offer_group_public_key: vec![73],
+            network_encryption_public_key: [72; 32],
+            network_encryption_group_public_key: vec![73],
             identity_mismatches,
         }
     );

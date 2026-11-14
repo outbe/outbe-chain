@@ -1,6 +1,6 @@
 use super::eip7702_support::*;
 use super::*;
-use outbe_primitives::addresses::{AGENT_REWARD_ADDRESS, ZEROFEE_ADDRESS};
+use outbe_system_common::addresses::{AGENT_REWARD_ADDRESS, ZEROFEE_ADDRESS};
 use outbe_zerofee::precompile::IZeroFee::SponsorshipAuthorized;
 
 /// Happy path: the executor pre-fee hook admits a sponsored tx with

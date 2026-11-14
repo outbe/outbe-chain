@@ -41,7 +41,6 @@ use commonware_cryptography::{
     bls12381::primitives::{ops::keypair, variant::MinSig},
     sha256::Digest as Sha256Digest,
 };
-use outbe_primitives::addresses::{PROMIS_LIMIT_ADDRESS, STAKING_ADDRESS};
 use outbe_primitives::consensus_metadata::{
     CertifiedParentAccountingMetadata, ParentParticipationProof,
 };
@@ -65,6 +64,7 @@ use outbe_slashindicator::runtime::classify_vrf_failure;
 use outbe_slashindicator::schema::SlashIndicator;
 use outbe_slashindicator::vrf_evidence::InvalidVrfProofEvidence;
 use outbe_staking::contract::Staking;
+use outbe_system_common::addresses::{PROMIS_LIMIT_ADDRESS, STAKING_ADDRESS};
 use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::state::{write_committee_snapshot, CommitteeEntry, CommitteeSnapshot};

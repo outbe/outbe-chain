@@ -179,13 +179,13 @@ pub(crate) async fn prepare(
 /// Require that the local enclave holds the exact offer key of the selected
 /// upstream. Losing the key is terminal for this node identity.
 async fn require_upstream_offer_key_v1(upstream: &str) -> eyre::Result<()> {
-    let expected_offer = outbe_consensus::read_upstream_tribute_offer_public_key(upstream)
+    let expected_offer = outbe_consensus::read_upstream_network_encryption_public_key(upstream)
         .await
         .wrap_err("failed to read mandatory offer key from the selected upstream")?;
     if expected_offer.is_zero() {
         return Err(LaunchError::UpstreamMissingOst3OfferKey.into());
     }
-    let resident_offer = outbe_tee::resident_offer_public_key_v1()
+    let resident_offer = outbe_tee::resident_network_encryption_public_key_v1()
         .wrap_err("failed to read the local enclave resident offer key")?;
     if resident_offer != expected_offer {
         return Err(LaunchError::LocalEnclaveOfferKeyMismatch.into());
@@ -234,10 +234,12 @@ fn local_tee_admission_ready_v1(
     ) {
         return Ok((false, admission));
     }
-    let on_chain_offer =
-        outbe_consensus::validators::read_tee_offer_public_at_latest(protocol, &node.provider)
-            .wrap_err("read the canonical offer key for the TEE lease guard")?;
-    let resident_offer = outbe_tee::resident_offer_public_key_state_v1()
+    let on_chain_offer = outbe_consensus::validators::read_network_encryption_public_at_latest(
+        protocol,
+        &node.provider,
+    )
+    .wrap_err("read the canonical offer key for the TEE lease guard")?;
+    let resident_offer = outbe_tee::resident_network_encryption_public_key_state_v1()
         .wrap_err("read the resident offer key for the TEE lease guard")?;
     Ok((
         !on_chain_offer.is_zero() && resident_offer == Some(on_chain_offer),

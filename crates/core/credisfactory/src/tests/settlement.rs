@@ -5,9 +5,9 @@ use alloy_sol_types::SolCall;
 use outbe_credis::{CredisContract, CredisState};
 use outbe_enclave::protocol::GratisOp;
 use outbe_gratisfactory::runtime::cancel_pledge;
-use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::storage::StorageHandle;
 use outbe_promislimit::PromisLimitContract;
+use outbe_system_common::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_vaultrouter::VaultRouterContract;
 
 fn unallocated(storage: &StorageHandle<'_>) -> U256 {
@@ -615,7 +615,7 @@ fn failed_origination_keeps_the_pledge_and_cca_weight_and_exit_freezes_new_credi
         bootstrap(&storage, pledge_cost() * U256::from(2u64));
         let id = seed_reservation(&storage, alice(), alice(), pledge_stables());
         pledge(&storage, alice(), id, 1);
-        let day = outbe_primitives::time::timestamp_to_date_key(CREATED_AT);
+        let day = outbe_system_common::time::timestamp_to_date_key(CREATED_AT);
         // The unfunded stake transfer fails after the pledge was handed to Credis.
         assert!(runtime::issue_credis(storage.clone(), cca(), id, pledge_stake()).is_err());
         assert_eq!(
@@ -769,7 +769,7 @@ fn the_owner_forfeits_an_issued_credis_burning_its_sources_pledge() {
         let credis_id = runtime::issue_credis(storage.clone(), cca(), id, pledge_stake())
             .unwrap()
             .0;
-        let day = outbe_primitives::time::timestamp_to_date_key(CREATED_AT);
+        let day = outbe_system_common::time::timestamp_to_date_key(CREATED_AT);
         let liquid = view_balance(&storage, alice());
         let same_block_err = forfeit_through_abi(&storage, bob(), credis_id, U256::ZERO)
             .err()

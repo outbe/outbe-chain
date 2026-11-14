@@ -9,7 +9,7 @@
 use alloy_primitives::U256;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::EmissionDate;
+use outbe_system_common::time::EmissionDate;
 
 use crate::constants::CANCELED_LIMIT_OVERFLOW;
 use crate::precompile::IDesis;

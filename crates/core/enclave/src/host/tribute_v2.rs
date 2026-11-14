@@ -2,11 +2,14 @@
 
 use alloy_primitives::{keccak256, B256};
 use outbe_core_common::tribute_encryption::{EncryptedTributeV2, TributeAmountsV2};
-use outbe_tee::{tee_call::verify_enclave_attestation, AttestationMetricClass, TransportError};
+use outbe_tee::{tee_call::verify_enclave_attestation, TransportError};
 use serde::{Deserialize, Serialize};
 
-use super::protocol::{
-    inputs_canonical_hash, EncryptedTributeOffer, TributeOfferStatus, TributeZkExpectedHashes,
+use super::{
+    errors::TRIBUTE_OFFER_ATTESTATION,
+    protocol::{
+        inputs_canonical_hash, EncryptedTributeOffer, TributeOfferStatus, TributeZkExpectedHashes,
+    },
 };
 
 /// Public offer result. Amounts and the creator public key remain encrypted.
@@ -91,7 +94,6 @@ pub fn verify_attestation(
     preimage: &[u8],
     tag: &[u8],
 ) -> Result<(), TransportError> {
-    verify_enclave_attestation(attestation_pub, preimage, tag).map_err(|cause| {
-        TransportError::app_attestation(AttestationMetricClass::TributeOffer, cause)
-    })
+    verify_enclave_attestation(attestation_pub, preimage, tag)
+        .map_err(|cause| TransportError::app_attestation(TRIBUTE_OFFER_ATTESTATION, cause))
 }

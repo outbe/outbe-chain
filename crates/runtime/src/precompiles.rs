@@ -4,11 +4,11 @@
 //! runtime host; the host calls these functions.
 
 use alloy_primitives::{Address, Bytes, U256};
-use outbe_primitives::addresses::*;
 use outbe_primitives::dispatch::reject_value_unless_payable;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::*;
 
 #[derive(Clone, Copy)]
 enum ValuePolicy {
@@ -92,8 +92,16 @@ macro_rules! define_exact_routes {
             );
         )+
 
+        const EXACT_ROUTE_ADDRESSES: &[Address] = &[$($address),+];
+
         #[cfg(test)]
-        const ROUTE_COUNT: usize = [$($address),+].len();
+        const ROUTE_COUNT: usize = EXACT_ROUTE_ADDRESSES.len();
+
+        /// Returns all exact precompile addresses registered by the runtime host.
+        #[must_use]
+        pub fn outbe_exact_precompile_addresses() -> &'static [Address] {
+            EXACT_ROUTE_ADDRESSES
+        }
 
         fn exact_route(address: &Address) -> Option<ExactRoute> {
             match *address {
@@ -153,9 +161,11 @@ define_exact_routes! {
     UPDATE_ADDRESS => (outbe_update::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_update::precompile::PAYABLE_SELECTORS),
 }
 
-const _: () = outbe_evm::precompiles::assert_valid_production_routes(
-    outbe_evm::precompiles::outbe_precompile_addresses(),
-);
+const _: () = outbe_evm::precompiles::assert_valid_production_routes(EXACT_ROUTE_ADDRESSES);
+
+pub(crate) fn is_registered(address: &Address) -> bool {
+    exact_route(address).is_some() || is_stablecoin_address(*address)
+}
 
 pub(crate) fn is_payable(address: &Address) -> bool {
     if let Some(route) = exact_route(address) {
@@ -169,7 +179,7 @@ pub(crate) fn base_gas(address: &Address, input: &[u8]) -> u64 {
         return (route.base_gas)(input);
     }
     if is_stablecoin_address(*address) {
-        return outbe_primitives::stablecoin_fork::STABLECOIN_V1_GAS.dispatch_base;
+        return outbe_system_common::stablecoin_fork::STABLECOIN_V1_GAS.dispatch_base;
     }
     PRECOMPILE_BASE_GAS
 }

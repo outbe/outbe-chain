@@ -2,8 +2,8 @@
 
 use alloy_primitives::U256;
 use outbe_primitives::error::Result;
-use outbe_primitives::time::{WorldwideDay, SECONDS_PER_DAY};
 use outbe_system_common::address_pair::AddressPair;
+use outbe_system_common::time::{WorldwideDay, SECONDS_PER_DAY};
 
 use super::{pair_series, PairSeries, VwapAccumulator};
 use crate::constants::VWAP_HOUR_SECONDS;

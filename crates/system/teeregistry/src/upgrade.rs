@@ -247,9 +247,9 @@ impl TeeRegistry<'_> {
         context: &outbe_tee::dcap_protocol::DcapOnboardingContextV1,
     ) -> Result<bool> {
         Ok(self.strict_upgrade_successor.read()? == context.policy_hash
-            && self.offer_public_key()?.0 == context.tribute_offer_public
+            && self.offer_public_key()?.0 == context.network_encryption_public
             && self.key_epoch()? == context.key_epoch
-            && self.tribute_offer_epoch()? == context.tribute_offer_epoch)
+            && self.tribute_offer_epoch()? == context.network_encryption_epoch)
     }
 }
 

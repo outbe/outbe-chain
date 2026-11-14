@@ -6,18 +6,17 @@ pub mod handle;
 pub mod hashmap;
 pub mod indexed_list;
 pub mod keys;
-pub mod metadosis_mutation;
 pub mod proof;
 pub mod readonly;
+pub mod scoped_mutation;
 pub mod types;
 
 pub use handle::StorageHandle;
-pub use metadosis_mutation::{
-    metadosis_advance_due_binding, metadosis_cycle_allocation_binding,
-    metadosis_init_genesis_binding, metadosis_process_ready_binding, MetadosisCycleLifecycle,
-    MetadosisMutationEntitlements, MetadosisMutationPurpose, MetadosisMutationPurposeTag,
-};
 pub use revm::state::{AccountInfo, Bytecode};
+pub use scoped_mutation::{
+    scoped_block_binding, scoped_command_binding, CycleLifecyclePurpose, MutationEntitlements,
+    MutationPurposeTag, ScopedMutationPurpose,
+};
 pub use types::{Mapping, Slot, Storable, StorableType, StorageKey, StorageOps};
 
 use alloy_primitives::{Address, Bytes, LogData, B256, U256};
@@ -253,39 +252,39 @@ pub trait StorageBacked<'storage>: Sized {
 /// Runtime code reaches providers through explicit [`StorageHandle`] values
 /// created by precompile, transaction, or block lifecycle entrypoints.
 pub trait PrecompileStorageProvider {
-    /// Opens one exact Metadosis mutation frame for the current executor route.
+    /// Opens one exact scoped mutation frame for the current executor route.
     ///
     /// Providers deny this by default. Implementations must reject nested
     /// mutation and any purpose not entitled by the authenticated route.
-    fn begin_metadosis_mutation_frame(
+    fn begin_scoped_mutation_frame(
         &mut self,
-        _purpose: MetadosisMutationPurposeTag,
+        _purpose: MutationPurposeTag,
         _binding: B256,
         _chain_id: u64,
         _block_number: u64,
     ) -> Result<()> {
-        Err(crate::error::PrimitivesStorageError::MetadosisMutationFrameUnavailable.into())
+        Err(crate::error::PrimitivesStorageError::ScopedMutationFrameUnavailable.into())
     }
 
-    /// Requires the exact active frame before an owner applies Lysis effects.
-    fn require_metadosis_mutation_frame(
+    /// Requires the exact active frame before an owner applies scoped effects.
+    fn require_scoped_mutation_frame(
         &mut self,
-        _purpose: MetadosisMutationPurposeTag,
+        _purpose: MutationPurposeTag,
         _binding: B256,
         _chain_id: u64,
         _block_number: u64,
     ) -> Result<()> {
-        Err(crate::error::PrimitivesStorageError::MetadosisMutationFrameUnavailable.into())
+        Err(crate::error::PrimitivesStorageError::ScopedMutationFrameUnavailable.into())
     }
 
-    /// Closes the exact Metadosis mutation frame opened above.
-    fn finish_metadosis_mutation_frame(
+    /// Closes the exact scoped mutation frame opened above.
+    fn finish_scoped_mutation_frame(
         &mut self,
-        _purpose: MetadosisMutationPurposeTag,
+        _purpose: MutationPurposeTag,
         _binding: B256,
         _completed: bool,
     ) -> Result<()> {
-        Err(crate::error::PrimitivesStorageError::MetadosisMutationFrameUnavailable.into())
+        Err(crate::error::PrimitivesStorageError::ScopedMutationFrameUnavailable.into())
     }
 
     /// Returns the chain ID.

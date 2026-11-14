@@ -19,7 +19,7 @@ use crate::{api, MAX_LEAGUE, MIN_LEAGUE};
 
 const ALICE: Address = address!("0x1111111111111111111111111111111111111111");
 const BOB: Address = address!("0x2222222222222222222222222222222222222222");
-use outbe_primitives::time::SECONDS_PER_DAY as DAY;
+use outbe_system_common::time::SECONDS_PER_DAY as DAY;
 const T0: u64 = 1_000_000;
 
 /// Run `f` in a fresh storage scope on the test-enclave chain, with the
@@ -46,7 +46,7 @@ fn cohort_in_encrypts_and_sets_anchor() {
         // first acquisition UTC day.
         let blob = c.cohorts_ct_of(ALICE).unwrap();
         assert!(!blob.is_empty());
-        let expected_day = outbe_primitives::time::utc_day_from_timestamp(T0);
+        let expected_day = outbe_system_common::time::utc_day_from_timestamp(T0);
         assert_eq!(c.first_qualified_start().unwrap(), expected_day);
 
         // A later acquisition by a different owner does NOT move the set-once
@@ -484,7 +484,7 @@ mod enclave_responses {
 
 #[test]
 fn wwd_max_fidelity_locks_per_wwd_and_rolls_over_at_metadosis() {
-    use outbe_primitives::time::WorldwideDay;
+    use outbe_system_common::time::WorldwideDay;
 
     with_env(|storage| {
         let fc = FidelityContract::new(storage.clone());
@@ -529,7 +529,7 @@ fn wwd_max_fidelity_locks_per_wwd_and_rolls_over_at_metadosis() {
 
 #[test]
 fn same_day_buy_and_full_sell_resets_qualified_start() {
-    use outbe_primitives::time::WorldwideDay;
+    use outbe_system_common::time::WorldwideDay;
 
     with_env(|storage| {
         let fc = FidelityContract::new(storage.clone());

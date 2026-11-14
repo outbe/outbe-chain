@@ -138,7 +138,7 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
         );
     });
     let mined: Vec<_> = storage
-        .get_events(outbe_primitives::addresses::PROMIS_ADDRESS)
+        .get_events(outbe_system_common::addresses::PROMIS_ADDRESS)
         .iter()
         .filter_map(|log| {
             outbe_promis::precompile::IPromis::PromisMinedFromIntex::decode_log_data(log).ok()
@@ -265,7 +265,7 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
         assert_eq!(reserve(), forfeited);
     });
     let closed_series: Vec<_> = storage
-        .get_events(outbe_primitives::addresses::INTEX_ADDRESS)
+        .get_events(outbe_system_common::addresses::INTEX_ADDRESS)
         .iter()
         .filter_map(|log| {
             outbe_intex::precompile::IIntex::IntexSeriesClosed::decode_log_data(log).ok()

@@ -97,11 +97,11 @@ pub trait EngineProtocolState: Send + Sync + 'static {
     /// Validator-set pending-change flag.
     fn has_pending_set_change(&self, storage: StorageHandle<'_>) -> PrecompileResult<bool>;
 
-    /// Tribute offer public key. Zero before block-1 bootstrap.
-    fn tee_offer_public(&self, storage: StorageHandle<'_>) -> PrecompileResult<B256>;
+    /// Network encryption public key. Zero before block-1 bootstrap.
+    fn network_encryption_public(&self, storage: StorageHandle<'_>) -> PrecompileResult<B256>;
 
-    /// Tribute-offer epoch.
-    fn tee_offer_epoch(&self, storage: StorageHandle<'_>) -> PrecompileResult<u64>;
+    /// Network-encryption-key epoch.
+    fn network_encryption_epoch(&self, storage: StorageHandle<'_>) -> PrecompileResult<u64>;
 
     /// Recipient X25519 for `validator`. `Ok(None)` means no NodeHost binding.
     fn tee_recipient(

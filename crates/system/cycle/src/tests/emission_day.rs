@@ -3,16 +3,13 @@
 use alloy_primitives::U256;
 use outbe_emission::day_emission::emission_limit_of_day;
 use outbe_oracle::schema::OracleContract;
-use outbe_primitives::{
-    addresses::TRIBUTE_FACTORY_ADDRESS,
-    error::PrecompileError,
-    storage::MetadosisMutationPurposeTag,
-    time::{
-        date_key_to_utc_timestamp, day_number_between, timestamp_to_date_key, WorldwideDay,
-        SECONDS_PER_DAY,
-    },
-};
+use outbe_primitives::{error::PrecompileError, storage::MutationPurposeTag};
 use outbe_system_common::address_pair::AddressPair;
+use outbe_system_common::addresses::TRIBUTE_FACTORY_ADDRESS;
+use outbe_system_common::time::{
+    date_key_to_utc_timestamp, day_number_between, timestamp_to_date_key, WorldwideDay,
+    SECONDS_PER_DAY,
+};
 use outbe_tributefactory::TributeFactoryContract;
 
 use super::*;
@@ -24,7 +21,7 @@ fn every_utc_day_is_an_emission_day() {
     // Days 20261001, 20261002, 20261003 have wwd == 0; day 20261004 has wwd == 20260930 (with 0 Tributes).
     let genesis_oct_1 = date_key_to_utc_timestamp(20_261_001).unwrap() + 60;
     let mut storage = cycle_storage();
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 8);
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 8);
 
     storage.enter(|handle| {
         let block = BlockContext {
@@ -50,7 +47,7 @@ fn every_utc_day_is_an_emission_day() {
     let mut ts = first_hour;
     while ts <= end_ts {
         storage.set_block_number(block_number);
-        storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 8);
+        storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 8);
         storage.enter(|handle| {
             let block = BlockContext {
                 block_gas_limit: 0,
@@ -126,7 +123,7 @@ fn every_utc_day_is_an_emission_day() {
 #[test]
 fn start_date_comes_from_genesis_block() {
     let mut storage = cycle_storage();
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 32);
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 32);
 
     // 1. Over the exact same storage (no stored start_date slot), two BlockContexts with
     //    different genesis_timestamp values derive different start dates, active UTC days,
@@ -209,7 +206,7 @@ fn start_date_comes_from_genesis_block() {
 #[test]
 fn wwd_step_runs_once_a_day() {
     let mut storage = cycle_storage();
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 64);
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 64);
 
     // Block 1 at 2024-01-01 00:01:00 UTC initializes WWDs for cutoff 2024-01-01 00:00:00 UTC:
     // pipeline contains 20231231 (first_wwd_for_genesis), 20240101, and 20240102,
@@ -266,7 +263,7 @@ fn wwd_step_runs_once_a_day() {
     for day_offset in 1..=4u64 {
         let midnight_ts = GENESIS_TS + day_offset * SECONDS_PER_DAY;
         storage.set_block_number(block_no);
-        storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 8);
+        storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 8);
         storage.enter(|handle| {
             let ctx = dispatch_at(handle.clone(), block_no, midnight_ts);
             crate::handler::process_agent_rewards(&ctx).unwrap();
@@ -337,7 +334,7 @@ fn wwd_step_runs_once_a_day() {
     for hour in 1..=23u64 {
         let ts_hour = GENESIS_TS + 4 * SECONDS_PER_DAY + hour * 3_600;
         storage.set_block_number(block_no);
-        storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 8);
+        storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 8);
         storage.enter(|handle| {
             let ctx = dispatch_at(handle.clone(), block_no, ts_hour);
             crate::handler::process_agent_rewards(&ctx).unwrap();
@@ -394,7 +391,7 @@ fn wwd_step_runs_once_a_day() {
     let ts_day6_00h = GENESIS_TS + 5 * SECONDS_PER_DAY;
     let factory_events_before_failed_a6 = storage.get_events(TRIBUTE_FACTORY_ADDRESS).len();
     storage.set_block_number(block_no);
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 8);
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 8);
     storage.enter(|handle| {
         let ctx = dispatch_at(handle.clone(), block_no, ts_day6_00h);
         let factory = TributeFactoryContract::new(ctx.storage.clone());
@@ -456,7 +453,7 @@ fn wwd_step_runs_once_a_day() {
     });
     let ts_day6_01h = ts_day6_00h + 3_600;
     storage.set_block_number(block_no);
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 8);
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 8);
     storage.enter(|handle| {
         let ctx = dispatch_at(handle.clone(), block_no, ts_day6_01h);
         crate::handler::process_agent_rewards(&ctx).unwrap();
@@ -515,7 +512,7 @@ fn wwd_step_runs_once_a_day() {
     let ts_day7_00h = GENESIS_TS + 6 * SECONDS_PER_DAY;
     let factory_events_before_text_revert = storage.get_events(TRIBUTE_FACTORY_ADDRESS).len();
     storage.set_block_number(block_no);
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 0);
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 0);
     storage.enter(|handle| {
         let block = BlockContext {
             block_gas_limit: 0,

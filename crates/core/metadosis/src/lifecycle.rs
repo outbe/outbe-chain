@@ -1,8 +1,9 @@
 //! EmissionDay and WorldwideDay lifecycle orchestration.
 
 use outbe_emission::schema::metadosis_state;
-use outbe_primitives::{block::BlockRuntimeContext, error::Result, time::WorldwideDay};
+use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 use outbe_promislimit::PromisLimitContract;
+use outbe_system_common::time::WorldwideDay;
 use outbe_tributefactory::TributeFactoryContract;
 
 use crate::{
@@ -12,7 +13,7 @@ use crate::{
 };
 
 pub(crate) fn date_step_error(
-    err: outbe_primitives::time::TimeError,
+    err: outbe_system_common::time::TimeError,
 ) -> outbe_primitives::error::PrecompileError {
     match err.date_step() {
         Some((kind, date_key)) => MetadosisCallerError::DateStep { kind, date_key }.into(),

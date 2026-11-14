@@ -11,9 +11,9 @@ use outbe_oracle::schema::OracleContract;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::EmissionDate;
-use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 use outbe_system_common::stablecoin::ISO_4217_NUMERIC_CODES;
+use outbe_system_common::time::EmissionDate;
+use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 
 use crate::precompile::IIntexFactory;
 use crate::tests::called;
@@ -24,7 +24,7 @@ use outbe_system_common::pass_budget::{SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_
 pub(super) const CHAIN_ID: u64 = 1;
 pub(super) const REFERENCE_ISO: u16 = 840;
 pub(super) const ISSUED_AT: u64 = 1_700_000_000;
-pub(super) use outbe_primitives::time::{SECONDS_PER_DAY as DAY, SECONDS_PER_DAY_U32};
+pub(super) use outbe_system_common::time::{SECONDS_PER_DAY as DAY, SECONDS_PER_DAY_U32};
 pub(super) const TRIGGER: u64 = 1_000_000;
 pub(super) const WINDOW_DAYS: u32 = 28;
 

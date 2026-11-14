@@ -9,7 +9,7 @@ use outbe_core_common::{
     tribute_encryption::EncryptedTributeV2,
     wwd_entity_id::WwdEntityId,
 };
-use outbe_primitives::time::{EmissionDate, WorldwideDay};
+use outbe_system_common::time::{EmissionDate, WorldwideDay};
 use serde::{Deserialize, Serialize};
 
 /// Operation applied to an encrypted Tribute day or league total.

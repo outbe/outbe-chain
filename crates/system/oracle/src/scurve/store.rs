@@ -2,10 +2,10 @@
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolEvent;
-use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::error::Result;
-use outbe_primitives::time::{WorldwideDay, SECONDS_PER_DAY};
 use outbe_system_common::address_pair::AddressPair;
+use outbe_system_common::addresses::ORACLE_ADDRESS;
+use outbe_system_common::time::{WorldwideDay, SECONDS_PER_DAY};
 
 use super::query::{curve_at, curve_value};
 use crate::errors::OracleError;

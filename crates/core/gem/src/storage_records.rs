@@ -56,13 +56,13 @@ mod tests {
     use super::*;
     use alloy_primitives::{B256, U256};
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
-    use outbe_primitives::time::WorldwideDay;
+    use outbe_system_common::time::WorldwideDay;
 
     #[test]
     fn legacy_wwd_storage_is_read_by_native_u256_records_and_owner_indexes() {
+        use outbe_core_common::wwd_entity_id::WwdEntityId;
         use outbe_primitives::storage::dsl::{List, Map};
         use outbe_primitives::storage::types::{Mapping, Storable, StorageKey};
-        use outbe_primitives::wwd_entity_id::WwdEntityId;
 
         let mut provider = HashMapStorageProvider::new(54322345);
         StorageHandle::enter(&mut provider, |storage| {

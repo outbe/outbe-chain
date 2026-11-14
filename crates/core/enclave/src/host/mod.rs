@@ -37,7 +37,11 @@ use outbe_tee::{
     RuntimeEnclaveClient, TransportError,
 };
 
-pub use errors::{BalanceClientError, EnclaveClientError, LocalCryptoError, TributeSourceError};
+pub use errors::{
+    BalanceClientError, EnclaveClientError, LocalCryptoError, TributeSourceError,
+    FIDELITY_ATTESTATION, GRATIS_OP_ATTESTATION, NOD_MINT_REJECTED, PROMIS_OP_ATTESTATION,
+    TRIBUTE_OFFER_ATTESTATION, TRIBUTE_SOURCE_REJECTED,
+};
 pub use offer_encrypt::OFFER_HKDF_SALT;
 pub use promis_decrypt::decrypt_promis_balance;
 #[cfg(any(test, feature = "test-utils"))]

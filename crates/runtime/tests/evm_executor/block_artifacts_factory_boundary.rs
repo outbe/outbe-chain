@@ -544,7 +544,7 @@ fn factory_boundaries_are_byte_equal_across_proposer_and_validator_execution() {
                 assert_eq!(
                     proposer.token_code_hash,
                     Some(keccak256(
-                        outbe_primitives::addresses::STABLECOIN_MARKER_CODE
+                        outbe_system_common::addresses::STABLECOIN_MARKER_CODE
                     ))
                 );
                 assert_eq!(proposer.token_total_supply, U256::ZERO);

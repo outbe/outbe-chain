@@ -395,22 +395,23 @@ pub fn prepare_gramine_direct_dev_onboarding_artifact_v1(
     validate_direct_dev_response(&key, expected, context, &response)
 }
 
-/// Read whether the permanent tribute-offer key is ready in the mandatory local
-/// enclave. `None` is a fresh/keyless state, not a replacement or recovery path.
-pub fn resident_offer_public_key_state_v1() -> Result<Option<B256>, TransportError> {
+/// Read whether the permanent threshold network encryption key is ready in the
+/// mandatory local enclave. `None` is a fresh/keyless state, not a replacement
+/// or recovery path.
+pub fn resident_network_encryption_public_key_state_v1() -> Result<Option<B256>, TransportError> {
     let Some(result) = try_with_enclave(|session| session.request(&EnclaveRequest::GetPublicKeys))
     else {
         return Err(TransportError::EnclaveError(
             "mandatory enclave client is not configured".into(),
         ));
     };
-    decode_resident_offer_key_response(result?)
+    decode_resident_network_key_response(result?)
 }
 
-/// Require the permanent tribute-offer key. A keyless enclave is fatal to an
-/// existing identity and never triggers recovery, replacement, or fallback.
-pub fn resident_offer_public_key_v1() -> Result<B256, TransportError> {
-    resident_offer_public_key_state_v1()?.ok_or_else(|| {
+/// Require the permanent threshold network encryption key. A keyless enclave is
+/// fatal to an existing identity and never triggers recovery, replacement, or fallback.
+pub fn resident_network_encryption_public_key_v1() -> Result<B256, TransportError> {
+    resident_network_encryption_public_key_state_v1()?.ok_or_else(|| {
         TransportError::EnclaveError(
             "local enclave permanent offer key is not ready; no recovery or fallback exists".into(),
         )
@@ -418,7 +419,7 @@ pub fn resident_offer_public_key_v1() -> Result<B256, TransportError> {
 }
 
 /// Decode a ready-key probe without accepting a zero public key.
-fn decode_resident_offer_key_response(
+fn decode_resident_network_key_response(
     response: EnclaveResponse,
 ) -> Result<Option<B256>, TransportError> {
     let (offer_key_ready, recipient_x25519_pub) = match response {

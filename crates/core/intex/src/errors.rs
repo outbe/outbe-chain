@@ -46,7 +46,7 @@ impl From<outbe_core_common::series_id::InvalidSeriesId> for IntexError {
 }
 
 pub(crate) fn date_step_error(
-    err: outbe_primitives::time::TimeError,
+    err: outbe_system_common::time::TimeError,
 ) -> outbe_primitives::error::PrecompileError {
     match err.date_step() {
         Some((kind, date_key)) => IntexError::DateStep { kind, date_key }.into(),

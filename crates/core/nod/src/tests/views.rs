@@ -1,7 +1,7 @@
 //! Public reads: Nod data, lifecycle state and metadata.
 
 use super::*;
-use outbe_primitives::time::SECONDS_PER_DAY_U32;
+use outbe_system_common::time::SECONDS_PER_DAY_U32;
 
 #[test]
 fn settled_state_is_exposed_in_nod_data_and_metadata() {
@@ -175,7 +175,7 @@ fn settlement_updates_only_the_settled_nod() {
         .unwrap();
     });
 
-    let events = provider.get_events(outbe_primitives::addresses::NOD_ADDRESS);
+    let events = provider.get_events(outbe_system_common::addresses::NOD_ADDRESS);
     let batches: Vec<(U256, U256)> = events
         .iter()
         .filter_map(|log| INod::BatchMetadataUpdate::decode_log_data(log).ok())

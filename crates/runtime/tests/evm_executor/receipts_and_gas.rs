@@ -304,7 +304,7 @@ fn system_prefix_charges_visible_gas_and_receipt_cumulative_contract() {
 #[test]
 fn cycle_tick_utc_boundary_gas_usage() {
     const GENESIS_TS: u64 = 1_704_067_200;
-    use outbe_primitives::time::SECONDS_PER_DAY;
+    use outbe_system_common::time::SECONDS_PER_DAY;
 
     let signer = test_evm_signer();
     let proposer = signer.address();
@@ -387,7 +387,7 @@ fn cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     outbe_cycle::runtime::take_task_gas_samples();
     outbe_cycle::runtime::take_cycle_gas_samples();
     const GENESIS_TS: u64 = 1_704_067_200;
-    use outbe_primitives::time::SECONDS_PER_DAY;
+    use outbe_system_common::time::SECONDS_PER_DAY;
     // Validators fill the first shared slice; WAA and SRA await a later block.
     const DENSE_ADDRESS_COUNT: u64 =
         outbe_agentreward::constants::ACCRUAL_RECIPIENTS_PER_BLOCK as u64 / 2;
@@ -400,8 +400,8 @@ fn cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     let signer = test_evm_signer();
     let proposer = signer.address();
     let block_ts = GENESIS_TS + SECONDS_PER_DAY + 60;
-    let prev_day = outbe_primitives::time::previous_date_key(
-        outbe_primitives::time::timestamp_to_date_key(block_ts),
+    let prev_day = outbe_system_common::time::previous_date_key(
+        outbe_system_common::time::timestamp_to_date_key(block_ts),
     )
     .expect("date step");
     let mut state =

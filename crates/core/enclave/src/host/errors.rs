@@ -1,12 +1,42 @@
 //! Typed errors for host-side enclave clients, offer encryption, and owner-local decryption.
 
 use outbe_primitives::error::PrecompileError;
-use outbe_tee::{
-    AttestationMetricClass, RejectionMetricClass, TeeAttestationError, TransportError,
-};
+use outbe_tee::{AppErrorDescriptor, TeeAttestationError, TransportError};
 use thiserror::Error;
 
 use super::protocol::EnclaveResponse;
+
+/// Tribute offer, read, day, or NOD attestation failure descriptor.
+pub const TRIBUTE_OFFER_ATTESTATION: AppErrorDescriptor = AppErrorDescriptor::new(
+    "tribute_offer_attestation",
+    "offer attestation signature invalid",
+);
+
+/// Gratis ledger operation attestation failure descriptor.
+pub const GRATIS_OP_ATTESTATION: AppErrorDescriptor = AppErrorDescriptor::new(
+    "gratis_op_attestation",
+    "gratis-op attestation signature invalid",
+);
+
+/// Promis ledger operation attestation failure descriptor.
+pub const PROMIS_OP_ATTESTATION: AppErrorDescriptor = AppErrorDescriptor::new(
+    "promis_op_attestation",
+    "promis-op attestation signature invalid",
+);
+
+/// Fidelity operation attestation failure descriptor.
+pub const FIDELITY_ATTESTATION: AppErrorDescriptor = AppErrorDescriptor::new(
+    "fidelity_attestation",
+    "fidelity attestation signature invalid",
+);
+
+/// Tribute state-source proof or context rejection descriptor.
+pub const TRIBUTE_SOURCE_REJECTED: AppErrorDescriptor =
+    AppErrorDescriptor::new("tribute_source_rejected", "Tribute source rejected");
+
+/// Encrypted NOD mint business rejection descriptor.
+pub const NOD_MINT_REJECTED: AppErrorDescriptor =
+    AppErrorDescriptor::new("nod_mint_rejected", "encrypted NOD mint rejected");
 
 /// Errors returned by [`crate::balance_client::execute_confidential_balance_op`].
 #[derive(Debug, Error)]
@@ -192,10 +222,10 @@ impl From<EnclaveClientError> for TransportError {
     fn from(error: EnclaveClientError) -> Self {
         match error {
             EnclaveClientError::NodMintRejected { reason } => {
-                Self::app_rejected(RejectionMetricClass::NodMint, reason)
+                Self::app_rejected(NOD_MINT_REJECTED, reason)
             }
             EnclaveClientError::TributeSourceRejected(cause) => {
-                Self::app_rejected(RejectionMetricClass::TributeSource, cause)
+                Self::app_rejected(TRIBUTE_SOURCE_REJECTED, cause)
             }
             EnclaveClientError::InvalidTributeDayPredecessorVersion { expected, actual } => {
                 Self::EnclaveError(format!(
@@ -205,16 +235,16 @@ impl From<EnclaveClientError> for TransportError {
             EnclaveClientError::TributeOfferAttestation(cause)
             | EnclaveClientError::TributeDayAttestation(cause)
             | EnclaveClientError::NodAttestation(cause) => {
-                Self::app_attestation(AttestationMetricClass::TributeOffer, cause)
+                Self::app_attestation(TRIBUTE_OFFER_ATTESTATION, cause)
             }
             EnclaveClientError::GratisOpAttestation(cause) => {
-                Self::app_attestation(AttestationMetricClass::GratisOp, cause)
+                Self::app_attestation(GRATIS_OP_ATTESTATION, cause)
             }
             EnclaveClientError::PromisOpAttestation(cause) => {
-                Self::app_attestation(AttestationMetricClass::PromisOp, cause)
+                Self::app_attestation(PROMIS_OP_ATTESTATION, cause)
             }
             EnclaveClientError::FidelityAttestation(cause) => {
-                Self::app_attestation(AttestationMetricClass::Fidelity, cause)
+                Self::app_attestation(FIDELITY_ATTESTATION, cause)
             }
             EnclaveClientError::Transport(err) => err,
         }

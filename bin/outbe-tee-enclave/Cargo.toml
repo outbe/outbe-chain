@@ -105,6 +105,7 @@ rand-commonware.workspace = true
 rand-core-commonware.workspace = true
 
 [dev-dependencies]
+outbe-system-common.workspace = true
 outbe-tee = { workspace = true, features = ["sgx-noattest"] }
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-tribute = { workspace = true, features = ["test-utils"] }

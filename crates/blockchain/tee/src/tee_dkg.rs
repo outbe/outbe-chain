@@ -97,12 +97,12 @@ pub enum DkgWireMessage {
     DealerBundle(DealerBundle),
     Ack(Ack),
     FinalizedLog(FinalizedLog),
-    /// Seam F: a participant's partial signature over the fixed offer message,
+    /// Seam F: a participant's partial signature over the fixed network-key message,
     /// **sealed to one recipient enclave** (`partial` is opaque ciphertext). Each
     /// signer broadcasts one of these per recipient. A recipient collects the
     /// ciphertexts addressed to it (`recipient_bls == its enclave`) and recovers
-    /// the offer key in-SGX. The host cannot decrypt them.
-    TributeOfferPartial {
+    /// the threshold network encryption key in-SGX. The host cannot decrypt them.
+    NetworkKeyPartial {
         signer_bls: Vec<u8>,
         recipient_bls: Vec<u8>,
         partial: Vec<u8>,
@@ -135,7 +135,7 @@ impl DkgWireMessage {
                 put(&mut buf, &l.dealer_bls);
                 put(&mut buf, &l.signed_log);
             }
-            DkgWireMessage::TributeOfferPartial {
+            DkgWireMessage::NetworkKeyPartial {
                 signer_bls,
                 recipient_bls,
                 partial,
@@ -194,7 +194,7 @@ impl DkgWireMessage {
                 dealer_bls: take(&mut offset)?,
                 signed_log: take(&mut offset)?,
             }),
-            3 => DkgWireMessage::TributeOfferPartial {
+            3 => DkgWireMessage::NetworkKeyPartial {
                 signer_bls: take(&mut offset)?,
                 recipient_bls: take(&mut offset)?,
                 partial: take(&mut offset)?,
@@ -220,7 +220,7 @@ impl DkgWireMessage {
             DkgWireMessage::DealerBundle(b) => &b.dealer_bls,
             DkgWireMessage::Ack(a) => &a.player_bls,
             DkgWireMessage::FinalizedLog(l) => &l.dealer_bls,
-            DkgWireMessage::TributeOfferPartial { signer_bls, .. } => signer_bls,
+            DkgWireMessage::NetworkKeyPartial { signer_bls, .. } => signer_bls,
         }
     }
 }
@@ -253,15 +253,15 @@ pub struct CeremonyOutcome {
     pub group_public: Vec<u8>,
     /// Commitment to this node's secret threshold share (the share stays in SGX).
     pub share_commitment: B256,
-    /// The shared tribute offer X25519 public key, derived from the group
-    /// threshold signature over the fixed offer message (Seam F). Byte-identical
-    /// for all honest parties. Clients encrypt offers to it. Set by
-    /// [`run_tee_dkg_ceremony`]. It stays `[0u8; 32]` until Seam F completes.
-    pub tribute_offer_public: [u8; 32],
+    /// The shared threshold network encryption X25519 public key, derived from
+    /// the group threshold signature over the fixed network-key message (Seam F).
+    /// Byte-identical for all honest parties. Set by [`run_tee_dkg_ceremony`].
+    /// It stays `[0u8; 32]` until Seam F completes.
+    pub network_encryption_public_key: [u8; 32],
     /// The committee's encoded DKG group public key (constant term). Set alongside
-    /// `tribute_offer_public` at Seam F and carried into the founding bootstrap
-    /// payload.
-    pub tribute_offer_group_public_key: Vec<u8>,
+    /// `network_encryption_public_key` at Seam F and carried into the founding
+    /// bootstrap payload.
+    pub network_encryption_group_public_key: Vec<u8>,
     /// Number of incoming wire messages ignored due to a mismatch between the
     /// authenticated transport sender and the payload's claimed enclave BLS key
     /// (or an unauthorized sender).
@@ -452,8 +452,8 @@ impl CeremonyCoordinator {
                 group_public,
                 share_commitment,
                 // Filled by `run_tee_dkg_ceremony` after Seam F.
-                tribute_offer_public: [0u8; 32],
-                tribute_offer_group_public_key: Vec::new(),
+                network_encryption_public_key: [0u8; 32],
+                network_encryption_group_public_key: Vec::new(),
                 identity_mismatches: 0,
             }),
             _ => Err(CeremonyError::unexpected_response(
@@ -462,47 +462,47 @@ impl CeremonyCoordinator {
         }
     }
 
-    /// Seam F: threshold-sign the fixed offer message with this node's share, then
-    /// seal the partial to each recipient enclave. Returns one
+    /// Seam F: threshold-sign the fixed network-key message with this node's share,
+    /// then seal the partial to each recipient enclave. Returns one
     /// `(recipient_bls, sealed_partial)` per participant. The caller gossips each
     /// sealed ciphertext to its recipient. The host never sees a plaintext partial.
-    pub fn tribute_offer_partials_sealed<C: EnclaveChannel>(
+    pub fn network_key_partials_sealed<C: EnclaveChannel>(
         &self,
         ch: &mut C,
     ) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
-        match ch.request(&EnclaveRequest::DkgTributeOfferPartial {
+        match ch.request(&EnclaveRequest::DkgNetworkKeyPartial {
             ceremony_id: self.ceremony_id,
         })? {
-            EnclaveResponse::DkgTributeOfferPartial { sealed } => Ok(sealed),
+            EnclaveResponse::DkgNetworkKeyPartial { sealed } => Ok(sealed),
             _ => Err(CeremonyError::unexpected_response(
-                crate::errors::TeeDkgUnexpectedResponseReason::DkgTributeOfferPartial,
+                crate::errors::TeeDkgUnexpectedResponseReason::DkgNetworkKeyPartial,
             )),
         }
     }
 
     /// Founding Seam F: finalize the group threshold signature from the sealed
-    /// partials addressed to this enclave and install the permanent offer key.
+    /// partials addressed to this enclave and install the permanent network encryption key.
     /// The enclave capability matrix rejects this request once the key is ready.
-    pub fn finalize_tribute_offer<C: EnclaveChannel>(
+    pub fn finalize_network_encryption_key<C: EnclaveChannel>(
         &self,
         ch: &mut C,
         sealed_partials: &[Vec<u8>],
         chain_id: B256,
-        tribute_offer_epoch: u64,
+        network_key_epoch: u64,
     ) -> Result<([u8; 32], Vec<u8>)> {
-        match ch.request(&EnclaveRequest::DkgFinalizeTributeOffer {
+        match ch.request(&EnclaveRequest::DkgFinalizeNetworkKey {
             ceremony_id: self.ceremony_id,
             sealed_partials: sealed_partials.to_vec(),
             chain_id,
-            tribute_offer_epoch,
+            network_key_epoch,
         })? {
-            EnclaveResponse::DkgTributeOfferKey {
-                tribute_offer_public,
+            EnclaveResponse::DkgNetworkEncryptionKey {
+                network_encryption_public_key,
                 group_public_key,
-            } => Ok((tribute_offer_public, group_public_key)),
+            } => Ok((network_encryption_public_key, group_public_key)),
             EnclaveResponse::Error { message } => Err(CeremonyError::EnclaveError(message)),
             _ => Err(CeremonyError::unexpected_response(
-                crate::errors::TeeDkgUnexpectedResponseReason::DkgFinalizeTributeOffer,
+                crate::errors::TeeDkgUnexpectedResponseReason::DkgFinalizeNetworkKey,
             )),
         }
     }
@@ -527,7 +527,7 @@ mod tests {
                 dealer_bls: vec![9],
                 signed_log: vec![10; 120],
             }),
-            DkgWireMessage::TributeOfferPartial {
+            DkgWireMessage::NetworkKeyPartial {
                 signer_bls: vec![11, 12, 13],
                 recipient_bls: vec![21, 22, 23],
                 partial: vec![14; 48],

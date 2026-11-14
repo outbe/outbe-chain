@@ -5,13 +5,10 @@ use std::{
 };
 
 use serde::Deserialize;
-use walkdir::{DirEntry, WalkDir};
 
 use super::{
-    canonicalize_path,
-    scanner::{extract_inclusions, DiscoveredInclusion, TargetBase},
-    DependencyEdgeKind, InclusionKind, LayerBoundaryError, LayerViolation, BLOCKCHAIN_REL_DIR,
-    READ_ONLY_RELEASE_ALLOWLIST,
+    DependencyEdgeKind, LayerBoundaryError, LayerViolation, BLOCKCHAIN_REL_DIR,
+    TRANSITIVE_VENDOR_PATH_ALLOWLIST, VENDOR_PATH_ALLOWLIST,
 };
 
 #[derive(Debug, Deserialize)]
@@ -30,6 +27,8 @@ struct MetadataPackage {
 struct MetadataDependency {
     name: String,
     kind: Option<String>,
+    #[serde(default)]
+    path: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -38,6 +37,13 @@ pub(super) struct WorkspaceLayout {
     pub(super) blockchain_root: PathBuf,
     pub(super) blockchain_packages: BTreeSet<String>,
     pub(super) outside_packages: BTreeMap<String, PathBuf>,
+}
+
+struct ManifestCheckContext<'a> {
+    repo_root: &'a Path,
+    blockchain_root: &'a Path,
+    outside_packages: &'a BTreeMap<String, PathBuf>,
+    vendor_allowlist: BTreeSet<PathBuf>,
 }
 
 pub(super) fn normalize_lexical(path: &Path) -> PathBuf {
@@ -54,7 +60,7 @@ pub(super) fn normalize_lexical(path: &Path) -> PathBuf {
     normalized
 }
 
-fn resolve_manifest_path(repo_root: &Path, manifest_path: &Path) -> PathBuf {
+pub(super) fn resolve_manifest_path(repo_root: &Path, manifest_path: &Path) -> PathBuf {
     let joined = if manifest_path.is_absolute() {
         manifest_path.to_path_buf()
     } else {
@@ -71,8 +77,12 @@ pub(super) fn inspect_metadata_edges(
     let blockchain_root = resolve_manifest_path(repo_root, &repo_root.join(BLOCKCHAIN_REL_DIR));
     let (blockchain_packages, outside_packages) =
         partition_packages(repo_root, &blockchain_root, &metadata.packages);
-    let violations =
-        collect_manifest_violations(&metadata.packages, &blockchain_packages, &outside_packages);
+    let violations = collect_manifest_violations(
+        (repo_root, &blockchain_root),
+        &metadata.packages,
+        &blockchain_packages,
+        &outside_packages,
+    );
     Ok((
         WorkspaceLayout {
             repo_root: repo_root.to_path_buf(),
@@ -103,37 +113,104 @@ fn partition_packages(
 }
 
 fn collect_manifest_violations(
+    roots: (&Path, &Path),
     packages: &[MetadataPackage],
     blockchain_packages: &BTreeSet<String>,
     outside_packages: &BTreeMap<String, PathBuf>,
 ) -> Vec<LayerViolation> {
+    let (repo_root, blockchain_root) = roots;
+    let ctx = ManifestCheckContext {
+        repo_root,
+        blockchain_root,
+        outside_packages,
+        vendor_allowlist: VENDOR_PATH_ALLOWLIST
+            .iter()
+            .map(|rel| resolve_manifest_path(repo_root, Path::new(rel)))
+            .collect(),
+    };
     let mut violations = Vec::new();
     for pkg in packages {
         if !blockchain_packages.contains(&pkg.name) {
             continue;
         }
+        let pkg_manifest = resolve_manifest_path(repo_root, &pkg.manifest_path);
+        let pkg_dir = pkg_manifest.parent().unwrap_or(blockchain_root);
         for dep in &pkg.dependencies {
-            if let Some(target_manifest) = outside_packages.get(&dep.name) {
-                violations.push(LayerViolation::ForbiddenManifestDependency {
-                    source_package: pkg.name.clone(),
-                    kind: DependencyEdgeKind::from_cargo(dep.kind.as_deref()),
-                    target_package: dep.name.clone(),
-                    target_manifest: target_manifest.clone(),
-                });
-            }
+            check_single_dependency(&ctx, (&pkg.name, pkg_dir), dep, &mut violations);
         }
     }
     violations
 }
 
+fn check_single_dependency(
+    ctx: &ManifestCheckContext<'_>,
+    pkg: (&str, &Path),
+    dep: &MetadataDependency,
+    violations: &mut Vec<LayerViolation>,
+) {
+    let (pkg_name, pkg_dir) = pkg;
+    let kind = DependencyEdgeKind::from_cargo(dep.kind.as_deref());
+    if let Some(target_manifest) = ctx.outside_packages.get(&dep.name) {
+        violations.push(LayerViolation::ForbiddenManifestDependency {
+            source_package: pkg_name.to_owned(),
+            kind,
+            target_package: dep.name.clone(),
+            target_manifest: target_manifest.clone(),
+        });
+    }
+    if let Some(raw_path) = &dep.path {
+        let resolved_path = resolve_local_dep_path(ctx.repo_root, pkg_dir, raw_path);
+        if !is_allowed_local_dep_path(&resolved_path, ctx.blockchain_root, &ctx.vendor_allowlist) {
+            violations.push(LayerViolation::ForbiddenLocalPathDependency {
+                source_package: pkg_name.to_owned(),
+                kind,
+                target_package: dep.name.clone(),
+                resolved_path,
+            });
+        }
+    }
+}
+
+fn resolve_local_dep_path(repo_root: &Path, pkg_dir: &Path, dep_path: &Path) -> PathBuf {
+    let joined = if dep_path.is_absolute() {
+        dep_path.to_path_buf()
+    } else if dep_path.starts_with("..") {
+        pkg_dir.join(dep_path)
+    } else {
+        repo_root.join(dep_path)
+    };
+    fs::canonicalize(&joined).unwrap_or_else(|_| normalize_lexical(&joined))
+}
+
+fn is_allowed_local_dep_path(
+    resolved_path: &Path,
+    blockchain_root: &Path,
+    vendor_allowlist: &BTreeSet<PathBuf>,
+) -> bool {
+    (resolved_path != blockchain_root && resolved_path.starts_with(blockchain_root))
+        || vendor_allowlist.contains(resolved_path)
+}
+
 pub(super) fn find_resolved_tree_violations(
+    roots: (&Path, &Path),
     tree_output: &str,
     outside_packages: &BTreeMap<String, PathBuf>,
 ) -> Vec<LayerViolation> {
+    let (repo_root, blockchain_root) = roots;
+    let vendor_allowlist: BTreeSet<PathBuf> = TRANSITIVE_VENDOR_PATH_ALLOWLIST
+        .iter()
+        .map(|rel| resolve_manifest_path(repo_root, Path::new(rel)))
+        .collect();
     let mut seen = BTreeSet::new();
     for line in tree_output.lines() {
-        if let Some(first_token) = line.split_whitespace().next() {
-            if outside_packages.contains_key(first_token) {
+        let Some(first_token) = line.split_whitespace().next() else {
+            continue;
+        };
+        if outside_packages.contains_key(first_token) {
+            seen.insert(first_token.to_owned());
+        } else if let Some(local_dir) = extract_local_tree_path(line) {
+            let resolved = resolve_manifest_path(repo_root, Path::new(local_dir));
+            if !is_allowed_local_dep_path(&resolved, blockchain_root, &vendor_allowlist) {
                 seen.insert(first_token.to_owned());
             }
         }
@@ -143,146 +220,16 @@ pub(super) fn find_resolved_tree_violations(
         .collect()
 }
 
-fn is_skipped_dir(entry: &DirEntry) -> bool {
-    entry.file_type().is_dir() && entry.file_name() == "target"
-}
-
-fn is_rust_file(entry: &DirEntry) -> bool {
-    entry.file_type().is_file()
-        && entry.path().extension().and_then(|ext| ext.to_str()) == Some("rs")
-}
-
-fn find_manifest_dir(source_file: &Path, blockchain_root: &Path) -> PathBuf {
-    let mut current = source_file.parent();
-    while let Some(dir) = current {
-        if dir.join("Cargo.toml").is_file() {
-            return dir.to_path_buf();
+fn extract_local_tree_path(line: &str) -> Option<&str> {
+    let mut rest = line;
+    while let Some(open) = rest.find('(') {
+        let after_open = &rest[open + 1..];
+        let close = after_open.find(')')?;
+        let inner = &after_open[..close];
+        if inner.starts_with('/') || inner.as_bytes().get(1) == Some(&b':') {
+            return Some(inner);
         }
-        if dir == blockchain_root {
-            break;
-        }
-        current = dir.parent();
+        rest = &after_open[close + 1..];
     }
-    source_file
-        .parent()
-        .unwrap_or(blockchain_root)
-        .to_path_buf()
-}
-
-pub(super) fn scan_blockchain_sources(
-    repo_root: &Path,
-    blockchain_root: &Path,
-) -> Result<(usize, usize, Vec<LayerViolation>), LayerBoundaryError> {
-    let allowlisted_paths: BTreeSet<PathBuf> = READ_ONLY_RELEASE_ALLOWLIST
-        .iter()
-        .map(|rel| resolve_manifest_path(repo_root, Path::new(rel)))
-        .collect();
-
-    let mut scanned_files = 0usize;
-    let mut verified_inclusions = 0usize;
-    let mut violations = Vec::new();
-
-    let walker = WalkDir::new(blockchain_root)
-        .follow_links(false)
-        .into_iter()
-        .filter_entry(|entry| !is_skipped_dir(entry));
-
-    for entry in walker {
-        let entry = entry.map_err(|source| LayerBoundaryError::Walk {
-            path: blockchain_root.to_path_buf(),
-            source,
-        })?;
-        if !is_rust_file(&entry) {
-            continue;
-        }
-        scanned_files += 1;
-        let (count, file_violations) =
-            scan_single_file(entry.path(), (blockchain_root, &allowlisted_paths))?;
-        verified_inclusions += count;
-        violations.extend(file_violations);
-    }
-
-    Ok((scanned_files, verified_inclusions, violations))
-}
-
-fn scan_single_file(
-    path: &Path,
-    boundaries: (&Path, &BTreeSet<PathBuf>),
-) -> Result<(usize, Vec<LayerViolation>), LayerBoundaryError> {
-    let source_path = canonicalize_path(path)?;
-    let content =
-        fs::read_to_string(&source_path).map_err(|source| LayerBoundaryError::ReadSource {
-            path: source_path.clone(),
-            source,
-        })?;
-    let inclusions = extract_inclusions(&source_path, &content)?;
-    let manifest_dir = find_manifest_dir(&source_path, boundaries.0);
-    let mut violations = Vec::new();
-    for item in &inclusions {
-        if let Some(violation) =
-            check_single_inclusion(&source_path, &manifest_dir, boundaries, item)?
-        {
-            violations.push(violation);
-        }
-    }
-    Ok((inclusions.len(), violations))
-}
-
-fn check_single_inclusion(
-    source_file: &Path,
-    manifest_dir: &Path,
-    boundaries: (&Path, &BTreeSet<PathBuf>),
-    item: &DiscoveredInclusion,
-) -> Result<Option<LayerViolation>, LayerBoundaryError> {
-    let (blockchain_root, allowlisted_paths) = boundaries;
-    let base_dir = match item.base {
-        TargetBase::SourceParent => source_file.parent().unwrap_or(blockchain_root),
-        TargetBase::ManifestDir => manifest_dir,
-    };
-    let candidate = base_dir.join(&item.raw_target);
-    let lexical = normalize_lexical(&candidate);
-    if !is_allowed_target(&lexical, item.directive, blockchain_root, allowlisted_paths) {
-        return Ok(Some(forbidden_inclusion(source_file, item, lexical)));
-    }
-    let canonical =
-        fs::canonicalize(&candidate).map_err(|source| LayerBoundaryError::UnresolvedTarget {
-            source_file: source_file.to_path_buf(),
-            line: item.line,
-            directive: item.directive,
-            target: candidate,
-            source,
-        })?;
-    if !is_allowed_target(
-        &canonical,
-        item.directive,
-        blockchain_root,
-        allowlisted_paths,
-    ) {
-        return Ok(Some(forbidden_inclusion(source_file, item, canonical)));
-    }
-    Ok(None)
-}
-
-fn forbidden_inclusion(
-    source_file: &Path,
-    item: &DiscoveredInclusion,
-    resolved_path: PathBuf,
-) -> LayerViolation {
-    LayerViolation::ForbiddenFileInclusion {
-        source_file: source_file.to_path_buf(),
-        line: item.line,
-        directive: item.directive,
-        raw_target: item.raw_target.clone(),
-        resolved_path,
-    }
-}
-
-fn is_allowed_target(
-    resolved: &Path,
-    directive: InclusionKind,
-    blockchain_root: &Path,
-    allowlisted_paths: &BTreeSet<PathBuf>,
-) -> bool {
-    resolved.starts_with(blockchain_root)
-        || (directive.allows_release_pin_allowlist() && allowlisted_paths.contains(resolved))
+    None
 }

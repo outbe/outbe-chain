@@ -40,7 +40,7 @@ fn missing_emission_day_and_worldwide_day_revert_cleanly() {
 fn worldwide_day_and_emission_day_abi_preserve_bidirectional_link() {
     with_storage(|storage| {
         seed_offering_day(storage.clone());
-        let wwd: outbe_primitives::time::WorldwideDay = 20260920.into();
+        let wwd: outbe_system_common::time::WorldwideDay = 20260920.into();
         let expected_forming_start = wwd.start_timestamp().unwrap();
         let expected_forming_end =
             expected_forming_start + outbe_chain_constants::get_metadosis_forming_period_seconds();
@@ -90,7 +90,7 @@ fn worldwide_day_and_emission_day_abi_preserve_bidirectional_link() {
 }
 
 pub(super) fn seed_offering_day(storage: StorageHandle<'_>) {
-    let wwd: outbe_primitives::time::WorldwideDay = 20260920.into();
+    let wwd: outbe_system_common::time::WorldwideDay = 20260920.into();
     let day = 20261014u32;
     let forming_start = wwd.start_timestamp().unwrap();
     let forming_end = forming_start + outbe_chain_constants::get_metadosis_forming_period_seconds();
@@ -98,14 +98,14 @@ pub(super) fn seed_offering_day(storage: StorageHandle<'_>) {
         forming_end + outbe_chain_constants::get_metadosis_lookback_delay_seconds();
     let offering_end =
         offerings_start + outbe_chain_constants::get_metadosis_offering_period_seconds();
-    let binding = outbe_primitives::storage::metadosis_process_ready_binding(
+    let binding = outbe_system_common::metadosis_bindings::metadosis_process_ready_binding(
         storage.chain_id().unwrap(),
         storage.block_number().unwrap(),
         storage.now_secs().unwrap(),
     );
     storage
         .clone()
-        .with_metadosis_mutation::<outbe_primitives::storage::MetadosisCycleLifecycle, _>(
+        .with_scoped_mutation::<outbe_primitives::storage::CycleLifecyclePurpose, _>(
             binding,
             || {
                 let mut factory = TributeFactoryContract::new(storage.clone());

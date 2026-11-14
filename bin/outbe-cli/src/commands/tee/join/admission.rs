@@ -288,9 +288,9 @@ async fn stream_finalized_admission_attempt_v1<R: Rpc + Sync>(
             artifact: attempt.artifact,
             anchor_outcome: attempt.anchor_outcome,
             expected_intent_hash: attempt.expected_intent_hash,
-            expected_tribute_offer_public: attempt.expected_offer_public,
+            expected_network_encryption_public: attempt.expected_offer_public,
             expected_key_epoch: attempt.expected_key_epoch,
-            expected_tribute_offer_epoch: attempt.expected_offer_epoch,
+            expected_network_encryption_epoch: attempt.expected_offer_epoch,
         },
     )?;
 

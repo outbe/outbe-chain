@@ -1,12 +1,12 @@
 //! Metadosis mutation entitlements for protocol system transactions.
 
 use outbe_primitives::error::Result;
-use outbe_primitives::storage::{
+use outbe_primitives::storage::{MutationEntitlements, MutationPurposeTag};
+use outbe_system_common::metadosis_bindings::{
     metadosis_advance_due_binding, metadosis_cycle_allocation_binding,
-    metadosis_init_genesis_binding, metadosis_process_ready_binding, MetadosisMutationEntitlements,
-    MetadosisMutationPurposeTag,
+    metadosis_init_genesis_binding, metadosis_process_ready_binding,
 };
-use outbe_primitives::time::{date_key_to_utc_timestamp, timestamp_to_date_key};
+use outbe_system_common::time::{date_key_to_utc_timestamp, timestamp_to_date_key};
 
 use crate::handler;
 
@@ -16,11 +16,11 @@ pub fn cycle_tick_entitlements(
     block_number: u64,
     timestamp: u64,
     cycle_active_utc_day: Option<u32>,
-) -> MetadosisMutationEntitlements {
-    use MetadosisMutationPurposeTag as Purpose;
-    let mut entitlements = MetadosisMutationEntitlements::NONE;
+) -> MutationEntitlements {
+    use MutationPurposeTag as Purpose;
+    let mut entitlements = MutationEntitlements::NONE;
     if block_number == 1 {
-        entitlements = entitlements.union(MetadosisMutationEntitlements::exact(
+        entitlements = entitlements.union(MutationEntitlements::exact(
             Purpose::CycleLifecycle,
             metadosis_init_genesis_binding(chain_id, block_number, timestamp),
         ));
@@ -34,18 +34,18 @@ pub fn cycle_tick_entitlements(
     };
     if let Some(day) = day_to_allocate {
         if let Ok(day_ts) = date_key_to_utc_timestamp(day) {
-            entitlements = entitlements.union(MetadosisMutationEntitlements::exact(
+            entitlements = entitlements.union(MutationEntitlements::exact(
                 Purpose::CycleLifecycle,
                 metadosis_cycle_allocation_binding(chain_id, block_number, day_ts),
             ));
         }
     }
     entitlements
-        .union(MetadosisMutationEntitlements::exact(
+        .union(MutationEntitlements::exact(
             Purpose::CycleLifecycle,
             metadosis_advance_due_binding(chain_id, block_number, timestamp),
         ))
-        .union(MetadosisMutationEntitlements::exact(
+        .union(MutationEntitlements::exact(
             Purpose::CycleLifecycle,
             metadosis_process_ready_binding(chain_id, block_number, timestamp),
         ))

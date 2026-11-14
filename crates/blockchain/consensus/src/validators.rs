@@ -567,11 +567,11 @@ pub fn has_pending_set_change(
         .map_err(|error| ValidatorsError::CheckPendingSetChange(format!("{error}")).into())
 }
 
-/// Read the on-chain registered tribute offer public key (`TeeRegistry` slot 1).
+/// Read the on-chain registered network encryption public key (`TeeRegistry` slot 1).
 /// It is the canonical startup comparison for the permanent resident key and the
 /// expected public value verified by one-time registry onboarding. Returns zero
 /// only before block-1 OST3 has bootstrapped the chain.
-pub fn read_tee_offer_public_from_state(
+pub fn read_network_encryption_public_from_state(
     protocol: &dyn crate::protocol_state::EngineProtocolState,
     state_access: &dyn RethStateAccess,
 ) -> Result<B256> {
@@ -582,23 +582,23 @@ pub fn read_tee_offer_public_from_state(
     let storage = StorageHandle::new(&mut provider);
 
     protocol
-        .tee_offer_public(storage)
-        .map_err(|error| ValidatorsError::ReadTeeOfferPublicKey(format!("{error}")).into())
+        .network_encryption_public(storage)
+        .map_err(|error| ValidatorsError::ReadNetworkEncryptionPublicKey(error).into())
 }
 
-/// Read the on-chain tribute offer public from the latest committed state.
-pub fn read_tee_offer_public_at_latest(
+/// Read the on-chain network encryption public key from the latest committed state.
+pub fn read_network_encryption_public_at_latest(
     protocol: &dyn crate::protocol_state::EngineProtocolState,
     provider: &(impl StateProviderFactory + ?Sized),
 ) -> Result<B256> {
     let state = provider
         .latest()
         .map_err(|e| ValidatorsError::GetLatestState(format!("{e}")))?;
-    read_tee_offer_public_from_state(protocol, &state)
+    read_network_encryption_public_from_state(protocol, &state)
 }
 
-/// Read the on-chain tribute offer public key from the EVM state at a given block hash.
-pub fn read_tee_offer_public_at_block(
+/// Read the on-chain network encryption public key from the EVM state at a given block hash.
+pub fn read_network_encryption_public_at_block(
     protocol: &dyn crate::protocol_state::EngineProtocolState,
     provider: &(impl StateProviderFactory + ?Sized),
     block_hash: B256,
@@ -610,13 +610,13 @@ pub fn read_tee_offer_public_at_block(
                 block_hash,
                 error: format!("{e}"),
             })?;
-    read_tee_offer_public_from_state(protocol, &state)
+    read_network_encryption_public_from_state(protocol, &state)
 }
 
-/// Read the on-chain tribute-offer epoch (`TeeRegistry` slot 4) from the latest
-/// state. The current permanent genesis offer key uses epoch zero. This function
+/// Read the on-chain network-encryption-key epoch (`TeeRegistry` slot 4) from the
+/// latest state. The current permanent genesis key uses epoch zero. This function
 /// decodes the field explicitly. Onboarding code does not infer it.
-pub fn read_tee_offer_epoch_at_latest(
+pub fn read_network_encryption_epoch_at_latest(
     protocol: &dyn crate::protocol_state::EngineProtocolState,
     provider: &(impl StateProviderFactory + ?Sized),
 ) -> Result<u64> {
@@ -627,8 +627,8 @@ pub fn read_tee_offer_epoch_at_latest(
     let mut provider = ReadOnlyStorageProvider::new(reader);
     let storage = StorageHandle::new(&mut provider);
     protocol
-        .tee_offer_epoch(storage)
-        .map_err(|error| ValidatorsError::ReadTeeOfferEpoch(format!("{error}")).into())
+        .network_encryption_epoch(storage)
+        .map_err(|error| ValidatorsError::ReadNetworkEncryptionEpoch(error).into())
 }
 
 /// Read a validator's on-chain registered `recipient_x25519` (`TeeRegistry` per-

@@ -64,9 +64,9 @@ fn context() -> DcapOnboardingContextV1 {
         binding_id: B256::repeat_byte(4),
         policy_hash: B256::repeat_byte(5),
         recipient_x25519: [6; 32],
-        tribute_offer_public: [7; 32],
+        network_encryption_public: [7; 32],
         key_epoch: 8,
-        tribute_offer_epoch: 9,
+        network_encryption_epoch: 9,
     }
 }
 fn candidate_storage(context: &DcapOnboardingContextV1) -> HashMapStorageProvider {
@@ -98,12 +98,12 @@ fn candidate_storage(context: &DcapOnboardingContextV1) -> HashMapStorageProvide
             .unwrap();
         registry
             .tribute_offer_public_key
-            .write(B256::from(context.tribute_offer_public))
+            .write(B256::from(context.network_encryption_public))
             .unwrap();
         registry.key_epoch.write(context.key_epoch).unwrap();
         registry
             .tribute_offer_epoch
-            .write(context.tribute_offer_epoch)
+            .write(context.network_encryption_epoch)
             .unwrap();
     });
     provider

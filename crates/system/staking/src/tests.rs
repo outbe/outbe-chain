@@ -1,9 +1,9 @@
 use alloy_primitives::{address, Address, Log, B256, U256, U512};
 use alloy_sol_types::{SolCall, SolError, SolEvent};
-use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::STAKING_ADDRESS;
 use outbe_system_common::units::checked_whole_coen_to_native;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::test_support::test_lifecycle_of;

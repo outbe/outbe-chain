@@ -6,11 +6,11 @@ use commonware_cryptography::bls12381::primitives::{
     ops::{self, sign_message},
     variant::MinSig,
 };
-use outbe_primitives::addresses::L2_REGISTRY_ADDRESS;
 use outbe_primitives::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::L2_REGISTRY_ADDRESS;
 use rand_commonware::rngs::ChaCha20Rng;
 use rand_commonware::SeedableRng as _;
 

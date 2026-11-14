@@ -6,7 +6,7 @@
 
 use alloy_primitives::{Address, B256, U256};
 
-pub use outbe_primitives::time::WorldwideDay;
+pub use outbe_system_common::time::WorldwideDay;
 pub use outbe_tee::protocol::eip191_hash;
 
 mod enclave_request;

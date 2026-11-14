@@ -2,8 +2,8 @@
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_primitives::addresses::GEM_ADDRESS;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::GEM_ADDRESS;
 
 use super::*;
 use crate::config::GemParams;

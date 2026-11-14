@@ -5,8 +5,9 @@ use outbe_core_common::tribute_day_encryption::{
     EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1,
 };
 use outbe_enclave::tribute_day::{TributeDayOpRequestV2, TributeDayOperationV2};
-use outbe_primitives::{
-    error::Result,
+use outbe_primitives::error::Result;
+use outbe_system_common::{
+    metadosis_bindings::MetadosisStorageExt,
     time::{EmissionDate, WorldwideDay},
 };
 

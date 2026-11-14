@@ -17,8 +17,8 @@ use outbe_system_common::zero_fee::VALIDATOR_V1_NODE_HASH_SLOT;
 
 use crate::envelope::ZeroFeeEnvelope;
 use crate::hooks::{
-    ZeroFeeAuthorization, ZeroFeeCandidate, ZeroFeeHook, ZeroFeeHookId, ZeroFeePolicyError,
-    ZeroFeeTransaction,
+    ZeroFeeAuthorization, ZeroFeeCandidate, ZeroFeeHook, ZeroFeeHookTag, ZeroFeePolicyError,
+    ZeroFeeTransaction, RENEW_ENCLAVE_HOOK,
 };
 
 /// Own-lease renewal hook. Oracle and checkpoint hooks do not use it.
@@ -99,8 +99,8 @@ fn associated_node(
 }
 
 impl ZeroFeeHook for RenewEnclaveHook {
-    fn id(&self) -> ZeroFeeHookId {
-        ZeroFeeHookId::RenewEnclave
+    fn id(&self) -> ZeroFeeHookTag {
+        RENEW_ENCLAVE_HOOK
     }
 
     fn classify(
@@ -159,8 +159,8 @@ mod tests {
     use outbe_system_common::zero_fee::VALIDATOR_V1_NODE_HASH_SLOT;
 
     use crate::hooks::{
-        ZeroFeeAuthorization, ZeroFeeCandidate, ZeroFeeHookId, ZeroFeePolicyError,
-        ZeroFeeTransaction,
+        ZeroFeeAuthorization, ZeroFeeCandidate, ZeroFeePolicyError, ZeroFeeTransaction,
+        RENEW_ENCLAVE_HOOK,
     };
 
     const SIGNER: Address = Address::repeat_byte(0x44);
@@ -295,7 +295,7 @@ mod tests {
         assert_eq!(
             candidate,
             ZeroFeeCandidate {
-                hook: ZeroFeeHookId::RenewEnclave,
+                hook: RENEW_ENCLAVE_HOOK,
                 signer: SIGNER,
                 node_id_hash: hash,
             }
@@ -304,7 +304,7 @@ mod tests {
             assert_eq!(
                 crate::registry().authorize_fee_waiver(storage, candidate),
                 Ok(ZeroFeeAuthorization {
-                    hook: ZeroFeeHookId::RenewEnclave,
+                    hook: RENEW_ENCLAVE_HOOK,
                     subject: SIGNER,
                 })
             );

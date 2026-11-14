@@ -7,10 +7,9 @@ use outbe_evm::precompiles::{
     extend_outbe_precompiles, OutbePrecompileExecutionContext, OutbePrecompileRuntime,
 };
 use outbe_evm::EvmRuntimeHost;
-use outbe_primitives::{
-    addresses::{GRATIS_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS, STAKING_ADDRESS, SYSTEM_ADDRESS},
-    storage::gas::PRECOMPILE_BASE_GAS,
-    system_tx::SystemTx,
+use outbe_primitives::{storage::gas::PRECOMPILE_BASE_GAS, system_tx::SystemTx};
+use outbe_system_common::addresses::{
+    GRATIS_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS, STAKING_ADDRESS, SYSTEM_ADDRESS,
 };
 use revm::{
     context_interface::JournalTr,

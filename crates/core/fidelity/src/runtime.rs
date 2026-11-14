@@ -145,25 +145,31 @@ impl FidelityContract<'_> {
         if first == 0 {
             return Ok(U256::ZERO);
         }
-        let eval_day = outbe_primitives::time::utc_day_from_timestamp(timestamp);
+        let eval_day = outbe_system_common::time::utc_day_from_timestamp(timestamp);
         Ok(t_dec(eval_day.saturating_sub(first)))
     }
 
     /// Synthetic-max RCFI at the UTC day corresponding to `wwd`.
-    pub fn synthetic_max_for_wwd(&self, wwd: outbe_primitives::time::WorldwideDay) -> Result<U256> {
+    pub fn synthetic_max_for_wwd(
+        &self,
+        wwd: outbe_system_common::time::WorldwideDay,
+    ) -> Result<U256> {
         let first = self.first_qualified_start()?;
         if first == 0 || !wwd.is_valid() {
             return Ok(U256::ZERO);
         }
-        let ts = outbe_primitives::time::date_key_to_utc_timestamp(wwd.value())
+        let ts = outbe_system_common::time::date_key_to_utc_timestamp(wwd.value())
             .map_err(|err| outbe_primitives::error::PrecompileError::Fatal(err.to_string()))?;
-        let eval_day = outbe_primitives::time::utc_day_from_timestamp(ts);
+        let eval_day = outbe_system_common::time::utc_day_from_timestamp(ts);
         Ok(t_dec(eval_day.saturating_sub(first)))
     }
 
     /// Returns the fixed `max_fidelity` for `wwd` (using the locked snapshot if
     /// already locked, or `max(max_fidelity_prev, synthetic_max_for_wwd(wwd))`).
-    pub fn max_fidelity_for_wwd(&self, wwd: outbe_primitives::time::WorldwideDay) -> Result<U256> {
+    pub fn max_fidelity_for_wwd(
+        &self,
+        wwd: outbe_system_common::time::WorldwideDay,
+    ) -> Result<U256> {
         if let Some(locked) = self.wwd_max_fidelity_of(wwd)? {
             return Ok(locked);
         }
@@ -175,7 +181,7 @@ impl FidelityContract<'_> {
     /// Locks and returns the fixed `max_fidelity` for `wwd`.
     pub fn ensure_wwd_max_fidelity(
         &self,
-        wwd: outbe_primitives::time::WorldwideDay,
+        wwd: outbe_system_common::time::WorldwideDay,
     ) -> Result<U256> {
         if let Some(locked) = self.wwd_max_fidelity_of(wwd)? {
             return Ok(locked);
@@ -191,7 +197,7 @@ impl FidelityContract<'_> {
     /// `max_fidelity` of `wwd`, and records `user_rcfi` in `wwd_running_max_fidelity[wwd]`.
     pub fn league_from_rcfi_for_wwd(
         &self,
-        wwd: outbe_primitives::time::WorldwideDay,
+        wwd: outbe_system_common::time::WorldwideDay,
         user_rcfi: U256,
     ) -> Result<u16> {
         let max_fid = self.ensure_wwd_max_fidelity(wwd)?;
@@ -210,7 +216,7 @@ impl FidelityContract<'_> {
     pub fn league_for_wwd(
         &self,
         account: Address,
-        wwd: outbe_primitives::time::WorldwideDay,
+        wwd: outbe_system_common::time::WorldwideDay,
         timestamp: u64,
     ) -> Result<u16> {
         let blob = self.cohorts_ct_of(account)?;
@@ -237,7 +243,7 @@ impl FidelityContract<'_> {
     /// and the day's ceiling into `max_fidelity_prev` for the next WWD.
     pub fn finalize_wwd_max_fidelity(
         &self,
-        wwd: outbe_primitives::time::WorldwideDay,
+        wwd: outbe_system_common::time::WorldwideDay,
         _timestamp: u64,
     ) -> Result<U256> {
         let prev = self.max_fidelity_prev()?;

@@ -1,9 +1,6 @@
 use alloy_primitives::U256;
-use outbe_primitives::{
-    block::BlockRuntimeContext,
-    error::Result,
-    storage::{metadosis_process_ready_binding, MetadosisCycleLifecycle},
-};
+use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::CycleLifecyclePurpose};
+use outbe_system_common::metadosis_bindings::metadosis_process_ready_binding;
 
 use crate::commit::commit_transition;
 
@@ -14,7 +11,7 @@ pub fn process_emission_day(ctx: &BlockRuntimeContext<'_>, day: u32) -> Result<(
         ctx.block.block_number,
         ctx.block.timestamp,
     );
-    commit_transition::<MetadosisCycleLifecycle, _>(ctx.storage.clone(), binding, |_| {
+    commit_transition::<CycleLifecyclePurpose, _>(ctx.storage.clone(), binding, |_| {
         crate::runtime::process_emission_day(ctx, day)
     })
 }

@@ -24,9 +24,9 @@
 use alloy_primitives::Address;
 use outbe_gem::GemContract;
 use outbe_intex::IntexContract;
-use outbe_primitives::addresses::{GEM_ADDRESS, INTEX_ADDRESS};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::{GEM_ADDRESS, INTEX_ADDRESS};
 use outbe_validatorset::contract::ValidatorSet;
 use serde_json::Value;
 use tempfile::TempDir;
@@ -215,8 +215,8 @@ fn seed_genesis_writes_committee_snapshot_slots_31_to_40_matching_rust_schema() 
 /// `marker_list_covers_stateful_precompiles` unit test.
 #[test]
 fn every_stateful_precompile_preserved_by_marker_or_genesis() {
-    use outbe_evm::executor::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES;
-    use outbe_primitives::addresses::ZKPROOF_VERIFY_ADDRESS;
+    use outbe_runtime::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES;
+    use outbe_system_common::addresses::ZKPROOF_VERIFY_ADDRESS;
 
     let (_tmp, genesis, _raw) = run_seed_genesis(
         FIXTURE_GENESIS,
@@ -229,7 +229,7 @@ fn every_stateful_precompile_preserved_by_marker_or_genesis() {
     let storage_free = [ZKPROOF_VERIFY_ADDRESS];
 
     let mut checked = 0usize;
-    for addr in outbe_evm::precompiles::outbe_precompile_addresses() {
+    for addr in outbe_runtime::precompiles::outbe_exact_precompile_addresses() {
         if storage_free.contains(addr) {
             continue;
         }
@@ -583,12 +583,12 @@ fn seeded_profiles_and_gems_read_back_through_their_schemas() {
     load_seeded_storage(
         &mut provider,
         &genesis,
-        outbe_primitives::addresses::NOD_ADDRESS,
+        outbe_system_common::addresses::NOD_ADDRESS,
     );
     load_seeded_storage(
         &mut provider,
         &genesis,
-        outbe_primitives::addresses::CREDIS_ADDRESS,
+        outbe_system_common::addresses::CREDIS_ADDRESS,
     );
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -635,9 +635,9 @@ fn seeded_profiles_and_gems_read_back_through_their_schemas() {
 fn seeded_scurve_matches_a_curve_that_the_oracle_starts() {
     use outbe_oracle::schema::OracleContract;
     use outbe_oracle::scurve::{scurve_value, store_scurve_entry};
-    use outbe_primitives::addresses::ORACLE_ADDRESS;
-    use outbe_primitives::time::WorldwideDay;
     use outbe_system_common::address_pair::AddressPair;
+    use outbe_system_common::addresses::ORACLE_ADDRESS;
+    use outbe_system_common::time::WorldwideDay;
 
     const SEED: &str = r#"{
       "oracle": {

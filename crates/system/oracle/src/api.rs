@@ -16,8 +16,8 @@ pub use crate::window::{
 
 use alloy_primitives::{Address, U256};
 
-use outbe_primitives::time::{previous_date_key, WorldwideDay};
 use outbe_primitives::{error::Result, storage::StorageHandle};
+use outbe_system_common::time::{previous_date_key, WorldwideDay};
 
 /// Validates that `iso_code` is a reference currency.
 ///

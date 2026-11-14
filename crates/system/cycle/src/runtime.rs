@@ -6,9 +6,9 @@
 //! and fires any task whose next slot has been reached.
 
 use outbe_primitives::{
-    block::{BlockRuntimeContext, MetadosisEntitlementContext, ProtocolModule},
+    block::{BlockRuntimeContext, MutationEntitlementContext, ProtocolModule},
     error::{PrecompileError, Result},
-    storage::MetadosisMutationEntitlements,
+    storage::MutationEntitlements,
     system_tx::GENESIS_BOOTSTRAP_BLOCK_NUMBER,
 };
 
@@ -25,11 +25,9 @@ impl ProtocolModule for CycleModule {
     const NAME: &'static str = "cycle_tick";
     const NEEDS_CYCLE_ACTIVE_UTC_DAY: bool = true;
 
-    fn mutation_entitlements(
-        ctx: MetadosisEntitlementContext<'_>,
-    ) -> MetadosisMutationEntitlements {
+    fn mutation_entitlements(ctx: MutationEntitlementContext<'_>) -> MutationEntitlements {
         if !ctx.payload.is_empty() {
-            return MetadosisMutationEntitlements::NONE;
+            return MutationEntitlements::NONE;
         }
         crate::call_authority::cycle_tick_entitlements(
             ctx.chain_id,

@@ -182,13 +182,12 @@ where
 
     fn preserve_runtime_markers(&mut self) -> Result<(), BlockExecutionError> {
         use revm::state::{Account, Bytecode, EvmState};
-        // Single source of truth (see `marker_addresses` + its superset test).
-        let precompile_addresses = marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES;
+        let precompile_addresses = self.runtime_host.marker_addresses();
 
         let db = self.inner.evm.db_mut();
         let mut marker_state = EvmState::default();
 
-        for addr in precompile_addresses {
+        for addr in precompile_addresses.iter().copied() {
             let info = db
                 .basic(addr)
                 .map_err(|e| {

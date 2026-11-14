@@ -3,14 +3,16 @@ use alloy_sol_types::SolCall;
 use outbe_intex::SeriesId;
 use outbe_oracle::api::AddressPair;
 use outbe_oracle::schema::OracleContract;
-use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::EmissionDate;
-use outbe_primitives::time::SECONDS_PER_DAY_U32;
-use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
+use outbe_system_common::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_system_common::math::constants::REAL_ID_SHIFT;
+use outbe_system_common::time::EmissionDate;
+use outbe_system_common::time::SECONDS_PER_DAY_U32;
+use outbe_system_common::time::{
+    date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key,
+};
 
 mod called {
     use super::*;
@@ -94,7 +96,7 @@ use outbe_intex::{IntexContract, IntexState};
 
 /// ISO code every fixture prices in.
 const REFERENCE_ISO: u16 = 840;
-use outbe_primitives::time::SECONDS_PER_DAY as DAY;
+use outbe_system_common::time::SECONDS_PER_DAY as DAY;
 
 fn owner() -> Address {
     address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")

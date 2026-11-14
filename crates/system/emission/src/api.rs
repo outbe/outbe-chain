@@ -1,8 +1,7 @@
 use alloy_primitives::U256;
-use outbe_primitives::{
-    error::Result,
-    storage::StorageHandle,
-    time::{date_key_to_utc_timestamp, next_date_key, EmissionDate, WorldwideDay},
+use outbe_primitives::{error::Result, storage::StorageHandle};
+use outbe_system_common::time::{
+    date_key_to_utc_timestamp, next_date_key, EmissionDate, WorldwideDay,
 };
 
 use crate::{

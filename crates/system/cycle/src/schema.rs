@@ -1,6 +1,6 @@
 use outbe_macros::contract;
-use outbe_primitives::addresses::CYCLE_ADDRESS;
 use outbe_primitives::storage::types::Mapping;
+use outbe_system_common::addresses::CYCLE_ADDRESS;
 
 pub use outbe_rewards::accounting::Accounting;
 

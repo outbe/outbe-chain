@@ -9,12 +9,12 @@ use outbe_enclave::protocol::{GratisOp, ModifyAuth};
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_gratis::enclave_client::test_enclave as gratis_enclave;
 use outbe_oracle::schema::OracleContract;
-use outbe_primitives::time::SECONDS_PER_DAY;
-use outbe_primitives::{
-    addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS},
-    storage::{gas::PRECOMPILE_BASE_GAS, hashmap::HashMapStorageProvider, StorageHandle},
-    time::{previous_date_key, timestamp_to_date_key},
+use outbe_primitives::storage::{
+    gas::PRECOMPILE_BASE_GAS, hashmap::HashMapStorageProvider, StorageHandle,
 };
+use outbe_system_common::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
+use outbe_system_common::time::SECONDS_PER_DAY;
+use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 use outbe_system_common::units::{checked_protocol_to_native, SCALE_1E6_U256};
 use outbe_vaultrouter::{LiquidityReservation, VaultRouterContract};
 
@@ -104,7 +104,7 @@ fn iso_word(iso: u16) -> Bytes {
 fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
     storage
         .increase_balance(
-            outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
+            outbe_system_common::addresses::CCA_REGISTRY_ADDRESS,
             outbe_ccaregistry::constants::BOND_REQUIREMENT,
         )
         .map_err(|error| error.to_string())?;
@@ -191,7 +191,8 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
                 REFERENCE_ISO,
             )
             .expect("series id"),
-            call_start_day: outbe_primitives::time::first_full_day(CREATED_AT).expect("date step"),
+            call_start_day: outbe_system_common::time::first_full_day(CREATED_AT)
+                .expect("date step"),
             call_rate: profile.call_rate,
             call_window_seconds: profile.call_window_seconds,
             call_threshold_seconds: profile.call_threshold_seconds,

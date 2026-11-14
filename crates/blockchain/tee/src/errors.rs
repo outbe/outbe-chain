@@ -23,14 +23,17 @@ pub use quote::QuoteParseError;
 pub use session::DevIdentityMismatchError;
 pub use tee_attestation_activation::TeeAttestationActivationError;
 pub use tee_crypto::TeeCryptoError;
-pub use transport::{AttestationMetricClass, RejectionMetricClass, TransportError};
+pub use transport::{AppErrorDescriptor, TransportError};
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        AttestationMetricClass, RejectionMetricClass, TeeClientVerificationError, TransportError,
-    };
+    use super::{AppErrorDescriptor, TeeClientVerificationError, TransportError};
     use crate::tee_call::TeeAttestationError;
+
+    const TEST_ATTESTATION_DESCRIPTOR: AppErrorDescriptor =
+        AppErrorDescriptor::new("test_app_attestation", "test attestation signature invalid");
+    const TEST_REJECTION_DESCRIPTOR: AppErrorDescriptor =
+        AppErrorDescriptor::new("test_app_rejected", "test operation rejected");
 
     #[test]
     fn a_missing_sidecar_is_this_nodes_fault() {
@@ -48,10 +51,10 @@ mod tests {
             TransportError::Codec("x".into()),
             TransportError::Attestation("x".into()),
             TransportError::app_attestation(
-                AttestationMetricClass::TributeOffer,
+                TEST_ATTESTATION_DESCRIPTOR,
                 TeeAttestationError::InvalidSignatureLength { actual: 1 },
             ),
-            TransportError::app_rejected(RejectionMetricClass::NodMint, "x"),
+            TransportError::app_rejected(TEST_REJECTION_DESCRIPTOR, "x"),
         ] {
             assert!(!error.is_node_local(), "{error}");
             assert!(!error.is_connection_fault(), "{error}");

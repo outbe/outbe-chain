@@ -3,10 +3,6 @@
 use alloy_primitives::{b256, Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall};
 use outbe_evm::EvmRuntimeHost;
-use outbe_primitives::addresses::{
-    STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_MARKER_CODE,
-    STABLECOIN_POLICY_REGISTRY_ADDRESS, TEE_REGISTRY_ADDRESS, TRIBUTE_ADDRESS,
-};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_stablecoin::{FactoryTokenInitialization, StablecoinFactoryApi as TokenFactoryApi};
@@ -14,6 +10,10 @@ use outbe_stablecoinfactory::{
     precompile::IStablecoinFactory, FactoryReservation, StablecoinFactoryApi as RegistryApi,
 };
 use outbe_stablecoinpolicy::precompile::IStablecoinPolicyRegistry;
+use outbe_system_common::addresses::{
+    STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_MARKER_CODE,
+    STABLECOIN_POLICY_REGISTRY_ADDRESS, TEE_REGISTRY_ADDRESS, TRIBUTE_ADDRESS,
+};
 use outbe_system_common::stablecoin::StablecoinCreatePayload;
 use revm::state::Bytecode;
 

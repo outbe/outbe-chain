@@ -15,14 +15,14 @@ use outbe_oracle::{
     test_support::{publish_day_type_rate, record_finalized_day_vwap},
 };
 use outbe_primitives::{
-    addresses::{
-        CCA_REGISTRY_ADDRESS, CREDIS_FACTORY_ADDRESS, GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS,
-        VAULT_ROUTER_ADDRESS,
-    },
     chain::CHAIN_ID,
     storage::{StorageHandle, SubCallInput, SubCallStatus},
-    time::{previous_date_key, timestamp_to_date_key},
 };
+use outbe_system_common::addresses::{
+    CCA_REGISTRY_ADDRESS, CREDIS_FACTORY_ADDRESS, GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS,
+    VAULT_ROUTER_ADDRESS,
+};
+use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 use outbe_vaultrouter::{
     api::IVaultRouter,
     test_support::{register_source, register_target},
@@ -172,7 +172,7 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
         source: OWNER,
         series_id: outbe_core_common::series_id::SeriesId::for_pair(closed_day, 840, 840)
             .expect("series id"),
-        call_start_day: outbe_primitives::time::first_full_day(NOW).expect("date step"),
+        call_start_day: outbe_system_common::time::first_full_day(NOW).expect("date step"),
         call_rate: call_terms.call_rate,
         call_window_seconds: call_terms.call_window_seconds,
         call_threshold_seconds: call_terms.call_threshold_seconds,
@@ -538,7 +538,7 @@ fn settle_successful_issuance(
     out: &outbe_primitives::storage::SubCallOutput,
 ) -> eyre::Result<()> {
     use outbe_credis::precompile::ICredis;
-    use outbe_primitives::addresses::CREDIS_ADDRESS;
+    use outbe_system_common::addresses::CREDIS_ADDRESS;
     let credis_id = ICredisFactory::issueCredisCall::abi_decode_returns(&out.returndata)?.credisId;
     call!(
         evm,
@@ -644,7 +644,7 @@ fn assert_payment_credis_and_pledge_unchanged(
     evm: &mut EvmWorld,
     observation: &PaymentObservation,
 ) -> eyre::Result<()> {
-    use outbe_primitives::addresses::CREDIS_ADDRESS;
+    use outbe_system_common::addresses::CREDIS_ADDRESS;
     assert_eq!(
         call!(
             evm,

@@ -33,7 +33,10 @@ pub(super) async fn prepare_upgrade_relay_v1(
         return Err(UpgradeError::DurableSubmissionPolicyMismatch.into());
     }
     proof
-        .verify_for_transition(evidence.intent(), active.tribute_offer_public.into())
+        .verify_for_transition(
+            evidence.intent(),
+            active.network_encryption_public_key.into(),
+        )
         .map_err(UpgradeError::InvalidDurableKeyReadyProof)?;
     ensure_transition_source_or_target_v1(&active.binding, evidence.intent())?;
 

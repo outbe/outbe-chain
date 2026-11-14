@@ -92,9 +92,9 @@ impl DcapVerificationSessionV1 {
                 block_timestamp,
                 node_signature,
                 enclave_signature,
-                expected_tribute_offer_public,
+                expected_network_encryption_public,
                 key_epoch,
-                tribute_offer_epoch,
+                network_encryption_epoch,
             } => {
                 let node_signature = node_signature
                     .try_into()
@@ -110,9 +110,9 @@ impl DcapVerificationSessionV1 {
                     VerificationPurposeV1::RegisterOnboarding {
                         node_signature,
                         enclave_signature,
-                        expected_tribute_offer_public,
+                        expected_tribute_offer_public: expected_network_encryption_public,
                         key_epoch,
-                        tribute_offer_epoch,
+                        tribute_offer_epoch: network_encryption_epoch,
                     },
                 )
             }
@@ -233,9 +233,9 @@ impl DcapVerificationSessionV1 {
                 block_timestamp: upload.block_timestamp,
                 node_signature,
                 enclave_signature,
-                expected_tribute_offer_public,
+                expected_network_encryption_public: expected_tribute_offer_public,
                 key_epoch,
-                tribute_offer_epoch,
+                network_encryption_epoch: tribute_offer_epoch,
             }),
         }
         .map_err(|_| DcapVerifyError::CommitmentInvalid)?;
@@ -446,9 +446,9 @@ fn build_gramine_direct_dev_onboarding_artifact(
     }
     let resident_offer_key =
         resident_offer_key.ok_or(DcapVerifyError::OnboardingSourceOfferKeyNotReady)?;
-    if resident_offer_key.public() != context.tribute_offer_public
+    if resident_offer_key.public() != context.network_encryption_public
         || resident_offer_key.key_epoch() != context.key_epoch
-        || resident_offer_key.tribute_offer_epoch() != context.tribute_offer_epoch
+        || resident_offer_key.tribute_offer_epoch() != context.network_encryption_epoch
     {
         return Err(DcapVerifyError::DirectDevOfferKeyContextMismatch.into());
     }
@@ -535,9 +535,9 @@ fn build_onboarding_artifact(
         binding_id: intent.binding_id,
         policy_hash: intent.policy_hash,
         recipient_x25519: intent.recipient_x25519,
-        tribute_offer_public: *expected_tribute_offer_public,
+        network_encryption_public: *expected_tribute_offer_public,
         key_epoch: *key_epoch,
-        tribute_offer_epoch: *tribute_offer_epoch,
+        network_encryption_epoch: *tribute_offer_epoch,
     };
     crate::crypto::encrypt_onboarding_artifact_v1(
         resident_offer_key.secret(),
@@ -819,9 +819,9 @@ mod tests {
             binding_id: intent.binding_id,
             policy_hash: intent.policy_hash,
             recipient_x25519: intent.recipient_x25519,
-            tribute_offer_public: resident.public(),
+            network_encryption_public: resident.public(),
             key_epoch: 2,
-            tribute_offer_epoch: 3,
+            network_encryption_epoch: 3,
         };
         let request_hash = context.context_hash();
         let canonical_context = context.encode_canonical();
@@ -1088,9 +1088,9 @@ mod tests {
             block_timestamp: 77,
             node_signature: &node_signature,
             enclave_signature: &enclave_signature,
-            expected_tribute_offer_public: offer_public,
+            expected_network_encryption_public: offer_public,
             key_epoch: 2,
-            tribute_offer_epoch: 3,
+            network_encryption_epoch: 3,
         })
         .unwrap();
         let mut session = DcapVerificationSessionV1::default();
@@ -1102,9 +1102,9 @@ mod tests {
                 block_timestamp: 77,
                 node_signature: node_signature.to_vec(),
                 enclave_signature: enclave_signature.to_vec(),
-                expected_tribute_offer_public: offer_public,
+                expected_network_encryption_public: offer_public,
                 key_epoch: 2,
-                tribute_offer_epoch: 3,
+                network_encryption_epoch: 3,
             })
             .unwrap();
         let mut combined = evidence.to_vec();

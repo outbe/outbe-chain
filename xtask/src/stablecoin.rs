@@ -12,7 +12,7 @@ use walkdir::{DirEntry, WalkDir};
 
 #[path = "stablecoin_addresses.rs"]
 mod addresses;
-use addresses::{address_literals, canonical_address, load_planned_classes, marker_byte};
+use addresses::{canonical_address, collect_declared_addresses, load_planned_classes, marker_byte};
 
 const ETHEREUM_BUILTIN_MAX: u8 = 10;
 const STABLECOIN_INTERFACES: [&str; 4] = [
@@ -146,22 +146,9 @@ fn scan_declared_addresses(
     manifest: &StablecoinAddressManifest,
     classes: &[CheckedAddressClass],
 ) -> Result<BTreeSet<String>> {
-    let path = repo_root.join("crates/blockchain/primitives/src/addresses.rs");
-    let source = fs::read_to_string(&path).wrap_err_with(|| format!("read {}", path.display()))?;
-    let addresses = address_literals(&source)?;
-    let unique: BTreeSet<String> = addresses.iter().cloned().collect();
-    if unique.len() != addresses.len() {
-        bail!("duplicate address! literal in {}", path.display());
-    }
-
     let factory = canonical_address(&manifest.factory)?;
     let policy = canonical_address(&manifest.policy_registry)?;
-    if !unique.contains(&factory) || !unique.contains(&policy) {
-        bail!(
-            "stablecoin fixed addresses are missing from {}",
-            path.display()
-        );
-    }
+    let unique = collect_declared_addresses(repo_root, &[factory.as_str(), policy.as_str()])?;
     reject_class_collision(unique.iter().map(String::as_str), classes, "fixed address")?;
 
     for suffix in 1..=ETHEREUM_BUILTIN_MAX {

@@ -3,9 +3,9 @@
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolError;
-use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::error::PrecompileError;
 use outbe_promislimit::PromisLimitContract;
+use outbe_system_common::addresses::STAKING_ADDRESS;
 use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::ValidatorLifecycle;

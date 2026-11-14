@@ -13,7 +13,7 @@ use crate::{
 };
 use alloy_primitives::{Address, B256};
 use outbe_core_common::tribute_encryption::{TributeAmountsV2, TributeContextV2};
-use outbe_primitives::wwd_entity_id::WwdEntityId;
+use outbe_core_common::wwd_entity_id::WwdEntityId;
 use zeroize::Zeroizing;
 
 pub fn process_encrypted_tribute_offer_batch(

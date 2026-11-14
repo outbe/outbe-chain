@@ -4,8 +4,9 @@ use outbe_intex::{IntexContract, SeriesRecord};
 
 use crate::errors::date_step_error;
 use outbe_oracle::call_window::CallWindow;
-use outbe_primitives::{error::Result, storage::StorageHandle, time::first_full_day};
+use outbe_primitives::{error::Result, storage::StorageHandle};
 use outbe_system_common::call_breach::BreachTerms;
+use outbe_system_common::time::first_full_day;
 
 use crate::schema::IntexFactoryContract;
 

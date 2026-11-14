@@ -1,6 +1,7 @@
 use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
 use alloy_primitives::Address;
-use outbe_primitives::{addresses::ORACLE_ADDRESS, storage::StorageHandle};
+use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::ORACLE_ADDRESS;
 
 use crate::envelope::{active_validator_for_role, ZeroFeeEnvelope};
 use crate::hooks::ZeroFeePolicyError;
@@ -21,7 +22,7 @@ pub(crate) const VOTE_ENVELOPE: ZeroFeeEnvelope = ZeroFeeEnvelope {
     min_max_fee_per_gas: MIN_ZERO_FEE_ORACLE_MAX_FEE_PER_GAS,
     max_calldata_bytes: MAX_ZERO_FEE_ORACLE_CALLDATA_BYTES,
     max_gas_limit: MAX_ZERO_FEE_ORACLE_GAS_LIMIT,
-    malformed_reason: "submitVote(ExchangeRateTuple[],GasTuple[]) decode failed",
+    malformed_reason: "zero-fee oracle vote calldata is malformed: submitVote(ExchangeRateTuple[],GasTuple[]) decode failed",
 };
 
 /// The signer must be an active validator or its oracle delegate, and that
@@ -35,7 +36,9 @@ pub(crate) fn validate_oracle_submit_vote_state(
 
     let oracle = outbe_oracle::schema::OracleContract::new(storage);
     if oracle.vote_exists.read(&validator)? {
-        return Err(ZeroFeePolicyError::AlreadyVoted);
+        return Err(ZeroFeePolicyError::HookConflict(
+            "zero-fee oracle vote already exists for validator",
+        ));
     }
 
     Ok(validator)

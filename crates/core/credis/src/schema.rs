@@ -3,9 +3,9 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_core_common::series_id::SeriesId;
 use outbe_macros::{contract, storage_record, storage_schema};
-use outbe_primitives::addresses::CREDIS_ADDRESS;
+use outbe_system_common::addresses::CREDIS_ADDRESS;
 #[cfg(any(test, feature = "e2e-test", feature = "test-utils"))]
-use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
+use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 
 use crate::errors::CredisError;
 

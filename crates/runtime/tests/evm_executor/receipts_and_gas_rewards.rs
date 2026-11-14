@@ -151,7 +151,7 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
             .pending_reward_day
             .write(
                 &settled_hash,
-                outbe_primitives::time::timestamp_to_date_key(TEST_BLOCK_TIMESTAMP_BASE),
+                outbe_system_common::time::timestamp_to_date_key(TEST_BLOCK_TIMESTAMP_BASE),
             )
             .unwrap();
         storage
@@ -167,7 +167,7 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
     // generic validator fixture does not install this native precompile marker.
     let marker_code = Bytecode::new_legacy([0xef].into());
     state.database.insert_account_info(
-        outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS,
+        outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS,
         AccountInfo {
             code_hash: marker_code.hash_slow(),
             code: Some(marker_code),
@@ -302,7 +302,7 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
                 rewards.pending_committee_set_hash_at.read(&1)?,
                 committee_set_hash
             );
-            let day = outbe_primitives::time::timestamp_to_date_key(TEST_BLOCK_TIMESTAMP_BASE);
+            let day = outbe_system_common::time::timestamp_to_date_key(TEST_BLOCK_TIMESTAMP_BASE);
             assert_eq!(rewards.pending_reward_day.read(&settled_hash)?, day);
             assert_eq!(rewards.day_fee_sum_native.read(&day)?, parent_fee);
             assert_eq!(rewards.day_total_votes.read(&day)?, U256::from(4));
@@ -375,7 +375,7 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
     let (burn_log, burn) = &burns[0];
     assert_eq!(
         burn_log.address,
-        outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS
+        outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS
     );
     assert_eq!(
         burn.source,

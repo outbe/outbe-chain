@@ -7811,6 +7811,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-promislimit",
  "outbe-rewards",
+ "outbe-system-common",
  "proptest",
  "thiserror 2.0.18",
 ]
@@ -8071,6 +8072,7 @@ dependencies = [
  "outbe-hyperlanecontroller",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-system-common",
  "outbe-validatorset",
  "thiserror 2.0.18",
 ]
@@ -8352,6 +8354,7 @@ dependencies = [
  "outbe-fidelity-math",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-system-common",
  "outbe-tee",
  "serde_json",
  "thiserror 2.0.18",
@@ -8660,6 +8663,7 @@ dependencies = [
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promislimit",
+ "outbe-system-common",
  "outbe-tribute",
  "outbe-tributefactory",
  "proptest",
@@ -8781,7 +8785,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
- "time",
  "tokio",
  "tracing",
  "trybuild",
@@ -9266,6 +9269,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-system-common",
  "thiserror 2.0.18",
 ]
 
@@ -9300,6 +9304,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
+ "time",
  "tracing",
 ]
 
@@ -9362,6 +9367,7 @@ dependencies = [
  "outbe-enclave",
  "outbe-primitives",
  "outbe-simplex",
+ "outbe-system-common",
  "outbe-tee",
  "outbe-tribute",
  "postcard",

@@ -2,16 +2,16 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_oracle::{api, schema::OracleContract};
-use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::{
-    addresses::DESIS_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     error::Result,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
-    time::{previous_date_key, timestamp_to_date_key, EmissionDate},
 };
 use outbe_promislimit::PromisLimitContract;
 use outbe_system_common::address_pair::AddressPair;
+use outbe_system_common::addresses::DESIS_ADDRESS;
+use outbe_system_common::time::SECONDS_PER_DAY;
+use outbe_system_common::time::{previous_date_key, timestamp_to_date_key, EmissionDate};
 
 use crate::{
     constants::ORIGIN_ROUTER_ADDRESS,
@@ -225,7 +225,7 @@ fn full_sale_returns_only_the_dust_once() {
         assert_eq!((counts.issued, counts.active, counts.forfeited), (3, 3, 0));
     });
     assert!(p
-        .get_events(outbe_primitives::addresses::INTEX_ADDRESS)
+        .get_events(outbe_system_common::addresses::INTEX_ADDRESS)
         .iter()
         .all(|e| outbe_intex::precompile::IIntex::IntexSeriesClosed::decode_log_data(e).is_err()));
 }

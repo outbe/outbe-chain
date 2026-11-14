@@ -34,7 +34,7 @@ pub(crate) fn dispatch(storage: &StorageHandle<'_>, data: &[u8]) -> Option<Resul
         return Some(guarded(storage, || {
             let yesterday = storage
                 .now_secs()?
-                .checked_sub(outbe_primitives::time::SECONDS_PER_DAY)
+                .checked_sub(outbe_system_common::time::SECONDS_PER_DAY)
                 .ok_or(GemFactoryError::Overflow)?;
             reopen_day(storage, yesterday).map(|()| Bytes::new())
         }));
@@ -143,7 +143,7 @@ fn backdate(storage: &StorageHandle<'_>, gem_id: U256, issued_at: u64) -> Result
         reissued.sub_series_id == 0,
     )?;
     reissued.group_key = outbe_system_common::call_breach::group_key(
-        outbe_primitives::time::first_full_day(issued_at).expect("date step"),
+        outbe_system_common::time::first_full_day(issued_at).expect("date step"),
         call_price,
         reissued.reference_currency,
     );
@@ -172,7 +172,7 @@ fn requeue_called(storage: &StorageHandle<'_>, gem_id: U256, deadline: u64) -> R
 
 fn reopen_day(storage: &StorageHandle<'_>, deadline: u64) -> Result<()> {
     let gem = GemContract::new(storage.clone());
-    let day = outbe_primitives::time::timestamp_to_date_key(deadline);
+    let day = outbe_system_common::time::timestamp_to_date_key(deadline);
     gem.call_sweep_day.write(day)?;
     gem.call_latest_day
         .write(gem.call_latest_day.read()?.max(day))?;

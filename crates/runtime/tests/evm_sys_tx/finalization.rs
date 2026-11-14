@@ -71,7 +71,7 @@ fn dispatch_finalization_uses_preloaded_summary_not_calldata_money() {
     let mut provider = configured_storage(2, 1_700_000_000);
     let preloaded_fee = U256::from(1_234u64);
     let parent_timestamp = 1_699_999_990u64;
-    let parent_day = outbe_primitives::time::timestamp_to_date_key(parent_timestamp);
+    let parent_day = outbe_system_common::time::timestamp_to_date_key(parent_timestamp);
     let vrf_hash = B256::repeat_byte(0xAB);
     let meta = metadata();
     let fb_hash = meta.finalized_block_hash;
@@ -236,20 +236,20 @@ fn finalization_rejects_non_parent_metadata_with_preloaded_summary() {
 
 #[test]
 fn accounting_progress_address_is_not_a_dispatching_precompile() {
-    use outbe_primitives::addresses::ACCOUNTING_PROGRESS_ADDRESS;
+    use outbe_system_common::addresses::ACCOUNTING_PROGRESS_ADDRESS;
     assert!(
-        !outbe_evm::precompiles::outbe_precompile_addresses()
+        !outbe_runtime::precompiles::outbe_exact_precompile_addresses()
             .contains(&ACCOUNTING_PROGRESS_ADDRESS),
         "ACCOUNTING_PROGRESS_ADDRESS must NOT be a registered dispatching precompile \
-         (outbe_precompile_addresses) - it is a system-only marker; user CALLs must not dispatch",
+         (outbe_exact_precompile_addresses) - it is a system-only marker; user CALLs must not dispatch",
     );
 }
 
 #[test]
 fn accounting_progress_address_is_eip161_preserved() {
-    use outbe_primitives::addresses::ACCOUNTING_PROGRESS_ADDRESS;
+    use outbe_system_common::addresses::ACCOUNTING_PROGRESS_ADDRESS;
     assert!(
-        outbe_evm::executor::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES
+        outbe_runtime::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES
             .contains(&ACCOUNTING_PROGRESS_ADDRESS),
         "INV3: ACCOUNTING_PROGRESS_ADDRESS must be in the executor's EIP-161 marker \
          allowlist (OUTBE_RUNTIME_MARKER_ADDRESSES) so slot 0 survives state-root cleanup",

@@ -6,9 +6,9 @@ use super::*;
 /// genesis-preserved, while `tests/genesis.rs` binds the complementary seed.
 #[test]
 fn marker_list_covers_stateful_precompiles() {
-    use outbe_evm::executor::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES;
-    use outbe_evm::precompiles::outbe_precompile_addresses;
-    use outbe_primitives::addresses::{
+    use outbe_runtime::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES;
+    use outbe_runtime::precompiles::outbe_exact_precompile_addresses;
+    use outbe_system_common::addresses::{
         CODE_REGISTRY_ADDRESS, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS,
         VAULT_ROUTER_ADDRESS, ZEROFEE_ADDRESS, ZKPROOF_VERIFY_ADDRESS,
     };
@@ -40,7 +40,7 @@ fn marker_list_covers_stateful_precompiles() {
         "runtime marker addresses must not contain duplicates"
     );
 
-    for addr in outbe_precompile_addresses() {
+    for addr in outbe_exact_precompile_addresses() {
         if MARKER_EXEMPT.contains(addr) {
             continue;
         }
@@ -54,7 +54,7 @@ fn marker_list_covers_stateful_precompiles() {
     }
 
     // GEM and GEM_FACTORY must stay covered because both own persistent storage.
-    use outbe_primitives::addresses::{GEM_ADDRESS, GEM_FACTORY_ADDRESS};
+    use outbe_system_common::addresses::{GEM_ADDRESS, GEM_FACTORY_ADDRESS};
     assert!(OUTBE_RUNTIME_MARKER_ADDRESSES.contains(&GEM_ADDRESS));
     assert!(OUTBE_RUNTIME_MARKER_ADDRESSES.contains(&GEM_FACTORY_ADDRESS));
 }

@@ -3,14 +3,14 @@ use crate::TributeContract;
 use alloy_primitives::{B256, U256};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_primitives::storage::{
+use outbe_primitives::storage::{CycleLifecyclePurpose, MutationPurposeTag, StorageHandle};
+use outbe_system_common::metadosis_bindings::{
     metadosis_advance_due_binding, metadosis_cycle_allocation_binding,
-    metadosis_init_genesis_binding, metadosis_process_ready_binding, MetadosisCycleLifecycle,
-    MetadosisMutationPurposeTag, StorageHandle,
+    metadosis_init_genesis_binding, metadosis_process_ready_binding,
 };
-use outbe_primitives::time::WorldwideDay;
+use outbe_system_common::time::WorldwideDay;
 
-const MISMATCH: &str = "revert: test provider Metadosis mutation lease identity mismatch";
+const MISMATCH: &str = "revert: test provider scoped mutation lease identity mismatch";
 
 fn open_cycle<R>(
     storage: &StorageHandle<'_>,
@@ -23,14 +23,14 @@ fn open_cycle<R>(
         storage.now_secs().unwrap(),
     );
     storage
-        .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, body)
+        .with_scoped_mutation::<CycleLifecyclePurpose, _>(binding, body)
         .unwrap()
 }
 
 #[test]
 fn day_mutators_reject_a_missing_lease_without_writes() {
     let mut provider = HashMapStorageProvider::new(1);
-    provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
+    provider.enable_scoped_mutation_frame(MutationPurposeTag::CycleLifecycle);
     StorageHandle::enter(&mut provider, |storage| {
         let _enclave = crate::enclave_client::test_enclave::scope();
         let mut tc = TributeContract::new(storage.clone());
@@ -50,7 +50,7 @@ fn day_mutators_reject_a_missing_lease_without_writes() {
         assert_eq!(
             tc.compute_and_record_metadosis_fractions(
                 day,
-                outbe_primitives::time::EmissionDate::new(day.value()),
+                outbe_system_common::time::EmissionDate::new(day.value()),
                 &Default::default(),
                 U256::from(1u64),
                 1
@@ -97,7 +97,7 @@ fn day_mutators_keep_a_timestamp_overflow() {
 #[test]
 fn day_mutators_follow_the_caller_binding() {
     let mut provider = HashMapStorageProvider::new(1);
-    provider.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
+    provider.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 4);
     let day_a = WorldwideDay::new(20260920);
     let day_b = WorldwideDay::new(20260921);
     let day_c = WorldwideDay::new(20260922);
@@ -116,7 +116,7 @@ fn day_mutators_follow_the_caller_binding() {
             day_b.to_timestamp_utc().unwrap(),
         );
         storage
-            .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
+            .with_scoped_mutation::<CycleLifecyclePurpose, _>(binding, || {
                 tc.seal_day(day_b)?;
                 assert!(tc.is_day_sealed(day_b)?);
                 assert_eq!(tc.seal_day(day_c).unwrap_err().to_string(), MISMATCH);

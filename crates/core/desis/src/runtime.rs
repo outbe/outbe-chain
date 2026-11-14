@@ -5,8 +5,8 @@ use alloy_sol_types::SolCall;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::EmissionDate;
 use outbe_promislimit::PromisLimitContract;
+use outbe_system_common::time::EmissionDate;
 use outbe_system_common::units::SCALE_1E6_U64;
 
 use outbe_intexfactory::schema::IssuanceParams;

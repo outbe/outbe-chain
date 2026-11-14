@@ -66,7 +66,7 @@ fn issue_uses_the_reservation_pledge_once_and_rolls_back_failures() {
         );
         storage
             .increase_balance(
-                outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
+                outbe_system_common::addresses::CCA_REGISTRY_ADDRESS,
                 outbe_ccaregistry::constants::BOND_REQUIREMENT,
             )
             .unwrap();
@@ -452,7 +452,7 @@ fn credis_series_lifecycle_emits_open_issue_settle_call_close_and_forfeit_events
     use outbe_credis::constants::CALL_LOOKBACK_DAYS;
     use outbe_credis::precompile::ICredis;
     use outbe_gratisfactory::precompile::IGratisFactory;
-    use outbe_primitives::addresses::{
+    use outbe_system_common::addresses::{
         CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS,
     };
 
@@ -728,7 +728,7 @@ fn a_called_series_settled_before_its_deadline_closes_with_zero_forfeit() {
     use outbe_core_common::series_id::SeriesId;
     use outbe_credis::constants::CALL_LOOKBACK_DAYS;
     use outbe_credis::precompile::ICredis;
-    use outbe_primitives::addresses::CREDIS_ADDRESS;
+    use outbe_system_common::addresses::CREDIS_ADDRESS;
 
     let mut provider = env();
     let (id, series_id) = StorageHandle::enter(&mut provider, |storage| {

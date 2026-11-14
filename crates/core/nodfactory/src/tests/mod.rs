@@ -7,12 +7,12 @@ use outbe_gratisfactory::api::ModifyAuth;
 use outbe_nod::{
     api as nod_api, constants::CALL_NOTICE_PERIOD, precompile::INod, NodContract, NodIssueParams,
 };
-use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
-    addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS},
     error::PrecompileError,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
+use outbe_system_common::addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS};
+use outbe_system_common::time::WorldwideDay;
 use outbe_system_common::units::SCALE_1E6_U64;
 use outbe_vaultrouter::settlement::SettlementPayment;
 
@@ -127,14 +127,14 @@ impl World {
         provider.set_timestamp(U256::from(1_700_000_000));
 
         provider.stub_sub_call_at_selector(
-            outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+            outbe_system_common::addresses::VAULT_ROUTER_ADDRESS,
             IVaultRouter::assetVaultsCountCall::SELECTOR,
             Bytes::from(IVaultRouter::assetVaultsCountCall::abi_encode_returns(
                 &U256::ONE,
             )),
         );
         provider.stub_sub_call_at_selector(
-            outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+            outbe_system_common::addresses::VAULT_ROUTER_ADDRESS,
             IVaultRouter::depositCall::SELECTOR,
             Bytes::from(IVaultRouter::depositCall::abi_encode_returns(&U256::ONE)),
         );
@@ -248,7 +248,7 @@ impl World {
     fn publish_coen_rate(&mut self, iso_code: u16, rate: U256) {
         self.publish_coen_spot(iso_code, rate);
         self.enter(|storage| {
-            use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
+            use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
             let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso_code)
                 .unwrap()
                 .expect("COEN pair registered");

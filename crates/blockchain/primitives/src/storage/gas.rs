@@ -40,8 +40,8 @@ pub const PRECOMPILE_BASE_GAS: u64 = 200;
 ///   proof bytes.
 /// - Commit `fd16ab63` (#408) lowered the value from 3_000_000 to 300_000
 ///   after release measurements.
-/// - The Tribute scenario in `testing/protocol-benchmarks` is the measurement
-///   to run again before you change this value. `measure_verify_ms` measures
+/// - The UltraHonk verification scenario in `testing/protocol-benchmarks` is the
+///   measurement to run again before you change this value. `measure_verify_ms` measures
 ///   the verifier latency. `baselines/gas-v1.json` pins the
 ///   `precompile.configured_base` component at 300000.
 /// - Outbe runs a permissioned validator set with a 30M block gas limit. This

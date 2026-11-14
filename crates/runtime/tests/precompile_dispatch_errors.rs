@@ -5,10 +5,9 @@ use alloy_primitives::{keccak256, Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 use outbe_ccaregistry::precompile::ICcaRegistry;
 use outbe_evm::OutbeEvmFactory;
-use outbe_primitives::{
-    addresses::{CCA_REGISTRY_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS, STAKING_ADDRESS, SYSTEM_ADDRESS},
-    storage::gas::PRECOMPILE_BASE_GAS,
-    system_tx::SystemTx,
+use outbe_primitives::{storage::gas::PRECOMPILE_BASE_GAS, system_tx::SystemTx};
+use outbe_system_common::addresses::{
+    CCA_REGISTRY_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS, STAKING_ADDRESS, SYSTEM_ADDRESS,
 };
 use reth_ethereum::evm::primitives::EvmEnv;
 use revm::{
@@ -222,7 +221,9 @@ fn former_debug_address_does_not_invoke_a_calldata_selected_contract() {
     let former_debug = alloy_primitives::address!("000000000000000000000000000000000000f999");
     // Check registration first so a regression fails without executing an
     // unmetered loop through the obsolete adapter.
-    assert!(!outbe_evm::precompiles::outbe_precompile_addresses().contains(&former_debug));
+    assert!(
+        !outbe_runtime::precompiles::outbe_exact_precompile_addresses().contains(&former_debug)
+    );
     let mut db = funded_db();
     install(&mut db, PROXY, Bytes::from_static(&[0x5b, 0x60, 0, 0x56]));
     let mut data = vec![0; 64];

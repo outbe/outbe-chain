@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, U256};
 use outbe_core_common::nod_encryption::{EncryptedNodV1, NodTermsV1};
 use outbe_enclave::protocol::EnclaveRequest as DomainRequest;
-use outbe_primitives::time::WorldwideDay;
+use outbe_system_common::time::WorldwideDay;
 use outbe_tee::protocol::PayloadLane;
 
 use crate::initialization::CommandDenial;

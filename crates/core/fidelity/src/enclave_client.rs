@@ -8,16 +8,19 @@
 //! `tee_sidecar_unavailable` failure mode.
 
 use alloy_primitives::{Address, B256};
-use outbe_enclave::protocol::{
-    fidelity_cohort_canonical_hash, fidelity_query_canonical_hash,
-    fidelity_snapshot_canonical_hash, EnclaveRequest, EnclaveResponse, FidelityCohortRequest,
-    FidelityCohortResult, FidelityLeagueEntry, FidelityQueryRequest, FidelityQueryResult,
-    FidelitySnapshotRequest,
+use outbe_enclave::{
+    protocol::{
+        fidelity_cohort_canonical_hash, fidelity_query_canonical_hash,
+        fidelity_snapshot_canonical_hash, EnclaveRequest, EnclaveResponse, FidelityCohortRequest,
+        FidelityCohortResult, FidelityLeagueEntry, FidelityQueryRequest, FidelityQueryResult,
+        FidelitySnapshotRequest,
+    },
+    FIDELITY_ATTESTATION,
 };
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_tee::{
     tee_call::{verify_signed_rejection, SignedRejectionRef},
-    AttestationMetricClass, TeeAttestationError, TransportError,
+    TeeAttestationError, TransportError,
 };
 
 use crate::errors::FidelityFatalError;
@@ -202,7 +205,7 @@ fn verify_query_rejection(
     )
     .map_err(|cause| match cause {
         TeeAttestationError::InputsHashMismatch { .. } => TransportError::UnexpectedResponse,
-        other => TransportError::app_attestation(AttestationMetricClass::Fidelity, other),
+        other => TransportError::app_attestation(FIDELITY_ATTESTATION, other),
     })
 }
 

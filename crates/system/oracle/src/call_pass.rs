@@ -8,8 +8,8 @@ use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{decide, Decided, PassFailure, PrecompileError, Result},
     storage::{dsl::Value, StorageHandle},
-    time::{timestamp_to_date_key, TimeError, SECONDS_PER_DAY},
 };
+use outbe_system_common::time::{timestamp_to_date_key, TimeError, SECONDS_PER_DAY};
 use outbe_system_common::{
     call_bins::{self, CallBinStore, Visit},
     call_breach::ScanTerms,
@@ -331,8 +331,8 @@ mod tests {
     use outbe_primitives::{
         block::BlockContext,
         storage::{dsl::Map, hashmap::HashMapStorageProvider},
-        time::date_key_to_utc_timestamp,
     };
+    use outbe_system_common::time::date_key_to_utc_timestamp;
 
     struct TestSweep<'s> {
         current: Value<'s, u32>,

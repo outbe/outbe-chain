@@ -1,9 +1,7 @@
 use alloy_primitives::{Address, U256};
 use outbe_macros::contract;
-use outbe_primitives::{
-    addresses::GRATIS_ADDRESS,
-    storage::types::{Mapping, Slot, StorageBytes},
-};
+use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes};
+use outbe_system_common::addresses::GRATIS_ADDRESS;
 /// Fresh-genesis layout. `pledged_total_supply` sums every account's pledged blob.
 #[contract(addr = GRATIS_ADDRESS)]
 pub struct Gratis {
