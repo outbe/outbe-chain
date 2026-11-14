@@ -232,7 +232,13 @@ impl<E: FollowerRuntime, N: StackNodeAccess> LiveFollower<E, N> {
             tip_client
                 .finalized_tip()
                 .await
-                .ok_or(BootstrapPromotionError::UpstreamTipUnavailable)?
+                .map_err(|err| {
+                    tracing::warn!(
+                        error = outbe_primitives::telemetry::error_field(&err),
+                        "initial upstream finalized tip unavailable"
+                    );
+                    BootstrapPromotionError::UpstreamTipUnavailable
+                })?
                 .get()
         } else {
             0

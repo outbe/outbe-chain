@@ -1,9 +1,13 @@
 //! Upstream transport bounds and method fallback, tested against a real HTTP
 //! JSON-RPC endpoint.
-use super::{CallFailure, UpstreamLimits, UpstreamRpcClient, JSONRPC_METHOD_NOT_FOUND};
+use super::{
+    classify_tip_error, CallFailure, UpstreamLimits, UpstreamRpcClient, JSONRPC_METHOD_NOT_FOUND,
+};
+use crate::follow::upstream::UpstreamTipError;
 use crate::follow::{FinalizedSource as _, TipSource as _};
 use commonware_consensus::types::Height;
 use jsonrpsee::core::client::Error as ClientError;
+use std::error::Error as _;
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
@@ -14,6 +18,8 @@ use std::time::{Duration, Instant};
 enum Reply {
     /// Accept the request and never answer.
     Hang,
+    /// Answer with a non-success HTTP status.
+    HttpStatus(u16),
     /// Answer with a JSON-RPC error.
     Error(i32),
     /// Answer with this JSON `result`.
@@ -50,6 +56,13 @@ fn serve(stream: TcpStream, script: fn(&str) -> Reply, seen: &Methods) {
         let response = match script(&method) {
             Reply::Hang => {
                 std::thread::sleep(Duration::from_secs(5));
+                break;
+            }
+            Reply::HttpStatus(status_code) => {
+                let response = format!("HTTP/1.1 {status_code} Scripted\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
+                writer
+                    .write_all(response.as_bytes())
+                    .expect("write HTTP status");
                 break;
             }
             Reply::Error(code) => serde_json::json!({
@@ -137,6 +150,124 @@ fn only_method_not_found_selects_the_legacy_method() {
     }
 }
 
+#[test]
+fn tip_error_classification_preserves_typed_sources() {
+    use jsonrpsee::http_client::transport::Error as TransportError;
+
+    for status_code in [429, 503] {
+        let error =
+            classify_tip_error(ClientError::Transport(Box::new(TransportError::Rejected {
+                status_code,
+            })));
+        assert!(matches!(
+            (&error, status_code),
+            (UpstreamTipError::HttpRateLimited { .. }, 429)
+                | (
+                    UpstreamTipError::HttpStatus {
+                        status_code: 503,
+                        ..
+                    },
+                    503
+                )
+        ));
+        let source = error
+            .source()
+            .unwrap()
+            .downcast_ref::<ClientError>()
+            .unwrap();
+        let ClientError::Transport(source) = source else {
+            panic!("lost transport source")
+        };
+        assert!(
+            matches!(source.downcast_ref::<TransportError>(), Some(TransportError::Rejected { status_code: actual }) if *actual == status_code)
+        );
+    }
+    for source in [
+        ClientError::RequestTimeout,
+        ClientError::RestartNeeded(Arc::new(ClientError::RequestTimeout)),
+        ClientError::ServiceDisconnect,
+        ClientError::Transport(Box::new(std::io::Error::other("429"))),
+    ] {
+        let error = classify_tip_error(source);
+        assert!(matches!(error, UpstreamTipError::Transport { .. }));
+        assert!(error.source().is_some());
+    }
+    for source in [
+        ClientError::Call(jsonrpsee::types::ErrorObject::owned(
+            -32000, "429", None::<()>,
+        )),
+        ClientError::ParseError(serde_json::from_str::<u64>("bad").unwrap_err()),
+        ClientError::InvalidSubscriptionId,
+        ClientError::Custom("429".into()),
+    ] {
+        let error = classify_tip_error(source);
+        assert!(matches!(error, UpstreamTipError::InvalidResponse { .. }));
+        assert!(error.source().is_some());
+    }
+}
+
+#[tokio::test]
+async fn tip_http_statuses_preserve_their_class_and_source() {
+    for status_code in [429, 503] {
+        let (url, methods) = upstream(if status_code == 429 {
+            |_| Reply::HttpStatus(429)
+        } else {
+            |_| Reply::HttpStatus(503)
+        });
+        let error = client(&url, Duration::from_secs(5))
+            .finalized_tip()
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            (&error, status_code),
+            (UpstreamTipError::HttpRateLimited { .. }, 429)
+                | (
+                    UpstreamTipError::HttpStatus {
+                        status_code: 503,
+                        ..
+                    },
+                    503
+                )
+        ));
+        assert!(error.source().is_some());
+        assert_eq!(recorded(&methods), ["outbe_consensusStatus"]);
+    }
+}
+
+#[tokio::test]
+async fn tip_timeout_and_closed_port_are_transport_failures() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let closed_url = format!("http://{}", listener.local_addr().unwrap());
+    drop(listener);
+    let (hanging_url, _) = upstream(|_| Reply::Hang);
+    for url in [closed_url, hanging_url] {
+        let error = client(&url, Duration::from_millis(200))
+            .finalized_tip()
+            .await
+            .unwrap_err();
+        assert!(matches!(error, UpstreamTipError::Transport { .. }));
+        assert!(error.source().is_some());
+    }
+}
+
+#[tokio::test]
+async fn tip_rpc_errors_and_malformed_responses_are_invalid() {
+    for script in [
+        (|_| Reply::Error(-32000)) as fn(&str) -> Reply,
+        |_| Reply::Result("not JSON".into()),
+        |_| Reply::Result(r#"{"lastFinalizedBlock":"bad"}"#.into()),
+        |_| Reply::Result("{}".into()),
+    ] {
+        let (url, _) = upstream(script);
+        let error = client(&url, Duration::from_secs(5))
+            .finalized_tip()
+            .await
+            .unwrap_err();
+        assert!(matches!(error, UpstreamTipError::InvalidResponse { .. }));
+        assert!(error.source().is_some());
+    }
+}
+
 #[tokio::test]
 async fn timeout_is_transient_and_never_falls_back() {
     let (url, methods) = upstream(|_| Reply::Hang);
@@ -206,9 +337,9 @@ async fn responses_above_the_byte_cap_are_refused() {
         },
     )
     .expect("build capped client");
-    assert_eq!(capped.finalized_tip().await, None);
+    assert!(capped.finalized_tip().await.is_err());
     let default = client(&url, Duration::from_secs(5));
-    assert_eq!(default.finalized_tip().await, Some(Height::new(7)));
+    assert_eq!(default.finalized_tip().await.unwrap(), Height::new(7));
 }
 
 fn hex_bytes(bytes: &[u8]) -> String {
