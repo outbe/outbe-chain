@@ -78,9 +78,6 @@ pub(crate) enum TeeJoinCompletionError {
     /// Encoding the finalized onboarding artifact failed.
     #[error("encode finalized artifact: {0:#06x}")]
     EncodeFinalizedArtifact(u16),
-    /// `GramineDirectDev` post-bootstrap onboarding requires a node data directory.
-    #[error("GramineDirectDev post-bootstrap onboarding requires authenticated NodeHost state")]
-    GramineDirectDevMissingNodeHostState,
     /// The enclave returned an unexpected response during development onboarding.
     #[error("GramineDirectDev onboarding returned an unexpected response: {0}")]
     UnexpectedGramineDirectDevResponse(String),
