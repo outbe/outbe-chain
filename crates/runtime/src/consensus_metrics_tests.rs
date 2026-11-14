@@ -1,7 +1,7 @@
 use super::{
     spawn_consensus_metrics_server, spawn_with_limits, ConsensusMetricsHandle,
     ConsensusMetricsServerError, ServerLimits, ENCODE_CACHE_TTL, MAX_CONCURRENT_REQUESTS,
-    OPENMETRICS_CONTENT_TYPE,
+    MAX_REJECTING_CONNECTIONS, OPENMETRICS_CONTENT_TYPE, SATURATED_RESPONSE,
 };
 use commonware_runtime::{
     telemetry::metrics::raw::Counter, tokio::Context, Metrics as _, Runner as _, Supervisor as _,
@@ -265,6 +265,62 @@ fn consensus_metrics_rejects_saturation_without_parsing_and_recovers() {
             tokio::task::yield_now().await;
         }
         shutdown.cancel();
+    });
+}
+
+async fn half_open_rejection(addr: SocketAddr) -> TcpStream {
+    let mut stream = TcpStream::connect(addr).await.unwrap();
+    let mut response = vec![0_u8; SATURATED_RESPONSE.len()];
+    stream.read_exact(&mut response).await.unwrap();
+    assert_status(
+        std::str::from_utf8(&response).unwrap(),
+        "503 Service Unavailable",
+    );
+    stream
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn consensus_metrics_backpressures_excess_rejections_and_cancels_drain() {
+    run_test(|ctx| async move {
+        let limits = ServerLimits {
+            saturated_drain_timeout: Duration::from_secs(2),
+            ..ServerLimits::default()
+        };
+        let (handle, shutdown) = start_server(&ctx, limits);
+        let addr = handle.local_addr();
+        let mut stalled = Vec::new();
+        for _ in 0..MAX_CONCURRENT_REQUESTS {
+            stalled.push(stalled_connection(addr).await);
+        }
+        let mut rejecting = Vec::new();
+        for _ in 0..MAX_REJECTING_CONNECTIONS {
+            rejecting.push(half_open_rejection(addr).await);
+        }
+        let mut queued = TcpStream::connect(addr).await.unwrap();
+        queued.write_all(METRICS_REQUEST.as_bytes()).await.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), queued.read(&mut [0]))
+                .await
+                .is_err()
+        );
+        drop(rejecting.pop());
+        let mut response = String::new();
+        queued.read_to_string(&mut response).await.unwrap();
+        assert_status(&response, "503 Service Unavailable");
+        assert_eq!(body(&response), "service unavailable\n");
+        rejecting.push(half_open_rejection(addr).await);
+        tokio::time::timeout(Duration::from_millis(500), async {
+            shutdown.cancel();
+            for stream in &mut stalled {
+                assert_eq!(stream.read(&mut [0]).await.unwrap(), 0);
+            }
+            while TcpStream::connect(addr).await.is_ok() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("shutdown must cancel active and rejecting connections without waiting for drain");
     });
 }
 

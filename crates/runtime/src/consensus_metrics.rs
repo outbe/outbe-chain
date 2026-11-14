@@ -9,7 +9,7 @@ use std::{convert::Infallible, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpSocket, TcpStream},
-    sync::{Mutex, Semaphore},
+    sync::{Mutex, OwnedSemaphorePermit, Semaphore},
     time::Instant,
 };
 use tokio_util::sync::CancellationToken;
@@ -102,6 +102,8 @@ fn bind_reuseaddr_listener(
 struct ServerLimits {
     request_timeout: Duration,
     encode_cache_ttl: Duration,
+    saturated_write_timeout: Duration,
+    saturated_drain_timeout: Duration,
 }
 
 impl Default for ServerLimits {
@@ -109,6 +111,8 @@ impl Default for ServerLimits {
         Self {
             request_timeout: REQUEST_TIMEOUT,
             encode_cache_ttl: ENCODE_CACHE_TTL,
+            saturated_write_timeout: SATURATED_WRITE_TIMEOUT,
+            saturated_drain_timeout: SATURATED_DRAIN_TIMEOUT,
         }
     }
 }
@@ -117,12 +121,16 @@ type SnapshotCache = Arc<Mutex<Option<(Instant, Bytes)>>>;
 
 #[derive(Clone)]
 struct ServerState {
-    permits: Arc<Semaphore>,
+    conn_permits: Arc<Semaphore>,
+    serve_permits: Arc<Semaphore>,
     cache: SnapshotCache,
     shutdown: CancellationToken,
     limits: ServerLimits,
 }
 
+const MAX_REJECTING_CONNECTIONS: usize = MAX_CONCURRENT_REQUESTS;
+const SATURATED_WRITE_TIMEOUT: Duration = Duration::from_millis(250);
+const SATURATED_DRAIN_TIMEOUT: Duration = Duration::from_millis(50);
 const TEXT_CONTENT_TYPE: &str = "text/plain; charset=utf-8";
 const SATURATED_RESPONSE: &[u8] = b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 20\r\nConnection: close\r\n\r\nservice unavailable\n";
 
@@ -150,57 +158,99 @@ where
     let (listener, local_addr) = bind_reuseaddr_listener(listen_addr)?;
     metrics_ctx.spawn(move |ctx| async move {
         let state = ServerState {
-            permits: Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS)),
+            conn_permits: Arc::new(Semaphore::new(
+                MAX_CONCURRENT_REQUESTS + MAX_REJECTING_CONNECTIONS,
+            )),
+            serve_permits: Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS)),
             cache: Arc::new(Mutex::new(None)),
             shutdown: shutdown.clone(),
             limits,
         };
-        loop {
-            tokio::select! {
-                biased;
-                _ = shutdown.cancelled() => break,
-                accepted = listener.accept() => match accepted {
-                    Ok((stream, _)) => {
-                        let _ = stream.set_nodelay(true);
-                        dispatch_connection(&ctx, stream, &state);
-                    }
-                    Err(error) => {
-                        tracing::warn!(%error, "consensus metrics accept failed");
-                        tokio::time::sleep(Duration::from_millis(10)).await;
-                    }
-                }
-            }
+        while let Some((stream, conn_permit)) =
+            acquire_accepted_connection(&listener, &state.conn_permits, &shutdown).await
+        {
+            dispatch_connection(&ctx, stream, conn_permit, &state);
         }
     });
     Ok(ConsensusMetricsHandle { local_addr })
 }
 
-fn dispatch_connection<C>(ctx: &C, stream: TcpStream, state: &ServerState)
-where
+async fn acquire_accepted_connection(
+    listener: &TcpListener,
+    conn_permits: &Arc<Semaphore>,
+    shutdown: &CancellationToken,
+) -> Option<(TcpStream, OwnedSemaphorePermit)> {
+    loop {
+        let conn_permit = tokio::select! {
+            biased;
+            _ = shutdown.cancelled() => return None,
+            permit = Arc::clone(conn_permits).acquire_owned() => permit.ok()?,
+        };
+        let accepted = tokio::select! {
+            biased;
+            _ = shutdown.cancelled() => return None,
+            accepted = listener.accept() => accepted,
+        };
+        match accepted {
+            Ok((stream, _)) => {
+                let _ = stream.set_nodelay(true);
+                return Some((stream, conn_permit));
+            }
+            Err(error) => {
+                drop(conn_permit);
+                tracing::warn!(%error, "consensus metrics accept failed");
+                tokio::select! {
+                    biased;
+                    _ = shutdown.cancelled() => return None,
+                    _ = tokio::time::sleep(Duration::from_millis(10)) => {}
+                }
+            }
+        }
+    }
+}
+
+fn dispatch_connection<C>(
+    ctx: &C,
+    stream: TcpStream,
+    conn_permit: OwnedSemaphorePermit,
+    state: &ServerState,
+) where
     C: commonware_runtime::Metrics + commonware_runtime::Spawner,
 {
-    let permit = match state.permits.clone().try_acquire_owned() {
-        Ok(permit) => permit,
-        Err(_) => {
-            ctx.child("rejected")
-                .spawn(move |_| reject_saturated(stream));
-            return;
-        }
+    let Ok(serve_permit) = Arc::clone(&state.serve_permits).try_acquire_owned() else {
+        let shutdown = state.shutdown.clone();
+        let limits = state.limits;
+        ctx.child("rejected").spawn(move |_| async move {
+            let _conn_permit = conn_permit;
+            reject_saturated(stream, shutdown, limits).await;
+        });
+        return;
     };
     let state = state.clone();
     ctx.child("connection").spawn(move |conn_ctx| async move {
-        let _permit = permit;
         serve_connection(conn_ctx, stream, state).await;
+        // Release serve_permit before conn_permit so a woken accept() sees the free slot.
+        drop(serve_permit);
+        drop(conn_permit);
     });
 }
 
-async fn reject_saturated(mut stream: TcpStream) {
-    let _ = tokio::time::timeout(
-        Duration::from_millis(250),
-        stream.write_all(SATURATED_RESPONSE),
-    )
-    .await;
-    shutdown_and_drain(&mut stream).await;
+async fn reject_saturated(
+    mut stream: TcpStream,
+    shutdown: CancellationToken,
+    limits: ServerLimits,
+) {
+    let written = tokio::select! {
+        biased;
+        _ = shutdown.cancelled() => return,
+        written = tokio::time::timeout(
+            limits.saturated_write_timeout,
+            stream.write_all(SATURATED_RESPONSE),
+        ) => written,
+    };
+    if matches!(written, Ok(Ok(()))) {
+        shutdown_and_drain(&mut stream, &shutdown, limits.saturated_drain_timeout).await;
+    }
 }
 
 async fn serve_connection<C: commonware_runtime::Metrics>(
@@ -223,19 +273,35 @@ async fn serve_connection<C: commonware_runtime::Metrics>(
         }
     };
     if completed {
-        shutdown_and_drain(&mut stream).await;
+        shutdown_and_drain(
+            &mut stream,
+            &state.shutdown,
+            state.limits.saturated_drain_timeout,
+        )
+        .await;
     }
 }
 
-async fn shutdown_and_drain(stream: &mut TcpStream) {
+async fn shutdown_and_drain(
+    stream: &mut TcpStream,
+    shutdown: &CancellationToken,
+    drain_timeout: Duration,
+) {
     // Unread socket bytes cause BSD/macOS to reset TCP and discard the HTTP response on close.
-    let _ = stream.shutdown().await;
+    if tokio::select! {
+        biased;
+        _ = shutdown.cancelled() => return,
+        result = stream.shutdown() => result.is_err(),
+    } {
+        return;
+    }
     let mut limited = stream.take(MAX_HEADER_BUF_BYTES as u64);
-    let _ = tokio::time::timeout(
-        Duration::from_millis(50),
-        tokio::io::copy(&mut limited, &mut tokio::io::sink()),
-    )
-    .await;
+    let mut sink = tokio::io::sink();
+    tokio::select! {
+        biased;
+        _ = shutdown.cancelled() => {}
+        _ = tokio::time::timeout(drain_timeout, tokio::io::copy(&mut limited, &mut sink)) => {}
+    }
 }
 
 async fn encoded_snapshot<C: commonware_runtime::Metrics>(
