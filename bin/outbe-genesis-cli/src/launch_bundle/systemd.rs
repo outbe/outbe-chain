@@ -10,20 +10,40 @@ use crate::network::rpc_bind_ip;
 
 use super::{port_of, quote, write_script};
 
-/// Systemd service roles in dependency order: `(role, description, after_unit)`.
-pub const UNIT_ROLES: &[(&str, &str, Option<&str>)] = &[
-    ("enclave", "TEE enclave", None),
-    (
-        "radicle",
-        "Radicle sidecar",
-        Some("outbe-enclave@%i.service"),
-    ),
-    ("node", "validator node", Some("outbe-radicle@%i.service")),
-    (
-        "feeder",
-        "price oracle feeder",
-        Some("outbe-node@%i.service"),
-    ),
+/// One service in the founding-validator stack.
+pub struct UnitRole {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub script: &'static str,
+    pub after: Option<&'static str>,
+}
+
+/// Founding-validator services in dependency order.
+pub const UNIT_ROLES: &[UnitRole] = &[
+    UnitRole {
+        name: "enclave",
+        description: "TEE enclave",
+        script: "run-enclave.sh",
+        after: None,
+    },
+    UnitRole {
+        name: "radicle",
+        description: "Radicle sidecar",
+        script: "run-radicle.sh",
+        after: Some("outbe-enclave.service"),
+    },
+    UnitRole {
+        name: "validator",
+        description: "validator",
+        script: "run-node.sh",
+        after: Some("outbe-enclave.service outbe-radicle.service"),
+    },
+    UnitRole {
+        name: "feeder",
+        description: "price oracle feeder",
+        script: "run-feeder.sh",
+        after: Some("outbe-validator.service"),
+    },
 ];
 
 /// Render `Caddyfile` for one validator host.
@@ -139,81 +159,133 @@ exec {q_cli} tee renew \\\n\
     ))
 }
 
-/// Render one templated systemd unit file (`%i` is the validator index).
-pub fn systemd_unit(role: &str, description: &str, after: Option<&str>, base_dir: &str) -> String {
-    let dependency_suffix = after.map(|a| format!(" {a}")).unwrap_or_default();
-    let user = if role == "enclave" { "root" } else { "ubuntu" };
-    let enclave_mounts = if role == "enclave" {
+/// Render one non-templated founding-validator unit.
+pub fn systemd_unit(role: &UnitRole, base_dir: &str, index: usize) -> String {
+    let dependency_suffix = role
+        .after
+        .map(|after| format!(" {after}"))
+        .unwrap_or_default();
+    let account = if role.name == "enclave" {
+        "User=root\n".to_owned()
+    } else {
+        "User=outbe\nGroup=outbe\n".to_owned()
+    };
+    let validator_dir = format!("{base_dir}/validator-{index}");
+    let enclave_mounts = if role.name == "enclave" {
         format!(
             "BindReadOnlyPaths=-{base_dir}/sgx:/opt/outbe/sgx\n\
-BindPaths={base_dir}/validator-%i/tee:/var/lib/outbe/tee\n"
+BindPaths={validator_dir}/tee:/var/lib/outbe/tee\n"
         )
     } else {
         String::new()
     };
+    let nofile = if role.name == "validator" {
+        1_048_576
+    } else {
+        65_535
+    };
     format!(
         "[Unit]\n\
-Description=Outbe {description} (validator %i)\n\
+Description=Outbe founding {description}\n\
 After=network-online.target{dependency_suffix}\n\
 Wants=network-online.target{dependency_suffix}\n\
+PartOf=outbe-validator.target\n\
 StartLimitIntervalSec=0\n\
 \n\
 [Service]\n\
 Type=simple\n\
-User={user}\n\
-WorkingDirectory={base_dir}/validator-%i\n\
-ExecStart={base_dir}/validator-%i/run-{role}.sh\n\
+{account}\
+WorkingDirectory={validator_dir}\n\
+ExecStart={validator_dir}/{script}\n\
 Restart=always\n\
+RestartMode=direct\n\
 RestartSec=5\n\
-StandardOutput=journal\n\
-StandardError=journal\n\
+RestartSteps=5\n\
+RestartMaxDelaySec=60\n\
+TimeoutStartSec=150\n\
+TimeoutStopSec=90\n\
+KillMode=mixed\n\
+KillSignal=SIGTERM\n\
+UMask=0077\n\
+LimitNOFILE={nofile}\n\
+NoNewPrivileges=true\n\
+PrivateTmp=true\n\
+ProtectHome=true\n\
+ProtectSystem=strict\n\
+ReadWritePaths={base_dir}\n\
 {enclave_mounts}\
 \n\
 [Install]\n\
-WantedBy=multi-user.target\n"
+WantedBy=outbe-validator.target\n",
+        description = role.description,
+        script = role.script,
     )
 }
 
-/// Write all systemd service/timer templates and `install-systemd.sh`.
+/// Write the services and installer for one founding-validator host.
 pub fn write_systemd_units(
     output_dir: &Path,
     base_dir: &str,
+    index: usize,
     enable_tee_renewal: bool,
 ) -> Result<(), GenesisError> {
     let unit_dir = output_dir.join("systemd");
     fs::create_dir_all(&unit_dir).map_err(|err| GenesisError::io(&unit_dir, err))?;
-    for &(role, description, after) in UNIT_ROLES {
-        let unit = systemd_unit(role, description, after, base_dir);
-        let unit_path = unit_dir.join(format!("outbe-{role}@.service"));
+    for role in UNIT_ROLES {
+        let unit = systemd_unit(role, base_dir, index);
+        let unit_path = unit_dir.join(format!("outbe-{}.service", role.name));
         fs::write(&unit_path, unit).map_err(|err| GenesisError::io(&unit_path, err))?;
     }
 
-    let renew_service = unit_dir.join("outbe-tee-renew@.service");
+    let target = unit_dir.join("outbe-validator.target");
+    fs::write(
+        &target,
+        "[Unit]\n\
+Description=Outbe founding validator stack\n\
+Wants=outbe-enclave.service\n\
+Wants=outbe-radicle.service\n\
+Wants=outbe-validator.service\n\
+Wants=outbe-feeder.service\n\
+After=outbe-enclave.service outbe-radicle.service\n\
+After=outbe-validator.service outbe-feeder.service\n\
+\n\
+[Install]\n\
+WantedBy=multi-user.target\n",
+    )
+    .map_err(|err| GenesisError::io(&target, err))?;
+
+    let renew_service = unit_dir.join("outbe-tee-renew.service");
     fs::write(
         &renew_service,
         format!(
             "[Unit]\n\
-Description=Outbe founder TEE lease renewal (validator %i)\n\
-After=network-online.target outbe-enclave@%i.service outbe-node@%i.service\n\
-Requisite=outbe-enclave@%i.service outbe-node@%i.service\n\
+Description=Outbe founding validator TEE lease renewal\n\
+After=network-online.target outbe-enclave.service outbe-validator.service\n\
+Requisite=outbe-enclave.service outbe-validator.service\n\
 \n\
 [Service]\n\
 Type=oneshot\n\
-User=ubuntu\n\
-WorkingDirectory={base_dir}/validator-%i\n\
-ExecStart={base_dir}/validator-%i/run-tee-renew.sh\n\
+User=outbe\n\
+Group=outbe\n\
+WorkingDirectory={base_dir}/validator-{index}\n\
+ExecStart={base_dir}/validator-{index}/run-tee-renew.sh\n\
 TimeoutStartSec=10min\n\
 UMask=0077\n\
-LimitCORE=0\n"
+LimitCORE=0\n\
+NoNewPrivileges=true\n\
+PrivateTmp=true\n\
+ProtectHome=true\n\
+ProtectSystem=strict\n\
+ReadWritePaths={base_dir}\n"
         ),
     )
     .map_err(|err| GenesisError::io(&renew_service, err))?;
 
-    let renew_timer = unit_dir.join("outbe-tee-renew@.timer");
+    let renew_timer = unit_dir.join("outbe-tee-renew.timer");
     fs::write(
         &renew_timer,
         "[Unit]\n\
-Description=Daily Outbe founder TEE lease renewal check (validator %i)\n\
+Description=Daily Outbe founding validator TEE lease renewal check\n\
 \n\
 [Timer]\n\
 OnCalendar=daily\n\
@@ -225,31 +297,29 @@ WantedBy=timers.target\n",
     .map_err(|err| GenesisError::io(&renew_timer, err))?;
 
     let renewal_install = if enable_tee_renewal {
-        "\nsudo systemctl enable --now \"outbe-tee-renew@$INDEX.timer\"\n"
+        "sudo systemctl enable --now outbe-tee-renew.timer\n"
     } else {
         ""
     };
-    let q_base = quote(base_dir);
+    let base = quote(base_dir);
     let install = format!(
-        "\n# Install and start every Outbe service for validator $1 on this machine.\n\
-INDEX=\"${{1:?usage: install-systemd.sh <validator-index>}}\"\n\
+        "\n# Install and start this machine's single founding validator.\n\
+UNIT_DIR=\"$(cd -- \"$(dirname -- \"${{BASH_SOURCE[0]}}\")/systemd\" && pwd)\"\n\
 \n\
-sudo install -d -m 0700 {q_base}/validator-$INDEX/tee /var/lib/outbe/tee\n\
-\n\
-sudo install -m 644 {q_base}/systemd/outbe-*@.service /etc/systemd/system/\n\
-sudo install -m 644 {q_base}/systemd/outbe-*@.timer /etc/systemd/system/\n\
+getent group outbe >/dev/null || sudo groupadd --system outbe\n\
+id -u outbe >/dev/null 2>&1 || sudo useradd --system --gid outbe \\\n  --home-dir {base} --shell /usr/sbin/nologin outbe\n\
+sudo install -d -m 0700 {base}/validator-{index}/tee /var/lib/outbe/tee\n\
+sudo chown -R outbe:outbe {base}\n\
+sudo install -m 0644 \"$UNIT_DIR\"/outbe-* /etc/systemd/system/\n\
 sudo systemctl daemon-reload\n\
 \n\
-\n\
-for role in enclave radicle node feeder; do\n\
-  sudo systemctl enable --now \"outbe-$role@$INDEX.service\"\n\
-done\n\
+sudo systemctl enable --now outbe-validator.target\n\
 {renewal_install}\n\
 echo\n\
-echo \"services for validator $INDEX:\"\n\
+echo \"founding validator services:\"\n\
 systemctl list-units 'outbe-*' --no-pager --no-legend | sed 's/^/  /'\n\
 echo\n\
-echo \"follow one with: journalctl -u outbe-node@$INDEX -f\"\n"
+echo \"follow the node with: journalctl -u outbe-validator -f\"\n"
     );
     write_script(&output_dir.join("install-systemd.sh"), &install)
 }

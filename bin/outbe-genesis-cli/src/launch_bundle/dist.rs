@@ -23,23 +23,16 @@ fn pack_validator_archive(
     let staging = dist.join(format!("validator-{index}"));
     fs::create_dir_all(&staging).map_err(|err| GenesisError::io(&staging, err))?;
 
-    for name in [
-        "genesis.json",
-        "reth-bootnodes.txt",
-        "DEPLOY.md",
-        "install-systemd.sh",
-    ] {
+    for name in ["genesis.json", "reth-bootnodes.txt", "DEPLOY.md"] {
         let item = output_dir.join(name);
         if item.is_file() {
             let dst = staging.join(name);
             fs::copy(&item, &dst).map_err(|err| GenesisError::io(&dst, err))?;
         }
     }
-    for folder in ["systemd", "sgx"] {
-        let src = output_dir.join(folder);
-        if src.is_dir() {
-            copy_dir_recursive(&src, &staging.join(folder))?;
-        }
+    let sgx = output_dir.join("sgx");
+    if sgx.is_dir() {
+        copy_dir_recursive(&sgx, &staging.join("sgx"))?;
     }
 
     let val_folder = format!("validator-{index}");
@@ -129,7 +122,7 @@ sudo chown \"$USER\" {q_base}\n\
 tar xzf \"$ARCHIVE\" -C {q_base}\n\
 chmod -R go-rwx {q_base}/keys\n\
 \n\
-echo \"unpacked into {base_dir}; next: ./install-systemd.sh $INDEX\"\n"
+echo \"unpacked into {base_dir}; next: {base_dir}/validator-$INDEX/install-systemd.sh\"\n"
     );
     write_script(&dist.join("unpack.sh"), &unpack)?;
     Ok(names)
@@ -278,20 +271,17 @@ metrics `{metrics_port}`, Radicle status\n\
 ```bash\n\
 cd {base_dir}/validator-N\n\
 ./preflight.sh N        # verifies genesis/enclave/state before anything starts\n\
-sudo {base_dir}/install-systemd.sh N\n\
+sudo ./install-systemd.sh\n\
 ```\n\
 \n\
-`install-systemd.sh` installs one templated unit per role, starts them in\n\
-dependency order, and enables the daily TEE renewal timer for a NodeHost SGX\n\
+`install-systemd.sh` installs one non-templated unit per role, starts the\n\
+`outbe-validator.target`, and enables the daily TEE renewal timer for a NodeHost SGX\n\
 session. The services recover after clean or failed exits. `preflight.sh`\n\
 is read-only: run it first and compare the genesis digest it prints across all\n\
 four machines. When SGX is enabled, compare the enclave digest too.\n\
 \n\
-`start-all.sh` starts the components in dependency order - configured storage, enclave,\n\
-Radicle sidecar, node, feeder - and writes pids and logs into\n\
-`{base_dir}/validator-N/`. To run one component in the foreground instead, call\n\
-its script directly: `run-enclave.sh`, `run-radicle.sh`,\n\
-`run-node.sh`, `run-feeder.sh`. `stop-all.sh` reverses it.\n\
+Inspect the stack with `systemctl status outbe-validator.target` and follow the\n\
+node with `journalctl -u outbe-validator -f`.\n\
 \n\
 **Start all four machines within a few minutes of each other.** Block 1 carries\n\
 the founding DKG ceremony and needs every genesis validator online - unlike a\n\

@@ -120,8 +120,7 @@ fn render_writes_valid_bash_scripts_and_stable_bootnodes() {
             "run-node.sh",
             "run-feeder.sh",
             "run-tee-renew.sh",
-            "start-all.sh",
-            "stop-all.sh",
+            "install-systemd.sh",
         ] {
             let script = directory.join(name);
             assert!(script.is_file(), "{name} missing");
@@ -138,12 +137,7 @@ fn render_writes_valid_bash_scripts_and_stable_bootnodes() {
         let feeder = fs::read_to_string(directory.join("feeder.toml")).expect("feeder config");
         assert!(feeder.contains(&format!("private_key = \"0x{:064x}\"", index + 11)));
         assert!(!feeder.contains(&format!("private_key = \"0x{:064x}\"", index + 1)));
-
-        let start_all = fs::read_to_string(directory.join("start-all.sh")).expect("start-all");
-        assert!(start_all.contains("logs/enclave.log (pid $(cat enclave.pid))"));
-        assert!(!start_all.contains("docker"));
-        let stop_all = fs::read_to_string(directory.join("stop-all.sh")).expect("stop-all");
-        assert!(!stop_all.contains("docker"));
+        assert!(directory.join("systemd/outbe-validator.target").is_file());
     }
 
     let first_bootnodes =
@@ -297,8 +291,8 @@ fn distribution_archives_and_signed_enclave_staging() {
             "genesis.json",
             "reth-bootnodes.txt",
             &format!("validator-{index}"),
-            "systemd",
-            "install-systemd.sh",
+            &format!("validator-{index}/systemd"),
+            &format!("validator-{index}/install-systemd.sh"),
         ] {
             assert!(
                 joined.contains(required),
@@ -337,20 +331,29 @@ fn caddy_systemd_units_tee_renewal_and_enclave_modes() {
     assert!(!caddy.contains("8776"));
     assert!(caddy.contains("auto_https off"));
 
-    let unit_dir = output_dir.join("systemd");
-    for (role, dep) in [
-        ("enclave", None),
-        ("radicle", Some("outbe-enclave@%i.service")),
-        ("node", Some("outbe-radicle@%i.service")),
-        ("feeder", Some("outbe-node@%i.service")),
+    let unit_dir = output_dir.join("validator-2/systemd");
+    for (role, script, dep) in [
+        ("enclave", "run-enclave.sh", None),
+        ("radicle", "run-radicle.sh", Some("outbe-enclave.service")),
+        (
+            "validator",
+            "run-node.sh",
+            Some("outbe-enclave.service outbe-radicle.service"),
+        ),
+        ("feeder", "run-feeder.sh", Some("outbe-validator.service")),
     ] {
         let unit =
-            fs::read_to_string(unit_dir.join(format!("outbe-{role}@.service"))).expect("read unit");
+            fs::read_to_string(unit_dir.join(format!("outbe-{role}.service"))).expect("read unit");
         assert!(unit.contains("Restart=always"));
+        assert!(unit.contains("RestartMode=direct"));
         assert!(unit.contains("StartLimitIntervalSec=0"));
-        assert!(unit.contains(&format!("run-{role}.sh")));
+        assert!(unit.contains(script));
+        assert!(unit.contains("ProtectSystem=strict"));
+        assert!(!unit.contains("%i"));
         if let Some(d) = dep {
             assert!(unit.contains(&format!("Wants=network-online.target {d}")));
+            assert!(unit.contains("User=outbe"));
+            assert!(unit.contains("Group=outbe"));
         } else {
             assert!(unit.contains("Wants=network-online.target"));
             assert!(unit.contains("User=root"));
@@ -361,12 +364,13 @@ fn caddy_systemd_units_tee_renewal_and_enclave_modes() {
     }
 
     let timer =
-        fs::read_to_string(unit_dir.join("outbe-tee-renew@.timer")).expect("read renew timer");
+        fs::read_to_string(unit_dir.join("outbe-tee-renew.timer")).expect("read renew timer");
     assert!(timer.contains("OnCalendar=daily"));
     assert!(timer.contains("Persistent=true"));
-    let install_systemd =
-        fs::read_to_string(output_dir.join("install-systemd.sh")).expect("install-systemd");
-    assert!(install_systemd.contains("enable --now \"outbe-tee-renew@$INDEX.timer\""));
+    let install_systemd = fs::read_to_string(output_dir.join("validator-2/install-systemd.sh"))
+        .expect("install-systemd");
+    assert!(install_systemd.contains("enable --now outbe-tee-renew.timer"));
+    assert!(install_systemd.contains("enable --now outbe-validator.target"));
 
     let node2 =
         fs::read_to_string(output_dir.join("validator-2").join("run-node.sh")).expect("node2");
@@ -393,9 +397,6 @@ fn caddy_systemd_units_tee_renewal_and_enclave_modes() {
     assert!(fs::read_to_string(rpc_dir.join("feeder.toml"))
         .expect("rpc feeder")
         .contains("rpc_endpoint = \"http://10.0.0.3:8545\""));
-    assert!(fs::read_to_string(rpc_dir.join("start-all.sh"))
-        .expect("rpc start")
-        .contains("/dev/tcp/10.0.0.3/8545"));
     assert!(fs::read_to_string(rpc_dir.join("run-tee-renew.sh"))
         .expect("rpc renew")
         .contains("--rpc-url http://10.0.0.3:8545"));
@@ -419,8 +420,8 @@ fn caddy_systemd_units_tee_renewal_and_enclave_modes() {
         fs::read_to_string(out_mock.join("validator-0").join("run-node.sh")).expect("node_mock");
     assert!(!node_mock.contains("--tee-session-mode"));
     let install_mock =
-        fs::read_to_string(out_mock.join("install-systemd.sh")).expect("install_mock");
-    assert!(!install_mock.contains("enable --now \"outbe-tee-renew@$INDEX.timer\""));
+        fs::read_to_string(out_mock.join("validator-0/install-systemd.sh")).expect("install_mock");
+    assert!(!install_mock.contains("enable --now outbe-tee-renew.timer"));
     let enclave_mock =
         fs::read_to_string(out_mock.join("validator-0/run-enclave.sh")).expect("enclave_mock");
     assert!(enclave_mock.contains("outbe-tee-enclave-mock"));

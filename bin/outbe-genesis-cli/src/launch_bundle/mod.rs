@@ -22,12 +22,11 @@ use crate::seed_codec::parse_u64;
 pub use self::dist::{build_distribution, deploy_markdown};
 pub use self::scripts::{
     enclave_script, feeder_config, feeder_pairs, feeder_pairs_file, feeder_pairs_settings,
-    feeder_pairs_table, feeder_script, node_script, radicle_script, start_all_script,
-    stop_all_script,
+    feeder_pairs_table, feeder_script, node_script, radicle_script,
 };
 pub use self::systemd::{
     caddy_install_script, caddyfile, preflight_script, systemd_unit, tee_renew_script,
-    write_systemd_units, UNIT_ROLES,
+    write_systemd_units, UnitRole, UNIT_ROLES,
 };
 
 /// Default port numbers shared across validator hosts.
@@ -380,13 +379,11 @@ fn write_validator_scripts(
     fs::write(&pairs_path, feeder_pairs(config)?)
         .map_err(|err| GenesisError::io(&pairs_path, err))?;
 
-    let tee_port = port_of(config, "tee_enclave_port")?;
-    let start_all = start_all_script(config, index, paths.base_dir, host)?
-        .replace("{TEE_PORT}", &tee_port.to_string());
-    write_script(&directory.join("start-all.sh"), &start_all)?;
-    write_script(
-        &directory.join("stop-all.sh"),
-        &stop_all_script(index, paths.base_dir),
+    write_systemd_units(
+        &directory,
+        paths.base_dir,
+        index,
+        uses_production_tee_session(config),
     )?;
     Ok(())
 }
@@ -452,7 +449,6 @@ pub fn render(
     }
 
     stage_signed_enclave(config, output_dir)?;
-    write_systemd_units(output_dir, &base_dir, uses_production_tee_session(config))?;
     build_distribution(output_dir, validators, keys_dir, &base_dir)?;
 
     let mut deploy_config = config.clone();
