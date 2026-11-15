@@ -14,31 +14,7 @@ impl ApplicationShared {
         let parent_block = &request.parent.block;
         let parent_proof_key = request.parent.proof_key;
         let now_millis = self.unix_time_source.now_millis()?;
-        // Clamp the proposed timestamp into the deterministic two-sided drift band
-        // `[parent + MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
-        // parent + MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS]`. The lower bound
-        // forces each block to advance chain time. This denies a colluding leader
-        // majority the `parent + 1 ms` timestamp freeze that stalls emission and
-        // unbonding maturity. The upper bound (C-01) mirrors the validator check
-        // in `outbe-execution`'s `validate_against_parent_timestamp_millis`. Thus an
-        // honest proposer never emits a block that validators would reject as
-        // over-drifted. Both bounds match the validator rule exactly. Thus the
-        // clamp only ever shifts the timestamp into the accepted band, never out
-        // of it. After a long stall `now_millis` may exceed the cap. The chain
-        // then self-heals: it ratchets time forward by at most one band per block
-        // until it catches up to real time.
-        //
-        // Exception: the genesis child has no resolved consensus parent block.
-        // Thus the band is meaningless and only monotonicity is enforced. The
-        // validator side exempts the genesis parent (`parent.number() == 0`) from
-        // both band bounds. Thus block 1 (~= genesis + now) always validates and
-        // no unbonding-lock bypass is possible at the first block.
-        let timestamp_millis = proposal_timestamp_millis(
-            parent_block.as_ref(),
-            now_millis,
-            outbe_primitives::consensus::MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
-            outbe_primitives::consensus::MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
-        );
+        let timestamp_millis = resolve_proposal_timestamp_millis(parent_block.as_ref(), now_millis);
 
         // build header.extra_data only from consensus header
         // artifacts that affect block hashing (DKG boundary/dealer-log).
@@ -258,5 +234,80 @@ impl ApplicationShared {
             )?;
 
         Ok(header_extra_data)
+    }
+}
+
+fn resolve_proposal_timestamp_millis(
+    parent_block: Option<&ConsensusBlock>,
+    now_millis: u64,
+) -> u64 {
+    if super::super::timing::parent_ahead_of_local_clock(parent_block, now_millis) {
+        crate::metrics::propose::record_parent_ahead_of_local_clock();
+    }
+    // Clamp the proposed timestamp into the deterministic two-sided drift band
+    // `[parent + MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
+    // parent + MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS]`. The lower bound
+    // forces each block to advance chain time. This denies a colluding leader
+    // majority the `parent + 1 ms` timestamp freeze that stalls emission and
+    // unbonding maturity. The upper bound (C-01) mirrors the validator check
+    // in `outbe-execution`'s `validate_against_parent_timestamp_millis`. Thus an
+    // honest proposer never emits a block that validators would reject as
+    // over-drifted. Both bounds match the validator rule exactly. Thus the
+    // clamp only ever shifts the timestamp into the accepted band, never out
+    // of it. After a long stall `now_millis` may exceed the cap. The chain
+    // then self-heals: it ratchets time forward by at most one band per block
+    // until it catches up to real time.
+    //
+    // Exception: the genesis child has no resolved consensus parent block.
+    // Thus the band is meaningless and only monotonicity is enforced. The
+    // validator side exempts the genesis parent (`parent.number() == 0`) from
+    // both band bounds. Thus block 1 (~= genesis + now) always validates and
+    // no unbonding-lock bypass is possible at the first block.
+    proposal_timestamp_millis(
+        parent_block,
+        now_millis,
+        outbe_primitives::consensus::MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
+        outbe_primitives::consensus::MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+    #[test]
+    fn timestamp_resolution_records_only_a_parent_strictly_ahead_of_local_time() {
+        let mut block = crate::test_fixtures::block_with_number(1)
+            .into_inner()
+            .into_block();
+        block.header.inner.timestamp = 3;
+        let parent =
+            ConsensusBlock::from_sealed(reth_ethereum::primitives::SealedBlock::seal_slow(block));
+        assert_eq!(parent.timestamp_millis(), 3000);
+        for (now, expected_timestamp, ahead) in [
+            (2999, 4000, true),
+            (3000, 4000, false),
+            (3001, 4000, false),
+            (3999, 4000, false),
+            (4000, 4000, false),
+            (4001, 4001, false),
+        ] {
+            let recorder = DebuggingRecorder::new();
+            let timestamp = metrics::with_local_recorder(&recorder, || {
+                resolve_proposal_timestamp_millis(Some(&parent), now)
+            });
+            assert_eq!(timestamp, expected_timestamp);
+            let snapshot = recorder.snapshotter().snapshot().into_vec();
+            assert_eq!(snapshot.len(), usize::from(ahead));
+            if ahead {
+                assert_eq!(
+                    snapshot[0].0.key().name(),
+                    "outbe_consensus_parent_ahead_of_local_clock_total"
+                );
+                assert_eq!(snapshot[0].0.key().labels().count(), 0);
+                assert_eq!(snapshot[0].3, DebugValue::Counter(1));
+            }
+        }
     }
 }

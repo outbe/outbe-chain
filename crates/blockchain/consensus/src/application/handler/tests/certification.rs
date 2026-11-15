@@ -39,6 +39,7 @@ impl CertificationFixture {
             round,
             (block.digest(), block),
             ExecutionReadBudget::new(),
+            Duration::ZERO,
         );
         let execution = async {
             let BeaconEngineMessage::NewPayload { tx, .. } = engine.recv().await.unwrap() else {
@@ -180,7 +181,13 @@ fn a_staged_proposal_with_a_closed_marshal_cannot_authorize_certification() {
         let (_, outcome) = fixture
             .publish_valid_candidate(&context, round, block)
             .await;
-        assert_eq!(outcome.unwrap(), ProposeOutcome::Proposed(digest));
+        assert_eq!(
+            outcome.unwrap(),
+            ProposeOutcome::Proposed {
+                digest,
+                resolve_pad: Duration::ZERO
+            }
+        );
         assert!(fixture.app.certify(round, digest).await.await.is_err());
     });
 }

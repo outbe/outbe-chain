@@ -160,7 +160,7 @@ impl ApplicationShared {
         &self,
         clock: &(impl commonware_runtime::Clock + commonware_runtime::Supervisor),
         task: VerifyTask,
-    ) -> eyre::Result<()> {
+    ) {
         let _in_flight = VerifyInFlightGuard::new();
         let withheld_vote = WithheldVoteRecord::default();
         let VerifyTask {
@@ -195,12 +195,11 @@ impl ApplicationShared {
                 futures::future::Either::Left(_) => {
                     withheld_vote.record(VoteWithheldReason::ViewCancelled);
                     execution_read_budget.cancel();
-                    return Ok(());
+                    return;
                 }
                 futures::future::Either::Right((outcome, _)) => outcome,
             };
         self.publish_verify_verdict(&request, response, outcome, &withheld_vote);
-        Ok(())
     }
 
     async fn decide_verification(
@@ -494,8 +493,7 @@ mod tests {
                             };
                             execution.response.send(VerificationOutcome::Valid).unwrap();
                         };
-                        let (result, ()) = futures::join!(verify, execute);
-                        result.unwrap();
+                        let ((), ()) = futures::join!(verify, execute);
                         assert!(receiver.await.unwrap());
                     })
                     .await;
@@ -562,7 +560,7 @@ mod tests {
                             assert!(receiver.await.is_err());
                         } else {
                             drop(receiver);
-                            verify.await.unwrap();
+                            verify.await;
                             assert!(budget.is_cancelled());
                         }
                         // Snapshots consume deltas: cancellation adds no count and removes the active task.
@@ -615,7 +613,7 @@ mod tests {
                         assert!(futures::poll!(verify.as_mut()).is_pending());
                         assert_withheld(&recorder, reason, 1, 1.0);
                         drop(receiver);
-                        verify.await.unwrap();
+                        verify.await;
                         assert_withheld(&recorder, reason, 0, -1.0);
                     })
                     .await;
@@ -645,7 +643,7 @@ mod tests {
                         ));
                         if cancelled {
                             drop(receiver);
-                            verify.await.unwrap();
+                            verify.await;
                             assert_withheld(&recorder, VoteWithheldReason::ViewCancelled, 1, 0.0);
                             return;
                         }
@@ -663,7 +661,7 @@ mod tests {
                             1.0,
                         );
                         drop(receiver);
-                        verify.await.unwrap();
+                        verify.await;
                         assert_withheld(
                             &recorder,
                             VoteWithheldReason::ResolveTimeoutOrMissing,

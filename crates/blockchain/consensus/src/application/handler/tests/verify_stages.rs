@@ -137,8 +137,7 @@ async fn verify_decision_case(
             drop(receiver.take());
         }
     };
-    let (result, ()) = futures::join!(verify, executor);
-    result.unwrap();
+    let ((), ()) = futures::join!(verify, executor);
     if let Some(receiver) = receiver {
         assert_eq!(receiver.await.unwrap(), matches!(case, DecisionCase::Valid));
     }
@@ -278,8 +277,7 @@ fn verify_prechecks_reject_or_withhold_before_engine_work() {
                                     execution_read_budget: budget.clone(),
                                 },
                             )
-                            .await
-                            .unwrap();
+                            .await;
                         assert!(budget.is_cancelled());
                         assert!(engine_rx.try_recv().is_err());
                         drop(keepalive);
@@ -323,10 +321,9 @@ fn verify_prechecks_reject_or_withhold_before_engine_work() {
                         );
                         drop(receiver.take());
                     };
-                    let (result, ()) = futures::join!(verify, cancel);
-                    result.unwrap();
+                    let ((), ()) = futures::join!(verify, cancel);
                 } else {
-                    verify.await.unwrap();
+                    verify.await;
                     assert!(!receiver.take().unwrap().await.unwrap(), "{case:?}");
                 }
                 assert!(engine_rx.try_recv().is_err(), "{case:?}");
@@ -402,8 +399,7 @@ fn live_executor_retries_execution_while_candidate_storage_remains_independent()
                     tx.send(Ok(PayloadStatus::from_status(status))).unwrap();
                 }
             };
-            let (result, ()) = futures::join!(verify, execution);
-            result.unwrap();
+            let ((), ()) = futures::join!(verify, execution);
             assert!(receiver.await.unwrap());
             assert!(
                 shared
@@ -477,8 +473,7 @@ fn cancellation_while_resolving_parent_preserves_available_candidate() {
                         "parent resolution still prevents a verdict"
                     );
                 };
-                let (result, ()) = futures::join!(verify, cancel);
-                result.unwrap();
+                let ((), ()) = futures::join!(verify, cancel);
                 assert!(budget.is_cancelled());
                 assert_eq!(
                     shared
@@ -537,7 +532,7 @@ fn epoch_parent_mismatch_rejects_without_waiting_for_an_unavailable_candidate() 
                     execution_read_budget: ExecutionReadBudget::new(),
                 },
             );
-            let futures::future::Either::Left(((result, verdict), _)) = futures::future::select(
+            let futures::future::Either::Left((((), verdict), _)) = futures::future::select(
                 Box::pin(async { futures::join!(verify, receiver) }),
                 Box::pin(clock.sleep(Duration::from_millis(1))),
             )
@@ -545,7 +540,6 @@ fn epoch_parent_mismatch_rejects_without_waiting_for_an_unavailable_candidate() 
             else {
                 panic!("a known invalid parent must reject before payload resolution timeout");
             };
-            result.unwrap();
             assert!(!verdict.unwrap());
             drop(keepalive);
             actor.abort();
