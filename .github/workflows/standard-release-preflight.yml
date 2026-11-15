@@ -1,25 +1,38 @@
-name: 17. GoReleaser — preflight
+name: 17. Software bundle — preflight
 
 run-name: Standard release preflight — ${{ github.ref_name }}
 
 on:
   workflow_dispatch:
+    inputs:
+      profile:
+        description: Software profile to build
+        required: true
+        default: production
+        type: choice
+        options:
+          - production
+          - development
 
 permissions:
   contents: read
 
 jobs:
-  goreleaser:
-    name: build and package without publishing
+  software-bundle:
+    name: build and verify without publishing
     runs-on: testnet-release-sgx
-    container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
-    env:
-      CARGO_HOME: /github/home/.cargo
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: ./.github/actions/run-goreleaser
+      - uses: ./.github/actions/build-software-bundle
         with:
-          dry_run: "true"
+          profile: ${{ inputs.profile }}
+          output: ${{ runner.temp }}/outbe-software
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: outbe-software-${{ inputs.profile }}
+          path: ${{ runner.temp }}/outbe-software
+          if-no-files-found: error
+          retention-days: 7

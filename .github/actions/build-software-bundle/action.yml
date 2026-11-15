@@ -1,0 +1,43 @@
+name: Build Outbe software bundle
+description: Build the deterministic software bundle with the pinned release toolchain
+
+inputs:
+  profile:
+    description: Software profile to build
+    required: true
+  output:
+    description: Empty directory that receives the bundle
+    required: true
+  release_tag:
+    description: Optional immutable release tag
+    required: false
+    default: ""
+  no_cache:
+    description: Disable the Docker build cache
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Build and verify software bundle
+      shell: bash
+      env:
+        OUTBE_SOFTWARE_PROFILE: ${{ inputs.profile }}
+        OUTBE_SOFTWARE_OUTPUT: ${{ inputs.output }}
+        OUTBE_SOFTWARE_RELEASE_TAG: ${{ inputs.release_tag }}
+        OUTBE_SOFTWARE_NO_CACHE: ${{ inputs.no_cache }}
+      run: |
+        set -euo pipefail
+        args=(
+          release build
+          --profile "${OUTBE_SOFTWARE_PROFILE}"
+          --output "${OUTBE_SOFTWARE_OUTPUT}"
+        )
+        if [[ -n "${OUTBE_SOFTWARE_RELEASE_TAG}" ]]; then
+          args+=(--release-tag "${OUTBE_SOFTWARE_RELEASE_TAG}")
+        fi
+        if [[ "${OUTBE_SOFTWARE_NO_CACHE}" == "true" ]]; then
+          args+=(--no-cache)
+        fi
+        cargo xtask "${args[@]}"
