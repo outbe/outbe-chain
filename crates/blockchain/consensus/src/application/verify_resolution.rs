@@ -25,6 +25,16 @@ pub(crate) enum VerifyResolveError {
     Unavailable,
 }
 
+impl VerifyResolveError {
+    pub(crate) const fn withheld_reason(self) -> crate::metrics::verify::VoteWithheldReason {
+        match self {
+            Self::Timeout | Self::Unavailable => {
+                crate::metrics::verify::VoteWithheldReason::ResolveTimeoutOrMissing
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum VerifyResolveTarget {
     Block,
