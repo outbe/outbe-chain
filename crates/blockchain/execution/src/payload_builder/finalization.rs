@@ -90,5 +90,6 @@ pub(super) fn into_payload<DB: Database>(
     .with_sidecars(blob_sidecars);
     let payload = OutbeBuiltPayload::new(inner, Some(executed_block));
 
+    super::record_payload_rlp_size(sealed_block.rlp_length());
     Ok(payload)
 }
