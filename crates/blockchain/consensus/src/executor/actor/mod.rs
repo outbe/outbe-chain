@@ -13,7 +13,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use super::ingress::{Mailbox, Message};
+use super::ingress::{InstrumentedReceiver, Mailbox, Message};
 use crate::ancestry_readiness::AncestryReadiness;
 use alloy_primitives::B256;
 use commonware_consensus::types::Height;
@@ -43,7 +43,7 @@ pub struct ExecutorActor<E> {
     engine: EngineHandle,
     genesis_hash: B256,
     state: LastCanonicalized,
-    mailbox_rx: futures::channel::mpsc::UnboundedReceiver<Message>,
+    mailbox_rx: InstrumentedReceiver,
     // Intentionally `tokio::sync::mpsc`: this height-signal channel is created and
     // consumed cross-crate by `outbe-engine` (its `stack` module). It is a plain channel
     // with no timer/spawn dependency. It is runtime-agnostic, so it does not pull
@@ -77,8 +77,7 @@ where
             last_finalized_hash,
         } = recovered;
 
-        let (tx, rx) = futures::channel::mpsc::unbounded();
-        let mailbox = Mailbox::from_sender(tx);
+        let (mailbox, rx) = Mailbox::channel();
         let state = LastCanonicalized::from_recovered(
             genesis_hash,
             last_finalized_height,
@@ -163,6 +162,12 @@ where
         last_consensus_finalized: Height,
     ) -> eyre::Result<()> {
         self.verification.get_mut().marshal = Some(marshal.clone());
+        self.verification
+            .get_mut()
+            .observe_finalized_height(last_consensus_finalized);
+        self.verification
+            .get_mut()
+            .record_progress(self.state.head_height, self.state.finalized_height);
         // Startup backfill: execution behind consensus.
         let execution_height = self.state.finalized_height;
         if let Some(readiness) = &self.ancestry_readiness {
@@ -256,10 +261,11 @@ where
             // deterministic runtimes (no tokio reactor dependency).
             commonware_macros::select! {
                 msg = self.mailbox_rx.next() => {
-                    let Some(msg) = msg else {
+                    let Some((enqueued_at, msg)) = msg else {
                         info!("executor actor mailbox closed, exiting");
                         return Ok(());
                     };
+                    crate::metrics::executor::record_executor_queue_wait_ms(enqueued_at.elapsed());
                     // A fatal (diverged-finalized-state) message propagates up and
                     // ends the loop, signalling the supervisor to shut the node down.
                     self.handle_message(msg).await?;
