@@ -1,0 +1,519 @@
+//! Stage 2 production emitters and their explicit Prometheus wire contract.
+
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
+
+use alloy_consensus::{SignableTransaction as _, TxLegacy};
+use alloy_primitives::{Address, Bytes, Signature, TxKind};
+use commonware_actor::{Feedback, Unreliable};
+use commonware_cryptography::bls12381;
+use commonware_p2p::{CheckedSender, LimitedSender, Recipients};
+use commonware_runtime::IoBufs;
+use outbe_consensus::{
+    follow::{metrics as follower, upstream::UpstreamTipError},
+    metrics::{executor, p2p, propose, verify},
+};
+use outbe_execution::payload_builder::{
+    record_payload_build_outcome, record_payload_rlp_size, record_payload_sparse_trie_fallback,
+    record_payload_state_root_duration, PayloadTxSkipReason,
+};
+use outbe_primitives::{
+    consensus::{ConsensusExecutionBridge, ConsensusOperatingMode},
+    OutbeBlock, OutbeBlockBody, OutbeHeader, OutbePrimitives,
+};
+use outbe_tee::metrics::*;
+use outbe_txpool::{
+    maintain::{
+        maintain_outbe_pool, run_staleness_tick, OutbePoolMaintainConfig, PendingStalenessTracker,
+    },
+    record_txpool_rejection, record_txpool_validation_duration, TxpoolRejectionReason,
+};
+use reth_basic_payload_builder::BuildOutcome;
+use reth_primitives_traits::RecoveredBlock;
+use reth_provider::{CanonStateNotification, CanonStateSubscriptions, Chain};
+use reth_transaction_pool::{
+    test_utils::{testing_pool, MockTransactionFactory},
+    TransactionOrigin, TransactionPool,
+};
+
+pub async fn emit() {
+    canary::emit_ticks().await;
+    emit_tee_client();
+    emit_staleness().await;
+    emit_consensus();
+    emit_p2p();
+    emit_follower();
+    emit_payload();
+    emit_txpool().await;
+    let _in_flight = outbe_tee::metrics::ExecutionInFlightGuard::new();
+    outbe_tee::metrics::record_tee_execution_lock_wait_ms(Duration::from_millis(3));
+}
+
+fn emit_tee_client() {
+    record_request_duration("health", Duration::from_millis(5));
+    record_request_error("health", "codec");
+    record_reconnect("ok");
+    record_session_generation(1);
+}
+
+async fn emit_staleness() {
+    let pool = testing_pool();
+    let transaction = MockTransactionFactory::default().create_eip1559();
+    pool.add_transaction(TransactionOrigin::External, transaction.transaction)
+        .await
+        .expect("admit pending transaction");
+    let mut tracker = PendingStalenessTracker::new(10);
+    assert!(run_staleness_tick(&pool, &mut tracker, 100).is_empty());
+    assert_eq!(run_staleness_tick(&pool, &mut tracker, 110).len(), 1);
+}
+
+fn emit_consensus() {
+    let bridge = ConsensusExecutionBridge::new();
+    bridge.set_operating_mode(ConsensusOperatingMode::UpstreamBootstrap);
+    bridge.set_operating_mode(ConsensusOperatingMode::Follower);
+    for reason in [
+        verify::VoteWithheldReason::Unavailable,
+        verify::VoteWithheldReason::VerifyError,
+        verify::VoteWithheldReason::EpochFence,
+        verify::VoteWithheldReason::PublishEpochFence,
+        verify::VoteWithheldReason::ViewCancelled,
+        verify::VoteWithheldReason::ResolveTimeoutOrMissing,
+    ] {
+        verify::WithheldVoteRecord::default().record(reason);
+    }
+    let _in_flight = verify::VerifyInFlightGuard::new();
+    executor::record_block_verify_execution_ms(Duration::from_millis(4));
+    verify::record_block_verify_decision_ms(Duration::from_millis(6));
+    verify::record_candidate_timestamp_ahead_ms(8);
+    propose::record_block_build_resolve_pad_ms(Duration::from_millis(3));
+    for outcome in [
+        propose::ProposalOutcomeLabel::Proposed,
+        propose::ProposalOutcomeLabel::Cancelled,
+        propose::ProposalOutcomeLabel::PaceCancelled,
+        propose::ProposalOutcomeLabel::ParentProofUnavailable,
+        propose::ProposalOutcomeLabel::EpochStale,
+        propose::ProposalOutcomeLabel::BoundaryUnavailable,
+        propose::ProposalOutcomeLabel::ExecutionUnavailable,
+        propose::ProposalOutcomeLabel::RoundAlreadyProposed,
+        propose::ProposalOutcomeLabel::Failed,
+    ] {
+        propose::record_proposal_outcome(outcome);
+    }
+    propose::record_parent_ahead_of_local_clock();
+    propose::record_self_finalized_block();
+    executor::record_executor_queue_entries(2);
+    executor::record_executor_queue_wait_ms(Duration::from_millis(5));
+    executor::record_executor_finalization_lag_blocks(1);
+    executor::record_executor_convergence_depth_blocks(2);
+}
+
+#[derive(Clone, Copy)]
+struct TestSender(Option<Unreliable<Feedback>>);
+
+impl LimitedSender for TestSender {
+    type PublicKey = bls12381::PublicKey;
+    type Checked<'a> = Self;
+
+    fn check(&mut self, _: Recipients<Self::PublicKey>) -> Result<Self, std::time::SystemTime> {
+        self.0.ok_or(std::time::SystemTime::UNIX_EPOCH)?;
+        Ok(*self)
+    }
+}
+
+impl CheckedSender for TestSender {
+    type PublicKey = bls12381::PublicKey;
+
+    fn recipients(&self) -> Vec<Self::PublicKey> {
+        Vec::new()
+    }
+
+    fn send(self, _: impl Into<IoBufs> + Send, _: bool) -> Unreliable<Feedback> {
+        self.0.expect("checked sender has feedback")
+    }
+}
+
+fn emit_p2p() {
+    for channel in [
+        p2p::P2pChannel::Dkg,
+        p2p::P2pChannel::TeeDkg,
+        p2p::P2pChannel::TeeBootstrap,
+    ] {
+        for feedback in [None, Some(Unreliable::Rejected)] {
+            assert!(p2p::send_observed(
+                &mut TestSender(feedback),
+                p2p::ObservedSend {
+                    channel,
+                    recipients: Recipients::All,
+                    expected_peers: Some(1),
+                    bytes: Bytes::from_static(b"recorder contract"),
+                    priority: false,
+                },
+            )
+            .is_empty());
+        }
+    }
+    p2p::record_tee_bootstrap_pending(2, 64);
+    outbe_radicle::integration::record_p2p_send_rate_limited();
+    outbe_radicle::integration::record_p2p_send_skipped_peer();
+    outbe_radicle::integration::record_p2p_send_rejected();
+}
+
+fn emit_follower() {
+    follower::record_upstream_tip_err(&UpstreamTipError::InvalidResponse {
+        source: jsonrpsee::core::client::Error::Custom("invalid tip".into()),
+    });
+    follower::record_upstream_tip_ok(100, 105.0);
+    follower::record_follower_heights(Some(98), Some(100));
+    follower::record_follower_round(follower::FollowerRoundResult::Pulled);
+    follower::record_resolver_failure(
+        follower::FollowerResolverKind::Block,
+        follower::FollowerResolverFailureReason::DeliveryRejected,
+    );
+}
+
+fn emit_payload() {
+    outbe_evm::executor::record_zero_fee_soft_failure_metric();
+    outbe_evm::executor::record_zero_fee_cap_exceeded_metric();
+    record_payload_build_outcome(
+        &Ok(BuildOutcome::Better {
+            payload: (),
+            cached_reads: Default::default(),
+        }),
+        Duration::from_millis(7),
+    );
+    record_payload_state_root_duration(Duration::from_millis(2));
+    record_payload_sparse_trie_fallback();
+    record_payload_rlp_size(128);
+    for reason in [
+        PayloadTxSkipReason::GasLimit,
+        PayloadTxSkipReason::RlpSizeLimit,
+        PayloadTxSkipReason::BlobRejected,
+        PayloadTxSkipReason::GasAboveAvailable,
+        PayloadTxSkipReason::NonceTooLow,
+        PayloadTxSkipReason::SponsoredBudgetDeferred,
+        PayloadTxSkipReason::EnclaveWitnessBudgetDeferred,
+        PayloadTxSkipReason::InvalidTx,
+    ] {
+        reason.record();
+    }
+}
+
+struct Subscription(
+    Mutex<Option<tokio::sync::broadcast::Receiver<CanonStateNotification<OutbePrimitives>>>>,
+);
+
+impl CanonStateSubscriptions for Subscription {
+    type Primitives = OutbePrimitives;
+
+    fn subscribe_to_canonical_state(
+        &self,
+    ) -> reth_chain_state::CanonStateNotifications<OutbePrimitives> {
+        self.0
+            .lock()
+            .expect("subscription lock")
+            .take()
+            .expect("one subscriber")
+    }
+}
+
+async fn emit_txpool() {
+    for reason in [
+        TxpoolRejectionReason::UpstreamInvalid,
+        TxpoolRejectionReason::UpstreamError,
+        TxpoolRejectionReason::ReservedSystemTx,
+        TxpoolRejectionReason::Overdraft,
+        TxpoolRejectionReason::StateReadFailed,
+        TxpoolRejectionReason::UnknownHook,
+        TxpoolRejectionReason::NonZeroValue,
+        TxpoolRejectionReason::CalldataTooLarge,
+        TxpoolRejectionReason::GasLimitTooHigh,
+        TxpoolRejectionReason::FeeCapTooLow,
+        TxpoolRejectionReason::MalformedCalldata,
+        TxpoolRejectionReason::UnauthorizedSigner,
+        TxpoolRejectionReason::HookConflict,
+        TxpoolRejectionReason::Storage,
+        TxpoolRejectionReason::FreeTxDailyExhausted,
+        TxpoolRejectionReason::FreeTxDailyContractCreationForbidden,
+        TxpoolRejectionReason::FreeTxDailyValueNotZero,
+        TxpoolRejectionReason::FreeTxDailyGasLimitExceeded,
+        TxpoolRejectionReason::FreeTxDailyCalldataTooLarge,
+        TxpoolRejectionReason::FreeTxDailyTargetNotWhitelisted,
+    ] {
+        record_txpool_rejection(reason);
+    }
+    record_txpool_validation_duration(Duration::from_millis(2));
+    let pool = testing_pool();
+    pool.add_transaction(
+        TransactionOrigin::External,
+        MockTransactionFactory::default()
+            .create_eip1559()
+            .transaction,
+    )
+    .await
+    .expect("pending transaction for inclusion alarm");
+    let (sender, receiver) = tokio::sync::broadcast::channel(1);
+    let block = RecoveredBlock::new_unhashed(
+        OutbeBlock {
+            header: OutbeHeader::new(alloy_consensus::Header {
+                number: 2,
+                timestamp: 100,
+                ..Default::default()
+            }),
+            body: OutbeBlockBody {
+                transactions: vec![TxLegacy {
+                    to: TxKind::Call(outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS),
+                    ..Default::default()
+                }
+                .into_signed(Signature::test_signature())
+                .into()],
+                ..Default::default()
+            },
+        },
+        vec![Address::ZERO],
+    );
+    sender
+        .send(CanonStateNotification::Commit {
+            new: Arc::new(Chain::new([block], Default::default(), Default::default())),
+        })
+        .expect("queue canonical block");
+    drop(sender);
+    maintain_outbe_pool(
+        Subscription(Mutex::new(Some(receiver))),
+        pool,
+        OutbePoolMaintainConfig {
+            staleness_interval_secs: 4,
+            ..Default::default()
+        },
+    )
+    .await;
+}
+
+pub fn assert_stage2(rendered: &str, types: &HashMap<&str, &str>) {
+    assert!(rendered.contains("reth_outbe_p2p_send_rate_limited_total{channel=\"radicle\"} 1"));
+    assert!(rendered.contains("reth_outbe_p2p_send_skipped_peers_total{channel=\"radicle\"} 1"));
+    assert!(rendered.contains("reth_outbe_p2p_send_rejected_total{channel=\"radicle\"} 1"));
+    for (kind, names) in [
+        (
+            "gauge",
+            &[
+                "reth_outbe_consensus_operating_mode",
+                "reth_outbe_consensus_verify_in_flight_blocks",
+                "reth_outbe_consensus_executor_queue_entries",
+                "reth_outbe_consensus_executor_finalization_lag_blocks",
+                "reth_outbe_consensus_executor_convergence_depth_blocks",
+                "reth_outbe_p2p_tee_bootstrap_pending_messages",
+                "reth_outbe_p2p_tee_bootstrap_pending_bytes",
+                "reth_outbe_follower_upstream_tip_known",
+                "reth_outbe_follower_upstream_tip_height",
+                "reth_outbe_follower_upstream_last_ok_timestamp_seconds",
+                "reth_outbe_follower_processed_height",
+                "reth_outbe_follower_supported_ceiling_height",
+                "reth_outbe_txpool_canonical_tip_age_seconds",
+                "reth_outbe_txpool_queued_txs",
+                "reth_outbe_txpool_block_user_txs",
+                "reth_outbe_txpool_pending_snapshot_txs",
+                "reth_outbe_evm_payload_rlp_size_bytes",
+                "reth_outbe_tee_client_execution_in_flight_requests",
+            ][..],
+        ),
+        (
+            "counter",
+            &[
+                "reth_outbe_consensus_mode_transitions_total",
+                "reth_outbe_consensus_vote_withheld_total",
+                "reth_outbe_consensus_proposal_outcomes_total",
+                "reth_outbe_consensus_parent_ahead_of_local_clock_total",
+                "reth_outbe_consensus_self_finalized_blocks_total",
+                "reth_outbe_p2p_send_rate_limited_total",
+                "reth_outbe_p2p_send_skipped_peers_total",
+                "reth_outbe_p2p_send_rejected_total",
+                "reth_outbe_follower_upstream_poll_errors_total",
+                "reth_outbe_follower_rounds_total",
+                "reth_outbe_follower_resolver_failures_total",
+                "reth_outbe_txpool_inclusion_alarms_total",
+                "reth_outbe_txpool_rejected_total",
+                "reth_outbe_txpool_stale_evicted_total",
+                "reth_outbe_evm_zero_fee_soft_failures_total",
+                "reth_outbe_evm_zero_fee_cap_exceeded_total",
+                "reth_outbe_evm_payload_build_stop_total",
+                "reth_outbe_evm_payload_tx_skipped_total",
+                "reth_outbe_evm_payload_sparse_trie_fallback_total",
+            ][..],
+        ),
+        (
+            "histogram",
+            &[
+                "reth_outbe_consensus_block_verify_execution_ms",
+                "reth_outbe_consensus_block_verify_decision_ms",
+                "reth_outbe_consensus_candidate_timestamp_ahead_ms",
+                "reth_outbe_consensus_block_build_resolve_pad_ms",
+                "reth_outbe_consensus_executor_queue_wait_ms",
+                "reth_outbe_txpool_validation_duration_ms",
+                "reth_outbe_evm_payload_build_duration_ms",
+                "reth_outbe_evm_payload_state_root_duration_ms",
+                "reth_outbe_tee_client_execution_lock_wait_ms",
+            ][..],
+        ),
+    ] {
+        for name in names {
+            assert_eq!(types.get(name), Some(&kind), "{name}");
+            let sample = if kind == "histogram" {
+                format!("{name}_count")
+            } else {
+                (*name).to_owned()
+            };
+            assert!(
+                super::has_sample(rendered, &sample),
+                "missing sample {sample}"
+            );
+        }
+    }
+}
+
+mod canary {
+    use super::*;
+    use alloy_primitives::{B256, U256};
+    use ed25519_dalek::{Signer, SigningKey};
+    use outbe_enclave::protocol::{
+        inputs_canonical_hash, tribute_offer_attestation_preimage, EnclaveRequest as DomainRequest,
+        EnclaveResponse as DomainResponse, EncryptedTributeOffer, TributeOfferResult,
+        TributeOfferStatus,
+    };
+    use outbe_execution::tee_canary::{
+        run_tee_canary_worker, EnclaveRequester, TeeCanaryConfig, TeeCanaryTarget,
+    };
+    use outbe_runtime::TributeCanaryProbe;
+    use outbe_tee::{
+        canary::{TeeEnclaveHealthChannel, TeeEnclaveHealthState},
+        errors::TransportError,
+        protocol::{EnclaveHealthStatusV1, EnclaveRequest, EnclaveResponse},
+    };
+    use tokio_util::sync::CancellationToken;
+
+    pub(super) async fn emit_ticks() {
+        for (fail, expected) in [
+            (false, TeeEnclaveHealthState::Ready),
+            (true, TeeEnclaveHealthState::Degraded),
+        ] {
+            let status = TeeEnclaveHealthChannel::default();
+            let shutdown = CancellationToken::new();
+            let period = Duration::from_secs(60);
+            let worker = tokio::spawn(run_tee_canary_worker(
+                TeeCanaryTarget::new(
+                    FakeEnclaveRequester {
+                        fail,
+                        key: SigningKey::from_bytes(&[9; 32]),
+                    },
+                    TributeCanaryProbe,
+                ),
+                TeeCanaryConfig {
+                    interval: period,
+                    failure_threshold: 1,
+                },
+                status.clone(),
+                shutdown.clone(),
+            ));
+            let observed = observe_tick(&status, expected, period).await;
+            shutdown.cancel();
+            worker.await.expect("canary worker stopped");
+            observed.expect("canary published expected tick");
+        }
+    }
+
+    async fn observe_tick(
+        status: &TeeEnclaveHealthChannel,
+        expected: TeeEnclaveHealthState,
+        period: Duration,
+    ) -> Result<(), tokio::time::error::Elapsed> {
+        // One period is the budget for observing the immediate first tick.
+        tokio::time::timeout(period, async {
+            while status.snapshot().state != expected {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+    }
+
+    struct FakeEnclaveRequester {
+        fail: bool,
+        key: SigningKey,
+    }
+
+    impl EnclaveRequester for FakeEnclaveRequester {
+        fn request(&self, request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
+            match request {
+                EnclaveRequest::Health => Ok(EnclaveResponse::HealthStatus {
+                    status: Box::new(health()),
+                }),
+                EnclaveRequest::GetPublicKeys => Ok(EnclaveResponse::PublicKeys {
+                    offer_key_ready: true,
+                    recipient_x25519_pub: [0x0B; 32],
+                    attestation_pub: self.key.verifying_key().to_bytes(),
+                    noise_static_pub: [0x0C; 32],
+                    tee_bls_pub: Vec::new(),
+                    dkg_enc_pub: [0x0D; 32],
+                    dkg_enc_sig: Vec::new(),
+                }),
+                EnclaveRequest::Payload { payload, .. } => {
+                    match DomainRequest::decode_wire_canonical(payload)? {
+                        DomainRequest::ProcessTributeOfferBatch { offers } if !self.fail => {
+                            self.batch(&offers)
+                        }
+                        DomainRequest::ProcessTributeOfferBatch { .. } => {
+                            Err(TransportError::EnclaveError("scripted failure".into()))
+                        }
+                        other => panic!("unexpected canary domain request: {other:?}"),
+                    }
+                }
+                _ => panic!("unexpected canary request: {request:?}"),
+            }
+        }
+
+        fn attestation_pub(&self) -> Option<[u8; 32]> {
+            Some(self.key.verifying_key().to_bytes())
+        }
+    }
+
+    impl FakeEnclaveRequester {
+        fn batch(
+            &self,
+            offers: &[EncryptedTributeOffer],
+        ) -> Result<EnclaveResponse, TransportError> {
+            let results = vec![TributeOfferResult {
+                token_id: B256::repeat_byte(1),
+                owner: offers[0].owner,
+                issuance_amount_minor: U256::from(1),
+                nominal_amount_minor: U256::from(1),
+                effective_reference_price_minor: U256::from(2_000_000),
+                su_hashes: Vec::new(),
+                wallet_addresses: Vec::new(),
+                sra_addresses: Vec::new(),
+                zk_expected_hashes: None,
+                status: TributeOfferStatus::Created,
+            }];
+            let hash = inputs_canonical_hash(offers);
+            let preimage =
+                tribute_offer_attestation_preimage(hash, &results).expect("attestation preimage");
+            DomainResponse::TributeOfferBatch {
+                results,
+                inputs_canonical_hash: hash,
+                attestation_tag: self.key.sign(&preimage).to_bytes().to_vec(),
+            }
+            .into_wire_response()
+        }
+    }
+
+    fn health() -> EnclaveHealthStatusV1 {
+        serde_json::from_value(serde_json::json!({
+            "uptime_s": 10, "offer_key_ready": true,
+            "heap": { "current_bytes": 1024, "peak_bytes": 2048 },
+            "requests": { "total": 2, "errored": 1, "denied": 0 },
+            "classes": { "initialized": 0, "founding_keyless": 0, "keyless_onboarding": 0,
+                "ready": 2, "dev_source_seal": 0, "dev_recipient_ingest": 0 }
+        }))
+        .expect("enclave health fixture")
+    }
+}

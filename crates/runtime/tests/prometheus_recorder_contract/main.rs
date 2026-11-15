@@ -1,22 +1,27 @@
 //! Executable contract between production emitters, Reth exposition and monitoring.
 
+mod stage2;
+
 use std::{collections::HashMap, time::Duration};
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::Address;
 use outbe_consensus::{forfeit::ProposerForfeitReason, metrics::*};
 use outbe_radicle::integration::{RadicleMetrics, RadicleStatusSnapshot, RadicleVotingGate};
 use outbe_runtime::metrics_recorder::{validate_outbe_metric_taxonomy, OUTBE_METRIC_SUBSYSTEMS};
 use outbe_slashindicator::metrics::*;
-use outbe_tee::metrics::*;
-use outbe_txpool::maintain::{run_staleness_tick, PendingStalenessTracker};
 use outbe_validatorset::metrics::*;
-use reth_transaction_pool::{
-    test_utils::{testing_pool, MockTransactionFactory},
-    TransactionOrigin, TransactionPool,
-};
 use serde_json::Value;
 
 const LATENCIES: &[&str] = &[
+    "reth_outbe_consensus_block_verify_execution_ms",
+    "reth_outbe_consensus_block_verify_decision_ms",
+    "reth_outbe_consensus_candidate_timestamp_ahead_ms",
+    "reth_outbe_consensus_block_build_resolve_pad_ms",
+    "reth_outbe_consensus_executor_queue_wait_ms",
+    "reth_outbe_txpool_validation_duration_ms",
+    "reth_outbe_evm_payload_build_duration_ms",
+    "reth_outbe_evm_payload_state_root_duration_ms",
+    "reth_outbe_tee_client_execution_lock_wait_ms",
     "reth_outbe_tee_canary_latency_ms",
     "reth_outbe_tee_client_request_duration_ms",
     "reth_outbe_consensus_block_build_duration_ms",
@@ -37,12 +42,7 @@ async fn prometheus_recorder_contract() {
     emit_validatorset();
     emit_slashing();
     emit_radicle();
-    emit_tee_client();
-    canary::emit_ticks().await;
-    emit_txpool().await;
-    emit_follower();
-    emit_p2p();
-    emit_evm();
+    stage2::emit().await;
     metrics_process::Collector::default().collect();
     let rendered = recorder.handle().render();
     assert_eq!(validate_outbe_metric_taxonomy(&rendered), Ok(()));
@@ -51,6 +51,7 @@ async fn prometheus_recorder_contract() {
         types.get("reth_outbe_consensus_metrics_exporter_up"),
         Some(&"gauge")
     );
+    stage2::assert_stage2(&rendered, &types);
     assert_subsystems(&rendered, &types);
     assert_latency_buckets(&rendered, &types);
     assert_monitoring(&rendered, &types);
@@ -229,38 +230,6 @@ fn emit_radicle() {
     RadicleMetrics::default().record(&snapshot);
 }
 
-fn emit_tee_client() {
-    record_request_duration("health", Duration::from_millis(5));
-    record_request_error("health", "codec");
-    record_reconnect("ok");
-    record_session_generation(1);
-}
-
-async fn emit_txpool() {
-    let pool = testing_pool();
-    let transaction = MockTransactionFactory::default().create_eip1559();
-    pool.add_transaction(TransactionOrigin::External, transaction.transaction)
-        .await
-        .expect("admit pending transaction");
-    let mut tracker = PendingStalenessTracker::new(10);
-    assert!(run_staleness_tick(&pool, &mut tracker, 100).is_empty());
-    assert_eq!(run_staleness_tick(&pool, &mut tracker, 110).len(), 1);
-}
-
-// shortcut: use test emitters until production follower and P2P emitters exist.
-fn emit_follower() {
-    metrics::gauge!("outbe_follower_upstream_tip_known").set(1.0);
-}
-
-fn emit_p2p() {
-    metrics::counter!("outbe_p2p_send_rate_limited_total", "channel" => "dkg").increment(1);
-}
-
-fn emit_evm() {
-    outbe_evm::executor::record_zero_fee_soft_failure_metric();
-    outbe_evm::executor::record_zero_fee_cap_exceeded_metric();
-}
-
 fn metric_types(rendered: &str) -> HashMap<&str, &str> {
     rendered
         .lines()
@@ -323,11 +292,11 @@ fn assert_latency_buckets(rendered: &str, types: &HashMap<&str, &str>) {
 
 fn assert_monitoring(rendered: &str, types: &HashMap<&str, &str>) {
     let alerts: Value = serde_yaml_ng::from_str(include_str!(
-        "../../../deploy/monitoring/alerts.example.yaml"
+        "../../../../deploy/monitoring/alerts.example.yaml"
     ))
     .expect("parse alert YAML");
     let dashboard: Value = serde_json::from_str(include_str!(
-        "../../../deploy/monitoring/grafana/dashboards/outbe-overview.json"
+        "../../../../deploy/monitoring/grafana/dashboards/outbe-overview.json"
     ))
     .expect("parse dashboard JSON");
     for document in [&alerts, &dashboard] {
@@ -485,149 +454,5 @@ fn assert_expression_regressions(rendered: &str, types: &HashMap<&str, &str>) {
             valid,
             "{expression}"
         );
-    }
-}
-
-mod canary {
-    use super::*;
-    use ed25519_dalek::{Signer, SigningKey};
-    use outbe_enclave::protocol::{
-        inputs_canonical_hash, tribute_offer_attestation_preimage, EnclaveRequest as DomainRequest,
-        EnclaveResponse as DomainResponse, EncryptedTributeOffer, TributeOfferResult,
-        TributeOfferStatus,
-    };
-    use outbe_execution::tee_canary::{
-        run_tee_canary_worker, EnclaveRequester, TeeCanaryConfig, TeeCanaryTarget,
-    };
-    use outbe_runtime::TributeCanaryProbe;
-    use outbe_tee::{
-        canary::{TeeEnclaveHealthChannel, TeeEnclaveHealthState},
-        errors::TransportError,
-        protocol::{EnclaveHealthStatusV1, EnclaveRequest, EnclaveResponse},
-    };
-    use tokio_util::sync::CancellationToken;
-
-    pub(super) async fn emit_ticks() {
-        for (fail, expected) in [
-            (false, TeeEnclaveHealthState::Ready),
-            (true, TeeEnclaveHealthState::Degraded),
-        ] {
-            let status = TeeEnclaveHealthChannel::default();
-            let shutdown = CancellationToken::new();
-            let period = Duration::from_secs(60);
-            let worker = tokio::spawn(run_tee_canary_worker(
-                TeeCanaryTarget::new(
-                    FakeEnclaveRequester {
-                        fail,
-                        key: SigningKey::from_bytes(&[9; 32]),
-                    },
-                    TributeCanaryProbe,
-                ),
-                TeeCanaryConfig {
-                    interval: period,
-                    failure_threshold: 1,
-                },
-                status.clone(),
-                shutdown.clone(),
-            ));
-            let observed = observe_tick(&status, expected, period).await;
-            shutdown.cancel();
-            worker.await.expect("canary worker stopped");
-            observed.expect("canary published expected tick");
-        }
-    }
-
-    async fn observe_tick(
-        status: &TeeEnclaveHealthChannel,
-        expected: TeeEnclaveHealthState,
-        period: Duration,
-    ) -> Result<(), tokio::time::error::Elapsed> {
-        // One period is the budget for observing the immediate first tick.
-        tokio::time::timeout(period, async {
-            while status.snapshot().state != expected {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-    }
-
-    struct FakeEnclaveRequester {
-        fail: bool,
-        key: SigningKey,
-    }
-
-    impl EnclaveRequester for FakeEnclaveRequester {
-        fn request(&self, request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
-            match request {
-                EnclaveRequest::Health => Ok(EnclaveResponse::HealthStatus {
-                    status: Box::new(health()),
-                }),
-                EnclaveRequest::GetPublicKeys => Ok(EnclaveResponse::PublicKeys {
-                    offer_key_ready: true,
-                    recipient_x25519_pub: [0x0B; 32],
-                    attestation_pub: self.key.verifying_key().to_bytes(),
-                    noise_static_pub: [0x0C; 32],
-                    tee_bls_pub: Vec::new(),
-                    dkg_enc_pub: [0x0D; 32],
-                    dkg_enc_sig: Vec::new(),
-                }),
-                EnclaveRequest::Payload { payload, .. } => {
-                    match DomainRequest::decode_wire_canonical(payload)? {
-                        DomainRequest::ProcessTributeOfferBatch { offers } if !self.fail => {
-                            self.batch(&offers)
-                        }
-                        DomainRequest::ProcessTributeOfferBatch { .. } => {
-                            Err(TransportError::EnclaveError("scripted failure".into()))
-                        }
-                        other => panic!("unexpected canary domain request: {other:?}"),
-                    }
-                }
-                _ => panic!("unexpected canary request: {request:?}"),
-            }
-        }
-
-        fn attestation_pub(&self) -> Option<[u8; 32]> {
-            Some(self.key.verifying_key().to_bytes())
-        }
-    }
-
-    impl FakeEnclaveRequester {
-        fn batch(
-            &self,
-            offers: &[EncryptedTributeOffer],
-        ) -> Result<EnclaveResponse, TransportError> {
-            let results = vec![TributeOfferResult {
-                token_id: B256::repeat_byte(1),
-                owner: offers[0].owner,
-                issuance_amount_minor: U256::from(1),
-                nominal_amount_minor: U256::from(1),
-                effective_reference_price_minor: U256::from(2_000_000),
-                su_hashes: Vec::new(),
-                wallet_addresses: Vec::new(),
-                sra_addresses: Vec::new(),
-                zk_expected_hashes: None,
-                status: TributeOfferStatus::Created,
-            }];
-            let hash = inputs_canonical_hash(offers);
-            let preimage =
-                tribute_offer_attestation_preimage(hash, &results).expect("attestation preimage");
-            DomainResponse::TributeOfferBatch {
-                results,
-                inputs_canonical_hash: hash,
-                attestation_tag: self.key.sign(&preimage).to_bytes().to_vec(),
-            }
-            .into_wire_response()
-        }
-    }
-
-    fn health() -> EnclaveHealthStatusV1 {
-        serde_json::from_value(serde_json::json!({
-            "uptime_s": 10, "offer_key_ready": true,
-            "heap": { "current_bytes": 1024, "peak_bytes": 2048 },
-            "requests": { "total": 2, "errored": 1, "denied": 0 },
-            "classes": { "initialized": 0, "founding_keyless": 0, "keyless_onboarding": 0,
-                "ready": 2, "dev_source_seal": 0, "dev_recipient_ingest": 0 }
-        }))
-        .expect("enclave health fixture")
     }
 }
