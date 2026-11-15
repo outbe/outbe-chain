@@ -71,10 +71,36 @@ pub trait LocalBlockSource: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = Option<ConsensusBlock>> + Send;
 }
 
+/// Why discovering the upstream's finalized tip failed.
+#[derive(Debug, thiserror::Error)]
+pub enum UpstreamTipError {
+    #[error("upstream finalized tip rate limited")]
+    HttpRateLimited {
+        #[source]
+        source: jsonrpsee::core::client::Error,
+    },
+    #[error("upstream finalized tip HTTP status {status_code}")]
+    HttpStatus {
+        status_code: u16,
+        #[source]
+        source: jsonrpsee::core::client::Error,
+    },
+    #[error("upstream finalized tip transport failed")]
+    Transport {
+        #[source]
+        source: jsonrpsee::core::client::Error,
+    },
+    #[error("upstream finalized tip response invalid")]
+    InvalidResponse {
+        #[source]
+        source: jsonrpsee::core::client::Error,
+    },
+}
+
 /// Discovers how far the upstream has finalized, so the follower knows which
 /// heights to pull. Backed by the upstream's
 /// `outbe_consensusStatus().last_finalized_block`.
 pub trait TipSource: Clone + Send + Sync + 'static {
-    /// The upstream's latest finalized block height, or `None` if unreachable.
-    fn finalized_tip(&self) -> impl Future<Output = Option<Height>> + Send;
+    /// The upstream's latest finalized block height, or the typed failure cause.
+    fn finalized_tip(&self) -> impl Future<Output = Result<Height, UpstreamTipError>> + Send;
 }

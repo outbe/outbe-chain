@@ -265,7 +265,7 @@ impl RenewalEpoch {
 pub(super) struct PrivateExecutionUnavailable;
 
 pub(super) fn require_enclave_session() -> RpcResult<()> {
-    if outbe_tee::try_with_enclave(|_| ()).is_none() {
+    if !outbe_tee::is_enclave_configured() {
         Err(super::internal_err(PrivateExecutionUnavailable))
     } else {
         Ok(())
@@ -278,7 +278,7 @@ mod private_execution_tests {
 
     #[test]
     fn missing_session_is_private_execution_unavailable() {
-        if outbe_tee::try_with_enclave(|_| ()).is_some() {
+        if outbe_tee::is_enclave_configured() {
             return;
         }
         let error = require_enclave_session().expect_err("no session");

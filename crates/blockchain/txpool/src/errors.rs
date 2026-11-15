@@ -1,6 +1,6 @@
 //! Error types for the transaction pool.
 
-use outbe_primitives::error::PrecompileError;
+use outbe_primitives::{error::PrecompileError, zero_fee_types::ZeroFeePolicyError};
 use reth_transaction_pool::error::PoolTransactionError;
 use std::any::Any;
 use thiserror::Error;
@@ -19,13 +19,20 @@ impl PoolTransactionError for OutbeReservedSystemTxPoolError {
     }
 }
 
+/// Typed policy and provider failures retained by pool admission.
 #[derive(Debug, Error)]
-#[error("zero-fee policy rejected transaction: {0}")]
-pub struct OutbeZeroFeePoolError(pub(crate) String);
+pub enum OutbeZeroFeePoolError {
+    /// A protocol policy rejected the transaction.
+    #[error("zero-fee policy rejected transaction: {0}")]
+    Policy(#[source] ZeroFeePolicyError),
+    /// The latest committed state could not be read.
+    #[error("zero-fee policy rejected transaction: {0}")]
+    StateRead(#[source] Box<dyn std::error::Error + Send + Sync>),
+}
 
 impl OutbeZeroFeePoolError {
-    pub(crate) fn from_display(error: impl std::fmt::Display) -> Self {
-        Self(error.to_string())
+    pub(crate) fn state_read(error: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::StateRead(Box::new(error))
     }
 }
 

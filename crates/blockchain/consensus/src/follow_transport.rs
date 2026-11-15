@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use crate::block::ConsensusBlock;
 use crate::errors::FollowTransportError;
+use crate::follow::upstream::UpstreamTipError;
 use crate::follow::{CertifiedFinalizedBlock, FinalizedSource, TipSource};
 use alloy_primitives::{Address, B256};
 use commonware_codec::Read as _;
@@ -440,8 +441,29 @@ impl FinalizedSource for UpstreamRpcClient {
     }
 }
 
+fn classify_tip_error(error: ClientError) -> UpstreamTipError {
+    use jsonrpsee::http_client::transport::Error as TransportError;
+
+    match &error {
+        ClientError::Transport(source) => match source.downcast_ref::<TransportError>() {
+            Some(TransportError::Rejected { status_code: 429 }) => {
+                UpstreamTipError::HttpRateLimited { source: error }
+            }
+            Some(TransportError::Rejected { status_code }) => UpstreamTipError::HttpStatus {
+                status_code: *status_code,
+                source: error,
+            },
+            _ => UpstreamTipError::Transport { source: error },
+        },
+        ClientError::RequestTimeout
+        | ClientError::RestartNeeded(_)
+        | ClientError::ServiceDisconnect => UpstreamTipError::Transport { source: error },
+        _ => UpstreamTipError::InvalidResponse { source: error },
+    }
+}
+
 impl TipSource for UpstreamRpcClient {
-    fn finalized_tip(&self) -> impl Future<Output = Option<Height>> + Send {
+    fn finalized_tip(&self) -> impl Future<Output = Result<Height, UpstreamTipError>> + Send {
         let client = self.client.clone();
         let url = self.url.clone();
         async move {
@@ -449,10 +471,11 @@ impl TipSource for UpstreamRpcClient {
                 .request::<UpstreamConsensusStatus, _>("outbe_consensusStatus", rpc_params![])
                 .await
             {
-                Ok(status) => Some(Height::new(status.last_finalized_block)),
+                Ok(status) => Ok(Height::new(status.last_finalized_block)),
                 Err(error) => {
-                    warn!(%url, %error, "failed to query upstream consensus status (tip)");
-                    None
+                    let err = classify_tip_error(error);
+                    warn!(%url, error = outbe_primitives::telemetry::error_field(&err), "failed to query upstream consensus status (tip)");
+                    Err(err)
                 }
             }
         }

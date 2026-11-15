@@ -10,6 +10,36 @@ use std::time::Duration;
 
 use metrics::{counter, gauge, histogram};
 
+/// Time spent acquiring the execution session, excluding the enclave request.
+pub fn record_tee_execution_lock_wait_ms(duration: Duration) {
+    histogram!("outbe_tee_client_execution_lock_wait_ms").record(duration.as_secs_f64() * 1000.0);
+}
+
+/// Execution requests currently waiting for or holding the session lock.
+pub struct ExecutionInFlightGuard {
+    gauge: metrics::Gauge,
+}
+
+impl ExecutionInFlightGuard {
+    pub fn new() -> Self {
+        let gauge = gauge!("outbe_tee_client_execution_in_flight_requests");
+        gauge.increment(1.0);
+        Self { gauge }
+    }
+}
+
+impl Default for ExecutionInFlightGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for ExecutionInFlightGuard {
+    fn drop(&mut self) {
+        self.gauge.decrement(1.0);
+    }
+}
+
 /// One attempt's round-trip duration, labelled by the request's stable
 /// [`crate::protocol::EnclaveRequest::label`]. A retried request records two
 /// samples - one per attempt.
@@ -77,6 +107,8 @@ mod tests {
             record_request_error("health", "io_timeout");
             record_reconnect("ok");
             record_session_generation(2);
+            let _in_flight = ExecutionInFlightGuard::new();
+            record_tee_execution_lock_wait_ms(Duration::from_millis(5));
         });
         assert_eq!(
             *recorder.0.borrow(),
@@ -102,6 +134,14 @@ mod tests {
                 (
                     "gauge",
                     Key::from_name("outbe_tee_client_session_generation")
+                ),
+                (
+                    "gauge",
+                    Key::from_name("outbe_tee_client_execution_in_flight_requests")
+                ),
+                (
+                    "histogram",
+                    Key::from_name("outbe_tee_client_execution_lock_wait_ms")
                 ),
             ]
         );

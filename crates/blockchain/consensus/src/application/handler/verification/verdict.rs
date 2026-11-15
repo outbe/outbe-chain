@@ -1,5 +1,5 @@
 //! Publish only a terminal decision; storage and convergence have independent owners.
-use super::{ApplicationShared, VerifyRequest};
+use super::{ApplicationShared, VerifyRequest, VoteWithheldReason, WithheldVoteRecord};
 use crate::executor::ingress::VerificationOutcome;
 use commonware_utils::channel::oneshot;
 
@@ -9,6 +9,7 @@ impl ApplicationShared {
         request: &VerifyRequest,
         response: oneshot::Sender<bool>,
         outcome: VerificationOutcome,
+        withheld_vote: &WithheldVoteRecord,
     ) {
         match outcome {
             VerificationOutcome::Invalid => {
@@ -19,7 +20,10 @@ impl ApplicationShared {
             {
                 let _ = response.send(true);
             }
-            VerificationOutcome::Valid | VerificationOutcome::Unavailable => {}
+            VerificationOutcome::Valid => {
+                withheld_vote.record(VoteWithheldReason::PublishEpochFence);
+            }
+            VerificationOutcome::Unavailable => {}
         }
     }
 }

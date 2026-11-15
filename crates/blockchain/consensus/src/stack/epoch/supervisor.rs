@@ -222,27 +222,11 @@ where
                 },
 
                 // Component exits -> fatal.
-                result = &mut self.actors.executor_handle_task => {
-                    info!("executor actor exited");
-                    let executor_result = result
-                        .map_err(crate::errors::StackEpochError::executor_actor_task_failed)?;
-                    executor_result.wrap_err("executor actor returned fatal error")?;
-                    return Ok(EpochLoopOutcome::StackExit);
-                },
-                result = &mut self.actors.handler_handle => {
-                    info!("application handler exited");
-                    let application_result = result
-                        .map_err(crate::errors::StackEpochError::application_handler_task_failed)?;
-                    application_result.wrap_err("application handler returned fatal error")?;
-                    return Ok(EpochLoopOutcome::StackExit);
-                },
-                result = &mut self.actors.finalization_handle => {
-                    info!("finalization actor exited");
-                    let finalization_result = result
-                        .map_err(crate::errors::StackEpochError::finalization_actor_task_failed)?;
-                    finalization_result.wrap_err("finalization actor returned fatal error")?;
-                    return Ok(EpochLoopOutcome::StackExit);
-                },
+                result = await_supervised_component_exit(
+                    &mut self.actors.executor_handle_task,
+                    &mut self.actors.handler_handle,
+                    &mut self.actors.finalization_handle,
+                ) => return result,
                 result = &mut self.actors.peer_manager_handle_task => {
                     info!("peer manager actor exited");
                     result.map_err(crate::errors::StackEpochError::peer_manager_actor_exited)?;
@@ -388,6 +372,20 @@ where
     }
 }
 
+async fn await_supervised_component_exit(
+    executor: &mut commonware_runtime::Handle<Result<()>>,
+    application_handler: &mut commonware_runtime::Handle<Result<()>>,
+    finalization_actor: &mut commonware_runtime::Handle<
+        std::result::Result<(), outbe_primitives::error::PrecompileError>,
+    >,
+) -> Result<EpochLoopOutcome> {
+    commonware_macros::select! {
+        result = executor => Err(crate::supervision::unexpected_eyre_actor_exit("executor", result)),
+        result = application_handler => Err(crate::supervision::unexpected_eyre_actor_exit("application_handler", result)),
+        result = finalization_actor => Err(crate::supervision::unexpected_fallible_actor_exit("finalization_actor", result)),
+    }
+}
+
 pub fn future_epoch_hint_height(
     epocher: &crate::follow::FollowerEpocher,
     current_epoch: Epoch,
@@ -397,4 +395,47 @@ pub fn future_epoch_hint_height(
         return None;
     }
     epocher.backup_vote_hint_height(current_epoch)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::await_supervised_component_exit;
+    use commonware_runtime::{deterministic, Runner as _, Spawner as _, Supervisor as _};
+
+    async fn complete_only<E>(actor: &'static str, exiting: &'static str) -> Result<(), E> {
+        if actor != exiting {
+            std::future::pending::<()>().await;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn early_successful_component_exit_is_fatal() {
+        for actor in ["executor", "application_handler", "finalization_actor"] {
+            deterministic::Runner::default().start(move |context| async move {
+                let mut executor = context
+                    .child("executor")
+                    .spawn(move |_| complete_only("executor", actor));
+                let mut application_handler = context
+                    .child("application_handler")
+                    .spawn(move |_| complete_only("application_handler", actor));
+                let mut finalization_actor = context
+                    .child("finalization_actor")
+                    .spawn(move |_| complete_only("finalization_actor", actor));
+                let outcome = await_supervised_component_exit(
+                    &mut executor,
+                    &mut application_handler,
+                    &mut finalization_actor,
+                )
+                .await;
+                let error = outcome.expect_err("early component exit must be fatal");
+                let Some(crate::supervision::SupervisedActorError::UnexpectedExit { actor: name }) =
+                    error.downcast_ref()
+                else {
+                    panic!("unexpected error: {error:#}");
+                };
+                assert_eq!(*name, actor);
+            });
+        }
+    }
 }

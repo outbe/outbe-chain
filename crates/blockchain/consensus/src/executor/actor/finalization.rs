@@ -177,6 +177,9 @@ where
             }
         }
         self.state = new_state;
+        self.verification
+            .get_mut()
+            .record_progress(self.state.head_height, self.state.finalized_height);
     }
 
     /// Handle a marshal update (finalized block delivery or tip notification).
@@ -188,6 +191,10 @@ where
             commonware_consensus::marshal::Update::Block(block, ack) => {
                 let height = Height::new(block.number());
                 let digest = Digest(block.block_hash());
+                self.verification.get_mut().observe_finalized_height(height);
+                self.verification
+                    .get_mut()
+                    .record_progress(self.state.head_height, self.state.finalized_height);
                 if (height == self.state.finalized_height
                     && digest.0 == self.state.forkchoice.finalized_block_hash)
                     || (height == Height::zero() && digest.0 == self.genesis_hash)
@@ -252,6 +259,9 @@ where
             }
             commonware_consensus::marshal::Update::Tip(round, height, digest) => {
                 self.verification.get_mut().finalized(round, height, digest);
+                self.verification
+                    .get_mut()
+                    .record_progress(self.state.head_height, self.state.finalized_height);
                 debug!(
                     %round, %height, %digest,
                     "marshal tip update"

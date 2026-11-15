@@ -36,7 +36,9 @@ use outbe_primitives::OutbePayloadAttributes;
 
 use reth_ethereum::node::api::BuiltPayload as _;
 
+use crate::metrics::propose::ProposalOutcomeLabel;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tracing::debug;
 
@@ -69,7 +71,10 @@ pub(super) struct ProposalParent {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ProposeOutcome {
-    Proposed(Digest),
+    Proposed {
+        digest: Digest,
+        resolve_pad: Duration,
+    },
     ParentProofUnavailable,
     EpochStale,
     BoundaryUnavailable,
@@ -78,9 +83,20 @@ pub(super) enum ProposeOutcome {
 }
 
 impl ProposeOutcome {
+    pub(super) fn outcome_label(self) -> ProposalOutcomeLabel {
+        match self {
+            Self::Proposed { .. } => ProposalOutcomeLabel::Proposed,
+            Self::ParentProofUnavailable => ProposalOutcomeLabel::ParentProofUnavailable,
+            Self::EpochStale => ProposalOutcomeLabel::EpochStale,
+            Self::BoundaryUnavailable => ProposalOutcomeLabel::BoundaryUnavailable,
+            Self::ExecutionUnavailable => ProposalOutcomeLabel::ExecutionUnavailable,
+            Self::RoundAlreadyProposed => ProposalOutcomeLabel::RoundAlreadyProposed,
+        }
+    }
+
     pub(super) fn completion_message(self) -> &'static str {
         match self {
-            Self::Proposed(_) => "proposal task completed with a built candidate",
+            Self::Proposed { .. } => "proposal task completed with a built candidate",
             Self::ParentProofUnavailable => {
                 "proposal task completed without response: exact parent proof unavailable"
             }
@@ -119,7 +135,7 @@ impl ProposalPayloadTrace {
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub(super) enum BuildBlockOutcome {
-    Built(Digest, ConsensusBlock),
+    Built(Digest, ConsensusBlock, Duration),
     ParentProofUnavailable,
     EpochStale,
     BoundaryUnavailable,

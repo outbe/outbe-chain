@@ -39,10 +39,12 @@ alloy-sol-types.workspace = true
 eyre.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+metrics.workspace = true
 parking_lot.workspace = true
 postcard.workspace = true
 
 [dev-dependencies]
+metrics-util = "0.20"
 outbe-evm = { workspace = true, features = ["test-utils"] }
 outbe-tee = { workspace = true, features = ["test-utils"] }
 alloy-sol-types.workspace = true

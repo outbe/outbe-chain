@@ -393,6 +393,17 @@ pub enum ConsensusOperatingMode {
 }
 
 impl ConsensusOperatingMode {
+    /// Stable, bounded label for operating-mode telemetry.
+    #[must_use]
+    pub const fn as_label(self) -> &'static str {
+        match self {
+            Self::Follower => "follower",
+            Self::UpstreamBootstrap => "upstream_bootstrap",
+            Self::Verifier => "verifier",
+            Self::Signer => "signer",
+        }
+    }
+
     /// Whether this operating mode belongs to the validator lifecycle.
     #[must_use]
     pub const fn is_validator(self) -> bool {
@@ -518,7 +529,12 @@ impl ConsensusExecutionBridge {
 
     /// Updates the current ontological consensus operating mode.
     pub fn set_operating_mode(&self, mode: ConsensusOperatingMode) {
-        self.operating_mode.store(mode as u8, Ordering::Release);
+        let prev_raw = self.operating_mode.swap(mode as u8, Ordering::AcqRel);
+        let prev = ConsensusOperatingMode::from_u8(prev_raw);
+        metrics::gauge!("outbe_consensus_operating_mode").set((mode as u8) as f64);
+        if prev != mode {
+            metrics::counter!("outbe_consensus_mode_transitions_total", "from" => prev.as_label(), "to" => mode.as_label()).increment(1);
+        }
     }
 
     pub fn repository_publication_mailbox(
@@ -739,6 +755,75 @@ impl std::fmt::Debug for ConsensusExecutionBridge {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bridge_constructor_emits_no_metrics() {
+        let recorder = metrics_util::debugging::DebuggingRecorder::new();
+        metrics::with_local_recorder(&recorder, || {
+            assert_eq!(
+                ConsensusExecutionBridge::new().operating_mode(),
+                ConsensusOperatingMode::Follower
+            );
+        });
+        assert!(recorder.snapshotter().snapshot().into_vec().is_empty());
+    }
+
+    #[test]
+    fn bridge_records_operating_mode_metrics() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+        use ConsensusOperatingMode::{Follower, Signer, UpstreamBootstrap, Verifier};
+
+        let recorder = DebuggingRecorder::new();
+        let bridge = ConsensusExecutionBridge::new();
+        let mut expected = vec![(
+            metrics::Key::from_name("outbe_consensus_operating_mode"),
+            DebugValue::Gauge(0.0.into()),
+        )];
+        let mut previous = "follower";
+        for (mode, label, value) in [
+            (Follower, "follower", 0.0),
+            (UpstreamBootstrap, "upstream_bootstrap", 1.0),
+            (Verifier, "verifier", 2.0),
+            (Signer, "signer", 3.0),
+            (Verifier, "verifier", 2.0),
+        ] {
+            assert_eq!(mode.as_label(), label);
+            if previous != label {
+                expected.push((
+                    metrics::Key::from_parts(
+                        "outbe_consensus_mode_transitions_total",
+                        vec![
+                            metrics::Label::new("from", previous),
+                            metrics::Label::new("to", label),
+                        ],
+                    ),
+                    DebugValue::Counter(1),
+                ));
+            }
+            expected[0].1 = DebugValue::Gauge(value.into());
+            for _ in 0..2 {
+                metrics::with_local_recorder(&recorder, || {
+                    metrics::gauge!("outbe_consensus_operating_mode").set(-1.0);
+                    bridge.set_operating_mode(mode);
+                });
+                assert_eq!(bridge.operating_mode(), mode);
+                let snapshot = recorder.snapshotter().snapshot().into_vec();
+                assert_eq!(snapshot.len(), expected.len());
+                for (key, value) in &mut expected {
+                    let observed = snapshot
+                        .iter()
+                        .find(|(actual, _, _, _)| actual.key() == key)
+                        .unwrap();
+                    assert_eq!(&observed.3, value, "{key:?}");
+                    // DebuggingRecorder snapshots reset counters to zero.
+                    if matches!(value, DebugValue::Counter(_)) {
+                        *value = DebugValue::Counter(0);
+                    }
+                }
+            }
+            previous = label;
+        }
+    }
 
     #[test]
     fn randomness_status_maps_operator_flags() {

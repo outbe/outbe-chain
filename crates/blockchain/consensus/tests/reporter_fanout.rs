@@ -75,6 +75,17 @@ fn valid_notarization() -> NotarizationFixture {
 }
 
 fn certificate_fixture(view: u64, finalize: bool) -> NotarizationFixture {
+    let payload = OutbeDigest::from(alloy_primitives::B256::from_slice(
+        Sha256::hash(&[b"test-payload"]).as_ref(),
+    ));
+    certificate_fixture_with_payload(view, finalize, payload)
+}
+
+fn certificate_fixture_with_payload(
+    view: u64,
+    finalize: bool,
+    payload: OutbeDigest,
+) -> NotarizationFixture {
     let (keys, participants) = test_participants(3);
     let dkg = bootstrap_dkg(3).unwrap();
     let schemes: Vec<HybridScheme<MinSig>> = outbe_consensus::test_harness::fixture_signer_schemes(
@@ -89,9 +100,6 @@ fn certificate_fixture(view: u64, finalize: bool) -> NotarizationFixture {
     let verifier =
         HybridScheme::<MinSig>::verifier(b"reporter-test", participants.clone(), dkg.polynomial)
             .unwrap();
-    let payload = OutbeDigest::from(alloy_primitives::B256::from_slice(
-        Sha256::hash(&[b"test-payload"]).as_ref(),
-    ));
     let proposal = Proposal::new(
         Round::new(Epoch::new(0), View::new(view)),
         View::new(view - 1),
@@ -433,4 +441,59 @@ fn raw_finalize_vote_is_reported_before_its_certificate() {
             );
         }
     });
+}
+
+#[test]
+fn reporter_counts_self_finalization_once_across_epoch_rotation() {
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+    let recorder = DebuggingRecorder::new();
+    let (fixture, verifier, participants) = certificate_fixture(2, true);
+    let continuity = ReporterContinuity::default();
+    let (previous_epoch, _previous_rx) = build_reporter_with_continuity(
+        Arc::new(FinalizedParentCertStore::new()),
+        verifier.clone(),
+        &participants,
+        continuity.clone(),
+    );
+    continuity
+        .self_proposed_digests()
+        .record(fixture.proposal.payload);
+    drop(previous_epoch);
+    let (mut reporter, mut rx) = build_reporter_with_continuity(
+        Arc::new(FinalizedParentCertStore::new()),
+        verifier,
+        &participants,
+        continuity.clone(),
+    );
+    let (peer, _, _) = certificate_fixture_with_payload(
+        3,
+        true,
+        OutbeDigest::from(alloy_primitives::B256::repeat_byte(42)),
+    );
+    for (finalized, expected_delta) in [fixture.clone(), fixture, peer].into_iter().zip([1, 0, 0]) {
+        let feedback = metrics::with_local_recorder(&recorder, || {
+            reporter.report(Activity::Finalization(
+                commonware_consensus::simplex::types::Finalization {
+                    proposal: finalized.proposal,
+                    certificate: finalized.certificate,
+                },
+            ))
+        });
+        assert!(matches!(feedback, commonware_actor::Feedback::Ok));
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            FinalizationMessage::Finalized(_)
+        ));
+        let snapshot = recorder.snapshotter().snapshot().into_vec();
+        let counters: Vec<_> = snapshot
+            .iter()
+            .filter(|(key, _, _, _)| {
+                key.key().name() == "outbe_consensus_self_finalized_blocks_total"
+            })
+            .collect();
+        assert_eq!(counters.len(), 1);
+        assert_eq!(counters[0].0.key().labels().count(), 0);
+        assert_eq!(counters[0].3, DebugValue::Counter(expected_delta));
+    }
 }

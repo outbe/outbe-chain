@@ -7,7 +7,7 @@ use alloy_primitives::{address, Bytes, Signature};
 use alloy_signer::SignerSync as _;
 use alloy_signer_local::PrivateKeySigner;
 use outbe_primitives::{
-    addresses::{TEE_REGISTRY_ADDRESS, ZEROFEE_ADDRESS},
+    addresses::{OUTBE_SYSTEM_TX_ADDRESS, TEE_REGISTRY_ADDRESS, ZEROFEE_ADDRESS},
     transaction_call::TransactionCallFields,
     zero_fee_types::{
         BootstrapAccountView, BootstrapCandidate, BootstrapTransactionView, ZeroFeeAuthorization,
@@ -593,4 +593,251 @@ fn pool_admits_delegated_sponsored_tx_without_a_quota_read() {
         panic!("delegated sponsored tx must be admitted without a quota read, got {outcome:?}");
     };
     assert_eq!(balance, U256::MAX);
+}
+
+#[test]
+fn validation_records_duration_and_one_closed_rejection_reason() {
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+    for (target, input, script, balance, expected) in [
+        (
+            OUTBE_SYSTEM_TX_ADDRESS,
+            Bytes::new(),
+            ScriptedPolicy::default(),
+            U256::MAX,
+            "reserved_system_tx",
+        ),
+        (
+            Address::ZERO,
+            Bytes::new(),
+            ScriptedPolicy::default(),
+            U256::ZERO,
+            "overdraft",
+        ),
+        (
+            TEST_HOOK_TARGET_A,
+            Bytes::new(),
+            ScriptedPolicy {
+                classify: ClassifyAnswer::HookWhenInputLongerThanSelector,
+                ..Default::default()
+            },
+            U256::MAX,
+            "malformed_calldata",
+        ),
+        (
+            TEST_HOOK_TARGET_A,
+            Bytes::from_static(&[1, 2, 3, 4, 5]),
+            ScriptedPolicy {
+                classify: ClassifyAnswer::HookWhenInputLongerThanSelector,
+                ..Default::default()
+            },
+            U256::MAX,
+            "unauthorized_signer",
+        ),
+        (
+            Address::ZERO,
+            Bytes::new(),
+            ScriptedPolicy::default(),
+            U256::MAX,
+            "",
+        ),
+        (
+            Address::ZERO,
+            Bytes::new(),
+            ScriptedPolicy::default(),
+            U256::MAX,
+            "upstream_invalid",
+        ),
+    ] {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            let gas_limit = if expected == "upstream_invalid" {
+                1
+            } else {
+                1_000_000
+            };
+            let transaction =
+                pooled_tx_with_gas(target, input, MIN_PROTOCOL_BASE_FEE as u128, 0, gas_limit);
+            let validator =
+                validator_with(funded_provider(transaction.sender(), balance, None), script);
+            let outcome = futures::executor::block_on(
+                validator.validate_transaction(TransactionOrigin::External, transaction),
+            );
+            assert_eq!(
+                matches!(outcome, TransactionValidationOutcome::Valid { .. }),
+                expected.is_empty()
+            );
+        });
+        let snapshot = snapshotter.snapshot().into_vec();
+        let durations: Vec<_> = snapshot
+            .iter()
+            .filter(|(key, ..)| key.key().name() == "outbe_txpool_validation_duration_ms")
+            .collect();
+        assert_eq!(durations.len(), 1, "{expected}: duration missing");
+        let DebugValue::Histogram(values) = &durations[0].3 else {
+            panic!("duration must be histogram")
+        };
+        assert_eq!(values.len(), 1);
+        assert!(values[0].into_inner().is_finite() && values[0].into_inner() >= 0.0);
+        let rejections: Vec<_> = snapshot
+            .iter()
+            .filter(|(key, ..)| key.key().name() == "outbe_txpool_rejected_total")
+            .collect();
+        if expected.is_empty() {
+            assert!(rejections.is_empty());
+        } else {
+            assert_eq!(rejections.len(), 1);
+            assert_eq!(rejections[0].3, DebugValue::Counter(1));
+            let labels: Vec<_> = rejections[0]
+                .0
+                .key()
+                .labels()
+                .map(|label| (label.key(), label.value()))
+                .collect();
+            assert_eq!(labels, vec![("reason", expected)]);
+        }
+    }
+}
+
+fn policy_rejection_cases() -> Vec<(ZeroFeePolicyError, &'static str)> {
+    vec![
+        (ZeroFeePolicyError::UnknownHook(TEST_HOOK_A), "unknown_hook"),
+        (ZeroFeePolicyError::NonZeroValue, "non_zero_value"),
+        (
+            ZeroFeePolicyError::CalldataTooLarge {
+                size: 999,
+                limit: 1,
+            },
+            "calldata_too_large",
+        ),
+        (
+            ZeroFeePolicyError::GasLimitTooHigh {
+                gas_limit: 999,
+                limit: 1,
+            },
+            "gas_limit_too_high",
+        ),
+        (
+            ZeroFeePolicyError::FeeCapTooLow {
+                max_fee_per_gas: 0,
+                minimum: 999,
+            },
+            "fee_cap_too_low",
+        ),
+        (
+            ZeroFeePolicyError::MalformedCalldata("dynamic detail 999"),
+            "malformed_calldata",
+        ),
+        (
+            ZeroFeePolicyError::UnauthorizedSigner,
+            "unauthorized_signer",
+        ),
+        (
+            ZeroFeePolicyError::HookConflict("dynamic detail 999"),
+            "hook_conflict",
+        ),
+        (
+            ZeroFeePolicyError::from(outbe_primitives::error::PrecompileError::Storage(
+                "dynamic detail 999".into(),
+            )),
+            "storage",
+        ),
+        (
+            ZeroFeePolicyError::FreeTxDailyExhausted {
+                used: 999,
+                limit: 1,
+            },
+            "free_tx_daily_exhausted",
+        ),
+        (
+            ZeroFeePolicyError::FreeTxDailyContractCreationForbidden,
+            "free_tx_daily_contract_creation_forbidden",
+        ),
+        (
+            ZeroFeePolicyError::FreeTxDailyValueNotZero,
+            "free_tx_daily_value_not_zero",
+        ),
+        (
+            ZeroFeePolicyError::FreeTxDailyGasLimitExceeded {
+                gas_limit: 999,
+                limit: 1,
+            },
+            "free_tx_daily_gas_limit_exceeded",
+        ),
+        (
+            ZeroFeePolicyError::FreeTxDailyCalldataTooLarge {
+                size: 999,
+                limit: 1,
+            },
+            "free_tx_daily_calldata_too_large",
+        ),
+        (
+            ZeroFeePolicyError::FreeTxDailyTargetNotWhitelisted {
+                to: TEST_HOOK_TARGET_A,
+            },
+            "free_tx_daily_target_not_whitelisted",
+        ),
+    ]
+}
+
+#[test]
+fn rejection_taxonomy_records_all_twenty_static_labels() {
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+    let mut cases = vec![
+        (TxpoolRejectionReason::UpstreamInvalid, "upstream_invalid"),
+        (TxpoolRejectionReason::UpstreamError, "upstream_error"),
+        (
+            TxpoolRejectionReason::ReservedSystemTx,
+            "reserved_system_tx",
+        ),
+        (TxpoolRejectionReason::Overdraft, "overdraft"),
+        (TxpoolRejectionReason::StateReadFailed, "state_read_failed"),
+    ];
+    cases.extend(
+        policy_rejection_cases()
+            .iter()
+            .map(|(error, label)| (TxpoolRejectionReason::from(error), *label)),
+    );
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    metrics::with_local_recorder(&recorder, || {
+        for (reason, expected) in &cases {
+            assert_eq!(reason.label(), *expected);
+            assert!(expected.starts_with(|ch: char| ch.is_ascii_lowercase()));
+            assert!(expected
+                .bytes()
+                .all(|ch| ch.is_ascii_lowercase() || ch == b'_'));
+            record_txpool_rejection(*reason);
+        }
+    });
+    let snapshot = snapshotter.snapshot().into_vec();
+    assert_eq!(snapshot.len(), 20);
+    for (key, _, _, value) in snapshot {
+        assert_eq!(key.key().name(), "outbe_txpool_rejected_total");
+        assert_eq!(value, DebugValue::Counter(1));
+        assert_eq!(key.key().labels().count(), 1);
+        let label = key.key().labels().next().unwrap();
+        assert_eq!(label.key(), "reason");
+        assert!(cases.iter().any(|(_, expected)| *expected == label.value()));
+    }
+}
+
+#[test]
+fn pool_errors_retain_policy_and_state_sources() {
+    use std::error::Error;
+
+    for (policy, _) in policy_rejection_cases() {
+        let error = OutbeZeroFeePoolError::Policy(policy.clone());
+        assert_eq!(
+            error.source().unwrap().downcast_ref::<ZeroFeePolicyError>(),
+            Some(&policy)
+        );
+        assert!(!reth_transaction_pool::error::PoolTransactionError::is_bad_transaction(&error));
+    }
+    let error =
+        OutbeZeroFeePoolError::state_read(std::io::Error::other("provider unavailable 999"));
+    assert!(error.source().unwrap().is::<std::io::Error>());
+    assert!(!reth_transaction_pool::error::PoolTransactionError::is_bad_transaction(&error));
 }

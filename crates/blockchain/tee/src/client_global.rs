@@ -14,7 +14,8 @@
 //! from the execution path. It never holds a `StorageHandle` across it and never
 //! spawns a thread.
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::time::Instant;
 
 use alloy_primitives::B256;
 
@@ -25,6 +26,7 @@ use crate::dcap_protocol::{
     DcapVerificationOutcomeV1,
 };
 use crate::errors::TransportError;
+use crate::metrics::{record_tee_execution_lock_wait_ms, ExecutionInFlightGuard};
 use crate::protocol::{EnclaveRequest, EnclaveResponse, PayloadLane};
 use crate::session::EnclaveSession;
 use crate::tee_call::CallMeta;
@@ -109,7 +111,11 @@ impl EnclaveSessions {
     }
 
     pub(crate) fn with_execution<R>(&self, f: impl FnOnce(&mut EnclaveSession) -> R) -> R {
-        with_session(&self.execution, f)
+        let _in_flight = ExecutionInFlightGuard::new();
+        let wait_start = Instant::now();
+        let mut guard = lock_recovering(&self.execution);
+        record_tee_execution_lock_wait_ms(wait_start.elapsed());
+        f(&mut guard)
     }
 
     pub(crate) fn canary_request(
@@ -275,15 +281,18 @@ pub fn canary_attestation_pub() -> Option<[u8; 32]> {
 }
 
 fn with_session<R>(mutex: &Mutex<EnclaveSession>, f: impl FnOnce(&mut EnclaveSession) -> R) -> R {
-    let mut session = match mutex.lock() {
+    f(&mut lock_recovering(mutex))
+}
+
+fn lock_recovering(session: &Mutex<EnclaveSession>) -> MutexGuard<'_, EnclaveSession> {
+    match session.lock() {
         Ok(guard) => guard,
         Err(poisoned) => {
             let mut guard = poisoned.into_inner();
             guard.recover_from_poison();
             guard
         }
-    };
-    f(&mut session)
+    }
 }
 
 /// Invoke the full verifier only through a production NodeHost-authorized
@@ -474,4 +483,181 @@ fn validate_direct_dev_response(
         return Err(TransportError::UnexpectedResponse);
     }
     Ok(artifact)
+}
+
+#[cfg(test)]
+mod contention_tests {
+    use super::*;
+    use metrics::{
+        Counter, Gauge, GaugeFn, Histogram, HistogramFn, Key, KeyName, Metadata, Recorder,
+        SharedString, Unit,
+    };
+    use std::sync::{Arc, Barrier, Condvar};
+    use std::time::Duration;
+
+    #[derive(Default)]
+    struct Observations {
+        in_flight: f64,
+        gauge_registrations: usize,
+        waits: Vec<f64>,
+    }
+
+    #[derive(Default)]
+    struct ExecutionMetrics {
+        values: Mutex<Observations>,
+        changed: Condvar,
+    }
+
+    impl GaugeFn for ExecutionMetrics {
+        fn increment(&self, value: f64) {
+            self.values.lock().unwrap().in_flight += value;
+            self.changed.notify_all();
+        }
+
+        fn decrement(&self, value: f64) {
+            self.values.lock().unwrap().in_flight -= value;
+        }
+
+        fn set(&self, value: f64) {
+            self.values.lock().unwrap().in_flight = value;
+        }
+    }
+
+    impl HistogramFn for ExecutionMetrics {
+        fn record(&self, value: f64) {
+            self.values.lock().unwrap().waits.push(value);
+        }
+    }
+
+    #[derive(Default)]
+    struct TestRecorder(Arc<ExecutionMetrics>);
+
+    impl Recorder for TestRecorder {
+        fn describe_counter(&self, _: KeyName, _: Option<Unit>, _: SharedString) {}
+        fn describe_gauge(&self, _: KeyName, _: Option<Unit>, _: SharedString) {}
+        fn describe_histogram(&self, _: KeyName, _: Option<Unit>, _: SharedString) {}
+
+        fn register_counter(&self, _: &Key, _: &Metadata<'_>) -> Counter {
+            Counter::noop()
+        }
+
+        fn register_gauge(&self, key: &Key, _: &Metadata<'_>) -> Gauge {
+            if key.name() == "outbe_tee_client_execution_in_flight_requests" {
+                self.0.values.lock().unwrap().gauge_registrations += 1;
+                Gauge::from_arc(Arc::clone(&self.0))
+            } else {
+                Gauge::noop()
+            }
+        }
+
+        fn register_histogram(&self, key: &Key, _: &Metadata<'_>) -> Histogram {
+            if key.name() == "outbe_tee_client_execution_lock_wait_ms" {
+                Histogram::from_arc(Arc::clone(&self.0))
+            } else {
+                Histogram::noop()
+            }
+        }
+    }
+
+    fn local_sessions() -> (crate::test_utils::MockDevEnclaveServer, EnclaveSessions) {
+        let server = crate::test_utils::MockDevEnclaveServer::spawn([0xAA; 32], |_| {
+            EnclaveResponse::Error {
+                message: "test response".into(),
+            }
+        });
+        let client = EnclaveClient::connect_endpoint(&server.endpoint).unwrap();
+        let session = EnclaveSession::development(client, server.endpoint.clone()).unwrap();
+        (server, EnclaveSessions::new(session))
+    }
+
+    #[test]
+    fn execution_tracks_entry_error_and_panic() {
+        let (_server, sessions) = local_sessions();
+        let recorder = TestRecorder::default();
+        metrics::with_local_recorder(&recorder, || {
+            let result = sessions.with_execution(|_| {
+                let values = recorder.0.values.lock().unwrap();
+                assert_eq!(values.in_flight, 1.0);
+                assert_eq!(values.waits.len(), 1);
+                Err::<(), _>(TransportError::Unavailable("test failure".into()))
+            });
+            assert!(result.is_err());
+            assert_eq!(recorder.0.values.lock().unwrap().in_flight, 0.0);
+            let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                sessions.with_execution(|_| panic!("interrupted execution"));
+            }));
+            assert!(panic.is_err());
+            assert_eq!(recorder.0.values.lock().unwrap().in_flight, 0.0);
+            // Poison recovery must still run the callback and balance its gauge.
+            sessions.with_execution(|_| ());
+            let values = recorder.0.values.lock().unwrap();
+            assert_eq!(values.in_flight, 0.0);
+            assert_eq!(values.waits.len(), 3);
+        });
+    }
+
+    #[test]
+    fn execution_contention_counts_waiters_and_records_wait_before_callback() {
+        let (_server, sessions) = local_sessions();
+        let recorder = TestRecorder::default();
+        let barrier = Barrier::new(2);
+        std::thread::scope(|scope| {
+            let holder = scope.spawn(|| {
+                metrics::with_local_recorder(&recorder, || {
+                    sessions.with_execution(|_| {
+                        barrier.wait();
+                        let (values, _) = recorder
+                            .0
+                            .changed
+                            .wait_timeout_while(
+                                recorder.0.values.lock().unwrap(),
+                                Duration::from_secs(5),
+                                |values| values.in_flight != 2.0,
+                            )
+                            .unwrap();
+                        assert_eq!(values.in_flight, 2.0);
+                        drop(values);
+                        std::thread::sleep(Duration::from_millis(25));
+                    });
+                });
+            });
+            let waiter = scope.spawn(|| {
+                metrics::with_local_recorder(&recorder, || {
+                    barrier.wait();
+                    sessions.with_execution(|_| {
+                        let values = recorder.0.values.lock().unwrap();
+                        assert_eq!(values.waits.len(), 2);
+                        assert!(values.waits[1] >= 20.0, "wait: {} ms", values.waits[1]);
+                        Err::<(), _>(TransportError::Unavailable("test failure".into()))
+                    })
+                })
+            });
+            holder.join().unwrap();
+            assert!(waiter.join().unwrap().is_err());
+        });
+        assert_eq!(recorder.0.values.lock().unwrap().in_flight, 0.0);
+    }
+
+    #[test]
+    fn other_lanes_do_not_emit_execution_contention_metrics() {
+        let (_server, sessions) = local_sessions();
+        let recorder = TestRecorder::default();
+        metrics::with_local_recorder(&recorder, || {
+            assert!(matches!(
+                sessions.canary_request(&EnclaveRequest::Health),
+                Err(TransportError::EnclaveError(message)) if message == "test response"
+            ));
+            assert!(matches!(
+                sessions.account_query_request(&EnclaveRequest::Payload {
+                    lane: PayloadLane::AccountQuery,
+                    payload: Vec::new(),
+                }),
+                Err(TransportError::EnclaveError(message)) if message == "test response"
+            ));
+        });
+        let values = recorder.0.values.lock().unwrap();
+        assert_eq!(values.in_flight, 0.0);
+        assert_eq!(values.gauge_registrations, 0);
+        assert!(values.waits.is_empty());
+    }
 }

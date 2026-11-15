@@ -442,6 +442,7 @@ fn finalizer_test_shared(
     );
 
     let shared = ApplicationShared {
+        self_proposed_digests: Default::default(),
         unix_time_source: Arc::new(super::SystemUnixTimeSource),
         engine,
         payload_builder,
@@ -1644,75 +1645,59 @@ fn floor_remaining_arithmetic() {
     );
 }
 
-/// Test 5: with a held receiver and a non-trivial floor, `pace_and_send` waits
-/// ~`remaining` of virtual time and then delivers the digest.
 #[test]
-fn floor_sends_after_remainder() {
-    let (received, waited) = commonware_runtime::deterministic::Runner::timed(Duration::from_secs(
-        30,
-    ))
-    .start(|context| async move {
-        let (tx, rx) = oneshot::channel::<Digest>();
-        let t0 = context.current();
-        super::pace_and_send(
-            &context,
-            tx,
-            Digest(B256::ZERO),
-            Duration::from_millis(2000),
-            t0,
-        )
-        .await;
-        let waited = context.current().duration_since(t0).unwrap_or_default();
-        (rx.await.ok(), waited)
+fn delivered_proposal_counts_self_finalization_once_via_shared_continuity() {
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+    let round = Round::new(Epoch::new(0), View::new(2));
+    let continuity = crate::reporter::ReporterContinuity::default();
+    let block = consensus_block_with_number(0x37, 7);
+    let peer_block = consensus_block_with_number(0x38, 7);
+    commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start({
+        let (continuity, block) = (continuity.clone(), block.clone());
+        move |ctx| async move {
+            let fixture = certification::CertificationFixture::open(&ctx, "self-fin-e2e").await;
+            let (mut shared, outcome) = fixture
+                .publish_valid_candidate(&ctx, round, block.clone())
+                .await;
+            shared.shared.self_proposed_digests = continuity.self_proposed_digests();
+            let (response, rx) = oneshot::channel();
+            let reply = super::dispatch::ProposalReply {
+                response,
+                propose_start: ctx.current(),
+                outcome,
+            };
+            shared.complete_propose_message(&ctx, reply).await;
+            assert_eq!(rx.await.unwrap(), block.digest());
+        }
     });
-    assert_eq!(received, Some(Digest(B256::ZERO)));
-    assert!(
-        waited >= Duration::from_millis(2000),
-        "expected to wait the floor, waited {waited:?}"
+    let mut fixture = certification::reporter_with_continuity(
+        round.epoch(),
+        continuity,
+        &block,
+        round,
+        &peer_block,
     );
-}
-
-/// Test 6 (the `select!` guard): if the proposal receiver is dropped (view
-/// cancelled), `pace_and_send` aborts promptly via `response.closed()` and does
-/// not sleep the full floor.
-#[test]
-fn floor_aborts_on_closed_receiver() {
-    let waited = commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
-        |context| async move {
-            let (tx, rx) = oneshot::channel::<Digest>();
-            drop(rx); // Simplex dropped the proposal receiver on a view change.
-            let t0 = context.current();
-            super::pace_and_send(
-                &context,
-                tx,
-                Digest(B256::ZERO),
-                Duration::from_millis(2000),
-                t0,
-            )
-            .await;
-            context.current().duration_since(t0).unwrap_or_default()
-        },
-    );
-    assert!(
-        waited < Duration::from_millis(2000),
-        "aborted pacing must not sleep the full floor, waited {waited:?}"
-    );
-}
-
-/// Test 7: zero remaining (case C / floor already met) sends immediately with no
-/// sleep - control-flow identical to pre-pacing behavior.
-#[test]
-fn floor_zero_sends_immediately() {
-    let (received, waited) = commonware_runtime::deterministic::Runner::timed(Duration::from_secs(
-        30,
-    ))
-    .start(|context| async move {
-        let (tx, rx) = oneshot::channel::<Digest>();
-        let t0 = context.current();
-        super::pace_and_send(&context, tx, Digest(B256::ZERO), Duration::ZERO, t0).await;
-        let waited = context.current().duration_since(t0).unwrap_or_default();
-        (rx.await.ok(), waited)
+    let recorder = DebuggingRecorder::new();
+    metrics::with_local_recorder(&recorder, || {
+        for item in [
+            fixture.self_finalization,
+            fixture.duplicate_finalization,
+            fixture.peer_finalization,
+        ] {
+            assert!(matches!(
+                fixture.reporter.report(Activity::Finalization(item)),
+                Feedback::Ok
+            ));
+            assert!(fixture.rx.try_recv().is_ok());
+        }
     });
-    assert_eq!(received, Some(Digest(B256::ZERO)));
-    assert_eq!(waited, Duration::ZERO);
+    let counts: Vec<_> = recorder
+        .snapshotter()
+        .snapshot()
+        .into_vec()
+        .into_iter()
+        .filter(|(k, _, _, _)| k.key().name() == "outbe_consensus_self_finalized_blocks_total")
+        .map(|(_, _, _, v)| v)
+        .collect();
+    assert_eq!(counts, vec![DebugValue::Counter(1)]);
 }
