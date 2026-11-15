@@ -2,16 +2,22 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
+    env,
     fs::{self, File},
     io::Read,
     path::{Component, Path, PathBuf},
+    process::Command,
 };
 
+use clap::ValueEnum;
 use eyre::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::{elf::ReleaseIdentity, sgx::canonical_json};
+use super::{
+    elf::{self, ReleaseIdentity},
+    sgx::canonical_json,
+};
 
 pub const MANIFEST_NAME: &str = "software-manifest.json";
 pub const MANIFEST_VERSION: u32 = 1;
@@ -29,7 +35,7 @@ const PRODUCTION_ENCLAVE: &str = "outbe-tee-enclave";
 const DEVELOPMENT_ENCLAVE: &str = "outbe-tee-enclave-mock";
 const OPERATOR_TOOL: &str = "outbe-genesis-cli";
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 pub enum SoftwareProfile {
     Production,
@@ -86,6 +92,24 @@ pub struct PackageOptions<'a> {
     pub profile: SoftwareProfile,
     pub target: &'a str,
     pub identity: &'a ReleaseIdentity,
+}
+
+pub struct BuildOptions<'a> {
+    pub repo_root: &'a Path,
+    pub output_dir: &'a Path,
+    pub profile: SoftwareProfile,
+    pub release_tag: Option<&'a str>,
+    pub no_cache: bool,
+    pub inside_container: bool,
+}
+
+/// Build and package one complete software profile using the pinned Linux toolchain.
+pub fn build(options: &BuildOptions<'_>) -> Result<PathBuf> {
+    if options.inside_container {
+        build_inside_container(options)
+    } else {
+        build_with_docker(options)
+    }
 }
 
 impl SoftwareManifest {
@@ -225,6 +249,206 @@ pub fn bundle_name(profile: SoftwareProfile, commit: &str) -> Result<String> {
         "outbe-software-bundle-v{MANIFEST_VERSION}-{}-{commit}.tar.zst",
         profile.as_str()
     ))
+}
+
+fn build_with_docker(options: &BuildOptions<'_>) -> Result<PathBuf> {
+    require_clean_checkout(options.repo_root)?;
+    prepare_output_directory(options.output_dir)?;
+    let spec = elf::load_and_validate_build_spec(
+        &options
+            .repo_root
+            .join("release/reproducible-elf-build-v1.json"),
+        Some(options.repo_root),
+    )?;
+    let identity = elf::resolve_release_identity(options.repo_root, options.release_tag)?;
+    let values = elf::resolved_values(&spec, &identity)?;
+    ensure!(values.len() == 7, "incomplete reproducible build identity");
+    let output_dir = absolute_path(options.output_dir)?;
+    let mut command = Command::new("docker");
+    command.current_dir(options.repo_root).args([
+        "build",
+        "--platform",
+        "linux/amd64",
+        "--file",
+        "Dockerfile.project-toolchain",
+        "--target",
+        "software-artifacts",
+        "--build-arg",
+        &format!("SOURCE_COMMIT={}", values[3]),
+        "--build-arg",
+        &format!("SOURCE_DATE_EPOCH={}", values[4]),
+        "--build-arg",
+        &format!("RELEASE_TAG={}", values[5]),
+        "--build-arg",
+        &format!("SOURCE_DESCRIBE={}", values[6]),
+        "--build-arg",
+        &format!("REPRODUCIBLE_RUSTFLAGS={}", values[0]),
+        "--build-arg",
+        &format!("REPRODUCIBLE_CFLAGS={}", values[1]),
+        "--build-arg",
+        &format!("REPRODUCIBLE_CXXFLAGS={}", values[2]),
+        "--build-arg",
+        &format!("SOFTWARE_PROFILE={}", options.profile.as_str()),
+        "--output",
+        &format!("type=local,dest={}", output_dir.display()),
+    ]);
+    if options.no_cache {
+        command.arg("--no-cache");
+    }
+    let status = command
+        .arg(".")
+        .status()
+        .wrap_err("run pinned Docker build")?;
+    ensure!(status.success(), "pinned software build failed");
+    let bundle = output_dir.join(bundle_name(options.profile, &identity.source_commit)?);
+    ensure!(
+        bundle.is_file(),
+        "software build did not produce {}",
+        bundle.display()
+    );
+    verify_archive(&bundle)?;
+    Ok(bundle)
+}
+
+fn build_inside_container(options: &BuildOptions<'_>) -> Result<PathBuf> {
+    let identity = identity_from_environment(options.release_tag)?;
+    let target = "x86_64-unknown-linux-gnu";
+    run_cargo_build(options.repo_root, options.profile, target)?;
+    let staging = tempfile::tempdir().wrap_err("create software artifact staging directory")?;
+    let staging_bin = staging.path().join("bin");
+    fs::create_dir(&staging_bin)?;
+    let built = options
+        .repo_root
+        .join("target")
+        .join(target)
+        .join("release");
+    for binary in expected_binaries(options.profile) {
+        let source = built.join(binary);
+        let destination = staging_bin.join(binary);
+        fs::copy(&source, &destination)
+            .wrap_err_with(|| format!("stage release binary: {}", source.display()))?;
+    }
+    fs::create_dir_all(options.output_dir)?;
+    let output = options
+        .output_dir
+        .join(bundle_name(options.profile, &identity.source_commit)?);
+    package(&PackageOptions {
+        artifacts: staging.path(),
+        systemd_units: &options
+            .repo_root
+            .join("bin/outbe-up/templates/validator/systemd"),
+        output: &output,
+        profile: options.profile,
+        target,
+        identity: &identity,
+    })?;
+    Ok(output)
+}
+
+fn run_cargo_build(repo_root: &Path, profile: SoftwareProfile, target: &str) -> Result<()> {
+    let mut command = Command::new("cargo");
+    command.current_dir(repo_root).args([
+        "build",
+        "--locked",
+        "--release",
+        "--no-default-features",
+        "--target",
+        target,
+    ]);
+    for (package, binary) in binary_targets(profile) {
+        command.args(["--package", package, "--bin", binary]);
+    }
+    let features = match profile {
+        SoftwareProfile::Production => "outbe-tee-enclave/production-dcap-release",
+        SoftwareProfile::Development => {
+            "outbe-chain/test-protocol-overrides,outbe-tee-enclave/mock"
+        }
+    };
+    command.args(["--features", features]);
+    if profile == SoftwareProfile::Production {
+        command.env("OUTBE_NATIVE_DCAP", "require");
+    }
+    let status = command.status().wrap_err("build software binaries")?;
+    ensure!(status.success(), "software binary build failed");
+    Ok(())
+}
+
+fn binary_targets(profile: SoftwareProfile) -> Vec<(&'static str, &'static str)> {
+    let mut targets = vec![
+        ("outbe-up", "outbe-up"),
+        ("outbe-chain", "outbe-chain"),
+        ("outbe-cli", "outbe-cli"),
+        ("outbe-keygen", "outbe-keygen"),
+        ("outbe-feeder", "outbe-feeder"),
+        ("outbe-radicle-sidecar", "outbe-radicle"),
+        ("outbe-hyperlane-validator", "outbe-hyperlane-validator"),
+        ("outbe-genesis-cli", OPERATOR_TOOL),
+    ];
+    targets.push(("outbe-tee-enclave", profile.enclave_binary()));
+    targets
+}
+
+fn expected_binaries(profile: SoftwareProfile) -> Vec<&'static str> {
+    binary_targets(profile)
+        .into_iter()
+        .map(|(_, binary)| binary)
+        .collect()
+}
+
+fn identity_from_environment(requested_tag: Option<&str>) -> Result<ReleaseIdentity> {
+    let required = |name: &str| {
+        env::var(name).wrap_err_with(|| format!("missing container build identity: {name}"))
+    };
+    let source_commit = required("VERGEN_GIT_SHA")?;
+    ensure!(
+        is_lower_hex(&source_commit, 40),
+        "invalid container source commit"
+    );
+    let release_tag = requested_tag
+        .map(ToOwned::to_owned)
+        .unwrap_or(required("RELEASE_TAG")?);
+    Ok(ReleaseIdentity {
+        source_commit,
+        source_date_epoch: required("SOURCE_DATE_EPOCH")?,
+        source_describe: required("VERGEN_GIT_DESCRIBE")?,
+        release_tag,
+    })
+}
+
+fn require_clean_checkout(repo_root: &Path) -> Result<()> {
+    let output = Command::new("git")
+        .current_dir(repo_root)
+        .args(["status", "--porcelain=v1", "--untracked-files=all"])
+        .output()
+        .wrap_err("inspect release checkout")?;
+    ensure!(output.status.success(), "git status failed");
+    ensure!(
+        output.stdout.is_empty(),
+        "software release builds require a clean checkout"
+    );
+    Ok(())
+}
+
+fn prepare_output_directory(output: &Path) -> Result<()> {
+    if output.exists() {
+        ensure!(output.is_dir(), "release output is not a directory");
+        ensure!(
+            fs::read_dir(output)?.next().is_none(),
+            "release output directory must be empty: {}",
+            output.display()
+        );
+    } else {
+        fs::create_dir_all(output)?;
+    }
+    Ok(())
+}
+
+fn absolute_path(path: &Path) -> Result<PathBuf> {
+    if path.is_absolute() {
+        Ok(path.to_owned())
+    } else {
+        Ok(env::current_dir()?.join(path))
+    }
 }
 
 fn collect_inputs(

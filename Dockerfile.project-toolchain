@@ -191,7 +191,7 @@ RUN set -eu; \
     test "$(rustc --version | cut -d' ' -f1-2)" = "rustc 1.96.0"; \
     test -f /usr/include/sgx_dcap_quoteverify.h
 
-FROM toolchain AS builder
+FROM toolchain AS source-builder
 
 COPY . .
 
@@ -207,6 +207,7 @@ ENV CFLAGS=${REPRODUCIBLE_CFLAGS} \
     CXXFLAGS=${REPRODUCIBLE_CXXFLAGS} \
     LANG=C \
     LC_ALL=C \
+    RELEASE_TAG=${RELEASE_TAG} \
     RUSTFLAGS=${REPRODUCIBLE_RUSTFLAGS} \
     SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH} \
     TZ=UTC \
@@ -215,7 +216,21 @@ ENV CFLAGS=${REPRODUCIBLE_CFLAGS} \
     VERGEN_GIT_SHA=${SOURCE_COMMIT} \
     ZERO_AR_DATE=1
 
+FROM source-builder AS builder
+
 RUN release/scripts/build-elfs-in-container.sh
 
 FROM scratch AS artifacts
 COPY --from=builder /out/ /
+
+FROM source-builder AS software-builder
+
+ARG SOFTWARE_PROFILE
+
+RUN cargo xtask release build \
+      --profile "${SOFTWARE_PROFILE}" \
+      --output /out \
+      --inside-container
+
+FROM scratch AS software-artifacts
+COPY --from=software-builder /out/ /

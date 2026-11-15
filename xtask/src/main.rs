@@ -5,7 +5,7 @@ use clap::{Args, Parser, Subcommand};
 use eyre::{bail, ensure, Result, WrapErr as _};
 use xtask::{
     layer_boundaries, protocol_bench,
-    release::{elf, sgx, toolchain},
+    release::{elf, sgx, software, toolchain},
     stablecoin,
 };
 
@@ -92,12 +92,33 @@ struct ReleaseArgs {
 
 #[derive(Debug, Subcommand)]
 enum ReleaseCommand {
+    /// Build a deterministic, network-neutral Outbe software bundle.
+    Build(SoftwareBuildArgs),
     /// Validate build specs, generate manifests and compare reproducible ELF outputs.
     Elf(ElfArgs),
     /// Prepare, authorize and verify a pre-signed Gramine SGX bundle.
     Sgx(SgxArgs),
     /// Verify project toolchain pins, APT closures and Intel DCAP native-QVL artifacts.
     Toolchain(ToolchainArgs),
+}
+
+#[derive(Debug, Args)]
+struct SoftwareBuildArgs {
+    /// Safe production binaries, or an explicitly unsafe local-development build.
+    #[arg(long, value_enum)]
+    profile: software::SoftwareProfile,
+    /// Directory that receives the versioned `.tar.zst` bundle.
+    #[arg(long)]
+    output: PathBuf,
+    /// Immutable release tag. Defaults to `commit-<full-sha>`.
+    #[arg(long)]
+    release_tag: Option<String>,
+    /// Disable the Docker build cache when producing independent evidence.
+    #[arg(long)]
+    no_cache: bool,
+    /// Internal half of the pinned container build.
+    #[arg(long, hide = true)]
+    inside_container: bool,
 }
 
 #[derive(Debug, Args)]
@@ -381,6 +402,18 @@ fn main() -> Result<()> {
             )?;
         }
         Command::Release(release) => match release.command {
+            ReleaseCommand::Build(arguments) => {
+                let repo_root = sgx::repository_root()?;
+                let output = software::build(&software::BuildOptions {
+                    repo_root: &repo_root,
+                    output_dir: &arguments.output,
+                    profile: arguments.profile,
+                    release_tag: arguments.release_tag.as_deref(),
+                    no_cache: arguments.no_cache,
+                    inside_container: arguments.inside_container,
+                })?;
+                println!("software bundle: {}", output.display());
+            }
             ReleaseCommand::Elf(elf_args) => run_elf_command(elf_args.command)?,
             ReleaseCommand::Sgx(sgx_args) => {
                 let repo_root = sgx::repository_root()?;

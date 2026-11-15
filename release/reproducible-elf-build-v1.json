@@ -119,6 +119,7 @@
     "xtask/src/lib.rs",
     "xtask/src/main.rs",
     "xtask/src/release/mod.rs",
+    "xtask/src/release/software.rs",
     "xtask/src/release/elf/mod.rs",
     "xtask/src/release/elf/inputs.rs",
     "xtask/src/release/elf/manifest.rs",
