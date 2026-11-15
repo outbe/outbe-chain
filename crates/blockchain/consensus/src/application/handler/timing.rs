@@ -134,6 +134,20 @@ pub(super) fn proposal_timestamp_millis(
     )
 }
 
+/// Whether the exact parent is ahead of the local proposer clock.
+pub(super) fn parent_ahead_of_local_clock(
+    parent_block: Option<&ConsensusBlock>,
+    now_millis: u64,
+) -> bool {
+    parent_block.is_some_and(|p| p.timestamp_millis() > 0 && now_millis < p.timestamp_millis())
+}
+
+pub(super) struct ProposalPacing {
+    pub(super) min_block_time: Duration,
+    pub(super) propose_start: std::time::SystemTime,
+    pub(super) resolve_pad: Duration,
+}
+
 /// Pure min-block-time floor arithmetic: remaining pad = `min - elapsed`
 /// (`saturating_sub`). A zero result means the floor is already met. Send the
 /// digest immediately with no wait (case C / heavy block).
@@ -159,31 +173,236 @@ pub(super) async fn pace_and_send<C>(
     ctx: &C,
     mut response: oneshot::Sender<Digest>,
     digest: Digest,
-    min_block_time: std::time::Duration,
-    propose_start: std::time::SystemTime,
-) where
+    pacing: ProposalPacing,
+) -> bool
+where
     C: commonware_runtime::Clock,
 {
     let elapsed = ctx
         .current()
-        .duration_since(propose_start)
+        .duration_since(pacing.propose_start)
         .unwrap_or_default();
-    let remaining = floor_remaining(min_block_time, elapsed);
-    crate::metrics::record_block_build_time(elapsed);
+    let remaining = floor_remaining(pacing.min_block_time, elapsed);
+    crate::metrics::record_block_build_time(elapsed.saturating_sub(pacing.resolve_pad));
     crate::metrics::record_block_wait_time(remaining);
     if remaining.is_zero() {
         // Case C (elapsed >= min): send now, control-flow identical to pre-pacing.
-        let _ = response.send(digest);
+        response.send(digest).is_ok()
     } else {
         // Biased select!: cancellation wins over a near-simultaneous sleep
         // completion, so we never send into a closed channel.
         commonware_macros::select! {
             () = response.closed() => {
                 debug!("view cancelled during min-block-time pacing; dropping proposal");
+                false
             },
             _ = ctx.sleep(remaining) => {
-                let _ = response.send(digest);
+                response.send(digest).is_ok()
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::B256;
+    use commonware_runtime::{Clock as _, Runner as _};
+
+    /// Test 5: with a held receiver and a non-trivial floor, `pace_and_send` waits
+    /// ~`remaining` of virtual time and then delivers the digest.
+    #[test]
+    fn floor_sends_after_remainder() {
+        let (received, waited) = commonware_runtime::deterministic::Runner::timed(
+            Duration::from_secs(30),
+        )
+        .start(|context| async move {
+            let (tx, rx) = oneshot::channel::<Digest>();
+            let t0 = context.current();
+            assert!(
+                super::pace_and_send(
+                    &context,
+                    tx,
+                    Digest(B256::ZERO),
+                    ProposalPacing {
+                        min_block_time: Duration::from_millis(2000),
+                        propose_start: t0,
+                        resolve_pad: Duration::ZERO,
+                    },
+                )
+                .await
+            );
+            let waited = context.current().duration_since(t0).unwrap_or_default();
+            (rx.await.ok(), waited)
+        });
+        assert_eq!(received, Some(Digest(B256::ZERO)));
+        assert!(
+            waited >= Duration::from_millis(2000),
+            "expected to wait the floor, waited {waited:?}"
+        );
+    }
+
+    /// Test 6 (the `select!` guard): if the proposal receiver is dropped (view
+    /// cancelled), `pace_and_send` aborts promptly via `response.closed()` and does
+    /// not sleep the full floor.
+    #[test]
+    fn floor_aborts_on_closed_receiver() {
+        let waited = commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30))
+            .start(|context| async move {
+                let (tx, rx) = oneshot::channel::<Digest>();
+                drop(rx); // Simplex dropped the proposal receiver on a view change.
+                let t0 = context.current();
+                assert!(
+                    !super::pace_and_send(
+                        &context,
+                        tx,
+                        Digest(B256::ZERO),
+                        ProposalPacing {
+                            min_block_time: Duration::from_millis(2000),
+                            propose_start: t0,
+                            resolve_pad: Duration::ZERO,
+                        },
+                    )
+                    .await
+                );
+                context.current().duration_since(t0).unwrap_or_default()
+            });
+        assert!(
+            waited < Duration::from_millis(2000),
+            "aborted pacing must not sleep the full floor, waited {waited:?}"
+        );
+    }
+
+    /// Test 7: zero remaining (case C / floor already met) sends immediately with no
+    /// sleep - control-flow identical to pre-pacing behavior.
+    #[test]
+    fn floor_zero_sends_immediately() {
+        let (received, waited) = commonware_runtime::deterministic::Runner::timed(
+            Duration::from_secs(30),
+        )
+        .start(|context| async move {
+            let (tx, rx) = oneshot::channel::<Digest>();
+            let t0 = context.current();
+            assert!(
+                super::pace_and_send(
+                    &context,
+                    tx,
+                    Digest(B256::ZERO),
+                    ProposalPacing {
+                        min_block_time: Duration::ZERO,
+                        propose_start: t0,
+                        resolve_pad: Duration::ZERO
+                    }
+                )
+                .await
+            );
+            let waited = context.current().duration_since(t0).unwrap_or_default();
+            (rx.await.ok(), waited)
+        });
+        assert_eq!(received, Some(Digest(B256::ZERO)));
+        assert_eq!(waited, Duration::ZERO);
+    }
+
+    #[test]
+    fn active_build_excludes_resolve_pad_without_changing_the_floor() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+        for (elapsed_ms, pad_ms, active_ms, wait_ms) in [(500, 200, 300, 500), (100, 200, 0, 900)] {
+            let recorder = DebuggingRecorder::new();
+            metrics::with_local_recorder(&recorder, || {
+                commonware_runtime::deterministic::Runner::default().start(|clock| async move {
+                    let start = clock.current();
+                    clock.sleep(Duration::from_millis(elapsed_ms)).await;
+                    let (response, receiver) = oneshot::channel();
+                    assert!(
+                        pace_and_send(
+                            &clock,
+                            response,
+                            Digest::ZERO,
+                            ProposalPacing {
+                                min_block_time: Duration::from_millis(1000),
+                                propose_start: start,
+                                resolve_pad: Duration::from_millis(pad_ms),
+                            }
+                        )
+                        .await
+                    );
+                    assert_eq!(receiver.await.unwrap(), Digest::ZERO);
+                    assert_eq!(
+                        clock.current().duration_since(start).unwrap(),
+                        Duration::from_millis(1000)
+                    );
+                });
+            });
+            let snapshot = recorder.snapshotter().snapshot().into_vec();
+            assert_eq!(snapshot.len(), 2);
+            for (key, _, _, value) in snapshot {
+                let expected = match key.key().name() {
+                    "outbe_consensus_block_build_duration_ms" => active_ms,
+                    "outbe_consensus_block_wait_duration_ms" => wait_ms,
+                    name => panic!("unexpected metric: {name}"),
+                };
+                assert_eq!(value, DebugValue::Histogram(vec![(expected as f64).into()]));
+            }
+        }
+    }
+
+    #[test]
+    fn pacing_reports_failed_delivery_even_without_a_floor() {
+        commonware_runtime::deterministic::Runner::default().start(|clock| async move {
+            let (response, receiver) = oneshot::channel();
+            drop(receiver);
+            assert!(
+                !pace_and_send(
+                    &clock,
+                    response,
+                    Digest::ZERO,
+                    ProposalPacing {
+                        min_block_time: Duration::ZERO,
+                        propose_start: clock.current(),
+                        resolve_pad: Duration::ZERO,
+                    }
+                )
+                .await
+            );
+        });
+    }
+
+    #[test]
+    fn parent_clock_comparison_is_strict_and_timestamp_clamping_stays_pure() {
+        use metrics_util::debugging::DebuggingRecorder;
+        let recorder = DebuggingRecorder::new();
+        metrics::with_local_recorder(&recorder, || {
+            let mut block = crate::test_fixtures::block_with_number(1)
+                .into_inner()
+                .into_block();
+            block.header.inner.timestamp = 3;
+            let parent = ConsensusBlock::from_sealed(
+                reth_ethereum::primitives::SealedBlock::seal_slow(block),
+            );
+            assert_eq!(parent.timestamp_millis(), 3000);
+            for (now, ahead) in [
+                (2999, true),
+                (3000, false),
+                (3001, false),
+                (3999, false),
+                (4000, false),
+            ] {
+                assert_eq!(parent_ahead_of_local_clock(Some(&parent), now), ahead);
+                assert_eq!(
+                    clamp_proposed_timestamp_millis(3000, now, 60_000, 1000),
+                    4000
+                );
+            }
+            assert!(!parent_ahead_of_local_clock(None, 0));
+            let mut block = crate::test_fixtures::block_with_number(1)
+                .into_inner()
+                .into_block();
+            block.header.inner.timestamp = 0;
+            let zero_parent = ConsensusBlock::from_sealed(
+                reth_ethereum::primitives::SealedBlock::seal_slow(block),
+            );
+            assert!(!parent_ahead_of_local_clock(Some(&zero_parent), 0));
+        });
+        assert!(recorder.snapshotter().snapshot().into_vec().is_empty());
     }
 }
