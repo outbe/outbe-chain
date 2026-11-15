@@ -87,10 +87,10 @@ pub fn feeder() -> Result<()> {
     let validator = required_env("OUTBE_VALIDATOR_ADDRESS")?;
     ensure!(valid_address(&validator), "invalid OUTBE_VALIDATOR_ADDRESS");
 
-    let key_path = Path::new(process::ROOT).join("keys/evm-key.hex");
+    let key_path = Path::new(process::ROOT).join("keys/feeder-key.hex");
     let key = fs::read_to_string(&key_path)
-        .wrap_err_with(|| format!("cannot read Validator EVM key: {}", key_path.display()))?;
-    ensure!(valid_key(&key), "Validator EVM key is not canonical");
+        .wrap_err_with(|| format!("cannot read feeder key: {}", key_path.display()))?;
+    ensure!(valid_key(&key), "feeder key is not canonical");
     let public = fs::read_to_string(Path::new(process::ROOT).join("feeder-public.toml"))
         .wrap_err("cannot read public feeder configuration")?;
 

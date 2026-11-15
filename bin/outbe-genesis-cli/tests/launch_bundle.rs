@@ -57,6 +57,8 @@ fn render_fixture(root: &Path, overrides: Option<Value>) -> (PathBuf, PathBuf) {
         let dir = keys_dir.join(format!("validator-{index}"));
         fs::create_dir_all(&dir).expect("mkdir validator");
         fs::write(dir.join("evm-key.hex"), format!("{:064x}\n", index + 1)).expect("write evm key");
+        fs::write(dir.join("feeder-key.hex"), format!("{:064x}\n", index + 11))
+            .expect("write feeder key");
     }
     let genesis = output_dir.join("genesis.json");
     let tee_policy = initial_tee_policy_v1(
@@ -133,6 +135,9 @@ fn render_writes_valid_bash_scripts_and_stable_bootnodes() {
             assert!(status.success(), "bash -n failed for {name}");
         }
         assert!(directory.join("feeder.toml").is_file());
+        let feeder = fs::read_to_string(directory.join("feeder.toml")).expect("feeder config");
+        assert!(feeder.contains(&format!("private_key = \"0x{:064x}\"", index + 11)));
+        assert!(!feeder.contains(&format!("private_key = \"0x{:064x}\"", index + 1)));
 
         let start_all = fs::read_to_string(directory.join("start-all.sh")).expect("start-all");
         assert!(start_all.contains("logs/enclave.log (pid $(cat enclave.pid))"));

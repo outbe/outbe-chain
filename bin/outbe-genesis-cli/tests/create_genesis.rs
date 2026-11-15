@@ -79,6 +79,7 @@ fn fake_validators() -> Vec<Value> {
         .map(|index| {
             json!({
                 "address": format!("0x{}", (index + 1).to_string().repeat(40)),
+                "feeder_address": format!("0x{}", (index + 5).to_string().repeat(40)),
                 "public_key": format!("{:02x}", index + 1).repeat(48),
                 "radicle_node_id": format!("0x{}", format!("{:02x}", index + 9).repeat(32)),
                 "p2p_address": format!("10.0.0.{}:30400", index + 1),

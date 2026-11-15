@@ -311,6 +311,7 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
     let secrets = [
         "signing-key.hex",
         "evm-key.hex",
+        "feeder-key.hex",
         "reth-p2p-secret.hex",
         "radicle/keys/radicle",
     ];
@@ -339,6 +340,7 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
         fs::set_permissions(keys.join(relative), fs::Permissions::from_mode(0o600))?;
     }
     canonical_key(&keys.join("evm-key.hex"))?;
+    canonical_key(&keys.join("feeder-key.hex"))?;
     canonical_key(&keys.join("reth-p2p-secret.hex"))?;
     process::capture(
         root.join("outbe-keygen"),

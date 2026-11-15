@@ -126,6 +126,7 @@ fn print_summary(validator: Address, minimum_stake: U256, certified_rpc: &str) {
     println!("  address:          {validator:#x}");
     println!("  BLS key:          /opt/outbe-chain/keys/signing-key.hex");
     println!("  EVM key:          /opt/outbe-chain/keys/evm-key.hex");
+    println!("  Feeder key:       /opt/outbe-chain/keys/feeder-key.hex");
     println!("  Reth P2P key:     /opt/outbe-chain/keys/reth-p2p-secret.hex");
     println!("  Radicle identity: /opt/outbe-chain/keys/radicle");
     println!();

@@ -358,12 +358,12 @@ fn write_validator_scripts(
         &caddy_install_script(config, paths.base_dir, index)?,
     )?;
 
-    let evm_key_path = paths
+    let feeder_key_path = paths
         .keys_dir
         .join(format!("validator-{index}"))
-        .join("evm-key.hex");
-    let raw_key =
-        fs::read_to_string(&evm_key_path).map_err(|err| GenesisError::io(&evm_key_path, err))?;
+        .join("feeder-key.hex");
+    let raw_key = fs::read_to_string(&feeder_key_path)
+        .map_err(|err| GenesisError::io(&feeder_key_path, err))?;
     let signer_key = raw_key
         .trim()
         .strip_prefix("0x")

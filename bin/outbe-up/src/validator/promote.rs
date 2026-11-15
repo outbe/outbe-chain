@@ -19,6 +19,7 @@ use crate::{
 const TEE_JOIN_ATTEMPTS: usize = 3;
 const TEE_JOIN_RETRY_DELAY: Duration = Duration::from_millis(100);
 const FINALIZED_VIEW_MISMATCH: &str = "finalized schedule and eth finalized block disagree";
+const ORACLE_DELEGATE_ROLE: u8 = 1;
 
 pub async fn run() -> Result<()> {
     let _lock = process::LifecycleLock::acquire()?;
@@ -26,7 +27,9 @@ pub async fn run() -> Result<()> {
     let mut progress = Progress::new();
     let local = RpcClient::new(LOCAL_RPC)?;
     let remote = RpcClient::new(journal.config.network.certified_rpc.clone())?;
-    let validator = validator_address(&Path::new(process::ROOT).join("keys/evm-key.hex"))?;
+    let keys = Path::new(process::ROOT).join("keys");
+    let validator = validator_address(&keys.join("evm-key.hex"))?;
+    let feeder = validator_address(&keys.join("feeder-key.hex"))?;
 
     progress.stage("checking synchronized full node and validator state");
     ensure!(
@@ -93,6 +96,8 @@ pub async fn run() -> Result<()> {
         );
     }
 
+    ensure_feeder_delegate(&mut journal, &remote, validator, feeder, &mut progress).await?;
+
     progress.stage("switching the same data directory to validator mode");
     process::systemctl(&["disable", "--now", FULL_NODE])?;
     process::systemctl(&["enable", "--now", VALIDATOR_TARGET])?;
@@ -115,6 +120,42 @@ pub async fn run() -> Result<()> {
     progress.done(&format!(
         "validator {validator:#x} is promoted; DKG activation continues in the background"
     ));
+    Ok(())
+}
+
+async fn ensure_feeder_delegate(
+    journal: &mut Journal,
+    remote: &RpcClient,
+    validator: alloy_primitives::Address,
+    feeder: alloy_primitives::Address,
+    progress: &mut Progress,
+) -> Result<()> {
+    if remote
+        .validator_delegate(validator, ORACLE_DELEGATE_ROLE)
+        .await?
+        == feeder
+    {
+        return Ok(());
+    }
+    progress.stage("delegating oracle votes to the feeder signer");
+    let hash = if let Some(hash) = journal.feeder_delegate_transaction.clone() {
+        hash
+    } else {
+        let feeder_arg = format!("{feeder:#x}");
+        let output = run_outbe_cli(&["validator", "delegate", "oracle", &feeder_arg])?;
+        let hash = transaction_hash(&output)?;
+        journal.feeder_delegate_transaction = Some(hash.clone());
+        journal.save()?;
+        hash
+    };
+    wait_transaction_finalized(remote, &hash, progress).await?;
+    ensure!(
+        remote
+            .validator_delegate(validator, ORACLE_DELEGATE_ROLE)
+            .await?
+            == feeder,
+        "oracle feeder delegation is not visible after finality"
+    );
     Ok(())
 }
 

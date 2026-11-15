@@ -9,10 +9,10 @@ use crate::error::GenesisError;
 use crate::inputs::{StakeSeedTerms, ValidatorSeedTerms};
 use crate::keccak::keccak256;
 use crate::seed_codec::{
-    address_as_u256, address_bytes, alloc_balance_hex, parse_genesis_timestamp, parse_i128,
-    parse_u256, parse_u64, pubkey_bytes, radicle_node_id_bytes, u64_bytes, write_mapping_bytes,
-    StorageBuilder, DEFAULT_EPOCH_LENGTH_BLOCKS, DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS,
-    DEFAULT_UNBONDING_PERIOD, HYPERLANE_CONTROLLER_ADDRESS,
+    address_as_u256, address_bytes, alloc_balance_hex, nested_mapping_key, parse_genesis_timestamp,
+    parse_i128, parse_u256, parse_u64, pubkey_bytes, radicle_node_id_bytes, u64_bytes,
+    write_mapping_bytes, StorageBuilder, DEFAULT_EPOCH_LENGTH_BLOCKS,
+    DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS, DEFAULT_UNBONDING_PERIOD, HYPERLANE_CONTROLLER_ADDRESS,
     HYPERLANE_CONTROLLER_BOOTSTRAP_ADMIN_SLOT, MIN_STAKE, STAKING_ADDRESS, VALIDATOR_SET_ADDRESS,
     VAULT_ROUTER_ADDRESS,
 };
@@ -21,6 +21,7 @@ use crate::seed_p2p::encode_p2p_address_payload;
 
 /// Consensus bound on maximum registered validators (`outbe_consensus::bls::MAX_VALIDATORS`).
 pub const CONSENSUS_VALIDATOR_BOUND: u64 = 256;
+const ORACLE_DELEGATE_ROLE: u8 = 1;
 
 /// Seed the ValidatorSet precompile storage layout.
 pub fn seed_validator_set(
@@ -136,6 +137,12 @@ pub fn seed_validator_set(
         let pk_hash = keccak256(&pk);
         let addr_bytes = address_bytes(addr)?;
         let addr_u256 = address_as_u256(addr)?;
+        let feeder = validator
+            .get("feeder_address")
+            .and_then(Value::as_str)
+            .ok_or_else(|| GenesisError::validation("validator missing feeder_address"))?;
+        let feeder_bytes = address_bytes(feeder)?;
+        let feeder_u256 = address_as_u256(feeder)?;
 
         storage.set_mapping_b256(5, &addr_bytes, &pk_lo);
         storage.set_mapping_b256(6, &addr_bytes, &pk_hi);
@@ -147,6 +154,14 @@ pub fn seed_validator_set(
         storage.set_mapping(24, &addr_bytes, 1u64);
         storage.set_mapping_b256(50, &addr_bytes, radicle_node_id);
         storage.set_mapping(51, radicle_node_id, addr_u256);
+        storage.set_raw_slot(
+            nested_mapping_key(&addr_bytes, &[ORACLE_DELEGATE_ROLE], 48),
+            feeder_u256,
+        );
+        storage.set_raw_slot(
+            nested_mapping_key(&[ORACLE_DELEGATE_ROLE], &feeder_bytes, 49),
+            addr_u256,
+        );
 
         if let Some((version, payload)) = encode_p2p_address_payload(validator.get("p2p_address"))?
         {

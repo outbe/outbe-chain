@@ -179,6 +179,12 @@ impl RpcClient {
         })
     }
 
+    pub async fn validator_delegate(&self, validator: Address, role: u8) -> Result<Address> {
+        let call = IValidatorSet::getDelegateCall { validator, role };
+        let result = self.eth_call(VALIDATOR_SET, &call.abi_encode()).await?;
+        Ok(IValidatorSet::getDelegateCall::abi_decode_returns(&result)?)
+    }
+
     pub async fn transaction_block(&self, hash: &str) -> Result<Option<u64>> {
         let Some(receipt) = self
             .call_optional("eth_getTransactionReceipt", json!([hash]))

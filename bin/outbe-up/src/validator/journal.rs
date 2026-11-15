@@ -31,6 +31,8 @@ pub struct Journal {
     #[serde(default)]
     pub stake_transaction: Option<String>,
     #[serde(default)]
+    pub feeder_delegate_transaction: Option<String>,
+    #[serde(default)]
     pub confirm_ready_transaction: Option<String>,
     #[serde(default)]
     pub snapshot_sha256: Option<String>,
@@ -52,6 +54,7 @@ impl Journal {
             valid_until: None,
             tee_join_complete: false,
             stake_transaction: None,
+            feeder_delegate_transaction: None,
             confirm_ready_transaction: None,
             snapshot_sha256: None,
             snapshot_restore_in_progress: None,
