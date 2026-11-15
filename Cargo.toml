@@ -440,8 +440,57 @@ split-debuginfo = "unpacked"
 [profile.test]
 debug = 0
 
-[profile.dev.package.outbe-zk-backend]
-opt-level = 3
+# Release profile tuned for binary size across the release matrix while
+# preserving unwind semantics. `panic` MUST stay `"unwind"`: Reth's task
+# manager, the Commonware runtime, `BarretenbergHandler` FFI guards, and
+# `outbe-runtime` / `outbe-execution` shutdown paths rely on `catch_unwind`.
+# Cost: slower `--release` / `bench` link passes, and `strip = "symbols"` drops
+# `.symtab` function names from `RUST_BACKTRACE=1` and `perf` (switch to
+# `strip = "debuginfo"` if symbolicated backtraces are needed; `.dynsym` for
+# Gramine SGX and `.dep-v0` for `cargo auditable` stay intact).
+[profile.release]
+strip = "symbols"
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+
+# Optimize non-workspace crypto, ZK witness solvers, KDFs, C-crypto wrappers,
+# and proptest RNGs in dev/test builds. Workspace crates stay at -O0 (except
+# `outbe-zk-backend`) to preserve fast incremental rebuilds and debuggability.
+[profile.dev.package]
+outbe-zk-backend = { opt-level = 3 }
+# C-crypto build.rs (`cc-rs` reads OPT_LEVEL from the package profile)
+blst = { opt-level = 3 }
+c-kzg = { opt-level = 3 }
+secp256k1-sys = { opt-level = 3 }
+# Hashing & KDF
+sha2 = { opt-level = 3 }
+sha3 = { opt-level = 3 }
+keccak = { opt-level = 3 }
+blake2 = { opt-level = 3 }
+argon2 = { opt-level = 3 }
+# ZK / BN254 / Grumpkin / Noir blackbox solvers
+ark-ff = { opt-level = 3 }
+ark-bn254 = { opt-level = 3 }
+ark-grumpkin = { opt-level = 3 }
+num-bigint = { opt-level = 3 }
+acvm_blackbox_solver = { opt-level = 3 }
+bn254_blackbox_solver = { opt-level = 3 }
+# Curves, signatures & AEAD transport
+k256 = { opt-level = 3 }
+p256 = { opt-level = 3 }
+crypto-bigint = { opt-level = 3 }
+ed25519-dalek = { opt-level = 3 }
+x25519-dalek = { opt-level = 3 }
+curve25519-dalek = { opt-level = 3 }
+chacha20 = { opt-level = 3 }
+poly1305 = { opt-level = 3 }
+chacha20poly1305 = { opt-level = 3 }
+# Property-testing generators & RNGs
+proptest = { opt-level = 3 }
+rand_chacha = { opt-level = 3 }
+rand_xorshift = { opt-level = 3 }
+
 [patch.crates-io]
 alloy-evm = { path = "vendor/alloy-evm" }
 outbe-poseidon = { path = "crates/zk/poseidon" }
