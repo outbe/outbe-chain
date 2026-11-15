@@ -211,12 +211,15 @@ pub fn node_script(
     } else {
         ""
     };
-    let local_consensus_defaults = config
+    let local_consensus_defaults = if config
         .get("consensus_use_local_defaults")
         .and_then(Value::as_bool)
         .unwrap_or(false)
-        .then_some("  --consensus.use-local-defaults \\\n")
-        .unwrap_or_default();
+    {
+        "  --consensus.use-local-defaults \\\n"
+    } else {
+        ""
+    };
     let validator_keys = format!("{keys_dir}/validator-{index}");
     let validator_dir = format!("{base_dir}/validator-{index}");
     let radicle_home = format!("{validator_keys}/radicle");

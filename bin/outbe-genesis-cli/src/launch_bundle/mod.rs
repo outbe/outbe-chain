@@ -67,6 +67,12 @@ struct BundlePaths<'a> {
     remote_keys_dir: &'a str,
 }
 
+#[derive(Clone, Copy)]
+struct DirectDevScriptContext<'a> {
+    network_binding: &'a str,
+    node_id: &'a str,
+}
+
 /// POSIX shell quoting matching Python's `shlex.quote`.
 pub fn quote(value: &str) -> String {
     if value.is_empty() {
@@ -293,8 +299,7 @@ fn write_validator_scripts(
     index: usize,
     validator: &Value,
     paths: &BundlePaths<'_>,
-    direct_dev_binding: Option<&str>,
-    direct_dev_node_id: Option<&str>,
+    direct_dev: Option<DirectDevScriptContext<'_>>,
 ) -> Result<(), GenesisError> {
     let directory = paths.output_dir.join(format!("validator-{index}"));
     fs::create_dir_all(&directory).map_err(|err| GenesisError::io(&directory, err))?;
@@ -313,8 +318,8 @@ fn write_validator_scripts(
             config,
             index,
             paths.base_dir,
-            direct_dev_binding,
-            direct_dev_node_id,
+            direct_dev.map(|context| context.network_binding),
+            direct_dev.map(|context| context.node_id),
         )?,
     )?;
     write_script(
@@ -436,16 +441,14 @@ pub fn render(
     };
     let direct_dev_binding = direct_dev_network_binding(config, genesis_path)?;
     for (index, validator) in validators.iter().enumerate() {
-        write_validator_scripts(
-            config,
-            index,
-            validator,
-            &paths,
-            direct_dev_binding.as_deref(),
+        let direct_dev =
             direct_dev_binding
-                .as_ref()
-                .map(|_| reth_p2p_public_keys[index].as_str()),
-        )?;
+                .as_deref()
+                .map(|network_binding| DirectDevScriptContext {
+                    network_binding,
+                    node_id: &reth_p2p_public_keys[index],
+                });
+        write_validator_scripts(config, index, validator, &paths, direct_dev)?;
     }
 
     stage_signed_enclave(config, output_dir)?;
