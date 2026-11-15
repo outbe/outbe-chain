@@ -14,7 +14,6 @@ use crate::{support::process, validator::rpc::RpcClient};
 
 const ENCLAVE_ADDRESS: &str = "127.0.0.1:17000";
 const RADICLE_SOCKET: &str = "/opt/outbe-chain/keys/radicle/node/outbe-control.sock";
-const LOCAL_RPC: &str = "http://127.0.0.1:8545";
 
 pub fn enclave() -> Result<()> {
     let runtime = required_env("OUTBE_ENCLAVE_RUNTIME")?;
@@ -86,6 +85,7 @@ pub fn feeder() -> Result<()> {
     );
     let validator = required_env("OUTBE_VALIDATOR_ADDRESS")?;
     ensure!(valid_address(&validator), "invalid OUTBE_VALIDATOR_ADDRESS");
+    let rpc = local_rpc_url()?;
 
     let key_path = Path::new(process::ROOT).join("keys/feeder-key.hex");
     let key = fs::read_to_string(&key_path)
@@ -102,7 +102,7 @@ pub fn feeder() -> Result<()> {
     let mut content = format!(
         concat!(
             "[chain]\n",
-            "rpc_endpoint = \"http://127.0.0.1:8545\"\n",
+            "rpc_endpoint = {rpc}\n",
             "chain_id = {chain_id}\n",
             "gasless_oracle_votes = true\n\n",
             "[account]\n",
@@ -113,6 +113,7 @@ pub fn feeder() -> Result<()> {
             "bind_address = \"127.0.0.1:9002\"\n\n"
         ),
         chain_id = chain_id,
+        rpc = serde_json::to_string(&rpc)?,
         private_key = serde_json::to_string(&format!("0x{key}"))?,
         validator = serde_json::to_string(&validator)?,
     );
@@ -161,7 +162,7 @@ pub async fn wait_rpc(timeout: u64) -> Result<()> {
     let expected = required_env("OUTBE_CHAIN_ID")?
         .parse::<u64>()
         .wrap_err("OUTBE_CHAIN_ID must be a positive decimal integer")?;
-    let rpc = RpcClient::new(LOCAL_RPC)?;
+    let rpc = RpcClient::new(local_rpc_url()?)?;
     let main_pid = env::var("MAINPID")
         .ok()
         .and_then(|value| value.parse::<u32>().ok())
@@ -211,6 +212,17 @@ fn required_env(name: &str) -> Result<String> {
         .ok()
         .filter(|value| !value.is_empty())
         .ok_or_else(|| eyre::eyre!("missing environment variable: {name}"))
+}
+
+fn local_rpc_url() -> Result<String> {
+    let bind = required_env("OUTBE_RPC_BIND_IP")?
+        .parse::<std::net::Ipv4Addr>()
+        .wrap_err("OUTBE_RPC_BIND_IP must be an IPv4 literal")?;
+    ensure!(
+        bind.is_loopback() || bind.is_private(),
+        "OUTBE_RPC_BIND_IP must be a loopback or private IPv4 address"
+    );
+    Ok(format!("http://{bind}:8545"))
 }
 
 fn private_hex(path: &Path) -> Result<String> {

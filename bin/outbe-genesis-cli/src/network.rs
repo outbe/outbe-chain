@@ -1,6 +1,7 @@
 //! Network identities, defaults and configuration validation.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
@@ -57,7 +58,7 @@ pub const TEE_KEYS: [&str; 6] = [
     "minimum_tcb_evaluation_data_number",
 ];
 
-const STATIC_TOP_LEVEL_KEYS: [&str; 40] = [
+const STATIC_TOP_LEVEL_KEYS: [&str; 41] = [
     "network",
     "validators",
     "keys_dir",
@@ -91,6 +92,7 @@ const STATIC_TOP_LEVEL_KEYS: [&str; 40] = [
     "remote_base_dir",
     "remote_keys_dir",
     "price_provider",
+    "rpc_bind_ip",
     "public_rpc_port",
     "public_radicle_status_port",
     "price_feed_rest",
@@ -175,7 +177,36 @@ pub fn validate_config(config: &Value) -> Result<(), GenesisError> {
     }
     validate_founders(obj)?;
     validate_tee(config, obj)?;
+    rpc_bind_ip(config, "127.0.0.1")?;
     validate_ports(obj)
+}
+
+/// Resolve the RPC bind for one founder. `validator` selects that founder's
+/// own address from the `validators` list.
+pub fn rpc_bind_ip(config: &Value, validator_host: &str) -> Result<Ipv4Addr, GenesisError> {
+    let configured = config
+        .get("rpc_bind_ip")
+        .map(|value| {
+            value.as_str().ok_or_else(|| {
+                GenesisError::validation("rpc_bind_ip must be an IPv4 address or `validator`")
+            })
+        })
+        .transpose()?
+        .unwrap_or("127.0.0.1");
+    let value = if configured == "validator" {
+        validator_host
+    } else {
+        configured
+    };
+    let address = value.parse::<Ipv4Addr>().map_err(|_| {
+        GenesisError::validation("rpc_bind_ip must be an IPv4 address or `validator`")
+    })?;
+    if !address.is_loopback() && !address.is_private() {
+        return Err(GenesisError::validation(
+            "rpc_bind_ip must resolve to a loopback or private IPv4 address",
+        ));
+    }
+    Ok(address)
 }
 
 fn validate_founders(obj: &Map<String, Value>) -> Result<(), GenesisError> {

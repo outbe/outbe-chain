@@ -16,7 +16,6 @@ use crate::{
     },
 };
 
-const LOCAL_RPC: &str = "http://127.0.0.1:8545";
 const FULL_NODE: &str = "outbe-full-node.service";
 const VALIDATOR_SERVICE: &str = "outbe-validator.service";
 const ENCLAVE_SERVICE: &str = "outbe-enclave.service";
@@ -40,7 +39,7 @@ struct StatusSnapshot<'a> {
 pub async fn show(watch: bool) -> Result<()> {
     process::require_root()?;
     let journal = Journal::load()?;
-    let local = RpcClient::new(LOCAL_RPC)?;
+    let local = RpcClient::new(journal.config.network.local_rpc_url())?;
     let remote = RpcClient::new(journal.config.network.certified_rpc.clone())?;
     let validator = validator_address(&Path::new(ROOT).join("keys/evm-key.hex"))?;
     if !watch {

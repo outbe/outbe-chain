@@ -247,6 +247,18 @@ fn config_validation_matrix_and_rejections() {
     let err = validate_config(&port_oob).expect_err("port out of bounds");
     assert!(err.to_string().contains("outside 1..65535"));
 
+    validate_config(&merge_obj(
+        minimal_config("./keys"),
+        json!({"rpc_bind_ip": "validator"}),
+    ))
+    .expect("per-validator private RPC bind");
+    let err = validate_config(&merge_obj(
+        minimal_config("./keys"),
+        json!({"rpc_bind_ip": "0.0.0.0"}),
+    ))
+    .expect_err("unspecified RPC bind");
+    assert!(err.to_string().contains("loopback or private"));
+
     let dcap_no_measurements = merge_obj(
         minimal_config("./keys"),
         json!({"tee": {"mode": "dcap-required"}}),

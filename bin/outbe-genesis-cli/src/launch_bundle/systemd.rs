@@ -6,6 +6,7 @@ use std::path::Path;
 use serde_json::Value;
 
 use crate::error::GenesisError;
+use crate::network::rpc_bind_ip;
 
 use super::{port_of, quote, write_script};
 
@@ -31,6 +32,7 @@ pub fn caddyfile(config: &Value, host: &str) -> Result<String, GenesisError> {
     let status_port = port_of(config, "radicle_status_port")?;
     let public_rpc = port_of(config, "public_rpc_port")?;
     let public_radicle = port_of(config, "public_radicle_status_port")?;
+    let rpc_bind = rpc_bind_ip(config, host)?;
     Ok(format!(
         "# Generated for {host}. Plain HTTP on the public address: no TLS,\n\
 # because these hosts are addressed by IP and have no certificate names.\n\
@@ -52,7 +54,7 @@ pub fn caddyfile(config: &Value, host: &str) -> Result<String, GenesisError> {
 \t\trespond 204\n\
 \t}}\n\
 \thandle {{\n\
-\t\treverse_proxy 127.0.0.1:{rpc_port} {{\n\
+\t\treverse_proxy {rpc_bind}:{rpc_port} {{\n\
 \t\t\theader_up X-Real-IP {{remote_host}}\n\
 \t\t\theader_down -Access-Control-Allow-Origin\n\
 \t\t}}\n\
@@ -116,10 +118,12 @@ pub fn tee_renew_script(
     index: usize,
     base_dir: &str,
     keys_dir: &str,
+    validator_host: &str,
 ) -> Result<String, GenesisError> {
     let key_dir = format!("{keys_dir}/validator-{index}");
     let tee_port = port_of(config, "tee_enclave_port")?;
     let rpc_port = port_of(config, "rpc_port")?;
+    let rpc_bind = rpc_bind_ip(config, validator_host)?;
     Ok(format!(
         "\nKEY=\"$(tr -d '[:space:]' < {q_evm_key})\"\n\
 exec {q_cli} tee renew \\\n\
@@ -127,7 +131,7 @@ exec {q_cli} tee renew \\\n\
   --node-data-dir {q_data_dir} \\\n\
   --reth-p2p-secret-key {q_p2p_secret} \\\n\
   --private-key \"$KEY\" \\\n\
-  --rpc-url http://127.0.0.1:{rpc_port}\n",
+  --rpc-url http://{rpc_bind}:{rpc_port}\n",
         q_evm_key = quote(&format!("{key_dir}/evm-key.hex")),
         q_cli = quote(&format!("{base_dir}/outbe-cli")),
         q_data_dir = quote(&format!("{base_dir}/validator-{index}/data")),

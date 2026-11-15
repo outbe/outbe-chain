@@ -15,6 +15,7 @@ use crate::{
 
 const ENV_KEYS: &[&str] = &[
     "OUTBE_EXTERNAL_IP",
+    "OUTBE_RPC_BIND_IP",
     "OUTBE_CERTIFIED_RPC",
     "OUTBE_VALIDATOR_ADDRESS",
     "OUTBE_BOOTNODES",
@@ -123,6 +124,13 @@ fn validate_environment(values: &BTreeMap<String, String>) -> Result<()> {
     values["OUTBE_EXTERNAL_IP"]
         .parse::<std::net::Ipv4Addr>()
         .wrap_err("OUTBE_EXTERNAL_IP must be an IPv4 literal")?;
+    let rpc_bind = values["OUTBE_RPC_BIND_IP"]
+        .parse::<std::net::Ipv4Addr>()
+        .wrap_err("OUTBE_RPC_BIND_IP must be an IPv4 literal")?;
+    ensure!(
+        rpc_bind.is_loopback() || rpc_bind.is_private(),
+        "OUTBE_RPC_BIND_IP must be a loopback or private IPv4 address"
+    );
     let rpc = &values["OUTBE_CERTIFIED_RPC"];
     ensure!(
         (rpc.starts_with("http://") || rpc.starts_with("https://"))

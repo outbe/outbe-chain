@@ -347,7 +347,7 @@ fn write_validator_scripts(
         .map_err(|err| GenesisError::io(&caddyfile_path, err))?;
     write_script(
         &directory.join("run-tee-renew.sh"),
-        &tee_renew_script(config, index, paths.base_dir, paths.remote_keys_dir)?,
+        &tee_renew_script(config, index, paths.base_dir, paths.remote_keys_dir, host)?,
     )?;
     write_script(
         &directory.join("preflight.sh"),
@@ -381,7 +381,7 @@ fn write_validator_scripts(
         .map_err(|err| GenesisError::io(&pairs_path, err))?;
 
     let tee_port = port_of(config, "tee_enclave_port")?;
-    let start_all = start_all_script(config, index, paths.base_dir)?
+    let start_all = start_all_script(config, index, paths.base_dir, host)?
         .replace("{TEE_PORT}", &tee_port.to_string());
     write_script(&directory.join("start-all.sh"), &start_all)?;
     write_script(

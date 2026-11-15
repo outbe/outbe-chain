@@ -22,7 +22,7 @@ ExecStart=/opt/outbe-chain/outbe-chain node \
   --consensus.storage-dir /opt/outbe-chain/validator-0/consensus \
   --tee-enclave-socket 127.0.0.1:17000 \
   --http \
-  --http.addr 127.0.0.1 \
+  --http.addr ${OUTBE_RPC_BIND_IP} \
   --http.port 8545 \
   --http.api eth,net,web3,outbe \
   --authrpc.port 8551 \

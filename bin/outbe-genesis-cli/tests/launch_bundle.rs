@@ -384,6 +384,25 @@ fn caddy_systemd_units_tee_renewal_and_enclave_modes() {
         fs::read_to_string(out_private.join("validator-2/run-node.sh")).expect("node_private");
     assert!(node_private.contains("--consensus.use-local-defaults"));
 
+    let tmp_rpc = tempfile::tempdir().expect("tmp_rpc");
+    let (_, out_rpc) = render_fixture(tmp_rpc.path(), Some(json!({"rpc_bind_ip": "validator"})));
+    let rpc_dir = out_rpc.join("validator-2");
+    assert!(fs::read_to_string(rpc_dir.join("run-node.sh"))
+        .expect("rpc node")
+        .contains("--http.addr 10.0.0.3"));
+    assert!(fs::read_to_string(rpc_dir.join("feeder.toml"))
+        .expect("rpc feeder")
+        .contains("rpc_endpoint = \"http://10.0.0.3:8545\""));
+    assert!(fs::read_to_string(rpc_dir.join("start-all.sh"))
+        .expect("rpc start")
+        .contains("/dev/tcp/10.0.0.3/8545"));
+    assert!(fs::read_to_string(rpc_dir.join("run-tee-renew.sh"))
+        .expect("rpc renew")
+        .contains("--rpc-url http://10.0.0.3:8545"));
+    assert!(fs::read_to_string(rpc_dir.join("Caddyfile"))
+        .expect("rpc caddy")
+        .contains("reverse_proxy 10.0.0.3:8545"));
+
     let enclave0 = fs::read_to_string(output_dir.join("validator-0").join("run-enclave.sh"))
         .expect("enclave0");
     assert!(enclave0.contains("outbe-tee-enclave-launch"));

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use crate::error::GenesisError;
-use crate::network::profiles_dir;
+use crate::network::{profiles_dir, rpc_bind_ip};
 use crate::seed_codec::parse_u64;
 
 use super::{port_of, quote, uses_production_tee_session, DEFAULT_MAX_VALIDATORS};
@@ -231,6 +231,7 @@ pub fn node_script(
     let reth_p2p_port = port_of(config, "reth_p2p_port")?;
     let reth_discv5_port = port_of(config, "reth_discv5_port")?;
     let metrics_port = port_of(config, "metrics_port")?;
+    let rpc_bind = rpc_bind_ip(config, host)?;
 
     Ok(format!(
         "\n# Validator node: execution and consensus with native enclave Lysis.\n\
@@ -260,7 +261,7 @@ exec {q_binary} node \\\n\
   --radicle.control-socket {q_radicle_sock} \\\n\
   --radicle.status-address 127.0.0.1:{radicle_status_port} \\\n\
   --tee-enclave-socket 127.0.0.1:{tee_enclave_port} \\\n\
-  --http --http.addr 127.0.0.1 --http.port {rpc_port} \\\n\
+  --http --http.addr {rpc_bind} --http.port {rpc_port} \\\n\
   --http.api eth,net,web3,outbe \\\n\
   --authrpc.port {authrpc_port} \\\n\
   --port {reth_p2p_port} \\\n\
@@ -388,13 +389,22 @@ pub fn feeder_config(
         .and_then(Value::as_str)
         .ok_or_else(|| GenesisError::validation("validator missing address"))?;
     let feeder_health_port = port_of(config, "feeder_health_port")?;
+    let p2p_address = validator
+        .get("p2p_address")
+        .and_then(Value::as_str)
+        .unwrap_or("127.0.0.1");
+    let validator_host = p2p_address
+        .rsplit_once(':')
+        .map(|(host, _)| host)
+        .unwrap_or(p2p_address);
+    let rpc_bind = rpc_bind_ip(config, validator_host)?;
 
     Ok(format!(
         "# Price oracle feeder for validator-{index}.\n\
 pairs = \"pairs.toml\"\n\
 \n\
 [chain]\n\
-rpc_endpoint = \"http://127.0.0.1:{rpc_port}\"\n\
+rpc_endpoint = \"http://{rpc_bind}:{rpc_port}\"\n\
 chain_id = {chain_id}\n\
 gasless_oracle_votes = true\n\
 \n\
@@ -487,10 +497,12 @@ pub fn start_all_script(
     config: &Value,
     index: usize,
     base_dir: &str,
+    validator_host: &str,
 ) -> Result<String, GenesisError> {
     let directory = format!("{base_dir}/validator-{index}");
     let status_port = port_of(config, "radicle_status_port")?;
     let rpc_port = port_of(config, "rpc_port")?;
+    let rpc_bind = rpc_bind_ip(config, validator_host)?;
     Ok(format!(
         "\n# Bring up the configured storage, enclave, Radicle and node in dependency order.\n\
 cd {}\n\
@@ -519,7 +531,7 @@ nohup ./run-node.sh > logs/node.log 2>&1 &\n\
 echo $! > node.pid\n\
 echo \"waiting for RPC...\"\n\
 for _ in $(seq 1 180); do\n\
-  if (exec 3<>/dev/tcp/127.0.0.1/{rpc_port}) 2>/dev/null; then exec 3>&-; break; fi\n\
+  if (exec 3<>/dev/tcp/{rpc_bind}/{rpc_port}) 2>/dev/null; then exec 3>&-; break; fi\n\
   sleep 1\n\
 done\n\
 \n\

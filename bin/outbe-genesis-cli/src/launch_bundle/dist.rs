@@ -9,6 +9,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::error::GenesisError;
+use crate::network::rpc_bind_ip;
 use crate::seed_codec::parse_u64;
 
 use super::{copy_dir_recursive, port_of, quote, write_script};
@@ -201,6 +202,15 @@ SGX hardware, and the exact release measurements.\n"
     let radicle_status_port = port_of(config, "radicle_status_port")?;
     let tee_enclave_port = port_of(config, "tee_enclave_port")?;
     let feeder_health_port = port_of(config, "feeder_health_port")?;
+    let first_host = first_p2p
+        .rsplit_once(':')
+        .map(|(host, _)| host)
+        .unwrap_or(first_p2p);
+    let rpc_bind = if config.get("rpc_bind_ip").and_then(Value::as_str) == Some("validator") {
+        "<this-validator-private-ip>".to_owned()
+    } else {
+        rpc_bind_ip(config, first_host)?.to_string()
+    };
     Ok(format!(
         "# Deploying this network\n\
 \n\
@@ -242,8 +252,8 @@ Between the four machines:\n\
 | `{reth_discv5_port}` | reth discv5 (UDP) |\n\
 | `{radicle_port}` | Radicle replication |\n\
 \n\
-Everything else stays on loopback and must not be exposed: RPC\n\
-`{rpc_port}`, authrpc `{authrpc_port}`,\n\
+RPC uses its explicit loopback/private bind `{rpc_bind}:{rpc_port}`. Everything\n\
+else stays on loopback and must not be exposed: authrpc `{authrpc_port}`,\n\
 metrics `{metrics_port}`, Radicle status\n\
 `{radicle_status_port}`, the enclave socket\n\
 `{tee_enclave_port}` and the feeder health endpoint\n\
@@ -293,12 +303,12 @@ genesis itself stays valid.\n\
 \n\
 ```bash\n\
 # height advances on each machine\n\
-curl -s -X POST http://127.0.0.1:{rpc_port} \\\n\
+curl -s -X POST http://{rpc_bind}:{rpc_port} \\\n\
   -H 'content-type: application/json' \\\n\
   -d '{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_blockNumber\",\"params\":[]}}'\n\
 \n\
 # all four validators active\n\
-outbe-cli --rpc-url http://127.0.0.1:{rpc_port} validator list\n\
+outbe-cli --rpc-url http://{rpc_bind}:{rpc_port} validator list\n\
 \n\
 # feeder health\n\
 curl -s http://127.0.0.1:{feeder_health_port}/health\n\

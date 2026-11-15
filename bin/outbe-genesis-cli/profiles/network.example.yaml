@@ -73,6 +73,9 @@ tee:
 # consensus_use_local_defaults: false
 # reth_p2p_port: 30303
 # reth_discv5_port: 31303
+# RPC stays on loopback by default. Use `validator` to bind each founder to its
+# corresponding private address from `validators`.
+# rpc_bind_ip: 127.0.0.1
 # rpc_port: 8545
 # authrpc_port: 8551
 # metrics_port: 9101

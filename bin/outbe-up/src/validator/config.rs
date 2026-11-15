@@ -32,6 +32,8 @@ pub struct NetworkConfig {
     pub chain_id: u64,
     pub certified_rpc: String,
     pub external_ip: Ipv4Addr,
+    #[serde(default = "default_rpc_bind_ip")]
+    pub rpc_bind_ip: Ipv4Addr,
     pub bootnodes: Vec<String>,
     pub consensus_peers: Vec<String>,
     #[serde(default)]
@@ -149,6 +151,7 @@ impl OperatorConfig {
         let env = format!(
             concat!(
                 "OUTBE_EXTERNAL_IP=\"{}\"\n",
+                "OUTBE_RPC_BIND_IP=\"{}\"\n",
                 "OUTBE_CERTIFIED_RPC=\"{}\"\n",
                 "OUTBE_VALIDATOR_ADDRESS=\"{:#x}\"\n",
                 "OUTBE_BOOTNODES=\"{}\"\n",
@@ -160,6 +163,7 @@ impl OperatorConfig {
                 "OUTBE_CHAIN_ID=\"{}\"\n"
             ),
             self.network.external_ip,
+            self.network.rpc_bind_ip,
             self.network.certified_rpc,
             validator,
             self.network.bootnodes.join(","),
@@ -186,6 +190,10 @@ impl OperatorConfig {
         ensure!(
             self.network.chain_id > 0,
             "network.chain_id must be positive"
+        );
+        ensure!(
+            self.network.rpc_bind_ip.is_loopback() || self.network.rpc_bind_ip.is_private(),
+            "network.rpc_bind_ip must be a loopback or private IPv4 address"
         );
         ensure!(
             self.network.certified_rpc.starts_with("http://")
@@ -239,6 +247,16 @@ impl OperatorConfig {
             .wrap_err("feeder.public_toml is not valid TOML")?;
         Ok(())
     }
+}
+
+impl NetworkConfig {
+    pub fn local_rpc_url(&self) -> String {
+        format!("http://{}:8545", self.rpc_bind_ip)
+    }
+}
+
+const fn default_rpc_bind_ip() -> Ipv4Addr {
+    Ipv4Addr::LOCALHOST
 }
 
 fn development_network_binding(root: &Path, chain_id: u64) -> Result<String> {
@@ -341,6 +359,7 @@ feeder:
         ))
         .unwrap();
         config.validate().unwrap();
+        assert_eq!(config.network.rpc_bind_ip, Ipv4Addr::LOCALHOST);
         assert!(matches!(
             config.tee.lease_duration_seconds,
             LeaseDuration::Mode(LeaseDurationMode::Auto)

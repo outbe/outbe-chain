@@ -12,7 +12,7 @@ use crate::{
         rpc::RpcClient,
         validator_address,
         wait::{wait_for_rpc_chain, wait_for_sync, wait_for_verifier, wait_transaction_finalized},
-        ENCLAVE_SERVICE, FULL_NODE, LOCAL_RPC, RENEW_TIMER, VALIDATOR_SERVICE, VALIDATOR_TARGET,
+        ENCLAVE_SERVICE, FULL_NODE, RENEW_TIMER, VALIDATOR_SERVICE, VALIDATOR_TARGET,
     },
 };
 
@@ -25,7 +25,7 @@ pub async fn run() -> Result<()> {
     let _lock = process::LifecycleLock::acquire()?;
     let mut journal = Journal::load()?;
     let mut progress = Progress::new();
-    let local = RpcClient::new(LOCAL_RPC)?;
+    let local = RpcClient::new(journal.config.network.local_rpc_url())?;
     let remote = RpcClient::new(journal.config.network.certified_rpc.clone())?;
     let keys = Path::new(process::ROOT).join("keys");
     let validator = validator_address(&keys.join("evm-key.hex"))?;
