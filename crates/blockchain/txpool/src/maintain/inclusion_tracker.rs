@@ -43,7 +43,7 @@ impl InclusionStallTracker {
     ) -> Self {
         let effective_min_block_time = min_block_time.max(Duration::from_millis(1));
         // Warn at one quarter of the relevant expiry budget, then repeat at
-        // that cadence. Defaults: pending 150s / 75 blocks, queued 30s / 15 blocks.
+        // that cadence (for 2s genesis blocks: pending 150s / 75 blocks, queued 30s / 15 blocks).
         let blocks = |lifetime: Duration| {
             (lifetime.as_nanos() / 4 / effective_min_block_time.as_nanos())
                 .clamp(1, u64::MAX as u128) as u64

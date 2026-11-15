@@ -4,10 +4,10 @@ use crate::application::handler::verification::VerifyTask;
 use crate::metrics::propose::{record_proposal_outcome, ProposalOutcomeLabel};
 use commonware_utils::channel::oneshot;
 
-struct ProposalReply {
-    response: oneshot::Sender<Digest>,
-    propose_start: std::time::SystemTime,
-    outcome: eyre::Result<ProposeOutcome>,
+pub(super) struct ProposalReply {
+    pub(super) response: oneshot::Sender<Digest>,
+    pub(super) propose_start: std::time::SystemTime,
+    pub(super) outcome: eyre::Result<ProposeOutcome>,
 }
 impl ApplicationHandler {
     pub(super) fn dispatch_message<E>(&self, context: &E, message: Message)
@@ -85,7 +85,7 @@ impl ApplicationShared {
         )
         .await;
     }
-    async fn complete_propose_message(
+    pub(super) async fn complete_propose_message(
         &self,
         clock: &impl commonware_runtime::Clock,
         reply: ProposalReply,

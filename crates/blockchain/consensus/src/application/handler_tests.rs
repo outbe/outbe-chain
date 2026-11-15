@@ -1644,3 +1644,60 @@ fn floor_remaining_arithmetic() {
         Duration::ZERO
     );
 }
+
+#[test]
+fn delivered_proposal_counts_self_finalization_once_via_shared_continuity() {
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+    let round = Round::new(Epoch::new(0), View::new(2));
+    let continuity = crate::reporter::ReporterContinuity::default();
+    let block = consensus_block_with_number(0x37, 7);
+    let peer_block = consensus_block_with_number(0x38, 7);
+    commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start({
+        let (continuity, block) = (continuity.clone(), block.clone());
+        move |ctx| async move {
+            let fixture = certification::CertificationFixture::open(&ctx, "self-fin-e2e").await;
+            let (mut shared, outcome) = fixture
+                .publish_valid_candidate(&ctx, round, block.clone())
+                .await;
+            shared.shared.self_proposed_digests = continuity.self_proposed_digests();
+            let (response, rx) = oneshot::channel();
+            let reply = super::dispatch::ProposalReply {
+                response,
+                propose_start: ctx.current(),
+                outcome,
+            };
+            shared.complete_propose_message(&ctx, reply).await;
+            assert_eq!(rx.await.unwrap(), block.digest());
+        }
+    });
+    let mut fixture = certification::reporter_with_continuity(
+        round.epoch(),
+        continuity,
+        &block,
+        round,
+        &peer_block,
+    );
+    let recorder = DebuggingRecorder::new();
+    metrics::with_local_recorder(&recorder, || {
+        for item in [
+            fixture.self_finalization,
+            fixture.duplicate_finalization,
+            fixture.peer_finalization,
+        ] {
+            assert!(matches!(
+                fixture.reporter.report(Activity::Finalization(item)),
+                Feedback::Ok
+            ));
+            assert!(fixture.rx.try_recv().is_ok());
+        }
+    });
+    let counts: Vec<_> = recorder
+        .snapshotter()
+        .snapshot()
+        .into_vec()
+        .into_iter()
+        .filter(|(k, _, _, _)| k.key().name() == "outbe_consensus_self_finalized_blocks_total")
+        .map(|(_, _, _, v)| v)
+        .collect();
+    assert_eq!(counts, vec![DebugValue::Counter(1)]);
+}

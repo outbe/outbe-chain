@@ -72,8 +72,14 @@ async fn emit_staleness() {
 
 fn emit_consensus() {
     let bridge = ConsensusExecutionBridge::new();
-    bridge.set_operating_mode(ConsensusOperatingMode::UpstreamBootstrap);
-    bridge.set_operating_mode(ConsensusOperatingMode::Follower);
+    for mode in [
+        ConsensusOperatingMode::UpstreamBootstrap,
+        ConsensusOperatingMode::Verifier,
+        ConsensusOperatingMode::Signer,
+        ConsensusOperatingMode::Follower,
+    ] {
+        bridge.set_operating_mode(mode);
+    }
     for reason in [
         verify::VoteWithheldReason::Unavailable,
         verify::VoteWithheldReason::VerifyError,
@@ -162,28 +168,87 @@ fn emit_p2p() {
 }
 
 fn emit_follower() {
-    follower::record_upstream_tip_err(&UpstreamTipError::InvalidResponse {
-        source: jsonrpsee::core::client::Error::Custom("invalid tip".into()),
-    });
+    for err in [
+        UpstreamTipError::HttpRateLimited {
+            source: jsonrpsee::core::client::Error::Custom("rate limited".into()),
+        },
+        UpstreamTipError::HttpStatus {
+            status_code: 503,
+            source: jsonrpsee::core::client::Error::Custom("bad gateway".into()),
+        },
+        UpstreamTipError::Transport {
+            source: jsonrpsee::core::client::Error::Custom("transport".into()),
+        },
+        UpstreamTipError::InvalidResponse {
+            source: jsonrpsee::core::client::Error::Custom("invalid tip".into()),
+        },
+    ] {
+        follower::record_upstream_tip_err(&err);
+    }
     follower::record_upstream_tip_ok(100, 105.0);
     follower::record_follower_heights(Some(98), Some(100));
-    follower::record_follower_round(follower::FollowerRoundResult::Pulled);
-    follower::record_resolver_failure(
-        follower::FollowerResolverKind::Block,
-        follower::FollowerResolverFailureReason::DeliveryRejected,
-    );
+    for round in [
+        follower::FollowerRoundResult::Idle,
+        follower::FollowerRoundResult::Pulled,
+        follower::FollowerRoundResult::CeilingClamped,
+        follower::FollowerRoundResult::TipUnreachable,
+    ] {
+        follower::record_follower_round(round);
+    }
+    for (kind, reason) in [
+        (
+            follower::FollowerResolverKind::Block,
+            follower::FollowerResolverFailureReason::Timeout,
+        ),
+        (
+            follower::FollowerResolverKind::Block,
+            follower::FollowerResolverFailureReason::PermitSaturated,
+        ),
+        (
+            follower::FollowerResolverKind::Block,
+            follower::FollowerResolverFailureReason::MissingOrError,
+        ),
+        (
+            follower::FollowerResolverKind::Block,
+            follower::FollowerResolverFailureReason::HashMismatch,
+        ),
+        (
+            follower::FollowerResolverKind::Block,
+            follower::FollowerResolverFailureReason::Oversized,
+        ),
+        (
+            follower::FollowerResolverKind::Block,
+            follower::FollowerResolverFailureReason::UnannotatedBlock,
+        ),
+        (
+            follower::FollowerResolverKind::Block,
+            follower::FollowerResolverFailureReason::DeliveryRejected,
+        ),
+        (
+            follower::FollowerResolverKind::Finalized,
+            follower::FollowerResolverFailureReason::ProofUnauthenticated,
+        ),
+    ] {
+        follower::record_resolver_failure(kind, reason);
+    }
 }
 
 fn emit_payload() {
     outbe_evm::executor::record_zero_fee_soft_failure_metric();
     outbe_evm::executor::record_zero_fee_cap_exceeded_metric();
-    record_payload_build_outcome(
-        &Ok(BuildOutcome::Better {
+    for outcome in [
+        BuildOutcome::Better {
             payload: (),
             cached_reads: Default::default(),
-        }),
-        Duration::from_millis(7),
-    );
+        },
+        BuildOutcome::Aborted {
+            fees: Default::default(),
+            cached_reads: Default::default(),
+        },
+        BuildOutcome::Cancelled,
+    ] {
+        record_payload_build_outcome(&Ok(outcome), Duration::from_millis(7));
+    }
     record_payload_state_root_duration(Duration::from_millis(2));
     record_payload_sparse_trie_fallback();
     record_payload_rlp_size(128);
@@ -245,56 +310,228 @@ async fn emit_txpool() {
         record_txpool_rejection(reason);
     }
     record_txpool_validation_duration(Duration::from_millis(2));
-    let pool = testing_pool();
-    pool.add_transaction(
-        TransactionOrigin::External,
-        MockTransactionFactory::default()
+    for queued_only in [false, true] {
+        let pool = testing_pool();
+        let mut tx = MockTransactionFactory::default()
             .create_eip1559()
-            .transaction,
-    )
-    .await
-    .expect("pending transaction for inclusion alarm");
-    let (sender, receiver) = tokio::sync::broadcast::channel(1);
-    let block = RecoveredBlock::new_unhashed(
-        OutbeBlock {
-            header: OutbeHeader::new(alloy_consensus::Header {
-                number: 2,
-                timestamp: 100,
-                ..Default::default()
-            }),
-            body: OutbeBlockBody {
-                transactions: vec![TxLegacy {
-                    to: TxKind::Call(outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS),
+            .transaction;
+        if queued_only {
+            tx.set_nonce(64);
+        }
+        pool.add_transaction(TransactionOrigin::External, tx)
+            .await
+            .expect("admit transaction for inclusion alarm");
+        let (sender, receiver) = tokio::sync::broadcast::channel(1);
+        let block = RecoveredBlock::new_unhashed(
+            OutbeBlock {
+                header: OutbeHeader::new(alloy_consensus::Header {
+                    number: 2,
+                    timestamp: 100,
                     ..Default::default()
-                }
-                .into_signed(Signature::test_signature())
-                .into()],
+                }),
+                body: OutbeBlockBody {
+                    transactions: vec![TxLegacy {
+                        to: TxKind::Call(outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS),
+                        ..Default::default()
+                    }
+                    .into_signed(Signature::test_signature())
+                    .into()],
+                    ..Default::default()
+                },
+            },
+            vec![Address::ZERO],
+        );
+        sender
+            .send(CanonStateNotification::Commit {
+                new: Arc::new(Chain::new([block], Default::default(), Default::default())),
+            })
+            .expect("queue canonical block");
+        drop(sender);
+        maintain_outbe_pool(
+            Subscription(Mutex::new(Some(receiver))),
+            pool,
+            OutbePoolMaintainConfig {
+                staleness_interval_secs: 4,
+                queued_lifetime: Duration::from_secs(4),
                 ..Default::default()
             },
-        },
-        vec![Address::ZERO],
-    );
-    sender
-        .send(CanonStateNotification::Commit {
-            new: Arc::new(Chain::new([block], Default::default(), Default::default())),
-        })
-        .expect("queue canonical block");
-    drop(sender);
-    maintain_outbe_pool(
-        Subscription(Mutex::new(Some(receiver))),
-        pool,
-        OutbePoolMaintainConfig {
-            staleness_interval_secs: 4,
-            ..Default::default()
-        },
-    )
-    .await;
+        )
+        .await;
+    }
+}
+
+fn has_labeled_sample(rendered: &str, name: &str, expected: &[(&str, &str)]) -> bool {
+    let prefix = format!("{name}{{");
+    rendered.lines().any(|line| {
+        !line.starts_with('#')
+            && line
+                .strip_prefix(&prefix)
+                .and_then(|rest| rest.split_once("} "))
+                .is_some_and(|(raw_labels, _)| {
+                    let mut parsed: Vec<(&str, &str)> = raw_labels
+                        .split(',')
+                        .filter_map(|pair| pair.split_once('='))
+                        .map(|(k, v)| (k, v.trim_matches('"')))
+                        .collect();
+                    parsed.sort_unstable();
+                    let mut want = expected.to_vec();
+                    want.sort_unstable();
+                    parsed == want
+                })
+    })
+}
+
+fn assert_single_label_set(rendered: &str, name: &str, key: &str, values: &[&str]) {
+    for value in values {
+        assert!(
+            has_labeled_sample(rendered, name, &[(key, value)]),
+            "missing rendered label {name}{{{key}=\"{value}\"}}"
+        );
+    }
 }
 
 pub fn assert_stage2(rendered: &str, types: &HashMap<&str, &str>) {
-    assert!(rendered.contains("reth_outbe_p2p_send_rate_limited_total{channel=\"radicle\"} 1"));
-    assert!(rendered.contains("reth_outbe_p2p_send_skipped_peers_total{channel=\"radicle\"} 1"));
-    assert!(rendered.contains("reth_outbe_p2p_send_rejected_total{channel=\"radicle\"} 1"));
+    for (from, to) in [
+        ("follower", "upstream_bootstrap"),
+        ("upstream_bootstrap", "verifier"),
+        ("verifier", "signer"),
+        ("signer", "follower"),
+    ] {
+        assert!(
+            has_labeled_sample(
+                rendered,
+                "reth_outbe_consensus_mode_transitions_total",
+                &[("from", from), ("to", to)],
+            ),
+            "missing mode transition {from} -> {to}"
+        );
+    }
+    assert_single_label_set(
+        rendered,
+        "reth_outbe_consensus_vote_withheld_total",
+        "reason",
+        &[
+            "unavailable",
+            "verify_error",
+            "epoch_fence",
+            "publish_epoch_fence",
+            "view_cancelled",
+            "resolve_timeout_or_missing",
+        ],
+    );
+    assert_single_label_set(
+        rendered,
+        "reth_outbe_consensus_proposal_outcomes_total",
+        "result",
+        &[
+            "proposed",
+            "cancelled",
+            "pace_cancelled",
+            "parent_proof_unavailable",
+            "epoch_stale",
+            "boundary_unavailable",
+            "execution_unavailable",
+            "round_already_proposed",
+            "failed",
+        ],
+    );
+    for metric in [
+        "reth_outbe_p2p_send_rate_limited_total",
+        "reth_outbe_p2p_send_skipped_peers_total",
+        "reth_outbe_p2p_send_rejected_total",
+    ] {
+        assert_single_label_set(
+            rendered,
+            metric,
+            "channel",
+            &["dkg", "tee_dkg", "tee_bootstrap", "radicle"],
+        );
+    }
+    assert_single_label_set(
+        rendered,
+        "reth_outbe_follower_upstream_poll_errors_total",
+        "reason",
+        &["http_429", "http_status", "transport", "invalid_response"],
+    );
+    assert_single_label_set(
+        rendered,
+        "reth_outbe_follower_rounds_total",
+        "result",
+        &["idle", "pulled", "ceiling_clamped", "tip_unreachable"],
+    );
+    for (kind, reason) in [
+        ("block", "timeout"),
+        ("block", "permit_saturated"),
+        ("block", "missing_or_error"),
+        ("block", "hash_mismatch"),
+        ("block", "oversized"),
+        ("block", "unannotated_block"),
+        ("block", "delivery_rejected"),
+        ("finalized", "proof_unauthenticated"),
+    ] {
+        assert!(
+            has_labeled_sample(
+                rendered,
+                "reth_outbe_follower_resolver_failures_total",
+                &[("kind", kind), ("reason", reason)],
+            ),
+            "missing resolver failure {kind}/{reason}"
+        );
+    }
+    assert_single_label_set(
+        rendered,
+        "reth_outbe_txpool_inclusion_alarms_total",
+        "kind",
+        &["pending_not_included", "queued_only"],
+    );
+    assert_single_label_set(
+        rendered,
+        "reth_outbe_txpool_rejected_total",
+        "reason",
+        &[
+            "upstream_invalid",
+            "upstream_error",
+            "reserved_system_tx",
+            "overdraft",
+            "state_read_failed",
+            "unknown_hook",
+            "non_zero_value",
+            "calldata_too_large",
+            "gas_limit_too_high",
+            "fee_cap_too_low",
+            "malformed_calldata",
+            "unauthorized_signer",
+            "hook_conflict",
+            "storage",
+            "free_tx_daily_exhausted",
+            "free_tx_daily_contract_creation_forbidden",
+            "free_tx_daily_value_not_zero",
+            "free_tx_daily_gas_limit_exceeded",
+            "free_tx_daily_calldata_too_large",
+            "free_tx_daily_target_not_whitelisted",
+        ],
+    );
+    assert_single_label_set(
+        rendered,
+        "reth_outbe_evm_payload_build_stop_total",
+        "reason",
+        &["cancelled", "candidates_exhausted", "aborted_not_better"],
+    );
+    assert_single_label_set(
+        rendered,
+        "reth_outbe_evm_payload_tx_skipped_total",
+        "reason",
+        &[
+            "gas_limit",
+            "rlp_size_limit",
+            "blob_rejected",
+            "gas_above_available",
+            "nonce_too_low",
+            "sponsored_budget_deferred",
+            "enclave_witness_budget_deferred",
+            "invalid_tx",
+        ],
+    );
     for (kind, names) in [
         (
             "gauge",

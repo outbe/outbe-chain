@@ -84,6 +84,71 @@ impl CertificationFixture {
     }
 }
 
+pub(super) struct ContinuityReporterFixture {
+    pub(super) reporter: crate::reporter::OutbeReporter,
+    pub(super) rx: futures::channel::mpsc::UnboundedReceiver<crate::finalization::ingress::Message>,
+    pub(super) self_finalization: Finalization<HybridScheme<MinSig>, Digest>,
+    pub(super) duplicate_finalization: Finalization<HybridScheme<MinSig>, Digest>,
+    pub(super) peer_finalization: Finalization<HybridScheme<MinSig>, Digest>,
+}
+
+pub(super) fn reporter_with_continuity(
+    epoch: Epoch,
+    continuity: crate::reporter::ReporterContinuity,
+    block: &ConsensusBlock,
+    round: Round,
+    peer_block: &ConsensusBlock,
+) -> ContinuityReporterFixture {
+    let FinalizationMetadataContext {
+        scheme_provider,
+        signers,
+        verifier,
+        committee,
+        ..
+    } = finalization_metadata_context(epoch);
+    let (_, self_finalization) = finalization_metadata_from_context(
+        block,
+        round,
+        View::new(1),
+        FinalizationSigningContext::new(&signers, &verifier, committee.clone()),
+    );
+    let (_, peer_finalization) = finalization_metadata_from_context(
+        peer_block,
+        Round::new(epoch, View::new(3)),
+        View::new(2),
+        FinalizationSigningContext::new(&signers, &verifier, committee.clone()),
+    );
+    let late = crate::finalization::late_sig_store::shared(
+        outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K,
+    );
+    let (_, finalize_verify_mailbox) =
+        crate::finalization::finalize_verify::FinalizeVerifyActor::new(scheme_provider, late);
+    let (tx, rx) = futures::channel::mpsc::unbounded();
+    let reporter = crate::reporter::OutbeReporter::new(
+        continuity,
+        crate::reporter::ReporterCommittee {
+            validator_addresses: committee,
+            verifier_scheme: verifier,
+            epoch,
+        },
+        crate::reporter::ReporterDependencies {
+            finalization_mailbox: crate::finalization::ingress::Mailbox::from_sender(tx),
+            bridge: None,
+            witness_sink: Arc::new(
+                crate::finalization::parent_cert_store::FinalizedParentCertStore::new(),
+            ),
+            finalize_verify_mailbox,
+        },
+    );
+    ContinuityReporterFixture {
+        reporter,
+        rx,
+        duplicate_finalization: self_finalization.clone(),
+        self_finalization,
+        peer_finalization,
+    }
+}
+
 #[test]
 fn certify_waits_for_the_exact_candidate_without_a_local_verify() {
     Runner::timed(Duration::from_secs(30)).start(|context| async move {

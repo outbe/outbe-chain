@@ -55,7 +55,7 @@ impl Default for OutbePoolMaintainConfig {
     fn default() -> Self {
         Self {
             staleness_interval_secs: 600,
-            min_block_time: Duration::from_secs(2),
+            min_block_time: Duration::from_secs(1),
             queued_lifetime: Duration::from_secs(120),
         }
     }
@@ -297,7 +297,7 @@ mod tests {
     fn maintenance_config_defaults() {
         let config = OutbePoolMaintainConfig::default();
         assert_eq!(config.staleness_interval_secs, 600);
-        assert_eq!(config.min_block_time, Duration::from_secs(2));
+        assert_eq!(config.min_block_time, Duration::from_secs(1));
         assert_eq!(config.queued_lifetime, Duration::from_secs(120));
     }
 

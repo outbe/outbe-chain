@@ -214,15 +214,31 @@ async fn wait_for_cancel(rx: &mut tokio::sync::watch::Receiver<bool>) {
     }
 }
 
+fn await_shutdown_signal(
+    stopped: commonware_runtime::signal::Signal,
+    unexpected_exit: impl FnOnce() -> eyre::Report,
+) -> Result<()> {
+    match stopped.now_or_never() {
+        Some(Ok(_)) => Ok(()),
+        Some(Err(error)) => Err(FollowError::shutdown_signal_failed(error).into()),
+        None => Err(unexpected_exit()),
+    }
+}
+
 fn await_driver_exit(
     outcome: std::result::Result<(), commonware_runtime::Error>,
     driver_cancel: &tokio::sync::watch::Receiver<bool>,
     driver_stopped: commonware_runtime::signal::Signal,
 ) -> Result<()> {
-    if outcome.is_ok() && (*driver_cancel.borrow() || driver_stopped.now_or_never().is_some()) {
-        return Ok(());
+    match outcome {
+        Ok(()) if *driver_cancel.borrow() => Ok(()),
+        Ok(()) => await_shutdown_signal(driver_stopped, || {
+            crate::supervision::unexpected_actor_exit("follow_driver", Ok(())).into()
+        }),
+        Err(error) => {
+            Err(crate::supervision::unexpected_actor_exit("follow_driver", Err(error)).into())
+        }
     }
-    Err(crate::supervision::unexpected_actor_exit("follow_driver", outcome).into())
 }
 
 async fn await_marshal_exit(
@@ -236,11 +252,7 @@ async fn await_marshal_exit(
     if *follower_phase_cancel.borrow() {
         return Ok(());
     }
-    match stopped.now_or_never() {
-        Some(Ok(_)) => Ok(()),
-        Some(Err(error)) => Err(FollowError::shutdown_signal_failed(error).into()),
-        None => Err(FollowError::MarshalExitedUnexpectedly.into()),
-    }
+    await_shutdown_signal(stopped, || FollowError::MarshalExitedUnexpectedly.into())
 }
 
 /// Rebuild the authenticated follower committee chain from the trusted anchor
@@ -745,6 +757,18 @@ mod shutdown_tests {
 
     #[tokio::test]
     async fn lost_shutdown_sender_is_not_a_requested_stop() {
+        use super::FollowError;
+
+        let (driver_signaler, driver_signal) = Signaler::new();
+        drop(driver_signaler);
+        let driver_error =
+            await_driver_exit(Ok(()), &tokio::sync::watch::channel(false).1, driver_signal)
+                .unwrap_err();
+        assert!(matches!(
+            driver_error.downcast_ref::<FollowError>(),
+            Some(FollowError::ShutdownSignalFailed(_))
+        ));
+
         let (signaler, signal) = Signaler::new();
         drop(signaler);
         let error = await_marshal_exit(
@@ -754,6 +778,9 @@ mod shutdown_tests {
         )
         .await
         .unwrap_err();
-        assert!(error.to_string().contains("shutdown signal failed"));
+        assert!(matches!(
+            error.downcast_ref::<FollowError>(),
+            Some(FollowError::ShutdownSignalFailed(_))
+        ));
     }
 }
