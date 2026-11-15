@@ -115,8 +115,11 @@ where
             // after. Otherwise reuse the last known tip and just re-hint.
             if wakeups.is_multiple_of(TIP_REFRESH_EVERY) {
                 match self.config.tip.finalized_tip().await {
-                    Some(tip) => last_tip = Some(tip),
-                    None => debug!("upstream tip query failed; driving to last known tip"),
+                    Ok(tip) => last_tip = Some(tip),
+                    Err(err) => debug!(
+                        error = outbe_primitives::telemetry::error_field(&err),
+                        "upstream tip query failed; driving to last known tip"
+                    ),
                 }
             }
             wakeups = wakeups.wrapping_add(1);

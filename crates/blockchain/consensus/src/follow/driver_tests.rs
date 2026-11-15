@@ -74,12 +74,12 @@ struct Tip {
 }
 
 impl TipSource for Tip {
-    async fn finalized_tip(&self) -> Option<Height> {
+    async fn finalized_tip(&self) -> Result<Height, crate::follow::upstream::UpstreamTipError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         if self.pending {
             std::future::pending().await
         } else {
-            Some(Height::new(10))
+            Ok(Height::new(10))
         }
     }
 }
