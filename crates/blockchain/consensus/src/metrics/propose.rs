@@ -45,6 +45,10 @@ pub fn record_parent_ahead_of_local_clock() {
     counter!("outbe_consensus_parent_ahead_of_local_clock_total").increment(1);
 }
 
+pub fn record_self_finalized_block() {
+    metrics::counter!("outbe_consensus_self_finalized_blocks_total").increment(1);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

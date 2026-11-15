@@ -689,7 +689,9 @@ where
     );
 
     // Create application handler with marshal mailbox and shared finalization state.
+    let reporter_continuity = ReporterContinuity::default();
     let application_handler = ApplicationHandler::new(ApplicationDeps {
+        self_proposed_digests: reporter_continuity.self_proposed_digests(),
         unix_time_source: match args.testnet_unix_time_offset_secs {
             Some(offset_secs) => {
                 Arc::new(crate::application::OffsetUnixTimeSource::new(offset_secs))
@@ -864,7 +866,7 @@ where
         bootnode_map,
         oracle,
         recovered_boundary_artifact: recovered_boundary_artifact.cloned(),
-        reporter_continuity: ReporterContinuity::default(),
+        reporter_continuity,
         genesis_hash,
         bt,
         page_cache,

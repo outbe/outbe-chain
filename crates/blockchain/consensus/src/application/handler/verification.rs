@@ -296,6 +296,7 @@ mod tests {
     ) -> ApplicationShared {
         let (engine_tx, _) = tokio::sync::mpsc::unbounded_channel();
         ApplicationShared {
+            self_proposed_digests: Default::default(),
             unix_time_source: Arc::new(TestClock(Some(3000))),
             engine: crate::application::handler::EngineHandle::new(engine_tx),
             executor_mailbox: crate::executor::Mailbox::from_sender(executor_tx),

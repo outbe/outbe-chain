@@ -90,7 +90,14 @@ impl ApplicationShared {
         clock: &impl commonware_runtime::Clock,
         reply: ProposalReply,
     ) {
-        if let Err(error) = complete_proposal(clock, reply, self.min_block_time).await {
+        if let Err(error) = complete_proposal(
+            clock,
+            reply,
+            self.min_block_time,
+            &self.self_proposed_digests,
+        )
+        .await
+        {
             self.report_proposal_failure(error);
         }
     }
@@ -127,6 +134,7 @@ async fn complete_proposal(
     clock: &impl commonware_runtime::Clock,
     reply: ProposalReply,
     min_block_time: std::time::Duration,
+    self_proposed: &crate::reporter::SelfProposedDigests,
 ) -> eyre::Result<()> {
     let ProposalReply {
         response,
@@ -142,6 +150,8 @@ async fn complete_proposal(
             // digest until the min-block-time floor elapses. Then give it
             // to Simplex, or abort if the view is cancelled first. This
             // never touches block bytes/hash/validation.
+            // Register before sending so an immediate finalization can consume it.
+            self_proposed.record(digest);
             let delivered = pace_and_send(
                 clock,
                 response,
@@ -153,6 +163,9 @@ async fn complete_proposal(
                 },
             )
             .await;
+            if !delivered {
+                self_proposed.take(&digest);
+            }
             record_proposal_outcome(if delivered {
                 ProposalOutcomeLabel::Proposed
             } else {
@@ -235,6 +248,7 @@ mod tests {
                             Some(receiver)
                         };
                         let start = clock.current();
+                        let self_proposed = crate::reporter::SelfProposedDigests::default();
                         let result = complete_proposal(
                             &clock,
                             ProposalReply {
@@ -243,9 +257,11 @@ mod tests {
                                 outcome,
                             },
                             Duration::from_millis(100),
+                            &self_proposed,
                         )
                         .await;
                         assert_eq!(result.is_err(), label == "failed");
+                        assert_eq!(self_proposed.take(&Digest::ZERO), label == "proposed");
                         if let Some(receiver) = receiver {
                             if label == "proposed" {
                                 assert_eq!(receiver.await.unwrap(), Digest::ZERO);

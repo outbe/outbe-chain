@@ -442,6 +442,7 @@ fn finalizer_test_shared(
     );
 
     let shared = ApplicationShared {
+        self_proposed_digests: Default::default(),
         unix_time_source: Arc::new(super::SystemUnixTimeSource),
         engine,
         payload_builder,
