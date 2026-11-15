@@ -15,9 +15,10 @@ use crate::errors::{OutbeReservedSystemTxPoolError, OutbeZeroFeePoolError};
 use alloy_eips::{eip7840::BlobParams, merge::EPOCH_SLOTS};
 use alloy_primitives::{Address, B256, KECCAK256_EMPTY, U256};
 use outbe_primitives::{
-    addresses::{OUTBE_SYSTEM_TX_ADDRESS, ZEROFEE_ADDRESS},
+    addresses::ZEROFEE_ADDRESS,
     storage::{readonly::ReadOnlyStorageProvider, StorageHandle},
-    zero_fee_types::{BootstrapTransactionView, ZeroFeeTransaction},
+    system_tx::is_reserved_system_tx,
+    zero_fee_types::{BootstrapTransactionView, ZeroFeePolicyError, ZeroFeeTransaction},
     OutbePrimitives,
 };
 
@@ -35,13 +36,141 @@ use reth_transaction_pool::{
     TransactionOrdering, TransactionOrigin, TransactionValidationOutcome,
     TransactionValidationTaskExecutor, TransactionValidator,
 };
-use std::{fmt, marker::PhantomData, sync::Arc, time::SystemTime};
+use std::{
+    fmt,
+    marker::PhantomData,
+    sync::Arc,
+    time::{Duration, Instant, SystemTime},
+};
 
-fn is_reserved_system_tx<T>(tx: &T) -> bool
-where
-    T: alloy_consensus::Transaction + ?Sized,
-{
-    tx.to() == Some(OUTBE_SYSTEM_TX_ADDRESS)
+/// Closed rejection taxonomy; labels never include transaction data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TxpoolRejectionReason {
+    /// The `upstream_invalid` rejection class.
+    UpstreamInvalid,
+    /// The `upstream_error` rejection class.
+    UpstreamError,
+    /// The `reserved_system_tx` rejection class.
+    ReservedSystemTx,
+    /// The `overdraft` rejection class.
+    Overdraft,
+    /// The `state_read_failed` rejection class.
+    StateReadFailed,
+    /// The `unknown_hook` rejection class.
+    UnknownHook,
+    /// The `non_zero_value` rejection class.
+    NonZeroValue,
+    /// The `calldata_too_large` rejection class.
+    CalldataTooLarge,
+    /// The `gas_limit_too_high` rejection class.
+    GasLimitTooHigh,
+    /// The `fee_cap_too_low` rejection class.
+    FeeCapTooLow,
+    /// The `malformed_calldata` rejection class.
+    MalformedCalldata,
+    /// The `unauthorized_signer` rejection class.
+    UnauthorizedSigner,
+    /// The `hook_conflict` rejection class.
+    HookConflict,
+    /// The `storage` rejection class.
+    Storage,
+    /// The `free_tx_daily_exhausted` rejection class.
+    FreeTxDailyExhausted,
+    /// The `free_tx_daily_contract_creation_forbidden` rejection class.
+    FreeTxDailyContractCreationForbidden,
+    /// The `free_tx_daily_value_not_zero` rejection class.
+    FreeTxDailyValueNotZero,
+    /// The `free_tx_daily_gas_limit_exceeded` rejection class.
+    FreeTxDailyGasLimitExceeded,
+    /// The `free_tx_daily_calldata_too_large` rejection class.
+    FreeTxDailyCalldataTooLarge,
+    /// The `free_tx_daily_target_not_whitelisted` rejection class.
+    FreeTxDailyTargetNotWhitelisted,
+}
+
+impl TxpoolRejectionReason {
+    fn label(self) -> &'static str {
+        match self {
+            Self::UpstreamInvalid => "upstream_invalid",
+            Self::UpstreamError => "upstream_error",
+            Self::ReservedSystemTx => "reserved_system_tx",
+            Self::Overdraft => "overdraft",
+            Self::StateReadFailed => "state_read_failed",
+            Self::UnknownHook => "unknown_hook",
+            Self::NonZeroValue => "non_zero_value",
+            Self::CalldataTooLarge => "calldata_too_large",
+            Self::GasLimitTooHigh => "gas_limit_too_high",
+            Self::FeeCapTooLow => "fee_cap_too_low",
+            Self::MalformedCalldata => "malformed_calldata",
+            Self::UnauthorizedSigner => "unauthorized_signer",
+            Self::HookConflict => "hook_conflict",
+            Self::Storage => "storage",
+            Self::FreeTxDailyExhausted => "free_tx_daily_exhausted",
+            Self::FreeTxDailyContractCreationForbidden => {
+                "free_tx_daily_contract_creation_forbidden"
+            }
+            Self::FreeTxDailyValueNotZero => "free_tx_daily_value_not_zero",
+            Self::FreeTxDailyGasLimitExceeded => "free_tx_daily_gas_limit_exceeded",
+            Self::FreeTxDailyCalldataTooLarge => "free_tx_daily_calldata_too_large",
+            Self::FreeTxDailyTargetNotWhitelisted => "free_tx_daily_target_not_whitelisted",
+        }
+    }
+}
+
+impl From<&ZeroFeePolicyError> for TxpoolRejectionReason {
+    fn from(error: &ZeroFeePolicyError) -> Self {
+        match error {
+            ZeroFeePolicyError::UnknownHook(_) => Self::UnknownHook,
+            ZeroFeePolicyError::NonZeroValue => Self::NonZeroValue,
+            ZeroFeePolicyError::CalldataTooLarge { .. } => Self::CalldataTooLarge,
+            ZeroFeePolicyError::GasLimitTooHigh { .. } => Self::GasLimitTooHigh,
+            ZeroFeePolicyError::FeeCapTooLow { .. } => Self::FeeCapTooLow,
+            ZeroFeePolicyError::MalformedCalldata(_) => Self::MalformedCalldata,
+            ZeroFeePolicyError::UnauthorizedSigner => Self::UnauthorizedSigner,
+            ZeroFeePolicyError::HookConflict(_) => Self::HookConflict,
+            ZeroFeePolicyError::Storage(_) => Self::Storage,
+            ZeroFeePolicyError::FreeTxDailyExhausted { .. } => Self::FreeTxDailyExhausted,
+            ZeroFeePolicyError::FreeTxDailyContractCreationForbidden => {
+                Self::FreeTxDailyContractCreationForbidden
+            }
+            ZeroFeePolicyError::FreeTxDailyValueNotZero => Self::FreeTxDailyValueNotZero,
+            ZeroFeePolicyError::FreeTxDailyGasLimitExceeded { .. } => {
+                Self::FreeTxDailyGasLimitExceeded
+            }
+            ZeroFeePolicyError::FreeTxDailyCalldataTooLarge { .. } => {
+                Self::FreeTxDailyCalldataTooLarge
+            }
+            ZeroFeePolicyError::FreeTxDailyTargetNotWhitelisted { .. } => {
+                Self::FreeTxDailyTargetNotWhitelisted
+            }
+        }
+    }
+}
+
+/// Records exactly one rejected transaction using the closed taxonomy.
+pub fn record_txpool_rejection(reason: TxpoolRejectionReason) {
+    metrics::counter!("outbe_txpool_rejected_total", "reason" => reason.label()).increment(1);
+}
+
+/// Records wall-clock admission latency, including upstream checks and Outbe policy.
+pub fn record_txpool_validation_duration(duration: Duration) {
+    metrics::histogram!("outbe_txpool_validation_duration_ms")
+        .record(duration.as_secs_f64() * 1000.0);
+}
+
+fn reject_zero_fee_outcome<T: PoolTransaction>(
+    parts: ValidOutcomeParts<T>,
+    error: OutbeZeroFeePoolError,
+) -> TransactionValidationOutcome<T> {
+    let reason = match &error {
+        OutbeZeroFeePoolError::Policy(error) => TxpoolRejectionReason::from(error),
+        OutbeZeroFeePoolError::StateRead(_) => TxpoolRejectionReason::StateReadFailed,
+    };
+    record_txpool_rejection(reason);
+    TransactionValidationOutcome::Invalid(
+        parts.transaction.into_transaction(),
+        InvalidPoolTransactionError::other(error),
+    )
 }
 
 fn zero_fee_transaction<'a, T>(tx: &'a T, signer: Address) -> ZeroFeeTransaction<'a>
@@ -279,6 +408,7 @@ where
     T: EthPoolTransaction + alloy_consensus::Transaction,
 {
     if is_reserved_system_tx(parts.transaction.transaction()) {
+        record_txpool_rejection(TxpoolRejectionReason::ReservedSystemTx);
         return ReservedSystemTxPolicy::Reject(TransactionValidationOutcome::Invalid(
             parts.transaction.into_transaction(),
             InvalidPoolTransactionError::other(OutbeReservedSystemTxPoolError),
@@ -335,8 +465,20 @@ where
         origin: TransactionOrigin,
         transaction: Self::Transaction,
     ) -> TransactionValidationOutcome<Self::Transaction> {
+        let start = Instant::now();
         let outcome = self.inner.validate_transaction(origin, transaction).await;
-        self.apply_outbe_policy(outcome)
+        match &outcome {
+            TransactionValidationOutcome::Invalid(..) => {
+                record_txpool_rejection(TxpoolRejectionReason::UpstreamInvalid)
+            }
+            TransactionValidationOutcome::Error(..) => {
+                record_txpool_rejection(TxpoolRejectionReason::UpstreamError)
+            }
+            TransactionValidationOutcome::Valid { .. } => {}
+        }
+        let outcome = self.apply_outbe_policy(outcome);
+        record_txpool_validation_duration(start.elapsed());
+        outcome
     }
 
     fn on_new_head_block(&self, new_tip_block: &reth_primitives_traits::SealedBlock<Self::Block>) {
@@ -372,6 +514,7 @@ where
         let normal_fee_outcome = |parts: ValidOutcomeParts<Tx>| {
             let cost = *parts.transaction.transaction().cost();
             if cost > parts.balance {
+                record_txpool_rejection(TxpoolRejectionReason::Overdraft);
                 let balance = parts.balance;
                 TransactionValidationOutcome::Invalid(
                     parts.transaction.into_transaction(),
@@ -388,10 +531,7 @@ where
                     parts.balance = U256::MAX;
                     valid_outcome(parts)
                 }
-                Err(err) => TransactionValidationOutcome::Invalid(
-                    parts.transaction.into_transaction(),
-                    InvalidPoolTransactionError::other(err),
-                ),
+                Err(err) => reject_zero_fee_outcome(parts, err),
             },
             Ok(None) => {
                 let bootstrap_candidate = BootstrapTransactionView::from_transaction(
@@ -407,12 +547,7 @@ where
                             return valid_outcome(parts);
                         }
                         Ok(false) => return normal_fee_outcome(parts),
-                        Err(err) => {
-                            return TransactionValidationOutcome::Invalid(
-                                parts.transaction.into_transaction(),
-                                InvalidPoolTransactionError::other(err),
-                            )
-                        }
+                        Err(err) => return reject_zero_fee_outcome(parts, err),
                     }
                 }
 
@@ -422,16 +557,10 @@ where
                         valid_outcome(parts)
                     }
                     Ok(SponsorshipOutcome::NotSponsored) => normal_fee_outcome(parts),
-                    Err(err) => TransactionValidationOutcome::Invalid(
-                        parts.transaction.into_transaction(),
-                        InvalidPoolTransactionError::other(err),
-                    ),
+                    Err(err) => reject_zero_fee_outcome(parts, err),
                 }
             }
-            Err(err) => TransactionValidationOutcome::Invalid(
-                parts.transaction.into_transaction(),
-                InvalidPoolTransactionError::other(OutbeZeroFeePoolError::from_display(err)),
-            ),
+            Err(err) => reject_zero_fee_outcome(parts, OutbeZeroFeePoolError::Policy(err)),
         }
     }
 
@@ -463,7 +592,7 @@ where
             .inner
             .client()
             .latest()
-            .map_err(OutbeZeroFeePoolError::from_display)?;
+            .map_err(OutbeZeroFeePoolError::state_read)?;
 
         // Resolve the signer's account + (optional) delegation bytecode
         // from the latest committed state. Then give the already-fetched
@@ -473,7 +602,7 @@ where
         // without a provider mock. See the `sponsorship_decision` tests.
         let Some(account) = state
             .basic_account(&signer)
-            .map_err(OutbeZeroFeePoolError::from_display)?
+            .map_err(OutbeZeroFeePoolError::state_read)?
         else {
             return Ok(SponsorshipOutcome::NotSponsored);
         };
@@ -481,7 +610,7 @@ where
         let delegation_bytecode = match account.bytecode_hash {
             Some(hash) => state
                 .bytecode_by_hash(&hash)
-                .map_err(OutbeZeroFeePoolError::from_display)?,
+                .map_err(OutbeZeroFeePoolError::state_read)?,
             None => None,
         };
         let delegated_to = delegation_bytecode
@@ -499,7 +628,7 @@ where
             .inner
             .client()
             .latest()
-            .map_err(OutbeZeroFeePoolError::from_display)?;
+            .map_err(OutbeZeroFeePoolError::state_read)?;
 
         let reader = state_reader::RethStateReader::new(&state);
         let mut provider = ReadOnlyStorageProvider::new(reader);
@@ -508,7 +637,7 @@ where
         self.policy
             .authorize(storage, candidate)
             .map(|_| ())
-            .map_err(OutbeZeroFeePoolError::from_display)
+            .map_err(OutbeZeroFeePoolError::Policy)
     }
 
     fn validate_bootstrap_state(
@@ -519,10 +648,10 @@ where
             .inner
             .client()
             .latest()
-            .map_err(OutbeZeroFeePoolError::from_display)?;
+            .map_err(OutbeZeroFeePoolError::state_read)?;
         let Some(account) = state
             .basic_account(&candidate.signer)
-            .map_err(OutbeZeroFeePoolError::from_display)?
+            .map_err(OutbeZeroFeePoolError::state_read)?
         else {
             return Ok(false);
         };
@@ -593,7 +722,7 @@ pub fn sponsorship_decision(
 
     policy
         .precheck_sponsorship(signer)
-        .map_err(OutbeZeroFeePoolError::from_display)?;
+        .map_err(OutbeZeroFeePoolError::Policy)?;
 
     Ok(SponsorshipOutcome::Accepted)
 }
