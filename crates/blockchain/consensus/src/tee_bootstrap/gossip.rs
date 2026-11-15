@@ -1,4 +1,5 @@
 use super::*;
+use crate::metrics::p2p::{send_observed, ObservedSend, P2pChannel};
 
 /// Owned Commonware channel, runtime clock and permitted remote delivery peers
 /// for one startup ceremony. The ceremony supplies its own delivery scope.
@@ -26,7 +27,16 @@ where
 {
     async fn broadcast(&mut self, bytes: Vec<u8>) -> Result<(), CeremonyError> {
         let envelope = self.delivery.envelope(Recipients::All, bytes)?;
-        let _ = self.sender.send(Recipients::All, envelope, true);
+        let _ = send_observed(
+            &mut self.sender,
+            ObservedSend {
+                channel: P2pChannel::TeeBootstrap,
+                recipients: Recipients::All,
+                expected_peers: Some(self.delivery.expected_peers(&Recipients::All)),
+                bytes: envelope,
+                priority: true,
+            },
+        );
         Ok(())
     }
 
@@ -38,7 +48,7 @@ where
                     return match recv {
                         Ok((from, raw)) => {
                             let Some((id, payload)) = receive_delivery(&mut self.delivery, &from, raw.as_ref()) else { continue; };
-                            let _ = self.sender.send(Recipients::One(from), ack_envelope(id), true);
+                            delivery::send_ack(&mut self.sender, P2pChannel::TeeBootstrap, from, id);
                             Some(payload.to_vec())
                         }
                         Err(_) => None,
@@ -101,7 +111,11 @@ where
             sender_to_tee_bls: BTreeMap::new(),
             buffered: VecDeque::new(),
             early_signed_identities: BTreeMap::new(),
-            delivery: new_delivery_tracker(scope, transport.allowed_remote_peers),
+            delivery: delivery::new_channel_delivery_tracker(
+                scope,
+                transport.allowed_remote_peers,
+                P2pChannel::TeeDkg,
+            ),
         }
     }
 
@@ -114,7 +128,17 @@ where
         env.push(DKG_ENV_CEREMONY);
         env.extend_from_slice(&msg.to_bytes());
         let envelope = self.delivery.envelope(recipients.clone(), env)?;
-        let _ = self.sender.send(recipients, envelope, true);
+        let expected_peers = Some(self.delivery.expected_peers(&recipients));
+        let _ = send_observed(
+            &mut self.sender,
+            ObservedSend {
+                channel: P2pChannel::TeeDkg,
+                recipients,
+                expected_peers,
+                bytes: envelope,
+                priority: true,
+            },
+        );
         Ok(())
     }
 }
@@ -152,7 +176,7 @@ where
                 recv = self.receiver.recv() => {
                     let (from, raw) = recv.ok()?;
                     let Some((id, bytes)) = receive_delivery(&mut self.delivery, &from, raw.as_ref()) else { continue; };
-                    let _ = self.sender.send(Recipients::One(from.clone()), ack_envelope(id), true);
+                    delivery::send_ack(&mut self.sender, P2pChannel::TeeDkg, from.clone(), id);
                     match bytes.first().copied() {
                         Some(DKG_ENV_CEREMONY) => match DkgWireMessage::from_bytes(&bytes[1..]) {
                             Ok(msg) => {
