@@ -7,6 +7,9 @@ mod resolution;
 mod tests;
 
 use crate::digest::Digest;
+use crate::follow::metrics::{
+    record_resolver_failure, FollowerResolverFailureReason, FollowerResolverKind,
+};
 use crate::follow::upstream::{FinalizedSource, LocalBlockSource};
 use crate::follow::{FollowerEpocher, SharedCommitteeChain};
 use bytes::{Buf, BufMut, Bytes};
@@ -19,6 +22,7 @@ use commonware_resolver::{opaque, Consumer, Delivery, Fetch, Resolver, TargetedR
 use commonware_runtime::{Clock, Metrics, Spawner};
 use commonware_utils::{channel::oneshot, vec::NonEmptyVec, Span};
 pub(super) use resolution::FetchResolution;
+use resolution::{record_failure, relay_delivery};
 use std::{
     collections::BTreeMap,
     fmt,
@@ -108,7 +112,10 @@ where
         inner: opaque::init(
             context.child("opaque"),
             fetcher,
-            MarshalConsumer(handler),
+            MarshalConsumer {
+                handler,
+                context: Arc::new(context.child("delivery")),
+            },
             mailbox_size,
             RETRY_FLOOR,
         ),
@@ -186,9 +193,19 @@ struct Acquired {
     value: Fetched,
     _permit: Arc<OwnedSemaphorePermit>,
 }
-#[derive(Clone)]
-struct MarshalConsumer(handler::Handler<Digest>);
-impl Consumer for MarshalConsumer {
+struct MarshalConsumer<E> {
+    handler: handler::Handler<Digest>,
+    context: Arc<E>,
+}
+impl<E> Clone for MarshalConsumer<E> {
+    fn clone(&self) -> Self {
+        Self {
+            handler: self.handler.clone(),
+            context: self.context.clone(),
+        }
+    }
+}
+impl<E: Spawner> Consumer for MarshalConsumer<E> {
     type Key = BoundKey;
     type Value = Acquired;
     type Subscriber = Annotation;
@@ -199,13 +216,21 @@ impl Consumer for MarshalConsumer {
         value: Acquired,
     ) -> oneshot::Receiver<bool> {
         match value.value {
-            Fetched::Value(bytes) => self.0.deliver(
-                Delivery {
-                    key: delivery.key.key,
-                    subscribers: delivery.subscribers,
-                },
-                bytes,
-            ),
+            Fetched::Value(bytes) => {
+                let key = delivery.key.key;
+                let response = self.handler.deliver(
+                    Delivery {
+                        key,
+                        subscribers: delivery.subscribers,
+                    },
+                    bytes,
+                );
+                let (sender, receiver) = oneshot::channel();
+                self.context
+                    .child("ack")
+                    .spawn(move |_| relay_delivery(key, response, sender));
+                receiver
+            }
             // The authenticated ancestor bundle has already been acknowledged by marshal.
             Fetched::Delivered => {
                 let (tx, rx) = oneshot::channel();
@@ -247,17 +272,21 @@ impl<E: Clock, F: FinalizedSource, L: LocalBlockSource> opaque::Fetcher for Fetc
                 this.context.sleep(delay).await;
             }
             // Opaque queues/retries when all acquisition slots are occupied; no application scheduler.
-            let permit = this.permits.try_acquire_owned().ok()?;
+            let Ok(permit) = this.permits.try_acquire_owned() else {
+                record_failure(&key.key, FollowerResolverFailureReason::PermitSaturated);
+                return None;
+            };
             let mut handler = this.handler;
             let span = tracing::info_span!("follow.acquire", key = %key);
             let resolution = this.resolution;
             let acquisition = async move { resolution.acquire(key, &span, &mut handler).await };
-            let value = this
-                .context
-                .timeout(ACQUISITION_TIMEOUT, acquisition)
-                .await
-                .ok()
-                .flatten();
+            let value = match this.context.timeout(ACQUISITION_TIMEOUT, acquisition).await {
+                Ok(value) => value,
+                Err(_) => {
+                    record_failure(&key.key, FollowerResolverFailureReason::Timeout);
+                    None
+                }
+            };
             let mut retries = this.retries.lock();
             if value.is_some() {
                 retries.entries.remove(&key);

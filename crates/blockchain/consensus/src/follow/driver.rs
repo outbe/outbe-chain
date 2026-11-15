@@ -11,7 +11,7 @@
 //! authenticates a pre-announce/boundary and advances the shared epocher before
 //! handing a boundary block to the marshal.
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use commonware_consensus::types::Height;
 use commonware_cryptography::bls12381;
@@ -19,6 +19,10 @@ use commonware_runtime::{Clock, Metrics, Spawner};
 use commonware_utils::vec::NonEmptyVec;
 use tracing::{debug, info};
 
+use crate::follow::metrics::{
+    record_follower_heights, record_follower_round, record_upstream_tip_err,
+    record_upstream_tip_ok, FollowerRoundResult, TipKnownGuard,
+};
 use crate::follow::upstream::TipSource;
 use crate::follow::FollowerEpocher;
 use crate::marshal_types::MarshalMailbox;
@@ -44,13 +48,17 @@ fn hint_range(
     processed: Option<Height>,
     tip: Height,
     ceiling: Option<Height>,
-) -> Option<std::ops::RangeInclusive<u64>> {
-    let processed = processed?.get();
-    let end = tip
-        .get()
-        .min(processed.saturating_add(HINT_WINDOW))
-        .min(ceiling?.get());
-    (end > processed).then(|| processed.saturating_add(1)..=end)
+) -> (Option<std::ops::RangeInclusive<u64>>, bool) {
+    let Some(processed) = processed.map(Height::get) else {
+        return (None, false);
+    };
+    let end = tip.get().min(processed.saturating_add(HINT_WINDOW));
+    let clamped = processed < tip.get() && ceiling.is_none_or(|ceiling| ceiling.get() < end);
+    let range = ceiling
+        .map(|ceiling| end.min(ceiling.get()))
+        .filter(|end| *end > processed)
+        .map(|end| processed.saturating_add(1)..=end);
+    (range, clamped)
 }
 
 /// A stub target peer for `hint_finalized`. The follower has no real consensus
@@ -92,6 +100,7 @@ where
     }
 
     async fn run(mut self) {
+        let _tip_known_guard = TipKnownGuard::new();
         info!("follow driver started");
         // Cancellation covers pending upstream and marshal queries as well as
         // the polling sleep. A stopped marshal must never be polled for work.
@@ -115,16 +124,30 @@ where
             // after. Otherwise reuse the last known tip and just re-hint.
             if wakeups.is_multiple_of(TIP_REFRESH_EVERY) {
                 match self.config.tip.finalized_tip().await {
-                    Ok(tip) => last_tip = Some(tip),
-                    Err(err) => debug!(
-                        error = outbe_primitives::telemetry::error_field(&err),
-                        "upstream tip query failed; driving to last known tip"
-                    ),
+                    Ok(tip) => {
+                        let now_unix_secs = self
+                            .context
+                            .current()
+                            .duration_since(SystemTime::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs_f64();
+                        record_upstream_tip_ok(tip.get(), now_unix_secs);
+                        last_tip = Some(tip);
+                    }
+                    Err(err) => {
+                        record_upstream_tip_err(&err);
+                        debug!(
+                            error = outbe_primitives::telemetry::error_field(&err),
+                            "upstream tip query failed; driving to last known tip"
+                        );
+                    }
                 }
             }
             wakeups = wakeups.wrapping_add(1);
             if let Some(tip) = last_tip {
                 self.pull_to(tip).await;
+            } else {
+                record_follower_round(FollowerRoundResult::TipUnreachable);
             }
             self.context.sleep(TIP_POLL_INTERVAL).await;
         }
@@ -145,13 +168,20 @@ where
     async fn pull_to(&mut self, tip: Height) {
         // Marshal's processed floor (genesis anchor = height 0 on a fresh node).
         let processed = self.config.marshal.get_processed_height().await;
-        let Some(range) = hint_range(processed, tip, self.config.epocher.supported_ceiling())
-        else {
+        let ceiling = self.config.epocher.supported_ceiling();
+        record_follower_heights(processed.map(Height::get), ceiling.map(Height::get));
+        let (range, clamped) = hint_range(processed, tip, ceiling);
+        let Some(range) = range else {
             debug!(
                 tip = tip.get(),
                 processed = ?processed,
                 "follow driver has no eligible hint range"
             );
+            if clamped {
+                record_follower_round(FollowerRoundResult::CeilingClamped);
+            } else if processed.is_some_and(|processed| processed >= tip) {
+                record_follower_round(FollowerRoundResult::Idle);
+            }
             // Missing progress is not genesis or rollback. The engine supervises
             // marshal termination. This driver must not fabricate new work.
             return;
@@ -165,6 +195,11 @@ where
                 .marshal
                 .hint_finalized(Height::new(height), targets.clone());
         }
+        record_follower_round(if clamped {
+            FollowerRoundResult::CeilingClamped
+        } else {
+            FollowerRoundResult::Pulled
+        });
         debug!(
             tip = tip.get(),
             processed = ?processed,
