@@ -21,7 +21,7 @@ pub struct SeedInputs {
     pub base_genesis: Value,
     /// Declarative protocol seed sections (`staking`, `oracle`, `balance`, etc.).
     pub seed: Value,
-    /// Founding validator descriptors (`address`, `public_key`, `radicle_node_id`, `p2p_address`).
+    /// Founding validator descriptors (`address`, `feeder_address`, `public_key`, `radicle_node_id`, `p2p_address`).
     pub validators: Vec<Value>,
 }
 
