@@ -403,7 +403,11 @@ fn main() -> Result<()> {
         }
         Command::Release(release) => match release.command {
             ReleaseCommand::Build(arguments) => {
-                let repo_root = sgx::repository_root()?;
+                let repo_root = if arguments.inside_container {
+                    std::env::current_dir()?
+                } else {
+                    sgx::repository_root()?
+                };
                 let output = software::build(&software::BuildOptions {
                     repo_root: &repo_root,
                     output_dir: &arguments.output,
