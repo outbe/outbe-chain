@@ -25,7 +25,6 @@ For hardware-free dev/test networks created with a `GramineDirectDev` genesis TE
 `outbe-tee-enclave-mock`; no SGX hardware, AESM, DCAP, Gramine, or Docker is required. This mode is
 unattested and must never be used for production or mainnet.
 
-The editable configuration example lives at
-`templates/validator/operator-config.example.yaml`. Systemd templates are embedded at build time
-from `templates/validator/systemd/`; network-specific values remain in the generated
-`/opt/outbe-chain/validator.env` rather than being rendered into unit files.
+The editable configuration example lives at `templates/validator/operator-config.example.yaml`.
+Systemd policy comes from the shared `outbe-operator-systemd` crate used by both joining and
+founding flows; network-specific values remain in the generated `/opt/outbe-chain/validator.env`.

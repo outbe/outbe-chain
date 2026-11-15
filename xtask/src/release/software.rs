@@ -11,6 +11,7 @@ use std::{
 
 use clap::ValueEnum;
 use eyre::{bail, ensure, Context, Result};
+use outbe_operator_systemd::joining_units;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -316,6 +317,7 @@ fn build_inside_container(options: &BuildOptions<'_>) -> Result<PathBuf> {
     run_cargo_build(options.repo_root, options.profile, target)?;
     let staging = tempfile::tempdir().wrap_err("create software artifact staging directory")?;
     let staging_bin = staging.path().join("bin");
+    let staging_systemd = staging.path().join("systemd");
     fs::create_dir(&staging_bin)?;
     let built = options
         .repo_root
@@ -328,21 +330,28 @@ fn build_inside_container(options: &BuildOptions<'_>) -> Result<PathBuf> {
         fs::copy(&source, &destination)
             .wrap_err_with(|| format!("stage release binary: {}", source.display()))?;
     }
+    stage_joining_units(&staging_systemd)?;
     fs::create_dir_all(options.output_dir)?;
     let output = options
         .output_dir
         .join(bundle_name(options.profile, &identity.source_commit)?);
     package(&PackageOptions {
         artifacts: staging.path(),
-        systemd_units: &options
-            .repo_root
-            .join("bin/outbe-up/templates/validator/systemd"),
+        systemd_units: &staging_systemd,
         output: &output,
         profile: options.profile,
         target,
         identity: &identity,
     })?;
     Ok(output)
+}
+
+fn stage_joining_units(output: &Path) -> Result<()> {
+    fs::create_dir_all(output)?;
+    for unit in joining_units("/usr/local/bin/outbe-up") {
+        fs::write(output.join(unit.name), unit.content)?;
+    }
+    Ok(())
 }
 
 fn run_cargo_build(repo_root: &Path, profile: SoftwareProfile, target: &str) -> Result<()> {
@@ -705,5 +714,20 @@ mod tests {
             .files
             .iter()
             .any(|file| file.path == "bin/outbe-tee-enclave"));
+    }
+
+    #[test]
+    fn staged_units_are_the_canonical_embedded_assets() {
+        let temp = tempfile::tempdir().unwrap();
+        let output = temp.path().join("systemd");
+        stage_joining_units(&output).unwrap();
+        for expected in joining_units("/usr/local/bin/outbe-up") {
+            assert_eq!(
+                fs::read_to_string(output.join(&expected.name)).unwrap(),
+                expected.content,
+                "{}",
+                expected.name
+            );
+        }
     }
 }

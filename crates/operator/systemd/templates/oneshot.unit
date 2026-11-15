@@ -1,0 +1,17 @@
+[Unit]
+Description=@@DESCRIPTION@@
+@@UNIT_DIRECTIVES@@
+
+[Service]
+Type=oneshot
+User=outbe
+Group=outbe
+@@SERVICE_DIRECTIVES@@
+TimeoutStartSec=10min
+UMask=0077
+LimitCORE=0
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+@@SANDBOX_DIRECTIVES@@

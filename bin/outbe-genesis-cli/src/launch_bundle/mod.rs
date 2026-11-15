@@ -25,8 +25,7 @@ pub use self::scripts::{
     feeder_pairs_table, feeder_script, node_script, radicle_script,
 };
 pub use self::systemd::{
-    caddy_install_script, caddyfile, preflight_script, systemd_unit, tee_renew_script,
-    write_systemd_units, UnitRole, UNIT_ROLES,
+    caddy_install_script, caddyfile, preflight_script, tee_renew_script, write_systemd_units,
 };
 
 /// Default port numbers shared across validator hosts.

@@ -1,0 +1,6 @@
+[Unit]
+Description=@@DESCRIPTION@@
+@@UNIT_DIRECTIVES@@
+
+[Install]
+WantedBy=multi-user.target

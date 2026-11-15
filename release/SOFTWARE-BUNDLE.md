@@ -27,14 +27,14 @@ file. The build verifies the completed archive before returning it.
 - `bin/`: node, operator, feeder, Radicle, Hyperlane validator, and profile-specific enclave
   binaries;
 - `tools/outbe-genesis-cli`: the founding-network bundle generator;
-- `systemd/`: canonical joining-validator services embedded from `outbe-up`.
+- `systemd/`: canonical joining-validator services rendered by `outbe-operator-systemd`.
 
 The Hyperlane validator is payload only in this phase: no Hyperlane unit, configuration, or startup
 automation is installed.
 
 Founding-validator launch bundles are generated later from this exact software set plus one fresh
-genesis and network configuration. Their non-templated units follow the same users, hardening,
-restart policy, paths, and target layout as the joining-validator units.
+genesis and network configuration. Joining and founding units use the same templates and policy;
+their compact specifications contain only the commands, dependencies, and paths that must differ.
 
 ## CI
 

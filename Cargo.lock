@@ -8421,6 +8421,7 @@ dependencies = [
  "flate2",
  "hex",
  "k256 0.13.4",
+ "outbe-operator-systemd",
  "outbe-primitives",
  "rand_core 0.6.4",
  "serde",
@@ -8715,6 +8716,10 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
 ]
+
+[[package]]
+name = "outbe-operator-systemd"
+version = "0.1.0"
 
 [[package]]
 name = "outbe-oracle"
@@ -9521,6 +9526,7 @@ dependencies = [
  "hex",
  "indicatif",
  "k256 0.13.4",
+ "outbe-operator-systemd",
  "outbe-primitives",
  "outbe-snapshot",
  "rand 0.8.6",
@@ -17721,6 +17727,7 @@ dependencies = [
  "hex",
  "libc",
  "outbe-genesis-cli",
+ "outbe-operator-systemd",
  "outbe-primitives",
  "outbe-simplex",
  "outbe-tee",
