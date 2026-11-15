@@ -17735,6 +17735,7 @@ dependencies = [
  "time",
  "tokio",
  "walkdir",
+ "zstd",
 ]
 
 [[package]]
