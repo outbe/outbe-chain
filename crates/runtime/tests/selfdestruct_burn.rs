@@ -92,6 +92,31 @@ fn transact(
     outcome.result
 }
 
+/// The same transaction on the upstream revm EVM, which has no Outbe instructions.
+fn upstream_gas(db: &CacheDB<EmptyDB>, to: Address) -> u64 {
+    use revm::{context::ContextSetters, ExecuteEvm, MainBuilder, MainContext};
+    let mut evm = revm::Context::mainnet()
+        .with_db(db.clone())
+        .modify_cfg_chained(|cfg| {
+            cfg.chain_id = 1;
+            cfg.set_spec_and_mainnet_gas_params(SpecId::PRAGUE);
+        })
+        .modify_block_chained(|block| block.gas_limit = 30_000_000)
+        .build_mainnet();
+    let nonce = db.cache.accounts[&CALLER].info.nonce;
+    evm.set_tx(
+        TxEnv::builder()
+            .caller(CALLER)
+            .nonce(nonce)
+            .kind(TxKind::Call(to))
+            .gas_limit(3_000_000)
+            .chain_id(Some(1))
+            .build()
+            .unwrap(),
+    );
+    evm.replay().unwrap().result.tx_gas_used()
+}
+
 fn balance(db: &CacheDB<EmptyDB>, address: Address) -> U256 {
     db.cache
         .accounts
@@ -195,4 +220,22 @@ fn a_reverted_selfdestruct_moves_nothing() {
     assert_eq!(balance(&db, OLD), U256::from(FIVE_COEN));
     assert_eq!(balance(&db, Address::ZERO), U256::ZERO);
     assert_eq!(balance(&db, STAKING_ADDRESS), U256::ZERO);
+}
+
+#[test]
+fn a_selfdestruct_that_is_not_redirected_costs_the_upstream_gas() {
+    let existing = Address::repeat_byte(0x43);
+    for code in [
+        selfdestruct_to(Address::repeat_byte(0x42)),
+        selfdestruct_to(existing),
+        SELFDESTRUCT_TO_SELF.to_vec(),
+    ] {
+        let mut db = world();
+        put(&mut db, existing, U256::ONE, &[]);
+        put(&mut db, OLD, U256::from(FIVE_COEN), &code);
+        let upstream = upstream_gas(&db, OLD);
+        let result = transact(&mut db, TxKind::Call(OLD), U256::ZERO, vec![]);
+        assert!(result.is_success(), "{result:?}");
+        assert_eq!(result.tx_gas_used(), upstream, "{code:?}");
+    }
 }
