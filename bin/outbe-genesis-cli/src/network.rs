@@ -32,16 +32,14 @@ pub const MAX_GENESIS_AGE_SECONDS: i64 = 6 * 60 * 60;
 
 const PACKAGED_ASSETS: &str = "share/outbe-genesis";
 
-pub const SEED_SECTIONS: [&str; 16] = [
+pub const SEED_SECTIONS: [&str; 14] = [
     "protocol_constants",
     "balance",
     "staking",
     "rewards",
     "validator_set",
     "code_registry",
-    "metadosis",
     "oracle",
-    "tributes",
     "intex_profile",
     "gem_profile",
     "nod_profile",
@@ -60,7 +58,7 @@ pub const TEE_KEYS: [&str; 6] = [
     "minimum_tcb_evaluation_data_number",
 ];
 
-const STATIC_TOP_LEVEL_KEYS: [&str; 42] = [
+const STATIC_TOP_LEVEL_KEYS: [&str; 40] = [
     "network",
     "validators",
     "keys_dir",
@@ -78,8 +76,6 @@ const STATIC_TOP_LEVEL_KEYS: [&str; 42] = [
     "dkg_activation_grace_blocks",
     "prefund_coen_units",
     "min_stake",
-    "worldwide_day",
-    "fresh_metadosis",
     "contracts_dir",
     "enclave_image",
     "enclave_dir",

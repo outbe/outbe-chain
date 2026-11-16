@@ -11,7 +11,6 @@ use outbe_genesis_cli::seed_codec::{
     address_as_u256, address_bytes, asset_address, data_slot, hex32, mapping_key, u32_bytes,
     StorageBuilder,
 };
-use outbe_genesis_cli::seed_economy::clear_seeded_metadosis_days;
 use outbe_genesis_cli::seed_oracle::{seed_oracle, DEFAULT_POLICY_RATES};
 use outbe_genesis_cli::seed_validators::{seed_staking, seed_validator_set};
 use serde_json::{json, Value};
@@ -211,21 +210,6 @@ fn optional_seed_profile_is_copied_to_genesis_config_and_rejects_conflicts() {
     let err = seed_protocol_constants(&mut genesis3, &json!({"protocol_constants": []}))
         .expect_err("non-object");
     assert!(err.to_string().contains("JSON object"));
-}
-
-#[test]
-fn fresh_metadosis_clears_seeded_days_as_expected() {
-    let mut seed = json!({
-        "metadosis": {"worldwide_days": [{"wwd": 20260807}], "other": 7},
-        "oracle": {"scurve_seeds": [{"peak_day": 20260807}]}
-    });
-    clear_seeded_metadosis_days(&mut seed).expect("clear_seeded_metadosis_days");
-    assert_eq!(seed["metadosis"]["worldwide_days"], json!([]));
-    assert_eq!(seed["metadosis"]["other"], json!(7));
-    assert_eq!(
-        seed["oracle"]["scurve_seeds"],
-        json!([{"peak_day": 20260807}])
-    );
 }
 
 #[test]

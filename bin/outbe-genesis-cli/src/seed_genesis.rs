@@ -17,8 +17,7 @@ use crate::seed_codec::{
     MARKER_CODE, NOD_ADDRESS, NOD_PROFILE_SLOT,
 };
 use crate::seed_economy::{
-    clear_seeded_metadosis_days, merge_storage_into_alloc, override_worldwide_day, seed_coen,
-    seed_economic_state,
+    merge_storage_into_alloc, seed_coen, seed_economic_state,
 };
 use crate::seed_system::seed_system_state;
 use crate::seed_validators::seed_founders;
@@ -44,20 +43,11 @@ pub fn apply_seed(
 ) -> Result<Value, GenesisError> {
     let default_options = SeedOptions::default();
     let options = options.unwrap_or(&default_options);
-    let mut seed_owned = seed.clone();
-
-    seed_protocol_constants(genesis, &seed_owned)?;
-
-    if let Some(worldwide_day) = options.worldwide_day {
-        override_worldwide_day(&mut seed_owned, worldwide_day);
-    }
-    if options.fresh_metadosis {
-        clear_seeded_metadosis_days(&mut seed_owned)?;
-    }
+    seed_protocol_constants(genesis, seed)?;
 
     let validators = validators.unwrap_or(&[]);
 
-    validate_seed_keys(&seed_owned)?;
+    validate_seed_keys(seed)?;
 
     {
         let alloc = ensure_object_field(genesis, "alloc")?;
@@ -65,7 +55,7 @@ pub fn apply_seed(
         ensure_precompile_markers(alloc);
     }
 
-    if let Some(balances) = seed_owned.get("balance").and_then(Value::as_object) {
+    if let Some(balances) = seed.get("balance").and_then(Value::as_object) {
         let alloc = ensure_object_field(genesis, "alloc")?;
         seed_coen(alloc, balances)?;
         println!("  balance: {} entries", balances.len());
@@ -74,14 +64,14 @@ pub fn apply_seed(
     if !validators.is_empty() {
         let genesis_snapshot = genesis.clone();
         let alloc = ensure_object_field(genesis, "alloc")?;
-        seed_founders(&genesis_snapshot, &seed_owned, validators, alloc)?;
+        seed_founders(&genesis_snapshot, seed, validators, alloc)?;
     }
 
     {
         let mut genesis_snapshot = genesis.clone();
         {
             let alloc = ensure_object_field(genesis, "alloc")?;
-            seed_system_state(&mut genesis_snapshot, &seed_owned, alloc)?;
+            seed_system_state(&mut genesis_snapshot, seed, alloc)?;
         }
         if let Some(cfg) = genesis_snapshot.get("config").cloned() {
             if let Some(obj) = genesis.as_object_mut() {
@@ -89,9 +79,9 @@ pub fn apply_seed(
             }
         }
         let alloc = ensure_object_field(genesis, "alloc")?;
-        seed_economic_state(&seed_owned, alloc)?;
+        seed_economic_state(seed, alloc)?;
         let contracts_path = options.contracts_dir.as_deref().map(Path::new);
-        seed_contract_alloc(alloc, &seed_owned, contracts_path)?;
+        seed_contract_alloc(alloc, seed, contracts_path)?;
     }
 
     sort_json_value(genesis);

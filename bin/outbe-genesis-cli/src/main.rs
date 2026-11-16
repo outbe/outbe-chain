@@ -60,12 +60,6 @@ enum Commands {
         /// Directory containing contract code/state files referenced from `seed["contracts"]`.
         #[arg(long)]
         contracts_dir: Option<PathBuf>,
-        /// Override the seeded active worldwide-day (`YYYYMMDD`).
-        #[arg(long)]
-        worldwide_day: Option<u32>,
-        /// Do not seed an already-OFFERING WorldwideDay.
-        #[arg(long)]
-        fresh_metadosis: bool,
         /// Minimum stake in COEN base units (`unit`, default: `10000000000000000000000000` / `10_000_000` COEN).
         #[arg(long)]
         min_stake: Option<String>,
@@ -87,8 +81,6 @@ fn main() -> ExitCode {
             validators,
             output,
             contracts_dir,
-            worldwide_day,
-            fresh_metadosis,
             min_stake,
         }) => run_seed_cli_with_min_stake(
             &SeedCliArgs {
@@ -97,8 +89,6 @@ fn main() -> ExitCode {
                 validators,
                 output,
                 contracts_dir,
-                worldwide_day,
-                fresh_metadosis,
             },
             min_stake.as_deref(),
         ),

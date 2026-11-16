@@ -102,8 +102,6 @@ fn run_seed_genesis(
             seed: seed_path,
             validators: Some(validators_path),
             output: out_path.clone(),
-            worldwide_day: None,
-            fresh_metadosis: false,
             contracts_dir: None,
         },
     )

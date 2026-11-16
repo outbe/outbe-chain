@@ -112,8 +112,6 @@ fn complete_genesis_seeder_output_passes_xtask_validation() {
             seed,
             validators: None,
             output: output.clone(),
-            worldwide_day: None,
-            fresh_metadosis: false,
             contracts_dir: None,
         },
     )

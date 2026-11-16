@@ -154,10 +154,6 @@ pub struct SeedCliArgs {
     pub output: PathBuf,
     /// Optional directory containing external contract files.
     pub contracts_dir: Option<PathBuf>,
-    /// Optional WorldwideDay override (`YYYYMMDD`).
-    pub worldwide_day: Option<u32>,
-    /// Do not seed an already-OFFERING WorldwideDay.
-    pub fresh_metadosis: bool,
 }
 
 /// Execute the `seed_genesis` CLI pipeline.
@@ -212,11 +208,7 @@ pub fn run_seed_cli_with_min_stake(
             seed,
             validators,
         },
-        &SeedOptions {
-            contracts_dir,
-            worldwide_day: args.worldwide_day,
-            fresh_metadosis: args.fresh_metadosis,
-        },
+        &SeedOptions { contracts_dir },
     )?;
 
     if let Some(parent) = args.output.parent() {
