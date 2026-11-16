@@ -62,7 +62,7 @@ where
                 .map(|_| ())
         };
         if let Err(error) = authorize_outcome {
-            return self.include_zero_fee_soft_failure(recovered.tx(), error);
+            return self.include_zero_fee_soft_failure(recovered.tx(), error, Some(candidate));
         }
         self.execute_without_user_fee(tx_env, recovered, f)
     }
