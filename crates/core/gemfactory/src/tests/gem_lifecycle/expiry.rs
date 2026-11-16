@@ -38,6 +38,17 @@ fn expiry_waits_until_the_deadline_day_has_closed() {
     });
 }
 
+#[test]
+fn the_daily_pass_leaves_a_gem_in_its_issue_block() {
+    with_storage(|storage| {
+        set_profile(storage, outbe_gem::config::PROFILE_PROD);
+        let gem_id = add(storage, sample_params(ALICE));
+        begin_block_at(storage, T_NOW);
+        assert_eq!(gem_state(storage, gem_id), GemState::Issued as u8);
+        assert_eq!(unallocated(storage), U256::ZERO);
+    });
+}
+
 /// The gem is deleted and the load goes back to the reserve in one transition.
 #[test]
 fn forfeit_deletes_the_gem_and_returns_promis_load() {

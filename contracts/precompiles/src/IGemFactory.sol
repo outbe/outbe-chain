@@ -17,6 +17,7 @@ interface IGemFactory {
     error InsufficientCapacity();
     error PositionExpired();
     error InsufficientProofOfWork();
+    error CannotMineInIssueBlock();
     error InvalidCurrency(uint16 currency);
     error OracleUnavailable();
     error InvalidOwner();
@@ -62,7 +63,7 @@ interface IGemFactory {
     ///         modify key authorizes the call: `mac = HMAC(modifyKey, op-preimage)`.
     ///         `opNonce` MUST equal the owner's current on-chain promis op-nonce (fetch it via
     ///         `outbe_deriveKeys` + `IPromis.opNonceOf`). The bound amount is the gem's load.
-    ///         Returns the minted Promis.
+    ///         A gem is not mined in its issue block. Returns the minted Promis.
     /// @dev    `nonce` solves SHA256("OUTBE_GEM_MINING_V1" || `gemId` || owner || uint64(0) ||
     ///         `nonce`) to the protocol difficulty. The owner is the gem's, not the caller's.
     function minePromis(uint256 gemId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256 promisMinor);

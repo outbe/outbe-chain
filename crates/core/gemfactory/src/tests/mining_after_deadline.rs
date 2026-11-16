@@ -21,6 +21,7 @@ fn called_group(load: U256) -> (HashMapStorageProvider, U256, U256) {
         record_settled(&handle, paid);
         (paid, unpaid)
     });
+    provider.set_block_number(1);
     (provider, ids.0, ids.1)
 }
 

@@ -251,6 +251,19 @@ fn force_settled(storage: &StorageHandle<'_>, gem_id: U256) {
     record_settled(storage, gem_id);
 }
 
+/// One settled Gem of `load` Promis owned by Alice, priced at 2 COEN/USD, in the block
+/// before the provider's.
+fn settled_gem(load: U256) -> (HashMapStorageProvider, U256) {
+    let mut provider = test_storage(Some(U256::from(2u64) * six_decimal_unit()));
+    let gem_id = StorageHandle::enter(&mut provider, |storage| {
+        let gem_id = issue_at_live_rate(&storage, ALICE, load, 840, 840).unwrap();
+        force_settled(&storage, gem_id);
+        gem_id
+    });
+    provider.set_block_number(1);
+    (provider, gem_id)
+}
+
 /// Records Settled the way `settle_gem` does once payment is in, without the payment.
 fn record_settled(storage: &StorageHandle<'_>, gem_id: U256) {
     let gem = gem_api::get_view(storage, gem_id).unwrap().unwrap();

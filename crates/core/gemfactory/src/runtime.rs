@@ -485,6 +485,10 @@ pub fn mine_promis(
     if !item.is_settled() {
         return Err(GemFactoryError::GemNotSettled.into());
     }
+    // Mining deletes the gem, and its issuer could issue the same id again in this block.
+    if item.is_issued_in(storage.block_number()?) {
+        return Err(GemFactoryError::CannotMineInIssueBlock.into());
+    }
 
     validate_pow(gem_id, item.owner, nonce)?;
 

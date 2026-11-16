@@ -99,6 +99,18 @@ impl GemItemState {
         ))
     }
 
+    /// The id derives from the issue block, so it matches only in that block.
+    #[must_use]
+    pub fn is_issued_in(&self, block_number: u64) -> bool {
+        GemContract::generate_gem_id(
+            self.series_id,
+            self.sub_series_id,
+            self.issuer,
+            self.owner,
+            block_number,
+        ) == self.gem_id
+    }
+
     #[must_use]
     pub fn is_settled(&self) -> bool {
         self.state == GemState::Settled as u8

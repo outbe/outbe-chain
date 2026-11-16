@@ -592,6 +592,11 @@
   },
   {
     "type": "error",
+    "name": "CannotMineInIssueBlock",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "DateStep",
     "inputs": [
       {

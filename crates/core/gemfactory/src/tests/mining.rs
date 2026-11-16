@@ -3,15 +3,13 @@ use super::*;
 #[test]
 fn mine_promis_full_flow() {
     outbe_promis::enclave_client::test_enclave::install();
-    let rate = U256::from(2u64) * six_decimal_unit();
-    with_storage(Some(rate), |storage| {
-        let load = U256::from(10u64) * six_decimal_unit();
-        // The paid settle deposits into the Reserve vault, which this storage-only
-        // harness cannot service. `force_settled` records Settled through
-        // `gem_api::settle_gem` and does not deposit. Localnet covers the paid settle.
-        let gem_id = issue_at_live_rate(storage, ALICE, load, 840, 840).unwrap();
-
-        force_settled(storage, gem_id);
+    let load = U256::from(10u64) * six_decimal_unit();
+    // The paid settle deposits into the Reserve vault, which this storage-only
+    // harness cannot service. `force_settled` records Settled through
+    // `gem_api::settle_gem` and does not deposit. Localnet covers the paid settle.
+    let (mut provider, gem_id) = settled_gem(load);
+    StorageHandle::enter(&mut provider, |storage| {
+        let storage = &storage;
         let nonce = find_valid_nonce(gem_id, ALICE);
         let minted = runtime::mine_promis(
             storage,
@@ -64,12 +62,10 @@ fn mine_promis_rejects_non_settled() {
 #[test]
 fn anyone_may_relay_mining_and_the_promis_lands_with_the_owner() {
     outbe_promis::enclave_client::test_enclave::install();
-    let rate = U256::from(2u64) * six_decimal_unit();
-    with_storage(Some(rate), |storage| {
-        let load = U256::from(10u64) * six_decimal_unit();
-        let gem_id = issue_at_live_rate(storage, ALICE, load, 840, 840).unwrap();
-        force_settled(storage, gem_id);
-
+    let load = U256::from(10u64) * six_decimal_unit();
+    let (mut provider, gem_id) = settled_gem(load);
+    StorageHandle::enter(&mut provider, |storage| {
+        let storage = &storage;
         let nonce = find_valid_nonce(gem_id, ALICE);
         let call = crate::precompile::IGemFactory::minePromisCall {
             gemId: gem_id,
@@ -104,6 +100,40 @@ fn anyone_may_relay_mining_and_the_promis_lands_with_the_owner() {
             0
         );
     });
+    outbe_promis::enclave_client::test_enclave::uninstall();
+}
+
+#[test]
+fn a_gem_is_not_mined_in_its_issue_block() {
+    outbe_promis::enclave_client::test_enclave::install();
+    let load = U256::from(10u64) * six_decimal_unit();
+    let mut provider = test_storage(Some(U256::from(2u64) * six_decimal_unit()));
+    let mine = |provider: &mut HashMapStorageProvider, gem_id: U256| {
+        StorageHandle::enter(provider, |storage| {
+            runtime::mine_promis(
+                &storage,
+                crate::schema::GemMiningProof {
+                    gem_id,
+                    nonce: find_valid_nonce(gem_id, ALICE),
+                },
+                promis_auth(ALICE, load, 0),
+            )
+        })
+    };
+    let gem_id = StorageHandle::enter(&mut provider, |storage| {
+        let gem_id = issue_at_live_rate(&storage, ALICE, load, 840, 840).unwrap();
+        force_settled(&storage, gem_id);
+        gem_id
+    });
+    assert_eq!(
+        mine(&mut provider, gem_id).unwrap_err().to_string(),
+        outbe_primitives::error::PrecompileError::from(
+            crate::errors::GemFactoryError::CannotMineInIssueBlock
+        )
+        .to_string()
+    );
+    provider.set_block_number(1);
+    assert_eq!(mine(&mut provider, gem_id).unwrap(), load);
     outbe_promis::enclave_client::test_enclave::uninstall();
 }
 
