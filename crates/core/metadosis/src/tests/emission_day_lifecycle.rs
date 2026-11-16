@@ -434,12 +434,11 @@ fn wwd_without_price_runs_as_empty_day() {
             .set_block_timestamp(U256::from(proj.offerings_start))
             .unwrap();
         assert!(!api::is_offering_day(storage.clone(), wwd).unwrap());
-        let offer_err =
-            outbe_tributefactory::worldwideday::genesis::submit_signed_test_offer_for_day(
-                storage.clone(),
-                wwd,
-            )
-            .expect_err("offer_tribute must revert when forming VWAP snapshot is absent");
+        let offer_err = outbe_tributefactory::test_support::submit_signed_test_offer_for_day(
+            storage.clone(),
+            wwd,
+        )
+        .expect_err("offer_tribute must revert when forming VWAP snapshot is absent");
         assert_eq!(
             offer_err.to_string(),
             outbe_primitives::error::PrecompileError::from(

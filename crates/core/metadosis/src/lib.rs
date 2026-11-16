@@ -21,8 +21,6 @@ mod commit;
 pub mod constants;
 mod emission_sink;
 pub mod errors;
-#[cfg(feature = "test-utils")]
-pub use outbe_tributefactory::worldwideday::genesis;
 mod lifecycle;
 mod limits;
 mod lysis;
