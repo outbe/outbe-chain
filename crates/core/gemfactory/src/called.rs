@@ -169,7 +169,7 @@ pub(crate) fn call_currency(
         budget,
         |group, budget| {
             call_pass::call_entry::<GemCallPass>(&ctx.storage, budget, group, || {
-                if retire_paid_group(&mut gem, group, ctx.block.timestamp)? {
+                if retire_settled_group(&mut gem, group, ctx.block.timestamp)? {
                     return Ok(1);
                 }
                 let calls = u32::from(call_if_breached(
@@ -186,10 +186,10 @@ pub(crate) fn call_currency(
     Ok((called, finished))
 }
 
-/// Takes a group every gem of which is paid out of its bin once its first full day is
+/// Takes a group every gem of which is settled out of its bin once its first full day is
 /// under way: a gem issued at its 00:00:00 still joins it, none after. Returns whether
 /// it did.
-fn retire_paid_group(gem: &mut GemContract<'_>, group: B256, now: u64) -> Result<bool> {
+fn retire_settled_group(gem: &mut GemContract<'_>, group: B256, now: u64) -> Result<bool> {
     if gem.group_gem_count.read(&group)? != 0 || gem.group_called_at.read(&group)? != 0 {
         return Ok(false);
     }
@@ -245,7 +245,7 @@ pub(crate) fn breach_terms(terms: &CallTerms, full_day_after_issue: u32) -> Brea
     }
 }
 
-/// `Issued -> Called` for every unpaid member at once: the group leaves the trie for the
+/// `Issued -> Called` for every unsettled member at once: the group leaves the trie for the
 /// expiry queue, where it waits on its sealed notice period as one entry.
 pub(crate) fn mark_called(
     gem: &mut GemContract<'_>,

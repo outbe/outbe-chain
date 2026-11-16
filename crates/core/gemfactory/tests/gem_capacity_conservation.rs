@@ -243,7 +243,7 @@ fn every_included_gem_subtype_returns_its_full_load_once_after_forfeiture() {
 }
 
 #[test]
-fn a_paid_then_mined_gem_returns_no_capacity_while_unpaid_siblings_forfeit() {
+fn a_settled_then_mined_gem_returns_no_capacity_while_unsettled_siblings_forfeit() {
     let (mut p, rights) = world();
     let (paid, paid_load) = rights[0];
     // The completed settlement footprint; payment itself is covered by the
@@ -271,10 +271,10 @@ fn a_paid_then_mined_gem_returns_no_capacity_while_unpaid_siblings_forfeit() {
     });
 }
 
-/// A paid gem outlives the forfeit and the cleanup of its unpaid siblings: it stays
+/// A settled gem outlives the forfeit and the cleanup of its unsettled siblings: it stays
 /// Settled, listed and counted, and its load is never returned.
 #[test]
-fn a_paid_gem_stays_live_beside_its_forfeited_siblings() {
+fn a_settled_gem_stays_live_beside_its_forfeited_siblings() {
     use alloy_sol_types::SolCall;
     use outbe_gem::precompile::IGem;
 
@@ -313,7 +313,10 @@ fn a_paid_gem_stays_live_beside_its_forfeited_siblings() {
         let group = api::get_group(&s, group_key).unwrap().unwrap();
         assert_eq!(group.settled_gems, 1);
         assert_eq!(gem.group_gem_count.read(&group_key).unwrap(), 0);
-        assert_eq!(gem.group_unpaid_load.read(&group_key).unwrap(), U256::ZERO);
+        assert_eq!(
+            gem.group_unsettled_load_minor.read(&group_key).unwrap(),
+            U256::ZERO
+        );
         assert_eq!(gem.cleanup_group_slot.read(&group_key).unwrap(), 0);
         assert_eq!(gem.forfeit_tree_root.read().unwrap(), U256::ZERO);
         assert_eq!(
@@ -332,7 +335,7 @@ fn a_paid_gem_stays_live_beside_its_forfeited_siblings() {
         .collect::<Vec<_>>();
     assert_eq!(forfeited, vec![(4, total - paid_load)]);
 
-    // Mining the paid gem closes the group and returns nothing more.
+    // Mining the settled gem closes the group and returns nothing more.
     StorageHandle::enter(&mut p, |s| {
         let (item, group) = api::load_pair(&s, paid).unwrap().unwrap();
         api::remove_gem(&s, item, group).unwrap();

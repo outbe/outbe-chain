@@ -1,5 +1,5 @@
-//! A paid Gem has no deadline: a settled Gem whose group was called mines its
-//! Promis after the settlement deadline, while its unpaid twin is refused.
+//! A settled Gem has no deadline: a settled Gem whose group was called mines its
+//! Promis after the settlement deadline, while its unsettled twin is refused.
 
 use super::*;
 use outbe_gem::GemParams;
@@ -50,9 +50,13 @@ fn a_settled_gem_mines_after_the_settlement_deadline_while_its_unpaid_twin_is_re
         );
         let gem = gem_view(handle, paid);
         assert_eq!(gem.item.state, GemState::Settled as u8);
-        assert_eq!(gem.called_at(), T_NOW, "the paid Gem shares the deadline");
+        assert_eq!(
+            gem.called_at(),
+            T_NOW,
+            "the settled Gem shares the deadline"
+        );
 
-        // The unpaid twin is refused at the mining gate.
+        // The unsettled twin is refused at the mining gate.
         let refused = runtime::mine_promis(
             handle,
             crate::schema::GemMiningProof {
@@ -71,7 +75,7 @@ fn a_settled_gem_mines_after_the_settlement_deadline_while_its_unpaid_twin_is_re
         );
         assert!(gem_api::get_item(handle, unpaid).unwrap().is_some());
 
-        // The paid Gem mines.
+        // The settled Gem mines.
         let nonce = find_valid_nonce(paid, ALICE);
         let minted = runtime::mine_promis(
             handle,

@@ -124,8 +124,8 @@ impl GemContract<'_> {
                 })
             }
         };
-        self.add_unpaid_load(group_key, item.promis_load_minor)?;
-        let opened_new_sub_series = self.add_sub_series_unpaid(item)?;
+        self.add_unsettled_load(group_key, item.promis_load_minor)?;
+        let opened_new_sub_series = self.add_sub_series_unsettled(item)?;
 
         self.insert_group_member(group_key, item.gem_id)?;
         self.insert_state_record(item)?;
@@ -152,8 +152,8 @@ impl GemContract<'_> {
             .checked_add(1)
             .ok_or(GemError::SettledCountOverflow)?;
         self.remove_group_member(item.group_key, item.gem_id)?;
-        self.take_unpaid_load(item.group_key, item.promis_load_minor)?;
-        self.take_sub_series_unpaid(&item)?;
+        self.take_unsettled_load(item.group_key, item.promis_load_minor)?;
+        self.take_sub_series_unsettled(&item)?;
         item.called_at = self.group_called_at.read(&item.group_key)?;
         item.settled_at = self.storage.now_secs()?;
         item.state = GemState::Settled as u8;
@@ -176,8 +176,8 @@ impl GemContract<'_> {
                 .ok_or(GemError::SettledCountUnderflow { group_id })?;
             self.group_gem_count.read(&item.group_key)?
         } else {
-            self.take_unpaid_load(item.group_key, item.promis_load_minor)?;
-            self.take_sub_series_unpaid(&item)?;
+            self.take_unsettled_load(item.group_key, item.promis_load_minor)?;
+            self.take_sub_series_unsettled(&item)?;
             self.remove_group_member(item.group_key, item.gem_id)?
         };
         self.delete_state_record(item.gem_id)?;

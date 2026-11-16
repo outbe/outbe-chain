@@ -393,10 +393,10 @@ fn leaving_a_group_moves_its_last_member_into_the_hole() {
     });
 }
 
-/// The group record and its sealed terms outlive the unpaid membership while a paid
+/// The group record and its sealed terms outlive the unsettled membership while a settled
 /// member exists; the last removal takes everything down.
 #[test]
-fn group_and_terms_survive_until_unpaid_and_settled_are_zero() {
+fn group_and_terms_survive_until_unsettled_and_settled_are_zero() {
     with_storage(|storage| {
         let gem_id = add(storage, sample_params(ALICE));
         let group = group_of(storage, gem_id);
@@ -412,15 +412,15 @@ fn group_and_terms_survive_until_unpaid_and_settled_are_zero() {
         assert_eq!(gem.group_gem_count.read(&group).unwrap(), 0);
         let body = api::get_group(storage, group_id)
             .unwrap()
-            .expect("the paid member keeps the group");
+            .expect("the settled member keeps the group");
         assert_eq!(body.settled_gems, 1);
         assert!(!gem.group_call_price_minor.read(&group).unwrap().is_zero());
         assert_eq!(
             view(storage, gem_id).item.entry_price_minor,
             U256::from(500_000u64)
         );
-        // The group keeps its place in the trie while a paid member holds it open; the
-        // scan skips a group without unpaid members.
+        // The group keeps its place in the trie while a settled member holds it open; the
+        // scan skips a group without unsettled members.
         assert_ne!(gem.call_group_slot.read(&group).unwrap(), 0);
         let mut scan = GemContract::new(storage.clone());
         let window = breach_window(
@@ -439,13 +439,17 @@ fn group_and_terms_survive_until_unpaid_and_settled_are_zero() {
         assert!(!tree_math::contains(&outbe_gem::CallBins(&gem, USD), bin).unwrap());
         assert!(api::get_group(storage, group_id).unwrap().is_none());
         assert!(gem.group_call_price_minor.read(&group).unwrap().is_zero());
-        assert!(gem.group_unpaid_load.read(&group).unwrap().is_zero());
+        assert!(gem
+            .group_unsettled_load_minor
+            .read(&group)
+            .unwrap()
+            .is_zero());
     });
 }
 
-/// Removing an unpaid gem touches no group body; removing a paid one lowers the count.
+/// Removing an unsettled gem touches no group body; removing a settled one lowers the count.
 #[test]
-fn unpaid_removal_preserves_group_state_settled_removal_decrements() {
+fn unsettled_removal_preserves_group_state_settled_removal_decrements() {
     let mut provider = provider_at(T_NOW);
     StorageHandle::enter(&mut provider, |storage| {
         let gems = gems_with_loads(&storage, &[1, 2]);
@@ -459,7 +463,7 @@ fn unpaid_removal_preserves_group_state_settled_removal_decrements() {
                 .settled_gems,
             1
         );
-        // Forfeit the unpaid one: the group body stays as it is.
+        // Forfeit the unsettled one: the group body stays as it is.
         begin_block_at(
             &storage,
             GemContract::day_end(GemContract::deadline_day(

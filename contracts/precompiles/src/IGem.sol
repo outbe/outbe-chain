@@ -93,7 +93,7 @@ interface IGem {
         uint64 calledAt,
         uint64 settlementDeadline
     );
-    /// @notice The sub-series notice period lapsed: its `forfeitedCount` unpaid gems are forfeited and
+    /// @notice The sub-series notice period lapsed: its `forfeitedCount` unsettled gems are forfeited and
     ///         their `forfeitedAmountMinor` returned at once. The cleanup deletes them after.
     event GemSeriesClosed(
         bytes14 indexed seriesId,

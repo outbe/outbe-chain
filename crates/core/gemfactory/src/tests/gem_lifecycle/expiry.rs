@@ -1,5 +1,5 @@
-//! The forfeit sweep: a called group whose notice lapsed returns its unpaid load to the
-//! Promis reserve in one credit, and the cleanup deletes its unpaid gems under the
+//! The forfeit sweep: a called group whose notice lapsed returns its unsettled load to the
+//! Promis reserve in one credit, and the cleanup deletes its unsettled gems under the
 //! block budget.
 
 use alloy_primitives::{B256, U256};
@@ -162,7 +162,7 @@ fn a_fully_settled_group_closes_with_zero_forfeit() {
     );
 }
 
-/// Its owner paid the strike, so the load is theirs.
+/// Its owner settled it at the strike, so the load is theirs.
 #[test]
 fn a_settled_gem_is_never_forfeited() {
     with_storage(|storage| {

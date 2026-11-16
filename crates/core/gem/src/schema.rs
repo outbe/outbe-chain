@@ -117,7 +117,7 @@ impl GemItemState {
     }
 }
 
-/// Shared group record. The record is deleted once both the unpaid count and
+/// Shared group record. The record is deleted once both the unsettled count and
 /// `settled_gems` reach zero.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[storage_record(exists_field = full_day_after_issue)]
@@ -129,7 +129,7 @@ pub struct GemGroupState {
     pub full_day_after_issue: WorldwideDay,
     #[attribute(order = 1)]
     pub reference_currency: u16,
-    /// Paid members still holding the group open.
+    /// Settled members still holding the group open.
     #[attribute(order = 2)]
     pub settled_gems: u64,
 }
@@ -166,7 +166,7 @@ pub struct GemView {
 }
 
 impl GemView {
-    /// `called_at` as the ABI reports it: the group's while the gem is unpaid, the
+    /// `called_at` as the ABI reports it: the group's while the gem is unsettled, the
     /// gem's own copy once settled.
     #[must_use]
     pub fn called_at(&self) -> u64 {
@@ -211,7 +211,7 @@ impl GemView {
 #[storage_schema]
 #[contract(addr = GEM_ADDRESS)]
 pub struct GemContract {
-    // --- Group membership: unpaid gems for the cleanup, with a count,
+    // --- Group membership: unsettled gems for the cleanup, with a count,
     // positional map and reverse map for swap removal.
     #[attribute(order = 1)]
     pub group_gem_count: outbe_primitives::storage::dsl::Map<B256, u32>,
@@ -323,11 +323,11 @@ pub struct GemContract {
     #[attribute(order = 41)]
     pub owner_id_position: outbe_primitives::storage::dsl::Map<U256, u32>,
 
-    /// Promis load of the group's unpaid gems, returned at once when it is forfeited.
+    /// Promis load of the group's unsettled gems, returned at once when it is forfeited.
     #[attribute(order = 42)]
-    pub group_unpaid_load: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub group_unsettled_load_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    // --- This queue stores forfeited groups whose unpaid gems await deletion.
+    // --- This queue stores forfeited groups whose unsettled gems await deletion.
     // It schedules groups by day, like the forfeit queue.
     #[attribute(order = 43)]
     pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
@@ -382,9 +382,9 @@ pub struct GemContract {
     #[attribute(order = 65)]
     pub group_sub_series_reference_currency: outbe_primitives::storage::dsl::Map<B256, u16>,
     #[attribute(order = 66)]
-    pub group_sub_series_unpaid_count: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub group_sub_series_unsettled_count: outbe_primitives::storage::dsl::Map<B256, u32>,
     #[attribute(order = 67)]
-    pub group_sub_series_unpaid_load: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub group_sub_series_unsettled_load_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
 }
 
 /// Summary of one `(series_id, sub_series_id)` within a call group.
@@ -394,8 +394,8 @@ pub struct GroupSubSeriesSummary {
     pub sub_series_id: u16,
     pub issuance_currency: u16,
     pub reference_currency: u16,
-    pub unpaid_count: u32,
-    pub unpaid_load: U256,
+    pub unsettled_count: u32,
+    pub unsettled_load_minor: U256,
 }
 
 impl GemContract<'_> {

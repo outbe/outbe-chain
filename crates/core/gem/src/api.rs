@@ -180,7 +180,7 @@ pub fn settlement_deadline(storage: &StorageHandle<'_>, group_key: B256) -> Resu
 
 pub use outbe_core_common::settlement::settlement_deadline_of;
 
-/// Records a loaded gem paid for. GemFactory decides the settlement and takes the payment.
+/// Records a loaded gem as settled. GemFactory decides the settlement and takes the payment.
 pub fn record_settled(
     storage: &StorageHandle<'_>,
     item: LoadedGem,
@@ -189,7 +189,7 @@ pub fn record_settled(
     crate::state_api::record_settled(storage, item, group)
 }
 
-/// Deletes a loaded gem, lowering membership or the paid count, and the group once
+/// Deletes a loaded gem, lowering membership or the settled count, and the group once
 /// nothing refers to it.
 pub fn remove_gem(
     storage: &StorageHandle<'_>,
