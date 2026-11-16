@@ -404,11 +404,7 @@ impl Staking<'_> {
         // Burn slashed units from STAKING_ADDRESS and credit the Promis Limit.
         if !total_slashed.is_zero() {
             outbe_promislimit::PromisLimitContract::new(self.storage.clone())
-                .burn_to_promis_limit(
-                    STAKING_ADDRESS,
-                    total_slashed,
-                    outbe_promislimit::BurnSource::Slash,
-                )?;
+                .burn(outbe_promislimit::BurnSource::ValidatorStake, total_slashed)?;
         }
 
         // Cross-call: pass the post-write amount after stake, claim, and burn

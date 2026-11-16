@@ -1,32 +1,13 @@
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::SolEvent;
+use outbe_primitives::addresses::REWARDS_ADDRESS;
 use outbe_primitives::error::Result;
-use outbe_system_common::addresses::{PROMIS_LIMIT_ADDRESS, SYSTEM_ADDRESS};
+use outbe_system_common::addresses::{
+    INTEX_FACTORY_ADDRESS, PROMIS_LIMIT_ADDRESS, STAKING_ADDRESS, VOTE_ADDRESS,
+};
 use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 
 use crate::{errors::PromisLimitError, precompile::IPromisLimit, schema::PromisLimitContract};
-
-/// Identifies the protocol path that burns `COEN` units into the Promis Limit.
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum BurnSource {
-    BaseFee = 0,
-    BlobFee = 1,
-    Slash = 2,
-    ProposalBond = 3,
-    BlockFee = 4,
-    Proceeds = 5,
-    LysisUnused = 6,
-    NodForfeit = 7,
-}
-
-impl BurnSource {
-    /// Returns `true` when the EVM already burned the `COEN` units before
-    /// `PromisLimitContract::burn_to_promis_limit` is called.
-    pub const fn is_already_burned(self) -> bool {
-        matches!(self, Self::BaseFee | Self::BlobFee)
-    }
-}
 
 /// The cause of a limit or a load that goes back to the Promis Limit.
 #[repr(u8)]
@@ -45,6 +26,32 @@ pub enum LimitSource {
     AgentReward = 32,
 }
 
+/// The cause of a burn of COEN from the one account of its module.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BurnSource {
+    PriorityFees = 42,
+    IntexAuctionProceeds = 43,
+    ValidatorStake = 44,
+    ProposalBond = 45,
+}
+
+impl BurnSource {
+    pub const fn account(self) -> Address {
+        match self {
+            Self::PriorityFees => REWARDS_ADDRESS,
+            Self::IntexAuctionProceeds => INTEX_FACTORY_ADDRESS,
+            Self::ValidatorStake => STAKING_ADDRESS,
+            Self::ProposalBond => VOTE_ADDRESS,
+        }
+    }
+}
+
+const BASE_FEES: u8 = 41;
+const BURN_ADDRESSES: u8 = 46;
+
+pub const DEAD_ADDRESS: Address = address!("0x000000000000000000000000000000000000dEaD");
+
 /// The cause of a take from the Promis Limit.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -57,72 +64,78 @@ impl PromisLimitContract<'_> {
         self.promis_limit.read()
     }
 
-    pub fn rest_minor(&self) -> Result<U256> {
-        self.rest_minor.read()
+    /// COEN units below one minor that stay on the account of `source` for its next burn.
+    pub fn burn_rest(&self, source: BurnSource) -> Result<U256> {
+        self.burn_rests.read(&(source as u8))
+    }
+
+    /// Base and blob fees that the EVM burned and the daily add has not taken yet.
+    pub fn base_fee_count(&self) -> Result<U256> {
+        self.base_fee_count.read()
     }
 
     pub(crate) fn set_promis_limit(&mut self, total: U256) -> Result<()> {
         self.promis_limit.write(total)
     }
 
-    /// Routes `amount_minor` `COEN` units into the Promis Limit, credits whole Promis Limit
-    /// minors to `promis_limit`, and stores the remainder in `rest_minor`.
-    ///
-    /// Already-burned fee sources (`BurnSource::BaseFee | BurnSource::BlobFee`) may only be
-    /// passed by the block executor (`escrow == SYSTEM_ADDRESS`) and do not decrease any
-    /// account balance. All other sources must supply a non-system `escrow` account from
-    /// which `amount_minor` is burned.
-    pub fn burn_to_promis_limit(
-        &mut self,
-        escrow: Address,
-        amount_minor: U256,
-        source: BurnSource,
-    ) -> Result<U256> {
-        if source.is_already_burned() != (escrow == SYSTEM_ADDRESS) {
-            return Err(PromisLimitError::UnauthorizedBurnCaller {
-                caller: escrow,
-                burn_source: source as u8,
-            }
-            .into());
+    /// Burns `amount` COEN units from the account of `source` with its rest, and adds the whole
+    /// minors. The part below one minor stays on the account as the new rest.
+    pub fn burn(&mut self, source: BurnSource, amount: U256) -> Result<()> {
+        if amount.is_zero() {
+            return Ok(());
         }
-        if amount_minor.is_zero() {
-            return Ok(U256::ZERO);
-        }
-
         let guard = self.storage.checkpoint_guard()?;
-        let prev_rest = self.rest_minor.read()?;
-        let total_minor = prev_rest
-            .checked_add(amount_minor)
+        let code = source as u8;
+        let total = self
+            .burn_rests
+            .read(&code)?
+            .checked_add(amount)
             .ok_or(PromisLimitError::Overflow)?;
-        let credited_minor = total_minor / UNITS_PER_PROTOCOL_MINOR;
-        let new_rest = total_minor % UNITS_PER_PROTOCOL_MINOR;
+        self.burn_rests
+            .write(&code, total % UNITS_PER_PROTOCOL_MINOR)?;
+        self.burn_whole_minors(code, source.account(), total)?;
+        guard.commit()
+    }
 
-        if !credited_minor.is_zero() {
-            let after = self
-                .promis_limit()?
-                .checked_add(credited_minor)
-                .ok_or(PromisLimitError::Overflow)?;
-            self.set_promis_limit(after)?;
+    /// Counts base and blob fees that the EVM burned in a block.
+    pub fn count_base_fees(&mut self, amount: U256) -> Result<()> {
+        if amount.is_zero() {
+            return Ok(());
         }
-        if !source.is_already_burned() {
-            self.storage.decrease_balance(escrow, amount_minor)?;
-        }
-        self.rest_minor.write(new_rest)?;
-        // End-of-block already-burned fee settlement runs outside any transaction receipt;
-        // its event schema and transport carrier are owned by the Events review (§3.1, §5.2).
-        if !source.is_already_burned() {
-            self.storage.emit_event(
-                PROMIS_LIMIT_ADDRESS,
-                IPromisLimit::NativeBurnedToPromisLimit {
-                    source: source as u8,
-                    burnedUnit: amount_minor,
-                }
-                .encode_log_data(),
-            )?;
-        }
-        guard.commit()?;
+        let count = self
+            .base_fee_count
+            .read()?
+            .checked_add(amount)
+            .ok_or(PromisLimitError::Overflow)?;
+        self.base_fee_count.write(count)
+    }
 
-        Ok(credited_minor)
+    /// The daily step: adds the whole minors of the base fee count, and burns the whole minors
+    /// on each burn address.
+    pub fn settle_day_burns(&mut self) -> Result<()> {
+        let count = self.base_fee_count.read()?;
+        self.base_fee_count
+            .write(count % UNITS_PER_PROTOCOL_MINOR)?;
+        self.add_with_code(BASE_FEES, count / UNITS_PER_PROTOCOL_MINOR)?;
+
+        let mut burned = U256::ZERO;
+        for account in [Address::ZERO, DEAD_ADDRESS] {
+            let minors = self.storage.balance(account)? / UNITS_PER_PROTOCOL_MINOR;
+            self.storage
+                .decrease_balance(account, minors * UNITS_PER_PROTOCOL_MINOR)?;
+            burned += minors;
+        }
+        self.add_with_code(BURN_ADDRESSES, burned)
+    }
+
+    fn burn_whole_minors(&mut self, code: u8, from: Address, units: U256) -> Result<()> {
+        let minors = units / UNITS_PER_PROTOCOL_MINOR;
+        if minors.is_zero() {
+            return Ok(());
+        }
+        self.storage
+            .decrease_balance(from, minors * UNITS_PER_PROTOCOL_MINOR)?;
+        self.add_with_code(code, minors)
     }
 
     pub fn add(&mut self, source: LimitSource, amount_minor: U256) -> Result<()> {

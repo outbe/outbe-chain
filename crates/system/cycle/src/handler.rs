@@ -499,6 +499,7 @@ fn process_emission_day_steps(ctx: &BlockRuntimeContext) -> Result<Readiness> {
     run_advance_worldwide_days_step(ctx, block_utc_day)?;
 
     if let Some(day) = allocated {
+        outbe_promislimit::PromisLimitContract::new(ctx.storage.clone()).settle_day_burns()?;
         run_metadosis_step(ctx, day)?;
     }
 
