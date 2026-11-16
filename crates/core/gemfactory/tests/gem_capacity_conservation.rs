@@ -59,6 +59,7 @@ fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
                 let id = api::add_gem(
                     &s,
                     GemAddParams {
+                        issuer: Address::repeat_byte(0xEE),
                         owner: Address::repeat_byte(i + 1),
                         promis_load_minor: load,
                         entry_price_minor: U256::from(1_000_000),

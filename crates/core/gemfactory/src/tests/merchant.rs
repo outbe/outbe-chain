@@ -856,6 +856,7 @@ fn a_series_numbers_each_source_call_price_on_first_use() {
                 GemContract::generate_gem_id(
                     item.series_id,
                     sub_series,
+                    ALICE,
                     item.owner,
                     storage.block_number().unwrap(),
                 )
@@ -881,7 +882,9 @@ fn a_series_numbers_each_source_call_price_on_first_use() {
 #[test]
 fn one_owner_gets_one_gem_of_a_sub_series_in_a_block() {
     let unit = six_decimal_unit();
-    with_storage(Some(U256::from(2u64) * unit), |storage| {
+    let mut provider = test_storage(Some(U256::from(2u64) * unit));
+    let id = StorageHandle::enter(&mut provider, |storage| {
+        let storage = &storage;
         seed_day_vwap(storage, 840, U256::from(2u64) * unit);
         let id = seed_and_send(storage, U256::from(3u64) * unit, six_decimal_u128());
         merchant_gem_to(storage, id, BOB).unwrap();
@@ -895,6 +898,36 @@ fn one_owner_gets_one_gem_of_a_sub_series_in_a_block() {
                 outbe_gem::errors::GemError::AlreadyExists
             )
             .to_string()
+        );
+        id
+    });
+    provider.set_block_number(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        merchant_gem_to(&storage, id, BOB).unwrap();
+    });
+}
+
+#[test]
+fn gem_id_holds_the_issuer() {
+    let unit = six_decimal_unit();
+    with_storage(Some(U256::from(2u64) * unit), |storage| {
+        seed_day_vwap(storage, 840, U256::from(2u64) * unit);
+        let id = seed_and_send(storage, U256::from(3u64) * unit, six_decimal_u128());
+        set_source_price(storage, unit);
+        let merchant = gem_item(storage, merchant_gem_to(storage, id, BOB).unwrap());
+        let reward = gem_item(
+            storage,
+            issue_at_live_rate(storage, BOB, unit, 840, 840).unwrap(),
+        );
+        assert_ne!(merchant.gem_id, reward.gem_id);
+        assert_eq!(
+            (merchant.series_id, merchant.sub_series_id, merchant.owner),
+            (reward.series_id, reward.sub_series_id, reward.owner)
+        );
+        assert_eq!(merchant.issuer, ALICE);
+        assert_eq!(
+            reward.issuer,
+            outbe_system_common::addresses::AGENT_REWARD_ADDRESS
         );
     });
 }

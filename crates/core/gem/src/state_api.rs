@@ -227,6 +227,7 @@ mod tests {
                 entry_price_minor: U256::from(1_000_000),
                 series_id: Default::default(),
                 sub_series_id: 0,
+                issuer: Address::ZERO,
             };
             add_item(&storage, &item, None).unwrap();
             let contract = GemContract::new(storage.clone());
@@ -285,6 +286,7 @@ mod tests {
                 entry_price_minor: U256::from(1_000_000),
                 series_id: Default::default(),
                 sub_series_id: 0,
+                issuer: Address::ZERO,
             };
             assert!(matches!(
                 add_item(&storage, &item, None),

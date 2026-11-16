@@ -29,6 +29,7 @@ impl Rail for Gem {
         let gem_id = outbe_gem::api::add_gem(
             storage,
             GemAddParams {
+                issuer: OWNER,
                 owner: OWNER,
                 promis_load_minor: U256::from(1_500_000),
                 entry_price_minor: entry_price,

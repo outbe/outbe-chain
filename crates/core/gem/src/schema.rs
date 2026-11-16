@@ -22,6 +22,8 @@ pub enum GemState {
 /// from the live profile when it opens, and every later member inherits that copy.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GemAddParams {
+    /// The position owner for a merchant gem, the AgentReward contract for a reward gem.
+    pub issuer: Address,
     pub owner: Address,
     pub promis_load_minor: U256,
     pub entry_price_minor: U256,
@@ -72,6 +74,8 @@ pub struct GemItemState {
     /// The call price of the gem inside its series: 0 for the series-date VWAP.
     #[attribute(order = 11)]
     pub sub_series_id: u16,
+    #[attribute(order = 12)]
+    pub issuer: Address,
 }
 
 impl GemItemState {
@@ -383,16 +387,18 @@ pub struct GroupSubSeriesSummary {
 }
 
 impl GemContract<'_> {
-    /// `keccak256(series_id || sub_series_id_be || owner || block_number_be)`: one gem per
-    /// owner, sub-series and block.
+    /// `keccak256(series_id || sub_series_id_be || issuer || owner || block_number_be)`: one
+    /// gem per issuer, owner, sub-series and block.
     pub fn generate_gem_id(
         series_id: SeriesId,
         sub_series_id: u16,
+        issuer: Address,
         owner: Address,
         block_number: u64,
     ) -> U256 {
         series_id.right_id(&[
             &sub_series_id.to_be_bytes(),
+            issuer.as_slice(),
             owner.as_slice(),
             &block_number.to_be_bytes(),
         ])
@@ -416,23 +422,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn gem_id_hashes_the_series_sub_series_owner_and_block() {
+    fn gem_id_hashes_the_series_sub_series_issuer_owner_and_block() {
         let series = SeriesId::from_bytes(*b"20261102-EUR-U");
+        let issuer = Address::repeat_byte(0x22);
         let owner = Address::repeat_byte(0x11);
         assert_eq!(
-            GemContract::generate_gem_id(series, 0, owner, 1),
+            GemContract::generate_gem_id(series, 0, issuer, owner, 1),
             U256::from_be_bytes(
                 alloy_primitives::b256!(
-                    "f784299ac3118dc85ddb52184520b287410841519878181a0b741fa2f865c219"
+                    "43dc02fc340d447cd8cf192bedac0453bc024ab654317fea632bc562e9104b5f"
                 )
                 .0
             )
         );
         assert_eq!(
-            GemContract::generate_gem_id(series, 1, owner, 1),
+            GemContract::generate_gem_id(series, 1, issuer, owner, 1),
             U256::from_be_bytes(
                 alloy_primitives::b256!(
-                    "55f14188e745f03dcf717aafed0aecd574862369e409bf4b3ca77c12c57b6718"
+                    "9577f3545373b5231a80b96ef09cc02b23f513eabb299af6d164d22db47a82ab"
                 )
                 .0
             )

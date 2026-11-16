@@ -7,7 +7,7 @@ use outbe_intex::{IntexState, SeriesId};
 use outbe_oracle::api::get_utc_day_vwap_for_iso;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_system_common::addresses::GEM_FACTORY_ADDRESS;
+use outbe_system_common::addresses::{AGENT_REWARD_ADDRESS, GEM_FACTORY_ADDRESS};
 use outbe_system_common::stablecoin::iso_4217_alpha;
 use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 
@@ -44,6 +44,7 @@ pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<
     // The caller resolves the price: it knows which day the gem belongs to.
     let issued_at = storage.now_secs()?;
     let params = GemAddParams {
+        issuer: AGENT_REWARD_ADDRESS,
         owner,
         promis_load_minor: promis_load,
         entry_price_minor: entry_price,
@@ -304,6 +305,7 @@ pub fn issue_merchant_gem(
     let gem_id = add_gem(
         storage,
         GemAddParams {
+            issuer: caller,
             owner,
             promis_load_minor: promis_load,
             entry_price_minor: entry_price,

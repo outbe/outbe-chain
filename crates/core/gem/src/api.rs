@@ -37,6 +37,7 @@ pub fn add_gem_opening_sub_series(
     let gem_id = GemContract::generate_gem_id(
         series_id,
         sub_series_id,
+        params.issuer,
         params.owner,
         storage.block_number()?,
     );
@@ -55,6 +56,7 @@ pub fn add_gem_opening_sub_series(
         entry_price_minor: params.entry_price_minor,
         series_id,
         sub_series_id,
+        issuer: params.issuer,
     };
     let opened = crate::state_api::add_item(storage, &item, params.call_terms)?;
     Ok((gem_id, opened))

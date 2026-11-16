@@ -101,6 +101,7 @@ fn issue_settled(
     let gem_id = crate::runtime::add_gem(
         storage,
         GemAddParams {
+            issuer: outbe_system_common::addresses::GEM_FACTORY_ADDRESS,
             owner: call.owner,
             promis_load_minor: call.promisLoadMinor,
             entry_price_minor: unit,
