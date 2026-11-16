@@ -2,6 +2,17 @@
 
 use alloy_primitives::{keccak256, B256};
 
+/// The supported same-signer consensus equivocation classes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum EquivocationEvidenceKind {
+    /// Two notarizations of different proposals in one round.
+    ConflictingNotarize,
+    /// Two finalizations of different proposals in one round.
+    ConflictingFinalize,
+    /// A nullification and finalization in one round.
+    NullifyFinalize,
+}
+
 /// Computes the order-independent hash of two equivocation evidence blocks.
 ///
 /// The wire-frozen preimage is the lexicographically ordered raw concatenation

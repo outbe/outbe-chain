@@ -22,6 +22,24 @@ use crate::evidence::EvidenceCommittee;
 use crate::precompile::ISlashIndicator;
 use crate::schema::SlashIndicator;
 
+/// Internal runtime failures retain either domain information or the provider cause.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum SlashRuntimeError {
+    #[error("slash runtime: {0}")]
+    Domain(#[from] SlashIndicatorError),
+    #[error("precompile: {0}")]
+    Precompile(#[from] PrecompileError),
+}
+
+impl From<SlashRuntimeError> for PrecompileError {
+    fn from(error: SlashRuntimeError) -> Self {
+        match error {
+            SlashRuntimeError::Domain(error) => error.into(),
+            SlashRuntimeError::Precompile(error) => error,
+        }
+    }
+}
+
 impl SlashIndicator<'_> {
     // --- Config helpers ---
 
@@ -98,6 +116,15 @@ impl SlashIndicator<'_> {
     /// staked set makes DoS self-destructive (a griefer pays gas AND has
     /// slashable stake at risk) instead of free on the ZeroFee chain.
     pub(crate) fn require_active_submitter(&self, caller: Address) -> Result<()> {
+        self.require_active_submitter_typed(caller)
+            .map_err(PrecompileError::from)
+    }
+
+    /// Admit a submitter without encoding domain failures into ABI bytes.
+    pub(crate) fn require_active_submitter_typed(
+        &self,
+        caller: Address,
+    ) -> core::result::Result<(), SlashRuntimeError> {
         let vs = ValidatorSet::new(self.storage.clone());
         let lifecycle = vs.validator_lifecycle(caller)?;
         if !lifecycle.is_active_status() {
@@ -109,8 +136,16 @@ impl SlashIndicator<'_> {
         }
         // Evidence entry points call this before dedup and effects. Reject an
         // illegal percent here so a later felony cannot mark evidence first.
-        self.slash_amount_percent()?;
-        self.evidence_reward_percent()?;
+        admitted_percent_typed(
+            self.config_slash_amount_percent.read()?,
+            DEFAULT_SLASH_AMOUNT_PERCENT,
+            "slash_amount_percent",
+        )?;
+        admitted_percent_typed(
+            self.config_evidence_reward_percent.read()?,
+            DEFAULT_EVIDENCE_REWARD_PERCENT,
+            "evidence_reward_percent",
+        )?;
         Ok(())
     }
 
@@ -121,17 +156,21 @@ impl SlashIndicator<'_> {
     /// The snapshot committee order matches the signer's participant `Set`. Both
     /// are the canonical sorted/deduped pubkey set, so the commitment bytes agree.
     pub(crate) fn committee_set_for_epoch(&self, epoch: u64) -> Result<EvidenceCommittee> {
-        let snapshot =
-            read_committee_snapshot_for_epoch(self.storage.clone(), epoch)?.ok_or_else(|| {
-                PrecompileError::from(SlashIndicatorError::MissingCommitteeSnapshotForEpoch {
-                    epoch,
-                })
-            })?;
+        self.committee_set_for_epoch_typed(epoch)
+            .map_err(PrecompileError::from)
+    }
+
+    /// Resolve committee membership while keeping rejection and provider failures distinct.
+    pub(crate) fn committee_set_for_epoch_typed(
+        &self,
+        epoch: u64,
+    ) -> core::result::Result<EvidenceCommittee, SlashRuntimeError> {
+        let snapshot = read_committee_snapshot_for_epoch(self.storage.clone(), epoch)?
+            .ok_or(SlashIndicatorError::MissingCommitteeSnapshotForEpoch { epoch })?;
         let mut keys = Vec::with_capacity(snapshot.committee.len());
         for entry in &snapshot.committee {
-            let pk = bls12381::PublicKey::read(&mut entry.consensus_pubkey.as_slice()).map_err(
-                |_| PrecompileError::from(SlashIndicatorError::InvalidCommitteePubkeyInSnapshot),
-            )?;
+            let pk = bls12381::PublicKey::read(&mut entry.consensus_pubkey.as_slice())
+                .map_err(|_| SlashIndicatorError::InvalidCommitteePubkeyInSnapshot)?;
             keys.push(pk);
         }
         Ok(Set::from_iter_dedup(keys))
@@ -194,7 +233,8 @@ impl SlashIndicator<'_> {
             slash_percent,
             slashed_amount = %slashed_amount,
             block_number,
-            "evidence-based felony applied - validator force-exited, stake slashed, submitter rewarded",
+            "evidence-based felony applied - validator force-exited, \
+             stake slashed, submitter rewarded",
         );
 
         // Mint floor(slashed amount * reward percent / 100) to the submitter.
@@ -269,6 +309,14 @@ impl SlashIndicator<'_> {
 
 /// The registered validator whose consensus pubkey hash is `pubkey_hash`.
 pub(crate) fn registered_validator(vs: &ValidatorSet<'_>, pubkey_hash: B256) -> Result<Address> {
+    registered_validator_typed(vs, pubkey_hash).map_err(PrecompileError::from)
+}
+
+/// Resolve a signer without erasing its typed registration rejection.
+pub(crate) fn registered_validator_typed(
+    vs: &ValidatorSet<'_>,
+    pubkey_hash: B256,
+) -> core::result::Result<Address, SlashRuntimeError> {
     let validator = vs.lookup_by_pubkey_hash(pubkey_hash)?;
     if validator.is_zero() {
         return Err(SlashIndicatorError::SignerNotRegisteredValidator.into());
@@ -299,12 +347,20 @@ pub fn admit_percent_word(
 
 /// Reads a stored `u64` percent through [`admit_percent_word`].
 fn admitted_percent(stored: u64, default_percent: u64, field: &'static str) -> Result<u64> {
+    admitted_percent_typed(stored, default_percent, field).map_err(PrecompileError::from)
+}
+
+fn admitted_percent_typed(
+    stored: u64,
+    default_percent: u64,
+    field: &'static str,
+) -> core::result::Result<u64, SlashIndicatorError> {
     admit_percent_word(U256::from(stored), default_percent, field).map_err(|error| {
         let (field, value) = match error {
             PercentAdmissionError::Above100 { field, value } => (field, value),
             PercentAdmissionError::WordExceedsU64 { field, .. } => (field, u64::MAX),
         };
-        SlashIndicatorError::SlashConfigPercentAbove100 { field, value }.into()
+        SlashIndicatorError::SlashConfigPercentAbove100 { field, value }
     })
 }
 
