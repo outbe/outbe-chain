@@ -30,6 +30,8 @@ pub const DEFAULT_PREFUND_COEN_UNITS: u128 = 100_000_000 * 1_000_000_000_000_000
 pub const FOUNDER_COUNT: usize = 4;
 pub const MAX_GENESIS_AGE_SECONDS: i64 = 6 * 60 * 60;
 
+const PACKAGED_ASSETS: &str = "share/outbe-genesis";
+
 pub const SEED_SECTIONS: [&str; 16] = [
     "protocol_constants",
     "balance",
@@ -113,12 +115,26 @@ pub fn repo_root() -> PathBuf {
 
 /// Return the `profiles` directory (`<repo>/bin/outbe-genesis-cli/profiles`).
 pub fn profiles_dir() -> PathBuf {
-    repo_root().join("bin/outbe-genesis-cli/profiles")
+    packaged_assets_dir()
+        .map(|root| root.join("profiles"))
+        .unwrap_or_else(|| repo_root().join("bin/outbe-genesis-cli/profiles"))
 }
 
 /// Return the default `contracts` predeploy directory (`<repo>/contracts/predeploys`).
 pub fn default_contracts_dir() -> PathBuf {
-    repo_root().join("contracts/predeploys")
+    packaged_assets_dir()
+        .map(|root| root.join("contracts/predeploys"))
+        .unwrap_or_else(|| repo_root().join("contracts/predeploys"))
+}
+
+fn packaged_assets_dir() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let bundle_root = executable.parent()?.parent()?;
+    let assets = bundle_root.join(PACKAGED_ASSETS);
+    assets
+        .join("profiles/testnet.yaml")
+        .is_file()
+        .then_some(assets)
 }
 
 /// Return the baseline profile path (`<repo>/bin/outbe-genesis-cli/profiles/testnet.yaml`).

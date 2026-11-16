@@ -14,6 +14,7 @@ use eyre::{bail, ensure, Context, Result};
 use outbe_operator_systemd::joining_units;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use walkdir::WalkDir;
 
 use super::{
     elf::{self, ReleaseIdentity},
@@ -35,6 +36,7 @@ const COMMON_BINARIES: &[&str] = &[
 const PRODUCTION_ENCLAVE: &str = "outbe-tee-enclave";
 const DEVELOPMENT_ENCLAVE: &str = "outbe-tee-enclave-mock";
 const OPERATOR_TOOL: &str = "outbe-genesis-cli";
+const GENESIS_ASSETS: &str = "share/outbe-genesis";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
 #[serde(rename_all = "kebab-case")]
@@ -331,6 +333,7 @@ fn build_inside_container(options: &BuildOptions<'_>) -> Result<PathBuf> {
             .wrap_err_with(|| format!("stage release binary: {}", source.display()))?;
     }
     stage_joining_units(&staging_systemd)?;
+    stage_genesis_assets(options.repo_root, &staging.path().join(GENESIS_ASSETS))?;
     fs::create_dir_all(options.output_dir)?;
     let output = options
         .output_dir
@@ -350,6 +353,34 @@ fn stage_joining_units(output: &Path) -> Result<()> {
     fs::create_dir_all(output)?;
     for unit in joining_units("/usr/local/bin/outbe-up") {
         fs::write(output.join(unit.name), unit.content)?;
+    }
+    Ok(())
+}
+
+fn stage_genesis_assets(repo_root: &Path, output: &Path) -> Result<()> {
+    copy_tree(
+        &repo_root.join("bin/outbe-genesis-cli/profiles"),
+        &output.join("profiles"),
+    )?;
+    copy_tree(
+        &repo_root.join("contracts/predeploys"),
+        &output.join("contracts/predeploys"),
+    )
+}
+
+fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
+    for entry in WalkDir::new(source) {
+        let entry = entry.wrap_err_with(|| format!("walk release assets: {}", source.display()))?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let relative = entry.path().strip_prefix(source)?;
+        let target = destination.join(relative);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(entry.path(), &target)
+            .wrap_err_with(|| format!("stage release asset: {}", entry.path().display()))?;
     }
     Ok(())
 }
@@ -481,6 +512,23 @@ fn collect_inputs(
         source: bin.join(OPERATOR_TOOL),
         mode: 0o755,
     });
+
+    let share = artifacts.join("share");
+    if share.is_dir() {
+        for entry in WalkDir::new(&share) {
+            let entry =
+                entry.wrap_err_with(|| format!("walk release share: {}", share.display()))?;
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let relative = entry.path().strip_prefix(artifacts)?;
+            inputs.push(BundleInput {
+                archive_path: relative.to_string_lossy().replace('\\', "/"),
+                source: entry.path().to_owned(),
+                mode: 0o644,
+            });
+        }
+    }
 
     let mut units = fs::read_dir(systemd_units)
         .wrap_err_with(|| format!("read systemd units: {}", systemd_units.display()))?
@@ -641,8 +689,10 @@ mod tests {
     fn fixture(root: &Path, profile: SoftwareProfile) -> (PathBuf, PathBuf) {
         let artifacts = root.join("artifacts");
         let bin = artifacts.join("bin");
+        let profiles = artifacts.join(GENESIS_ASSETS).join("profiles");
         let units = root.join("units");
         fs::create_dir_all(&bin).unwrap();
+        fs::create_dir_all(&profiles).unwrap();
         fs::create_dir_all(&units).unwrap();
         for name in COMMON_BINARIES
             .iter()
@@ -651,6 +701,7 @@ mod tests {
         {
             fs::write(bin.join(name), format!("fixture:{name}\n")).unwrap();
         }
+        fs::write(profiles.join("testnet.yaml"), "network: testnet\n").unwrap();
         fs::write(
             units.join("outbe-validator.service"),
             "[Service]\nExecStart=/opt/outbe-chain/outbe-chain\n",
@@ -688,6 +739,10 @@ mod tests {
             .files
             .iter()
             .any(|file| file.path == "bin/outbe-tee-enclave"));
+        assert!(manifest
+            .files
+            .iter()
+            .any(|file| file.path == "share/outbe-genesis/profiles/testnet.yaml"));
         assert!(!manifest.files.iter().any(|file| file.path.contains("mock")));
     }
 
@@ -729,5 +784,18 @@ mod tests {
                 expected.name
             );
         }
+    }
+
+    #[test]
+    fn stages_genesis_runtime_assets() {
+        let temp = tempfile::tempdir().unwrap();
+        let output = temp.path().join(GENESIS_ASSETS);
+        stage_genesis_assets(
+            Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap(),
+            &output,
+        )
+        .unwrap();
+        assert!(output.join("profiles/testnet.yaml").is_file());
+        assert!(output.join("contracts/predeploys").is_dir());
     }
 }
