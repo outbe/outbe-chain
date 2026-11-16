@@ -650,7 +650,7 @@ fn validate_network_schema(net: &Map<String, Value>) -> Result<&'static str> {
     match (chain_id, chain_name, gpath) {
         (676, "outbe-mainnet-1", "mainnet-genesis.json") => Ok("mainnet"),
         (54_322_345, "outbe-testnet-1", "testnet-genesis.json") => Ok("testnet"),
-        _ => bail!("invalid network identity tuple"),
+        _ => Err(eyre!("invalid network identity tuple")),
     }
 }
 

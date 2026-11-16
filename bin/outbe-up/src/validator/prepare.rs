@@ -19,19 +19,19 @@ use crate::{
 pub async fn run(bundle_path: &Path, config_path: &Path) -> Result<()> {
     let _lock = process::LifecycleLock::acquire()?;
     let mut progress = Progress::new();
+    progress.stage("verifying every operator bundle file");
+    let extracted = bundle::verify_and_extract(bundle_path, Path::new("/opt"))?;
+    verify_bootstrap_binary(extracted.directory.path())?;
+
     progress.stage("validating operator configuration and remote network");
     let (config, config_sha256) = OperatorConfig::read(config_path)?;
+    verify_bundle_network(extracted.directory.path(), &config)?;
     let remote = RpcClient::new(config.network.certified_rpc.clone())?;
     ensure!(
         remote.chain_id().await? == config.network.chain_id,
         "certified RPC chain id does not match operator config"
     );
     let minimum_stake = remote.min_stake().await?;
-
-    progress.stage("verifying every operator bundle file");
-    let extracted = bundle::verify_and_extract(bundle_path, Path::new("/opt"))?;
-    verify_bootstrap_binary(extracted.directory.path())?;
-    verify_bundle_network(extracted.directory.path(), &config)?;
     let root = Path::new(process::ROOT);
     if root.exists() {
         let mut journal = Journal::load()?;
@@ -126,6 +126,7 @@ fn print_summary(validator: Address, minimum_stake: U256, certified_rpc: &str) {
     println!("  address:          {validator:#x}");
     println!("  BLS key:          /opt/outbe-chain/keys/signing-key.hex");
     println!("  EVM key:          /opt/outbe-chain/keys/evm-key.hex");
+    println!("  Feeder key:       /opt/outbe-chain/keys/feeder-key.hex");
     println!("  Reth P2P key:     /opt/outbe-chain/keys/reth-p2p-secret.hex");
     println!("  Radicle identity: /opt/outbe-chain/keys/radicle");
     println!();

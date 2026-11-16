@@ -380,6 +380,8 @@ jobs:
     name: preview next version
     if: github.event_name == 'pull_request' && !github.event.pull_request.draft
     runs-on: ubuntu-24.04
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
     container:
       image: ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268
     timeout-minutes: 10

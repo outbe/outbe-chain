@@ -1,6 +1,7 @@
 //! Network identities, defaults and configuration validation.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
@@ -28,6 +29,8 @@ pub const DEFAULT_CONSENSUS_P2P_PORT: u16 = 30400;
 pub const DEFAULT_PREFUND_COEN_UNITS: u128 = 100_000_000 * 1_000_000_000_000_000_000;
 pub const FOUNDER_COUNT: usize = 4;
 pub const MAX_GENESIS_AGE_SECONDS: i64 = 6 * 60 * 60;
+
+const PACKAGED_ASSETS: &str = "share/outbe-genesis";
 
 pub const SEED_SECTIONS: [&str; 16] = [
     "protocol_constants",
@@ -57,7 +60,7 @@ pub const TEE_KEYS: [&str; 6] = [
     "minimum_tcb_evaluation_data_number",
 ];
 
-const STATIC_TOP_LEVEL_KEYS: [&str; 39] = [
+const STATIC_TOP_LEVEL_KEYS: [&str; 42] = [
     "network",
     "validators",
     "keys_dir",
@@ -67,6 +70,7 @@ const STATIC_TOP_LEVEL_KEYS: [&str; 39] = [
     "chain_binary",
     "keygen_binary",
     "consensus_p2p_port",
+    "consensus_use_local_defaults",
     "gas_limit",
     "timestamp",
     "epoch_length_blocks",
@@ -82,6 +86,7 @@ const STATIC_TOP_LEVEL_KEYS: [&str; 39] = [
     "enclave_runner",
     "enclave_sgx",
     "signed_enclave_dir",
+    "crs_path",
     "allow_stale_timestamp",
     "node_binary",
     "radicle_binary",
@@ -90,6 +95,7 @@ const STATIC_TOP_LEVEL_KEYS: [&str; 39] = [
     "remote_base_dir",
     "remote_keys_dir",
     "price_provider",
+    "rpc_bind_ip",
     "public_rpc_port",
     "public_radicle_status_port",
     "price_feed_rest",
@@ -110,12 +116,33 @@ pub fn repo_root() -> PathBuf {
 
 /// Return the `profiles` directory (`<repo>/bin/outbe-genesis-cli/profiles`).
 pub fn profiles_dir() -> PathBuf {
-    repo_root().join("bin/outbe-genesis-cli/profiles")
+    packaged_assets_dir()
+        .map(|root| root.join("profiles"))
+        .unwrap_or_else(|| repo_root().join("bin/outbe-genesis-cli/profiles"))
 }
 
 /// Return the default `contracts` predeploy directory (`<repo>/contracts/predeploys`).
 pub fn default_contracts_dir() -> PathBuf {
-    repo_root().join("contracts/predeploys")
+    packaged_assets_dir()
+        .map(|root| root.join("contracts/predeploys"))
+        .unwrap_or_else(|| repo_root().join("contracts/predeploys"))
+}
+
+fn packaged_assets_dir() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let bundle_root = executable.parent()?.parent()?;
+    let assets = bundle_root.join(PACKAGED_ASSETS);
+    assets
+        .join("profiles/testnet.yaml")
+        .is_file()
+        .then_some(assets)
+}
+
+/// Return the CRS shipped next to a packaged `outbe-genesis-cli`.
+pub fn packaged_crs_path() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let crs = executable.parent()?.parent()?.join(".bb-crs/bn254_g1.dat");
+    crs.is_file().then_some(crs)
 }
 
 /// Return the baseline profile path (`<repo>/bin/outbe-genesis-cli/profiles/testnet.yaml`).
@@ -174,7 +201,36 @@ pub fn validate_config(config: &Value) -> Result<(), GenesisError> {
     }
     validate_founders(obj)?;
     validate_tee(config, obj)?;
+    rpc_bind_ip(config, "127.0.0.1")?;
     validate_ports(obj)
+}
+
+/// Resolve the RPC bind for one founder. `validator` selects that founder's
+/// own address from the `validators` list.
+pub fn rpc_bind_ip(config: &Value, validator_host: &str) -> Result<Ipv4Addr, GenesisError> {
+    let configured = config
+        .get("rpc_bind_ip")
+        .map(|value| {
+            value.as_str().ok_or_else(|| {
+                GenesisError::validation("rpc_bind_ip must be an IPv4 address or `validator`")
+            })
+        })
+        .transpose()?
+        .unwrap_or("127.0.0.1");
+    let value = if configured == "validator" {
+        validator_host
+    } else {
+        configured
+    };
+    let address = value.parse::<Ipv4Addr>().map_err(|_| {
+        GenesisError::validation("rpc_bind_ip must be an IPv4 address or `validator`")
+    })?;
+    if !address.is_loopback() && !address.is_private() {
+        return Err(GenesisError::validation(
+            "rpc_bind_ip must resolve to a loopback or private IPv4 address",
+        ));
+    }
+    Ok(address)
 }
 
 fn validate_founders(obj: &Map<String, Value>) -> Result<(), GenesisError> {

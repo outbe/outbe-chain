@@ -233,11 +233,13 @@ fn founder_radicle_bindings_are_complete_unique_and_bidirectional() {
     let validators = vec![
         json!({
             "address": "0x1111111111111111111111111111111111111111",
+            "feeder_address": "0x3333333333333333333333333333333333333333",
             "public_key": "11".repeat(48),
             "radicle_node_id": "21".repeat(32),
         }),
         json!({
             "address": "0x2222222222222222222222222222222222222222",
+            "feeder_address": "0x4444444444444444444444444444444444444444",
             "public_key": "12".repeat(48),
             "radicle_node_id": "22".repeat(32),
         }),
@@ -265,6 +267,24 @@ fn founder_radicle_bindings_are_complete_unique_and_bidirectional() {
             hex32(address_as_u256(addr_str).expect("u256"))
         );
         assert!(!storage.entries.contains_key(&mapping_key(&address, 7)));
+        let feeder = validator["feeder_address"].as_str().expect("feeder");
+        let feeder_bytes = address_bytes(feeder).expect("feeder bytes");
+        assert_eq!(
+            storage.entries[&hex32(outbe_genesis_cli::seed_codec::nested_mapping_key(
+                &address,
+                &[1],
+                48,
+            ))],
+            hex32(address_as_u256(feeder).expect("feeder u256"))
+        );
+        assert_eq!(
+            storage.entries[&hex32(outbe_genesis_cli::seed_codec::nested_mapping_key(
+                &[1],
+                &feeder_bytes,
+                49,
+            ))],
+            hex32(address_as_u256(addr_str).expect("validator u256"))
+        );
     }
 
     let mut staking = StorageBuilder::new();

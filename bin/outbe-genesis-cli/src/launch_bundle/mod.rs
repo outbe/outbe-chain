@@ -4,26 +4,29 @@ pub mod dist;
 pub mod scripts;
 pub mod systemd;
 
-use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::{env, fs};
 
 use serde_json::Value;
 use walkdir::WalkDir;
 
+use outbe_primitives::tee_attestation_v1::{
+    AttestationMode, NetworkBindingV1, TeePolicyScheduleV1,
+};
+
 use crate::error::GenesisError;
 pub use crate::keys::ensure_reth_p2p_secret;
+use crate::network::packaged_crs_path;
 use crate::seed_codec::parse_u64;
 
 pub use self::dist::{build_distribution, deploy_markdown};
 pub use self::scripts::{
     enclave_script, feeder_config, feeder_pairs, feeder_pairs_file, feeder_pairs_settings,
-    feeder_pairs_table, feeder_script, node_script, radicle_script, start_all_script,
-    stop_all_script,
+    feeder_pairs_table, feeder_script, node_script, radicle_script,
 };
 pub use self::systemd::{
-    caddy_install_script, caddyfile, preflight_script, systemd_unit, tee_renew_script,
-    write_systemd_units, UNIT_ROLES,
+    caddy_install_script, caddyfile, preflight_script, tee_renew_script, write_systemd_units,
 };
 
 /// Default port numbers shared across validator hosts.
@@ -56,11 +59,30 @@ pub const SIGNED_ENCLAVE_FILES: &[&str] = &[
     "outbe-tee-enclave.sig",
 ];
 
+/// Run one command with root privileges without requiring `sudo` when the
+/// generated installer is already running as root.
+pub(super) const ROOT_HELPER: &str = r#"as_root() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo -- "$@"
+  else
+    echo "root privileges required: run as root or install sudo" >&2
+    return 1
+  fi
+}"#;
+
 struct BundlePaths<'a> {
     output_dir: &'a Path,
     keys_dir: &'a Path,
     base_dir: &'a str,
     remote_keys_dir: &'a str,
+}
+
+#[derive(Clone, Copy)]
+struct DirectDevScriptContext<'a> {
+    network_binding: &'a str,
+    node_id: &'a str,
 }
 
 /// POSIX shell quoting matching Python's `shlex.quote`.
@@ -136,6 +158,83 @@ pub fn uses_production_tee_session(config: &Value) -> bool {
     enclave_sgx || is_dcap
 }
 
+fn direct_dev_network_binding(
+    config: &Value,
+    genesis_path: &Path,
+) -> Result<Option<String>, GenesisError> {
+    if uses_production_tee_session(config) {
+        return Ok(None);
+    }
+    let mode = config
+        .get("tee")
+        .and_then(|tee| tee.get("mode"))
+        .and_then(Value::as_str);
+    if mode != Some("gramine-direct-dev") {
+        return Ok(None);
+    }
+
+    let chain_id = parse_u64(
+        config
+            .get("chain_id")
+            .ok_or_else(|| GenesisError::validation("chain_id is required"))?,
+    )?;
+    let genesis: Value = serde_json::from_slice(
+        &fs::read(genesis_path).map_err(|error| GenesisError::io(genesis_path, error))?,
+    )?;
+    let encoded = genesis
+        .pointer("/config/teeAttestationV1/policySchedule")
+        .and_then(Value::as_str)
+        .ok_or_else(|| GenesisError::validation("genesis has no TEE policy schedule"))?;
+    let bytes = hex::decode(encoded.strip_prefix("0x").unwrap_or(encoded)).map_err(|error| {
+        GenesisError::validation(format!("invalid TEE policy schedule: {error}"))
+    })?;
+    let schedule = TeePolicyScheduleV1::decode_canonical(&bytes).map_err(|error| {
+        GenesisError::validation(format!("invalid TEE policy schedule: {error}"))
+    })?;
+    let expected_chain_id = alloy_primitives::U256::from(chain_id).to_be_bytes::<32>();
+    if schedule.chain_id != expected_chain_id {
+        return Err(GenesisError::validation(
+            "genesis TEE policy chain id does not match chain_id",
+        ));
+    }
+    let policy = schedule.active_policy(1).map_err(|error| {
+        GenesisError::validation(format!("invalid genesis TEE policy: {error}"))
+    })?;
+    if policy.attestation_mode != AttestationMode::GramineDirectDev {
+        return Err(GenesisError::validation(
+            "gramine-direct-dev requires a GramineDirectDev genesis TEE policy",
+        ));
+    }
+    let binding = NetworkBindingV1 {
+        chain_id: schedule.chain_id,
+        genesis_hash: schedule.genesis_hash,
+        attestation_mode: policy.attestation_mode,
+    }
+    .encode_canonical()
+    .map_err(|error| GenesisError::validation(format!("encode network binding: {error}")))?;
+    Ok(Some(hex::encode(binding)))
+}
+
+fn compressed_reth_p2p_public(node_id: &str) -> Result<String, GenesisError> {
+    let uncompressed = hex::decode(node_id)
+        .map_err(|error| GenesisError::validation(format!("invalid Reth P2P node id: {error}")))?;
+    if uncompressed.len() != 64 {
+        return Err(GenesisError::validation(format!(
+            "Reth P2P node id must be 64 bytes, got {}",
+            uncompressed.len()
+        )));
+    }
+    let prefix = if uncompressed[63] & 1 == 0 {
+        0x02
+    } else {
+        0x03
+    };
+    let mut compressed = [0_u8; 33];
+    compressed[0] = prefix;
+    compressed[1..].copy_from_slice(&uncompressed[..32]);
+    Ok(hex::encode(compressed))
+}
+
 pub(super) fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), GenesisError> {
     fs::create_dir_all(dst).map_err(|err| GenesisError::io(dst, err))?;
     for entry_res in WalkDir::new(src) {
@@ -158,6 +257,30 @@ pub(super) fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), GenesisEr
         }
     }
     Ok(())
+}
+
+fn stage_crs(config: &Value, output_dir: &Path) -> Result<(), GenesisError> {
+    let source = config
+        .get("crs_path")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .or_else(packaged_crs_path)
+        .or_else(|| env::var_os("BB_CRS_PATH").map(PathBuf::from))
+        .ok_or_else(|| {
+            GenesisError::validation("CRS is missing; use the packaged release or set `crs_path`")
+        })?;
+    if !source.is_file() {
+        return Err(GenesisError::validation(format!(
+            "CRS file does not exist: {}",
+            source.display()
+        )));
+    }
+    let destination = output_dir.join(".bb-crs/bn254_g1.dat");
+    fs::create_dir_all(destination.parent().expect("CRS path has a parent"))
+        .map_err(|err| GenesisError::io(&destination, err))?;
+    fs::copy(&source, &destination).map_err(|err| GenesisError::io(&destination, err))?;
+    fs::set_permissions(&destination, fs::Permissions::from_mode(0o644))
+        .map_err(|err| GenesisError::io(&destination, err))
 }
 
 /// Copy the complete signed SGX release runtime into the bundle and strip signing keys.
@@ -212,6 +335,7 @@ fn write_validator_scripts(
     index: usize,
     validator: &Value,
     paths: &BundlePaths<'_>,
+    direct_dev: Option<DirectDevScriptContext<'_>>,
 ) -> Result<(), GenesisError> {
     let directory = paths.output_dir.join(format!("validator-{index}"));
     fs::create_dir_all(&directory).map_err(|err| GenesisError::io(&directory, err))?;
@@ -226,7 +350,13 @@ fn write_validator_scripts(
 
     write_script(
         &directory.join("run-enclave.sh"),
-        &enclave_script(config, index, paths.base_dir)?,
+        &enclave_script(
+            config,
+            index,
+            paths.base_dir,
+            direct_dev.map(|context| context.network_binding),
+            direct_dev.map(|context| context.node_id),
+        )?,
     )?;
     write_script(
         &directory.join("run-radicle.sh"),
@@ -253,7 +383,7 @@ fn write_validator_scripts(
         .map_err(|err| GenesisError::io(&caddyfile_path, err))?;
     write_script(
         &directory.join("run-tee-renew.sh"),
-        &tee_renew_script(config, index, paths.base_dir, paths.remote_keys_dir)?,
+        &tee_renew_script(config, index, paths.base_dir, paths.remote_keys_dir, host)?,
     )?;
     write_script(
         &directory.join("preflight.sh"),
@@ -264,12 +394,12 @@ fn write_validator_scripts(
         &caddy_install_script(config, paths.base_dir, index)?,
     )?;
 
-    let evm_key_path = paths
+    let feeder_key_path = paths
         .keys_dir
         .join(format!("validator-{index}"))
-        .join("evm-key.hex");
-    let raw_key =
-        fs::read_to_string(&evm_key_path).map_err(|err| GenesisError::io(&evm_key_path, err))?;
+        .join("feeder-key.hex");
+    let raw_key = fs::read_to_string(&feeder_key_path)
+        .map_err(|err| GenesisError::io(&feeder_key_path, err))?;
     let signer_key = raw_key
         .trim()
         .strip_prefix("0x")
@@ -286,13 +416,11 @@ fn write_validator_scripts(
     fs::write(&pairs_path, feeder_pairs(config)?)
         .map_err(|err| GenesisError::io(&pairs_path, err))?;
 
-    let tee_port = port_of(config, "tee_enclave_port")?;
-    let start_all = start_all_script(config, index, paths.base_dir)?
-        .replace("{TEE_PORT}", &tee_port.to_string());
-    write_script(&directory.join("start-all.sh"), &start_all)?;
-    write_script(
-        &directory.join("stop-all.sh"),
-        &stop_all_script(index, paths.base_dir),
+    write_systemd_units(
+        &directory,
+        paths.base_dir,
+        index,
+        uses_production_tee_session(config),
     )?;
     Ok(())
 }
@@ -318,8 +446,10 @@ pub fn render(
 
     let reth_p2p_port = port_of(config, "reth_p2p_port")?;
     let mut enodes = Vec::with_capacity(validators.len());
+    let mut reth_p2p_public_keys = Vec::with_capacity(validators.len());
     for (index, validator) in validators.iter().enumerate() {
         let node_id = ensure_reth_p2p_secret(&keys_dir.join(format!("validator-{index}")))?;
+        reth_p2p_public_keys.push(compressed_reth_p2p_public(&node_id)?);
         let p2p_address = validator
             .get("p2p_address")
             .and_then(Value::as_str)
@@ -343,12 +473,20 @@ pub fn render(
         base_dir: &base_dir,
         remote_keys_dir: &remote_keys_dir,
     };
+    let direct_dev_binding = direct_dev_network_binding(config, genesis_path)?;
     for (index, validator) in validators.iter().enumerate() {
-        write_validator_scripts(config, index, validator, &paths)?;
+        let direct_dev =
+            direct_dev_binding
+                .as_deref()
+                .map(|network_binding| DirectDevScriptContext {
+                    network_binding,
+                    node_id: &reth_p2p_public_keys[index],
+                });
+        write_validator_scripts(config, index, validator, &paths, direct_dev)?;
     }
 
     stage_signed_enclave(config, output_dir)?;
-    write_systemd_units(output_dir, &base_dir, uses_production_tee_session(config))?;
+    stage_crs(config, output_dir)?;
     build_distribution(output_dir, validators, keys_dir, &base_dir)?;
 
     let mut deploy_config = config.clone();

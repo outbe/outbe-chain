@@ -6,26 +6,30 @@ use rand::RngCore;
 use crate::{
     support::{process, progress::Progress},
     validator::{
+        config::EnclaveRuntime,
         journal::Journal,
         path_text,
         rpc::RpcClient,
         validator_address,
         wait::{wait_for_rpc_chain, wait_for_sync, wait_for_verifier, wait_transaction_finalized},
-        ENCLAVE_SERVICE, FULL_NODE, LOCAL_RPC, RENEW_TIMER, VALIDATOR_SERVICE, VALIDATOR_TARGET,
+        ENCLAVE_SERVICE, FULL_NODE, RENEW_TIMER, VALIDATOR_SERVICE, VALIDATOR_TARGET,
     },
 };
 
 const TEE_JOIN_ATTEMPTS: usize = 3;
 const TEE_JOIN_RETRY_DELAY: Duration = Duration::from_millis(100);
 const FINALIZED_VIEW_MISMATCH: &str = "finalized schedule and eth finalized block disagree";
+const ORACLE_DELEGATE_ROLE: u8 = 1;
 
 pub async fn run() -> Result<()> {
     let _lock = process::LifecycleLock::acquire()?;
     let mut journal = Journal::load()?;
     let mut progress = Progress::new();
-    let local = RpcClient::new(LOCAL_RPC)?;
+    let local = RpcClient::new(journal.config.network.local_rpc_url())?;
     let remote = RpcClient::new(journal.config.network.certified_rpc.clone())?;
-    let validator = validator_address(&Path::new(process::ROOT).join("keys/evm-key.hex"))?;
+    let keys = Path::new(process::ROOT).join("keys");
+    let validator = validator_address(&keys.join("evm-key.hex"))?;
+    let feeder = validator_address(&keys.join("feeder-key.hex"))?;
 
     progress.stage("checking synchronized full node and validator state");
     ensure!(
@@ -51,12 +55,18 @@ pub async fn run() -> Result<()> {
         );
     }
 
-    progress.stage("starting enclave and completing TEE admission");
+    if journal.tee_join_complete {
+        progress.stage("resuming completed TEE admission");
+    } else {
+        progress.stage("starting enclave and completing TEE admission");
+    }
     process::systemctl(&["start", ENCLAVE_SERVICE])?;
-    ensure_join_identity(&mut journal, &remote).await?;
-    run_tee_join(&journal).await?;
-    journal.tee_join_complete = true;
-    journal.save()?;
+    if !journal.tee_join_complete {
+        ensure_join_identity(&mut journal, &remote).await?;
+        run_tee_join(&journal).await?;
+        journal.tee_join_complete = true;
+        journal.save()?;
+    }
 
     if !record.registered {
         progress.stage("bonding the network minimum stake");
@@ -86,6 +96,8 @@ pub async fn run() -> Result<()> {
         );
     }
 
+    ensure_feeder_delegate(&mut journal, &remote, validator, feeder, &mut progress).await?;
+
     progress.stage("switching the same data directory to validator mode");
     process::systemctl(&["disable", "--now", FULL_NODE])?;
     process::systemctl(&["enable", "--now", VALIDATOR_TARGET])?;
@@ -108,6 +120,42 @@ pub async fn run() -> Result<()> {
     progress.done(&format!(
         "validator {validator:#x} is promoted; DKG activation continues in the background"
     ));
+    Ok(())
+}
+
+async fn ensure_feeder_delegate(
+    journal: &mut Journal,
+    remote: &RpcClient,
+    validator: alloy_primitives::Address,
+    feeder: alloy_primitives::Address,
+    progress: &mut Progress,
+) -> Result<()> {
+    if remote
+        .validator_delegate(validator, ORACLE_DELEGATE_ROLE)
+        .await?
+        == feeder
+    {
+        return Ok(());
+    }
+    progress.stage("delegating oracle votes to the feeder signer");
+    let hash = if let Some(hash) = journal.feeder_delegate_transaction.clone() {
+        hash
+    } else {
+        let feeder_arg = format!("{feeder:#x}");
+        let output = run_outbe_cli(&["validator", "delegate", "oracle", &feeder_arg])?;
+        let hash = transaction_hash(&output)?;
+        journal.feeder_delegate_transaction = Some(hash.clone());
+        journal.save()?;
+        hash
+    };
+    wait_transaction_finalized(remote, &hash, progress).await?;
+    ensure!(
+        remote
+            .validator_delegate(validator, ORACLE_DELEGATE_ROLE)
+            .await?
+            == feeder,
+        "oracle feeder delegation is not visible after finality"
+    );
     Ok(())
 }
 
@@ -142,13 +190,11 @@ async fn run_tee_join(journal: &Journal) -> Result<()> {
         .valid_until
         .expect("valid_until was saved")
         .to_string();
-    let args = [
-        "tee",
-        "join",
-        "--enclave-socket",
-        "127.0.0.1:17000",
-        "--node-data-dir",
-        "/opt/outbe-chain/validator-0/data",
+    let mut args = vec!["tee", "join", "--enclave-socket", "127.0.0.1:17000"];
+    if !matches!(journal.config.tee.runtime, EnclaveRuntime::Mock) {
+        args.extend(["--node-data-dir", "/opt/outbe-chain/validator-0/data"]);
+    }
+    args.extend([
         "--reth-p2p-secret-key",
         "/opt/outbe-chain/keys/reth-p2p-secret.hex",
         "--genesis",
@@ -159,7 +205,7 @@ async fn run_tee_join(journal: &Journal) -> Result<()> {
         &valid_until,
         "--timeout-secs",
         "600",
-    ];
+    ]);
     for attempt in 1..=TEE_JOIN_ATTEMPTS {
         match run_outbe_cli(&args) {
             Ok(_) => return Ok(()),

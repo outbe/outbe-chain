@@ -15,12 +15,15 @@ use crate::{
 
 const ENV_KEYS: &[&str] = &[
     "OUTBE_EXTERNAL_IP",
+    "OUTBE_RPC_BIND_IP",
     "OUTBE_CERTIFIED_RPC",
     "OUTBE_VALIDATOR_ADDRESS",
     "OUTBE_BOOTNODES",
     "OUTBE_CONSENSUS_PEERS",
     "OUTBE_CONSENSUS_EXTRA_ARGS",
     "OUTBE_ENCLAVE_RUNTIME",
+    "OUTBE_TEE_SESSION_MODE",
+    "OUTBE_DEV_NETWORK_BINDING",
     "OUTBE_CHAIN_ID",
 ];
 
@@ -34,7 +37,7 @@ pub fn run() -> Result<()> {
     let environment = read_environment(&env_path)?;
     validate_environment(&environment)?;
     validate_runtime(root, &environment)?;
-    validate_bundle(root)?;
+    validate_bundle(root, &environment)?;
 
     if environment["OUTBE_ENCLAVE_RUNTIME"] == "system-gramine" {
         install_system_gramine_paths(root)?;
@@ -103,11 +106,12 @@ fn read_environment(path: &Path) -> Result<BTreeMap<String, String>> {
             "duplicate validator.env key: {name}"
         );
     }
-    for name in ENV_KEYS
-        .iter()
-        .copied()
-        .filter(|name| !matches!(*name, "OUTBE_CONSENSUS_EXTRA_ARGS"))
-    {
+    for name in ENV_KEYS.iter().copied().filter(|name| {
+        !matches!(
+            *name,
+            "OUTBE_CONSENSUS_EXTRA_ARGS" | "OUTBE_DEV_NETWORK_BINDING"
+        )
+    }) {
         ensure!(
             values.get(name).is_some_and(|value| !value.is_empty()),
             "missing {name} in validator.env"
@@ -120,6 +124,13 @@ fn validate_environment(values: &BTreeMap<String, String>) -> Result<()> {
     values["OUTBE_EXTERNAL_IP"]
         .parse::<std::net::Ipv4Addr>()
         .wrap_err("OUTBE_EXTERNAL_IP must be an IPv4 literal")?;
+    let rpc_bind = values["OUTBE_RPC_BIND_IP"]
+        .parse::<std::net::Ipv4Addr>()
+        .wrap_err("OUTBE_RPC_BIND_IP must be an IPv4 literal")?;
+    ensure!(
+        rpc_bind.is_loopback() || rpc_bind.is_private(),
+        "OUTBE_RPC_BIND_IP must be a loopback or private IPv4 address"
+    );
     let rpc = &values["OUTBE_CERTIFIED_RPC"];
     ensure!(
         (rpc.starts_with("http://") || rpc.starts_with("https://"))
@@ -154,6 +165,28 @@ fn validate_environment(values: &BTreeMap<String, String>) -> Result<()> {
         !peers.is_empty() && peers.iter().all(|peer| valid_peer(peer)),
         "OUTBE_CONSENSUS_PEERS is invalid"
     );
+    if values["OUTBE_ENCLAVE_RUNTIME"] == "mock" {
+        ensure!(
+            values["OUTBE_DEV_NETWORK_BINDING"].len() == 132
+                && values["OUTBE_DEV_NETWORK_BINDING"]
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit()),
+            "OUTBE_DEV_NETWORK_BINDING must be a canonical 66-byte hex value"
+        );
+    }
+    let expected_session = match values["OUTBE_ENCLAVE_RUNTIME"].as_str() {
+        "mock" => "development",
+        "system-gramine" | "bundled-sgx" => "production-node-host",
+        _ => {
+            return Err(eyre::eyre!(
+                "OUTBE_ENCLAVE_RUNTIME must be system-gramine, bundled-sgx, or mock"
+            ));
+        }
+    };
+    ensure!(
+        values["OUTBE_TEE_SESSION_MODE"] == expected_session,
+        "OUTBE_TEE_SESSION_MODE does not match OUTBE_ENCLAVE_RUNTIME"
+    );
     Ok(())
 }
 
@@ -180,15 +213,21 @@ fn validate_runtime(root: &Path, environment: &BTreeMap<String, String>) -> Resu
                 required_file(&root.join("sgx").join(relative))?;
             }
         }
+        "mock" => {
+            required_executable(&root.join("outbe-tee-enclave-mock"))?;
+            canonical_key(&root.join("tee/dev-dkg-seed.hex"))?;
+            canonical_key(&root.join("tee/dev-offer-secret.hex"))?;
+        }
         _ => {
-            bail!("OUTBE_ENCLAVE_RUNTIME must be system-gramine or bundled-sgx");
+            bail!("OUTBE_ENCLAVE_RUNTIME must be system-gramine, bundled-sgx, or mock");
         }
     }
     Ok(())
 }
 
-fn validate_bundle(root: &Path) -> Result<()> {
+fn validate_bundle(root: &Path, environment: &BTreeMap<String, String>) -> Result<()> {
     required_file(&root.join("genesis.json"))?;
+    required_file(&root.join(".bb-crs/bn254_g1.dat"))?;
     for name in [
         "outbe-up",
         "outbe-chain",
@@ -196,9 +235,12 @@ fn validate_bundle(root: &Path) -> Result<()> {
         "outbe-keygen",
         "outbe-feeder",
         "outbe-radicle",
-        "outbe-tee-enclave",
     ] {
         required_executable(&root.join(name))?;
+    }
+    match environment["OUTBE_ENCLAVE_RUNTIME"].as_str() {
+        "mock" => required_executable(&root.join("outbe-tee-enclave-mock"))?,
+        _ => required_executable(&root.join("outbe-tee-enclave"))?,
     }
     Ok(())
 }
@@ -278,6 +320,7 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
     let secrets = [
         "signing-key.hex",
         "evm-key.hex",
+        "feeder-key.hex",
         "reth-p2p-secret.hex",
         "radicle/keys/radicle",
     ];
@@ -306,6 +349,7 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
         fs::set_permissions(keys.join(relative), fs::Permissions::from_mode(0o600))?;
     }
     canonical_key(&keys.join("evm-key.hex"))?;
+    canonical_key(&keys.join("feeder-key.hex"))?;
     canonical_key(&keys.join("reth-p2p-secret.hex"))?;
     process::capture(
         root.join("outbe-keygen"),
@@ -442,4 +486,38 @@ fn command_in_path(name: &str) -> bool {
                 .is_ok_and(|metadata| metadata.is_file() && metadata.mode() & 0o111 != 0)
         })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundle_requires_the_packaged_crs() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("genesis.json"), b"{}").unwrap();
+        for name in [
+            "outbe-up",
+            "outbe-chain",
+            "outbe-cli",
+            "outbe-keygen",
+            "outbe-feeder",
+            "outbe-radicle",
+            "outbe-tee-enclave-mock",
+        ] {
+            let path = root.path().join(name);
+            fs::write(&path, b"binary").unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let environment = BTreeMap::from([("OUTBE_ENCLAVE_RUNTIME".to_owned(), "mock".to_owned())]);
+        assert!(validate_bundle(root.path(), &environment)
+            .unwrap_err()
+            .to_string()
+            .contains(".bb-crs/bn254_g1.dat"));
+
+        let crs = root.path().join(".bb-crs/bn254_g1.dat");
+        fs::create_dir_all(crs.parent().unwrap()).unwrap();
+        fs::write(crs, b"CRS").unwrap();
+        validate_bundle(root.path(), &environment).unwrap();
+    }
 }

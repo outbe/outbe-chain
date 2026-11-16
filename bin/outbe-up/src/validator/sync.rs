@@ -10,7 +10,7 @@ use crate::{
         rpc::RpcClient,
         snapshot,
         wait::{wait_for_rpc_chain, wait_for_sync},
-        FULL_NODE, LOCAL_RPC, VALIDATOR_SERVICE, VALIDATOR_TARGET,
+        FULL_NODE, VALIDATOR_SERVICE, VALIDATOR_TARGET,
     },
 };
 
@@ -65,7 +65,7 @@ pub async fn run(snapshot_path: Option<&Path>) -> Result<()> {
 
     progress.stage("starting keyless full node");
     process::systemctl(&["enable", "--now", FULL_NODE])?;
-    let local = RpcClient::new(LOCAL_RPC)?;
+    let local = RpcClient::new(journal.config.network.local_rpc_url())?;
     let remote = RpcClient::new(journal.config.network.certified_rpc.clone())?;
     wait_for_rpc_chain(&local, journal.config.network.chain_id, &mut progress).await?;
     progress.stage("synchronizing keyless full node");

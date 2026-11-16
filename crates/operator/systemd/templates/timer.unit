@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily Outbe TEE lease renewal check
+Description=@@DESCRIPTION@@
 
 [Timer]
 OnCalendar=daily

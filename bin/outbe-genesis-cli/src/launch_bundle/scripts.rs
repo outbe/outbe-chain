@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use crate::error::GenesisError;
-use crate::network::profiles_dir;
+use crate::network::{profiles_dir, rpc_bind_ip};
 use crate::seed_codec::parse_u64;
 
 use super::{port_of, quote, uses_production_tee_session, DEFAULT_MAX_VALIDATORS};
@@ -17,22 +17,14 @@ pub fn enclave_script(
     config: &Value,
     index: usize,
     base_dir: &str,
+    direct_dev_binding: Option<&str>,
+    direct_dev_node_id: Option<&str>,
 ) -> Result<String, GenesisError> {
     let mode = config
         .get("tee")
         .and_then(|t| t.get("mode"))
         .and_then(Value::as_str)
         .ok_or_else(|| GenesisError::validation("tee.mode is required"))?;
-    let default_enclave_dir = format!("{base_dir}/sgx");
-    let enclave_dir = config
-        .get("enclave_dir")
-        .and_then(Value::as_str)
-        .unwrap_or(&default_enclave_dir);
-    let default_enclave_runner = format!("{enclave_dir}/bin/outbe-tee-enclave-launch");
-    let enclave_runner = config
-        .get("enclave_runner")
-        .and_then(Value::as_str)
-        .unwrap_or(&default_enclave_runner);
     let chain_id = parse_u64(
         config
             .get("chain_id")
@@ -41,18 +33,41 @@ pub fn enclave_script(
     let chain_id_hex = format!("0x{chain_id:064x}");
     let port = port_of(config, "tee_enclave_port")?;
     let endpoint = format!("127.0.0.1:{port}");
-    let image = config
-        .get("enclave_image")
-        .and_then(Value::as_str)
-        .unwrap_or("outbe-tee-enclave:latest");
     let validator_dir = format!("{base_dir}/validator-{index}");
     let validator_tee = format!("{validator_dir}/tee");
-    let name = format!("outbe-enclave-{index}");
 
-    if mode == "dcap-required" {
+    if uses_production_tee_session(config) {
+        let default_enclave_dir = format!("{base_dir}/sgx");
+        let enclave_dir = config
+            .get("enclave_dir")
+            .and_then(Value::as_str)
+            .unwrap_or(&default_enclave_dir);
+        let default_enclave_runner = format!("{enclave_dir}/bin/outbe-tee-enclave-launch");
+        let enclave_runner = config
+            .get("enclave_runner")
+            .and_then(Value::as_str)
+            .unwrap_or(&default_enclave_runner);
+        if mode != "dcap-required" {
+            return Ok(format!(
+                "\n# TEE enclave under gramine-sgx on the host.\n\
+# The node refuses to start until this answers on {endpoint}.\n\
+mkdir -p {q_val_tee}\n\
+\n\
+[ -e /dev/sgx_enclave ] \\\n  || {{ echo \"missing /dev/sgx_enclave: SGX driver not loaded\" >&2; exit 1; }}\n\
+\n\
+cd {q_enclave_dir}\n\
+exec {q_runner} \\\n\
+  --socket {q_endpoint} \\\n\
+  --tee-dir /var/lib/outbe/tee \\\n\
+  --chain-id {chain_id_hex}\n",
+                q_val_tee = quote(&validator_tee),
+                q_enclave_dir = quote(enclave_dir),
+                q_runner = quote(enclave_runner),
+                q_endpoint = quote(&endpoint),
+            ));
+        }
         return Ok(format!(
-            "\n# TEE enclave under gramine-sgx, on the host. Requires the SGX driver\n\
-# (/dev/sgx_enclave, /dev/sgx_provision) and a running aesmd.service.\n\
+            "\n# TEE enclave under gramine-sgx on the host.\n\
 # The node refuses to start until this answers on {endpoint}.\n\
 mkdir -p {q_val_tee}\n\
 \n\
@@ -74,48 +89,34 @@ exec {q_runner} \\\n\
         ));
     }
 
-    let manifest = format!("{enclave_dir}/outbe-tee-enclave.manifest.sgx");
-    let signing_key = format!("{base_dir}/test-sgx-signing-key.pem");
+    let binding = direct_dev_binding.ok_or_else(|| {
+        GenesisError::validation("gramine-direct-dev requires a genesis network binding")
+    })?;
+    let node_id = direct_dev_node_id.ok_or_else(|| {
+        GenesisError::validation("gramine-direct-dev requires a Reth P2P node identity")
+    })?;
+    let enclave_runner = config
+        .get("enclave_runner")
+        .and_then(Value::as_str)
+        .unwrap_or("outbe-tee-enclave-mock");
     let dkg_seed = format!("{:064x}", index + 1);
     Ok(format!(
-        "\n# TEE enclave, unattested development profile. The node refuses to start\n\
+        "\n# Unattested mock enclave for an explicit development network. The node refuses to start\n\
 # until this answers on {endpoint}.\n\
 mkdir -p {q_val_tee}\n\
 \n\
-if [ -e /dev/sgx_enclave ] && [ -x {q_runner} ] && [ -f {q_manifest} ]; then\n\
-  # Real SGX hardware: use the immutable loader and runtime shipped in the\n\
-  # signed release bundle. The systemd unit binds this tree at /opt/outbe/sgx\n\
-  # and the per-validator sealing directory at /var/lib/outbe/tee, matching the\n\
-  # paths covered by the signed manifest.\n\
-  cd {q_enclave_dir}\n\
-  exec {q_runner} \\\n\
-    --socket {q_endpoint} \\\n\
-    --tee-dir /var/lib/outbe/tee \\\n\
-    --chain-id {chain_id_hex}\n\
-fi\n\
-\n\
-# No SGX on this host: fall back to the container, which runs the enclave\n\
-# under gramine-direct (LibOS only, no hardware isolation).\n\
-docker rm -f {q_name} >/dev/null 2>&1 || true\n\
-exec docker run --rm --name {q_name} \\\n\
-  --network host \\\n\
-  --log-driver local --log-opt max-size=10m --log-opt max-file=3 \\\n\
-  --security-opt seccomp=unconfined \\\n\
-  -v {q_signing_key}:/run/secrets/outbe-test-sgx-key.pem:ro \\\n\
-  -v {q_val_tee}:/tee \\\n\
-  {q_image} \\\n\
+exec {q_runner} \\\n\
+  --dev-network-binding {q_binding} \\\n\
+  --dev-reth-p2p-public {q_node_id} \\\n\
   --socket {q_endpoint} \\\n\
   --dkg-seed {dkg_seed} \\\n\
-  --tee-dir /tee \\\n\
+  --tee-dir {q_val_tee} \\\n\
   --chain-id {chain_id_hex}\n",
         q_val_tee = quote(&validator_tee),
-        q_manifest = quote(&manifest),
-        q_enclave_dir = quote(enclave_dir),
         q_runner = quote(enclave_runner),
+        q_binding = quote(binding),
+        q_node_id = quote(node_id),
         q_endpoint = quote(&endpoint),
-        q_name = quote(&name),
-        q_signing_key = quote(&signing_key),
-        q_image = quote(image),
     ))
 }
 
@@ -210,6 +211,15 @@ pub fn node_script(
     } else {
         ""
     };
+    let local_consensus_defaults = if config
+        .get("consensus_use_local_defaults")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        "  --consensus.use-local-defaults \\\n"
+    } else {
+        ""
+    };
     let validator_keys = format!("{keys_dir}/validator-{index}");
     let validator_dir = format!("{base_dir}/validator-{index}");
     let radicle_home = format!("{validator_keys}/radicle");
@@ -221,6 +231,7 @@ pub fn node_script(
     let reth_p2p_port = port_of(config, "reth_p2p_port")?;
     let reth_discv5_port = port_of(config, "reth_discv5_port")?;
     let metrics_port = port_of(config, "metrics_port")?;
+    let rpc_bind = rpc_bind_ip(config, host)?;
 
     Ok(format!(
         "\n# Validator node: execution and consensus with native enclave Lysis.\n\
@@ -245,11 +256,12 @@ exec {q_binary} node \\\n\
   --consensus.signing-key \"$KEYS/signing-key.hex\" \\\n\
   --validator.evm-key \"$KEYS/evm-key.hex\" \\\n\
   --consensus.listen-addr 0.0.0.0:{consensus_port} \\\n\
+{local_consensus_defaults}\
   --consensus.storage-dir {q_consensus} \\\n\
   --radicle.control-socket {q_radicle_sock} \\\n\
   --radicle.status-address 127.0.0.1:{radicle_status_port} \\\n\
   --tee-enclave-socket 127.0.0.1:{tee_enclave_port} \\\n\
-  --http --http.addr 127.0.0.1 --http.port {rpc_port} \\\n\
+  --http --http.addr {rpc_bind} --http.port {rpc_port} \\\n\
   --http.api eth,net,web3,outbe \\\n\
   --authrpc.port {authrpc_port} \\\n\
   --port {reth_p2p_port} \\\n\
@@ -377,13 +389,22 @@ pub fn feeder_config(
         .and_then(Value::as_str)
         .ok_or_else(|| GenesisError::validation("validator missing address"))?;
     let feeder_health_port = port_of(config, "feeder_health_port")?;
+    let p2p_address = validator
+        .get("p2p_address")
+        .and_then(Value::as_str)
+        .unwrap_or("127.0.0.1");
+    let validator_host = p2p_address
+        .rsplit_once(':')
+        .map(|(host, _)| host)
+        .unwrap_or(p2p_address);
+    let rpc_bind = rpc_bind_ip(config, validator_host)?;
 
     Ok(format!(
         "# Price oracle feeder for validator-{index}.\n\
 pairs = \"pairs.toml\"\n\
 \n\
 [chain]\n\
-rpc_endpoint = \"http://127.0.0.1:{rpc_port}\"\n\
+rpc_endpoint = \"http://{rpc_bind}:{rpc_port}\"\n\
 chain_id = {chain_id}\n\
 gasless_oracle_votes = true\n\
 \n\
@@ -468,79 +489,5 @@ pub fn feeder_script(config: &Value, index: usize, base_dir: &str) -> String {
 exec {} --config {}\n",
         quote(binary),
         quote(&feeder_toml)
-    )
-}
-
-/// Render `start-all.sh` for one validator.
-pub fn start_all_script(
-    config: &Value,
-    index: usize,
-    base_dir: &str,
-) -> Result<String, GenesisError> {
-    let directory = format!("{base_dir}/validator-{index}");
-    let status_port = port_of(config, "radicle_status_port")?;
-    let rpc_port = port_of(config, "rpc_port")?;
-    Ok(format!(
-        "\n# Bring up the configured storage, enclave, Radicle and node in dependency order.\n\
-cd {}\n\
-mkdir -p logs\n\
-\n\
-\n\
-# run-enclave.sh execs into the enclave, so it must be backgrounded: calling it\n\
-# directly would replace this script and nothing below would ever run.\n\
-nohup ./run-enclave.sh > logs/enclave.log 2>&1 &\n\
-echo $! > enclave.pid\n\
-echo \"waiting for the enclave...\"\n\
-for _ in $(seq 1 60); do\n\
-  if (exec 3<>/dev/tcp/127.0.0.1/{{TEE_PORT}}) 2>/dev/null; then exec 3>&-; break; fi\n\
-  sleep 1\n\
-done\n\
-\n\
-nohup ./run-radicle.sh > logs/radicle.log 2>&1 &\n\
-echo $! > radicle.pid\n\
-echo \"waiting for the Radicle sidecar...\"\n\
-for _ in $(seq 1 60); do\n\
-  if (exec 3<>/dev/tcp/127.0.0.1/{status_port}) 2>/dev/null; then exec 3>&-; break; fi\n\
-  sleep 1\n\
-done\n\
-\n\
-nohup ./run-node.sh > logs/node.log 2>&1 &\n\
-echo $! > node.pid\n\
-echo \"waiting for RPC...\"\n\
-for _ in $(seq 1 180); do\n\
-  if (exec 3<>/dev/tcp/127.0.0.1/{rpc_port}) 2>/dev/null; then exec 3>&-; break; fi\n\
-  sleep 1\n\
-done\n\
-\n\
-nohup ./run-feeder.sh > logs/feeder.log 2>&1 &\n\
-echo $! > feeder.pid\n\
-\n\
-echo\n\
-echo \"validator-{index} started:\"\n\
-echo \"  node:    logs/node.log    (pid $(cat node.pid))\"\n\
-echo \"  radicle: logs/radicle.log (pid $(cat radicle.pid))\"\n\
-echo \"  feeder:  logs/feeder.log  (pid $(cat feeder.pid))\"\n\
-echo \"  enclave: docker logs outbe-enclave-{index}\"\n",
-        quote(&directory)
-    ))
-}
-
-/// Render `stop-all.sh` for one validator.
-pub fn stop_all_script(index: usize, base_dir: &str) -> String {
-    let directory = format!("{base_dir}/validator-{index}");
-    format!(
-        "\ncd {}\n\
-for name in feeder node radicle enclave; do\n\
-  if [ -f \"$name.pid\" ]; then\n\
-    pid=\"$(cat \"$name.pid\")\"\n\
-    if kill -0 \"$pid\" 2>/dev/null; then\n\
-      kill \"$pid\"\n\
-      echo \"stopped $name (pid $pid)\"\n\
-    fi\n\
-    rm -f \"$name.pid\"\n\
-  fi\n\
-done\n\
-docker stop outbe-enclave-{index} >/dev/null 2>&1 && echo \"stopped enclave\" || true\n",
-        quote(&directory)
     )
 }

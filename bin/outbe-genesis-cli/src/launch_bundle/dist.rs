@@ -9,9 +9,10 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::error::GenesisError;
+use crate::network::rpc_bind_ip;
 use crate::seed_codec::parse_u64;
 
-use super::{copy_dir_recursive, port_of, quote, write_script};
+use super::{copy_dir_recursive, port_of, quote, write_script, ROOT_HELPER};
 
 fn pack_validator_archive(
     output_dir: &Path,
@@ -22,24 +23,22 @@ fn pack_validator_archive(
     let staging = dist.join(format!("validator-{index}"));
     fs::create_dir_all(&staging).map_err(|err| GenesisError::io(&staging, err))?;
 
-    for name in [
-        "genesis.json",
-        "reth-bootnodes.txt",
-        "DEPLOY.md",
-        "install-systemd.sh",
-    ] {
+    for name in ["genesis.json", "reth-bootnodes.txt", "DEPLOY.md"] {
         let item = output_dir.join(name);
         if item.is_file() {
             let dst = staging.join(name);
             fs::copy(&item, &dst).map_err(|err| GenesisError::io(&dst, err))?;
         }
     }
-    for folder in ["systemd", "sgx"] {
-        let src = output_dir.join(folder);
-        if src.is_dir() {
-            copy_dir_recursive(&src, &staging.join(folder))?;
-        }
+    let sgx = output_dir.join("sgx");
+    if sgx.is_dir() {
+        copy_dir_recursive(&sgx, &staging.join("sgx"))?;
     }
+    let crs = output_dir.join(".bb-crs/bn254_g1.dat");
+    let staged_crs = staging.join(".bb-crs/bn254_g1.dat");
+    fs::create_dir_all(staged_crs.parent().expect("CRS path has a parent"))
+        .map_err(|err| GenesisError::io(&staged_crs, err))?;
+    fs::copy(&crs, &staged_crs).map_err(|err| GenesisError::io(&staged_crs, err))?;
 
     let val_folder = format!("validator-{index}");
     copy_dir_recursive(&output_dir.join(&val_folder), &staging.join(&val_folder))?;
@@ -113,7 +112,8 @@ pub fn build_distribution(
 
     let q_base = quote(base_dir);
     let unpack = format!(
-        "\n# Unpack this machine's archive into {base_dir}. Run it ON the target machine,\n\
+        "\n{root_helper}\n\n\
+# Unpack this machine's archive into {base_dir}. Run it ON the target machine,\n\
 # from the directory holding validator-<index>.tgz.\n\
 INDEX=\"${{1:?usage: unpack.sh <validator-index>}}\"\n\
 ARCHIVE=\"validator-$INDEX.tgz\"\n\
@@ -123,12 +123,13 @@ if command -v sha256sum >/dev/null && [ -f SHA256SUMS ]; then\n\
   grep \" $ARCHIVE\\$\" SHA256SUMS | sha256sum -c - || {{ echo \"checksum mismatch\" >&2; exit 1; }}\n\
 fi\n\
 \n\
-sudo mkdir -p {q_base}\n\
-sudo chown \"$USER\" {q_base}\n\
+as_root mkdir -p {q_base}\n\
+as_root chown \"$USER\" {q_base}\n\
 tar xzf \"$ARCHIVE\" -C {q_base}\n\
 chmod -R go-rwx {q_base}/keys\n\
 \n\
-echo \"unpacked into {base_dir}; next: ./install-systemd.sh $INDEX\"\n"
+echo \"unpacked into {base_dir}; next: {base_dir}/validator-$INDEX/install-systemd.sh\"\n",
+        root_helper = ROOT_HELPER,
     );
     write_script(&dist.join("unpack.sh"), &unpack)?;
     Ok(names)
@@ -201,6 +202,15 @@ SGX hardware, and the exact release measurements.\n"
     let radicle_status_port = port_of(config, "radicle_status_port")?;
     let tee_enclave_port = port_of(config, "tee_enclave_port")?;
     let feeder_health_port = port_of(config, "feeder_health_port")?;
+    let first_host = first_p2p
+        .rsplit_once(':')
+        .map(|(host, _)| host)
+        .unwrap_or(first_p2p);
+    let rpc_bind = if config.get("rpc_bind_ip").and_then(Value::as_str) == Some("validator") {
+        "<this-validator-private-ip>".to_owned()
+    } else {
+        rpc_bind_ip(config, first_host)?.to_string()
+    };
     Ok(format!(
         "# Deploying this network\n\
 \n\
@@ -216,8 +226,8 @@ every machine, because each founder runs on its own host.\n\
 ## 1. Copy the per-validator archive to each machine\n\
 \n\
 The generator writes one self-contained archive per machine under `dist/`. Each\n\
-archive contains the shared genesis and bootnodes, the bundled SGX runtime,\n\
-systemd units and installer, launch scripts, and **only that validator's** keys.\n\
+archive contains the shared genesis and bootnodes, systemd units and installer,\n\
+launch scripts, the selected enclave runtime, and **only that validator's** keys.\n\
 \n\
 ```bash\n\
 # From the generated output directory, for machine N (0..3):\n\
@@ -242,8 +252,8 @@ Between the four machines:\n\
 | `{reth_discv5_port}` | reth discv5 (UDP) |\n\
 | `{radicle_port}` | Radicle replication |\n\
 \n\
-Everything else stays on loopback and must not be exposed: RPC\n\
-`{rpc_port}`, authrpc `{authrpc_port}`,\n\
+RPC uses its explicit loopback/private bind `{rpc_bind}:{rpc_port}`. Everything\n\
+else stays on loopback and must not be exposed: authrpc `{authrpc_port}`,\n\
 metrics `{metrics_port}`, Radicle status\n\
 `{radicle_status_port}`, the enclave socket\n\
 `{tee_enclave_port}` and the feeder health endpoint\n\
@@ -258,30 +268,27 @@ metrics `{metrics_port}`, Radicle status\n\
 - the `outbe-chain`, `outbe-radicle` and `outbe-feeder` binaries on `PATH`\n\
   (or set `node_binary`, `radicle_binary` and `feeder_binary` in the yaml to\n\
   absolute paths and regenerate)\n\
-- for `dcap-required`: SGX hardware exposing `/dev/sgx_enclave` and\n\
-  `/dev/sgx_provision`, with `aesmd.service` running\n\
-- Docker is required only for the `gramine-direct-dev` fallback on a host\n\
-  without usable SGX hardware\n\
+- when `enclave_sgx` is enabled: SGX hardware exposing `/dev/sgx_enclave`\n\
+- for `dcap-required`: also `/dev/sgx_provision` and `aesmd.service`\n\
+- `outbe-tee-enclave-mock` on `PATH` (or `enclave_runner` pointing to it) only\n\
+  when `enclave_sgx: false`; otherwise the signed SGX runtime is used\n\
 \n\
 ## 4. Start each machine\n\
 \n\
 ```bash\n\
 cd {base_dir}/validator-N\n\
 ./preflight.sh N        # verifies genesis/enclave/state before anything starts\n\
-sudo {base_dir}/install-systemd.sh N\n\
+./install-systemd.sh\n\
 ```\n\
 \n\
-`install-systemd.sh` installs one templated unit per role, starts them in\n\
-dependency order, and enables the daily TEE renewal timer for a NodeHost SGX\n\
-session. The services recover after clean or failed exits. `preflight.sh` is\n\
-read-only: run it first and compare the genesis and enclave digests it prints\n\
-across all four machines - they must be identical.\n\
+`install-systemd.sh` installs one non-templated unit per role, starts the\n\
+`outbe-validator.target`, and enables the daily TEE renewal timer for a NodeHost SGX\n\
+session. The services recover after clean or failed exits. `preflight.sh`\n\
+is read-only: run it first and compare the genesis digest it prints across all\n\
+four machines. When SGX is enabled, compare the enclave digest too.\n\
 \n\
-`start-all.sh` starts the components in dependency order - configured storage, enclave,\n\
-Radicle sidecar, node, feeder - and writes pids and logs into\n\
-`{base_dir}/validator-N/`. To run one component in the foreground instead, call\n\
-its script directly: `run-enclave.sh`, `run-radicle.sh`,\n\
-`run-node.sh`, `run-feeder.sh`. `stop-all.sh` reverses it.\n\
+Inspect the stack with `systemctl status outbe-validator.target` and follow the\n\
+node with `journalctl -u outbe-validator -f`.\n\
 \n\
 **Start all four machines within a few minutes of each other.** Block 1 carries\n\
 the founding DKG ceremony and needs every genesis validator online - unlike a\n\
@@ -293,12 +300,12 @@ genesis itself stays valid.\n\
 \n\
 ```bash\n\
 # height advances on each machine\n\
-curl -s -X POST http://127.0.0.1:{rpc_port} \\\n\
+curl -s -X POST http://{rpc_bind}:{rpc_port} \\\n\
   -H 'content-type: application/json' \\\n\
   -d '{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_blockNumber\",\"params\":[]}}'\n\
 \n\
 # all four validators active\n\
-outbe-cli --rpc-url http://127.0.0.1:{rpc_port} validator list\n\
+outbe-cli --rpc-url http://{rpc_bind}:{rpc_port} validator list\n\
 \n\
 # feeder health\n\
 curl -s http://127.0.0.1:{feeder_health_port}/health\n\
@@ -312,7 +319,7 @@ number and `validator list` shows four active validators.\n\
 | Component | Process | Notes |\n\
 |---|---|---|\n\
 | Execution + consensus | `outbe-chain node` | one binary, no Engine API split |\n\
-| TEE enclave | bundled `sgx/bin/outbe-tee-enclave-launch` | uses the shipped Gramine runtime on SGX; Docker is only the non-SGX development fallback |\n\
+| TEE enclave | bundled SGX launcher or `outbe-tee-enclave-mock` | selected explicitly with `enclave_sgx`; there is no runtime fallback |\n\
 | Radicle | `outbe-radicle` | validator startup requires its control socket |\n\
 | Price feeder | `outbe-feeder` | submits oracle votes |\n\
 \n\

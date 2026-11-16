@@ -79,6 +79,7 @@ fn fake_validators() -> Vec<Value> {
         .map(|index| {
             json!({
                 "address": format!("0x{}", (index + 1).to_string().repeat(40)),
+                "feeder_address": format!("0x{}", (index + 5).to_string().repeat(40)),
                 "public_key": format!("{:02x}", index + 1).repeat(48),
                 "radicle_node_id": format!("0x{}", format!("{:02x}", index + 9).repeat(32)),
                 "p2p_address": format!("10.0.0.{}:30400", index + 1),
@@ -245,6 +246,18 @@ fn config_validation_matrix_and_rejections() {
     let port_oob = merge_obj(minimal_config("./keys"), json!({"rpc_port": 70000}));
     let err = validate_config(&port_oob).expect_err("port out of bounds");
     assert!(err.to_string().contains("outside 1..65535"));
+
+    validate_config(&merge_obj(
+        minimal_config("./keys"),
+        json!({"rpc_bind_ip": "validator"}),
+    ))
+    .expect("per-validator private RPC bind");
+    let err = validate_config(&merge_obj(
+        minimal_config("./keys"),
+        json!({"rpc_bind_ip": "0.0.0.0"}),
+    ))
+    .expect_err("unspecified RPC bind");
+    assert!(err.to_string().contains("loopback or private"));
 
     let dcap_no_measurements = merge_obj(
         minimal_config("./keys"),

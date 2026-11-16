@@ -47,11 +47,14 @@ fn validator_command_generates_distinct_runtime_keys() {
     );
 
     let validator_evm = read_canonical_secret(&output_dir.path().join("evm-key.hex"));
+    let feeder = read_canonical_secret(&output_dir.path().join("feeder-key.hex"));
     let reth_p2p = read_canonical_secret(&output_dir.path().join("reth-p2p-secret.hex"));
+    assert_ne!(feeder, validator_evm, "feeder must have its own signer");
     assert_ne!(
         reth_p2p, validator_evm,
         "Reth must have its own identity key"
     );
+    assert_ne!(reth_p2p, feeder, "Reth and feeder keys must be distinct");
     {
         let name = "evm-key.hex";
         let path = output_dir.path().join(name);
@@ -96,7 +99,7 @@ fn validator_command_protects_every_plaintext_runtime_key() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    for name in ["evm-key.hex", "reth-p2p-secret.hex"] {
+    for name in ["evm-key.hex", "feeder-key.hex", "reth-p2p-secret.hex"] {
         let mode = fs::metadata(output_dir.path().join(name))
             .expect("secret metadata")
             .permissions()
@@ -108,8 +111,7 @@ fn validator_command_protects_every_plaintext_runtime_key() {
 
 #[test]
 fn validator_command_refuses_each_preexisting_runtime_key_before_writing() {
-    {
-        let name = "reth-p2p-secret.hex";
+    for name in ["feeder-key.hex", "reth-p2p-secret.hex"] {
         let output_dir = tempfile::tempdir().expect("temporary output directory");
         let existing = output_dir.path().join(name);
         fs::write(&existing, b"operator-owned").expect("write sentinel artifact");

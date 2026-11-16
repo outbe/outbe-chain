@@ -44,6 +44,7 @@ filetime.workspace = true
 hex.workspace = true
 libc = { workspace = true, optional = true }
 outbe-simplex.workspace = true
+outbe-operator-systemd.workspace = true
 outbe-primitives.workspace = true
 outbe-tee.workspace = true
 rand_core = { workspace = true, optional = true }
@@ -57,6 +58,7 @@ tempfile.workspace = true
 tokio = { workspace = true, optional = true }
 walkdir.workspace = true
 tar.workspace = true
+zstd.workspace = true
 
 [dev-dependencies]
 outbe-genesis-cli.workspace = true

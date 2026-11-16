@@ -89,7 +89,7 @@ fn seed_single_validator_genesis(signer: &OutbeEvmSigner) -> eyre::Result<Genesi
     std::fs::write(
         &validators_path,
         format!(
-            r#"[{{ "address": "0x{addr:x}", "public_key": "{GENESIS_VALIDATOR_PUBKEY}", "radicle_node_id": "{GENESIS_VALIDATOR_RADICLE_NODE_ID}" }}]"#,
+            r#"[{{ "address": "0x{addr:x}", "feeder_address": "0x5555555555555555555555555555555555555555", "public_key": "{GENESIS_VALIDATOR_PUBKEY}", "radicle_node_id": "{GENESIS_VALIDATOR_RADICLE_NODE_ID}" }}]"#,
             addr = signer.address()
         ),
     )?;

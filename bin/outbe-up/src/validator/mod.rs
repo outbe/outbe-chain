@@ -19,7 +19,6 @@ pub mod status;
 pub mod sync;
 pub mod wait;
 
-pub const LOCAL_RPC: &str = "http://127.0.0.1:8545";
 pub const FULL_NODE: &str = "outbe-full-node.service";
 pub const VALIDATOR_TARGET: &str = "outbe-validator.target";
 pub const VALIDATOR_SERVICE: &str = "outbe-validator.service";
