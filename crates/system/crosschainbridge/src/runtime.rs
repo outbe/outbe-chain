@@ -134,8 +134,7 @@ impl<'a> CrosschainBridgeContract<'a> {
         Ok(message_id)
     }
 
-    /// Hyperlane StandardHookMetadata: variant 1, msg value 0, gas limit,
-    /// refund address.
+    /// Hyperlane StandardHookMetadata with `gas_limit`.
     fn hook_metadata(&self, gas_limit: U256) -> Bytes {
         let mut metadata = vec![0, 1];
         metadata.extend_from_slice(&[0u8; 32]);
