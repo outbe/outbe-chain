@@ -10,6 +10,7 @@ use outbe_primitives::dispatch::{
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
+use crate::constants::DEFAULT_REMOTE_GAS_LIMIT;
 use crate::schema::CrosschainBridgeContract;
 
 /// Selectors that accept native value: only `fund`, the top-up of the balance
@@ -53,7 +54,11 @@ pub fn dispatch(
                 }),
                 callRemote(c) => mutate(&storage, c, caller, |sender, c| {
                     CrosschainBridgeContract::require_allowed_caller(sender)?;
-                    gov.call_remote(c.domain, &c.calls)
+                    gov.call_remote(c.domain, &c.calls, U256::from(DEFAULT_REMOTE_GAS_LIMIT))
+                }),
+                callRemoteWithGasLimit(c) => mutate(&storage, c, caller, |sender, c| {
+                    CrosschainBridgeContract::require_allowed_caller(sender)?;
+                    gov.call_remote(c.domain, &c.calls, c.gasLimit)
                 }),
                 remoteAccount(c) => view(c, |c| gov.remote_account(c.domain)),
             }

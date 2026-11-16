@@ -1,8 +1,9 @@
 //! The owner calls: local calls and Interchain Account dispatch, paid from the
 //! owner balance. The only code that calls another contract as the owner. It
-//! runs the calls of the vote actions and the `callLocal` and `callRemote`
-//! calls of the allowed-caller list. Use these methods only in the frame of the
-//! owner address: every call has the frame address as `msg.sender`.
+//! runs the calls of the vote actions and the `callLocal`, `callRemote` and
+//! `callRemoteWithGasLimit` calls of the allowed-caller list. Use these methods
+//! only in the frame of the owner address: every call has the frame address as
+//! `msg.sender`.
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
@@ -15,9 +16,14 @@ use crate::errors::CrosschainBridgeError;
 use crate::precompile::ICrosschainBridge::{self, Call};
 use crate::schema::CrosschainBridgeContract;
 
+/// Variant of Hyperlane's StandardHookMetadata with a gas limit.
+const HOOK_METADATA_VARIANT: u16 = 1;
+/// Packed StandardHookMetadata: variant, message value, gas limit, refund address.
+const HOOK_METADATA_LEN: usize = 2 + 32 + 32 + 20;
+
 impl<'a> CrosschainBridgeContract<'a> {
     /// Requires that `caller` may make the owner call a contract through
-    /// `callLocal` and `callRemote`.
+    /// `callLocal`, `callRemote` and `callRemoteWithGasLimit`.
     pub fn require_allowed_caller(caller: Address) -> Result<()> {
         if !ALLOWED_CALLERS.contains(&caller) {
             return Err(CrosschainBridgeError::CallerNotAllowed { caller }.into());
@@ -45,14 +51,18 @@ impl<'a> CrosschainBridgeContract<'a> {
     }
 
     /// Runs `calls` on `domain` through the Interchain Account. The owner
-    /// balance pays the dispatch fee.
-    pub fn call_remote(&mut self, domain: u32, calls: &[Call]) -> Result<B256> {
+    /// balance pays the dispatch fee for `gas_limit`. The gas limit sets only
+    /// the fee. It does not limit the gas of the delivery.
+    pub fn call_remote(&mut self, domain: u32, calls: &[Call], gas_limit: U256) -> Result<B256> {
         self.require_remote(domain)?;
         if calls.is_empty() {
             return Err(CrosschainBridgeError::EmptyCalls.into());
         }
+        if gas_limit.is_zero() {
+            return Err(CrosschainBridgeError::InvalidGasLimit.into());
+        }
         let storage = self.storage.clone();
-        storage.with_checkpoint(|| self.dispatch(domain, calls))
+        storage.with_checkpoint(|| self.dispatch(domain, calls, gas_limit))
     }
 
     /// Records a top-up. The payable route credits the value itself.
@@ -85,9 +95,9 @@ impl<'a> CrosschainBridgeContract<'a> {
         )
     }
 
-    fn dispatch(&mut self, domain: u32, calls: &[Call]) -> Result<B256> {
+    fn dispatch(&mut self, domain: u32, calls: &[Call], gas_limit: U256) -> Result<B256> {
         let router = self.hyperlane().ica_router.read()?;
-        let fee = self.quote(router, domain)?;
+        let fee = self.quote(router, domain, gas_limit)?;
         self.require_balance(fee)?;
         let calls = calls
             .iter()
@@ -103,6 +113,7 @@ impl<'a> CrosschainBridgeContract<'a> {
             IInterchainAccountRouter::callRemoteCall {
                 _destination: domain,
                 _calls: calls,
+                _hookMetadata: self.hook_metadata(gas_limit),
             }
             .abi_encode()
             .into(),
@@ -115,15 +126,28 @@ impl<'a> CrosschainBridgeContract<'a> {
             domain,
             messageId: message_id,
             fee,
+            gasLimit: gas_limit,
         })?;
         Ok(message_id)
     }
 
-    fn quote(&self, router: Address, domain: u32) -> Result<U256> {
+    /// Hyperlane StandardHookMetadata: variant 1, message value 0, the gas
+    /// limit and the owner as the refund address, packed (86 bytes).
+    fn hook_metadata(&self, gas_limit: U256) -> Bytes {
+        let mut metadata = Vec::with_capacity(HOOK_METADATA_LEN);
+        metadata.extend_from_slice(&HOOK_METADATA_VARIANT.to_be_bytes());
+        metadata.extend_from_slice(&U256::ZERO.to_be_bytes::<32>());
+        metadata.extend_from_slice(&gas_limit.to_be_bytes::<32>());
+        metadata.extend_from_slice(self.address.as_slice());
+        metadata.into()
+    }
+
+    fn quote(&self, router: Address, domain: u32, gas_limit: U256) -> Result<U256> {
         let ret = self.storage.staticcall(
             router,
             IInterchainAccountRouter::quoteGasPaymentCall {
                 _destination: domain,
+                _gasLimit: gas_limit,
             }
             .abi_encode()
             .into(),

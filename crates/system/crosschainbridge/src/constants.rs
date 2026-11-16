@@ -7,3 +7,7 @@ use outbe_system_common::addresses::{HYPERLANE_CONTROLLER_ADDRESS, UPDATE_ADDRES
 ///   Hyperlane chain votes;
 /// - Update, for an approved `upgradeContracts` proposal.
 pub const ALLOWED_CALLERS: &[Address] = &[HYPERLANE_CONTROLLER_ADDRESS, UPDATE_ADDRESS];
+
+/// Gas limit of a `callRemote` message. The owner pays the IGP fee for this
+/// gas. The gas limit does not limit the gas of the delivery.
+pub const DEFAULT_REMOTE_GAS_LIMIT: u64 = 200_000;

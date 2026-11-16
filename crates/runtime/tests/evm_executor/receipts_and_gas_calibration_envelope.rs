@@ -206,7 +206,9 @@ fn calibration_boundary_with_nested_ism_calls() {
     assert_eq!(
         logs.iter()
             .filter(|log| log.data.topics().first()
-                == Some(&keccak256("RemoteCallDispatched(uint32,bytes32,uint256)")))
+                == Some(&keccak256(
+                    "RemoteCallDispatched(uint32,bytes32,uint256,uint256)"
+                )))
             .count(),
         255
     );

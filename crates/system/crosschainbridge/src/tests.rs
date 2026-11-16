@@ -15,8 +15,11 @@ use outbe_hyperlanecontroller::HyperlaneControllerContract;
 use crate::precompile::ICrosschainBridge::Call;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_system_common::addresses::{CROSSCHAIN_BRIDGE_ADDRESS, HYPERLANE_CONTROLLER_ADDRESS};
+use outbe_system_common::addresses::{
+    CROSSCHAIN_BRIDGE_ADDRESS, HYPERLANE_CONTROLLER_ADDRESS, UPDATE_ADDRESS,
+};
 
+use crate::constants::DEFAULT_REMOTE_GAS_LIMIT;
 use crate::precompile::{dispatch, ICrosschainBridge};
 use crate::schema::CrosschainBridgeContract;
 
@@ -207,6 +210,7 @@ fn a_remote_call_without_fee_balance_changes_nothing() {
                     value: U256::ZERO,
                     data: Bytes::new(),
                 }],
+                U256::from(DEFAULT_REMOTE_GAS_LIMIT),
             )
             .unwrap_err();
         assert_eq!(
@@ -230,12 +234,13 @@ fn remote_and_local_generic_calls() {
                 .abi_encode()
                 .into(),
         }];
+        let gas_limit = U256::from(DEFAULT_REMOTE_GAS_LIMIT);
         assert_eq!(
-            gov.call_remote(SEPOLIA, &calls).unwrap(),
+            gov.call_remote(SEPOLIA, &calls, gas_limit).unwrap(),
             B256::repeat_byte(0xaa)
         );
-        assert!(gov.call_remote(LOCAL, &calls).is_err());
-        assert!(gov.call_remote(SEPOLIA, &[]).is_err());
+        assert!(gov.call_remote(LOCAL, &calls, gas_limit).is_err());
+        assert!(gov.call_remote(SEPOLIA, &[], gas_limit).is_err());
 
         gov.call_local(local_ism(), U256::ZERO, Bytes::from_static(&[1, 2, 3, 4]))
             .unwrap();
@@ -288,4 +293,192 @@ fn remote_account_is_the_router_derived_account() {
         let account = ICrosschainBridge::remoteAccountCall::abi_decode_returns(&ret).unwrap();
         assert_eq!(account, v(0x1c));
     });
+}
+
+const FEE: u64 = 7;
+
+fn accept_ownership_calls() -> Vec<Call> {
+    vec![Call {
+        to: sepolia_ism(),
+        value: U256::ZERO,
+        data: IStorageMultisigIsm::acceptOwnershipCall {}
+            .abi_encode()
+            .into(),
+    }]
+}
+
+/// Router stubs that quote `FEE`, and an owner balance that pays it.
+fn funded_provider() -> HashMapStorageProvider {
+    let mut p = initialized_provider();
+    stub_router_and_ism(&mut p, U256::from(FEE), &[v(1)], 1);
+    p.set_balance(CROSSCHAIN_BRIDGE_ADDRESS, U256::from(1_000));
+    p.clear_events(CROSSCHAIN_BRIDGE_ADDRESS);
+    p
+}
+
+/// The router calls of one remote call: the gas limit of the quote, the
+/// decoded `callRemote` call and its `msg.value`.
+struct Dispatched {
+    quote_gas_limit: U256,
+    call: IInterchainAccountRouter::callRemoteCall,
+    value: U256,
+}
+
+/// Sends `input` from `caller` and returns the router calls it made.
+fn dispatch_remote(p: &mut HashMapStorageProvider, caller: Address, input: &[u8]) -> Dispatched {
+    let start = p.sub_call_inputs().len();
+    StorageHandle::enter(p, |storage| {
+        let ret = dispatch(storage, input, caller, U256::ZERO).unwrap();
+        assert_eq!(B256::abi_decode(&ret).unwrap(), B256::repeat_byte(0xaa));
+    });
+    let sent = &p.sub_call_inputs()[start..];
+    let quote = sent
+        .iter()
+        .find(|input| {
+            input.is_static
+                && input.target == ica_router()
+                && input.calldata[..4] == IInterchainAccountRouter::quoteGasPaymentCall::SELECTOR
+        })
+        .expect("quoteGasPayment call");
+    let quote = IInterchainAccountRouter::quoteGasPaymentCall::abi_decode(&quote.calldata).unwrap();
+    assert_eq!(quote._destination, SEPOLIA);
+    let remote = sent
+        .iter()
+        .find(|input| {
+            !input.is_static
+                && input.target == ica_router()
+                && input.calldata[..4] == IInterchainAccountRouter::callRemoteCall::SELECTOR
+        })
+        .expect("callRemote call");
+    Dispatched {
+        quote_gas_limit: quote._gasLimit,
+        call: IInterchainAccountRouter::callRemoteCall::abi_decode(&remote.calldata).unwrap(),
+        value: remote.value,
+    }
+}
+
+/// StandardHookMetadata of Hyperlane: variant 1, message value 0, the gas
+/// limit and CrosschainBridge as the refund address.
+fn expected_metadata(gas_limit: u64) -> Bytes {
+    let mut metadata = vec![0x00, 0x01];
+    metadata.extend_from_slice(&U256::ZERO.to_be_bytes::<32>());
+    metadata.extend_from_slice(&U256::from(gas_limit).to_be_bytes::<32>());
+    metadata.extend_from_slice(CROSSCHAIN_BRIDGE_ADDRESS.as_slice());
+    assert_eq!(metadata.len(), 86);
+    metadata.into()
+}
+
+fn dispatched_event(p: &HashMapStorageProvider) -> ICrosschainBridge::RemoteCallDispatched {
+    let events = p.get_events(CROSSCHAIN_BRIDGE_ADDRESS);
+    assert_eq!(events.len(), 1);
+    ICrosschainBridge::RemoteCallDispatched::decode_log_data(&events[0]).unwrap()
+}
+
+#[test]
+fn call_remote_pays_for_the_default_gas_limit() {
+    let mut p = funded_provider();
+    let input = ICrosschainBridge::callRemoteCall {
+        domain: SEPOLIA,
+        calls: accept_ownership_calls(),
+    }
+    .abi_encode();
+    let sent = dispatch_remote(&mut p, UPDATE_ADDRESS, &input);
+    assert_eq!(DEFAULT_REMOTE_GAS_LIMIT, 200_000);
+    assert_eq!(sent.quote_gas_limit, U256::from(DEFAULT_REMOTE_GAS_LIMIT));
+    assert_eq!(sent.call._destination, SEPOLIA);
+    assert_eq!(sent.call._calls.len(), 1);
+    assert_eq!(
+        sent.call._hookMetadata,
+        expected_metadata(DEFAULT_REMOTE_GAS_LIMIT)
+    );
+    assert_eq!(sent.value, U256::from(FEE));
+
+    let event = dispatched_event(&p);
+    assert_eq!(event.domain, SEPOLIA);
+    assert_eq!(event.messageId, B256::repeat_byte(0xaa));
+    assert_eq!(event.fee, U256::from(FEE));
+    assert_eq!(event.gasLimit, U256::from(DEFAULT_REMOTE_GAS_LIMIT));
+}
+
+#[test]
+fn call_remote_with_gas_limit_quotes_and_sends_the_same_gas_limit() {
+    let mut p = funded_provider();
+    let input = ICrosschainBridge::callRemoteWithGasLimitCall {
+        domain: SEPOLIA,
+        calls: accept_ownership_calls(),
+        gasLimit: U256::from(750_000),
+    }
+    .abi_encode();
+    let sent = dispatch_remote(&mut p, HYPERLANE_CONTROLLER_ADDRESS, &input);
+    assert_eq!(sent.quote_gas_limit, U256::from(750_000));
+    assert_eq!(sent.call._hookMetadata, expected_metadata(750_000));
+    let metadata_gas_limit = U256::from_be_slice(&sent.call._hookMetadata[34..66]);
+    assert_eq!(metadata_gas_limit, sent.quote_gas_limit);
+    assert_eq!(sent.value, U256::from(FEE));
+
+    let event = dispatched_event(&p);
+    assert_eq!(event.fee, U256::from(FEE));
+    assert_eq!(event.gasLimit, U256::from(750_000));
+}
+
+#[test]
+fn a_zero_gas_limit_reverts_and_dispatches_nothing() {
+    let mut p = funded_provider();
+    let start = p.sub_call_inputs().len();
+    let input = ICrosschainBridge::callRemoteWithGasLimitCall {
+        domain: SEPOLIA,
+        calls: accept_ownership_calls(),
+        gasLimit: U256::ZERO,
+    }
+    .abi_encode();
+    StorageHandle::enter(&mut p, |storage| {
+        let err = dispatch(storage, &input, UPDATE_ADDRESS, U256::ZERO).unwrap_err();
+        assert_eq!(
+            revert_selector(err),
+            ICrosschainBridge::InvalidGasLimit::SELECTOR
+        );
+    });
+    assert!(p.sub_call_inputs()[start..].is_empty());
+    assert!(topics(&p).is_empty());
+}
+
+#[test]
+fn only_an_allowed_caller_may_call_remote_with_a_gas_limit() {
+    let mut p = funded_provider();
+    let start = p.sub_call_inputs().len();
+    let input = ICrosschainBridge::callRemoteWithGasLimitCall {
+        domain: SEPOLIA,
+        calls: accept_ownership_calls(),
+        gasLimit: U256::from(750_000),
+    }
+    .abi_encode();
+    StorageHandle::enter(&mut p, |storage| {
+        let err = dispatch(storage, &input, stranger(), U256::ZERO).unwrap_err();
+        assert_eq!(
+            revert_selector(err),
+            ICrosschainBridge::CallerNotAllowed::SELECTOR
+        );
+    });
+    assert!(p.sub_call_inputs()[start..].is_empty());
+    assert!(topics(&p).is_empty());
+}
+
+#[test]
+fn a_gas_limit_above_the_balance_reverts_with_insufficient_balance() {
+    let mut p = funded_provider();
+    p.set_balance(CROSSCHAIN_BRIDGE_ADDRESS, U256::from(FEE - 1));
+    let input = ICrosschainBridge::callRemoteWithGasLimitCall {
+        domain: SEPOLIA,
+        calls: accept_ownership_calls(),
+        gasLimit: U256::from(750_000),
+    }
+    .abi_encode();
+    StorageHandle::enter(&mut p, |storage| {
+        let err = dispatch(storage, &input, UPDATE_ADDRESS, U256::ZERO).unwrap_err();
+        assert_eq!(
+            revert_selector(err),
+            ICrosschainBridge::InsufficientBalance::SELECTOR
+        );
+    });
+    assert!(topics(&p).is_empty());
 }

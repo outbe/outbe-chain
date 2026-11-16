@@ -78,6 +78,52 @@
   },
   {
     "type": "function",
+    "name": "callRemoteWithGasLimit",
+    "inputs": [
+      {
+        "name": "domain",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "calls",
+        "type": "tuple[]",
+        "internalType": "struct ICrosschainBridge.Call[]",
+        "components": [
+          {
+            "name": "to",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "value",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "data",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      },
+      {
+        "name": "gasLimit",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "messageId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "fund",
     "inputs": [],
     "outputs": [],
@@ -161,6 +207,12 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      },
+      {
+        "name": "gasLimit",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -205,6 +257,11 @@
   {
     "type": "error",
     "name": "InvalidDomain",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidGasLimit",
     "inputs": []
   },
   {

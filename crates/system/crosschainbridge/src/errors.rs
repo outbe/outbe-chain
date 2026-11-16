@@ -37,6 +37,9 @@ pub enum CrosschainBridgeError {
 
     #[error("undecodable return data from {0}")]
     UndecodableReturn(&'static str),
+
+    #[error("remote gas limit must be non-zero")]
+    InvalidGasLimit,
 }
 
 impl From<CrosschainBridgeError> for PrecompileError {
@@ -72,6 +75,9 @@ impl From<CrosschainBridgeError> for PrecompileError {
                     value: value.to_string(),
                 }
                 .abi_encode()
+            }
+            CrosschainBridgeError::InvalidGasLimit => {
+                ICrosschainBridge::InvalidGasLimit {}.abi_encode()
             }
         };
         PrecompileError::RevertBytes(Bytes::from(bytes))
