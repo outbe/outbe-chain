@@ -77,22 +77,34 @@ pub(super) async fn query_all(
 }
 
 pub(super) fn healthy(status: &FounderStatus, chain_id: u64, peers: usize) -> bool {
-    let consensus = status.consensus.as_ref();
-    status.error.is_none()
-        && status.target == "active"
-        && status.validator == "active"
-        && status.enclave == "active"
-        && status.radicle == "active"
-        && status.chain_id == Some(chain_id)
-        && status.finalized.is_some_and(|height| height > 0)
-        && status
-            .execution_peers
-            .is_some_and(|count| count >= peers as u64)
-        && consensus.is_some_and(|value| {
-            value.mode == "signer"
-                && value.has_threshold_shares
-                && value.connected_peers >= peers as u64
-        })
+    let services_ready = [
+        status.target.as_str(),
+        status.validator.as_str(),
+        status.enclave.as_str(),
+        status.radicle.as_str(),
+    ]
+    .into_iter()
+    .all(|state| state == "active");
+    let chain_matches = status.chain_id == Some(chain_id);
+    let finality_ready = status.finalized.is_some_and(|height| height > 0);
+    let execution_ready = status
+        .execution_peers
+        .is_some_and(|count| count >= peers as u64);
+    let consensus_ready = status.consensus.as_ref().is_some_and(|value| {
+        value.mode == "signer"
+            && value.has_threshold_shares
+            && value.connected_peers >= peers as u64
+    });
+    [
+        status.error.is_none(),
+        services_ready,
+        chain_matches,
+        finality_ready,
+        execution_ready,
+        consensus_ready,
+    ]
+    .into_iter()
+    .all(|ready| ready)
 }
 
 pub(super) fn render(build: &NetworkBuild, statuses: &[FounderStatus]) -> String {

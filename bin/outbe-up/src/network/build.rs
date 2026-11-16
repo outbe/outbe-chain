@@ -442,73 +442,7 @@ pub(super) fn founder_artifacts(
 pub(super) fn build_joining_artifacts(artifacts: &BuildArtifacts<'_>) -> Result<JoiningArtifact> {
     let joining = artifacts.root.join("joining");
     fs::create_dir(&joining)?;
-    let mut files = Vec::new();
-    let system_gramine = matches!(artifacts.config.tee.runtime, EnclaveRuntime::SystemGramine);
-    for file in &artifacts.software.files {
-        let destination = match file.path.strip_prefix("bin/") {
-            Some("outbe-tee-enclave") if system_gramine => None,
-            Some(name) => Some(name.to_owned()),
-            None if file.path == ".bb-crs/bn254_g1.dat" => Some(file.path.clone()),
-            None => None,
-        };
-        if let Some(path) = destination {
-            files.push(BundleInput {
-                path,
-                source: artifacts.software_root.join(&file.path),
-                mode: file.mode,
-            });
-        }
-    }
-    files.push(BundleInput {
-        path: "genesis.json".into(),
-        source: artifacts.root.join("genesis.json"),
-        mode: 0o644,
-    });
-    let sgx = artifacts.root.join("sgx");
-    if sgx.is_dir() {
-        if system_gramine {
-            for (path, source, mode) in [
-                (
-                    "outbe-tee-enclave",
-                    sgx.join("bin/outbe-tee-enclave"),
-                    0o755,
-                ),
-                (
-                    "network-descriptor-v1.bin",
-                    sgx.join("network-descriptor-v1.bin"),
-                    0o644,
-                ),
-                (
-                    "outbe-tee-enclave.manifest.sgx",
-                    sgx.join("outbe-tee-enclave.manifest.sgx"),
-                    0o644,
-                ),
-                (
-                    "outbe-tee-enclave.sig",
-                    sgx.join("outbe-tee-enclave.sig"),
-                    0o644,
-                ),
-            ] {
-                files.push(BundleInput {
-                    path: path.into(),
-                    source,
-                    mode,
-                });
-            }
-        } else if matches!(artifacts.config.tee.runtime, EnclaveRuntime::BundledSgx) {
-            for entry in WalkDir::new(&sgx).follow_links(false) {
-                let entry = entry?;
-                if entry.file_type().is_file() {
-                    let relative = entry.path().strip_prefix(&sgx)?.to_string_lossy();
-                    files.push(BundleInput {
-                        path: format!("sgx/{relative}"),
-                        source: entry.path().to_owned(),
-                        mode: entry.metadata()?.permissions().mode() & 0o777,
-                    });
-                }
-            }
-        }
-    }
+    let files = joining_bundle_files(artifacts)?;
     let bundle_path = joining.join("outbe-validator-operator-bundle.tar.zst");
     bundle::create_archive(&bundle_path, files)?;
 
@@ -553,6 +487,85 @@ pub(super) fn build_joining_artifacts(artifacts: &BuildArtifacts<'_>) -> Result<
         bundle_sha256: sha256_file(&bundle_path)?,
         config_example: "joining/operator-config.example.yaml".into(),
     })
+}
+
+fn joining_bundle_files(artifacts: &BuildArtifacts<'_>) -> Result<Vec<BundleInput>> {
+    let mut files = Vec::new();
+    let system_gramine = matches!(artifacts.config.tee.runtime, EnclaveRuntime::SystemGramine);
+    for file in &artifacts.software.files {
+        let destination = match file.path.strip_prefix("bin/") {
+            Some("outbe-tee-enclave") if system_gramine => None,
+            Some(name) => Some(name.to_owned()),
+            None if file.path == ".bb-crs/bn254_g1.dat" => Some(file.path.clone()),
+            None => None,
+        };
+        if let Some(path) = destination {
+            files.push(BundleInput {
+                path,
+                source: artifacts.software_root.join(&file.path),
+                mode: file.mode,
+            });
+        }
+    }
+    files.push(BundleInput {
+        path: "genesis.json".into(),
+        source: artifacts.root.join("genesis.json"),
+        mode: 0o644,
+    });
+    let sgx = artifacts.root.join("sgx");
+    append_signed_sgx_files(&mut files, &sgx, artifacts.config.tee.runtime)?;
+    Ok(files)
+}
+
+fn append_signed_sgx_files(
+    files: &mut Vec<BundleInput>,
+    sgx: &Path,
+    runtime: EnclaveRuntime,
+) -> Result<()> {
+    if !sgx.is_dir() {
+        return Ok(());
+    }
+    match runtime {
+        EnclaveRuntime::SystemGramine => {
+            files.extend([
+                BundleInput {
+                    path: "outbe-tee-enclave".into(),
+                    source: sgx.join("bin/outbe-tee-enclave"),
+                    mode: 0o755,
+                },
+                BundleInput {
+                    path: "network-descriptor-v1.bin".into(),
+                    source: sgx.join("network-descriptor-v1.bin"),
+                    mode: 0o644,
+                },
+                BundleInput {
+                    path: "outbe-tee-enclave.manifest.sgx".into(),
+                    source: sgx.join("outbe-tee-enclave.manifest.sgx"),
+                    mode: 0o644,
+                },
+                BundleInput {
+                    path: "outbe-tee-enclave.sig".into(),
+                    source: sgx.join("outbe-tee-enclave.sig"),
+                    mode: 0o644,
+                },
+            ]);
+        }
+        EnclaveRuntime::BundledSgx => {
+            for entry in WalkDir::new(sgx).follow_links(false) {
+                let entry = entry?;
+                if entry.file_type().is_file() {
+                    let relative = entry.path().strip_prefix(sgx)?.to_string_lossy();
+                    files.push(BundleInput {
+                        path: format!("sgx/{relative}"),
+                        source: entry.path().to_owned(),
+                        mode: entry.metadata()?.permissions().mode() & 0o777,
+                    });
+                }
+            }
+        }
+        EnclaveRuntime::Mock => {}
+    }
+    Ok(())
 }
 
 pub(super) fn required_validator_field<'a>(validator: &'a Value, name: &str) -> Result<&'a str> {
