@@ -301,7 +301,7 @@ fn job_rounding_rest_goes_to_promis_limit_once() {
 }
 
 #[test]
-fn only_a_nonzero_job_rest_reports_its_return_to_the_promis_limit() {
+fn each_pool_job_reports_its_rest_and_only_a_nonzero_rest_reaches_the_promis_limit() {
     use alloy_sol_types::SolEvent;
     use outbe_system_common::addresses::{AGENT_REWARD_ADDRESS, PROMIS_LIMIT_ADDRESS};
     for (amount, rest) in [(10u64, 1u64), (9, 0)] {
@@ -356,11 +356,10 @@ fn only_a_nonzero_job_rest_reports_its_return_to_the_promis_limit() {
             })
             .map(|event| (event.source, event.amountMinor))
             .collect();
+        assert_eq!(returned, vec![0, 1, 2, 3]);
         if rest == 0 {
-            assert!(returned.is_empty());
             assert!(added.is_empty());
         } else {
-            assert_eq!(returned, vec![0, 1, 2, 3]);
             assert_eq!(added, vec![(15, U256::ONE); 4]);
         }
     }
