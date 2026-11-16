@@ -45,6 +45,7 @@ hex.workspace = true
 libc = { workspace = true, optional = true }
 outbe-simplex.workspace = true
 outbe-operator-systemd.workspace = true
+outbe-software-bundle.workspace = true
 outbe-primitives.workspace = true
 outbe-tee.workspace = true
 rand_core = { workspace = true, optional = true }

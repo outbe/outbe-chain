@@ -9255,6 +9255,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-software-bundle"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "eyre",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "zstd",
+]
+
+[[package]]
 name = "outbe-stablecoin"
 version = "0.1.0"
 dependencies = [
@@ -9543,6 +9557,7 @@ dependencies = [
  "outbe-operator-systemd",
  "outbe-primitives",
  "outbe-snapshot",
+ "outbe-software-bundle",
  "rand 0.8.6",
  "reqwest 0.12.28",
  "rustix",
@@ -17745,6 +17760,7 @@ dependencies = [
  "outbe-operator-systemd",
  "outbe-primitives",
  "outbe-simplex",
+ "outbe-software-bundle",
  "outbe-tee",
  "rand_core 0.6.4",
  "reth-ethereum",

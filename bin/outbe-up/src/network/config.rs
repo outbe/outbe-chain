@@ -10,6 +10,7 @@ use std::{
 
 use alloy_primitives::{Address, U256};
 use eyre::{ensure, Context, Result};
+pub use outbe_software_bundle::SoftwareProfile;
 use serde::{Deserialize, Serialize};
 
 use crate::validator::config::EnclaveRuntime;
@@ -57,13 +58,6 @@ impl Network {
             Self::Mainnet => "mainnet",
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum SoftwareProfile {
-    Production,
-    Development,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
