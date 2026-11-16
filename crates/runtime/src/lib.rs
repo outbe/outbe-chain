@@ -9,6 +9,7 @@ mod configuration;
 mod consensus;
 pub mod consensus_metrics;
 pub mod domain_rpc;
+pub mod equivocation_slasher;
 mod errors;
 mod execution_runtime;
 mod identity;

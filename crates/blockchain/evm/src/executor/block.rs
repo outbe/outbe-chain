@@ -93,7 +93,8 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// body carries it via `expected_begin_system_txs`) and until the TEE-DKG
     /// bootstrap producer supplies a payload.
     pub pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>,
-    /// Explicit 4-stage block execution state machine (`ConsensusStage -> BeginBlock -> MidBlock -> EndBlock -> Completed`).
+    /// Explicit block execution state machine:
+    /// `ConsensusStage -> BeginBlock -> MidBlock -> EndBlock -> Completed`.
     pub fsm: crate::system_tx::BlockExecutionFsm,
     /// Number of zero-fee soft-failure receipts emitted in THIS
     /// block. Bounds block-stuffing by zero-cost 21k soft-failures (see
@@ -101,6 +102,8 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// fresh per block, so this resets per block. It is identical on the
     /// proposer (build) and validator (re-execution) paths.
     pub zero_fee_soft_failures: u32,
+    /// Per-hook soft-failure counts, reset with each block executor.
+    pub(super) zero_fee_hook_soft_failures: std::collections::BTreeMap<u8, u32>,
     /// Sum of included sponsored and bootstrap gas limits, reset per block.
     pub sponsored_gas_used: u64,
     /// Block-scoped consensus enclave witness state (`ProposerRecord`, `VerifierWithEnclave`,
@@ -108,7 +111,8 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     pub witness_state: Option<Arc<std::sync::Mutex<outbe_tee::witness::WitnessState>>>,
     /// Zero-based index of the next committed transaction in `body.transactions`.
     pub body_tx_index: u32,
-    /// Cached compressed `OART 0x0A` payload on the proposer path so `prepare_final_header_artifacts`
+    /// Cached compressed `OART 0x0A` payload on the proposer path so
+    /// `prepare_final_header_artifacts`
     /// and `finalize_header_artifacts` never re-compress the witness tape.
     pub frozen_enclave_witness: Option<Bytes>,
     /// End-zone transactions built by the proposer. The block builder appends them.
@@ -122,7 +126,8 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     pub cached_phase1_input: Option<(SystemTx, AccountedParentArtifact)>,
     /// Resolved begin-zone system transactions and visible gas plan computed once per block.
     pub resolved_begin_zone: Option<Vec<ResolvedBeginSystemTx>>,
-    /// Pre-verified signer indices per `LateFinalizeCredits` batch from `verify_late_finalize_credits_in_preexec`.
+    /// Pre-verified signer indices per `LateFinalizeCredits` batch from
+    /// `verify_late_finalize_credits_in_preexec`.
     pub verified_late_credit_signers: Option<Arc<Vec<Vec<usize>>>>,
     /// Domain host captured when this executor is built.
     pub runtime_host: Arc<dyn crate::EvmRuntimeHost>,
@@ -203,6 +208,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             pending_tee_bootstrap,
             fsm: crate::system_tx::BlockExecutionFsm::for_mid_block(&block_order),
             zero_fee_soft_failures: 0,
+            zero_fee_hook_soft_failures: std::collections::BTreeMap::new(),
             sponsored_gas_used: 0,
             witness_state: None,
             body_tx_index: 0,
@@ -506,7 +512,8 @@ fn clear_uncommitted_witness_on_decline(
 }
 
 /// The upstream EVM variant stores its boxed cause without exposing it as source.
-/// Unwrap only a proven cancellation or node-local abort so the engine's internal-error path retains it.
+/// Unwrap only a proven cancellation or node-local abort so the engine's internal-error path
+/// retains it.
 fn preserve_cancelled_execution(error: BlockExecutionError) -> BlockExecutionError {
     match error {
         BlockExecutionError::Internal(InternalBlockExecutionError::EVM { hash, error }) => {

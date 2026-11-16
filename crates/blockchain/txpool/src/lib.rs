@@ -526,7 +526,7 @@ where
         };
         let classification = self.policy.classify(&zero_fee_tx);
         match classification {
-            Ok(Some(candidate)) => match self.validate_zero_fee_state(candidate) {
+            Ok(Some(candidate)) => match self.validate_zero_fee_state(&zero_fee_tx, candidate) {
                 Ok(()) => {
                     parts.balance = U256::MAX;
                     valid_outcome(parts)
@@ -622,6 +622,7 @@ where
 
     fn validate_zero_fee_state(
         &self,
+        tx: &ZeroFeeTransaction<'_>,
         candidate: outbe_primitives::zero_fee_types::ZeroFeeCandidate,
     ) -> Result<(), OutbeZeroFeePoolError> {
         let state = self
@@ -635,7 +636,7 @@ where
         let storage = StorageHandle::new(&mut provider);
 
         self.policy
-            .authorize(storage, candidate)
+            .authorize(storage, tx, candidate)
             .map(|_| ())
             .map_err(OutbeZeroFeePoolError::Policy)
     }

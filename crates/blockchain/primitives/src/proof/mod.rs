@@ -38,8 +38,8 @@ pub use constants::{
 };
 pub use error::V2VerifyError;
 pub use fingerprint::{
-    canonical_signer_set_hash, canonical_vrf_proof_hash_v2, committee_set_hash_v2,
-    committee_snapshot_key, invalid_vrf_evidence_hash_v2,
+    canonical_equivocation_evidence_hash, canonical_signer_set_hash, canonical_vrf_proof_hash_v2,
+    committee_set_hash_v2, committee_snapshot_key, invalid_vrf_evidence_hash_v2,
 };
 pub use hybrid_wire::{HybridCertificate, VrfProof};
 pub use late_finalize::verify_late_finalize_proof;

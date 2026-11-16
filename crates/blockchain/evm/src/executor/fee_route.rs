@@ -34,7 +34,7 @@ where
         let candidate = self.runtime_host.user_fee_policy().classify(&zero_fee_tx);
         let candidate = match candidate {
             Ok(candidate) => candidate,
-            Err(error) => return self.include_zero_fee_soft_failure(tx, error),
+            Err(error) => return self.include_zero_fee_soft_failure(tx, error, None),
         };
         if let Some(candidate) = candidate {
             return self.execute_protocol_fee_waiver(candidate, tx_env, recovered, f);
@@ -107,6 +107,7 @@ where
         &mut self,
         tx: &TransactionSigned,
         error: outbe_primitives::zero_fee_types::ZeroFeePolicyError,
+        candidate: Option<outbe_primitives::zero_fee_types::ZeroFeeCandidate>,
     ) -> Result<Option<GasOutput>, BlockExecutionError> {
         let block_gas_limit = self.inner.evm.block().gas_limit();
         let used = self.accounted_block_gas();
@@ -120,7 +121,7 @@ where
                 .into(),
             );
         }
-        self.record_zero_fee_soft_failure(*tx.tx_hash())?;
+        self.record_zero_fee_soft_failure(*tx.tx_hash(), candidate)?;
         self.push_failure_receipt(
             tx.tx_type(),
             outbe_primitives::addresses::ZERO_FEE_POLICY_LOG_ADDRESS,
@@ -140,5 +141,61 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
             timestamp,
             self.inner.evm.block().beneficiary(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use outbe_primitives::zero_fee_types::{ZeroFeeCandidate, ZeroFeeHookTag, ZeroFeePolicyError};
+
+    #[test]
+    fn zero_fee_tail_gas_rejection_preserves_caps_and_receipts() {
+        super::super::zero_fee::tests::with_executor(|mut executor| {
+            let tx: TransactionSigned = alloy_consensus::TxLegacy::default()
+                .into_signed(alloy_primitives::Signature::test_signature())
+                .into();
+            let candidate = ZeroFeeCandidate::new(
+                ZeroFeeHookTag::new(3, "SlashEquivocation", Some(1))
+                    .with_max_soft_failures_per_block(4),
+                Address::ZERO,
+            );
+            let limit = executor.inner.evm.block().gas_limit();
+            let used = limit - 20_999;
+            executor.inner.cumulative_tx_gas_used = used;
+            assert!(matches!(
+                executor.include_zero_fee_soft_failure(
+                    &tx,
+                    ZeroFeePolicyError::NonZeroValue,
+                    Some(candidate),
+                ),
+                Err(BlockExecutionError::Validation(
+                    BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
+                        transaction_gas_limit: 21_000,
+                        block_available_gas: 20_999,
+                    }
+                ))
+            ));
+            assert_eq!(executor.zero_fee_soft_failures, 0);
+            assert!(executor.zero_fee_hook_soft_failures.is_empty());
+            assert!(executor.inner.receipts.is_empty());
+            assert_eq!(executor.gas_accounting(), (used, 0, 0));
+            executor.inner.cumulative_tx_gas_used = limit - 21_000;
+            assert!(executor
+                .include_zero_fee_soft_failure(
+                    &tx,
+                    ZeroFeePolicyError::NonZeroValue,
+                    Some(candidate),
+                )
+                .unwrap()
+                .is_some());
+            assert_eq!(executor.zero_fee_soft_failures, 1);
+            assert_eq!(executor.zero_fee_hook_soft_failures.get(&3), Some(&1));
+            assert_eq!(executor.gas_accounting(), (limit, 21_000, 21_000));
+            let receipt = &executor.inner.receipts[0];
+            assert!(!receipt.success);
+            assert_eq!(receipt.cumulative_gas_used, limit);
+            assert_eq!(receipt.logs.len(), 1);
+        });
     }
 }

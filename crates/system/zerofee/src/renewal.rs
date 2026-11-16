@@ -125,6 +125,7 @@ impl ZeroFeeHook for RenewEnclaveHook {
     fn authorize_fee_waiver(
         &self,
         storage: StorageHandle<'_>,
+        _tx: &ZeroFeeTransaction<'_>,
         candidate: ZeroFeeCandidate,
     ) -> Result<ZeroFeeAuthorization, ZeroFeePolicyError> {
         if candidate.node_id_hash.is_zero()
@@ -302,7 +303,7 @@ mod tests {
         );
         with_binding(Some(hash), |storage| {
             assert_eq!(
-                crate::registry().authorize_fee_waiver(storage, candidate),
+                crate::registry().authorize_fee_waiver(storage, &accepted(&input), candidate),
                 Ok(ZeroFeeAuthorization {
                     hook: RENEW_ENCLAVE_HOOK,
                     subject: SIGNER,
@@ -317,13 +318,13 @@ mod tests {
         let candidate = classify(&input).unwrap().unwrap();
         with_binding(Some(B256::repeat_byte(0xab)), |storage| {
             assert_eq!(
-                crate::registry().authorize_fee_waiver(storage, candidate),
+                crate::registry().authorize_fee_waiver(storage, &accepted(&input), candidate),
                 Err(ZeroFeePolicyError::UnauthorizedSigner)
             );
         });
         with_binding(None, |storage| {
             assert_eq!(
-                crate::registry().authorize_fee_waiver(storage, candidate),
+                crate::registry().authorize_fee_waiver(storage, &accepted(&input), candidate),
                 Err(ZeroFeePolicyError::UnauthorizedSigner)
             );
         });
@@ -331,6 +332,7 @@ mod tests {
             assert_eq!(
                 crate::registry().authorize_fee_waiver(
                     storage,
+                    &accepted(&input),
                     ZeroFeeCandidate {
                         node_id_hash: B256::ZERO,
                         ..candidate

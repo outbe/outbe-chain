@@ -138,6 +138,7 @@ pub(super) fn reporter_with_continuity(
                 crate::finalization::parent_cert_store::FinalizedParentCertStore::new(),
             ),
             finalize_verify_mailbox,
+            equivocation_verify_mailbox: crate::EquivocationVerifyActor::new(Default::default()).1,
         },
     );
     ContinuityReporterFixture {
