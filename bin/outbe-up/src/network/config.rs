@@ -26,6 +26,7 @@ pub struct NetworkConfig {
     pub name: String,
     pub network: Network,
     pub chain_id: u64,
+    pub certified_rpc: String,
     pub software_profile: SoftwareProfile,
     pub founders: Vec<Founder>,
     #[serde(default)]
@@ -109,6 +110,8 @@ pub struct Genesis {
 pub struct Tee {
     pub policy: TeePolicy,
     pub runtime: EnclaveRuntime,
+    #[serde(default)]
+    pub enclave_image: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -116,6 +119,15 @@ pub struct Tee {
 pub enum TeePolicy {
     GramineDirectDev,
     DcapRequired,
+}
+
+impl TeePolicy {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::GramineDirectDev => "gramine-direct-dev",
+            Self::DcapRequired => "dcap-required",
+        }
+    }
 }
 
 impl NetworkConfig {
@@ -143,6 +155,12 @@ impl NetworkConfig {
             "{} requires chain_id {}",
             self.network.as_str(),
             self.network.chain_id()
+        );
+        ensure!(
+            (self.certified_rpc.starts_with("http://")
+                || self.certified_rpc.starts_with("https://"))
+                && !self.certified_rpc.contains(char::is_whitespace),
+            "certified_rpc must be an HTTP(S) URL without whitespace"
         );
         ensure!(
             self.founders.len() >= MIN_FOUNDERS,
@@ -251,6 +269,13 @@ impl NetworkConfig {
             self.network != Network::Mainnet || self.tee.policy == TeePolicy::DcapRequired,
             "mainnet requires tee.policy=dcap-required"
         );
+        if self.tee.policy == TeePolicy::DcapRequired {
+            let image = self.tee.enclave_image.as_deref().unwrap_or_default();
+            ensure!(
+                pinned_sha256_image(image),
+                "tee.policy=dcap-required needs tee.enclave_image pinned by sha256"
+            );
+        }
         Ok(())
     }
 }
@@ -321,6 +346,18 @@ fn safe_user(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
+fn pinned_sha256_image(value: &str) -> bool {
+    let Some((name, digest)) = value.split_once("@sha256:") else {
+        return false;
+    };
+    !name.is_empty()
+        && !name.chars().any(char::is_whitespace)
+        && digest.len() == 64
+        && digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 const fn loopback() -> Ipv4Addr {
     Ipv4Addr::LOCALHOST
 }
@@ -344,6 +381,7 @@ version: 1
 name: local-testnet
 network: testnet
 chain_id: 54322345
+certified_rpc: "http://10.0.0.10:8545"
 software_profile: development
 founders:
 {}
@@ -355,6 +393,7 @@ genesis:
 tee:
   policy: gramine-direct-dev
   runtime: mock
+  # enclave_image is required only with policy: dcap-required.
 "#,
             (0..founder_count)
                 .map(|index| format!(
@@ -391,6 +430,8 @@ tee:
         config.tee.runtime = EnclaveRuntime::SystemGramine;
         config.validate().unwrap();
         config.tee.policy = TeePolicy::DcapRequired;
+        config.tee.enclave_image =
+            Some(format!("example.invalid/enclave@sha256:{}", "a".repeat(64)));
         config.validate().unwrap();
 
         config.software_profile = SoftwareProfile::Development;

@@ -60,7 +60,7 @@ pub const TEE_KEYS: [&str; 6] = [
     "minimum_tcb_evaluation_data_number",
 ];
 
-const STATIC_TOP_LEVEL_KEYS: [&str; 42] = [
+const STATIC_TOP_LEVEL_KEYS: [&str; 43] = [
     "network",
     "validators",
     "keys_dir",
@@ -81,6 +81,7 @@ const STATIC_TOP_LEVEL_KEYS: [&str; 42] = [
     "worldwide_day",
     "fresh_metadosis",
     "contracts_dir",
+    "base_profile",
     "enclave_image",
     "enclave_dir",
     "enclave_runner",

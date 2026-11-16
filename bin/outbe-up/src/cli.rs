@@ -35,6 +35,18 @@ enum NetworkCommand {
         #[arg(long, default_value = "network.yaml")]
         output: PathBuf,
     },
+    /// Build genesis and host-specific artifacts from one immutable software bundle.
+    Build {
+        #[arg(long)]
+        software_bundle: PathBuf,
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        /// Reuse an existing validator-N key tree instead of generating new identities.
+        #[arg(long)]
+        keys_dir: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -95,6 +107,12 @@ impl Cli {
         match self.command {
             Command::Network(args) => match args.command {
                 NetworkCommand::Init { output } => network::config::init(&output),
+                NetworkCommand::Build {
+                    software_bundle,
+                    config,
+                    output,
+                    keys_dir,
+                } => network::build::run(&software_bundle, &config, &output, keys_dir.as_deref()),
             },
             Command::Validator(args) => match args.command {
                 ValidatorCommand::ConfigExample => {
@@ -136,6 +154,18 @@ mod tests {
             Cli::try_parse_from(["outbe-up", "network", "init", "--output", "network.yaml",])
                 .is_ok()
         );
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "network",
+            "build",
+            "--software-bundle",
+            "software.tar.zst",
+            "--config",
+            "network.yaml",
+            "--output",
+            "network-build",
+        ])
+        .is_ok());
         assert!(Cli::try_parse_from([
             "outbe-up",
             "validator",

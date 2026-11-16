@@ -20,6 +20,7 @@ k256.workspace = true
 outbe-snapshot.workspace = true
 outbe-operator-systemd.workspace = true
 outbe-software-bundle.workspace = true
+outbe-genesis-cli.workspace = true
 outbe-primitives = { workspace = true, features = ["tee-attestation-v1"] }
 rand.workspace = true
 reqwest.workspace = true

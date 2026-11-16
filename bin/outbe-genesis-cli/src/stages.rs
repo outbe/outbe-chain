@@ -150,7 +150,12 @@ pub fn prefund_validators(
 
 /// Build the protocol seed sections by merging the network's overrides on top of `testnet.yaml`.
 pub fn build_seed(config: &Value) -> Result<Value, GenesisError> {
-    let baseline = load_yaml(&base_profile_path())?;
+    let profile = config
+        .get("base_profile")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .unwrap_or_else(base_profile_path);
+    let baseline = load_yaml(&profile)?;
     let is_mainnet = config.get("chain_id").and_then(Value::as_u64) == Some(MAINNET_CHAIN_ID)
         || config.get("network").and_then(Value::as_str) == Some("mainnet");
     let mut seed_map = Map::new();

@@ -9554,6 +9554,7 @@ dependencies = [
  "hex",
  "indicatif",
  "k256 0.13.4",
+ "outbe-genesis-cli",
  "outbe-operator-systemd",
  "outbe-primitives",
  "outbe-snapshot",
