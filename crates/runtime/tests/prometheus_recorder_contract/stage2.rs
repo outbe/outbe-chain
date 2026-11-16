@@ -30,6 +30,7 @@ use outbe_txpool::{
         maintain_outbe_pool, run_staleness_tick, OutbePoolMaintainConfig, PendingStalenessTracker,
     },
     record_txpool_rejection, record_txpool_validation_duration, TxpoolRejectionReason,
+    TxpoolRejectionReason::*,
 };
 use reth_basic_payload_builder::BuildOutcome;
 use reth_primitives_traits::RecoveredBlock;
@@ -44,6 +45,7 @@ pub async fn emit() {
     emit_tee_client();
     emit_staleness().await;
     emit_consensus();
+    emit_equivocation();
     emit_p2p();
     emit_follower();
     emit_payload();
@@ -114,6 +116,52 @@ fn emit_consensus() {
     executor::record_executor_queue_wait_ms(Duration::from_millis(5));
     executor::record_executor_finalization_lag_blocks(1);
     executor::record_executor_convergence_depth_blocks(2);
+}
+
+fn emit_equivocation() {
+    use outbe_consensus::metrics::{self, EquivocationKind::*};
+    use outbe_runtime::equivocation_slasher as slasher;
+    metrics::record_equivocation_verify_admission("enqueued");
+    let labels = [("result", "enqueued")];
+    assert_counter("consensus_equivocation_verify_admission", &labels);
+    for (kind, label) in [
+        (ConflictingNotarize, "conflicting_notarize"),
+        (ConflictingFinalize, "conflicting_finalize"),
+        (NullifyFinalize, "nullify_finalize"),
+    ] {
+        slasher::record_equivocation_submitted(kind);
+        assert_counter("slashing_equivocation_submitted", &[("kind", label)]);
+        for result in ["verified", "invalid_signature"] {
+            metrics::record_equivocation_verify(kind, result);
+            let labels = [("kind", label), ("result", result)];
+            assert_counter("consensus_equivocation_verify", &labels);
+        }
+    }
+    for reason in [
+        "already_processed",
+        "already_penalized",
+        "expired_epoch",
+        "unregistered_signer",
+        "not_slashable",
+        "submitter_not_active",
+        "sender_busy",
+        "rejected",
+    ] {
+        slasher::record_equivocation_skipped(reason);
+        assert_counter("slashing_equivocation_skipped", &[("reason", reason)]);
+    }
+    for reason in ["state_read", "submit"] {
+        slasher::record_equivocation_submit_failed(reason);
+        assert_counter("slashing_equivocation_submit_failed", &[("reason", reason)]);
+    }
+}
+
+fn assert_counter(metric: &str, labels: &[(&str, &str)]) {
+    let recorder = outbe_runtime::install_outbe_prometheus_recorder().expect("recorder");
+    let rendered = recorder.handle().render();
+    let name = format!("reth_outbe_{metric}_total");
+    assert!(rendered.contains(&format!("# TYPE {name} counter\n")));
+    assert!(has_labeled_sample(&rendered, &name, labels));
 }
 
 #[derive(Clone, Copy)]
@@ -284,29 +332,43 @@ impl CanonStateSubscriptions for Subscription {
     }
 }
 
+const TXPOOL_REJECTIONS: &[(TxpoolRejectionReason, &str)] = &[
+    (UpstreamInvalid, "upstream_invalid"),
+    (UpstreamError, "upstream_error"),
+    (ReservedSystemTx, "reserved_system_tx"),
+    (Overdraft, "overdraft"),
+    (StateReadFailed, "state_read_failed"),
+    (UnknownHook, "unknown_hook"),
+    (NonZeroValue, "non_zero_value"),
+    (CalldataTooLarge, "calldata_too_large"),
+    (GasLimitTooHigh, "gas_limit_too_high"),
+    (FeeCapTooLow, "fee_cap_too_low"),
+    (MalformedCalldata, "malformed_calldata"),
+    (UnauthorizedSigner, "unauthorized_signer"),
+    (HookConflict, "hook_conflict"),
+    (Storage, "storage"),
+    (FreeTxDailyExhausted, "free_tx_daily_exhausted"),
+    (
+        FreeTxDailyContractCreationForbidden,
+        "free_tx_daily_contract_creation_forbidden",
+    ),
+    (FreeTxDailyValueNotZero, "free_tx_daily_value_not_zero"),
+    (
+        FreeTxDailyGasLimitExceeded,
+        "free_tx_daily_gas_limit_exceeded",
+    ),
+    (
+        FreeTxDailyCalldataTooLarge,
+        "free_tx_daily_calldata_too_large",
+    ),
+    (
+        FreeTxDailyTargetNotWhitelisted,
+        "free_tx_daily_target_not_whitelisted",
+    ),
+];
+
 async fn emit_txpool() {
-    for reason in [
-        TxpoolRejectionReason::UpstreamInvalid,
-        TxpoolRejectionReason::UpstreamError,
-        TxpoolRejectionReason::ReservedSystemTx,
-        TxpoolRejectionReason::Overdraft,
-        TxpoolRejectionReason::StateReadFailed,
-        TxpoolRejectionReason::UnknownHook,
-        TxpoolRejectionReason::NonZeroValue,
-        TxpoolRejectionReason::CalldataTooLarge,
-        TxpoolRejectionReason::GasLimitTooHigh,
-        TxpoolRejectionReason::FeeCapTooLow,
-        TxpoolRejectionReason::MalformedCalldata,
-        TxpoolRejectionReason::UnauthorizedSigner,
-        TxpoolRejectionReason::HookConflict,
-        TxpoolRejectionReason::Storage,
-        TxpoolRejectionReason::FreeTxDailyExhausted,
-        TxpoolRejectionReason::FreeTxDailyContractCreationForbidden,
-        TxpoolRejectionReason::FreeTxDailyValueNotZero,
-        TxpoolRejectionReason::FreeTxDailyGasLimitExceeded,
-        TxpoolRejectionReason::FreeTxDailyCalldataTooLarge,
-        TxpoolRejectionReason::FreeTxDailyTargetNotWhitelisted,
-    ] {
+    for &(reason, _) in TXPOOL_REJECTIONS {
         record_txpool_rejection(reason);
     }
     record_txpool_validation_duration(Duration::from_millis(2));
@@ -484,33 +546,14 @@ pub fn assert_stage2(rendered: &str, types: &HashMap<&str, &str>) {
         "kind",
         &["pending_not_included", "queued_only"],
     );
-    assert_single_label_set(
-        rendered,
-        "reth_outbe_txpool_rejected_total",
-        "reason",
-        &[
-            "upstream_invalid",
-            "upstream_error",
-            "reserved_system_tx",
-            "overdraft",
-            "state_read_failed",
-            "unknown_hook",
-            "non_zero_value",
-            "calldata_too_large",
-            "gas_limit_too_high",
-            "fee_cap_too_low",
-            "malformed_calldata",
-            "unauthorized_signer",
-            "hook_conflict",
-            "storage",
-            "free_tx_daily_exhausted",
-            "free_tx_daily_contract_creation_forbidden",
-            "free_tx_daily_value_not_zero",
-            "free_tx_daily_gas_limit_exceeded",
-            "free_tx_daily_calldata_too_large",
-            "free_tx_daily_target_not_whitelisted",
-        ],
-    );
+    for (_, label) in TXPOOL_REJECTIONS {
+        assert_single_label_set(
+            rendered,
+            "reth_outbe_txpool_rejected_total",
+            "reason",
+            &[label],
+        );
+    }
     assert_single_label_set(
         rendered,
         "reth_outbe_evm_payload_build_stop_total",
