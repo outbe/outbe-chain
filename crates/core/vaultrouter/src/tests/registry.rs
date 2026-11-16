@@ -335,8 +335,6 @@ fn declared_error_reservation_not_found() {
 #[test]
 fn declared_error_covers_settlement_token_failure_only() {
     let _: IVaultRouter::TokenOperationFailed =
-        decode_revert(SettlementError::TokenOperationFailed.into());
-    let _: IVaultRouter::TokenOperationFailed =
         decode_revert(VaultRouterError::TokenOperationFailed.into());
     let _: IVaultRouter::AmountMismatch = decode_revert(SettlementError::AmountMismatch.into());
 }

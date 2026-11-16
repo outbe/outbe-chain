@@ -246,8 +246,6 @@ pub enum SettlementError {
     OracleUnavailable,
     #[error("VWAP snapshot {authorized:#x} does not match the required {required:#x}")]
     SnapshotMismatch { authorized: U256, required: U256 },
-    #[error("settlement token call failed")]
-    TokenOperationFailed,
     #[error("settlement token moved an unexpected amount")]
     AmountMismatch,
 }
@@ -276,7 +274,6 @@ impl From<SettlementError> for PrecompileError {
                 authorized,
                 required,
             }),
-            SettlementError::TokenOperationFailed => revert_with(I::TokenOperationFailed {}),
             SettlementError::AmountMismatch => revert_with(I::AmountMismatch {}),
         }
     }
