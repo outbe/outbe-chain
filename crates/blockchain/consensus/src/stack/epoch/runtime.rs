@@ -89,6 +89,7 @@ pub(super) struct EpochSupervisor<E: Clock, N: ExecutionNodeBackend> {
     pub(super) finalized_parent_cert_store:
         crate::finalization::parent_cert_store::FinalizedParentCertStore,
     pub(super) finalize_verify_mailbox: crate::finalization::finalize_verify::FinalizeVerifyMailbox,
+    pub(super) equivocation_verify_mailbox: crate::EquivocationVerifyMailbox,
     pub(super) application_drain: crate::application_shutdown::ApplicationDrain,
     pub(super) radicle_status: outbe_radicle::integration::RadicleStatusHandle,
     pub(super) radicle_updates:

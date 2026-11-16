@@ -7,7 +7,6 @@
 use alloy_primitives::B256;
 use commonware_cryptography::bls12381;
 use commonware_utils::ordered::Set;
-use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::errors::SlashIndicatorError;
 
@@ -34,19 +33,19 @@ impl EvidenceBlock {
     /// Parses an evidence block from raw bytes.
     ///
     /// Format: `pubkey[48] || signature[96] || proposal_bytes[remaining]`
-    pub fn parse(data: &[u8]) -> Result<Self> {
+    pub fn parse(data: &[u8]) -> core::result::Result<Self, SlashIndicatorError> {
         if data.len() < 48 + 96 + 1 {
-            return Err(SlashIndicatorError::EvidenceBlockTooShort.into());
+            return Err(SlashIndicatorError::EvidenceBlockTooShort);
         }
         // The length guard above proves that these fixed slices have the exact size,
         // so the conversions cannot fail. Map to a structured error instead of
         // `unwrap()` on the precompile path.
         let pubkey: [u8; 48] = data[..48]
             .try_into()
-            .map_err(|_| PrecompileError::from(SlashIndicatorError::EvidencePubkeySlice))?;
+            .map_err(|_| SlashIndicatorError::EvidencePubkeySlice)?;
         let signature: [u8; 96] = data[48..144]
             .try_into()
-            .map_err(|_| PrecompileError::from(SlashIndicatorError::EvidenceSignatureSlice))?;
+            .map_err(|_| SlashIndicatorError::EvidenceSignatureSlice)?;
         let proposal_bytes = data[144..].to_vec();
         Ok(Self {
             pubkey,
@@ -57,31 +56,43 @@ impl EvidenceBlock {
 
     /// Verifies the BLS MinPk signature against the Simplex notarize payload,
     /// committee-bound to `committee`.
-    pub fn verify_notarize_signature(&self, committee: &EvidenceCommittee) -> Result<()> {
+    pub fn verify_notarize_signature(
+        &self,
+        committee: &EvidenceCommittee,
+    ) -> core::result::Result<(), SlashIndicatorError> {
         self.verify_bls_signature(&outbe_primitives::proof::notarize_namespace(committee))
     }
 
     /// Verifies the BLS MinPk signature against the Simplex nullify payload,
     /// committee-bound to `committee`.
-    pub fn verify_nullify_signature(&self, committee: &EvidenceCommittee) -> Result<()> {
+    pub fn verify_nullify_signature(
+        &self,
+        committee: &EvidenceCommittee,
+    ) -> core::result::Result<(), SlashIndicatorError> {
         self.verify_bls_signature(&outbe_primitives::proof::nullify_namespace(committee))
     }
 
     /// Verifies the BLS MinPk signature against the Simplex finalize payload,
     /// committee-bound to `committee`.
-    pub fn verify_finalize_signature(&self, committee: &EvidenceCommittee) -> Result<()> {
+    pub fn verify_finalize_signature(
+        &self,
+        committee: &EvidenceCommittee,
+    ) -> core::result::Result<(), SlashIndicatorError> {
         self.verify_bls_signature(&outbe_primitives::proof::finalize_namespace(committee))
     }
 
     /// Common BLS MinPk signature verification against a given namespace.
-    fn verify_bls_signature(&self, namespace: &[u8]) -> Result<()> {
+    fn verify_bls_signature(
+        &self,
+        namespace: &[u8],
+    ) -> core::result::Result<(), SlashIndicatorError> {
         use blst::min_pk::{PublicKey, Signature};
         use blst::BLST_ERROR;
 
         let pk = PublicKey::from_bytes(&self.pubkey)
-            .map_err(|_| PrecompileError::from(SlashIndicatorError::InvalidBlsPublicKey))?;
+            .map_err(|_| SlashIndicatorError::InvalidBlsPublicKey)?;
         let sig = Signature::from_bytes(&self.signature)
-            .map_err(|_| PrecompileError::from(SlashIndicatorError::InvalidBlsSignature))?;
+            .map_err(|_| SlashIndicatorError::InvalidBlsSignature)?;
 
         let signed_payload = build_signed_payload_with_ns(namespace, &self.proposal_bytes);
 
@@ -90,7 +101,7 @@ impl EvidenceBlock {
         let dst = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
         let result = sig.verify(true, &signed_payload, dst, &[], &pk, true);
         if result != BLST_ERROR::BLST_SUCCESS {
-            return Err(SlashIndicatorError::InvalidBlsSignature.into());
+            return Err(SlashIndicatorError::InvalidBlsSignature);
         }
         Ok(())
     }
@@ -98,7 +109,7 @@ impl EvidenceBlock {
     /// Extracts the round (epoch, view) from the encoded proposal bytes.
     ///
     /// Proposal encoding: `varint(epoch) || varint(view) || varint(parent) || digest[32]`
-    pub fn round(&self) -> Result<(u64, u64)> {
+    pub fn round(&self) -> core::result::Result<(u64, u64), SlashIndicatorError> {
         let mut pos = 0;
         let epoch = read_leb128(&self.proposal_bytes, &mut pos)?;
         let view = read_leb128(&self.proposal_bytes, &mut pos)?;
@@ -143,12 +154,12 @@ fn write_leb128(buf: &mut Vec<u8>, mut value: u64) {
 }
 
 /// Reads a LEB128 varint from `data` starting at `pos`, advancing `pos`.
-fn read_leb128(data: &[u8], pos: &mut usize) -> Result<u64> {
+fn read_leb128(data: &[u8], pos: &mut usize) -> core::result::Result<u64, SlashIndicatorError> {
     let mut result: u64 = 0;
     let mut shift = 0u32;
     loop {
         if *pos >= data.len() {
-            return Err(SlashIndicatorError::UnexpectedEndOfVarint.into());
+            return Err(SlashIndicatorError::UnexpectedEndOfVarint);
         }
         let byte = data[*pos];
         *pos += 1;
@@ -157,18 +168,18 @@ fn read_leb128(data: &[u8], pos: &mut usize) -> Result<u64> {
         // Byte ten can only supply bit 63 of the decoded value.
         // Reject excess bits before the shift.
         if shift == 63 && (payload > 1 || byte & 0x80 != 0) {
-            return Err(SlashIndicatorError::VarintOverflow.into());
+            return Err(SlashIndicatorError::VarintOverflow);
         }
         result |= u64::from(payload) << shift;
         if byte & 0x80 == 0 {
             if shift != 0 && payload == 0 {
-                return Err(SlashIndicatorError::NonCanonicalVarint.into());
+                return Err(SlashIndicatorError::NonCanonicalVarint);
             }
             return Ok(result);
         }
         shift += 7;
         if shift >= 64 {
-            return Err(SlashIndicatorError::VarintOverflow.into());
+            return Err(SlashIndicatorError::VarintOverflow);
         }
     }
 }
@@ -176,9 +187,7 @@ fn read_leb128(data: &[u8], pos: &mut usize) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::precompile::ISlashIndicator;
     use crate::test_signing::{self, signed_evidence, POP_DST};
-    use alloy_sol_types::SolError;
     use blst::min_pk::{PublicKey, SecretKey};
     use commonware_codec::{varint::UInt, Encode as _};
     use commonware_cryptography::Signer as _;
@@ -215,19 +224,16 @@ mod tests {
             [vec![0x80; 9], vec![0]].concat(),
         ] {
             let err = read_leb128(&bytes, &mut 0).unwrap_err();
-            assert!(matches!(err, PrecompileError::RevertBytes(bytes)
-                if bytes.as_ref() == ISlashIndicator::NonCanonicalVarint {}.abi_encode()));
+            assert!(matches!(err, SlashIndicatorError::NonCanonicalVarint));
         }
         for terminal in [2, 127, 128, 129, 255] {
             let bytes = [vec![0xff; 9], vec![terminal]].concat();
             let err = read_leb128(&bytes, &mut 0).unwrap_err();
-            assert!(matches!(err, PrecompileError::RevertBytes(bytes)
-                if bytes.as_ref() == ISlashIndicator::VarintOverflow {}.abi_encode()));
+            assert!(matches!(err, SlashIndicatorError::VarintOverflow));
         }
         for bytes in [vec![], vec![0x80], vec![0xff; 9]] {
             let err = read_leb128(&bytes, &mut 0).unwrap_err();
-            assert!(matches!(err, PrecompileError::RevertBytes(bytes)
-                if bytes.as_ref() == ISlashIndicator::UnexpectedEndOfVarint {}.abi_encode()));
+            assert!(matches!(err, SlashIndicatorError::UnexpectedEndOfVarint));
         }
     }
 

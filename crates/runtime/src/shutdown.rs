@@ -204,15 +204,21 @@ pub(crate) async fn wait_for_launcher_exit(
         rejection = tee_lease_exit => {
             let reason = tee_lease_exit_reason(rejection, shutdown);
             if has_consensus {
-                tracing::error!(reason = %reason, "finalized TEE lease guard requested node shutdown");
+                tracing::error!(
+                    reason = %reason, "finalized TEE lease guard requested node shutdown"
+                );
             } else {
-                tracing::error!(reason = %reason, "finalized TEE lease guard requested full-node shutdown");
+                tracing::error!(
+                    reason = %reason, "finalized TEE lease guard requested full-node shutdown"
+                );
             }
             LauncherExitCause::TeeLeaseRejected
         }
         signal = tokio::signal::ctrl_c() => {
             if let Err(error) = signal {
-                shutdown.record_failure(eyre::Report::new(error).wrap_err("shutdown signal listener failed"));
+                shutdown.record_failure(
+                    eyre::Report::new(error).wrap_err("shutdown signal listener failed"),
+                );
             }
             info!("received shutdown signal");
             LauncherExitCause::CtrlC
@@ -240,6 +246,7 @@ pub(crate) struct LauncherDrainTasks {
     pub(crate) radicle_observer: Option<tokio::task::JoinHandle<()>>,
     pub(crate) tee_canary_handle: Option<tokio::task::JoinHandle<()>>,
     pub(crate) txpool_maintenance_handle: tokio::task::JoinHandle<()>,
+    pub equivocation_slasher_handle: Option<tokio::task::JoinHandle<()>>,
     pub(crate) upgrade_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -296,6 +303,13 @@ pub(crate) async fn drain_launcher_tasks(
     tasks: LauncherDrainTasks,
 ) {
     shutdown_token.cancel();
+    if let Some(handle) = tasks.equivocation_slasher_handle {
+        if let Err(error) = handle.await {
+            shutdown.record_failure(
+                eyre::Report::new(error).wrap_err("equivocation slasher worker panicked"),
+            );
+        }
+    }
     if let Some(handle) = tasks.tee_lease_guard_handle {
         if let Err(error) = handle.await {
             shutdown.record_failure(eyre::Report::new(error).wrap_err("TEE lease guard panicked"));
@@ -377,6 +391,7 @@ mod tests {
                 radicle_observer: None,
                 tee_canary_handle: None,
                 txpool_maintenance_handle: tokio::spawn(async {}),
+                equivocation_slasher_handle: None,
                 upgrade_handle: None,
             },
         )
@@ -404,6 +419,7 @@ mod tests {
                     radicle_observer: None,
                     tee_canary_handle: None,
                     txpool_maintenance_handle: tokio::spawn(async {}),
+                    equivocation_slasher_handle: None,
                     upgrade_handle: None,
                 },
             )
@@ -419,6 +435,37 @@ mod tests {
             .await
             .expect("drain")
             .expect("join");
+        assert!(finished.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn drain_cancels_and_awaits_equivocation_slasher() {
+        let token = tokio_util::sync::CancellationToken::new();
+        let worker_token = token.clone();
+        let finished = Arc::new(AtomicBool::new(false));
+        let done = Arc::clone(&finished);
+        let handle = tokio::spawn(async move {
+            worker_token.cancelled().await;
+            done.store(true, Ordering::SeqCst);
+        });
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            drain_launcher_tasks(
+                &token,
+                &shutdown(),
+                LauncherDrainTasks {
+                    tee_lease_guard_handle: None,
+                    radicle_observer: None,
+                    tee_canary_handle: None,
+                    equivocation_slasher_handle: Some(handle),
+                    txpool_maintenance_handle: tokio::spawn(async {}),
+                    upgrade_handle: None,
+                },
+            ),
+        )
+        .await
+        .expect("worker drains on cancellation");
+        assert!(token.is_cancelled());
         assert!(finished.load(Ordering::SeqCst));
     }
 }

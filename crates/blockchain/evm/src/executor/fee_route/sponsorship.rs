@@ -40,7 +40,7 @@ where
         };
         let authorization = match authorized {
             Ok(auth) => auth,
-            Err(error) => return self.include_zero_fee_soft_failure(recovered.tx(), error),
+            Err(error) => return self.include_zero_fee_soft_failure(recovered.tx(), error, None),
         };
         let result = self.execute_without_user_fee(tx_env, recovered, f);
         // An included revert consumes a slot. Err/Ok(None) neither writes the

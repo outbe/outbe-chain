@@ -125,7 +125,7 @@ fn zero_fee_soft_failure_cap_admits_then_rejects_with_invalid_tx() {
 
     let mut admitted = 0u32;
     let rejected_err = loop {
-        match executor.record_zero_fee_soft_failure(B256::ZERO) {
+        match executor.record_zero_fee_soft_failure(B256::ZERO, None) {
             Ok(()) => {
                 admitted += 1;
                 assert!(admitted <= 4096, "cap never enforced");
