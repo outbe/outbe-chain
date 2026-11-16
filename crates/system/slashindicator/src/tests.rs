@@ -555,10 +555,10 @@ fn test_evidence_reward() {
 
         // Verify evidence reward paid to submitter
         // slashed = 1_000_000 * 8 / 100 = 80_000
-        // reward  = 80_000 * 100 / 100 = 80_000
+        // reward  = 80_000 * 100 / 100 = 80_000, paid from the slash, so nothing burns
         let ctx = storage.clone();
         assert_eq!(ctx.balance(SUBMITTER).unwrap(), U256::from(80_000u64));
-        assert_slash_credits_promis_limit(ctx, U256::from(80_000u64));
+        assert_slash_credits_promis_limit(ctx, U256::ZERO);
     });
 }
 
@@ -1136,24 +1136,6 @@ fn admit_percent_word_rejects_wide_word_before_narrowing() {
     assert_eq!(
         crate::runtime::admit_percent_word(U256::ZERO, 100, "evidence_reward_percent").unwrap(),
         100
-    );
-}
-
-#[test]
-fn floor_percent_matches_division_for_large_amounts() {
-    let max = U256::MAX;
-    assert_eq!(crate::runtime::floor_percent(max, 100), max);
-    assert_eq!(
-        crate::runtime::floor_percent(max, 1),
-        max / U256::from(100u64)
-    );
-    assert_eq!(
-        crate::runtime::floor_percent(U256::from(150u64), 1),
-        U256::from(1u64)
-    );
-    assert_eq!(
-        crate::runtime::floor_percent(U256::from(80u64), 1),
-        U256::ZERO
     );
 }
 

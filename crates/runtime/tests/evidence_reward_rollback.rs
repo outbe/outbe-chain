@@ -257,7 +257,7 @@ fn invalid_evidence_reward_reverts_transaction_and_identical_signed_evidence_can
                 limit
                     .burn_rest(outbe_promislimit::BurnSource::ValidatorStake)
                     .unwrap(),
-                U256::from(if nonce == 0 { 0 } else { 80_000 })
+                U256::from(if nonce == 0 { 0 } else { 80_000 - 8_000 })
             );
         });
         assert_eq!(
@@ -265,7 +265,7 @@ fn invalid_evidence_reward_reverts_transaction_and_identical_signed_evidence_can
             U256::from(if nonce == 0 {
                 INITIAL_STAKE
             } else {
-                920_000 + 80_000
+                920_000 + 80_000 - 8_000
             })
         );
         // Zero gas price isolates the native reward from transaction fees.

@@ -343,12 +343,25 @@ impl Staking<'_> {
     /// - Also proportionally reduces pending unbonding entries.
     /// - Burns slashed tokens from STAKING_ADDRESS native balance.
     /// - Passes the post-write amount to ValidatorSet for the lifecycle transition.
-    /// - Returns the total slashed amount (for evidence reward calculation).
+    /// - Returns the total slashed amount.
     /// - Can change lifecycle when the remaining stake falls below the minimum.
     ///   `Joining` moves to `WaitingForReadiness`. `Active` moves to `Exiting`.
     ///   SlashIndicator felony paths jail the validator. They do not force-exit it.
     pub fn slash_stake(&mut self, validator: Address, percent: u64) -> Result<U256> {
-        if percent > 100 {
+        self.slash_stake_paying(validator, percent, Address::ZERO, 0)
+            .map(|(slashed, _)| slashed)
+    }
+
+    /// Slashes as [`Self::slash_stake`], pays `payee_percent` of the slashed amount from the
+    /// escrow to `payee`, and burns only the rest. Returns the slashed and the paid amounts.
+    pub fn slash_stake_paying(
+        &mut self,
+        validator: Address,
+        percent: u64,
+        payee: Address,
+        payee_percent: u64,
+    ) -> Result<(U256, U256)> {
+        if percent > 100 || payee_percent > 100 {
             return Err(StakingError::InvalidSlashPercent.into());
         }
 
@@ -401,11 +414,15 @@ impl Staking<'_> {
             current_stored = self.unbonding_next.read(&idx)?;
         }
 
-        // Burn slashed units from STAKING_ADDRESS and credit the Promis Limit.
-        if !total_slashed.is_zero() {
-            outbe_promislimit::PromisLimitContract::new(self.storage.clone())
-                .burn(outbe_promislimit::BurnSource::ValidatorStake, total_slashed)?;
+        let paid = slash_percent(total_slashed, payee_percent)?;
+        if !paid.is_zero() {
+            self.storage
+                .transfer_balance(STAKING_ADDRESS, payee, paid)?;
         }
+        outbe_promislimit::PromisLimitContract::new(self.storage.clone()).burn(
+            outbe_promislimit::BurnSource::ValidatorStake,
+            total_slashed - paid,
+        )?;
 
         // Cross-call: pass the post-write amount after stake, claim, and burn
         // accounting succeeds. Preserve the existing unbonding-end hint.
@@ -427,7 +444,7 @@ impl Staking<'_> {
         }
         guard.commit()?;
 
-        Ok(total_slashed)
+        Ok((total_slashed, paid))
     }
 
     /// Returns the staked amount for a validator.
