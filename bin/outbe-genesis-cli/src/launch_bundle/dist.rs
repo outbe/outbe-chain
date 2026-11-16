@@ -198,7 +198,7 @@ pub fn deploy_markdown(
     };
     let runtime_warning = if confidential_vm {
         "\n> The signer runs inside an operator-provided confidential VM. VM attestation is not \
-implemented yet, so this flow is limited to devnet and testnet.\n"
+implemented yet, so the deployment trusts the operator and infrastructure.\n"
     } else if mode == "dcap-required" {
         ""
     } else {

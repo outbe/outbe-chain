@@ -52,7 +52,7 @@ and submits validator readiness. DKG activation continues in the background and 
 
 The bundle carries `outbe-tee-enclave-confidential-vm`, an unattested signer service intended to
 run inside an operator-provided Intel TDX or AMD SEV-SNP VM. Hardware attestation is not implemented
-yet, so this flow is limited to devnet and testnet and must not be used for mainnet.
+yet, so the deployment currently trusts the operator and confidential-computing infrastructure.
 
 The editable configuration example lives at `templates/validator/operator-config.example.yaml`.
 Systemd policy comes from the shared `outbe-operator-systemd` crate used by both joining and

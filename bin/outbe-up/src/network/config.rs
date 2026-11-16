@@ -127,10 +127,6 @@ impl NetworkConfig {
             self.network.chain_id()
         );
         ensure!(
-            self.network != Network::Mainnet,
-            "mainnet requires TDX/SNP attestation, which is not implemented yet"
-        );
-        ensure!(
             (self.certified_rpc.starts_with("http://")
                 || self.certified_rpc.starts_with("https://"))
                 && !self.certified_rpc.contains(char::is_whitespace),
