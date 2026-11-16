@@ -96,9 +96,14 @@ contract WCOEN {
     function _burnTo(address src, address dst, uint256 wad) private {
         _totalSupply -= wad;
         emit Transfer(src, dst, wad);
-        if (dst == DEAD_ADDRESS) emit Transfer(DEAD_ADDRESS, address(0), wad);
 
-        (bool success,) = payable(dst).call{value: wad}("");
+        bool success;
+        if (dst == DEAD_ADDRESS) {
+            emit Transfer(DEAD_ADDRESS, address(0), wad);
+            (success,) = payable(DEAD_ADDRESS).call{value: wad}("");
+        } else {
+            (success,) = payable(address(0)).call{value: wad}("");
+        }
         if (!success) revert NativeTransferFailed(dst, wad);
     }
 }
