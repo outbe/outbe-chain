@@ -235,13 +235,13 @@ fi\n"
         let runner = config
             .get("enclave_runner")
             .and_then(Value::as_str)
-            .unwrap_or("outbe-tee-enclave-mock");
+            .unwrap_or("outbe-tee-enclave-confidential-vm");
         format!(
             "runner={}\n\
 if [ -x \"$runner\" ] || command -v \"$runner\" >/dev/null 2>&1; then\n\
-  note \"development enclave\" \"outbe-tee-enclave-mock\"\n\
+  note \"confidential VM signer\" \"outbe-tee-enclave-confidential-vm\"\n\
 else\n\
-  note \"development enclave\" \"MISSING $runner\"; fail=1\n\
+  note \"confidential VM signer\" \"MISSING $runner\"; fail=1\n\
 fi\n",
             quote(runner)
         )

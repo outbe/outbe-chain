@@ -187,12 +187,48 @@ pub fn deploy_markdown(
         .map(|enode| format!("  - `{enode}`"))
         .collect::<Vec<_>>()
         .join("\n");
-    let dev_warning = if mode == "dcap-required" {
+    let confidential_vm = config
+        .get("enclave_sgx")
+        .and_then(Value::as_bool)
+        .is_some_and(|enabled| !enabled);
+    let runtime_summary = if confidential_vm {
+        "confidential VM signer (VM attestation pending)".to_owned()
+    } else {
+        format!("TEE mode `{mode}`")
+    };
+    let runtime_warning = if confidential_vm {
+        "\n> The signer runs inside an operator-provided confidential VM. VM attestation is not \
+implemented yet, so this flow is limited to devnet and testnet.\n"
+    } else if mode == "dcap-required" {
         ""
     } else {
         "\n> **`gramine-direct-dev`**: the enclave runs unattested. Use it for a \
 devnet only. A production network needs `tee.mode: dcap-required`, real \
 SGX hardware, and the exact release measurements.\n"
+    };
+    let runtime_prerequisites = if confidential_vm {
+        "- `outbe-tee-enclave-confidential-vm` is installed from the software bundle\n\
+- no SGX device, AESM, DCAP, or Gramine installation is required"
+    } else {
+        "- no system Gramine installation is required on SGX hosts: `sgx/` contains the\n\
+  pinned enclave launcher and runtime from the signed release bundle\n\
+- `outbe-cli` on every SGX validator host for automatic TEE renewal\n\
+- when `enclave_sgx` is enabled: SGX hardware exposing `/dev/sgx_enclave`\n\
+- for `dcap-required`: also `/dev/sgx_provision` and `aesmd.service`\n\
+- `outbe-tee-enclave-confidential-vm` on `PATH` only when `enclave_sgx: false`"
+    };
+    let runtime_process = if confidential_vm {
+        "`outbe-tee-enclave-confidential-vm` | one signer inside the confidential VM"
+    } else {
+        "bundled SGX launcher | selected explicitly by the legacy launch configuration"
+    };
+    let runtime_install_note = if confidential_vm {
+        "The services recover after clean or failed exits. `preflight.sh` is read-only: run it \
+first and compare the genesis digest it prints across all founding machines."
+    } else {
+        "The installer also enables the daily TEE renewal timer. The services recover after clean \
+or failed exits. `preflight.sh` is read-only: compare the genesis and enclave digests across all \
+founding machines."
     };
 
     let reth_p2p_port = port_of(config, "reth_p2p_port")?;
@@ -216,8 +252,8 @@ SGX hardware, and the exact release measurements.\n"
     Ok(format!(
         "# Deploying this network\n\
 \n\
-Chain id `{chain_id}`, {founder_count} founding validators, TEE mode `{mode}`.\n\
-{dev_warning}\n\
+Chain id `{chain_id}`, {founder_count} founding validators, {runtime_summary}.\n\
+{runtime_warning}\n\
 | Machine | Consensus p2p | Validator address |\n\
 |---|---|---|\n\
 {rows_joined}\n\
@@ -264,16 +300,10 @@ metrics `{metrics_port}`, Radicle status\n\
 ## 3. Prerequisites on every machine\n\
 \n\
 - Python 3.11+ - reads the shared storage TOML at launch\n\
-- no system Gramine installation is required on SGX hosts: `sgx/` contains the\n\
-  pinned enclave launcher and runtime from the signed release bundle\n\
-- `outbe-cli` on every SGX validator host for automatic TEE renewal\n\
 - the `outbe-chain`, `outbe-radicle` and `outbe-feeder` binaries on `PATH`\n\
   (or set `node_binary`, `radicle_binary` and `feeder_binary` in the yaml to\n\
   absolute paths and regenerate)\n\
-- when `enclave_sgx` is enabled: SGX hardware exposing `/dev/sgx_enclave`\n\
-- for `dcap-required`: also `/dev/sgx_provision` and `aesmd.service`\n\
-- `outbe-tee-enclave-mock` on `PATH` (or `enclave_runner` pointing to it) only\n\
-  when `enclave_sgx: false`; otherwise the signed SGX runtime is used\n\
+{runtime_prerequisites}\n\
 \n\
 ## 4. Start each machine\n\
 \n\
@@ -283,11 +313,8 @@ cd {base_dir}/validator-N\n\
 ./install-systemd.sh\n\
 ```\n\
 \n\
-`install-systemd.sh` installs one non-templated unit per role, starts the\n\
-`outbe-validator.target`, and enables the daily TEE renewal timer for a NodeHost SGX\n\
-session. The services recover after clean or failed exits. `preflight.sh`\n\
-is read-only: run it first and compare the genesis digest it prints across all\n\
-founding machines. When SGX is enabled, compare the enclave digest too.\n\
+`install-systemd.sh` installs one non-templated unit per role and starts the\n\
+`outbe-validator.target`. {runtime_install_note}\n\
 \n\
 Inspect the stack with `systemctl status outbe-validator.target` and follow the\n\
 node with `journalctl -u outbe-validator -f`.\n\
@@ -321,7 +348,7 @@ number and `validator list` shows {founder_count} active validators.\n\
 | Component | Process | Notes |\n\
 |---|---|---|\n\
 | Execution + consensus | `outbe-chain node` | one binary, no Engine API split |\n\
-| TEE enclave | bundled SGX launcher or `outbe-tee-enclave-mock` | selected explicitly with `enclave_sgx`; there is no runtime fallback |\n\
+| TEE signer | {runtime_process} |\n\
 | Radicle | `outbe-radicle` | validator startup requires its control socket |\n\
 | Price feeder | `outbe-feeder` | submits oracle votes |\n\
 \n\

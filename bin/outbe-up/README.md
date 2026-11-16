@@ -16,29 +16,16 @@ outbe-up network build \
   --config network.yaml \
   --output network-build
 
-# Only tee.policy=dcap-required has this protected-signing boundary:
-outbe-up network finalize \
-  --build network-build \
-  --signed-sgx signed-sgx-bundle \
-  --output network-final
-
-outbe-up network prepare --build network-build [--identity ~/.ssh/operator]
-outbe-up network start --build network-build [--identity ~/.ssh/operator]
-outbe-up network status --build network-build [--watch]
+outbe-up network prepare --artifacts network-build [--ssh-key ~/.ssh/operator]
+outbe-up network start --artifacts network-build [--ssh-key ~/.ssh/operator]
+outbe-up network status --artifacts network-build [--ssh-key ~/.ssh/operator] [--watch]
 ```
 
-For DCAP, use `network-final` in the last three commands. `build` produces one fresh genesis, one
-founder identity per configured host, host-specific founding archives, and a joining-validator
-bundle/config from the same software and genesis. `prepare` verifies and installs every host over
-SSH without starting it. `start` starts all founders and waits for RPC, execution peers, consensus
-signer state, threshold shares, and a finalized block. Repeating `prepare` or `start` for the same
-build is safe.
-
-A DCAP build also writes `sgx-signing-request.json`. Upload its pinned seeded genesis to the
-approved HTTPS location, run the existing protected testnet/mainnet SGX workflow with the emitted
-release tag and SHA-256, extract its signed SGX artifact, and pass that directory to `finalize`.
-`runtime: system-gramine` requires the pinned Gramine installation on every host;
-`runtime: bundled-sgx` uses the signed self-contained runtime instead.
+`build` produces one fresh genesis, one founder identity per configured host, host-specific
+founding archives, and a joining-validator bundle/config from the same software and genesis.
+`prepare` verifies and installs every host over SSH without starting it. `start` starts all
+founders and waits for RPC, execution peers, consensus signer state, threshold shares, and a
+finalized block. Repeating `prepare` or `start` for the same artifacts is safe.
 
 `network.yaml` keeps SSH endpoints separate from node advertise/RPC addresses, supports four or
 more founders, prefunded accounts and explicit genesis overrides. Private consensus topologies
@@ -53,19 +40,19 @@ sudo outbe-up validator promote
 sudo outbe-up validator status [--watch]
 ```
 
-Run `outbe-up validator config-example` to print the configuration template embedded in that exact
-binary version.
+Run `outbe-up validator init --output operator-config.yaml` to write the configuration template
+embedded in that exact binary version.
 
 `prepare` verifies the config, network, manifest, every bundled file, and the bootstrap binary. It
 then creates host-local identities and installs services without starting them. `sync` optionally
-restores a verified snapshot and synchronizes a keyless full node. `promote` performs TEE admission,
-bonds the network minimum stake, switches the same data directory to validator mode, and submits
-validator readiness. DKG activation continues in the background and is visible through `status`.
+restores a verified snapshot and synchronizes a keyless full node. `promote` performs network
+admission, bonds the network minimum stake, switches the same data directory to validator mode,
+and submits validator readiness. DKG activation continues in the background and is visible through
+`status`.
 
-For hardware-free dev/test networks created with a `GramineDirectDev` genesis TEE policy, set
-`tee.runtime: mock`. The operator bundle must then carry
-`outbe-tee-enclave-mock`; no SGX hardware, AESM, DCAP, Gramine, or Docker is required. This mode is
-unattested and must never be used for production or mainnet.
+The bundle carries `outbe-tee-enclave-confidential-vm`, an unattested signer service intended to
+run inside an operator-provided Intel TDX or AMD SEV-SNP VM. Hardware attestation is not implemented
+yet, so this flow is limited to devnet and testnet and must not be used for mainnet.
 
 The editable configuration example lives at `templates/validator/operator-config.example.yaml`.
 Systemd policy comes from the shared `outbe-operator-systemd` crate used by both joining and

@@ -34,8 +34,8 @@ impl NetworkBuild {
             "unsupported network manifest version"
         );
         ensure!(
-            manifest.state == BuildState::Complete,
-            "network build is not complete; finalize its SGX artifacts first"
+            manifest.state == BuildState::Ready,
+            "network artifacts are not ready"
         );
         ensure!(
             manifest.name == config.name
@@ -52,28 +52,13 @@ impl NetworkBuild {
             sha256_file(&root.join("software-bundle.tar.zst"))? == manifest.software.archive_sha256,
             "software bundle changed after network build"
         );
-        let (genesis_block_hash, network_binding) =
-            super::build::genesis_identity(&root.join("genesis.json"))?;
+        let (genesis_block_hash, _) = super::build::genesis_identity(&root.join("genesis.json"))?;
         ensure!(
-            manifest.genesis.final_path.as_deref() == Some("genesis.json")
-                && manifest.genesis.final_sha256.as_deref()
-                    == Some(sha256_file(&root.join("genesis.json"))?.as_str())
-                && manifest.genesis.genesis_block_hash.as_deref()
-                    == Some(genesis_block_hash.as_str()),
+            manifest.genesis.final_path == "genesis.json"
+                && manifest.genesis.final_sha256 == sha256_file(&root.join("genesis.json"))?
+                && manifest.genesis.genesis_block_hash == genesis_block_hash,
             "final genesis is missing or changed after network build"
         );
-        if config.tee.policy == super::config::TeePolicy::DcapRequired {
-            let signed = manifest.signed_sgx.as_ref().ok_or_else(|| {
-                eyre::eyre!("completed DCAP network manifest has no signed SGX identity")
-            })?;
-            ensure!(
-                signed.network_binding
-                    == hex::encode(network_binding.encode_canonical().map_err(|error| {
-                        eyre::eyre!("encode final network binding: {error}")
-                    })?),
-                "signed SGX network binding does not match final genesis"
-            );
-        }
         for (index, (founder, artifact)) in
             config.founders.iter().zip(&manifest.founders).enumerate()
         {
@@ -83,12 +68,11 @@ impl NetworkBuild {
                     && artifact.name == founder.name
                     && artifact.ssh_host == founder.ssh.host
                     && artifact.advertise_ip == founder.advertise_ip
-                    && artifact.archive.as_deref() == Some(expected.as_str()),
+                    && artifact.archive == expected,
                 "founder {index} does not match its network manifest"
             );
             ensure!(
-                artifact.archive_sha256.as_deref()
-                    == Some(sha256_file(&root.join(&expected))?.as_str()),
+                artifact.archive_sha256 == sha256_file(&root.join(&expected))?,
                 "founder {index} archive changed after network build"
             );
         }
@@ -102,20 +86,16 @@ impl NetworkBuild {
 
 #[derive(Clone)]
 pub(super) struct SshOptions {
-    identity: Option<PathBuf>,
+    ssh_key: Option<PathBuf>,
 }
 
 impl SshOptions {
-    pub(super) fn new(identity: Option<&Path>) -> Result<Self> {
-        if let Some(path) = identity {
-            ensure!(
-                path.is_file(),
-                "SSH identity does not exist: {}",
-                path.display()
-            );
+    pub(super) fn new(ssh_key: Option<&Path>) -> Result<Self> {
+        if let Some(path) = ssh_key {
+            ensure!(path.is_file(), "SSH key does not exist: {}", path.display());
         }
         Ok(Self {
-            identity: identity.map(Path::to_owned),
+            ssh_key: ssh_key.map(Path::to_owned),
         })
     }
 
@@ -151,8 +131,8 @@ impl SshOptions {
         let mut process = Command::new("scp");
         process.args(["-q", "-P", &founder.ssh.port.to_string()]);
         process.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]);
-        if let Some(identity) = &self.identity {
-            process.arg("-i").arg(identity);
+        if let Some(ssh_key) = &self.ssh_key {
+            process.arg("-i").arg(ssh_key);
         }
         if recursive {
             process.arg("-r");
@@ -171,8 +151,8 @@ impl SshOptions {
     fn ssh_args(&self, process: &mut Command, founder: &Founder) {
         process.args(["-p", &founder.ssh.port.to_string()]);
         process.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]);
-        if let Some(identity) = &self.identity {
-            process.arg("-i").arg(identity);
+        if let Some(ssh_key) = &self.ssh_key {
+            process.arg("-i").arg(ssh_key);
         }
         process.arg(format!("{}@{}", founder.ssh.user, founder.ssh.host));
     }

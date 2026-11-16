@@ -6,11 +6,7 @@ use outbe_software_bundle::verify_and_extract;
 use tokio::task::JoinSet;
 use walkdir::WalkDir;
 
-use super::{
-    config::TeePolicy,
-    remote::{NetworkBuild, SshOptions},
-};
-use crate::validator::config::EnclaveRuntime;
+use super::remote::{NetworkBuild, SshOptions};
 
 const INSTALLER: &str = r#"#!/bin/sh
 set -eu
@@ -55,9 +51,9 @@ as_root "$base/validator-${index}/preflight.sh"
 as_root "$base/validator-${index}/install-systemd.sh" --prepare-only
 "#;
 
-pub async fn run(build: &Path, identity: Option<&Path>) -> Result<()> {
-    let build = NetworkBuild::load(build)?;
-    let ssh = SshOptions::new(identity)?;
+pub async fn run(artifacts: &Path, ssh_key: Option<&Path>) -> Result<()> {
+    let build = NetworkBuild::load(artifacts)?;
+    let ssh = SshOptions::new(ssh_key)?;
     let temporary = tempfile::tempdir()?;
     let software = temporary.path().join("software");
     verify_and_extract(&build.root.join("software-bundle.tar.zst"), &software)?;
@@ -68,22 +64,13 @@ pub async fn run(build: &Path, identity: Option<&Path>) -> Result<()> {
     let installer = temporary.path().join("install-founder.sh");
     fs::write(&installer, INSTALLER)?;
     fs::set_permissions(&installer, fs::Permissions::from_mode(0o700))?;
-    let genesis_sha = build
-        .manifest
-        .genesis
-        .final_sha256
-        .clone()
-        .ok_or_else(|| eyre::eyre!("network manifest has no final genesis digest"))?;
-    let tee_check = remote_tee_check(build.config.tee.policy, build.config.tee.runtime);
+    let genesis_sha = build.manifest.genesis.final_sha256.clone();
 
     let mut tasks = JoinSet::new();
     for (index, founder) in build.config.founders.into_iter().enumerate() {
         let ssh = ssh.clone();
         let archive = build.root.join(format!("dist/validator-{index}.tgz"));
-        let archive_sha = build.manifest.founders[index]
-            .archive_sha256
-            .clone()
-            .expect("validated founder archive digest");
+        let archive_sha = build.manifest.founders[index].archive_sha256.clone();
         let binaries = software.join("bin");
         let installer = installer.clone();
         let genesis_sha = genesis_sha.clone();
@@ -99,7 +86,6 @@ pub async fn run(build: &Path, identity: Option<&Path>) -> Result<()> {
                 archive_sha: &archive_sha,
                 genesis_sha: &genesis_sha,
                 required_kib,
-                tee_check,
             })
             .wrap_err_with(|| format!("prepare {}", founder.name))
         });
@@ -131,12 +117,10 @@ struct PrepareFounder<'a> {
     archive_sha: &'a str,
     genesis_sha: &'a str,
     required_kib: u64,
-    tee_check: &'static str,
 }
 
 fn prepare_founder(input: PrepareFounder<'_>) -> Result<()> {
     let advertise_ip = input.founder.advertise_ip;
-    let tee_check = input.tee_check;
     let rpc_bind_check =
         if input.founder.rpc_bind_ip.is_loopback() || input.founder.rpc_bind_ip == advertise_ip {
             String::new()
@@ -156,7 +140,7 @@ command -v curl >/dev/null; command -v ip >/dev/null; \
 if [ \"$(id -u)\" -ne 0 ]; then command -v sudo >/dev/null; sudo -n true; fi; \
 ip -4 -o addr show | grep -Fq ' {advertise_ip}/' \
   || {{ echo 'advertise_ip {advertise_ip} is not configured on this host' >&2; exit 1; }}; \
-{rpc_bind_check} {tee_check} \
+{rpc_bind_check} \
 available=\"$(df -Pk /opt 2>/dev/null | awk 'NR==2 {{print $4}}')\"; \
 [ -n \"$available\" ] || available=\"$(df -Pk / | awk 'NR==2 {{print $4}}')\"; \
 [ \"$available\" -ge {} ] \
@@ -211,27 +195,6 @@ fn required_disk_kib(binaries: &Path, archive: &Path) -> Result<u64> {
     Ok(bytes.saturating_mul(2).div_ceil(1024) + 1024 * 1024)
 }
 
-const fn remote_tee_check(policy: TeePolicy, runtime: EnclaveRuntime) -> &'static str {
-    match (policy, runtime) {
-        (TeePolicy::GramineDirectDev, EnclaveRuntime::Mock) => "",
-        (TeePolicy::DcapRequired, EnclaveRuntime::SystemGramine) => {
-            "command -v gramine-sgx >/dev/null \
-|| { echo 'gramine-sgx is not installed' >&2; exit 1; }; \
-test -e /dev/sgx_enclave && test -e /dev/sgx_provision \
-|| { echo 'SGX devices are not available' >&2; exit 1; }; \
-systemctl is-active --quiet aesmd.service \
-|| { echo 'aesmd.service is not active' >&2; exit 1; };"
-        }
-        (TeePolicy::DcapRequired, EnclaveRuntime::BundledSgx) => {
-            "test -e /dev/sgx_enclave && test -e /dev/sgx_provision \
-|| { echo 'SGX devices are not available' >&2; exit 1; }; \
-systemctl is-active --quiet aesmd.service \
-|| { echo 'aesmd.service is not active' >&2; exit 1; };"
-        }
-        _ => "echo 'unsupported TEE policy/runtime combination' >&2; exit 1;",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,21 +204,5 @@ mod tests {
         assert!(INSTALLER.contains("--prepare-only"));
         assert!(INSTALLER.contains("outbe-validator.target is active"));
         assert!(!INSTALLER.contains("enable --now"));
-    }
-
-    #[test]
-    fn production_preflight_selects_runtime_dependencies() {
-        assert!(
-            remote_tee_check(TeePolicy::DcapRequired, EnclaveRuntime::SystemGramine)
-                .contains("gramine-sgx")
-        );
-        assert!(
-            !remote_tee_check(TeePolicy::DcapRequired, EnclaveRuntime::BundledSgx)
-                .contains("gramine-sgx")
-        );
-        assert_eq!(
-            remote_tee_check(TeePolicy::GramineDirectDev, EnclaveRuntime::Mock),
-            ""
-        );
     }
 }

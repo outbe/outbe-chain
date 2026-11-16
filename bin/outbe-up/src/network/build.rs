@@ -12,21 +12,17 @@ use walkdir::WalkDir;
 
 use crate::{
     support::process,
-    validator::{
-        bundle::{self, BundleInput},
-        config::EnclaveRuntime,
-    },
+    validator::bundle::{self, BundleInput},
 };
 
-use super::config::{NetworkConfig, TeePolicy};
+use super::config::NetworkConfig;
 
 const MANIFEST_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub(super) enum BuildState {
-    Complete,
-    SigningRequired,
+    Ready,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -39,21 +35,8 @@ pub(super) struct NetworkManifest {
     pub(super) config_sha256: String,
     pub(super) software: SoftwareIdentity,
     pub(super) genesis: GenesisIdentity,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) signed_sgx: Option<SignedSgxIdentity>,
     pub(super) founders: Vec<FounderArtifact>,
-    pub(super) joining: Option<JoiningArtifact>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub(super) struct SignedSgxIdentity {
-    pub(super) bundle_manifest_sha256: String,
-    pub(super) descriptor_sha256: String,
-    pub(super) network_binding: String,
-    pub(super) mrenclave: String,
-    pub(super) mrsigner: String,
-    pub(super) isv_prod_id: u16,
-    pub(super) isv_svn: u16,
+    pub(super) joining: JoiningArtifact,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -61,7 +44,6 @@ pub(super) struct SoftwareIdentity {
     pub(super) archive_sha256: String,
     pub(super) commit: String,
     pub(super) release_tag: String,
-    pub(super) profile: String,
     pub(super) target: String,
 }
 
@@ -69,9 +51,9 @@ pub(super) struct SoftwareIdentity {
 pub(super) struct GenesisIdentity {
     pub(super) seeded_path: String,
     pub(super) seeded_sha256: String,
-    pub(super) final_path: Option<String>,
-    pub(super) final_sha256: Option<String>,
-    pub(super) genesis_block_hash: Option<String>,
+    pub(super) final_path: String,
+    pub(super) final_sha256: String,
+    pub(super) genesis_block_hash: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -82,8 +64,8 @@ pub(super) struct FounderArtifact {
     pub(super) advertise_ip: Ipv4Addr,
     pub(super) validator_address: String,
     pub(super) consensus_public_key: String,
-    pub(super) archive: Option<String>,
-    pub(super) archive_sha256: Option<String>,
+    pub(super) archive: String,
+    pub(super) archive_sha256: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -124,12 +106,7 @@ pub fn run(
         .prefix("outbe-software-")
         .tempdir_in(parent)?;
     let software = verify_and_extract(software_bundle, software_root.path())?;
-    ensure_profile(&config, &software)?;
-    let signing_required = config.tee.policy == TeePolicy::DcapRequired;
-    ensure!(
-        signing_required || matches!(config.tee.runtime, EnclaveRuntime::Mock),
-        "production Gramine direct-dev packaging needs a signed Gramine runtime; use mock for development or dcap-required for production"
-    );
+    ensure_supported_software(&software)?;
 
     let staging = tempfile::Builder::new()
         .prefix(".outbe-network-")
@@ -162,46 +139,32 @@ pub fn run(
     .map_err(eyre::Report::msg)?;
 
     let final_genesis = staging.path().join("genesis.json");
-    if !signing_required {
-        run_tee_stage(
-            software_root
-                .path()
-                .join("bin/outbe-chain")
-                .to_str()
-                .ok_or_else(|| eyre::eyre!("software path is not UTF-8"))?,
-            &seeded,
-            &final_genesis,
-            &legacy,
-        )
+    run_tee_stage(
+        software_root
+            .path()
+            .join("bin/outbe-chain")
+            .to_str()
+            .ok_or_else(|| eyre::eyre!("software path is not UTF-8"))?,
+        &seeded,
+        &final_genesis,
+        &legacy,
+    )
+    .map_err(eyre::Report::msg)?;
+    launch_bundle::render(&legacy, &validators, &final_genesis, &keys)
         .map_err(eyre::Report::msg)?;
-        launch_bundle::render(&legacy, &validators, &final_genesis, &keys)
-            .map_err(eyre::Report::msg)?;
-    } else {
-        write_signing_request(staging.path(), &config, &software, software_bundle, &seeded)?;
-    }
 
-    let founders = founder_artifacts(staging.path(), &config, &validators, signing_required)?;
-    let joining = if signing_required {
-        None
-    } else {
-        Some(build_joining_artifacts(&BuildArtifacts {
-            root: staging.path(),
-            software_root: software_root.path(),
-            software: &software,
-            config: &config,
-            validators: &validators,
-        })?)
-    };
-    let genesis_block_hash = (!signing_required)
-        .then(|| genesis_identity(&final_genesis).map(|(hash, _)| hash))
-        .transpose()?;
+    let founders = founder_artifacts(staging.path(), &config, &validators)?;
+    let joining = build_joining_artifacts(&BuildArtifacts {
+        root: staging.path(),
+        software_root: software_root.path(),
+        software: &software,
+        config: &config,
+        validators: &validators,
+    })?;
+    let genesis_block_hash = genesis_identity(&final_genesis)?.0;
     let manifest = NetworkManifest {
         version: MANIFEST_VERSION,
-        state: if signing_required {
-            BuildState::SigningRequired
-        } else {
-            BuildState::Complete
-        },
+        state: BuildState::Ready,
         name: config.name.clone(),
         network: config.network.as_str().to_owned(),
         chain_id: config.chain_id,
@@ -210,19 +173,15 @@ pub fn run(
             archive_sha256: sha256_file(software_bundle)?,
             commit: software.commit,
             release_tag: software.release_tag,
-            profile: software.profile.as_str().to_owned(),
             target: software.target,
         },
         genesis: GenesisIdentity {
             seeded_path: "genesis.seeded.json".into(),
             seeded_sha256: sha256_file(&seeded)?,
-            final_path: (!signing_required).then(|| "genesis.json".into()),
-            final_sha256: (!signing_required)
-                .then(|| sha256_file(&final_genesis))
-                .transpose()?,
+            final_path: "genesis.json".into(),
+            final_sha256: sha256_file(&final_genesis)?,
             genesis_block_hash,
         },
-        signed_sgx: None,
         founders,
         joining,
     };
@@ -232,13 +191,7 @@ pub fn run(
     )?;
     fs::rename(staging.keep(), output)?;
     println!("network artifacts: {}", output.display());
-    if signing_required {
-        println!(
-            "state: signing required; run the protected SGX job, then `outbe-up network finalize`"
-        );
-    } else {
-        println!("state: complete; ready for `outbe-up network prepare`");
-    }
+    println!("state: ready; run `outbe-up network prepare`");
     Ok(())
 }
 
@@ -263,11 +216,7 @@ pub(super) fn genesis_identity(path: &Path) -> Result<(String, NetworkBindingV1)
     Ok((format!("{:#x}", schedule.genesis_hash), binding))
 }
 
-fn ensure_profile(config: &NetworkConfig, software: &SoftwareManifest) -> Result<()> {
-    ensure!(
-        config.software_profile == software.profile,
-        "network software_profile does not match the software bundle"
-    );
+fn ensure_supported_software(software: &SoftwareManifest) -> Result<()> {
     ensure!(
         software.target == "x86_64-unknown-linux-gnu",
         "unsupported software target: {}",
@@ -339,23 +288,15 @@ pub(super) fn legacy_config(config: &NetworkConfig, software: &Path, keys: &Path
             json!(config.topology.use_local_defaults),
         ),
         ("rpc_bind_ip", json!(rpc_bind(config)?)),
-        ("tee", json!({"mode": config.tee.policy.as_str()})),
+        ("tee", json!({"mode": "gramine-direct-dev"})),
+        ("enclave_sgx", json!(false)),
+        ("enclave_runtime", json!("confidential-vm")),
         (
-            "enclave_sgx",
-            json!(!matches!(config.tee.runtime, EnclaveRuntime::Mock)),
+            "enclave_runner",
+            json!("/opt/outbe-chain/outbe-tee-enclave-confidential-vm"),
         ),
-        ("enclave_runtime", json!(config.tee.runtime.as_env())),
     ] {
         root.insert(key.to_owned(), value);
-    }
-    if matches!(config.tee.runtime, EnclaveRuntime::Mock) {
-        root.insert(
-            "enclave_runner".into(),
-            json!("/opt/outbe-chain/outbe-tee-enclave-mock"),
-        );
-    }
-    if let Some(image) = &config.tee.enclave_image {
-        root.insert("enclave_image".into(), json!(image));
     }
     for (key, value) in [
         ("timestamp", config.genesis.timestamp),
@@ -413,7 +354,6 @@ pub(super) fn founder_artifacts(
     root: &Path,
     config: &NetworkConfig,
     validators: &[Value],
-    signing_required: bool,
 ) -> Result<Vec<FounderArtifact>> {
     config
         .founders
@@ -430,10 +370,8 @@ pub(super) fn founder_artifacts(
                 advertise_ip: founder.advertise_ip,
                 validator_address: required_validator_field(validator, "address")?.to_owned(),
                 consensus_public_key: required_validator_field(validator, "public_key")?.to_owned(),
-                archive: (!signing_required).then_some(relative),
-                archive_sha256: (!signing_required)
-                    .then(|| sha256_file(&archive))
-                    .transpose()?,
+                archive: relative,
+                archive_sha256: sha256_file(&archive)?,
             })
         })
         .collect()
@@ -466,15 +404,11 @@ pub(super) fn build_joining_artifacts(artifacts: &BuildArtifacts<'_>) -> Result<
         "network": {
             "chain_id": artifacts.config.chain_id,
             "certified_rpc": artifacts.config.certified_rpc,
-            "external_ip": "192.0.2.10",
+            "advertise_ip": "192.0.2.10",
             "rpc_bind_ip": "127.0.0.1",
             "bootnodes": bootnodes,
             "consensus_peers": peers,
             "use_local_defaults": artifacts.config.topology.use_local_defaults,
-        },
-        "tee": {
-            "runtime": artifacts.config.tee.runtime.as_env(),
-            "lease_duration_seconds": "auto",
         },
         "feeder": {
             "public_toml": "[oracle]\nsources = \"local\"\nvote_period = 60\npoll_interval_secs = 2\n",
@@ -491,10 +425,8 @@ pub(super) fn build_joining_artifacts(artifacts: &BuildArtifacts<'_>) -> Result<
 
 fn joining_bundle_files(artifacts: &BuildArtifacts<'_>) -> Result<Vec<BundleInput>> {
     let mut files = Vec::new();
-    let system_gramine = matches!(artifacts.config.tee.runtime, EnclaveRuntime::SystemGramine);
     for file in &artifacts.software.files {
         let destination = match file.path.strip_prefix("bin/") {
-            Some("outbe-tee-enclave") if system_gramine => None,
             Some(name) => Some(name.to_owned()),
             None if file.path == ".bb-crs/bn254_g1.dat" => Some(file.path.clone()),
             None => None,
@@ -512,60 +444,7 @@ fn joining_bundle_files(artifacts: &BuildArtifacts<'_>) -> Result<Vec<BundleInpu
         source: artifacts.root.join("genesis.json"),
         mode: 0o644,
     });
-    let sgx = artifacts.root.join("sgx");
-    append_signed_sgx_files(&mut files, &sgx, artifacts.config.tee.runtime)?;
     Ok(files)
-}
-
-fn append_signed_sgx_files(
-    files: &mut Vec<BundleInput>,
-    sgx: &Path,
-    runtime: EnclaveRuntime,
-) -> Result<()> {
-    if !sgx.is_dir() {
-        return Ok(());
-    }
-    match runtime {
-        EnclaveRuntime::SystemGramine => {
-            files.extend([
-                BundleInput {
-                    path: "outbe-tee-enclave".into(),
-                    source: sgx.join("bin/outbe-tee-enclave"),
-                    mode: 0o755,
-                },
-                BundleInput {
-                    path: "network-descriptor-v1.bin".into(),
-                    source: sgx.join("network-descriptor-v1.bin"),
-                    mode: 0o644,
-                },
-                BundleInput {
-                    path: "outbe-tee-enclave.manifest.sgx".into(),
-                    source: sgx.join("outbe-tee-enclave.manifest.sgx"),
-                    mode: 0o644,
-                },
-                BundleInput {
-                    path: "outbe-tee-enclave.sig".into(),
-                    source: sgx.join("outbe-tee-enclave.sig"),
-                    mode: 0o644,
-                },
-            ]);
-        }
-        EnclaveRuntime::BundledSgx => {
-            for entry in WalkDir::new(sgx).follow_links(false) {
-                let entry = entry?;
-                if entry.file_type().is_file() {
-                    let relative = entry.path().strip_prefix(sgx)?.to_string_lossy();
-                    files.push(BundleInput {
-                        path: format!("sgx/{relative}"),
-                        source: entry.path().to_owned(),
-                        mode: entry.metadata()?.permissions().mode() & 0o777,
-                    });
-                }
-            }
-        }
-        EnclaveRuntime::Mock => {}
-    }
-    Ok(())
 }
 
 pub(super) fn required_validator_field<'a>(validator: &'a Value, name: &str) -> Result<&'a str> {
@@ -573,32 +452,6 @@ pub(super) fn required_validator_field<'a>(validator: &'a Value, name: &str) -> 
         .get(name)
         .and_then(Value::as_str)
         .ok_or_else(|| eyre::eyre!("generated validator has no {name}"))
-}
-
-fn write_signing_request(
-    root: &Path,
-    config: &NetworkConfig,
-    software: &SoftwareManifest,
-    software_bundle: &Path,
-    seeded: &Path,
-) -> Result<()> {
-    let request = json!({
-        "version": 1,
-        "network": config.network.as_str(),
-        "chain_id": config.chain_id,
-        "software_commit": software.commit,
-        "software_release_tag": software.release_tag,
-        "software_bundle_sha256": sha256_file(software_bundle)?,
-        "seeded_genesis": "genesis.seeded.json",
-        "seeded_genesis_sha256": sha256_file(seeded)?,
-        "enclave_image": config.tee.enclave_image,
-        "enclave_runtime": config.tee.runtime.as_env(),
-    });
-    fs::write(
-        root.join("sgx-signing-request.json"),
-        format!("{}\n", serde_json::to_string_pretty(&request)?),
-    )?;
-    Ok(())
 }
 
 pub(super) fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
@@ -651,7 +504,7 @@ mod tests {
         assert_eq!(value["network"], "testnet");
         assert_eq!(value["tee"]["mode"], "gramine-direct-dev");
         assert_eq!(value["enclave_sgx"], false);
-        assert_eq!(value["enclave_runtime"], "mock");
+        assert_eq!(value["enclave_runtime"], "confidential-vm");
         assert_eq!(
             value["balance"]["0x1111111111111111111111111111111111111111"],
             "1000000000000000000000"

@@ -8,7 +8,6 @@ use std::{
     path::{Component, Path},
 };
 
-use clap::ValueEnum;
 use eyre::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -16,36 +15,12 @@ use sha2::{Digest, Sha256};
 pub const MANIFEST_NAME: &str = "software-manifest.json";
 pub const MANIFEST_VERSION: u32 = 1;
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
-#[serde(rename_all = "kebab-case")]
-pub enum SoftwareProfile {
-    Production,
-    Development,
-}
-
-impl SoftwareProfile {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Production => "production",
-            Self::Development => "development",
-        }
-    }
-
-    pub const fn enclave_binary(self) -> &'static str {
-        match self {
-            Self::Production => "outbe-tee-enclave",
-            Self::Development => "outbe-tee-enclave-mock",
-        }
-    }
-}
-
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SoftwareManifest {
     pub version: u32,
     pub commit: String,
     pub release_tag: String,
-    pub profile: SoftwareProfile,
     pub target: String,
     pub files: Vec<SoftwareFile>,
 }
@@ -197,11 +172,10 @@ fn extract_entry(
     Ok(hex::encode(digest.finalize()))
 }
 
-pub fn bundle_name(profile: SoftwareProfile, commit: &str) -> Result<String> {
+pub fn bundle_name(commit: &str) -> Result<String> {
     ensure!(is_lower_hex(commit, 40), "invalid source commit");
     Ok(format!(
-        "outbe-software-bundle-v{MANIFEST_VERSION}-{}-{commit}.tar.zst",
-        profile.as_str()
+        "outbe-software-bundle-v{MANIFEST_VERSION}-{commit}.tar.zst"
     ))
 }
 

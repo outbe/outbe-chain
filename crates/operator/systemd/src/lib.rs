@@ -63,8 +63,8 @@ pub fn joining_units(outbe_up: &str) -> Vec<UnitFile> {
             description: "Outbe TEE enclave",
             account: Account::Root,
             unit_directives: lines(&[
-                "After=network-online.target aesmd.service",
-                "Wants=network-online.target aesmd.service",
+                "After=network-online.target",
+                "Wants=network-online.target",
                 "PartOf=outbe-validator.target",
             ]),
             service_directives: lines(&[
@@ -74,7 +74,6 @@ pub fn joining_units(outbe_up: &str) -> Vec<UnitFile> {
             ]),
             sandbox_directives: lines(&[
                 "ReadWritePaths=/opt/outbe-chain/tee",
-                "BindReadOnlyPaths=-/opt/outbe-chain/sgx:/opt/outbe/sgx",
                 "BindPaths=/opt/outbe-chain/tee:/var/lib/outbe/tee",
             ]),
             limit_nofile: 65_535,
@@ -163,8 +162,8 @@ pub fn founding_units(config: FoundingConfig<'_>) -> Vec<UnitFile> {
             description: "Outbe TEE enclave",
             account: Account::Root,
             unit_directives: lines(&[
-                "After=network-online.target aesmd.service",
-                "Wants=network-online.target aesmd.service",
+                "After=network-online.target",
+                "Wants=network-online.target",
                 "PartOf=outbe-validator.target",
             ]),
             service_directives: lines(&[
@@ -173,7 +172,6 @@ pub fn founding_units(config: FoundingConfig<'_>) -> Vec<UnitFile> {
             ]),
             sandbox_directives: lines(&[
                 &format!("ReadWritePaths={}", config.base_dir),
-                &format!("BindReadOnlyPaths=-{}/sgx:/opt/outbe/sgx", config.base_dir),
                 &format!("BindPaths={validator_dir}/tee:/var/lib/outbe/tee"),
             ]),
             limit_nofile: 65_535,

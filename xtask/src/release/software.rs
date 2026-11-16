@@ -14,14 +14,10 @@ use walkdir::WalkDir;
 
 use outbe_software_bundle::sha256_file;
 pub use outbe_software_bundle::{
-    bundle_name, verify_archive, SoftwareFile, SoftwareManifest, SoftwareProfile, MANIFEST_NAME,
-    MANIFEST_VERSION,
+    bundle_name, verify_archive, SoftwareFile, SoftwareManifest, MANIFEST_NAME, MANIFEST_VERSION,
 };
 
-use super::{
-    elf::{self, ReleaseIdentity},
-    sgx::canonical_json,
-};
+use super::elf::{self, ReleaseIdentity};
 
 const COMMON_BINARIES: &[&str] = &[
     "outbe-up",
@@ -33,6 +29,8 @@ const COMMON_BINARIES: &[&str] = &[
     "outbe-hyperlane-validator",
 ];
 const OPERATOR_TOOL: &str = "outbe-genesis-cli";
+const CONFIDENTIAL_VM_ENCLAVE: &str = "outbe-tee-enclave-confidential-vm";
+const CONFIDENTIAL_VM_ENCLAVE_SOURCE: &str = "outbe-tee-enclave-mock";
 const GENESIS_ASSETS: &str = "share/outbe-genesis";
 const CRS_BUNDLE_PATH: &str = ".bb-crs/bn254_g1.dat";
 const CRS_URL: &str = "https://crs.aztec.network/g1.dat";
@@ -50,7 +48,6 @@ pub struct PackageOptions<'a> {
     pub artifacts: &'a Path,
     pub systemd_units: &'a Path,
     pub output: &'a Path,
-    pub profile: SoftwareProfile,
     pub target: &'a str,
     pub identity: &'a ReleaseIdentity,
 }
@@ -58,13 +55,12 @@ pub struct PackageOptions<'a> {
 pub struct BuildOptions<'a> {
     pub repo_root: &'a Path,
     pub output_dir: &'a Path,
-    pub profile: SoftwareProfile,
     pub release_tag: Option<&'a str>,
     pub no_cache: bool,
     pub inside_container: bool,
 }
 
-/// Build and package one complete software profile using the pinned Linux toolchain.
+/// Build and package the complete software bundle using the pinned Linux toolchain.
 pub fn build(options: &BuildOptions<'_>) -> Result<PathBuf> {
     if options.inside_container {
         build_inside_container(options)
@@ -80,7 +76,7 @@ pub fn package(options: &PackageOptions<'_>) -> Result<SoftwareManifest> {
         "software bundle already exists: {}",
         options.output.display()
     );
-    let inputs = collect_inputs(options.artifacts, options.systemd_units, options.profile)?;
+    let inputs = collect_inputs(options.artifacts, options.systemd_units)?;
     let files = inputs
         .iter()
         .map(manifest_file)
@@ -89,7 +85,6 @@ pub fn package(options: &PackageOptions<'_>) -> Result<SoftwareManifest> {
         version: MANIFEST_VERSION,
         commit: options.identity.source_commit.clone(),
         release_tag: options.identity.release_tag.clone(),
-        profile: options.profile,
         target: options.target.to_owned(),
         files,
     };
@@ -140,8 +135,6 @@ fn build_with_docker(options: &BuildOptions<'_>) -> Result<PathBuf> {
         &format!("REPRODUCIBLE_CFLAGS={}", values[1]),
         "--build-arg",
         &format!("REPRODUCIBLE_CXXFLAGS={}", values[2]),
-        "--build-arg",
-        &format!("SOFTWARE_PROFILE={}", options.profile.as_str()),
         "--output",
         &format!("type=local,dest={}", output_dir.display()),
     ]);
@@ -153,7 +146,7 @@ fn build_with_docker(options: &BuildOptions<'_>) -> Result<PathBuf> {
         .status()
         .wrap_err("run pinned Docker build")?;
     ensure!(status.success(), "pinned software build failed");
-    let bundle = output_dir.join(bundle_name(options.profile, &identity.source_commit)?);
+    let bundle = output_dir.join(bundle_name(&identity.source_commit)?);
     ensure!(
         bundle.is_file(),
         "software build did not produce {}",
@@ -166,7 +159,7 @@ fn build_with_docker(options: &BuildOptions<'_>) -> Result<PathBuf> {
 fn build_inside_container(options: &BuildOptions<'_>) -> Result<PathBuf> {
     let identity = identity_from_environment(options.release_tag)?;
     let target = "x86_64-unknown-linux-gnu";
-    run_cargo_build(options.repo_root, options.profile, target)?;
+    run_cargo_build(options.repo_root, target)?;
     let staging = tempfile::tempdir().wrap_err("create software artifact staging directory")?;
     let staging_bin = staging.path().join("bin");
     let staging_systemd = staging.path().join("systemd");
@@ -176,9 +169,13 @@ fn build_inside_container(options: &BuildOptions<'_>) -> Result<PathBuf> {
         .join("target")
         .join(target)
         .join("release");
-    for binary in expected_binaries(options.profile) {
+    for binary in expected_binaries() {
         let source = built.join(binary);
-        let destination = staging_bin.join(binary);
+        let destination = staging_bin.join(if binary == CONFIDENTIAL_VM_ENCLAVE_SOURCE {
+            CONFIDENTIAL_VM_ENCLAVE
+        } else {
+            binary
+        });
         fs::copy(&source, &destination)
             .wrap_err_with(|| format!("stage release binary: {}", source.display()))?;
     }
@@ -188,12 +185,11 @@ fn build_inside_container(options: &BuildOptions<'_>) -> Result<PathBuf> {
     fs::create_dir_all(options.output_dir)?;
     let output = options
         .output_dir
-        .join(bundle_name(options.profile, &identity.source_commit)?);
+        .join(bundle_name(&identity.source_commit)?);
     package(&PackageOptions {
         artifacts: staging.path(),
         systemd_units: &staging_systemd,
         output: &output,
-        profile: options.profile,
         target,
         identity: &identity,
     })?;
@@ -264,7 +260,7 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-fn run_cargo_build(repo_root: &Path, profile: SoftwareProfile, target: &str) -> Result<()> {
+fn run_cargo_build(repo_root: &Path, target: &str) -> Result<()> {
     let mut command = Command::new("cargo");
     command.current_dir(repo_root).args([
         "build",
@@ -274,26 +270,20 @@ fn run_cargo_build(repo_root: &Path, profile: SoftwareProfile, target: &str) -> 
         "--target",
         target,
     ]);
-    for (package, binary) in binary_targets(profile) {
+    for (package, binary) in binary_targets() {
         command.args(["--package", package, "--bin", binary]);
     }
-    let features = match profile {
-        SoftwareProfile::Production => "outbe-tee-enclave/production-dcap-release",
-        SoftwareProfile::Development => {
-            "outbe-chain/test-protocol-overrides,outbe-tee-enclave/mock"
-        }
-    };
-    command.args(["--features", features]);
-    if profile == SoftwareProfile::Production {
-        command.env("OUTBE_NATIVE_DCAP", "require");
-    }
+    command.args([
+        "--features",
+        "outbe-chain/test-protocol-overrides,outbe-tee-enclave/mock",
+    ]);
     let status = command.status().wrap_err("build software binaries")?;
     ensure!(status.success(), "software binary build failed");
     Ok(())
 }
 
-fn binary_targets(profile: SoftwareProfile) -> Vec<(&'static str, &'static str)> {
-    let mut targets = vec![
+fn binary_targets() -> Vec<(&'static str, &'static str)> {
+    vec![
         ("outbe-up", "outbe-up"),
         ("outbe-chain", "outbe-chain"),
         ("outbe-cli", "outbe-cli"),
@@ -302,13 +292,12 @@ fn binary_targets(profile: SoftwareProfile) -> Vec<(&'static str, &'static str)>
         ("outbe-radicle-sidecar", "outbe-radicle"),
         ("outbe-hyperlane-validator", "outbe-hyperlane-validator"),
         ("outbe-genesis-cli", OPERATOR_TOOL),
-    ];
-    targets.push(("outbe-tee-enclave", profile.enclave_binary()));
-    targets
+        ("outbe-tee-enclave", CONFIDENTIAL_VM_ENCLAVE_SOURCE),
+    ]
 }
 
-fn expected_binaries(profile: SoftwareProfile) -> Vec<&'static str> {
-    binary_targets(profile)
+fn expected_binaries() -> Vec<&'static str> {
+    binary_targets()
         .into_iter()
         .map(|(_, binary)| binary)
         .collect()
@@ -370,16 +359,12 @@ fn absolute_path(path: &Path) -> Result<PathBuf> {
     }
 }
 
-fn collect_inputs(
-    artifacts: &Path,
-    systemd_units: &Path,
-    profile: SoftwareProfile,
-) -> Result<Vec<BundleInput>> {
+fn collect_inputs(artifacts: &Path, systemd_units: &Path) -> Result<Vec<BundleInput>> {
     let bin = artifacts.join("bin");
     let mut inputs = COMMON_BINARIES
         .iter()
         .copied()
-        .chain(std::iter::once(profile.enclave_binary()))
+        .chain(std::iter::once(CONFIDENTIAL_VM_ENCLAVE))
         .map(|name| BundleInput {
             archive_path: format!("bin/{name}"),
             source: bin.join(name),
@@ -500,6 +485,12 @@ fn write_archive(
     Ok(())
 }
 
+fn canonical_json(manifest: &SoftwareManifest) -> Result<Vec<u8>> {
+    let mut encoded = serde_json::to_vec(manifest).wrap_err("encode software manifest")?;
+    encoded.push(b'\n');
+    Ok(encoded)
+}
+
 fn append_bytes(
     archive: &mut tar::Builder<zstd::Encoder<'_, File>>,
     path: &str,
@@ -539,7 +530,7 @@ mod tests {
         }
     }
 
-    fn fixture(root: &Path, profile: SoftwareProfile) -> (PathBuf, PathBuf) {
+    fn fixture(root: &Path) -> (PathBuf, PathBuf) {
         let artifacts = root.join("artifacts");
         let bin = artifacts.join("bin");
         let profiles = artifacts.join(GENESIS_ASSETS).join("profiles");
@@ -552,7 +543,7 @@ mod tests {
         for name in COMMON_BINARIES
             .iter()
             .copied()
-            .chain([profile.enclave_binary(), OPERATOR_TOOL])
+            .chain([CONFIDENTIAL_VM_ENCLAVE, OPERATOR_TOOL])
         {
             fs::write(bin.join(name), format!("fixture:{name}\n")).unwrap();
         }
@@ -569,8 +560,7 @@ mod tests {
     #[test]
     fn package_is_deterministic_and_self_verifying() {
         let temp = tempfile::tempdir().unwrap();
-        let profile = SoftwareProfile::Production;
-        let (artifacts, units) = fixture(temp.path(), profile);
+        let (artifacts, units) = fixture(temp.path());
         let first = temp.path().join("first.tar.zst");
         let second = temp.path().join("second.tar.zst");
         for output in [&first, &second] {
@@ -578,7 +568,6 @@ mod tests {
                 artifacts: &artifacts,
                 systemd_units: &units,
                 output,
-                profile,
                 target: "x86_64-unknown-linux-gnu",
                 identity: &identity(),
             })
@@ -586,7 +575,6 @@ mod tests {
         }
         assert_eq!(fs::read(&first).unwrap(), fs::read(&second).unwrap());
         let manifest = verify_archive(&first).unwrap();
-        assert_eq!(manifest.profile, SoftwareProfile::Production);
         assert!(manifest
             .files
             .iter()
@@ -594,7 +582,7 @@ mod tests {
         assert!(manifest
             .files
             .iter()
-            .any(|file| file.path == "bin/outbe-tee-enclave"));
+            .any(|file| file.path == "bin/outbe-tee-enclave-confidential-vm"));
         assert!(manifest
             .files
             .iter()
@@ -603,32 +591,7 @@ mod tests {
             .files
             .iter()
             .any(|file| file.path == CRS_BUNDLE_PATH));
-        assert!(!manifest.files.iter().any(|file| file.path.contains("mock")));
-    }
-
-    #[test]
-    fn development_bundle_contains_only_the_mock_enclave() {
-        let temp = tempfile::tempdir().unwrap();
-        let profile = SoftwareProfile::Development;
-        let (artifacts, units) = fixture(temp.path(), profile);
-        let output = temp.path().join("development.tar.zst");
-        let manifest = package(&PackageOptions {
-            artifacts: &artifacts,
-            systemd_units: &units,
-            output: &output,
-            profile,
-            target: "x86_64-unknown-linux-gnu",
-            identity: &identity(),
-        })
-        .unwrap();
-        assert!(manifest
-            .files
-            .iter()
-            .any(|file| file.path == "bin/outbe-tee-enclave-mock"));
-        assert!(!manifest
-            .files
-            .iter()
-            .any(|file| file.path == "bin/outbe-tee-enclave"));
+        assert!(!manifest.files.iter().any(|file| file.path.contains("sgx")));
     }
 
     #[test]

@@ -6,7 +6,6 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-clap.workspace = true
 eyre.workspace = true
 hex.workspace = true
 serde.workspace = true

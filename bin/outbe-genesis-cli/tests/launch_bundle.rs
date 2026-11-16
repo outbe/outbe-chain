@@ -369,8 +369,8 @@ fn caddy_systemd_units_tee_renewal_and_enclave_modes() {
         } else {
             assert!(unit.contains("Wants=network-online.target"));
             assert!(unit.contains("User=root"));
-            assert!(unit.contains("BindReadOnlyPaths=-"));
-            assert!(unit.contains("/sgx:/opt/outbe/sgx"));
+            assert!(!unit.contains("/sgx"));
+            assert!(!unit.contains("aesmd.service"));
             assert!(unit.contains("/tee:/var/lib/outbe/tee"));
         }
     }
@@ -445,13 +445,13 @@ fn caddy_systemd_units_tee_renewal_and_enclave_modes() {
     assert!(!install_mock.contains("enable --now outbe-tee-renew.timer"));
     let enclave_mock =
         fs::read_to_string(out_mock.join("validator-0/run-enclave.sh")).expect("enclave_mock");
-    assert!(enclave_mock.contains("outbe-tee-enclave-mock"));
+    assert!(enclave_mock.contains("outbe-tee-enclave-confidential-vm"));
     assert!(enclave_mock.contains("--dev-network-binding"));
     assert!(enclave_mock.contains("--dev-reth-p2p-public"));
     assert!(enclave_mock.contains("--dkg-seed"));
     let preflight_mock =
         fs::read_to_string(out_mock.join("validator-0/preflight.sh")).expect("preflight_mock");
-    assert!(preflight_mock.contains("development enclave"));
+    assert!(preflight_mock.contains("confidential VM signer"));
     assert!(!preflight_mock.contains("MISSING manifest or signature"));
 
     // Production DCAP mode

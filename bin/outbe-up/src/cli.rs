@@ -47,37 +47,28 @@ enum NetworkCommand {
         #[arg(long)]
         keys_dir: Option<PathBuf>,
     },
-    /// Finish a DCAP network build with its protected, signed SGX runtime.
-    Finalize {
-        #[arg(long)]
-        build: PathBuf,
-        #[arg(long)]
-        signed_sgx: PathBuf,
-        #[arg(long)]
-        output: PathBuf,
-    },
     /// Verify and install every founding host without starting services.
     Prepare {
         #[arg(long)]
-        build: PathBuf,
+        artifacts: PathBuf,
         #[arg(long)]
-        identity: Option<PathBuf>,
+        ssh_key: Option<PathBuf>,
     },
     /// Start every founder and wait for finalized consensus.
     Start {
         #[arg(long)]
-        build: PathBuf,
+        artifacts: PathBuf,
         #[arg(long)]
-        identity: Option<PathBuf>,
+        ssh_key: Option<PathBuf>,
         #[arg(long, default_value_t = 600)]
         timeout: u64,
     },
     /// Show the coordinated state of every founding validator.
     Status {
         #[arg(long)]
-        build: PathBuf,
+        artifacts: PathBuf,
         #[arg(long)]
-        identity: Option<PathBuf>,
+        ssh_key: Option<PathBuf>,
         #[arg(long)]
         watch: bool,
     },
@@ -91,8 +82,11 @@ struct ValidatorArgs {
 
 #[derive(Debug, Subcommand)]
 enum ValidatorCommand {
-    /// Print an operator configuration template.
-    ConfigExample,
+    /// Write a documented operator configuration template.
+    Init {
+        #[arg(long, default_value = "operator-config.yaml")]
+        output: PathBuf,
+    },
     /// Verify and install an operator bundle without starting services.
     Prepare {
         #[arg(long)]
@@ -147,37 +141,29 @@ impl Cli {
                     output,
                     keys_dir,
                 } => network::build::run(&software_bundle, &config, &output, keys_dir.as_deref()),
-                NetworkCommand::Finalize {
-                    build,
-                    signed_sgx,
-                    output,
-                } => network::finalize::run(&build, &signed_sgx, &output),
-                NetworkCommand::Prepare { build, identity } => {
-                    network::prepare::run(&build, identity.as_deref()).await
+                NetworkCommand::Prepare { artifacts, ssh_key } => {
+                    network::prepare::run(&artifacts, ssh_key.as_deref()).await
                 }
                 NetworkCommand::Start {
-                    build,
-                    identity,
+                    artifacts,
+                    ssh_key,
                     timeout,
                 } => {
                     network::start::run(
-                        &build,
-                        identity.as_deref(),
+                        &artifacts,
+                        ssh_key.as_deref(),
                         std::time::Duration::from_secs(timeout),
                     )
                     .await
                 }
                 NetworkCommand::Status {
-                    build,
-                    identity,
+                    artifacts,
+                    ssh_key,
                     watch,
-                } => network::status::show(&build, identity.as_deref(), watch).await,
+                } => network::status::show(&artifacts, ssh_key.as_deref(), watch).await,
             },
             Command::Validator(args) => match args.command {
-                ValidatorCommand::ConfigExample => {
-                    print!("{}", validator::assets::OPERATOR_CONFIG_EXAMPLE);
-                    Ok(())
-                }
+                ValidatorCommand::Init { output } => validator::assets::init(&output),
                 ValidatorCommand::Prepare { bundle, config } => {
                     validator::prepare::run(&bundle, &config).await
                 }
@@ -229,7 +215,7 @@ mod tests {
             "outbe-up",
             "network",
             "start",
-            "--build",
+            "--artifacts",
             "network-final",
             "--timeout",
             "900",
@@ -239,7 +225,7 @@ mod tests {
             "outbe-up",
             "network",
             "status",
-            "--build",
+            "--artifacts",
             "network-final",
             "--watch",
         ])
@@ -248,22 +234,18 @@ mod tests {
             "outbe-up",
             "network",
             "prepare",
-            "--build",
+            "--artifacts",
             "network-final",
-            "--identity",
+            "--ssh-key",
             "operator-key",
         ])
         .is_ok());
         assert!(Cli::try_parse_from([
             "outbe-up",
-            "network",
-            "finalize",
-            "--build",
-            "network-build",
-            "--signed-sgx",
-            "signed-sgx",
+            "validator",
+            "init",
             "--output",
-            "network-final",
+            "operator-config.yaml",
         ])
         .is_ok());
         assert!(Cli::try_parse_from([

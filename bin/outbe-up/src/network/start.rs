@@ -6,31 +6,23 @@ use std::{
 use eyre::{bail, Context, Result};
 use tokio::task::JoinSet;
 
-use crate::{support::progress::Progress, validator::config::EnclaveRuntime};
+use crate::support::progress::Progress;
 
 use super::{
     remote::{NetworkBuild, SshOptions},
     status::{healthy, query_all, render},
 };
 
-pub async fn run(build: &Path, identity: Option<&Path>, timeout: Duration) -> Result<()> {
-    let build = NetworkBuild::load(build)?;
-    let ssh = SshOptions::new(identity)?;
-    let start_renewal = !matches!(build.config.tee.runtime, EnclaveRuntime::Mock);
+pub async fn run(artifacts: &Path, ssh_key: Option<&Path>, timeout: Duration) -> Result<()> {
+    let build = NetworkBuild::load(artifacts)?;
+    let ssh = SshOptions::new(ssh_key)?;
     let mut tasks = JoinSet::new();
     for founder in build.config.founders.clone() {
         let ssh = ssh.clone();
         tasks.spawn_blocking(move || {
-            let services = if start_renewal {
-                "outbe-validator.target outbe-tee-renew.timer"
-            } else {
-                "outbe-validator.target"
-            };
             ssh.run(
                 &founder,
-                &format!(
-                    "if [ \"$(id -u)\" -eq 0 ]; then systemctl start {services}; else sudo -n systemctl start {services}; fi"
-                ),
+                "if [ \"$(id -u)\" -eq 0 ]; then systemctl start outbe-validator.target; else sudo -n systemctl start outbe-validator.target; fi",
             )
             .wrap_err_with(|| format!("start {}", founder.name))
         });

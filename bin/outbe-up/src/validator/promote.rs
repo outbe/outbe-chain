@@ -6,7 +6,6 @@ use rand::RngCore;
 use crate::{
     support::{process, progress::Progress},
     validator::{
-        config::EnclaveRuntime,
         journal::Journal,
         path_text,
         rpc::RpcClient,
@@ -72,7 +71,7 @@ pub async fn run() -> Result<()> {
         progress.stage("bonding the network minimum stake");
         let validator_arg = format!("{validator:#x}");
         let amount = minimum.to_string();
-        let symmetric = format!("{}:30400", journal.config.network.external_ip);
+        let symmetric = format!("{}:30400", journal.config.network.advertise_ip);
         let output = run_outbe_cli(&[
             "staking",
             "stake",
@@ -170,15 +169,16 @@ async fn ensure_join_identity(journal: &mut Journal, remote: &RpcClient) -> Resu
     }
     if journal.valid_until.is_none() {
         let (finalized, policy) = remote.finalized_tee_lease_policy().await?;
-        let duration = journal
-            .config
-            .tee
-            .lease_duration_seconds
-            .resolve(policy.minimum, policy.maximum)?;
+        ensure!(
+            policy.minimum <= policy.maximum,
+            "finalized TEE policy has an invalid lease range {}..={} seconds",
+            policy.minimum,
+            policy.maximum
+        );
         journal.valid_until = Some(
             finalized
                 .timestamp
-                .checked_add(duration)
+                .checked_add(policy.maximum)
                 .ok_or_else(|| eyre::eyre!("TEE lease deadline overflow"))?,
         );
     }
@@ -190,11 +190,11 @@ async fn run_tee_join(journal: &Journal) -> Result<()> {
         .valid_until
         .expect("valid_until was saved")
         .to_string();
-    let mut args = vec!["tee", "join", "--enclave-socket", "127.0.0.1:17000"];
-    if !matches!(journal.config.tee.runtime, EnclaveRuntime::Mock) {
-        args.extend(["--node-data-dir", "/opt/outbe-chain/validator-0/data"]);
-    }
-    args.extend([
+    let args = vec![
+        "tee",
+        "join",
+        "--enclave-socket",
+        "127.0.0.1:17000",
         "--reth-p2p-secret-key",
         "/opt/outbe-chain/keys/reth-p2p-secret.hex",
         "--genesis",
@@ -205,7 +205,7 @@ async fn run_tee_join(journal: &Journal) -> Result<()> {
         &valid_until,
         "--timeout-secs",
         "600",
-    ]);
+    ];
     for attempt in 1..=TEE_JOIN_ATTEMPTS {
         match run_outbe_cli(&args) {
             Ok(_) => return Ok(()),

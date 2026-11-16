@@ -29,9 +29,9 @@ struct RpcResponse {
     result: Option<Value>,
 }
 
-pub async fn show(build: &Path, identity: Option<&Path>, watch: bool) -> Result<()> {
-    let build = NetworkBuild::load(build)?;
-    let ssh = SshOptions::new(identity)?;
+pub async fn show(artifacts: &Path, ssh_key: Option<&Path>, watch: bool) -> Result<()> {
+    let build = NetworkBuild::load(artifacts)?;
+    let ssh = SshOptions::new(ssh_key)?;
     if !watch {
         println!("{}", render(&build, &query_all(&build, &ssh).await?));
         return Ok(());

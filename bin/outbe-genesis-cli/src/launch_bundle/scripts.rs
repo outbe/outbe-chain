@@ -106,10 +106,10 @@ exec {runner_command} \\\n\
     let enclave_runner = config
         .get("enclave_runner")
         .and_then(Value::as_str)
-        .unwrap_or("outbe-tee-enclave-mock");
+        .unwrap_or("outbe-tee-enclave-confidential-vm");
     let dkg_seed = format!("{:064x}", index + 1);
     Ok(format!(
-        "\n# Unattested mock enclave for an explicit development network. The node refuses to start\n\
+        "\n# Unattested signer inside the confidential VM. The node refuses to start\n\
 # until this answers on {endpoint}.\n\
 mkdir -p {q_val_tee}\n\
 \n\
