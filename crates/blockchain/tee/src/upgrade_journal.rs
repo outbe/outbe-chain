@@ -14,7 +14,6 @@ use std::{
 
 use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_sol_types::SolCall as _;
-#[cfg(feature = "native-dcap")]
 use outbe_primitives::tee_attestation_v1::{AttestationMode, DcapEvidenceV1};
 use outbe_primitives::{
     tee_attestation_v1::{
@@ -25,7 +24,6 @@ use outbe_primitives::{
 };
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "native-dcap")]
 use crate::{acquire_dcap_collateral_v1, dcap_collateral_validity_window_v1};
 use crate::{
     journal_storage::{sync_directory, JournalPaths, JournalSnapshotV1},
@@ -637,7 +635,6 @@ pub struct PreparedTransitionEvidenceV1 {
     pub collateral_expiration: u64,
 }
 
-#[cfg(feature = "native-dcap")]
 pub fn generate_transition_evidence_v1(
     candidate: &mut ReplacementCandidateEnclaveV1,
     intent: RegistrationIntentV1,

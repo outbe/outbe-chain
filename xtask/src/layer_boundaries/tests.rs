@@ -91,10 +91,10 @@ outbe-poseidon v0.1.0 (/repo/crates/zk/poseidon)
 }
 
 #[test]
-fn source_scanner_allows_internal_paths_and_two_readonly_release_pins_only() {
+fn source_scanner_allows_dcap_internal_paths_and_two_readonly_release_pins_only() {
     let temp = tempfile::tempdir().unwrap();
     let root = canonicalize_path(temp.path()).unwrap();
-    let tee_dir = root.join("crates/blockchain/tee");
+    let tee_dir = root.join("crates/blockchain/dcap");
     fs::create_dir_all(tee_dir.join("src")).unwrap();
     fs::create_dir_all(tee_dir.join("tests/fixtures")).unwrap();
     fs::create_dir_all(root.join("release")).unwrap();

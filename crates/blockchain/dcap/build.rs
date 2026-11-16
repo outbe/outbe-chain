@@ -230,7 +230,7 @@ fn skip_native_qvl_link(reason: &str) {
         "OUTBE_NATIVE_DCAP=require, but the pinned Intel native QVL cannot be linked: {reason}"
     );
     println!(
-        "cargo:warning=outbe-tee: skipping native-dcap QVL link ({reason}); native quote verification fails closed"
+        "cargo:warning=outbe-dcap: skipping native-dcap QVL link ({reason}); native quote verification fails closed"
     );
 }
 

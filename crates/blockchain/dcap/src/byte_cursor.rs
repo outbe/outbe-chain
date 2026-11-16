@@ -6,7 +6,7 @@
 
 /// The cause of a failed bounded read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CursorError {
+pub enum CursorError {
     /// The read length makes the end offset overflow `usize`.
     Overflow,
     /// The read ends after the end of the input.
@@ -16,14 +16,14 @@ pub(crate) enum CursorError {
 }
 
 /// Reads fields in order from `bytes`. The offset only increases.
-pub(crate) struct ByteCursor<'a, E> {
+pub struct ByteCursor<'a, E> {
     bytes: &'a [u8],
     offset: usize,
     error: fn(CursorError) -> E,
 }
 
 impl<'a, E> ByteCursor<'a, E> {
-    pub(crate) const fn new(bytes: &'a [u8], error: fn(CursorError) -> E) -> Self {
+    pub const fn new(bytes: &'a [u8], error: fn(CursorError) -> E) -> Self {
         Self {
             bytes,
             offset: 0,
@@ -31,13 +31,13 @@ impl<'a, E> ByteCursor<'a, E> {
         }
     }
 
-    pub(crate) const fn remaining(&self) -> usize {
+    pub const fn remaining(&self) -> usize {
         self.bytes.len().saturating_sub(self.offset)
     }
 
     /// Returns the next `len` bytes. The offset first checks for overflow and
     /// then for the end of the input. A failed read does not move the offset.
-    pub(crate) fn take(&mut self, len: usize) -> Result<&'a [u8], E> {
+    pub fn take(&mut self, len: usize) -> Result<&'a [u8], E> {
         let end = self
             .offset
             .checked_add(len)
@@ -50,31 +50,31 @@ impl<'a, E> ByteCursor<'a, E> {
         Ok(value)
     }
 
-    pub(crate) fn array<const N: usize>(&mut self) -> Result<[u8; N], E> {
+    pub fn array<const N: usize>(&mut self) -> Result<[u8; N], E> {
         let mut value = [0; N];
         value.copy_from_slice(self.take(N)?);
         Ok(value)
     }
 
-    pub(crate) fn u8(&mut self) -> Result<u8, E> {
+    pub fn u8(&mut self) -> Result<u8, E> {
         let [value] = self.array()?;
         Ok(value)
     }
 
-    pub(crate) fn u16_be(&mut self) -> Result<u16, E> {
+    pub fn u16_be(&mut self) -> Result<u16, E> {
         Ok(u16::from_be_bytes(self.array()?))
     }
 
-    pub(crate) fn u32_be(&mut self) -> Result<u32, E> {
+    pub fn u32_be(&mut self) -> Result<u32, E> {
         Ok(u32::from_be_bytes(self.array()?))
     }
 
-    pub(crate) fn u64_be(&mut self) -> Result<u64, E> {
+    pub fn u64_be(&mut self) -> Result<u64, E> {
         Ok(u64::from_be_bytes(self.array()?))
     }
 
     /// Accepts the input only if every byte was read.
-    pub(crate) fn finish(self) -> Result<(), E> {
+    pub fn finish(self) -> Result<(), E> {
         if self.offset != self.bytes.len() {
             return Err((self.error)(CursorError::Trailing));
         }

@@ -12,7 +12,7 @@ use outbe_primitives::tee_attestation_v1::{
 };
 use outbe_primitives::time::SECONDS_PER_DAY;
 
-use outbe_tee::errors::DcapFixtureError;
+use outbe_dcap::errors::DcapFixtureError;
 
 #[path = "outbe-dcap-fixture/assemble.rs"]
 mod assemble;

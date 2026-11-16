@@ -206,7 +206,7 @@ fn check_apt_sources_and_tee(root: &Path, pin: &Value, diffs: &mut Vec<String>) 
     }
 
     let tee_build =
-        fs::read_to_string(root.join("crates/blockchain/tee/build.rs")).unwrap_or_default();
+        fs::read_to_string(root.join("crates/blockchain/dcap/build.rs")).unwrap_or_default();
     for pin_inc in [
         "include_str!(\"../../../release/project-toolchain-v1.json\")",
         "include_str!(\"../../../release/dcap-native-qvl-v1.json\")",

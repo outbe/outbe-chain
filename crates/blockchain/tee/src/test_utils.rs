@@ -3,7 +3,6 @@
 use alloy_primitives::B256;
 use outbe_primitives::tee_attestation_v1::{DcapCollateralComponentV1, DcapCollateralKind};
 
-use crate::dcap_protocol::DcapOnboardingContextV1;
 use crate::registry_view::RenewalBindingV1;
 
 pub struct RenewalBindingFixtureV1 {
@@ -98,26 +97,7 @@ fn hash_triplet(seed: u8) -> [B256; 3] {
     [seed, seed.wrapping_add(1), seed.wrapping_add(2)].map(B256::repeat_byte)
 }
 
-pub fn onboarding_context_fixture(
-    seeds: [u8; 9],
-    key_epoch: u64,
-    network_encryption_epoch: u64,
-) -> DcapOnboardingContextV1 {
-    let [chain, genesis, intent, node, enclave, binding, policy, recipient, offer] = seeds;
-    DcapOnboardingContextV1 {
-        chain_id: [chain; 32],
-        genesis_hash: B256::repeat_byte(genesis),
-        intent_hash: B256::repeat_byte(intent),
-        node_id_hash: B256::repeat_byte(node),
-        enclave_id: B256::repeat_byte(enclave),
-        binding_id: B256::repeat_byte(binding),
-        policy_hash: B256::repeat_byte(policy),
-        recipient_x25519: [recipient; 32],
-        network_encryption_public: [offer; 32],
-        key_epoch,
-        network_encryption_epoch,
-    }
-}
+pub use outbe_dcap::test_utils::onboarding_context_fixture;
 
 pub fn canonical_dcap_collateral_fixture() -> Vec<DcapCollateralComponentV1> {
     (1_u8..=8)

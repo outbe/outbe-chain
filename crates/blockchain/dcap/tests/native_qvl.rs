@@ -2,7 +2,7 @@
 
 mod support;
 
-use outbe_tee::native_qvl::{verify_quote_native, NativeDcapCollateral, NativeQvlStatus};
+use outbe_dcap::native_qvl::{verify_quote_native, NativeDcapCollateral, NativeQvlStatus};
 use support::{signed_document, FixtureCollateral, QUOTE};
 
 const FIXTURE_TIME: i64 = 1_751_000_000;
@@ -81,7 +81,7 @@ fn tampered_real_quote_returns_a_stable_verification_failure() {
 
     assert_eq!(
         verify_quote_native(&tampered, &fixture.collateral(), FIXTURE_TIME).unwrap_err(),
-        outbe_tee::native_qvl::NativeQvlError::VerificationFailed
+        outbe_dcap::native_qvl::NativeQvlError::VerificationFailed
     );
 }
 
@@ -103,7 +103,7 @@ fn empty_submitted_collateral_fails_before_qvl() {
 
     assert_eq!(
         verify_quote_native(QUOTE, &collateral, FIXTURE_TIME).unwrap_err(),
-        outbe_tee::native_qvl::NativeQvlError::InvalidInput
+        outbe_dcap::native_qvl::NativeQvlError::InvalidInput
     );
 }
 
@@ -113,6 +113,6 @@ fn negative_consensus_time_fails_before_qvl() {
 
     assert_eq!(
         verify_quote_native(QUOTE, &fixture.collateral(), -1).unwrap_err(),
-        outbe_tee::native_qvl::NativeQvlError::InvalidInput
+        outbe_dcap::native_qvl::NativeQvlError::InvalidInput
     );
 }

@@ -1,5 +1,5 @@
+use outbe_dcap::release_dcap_artifacts::ReleaseDcapArtifactSetV1;
 use outbe_primitives::chain::OutbeNetwork;
-use outbe_tee::release_dcap_artifacts::ReleaseDcapArtifactSetV1;
 
 #[test]
 fn production_networks_have_exact_disjoint_dcap_artifact_sets() {

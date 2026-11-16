@@ -2,7 +2,7 @@
 
 use std::{fs, path::Path};
 
-use outbe_tee::errors::DcapFixtureError;
+use outbe_dcap::errors::DcapFixtureError;
 
 pub(super) fn argument(
     arguments: &[String],

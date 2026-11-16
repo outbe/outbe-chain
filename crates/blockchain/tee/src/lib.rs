@@ -11,27 +11,27 @@
 //! protocol logic. Enclave-resident secrets live in `bin/outbe-tee-enclave` and
 //! `crates/core/enclave`.
 
-mod byte_cursor;
+use outbe_dcap::byte_cursor;
 pub mod call_context;
 pub mod canary;
 pub mod client;
 pub mod client_global;
 pub mod codec;
-pub mod dcap_protocol;
-#[cfg(feature = "native-dcap")]
-pub mod dcap_v1;
+pub use outbe_dcap::dcap_protocol;
+pub use outbe_dcap::dcap_v1;
 pub mod errors;
 pub mod finalized_admission;
 pub mod host_collateral;
+pub use outbe_dcap::verifier;
 pub mod journal_storage;
 pub mod metrics;
 #[cfg(feature = "native-dcap")]
-pub mod native_qvl;
+pub use outbe_dcap::native_qvl;
 pub mod node_host;
 pub mod protocol;
-pub mod quote;
+pub use outbe_dcap::quote;
 pub mod registry_view;
-pub mod release_dcap_artifacts;
+pub use outbe_dcap::release_dcap_artifacts;
 pub mod remote_session;
 pub mod session;
 pub mod tee_attestation_activation;
@@ -61,7 +61,6 @@ pub use client_global::{
     verify_dcap_registration_and_seal_v1, InstallError, RegistrationVerificationRequest,
     RuntimeEnclaveClient,
 };
-#[cfg(feature = "native-dcap")]
 pub use dcap_v1::{dcap_collateral_validity_window_v1, DcapCollateralValidityWindowV1};
 pub use errors::{
     AppErrorDescriptor, CallContextError, CallContextProviderError, DcapFixtureError,

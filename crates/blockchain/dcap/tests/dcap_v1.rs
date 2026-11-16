@@ -3,13 +3,13 @@
 mod support;
 
 use alloy_primitives::B256;
+use outbe_dcap::dcap_v1::{verify_dcap_evidence, DcapRejectCodeV1};
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
     DcapCollateralKind, DcapEvidenceV1, NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1,
     RegistrationIntentV1, TeeMeasurementRuleV1, TeePolicyV1, TeeRegistryGasScheduleV1,
 };
 use outbe_primitives::time::SECONDS_PER_DAY;
-use outbe_tee::dcap_v1::{verify_dcap_evidence, DcapRejectCodeV1};
 use support::{signed_document, FixtureCollateral, QUOTE};
 
 const INTENT_BOUND_PROCESSOR_CAPTURE_TIME: u64 = 1_787_850_648;
@@ -25,7 +25,7 @@ fn embedded_pck_chain() -> Vec<u8> {
 }
 
 fn policy() -> TeePolicyV1 {
-    let measurements = outbe_tee::quote::parse_quote_measurements(QUOTE).unwrap();
+    let measurements = outbe_dcap::quote::parse_quote_measurements(QUOTE).unwrap();
     let intel_root_der_hash = B256::from_slice(
         &hex::decode("44a0196b2b99f889b8e149e95b807a350e7424964399e885a7cbb8ccfab674d3").unwrap(),
     );
@@ -238,7 +238,7 @@ fn intent_bound_real_processor_quote_passes_testnet_platform_status_policy() {
         .expect("ConfigurationAndSWHardeningNeeded is accepted by testnet policy");
     assert_eq!(
         verdict.platform_tcb_status,
-        outbe_tee::dcap_protocol::DcapPlatformTcbStatusV1::ConfigurationAndSWHardeningNeeded
+        outbe_dcap::dcap_protocol::DcapPlatformTcbStatusV1::ConfigurationAndSWHardeningNeeded
     );
 }
 

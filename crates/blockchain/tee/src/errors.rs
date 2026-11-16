@@ -2,10 +2,8 @@
 
 mod call_context;
 mod client_verification;
-mod dcap_fixture;
 mod host_collateral;
 mod protocol;
-mod quote;
 mod session;
 mod tee_attestation_activation;
 mod tee_crypto;
@@ -13,13 +11,13 @@ mod transport;
 
 pub use call_context::{CallContextError, CallContextProviderError};
 pub use client_verification::{NodeHostRecordError, TeeClientVerificationError};
-pub use dcap_fixture::{DcapFixtureError, NativeQvlError};
-pub use host_collateral::HostCollateralError;
+pub use outbe_dcap::errors::HostCollateralError;
+pub use outbe_dcap::errors::QuoteParseError;
+pub use outbe_dcap::errors::{DcapFixtureError, NativeQvlError};
 pub use protocol::{
     FinalizedAdmissionMalformedReason, TeeDkgMalformedWireReason, TeeDkgUnexpectedResponseReason,
     UpgradeTransferError,
 };
-pub use quote::QuoteParseError;
 pub use session::DevIdentityMismatchError;
 pub use tee_attestation_activation::TeeAttestationActivationError;
 pub use tee_crypto::TeeCryptoError;

@@ -411,6 +411,26 @@ fn len_u32(bytes: &[u8]) -> Result<u32, NativeQvlError> {
 mod tests {
     use super::*;
 
+    // CHARACTERIZATION: hosts without the pinned QVL must never accept a quote.
+    #[cfg(not(native_qvl_linked))]
+    #[test]
+    fn missing_pinned_qvl_fails_closed_at_the_public_boundary() {
+        let component = b"collateral";
+        let collateral = NativeDcapCollateral {
+            pck_crl_issuer_chain: component,
+            root_ca_crl: component,
+            pck_crl: component,
+            tcb_info_issuer_chain: component,
+            tcb_info: component,
+            qe_identity_issuer_chain: component,
+            qe_identity: component,
+        };
+        assert!(matches!(
+            verify_quote_native(&[1], &collateral, 1),
+            Err(NativeQvlError::UnsupportedAbi)
+        ));
+    }
+
     fn valid_raw_result() -> RawResult {
         RawResult {
             supplemental_major_version: 3,

@@ -8,6 +8,7 @@ publish.workspace = true
 [features]
 # Accept only the devnet software seal produced by the separate E2E binary.
 local-e2e = []
+native-dcap = ["outbe-tee/native-dcap"]
 
 [[bin]]
 name = "outbe-cli"
@@ -31,7 +32,7 @@ outbe-zerofee.workspace = true
 outbe-zk.workspace = true
 # TEE enclave client + wire protocol (the `tee join` offer-key registration).
 outbe-enclave.workspace = true
-outbe-tee = { workspace = true, features = ["native-dcap"] }
+outbe-tee.workspace = true
 outbe-update.workspace = true
 
 # CLI
@@ -61,7 +62,7 @@ tempfile.workspace = true
 ed25519-dalek.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-rpc = { workspace = true, features = ["test-support"] }
-outbe-tee = { workspace = true, features = ["test-utils", "native-dcap"] }
+outbe-tee = { workspace = true, features = ["test-utils"] }
 commonware-math.workspace = true
 rand-commonware.workspace = true
 rand-core-commonware.workspace = true

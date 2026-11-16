@@ -6,17 +6,17 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use outbe_primitives::tee_attestation_v1::{
-    AttestationEvidenceV1, DcapCollateralComponentV1, DcapEvidenceV1, RegistrationIntentV1,
-    TeePolicyV1,
-};
-use outbe_tee::release_dcap_artifacts::DCAP_COLLATERAL_COMPONENT_FILES;
-use outbe_tee::{
+use outbe_dcap::release_dcap_artifacts::DCAP_COLLATERAL_COMPONENT_FILES;
+use outbe_dcap::{
     dcap_protocol::DcapVerdictV1,
     dcap_v1::{verify_dcap_evidence, DcapRejectCodeV1},
     errors::DcapFixtureError,
     native_qvl::{verify_quote_native, NativeDcapCollateral},
     quote::parse_quote_measurements,
+};
+use outbe_primitives::tee_attestation_v1::{
+    AttestationEvidenceV1, DcapCollateralComponentV1, DcapEvidenceV1, RegistrationIntentV1,
+    TeePolicyV1,
 };
 use sha2::{Digest, Sha256};
 

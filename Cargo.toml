@@ -16,6 +16,7 @@ members = [
     "crates/blockchain/radicle",
     "crates/blockchain/snapshot",
     "crates/blockchain/tee",
+    "crates/blockchain/dcap",
     # system
     "crates/system/constants",
     "crates/system/common",
@@ -103,6 +104,7 @@ default-members = [
     "crates/blockchain/radicle",
     "crates/blockchain/snapshot",
     "crates/blockchain/tee",
+    "crates/blockchain/dcap",
     # system
     "crates/system/constants",
     "crates/system/common",
@@ -210,6 +212,7 @@ outbe-execution = { path = "crates/blockchain/execution" }
 outbe-radicle = { path = "crates/blockchain/radicle" }
 outbe-snapshot = { path = "crates/blockchain/snapshot" }
 outbe-tee = { path = "crates/blockchain/tee", default-features = false }
+outbe-dcap = { path = "crates/blockchain/dcap", default-features = false }
 # Internal - system
 outbe-chain-constants = { path = "crates/system/constants" }
 outbe-system-common = { path = "crates/system/common" }

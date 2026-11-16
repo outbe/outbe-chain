@@ -76,13 +76,13 @@ run = "cargo fmt --all --check"
 
 [tasks.lint]
 description = "Run clippy on all crates"
-# No --all-features: it would turn on outbe-tee's `native-dcap`, whose build.rs
-# links the pinned Intel SGX/DCAP toolchain (headers + .so) that only exists on
-# the gramine-sgx build. Lint native-dcap only where that toolchain is present.
+# No --all-features: outbe-dcap/outbe-tee native-dcap uses the pinned Intel
+# SGX/DCAP toolchain (headers + .so) available in the gramine-sgx build.
+# Lint both native-dcap package targets only where that toolchain is present.
 run = """
 cargo clippy --workspace --all-targets -- -D warnings
 if [ -f /usr/include/sgx_dcap_quoteverify.h ]; then
-  cargo clippy -p outbe-tee --all-targets --features native-dcap -- -D warnings
+  cargo clippy -p outbe-dcap -p outbe-tee --all-targets --features native-dcap -- -D warnings
 fi
 """
 

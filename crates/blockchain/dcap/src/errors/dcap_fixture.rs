@@ -1,11 +1,10 @@
 //! Typed errors for the `outbe-dcap-fixture` CLI binary.
 
-use std::fmt;
 use std::path::Path;
 use thiserror::Error;
 
 /// Errors returned by the `outbe-dcap-fixture` preparation and assembly tool.
-#[derive(Clone, Debug, PartialEq, Eq, Error)]
+#[derive(Debug, Error)]
 pub enum DcapFixtureError {
     /// Caller invoked the CLI with an invalid subcommand.
     #[error(
@@ -47,7 +46,8 @@ pub enum DcapFixtureError {
         /// Path that failed to read.
         path: String,
         /// Underlying I/O error message.
-        reason: String,
+        #[source]
+        reason: std::io::Error,
     },
 
     /// Filesystem create failed.
@@ -56,7 +56,8 @@ pub enum DcapFixtureError {
         /// Path that failed to create.
         path: String,
         /// Underlying I/O error message.
-        reason: String,
+        #[source]
+        reason: std::io::Error,
     },
 
     /// Filesystem write failed.
@@ -65,28 +66,30 @@ pub enum DcapFixtureError {
         /// Path that failed to write.
         path: String,
         /// Underlying I/O error message.
-        reason: String,
+        #[source]
+        reason: std::io::Error,
     },
 
     /// Canonical `TeePolicyV1` encoding failed.
     #[error("encode TeePolicyV1: {0}")]
-    EncodeTeePolicy(String),
+    EncodeTeePolicy(#[source] outbe_primitives::tee_attestation_v1::CodecError),
 
     /// Canonical `RegistrationIntentV1` encoding failed.
     #[error("encode RegistrationIntentV1: {0}")]
-    EncodeRegistrationIntent(String),
+    EncodeRegistrationIntent(#[source] outbe_primitives::tee_attestation_v1::CodecError),
 
     /// `RegistrationIntentV1` report-data derivation failed.
     #[error("derive RegistrationIntentV1 report_data: {0}")]
-    DeriveReportData(String),
+    DeriveReportData(#[source] outbe_primitives::tee_attestation_v1::CodecError),
 
     /// Capture metadata JSON serialization failed.
     #[error("encode capture metadata: {0}")]
-    EncodeCaptureMetadata(String),
+    EncodeCaptureMetadata(#[source] serde_json::Error),
 
     /// Fixture NodeHost signing key construction failed.
     #[error("construct fixture NodeHost key: {0}")]
-    ConstructFixtureNodeHostKey(String),
+    #[cfg(feature = "dcap-fixture-tool")]
+    ConstructFixtureNodeHostKey(#[source] k256::ecdsa::Error),
 
     /// Fixture NodeHost public key encoding failed.
     #[error("encode fixture NodeHost key")]
@@ -94,7 +97,7 @@ pub enum DcapFixtureError {
 
     /// `TeePolicyV1` hash calculation failed.
     #[error("hash TeePolicyV1: {0}")]
-    HashTeePolicy(String),
+    HashTeePolicy(#[source] outbe_primitives::tee_attestation_v1::CodecError),
 
     /// Lease expiration timestamp addition overflowed `u64`.
     #[error("requested_valid_until overflows u64")]
@@ -102,15 +105,15 @@ pub enum DcapFixtureError {
 
     /// Canonical `TeePolicyV1` decoding failed.
     #[error("decode canonical TeePolicyV1: {0}")]
-    DecodeTeePolicy(String),
+    DecodeTeePolicy(#[source] outbe_primitives::tee_attestation_v1::CodecError),
 
     /// Canonical `RegistrationIntentV1` decoding failed.
     #[error("decode canonical RegistrationIntentV1: {0}")]
-    DecodeRegistrationIntent(String),
+    DecodeRegistrationIntent(#[source] outbe_primitives::tee_attestation_v1::CodecError),
 
     /// Captured SGX quote measurement parsing failed.
     #[error("parse captured SGX quote: {0}")]
-    ParseCapturedQuote(String),
+    ParseCapturedQuote(#[source] super::QuoteParseError),
 
     /// Captured SGX quote report data differed from the canonical intent.
     #[error("quote REPORT_DATA does not match the canonical intent")]
@@ -118,7 +121,7 @@ pub enum DcapFixtureError {
 
     /// `capture-provenance.json` failed JSON decoding.
     #[error("decode capture-provenance.json: {0}")]
-    DecodeCaptureProvenance(String),
+    DecodeCaptureProvenance(#[source] serde_json::Error),
 
     /// Required collateral component file was missing from the capture set.
     #[error("missing captured component {0}")]
@@ -130,11 +133,11 @@ pub enum DcapFixtureError {
 
     /// Native QVL quote verification preflight failed.
     #[error("native QVL preflight failed: {0:?}")]
-    NativeQvlPreflightFailed(NativeQvlError),
+    NativeQvlPreflightFailed(#[source] NativeQvlError),
 
     /// Canonical `AttestationEvidenceV1` encoding failed for the valid fixture.
     #[error("encode valid AttestationEvidenceV1: {0}")]
-    EncodeValidEvidence(String),
+    EncodeValidEvidence(#[source] outbe_primitives::tee_attestation_v1::CodecError),
 
     /// Public DCAP verifier rejected the valid fixture evidence.
     #[error("valid evidence rejected with stable code 0x{code:04x}")]
@@ -156,7 +159,7 @@ pub enum DcapFixtureError {
 
     /// Canonical `AttestationEvidenceV1` encoding failed for the tampered fixture.
     #[error("encode tampered AttestationEvidenceV1: {0}")]
-    EncodeTamperedEvidence(String),
+    EncodeTamperedEvidence(#[source] outbe_primitives::tee_attestation_v1::CodecError),
 
     /// Tampered quote produced an unexpected reject code.
     #[error("tampered quote returned 0x{code:04x}, expected NativeVerificationFailed")]
@@ -167,7 +170,7 @@ pub enum DcapFixtureError {
 
     /// Fixture manifest JSON serialization failed.
     #[error("encode fixture manifest: {0}")]
-    EncodeFixtureManifest(String),
+    EncodeFixtureManifest(#[source] serde_json::Error),
 }
 
 /// Errors returned by the native Intel QVL quote verification boundary.
@@ -215,7 +218,7 @@ impl DcapFixtureError {
     pub fn read_path(path: &Path) -> impl FnOnce(std::io::Error) -> Self + '_ {
         move |error| Self::ReadPath {
             path: path.display().to_string(),
-            reason: error.to_string(),
+            reason: error,
         }
     }
 
@@ -223,7 +226,7 @@ impl DcapFixtureError {
     pub fn create_path(path: &Path) -> impl FnOnce(std::io::Error) -> Self + '_ {
         move |error| Self::CreatePath {
             path: path.display().to_string(),
-            reason: error.to_string(),
+            reason: error,
         }
     }
 
@@ -231,33 +234,36 @@ impl DcapFixtureError {
     pub fn write_path(path: &Path) -> impl FnOnce(std::io::Error) -> Self + '_ {
         move |error| Self::WritePath {
             path: path.display().to_string(),
-            reason: error.to_string(),
+            reason: error,
         }
     }
 
     /// Construct [`Self::EncodeTeePolicy`].
-    pub fn encode_tee_policy(error: impl fmt::Display) -> Self {
-        Self::EncodeTeePolicy(error.to_string())
+    pub fn encode_tee_policy(error: outbe_primitives::tee_attestation_v1::CodecError) -> Self {
+        Self::EncodeTeePolicy(error)
     }
 
     /// Construct [`Self::EncodeRegistrationIntent`].
-    pub fn encode_registration_intent(error: impl fmt::Display) -> Self {
-        Self::EncodeRegistrationIntent(error.to_string())
+    pub fn encode_registration_intent(
+        error: outbe_primitives::tee_attestation_v1::CodecError,
+    ) -> Self {
+        Self::EncodeRegistrationIntent(error)
     }
 
     /// Construct [`Self::DeriveReportData`].
-    pub fn derive_report_data(error: impl fmt::Display) -> Self {
-        Self::DeriveReportData(error.to_string())
+    pub fn derive_report_data(error: outbe_primitives::tee_attestation_v1::CodecError) -> Self {
+        Self::DeriveReportData(error)
     }
 
     /// Construct [`Self::EncodeCaptureMetadata`].
-    pub fn encode_capture_metadata(error: impl fmt::Display) -> Self {
-        Self::EncodeCaptureMetadata(error.to_string())
+    pub fn encode_capture_metadata(error: serde_json::Error) -> Self {
+        Self::EncodeCaptureMetadata(error)
     }
 
     /// Construct [`Self::ConstructFixtureNodeHostKey`].
-    pub fn construct_fixture_node_host_key(error: impl fmt::Display) -> Self {
-        Self::ConstructFixtureNodeHostKey(error.to_string())
+    #[cfg(feature = "dcap-fixture-tool")]
+    pub fn construct_fixture_node_host_key(error: k256::ecdsa::Error) -> Self {
+        Self::ConstructFixtureNodeHostKey(error)
     }
 
     /// Construct [`Self::EncodeFixtureNodeHostKey`].
@@ -266,28 +272,30 @@ impl DcapFixtureError {
     }
 
     /// Construct [`Self::HashTeePolicy`].
-    pub fn hash_tee_policy(error: impl fmt::Display) -> Self {
-        Self::HashTeePolicy(error.to_string())
+    pub fn hash_tee_policy(error: outbe_primitives::tee_attestation_v1::CodecError) -> Self {
+        Self::HashTeePolicy(error)
     }
 
     /// Construct [`Self::DecodeTeePolicy`].
-    pub fn decode_tee_policy(error: impl fmt::Display) -> Self {
-        Self::DecodeTeePolicy(error.to_string())
+    pub fn decode_tee_policy(error: outbe_primitives::tee_attestation_v1::CodecError) -> Self {
+        Self::DecodeTeePolicy(error)
     }
 
     /// Construct [`Self::DecodeRegistrationIntent`].
-    pub fn decode_registration_intent(error: impl fmt::Display) -> Self {
-        Self::DecodeRegistrationIntent(error.to_string())
+    pub fn decode_registration_intent(
+        error: outbe_primitives::tee_attestation_v1::CodecError,
+    ) -> Self {
+        Self::DecodeRegistrationIntent(error)
     }
 
     /// Construct [`Self::ParseCapturedQuote`].
-    pub fn parse_captured_quote(error: impl fmt::Display) -> Self {
-        Self::ParseCapturedQuote(error.to_string())
+    pub fn parse_captured_quote(error: super::QuoteParseError) -> Self {
+        Self::ParseCapturedQuote(error)
     }
 
     /// Construct [`Self::DecodeCaptureProvenance`].
-    pub fn decode_capture_provenance(error: impl fmt::Display) -> Self {
-        Self::DecodeCaptureProvenance(error.to_string())
+    pub fn decode_capture_provenance(error: serde_json::Error) -> Self {
+        Self::DecodeCaptureProvenance(error)
     }
 
     /// Construct [`Self::MissingCapturedComponent`].
@@ -306,8 +314,8 @@ impl DcapFixtureError {
     }
 
     /// Construct [`Self::EncodeValidEvidence`].
-    pub fn encode_valid_evidence(error: impl fmt::Display) -> Self {
-        Self::EncodeValidEvidence(error.to_string())
+    pub fn encode_valid_evidence(error: outbe_primitives::tee_attestation_v1::CodecError) -> Self {
+        Self::EncodeValidEvidence(error)
     }
 
     /// Construct [`Self::ValidEvidenceRejected`].
@@ -321,12 +329,14 @@ impl DcapFixtureError {
     }
 
     /// Construct [`Self::EncodeTamperedEvidence`].
-    pub fn encode_tampered_evidence(error: impl fmt::Display) -> Self {
-        Self::EncodeTamperedEvidence(error.to_string())
+    pub fn encode_tampered_evidence(
+        error: outbe_primitives::tee_attestation_v1::CodecError,
+    ) -> Self {
+        Self::EncodeTamperedEvidence(error)
     }
 
     /// Construct [`Self::EncodeFixtureManifest`].
-    pub fn encode_fixture_manifest(error: impl fmt::Display) -> Self {
-        Self::EncodeFixtureManifest(error.to_string())
+    pub fn encode_fixture_manifest(error: serde_json::Error) -> Self {
+        Self::EncodeFixtureManifest(error)
     }
 }
