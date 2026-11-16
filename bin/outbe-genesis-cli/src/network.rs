@@ -27,7 +27,7 @@ pub const DEFAULT_DKG_PREPARE_WINDOW_BLOCKS: u64 = 30;
 pub const DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS: u64 = 30;
 pub const DEFAULT_CONSENSUS_P2P_PORT: u16 = 30400;
 pub const DEFAULT_PREFUND_COEN_UNITS: u128 = 100_000_000 * 1_000_000_000_000_000_000;
-pub const FOUNDER_COUNT: usize = 4;
+pub const MIN_FOUNDER_COUNT: usize = 4;
 pub const MAX_GENESIS_AGE_SECONDS: i64 = 6 * 60 * 60;
 
 const PACKAGED_ASSETS: &str = "share/outbe-genesis";
@@ -237,10 +237,10 @@ fn validate_founders(obj: &Map<String, Value>) -> Result<(), GenesisError> {
     let hosts = obj
         .get("validators")
         .and_then(Value::as_array)
-        .filter(|h| h.len() == FOUNDER_COUNT)
+        .filter(|hosts| hosts.len() >= MIN_FOUNDER_COUNT)
         .ok_or_else(|| {
             GenesisError::validation(format!(
-                "`validators` must list exactly {FOUNDER_COUNT} hosts (the bootstrap network profile uses four founders)"
+                "`validators` must list at least {MIN_FOUNDER_COUNT} founding hosts"
             ))
         })?;
     if let Some((index, _)) = hosts

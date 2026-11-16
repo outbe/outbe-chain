@@ -12,8 +12,8 @@
 
 chain_id: 424242
 
-# One host or IP per founding validator, in order. The bootstrap profile fixes the founding
-# committee at four members. Append `:port` to give one validator a consensus
+# One host or IP per founding validator, in order. At least four founders are
+# required. Append `:port` to give one validator a consensus
 # port of its own (`- 10.0.0.3:31555`).
 validators:
   - 10.0.0.1

@@ -177,7 +177,18 @@ fn config_validation_matrix_and_rejections() {
         json!({"validators": ["10.0.0.1", "10.0.0.2", "10.0.0.3"]}),
     ))
     .expect_err("wrong validator count");
-    assert!(err.to_string().contains("exactly 4"));
+    assert!(err.to_string().contains("at least 4"));
+
+    for count in [4_usize, 5, 7] {
+        let validators: Vec<Value> = (1..=count)
+            .map(|index| Value::String(format!("10.0.0.{index}")))
+            .collect();
+        validate_config(&merge_obj(
+            minimal_config("./keys"),
+            json!({"validators": validators}),
+        ))
+        .unwrap_or_else(|error| panic!("{count} founders must validate: {error}"));
+    }
 
     let mut no_keys_dir = minimal_config("./keys");
     no_keys_dir.as_object_mut().expect("obj").remove("keys_dir");

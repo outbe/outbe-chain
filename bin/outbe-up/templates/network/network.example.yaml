@@ -1,0 +1,58 @@
+# Minimal four-founder development network. Add more `founders` entries for a
+# larger founding committee; at least four are required.
+version: 1
+name: local-testnet
+network: testnet
+chain_id: 54322345
+software_profile: development
+
+founders:
+  - name: validator-0
+    ssh:
+      host: 192.0.2.10
+      user: ubuntu
+      port: 22
+    advertise_ip: 10.0.0.10
+    rpc_bind_ip: 127.0.0.1
+  - name: validator-1
+    ssh:
+      host: 192.0.2.11
+      user: ubuntu
+      port: 22
+    advertise_ip: 10.0.0.11
+    rpc_bind_ip: 127.0.0.1
+  - name: validator-2
+    ssh:
+      host: 192.0.2.12
+      user: ubuntu
+      port: 22
+    advertise_ip: 10.0.0.12
+    rpc_bind_ip: 127.0.0.1
+  - name: validator-3
+    ssh:
+      host: 192.0.2.13
+      user: ubuntu
+      port: 22
+    advertise_ip: 10.0.0.13
+    rpc_bind_ip: 127.0.0.1
+
+topology:
+  # Enable only when consensus peers use private/RFC1918 addresses.
+  use_local_defaults: true
+
+genesis:
+  # Omit timestamp for a fresh launch time. Set it to reproduce one exact genesis.
+  # timestamp: 1793795928
+  epoch_length_blocks: 1200
+  dkg_prepare_window_blocks: 300
+  dkg_activation_grace_blocks: 300
+  prefunded_accounts:
+    "0x1111111111111111111111111111111111111111": "1000000000000000000000"
+  # Additional keys accepted by outbe-genesis-cli, for example oracle or
+  # protocol overrides. Network identity, hosts, keys, and runtime fields are
+  # managed by outbe-up and cannot be overridden here.
+  overrides: {}
+
+tee:
+  policy: gramine-direct-dev
+  runtime: mock

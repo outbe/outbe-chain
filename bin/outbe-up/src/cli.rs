@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 use eyre::Result;
 
-use crate::validator;
+use crate::{network, validator};
 
 #[derive(Debug, Parser)]
 #[command(name = "outbe-up", about = "Outbe node operator CLI")]
@@ -14,10 +14,27 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Build and operate a new founding-validator network.
+    Network(NetworkArgs),
     /// Prepare, synchronize, promote, and inspect a validator host.
     Validator(ValidatorArgs),
     #[command(hide = true)]
     Internal(InternalArgs),
+}
+
+#[derive(Debug, Args)]
+struct NetworkArgs {
+    #[command(subcommand)]
+    command: NetworkCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum NetworkCommand {
+    /// Write a documented network configuration template.
+    Init {
+        #[arg(long, default_value = "network.yaml")]
+        output: PathBuf,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -76,6 +93,9 @@ struct WaitArgs {
 impl Cli {
     pub async fn run(self) -> Result<()> {
         match self.command {
+            Command::Network(args) => match args.command {
+                NetworkCommand::Init { output } => network::config::init(&output),
+            },
             Command::Validator(args) => match args.command {
                 ValidatorCommand::ConfigExample => {
                     print!("{}", validator::assets::OPERATOR_CONFIG_EXAMPLE);
@@ -112,6 +132,10 @@ mod tests {
 
     #[test]
     fn lifecycle_commands_parse() {
+        assert!(
+            Cli::try_parse_from(["outbe-up", "network", "init", "--output", "network.yaml",])
+                .is_ok()
+        );
         assert!(Cli::try_parse_from([
             "outbe-up",
             "validator",
