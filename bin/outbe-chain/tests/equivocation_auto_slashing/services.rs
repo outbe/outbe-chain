@@ -1,5 +1,6 @@
 use alloy_primitives::{B256, U256};
-use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
+use outbe_consensus::bls::{self, KeyBackend};
+use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1, NodeIdV1};
 use std::{
     io::{BufRead, BufReader, Write},
     net::TcpListener,
@@ -12,6 +13,24 @@ use std::{
     thread,
     time::Duration,
 };
+
+/// The identity the node proves with its reth p2p key, which the mock enclave binds to.
+fn reth_node_id(validator: &Path) -> NodeIdV1 {
+    let secret = bls::load_secp256k1_secret(
+        &validator.join("reth-p2p-secret.hex"),
+        &KeyBackend::Plaintext,
+    )
+    .unwrap();
+    let key = k256::ecdsa::SigningKey::from_bytes((&secret).into()).unwrap();
+    NodeIdV1 {
+        reth_p2p_public: key
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .try_into()
+            .unwrap(),
+    }
+}
 
 pub fn enclave(genesis: &Path, validator: &Path, index: usize) -> String {
     let seeded =
@@ -35,7 +54,11 @@ pub fn enclave(genesis: &Path, validator: &Path, index: usize) -> String {
     let context = outbe_tee_enclave::transport::ServerContext {
         chain_id: B256::from(binding.chain_id),
         initialization: Arc::new(
-            outbe_tee_enclave::initialization::factory::development_for_network(binding),
+            outbe_tee_enclave::initialization::factory::development_for_network(
+                binding,
+                &keys,
+                reth_node_id(validator),
+            ),
         ),
         offer_key: Arc::new(OnceLock::new()),
         boot: Some(Arc::new(boot)),
