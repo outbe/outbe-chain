@@ -86,9 +86,10 @@ impl Cluster {
             .unwrap();
             peers.push((key.public_key(), listen));
             addresses.push(validator["address"].as_str().unwrap().parse().unwrap());
+            validator["feeder_address"] =
+                json!(format!("{:#x}", Address::repeat_byte(index as u8 + 0x51)));
             validator["radicle_node_id"] = json!(hex::encode([index as u8 + 1; 32]));
             validator["p2p_address"] = json!(listen.to_string());
-            validator["feeder_address"] = json!(Address::repeat_byte(0xf0 + index as u8));
         }
         write(&manifest, &json!(validators));
         let base = root.join("base.json");
