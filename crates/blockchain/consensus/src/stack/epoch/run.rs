@@ -793,6 +793,12 @@ where
         .child("finalize_verify")
         .spawn(move |_ctx| finalize_verify_actor.run());
 
+    let (equivocation_verify_actor, equivocation_verify_mailbox) =
+        crate::EquivocationVerifyActor::new(bridge.equivocation_evidence_mailbox().clone());
+    let _equivocation_verify_handle = ctx
+        .child("equivocation_verify")
+        .spawn(move |_ctx| equivocation_verify_actor.run());
+
     let executor_handle_task = executor_actor
         .with_ancestry_readiness(ancestry_readiness.clone())
         .with_finalized_execution_barrier(finalized_execution_barrier)
@@ -876,6 +882,7 @@ where
         finalization_view,
         finalized_parent_cert_store,
         finalize_verify_mailbox,
+        equivocation_verify_mailbox,
         application_drain,
         radicle_status,
         radicle_updates,

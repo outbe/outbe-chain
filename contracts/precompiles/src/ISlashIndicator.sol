@@ -12,6 +12,8 @@ interface ISlashIndicator {
     error ConflictingVotesMustBeDifferentProposals();
     error ConflictingVoteSignaturesInvalid();
     error EvidenceAlreadyProcessed();
+    error ValidatorAlreadyPenalized(address validator, uint64 epoch);
+    error ValidatorNotSlashable(address validator, uint8 status);
     error EvidenceBlockTooShort();
     error EvidencePubkeySlice();
     error EvidenceSignatureSlice();

@@ -60,6 +60,7 @@ impl<C: SolCall> ZeroFeeHook for ValidatorCallHook<C> {
     fn authorize_fee_waiver(
         &self,
         storage: StorageHandle,
+        _tx: &ZeroFeeTransaction<'_>,
         candidate: ZeroFeeCandidate,
     ) -> Result<ZeroFeeAuthorization, ZeroFeePolicyError> {
         let subject = (self.resolve_validator)(storage, candidate.signer)?;

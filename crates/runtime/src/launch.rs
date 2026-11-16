@@ -97,9 +97,12 @@ where
     let launcher_shutdown = process_shutdown.clone();
     let runtime_config = runtime_config_for_command(&cli.command);
     let command_result = execution_runtime::run_with_execution_runtime(runtime_config, |runner| {
-    cli.with_runner_and_components::<OutbeNode>(runner, components, async move |builder, args| {
-        let shutdown = launcher_shutdown.clone();
-        let result: eyre::Result<()> = async move {
+        cli.with_runner_and_components::<OutbeNode>(
+            runner,
+            components,
+            async move |builder, args| {
+                let shutdown = launcher_shutdown.clone();
+                let result: eyre::Result<()> = async move {
         let mut builder = builder;
         let _cancel_on_launcher_drop = shutdown_token.clone().drop_guard();
         args.validate()?;
@@ -128,7 +131,9 @@ where
             .to_path_buf();
         install_selected_reth_identity(builder.config_mut(), &args)?;
         let (evm_signer, local_tee_identity, tee_admission_anchor) =
-            tee::prepare(builder.config(), &args, node_data_dir.clone(), &initial_tee_policy).await?;
+            tee::prepare(
+                builder.config(), &args, node_data_dir.clone(), &initial_tee_policy,
+            ).await?;
 
         validate_adr005_node_mode(args.is_validator, args.upstream.is_some())?;
         bridge.set_operating_mode(if args.is_validator {
@@ -140,7 +145,7 @@ where
         let genesis_hash = builder.config().chain.genesis_hash();
         let outbe_execution = build_outbe_execution(
             bridge.clone(),
-            evm_signer,
+            evm_signer.clone(),
             shutdown.clone(),
             Arc::clone(&runtime_for_launcher),
         );
@@ -258,7 +263,9 @@ where
             &RethExecutionBackend::new(node.clone()),
         )?
         .min_block_time;
-        let txpool_maintenance_handle = tokio::spawn(shutdown.track_task("txpool maintenance task", outbe_txpool::maintain::maintain_outbe_pool(
+        let txpool_maintenance_handle = tokio::spawn(shutdown.track_task(
+            "txpool maintenance task",
+            outbe_txpool::maintain::maintain_outbe_pool(
             node.provider.clone(),
             node.pool.clone(),
             outbe_txpool::maintain::OutbePoolMaintainConfig {
@@ -267,6 +274,18 @@ where
                 queued_lifetime: crate::configuration::OUTBE_TXPOOL_QUEUED_LIFETIME,
             },
         )));
+
+        let equivocation_slasher_handle = if args.is_validator {
+            evm_signer.map(|signer| crate::equivocation_slasher::spawn(
+                node.clone(),
+                signer,
+                bridge.equivocation_evidence_mailbox().clone(),
+                min_block_time,
+                shutdown_token.clone(),
+            ))
+        } else {
+            None
+        };
 
         outbe_consensus::validators::check_binary_version_compatibility(
             runtime_for_launcher.as_ref(),
@@ -316,19 +335,21 @@ where
                 radicle_observer,
                 tee_canary_handle,
                 txpool_maintenance_handle,
+                equivocation_slasher_handle,
                 upgrade_handle,
             },
         ).await;
 
         Ok(())
         }.await;
-        if let Err(error) = result {
-            // Enter Reth's normal graceful teardown even on launcher failure.
-            // The process result below retains the error. This is not success.
-            launcher_shutdown.record_failure(error);
-        }
-        Ok(())
-    })
+                if let Err(error) = result {
+                    // Enter Reth's normal graceful teardown even on launcher failure.
+                    // The process result below retains the error. This is not success.
+                    launcher_shutdown.record_failure(error);
+                }
+                Ok(())
+            },
+        )
     })
     .wrap_err("execution node failed");
 

@@ -33,6 +33,10 @@ pub mod test_signing;
 mod tests;
 
 pub use boundary::prepare_boundary_epoch_counters;
+pub use equivocation::{
+    preflight_equivocation_evidence, validate_equivocation_wire_pair, EquivocationPreflightError,
+    VerifiedSlashTarget,
+};
 pub use errors::LivenessError;
 pub use liveness::{
     enforce_enclave_upgrade_deadline, enforce_tee_lease_deadlines, run_validator_liveness,

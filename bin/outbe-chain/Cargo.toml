@@ -49,6 +49,14 @@ tar.workspace = true
 reth-primitives-traits.workspace = true
 
 [dev-dependencies]
+outbe-tee-enclave = { workspace = true, features = ["mock"] }
+outbe-genesis-cli.workspace = true
+commonware-p2p.workspace = true
+commonware-runtime.workspace = true
+tokio.workspace = true
+multibase.workspace = true
+alloy-sol-types.workspace = true
+
 outbe-nodfactory = { workspace = true, features = ["test-utils"] }
 outbe-consensus = { workspace = true, features = ["test-utils"] }
 outbe-teeregistry.workspace = true
