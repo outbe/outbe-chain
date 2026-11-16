@@ -1,0 +1,18 @@
+[tasks.install]
+description = "Install dependencies using soldeer"
+run = "forge soldeer install"
+
+[tasks.build]
+description = "Build Safe deployment contracts"
+run = "forge build"
+
+[tasks.fmt]
+description = "Format Solidity code"
+run = "forge fmt"
+
+[tasks.deploy]
+description = "Deploy a Safe on Outbe"
+run = '''
+set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
+forge script script/DeploySafe.s.sol:DeploySafe --rpc-url "$NETWORK" --broadcast --slow -vvv --skip-simulation
+'''
