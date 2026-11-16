@@ -35,6 +35,7 @@ pub trait TxPoolZeroFeePolicy: Send + Sync + std::fmt::Debug {
     fn authorize(
         &self,
         storage: StorageHandle<'_>,
+        tx: &ZeroFeeTransaction<'_>,
         candidate: ZeroFeeCandidate,
     ) -> Result<ZeroFeeAuthorization, ZeroFeePolicyError>;
 
@@ -87,6 +88,7 @@ impl TxPoolZeroFeePolicy for NormalFeePolicy {
     fn authorize(
         &self,
         _storage: StorageHandle<'_>,
+        _tx: &ZeroFeeTransaction<'_>,
         candidate: ZeroFeeCandidate,
     ) -> Result<ZeroFeeAuthorization, ZeroFeePolicyError> {
         Err(ZeroFeePolicyError::UnknownHook(candidate.hook))

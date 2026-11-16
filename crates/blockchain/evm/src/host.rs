@@ -80,6 +80,7 @@ pub trait UserTxFeePolicy: std::fmt::Debug + Send + Sync {
     fn authorize_fee_waiver(
         &self,
         storage: StorageHandle<'_>,
+        tx: &ZeroFeeTransaction<'_>,
         candidate: ZeroFeeCandidate,
     ) -> std::result::Result<ZeroFeeAuthorization, ZeroFeePolicyError>;
 
@@ -262,6 +263,7 @@ impl UserTxFeePolicy for FailClosedFeePolicy {
     fn authorize_fee_waiver(
         &self,
         _storage: StorageHandle<'_>,
+        _tx: &ZeroFeeTransaction<'_>,
         _candidate: ZeroFeeCandidate,
     ) -> std::result::Result<ZeroFeeAuthorization, ZeroFeePolicyError> {
         Err(missing().into())

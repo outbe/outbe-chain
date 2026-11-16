@@ -1,4 +1,5 @@
 use super::*;
+use outbe_primitives::zero_fee_types::ZeroFeeCandidate;
 
 /// Record one zero-fee soft-failure accepted within the block budget.
 pub fn record_zero_fee_soft_failure_metric() {
@@ -149,7 +150,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     const MAX_ZERO_FEE_SOFT_FAILURES_PER_BLOCK: u32 = 64;
 
     /// Account for one zero-fee soft-failure and enforce the
-    /// per-block cap.
+    /// global and per-hook block caps, checking both before mutating either counter.
     ///
     /// Returns `Ok(())` when the soft-failure is within the per-block budget, and
     /// records it. Past [`Self::MAX_ZERO_FEE_SOFT_FAILURES_PER_BLOCK`] it
@@ -169,13 +170,28 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     pub fn record_zero_fee_soft_failure(
         &mut self,
         tx_hash: B256,
+        candidate: Option<ZeroFeeCandidate>,
     ) -> Result<(), BlockExecutionError> {
-        if self.zero_fee_soft_failures >= Self::MAX_ZERO_FEE_SOFT_FAILURES_PER_BLOCK {
+        let exceeded_cap =
+            if self.zero_fee_soft_failures >= Self::MAX_ZERO_FEE_SOFT_FAILURES_PER_BLOCK {
+                Some(Self::MAX_ZERO_FEE_SOFT_FAILURES_PER_BLOCK)
+            } else {
+                candidate.and_then(|cand| {
+                    cand.max_soft_failures_per_block().filter(|cap| {
+                        self.zero_fee_hook_soft_failures
+                            .get(&cand.hook.id())
+                            .copied()
+                            .unwrap_or(0)
+                            >= *cap
+                    })
+                })
+            };
+        if let Some(cap) = exceeded_cap {
             record_zero_fee_cap_exceeded_metric();
             let reason = format!(
                 "zero-fee soft-failure cap ({}) exceeded for this block; tx rejected to bound \
                  block stuffing",
-                Self::MAX_ZERO_FEE_SOFT_FAILURES_PER_BLOCK
+                cap
             );
             return Err(BlockExecutionError::Validation(
                 BlockValidationError::InvalidTx {
@@ -184,16 +200,30 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
                 },
             ));
         }
-        self.zero_fee_soft_failures = self.zero_fee_soft_failures.saturating_add(1);
+        self.zero_fee_soft_failures += 1;
+        if let Some(cand) = candidate {
+            *self
+                .zero_fee_hook_soft_failures
+                .entry(cand.hook.id())
+                .or_default() += 1;
+        }
         record_zero_fee_soft_failure_metric();
         Ok(())
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
+    use alloy_evm::{EvmEnv, EvmFactory};
     use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+    use outbe_primitives::zero_fee_types::{ZeroFeeCandidate, ZeroFeeHookTag};
+    use revm::{
+        context::{BlockEnv, CfgEnv},
+        database::{EmptyDB, State},
+        inspector::NoOpInspector,
+        primitives::hardfork::SpecId,
+    };
 
     #[test]
     fn zero_fee_soft_failure_metrics_respect_block_cap() {
@@ -205,13 +235,13 @@ mod tests {
                 with_executor(|mut executor| {
                     for _ in 0..64 {
                         executor
-                            .record_zero_fee_soft_failure(B256::ZERO)
+                            .record_zero_fee_soft_failure(B256::ZERO, None)
                             .expect("soft-failure within budget");
                     }
                     if try_over_cap {
                         let hash = B256::repeat_byte(1);
                         assert!(matches!(
-                            executor.record_zero_fee_soft_failure(hash),
+                            executor.record_zero_fee_soft_failure(hash, None),
                             Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                                 hash: rejected_hash, ..
                             })) if rejected_hash == hash
@@ -241,7 +271,64 @@ mod tests {
         }
     }
 
-    fn with_executor(f: impl FnOnce(OutbeBlockExecutor<'_, ()>)) {
+    #[test]
+    fn zero_fee_hook_caps_are_atomic_and_isolated() {
+        with_executor(|mut executor| {
+            let hook = ZeroFeeHookTag::new(3, "SlashEquivocation", Some(1))
+                .with_max_soft_failures_per_block(4);
+            let candidate = ZeroFeeCandidate::new(hook, Address::ZERO);
+            for _ in 0..4 {
+                executor
+                    .record_zero_fee_soft_failure(B256::ZERO, Some(candidate))
+                    .unwrap();
+            }
+            let hash = B256::repeat_byte(1);
+            assert!(matches!(
+                executor.record_zero_fee_soft_failure(hash, Some(candidate)),
+                Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
+                    hash: rejected_hash, ..
+                })) if rejected_hash == hash
+            ));
+            assert_eq!(executor.zero_fee_soft_failures, 4);
+            assert_eq!(executor.zero_fee_hook_soft_failures.get(&3), Some(&4));
+            for tag in [
+                ZeroFeeHookTag::new(4, "OtherCapped", None).with_max_soft_failures_per_block(4),
+                ZeroFeeHookTag::new(5, "Uncapped", None),
+            ] {
+                executor
+                    .record_zero_fee_soft_failure(
+                        B256::ZERO,
+                        Some(ZeroFeeCandidate::new(tag, Address::ZERO)),
+                    )
+                    .unwrap();
+                assert_eq!(
+                    executor.zero_fee_hook_soft_failures.get(&tag.id()),
+                    Some(&1)
+                );
+            }
+            for _ in 6..64 {
+                executor
+                    .record_zero_fee_soft_failure(B256::ZERO, None)
+                    .unwrap();
+            }
+            let before = executor.zero_fee_hook_soft_failures.clone();
+            let fresh = ZeroFeeCandidate::new(ZeroFeeHookTag::new(6, "Fresh", None), Address::ZERO);
+            assert!(executor
+                .record_zero_fee_soft_failure(hash, Some(fresh))
+                .is_err());
+            assert_eq!(executor.zero_fee_soft_failures, 64);
+            assert_eq!(executor.zero_fee_hook_soft_failures, before);
+        });
+        with_executor(|executor| {
+            assert_eq!(executor.zero_fee_soft_failures, 0);
+            assert!(executor.zero_fee_hook_soft_failures.is_empty());
+        });
+    }
+
+    pub(crate) type TestEvm =
+        <crate::OutbeEvmFactory as EvmFactory>::Evm<State<EmptyDB>, NoOpInspector>;
+
+    pub(crate) fn with_executor(f: impl FnOnce(OutbeBlockExecutor<'_, TestEvm>)) {
         let chain_spec = Arc::new(
             reth_chainspec::MAINNET
                 .as_ref()
@@ -249,9 +336,20 @@ mod tests {
                 .map_header(OutbeHeader::new),
         );
         let receipt_builder = RethReceiptBuilder::default();
-        // Soft-failure accounting never executes EVM transactions.
+        let evm = crate::OutbeEvmFactory::new(crate::host::stub_host()).create_evm(
+            State::builder().with_database(EmptyDB::default()).build(),
+            EvmEnv {
+                cfg_env: CfgEnv::new()
+                    .with_chain_id(1)
+                    .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
+                block_env: BlockEnv {
+                    gas_limit: 30_000_000,
+                    ..Default::default()
+                },
+            },
+        );
         let inner = EthBlockExecutor::new(
-            (),
+            evm,
             alloy_evm::eth::EthBlockExecutionCtx {
                 parent_hash: B256::ZERO,
                 parent_beacon_block_root: None,
