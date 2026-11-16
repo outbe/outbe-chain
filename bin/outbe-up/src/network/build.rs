@@ -5,7 +5,7 @@ use outbe_genesis_cli::{
     attestation::run_tee_stage, create_genesis::create_seeded_genesis, launch_bundle,
 };
 use outbe_software_bundle::{sha256_file, verify_and_extract, SoftwareManifest};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use walkdir::WalkDir;
 
@@ -21,70 +21,70 @@ use super::config::{NetworkConfig, TeePolicy};
 
 const MANIFEST_VERSION: u32 = 1;
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
-enum BuildState {
+pub(super) enum BuildState {
     Complete,
     SigningRequired,
 }
 
-#[derive(Debug, Serialize)]
-struct NetworkManifest {
-    version: u32,
-    state: BuildState,
-    name: String,
-    network: String,
-    chain_id: u64,
-    config_sha256: String,
-    software: SoftwareIdentity,
-    genesis: GenesisIdentity,
-    founders: Vec<FounderArtifact>,
-    joining: Option<JoiningArtifact>,
+#[derive(Debug, Deserialize, Serialize)]
+pub(super) struct NetworkManifest {
+    pub(super) version: u32,
+    pub(super) state: BuildState,
+    pub(super) name: String,
+    pub(super) network: String,
+    pub(super) chain_id: u64,
+    pub(super) config_sha256: String,
+    pub(super) software: SoftwareIdentity,
+    pub(super) genesis: GenesisIdentity,
+    pub(super) founders: Vec<FounderArtifact>,
+    pub(super) joining: Option<JoiningArtifact>,
 }
 
-#[derive(Debug, Serialize)]
-struct SoftwareIdentity {
-    archive_sha256: String,
-    commit: String,
-    release_tag: String,
-    profile: String,
-    target: String,
+#[derive(Debug, Deserialize, Serialize)]
+pub(super) struct SoftwareIdentity {
+    pub(super) archive_sha256: String,
+    pub(super) commit: String,
+    pub(super) release_tag: String,
+    pub(super) profile: String,
+    pub(super) target: String,
 }
 
-#[derive(Debug, Serialize)]
-struct GenesisIdentity {
-    seeded_path: String,
-    seeded_sha256: String,
-    final_path: Option<String>,
-    final_sha256: Option<String>,
-    genesis_block_hash: Option<String>,
+#[derive(Debug, Deserialize, Serialize)]
+pub(super) struct GenesisIdentity {
+    pub(super) seeded_path: String,
+    pub(super) seeded_sha256: String,
+    pub(super) final_path: Option<String>,
+    pub(super) final_sha256: Option<String>,
+    pub(super) genesis_block_hash: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct FounderArtifact {
-    index: usize,
-    name: String,
-    ssh_host: String,
-    advertise_ip: Ipv4Addr,
-    validator_address: String,
-    consensus_public_key: String,
-    archive: Option<String>,
-    archive_sha256: Option<String>,
+#[derive(Debug, Deserialize, Serialize)]
+pub(super) struct FounderArtifact {
+    pub(super) index: usize,
+    pub(super) name: String,
+    pub(super) ssh_host: String,
+    pub(super) advertise_ip: Ipv4Addr,
+    pub(super) validator_address: String,
+    pub(super) consensus_public_key: String,
+    pub(super) archive: Option<String>,
+    pub(super) archive_sha256: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct JoiningArtifact {
-    bundle: String,
-    bundle_sha256: String,
-    config_example: String,
+#[derive(Debug, Deserialize, Serialize)]
+pub(super) struct JoiningArtifact {
+    pub(super) bundle: String,
+    pub(super) bundle_sha256: String,
+    pub(super) config_example: String,
 }
 
-struct BuildArtifacts<'a> {
-    root: &'a Path,
-    software_root: &'a Path,
-    software: &'a SoftwareManifest,
-    config: &'a NetworkConfig,
-    validators: &'a [Value],
+pub(super) struct BuildArtifacts<'a> {
+    pub(super) root: &'a Path,
+    pub(super) software_root: &'a Path,
+    pub(super) software: &'a SoftwareManifest,
+    pub(super) config: &'a NetworkConfig,
+    pub(super) validators: &'a [Value],
 }
 
 pub fn run(
@@ -260,7 +260,7 @@ fn generate_keys(config: &NetworkConfig, software: &Path, keys: &Path) -> Result
     Ok(())
 }
 
-fn legacy_config(config: &NetworkConfig, software: &Path, keys: &Path) -> Result<Value> {
+pub(super) fn legacy_config(config: &NetworkConfig, software: &Path, keys: &Path) -> Result<Value> {
     let mut root = config
         .genesis
         .overrides
@@ -369,7 +369,7 @@ fn rpc_bind(config: &NetworkConfig) -> Result<String> {
     Ok(first.to_string())
 }
 
-fn founder_artifacts(
+pub(super) fn founder_artifacts(
     root: &Path,
     config: &NetworkConfig,
     validators: &[Value],
@@ -399,12 +399,14 @@ fn founder_artifacts(
         .collect()
 }
 
-fn build_joining_artifacts(artifacts: &BuildArtifacts<'_>) -> Result<JoiningArtifact> {
+pub(super) fn build_joining_artifacts(artifacts: &BuildArtifacts<'_>) -> Result<JoiningArtifact> {
     let joining = artifacts.root.join("joining");
     fs::create_dir(&joining)?;
     let mut files = Vec::new();
+    let system_gramine = matches!(artifacts.config.tee.runtime, EnclaveRuntime::SystemGramine);
     for file in &artifacts.software.files {
         let destination = match file.path.strip_prefix("bin/") {
+            Some("outbe-tee-enclave") if system_gramine => None,
             Some(name) => Some(name.to_owned()),
             None if file.path == ".bb-crs/bn254_g1.dat" => Some(file.path.clone()),
             None => None,
@@ -422,6 +424,51 @@ fn build_joining_artifacts(artifacts: &BuildArtifacts<'_>) -> Result<JoiningArti
         source: artifacts.root.join("genesis.json"),
         mode: 0o644,
     });
+    let sgx = artifacts.root.join("sgx");
+    if sgx.is_dir() {
+        if system_gramine {
+            for (path, source, mode) in [
+                (
+                    "outbe-tee-enclave",
+                    sgx.join("bin/outbe-tee-enclave"),
+                    0o755,
+                ),
+                (
+                    "network-descriptor-v1.bin",
+                    sgx.join("network-descriptor-v1.bin"),
+                    0o644,
+                ),
+                (
+                    "outbe-tee-enclave.manifest.sgx",
+                    sgx.join("outbe-tee-enclave.manifest.sgx"),
+                    0o644,
+                ),
+                (
+                    "outbe-tee-enclave.sig",
+                    sgx.join("outbe-tee-enclave.sig"),
+                    0o644,
+                ),
+            ] {
+                files.push(BundleInput {
+                    path: path.into(),
+                    source,
+                    mode,
+                });
+            }
+        } else if matches!(artifacts.config.tee.runtime, EnclaveRuntime::BundledSgx) {
+            for entry in WalkDir::new(&sgx).follow_links(false) {
+                let entry = entry?;
+                if entry.file_type().is_file() {
+                    let relative = entry.path().strip_prefix(&sgx)?.to_string_lossy();
+                    files.push(BundleInput {
+                        path: format!("sgx/{relative}"),
+                        source: entry.path().to_owned(),
+                        mode: entry.metadata()?.permissions().mode() & 0o777,
+                    });
+                }
+            }
+        }
+    }
     let bundle_path = joining.join("outbe-validator-operator-bundle.tar.zst");
     bundle::create_archive(&bundle_path, files)?;
 
@@ -468,7 +515,7 @@ fn build_joining_artifacts(artifacts: &BuildArtifacts<'_>) -> Result<JoiningArti
     })
 }
 
-fn required_validator_field<'a>(validator: &'a Value, name: &str) -> Result<&'a str> {
+pub(super) fn required_validator_field<'a>(validator: &'a Value, name: &str) -> Result<&'a str> {
     validator
         .get(name)
         .and_then(Value::as_str)
@@ -499,7 +546,7 @@ fn write_signing_request(
     Ok(())
 }
 
-fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
+pub(super) fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
     ensure!(
         source.is_dir(),
         "keys directory does not exist: {}",
