@@ -63,6 +63,24 @@ enum NetworkCommand {
         #[arg(long)]
         identity: Option<PathBuf>,
     },
+    /// Start every founder and wait for finalized consensus.
+    Start {
+        #[arg(long)]
+        build: PathBuf,
+        #[arg(long)]
+        identity: Option<PathBuf>,
+        #[arg(long, default_value_t = 600)]
+        timeout: u64,
+    },
+    /// Show the coordinated state of every founding validator.
+    Status {
+        #[arg(long)]
+        build: PathBuf,
+        #[arg(long)]
+        identity: Option<PathBuf>,
+        #[arg(long)]
+        watch: bool,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -137,6 +155,23 @@ impl Cli {
                 NetworkCommand::Prepare { build, identity } => {
                     network::prepare::run(&build, identity.as_deref()).await
                 }
+                NetworkCommand::Start {
+                    build,
+                    identity,
+                    timeout,
+                } => {
+                    network::start::run(
+                        &build,
+                        identity.as_deref(),
+                        std::time::Duration::from_secs(timeout),
+                    )
+                    .await
+                }
+                NetworkCommand::Status {
+                    build,
+                    identity,
+                    watch,
+                } => network::status::show(&build, identity.as_deref(), watch).await,
             },
             Command::Validator(args) => match args.command {
                 ValidatorCommand::ConfigExample => {
@@ -188,6 +223,25 @@ mod tests {
             "network.yaml",
             "--output",
             "network-build",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "network",
+            "start",
+            "--build",
+            "network-final",
+            "--timeout",
+            "900",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "network",
+            "status",
+            "--build",
+            "network-final",
+            "--watch",
         ])
         .is_ok());
         assert!(Cli::try_parse_from([

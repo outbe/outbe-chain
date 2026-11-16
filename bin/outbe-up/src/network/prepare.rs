@@ -126,7 +126,7 @@ struct PrepareFounder<'a> {
 fn prepare_founder(input: PrepareFounder<'_>) -> Result<()> {
     let remote = input.ssh.capture(
         input.founder,
-        "set -eu; test \"$(uname -s)\" = Linux; test \"$(uname -m)\" = x86_64; command -v systemctl >/dev/null; command -v tar >/dev/null; command -v sha256sum >/dev/null; if [ \"$(id -u)\" -ne 0 ]; then command -v sudo >/dev/null; sudo -n true; fi; mktemp -d /tmp/outbe-network.XXXXXX",
+        "set -eu; test \"$(uname -s)\" = Linux; test \"$(uname -m)\" = x86_64; command -v systemctl >/dev/null; command -v tar >/dev/null; command -v sha256sum >/dev/null; command -v curl >/dev/null; if [ \"$(id -u)\" -ne 0 ]; then command -v sudo >/dev/null; sudo -n true; fi; mktemp -d /tmp/outbe-network.XXXXXX",
     )?;
     ensure!(
         remote.starts_with("/tmp/outbe-network.")
