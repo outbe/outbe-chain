@@ -60,6 +60,24 @@ pub enum SlashIndicatorError {
     #[error("evidence already processed")]
     EvidenceAlreadyProcessed,
 
+    /// The validator already received an equivocation felony in this epoch.
+    #[error("validator {validator} already penalized in epoch {epoch}")]
+    ValidatorAlreadyPenalized {
+        /// Penalized validator address.
+        validator: Address,
+        /// Consensus epoch number.
+        epoch: u64,
+    },
+
+    /// The validator lifecycle status does not permit slashing.
+    #[error("validator {validator} is not slashable (status: {status})")]
+    ValidatorNotSlashable {
+        /// Rejected validator address.
+        validator: Address,
+        /// Stored validator status code.
+        status: u8,
+    },
+
     /// Raw evidence block is shorter than 145 bytes.
     #[error("evidence block too short: need at least 145 bytes")]
     EvidenceBlockTooShort,
@@ -465,6 +483,16 @@ impl From<SlashIndicatorError> for PrecompileError {
             SlashIndicatorError::EvidenceAlreadyProcessed => PrecompileError::RevertBytes(
                 Bytes::from(ISlashIndicator::EvidenceAlreadyProcessed {}.abi_encode()),
             ),
+            SlashIndicatorError::ValidatorAlreadyPenalized { validator, epoch } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::ValidatorAlreadyPenalized { validator, epoch }.abi_encode(),
+                ))
+            }
+            SlashIndicatorError::ValidatorNotSlashable { validator, status } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::ValidatorNotSlashable { validator, status }.abi_encode(),
+                ))
+            }
             SlashIndicatorError::EvidenceBlockTooShort => PrecompileError::RevertBytes(
                 Bytes::from(ISlashIndicator::EvidenceBlockTooShort {}.abi_encode()),
             ),
@@ -836,6 +864,27 @@ mod tests {
 
     #[test]
     fn caller_revert_keeps_address_integer_hash_and_string_fields() {
+        let validator = Address::repeat_byte(0xa5);
+        let bytes = encoded(SlashIndicatorError::ValidatorAlreadyPenalized {
+            validator,
+            epoch: u64::MAX,
+        });
+        assert_eq!(&bytes[..4], &[0xad, 0x1d, 0x17, 0x7f]);
+        let decoded = ISlashIndicator::ValidatorAlreadyPenalized::abi_decode(&bytes)
+            .expect("already penalized payload");
+        assert_eq!(decoded.validator, validator);
+        assert_eq!(decoded.epoch, u64::MAX);
+
+        let bytes = encoded(SlashIndicatorError::ValidatorNotSlashable {
+            validator,
+            status: u8::MAX,
+        });
+        assert_eq!(&bytes[..4], &[0x1b, 0x94, 0x1a, 0x53]);
+        let decoded = ISlashIndicator::ValidatorNotSlashable::abi_decode(&bytes)
+            .expect("not slashable payload");
+        assert_eq!(decoded.validator, validator);
+        assert_eq!(decoded.status, u8::MAX);
+
         let caller = Address::repeat_byte(0x11);
         let bytes = encoded(SlashIndicatorError::SubmitterNotActiveValidator { caller, status: 3 });
         let decoded = ISlashIndicator::SubmitterNotActiveValidator::abi_decode(&bytes)
