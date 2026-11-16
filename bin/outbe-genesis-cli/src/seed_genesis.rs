@@ -12,13 +12,11 @@ use crate::seed_alloc::{
     seed_external_contracts, seed_protocol_constants, validate_stablecoin_namespace_alloc,
 };
 use crate::seed_codec::{
-    seed_profile_selector, StorageBuilder, ALL_PRECOMPILE_ADDRESSES, CREDIS_ADDRESS,
-    CREDIS_PROFILE_SLOT, GEM_ADDRESS, GEM_PROFILE_SLOT, INTEX_ADDRESS, INTEX_PROFILE_SLOT,
-    MARKER_CODE, NOD_ADDRESS, NOD_PROFILE_SLOT,
+    parse_header_timestamp, seed_profile_selector, StorageBuilder, ALL_PRECOMPILE_ADDRESSES,
+    CREDIS_ADDRESS, CREDIS_PROFILE_SLOT, GEM_ADDRESS, GEM_PROFILE_SLOT, INTEX_ADDRESS,
+    INTEX_PROFILE_SLOT, MARKER_CODE, NOD_ADDRESS, NOD_PROFILE_SLOT,
 };
-use crate::seed_economy::{
-    merge_storage_into_alloc, seed_coen, seed_economic_state,
-};
+use crate::seed_economy::{merge_storage_into_alloc, seed_coen, seed_economic_state};
 use crate::seed_system::seed_system_state;
 use crate::seed_validators::seed_founders;
 
@@ -78,8 +76,12 @@ pub fn apply_seed(
                 obj.insert("config".to_owned(), cfg);
             }
         }
+        let genesis_timestamp = genesis
+            .get("timestamp")
+            .map(|_| parse_header_timestamp(genesis))
+            .transpose()?;
         let alloc = ensure_object_field(genesis, "alloc")?;
-        seed_economic_state(seed, alloc)?;
+        seed_economic_state(seed, genesis_timestamp, alloc)?;
         let contracts_path = options.contracts_dir.as_deref().map(Path::new);
         seed_contract_alloc(alloc, seed, contracts_path)?;
     }

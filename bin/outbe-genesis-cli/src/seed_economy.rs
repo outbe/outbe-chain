@@ -5,8 +5,8 @@ use serde_json::{Map, Value};
 
 use crate::error::GenesisError;
 use crate::seed_codec::{
-    address_as_u256, address_bytes, alloc_balance_hex, data_slot, parse_u256, StorageBuilder,
-    ORACLE_ADDRESS, VAULT_ROUTER_LIQUIDITY_SOURCES, VAULT_ROUTER_LIQUIDITY_TARGETS,
+    address_as_u256, address_bytes, alloc_balance_hex, data_slot, first_worldwide_day, parse_u256,
+    StorageBuilder, ORACLE_ADDRESS, VAULT_ROUTER_LIQUIDITY_SOURCES, VAULT_ROUTER_LIQUIDITY_TARGETS,
 };
 use crate::seed_oracle::seed_oracle;
 
@@ -58,14 +58,19 @@ pub fn seed_vault_router(storage: &mut StorageBuilder) -> Result<(), GenesisErro
     Ok(())
 }
 
-/// Seed the Oracle section into `alloc`.
+/// Seed the Oracle section into `alloc`. `genesis_timestamp` is the header timestamp.
 pub fn seed_economic_state(
     seed: &Value,
+    genesis_timestamp: Option<u64>,
     alloc: &mut Map<String, Value>,
 ) -> Result<(), GenesisError> {
     if let Some(oracle) = seed.get("oracle") {
         let mut oracle_storage = StorageBuilder::new();
-        seed_oracle(&mut oracle_storage, oracle)?;
+        seed_oracle(
+            &mut oracle_storage,
+            oracle,
+            genesis_timestamp.map(first_worldwide_day),
+        )?;
         merge_storage_into_alloc(alloc, ORACLE_ADDRESS, &oracle_storage)?;
     }
     Ok(())

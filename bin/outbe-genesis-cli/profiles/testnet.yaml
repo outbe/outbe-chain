@@ -166,7 +166,6 @@ oracle:
   scurve_seeds:
     - pair_base: COEN
       pair_quote: "840"
-      peak_day: 20241220
       peak_price: "1000000"
 
 # Native-token balances seeded on top of the validator prefund.

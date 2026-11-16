@@ -641,11 +641,13 @@ fn seeded_scurve_matches_a_curve_that_the_oracle_starts() {
     use outbe_system_common::addresses::ORACLE_ADDRESS;
     use outbe_system_common::time::WorldwideDay;
 
+    use outbe_genesis_cli::seed_codec::{first_worldwide_day, parse_header_timestamp};
+
     const SEED: &str = r#"{
       "oracle": {
         "pairs": [{ "base": "COEN", "quote": "840", "initial_rate": "1000000" }],
         "scurve_seeds": [
-          { "pair_base": "COEN", "pair_quote": "840", "peak_day": 20241220, "peak_price": "1000000" }
+          { "pair_base": "COEN", "pair_quote": "840", "peak_price": "1000000" }
         ]
       }
     }"#;
@@ -656,16 +658,17 @@ fn seeded_scurve_matches_a_curve_that_the_oracle_starts() {
     let mut started = HashMapStorageProvider::new(512_215);
 
     let pair = AddressPair::new_coen_to(840);
-    let peak = WorldwideDay::new(20241220);
+    let genesis_timestamp = parse_header_timestamp(&genesis).unwrap();
+    let peak = WorldwideDay::new(first_worldwide_day(genesis_timestamp));
     StorageHandle::enter(&mut started, |storage| {
         outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
         let mut oracle = OracleContract::new(storage);
         let peak_price = alloy_primitives::U256::from(1_000_000u64);
         assert!(store_scurve_entry(&mut oracle, pair, peak, peak_price).unwrap());
     });
-    // The peak WWD, a day in the first period, and a day in the second period.
-    for wwd in [20241220, 20241221, 20250601] {
-        let wwd = WorldwideDay::new(wwd);
+    // The first WWD of the genesis, a day in the first period, and a day in the second period.
+    for days in [0, 1, 200] {
+        let wwd = WorldwideDay::new(first_worldwide_day(genesis_timestamp + days * 86_400));
         let value = |provider: &mut HashMapStorageProvider| {
             StorageHandle::enter(provider, |storage| {
                 scurve_value(&OracleContract::new(storage), pair, wwd).unwrap()

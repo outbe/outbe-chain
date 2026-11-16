@@ -457,6 +457,11 @@ pub fn parse_header_timestamp(genesis: &Value) -> Result<u64, GenesisError> {
         .map_err(|_| GenesisError::validation(format!("genesis timestamp overflows u64: {signed}")))
 }
 
+/// The first Worldwide Day the chain makes. Mirrors `first_wwd_for_genesis` in crates/core/tributefactory.
+pub fn first_worldwide_day(genesis_timestamp: u64) -> u32 {
+    timestamp_to_utc_date_key(genesis_timestamp.saturating_sub(12 * 60 * 60))
+}
+
 /// Convert a unix timestamp to a UTC `YYYYMMDD` date key.
 pub fn timestamp_to_utc_date_key(timestamp: u64) -> u32 {
     civil_date_from_days(timestamp / SECONDS_PER_DAY)
