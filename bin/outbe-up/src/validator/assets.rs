@@ -11,7 +11,7 @@ use outbe_operator_systemd::joining_units;
 pub const OPERATOR_CONFIG_EXAMPLE: &str =
     include_str!("../../templates/validator/operator-config.example.yaml");
 
-pub fn init(path: &Path) -> Result<()> {
+pub fn write_config_example(path: &Path) -> Result<()> {
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -49,15 +49,15 @@ mod tests {
     }
 
     #[test]
-    fn init_writes_the_embedded_example_once() {
+    fn config_example_writes_the_embedded_example_once() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("operator-config.yaml");
-        init(&path).unwrap();
+        write_config_example(&path).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), OPERATOR_CONFIG_EXAMPLE);
         assert_eq!(
             fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o644
         );
-        assert!(init(&path).is_err());
+        assert!(write_config_example(&path).is_err());
     }
 }

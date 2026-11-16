@@ -40,7 +40,7 @@ sudo outbe-up validator promote
 sudo outbe-up validator status [--watch]
 ```
 
-Run `outbe-up validator init --output operator-config.yaml` to write the configuration template
+Run `outbe-up validator config-example --output operator-config.yaml` to write the configuration template
 embedded in that exact binary version.
 
 `prepare` verifies the config, network, manifest, every bundled file, and the bootstrap binary. It

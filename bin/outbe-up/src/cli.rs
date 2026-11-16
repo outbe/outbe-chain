@@ -83,7 +83,7 @@ struct ValidatorArgs {
 #[derive(Debug, Subcommand)]
 enum ValidatorCommand {
     /// Write a documented operator configuration template.
-    Init {
+    ConfigExample {
         #[arg(long, default_value = "operator-config.yaml")]
         output: PathBuf,
     },
@@ -163,7 +163,9 @@ impl Cli {
                 } => network::status::show(&artifacts, ssh_key.as_deref(), watch).await,
             },
             Command::Validator(args) => match args.command {
-                ValidatorCommand::Init { output } => validator::assets::init(&output),
+                ValidatorCommand::ConfigExample { output } => {
+                    validator::assets::write_config_example(&output)
+                }
                 ValidatorCommand::Prepare { bundle, config } => {
                     validator::prepare::run(&bundle, &config).await
                 }
@@ -243,7 +245,7 @@ mod tests {
         assert!(Cli::try_parse_from([
             "outbe-up",
             "validator",
-            "init",
+            "config-example",
             "--output",
             "operator-config.yaml",
         ])
