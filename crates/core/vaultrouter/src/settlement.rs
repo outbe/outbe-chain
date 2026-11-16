@@ -52,6 +52,13 @@ impl Quote {
             _ => Ok(()),
         }
     }
+
+    pub fn require_within_cap(&self, cap: U256) -> Result<()> {
+        if self.payment_minor > cap {
+            return Err(SettlementError::CostAboveCap.into());
+        }
+        Ok(())
+    }
 }
 
 /// Prices `cost` in `asset`. The reference currency matches first, so a
@@ -86,22 +93,17 @@ pub fn quote(
     })
 }
 
-/// Rejects a payer whose allowance to `spender` or balance is below `cap`, then a `cost`
-/// above `cap`. The funds come first, so a short payer learns nothing of the cost.
-pub fn require_within_cap(
+/// Rejects a payer whose allowance to `spender` or balance is below `cap`.
+pub fn require_funds(
     storage: &StorageHandle<'_>,
     spender: Address,
     payer: Address,
     asset: Address,
     cap: U256,
-    cost: U256,
 ) -> Result<()> {
     if allowance(storage, asset, payer, spender)? < cap || balance_of(storage, asset, payer)? < cap
     {
         return Err(SettlementError::InsufficientFunds.into());
-    }
-    if cost > cap {
-        return Err(SettlementError::CostAboveCap.into());
     }
     Ok(())
 }

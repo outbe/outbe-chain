@@ -351,14 +351,8 @@ pub fn settle_gem(
 
     let quote = settlement::quote(storage, asset, currencies(&gem), &settlement_cost(&gem))?;
     quote.require_snapshot(snapshot_id)?;
-    settlement::require_within_cap(
-        storage,
-        GEM_FACTORY_ADDRESS,
-        payer,
-        asset,
-        amount_cap_minor,
-        quote.payment_minor,
-    )?;
+    settlement::require_funds(storage, GEM_FACTORY_ADDRESS, payer, asset, amount_cap_minor)?;
+    quote.require_within_cap(amount_cap_minor)?;
     storage.clone().with_checkpoint(|| {
         // Settle before payment so a token callback cannot settle the gem twice.
         // A failed payment rolls the state back.
