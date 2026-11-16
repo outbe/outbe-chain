@@ -3,7 +3,7 @@ pragma solidity ^0.8.30;
 
 import {BridgeableERC20} from "./BridgeableERC20.sol";
 import {ERC7786TokenBridge} from "../ERC7786TokenBridge.sol";
-import {DEAD_ADDRESS} from "../BurnAddress.sol";
+import {DEAD_ADDRESS} from "@shared/BurnAddress.sol";
 
 /// @title SyntheticWCOEN
 /// @notice WCOEN on a target chain. Its backing is locked on Outbe, so WCOEN sent to 0x…dEaD here

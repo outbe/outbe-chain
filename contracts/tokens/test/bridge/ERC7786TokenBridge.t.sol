@@ -13,7 +13,7 @@ import {BridgeableERC20Stable} from "../../src/synthetic/BridgeableERC20Stable.s
 import {WCOEN as NativeWCOEN} from "../../src/canonical/WCOEN.sol";
 import {BridgeableERC20} from "../../src/synthetic/BridgeableERC20.sol";
 import {SyntheticWCOEN} from "../../src/synthetic/SyntheticWCOEN.sol";
-import {DEAD_ADDRESS} from "../../src/BurnAddress.sol";
+import {DEAD_ADDRESS} from "@shared/BurnAddress.sol";
 import {MockERC7786Bridge} from "../mocks/MockERC7786Bridge.sol";
 import {MockStablecoin} from "../mocks/MockStablecoin.sol";
 import {TokenBridgeProxy} from "../utils/TokenBridgeProxy.sol";

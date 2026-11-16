@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {DEAD_ADDRESS} from "../BurnAddress.sol";
+import {DEAD_ADDRESS} from "@shared/BurnAddress.sol";
 
 contract WCOEN {
     string public name = "Wrapped COEN";

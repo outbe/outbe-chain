@@ -3,7 +3,7 @@ pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {WCOEN} from "../../src/canonical/WCOEN.sol";
-import {DEAD_ADDRESS} from "../../src/BurnAddress.sol";
+import {DEAD_ADDRESS} from "@shared/BurnAddress.sol";
 
 contract StorageWritingReceiver {
     uint256 public received;
