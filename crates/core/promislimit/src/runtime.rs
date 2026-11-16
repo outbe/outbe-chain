@@ -28,6 +28,30 @@ impl BurnSource {
     }
 }
 
+/// The cause of a limit or a load that goes back to the Promis Limit.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LimitSource {
+    DayEmissionLimit = 11,
+    MetadosisLimit = 12,
+    LysisLimit = 13,
+    DesisLimit = 14,
+    RewardLimit = 15,
+    Nod = 21,
+    Intex = 22,
+    Gem = 23,
+    Credis = 24,
+    GemFactoryPosition = 31,
+    AgentReward = 32,
+}
+
+/// The cause of a take from the Promis Limit.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LimitTarget {
+    DesisLimit = 1,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PromisLimitCredit {
     pub before: U256,
@@ -109,6 +133,50 @@ impl PromisLimitContract<'_> {
         guard.commit()?;
 
         Ok(credited_minor)
+    }
+
+    pub fn add(&mut self, source: LimitSource, amount_minor: U256) -> Result<()> {
+        self.add_with_code(source as u8, amount_minor)
+    }
+
+    pub(crate) fn add_with_code(&mut self, source: u8, amount_minor: U256) -> Result<()> {
+        if amount_minor.is_zero() {
+            return Ok(());
+        }
+        let after = self
+            .promis_limit()?
+            .checked_add(amount_minor)
+            .ok_or(PromisLimitError::Overflow)?;
+        self.set_promis_limit(after)?;
+        self.storage.emit_event(
+            PROMIS_LIMIT_ADDRESS,
+            IPromisLimit::PromisLimitAdded {
+                source,
+                amountMinor: amount_minor,
+            }
+            .encode_log_data(),
+        )
+    }
+
+    /// Takes exactly `amount_minor`. Returns `false` and changes nothing when the Promis Limit
+    /// holds less.
+    pub fn subtract(&mut self, target: LimitTarget, amount_minor: U256) -> Result<bool> {
+        if amount_minor.is_zero() {
+            return Ok(true);
+        }
+        let Some(after) = self.promis_limit()?.checked_sub(amount_minor) else {
+            return Ok(false);
+        };
+        self.set_promis_limit(after)?;
+        self.storage.emit_event(
+            PROMIS_LIMIT_ADDRESS,
+            IPromisLimit::PromisLimitSubtracted {
+                target: target as u8,
+                amountMinor: amount_minor,
+            }
+            .encode_log_data(),
+        )?;
+        Ok(true)
     }
 
     pub fn checked_credit(&mut self, amount: U256) -> Result<PromisLimitCredit> {

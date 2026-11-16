@@ -8,7 +8,7 @@ use outbe_primitives::addresses::SYSTEM_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-pub use runtime::BurnSource;
+pub use runtime::{BurnSource, LimitSource, LimitTarget};
 pub use schema::PromisLimitContract;
 
 /// Settles already-burned block fees into the Promis Limit.

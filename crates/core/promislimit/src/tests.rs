@@ -108,6 +108,121 @@ fn a_strict_take_takes_the_exact_amount_or_nothing() {
     });
 }
 
+fn promis_limit_logs(storage: &HashMapStorageProvider) -> Vec<(u8, bool, U256)> {
+    use alloy_sol_types::SolEvent;
+    use outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS;
+
+    use crate::precompile::IPromisLimit;
+
+    storage
+        .get_events(PROMIS_LIMIT_ADDRESS)
+        .iter()
+        .map(|log| {
+            if let Ok(added) =
+                IPromisLimit::PromisLimitAdded::decode_raw_log(log.topics(), &log.data)
+            {
+                (added.source, true, added.amountMinor)
+            } else {
+                let taken =
+                    IPromisLimit::PromisLimitSubtracted::decode_raw_log(log.topics(), &log.data)
+                        .unwrap();
+                (taken.target, false, taken.amountMinor)
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn each_add_and_subtract_emits_its_code_from_the_promis_limit() {
+    use crate::runtime::{LimitSource, LimitTarget};
+
+    let sources = [
+        LimitSource::DayEmissionLimit,
+        LimitSource::MetadosisLimit,
+        LimitSource::LysisLimit,
+        LimitSource::DesisLimit,
+        LimitSource::RewardLimit,
+        LimitSource::Nod,
+        LimitSource::Intex,
+        LimitSource::Gem,
+        LimitSource::Credis,
+        LimitSource::GemFactoryPosition,
+        LimitSource::AgentReward,
+    ];
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |handle| {
+        let mut contract = PromisLimitContract::new(handle);
+        for (i, source) in sources.iter().enumerate() {
+            contract.add(*source, U256::from(i as u64 + 1)).unwrap();
+        }
+        assert!(contract
+            .subtract(LimitTarget::DesisLimit, U256::from(10u64))
+            .unwrap());
+        assert_eq!(contract.promis_limit().unwrap(), U256::from(56u64));
+    });
+
+    let mut expected: Vec<_> = sources
+        .iter()
+        .enumerate()
+        .map(|(i, source)| (*source as u8, true, U256::from(i as u64 + 1)))
+        .collect();
+    expected.push((1, false, U256::from(10u64)));
+    assert_eq!(promis_limit_logs(&storage), expected);
+}
+
+#[test]
+fn a_zero_add_or_subtract_changes_nothing_and_emits_nothing() {
+    use crate::runtime::{LimitSource, LimitTarget};
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |handle| {
+        let mut contract = PromisLimitContract::new(handle);
+        contract.add(LimitSource::Nod, U256::ZERO).unwrap();
+        assert!(contract
+            .subtract(LimitTarget::DesisLimit, U256::ZERO)
+            .unwrap());
+        assert_eq!(contract.promis_limit().unwrap(), U256::ZERO);
+    });
+    assert!(promis_limit_logs(&storage).is_empty());
+}
+
+#[test]
+fn a_subtract_above_the_balance_changes_nothing_and_emits_nothing() {
+    use crate::runtime::{LimitSource, LimitTarget};
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |handle| {
+        let mut contract = PromisLimitContract::new(handle);
+        contract.add(LimitSource::Gem, U256::from(5u64)).unwrap();
+        assert!(!contract
+            .subtract(LimitTarget::DesisLimit, U256::from(6u64))
+            .unwrap());
+        assert_eq!(contract.promis_limit().unwrap(), U256::from(5u64));
+    });
+    assert_eq!(
+        promis_limit_logs(&storage),
+        vec![(LimitSource::Gem as u8, true, U256::from(5u64))]
+    );
+}
+
+#[test]
+fn an_overflowing_add_fails_the_block() {
+    use crate::runtime::LimitSource;
+
+    with_contract(|c| {
+        c.set_promis_limit(U256::MAX).unwrap();
+        let err = c.add(LimitSource::Nod, U256::ONE).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                outbe_primitives::error::PrecompileError::FatalWithCause(_)
+            ),
+            "{err:?}"
+        );
+        assert_eq!(c.promis_limit().unwrap(), U256::MAX);
+    });
+}
+
 #[test]
 fn test_set_overwrites_previous() {
     with_contract(|c| {
