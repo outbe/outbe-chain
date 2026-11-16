@@ -13,6 +13,7 @@ pub mod crypto;
 pub mod digest;
 pub mod dispatch;
 pub mod enclave_upgrade;
+pub mod equivocation_evidence;
 pub mod error;
 pub mod errors;
 pub mod filesystem;

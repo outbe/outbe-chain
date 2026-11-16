@@ -1,4 +1,4 @@
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use commonware_codec::ReadExt as _;
 use commonware_cryptography::bls12381;
 use commonware_utils::ordered::Set;
@@ -326,11 +326,7 @@ pub(crate) fn floor_percent(amount: U256, percent: u64) -> U256 {
 /// Normalizes the order of two evidence payloads before hashing so that
 /// `(block1, block2)` and `(block2, block1)` produce the same hash.
 pub(crate) fn canonical_evidence_hash(ev1: &[u8], ev2: &[u8]) -> B256 {
-    let (first, second) = if ev1 <= ev2 { (ev1, ev2) } else { (ev2, ev1) };
-    let mut buf = Vec::with_capacity(first.len() + second.len());
-    buf.extend_from_slice(first);
-    buf.extend_from_slice(second);
-    keccak256(&buf)
+    outbe_primitives::equivocation_evidence::canonical_equivocation_evidence_hash(ev1, ev2)
 }
 
 /// Maps a [`V2VerifyError`] to a canonical VRF failure class code
