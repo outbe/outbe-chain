@@ -17,7 +17,7 @@ use crate::schema::SlashIndicator;
 
 /// A verified target carries no mutable authority and performs no writes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct VerifiedSlashTarget {
+pub struct VerifiedSlashTarget {
     pub accused: Address,
     pub epoch: u64,
     pub evidence_hash: B256,
@@ -25,7 +25,7 @@ pub(crate) struct VerifiedSlashTarget {
 
 /// Preflight failures retain domain errors and provider causes.
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum EquivocationPreflightError {
+pub enum EquivocationPreflightError {
     #[error("submitter not active: {0}")]
     SubmitterNotActive(#[source] SlashIndicatorError),
     #[error("evidence already processed: {0}")]
@@ -145,14 +145,7 @@ impl<'a> EvidencePair<'a> {
 }
 
 /// Validate wire structure without storage access or cryptographic work.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "Wire-only admission is reserved for callers that do not run storage preflight"
-    )
-)]
-pub(crate) fn validate_equivocation_wire_pair(
+pub fn validate_equivocation_wire_pair(
     kind: EquivocationEvidenceKind,
     block1: &[u8],
     block2: &[u8],
@@ -163,7 +156,7 @@ pub(crate) fn validate_equivocation_wire_pair(
 }
 
 /// Read-only preflight; storage markers precede committee access and BLS.
-pub(crate) fn preflight_equivocation_evidence(
+pub fn preflight_equivocation_evidence(
     storage: StorageHandle<'_>,
     caller: Address,
     kind: EquivocationEvidenceKind,
