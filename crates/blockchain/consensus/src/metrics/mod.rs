@@ -7,6 +7,11 @@
 //! Reth's `--metrics` endpoint exposes these metrics through the global
 //! `metrics` crate recorder configured by the runtime's metrics recorder.
 
+pub mod executor;
+pub mod p2p;
+pub mod propose;
+pub mod verify;
+
 use metrics::{counter, gauge, histogram};
 pub use outbe_simplex::metrics::*;
 use std::time::Duration;
@@ -479,8 +484,8 @@ pub fn record_genesis_dkg_boundary_not_ready_forfeit() {
     record_proposer_forfeit(crate::forfeit::ProposerForfeitReason::GenesisDkgBoundaryNotReady);
 }
 
-/// Real build + marshal cost of a proposal (elapsed since the proposer's
-/// closure-level `propose_start`), before any min-block-time floor pad.
+/// Active build + marshal cost since `propose_start`, excluding the payload
+/// resolve sleep and before any min-block-time floor pad.
 pub fn record_block_build_time(duration: Duration) {
     histogram!("outbe_consensus_block_build_duration_ms").record(duration.as_secs_f64() * 1000.0);
 }

@@ -227,6 +227,7 @@ fn validate_runtime(root: &Path, environment: &BTreeMap<String, String>) -> Resu
 
 fn validate_bundle(root: &Path, environment: &BTreeMap<String, String>) -> Result<()> {
     required_file(&root.join("genesis.json"))?;
+    required_file(&root.join(".bb-crs/bn254_g1.dat"))?;
     for name in [
         "outbe-up",
         "outbe-chain",
@@ -485,4 +486,38 @@ fn command_in_path(name: &str) -> bool {
                 .is_ok_and(|metadata| metadata.is_file() && metadata.mode() & 0o111 != 0)
         })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundle_requires_the_packaged_crs() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("genesis.json"), b"{}").unwrap();
+        for name in [
+            "outbe-up",
+            "outbe-chain",
+            "outbe-cli",
+            "outbe-keygen",
+            "outbe-feeder",
+            "outbe-radicle",
+            "outbe-tee-enclave-mock",
+        ] {
+            let path = root.path().join(name);
+            fs::write(&path, b"binary").unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let environment = BTreeMap::from([("OUTBE_ENCLAVE_RUNTIME".to_owned(), "mock".to_owned())]);
+        assert!(validate_bundle(root.path(), &environment)
+            .unwrap_err()
+            .to_string()
+            .contains(".bb-crs/bn254_g1.dat"));
+
+        let crs = root.path().join(".bb-crs/bn254_g1.dat");
+        fs::create_dir_all(crs.parent().unwrap()).unwrap();
+        fs::write(crs, b"CRS").unwrap();
+        validate_bundle(root.path(), &environment).unwrap();
+    }
 }

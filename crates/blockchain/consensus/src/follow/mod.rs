@@ -20,6 +20,7 @@
 
 mod driver;
 pub mod engine;
+pub mod metrics;
 mod resolver;
 mod stubs;
 pub mod upstream;

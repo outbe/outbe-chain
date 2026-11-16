@@ -60,7 +60,7 @@ pub const TEE_KEYS: [&str; 6] = [
     "minimum_tcb_evaluation_data_number",
 ];
 
-const STATIC_TOP_LEVEL_KEYS: [&str; 41] = [
+const STATIC_TOP_LEVEL_KEYS: [&str; 42] = [
     "network",
     "validators",
     "keys_dir",
@@ -86,6 +86,7 @@ const STATIC_TOP_LEVEL_KEYS: [&str; 41] = [
     "enclave_runner",
     "enclave_sgx",
     "signed_enclave_dir",
+    "crs_path",
     "allow_stale_timestamp",
     "node_binary",
     "radicle_binary",
@@ -135,6 +136,13 @@ fn packaged_assets_dir() -> Option<PathBuf> {
         .join("profiles/testnet.yaml")
         .is_file()
         .then_some(assets)
+}
+
+/// Return the CRS shipped next to a packaged `outbe-genesis-cli`.
+pub fn packaged_crs_path() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let crs = executable.parent()?.parent()?.join(".bb-crs/bn254_g1.dat");
+    crs.is_file().then_some(crs)
 }
 
 /// Return the baseline profile path (`<repo>/bin/outbe-genesis-cli/profiles/testnet.yaml`).

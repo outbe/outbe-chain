@@ -23,6 +23,7 @@ pub mod marshal_update_reporter;
 pub mod peer_manager;
 pub mod protocol_state;
 pub mod stack;
+pub(crate) mod supervision;
 pub mod tee_bootstrap;
 pub mod validators;
 pub use follow_transport::read_upstream_network_encryption_public_key;

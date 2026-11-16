@@ -20,10 +20,15 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 fn minimal_config(keys_dir: &str) -> Value {
+    let crs_path = Path::new(keys_dir)
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("bn254_g1.dat");
     json!({
         "chain_id": 424242,
         "validators": ["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"],
         "keys_dir": keys_dir,
+        "crs_path": crs_path,
         "tee": {"mode": "gramine-direct-dev"},
     })
 }
@@ -53,6 +58,7 @@ fn render_fixture(root: &Path, overrides: Option<Value>) -> (PathBuf, PathBuf) {
     let keys_dir = root.join("keys");
     let output_dir = root.join("net");
     fs::create_dir_all(&output_dir).expect("mkdir net");
+    fs::write(root.join("bn254_g1.dat"), b"fixture CRS").expect("write CRS");
     for index in 0..4 {
         let dir = keys_dir.join(format!("validator-{index}"));
         fs::create_dir_all(&dir).expect("mkdir validator");
@@ -111,6 +117,7 @@ fn render_writes_valid_bash_scripts_and_stable_bootnodes() {
 
     assert!(output_dir.join("reth-bootnodes.txt").is_file());
     assert!(output_dir.join("DEPLOY.md").is_file());
+    assert!(output_dir.join(".bb-crs/bn254_g1.dat").is_file());
 
     for index in 0..4 {
         let directory = output_dir.join(format!("validator-{index}"));
@@ -306,6 +313,7 @@ fn distribution_archives_and_signed_enclave_staging() {
         assert!(joined.contains(&format!("keys/validator-{index}")));
         assert!(joined.contains("sgx/bin/outbe-tee-enclave-launch"));
         assert!(joined.contains("sgx/gramine/runtime/glibc/libc.so.6"));
+        assert!(joined.contains(".bb-crs/bn254_g1.dat"));
         for other in 0..4 {
             if other != index {
                 assert!(!joined.contains(&format!("keys/validator-{other}")));

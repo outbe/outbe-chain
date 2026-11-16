@@ -52,7 +52,7 @@ use outbe_primitives::consensus::{
 #[path = "reporter_view_state.rs"]
 mod reporter_view_state;
 use reporter_view_state::{skipped_views, ReporterViewState};
-pub use reporter_view_state::{ReporterContinuity, ReporterContinuityState};
+pub use reporter_view_state::{ReporterContinuity, ReporterContinuityState, SelfProposedDigests};
 
 /// Reporter that forwards Simplex activities.
 ///
@@ -356,6 +356,7 @@ impl OutbeReporter {
     ) -> commonware_actor::Feedback {
         let view = finalization.proposal.view().get();
         let digest = finalization.proposal.payload;
+        self.continuity.count_if_self_proposed(&digest);
         let certificate = finalization.certificate;
 
         let signers_count = certificate.signers.count();

@@ -34,6 +34,11 @@ fn pack_validator_archive(
     if sgx.is_dir() {
         copy_dir_recursive(&sgx, &staging.join("sgx"))?;
     }
+    let crs = output_dir.join(".bb-crs/bn254_g1.dat");
+    let staged_crs = staging.join(".bb-crs/bn254_g1.dat");
+    fs::create_dir_all(staged_crs.parent().expect("CRS path has a parent"))
+        .map_err(|err| GenesisError::io(&staged_crs, err))?;
+    fs::copy(&crs, &staged_crs).map_err(|err| GenesisError::io(&staged_crs, err))?;
 
     let val_folder = format!("validator-{index}");
     copy_dir_recursive(&output_dir.join(&val_folder), &staging.join(&val_folder))?;

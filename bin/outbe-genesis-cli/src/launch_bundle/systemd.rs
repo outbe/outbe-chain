@@ -228,6 +228,11 @@ note() {{ printf '  %-42s %s\\n' \"$1\" \"$2\"; }}\n\
 \n\
 note \"genesis sha256\" \"$(sha256sum genesis.json | cut -c1-16)\"\n\
 echo \"  ^ genesis must be identical on every machine\"\n\
+if [ -r .bb-crs/bn254_g1.dat ]; then\n\
+  note \"CRS sha256\" \"$(sha256sum .bb-crs/bn254_g1.dat | cut -c1-16)\"\n\
+else\n\
+  note \"CRS\" \"MISSING .bb-crs/bn254_g1.dat\"; fail=1\n\
+fi\n\
 {enclave_check}\n\
 \n\
 # State from an earlier genesis belongs to a different chain; the node refuses to start on it.\n\

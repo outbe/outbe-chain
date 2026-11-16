@@ -58,6 +58,8 @@ tee:
 # node_binary: outbe-chain
 # radicle_binary: outbe-radicle
 # feeder_binary: outbe-feeder
+# Packaged releases use their bundled CRS automatically. Development override:
+# crs_path: /path/to/bn254_g1.dat
 
 # Binaries used here, to build the genesis. Default: release, then debug.
 # chain_binary: target/release/outbe-chain

@@ -16,7 +16,8 @@ cargo xtask release build --profile development --output /tmp/outbe-release-dev
 
 `production` builds the DCAP-capable enclave and rejects mock TEE support. `development` builds the
 mock enclave and enables the protocol overrides needed by hardware-free local networks. Both builds
-run inside the pinned project-toolchain container and require a clean Git checkout.
+run inside the pinned project-toolchain container and require a clean Git checkout. The builder
+downloads the canonical CRS prefix and verifies its pinned SHA-256.
 
 The output name includes the profile and full source commit. `software-manifest.json` is the first
 archive entry and records the release identity, target, profile, mode, size, and SHA-256 of every
@@ -27,6 +28,7 @@ file. The build verifies the completed archive before returning it.
 - `bin/`: node, operator, feeder, Radicle, Hyperlane validator, and profile-specific enclave
   binaries;
 - `tools/outbe-genesis-cli`: the founding-network bundle generator;
+- `.bb-crs/bn254_g1.dat`: the verified CRS required by every node;
 - `systemd/`: canonical joining-validator services rendered by `outbe-operator-systemd`.
 
 The Hyperlane validator is payload only in this phase: no Hyperlane unit, configuration, or startup

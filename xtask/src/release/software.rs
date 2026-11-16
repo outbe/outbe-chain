@@ -37,6 +37,10 @@ const PRODUCTION_ENCLAVE: &str = "outbe-tee-enclave";
 const DEVELOPMENT_ENCLAVE: &str = "outbe-tee-enclave-mock";
 const OPERATOR_TOOL: &str = "outbe-genesis-cli";
 const GENESIS_ASSETS: &str = "share/outbe-genesis";
+const CRS_BUNDLE_PATH: &str = ".bb-crs/bn254_g1.dat";
+const CRS_URL: &str = "https://crs.aztec.network/g1.dat";
+const CRS_SIZE: usize = 4_194_368;
+const CRS_SHA256: &str = "9fd9fad54cfdc61ec309e818fe7bbddad1ca7dde72cc9b1afd126b744f887078";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
 #[serde(rename_all = "kebab-case")]
@@ -334,6 +338,7 @@ fn build_inside_container(options: &BuildOptions<'_>) -> Result<PathBuf> {
     }
     stage_joining_units(&staging_systemd)?;
     stage_genesis_assets(options.repo_root, &staging.path().join(GENESIS_ASSETS))?;
+    stage_crs(staging.path())?;
     fs::create_dir_all(options.output_dir)?;
     let output = options
         .output_dir
@@ -366,6 +371,34 @@ fn stage_genesis_assets(repo_root: &Path, output: &Path) -> Result<()> {
         &repo_root.join("contracts/predeploys"),
         &output.join("contracts/predeploys"),
     )
+}
+
+fn stage_crs(output: &Path) -> Result<()> {
+    let destination = output.join(CRS_BUNDLE_PATH);
+    fs::create_dir_all(destination.parent().expect("CRS path has a parent"))?;
+    let status = Command::new("curl")
+        .args([
+            "--fail",
+            "--location",
+            "--silent",
+            "--show-error",
+            "--range",
+            &format!("0-{}", CRS_SIZE - 1),
+            "--output",
+            destination.to_str().expect("UTF-8 CRS path"),
+            CRS_URL,
+        ])
+        .status()
+        .wrap_err("download pinned CRS")?;
+    ensure!(status.success(), "failed to download pinned CRS");
+    let bytes = fs::read(&destination)?;
+    ensure!(bytes.len() == CRS_SIZE, "downloaded CRS has the wrong size");
+    ensure!(
+        hex::encode(Sha256::digest(&bytes)) == CRS_SHA256,
+        "downloaded CRS checksum mismatch"
+    );
+    fs::write(destination, bytes)?;
+    Ok(())
 }
 
 fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
@@ -511,6 +544,11 @@ fn collect_inputs(
         archive_path: format!("tools/{OPERATOR_TOOL}"),
         source: bin.join(OPERATOR_TOOL),
         mode: 0o755,
+    });
+    inputs.push(BundleInput {
+        archive_path: CRS_BUNDLE_PATH.to_owned(),
+        source: artifacts.join(CRS_BUNDLE_PATH),
+        mode: 0o644,
     });
 
     let share = artifacts.join("share");
@@ -690,9 +728,11 @@ mod tests {
         let artifacts = root.join("artifacts");
         let bin = artifacts.join("bin");
         let profiles = artifacts.join(GENESIS_ASSETS).join("profiles");
+        let crs = artifacts.join(CRS_BUNDLE_PATH);
         let units = root.join("units");
         fs::create_dir_all(&bin).unwrap();
         fs::create_dir_all(&profiles).unwrap();
+        fs::create_dir_all(crs.parent().unwrap()).unwrap();
         fs::create_dir_all(&units).unwrap();
         for name in COMMON_BINARIES
             .iter()
@@ -702,6 +742,7 @@ mod tests {
             fs::write(bin.join(name), format!("fixture:{name}\n")).unwrap();
         }
         fs::write(profiles.join("testnet.yaml"), "network: testnet\n").unwrap();
+        fs::write(crs, b"fixture CRS\n").unwrap();
         fs::write(
             units.join("outbe-validator.service"),
             "[Service]\nExecStart=/opt/outbe-chain/outbe-chain\n",
@@ -743,6 +784,10 @@ mod tests {
             .files
             .iter()
             .any(|file| file.path == "share/outbe-genesis/profiles/testnet.yaml"));
+        assert!(manifest
+            .files
+            .iter()
+            .any(|file| file.path == CRS_BUNDLE_PATH));
         assert!(!manifest.files.iter().any(|file| file.path.contains("mock")));
     }
 

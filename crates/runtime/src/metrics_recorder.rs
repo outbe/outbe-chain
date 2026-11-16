@@ -2,19 +2,20 @@
 //!
 //! Rust names are `outbe_<subsystem>_<metric_name>`; Reth's `/metrics` socket
 //! exports `reth_outbe_<subsystem>_<metric_name>` and `reth_process_*`.
-//! Stage 0's closed active list is [`OUTBE_METRIC_SUBSYSTEMS`]: consensus, dkg,
-//! vrf, tee, radicle, txpool, validatorset, slashing. The Stage 2 reservations
-//! [`OUTBE_RESERVED_STAGE2_SUBSYSTEMS`] (follower, p2p, evm) are not active yet.
+//! The closed active list is [`OUTBE_METRIC_SUBSYSTEMS`]: consensus, dkg, vrf,
+//! tee, radicle, txpool, validatorset, slashing, follower, p2p, evm.
+//! [`OUTBE_RESERVED_STAGE2_SUBSYSTEMS`] is empty after Stage 2 activation.
 //!
 //! `counter!` names must end in `_total`. `histogram!` names must end in their
 //! measurement unit: millisecond latencies use `_ms`, matched after Reth's prefix
 //! by `Matcher::Suffix("_ms")` and exported with [`OUTBE_LATENCY_BUCKETS_MS`].
 //! `gauge!` names MUST NOT end in `_total` or `_count`. Use units `_seconds`,
-//! `_bytes`, `_ratio`, `_blocks`, `_height`, `_view`; plurals `_validators`,
-//! `_peers`, `_entries`, `_votes`, `_misses`, `_felonies`, `_shares`, `_txs`,
+//! `_bytes`, `_ratio`, `_blocks`, `_height`, `_view`, `_mode`; plurals `_validators`,
+//! `_messages`, `_peers`, `_entries`, `_votes`, `_misses`, `_felonies`, `_shares`, `_txs`,
 //! `_requests`, `_repositories`; or boolean predicates (0.0/1.0) `_known`,
 //! `_allowed`, `_suspected`, `_degraded`, `_pending`, `_matched`.
-//! Standard label names are `addr`, `signer`, `reason`, `kind`, `result`.
+//! Standard label names are `addr`, `signer`, `reason`, `kind`, `result`, `from`,
+//! `to`, `channel`.
 //!
 //! Install before Reth starts or metrics are registered. Only this function's
 //! recorder is reused; a foreign global recorder is an error, not a fallback.
@@ -37,9 +38,12 @@ pub const OUTBE_METRIC_SUBSYSTEMS: &[&str] = &[
     "txpool",
     "validatorset",
     "slashing",
+    "follower",
+    "p2p",
+    "evm",
 ];
 /// Reserved segments that are not accepted until explicitly activated.
-pub const OUTBE_RESERVED_STAGE2_SUBSYSTEMS: &[&str] = &["follower", "p2p", "evm"];
+pub const OUTBE_RESERVED_STAGE2_SUBSYSTEMS: &[&str] = &[];
 
 static OUTBE_PROMETHEUS_RECORDER: OnceLock<&'static PrometheusRecorder> = OnceLock::new();
 static RECORDER_INSTALL_LOCK: Mutex<()> = Mutex::new(());
@@ -246,6 +250,13 @@ mod tests {
                      # TYPE reth_outbe_tee_client_request_duration_ms histogram\n\
                      reth_outbe_tee_client_request_duration_ms_bucket{request=\"canary\",le=\"0.5\"} 1\n";
         assert_eq!(validate_outbe_metric_taxonomy(valid), Ok(()));
+        for exposition in [
+            "# TYPE reth_outbe_follower_upstream_tip_known gauge\nreth_outbe_follower_upstream_tip_known 1",
+            "# TYPE reth_outbe_p2p_send_rate_limited_total counter\nreth_outbe_p2p_send_rate_limited_total{channel=\"dkg\"} 1",
+            "# TYPE reth_outbe_evm_zero_fee_soft_failures_total counter\nreth_outbe_evm_zero_fee_soft_failures_total 1",
+        ] {
+            assert_eq!(validate_outbe_metric_taxonomy(exposition), Ok(()));
+        }
         assert_eq!(
             validate_outbe_metric_taxonomy(
                 "# TYPE reth_process_threads gauge\nreth_process_threads 1"
@@ -304,8 +315,8 @@ mod tests {
                 "bucket",
             ),
             (
-                "reth_outbe_follower_rounds_total 1",
-                "reth_outbe_follower_rounds_total",
+                "reth_outbe_unknown_events_total 1",
+                "reth_outbe_unknown_events_total",
                 "subsystem",
             ),
         ] {

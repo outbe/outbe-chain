@@ -60,6 +60,8 @@ tee:
 # node_binary: outbe-chain
 # radicle_binary: outbe-radicle
 # feeder_binary: outbe-feeder
+# Packaged releases use their bundled CRS automatically. Development override:
+# crs_path: /path/to/bn254_g1.dat
 
 # Price source for the oracle feeder.
 # price_feed_rest: https://prc.testnet.outbe.net

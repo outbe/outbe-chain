@@ -17,13 +17,17 @@ where
         &mut self,
         parent: crate::executor::ingress::PendingParent,
     ) -> eyre::Result<()> {
-        if let Some((height, digest)) = self.verification.get_mut().record_parent(
+        let convergence = self.verification.get_mut().record_parent(
             parent,
             (
                 self.state.finalized_height,
                 Digest(self.state.forkchoice.finalized_block_hash),
             ),
-        ) {
+        );
+        self.verification
+            .get_mut()
+            .record_progress(self.state.head_height, self.state.finalized_height);
+        if let Some((height, digest)) = convergence {
             self.commit_convergence(height, digest).await?;
         }
         Ok(())
@@ -50,6 +54,9 @@ where
             );
         }
         self.state = next;
+        self.verification
+            .get_mut()
+            .record_progress(self.state.head_height, self.state.finalized_height);
         Ok(())
     }
 }
@@ -180,5 +187,107 @@ mod tests {
                 ..
             })
         ));
+    }
+}
+
+#[cfg(test)]
+mod telemetry_tests {
+    use super::super::*;
+    use commonware_consensus::types::{Epoch, View};
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshotter};
+    use outbe_primitives::OutbeHeader;
+    use reth_ethereum::{primitives::SealedBlock, Block};
+
+    fn parent(block: Option<Arc<ConsensusBlock>>, height: u64, digest: Digest) -> PendingParent {
+        PendingParent {
+            round: Round::new(Epoch::new(0), View::new(4)),
+            height: Height::new(height),
+            digest,
+            block,
+            epoch_fence: ApplicationEpochFence::new(Epoch::new(0)),
+        }
+    }
+
+    fn gauge(snapshotter: &Snapshotter, name: &str) -> Option<DebugValue> {
+        snapshotter
+            .snapshot()
+            .into_vec()
+            .into_iter()
+            .find(|(key, _, _, _)| key.key().name() == name)
+            .map(|(_, _, _, value)| value)
+    }
+
+    #[test]
+    fn convergence_requires_matching_parent_and_tracks_head_progress() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            let mut work = VerificationWork::default();
+            let finalized = (Height::zero(), Digest::ZERO);
+            let name = "outbe_consensus_executor_convergence_depth_blocks";
+            let mut block = Block::default();
+            block.header.number = 55;
+            let block = Arc::new(ConsensusBlock::from_sealed(SealedBlock::seal_slow(
+                block.map_header(OutbeHeader::new),
+            )));
+            let mismatched = Digest(alloy_primitives::B256::repeat_byte(1));
+            for pending in [
+                parent(None, 0, Digest::ZERO),
+                parent(Some(block.clone()), 55, mismatched),
+                parent(Some(block.clone()), 54, block.digest()),
+            ] {
+                work.record_parent(pending, finalized);
+                work.record_progress(Height::new(50), finalized.0);
+                assert_eq!(work.convergence_target_height, None);
+                assert_eq!(gauge(&snapshotter, name), None);
+            }
+            work.record_parent(parent(Some(block.clone()), 55, block.digest()), finalized);
+            work.record_progress(Height::new(50), finalized.0);
+            assert_eq!(
+                gauge(&snapshotter, name),
+                Some(DebugValue::Gauge(5.0.into()))
+            );
+            work.record_progress(Height::new(55), finalized.0);
+            assert_eq!(
+                gauge(&snapshotter, name),
+                Some(DebugValue::Gauge(0.0.into()))
+            );
+            work.record_progress(Height::new(60), finalized.0);
+            assert_eq!(
+                gauge(&snapshotter, name),
+                Some(DebugValue::Gauge((-5.0).into()))
+            );
+        });
+    }
+
+    #[test]
+    fn finalization_lag_tracks_known_tip_and_saturates() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            let mut work = VerificationWork::default();
+            let name = "outbe_consensus_executor_finalization_lag_blocks";
+            work.observe_finalized_height(Height::new(55));
+            work.record_progress(Height::new(50), Height::new(50));
+            assert_eq!(
+                gauge(&snapshotter, name),
+                Some(DebugValue::Gauge(5.0.into()))
+            );
+            work.finalized(
+                Round::new(Epoch::new(0), View::new(4)),
+                Height::new(57),
+                Digest::ZERO,
+            );
+            work.record_progress(Height::new(55), Height::new(55));
+            assert_eq!(
+                gauge(&snapshotter, name),
+                Some(DebugValue::Gauge(2.0.into()))
+            );
+            work.record_progress(Height::new(60), Height::new(60));
+            assert_eq!(
+                gauge(&snapshotter, name),
+                Some(DebugValue::Gauge(0.0.into()))
+            );
+        });
     }
 }

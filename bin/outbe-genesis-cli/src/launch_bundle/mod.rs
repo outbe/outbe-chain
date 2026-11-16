@@ -4,9 +4,9 @@ pub mod dist;
 pub mod scripts;
 pub mod systemd;
 
-use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::{env, fs};
 
 use serde_json::Value;
 use walkdir::WalkDir;
@@ -17,6 +17,7 @@ use outbe_primitives::tee_attestation_v1::{
 
 use crate::error::GenesisError;
 pub use crate::keys::ensure_reth_p2p_secret;
+use crate::network::packaged_crs_path;
 use crate::seed_codec::parse_u64;
 
 pub use self::dist::{build_distribution, deploy_markdown};
@@ -258,6 +259,30 @@ pub(super) fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), GenesisEr
     Ok(())
 }
 
+fn stage_crs(config: &Value, output_dir: &Path) -> Result<(), GenesisError> {
+    let source = config
+        .get("crs_path")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .or_else(packaged_crs_path)
+        .or_else(|| env::var_os("BB_CRS_PATH").map(PathBuf::from))
+        .ok_or_else(|| {
+            GenesisError::validation("CRS is missing; use the packaged release or set `crs_path`")
+        })?;
+    if !source.is_file() {
+        return Err(GenesisError::validation(format!(
+            "CRS file does not exist: {}",
+            source.display()
+        )));
+    }
+    let destination = output_dir.join(".bb-crs/bn254_g1.dat");
+    fs::create_dir_all(destination.parent().expect("CRS path has a parent"))
+        .map_err(|err| GenesisError::io(&destination, err))?;
+    fs::copy(&source, &destination).map_err(|err| GenesisError::io(&destination, err))?;
+    fs::set_permissions(&destination, fs::Permissions::from_mode(0o644))
+        .map_err(|err| GenesisError::io(&destination, err))
+}
+
 /// Copy the complete signed SGX release runtime into the bundle and strip signing keys.
 pub fn stage_signed_enclave(
     config: &Value,
@@ -461,6 +486,7 @@ pub fn render(
     }
 
     stage_signed_enclave(config, output_dir)?;
+    stage_crs(config, output_dir)?;
     build_distribution(output_dir, validators, keys_dir, &base_dir)?;
 
     let mut deploy_config = config.clone();

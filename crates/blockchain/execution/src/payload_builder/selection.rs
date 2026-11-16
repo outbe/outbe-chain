@@ -28,6 +28,39 @@ use super::{
     transaction_error::PreservedInvalidUserTx,
 };
 
+/// Closed reasons for skipping one candidate without changing selection policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PayloadTxSkipReason {
+    GasLimit,
+    RlpSizeLimit,
+    BlobRejected,
+    GasAboveAvailable,
+    NonceTooLow,
+    SponsoredBudgetDeferred,
+    EnclaveWitnessBudgetDeferred,
+    InvalidTx,
+}
+
+impl PayloadTxSkipReason {
+    pub const fn as_label(&self) -> &'static str {
+        match self {
+            Self::GasLimit => "gas_limit",
+            Self::RlpSizeLimit => "rlp_size_limit",
+            Self::BlobRejected => "blob_rejected",
+            Self::GasAboveAvailable => "gas_above_available",
+            Self::NonceTooLow => "nonce_too_low",
+            Self::SponsoredBudgetDeferred => "sponsored_budget_deferred",
+            Self::EnclaveWitnessBudgetDeferred => "enclave_witness_budget_deferred",
+            Self::InvalidTx => "invalid_tx",
+        }
+    }
+
+    pub fn record(self) {
+        metrics::counter!("outbe_evm_payload_tx_skipped_total", "reason" => self.as_label())
+            .increment(1);
+    }
+}
+
 enum BlobAdmission {
     Accepted(Option<Arc<BlobTransactionSidecarVariant>>),
     Rejected,
@@ -79,7 +112,10 @@ where
             }
             let sidecar = match self.blob_sidecar(&pool_tx, &tx)? {
                 BlobAdmission::Accepted(sidecar) => sidecar,
-                BlobAdmission::Rejected => continue,
+                BlobAdmission::Rejected => {
+                    PayloadTxSkipReason::BlobRejected.record();
+                    continue;
+                }
             };
             let accounting = UserAccounting {
                 rlp_length: tx_rlp_len,
@@ -135,6 +171,7 @@ where
                 .checked_sub(self.state.state_gas_used)
                 .is_some_and(|remaining| pool_tx.gas_limit() <= remaining);
         if !regular_fits || !state_fits {
+            PayloadTxSkipReason::GasLimit.record();
             self.best_txs.mark_invalid(
                 pool_tx,
                 InvalidPoolTransactionError::ExceedsGasLimit(
@@ -154,6 +191,7 @@ where
         tx_rlp_len: usize,
     ) -> bool {
         if let Err(SizeRejection { size, limit }) = self.state.size_budget.admit(tx_rlp_len) {
+            PayloadTxSkipReason::RlpSizeLimit.record();
             self.best_txs.mark_invalid(
                 pool_tx,
                 InvalidPoolTransactionError::OversizedData { size, limit },
@@ -240,23 +278,29 @@ where
                 BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas { .. },
             )) => {
                 trace!(target: "payload_builder", ?tx_hash, "deferring transaction beyond pre-end gas capacity");
+                PayloadTxSkipReason::GasAboveAvailable.record();
                 Ok(None)
             }
             Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                 error, ..
             })) => {
                 trace!(target: "payload_builder", %error, ?tx_hash, "skipping invalid transaction");
-                if !error.is_nonce_too_low()
-                    && !outbe_evm::is_sponsored_block_budget_deferral(error.as_ref())
-                    && !outbe_evm::is_enclave_witness_budget_deferral(error.as_ref())
-                {
+                let reason = if error.is_nonce_too_low() {
+                    PayloadTxSkipReason::NonceTooLow
+                } else if outbe_evm::is_sponsored_block_budget_deferral(error.as_ref()) {
+                    PayloadTxSkipReason::SponsoredBudgetDeferred
+                } else if outbe_evm::is_enclave_witness_budget_deferral(error.as_ref()) {
+                    PayloadTxSkipReason::EnclaveWitnessBudgetDeferred
+                } else {
                     self.best_txs.mark_invalid(
                         pool_tx,
                         InvalidPoolTransactionError::Other(Box::new(PreservedInvalidUserTx {
                             reason: error,
                         })),
                     );
-                }
+                    PayloadTxSkipReason::InvalidTx
+                };
+                reason.record();
                 Ok(None)
             }
             Err(err) => {

@@ -67,6 +67,7 @@ pub struct ApplicationHandler {
 
 #[derive(Clone)]
 pub(crate) struct ApplicationShared {
+    pub(crate) self_proposed_digests: crate::reporter::SelfProposedDigests,
     /// Explicit proposer wall-clock source. Never derived from ambient env.
     unix_time_source: Arc<dyn UnixTimeSource>,
 
@@ -180,6 +181,7 @@ pub(crate) struct ApplicationShared {
 /// `FinalizationActorDeps`, which the same `outbe-engine` call site
 /// (`stack::epoch::run`) uses a few lines later.
 pub struct ApplicationDeps {
+    pub self_proposed_digests: crate::reporter::SelfProposedDigests,
     pub unix_time_source: Arc<dyn UnixTimeSource>,
     pub rx: futures::channel::mpsc::Receiver<Message>,
     pub engine: EngineHandle,
@@ -222,6 +224,7 @@ impl ApplicationHandler {
     /// takes the already-initialized handle.
     pub fn new(deps: ApplicationDeps) -> Self {
         let ApplicationDeps {
+            self_proposed_digests,
             unix_time_source,
             rx,
             engine,
@@ -254,6 +257,7 @@ impl ApplicationHandler {
         Self {
             rx,
             shared: ApplicationShared {
+                self_proposed_digests,
                 unix_time_source,
                 engine,
                 payload_builder,

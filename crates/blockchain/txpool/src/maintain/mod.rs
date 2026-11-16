@@ -21,15 +21,21 @@
 //! Metrics use `outbe_txpool_*`: gauges count transactions with `_txs`, and
 //! counters end in `_total`. See `crates/runtime/src/metrics_recorder.rs`.
 
-use std::collections::HashSet;
+use std::{
+    collections::HashSet,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+
+pub mod inclusion_tracker;
+pub use inclusion_tracker::{InclusionAlarmKind, InclusionStallTracker};
 
 use alloy_consensus::BlockHeader as _;
 use alloy_primitives::B256;
 use futures::StreamExt as _;
 use metrics::{counter, gauge};
 use outbe_primitives::OutbePrimitives;
-use reth_chain_state::CanonStateSubscriptions;
-use reth_transaction_pool::TransactionPool;
+use reth_chain_state::{CanonStateNotification, CanonStateSubscriptions};
+use reth_transaction_pool::{PoolSize, TransactionPool};
 
 /// Configuration for [`maintain_outbe_pool`].
 #[derive(Clone, Copy, Debug)]
@@ -39,12 +45,18 @@ pub struct OutbePoolMaintainConfig {
     /// snapshots, so the effective pending TTL is one to two intervals. Must be
     /// non-zero (CLI validation enforces this).
     pub staleness_interval_secs: u64,
+    /// Minimum block interval, used for inclusion-stall telemetry.
+    pub min_block_time: Duration,
+    /// Queued transaction lifetime, used for inclusion-stall telemetry.
+    pub queued_lifetime: Duration,
 }
 
 impl Default for OutbePoolMaintainConfig {
     fn default() -> Self {
         Self {
             staleness_interval_secs: 600,
+            min_block_time: Duration::from_secs(1),
+            queued_lifetime: Duration::from_secs(120),
         }
     }
 }
@@ -64,6 +76,12 @@ impl PendingStalenessTracker {
             last_snapshot_time: None,
             interval_secs,
         }
+    }
+
+    /// Whether canonical time has reached the next snapshot boundary.
+    pub fn should_check(&self, now_secs: u64) -> bool {
+        self.last_snapshot_time
+            .is_none_or(|last| now_secs.saturating_sub(last) >= self.interval_secs)
     }
 
     /// Feed the current pending set at canonical tip time `tip_timestamp`
@@ -129,12 +147,15 @@ pub fn run_staleness_tick<Pool>(
 where
     Pool: TransactionPool,
 {
+    publish_pool_size(pool.pool_size());
+    if !tracker.should_check(tip_timestamp) {
+        return Vec::new();
+    }
     let pending: HashSet<B256> = pool
         .pending_transactions()
         .into_iter()
         .map(|tx| *tx.hash())
         .collect();
-    gauge!("outbe_txpool_pending_snapshot_txs").set(pending.len() as f64);
     let stale = tracker.check_and_update(pending, tip_timestamp);
     if stale.is_empty() {
         return Vec::new();
@@ -174,25 +195,86 @@ pub async fn maintain_outbe_pool<Provider, Pool>(
     Provider: CanonStateSubscriptions<Primitives = OutbePrimitives>,
     Pool: TransactionPool,
 {
-    let mut tracker = PendingStalenessTracker::new(config.staleness_interval_secs);
+    let mut staleness = PendingStalenessTracker::new(config.staleness_interval_secs);
+    let mut inclusion = InclusionStallTracker::new(
+        config.min_block_time,
+        config.queued_lifetime,
+        config.staleness_interval_secs,
+    );
     let mut stream = provider.canonical_state_stream();
+    let period = Duration::from_secs(5);
+    let started_at = tokio::time::Instant::now();
+    let unix_start = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let mut ticker = tokio::time::interval_at(started_at + period, period);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut last_tip_timestamp = None;
     tracing::info!(
         target: "outbe::txpool",
         staleness_interval_secs = config.staleness_interval_secs,
         "pending staleness eviction active"
     );
-    while let Some(notification) = stream.next().await {
-        // This loop handles Commit and Reorg identically. Only the new tip's
-        // timestamp and the pool's CURRENT pending set matter.
-        let Some(tip) = notification.tip_checked() else {
-            continue;
-        };
-        let _ = run_staleness_tick(&pool, &mut tracker, tip.header().timestamp());
+    loop {
+        tokio::select! {
+            notification = stream.next() => {
+                let Some(notification) = notification else { break };
+                observe_notification(&notification, &pool, &mut inclusion);
+                if let Some(tip) = notification.tip_checked() {
+                    let timestamp = tip.header().timestamp();
+                    last_tip_timestamp = Some(timestamp);
+                    let _ = run_staleness_tick(&pool, &mut staleness, timestamp);
+                }
+            }
+            _ = ticker.tick() => {}
+        }
+        publish_pool_size(pool.pool_size());
+        if let Some(timestamp) = last_tip_timestamp {
+            // Anchor Unix time to Tokio's monotonic clock, including paused-time tests.
+            let now_unix_secs = unix_start.saturating_add(started_at.elapsed().as_secs());
+            gauge!("outbe_txpool_canonical_tip_age_seconds")
+                .set(now_unix_secs.saturating_sub(timestamp) as f64);
+        }
     }
     tracing::info!(
         target: "outbe::txpool",
         "canonical state stream closed; pending staleness eviction stopped"
     );
+}
+
+fn publish_pool_size(size: PoolSize) {
+    gauge!("outbe_txpool_pending_snapshot_txs").set(size.pending as f64);
+    gauge!("outbe_txpool_queued_txs").set(size.queued as f64);
+}
+
+fn observe_notification<Pool: TransactionPool>(
+    notification: &CanonStateNotification<OutbePrimitives>,
+    pool: &Pool,
+    tracker: &mut InclusionStallTracker,
+) {
+    if matches!(notification, CanonStateNotification::Reorg { .. }) {
+        tracker.reset();
+    }
+    for block in notification.committed().blocks_iter() {
+        let user_txs = block
+            .body()
+            .transactions
+            .iter()
+            .filter(|tx| !outbe_primitives::system_tx::is_reserved_system_tx(*tx))
+            .count();
+        gauge!("outbe_txpool_block_user_txs").set(user_txs as f64);
+        if let Some(kind) = tracker.observe_block(
+            block.number(),
+            block.timestamp(),
+            user_txs,
+            pool.pool_size(),
+        ) {
+            counter!("outbe_txpool_inclusion_alarms_total", "kind" => kind.as_label()).increment(1);
+            tracing::warn!(target: "outbe::txpool", kind = kind.as_label(),
+                block_number = block.number(), "pool transactions not included in canonical blocks");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -205,12 +287,19 @@ mod tests {
             atomic::{AtomicU64, Ordering},
             Arc, Mutex,
         },
-        time::Duration,
     };
 
     use metrics::{
         Counter, Gauge, Histogram, Key, KeyName, Metadata, Recorder, SharedString, Unit,
     };
+
+    #[test]
+    fn maintenance_config_defaults() {
+        let config = OutbePoolMaintainConfig::default();
+        assert_eq!(config.staleness_interval_secs, 600);
+        assert_eq!(config.min_block_time, Duration::from_secs(1));
+        assert_eq!(config.queued_lifetime, Duration::from_secs(120));
+    }
 
     #[derive(Default)]
     struct TestRecorder {
@@ -341,7 +430,11 @@ mod tests {
             recorder.value("outbe_txpool_pending_snapshot_txs"),
             Some(2.0_f64.to_bits())
         );
-        assert_eq!(recorder.values.lock().unwrap().len(), 1);
+        assert_eq!(
+            recorder.value("outbe_txpool_queued_txs"),
+            Some(0.0_f64.to_bits())
+        );
+        assert_eq!(recorder.values.lock().unwrap().len(), 2);
         assert_eq!(recorder.value("outbe_txpool_stale_evicted_total"), None);
 
         // A newcomer admitted between snapshots must survive this round.
@@ -358,7 +451,7 @@ mod tests {
             recorder.value("outbe_txpool_pending_snapshot_txs"),
             Some(3.0_f64.to_bits())
         );
-        assert_eq!(recorder.values.lock().unwrap().len(), 2);
+        assert_eq!(recorder.values.lock().unwrap().len(), 3);
         assert_eq!(recorder.value("outbe_txpool_stale_evicted_total"), Some(2));
         assert!(removed.contains(&head_hash), "stale head must be evicted");
         assert!(
@@ -472,5 +565,285 @@ mod tests {
         .await
         .expect("queued-lifetime maintenance must remove the exact transaction");
         maintenance.abort();
+    }
+
+    fn recorded_metrics(
+        recorder: &metrics_util::debugging::DebuggingRecorder,
+    ) -> HashMap<Key, metrics_util::debugging::DebugValue> {
+        recorder
+            .snapshotter()
+            .snapshot()
+            .into_vec()
+            .into_iter()
+            .map(|(key, _, _, value)| (key.key().clone(), value))
+            .collect()
+    }
+
+    fn alarm_key(kind: InclusionAlarmKind) -> Key {
+        Key::from_parts(
+            "outbe_txpool_inclusion_alarms_total",
+            vec![metrics::Label::new("kind", kind.as_label())],
+        )
+    }
+
+    fn test_block(
+        number: u64,
+        timestamp: u64,
+        with_user: bool,
+    ) -> reth_primitives_traits::RecoveredBlock<outbe_primitives::OutbeBlock> {
+        use alloy_consensus::{SignableTransaction as _, TxLegacy};
+        use alloy_primitives::{Address, Signature, TxKind};
+        use outbe_primitives::{OutbeBlock, OutbeBlockBody, OutbeHeader};
+        let system_address = outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS;
+        let destinations = if with_user {
+            vec![system_address, system_address, Address::repeat_byte(0x44)]
+        } else {
+            vec![system_address, system_address]
+        };
+        let transactions = destinations
+            .into_iter()
+            .map(|to| {
+                TxLegacy {
+                    to: TxKind::Call(to),
+                    ..Default::default()
+                }
+                .into_signed(Signature::test_signature())
+                .into()
+            })
+            .collect::<Vec<_>>();
+        let senders = vec![Address::ZERO; transactions.len()];
+        reth_primitives_traits::RecoveredBlock::new_unhashed(
+            OutbeBlock {
+                header: OutbeHeader::new(alloy_consensus::Header {
+                    number,
+                    timestamp,
+                    ..Default::default()
+                }),
+                body: OutbeBlockBody {
+                    transactions,
+                    ..Default::default()
+                },
+            },
+            senders,
+        )
+    }
+
+    fn notification(numbers: std::ops::Range<u64>) -> CanonStateNotification<OutbePrimitives> {
+        CanonStateNotification::Commit {
+            new: Arc::new(reth_provider::Chain::new(
+                numbers.map(|number| test_block(number, number * 2, false)),
+                Default::default(),
+                Default::default(),
+            )),
+        }
+    }
+
+    #[tokio::test]
+    async fn system_only_batch_counts_each_block_but_skips_genesis_and_bootstrap() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+        use reth_transaction_pool::{
+            test_utils::{testing_pool, MockTransactionFactory},
+            TransactionOrigin,
+        };
+        let pool = testing_pool();
+        let transaction = MockTransactionFactory::default().create_eip1559();
+        pool.add_transaction(TransactionOrigin::External, transaction.transaction)
+            .await
+            .unwrap();
+        let recorder = DebuggingRecorder::new();
+        let mut tracker =
+            InclusionStallTracker::new(Duration::from_secs(2), Duration::from_secs(120), 600);
+        metrics::with_local_recorder(&recorder, || {
+            observe_notification(&notification(0..76), &pool, &mut tracker);
+        });
+        let values = recorded_metrics(&recorder);
+        assert_eq!(
+            values.get(&Key::from_name("outbe_txpool_block_user_txs")),
+            Some(&DebugValue::Gauge(0.0.into()))
+        );
+        assert!(!values.contains_key(&alarm_key(InclusionAlarmKind::PendingNotIncluded)));
+        metrics::with_local_recorder(&recorder, || {
+            observe_notification(&notification(76..77), &pool, &mut tracker);
+        });
+        assert_eq!(
+            recorded_metrics(&recorder).get(&alarm_key(InclusionAlarmKind::PendingNotIncluded)),
+            Some(&DebugValue::Counter(1))
+        );
+    }
+
+    #[tokio::test]
+    async fn queued_only_alarm_is_emitted_before_queued_expiry() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+        use reth_transaction_pool::{
+            test_utils::{testing_pool, MockTransactionFactory},
+            TransactionOrigin,
+        };
+        let pool = testing_pool();
+        let mut transaction = MockTransactionFactory::default()
+            .create_eip1559()
+            .transaction;
+        transaction.set_nonce(64);
+        pool.add_transaction(TransactionOrigin::External, transaction)
+            .await
+            .unwrap();
+        assert_eq!(pool.pool_size().pending, 0);
+        assert_eq!(pool.pool_size().queued, 1);
+        let recorder = DebuggingRecorder::new();
+        let mut tracker =
+            InclusionStallTracker::new(Duration::from_secs(2), Duration::from_secs(120), 600);
+        metrics::with_local_recorder(&recorder, || {
+            observe_notification(&notification(2..17), &pool, &mut tracker);
+            publish_pool_size(pool.pool_size());
+        });
+        let values = recorded_metrics(&recorder);
+        assert_eq!(
+            values.get(&alarm_key(InclusionAlarmKind::QueuedOnly)),
+            Some(&DebugValue::Counter(1))
+        );
+        assert_eq!(
+            values.get(&Key::from_name("outbe_txpool_queued_txs")),
+            Some(&DebugValue::Gauge(1.0.into()))
+        );
+    }
+
+    #[tokio::test]
+    async fn reorg_revert_and_user_transactions_reset_inclusion_series() {
+        use metrics_util::debugging::DebuggingRecorder;
+        use reth_transaction_pool::{
+            test_utils::{testing_pool, MockTransactionFactory},
+            TransactionOrigin,
+        };
+        let pool = testing_pool();
+        let transaction = MockTransactionFactory::default().create_eip1559();
+        pool.add_transaction(TransactionOrigin::External, transaction.transaction)
+            .await
+            .unwrap();
+        let recorder = DebuggingRecorder::new();
+        let mut tracker =
+            InclusionStallTracker::new(Duration::from_secs(2), Duration::from_secs(120), 600);
+        metrics::with_local_recorder(&recorder, || {
+            observe_notification(&notification(2..76), &pool, &mut tracker);
+            let reorg = CanonStateNotification::Reorg {
+                old: notification(75..76).committed(),
+                new: notification(75..76).committed(),
+            };
+            observe_notification(&reorg, &pool, &mut tracker);
+            observe_notification(&notification(76..149), &pool, &mut tracker);
+            let user = CanonStateNotification::Commit {
+                new: Arc::new(reth_provider::Chain::new(
+                    [test_block(149, 298, true)],
+                    Default::default(),
+                    Default::default(),
+                )),
+            };
+            observe_notification(&user, &pool, &mut tracker);
+            observe_notification(&notification(150..224), &pool, &mut tracker);
+            let revert = CanonStateNotification::Reorg {
+                old: notification(223..224).committed(),
+                new: Arc::default(),
+            };
+            observe_notification(&revert, &pool, &mut tracker);
+            observe_notification(&notification(224..298), &pool, &mut tracker);
+        });
+        let values = recorded_metrics(&recorder);
+        assert!(!values.contains_key(&alarm_key(InclusionAlarmKind::PendingNotIncluded)));
+        assert_eq!(
+            values.get(&Key::from_name("outbe_txpool_block_user_txs")),
+            Some(&metrics_util::debugging::DebugValue::Gauge(0.0.into()))
+        );
+    }
+
+    struct Subscription(Mutex<Option<reth_chain_state::CanonStateNotifications<OutbePrimitives>>>);
+
+    impl CanonStateSubscriptions for Subscription {
+        type Primitives = OutbePrimitives;
+
+        fn subscribe_to_canonical_state(
+            &self,
+        ) -> reth_chain_state::CanonStateNotifications<OutbePrimitives> {
+            self.0.lock().unwrap().take().unwrap()
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stalled_stream_updates_tip_age_every_five_seconds_and_stops_on_eof() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+        use reth_transaction_pool::test_utils::testing_pool;
+        let (sender, receiver) = tokio::sync::broadcast::channel(8);
+        let pool = testing_pool();
+        let recorder = DebuggingRecorder::new();
+        let mut task = Box::pin(maintain_outbe_pool(
+            Subscription(Mutex::new(Some(receiver))),
+            pool,
+            OutbePoolMaintainConfig::default(),
+        ));
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        sender
+            .send(CanonStateNotification::Commit {
+                new: Arc::new(reth_provider::Chain::new(
+                    [test_block(2, timestamp, false)],
+                    Default::default(),
+                    Default::default(),
+                )),
+            })
+            .unwrap();
+        assert!(
+            metrics::with_local_recorder(&recorder, || futures::FutureExt::now_or_never(
+                task.as_mut()
+            ))
+            .is_none()
+        );
+        let initial_age = match recorded_metrics(&recorder)
+            .get(&Key::from_name("outbe_txpool_canonical_tip_age_seconds"))
+        {
+            Some(DebugValue::Gauge(age)) => age.into_inner(),
+            value => panic!("expected initial canonical tip age gauge, got {value:?}"),
+        };
+        assert!(initial_age <= 1.0);
+        for elapsed in [5, 10] {
+            tokio::time::advance(Duration::from_secs(5)).await;
+            assert!(
+                metrics::with_local_recorder(&recorder, || futures::FutureExt::now_or_never(
+                    task.as_mut()
+                ))
+                .is_none()
+            );
+            let values = recorded_metrics(&recorder);
+            assert_eq!(
+                values.get(&Key::from_name("outbe_txpool_canonical_tip_age_seconds")),
+                Some(&DebugValue::Gauge(
+                    (initial_age + f64::from(elapsed)).into()
+                ))
+            );
+            assert_eq!(
+                values.get(&Key::from_name("outbe_txpool_pending_snapshot_txs")),
+                Some(&DebugValue::Gauge(0.0.into()))
+            );
+            assert_eq!(
+                values.get(&Key::from_name("outbe_txpool_queued_txs")),
+                Some(&DebugValue::Gauge(0.0.into()))
+            );
+        }
+        drop(sender);
+        assert!(
+            metrics::with_local_recorder(&recorder, || futures::FutureExt::now_or_never(
+                task.as_mut()
+            ))
+            .is_some()
+        );
+    }
+
+    #[test]
+    fn should_check_matches_snapshot_boundaries_and_time_regression() {
+        let mut tracker = PendingStalenessTracker::new(10);
+        assert!(tracker.should_check(100));
+        tracker.check_and_update(set(&[1]), 100);
+        assert!(!tracker.should_check(105));
+        assert!(!tracker.should_check(95));
+        assert!(tracker.should_check(110));
+        assert_eq!(tracker.check_and_update(set(&[1]), 110), vec![hash(1)]);
     }
 }

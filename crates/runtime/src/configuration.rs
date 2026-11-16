@@ -54,7 +54,8 @@ pub fn outbe_default_txpool_values() -> reth_node_core::args::DefaultTxPoolValue
 
 /// Parked-transaction lifetime. Reth's own default is three hours. That is
 /// orders of magnitude longer than a two-second chain needs.
-const OUTBE_TXPOOL_QUEUED_LIFETIME: std::time::Duration = std::time::Duration::from_secs(120);
+pub(crate) const OUTBE_TXPOOL_QUEUED_LIFETIME: std::time::Duration =
+    std::time::Duration::from_secs(120);
 
 /// RPC-submitted transactions must NOT be exempt from lifetime eviction.
 const OUTBE_TXPOOL_NO_LOCALS: bool = true;

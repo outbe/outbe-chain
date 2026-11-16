@@ -16,7 +16,10 @@ mod bootstrap_probe;
 
 pub use lifecycle::EndpointTaskOwner;
 pub use material::RepositoryMaterialPublisher;
-pub use metrics::RadicleMetrics;
+pub use metrics::{
+    record_p2p_send_rate_limited, record_p2p_send_rejected, record_p2p_send_skipped_peer,
+    RadicleMetrics,
+};
 pub use network::{
     shutdown_bounded, EndpointEvidenceHandle, EndpointNetwork, EndpointNetworkService,
     EndpointSigningIdentity, EndpointTransport, LocalEndpointIdentity,
