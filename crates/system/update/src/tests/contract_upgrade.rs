@@ -4,10 +4,11 @@ use alloy_sol_types::{SolCall, SolError};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_system_common::addresses::CROSSCHAIN_BRIDGE_ADDRESS;
+use outbe_system_common::addresses::{CROSSCHAIN_BRIDGE_ADDRESS, UPDATE_ADDRESS};
 use outbe_system_common::vote_target::{TargetExecutionOutcome, VoteTarget, VoteTargetContext};
 
 use crate::precompile::{dispatch, IUpdate};
+use crate::schema::Update;
 use crate::sol_ext::{ICrosschainBridge, IUUPSUpgradeable};
 use crate::vote_target::UpdateVoteTarget;
 
@@ -173,4 +174,72 @@ fn apply_approved_waits_for_the_execution_delay_of_the_payload() {
     p.set_block_number(UNLOCK);
     apply(&mut p, &payload).unwrap();
     assert_eq!(p.sub_call_inputs().len(), 1);
+}
+
+#[test]
+fn vote_step_applies_a_queued_upgrade_at_unlock_and_retries_a_reverted_one() {
+    let payload = upgrades(&[(TEST_CHAIN_ID, 0xb1)]);
+    let queued = |p: &mut HashMapStorageProvider| {
+        StorageHandle::enter(p, |storage| {
+            Update::new(storage).queued_contract_upgrades.len().unwrap()
+        })
+    };
+    let run = |p: &mut HashMapStorageProvider, block| {
+        StorageHandle::enter(p, |storage| {
+            crate::apply_due_contract_upgrades(&storage, block).unwrap()
+        })
+    };
+    let expected = IUpdate::applyApprovedCall {
+        proposalId: U256::ONE,
+        payload: payload.as_bytes().to_vec().into(),
+    }
+    .abi_encode();
+
+    // Before the unlock block nothing runs. A revert keeps the batch queued.
+    let mut p = HashMapStorageProvider::new(TEST_CHAIN_ID);
+    approve(&mut p, &payload);
+    write_vote_proposal(&mut p, &payload);
+    run(&mut p, UNLOCK - 1);
+    assert!(p.sub_call_inputs().is_empty());
+    p.stub_sub_call_revert_at(UPDATE_ADDRESS, Bytes::new());
+    run(&mut p, UNLOCK);
+    assert_eq!(p.sub_call_inputs().len(), 1);
+    assert_eq!(p.sub_call_inputs()[0].target, UPDATE_ADDRESS);
+    assert_eq!(p.sub_call_inputs()[0].calldata.to_vec(), expected);
+    assert_eq!(queued(&mut p), 1);
+
+    // A successful applyApproved removes the batch from the queue.
+    let mut p = HashMapStorageProvider::new(TEST_CHAIN_ID);
+    p.enable_sub_call_stub();
+    approve(&mut p, &payload);
+    write_vote_proposal(&mut p, &payload);
+    run(&mut p, UNLOCK);
+    assert_eq!(queued(&mut p), 0);
+
+    // A batch that another caller applied leaves the queue without a call.
+    let mut p = HashMapStorageProvider::new(TEST_CHAIN_ID);
+    p.enable_sub_call_stub();
+    approve(&mut p, &payload);
+    p.set_block_number(UNLOCK);
+    apply(&mut p, &payload).unwrap();
+    let calls = p.sub_call_inputs().len();
+    run(&mut p, UNLOCK);
+    assert_eq!(p.sub_call_inputs().len(), calls);
+    assert_eq!(queued(&mut p), 0);
+}
+
+fn write_vote_proposal(p: &mut HashMapStorageProvider, payload: &str) {
+    StorageHandle::enter(p, |storage| {
+        outbe_system_common::vote_target::vote_proposals(storage)
+            .create(&outbe_system_common::vote_target::ProposalRecord {
+                id: U256::ONE,
+                proposer: Address::repeat_byte(1),
+                target_module: UPDATE_ADDRESS,
+                payload: payload.to_string(),
+                created_height: 0,
+                voting_deadline_height: 0,
+                status: outbe_system_common::vote_target::ProposalStatus::Approved.to_u8(),
+            })
+            .unwrap();
+    });
 }

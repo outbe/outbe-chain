@@ -83,6 +83,8 @@ pub struct HashMapStorageProvider {
     /// Per-address return data stubs. Entries registered via
     /// [`Self::stub_sub_call_at`] take priority over `sub_call_stub`.
     sub_call_stubs: HashMap<Address, Bytes>,
+    /// Per-address revert data. A call to such an address reverts with it.
+    sub_call_revert_stubs: HashMap<Address, Bytes>,
     /// Per-address-and-selector return data stubs. These take priority over
     /// address-wide stubs so tests can model contracts with multiple views.
     sub_call_selector_stubs: HashMap<(Address, [u8; 4]), Bytes>,
@@ -150,6 +152,7 @@ impl HashMapStorageProvider {
             snapshots: Vec::new(),
             sub_call_stub: false,
             sub_call_stubs: HashMap::new(),
+            sub_call_revert_stubs: HashMap::new(),
             sub_call_selector_stubs: HashMap::new(),
             sub_call_selector_sequences: HashMap::new(),
             sub_call_inputs: Vec::new(),
@@ -224,6 +227,11 @@ impl HashMapStorageProvider {
     /// a real EVM sub-frame.
     pub fn stub_sub_call_at(&mut self, address: Address, returndata: Bytes) {
         self.sub_call_stubs.insert(address, returndata);
+    }
+
+    /// Makes every call to `address` revert with `revert_data`.
+    pub fn stub_sub_call_revert_at(&mut self, address: Address, revert_data: Bytes) {
+        self.sub_call_revert_stubs.insert(address, revert_data);
     }
 
     /// Register fixed returndata for one function selector at `address`.
@@ -818,6 +826,14 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             })?;
         }
         self.sub_call_inputs.push(input.clone());
+        if let Some(revert_data) = self.sub_call_revert_stubs.get(&input.target).cloned() {
+            return Ok(SubCallOutput {
+                status: SubCallStatus::Revert(revert_data),
+                returndata: Bytes::new(),
+                gas_used: 0,
+                gas_refunded: 0,
+            });
+        }
         if let Some(selector) = input
             .calldata
             .get(..4)

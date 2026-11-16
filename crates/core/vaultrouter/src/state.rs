@@ -45,6 +45,7 @@ pub(crate) fn record_approved_vault_action(
                 kind,
                 unlock_at,
             })?;
+        contract.queued_vault_actions.push(proposal_id)?;
         contract.pending_vault_proposals.write(&vault, proposal_id)
     })
 }

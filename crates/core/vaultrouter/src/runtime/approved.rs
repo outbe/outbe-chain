@@ -1,7 +1,10 @@
 //! Permissionless execution of governance-approved vault changes.
 
 use alloy_primitives::U256;
+use alloy_sol_types::SolCall;
 use outbe_primitives::{error::Result, storage::StorageHandle};
+use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
+use outbe_system_common::vote_target::{apply_due_approvals, DueApproval};
 
 use crate::{api::IVaultRouter, schema::VaultRouterContract, state};
 
@@ -32,8 +35,7 @@ pub(crate) fn apply_approved(storage: StorageHandle<'_>, proposal_id: U256) -> R
     storage.with_checkpoint(|| {
         let record = state::approved_vault_action(&storage, proposal_id)?;
         let unlock_height = record.unlock_at;
-        let expiry = unlock_height
-            .saturating_add(outbe_chain_constants::get_governance_voting_window_blocks());
+        let expiry = outbe_chain_constants::approved_action_expiry(unlock_height);
         let now = storage.block_number()?;
         if now < unlock_height {
             return Err(crate::errors::VaultRouterError::ApprovedVaultActionLocked {
@@ -58,4 +60,32 @@ pub(crate) fn apply_approved(storage: StorageHandle<'_>, proposal_id: U256) -> R
             _ => Err(crate::errors::VaultRouterError::InvalidApprovedVaultAction.into()),
         }
     })
+}
+
+/// Vote begin-block step: calls `applyApproved` for each queued vault action
+/// whose execution delay ended. The sub-call runs in the frame of VaultRouter,
+/// so its token approvals come from VaultRouter. A replaced or cleaned action
+/// has no record and leaves the queue.
+pub fn apply_due_vault_actions(storage: &StorageHandle<'_>, block_number: u64) -> Result<()> {
+    let contract = VaultRouterContract::new(storage.clone());
+    apply_due_approvals(
+        storage,
+        VAULT_ROUTER_ADDRESS,
+        &contract.queued_vault_actions,
+        |proposal_id| {
+            let Some(record) = contract.approved_vault_actions.get(proposal_id)? else {
+                return Ok(DueApproval::Done);
+            };
+            if block_number < record.unlock_at {
+                return Ok(DueApproval::Wait);
+            }
+            Ok(DueApproval::Call(
+                IVaultRouter::applyApprovedCall {
+                    proposalId: proposal_id,
+                }
+                .abi_encode()
+                .into(),
+            ))
+        },
+    )
 }

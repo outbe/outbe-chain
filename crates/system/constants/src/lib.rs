@@ -366,15 +366,10 @@ pub fn get_governance_voting_window_blocks() -> u64 {
     parameters().governance_voting_window_blocks
 }
 
-/// The blocks where an action approved at `approved_at` with an execution
-/// delay of `delay` blocks may run, as `(unlock, expiry)`: from the end of the
-/// delay to one voting window after it, both included.
-pub fn approved_action_window(approved_at: u64, delay: u64) -> (u64, u64) {
-    let unlock = approved_at.saturating_add(delay);
-    (
-        unlock,
-        unlock.saturating_add(get_governance_voting_window_blocks()),
-    )
+/// The last block where an approved action that unlocks at `unlock_height`
+/// may run: one voting window after the unlock, included.
+pub fn approved_action_expiry(unlock_height: u64) -> u64 {
+    unlock_height.saturating_add(get_governance_voting_window_blocks())
 }
 
 pub fn get_vwap_lookback_seconds() -> u64 {

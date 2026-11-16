@@ -3,6 +3,8 @@
 use outbe_coderegistry::vote_target::CodePatchVoteTarget;
 use outbe_hyperlanecontroller::HyperlaneVoteTarget;
 use outbe_l2registry::L2RegistryVoteTarget;
+use outbe_primitives::error::Result;
+use outbe_primitives::storage::StorageHandle;
 use outbe_stablecoinfactory::StablecoinFactoryVoteTarget;
 use outbe_update::vote_target::UpdateVoteTarget;
 use outbe_vaultrouter::VaultRouterVoteTarget;
@@ -36,4 +38,12 @@ static REGISTRY: VoteTargetRegistry = VoteTargetRegistry::new(ACTIVE_VOTE_TARGET
 #[must_use]
 pub fn registry() -> &'static VoteTargetRegistry {
     &REGISTRY
+}
+
+/// Calls `applyApproved` of Update (`upgradeContracts`), HyperlaneController
+/// and VaultRouter for each approved action whose execution delay ended.
+pub fn apply_due_approvals(storage: &StorageHandle<'_>, block_number: u64) -> Result<()> {
+    outbe_update::apply_due_contract_upgrades(storage, block_number)?;
+    outbe_hyperlanecontroller::apply_due_approved_actions(storage, block_number)?;
+    outbe_vaultrouter::apply_due_vault_actions(storage, block_number)
 }

@@ -10,6 +10,8 @@ pub(crate) mod contract_upgrade;
 pub(crate) mod enclave;
 pub(crate) mod protocol_update;
 
+pub use contract_upgrade::apply_due_contract_upgrades;
+
 use alloy_primitives::{Address, U256};
 use outbe_primitives::addresses::UPDATE_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
@@ -100,13 +102,15 @@ impl VoteTarget for UpdateVoteTarget {
             UpdateVotePayload::RevokeEnclaveBindingV1(decoded) => {
                 enclave::execute_approved_revocation(ctx, proposal_id, &decoded)
             }
-            UpdateVotePayload::UpgradeContracts(_) => {
-                // The tally has no sub-calls: store the payload hash for
-                // `applyApproved`.
+            UpdateVotePayload::UpgradeContracts(batch) => {
+                // The tally has no sub-calls: store the payload hash and the
+                // unlock block for `applyApproved`.
                 Update::new(ctx.storage.clone()).approve_contract_upgrade(
                     proposal_id,
                     raw_payload,
-                    ctx.block.block_number,
+                    ctx.block
+                        .block_number
+                        .saturating_add(batch.execution_delay_blocks),
                 )?;
                 Ok(TargetExecutionOutcome::Applied)
             }

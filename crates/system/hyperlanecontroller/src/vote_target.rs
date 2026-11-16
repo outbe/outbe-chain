@@ -3,17 +3,21 @@
 //! A chain id is also the Hyperlane domain of that chain.
 //!
 //! The vote tally runs where sub-calls are not available. So an approved
-//! proposal only stores the hash of its payload. Permissionless
-//! `applyApproved(proposalId, payload)` runs it later. Its writes to the ICA
-//! router and the ISMs are owner calls through `crosschainbridge`.
+//! proposal only stores the hash of its payload and enters a queue.
+//! `applyApproved(proposalId, payload)` runs it later. The begin-block step of
+//! Vote calls it when the execution delay ends, and anyone else may call it
+//! too. Its writes to the ICA router and the ISMs are owner calls through
+//! `crosschainbridge`.
 
 use alloy_primitives::{aliases::U96, keccak256, Address, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
+use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 use outbe_system_common::vote_target::{
-    decode_proposal_payload, decode_stored_proposal_payload, TargetExecutionOutcome, VoteTarget,
+    apply_due_approvals, approved_proposal_payload, decode_proposal_payload,
+    decode_stored_proposal_payload, DueApproval, TargetExecutionOutcome, VoteTarget,
     VoteTargetContext, VoteTargetError,
 };
 use serde::Deserialize;
@@ -210,10 +214,7 @@ impl HyperlaneControllerContract<'_> {
         }
         let action = Action::decode(payload, self.storage.chain_id()?)
             .map_err(|_| VoteTargetError::stored_payload_invalid("HyperlaneController"))?;
-        let (unlock_height, expiry) = outbe_chain_constants::approved_action_window(
-            self.approved_at.read(&proposal_id)?,
-            action.execution_delay_blocks(),
-        );
+        let unlock_height = self.unlock_at.read(&proposal_id)?;
         if self.storage.block_number()? < unlock_height {
             return Err(HyperlaneControllerError::ApprovedActionLocked {
                 proposal_id,
@@ -225,7 +226,9 @@ impl HyperlaneControllerContract<'_> {
         storage.with_checkpoint(|| {
             // Consume first. The checkpoint restores it if the action fails.
             self.approved_payload.write(&proposal_id, B256::ZERO)?;
-            if self.storage.block_number()? > expiry {
+            if self.storage.block_number()?
+                > outbe_chain_constants::approved_action_expiry(unlock_height)
+            {
                 return self.emit(IHyperlaneController::ApprovedActionExpired {
                     proposalId: proposal_id,
                 });
@@ -268,15 +271,49 @@ impl VoteTarget for HyperlaneVoteTarget {
     ) -> Result<TargetExecutionOutcome> {
         // Stored-payload corruption is an invariant failure, never proposal Error.
         decode_stored_proposal_payload(payload, "HyperlaneController")?;
-        Action::decode(payload, context.chain_id)
+        let action = Action::decode(payload, context.chain_id)
             .map_err(|_| VoteTargetError::stored_payload_invalid("HyperlaneController"))?;
         let controller = HyperlaneControllerContract::new(ctx.storage.clone());
         controller
             .approved_payload
             .write(&proposal_id, keccak256(payload))?;
-        controller
-            .approved_at
-            .write(&proposal_id, ctx.block.block_number)?;
+        controller.unlock_at.write(
+            &proposal_id,
+            ctx.block
+                .block_number
+                .saturating_add(action.execution_delay_blocks()),
+        )?;
+        controller.queued_approved_actions.push(proposal_id)?;
         Ok(TargetExecutionOutcome::Applied)
     }
+}
+
+/// Vote begin-block step: calls `applyApproved` for each queued action whose
+/// execution delay ended. The sub-call runs in the frame of the controller, so
+/// the controller is the caller of CrosschainBridge.
+pub fn apply_due_approved_actions(storage: &StorageHandle<'_>, block_number: u64) -> Result<()> {
+    let controller = HyperlaneControllerContract::new(storage.clone());
+    apply_due_approvals(
+        storage,
+        HYPERLANE_CONTROLLER_ADDRESS,
+        &controller.queued_approved_actions,
+        |proposal_id| {
+            if controller.approved_payload.read(&proposal_id)? == B256::ZERO {
+                return Ok(DueApproval::Done);
+            }
+            if block_number < controller.unlock_at.read(&proposal_id)? {
+                return Ok(DueApproval::Wait);
+            }
+            let payload =
+                approved_proposal_payload(storage.clone(), proposal_id, "HyperlaneController")?;
+            Ok(DueApproval::Call(
+                IHyperlaneController::applyApprovedCall {
+                    proposalId: proposal_id,
+                    payload: payload.into_bytes().into(),
+                }
+                .abi_encode()
+                .into(),
+            ))
+        },
+    )
 }

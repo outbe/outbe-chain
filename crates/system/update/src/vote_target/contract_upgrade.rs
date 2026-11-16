@@ -2,8 +2,10 @@
 //! not part of the protocol update.
 //!
 //! The vote tally runs where sub-calls are not available. So an approved
-//! proposal only stores the hash of its payload. Permissionless
-//! `applyApproved(proposalId, payload)` runs it later: it asks CrosschainBridge
+//! proposal only stores the hash of its payload and enters a queue.
+//! `applyApproved(proposalId, payload)` runs it later. The begin-block step of
+//! Vote calls it when the execution delay ends, and anyone else may call it
+//! too. It asks CrosschainBridge
 //! (`0x…EE15`), the owner of the contracts, to call
 //! `proxy.upgradeToAndCall(implementation, callData)` for each upgrade. On
 //! Outbe that is one `callLocal` for each upgrade. Each other chain gets one
@@ -13,8 +15,11 @@
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::error::Result;
-use outbe_system_common::addresses::CROSSCHAIN_BRIDGE_ADDRESS;
-use outbe_system_common::vote_target::decode_stored_proposal_payload;
+use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::{CROSSCHAIN_BRIDGE_ADDRESS, UPDATE_ADDRESS};
+use outbe_system_common::vote_target::{
+    apply_due_approvals, approved_proposal_payload, decode_stored_proposal_payload, DueApproval,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -133,16 +138,18 @@ impl UpgradeContractsPayload {
 }
 
 impl Update<'_> {
-    /// Stores the hash of an approved `upgradeContracts` payload.
+    /// Stores the hash of an approved `upgradeContracts` payload and its
+    /// unlock block, and queues the proposal for the begin-block step.
     pub(crate) fn approve_contract_upgrade(
         &self,
         proposal_id: U256,
         payload: &[u8],
-        block_number: u64,
+        unlock_height: u64,
     ) -> Result<()> {
         self.approved_upgrades
             .write(&proposal_id, keccak256(payload))?;
-        self.approved_upgrade_at.write(&proposal_id, block_number)
+        self.upgrade_unlock_at.write(&proposal_id, unlock_height)?;
+        self.queued_contract_upgrades.push(proposal_id)
     }
 
     /// Runs an approved batch once, inside one checkpoint: every upgrade is
@@ -157,13 +164,7 @@ impl Update<'_> {
         if keccak256(payload) != approved {
             return Err(UpdateError::ApprovedPayloadMismatch { proposal_id }.into());
         }
-        let value = decode_stored_proposal_payload(payload, "Update")?;
-        let batch = UpgradeContractsPayload::from_value(&value)
-            .map_err(UpdateError::stored_proposal_payload_invalid)?;
-        let (unlock_height, expiry) = outbe_chain_constants::approved_action_window(
-            self.approved_upgrade_at.read(&proposal_id)?,
-            batch.execution_delay_blocks,
-        );
+        let unlock_height = self.upgrade_unlock_at.read(&proposal_id)?;
         if self.storage.block_number()? < unlock_height {
             return Err(UpdateError::ContractUpgradeLocked {
                 proposal_id,
@@ -175,11 +176,16 @@ impl Update<'_> {
         storage.with_checkpoint(|| {
             // Consume first. The checkpoint restores it if an upgrade fails.
             self.approved_upgrades.write(&proposal_id, B256::ZERO)?;
-            if self.storage.block_number()? > expiry {
+            if self.storage.block_number()?
+                > outbe_chain_constants::approved_action_expiry(unlock_height)
+            {
                 return self.emit(IUpdate::ContractUpgradeExpired {
                     proposalId: proposal_id,
                 });
             }
+            let value = decode_stored_proposal_payload(payload, "Update")?;
+            let batch = UpgradeContractsPayload::from_value(&value)
+                .map_err(UpdateError::stored_proposal_payload_invalid)?;
             for call in batch.bridge_calls(self.storage.chain_id()?) {
                 self.storage
                     .call(CROSSCHAIN_BRIDGE_ADDRESS, U256::ZERO, call)?;
@@ -189,6 +195,35 @@ impl Update<'_> {
             })
         })
     }
+}
+
+/// Vote begin-block step: calls `applyApproved` for each queued batch whose
+/// execution delay ended. The sub-call runs in the frame of Update, so Update
+/// is the caller of CrosschainBridge.
+pub fn apply_due_contract_upgrades(storage: &StorageHandle<'_>, block_number: u64) -> Result<()> {
+    let update = Update::new(storage.clone());
+    apply_due_approvals(
+        storage,
+        UPDATE_ADDRESS,
+        &update.queued_contract_upgrades,
+        |proposal_id| {
+            if update.approved_upgrades.read(&proposal_id)? == B256::ZERO {
+                return Ok(DueApproval::Done);
+            }
+            if block_number < update.upgrade_unlock_at.read(&proposal_id)? {
+                return Ok(DueApproval::Wait);
+            }
+            let payload = approved_proposal_payload(storage.clone(), proposal_id, "Update")?;
+            Ok(DueApproval::Call(
+                IUpdate::applyApprovedCall {
+                    proposalId: proposal_id,
+                    payload: payload.into_bytes().into(),
+                }
+                .abi_encode()
+                .into(),
+            ))
+        },
+    )
 }
 
 #[cfg(test)]

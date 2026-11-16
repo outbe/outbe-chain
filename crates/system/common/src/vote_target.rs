@@ -6,7 +6,7 @@ use alloy_sol_types::{sol, SolError};
 use crate::addresses::VOTE_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::storage::dsl::{Map, RecordEntry, StorageRecord};
+use outbe_primitives::storage::dsl::{List, Map, RecordEntry, StorageRecord};
 use outbe_primitives::storage::types::{Mapping, Slot, Storable, StorableType, StorageBytes};
 use outbe_primitives::storage::StorageHandle;
 
@@ -414,6 +414,80 @@ pub fn read_proposal_status(
         return Ok(None);
     };
     Ok(Some(record.proposal_status()?))
+}
+
+/// What the Vote begin-block step does with one queued approval of a target
+/// module.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DueApproval {
+    /// The approval is gone: applied, expired, replaced, or applied by another
+    /// caller. It leaves the queue.
+    Done,
+    /// The execution delay has not ended.
+    Wait,
+    /// Call the target with this `applyApproved` calldata.
+    Call(Bytes),
+}
+
+/// Calls `applyApproved` of `target` for each approval in `queue` that is due.
+/// The sub-call runs in the frame of `target`. An approval leaves the queue
+/// when it is done or when the call succeeds. A reverted call stays in the
+/// queue and runs again in the next block. A node-local, fatal or sub-call
+/// failure fails the block.
+pub fn apply_due_approvals(
+    storage: &StorageHandle<'_>,
+    target: Address,
+    queue: &List<'_, U256>,
+    mut due: impl FnMut(U256) -> Result<DueApproval>,
+) -> Result<()> {
+    for proposal_id in queue.read_all()? {
+        match due(proposal_id)? {
+            DueApproval::Wait => continue,
+            DueApproval::Done => {}
+            DueApproval::Call(calldata) => {
+                if let Err(error) = storage.call(target, U256::ZERO, calldata) {
+                    if error.is_node_local()
+                        || matches!(
+                            error,
+                            PrecompileError::Fatal(_)
+                                | PrecompileError::FatalWithCause(_)
+                                | PrecompileError::SubCall(_)
+                        )
+                    {
+                        return Err(error);
+                    }
+                    tracing::warn!(
+                        target: "outbe::vote",
+                        %target,
+                        %proposal_id,
+                        %error,
+                        "approved action not applied, retry in the next block"
+                    );
+                    continue;
+                }
+            }
+        }
+        let ids = queue.read_all()?;
+        if let Some(index) = ids.iter().position(|id| *id == proposal_id) {
+            if let Some(last) = ids.last().filter(|_| index != ids.len() - 1) {
+                queue.set(index as u32, *last)?;
+            }
+            queue.pop()?;
+        }
+    }
+    Ok(())
+}
+
+/// Returns the payload of the approved proposal `proposal_id` of `module` from
+/// the Vote storage.
+pub fn approved_proposal_payload(
+    storage: StorageHandle<'_>,
+    proposal_id: U256,
+    module: &str,
+) -> Result<String> {
+    read_vote_proposal(storage, proposal_id)?
+        .map(|proposal| proposal.payload)
+        .ok_or_else(|| VoteTargetError::stored_payload_invalid(module))
 }
 
 /// Static handler table entry type.

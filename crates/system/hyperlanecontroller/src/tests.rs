@@ -1359,6 +1359,49 @@ mod vote_target {
     }
 
     #[test]
+    fn vote_step_calls_apply_approved_once_the_delay_ends() {
+        let payload = remove(ARBITRUM);
+        let mut p = initialized_provider();
+        p.enable_sub_call_stub();
+        approve(&mut p, &payload);
+        StorageHandle::enter(&mut p, |storage| {
+            outbe_system_common::vote_target::vote_proposals(storage)
+                .create(&outbe_system_common::vote_target::ProposalRecord {
+                    id: U256::ONE,
+                    proposer: v(1),
+                    target_module: HYPERLANE_CONTROLLER_ADDRESS,
+                    payload: payload.clone(),
+                    created_height: 0,
+                    voting_deadline_height: 0,
+                    status: outbe_system_common::vote_target::ProposalStatus::Approved.to_u8(),
+                })
+                .unwrap();
+        });
+        let run = |p: &mut HashMapStorageProvider, block| {
+            StorageHandle::enter(p, |storage| {
+                crate::apply_due_approved_actions(&storage, block).unwrap()
+            })
+        };
+        let start = p.sub_call_inputs().len();
+        run(&mut p, UNLOCK - 1);
+        assert_eq!(p.sub_call_inputs().len(), start);
+        run(&mut p, UNLOCK);
+        let calls = &p.sub_call_inputs()[start..];
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].target, HYPERLANE_CONTROLLER_ADDRESS);
+        let expected = IHyperlaneController::applyApprovedCall {
+            proposalId: U256::ONE,
+            payload: payload.as_bytes().to_vec().into(),
+        }
+        .abi_encode();
+        assert_eq!(calls[0].calldata.to_vec(), expected);
+        StorageHandle::enter(&mut p, |storage| {
+            let c = HyperlaneControllerContract::new(storage);
+            assert_eq!(c.queued_approved_actions.len().unwrap(), 0);
+        });
+    }
+
+    #[test]
     fn set_gas_markup_writes_the_markup() {
         let payload = format!(
             r#"{{"operation":"setGasMarkup","executionDelayBlocks":{DELAY},"markupBps":5000}}"#

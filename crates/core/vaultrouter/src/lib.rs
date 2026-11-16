@@ -15,6 +15,7 @@ pub(crate) mod state;
 pub mod test_support;
 pub mod vote_target;
 
+pub use runtime::apply_due_vault_actions;
 pub use schema::{LiquidityReservation, VaultRouterContract};
 pub use vote_target::VaultRouterVoteTarget;
 

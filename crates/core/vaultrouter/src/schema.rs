@@ -138,6 +138,11 @@ pub struct VaultRouterContract {
     /// slot 39: vault -> pending proposal ID; zero means none.
     #[attribute(order = 13)]
     pub pending_vault_proposals: outbe_primitives::storage::dsl::Map<Address, U256>,
+
+    /// slot 40: approved proposal ids that the Vote begin-block step has not
+    /// applied yet.
+    #[attribute(order = 14)]
+    pub queued_vault_actions: outbe_primitives::storage::dsl::List<U256>,
 }
 
 impl<'storage> VaultRouterContract<'storage> {

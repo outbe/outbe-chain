@@ -771,3 +771,36 @@ fn apply_waits_for_the_execution_delay_of_the_action() {
         ));
     });
 }
+
+#[test]
+fn vote_step_applies_an_unlocked_action_and_drops_a_replaced_one() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.enable_sub_call_stub();
+    StorageHandle::enter(&mut provider, |storage| {
+        stage(&storage, 9, REMOVE_VAULT, 10);
+        // The newer approval for the same vault replaces proposal 9.
+        stage(&storage, 1, ADD_VAULT, 10);
+        crate::apply_due_vault_actions(&storage, 9).unwrap();
+    });
+    assert!(provider.sub_call_inputs().is_empty());
+    StorageHandle::enter(&mut provider, |storage| {
+        crate::apply_due_vault_actions(&storage, 10).unwrap();
+        assert_eq!(
+            VaultRouterContract::new(storage)
+                .queued_vault_actions
+                .len()
+                .unwrap(),
+            0
+        );
+    });
+    let calls = provider.sub_call_inputs();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].target, VAULT_ROUTER_ADDRESS);
+    assert_eq!(
+        calls[0].calldata.to_vec(),
+        IVaultRouter::applyApprovedCall {
+            proposalId: U256::ONE
+        }
+        .abi_encode()
+    );
+}
