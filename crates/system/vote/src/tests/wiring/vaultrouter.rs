@@ -1,7 +1,7 @@
 use super::*;
 use crate::{handlers::TargetElectorate, ProposalSubmission};
 use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
-use outbe_vaultrouter::{api::IVaultRouter, VaultRouterContract};
+use outbe_vaultrouter::{precompile::IVaultRouter, VaultRouterContract};
 
 fn vault_payload(operation: &str, vault: Address) -> String {
     match operation {
@@ -12,7 +12,7 @@ fn vault_payload(operation: &str, vault: Address) -> String {
 
 fn route_payload(operation: &str, address: Address) -> String {
     match operation {
-        "addLiquiditySource" | "addLiquidityTarget" => {
+        "addStablecoinSource" | "addStablecoinTarget" => {
             serde_json::json!({"operation":operation,"address":address,"type":1}).to_string()
         }
         _ => serde_json::json!({"operation":operation,"address":address}).to_string(),
@@ -77,6 +77,7 @@ fn real_tally_stages_vault_actions_without_subcalls_and_nonapproved_has_no_effec
     let vault = Address::repeat_byte(0x11);
     let rejected_vault = Address::repeat_byte(0x12);
     let mut provider = HashMapStorageProvider::new(1);
+    let add_id;
     {
         let storage = StorageHandle::new(&mut provider);
         setup_active_validators(storage.clone());
@@ -99,6 +100,7 @@ fn real_tally_stages_vault_actions_without_subcalls_and_nonapproved_has_no_effec
                 registry(),
             )
             .unwrap();
+        add_id = add;
         approve(&mut vote, add);
         vote.cast_vote_approve(not_approved, VALIDATOR_A, false, 8)
             .unwrap();
@@ -113,17 +115,13 @@ fn real_tally_stages_vault_actions_without_subcalls_and_nonapproved_has_no_effec
         assert_eq!(status(&vote, add), ProposalStatus::Approved);
         assert_eq!(status(&vote, not_approved), ProposalStatus::Expired);
         let router = VaultRouterContract::new(storage.clone());
-        let record = router.approved_vault_actions.get(add).unwrap().unwrap();
+        let record = router.vault_actions.get(add).unwrap().unwrap();
         assert_eq!(
-            (record.vault, record.kind, record.approved_at),
+            (record.vault, record.kind, record.created_at),
             (vault, 1, height)
         );
         assert_eq!(router.pending_vault_proposals.read(&vault).unwrap(), add);
-        assert!(router
-            .approved_vault_actions
-            .get(not_approved)
-            .unwrap()
-            .is_none());
+        assert!(router.vault_actions.get(not_approved).unwrap().is_none());
         assert_eq!(
             router
                 .pending_vault_proposals
@@ -139,13 +137,23 @@ fn real_tally_stages_vault_actions_without_subcalls_and_nonapproved_has_no_effec
         .unwrap();
     }
     assert!(provider.sub_call_inputs().is_empty());
-    assert!(provider.get_events(VAULT_ROUTER_ADDRESS).is_empty());
+    // Only the approved proposal records a vault action, with VaultActionCreated.
+    assert_eq!(
+        provider.get_events(VAULT_ROUTER_ADDRESS),
+        &vec![IVaultRouter::VaultActionCreated {
+            proposalId: add_id,
+            vault,
+            kind: IVaultRouter::VaultAction::AddVault,
+        }
+        .encode_log_data()]
+    );
 }
 
 #[test]
 fn same_block_supersession_follows_real_tally_order_not_proposal_id() {
     let vault = Address::repeat_byte(0x11);
     let mut provider = HashMapStorageProvider::new(1);
+    let ids;
     {
         let storage = StorageHandle::new(&mut provider);
         setup_active_validators(storage.clone());
@@ -200,11 +208,36 @@ fn same_block_supersession_follows_real_tally_order_not_proposal_id() {
         assert_eq!(status(&vote, higher), ProposalStatus::Approved);
         let router = VaultRouterContract::new(storage);
         assert_eq!(router.pending_vault_proposals.read(&vault).unwrap(), lower);
-        assert!(router.approved_vault_actions.get(higher).unwrap().is_none());
-        let record = router.approved_vault_actions.get(lower).unwrap().unwrap();
-        assert_eq!((record.kind, record.approved_at), (2, height));
+        assert!(router.vault_actions.get(higher).unwrap().is_none());
+        let record = router.vault_actions.get(lower).unwrap().unwrap();
+        assert_eq!((record.kind, record.created_at), (2, height));
+        ids = (higher, lower);
     }
     assert!(provider.sub_call_inputs().is_empty());
+    let (higher, lower) = ids;
+    assert_eq!(
+        provider.get_events(VAULT_ROUTER_ADDRESS),
+        &vec![
+            IVaultRouter::VaultActionCreated {
+                proposalId: higher,
+                vault,
+                kind: IVaultRouter::VaultAction::AddVault,
+            }
+            .encode_log_data(),
+            IVaultRouter::VaultActionCanceled {
+                proposalId: higher,
+                vault,
+                newProposalId: lower,
+            }
+            .encode_log_data(),
+            IVaultRouter::VaultActionCreated {
+                proposalId: lower,
+                vault,
+                kind: IVaultRouter::VaultAction::RemoveVault,
+            }
+            .encode_log_data(),
+        ]
+    );
 }
 
 #[test]
@@ -216,11 +249,25 @@ fn route_actions_mutate_and_emit_while_conflicts_do_not_stop_other_tallies() {
         let storage = StorageHandle::new(&mut provider);
         setup_active_validators(storage.clone());
         let mut vote = Vote::new(storage.clone());
+        // The operation names follow the noun Stablecoin. The old Liquidity names fail.
+        for old in ["addLiquiditySource", "addLiquidityTarget"] {
+            let payload =
+                serde_json::json!({"operation":old,"address":address,"type":1}).to_string();
+            assert!(vote
+                .create_proposal(VALIDATOR_A, VAULT_ROUTER_ADDRESS, &payload, 7, registry())
+                .is_err());
+        }
+        for old in ["removeLiquiditySource", "removeLiquidityTarget"] {
+            let payload = serde_json::json!({"operation":old,"address":address}).to_string();
+            assert!(vote
+                .create_proposal(VALIDATOR_A, VAULT_ROUTER_ADDRESS, &payload, 7, registry())
+                .is_err());
+        }
         let conflict = vote
             .create_proposal(
                 VALIDATOR_A,
                 VAULT_ROUTER_ADDRESS,
-                &route_payload("removeLiquiditySource", missing),
+                &route_payload("removeStablecoinSource", missing),
                 7,
                 registry(),
             )
@@ -229,7 +276,7 @@ fn route_actions_mutate_and_emit_while_conflicts_do_not_stop_other_tallies() {
             .create_proposal(
                 VALIDATOR_B,
                 VAULT_ROUTER_ADDRESS,
-                &route_payload("addLiquiditySource", address),
+                &route_payload("addStablecoinSource", address),
                 7,
                 registry(),
             )
@@ -238,7 +285,7 @@ fn route_actions_mutate_and_emit_while_conflicts_do_not_stop_other_tallies() {
             .create_proposal(
                 VALIDATOR_C,
                 VAULT_ROUTER_ADDRESS,
-                &route_payload("addLiquidityTarget", address),
+                &route_payload("addStablecoinTarget", address),
                 7,
                 registry(),
             )
@@ -256,13 +303,13 @@ fn route_actions_mutate_and_emit_while_conflicts_do_not_stop_other_tallies() {
         assert_eq!(status(&vote, add_source), ProposalStatus::Approved);
         assert_eq!(status(&vote, add_target), ProposalStatus::Approved);
         let router = VaultRouterContract::new(storage.clone());
-        assert_eq!(router.liquidity_source_types.read(&address).unwrap(), 1);
-        assert_eq!(router.liquidity_target_types.read(&address).unwrap(), 1);
+        assert_eq!(router.stablecoin_source_types.read(&address).unwrap(), 1);
+        assert_eq!(router.stablecoin_target_types.read(&address).unwrap(), 1);
         let remove_source = vote
             .create_proposal(
                 VALIDATOR_A,
                 VAULT_ROUTER_ADDRESS,
-                &route_payload("removeLiquiditySource", address),
+                &route_payload("removeStablecoinSource", address),
                 height,
                 registry(),
             )
@@ -271,7 +318,7 @@ fn route_actions_mutate_and_emit_while_conflicts_do_not_stop_other_tallies() {
             .create_proposal(
                 VALIDATOR_B,
                 VAULT_ROUTER_ADDRESS,
-                &route_payload("removeLiquidityTarget", address),
+                &route_payload("removeStablecoinTarget", address),
                 height,
                 registry(),
             )
@@ -289,18 +336,18 @@ fn route_actions_mutate_and_emit_while_conflicts_do_not_stop_other_tallies() {
         .unwrap();
         assert_eq!(status(&vote, remove_source), ProposalStatus::Approved);
         assert_eq!(status(&vote, remove_target), ProposalStatus::Approved);
-        assert_eq!(router.liquidity_sources.len().unwrap(), 0);
-        assert_eq!(router.liquidity_targets.len().unwrap(), 0);
-        assert_eq!(router.liquidity_source_types.read(&address).unwrap(), 0);
-        assert_eq!(router.liquidity_target_types.read(&address).unwrap(), 0);
+        assert_eq!(router.stablecoin_sources.len().unwrap(), 0);
+        assert_eq!(router.stablecoin_targets.len().unwrap(), 0);
+        assert_eq!(router.stablecoin_source_types.read(&address).unwrap(), 0);
+        assert_eq!(router.stablecoin_target_types.read(&address).unwrap(), 0);
     }
     let events = provider.get_events(VAULT_ROUTER_ADDRESS);
     assert_eq!(events.len(), 4);
     for (event, signature) in events.iter().zip([
-        IVaultRouter::LiquiditySourceAdded::SIGNATURE_HASH,
-        IVaultRouter::LiquidityTargetAdded::SIGNATURE_HASH,
-        IVaultRouter::LiquiditySourceRemoved::SIGNATURE_HASH,
-        IVaultRouter::LiquidityTargetRemoved::SIGNATURE_HASH,
+        IVaultRouter::StablecoinSourceAdded::SIGNATURE_HASH,
+        IVaultRouter::StablecoinTargetAdded::SIGNATURE_HASH,
+        IVaultRouter::StablecoinSourceRemoved::SIGNATURE_HASH,
+        IVaultRouter::StablecoinTargetRemoved::SIGNATURE_HASH,
     ]) {
         assert_eq!(event.topics().first(), Some(&signature));
     }

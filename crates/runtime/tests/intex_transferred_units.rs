@@ -12,7 +12,7 @@ use outbe_primitives::storage::{SubCallOutput, SubCallStatus};
 use outbe_system_common::addresses::{INTEX_ADDRESS, INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_system_common::time::EmissionDate;
 use outbe_vaultrouter::{
-    api::IVaultRouter::StablesSource,
+    precompile::IVaultRouter::StablecoinSource,
     test_support::{register_source, register_vault},
 };
 use revm::database::{CacheDB, EmptyDB};
@@ -84,7 +84,7 @@ impl World {
             register_source(
                 &storage,
                 INTEX_FACTORY_ADDRESS,
-                StablesSource::IntexCostAmount,
+                StablecoinSource::IntexCostAmount,
             )
             .unwrap();
             outbe_intex::api::create_series(
@@ -129,7 +129,7 @@ impl World {
             PAYER,
             ASSET,
             IErc20Fixture::approveCall {
-                spender: INTEX_FACTORY_ADDRESS,
+                spender: VAULT_ROUTER_ADDRESS,
                 amount: U256::MAX,
             },
         );

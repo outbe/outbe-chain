@@ -11,7 +11,7 @@ use outbe_system_common::vote_target::{
 };
 use serde::Deserialize;
 
-use crate::{api::IVaultRouter, runtime, state};
+use crate::{precompile::IVaultRouter, runtime, state};
 
 #[derive(Debug, Deserialize)]
 #[serde(
@@ -29,18 +29,18 @@ enum Action {
     RemoveVault {
         vault: Address,
     },
-    AddLiquiditySource {
+    AddStablecoinSource {
         address: Address,
         r#type: u8,
     },
-    RemoveLiquiditySource {
+    RemoveStablecoinSource {
         address: Address,
     },
-    AddLiquidityTarget {
+    AddStablecoinTarget {
         address: Address,
         r#type: u8,
     },
-    RemoveLiquidityTarget {
+    RemoveStablecoinTarget {
         address: Address,
     },
 }
@@ -63,19 +63,19 @@ impl Action {
                 vault
             }
             Self::RemoveVault { vault } => vault,
-            Self::AddLiquiditySource { address, r#type } => {
-                if *r#type == 0 || IVaultRouter::StablesSource::try_from(*r#type).is_err() {
+            Self::AddStablecoinSource { address, r#type } => {
+                if *r#type == 0 || IVaultRouter::StablecoinSource::try_from(*r#type).is_err() {
                     return Err(VoteTargetError::InvalidPayload.into());
                 }
                 address
             }
-            Self::AddLiquidityTarget { address, r#type } => {
-                if *r#type == 0 || IVaultRouter::StablesTarget::try_from(*r#type).is_err() {
+            Self::AddStablecoinTarget { address, r#type } => {
+                if *r#type == 0 || IVaultRouter::StablecoinTarget::try_from(*r#type).is_err() {
                     return Err(VoteTargetError::InvalidPayload.into());
                 }
                 address
             }
-            Self::RemoveLiquiditySource { address } | Self::RemoveLiquidityTarget { address } => {
+            Self::RemoveStablecoinSource { address } | Self::RemoveStablecoinTarget { address } => {
                 address
             }
         };
@@ -88,37 +88,37 @@ impl Action {
     fn apply(&self, ctx: &BlockRuntimeContext<'_>, proposal_id: U256) -> Result<()> {
         let storage = ctx.storage.clone();
         match self {
-            Self::AddVault { vault, .. } => state::record_approved_vault_action(
+            Self::AddVault { vault, .. } => state::record_vault_action(
                 &storage,
                 proposal_id,
                 *vault,
                 state::ADD_VAULT,
                 ctx.block.block_number,
             ),
-            Self::RemoveVault { vault } => state::record_approved_vault_action(
+            Self::RemoveVault { vault } => state::record_vault_action(
                 &storage,
                 proposal_id,
                 *vault,
                 state::REMOVE_VAULT,
                 ctx.block.block_number,
             ),
-            Self::AddLiquiditySource { address, r#type } => {
-                runtime::add_liquidity_source(storage, *address, *r#type)
+            Self::AddStablecoinSource { address, r#type } => {
+                runtime::add_stablecoin_source(storage, *address, *r#type)
             }
-            Self::RemoveLiquiditySource { address } => {
-                runtime::remove_liquidity_source(storage, *address)
+            Self::RemoveStablecoinSource { address } => {
+                runtime::remove_stablecoin_source(storage, *address)
             }
-            Self::AddLiquidityTarget { address, r#type } => {
-                runtime::add_liquidity_target(storage, *address, *r#type)
+            Self::AddStablecoinTarget { address, r#type } => {
+                runtime::add_stablecoin_target(storage, *address, *r#type)
             }
-            Self::RemoveLiquidityTarget { address } => {
-                runtime::remove_liquidity_target(storage, *address)
+            Self::RemoveStablecoinTarget { address } => {
+                runtime::remove_stablecoin_target(storage, *address)
             }
         }
     }
 }
 
-/// Validator-only, zero-value vote target; vault mutations are staged for applyApproved.
+/// Validator-only, zero-value vote target; vault mutations are staged for applyVaultAction.
 pub struct VaultRouterVoteTarget;
 
 impl VoteTarget for VaultRouterVoteTarget {

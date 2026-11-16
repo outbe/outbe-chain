@@ -273,7 +273,7 @@ fn declared_error_insufficient_shares_for_withdraw() {
     storage.enable_sub_call_stub();
     StorageHandle::enter(&mut storage, |storage| {
         register_vault(&storage, asset(), vault());
-        runtime::add_liquidity_target(storage.clone(), target_account(), 1).unwrap();
+        runtime::add_stablecoin_target(storage.clone(), target_account(), 1).unwrap();
 
         let err = dispatch(
             storage.clone(),
@@ -313,7 +313,7 @@ fn declared_error_reserve_vault_owner_not_renounced() {
 #[test]
 fn declared_error_reservation_not_found() {
     with_reservable_vault(U256::from(100u64), |storage| {
-        runtime::add_liquidity_target(storage.clone(), CREDIS_FACTORY_ADDRESS, 1).unwrap();
+        runtime::add_stablecoin_target(storage.clone(), CREDIS_FACTORY_ADDRESS, 1).unwrap();
         let id = U256::from(42);
         let err = dispatch(
             storage.clone(),

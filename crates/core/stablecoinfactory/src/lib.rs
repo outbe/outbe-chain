@@ -6,7 +6,6 @@ pub mod precompile;
 pub mod schema;
 pub mod vote_target;
 
-mod abi;
 mod state;
 
 pub use api::{FactoryReservation, StablecoinFactoryApi, ValidatedStablecoinCreate};

@@ -196,7 +196,7 @@ fn with_payment_token<R>(
     f: impl FnOnce(StorageHandle) -> R,
 ) -> R {
     use crate::sol_ext::{IReferenceCurrency, IERC20};
-    use outbe_vaultrouter::api::IVaultRouter;
+    use outbe_vaultrouter::precompile::IVaultRouter;
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT));
@@ -301,13 +301,10 @@ fn settlement_quote_dispatch() {
 }
 
 /// An issued series 7 whose owner holds two units, and a registered six-decimal
-/// payment token whose transfers answer `transfer_ret`.
-fn with_erc20_series<R>(
-    transfer_ret: alloy_primitives::Bytes,
-    f: impl FnOnce(StorageHandle) -> R,
-) -> R {
+/// payment token. The router does not run, so a payment stops at its `depositFrom`.
+fn erc20_series() -> HashMapStorageProvider {
     use crate::sol_ext::{IReferenceCurrency, IERC1155, IERC20};
-    use outbe_vaultrouter::api::IVaultRouter;
+    use outbe_vaultrouter::precompile::IVaultRouter;
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT));
@@ -323,24 +320,35 @@ fn with_erc20_series<R>(
         IVaultRouter::assetVaultsCountCall::SELECTOR,
         word(1),
     );
-    storage.stub_sub_call_at(settlement_asset(), transfer_ret);
+    outbe_vaultrouter::test_support::stub_unanswered_deposit_from(&mut storage);
     storage.stub_sub_call_at_selector(
         settlement_asset(),
         IReferenceCurrency::isoCodeCall::SELECTOR,
         word(840),
     );
     storage.stub_sub_call_at_selector(settlement_asset(), IERC20::decimalsCall::SELECTOR, word(6));
-    storage.stub_sub_call_at_selector(settlement_asset(), IERC20::balanceOfCall::SELECTOR, word(0));
 
     StorageHandle::enter(&mut storage, |s| {
         runtime::issue_intex(&s, sample(7)).unwrap();
-        f(s)
-    })
+    });
+    storage
 }
 
+fn with_erc20_series<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
+    let mut storage = erc20_series();
+    StorageHandle::enter(&mut storage, f)
+}
+
+/// The factory asks the router to take the quoted cost directly from its own caller. A
+/// payment that the router refuses books no units.
 #[test]
-fn erc20_settle_refuses_a_transfer_that_moves_nothing_and_books_no_units() {
-    with_erc20_series(word(1), |s| {
+fn erc20_settle_asks_the_router_to_take_the_cost_from_the_caller() {
+    use crate::sol_ext::IERC20;
+
+    let mut storage = erc20_series();
+    let quoted = StorageHandle::enter(&mut storage, |s| {
+        let (_, quoted, _) =
+            runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::from(2)).unwrap();
         let err = runtime::settle_intex(
             &s,
             sid(7),
@@ -355,45 +363,30 @@ fn erc20_settle_refuses_a_transfer_that_moves_nothing_and_books_no_units() {
         .unwrap_err();
         assert_eq!(
             err.to_string(),
-            outbe_primitives::error::PrecompileError::from(
-                outbe_vaultrouter::settlement::SettlementError::AmountMismatch,
-            )
-            .to_string(),
+            outbe_vaultrouter::test_support::unanswered_deposit_from().to_string(),
             "{err}"
         );
         assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 0);
+        quoted
     });
-}
-
-#[test]
-fn erc20_settle_refuses_a_token_answering_false() {
-    with_erc20_series(word(0), |s| {
-        let err = runtime::settle_intex(
-            &s,
-            sid(7),
-            owner(),
-            U256::from(2),
-            SettlementPayment {
-                payer: owner(),
-                asset: settlement_asset(),
-                snapshot_id: U256::ZERO,
-            },
-        )
-        .unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            outbe_primitives::error::PrecompileError::from(
-                outbe_vaultrouter::settlement::SettlementError::TokenOperationFailed,
-            )
-            .to_string()
-        );
-        assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 0);
-    });
+    let pull = outbe_vaultrouter::test_support::last_deposit_from(&storage).unwrap();
+    assert_eq!(
+        (pull.payer, pull.asset, pull.assetsMinor),
+        (owner(), settlement_asset(), quoted)
+    );
+    // The factory neither takes nor approves the asset itself.
+    assert!(!storage.sub_call_inputs().iter().any(|input| {
+        input.target == settlement_asset()
+            && (input
+                .calldata
+                .starts_with(&IERC20::transferFromCall::SELECTOR)
+                || input.calldata.starts_with(&IERC20::approveCall::SELECTOR))
+    }));
 }
 
 #[test]
 fn erc20_settle_rejects_an_unaccepted_asset_before_any_transfer() {
-    with_erc20_series(word(1), |s| {
+    with_erc20_series(|s| {
         let foreign = address!("0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD");
         assert!(runtime::settle_intex(
             &s,

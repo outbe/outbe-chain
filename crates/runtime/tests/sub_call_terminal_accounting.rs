@@ -6,7 +6,7 @@ use outbe_evm::sub_call;
 use outbe_evm::OutbeEvmFactory;
 use outbe_primitives::storage::{SubCallError, SubCallInput, SubCallStatus};
 use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
-use outbe_vaultrouter::api::IVaultRouter;
+use outbe_vaultrouter::precompile::IVaultRouter;
 use reth_ethereum::evm::primitives::EvmEnv;
 use revm::{
     context::result::HaltReason,

@@ -58,7 +58,7 @@ interface IStablecoinPolicyRegistry {
     /// @notice Atomically removes unique nonzero accounts. Removing a non-member reverts.
     function removeMembers(uint256 policyId, address[] calldata accounts) external;
 
-    function beginPolicyAdminTransfer(uint256 policyId, address candidate) external;
+    function startPolicyAdminTransfer(uint256 policyId, address candidate) external;
 
     function cancelPolicyAdminTransfer(uint256 policyId) external;
 
