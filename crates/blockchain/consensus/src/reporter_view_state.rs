@@ -1,14 +1,14 @@
 //! Mutable per-view state owned by one reporter.
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, VecDeque},
     sync::{Arc, Mutex},
 };
 
 use alloy_primitives::Address;
 use commonware_cryptography::bls12381::primitives::variant::MinSig;
 
-use crate::hybrid::HybridCertificate;
+use crate::{digest::Digest, hybrid::HybridCertificate};
 
 /// Mutable per-view state owned by a single `OutbeReporter` instance, separated
 /// from the immutable epoch wiring. Holds the finalization cursor (the lower
@@ -57,9 +57,44 @@ impl ReporterViewState {
     }
 }
 
+const SELF_PROPOSED_DIGESTS_CAP: usize = 64;
+
+#[derive(Clone, Default, Debug)]
+pub struct SelfProposedDigests(Arc<Mutex<VecDeque<Digest>>>);
+
+impl SelfProposedDigests {
+    pub fn record(&self, digest: Digest) {
+        let mut digests = match self.0.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if digests.contains(&digest) {
+            return;
+        }
+        if digests.len() == SELF_PROPOSED_DIGESTS_CAP {
+            digests.pop_front();
+        }
+        digests.push_back(digest);
+    }
+
+    pub fn take(&self, digest: &Digest) -> bool {
+        let mut digests = match self.0.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(idx) = digests.iter().position(|candidate| candidate == digest) {
+            digests.remove(idx);
+            true
+        } else {
+            false
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct ReporterContinuity {
     inner: Arc<Mutex<ReporterContinuityState>>,
+    self_proposed: SelfProposedDigests,
 }
 
 #[derive(Clone, Default)]
@@ -70,6 +105,20 @@ pub struct ReporterContinuityState {
 }
 
 impl ReporterContinuity {
+    pub fn self_proposed_digests(&self) -> SelfProposedDigests {
+        self.self_proposed.clone()
+    }
+
+    pub fn take_self_proposed(&self, digest: &Digest) -> bool {
+        self.self_proposed.take(digest)
+    }
+
+    pub fn count_if_self_proposed(&self, digest: &Digest) {
+        if self.take_self_proposed(digest) {
+            crate::metrics::propose::record_self_finalized_block();
+        }
+    }
+
     pub fn snapshot(&self) -> ReporterContinuityState {
         match self.inner.lock() {
             Ok(state) => state.clone(),
@@ -104,7 +153,72 @@ pub(super) fn skipped_views(last_finalized_view: u64, view: u64) -> Option<u64> 
 mod tests {
     use alloy_primitives::address;
 
-    use super::{skipped_views, ReporterViewState};
+    use super::{skipped_views, ReporterContinuity, ReporterViewState, SelfProposedDigests};
+    use crate::digest::Digest;
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+    fn digest(value: u8) -> Digest {
+        Digest::from(alloy_primitives::B256::repeat_byte(value))
+    }
+
+    #[test]
+    fn self_proposed_digests_are_consumed_once_and_ignore_foreign_digests() {
+        let digests = SelfProposedDigests::default();
+        digests.record(digest(1));
+        assert!(!digests.take(&digest(2)));
+        assert!(digests.take(&digest(1)));
+        assert!(!digests.take(&digest(1)));
+    }
+
+    #[test]
+    fn duplicate_self_proposals_do_not_evict_the_oldest_digest() {
+        let digests = SelfProposedDigests::default();
+        for value in 0..64 {
+            digests.record(digest(value));
+        }
+        digests.record(digest(63));
+        assert!(digests.take(&digest(0)));
+        assert!(digests.take(&digest(63)));
+        assert!(!digests.take(&digest(63)));
+    }
+
+    #[test]
+    fn self_proposals_evict_at_capacity_and_share_epoch_continuity() {
+        let continuity = ReporterContinuity::default();
+        let next_epoch = continuity.clone();
+        let digests = continuity.self_proposed_digests();
+        for value in 0..=64 {
+            digests.record(digest(value));
+        }
+        assert!(!next_epoch.take_self_proposed(&digest(0)));
+        for value in 1..=64 {
+            assert!(next_epoch.take_self_proposed(&digest(value)));
+            assert!(!continuity.take_self_proposed(&digest(value)));
+        }
+        next_epoch.self_proposed_digests().record(digest(65));
+        assert!(digests.take(&digest(65)));
+    }
+
+    #[test]
+    fn self_finalized_counter_counts_only_the_first_recorded_match() {
+        let recorder = DebuggingRecorder::new();
+        let continuity = ReporterContinuity::default();
+        continuity.self_proposed_digests().record(digest(1));
+        metrics::with_local_recorder(&recorder, || {
+            continuity.count_if_self_proposed(&digest(1));
+            continuity.count_if_self_proposed(&digest(1));
+            continuity.count_if_self_proposed(&digest(2));
+        });
+        let snapshot = recorder.snapshotter().snapshot().into_vec();
+        assert_eq!(snapshot.len(), 1);
+        let (key, _, _, value) = &snapshot[0];
+        assert_eq!(
+            key.key().name(),
+            "outbe_consensus_self_finalized_blocks_total"
+        );
+        assert_eq!(key.key().labels().count(), 0);
+        assert_eq!(*value, DebugValue::Counter(1));
+    }
 
     #[test]
     fn view_state_buffers_drains_dedup_and_records_cursor() {

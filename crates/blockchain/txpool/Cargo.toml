@@ -28,15 +28,17 @@ futures.workspace = true
 metrics.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+tokio = { workspace = true, features = ["time", "macros", "sync"] }
 
 [dev-dependencies]
 alloy-signer.workspace = true
 alloy-signer-local.workspace = true
 futures.workspace = true
+metrics-util = "0.20"
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-tasks.workspace = true
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
 
 [lints]
 workspace = true

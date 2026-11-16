@@ -100,7 +100,8 @@ pub use system_execution::layout::ResolvedBeginSystemTx;
 
 pub use zero_fee::{
     enclave_witness_budget_deferral, is_enclave_witness_budget_deferral,
-    is_sponsored_block_budget_deferral, sponsored_block_budget_deferral,
+    is_sponsored_block_budget_deferral, record_zero_fee_cap_exceeded_metric,
+    record_zero_fee_soft_failure_metric, sponsored_block_budget_deferral,
     ENCLAVE_WITNESS_BUDGET_EXCEEDED, SPONSORED_BLOCK_BUDGET_EXCEEDED,
 };
 pub use zero_fee::{ZeroFeeCfgAccess, ZeroFeeCfgSnapshot};

@@ -66,6 +66,17 @@ pub struct ConsensusArgs {
     #[arg(long = "consensus.listen-addr", default_value = "127.0.0.1:30400")]
     pub listen_address: SocketAddr,
 
+    /// Optional HTTP listen address for exporting native Commonware runtime metrics (`/metrics`).
+    ///
+    /// Disabled when omitted. Prefer a loopback or private management interface:
+    /// Commonware Simplex metrics include validator public keys in label sets.
+    #[arg(
+        long = "consensus.metrics-addr",
+        value_name = "SOCKET",
+        env = "OUTBE_CONSENSUS_METRICS_ADDR"
+    )]
+    pub metrics_address: Option<SocketAddr>,
+
     /// Directory for consensus data storage.
     /// Defaults to `<datadir>/consensus` if not set.
     #[arg(long = "consensus.storage-dir", value_name = "PATH")]
@@ -261,6 +272,7 @@ impl fmt::Debug for ConsensusArgs {
             .debug_struct("ConsensusArgs")
             .field("is_validator", &self.is_validator)
             .field("listen_address", &self.listen_address)
+            .field("metrics_address", &self.metrics_address)
             .field("trust_el_head", &self.trust_el_head)
             .field(
                 "testnet_unix_time_offset_secs",
@@ -300,8 +312,16 @@ impl ConsensusArgs {
     /// - `--bls-key-backend encrypted` without `--bls-passphrase` -> error
     pub fn validate(&self) -> eyre::Result<()> {
         self.validate_role_and_transport()?;
+        self.validate_metrics_exporter_role()?;
         self.warn_ignored_signers();
         self.validate_key_material()
+    }
+
+    fn validate_metrics_exporter_role(&self) -> eyre::Result<()> {
+        if self.metrics_address.is_some() && !self.is_validator && self.upstream.is_none() {
+            return Err(crate::errors::ArgsError::ConsensusMetricsRequireConsensusRole.into());
+        }
+        Ok(())
     }
 
     fn validate_role_and_transport(&self) -> eyre::Result<()> {
@@ -459,6 +479,53 @@ mod tests {
         TestConsensusCli::try_parse_from(["test"])
             .expect("default CLI args should parse")
             .consensus
+    }
+
+    #[test]
+    fn metrics_address_cli_contract() {
+        assert_eq!(default_args().metrics_address, None);
+        let args = TestConsensusCli::try_parse_from([
+            "test",
+            "--consensus.metrics-addr",
+            "127.0.0.1:9091",
+        ])
+        .expect("metrics address should parse")
+        .consensus;
+        assert_eq!(
+            args.metrics_address,
+            Some("127.0.0.1:9091".parse().unwrap())
+        );
+        assert!(format!("{args:?}").contains("metrics_address"));
+        assert_eq!(
+            <TestConsensusCli as clap::CommandFactory>::command()
+                .get_arguments()
+                .find(|arg| arg.get_id() == "metrics_address")
+                .and_then(|arg| arg.get_env()),
+            Some(std::ffi::OsStr::new("OUTBE_CONSENSUS_METRICS_ADDR"))
+        );
+    }
+
+    #[test]
+    fn metrics_address_requires_consensus_role() {
+        let mut follower = default_args();
+        follower.upstream = Some("http://upstream:8545".to_string());
+        for (mut args, expected) in [
+            (
+                default_args(),
+                Err(crate::errors::ArgsError::ConsensusMetricsRequireConsensusRole),
+            ),
+            (validator_args(), Ok(())),
+            (follower, Ok(())),
+        ] {
+            args.metrics_address = Some("127.0.0.1:9091".parse().unwrap());
+            let actual = args.validate().map_err(|error| {
+                error
+                    .downcast_ref::<crate::errors::ArgsError>()
+                    .expect("typed argument validation error")
+                    .clone()
+            });
+            assert_eq!(actual, expected, "args: {args:?}");
+        }
     }
 
     #[test]

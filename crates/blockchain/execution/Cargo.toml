@@ -57,6 +57,7 @@ metrics.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+metrics-util = "0.20"
 outbe-execution = { path = ".", features = ["test-utils"] }
 reth-engine-tree = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
 reth-stages-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::metrics::p2p::{send_observed, ObservedSend, P2pChannel};
 
 /// Enclave identity advertised during discovery or the signed exchange.
 pub struct LocalIdentityAnnouncement {
@@ -92,7 +93,16 @@ where
         env.extend_from_slice(&(local.signature.len() as u32).to_be_bytes());
         env.extend_from_slice(&local.signature);
         let delivery_env = self.delivery.envelope(Recipients::All, env.clone())?;
-        let _ = self.sender.send(Recipients::All, delivery_env, true);
+        let _ = send_observed(
+            &mut self.sender,
+            ObservedSend {
+                channel: P2pChannel::TeeDkg,
+                recipients: Recipients::All,
+                expected_peers: Some(self.delivery.expected_peers(&Recipients::All)),
+                bytes: delivery_env,
+                priority: true,
+            },
+        );
         Ok(IdentityCollection {
             ids,
             local_bls: local.bls.clone(),
@@ -130,7 +140,7 @@ where
                     match recv {
                         Ok((from, raw)) => {
                             let Some((id, bytes)) = receive_delivery(&mut self.delivery, &from, raw.as_ref()) else { continue; };
-                            let _ = self.sender.send(Recipients::One(from.clone()), ack_envelope(id), true);
+                            delivery::send_ack(&mut self.sender, P2pChannel::TeeDkg, from.clone(), id);
                             self.handle_identity_frame(IdentityFrame { from, bytes }, &mut collected)?;
                         }
                         Err(_) => {

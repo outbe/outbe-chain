@@ -16,3 +16,16 @@ scrape_configs:
     # Reth --metrics exports reth_outbe_<subsystem>_* and reth_process_* directly.
     # No metric_relabel_configs is required.
     metrics_path: /metrics
+
+  - job_name: 'outbe-consensus-compose'
+    static_configs:
+      - targets:
+          - 'validator-0:9091'
+          - 'validator-1:9091'
+          - 'validator-2:9091'
+          - 'validator-3:9091'
+        labels:
+          chain: 'outbe'
+          role: 'validator'
+          plane: 'consensus'
+    metrics_path: /metrics

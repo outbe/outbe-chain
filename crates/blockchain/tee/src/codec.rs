@@ -403,6 +403,17 @@ mod tests {
     fn request_labels_are_unique_and_stable() {
         let labels = [
             EnclaveRequest::GetPublicKeys.label(),
+            EnclaveRequest::DkgNetworkKeyPartial {
+                ceremony_id: alloy_primitives::B256::ZERO,
+            }
+            .label(),
+            EnclaveRequest::DkgFinalizeNetworkKey {
+                ceremony_id: alloy_primitives::B256::ZERO,
+                sealed_partials: Vec::new(),
+                chain_id: alloy_primitives::B256::ZERO,
+                network_key_epoch: 0,
+            }
+            .label(),
             EnclaveRequest::Payload {
                 lane: PayloadLane::Execution,
                 payload: Vec::new(),
@@ -411,8 +422,10 @@ mod tests {
             EnclaveRequest::Health.label(),
         ];
         assert_eq!(labels[0], "get_public_keys");
-        assert_eq!(labels[1], "payload");
-        assert_eq!(labels[2], "health");
+        assert_eq!(labels[1], "dkg_network_key_partial");
+        assert_eq!(labels[2], "dkg_finalize_network_key");
+        assert_eq!(labels[3], "payload");
+        assert_eq!(labels[4], "health");
     }
 
     #[test]

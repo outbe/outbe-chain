@@ -29,7 +29,13 @@ fn staged_publication_releases_the_digest_before_persistence_and_flushes_without
         let (shared, outcome) = fixture
             .publish_valid_candidate(&context, round, block)
             .await;
-        assert_eq!(outcome.unwrap(), ProposeOutcome::Proposed(digest));
+        assert_eq!(
+            outcome.unwrap(),
+            ProposeOutcome::Proposed {
+                digest,
+                resolve_pad: Duration::ZERO
+            }
+        );
         assert!(
             fixture.marshal.get_verified(round).await.is_none(),
             "digest must precede marshal persistence"

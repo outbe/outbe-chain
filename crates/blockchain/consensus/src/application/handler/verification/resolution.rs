@@ -1,9 +1,9 @@
 //! Resolve immutable candidate and parent independently, preserving deterministic rejection.
-use super::{ApplicationShared, ResolvedVerifyBlocks, VerifyRequest};
+use super::{ApplicationShared, ResolvedVerifyBlocks, VerifyRequest, WithheldVoteRecord};
 use crate::application::handler::parent_round;
 use crate::application::{
     epoch_boundary::{self, EpochBoundaryParentError},
-    verify_resolution::{resolve_for_verify, VerifyResolveTarget},
+    verify_resolution::{resolve_for_verify, VerifyResolveError, VerifyResolveTarget},
 };
 use crate::block::ConsensusBlock;
 use crate::errors::ApplicationError;
@@ -12,6 +12,7 @@ use tracing::warn;
 enum ResolutionFailure {
     InvalidParent,
     Unavailable(eyre::Report),
+    ResolveUnavailable(eyre::Report, VerifyResolveError),
 }
 
 impl ApplicationShared {
@@ -19,6 +20,7 @@ impl ApplicationShared {
         &self,
         clock: &impl commonware_runtime::Clock,
         request: &VerifyRequest,
+        withheld_vote: &WithheldVoteRecord,
     ) -> eyre::Result<Option<ResolvedVerifyBlocks>> {
         // Candidate unavailability cannot override a known invalid parent.
         let resolved = futures::try_join!(
@@ -39,6 +41,11 @@ impl ApplicationShared {
             Ok(blocks) => Ok(Some(blocks)),
             Err(ResolutionFailure::InvalidParent) => Ok(None),
             Err(ResolutionFailure::Unavailable(error)) => Err(error),
+            Err(ResolutionFailure::ResolveUnavailable(error, resolution_error)) => {
+                // Count only the propagated failure, never a candidate masked by an invalid parent.
+                withheld_vote.record(resolution_error.withheld_reason());
+                Err(error)
+            }
         }
     }
 
@@ -60,8 +67,9 @@ impl ApplicationShared {
         )
         .await
         .map_err(|error| {
-            ResolutionFailure::Unavailable(
+            ResolutionFailure::ResolveUnavailable(
                 ApplicationError::CandidateUnavailable(format!("{error:?}")).into(),
+                error,
             )
         })?;
         // Persistence outlives parent resolution and response cancellation.
@@ -123,8 +131,9 @@ impl ApplicationShared {
         .await
         .map(Some)
         .map_err(|error| {
-            ResolutionFailure::Unavailable(
+            ResolutionFailure::ResolveUnavailable(
                 ApplicationError::ParentUnavailable(format!("{error:?}")).into(),
+                error,
             )
         })
     }

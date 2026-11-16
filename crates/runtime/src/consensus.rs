@@ -1,4 +1,34 @@
 use super::*;
+use std::net::SocketAddr;
+
+pub(crate) fn maybe_start_consensus_metrics_exporter<C>(
+    metrics_ctx: C,
+    metrics_address: Option<SocketAddr>,
+    shutdown: tokio_util::sync::CancellationToken,
+) -> Option<crate::consensus_metrics::ConsensusMetricsHandle>
+where
+    C: commonware_runtime::Metrics + commonware_runtime::Spawner,
+{
+    let addr = metrics_address?;
+    if !addr.ip().is_loopback() {
+        tracing::warn!(
+            %addr,
+            "--consensus.metrics-addr is bound to a non-loopback address and exposes validator public keys and timeout labels from Commonware Simplex metrics"
+        );
+    }
+    match crate::consensus_metrics::spawn_consensus_metrics_server(metrics_ctx, addr, shutdown) {
+        Ok(handle) => {
+            outbe_consensus::metrics::record_metrics_exporter_up(true);
+            info!(listen_addr = %handle.local_addr(), "started Commonware consensus metrics HTTP exporter");
+            Some(handle)
+        }
+        Err(error) => {
+            outbe_consensus::metrics::record_metrics_exporter_up(false);
+            tracing::error!(%addr, %error, "failed to bind Commonware consensus metrics HTTP exporter; continuing without consensus /metrics");
+            None
+        }
+    }
+}
 
 pub(crate) type ConsensusLaunch = (
     OutbeFullNode,
@@ -108,9 +138,13 @@ pub(crate) fn run(
 
     let runner = commonware_runtime::tokio::Runner::new(runtime_config);
     let node_lifetime_pin = node.clone();
+    let consensus_metrics_address = args.metrics_address;
 
     let ret: eyre::Result<()> = run_with_lifetime_pin(node_lifetime_pin, || {
         runner.start(async move |ctx| {
+                let _ = maybe_start_consensus_metrics_exporter(
+                    ctx.child("metrics"), consensus_metrics_address, shutdown_token_clone.clone(),
+                );
                 let graceful_shutdown = ctx.child("shutdown");
                 let application_shutdown = radicle_shutdown_for_consensus;
                 let application_drain = outbe_consensus::application_shutdown::ApplicationDrain::new(async move {
@@ -198,3 +232,7 @@ pub(crate) fn run(
     let _ = consensus_dead_tx.send(());
     ret
 }
+
+#[cfg(test)]
+#[path = "consensus_tests.rs"]
+mod tests;

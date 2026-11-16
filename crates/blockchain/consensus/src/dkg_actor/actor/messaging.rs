@@ -1,5 +1,6 @@
 use super::super::wire::DkgCeremonyId;
 use super::super::wire::DkgMessage;
+use crate::metrics::p2p::{send_observed, ObservedSend, P2pChannel};
 use alloy_primitives::Bytes;
 use commonware_codec::Encode;
 use commonware_codec::Read as _;
@@ -39,7 +40,21 @@ fn send_dkg_message(
     recipients: Recipients<bls12381::PublicKey>,
     message: DkgMessage,
 ) -> bool {
-    !sender.send(recipients, message.encode(), true).is_empty()
+    let expected_peers = match &recipients {
+        Recipients::One(_) => Some(1),
+        _ => None,
+    };
+    !send_observed(
+        sender,
+        ObservedSend {
+            channel: P2pChannel::Dkg,
+            recipients,
+            expected_peers,
+            bytes: message.encode(),
+            priority: true,
+        },
+    )
+    .is_empty()
 }
 
 /// Broadcast one finalized dealer log to all peers. This is the single site that

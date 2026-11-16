@@ -19,10 +19,11 @@ pub(in crate::follow) const MAX_DELIVERY_BYTES: usize =
 pub(in crate::follow) const MAX_PROOF_BUNDLE_BYTES: usize = 10 * 1024 * 1024;
 
 /// `true` when a value of `size` bytes may be encoded and delivered.
-fn deliverable(key: &ResolverKey, size: usize) -> bool {
+fn deliverable(key: &ResolverKey, size: usize, kind: FollowerResolverKind) -> bool {
     if size <= MAX_DELIVERY_BYTES {
         return true;
     }
+    record_resolver_failure(kind, FollowerResolverFailureReason::Oversized);
     warn!(%key, size, limit = MAX_DELIVERY_BYTES, "follower value exceeds the delivery cap; dropping fetch");
     false
 }
@@ -62,15 +63,14 @@ impl<F: FinalizedSource, L: LocalBlockSource> FetchResolution<F, L> {
         } = fetch;
         let bound = BoundKey::new(key, &subscriber);
         if let Some(Fetched::Value(value)) = self.acquire(bound, &span, &mut handler).await {
-            let _ = handler
-                .deliver(
-                    Delivery {
-                        key,
-                        subscribers: NonEmptyVec::new((subscriber, span)),
-                    },
-                    value,
-                )
-                .await;
+            let response = handler.deliver(
+                Delivery {
+                    key,
+                    subscribers: NonEmptyVec::new((subscriber, span)),
+                },
+                value,
+            );
+            let _ = acknowledged(&key, response).await;
         }
     }
 
@@ -97,23 +97,28 @@ impl<F: FinalizedSource, L: LocalBlockSource> FetchResolution<F, L> {
         let key = Key::Block(commitment);
         // A local block is left for the marshal to validate, as before.
         if let Some(block) = self.local.get_block_by_digest(commitment).await {
-            return deliverable(&key, block.encode_size()).then(|| block.encode());
+            return deliverable(&key, block.encode_size(), FollowerResolverKind::Block)
+                .then(|| block.encode());
         }
         let Some(height) = height else {
             // Round-bound requests carry no height. The follower cannot map them upstream.
+            record_failure(&key, FollowerResolverFailureReason::UnannotatedBlock);
             debug!(%key, "block request without a height annotation; dropping fetch");
             return None;
         };
         // A height-bound gap-repair block must match both height and commitment.
         match self.upstream.get_block(height).await {
             Some(block) if block.number() == height.get() && block.digest() == commitment => {
-                deliverable(&key, block.encode_size()).then(|| block.encode())
+                deliverable(&key, block.encode_size(), FollowerResolverKind::Block)
+                    .then(|| block.encode())
             }
             Some(_) => {
+                record_failure(&key, FollowerResolverFailureReason::HashMismatch);
                 debug!(%key, %height, "upstream block at height did not match requested commitment; dropping fetch");
                 None
             }
             None => {
+                record_failure(&key, FollowerResolverFailureReason::MissingOrError);
                 debug!(%key, %height, "upstream did not have requested block; dropping fetch");
                 None
             }
@@ -131,6 +136,7 @@ impl<F: FinalizedSource, L: LocalBlockSource> FetchResolution<F, L> {
     {
         let key: ResolverKey = Key::Finalized { height };
         let Some(proof) = self.upstream.get_finality_proof(height).await else {
+            record_failure(&key, FollowerResolverFailureReason::MissingOrError);
             debug!(%key, "upstream did not have finality proof; dropping fetch");
             return None;
         };
@@ -148,6 +154,7 @@ impl<F: FinalizedSource, L: LocalBlockSource> FetchResolution<F, L> {
             height,
             &proof,
         ) {
+            record_failure(&key, FollowerResolverFailureReason::ProofUnauthenticated);
             warn!(%key, %error, "failed to authenticate follower finality proof; dropping fetch");
             return None;
         }
@@ -206,17 +213,22 @@ fn proof_within_budget(
     anchor_size: usize,
     ancestors: &[crate::block::ConsensusBlock],
 ) -> bool {
-    if !deliverable(key, anchor_size) {
+    if !deliverable(key, anchor_size, FollowerResolverKind::Finalized) {
         return false;
     }
     let mut total = anchor_size;
     for block in ancestors {
         let size = block.encode_size();
-        if !deliverable(&Key::Block(block.digest()), size) {
+        if !deliverable(
+            &Key::Block(block.digest()),
+            size,
+            FollowerResolverKind::Finalized,
+        ) {
             return false;
         }
         total = total.saturating_add(size);
         if total > MAX_PROOF_BUNDLE_BYTES {
+            record_failure(key, FollowerResolverFailureReason::Oversized);
             warn!(%key, limit = MAX_PROOF_BUNDLE_BYTES, "follower finality proof exceeds the bundle cap; dropping fetch");
             return false;
         }
@@ -240,6 +252,51 @@ where
                 self.span.clone(),
             )),
         };
-        matches!(self.handler.deliver(delivery, value).await, Ok(true))
+        let accepted = matches!(self.handler.deliver(delivery, value).await, Ok(true));
+        if !accepted {
+            record_resolver_failure(
+                FollowerResolverKind::Finalized,
+                FollowerResolverFailureReason::DeliveryRejected,
+            );
+            debug!(%key, "marshal rejected follower finality proof item");
+        }
+        accepted
+    }
+}
+
+pub(super) fn record_failure(key: &ResolverKey, reason: FollowerResolverFailureReason) {
+    let kind = match key {
+        Key::Block(_) => FollowerResolverKind::Block,
+        Key::Finalized { .. } => FollowerResolverKind::Finalized,
+        Key::Notarized { .. } => return,
+    };
+    record_resolver_failure(kind, reason);
+}
+
+async fn acknowledged(
+    key: &ResolverKey,
+    response: oneshot::Receiver<bool>,
+) -> Result<bool, oneshot::error::RecvError> {
+    let result = response.await;
+    if !matches!(result, Ok(true)) {
+        record_failure(key, FollowerResolverFailureReason::DeliveryRejected);
+    }
+    result
+}
+
+// Preserve opaque's verdict and cancellation semantics while observing the ack.
+pub(super) async fn relay_delivery(
+    key: ResolverKey,
+    response: oneshot::Receiver<bool>,
+    mut sender: oneshot::Sender<bool>,
+) {
+    tokio::select! {
+        biased;
+        _ = sender.closed() => {},
+        result = acknowledged(&key, response) => {
+            if let Ok(accepted) = result {
+                let _ = sender.send(accepted);
+            }
+        }
     }
 }

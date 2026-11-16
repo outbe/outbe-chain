@@ -166,6 +166,7 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
         signing_key: Some(temp.path().join("signing-key.hex")),
         validator_evm_key: Some(evm_key_path.clone()),
         listen_address: "127.0.0.1:30400".parse::<SocketAddr>().unwrap(),
+        metrics_address: None,
         storage_dir: None,
         keys_dir: None,
         trust_el_head: false,

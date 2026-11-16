@@ -24,6 +24,7 @@ scrape_configs:
     metrics_path: /metrics
 
     # Custom outbe metrics to watch:
+    #   reth_outbe_consensus_metrics_exporter_up         - consensus exporter bound successfully (1) or failed (0)
     #   reth_outbe_consensus_blocks_proposed_total       - blocks proposed by this node
     #   reth_outbe_consensus_proposed_height             - latest proposed block height
     #   reth_outbe_consensus_finalized_view              - latest finalized Simplex view
@@ -38,3 +39,16 @@ scrape_configs:
     #   reth_outbe_consensus_parent_cert_store_entries   - exact-parent certificate handoff records retained
     #   reth_outbe_consensus_parent_cert_included_total  - Phase 1 parent certificate metadata included
     #   reth_outbe_consensus_parent_cert_missing_total   - proposer slot forfeits/misses due to unavailable certificate
+
+  # Opt in only after starting the node with --consensus.metrics-addr=127.0.0.1:9191.
+  # Disabled by default: nodes without that flag do not expose this endpoint.
+  # Commonware families include runtime_tasks_running, Simplex voter/resolver/batcher,
+  # Marshal, and P2P metrics; Outbe gauges remain on the Reth --metrics endpoint above.
+  # - job_name: 'outbe-consensus'
+  #   static_configs:
+  #     - targets: ['localhost:9191']
+  #       labels:
+  #         chain: 'outbe'
+  #         role: 'validator'
+  #         plane: 'consensus'
+  #   metrics_path: /metrics

@@ -7,6 +7,8 @@
 # Wire metrics: Reth --metrics adds reth_ to emitted names
 # (reth_outbe_<subsystem>_* and reth_process_*).
 # Source metrics:
+#   - reth_outbe_consensus_metrics_exporter_up
+#       consensus exporter startup bind status (1=bound, 0=bind failed).
 #   - reth_outbe_consensus_block_cache_entries
 #       process-local block_cache entry count
 #       (emitted from `crates/blockchain/consensus/src/metrics.rs`
@@ -35,6 +37,28 @@ groups:
   - name: outbe-chain.consensus
     interval: 30s
     rules:
+      - alert: OutbeConsensusVoteWithheldSpike
+        expr: sum(increase(reth_outbe_consensus_vote_withheld_total[5m])) > 5
+        labels:
+          severity: warning
+          subsystem: consensus
+        annotations:
+          summary: "consensus votes withheld more than 5 times in 5 minutes"
+          description: |
+            Check withheld-vote reasons and verification failures before investigating consensus liveness.
+
+      - alert: OutbeConsensusMetricsExporterBindFailed
+        expr: reth_outbe_consensus_metrics_exporter_up == 0
+        for: 1m
+        labels:
+          severity: warning
+          subsystem: consensus
+        annotations:
+          summary: "consensus metrics exporter failed to bind on {{ $labels.instance }}"
+          description: |
+            --consensus.metrics-addr failed to bind at startup while consensus
+            continues running. Check the configured address and port availability.
+
       # Soft warning: cache approaching the hard cap. Indicates either
       # a sustained wedge (no finalization advancing) or fork spam.
       - alert: OutbeBlockCacheNearCap
@@ -284,6 +308,17 @@ groups:
   - name: outbe-chain.tee
     interval: 30s
     rules:
+      - alert: OutbeTeeExecutionLockContentionHigh
+        expr: histogram_quantile(0.99, sum by (le) (rate(reth_outbe_tee_client_execution_lock_wait_ms_bucket[5m]))) > 100
+        for: 5m
+        labels:
+          severity: warning
+          subsystem: tee
+        annotations:
+          summary: "TEE execution lock p99 wait exceeds 100ms"
+          description: |
+            Execution requests are waiting on the enclave session lock; check concurrent execution load.
+
       - alert: OutbeTeeCanaryFailing
         expr: reth_outbe_tee_canary_consecutive_failures >= 3
         for: 2m
@@ -364,6 +399,26 @@ groups:
   - name: outbe-chain.txpool
     interval: 30s
     rules:
+      - alert: OutbeTxPoolInclusionStallAlarm
+        expr: increase(reth_outbe_txpool_inclusion_alarms_total[5m]) > 0
+        labels:
+          severity: warning
+          subsystem: txpool
+        annotations:
+          summary: "transaction pool inclusion stalled on {{ $labels.instance }}"
+          description: |
+            Check the alarm kind, queued transactions, and user transaction inclusion in canonical blocks.
+
+      - alert: OutbeCanonicalTipStale
+        expr: reth_outbe_txpool_canonical_tip_age_seconds > 60
+        labels:
+          severity: warning
+          subsystem: txpool
+        annotations:
+          summary: "canonical tip is more than 60 seconds old on {{ $labels.instance }}"
+          description: |
+            Check canonical chain progress and whether consensus finalization or execution has stalled.
+
       - alert: OutbeTxpoolSustainedStaleEviction
         expr: increase(reth_outbe_txpool_stale_evicted_total[15m]) > 0
         for: 15m
@@ -387,3 +442,30 @@ groups:
           subsystem: txpool
         annotations:
           summary: "pending pool backlog above 1000 for 15 minutes"
+
+  - name: outbe-chain.follower
+    interval: 30s
+    rules:
+      - alert: OutbeFollowerUpstreamUnreachable
+        expr: reth_outbe_follower_upstream_tip_known == 0 and on(instance) reth_outbe_consensus_operating_mode <= 1
+        for: 2m
+        labels:
+          severity: warning
+          subsystem: follower
+        annotations:
+          summary: "follower upstream is unreachable on {{ $labels.instance }}"
+          description: |
+            Only follower and upstream-bootstrap modes require upstream freshness; check the upstream RPC.
+
+  - name: outbe-chain.p2p
+    interval: 30s
+    rules:
+      - alert: OutbeP2pSendRateLimited
+        expr: sum by (channel) (increase(reth_outbe_p2p_send_rate_limited_total[5m])) > 10
+        labels:
+          severity: warning
+          subsystem: p2p
+        annotations:
+          summary: "P2P channel {{ $labels.channel }} rate-limited more than 10 sends in 5 minutes"
+          description: |
+            Check channel traffic and peer rate limits; local send rejection does not prove remote delivery.

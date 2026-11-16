@@ -6,6 +6,7 @@
 #   3. Build the image: docker build -t outbe-chain .
 #   4. Start: docker compose up
 # Each validator gets unique P2P, RPC, and metrics ports.
+# The bridge-network 0.0.0.0:9091 bind intentionally triggers the startup non-loopback WARN.
 
 x-validator-defaults: &validator-defaults
   image: outbe-chain
@@ -24,6 +25,7 @@ services:
       - "30400:30400"
       - "8545:8545"
       - "9001:9001"
+      - "9191:9091"
     command:
       - node
       - --datadir=/data
@@ -39,6 +41,7 @@ services:
       - --validator.evm-key=/data/evm-key.hex
       - --consensus.keys-dir=/data/dkg-keys
       - --consensus.listen-addr=0.0.0.0:30400
+      - --consensus.metrics-addr=0.0.0.0:9091
       - --consensus.use-local-defaults
 
   validator-1:
@@ -51,6 +54,7 @@ services:
       - "30401:30401"
       - "8546:8545"
       - "9002:9001"
+      - "9192:9091"
     command:
       - node
       - --datadir=/data
@@ -66,6 +70,7 @@ services:
       - --validator.evm-key=/data/evm-key.hex
       - --consensus.keys-dir=/data/dkg-keys
       - --consensus.listen-addr=0.0.0.0:30401
+      - --consensus.metrics-addr=0.0.0.0:9091
       - --consensus.use-local-defaults
 
   validator-2:
@@ -78,6 +83,7 @@ services:
       - "30402:30402"
       - "8547:8545"
       - "9003:9001"
+      - "9193:9091"
     command:
       - node
       - --datadir=/data
@@ -93,6 +99,7 @@ services:
       - --validator.evm-key=/data/evm-key.hex
       - --consensus.keys-dir=/data/dkg-keys
       - --consensus.listen-addr=0.0.0.0:30402
+      - --consensus.metrics-addr=0.0.0.0:9091
       - --consensus.use-local-defaults
 
   validator-3:
@@ -105,6 +112,7 @@ services:
       - "30403:30403"
       - "8548:8545"
       - "9004:9001"
+      - "9194:9091"
     command:
       - node
       - --datadir=/data
@@ -120,6 +128,7 @@ services:
       - --validator.evm-key=/data/evm-key.hex
       - --consensus.keys-dir=/data/dkg-keys
       - --consensus.listen-addr=0.0.0.0:30403
+      - --consensus.metrics-addr=0.0.0.0:9091
       - --consensus.use-local-defaults
 
   prometheus:

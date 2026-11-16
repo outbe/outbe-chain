@@ -64,6 +64,7 @@ pub(super) fn validator_signer_args(
         signing_key: Some(signing_key),
         validator_evm_key: Some(evm_key),
         listen_address: std::net::SocketAddr::from(([127, 0, 0, 1], 30400)),
+        metrics_address: None,
         storage_dir: None,
         keys_dir: None,
         trust_el_head: false,

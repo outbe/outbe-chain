@@ -1,4 +1,6 @@
 use super::*;
+use crate::metrics::p2p::{record_tee_bootstrap_pending, send_observed, ObservedSend, P2pChannel};
+use commonware_p2p::LimitedSender;
 
 #[derive(Debug)]
 pub(super) struct PendingDelivery {
@@ -16,6 +18,7 @@ pub(super) struct PendingDelivery {
 #[derive(Debug)]
 pub(super) struct DeliveryTracker {
     scope: B256,
+    channel: P2pChannel,
     allowed_peers: BTreeSet<bls12381::PublicKey>,
     known_peers: BTreeSet<bls12381::PublicKey>,
     pub(super) pending: BTreeMap<B256, PendingDelivery>,
@@ -23,6 +26,20 @@ pub(super) struct DeliveryTracker {
 }
 
 impl DeliveryTracker {
+    fn record_pending(&self) {
+        if self.channel == P2pChannel::TeeBootstrap {
+            record_tee_bootstrap_pending(self.pending.len(), self.pending_bytes);
+        }
+    }
+
+    pub(super) fn expected_peers(&self, recipients: &Recipients<bls12381::PublicKey>) -> usize {
+        match recipients {
+            Recipients::All => self.allowed_peers.len(),
+            Recipients::One(_) => 1,
+            Recipients::Some(peers) => peers.len(),
+        }
+    }
+
     fn message_id(&self, payload: &[u8]) -> B256 {
         let mut preimage = Vec::with_capacity(DELIVERY_ID_DOMAIN.len() + 32 + payload.len());
         preimage.extend_from_slice(DELIVERY_ID_DOMAIN);
@@ -88,6 +105,7 @@ impl DeliveryTracker {
                 retry_every_ticks: DELIVERY_INITIAL_RETRY_TICKS,
             },
         );
+        self.record_pending();
         Ok(envelope)
     }
 
@@ -121,6 +139,7 @@ impl DeliveryTracker {
         if complete {
             if let Some(removed) = self.pending.remove(&id) {
                 self.pending_bytes = self.pending_bytes.saturating_sub(removed.envelope.len());
+                self.record_pending();
             }
         }
     }
@@ -174,12 +193,29 @@ pub(super) fn new_delivery_tracker(
     scope: B256,
     allowed_peers: BTreeSet<bls12381::PublicKey>,
 ) -> DeliveryTracker {
+    new_channel_delivery_tracker(scope, allowed_peers, P2pChannel::TeeBootstrap)
+}
+
+pub(super) fn new_channel_delivery_tracker(
+    scope: B256,
+    allowed_peers: BTreeSet<bls12381::PublicKey>,
+    channel: P2pChannel,
+) -> DeliveryTracker {
     DeliveryTracker {
         scope,
+        channel,
         allowed_peers,
         known_peers: BTreeSet::new(),
         pending: BTreeMap::new(),
         pending_bytes: 0,
+    }
+}
+
+impl Drop for DeliveryTracker {
+    fn drop(&mut self) {
+        if self.channel == P2pChannel::TeeBootstrap {
+            record_tee_bootstrap_pending(0, 0);
+        }
     }
 }
 
@@ -188,6 +224,24 @@ pub(super) fn ack_envelope(id: B256) -> Vec<u8> {
     ack.push(DELIVERY_ACK);
     ack.extend_from_slice(id.as_slice());
     ack
+}
+
+pub(super) fn send_ack<S: LimitedSender<PublicKey = bls12381::PublicKey>>(
+    sender: &mut S,
+    channel: P2pChannel,
+    peer: bls12381::PublicKey,
+    id: B256,
+) {
+    let _ = send_observed(
+        sender,
+        ObservedSend {
+            channel,
+            recipients: Recipients::One(peer),
+            expected_peers: Some(1),
+            bytes: super::ack_envelope(id),
+            priority: true,
+        },
+    );
 }
 
 /// Authenticate the transport peer before decoding or recording its receipt.
@@ -215,6 +269,16 @@ pub(super) fn retry_delivery<S: P2pSender<PublicKey = bls12381::PublicKey>>(
     tracker: &mut DeliveryTracker,
 ) {
     for (recipients, bytes) in tracker.retry_batch() {
-        let _ = sender.send(recipients, bytes, true);
+        let expected_peers = Some(tracker.expected_peers(&recipients));
+        let _ = send_observed(
+            sender,
+            ObservedSend {
+                channel: tracker.channel,
+                recipients,
+                expected_peers,
+                bytes,
+                priority: true,
+            },
+        );
     }
 }

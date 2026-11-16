@@ -7,9 +7,14 @@ impl ApplicationShared {
         candidate_execution_budget: ExecutionReadBudget,
     ) -> eyre::Result<ProposeOutcome> {
         match outcome {
-            Ok(BuildBlockOutcome::Built(digest, block)) => {
-                self.publish_built_proposal(round, (digest, block), candidate_execution_budget)
-                    .await
+            Ok(BuildBlockOutcome::Built(digest, block, resolve_pad)) => {
+                self.publish_built_proposal(
+                    round,
+                    (digest, block),
+                    candidate_execution_budget,
+                    resolve_pad,
+                )
+                .await
             }
             Ok(BuildBlockOutcome::ParentProofUnavailable) => {
                 Ok(ProposeOutcome::ParentProofUnavailable)
@@ -24,6 +29,7 @@ impl ApplicationShared {
         round: Round,
         candidate: (Digest, ConsensusBlock),
         candidate_execution_budget: ExecutionReadBudget,
+        resolve_pad: Duration,
     ) -> eyre::Result<ProposeOutcome> {
         let (digest, block) = candidate;
         if let Err(error) = self
@@ -43,6 +49,9 @@ impl ApplicationShared {
         if !self.publication.stage(round, block) {
             return Ok(ProposeOutcome::RoundAlreadyProposed);
         }
-        Ok(ProposeOutcome::Proposed(digest))
+        Ok(ProposeOutcome::Proposed {
+            digest,
+            resolve_pad,
+        })
     }
 }

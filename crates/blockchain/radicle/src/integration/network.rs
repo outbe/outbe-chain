@@ -26,7 +26,7 @@ use crate::{
 use alloy_primitives::Address;
 use commonware_codec::Encode as _;
 use commonware_cryptography::{bls12381, Signer as _};
-use commonware_p2p::{CheckedSender as _, LimitedSender, Receiver, Recipients};
+use commonware_p2p::{LimitedSender, Receiver};
 use commonware_runtime::IoBuf;
 use outbe_primitives::radicle_publication::{PublicationAttestation, PUBLICATION_NAMESPACE};
 use std::{
@@ -1079,13 +1079,8 @@ fn send<S>(sender: &mut S, peer: PeerId, bytes: Vec<u8>) -> bool
 where
     S: LimitedSender<PublicKey = bls12381::PublicKey>,
 {
-    let Ok(public_key) = peer.to_public_key() else {
-        return false;
-    };
-    sender
-        .check(Recipients::One(public_key))
-        .map(|checked| checked.send(bytes, false).accepted())
-        .unwrap_or(false)
+    peer.to_public_key()
+        .is_ok_and(|public_key| super::metrics::send_p2p_observed(sender, public_key, bytes))
 }
 
 fn now_millis() -> u64 {
@@ -1102,7 +1097,7 @@ pub(crate) mod shutdown_tests {
     use crate::{endpoint::HandleError, integration::RadicleStatusChannel};
     use alloy_primitives::B256;
     use commonware_actor::{Feedback, Unreliable};
-    use commonware_p2p::CheckedSender;
+    use commonware_p2p::{CheckedSender, Recipients};
     use commonware_runtime::IoBufs;
 
     #[derive(Clone)]

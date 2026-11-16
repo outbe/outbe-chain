@@ -2,6 +2,8 @@
 //!
 //! Provides helpers that route ABI-encoded calldata to contract methods.
 
+#![deny(clippy::arithmetic_side_effects)]
+
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 
@@ -74,28 +76,32 @@ pub fn preflight_dynamic_bytes_len(
     let offset_start = argument_index
         .checked_mul(32)
         .ok_or(DispatchInputError::InvalidAbiBytesArgument)?;
+    let offset_end = offset_start
+        .checked_add(32)
+        .ok_or(DispatchInputError::InvalidAbiBytesArgument)?;
     let offset_word = args
-        .get(offset_start..offset_start.saturating_add(32))
+        .get(offset_start..offset_end)
         .ok_or(DispatchInputError::InvalidAbiBytesArgument)?;
     let offset = abi_usize(offset_word).ok_or(DispatchInputError::InvalidAbiBytesArgument)?;
-    if offset < head_len || offset % 32 != 0 {
+    if offset < head_len || !offset.is_multiple_of(32) {
         return Err(DispatchInputError::InvalidAbiBytesArgument.into());
     }
 
+    let length_end = offset
+        .checked_add(32)
+        .ok_or(DispatchInputError::InvalidAbiBytesArgument)?;
     let length_word = args
-        .get(offset..offset.saturating_add(32))
+        .get(offset..length_end)
         .ok_or(DispatchInputError::InvalidAbiBytesArgument)?;
     if abi_usize(length_word) != Some(expected_len) {
         return Err(DispatchInputError::InvalidBytesLength { expected_len }.into());
     }
 
     let padded_len = expected_len
-        .checked_add(31)
-        .map(|len| len / 32 * 32)
+        .checked_next_multiple_of(32)
         .ok_or(DispatchInputError::InvalidAbiBytesArgument)?;
-    let end = offset
-        .checked_add(32)
-        .and_then(|start| start.checked_add(padded_len))
+    let end = length_end
+        .checked_add(padded_len)
         .ok_or(DispatchInputError::InvalidAbiBytesArgument)?;
     if end > args.len() {
         return Err(DispatchInputError::InvalidAbiBytesArgument.into());
@@ -104,12 +110,13 @@ pub fn preflight_dynamic_bytes_len(
 }
 
 fn abi_usize(word: &[u8]) -> Option<usize> {
-    let width = core::mem::size_of::<usize>();
-    if word.len() != 32 || word[..32 - width].iter().any(|byte| *byte != 0) {
+    const WIDTH: usize = core::mem::size_of::<usize>();
+    const UPPER_ZERO_BYTES: usize = 32 - WIDTH;
+    if word.len() != 32 || word[..UPPER_ZERO_BYTES].iter().any(|byte| *byte != 0) {
         return None;
     }
-    let mut value = [0_u8; core::mem::size_of::<usize>()];
-    value.copy_from_slice(&word[32 - width..]);
+    let mut value = [0_u8; WIDTH];
+    value.copy_from_slice(&word[UPPER_ZERO_BYTES..]);
     Some(usize::from_be_bytes(value))
 }
 
@@ -264,38 +271,174 @@ pub fn reject_value(value: &U256) -> Result<()> {
 }
 
 #[cfg(test)]
+#[allow(clippy::arithmetic_side_effects)]
 mod tests {
     use super::preflight_dynamic_bytes_len;
+    use crate::error::{DispatchInputError, PrecompileError};
+    use proptest::prelude::*;
 
     const SELECTOR: [u8; 4] = [0x12, 0x34, 0x56, 0x78];
+
+    fn write_usize_word(slot: &mut [u8], value: usize) {
+        slot.fill(0);
+        let bytes = value.to_be_bytes();
+        slot[32 - bytes.len()..].copy_from_slice(&bytes);
+    }
 
     fn one_bytes_arg(length: usize) -> Vec<u8> {
         let padded = length.div_ceil(32) * 32;
         let mut calldata = vec![0_u8; 4 + 32 + 32 + padded];
         calldata[..4].copy_from_slice(&SELECTOR);
-        calldata[4 + 31] = 32;
-        calldata[4 + 32 + 31] = u8::try_from(length).unwrap();
+        write_usize_word(&mut calldata[4..36], 32);
+        write_usize_word(&mut calldata[36..68], length);
         calldata
+    }
+
+    fn assert_dispatch_error(res: crate::error::Result<()>, expected: DispatchInputError) {
+        let expected_msg = expected.to_string();
+        assert!(
+            matches!(&res, Err(PrecompileError::Revert(msg)) if msg == &expected_msg),
+            "expected Revert({expected_msg:?}), got {res:?}"
+        );
+    }
+
+    fn assert_invalid_abi_arg(res: crate::error::Result<()>) {
+        assert_dispatch_error(res, DispatchInputError::InvalidAbiBytesArgument);
     }
 
     #[test]
     fn fixed_dynamic_bytes_preflight_accepts_only_the_required_length() {
         assert!(preflight_dynamic_bytes_len(&one_bytes_arg(36), SELECTOR, 0, 1, 36).is_ok());
-        assert!(preflight_dynamic_bytes_len(&one_bytes_arg(35), SELECTOR, 0, 1, 36).is_err());
-        assert!(preflight_dynamic_bytes_len(&one_bytes_arg(37), SELECTOR, 0, 1, 36).is_err());
+        assert_dispatch_error(
+            preflight_dynamic_bytes_len(&one_bytes_arg(35), SELECTOR, 0, 1, 36),
+            DispatchInputError::InvalidBytesLength { expected_len: 36 },
+        );
+        assert_dispatch_error(
+            preflight_dynamic_bytes_len(&one_bytes_arg(37), SELECTOR, 0, 1, 36),
+            DispatchInputError::InvalidBytesLength { expected_len: 36 },
+        );
     }
 
     #[test]
-    fn fixed_dynamic_bytes_preflight_rejects_malformed_head_without_decoding_payload() {
+    fn fixed_dynamic_bytes_preflight_rejects_malformed_head_and_max_offsets() {
         let mut points_into_head = one_bytes_arg(36);
         points_into_head[4 + 31] = 0;
-        assert!(preflight_dynamic_bytes_len(&points_into_head, SELECTOR, 0, 1, 36).is_err());
+        assert_invalid_abi_arg(preflight_dynamic_bytes_len(
+            &points_into_head,
+            SELECTOR,
+            0,
+            1,
+            36,
+        ));
+
+        for offset in [usize::MAX & !31, usize::MAX - 15, usize::MAX] {
+            let mut max_offset = one_bytes_arg(36);
+            write_usize_word(&mut max_offset[4..36], offset);
+            assert_invalid_abi_arg(preflight_dynamic_bytes_len(&max_offset, SELECTOR, 0, 1, 36));
+        }
+
+        let mut oversized_offset = one_bytes_arg(36);
+        oversized_offset[4] = 1;
+        assert_invalid_abi_arg(preflight_dynamic_bytes_len(
+            &oversized_offset,
+            SELECTOR,
+            0,
+            1,
+            36,
+        ));
+
+        let mut oversized_length = one_bytes_arg(36);
+        oversized_length[36] = 1;
+        assert_dispatch_error(
+            preflight_dynamic_bytes_len(&oversized_length, SELECTOR, 0, 1, 36),
+            DispatchInputError::InvalidBytesLength { expected_len: 36 },
+        );
+
+        let valid = one_bytes_arg(36);
+        assert_invalid_abi_arg(preflight_dynamic_bytes_len(
+            &valid,
+            SELECTOR,
+            usize::MAX,
+            1,
+            36,
+        ));
+        assert_invalid_abi_arg(preflight_dynamic_bytes_len(
+            &valid,
+            SELECTOR,
+            0,
+            usize::MAX,
+            36,
+        ));
+
+        // Match the length word to `usize::MAX` so execution reaches `checked_next_multiple_of(32)`.
+        let mut max_len_call = one_bytes_arg(36);
+        write_usize_word(&mut max_len_call[36..68], usize::MAX);
+        assert_invalid_abi_arg(preflight_dynamic_bytes_len(
+            &max_len_call,
+            SELECTOR,
+            0,
+            1,
+            usize::MAX,
+        ));
 
         let truncated = &one_bytes_arg(36)[..4 + 32 + 32 + 35];
-        assert!(preflight_dynamic_bytes_len(truncated, SELECTOR, 0, 1, 36).is_err());
+        assert_invalid_abi_arg(preflight_dynamic_bytes_len(truncated, SELECTOR, 0, 1, 36));
 
         let unrelated = one_bytes_arg(35);
         assert!(preflight_dynamic_bytes_len(&unrelated, [0, 0, 0, 0], 0, 1, 36).is_ok());
+    }
+
+    fn dispatch_boundary_usize() -> impl Strategy<Value = usize> {
+        prop_oneof![
+            Just(0usize),
+            Just(1),
+            Just(31),
+            Just(32),
+            Just(33),
+            Just(36),
+            Just(64),
+            Just(usize::MAX & !31),
+            (usize::MAX - 64)..=usize::MAX,
+            any::<usize>(),
+        ]
+    }
+
+    proptest! {
+        #[test]
+        fn proptest_preflight_dynamic_bytes_len_never_panics_on_arbitrary_inputs(
+            mut raw in proptest::collection::vec(any::<u8>(), 0..=512),
+            match_selector in any::<bool>(),
+            arg_idx in prop_oneof![0usize..8, dispatch_boundary_usize()],
+            head_words in prop_oneof![1usize..8, dispatch_boundary_usize()],
+            expected_len in prop_oneof![0usize..=128, dispatch_boundary_usize()],
+        ) {
+            if match_selector && raw.len() >= 4 {
+                raw[..4].copy_from_slice(&SELECTOR);
+            }
+            let _ = preflight_dynamic_bytes_len(&raw, SELECTOR, arg_idx, head_words, expected_len);
+        }
+
+        #[test]
+        fn proptest_preflight_dynamic_bytes_len_rejects_invalid_offsets_and_lengths(
+            mutate_length in any::<bool>(),
+            value in dispatch_boundary_usize(),
+            upper_byte in prop_oneof![Just(0u8), 1u8..=u8::MAX],
+        ) {
+            let mut calldata = one_bytes_arg(36);
+            let slot = if mutate_length {
+                &mut calldata[36..68]
+            } else {
+                &mut calldata[4..36]
+            };
+            write_usize_word(slot, value);
+            if upper_byte != 0 {
+                slot[0] = upper_byte;
+            }
+
+            let res = preflight_dynamic_bytes_len(&calldata, SELECTOR, 0, 1, 36);
+            let expected_ok = upper_byte == 0 && if mutate_length { value == 36 } else { value == 32 };
+            prop_assert_eq!(res.is_ok(), expected_ok);
+        }
     }
 }
 

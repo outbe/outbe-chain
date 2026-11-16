@@ -62,6 +62,7 @@ native-dcap-test-trace = ["native-dcap"]
 dcap-fixture-tool = ["native-dcap", "sgx-noattest", "dep:k256"]
 
 [dev-dependencies]
+metrics-util = "0.20"
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-tee = { path = ".", features = ["test-utils", "sgx-noattest"] }
 k256.workspace = true
