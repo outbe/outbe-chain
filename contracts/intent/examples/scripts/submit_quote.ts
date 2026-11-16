@@ -93,14 +93,16 @@ async function main() {
   console.log(`  Committed! tx: ${commitReceipt?.hash}`);
 
   // === WAIT FOR REVEAL PHASE ===
+  // The commit deadline is a block number: the reveal phase starts at that block.
+  // ethers estimates the gas of the reveal against the latest block, so the latest block must reach the deadline.
   const commitDeadline = await auction.getCommitDeadline(orderIdHex);
-  const destBlock = await destProvider.getBlock('latest');
-  const now = destBlock!.timestamp;
-  const waitSeconds = Number(commitDeadline) - now + 2; // +2s buffer
-
-  if (waitSeconds > 0) {
-    console.log(`\n  Waiting ${waitSeconds}s for reveal phase...`);
-    await sleep(waitSeconds * 1000);
+  let latestBlock = BigInt(await destProvider.getBlockNumber());
+  if (latestBlock < commitDeadline) {
+    console.log(`\n  Waiting for block ${commitDeadline} (reveal phase), latest block is ${latestBlock}...`);
+  }
+  while (latestBlock < commitDeadline) {
+    await sleep(1000);
+    latestBlock = BigInt(await destProvider.getBlockNumber());
   }
 
   // === PHASE 2: REVEAL ===

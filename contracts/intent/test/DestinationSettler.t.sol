@@ -151,9 +151,9 @@ contract DestinationSettlerTest is BaseTest {
     /// @dev Single-solver full auction: commit -> warp -> reveal -> warp -> ended
     function _doFullAuction(address solver, bytes32 orderId, uint256 outputAmount, bytes memory originData) internal {
         _commit(solver, orderId, outputAmount);
-        vm.warp(block.timestamp + auction.commitPeriod());
+        vm.roll(vm.getBlockNumber() + auction.commitPeriod());
         _reveal(solver, orderId, outputAmount, originData);
-        vm.warp(block.timestamp + auction.revealPeriod());
+        vm.roll(vm.getBlockNumber() + auction.revealPeriod());
     }
 
     /// @dev Two-solver full auction: both commit -> warp -> both reveal -> warp -> ended
@@ -171,14 +171,14 @@ contract DestinationSettlerTest is BaseTest {
         vm.prank(solver2);
         auction.commit(orderId, _commitHash(solver2, orderId, amount2, bytes32(uint256(2))));
 
-        vm.warp(block.timestamp + auction.commitPeriod());
+        vm.roll(vm.getBlockNumber() + auction.commitPeriod());
 
         vm.prank(solver1);
         auction.reveal(orderId, amount1, bytes32(uint256(1)), originData);
         vm.prank(solver2);
         auction.reveal(orderId, amount2, bytes32(uint256(2)), originData);
 
-        vm.warp(block.timestamp + auction.revealPeriod());
+        vm.roll(vm.getBlockNumber() + auction.revealPeriod());
     }
 
     // ========== settleOrders ==========
@@ -402,7 +402,7 @@ contract DestinationSettlerTest is BaseTest {
 
         // Commit and reveal but don't warp past reveal phase
         _commit(vegeta, orderId, amount);
-        vm.warp(block.timestamp + auction.commitPeriod());
+        vm.roll(vm.getBlockNumber() + auction.commitPeriod());
         _reveal(vegeta, orderId, amount, originData);
 
         vm.expectRevert(IAuction.RevealNotEnded.selector);
@@ -465,7 +465,7 @@ contract DestinationSettlerTest is BaseTest {
         _commit(vegeta, orderId, amount);
 
         // Warp past commit phase
-        vm.warp(block.timestamp + auction.commitPeriod());
+        vm.roll(vm.getBlockNumber() + auction.commitPeriod());
 
         vm.prank(kakaroto);
         vm.expectRevert(IAuction.CommitPhaseEnded.selector);
@@ -480,7 +480,7 @@ contract DestinationSettlerTest is BaseTest {
         bytes memory originData = OrderEncoder.encode(orderData);
 
         _commit(vegeta, orderId, amount);
-        vm.warp(block.timestamp + auction.commitPeriod());
+        vm.roll(vm.getBlockNumber() + auction.commitPeriod());
         _reveal(vegeta, orderId, amount, originData);
 
         assertEq(auction.getQuoteCount(orderId), 1);
@@ -494,7 +494,7 @@ contract DestinationSettlerTest is BaseTest {
         bytes memory originData = OrderEncoder.encode(orderData);
 
         _commit(vegeta, orderId, amount);
-        vm.warp(block.timestamp + auction.commitPeriod());
+        vm.roll(vm.getBlockNumber() + auction.commitPeriod());
 
         vm.prank(vegeta);
         vm.expectRevert(IAuction.InvalidReveal.selector);
@@ -508,7 +508,7 @@ contract DestinationSettlerTest is BaseTest {
 
         // Start auction with kakaroto
         _commit(kakaroto, orderId, amount);
-        vm.warp(block.timestamp + auction.commitPeriod());
+        vm.roll(vm.getBlockNumber() + auction.commitPeriod());
 
         // Vegeta tries to reveal without committing
         vm.prank(vegeta);
@@ -542,7 +542,7 @@ contract DestinationSettlerTest is BaseTest {
         auction.commit(orderId, hashA);
         vm.prank(kakaroto);
         auction.commit(orderId, hashA);
-        vm.warp(block.timestamp + auction.commitPeriod());
+        vm.roll(vm.getBlockNumber() + auction.commitPeriod());
 
         _reveal(vegeta, orderId, amount + 10, originData);
 
@@ -564,14 +564,14 @@ contract DestinationSettlerTest is BaseTest {
         vm.prank(kakaroto);
         auction.commit(orderId, hashA);
         _commit(karpincho, orderId, amount);
-        vm.warp(block.timestamp + auction.commitPeriod());
+        vm.roll(vm.getBlockNumber() + auction.commitPeriod());
 
         _reveal(vegeta, orderId, amount + 10, originData);
         vm.prank(kakaroto);
         vm.expectRevert(IAuction.InvalidReveal.selector);
         auction.reveal(orderId, amount + 10, SALT, originData);
         _reveal(karpincho, orderId, amount, originData);
-        vm.warp(block.timestamp + auction.revealPeriod());
+        vm.roll(vm.getBlockNumber() + auction.revealPeriod());
 
         (address winner, uint256 winningAmount) = auction.getWinner(orderId);
         assertEq(winner, vegeta);
@@ -588,14 +588,14 @@ contract DestinationSettlerTest is BaseTest {
         auction.commit(orderId, hashA);
         vm.prank(kakaroto);
         auction.commit(orderId, hashA);
-        vm.warp(block.timestamp + auction.commitPeriod());
+        vm.roll(vm.getBlockNumber() + auction.commitPeriod());
 
         // The copier front-runs the reveal of the original solver with the same values
         vm.prank(kakaroto);
         vm.expectRevert(IAuction.InvalidReveal.selector);
         auction.reveal(orderId, amount + 10, SALT, originData);
         _reveal(vegeta, orderId, amount + 10, originData);
-        vm.warp(block.timestamp + auction.revealPeriod());
+        vm.roll(vm.getBlockNumber() + auction.revealPeriod());
 
         (address winner,) = auction.getWinner(orderId);
         assertEq(winner, vegeta);
@@ -607,7 +607,7 @@ contract DestinationSettlerTest is BaseTest {
         bytes memory originData = OrderEncoder.encode(orderData);
 
         _commit(vegeta, orderId, amount);
-        vm.warp(block.timestamp + auction.commitPeriod());
+        vm.roll(vm.getBlockNumber() + auction.commitPeriod());
         _reveal(vegeta, orderId, amount, originData);
 
         assertEq(auction.getQuoteCount(orderId), 1);
@@ -661,7 +661,7 @@ contract DestinationSettlerTest is BaseTest {
         bytes memory originData = OrderEncoder.encode(orderData);
 
         _commit(vegeta, orderId, amount);
-        vm.warp(block.timestamp + auction.commitPeriod());
+        vm.roll(vm.getBlockNumber() + auction.commitPeriod());
         _reveal(vegeta, orderId, amount, originData);
 
         // Don't warp past reveal

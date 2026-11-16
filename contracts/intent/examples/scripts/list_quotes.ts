@@ -4,8 +4,9 @@ import { Router__factory, Auction__factory } from '../typechain';
 import { getTokenDecimals, getProviderByDomain, getOrderData } from '../lib/common';
 import Table from 'cli-table3';
 
+// The auction deadlines are block numbers of the destination chain, not timestamps.
 function formatDeadline(deadline: bigint) {
-  return Number(deadline) > 0 ? new Date(Number(deadline) * 1000).toISOString() : 'N/A';
+  return deadline > 0n ? `block ${deadline}` : 'N/A';
 }
 
 /**
@@ -53,10 +54,11 @@ async function main() {
 
   const auction = Auction__factory.connect(await destRouter.AUCTION(), destProvider);
 
-  const [commitDeadline, revealDeadline, isAuctionEnded] = await Promise.all([
+  const [commitDeadline, revealDeadline, isAuctionEnded, latestBlock] = await Promise.all([
     auction.getCommitDeadline(orderIdHex),
     auction.getRevealDeadline(orderIdHex),
     auction.isAuctionEnded(orderIdHex),
+    destProvider.getBlockNumber(),
   ]);
 
   console.log(`\n  Commit Deadline: ${formatDeadline(commitDeadline)}`);
@@ -98,13 +100,12 @@ async function main() {
     console.log(`\nWinner: ${winnerAddress}`);
     console.log(`  Pays (2nd price): ${formatUnits(winnerAmount, outputDecimals)} (+${improvement}%)`);
   } else {
-    const now = Math.floor(Date.now() / 1000);
-    const commitLeft = Number(commitDeadline) - now;
-    const revealLeft = Number(revealDeadline) - now;
-    if (commitLeft > 0) {
-      console.log(`\nCommit phase open. Time left: ${commitLeft}s`);
-    } else if (revealLeft > 0) {
-      console.log(`\nReveal phase open. Time left: ${revealLeft}s`);
+    const commitLeft = commitDeadline - BigInt(latestBlock);
+    const revealLeft = revealDeadline - BigInt(latestBlock);
+    if (commitLeft > 0n) {
+      console.log(`\nCommit phase open. Blocks left: ${commitLeft}`);
+    } else if (revealLeft > 0n) {
+      console.log(`\nReveal phase open. Blocks left: ${revealLeft}`);
     }
   }
 
