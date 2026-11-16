@@ -39,11 +39,11 @@ contract AuctionTest is Test {
     }
 
     function _toReveal() internal {
-        vm.warp(block.timestamp + auction.commitPeriod());
+        vm.roll(vm.getBlockNumber() + auction.commitPeriod());
     }
 
     function _toEnd() internal {
-        vm.warp(block.timestamp + auction.commitPeriod() + auction.revealPeriod());
+        vm.roll(vm.getBlockNumber() + auction.commitPeriod() + auction.revealPeriod());
     }
 
     /// Low bids revealed first cannot exclude a later high bid: it replaces the lowest quote.
@@ -61,11 +61,34 @@ contract AuctionTest is Test {
         _reveal(address(3), 50);
         _reveal(address(4), 400);
 
-        vm.warp(block.timestamp + auction.revealPeriod());
+        vm.roll(vm.getBlockNumber() + auction.revealPeriod());
         (address winner, uint256 price) = auction.getWinner(orderId);
         assertEq(winner, address(4));
         assertEq(price, 200);
         assertEq(auction.getQuoteCount(orderId), 2);
+    }
+
+    /// The phases count blocks: time that passes without a new block does not move the phase.
+    /// vm.getBlockNumber() is necessary: with via_ir the compiler can reuse an old block.number
+    /// after vm.roll.
+    function test_phasesFollowBlocksNotTime() public {
+        _commit(address(1), 100);
+
+        vm.warp(block.timestamp + 1 days);
+        assertEq(auction.getCommitDeadline(orderId), vm.getBlockNumber() + auction.commitPeriod());
+        _commit(address(2), 200); // still the commit phase
+
+        vm.roll(vm.getBlockNumber() + auction.commitPeriod() - 1);
+        vm.expectRevert(IAuction.RevealPhaseNotActive.selector);
+        _reveal(address(1), 100);
+
+        vm.roll(vm.getBlockNumber() + 1);
+        _reveal(address(1), 100);
+
+        vm.roll(vm.getBlockNumber() + auction.revealPeriod() - 1);
+        assertFalse(auction.isAuctionEnded(orderId));
+        vm.roll(vm.getBlockNumber() + 1);
+        assertTrue(auction.isAuctionEnded(orderId));
     }
 
     /// A period change does not move the deadline of an auction that already started.
@@ -73,8 +96,8 @@ contract AuctionTest is Test {
         _commit(address(1), 100);
         uint256 deadline = auction.getRevealDeadline(orderId);
 
-        auction.setCommitPeriod(1 hours);
-        auction.setRevealPeriod(1 hours);
+        auction.setCommitPeriod(100);
+        auction.setRevealPeriod(100);
 
         assertEq(auction.getRevealDeadline(orderId), deadline);
         _toEnd();
