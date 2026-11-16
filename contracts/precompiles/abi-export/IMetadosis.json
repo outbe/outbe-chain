@@ -65,12 +65,6 @@
         "internalType": "uint256"
       },
       {
-        "name": "promisLimitReturnedMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
         "name": "status",
         "type": "string",
         "indexed": false,
