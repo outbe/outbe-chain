@@ -2,7 +2,8 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_core_common::addresses::INTEX_NFT1155_ADDRESS;
 use outbe_core_common::markup::marked_up;
-use outbe_gem::{api as gem_api, CallTerms, GemAddParams, GemParams, GemView};
+use outbe_gem::precompile::IGem::{GemIssued, GemSettled};
+use outbe_gem::{api as gem_api, CallTerms, GemAddParams, GemContract, GemParams, GemView};
 use outbe_intex::{IntexState, SeriesId};
 use outbe_oracle::api::get_utc_day_vwap_for_iso;
 use outbe_primitives::error::Result;
@@ -14,7 +15,7 @@ use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 use outbe_core_common::pow;
 
 use crate::errors::{date_step_error, GemFactoryError};
-use crate::precompile::IGemFactory::{GemIssued, GemPositionCreated, GemSeriesOpened, GemSettled};
+use crate::precompile::IGemFactory::{GemPositionCreated, GemSeriesOpened};
 use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition};
 use crate::sol_ext::IIntexNFT1155;
 use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, SettlementPayment};
@@ -145,18 +146,15 @@ pub(crate) fn derived_call_terms(
 /// Announce a new gem with its series, sub-series, currencies and cleartext load payload.
 fn emit_gem_issued(storage: &StorageHandle<'_>, gem_id: U256) -> Result<()> {
     let gem = load_view(storage, gem_id)?;
-    emit_event(
-        storage,
-        GemIssued {
-            gemId: gem_id,
-            owner: gem.item.owner,
-            seriesId: gem.item.series_id.into(),
-            subSeriesId: gem.item.sub_series_id,
-            issuanceCurrency: gem.item.issuance_currency,
-            referenceCurrency: gem.item.reference_currency,
-            payload: gem.item.promis_load_minor.to_be_bytes::<32>().into(),
-        },
-    )
+    GemContract::new(storage.clone()).emit(GemIssued {
+        gemId: gem_id,
+        owner: gem.item.owner,
+        seriesId: gem.item.series_id.into(),
+        subSeriesId: gem.item.sub_series_id,
+        issuanceCurrency: gem.item.issuance_currency,
+        referenceCurrency: gem.item.reference_currency,
+        payload: gem.item.promis_load_minor.to_be_bytes::<32>().into(),
+    })
 }
 
 fn load_view(storage: &StorageHandle<'_>, gem_id: U256) -> Result<GemView> {
@@ -366,17 +364,14 @@ pub fn settle_gem(
             asset,
             quote.payment_minor,
         )?;
-        emit_event(
-            storage,
-            GemSettled {
-                gemId: gem_id,
-                owner: gem.item.owner,
-                asset,
-                issuanceCurrency: gem.item.issuance_currency,
-                referenceCurrency: gem.item.reference_currency,
-                amountMinor: quote.payment_minor,
-            },
-        )
+        GemContract::new(storage.clone()).emit(GemSettled {
+            gemId: gem_id,
+            owner: gem.item.owner,
+            issuanceCurrency: gem.item.issuance_currency,
+            referenceCurrency: gem.item.reference_currency,
+            asset,
+            amountMinor: quote.payment_minor,
+        })
     })
 }
 

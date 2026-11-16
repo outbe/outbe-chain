@@ -149,16 +149,6 @@ interface IGemFactory {
         uint64 callThreshold,
         uint64 callNoticePeriod
     );
-    /// @notice A new gem was issued (agent reward or merchant flow).
-    event GemIssued(
-        uint256 indexed gemId,
-        address indexed owner,
-        bytes14 indexed seriesId,
-        uint16 subSeriesId,
-        uint16 issuanceCurrency,
-        uint16 referenceCurrency,
-        bytes payload
-    );
     /// @notice A merchant sent Intex units into a new position.
     event GemPositionCreated(
         uint256 indexed positionId,
@@ -167,15 +157,6 @@ interface IGemFactory {
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
         bytes payload
-    );
-    /// @notice A gem's Cost Amount was settled into the Reserve: `amountMinor` of `asset`.
-    event GemSettled(
-        uint256 indexed gemId,
-        address indexed owner,
-        address asset,
-        uint16 issuanceCurrency,
-        uint16 referenceCurrency,
-        uint256 amountMinor
     );
     /// @notice The `positions` positions whose validity ended in `expiryHour` (unix time
     ///         / 3600) returned the capacity they never issued, and the cleanup deletes them.

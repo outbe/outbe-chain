@@ -102,7 +102,8 @@ impl Rail for Gem {
             .evm
             .logs()
             .iter()
-            .filter_map(|log| IGemFactory::GemSettled::decode_log_data(&log.data).ok())
+            .filter(|log| log.address == GEM_ADDRESS)
+            .filter_map(|log| IGem::GemSettled::decode_log_data(&log.data).ok())
             .collect();
         assert_eq!(settled.len(), 1);
         assert_eq!(settled[0].owner, OWNER);

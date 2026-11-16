@@ -799,7 +799,8 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_group() {
     let events = provider.get_ordered_events();
     let issued: Vec<_> = events
         .iter()
-        .filter_map(|log| crate::precompile::IGemFactory::GemIssued::decode_log(log).ok())
+        .filter(|log| log.address == outbe_system_common::addresses::GEM_ADDRESS)
+        .filter_map(|log| outbe_gem::precompile::IGem::GemIssued::decode_log(log).ok())
         .map(|log| log.data)
         .collect();
     assert_eq!(issued.len(), 2);
