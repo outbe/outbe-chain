@@ -1084,6 +1084,11 @@
   },
   {
     "type": "error",
+    "name": "CostAboveCap",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "CredisOwnerMismatch",
     "inputs": []
   },
@@ -1117,6 +1122,11 @@
   {
     "type": "error",
     "name": "IndexOutOfBounds",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientFunds",
     "inputs": []
   },
   {

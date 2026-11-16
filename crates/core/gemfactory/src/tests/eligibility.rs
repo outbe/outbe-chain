@@ -52,6 +52,7 @@ fn cross_currency_settlement_rejects_a_leg_the_window_never_priced() {
                 asset: SETTLEMENT_ASSET,
                 snapshot_id: U256::ZERO,
             },
+            amount_cap(),
         )
         .unwrap_err();
 
@@ -88,6 +89,7 @@ fn settle_rejects_wrong_settlement_currency() {
                 asset: SETTLEMENT_ASSET_EUR,
                 snapshot_id: U256::ZERO,
             },
+            amount_cap(),
         );
         assert_eq!(
             res.unwrap_err().to_string(),

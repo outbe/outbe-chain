@@ -60,7 +60,7 @@ pub trait Rail: Copy + Debug + Sized {
 
     fn quote(self, world: &mut World<Self>) -> Quote;
 
-    fn settle_call(self, id: U256, snapshot_id: U256) -> Bytes;
+    fn settle_call(self, id: U256, snapshot_id: U256, cost: U256) -> Bytes;
 
     fn assert_settled(self, world: &World<Self>);
 
@@ -222,12 +222,12 @@ impl<R: Rail> World<R> {
     }
 
     pub fn settle_with(&mut self, snapshot_id: U256) -> SubCallOutput {
-        let calldata = self.rail.settle_call(self.id, snapshot_id);
+        let calldata = self.rail.settle_call(self.id, snapshot_id, self.cost);
         self.call(self.payer, R::FACTORY, calldata, false)
     }
 
     pub fn configure(&mut self, target: Address, mode: u64) {
-        let reentry = self.rail.settle_call(self.id, self.snapshot_id);
+        let reentry = self.rail.settle_call(self.id, self.snapshot_id, self.cost);
         self.ok(
             OWNER,
             target,

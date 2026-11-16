@@ -86,6 +86,26 @@ pub fn quote(
     })
 }
 
+/// Rejects a payer whose allowance to `spender` or balance is below `cap`, then a `cost`
+/// above `cap`. The funds come first, so a short payer learns nothing of the cost.
+pub fn require_within_cap(
+    storage: &StorageHandle<'_>,
+    spender: Address,
+    payer: Address,
+    asset: Address,
+    cap: U256,
+    cost: U256,
+) -> Result<()> {
+    if allowance(storage, asset, payer, spender)? < cap || balance_of(storage, asset, payer)? < cap
+    {
+        return Err(SettlementError::InsufficientFunds.into());
+    }
+    if cost > cap {
+        return Err(SettlementError::CostAboveCap.into());
+    }
+    Ok(())
+}
+
 /// Pulls exactly `amount` of `asset` from `payer` into `factory` and deposits it into the
 /// reserve vault through the router, leaving the factory's own balance untouched.
 pub fn collect(
@@ -171,6 +191,20 @@ fn token_call(storage: &StorageHandle<'_>, asset: Address, call: impl SolCall) -
         return Err(SettlementError::TokenOperationFailed.into());
     }
     Ok(())
+}
+
+fn allowance(
+    storage: &StorageHandle<'_>,
+    asset: Address,
+    owner: Address,
+    spender: Address,
+) -> Result<U256> {
+    let ret = storage.staticcall(
+        asset,
+        IERC20::allowanceCall { owner, spender }.abi_encode().into(),
+    )?;
+    IERC20::allowanceCall::abi_decode_returns(&ret)
+        .map_err(|_| SettlementError::TokenOperationFailed.into())
 }
 
 fn balance_of(storage: &StorageHandle<'_>, asset: Address, account: Address) -> Result<U256> {

@@ -88,6 +88,8 @@ interface IVaultRouter {
     error OracleUnavailable();
     error SnapshotMismatch(uint256 authorized, uint256 required);
     error AmountMismatch();
+    error InsufficientFunds();
+    error CostAboveCap();
     error ApprovedVaultActionNotFound(uint256 proposalId);
     error ApprovedVaultActionIndexInconsistent(uint256 proposalId);
     error InvalidApprovedVaultAction();

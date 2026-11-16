@@ -65,6 +65,7 @@ pub fn dispatch(
                         asset: c.asset,
                         snapshot_id: c.snapshotId,
                     },
+                    c.amountCapMinor,
                 )
             }),
             minePromis(c) => mutate(&storage, c, caller, |_sender, c| {

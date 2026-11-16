@@ -51,13 +51,16 @@ interface IGemFactory {
 
     /// @notice Settle a gem paying its cost in `asset`. Any caller may pay. The
     ///         gem stays with its owner.
-    /// @dev Approve GemFactory for the `quoteSettlement` amount before calling.
+    /// @dev Approve GemFactory for `amountCapMinor` before calling.
     ///      Payment is deposited into the Reserve through VaultRouter.
     /// @param asset Settlement asset the gem accepts.
     /// @param snapshotId The trailing VWAP snapshot `quoteSettlement` returned. An
     ///        issuance-currency payment naming any other snapshot reverts. Ignored
     ///        on the reference rail.
-    function settleGem(uint256 gemId, address asset, uint256 snapshotId) external;
+    /// @param amountCapMinor The most the payer pays, in `asset` units. A payer whose
+    ///        allowance or balance is below it reverts `InsufficientFunds`; a cost above
+    ///        it reverts `CostAboveCap`. The call takes only the cost.
+    function settleGem(uint256 gemId, address asset, uint256 snapshotId, uint256 amountCapMinor) external;
     /// @notice Burn a settled gem and mint confidential Promis to its owner,
     ///         gated by off-chain proof of work. Any caller may submit. The owner's Promis
     ///         modify key authorizes the call: `mac = HMAC(modifyKey, op-preimage)`.

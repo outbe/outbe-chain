@@ -321,6 +321,11 @@
         "name": "snapshotId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "amountCapMinor",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],

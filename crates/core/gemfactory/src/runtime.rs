@@ -334,11 +334,12 @@ pub fn issue_merchant_gem(
 
 /// Settles a gem paying its cost from `payer` in `asset` by ERC20 transfer. Anyone
 /// may pay for a gem. It stays with its owner. An issuance-currency payment must
-/// name the VWAP snapshot required at this block.
+/// name the VWAP snapshot required at this block, and the cost must fit the payer's cap.
 pub fn settle_gem(
     storage: &StorageHandle<'_>,
     gem_id: U256,
     payment: SettlementPayment,
+    amount_cap_minor: U256,
 ) -> Result<()> {
     let SettlementPayment {
         payer,
@@ -350,6 +351,14 @@ pub fn settle_gem(
 
     let quote = settlement::quote(storage, asset, currencies(&gem), &settlement_cost(&gem))?;
     quote.require_snapshot(snapshot_id)?;
+    settlement::require_within_cap(
+        storage,
+        GEM_FACTORY_ADDRESS,
+        payer,
+        asset,
+        amount_cap_minor,
+        quote.payment_minor,
+    )?;
     storage.clone().with_checkpoint(|| {
         // Settle before payment so a token callback cannot settle the gem twice.
         // A failed payment rolls the state back.

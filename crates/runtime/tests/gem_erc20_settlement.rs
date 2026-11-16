@@ -86,11 +86,12 @@ impl Rail for Gem {
         }
     }
 
-    fn settle_call(self, id: U256, snapshot_id: U256) -> Bytes {
+    fn settle_call(self, id: U256, snapshot_id: U256, cost: U256) -> Bytes {
         IGemFactory::settleGemCall {
             gemId: id,
             asset: ASSET,
             snapshotId: snapshot_id,
+            amountCapMinor: cost,
         }
         .abi_encode()
         .into()

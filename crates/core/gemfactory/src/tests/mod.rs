@@ -88,8 +88,16 @@ fn stub_settlement_asset(
     // The deposit path pulls and approves before handing over to the router.
     storage.stub_sub_call_at_selector(asset, IERC20::transferFromCall::SELECTOR, word(1));
     storage.stub_sub_call_at_selector(asset, IERC20::approveCall::SELECTOR, word(1));
-    // A fixed stub cannot vary between the two reads, so the delta is zero here.
-    storage.stub_sub_call_at_selector(asset, IERC20::balanceOfCall::SELECTOR, word(0));
+    // A fixed stub cannot vary between the two reads, so the delta is zero here. It
+    // covers `amount_cap`, as the allowance does.
+    let cap = alloy_primitives::Bytes::from(amount_cap().to_be_bytes::<32>().to_vec());
+    storage.stub_sub_call_at_selector(asset, IERC20::balanceOfCall::SELECTOR, cap.clone());
+    storage.stub_sub_call_at_selector(asset, IERC20::allowanceCall::SELECTOR, cap);
+}
+
+/// A cap above every quoted cost that the stubbed allowance and balance cover.
+fn amount_cap() -> U256 {
+    U256::from(u128::MAX)
 }
 
 fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
@@ -206,6 +214,7 @@ fn admitted_at_quote(storage: &StorageHandle<'_>, gem_id: U256, asset: Address) 
             asset,
             snapshot_id: snapshot,
         },
+        amount_cap(),
     );
     assert_eq!(
         res.unwrap_err().to_string(),
