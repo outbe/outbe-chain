@@ -802,22 +802,29 @@ fn settlement_error(error: outbe_vaultrouter::settlement::SettlementError) -> St
 #[test]
 fn settle_gem_checks_the_funds_before_the_cost() {
     let unit = six_decimal_unit();
-    let mut provider = test_storage(Some(U256::from(2u64) * unit));
-    provider.stub_sub_call_at_selector(SETTLEMENT_ASSET, IERC20::balanceOfCall::SELECTOR, word(1));
-    StorageHandle::enter(&mut provider, |storage| {
-        let storage = &storage;
-        let gem_id =
-            issue_at_live_rate(storage, ALICE, U256::from(10u64) * unit, 840, 840).unwrap();
-        let (_, cost, snapshot) =
-            runtime::quote_settlement(storage, gem_id, SETTLEMENT_ASSET).unwrap();
-        for cap in [U256::from(2u64), cost + U256::ONE] {
-            assert_eq!(
-                settle_capped(storage, gem_id, snapshot, cap),
-                settlement_error(outbe_vaultrouter::settlement::SettlementError::InsufficientFunds)
-            );
-        }
-        assert_eq!(gem_view(storage, gem_id).item.state, GemState::Issued as u8);
-    });
+    for short in [
+        IERC20::balanceOfCall::SELECTOR,
+        IERC20::allowanceCall::SELECTOR,
+    ] {
+        let mut provider = test_storage(Some(U256::from(2u64) * unit));
+        provider.stub_sub_call_at_selector(SETTLEMENT_ASSET, short, word(1));
+        StorageHandle::enter(&mut provider, |storage| {
+            let storage = &storage;
+            let gem_id =
+                issue_at_live_rate(storage, ALICE, U256::from(10u64) * unit, 840, 840).unwrap();
+            let (_, cost, snapshot) =
+                runtime::quote_settlement(storage, gem_id, SETTLEMENT_ASSET).unwrap();
+            for cap in [U256::from(2u64), cost + U256::ONE] {
+                assert_eq!(
+                    settle_capped(storage, gem_id, snapshot, cap),
+                    settlement_error(
+                        outbe_vaultrouter::settlement::SettlementError::InsufficientFunds
+                    )
+                );
+            }
+            assert_eq!(gem_view(storage, gem_id).item.state, GemState::Issued as u8);
+        });
+    }
 }
 
 #[test]
