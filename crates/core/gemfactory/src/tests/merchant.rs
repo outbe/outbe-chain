@@ -114,6 +114,43 @@ fn an_expired_position_returns_its_remainder() {
     });
 }
 
+#[test]
+fn a_position_returns_exactly_its_unissued_remainder_once() {
+    let unit = six_decimal_unit();
+    with_storage(Some(unit), |storage| {
+        seed_day_vwap(storage, 840, unit);
+        let promis_load = 15 * six_decimal_u128() / u128::from(SENT_UNITS);
+        let id = seed_and_send(storage, unit, promis_load);
+        assert_eq!(sent_capacity(promis_load), U256::from(15u64) * unit);
+        let gem_id = runtime::issue_merchant_gem(
+            storage,
+            crate::schema::MerchantGemIssueParams {
+                caller: ALICE,
+                position_id: id,
+                owner: BOB,
+                promis_load_minor: U256::from(6u64) * unit,
+                issuance_currency: 840,
+                reference_currency: 840,
+            },
+        )
+        .unwrap();
+
+        let closed = day_closed(T_NOW + POSITION_VALIDITY_SECONDS);
+        let block = daily_pass(&block_ctx(storage, closed)).unwrap();
+        assert_eq!(unallocated(storage), U256::from(9u64) * unit);
+        assert_eq!(positions_expired::cleanup_positions(&block).unwrap(), 1);
+        assert!(GemFactoryContract::new(storage.clone())
+            .positions
+            .get(id)
+            .unwrap()
+            .is_none());
+        assert_eq!(gem_view(storage, gem_id).item.owner, BOB);
+
+        daily_pass(&block_ctx(storage, closed + SECONDS_PER_DAY)).unwrap();
+        assert_eq!(unallocated(storage), U256::from(9u64) * unit);
+    });
+}
+
 /// A storage fault is this node's own: it fails the block instead of skipping the hour.
 #[test]
 fn a_storage_fault_in_the_position_sweep_fails_the_block() {
