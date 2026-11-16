@@ -4,9 +4,9 @@ use super::*;
 fn mine_promis_full_flow() {
     outbe_promis::enclave_client::test_enclave::install();
     let load = U256::from(10u64) * six_decimal_unit();
-    // The paid settle deposits into the Reserve vault, which this storage-only
+    // A real settle deposits into the Reserve vault, which this storage-only
     // harness cannot service. `force_settled` records Settled through
-    // `gem_api::settle_gem` and does not deposit. Localnet covers the paid settle.
+    // `gem_api::settle_gem` and does not deposit. Localnet covers the real settle.
     let (mut provider, gem_id) = settled_gem(load);
     StorageHandle::enter(&mut provider, |storage| {
         let storage = &storage;
@@ -104,7 +104,7 @@ fn anyone_may_relay_mining_and_the_promis_lands_with_the_owner() {
 }
 
 #[test]
-fn a_gem_is_not_mined_in_its_issue_block() {
+fn gem_is_not_mined_in_its_issue_block() {
     outbe_promis::enclave_client::test_enclave::install();
     let load = U256::from(10u64) * six_decimal_unit();
     let mut provider = test_storage(Some(U256::from(2u64) * six_decimal_unit()));

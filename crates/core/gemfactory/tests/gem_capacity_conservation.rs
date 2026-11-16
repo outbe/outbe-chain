@@ -245,13 +245,13 @@ fn every_included_gem_subtype_returns_its_full_load_once_after_forfeiture() {
 #[test]
 fn a_settled_then_mined_gem_returns_no_capacity_while_unsettled_siblings_forfeit() {
     let (mut p, rights) = world();
-    let (paid, paid_load) = rights[0];
+    let (settled, settled_load) = rights[0];
     // The completed settlement footprint; payment itself is covered by the
     // settlement tests.
     StorageHandle::enter(&mut p, |s| {
-        let (item, group) = api::load_pair(&s, paid).unwrap().unwrap();
+        let (item, group) = api::load_pair(&s, settled).unwrap().unwrap();
         api::record_settled(&s, item, group).unwrap();
-        let (item, group) = api::load_pair(&s, paid).unwrap().unwrap();
+        let (item, group) = api::load_pair(&s, settled).unwrap().unwrap();
         api::remove_gem(&s, item, group).unwrap();
         assert_eq!(
             PromisLimitContract::new(s).promis_limit().unwrap(),
@@ -266,7 +266,7 @@ fn a_settled_then_mined_gem_returns_no_capacity_while_unsettled_siblings_forfeit
         let total = rights.iter().map(|(_, load)| *load).sum::<U256>();
         assert_eq!(
             PromisLimitContract::new(s).promis_limit().unwrap(),
-            total - paid_load
+            total - settled_load
         );
     });
 }
@@ -279,10 +279,10 @@ fn a_settled_gem_stays_live_beside_its_forfeited_siblings() {
     use outbe_gem::precompile::IGem;
 
     let (mut p, rights) = world();
-    let (paid, paid_load) = rights[0];
+    let (settled, settled_load) = rights[0];
     let owner = Address::repeat_byte(1);
     StorageHandle::enter(&mut p, |s| {
-        let (item, group) = api::load_pair(&s, paid).unwrap().unwrap();
+        let (item, group) = api::load_pair(&s, settled).unwrap().unwrap();
         api::record_settled(&s, item, group).unwrap();
     });
     let due = ((DEADLINE / DAY) + 1) * DAY;
@@ -292,24 +292,24 @@ fn a_settled_gem_stays_live_beside_its_forfeited_siblings() {
     let group_key = StorageHandle::enter(&mut p, |s| {
         let gem = GemContract::new(s.clone());
         assert_eq!(api::balance_of(&s, owner).unwrap(), 1);
-        let view = api::get_view(&s, paid).unwrap().unwrap();
+        let view = api::get_view(&s, settled).unwrap().unwrap();
         assert_eq!(view.effective_state(due + DAY), GemState::Settled as u8);
         let out = outbe_gem::precompile::dispatch(
             s.clone(),
-            &IGem::getGemCall { gemId: paid }.abi_encode(),
+            &IGem::getGemCall { gemId: settled }.abi_encode(),
             Address::ZERO,
             U256::ZERO,
         )
         .unwrap();
         let data = IGem::getGemCall::abi_decode_returns(&out).unwrap();
         assert_eq!(data.state, GemState::Settled as u8);
-        assert_eq!(data.promisLoadMinor, paid_load);
+        assert_eq!(data.promisLoadMinor, settled_load);
         assert_eq!(data.calledAt, CALLED);
         assert_ne!(data.settlementDeadline, 0);
         assert_eq!(api::balance_of(&s, owner).unwrap(), 1);
-        assert_eq!(api::tokens_by_owner(&s, owner).unwrap(), vec![paid]);
+        assert_eq!(api::tokens_by_owner(&s, owner).unwrap(), vec![settled]);
 
-        let group_key = api::get_item(&s, paid).unwrap().unwrap().group_key;
+        let group_key = api::get_item(&s, settled).unwrap().unwrap().group_key;
         let group = api::get_group(&s, group_key).unwrap().unwrap();
         assert_eq!(group.settled_gems, 1);
         assert_eq!(gem.group_gem_count.read(&group_key).unwrap(), 0);
@@ -321,7 +321,7 @@ fn a_settled_gem_stays_live_beside_its_forfeited_siblings() {
         assert_eq!(gem.forfeit_tree_root.read().unwrap(), U256::ZERO);
         assert_eq!(
             PromisLimitContract::new(s).promis_limit().unwrap(),
-            total - paid_load
+            total - settled_load
         );
         group_key
     });
@@ -333,17 +333,17 @@ fn a_settled_gem_stays_live_beside_its_forfeited_siblings() {
         })
         .map(|event| (event.forfeitedCount, event.forfeitedAmountMinor))
         .collect::<Vec<_>>();
-    assert_eq!(forfeited, vec![(4, total - paid_load)]);
+    assert_eq!(forfeited, vec![(4, total - settled_load)]);
 
     // Mining the settled gem closes the group and returns nothing more.
     StorageHandle::enter(&mut p, |s| {
-        let (item, group) = api::load_pair(&s, paid).unwrap().unwrap();
+        let (item, group) = api::load_pair(&s, settled).unwrap().unwrap();
         api::remove_gem(&s, item, group).unwrap();
         assert!(api::get_group(&s, group_key).unwrap().is_none());
         assert_eq!(held(&s), 0);
         assert_eq!(
             PromisLimitContract::new(s).promis_limit().unwrap(),
-            total - paid_load
+            total - settled_load
         );
     });
 }

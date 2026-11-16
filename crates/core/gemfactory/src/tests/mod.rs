@@ -251,9 +251,9 @@ fn register_currency(storage: &StorageHandle<'_>, iso: u16, rate: U256) {
     seed_day_vwap(storage, iso, rate);
 }
 
-// The paid `settle_gem` path (Reserve vault deposit) is not exercisable in the
+// The payment path of `settle_gem` (Reserve vault deposit) is not exercisable in the
 // storage-only harness: the stubbed token moves no balance. Mine coverage
-// records Settled through `gem_api::settle_gem`, which does not deposit. Localnet covers the paid settle.
+// records Settled through `gem_api::settle_gem`, which does not deposit. Localnet covers the real settle.
 
 /// Records Settled. The body stays until it is mined.
 fn force_settled(storage: &StorageHandle<'_>, gem_id: U256) {

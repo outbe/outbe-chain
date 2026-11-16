@@ -115,7 +115,7 @@ fn an_expired_position_returns_its_remainder() {
 }
 
 #[test]
-fn a_position_returns_exactly_its_unissued_remainder_once() {
+fn position_of_15_units_issues_6_and_gives_back_9() {
     let unit = six_decimal_unit();
     with_storage(Some(unit), |storage| {
         seed_day_vwap(storage, 840, unit);
