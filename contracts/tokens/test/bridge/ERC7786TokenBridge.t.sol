@@ -4,13 +4,16 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
 import {USDT} from "../../src/canonical/USDT.sol";
 import {BridgeableERC20Stable} from "../../src/synthetic/BridgeableERC20Stable.sol";
 import {WCOEN as NativeWCOEN} from "../../src/canonical/WCOEN.sol";
-import {BridgeableERC20 as SyntheticWCOEN} from "../../src/synthetic/BridgeableERC20.sol";
+import {BridgeableERC20} from "../../src/synthetic/BridgeableERC20.sol";
+import {SyntheticWCOEN} from "../../src/synthetic/SyntheticWCOEN.sol";
+import {DEAD_ADDRESS} from "../../src/BurnAddress.sol";
 import {MockERC7786Bridge} from "../mocks/MockERC7786Bridge.sol";
 import {MockStablecoin} from "../mocks/MockStablecoin.sol";
 import {TokenBridgeProxy} from "../utils/TokenBridgeProxy.sol";
@@ -138,6 +141,48 @@ contract ERC7786TokenBridgeTest is Test {
         assertEq(outbeWcoen.balanceOf(address(outbeWcoenBridge)), 1e6);
     }
 
+    function test_WCOEN_BurnDead_SendsTheBackingToDeadOnOutbe() public {
+        uint256 amount = 4e6;
+        vm.deal(sourceAddr, amount);
+        vm.startPrank(sourceAddr);
+        outbeWcoen.deposit{value: amount}();
+        outbeWcoen.approve(address(outbeWcoenBridge), amount);
+        outbeWcoenBridge.send(BNB, targetAddr, amount);
+        vm.stopPrank();
+        vm.prank(targetAddr);
+        bnbWcoen.transfer(DEAD_ADDRESS, amount);
+        uint256 deadNative = DEAD_ADDRESS.balance;
+
+        vm.deal(intruder, 1);
+        vm.expectEmit(address(bnbWcoen));
+        emit IERC20.Transfer(DEAD_ADDRESS, address(0), amount);
+        vm.expectEmit(address(outbeWcoen));
+        emit IERC20.Transfer(address(outbeWcoenBridge), DEAD_ADDRESS, amount);
+        vm.expectEmit(address(outbeWcoen));
+        emit IERC20.Transfer(DEAD_ADDRESS, address(0), amount);
+        vm.prank(intruder);
+        bnbWcoen.burnDead{value: 1}();
+
+        assertEq(bnbWcoen.balanceOf(DEAD_ADDRESS), 0);
+        assertEq(bnbWcoen.totalSupply(), 0);
+        assertEq(address(bnbGateway).balance, 1);
+        assertEq(outbeWcoen.balanceOf(address(outbeWcoenBridge)), 0);
+        assertEq(outbeWcoen.balanceOf(DEAD_ADDRESS), 0);
+        assertEq(outbeWcoen.totalSupply(), 0);
+        assertEq(DEAD_ADDRESS.balance, deadNative + amount);
+    }
+
+    function test_RevertWhen_BurnDeadHasNothing() public {
+        vm.expectRevert(SyntheticWCOEN.NothingToBurn.selector);
+        bnbWcoen.burnDead();
+    }
+
+    function test_RevertWhen_SendBurnedFromNonToken() public {
+        vm.prank(intruder);
+        vm.expectRevert(abi.encodeWithSelector(ERC7786TokenBridge.UnauthorizedToken.selector, intruder));
+        bnbWcoenBridge.sendBurned(OUTBE, 1);
+    }
+
     function test_Quote_DelegatesToBridge() public {
         outbeGateway.setFeeQuote(123);
         vm.prank(targetAddr);
@@ -174,7 +219,7 @@ contract ERC7786TokenBridgeTest is Test {
     function test_FeeOnTransferLock_CreditsReceivedAmount() public {
         FeeOnTransferToken feeToken = new FeeOnTransferToken();
         ERC7786TokenBridge feeBridge = _bridge(address(feeToken), bnbGateway, LOCK, OUTBE, _nextAddress(4));
-        SyntheticWCOEN feeSynthetic = new SyntheticWCOEN("Fee", "FEE", 6, _nextAddress(2));
+        BridgeableERC20 feeSynthetic = new BridgeableERC20("Fee", "FEE", 6, _nextAddress(2));
         _bridge(address(feeSynthetic), outbeGateway, BURN, BNB, address(feeBridge));
         feeToken.mint(sourceAddr, 100e6);
 
@@ -305,7 +350,7 @@ contract ERC7786TokenBridgeTest is Test {
     function _setUpWcoenRoute() internal {
         outbeWcoen = new NativeWCOEN();
         outbeWcoenBridge = _bridge(address(outbeWcoen), outbeGateway, LOCK, BNB, _nextAddress(4));
-        bnbWcoen = new SyntheticWCOEN("Wrapped COEN", "WCOEN", 18, _nextAddress(2));
+        bnbWcoen = new SyntheticWCOEN(_nextAddress(2), OUTBE);
         bnbWcoenBridge = _bridge(address(bnbWcoen), bnbGateway, BURN, OUTBE, address(outbeWcoenBridge));
     }
 

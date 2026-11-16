@@ -297,6 +297,30 @@
   },
   {
     "type": "function",
+    "name": "sendBurned",
+    "inputs": [
+      {
+        "name": "destinationDomain",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "sendId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
     "name": "token",
     "inputs": [],
     "outputs": [
@@ -707,6 +731,17 @@
         "name": "sender",
         "type": "bytes",
         "internalType": "bytes"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnauthorizedToken",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   }

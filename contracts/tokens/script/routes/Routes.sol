@@ -6,8 +6,8 @@ import {EURC} from "../../src/canonical/EURC.sol";
 import {USDC} from "../../src/canonical/USDC.sol";
 import {USDT} from "../../src/canonical/USDT.sol";
 import {WCOEN} from "../../src/canonical/WCOEN.sol";
-import {BridgeableERC20} from "../../src/synthetic/BridgeableERC20.sol";
 import {BridgeableERC20Stable} from "../../src/synthetic/BridgeableERC20Stable.sol";
+import {SyntheticWCOEN} from "../../src/synthetic/SyntheticWCOEN.sol";
 
 /// @dev One route, ready to deploy on the connected chain. `_tokenInitCode` supplies its token.
 struct Route {
@@ -122,7 +122,7 @@ abstract contract Routes is BaseRoute {
             return canonical
                 ? type(WCOEN).creationCode
                 : abi.encodePacked(
-                    type(BridgeableERC20).creationCode, abi.encode("Wrapped COEN", "WCOEN", uint8(18), tokenBridge)
+                    type(SyntheticWCOEN).creationCode, abi.encode(tokenBridge, _toDomain(vm.envUint("OUTBE_CHAIN_ID")))
                 );
         }
         revert UnknownRoute(spec.tokenLabel);
