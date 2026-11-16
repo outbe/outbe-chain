@@ -37,6 +37,18 @@ groups:
   - name: outbe-chain.consensus
     interval: 30s
     rules:
+      - alert: OutbeEquivocationEvidenceVerified
+        expr: increase(reth_outbe_consensus_equivocation_verify_total{result="verified"}[5m]) > 0
+        labels:
+          severity: critical
+          subsystem: consensus
+        annotations:
+          summary: "verified equivocation on {{ $labels.instance }} (kind={{ $labels.kind }})"
+          description: |
+            Conflicting consensus votes passed cryptographic verification.
+            Investigate the consensus evidence and automatic slashing pipeline.
+            Invalid signatures and malformed P2P evidence do not trigger this alert.
+
       - alert: OutbeConsensusVoteWithheldSpike
         expr: sum(increase(reth_outbe_consensus_vote_withheld_total[5m])) > 5
         labels:
@@ -217,6 +229,19 @@ groups:
             Validator {{ $labels.addr }} transitioned to UNBONDING.
             Permanent exit from consensus until re-registration after
             cooldown. See `outbe::validatorset` log target for transition.
+
+      - alert: OutbeEquivocationSubmitFailed
+        expr: increase(reth_outbe_slashing_equivocation_submit_failed_total[5m]) > 0
+        labels:
+          severity: warning
+          subsystem: slashing
+        annotations:
+          summary: "equivocation submission failed on {{ $labels.instance }}"
+          description: |
+            Check the reason label, state provider, and local transaction pool errors.
+            If evm-key.hex is shared with outbe-feeder, check sender nonce contention
+            and ReplacementUnderpriced errors. Consider a separate key delegated
+            ValidatorDelegateRole::Oracle for outbe-feeder to avoid contention.
 
       # Slash event just happened (any reason). Treats the slash as a
       # signal that needs human attention.
