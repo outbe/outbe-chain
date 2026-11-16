@@ -81,10 +81,6 @@ pub fn brief_auction(
                 emissionDay: emission_day.into(),
                 amountMinor: U256::ZERO,
             })?;
-            contract.emit(IDesis::DesisLimitReturned {
-                emissionDay: emission_day.into(),
-                amountMinor: desis_limit_minor,
-            })?;
             return Ok(AuctionBriefReceipt::ReturnedToPromisLimit {
                 reason,
                 desis_limit_minor,

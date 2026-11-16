@@ -112,7 +112,8 @@ pub(super) fn verify_accepted_auction_cleanup(
             || outbe_desis::precompile::IDesis::IntexAuctionFailed::decode_log(log).is_ok()
             || outbe_intexfactory::precompile::IIntexFactory::IntexSeriesOpened::decode_log(log)
                 .is_ok()
-            || outbe_desis::precompile::IDesis::DesisLimitReturned::decode_log(log).is_ok()
+            || outbe_promislimit::precompile::IPromisLimit::PromisLimitAdded::decode_log(log)
+                .is_ok()
     }));
 }
 

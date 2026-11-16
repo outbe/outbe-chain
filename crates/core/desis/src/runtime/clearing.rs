@@ -229,12 +229,11 @@ fn clear_inner(
         emissionDay: emission_day.into(),
         amountMinor: desis_allocation_minor,
     })?;
-    contract.emit(IDesis::DesisLimitReturned {
-        emissionDay: emission_day.into(),
-        amountMinor: unused_desis_limit_minor,
-    })?;
     if !unused_desis_limit_minor.is_zero() {
-        PromisLimitContract::new(storage.clone()).checked_credit(unused_desis_limit_minor)?;
+        PromisLimitContract::new(storage.clone()).add(
+            outbe_promislimit::LimitSource::DesisLimit,
+            unused_desis_limit_minor,
+        )?;
     }
 
     if result.issued_units != 0 {

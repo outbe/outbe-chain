@@ -101,7 +101,9 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
             )
             .unwrap();
         if fail_shared_burn {
-            promis.checked_credit(U256::MAX).unwrap();
+            promis
+                .add(outbe_promislimit::LimitSource::Nod, U256::MAX)
+                .unwrap();
         }
         if invalid_slash_percent {
             let si = outbe_slashindicator::contract::SlashIndicator::new(storage.clone());

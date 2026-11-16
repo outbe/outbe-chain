@@ -27,7 +27,8 @@ interface IAgentReward {
 
     event RewardAccrued(address indexed account, uint8 indexed pool, uint32 indexed utcDay, uint256 promisLoadMinor);
     event RewardsClaimed(address indexed account, uint8 indexed pool, uint256 promisLoadMinor, uint256 gemId);
-    event RewardBalanceExpired(address indexed account, uint8 indexed pool, uint256 promisLoadMinor);
+    event AgentRewardExpired(address indexed account, uint8 indexed pool, uint256 promisLoadMinor);
+    event RewardLimitReturned(uint32 indexed emissionDay, uint8 indexed pool, uint256 amountMinor);
 
     /// @notice Includes expired balances until they are returned to the Promis Limit.
     function getClaimableBalance(address account) external view returns (uint256 promisLoadMinor);

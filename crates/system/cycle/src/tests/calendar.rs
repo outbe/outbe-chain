@@ -188,7 +188,7 @@ fn a_failed_allocation_whose_limit_cannot_reach_the_promis_limit_fails_the_block
             .unwrap();
         // Allocation overflows first; the full limit then overflows the Promis Limit in its fallback.
         outbe_promislimit::PromisLimitContract::new(handle.clone())
-            .checked_credit(U256::MAX)
+            .add(outbe_promislimit::LimitSource::Nod, U256::MAX)
             .unwrap();
         let err = run_due_tasks(&ctx).unwrap_err();
         assert!(

@@ -97,10 +97,5 @@
         "internalType": "uint8"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "Underflow",
-    "inputs": []
   }
 ]

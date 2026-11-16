@@ -70,7 +70,7 @@ fn nod_factory_end_block_deletes_a_forfeited_nod() {
         let nod_id = issue(&storage, Address::repeat_byte(0x41));
         queue_forfeited(&storage, nod_id);
         outbe_promislimit::PromisLimitContract::new(storage.clone())
-            .checked_credit(U256::from(7u64))
+            .add(outbe_promislimit::LimitSource::Nod, U256::from(7u64))
             .unwrap();
         assert_eq!(reserve(&storage), U256::from(7u64));
         nod_id

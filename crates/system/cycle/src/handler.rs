@@ -414,7 +414,8 @@ fn record_failed_allocation_fallback(ctx: &BlockRuntimeContext, day: u32) -> Res
         }
         outbe_agentreward::api::abandon_day_agent_rewards(ctx, day.into())?;
         if !cap.is_zero() {
-            outbe_promislimit::PromisLimitContract::new(ctx.storage.clone()).checked_credit(cap)?;
+            outbe_promislimit::PromisLimitContract::new(ctx.storage.clone())
+                .add(outbe_promislimit::LimitSource::DayEmissionLimit, cap)?;
         }
         outbe_emission::api::record_failed_day_allocation(ctx.storage.clone(), day, cap)?;
         ctx.storage

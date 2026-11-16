@@ -12,8 +12,6 @@ use thiserror::Error;
 pub enum PromisLimitError {
     #[error("promis limit overflow")]
     Overflow,
-    #[error("promis limit underflow")]
-    Underflow,
     #[error("unauthorized promis limit burn caller {caller} for source {burn_source}")]
     UnauthorizedBurnCaller { caller: Address, burn_source: u8 },
 }
@@ -27,7 +25,6 @@ impl From<PromisLimitError> for PrecompileError {
         use IPromisLimit as I;
         match err {
             err @ PromisLimitError::Overflow => PrecompileError::FatalWithCause(Box::new(err)),
-            PromisLimitError::Underflow => revert_with(I::Underflow {}),
             PromisLimitError::UnauthorizedBurnCaller {
                 caller,
                 burn_source,

@@ -140,7 +140,17 @@ fn finish_job(
         emission_pool,
         residue,
     )?;
-    outbe_promislimit::PromisLimitContract::new(ctx.storage.clone()).checked_credit(residue)?;
+    if !residue.is_zero() {
+        AgentRewardContract::new(ctx.storage.clone()).emit(
+            crate::precompile::IAgentReward::RewardLimitReturned {
+                emissionDay: job.day,
+                pool: pool as u8,
+                amountMinor: residue,
+            },
+        )?;
+        outbe_promislimit::PromisLimitContract::new(ctx.storage.clone())
+            .add(outbe_promislimit::LimitSource::RewardLimit, residue)?;
+    }
     release_pending(contract, pool, residue)?;
     contract.pending_jobs_by_day.write(&job.day, pending - 1)?;
     match pool {

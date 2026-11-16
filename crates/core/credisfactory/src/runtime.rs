@@ -231,7 +231,8 @@ fn burn_forfeited_collateral(
         let pledged = before.outstanding_gratis_minor;
         if !pledged.is_zero() {
             pledges::burn_from_credis(&storage, credis_id, pledged)?;
-            outbe_promislimit::PromisLimitContract::new(storage.clone()).checked_credit(pledged)?;
+            outbe_promislimit::PromisLimitContract::new(storage.clone())
+                .add(outbe_promislimit::LimitSource::Credis, pledged)?;
         }
         let forfeit = rules::delete_forfeited(&mut credis, before)?;
         if forfeit.forfeited_gratis_minor != pledged || credis.credis_exists(credis_id)? {

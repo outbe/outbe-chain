@@ -280,8 +280,13 @@ fn a_forfeit_credit_that_overflows_the_promis_limit_fails_the_block() {
         call_gem(storage, gems[0], T_NOW);
         let now = first_due_block(storage, gems[0]);
         let mut limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
-        limit.checked_take_up_to(U256::MAX).unwrap();
-        limit.checked_credit(U256::MAX).unwrap();
+        let held = limit.promis_limit().unwrap();
+        limit
+            .subtract(outbe_promislimit::LimitTarget::DesisLimit, held)
+            .unwrap();
+        limit
+            .add(outbe_promislimit::LimitSource::Gem, U256::MAX)
+            .unwrap();
 
         let failed = continue_sweeps(&block_ctx_at(storage, now)).unwrap_err();
         assert!(

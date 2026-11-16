@@ -164,6 +164,31 @@
   },
   {
     "type": "event",
+    "name": "AgentRewardExpired",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "pool",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "promisLoadMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RewardAccrued",
     "inputs": [
       {
@@ -195,13 +220,13 @@
   },
   {
     "type": "event",
-    "name": "RewardBalanceExpired",
+    "name": "RewardLimitReturned",
     "inputs": [
       {
-        "name": "account",
-        "type": "address",
+        "name": "emissionDay",
+        "type": "uint32",
         "indexed": true,
-        "internalType": "address"
+        "internalType": "uint32"
       },
       {
         "name": "pool",
@@ -210,7 +235,7 @@
         "internalType": "uint8"
       },
       {
-        "name": "promisLoadMinor",
+        "name": "amountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

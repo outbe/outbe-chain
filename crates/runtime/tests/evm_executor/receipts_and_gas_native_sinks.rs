@@ -710,7 +710,7 @@ fn scenario_d_promis_limit_overflow_fails_the_block_with_typed_error() {
 
     let mut seed_storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut seed_storage, |storage| {
-        PromisLimitContract::new(storage).checked_credit(U256::MAX)
+        PromisLimitContract::new(storage).add(outbe_promislimit::LimitSource::Nod, U256::MAX)
     })
     .unwrap();
 
