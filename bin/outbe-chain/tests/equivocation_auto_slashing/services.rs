@@ -1,5 +1,6 @@
 use alloy_primitives::{B256, U256};
-use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
+use outbe_consensus::bls::{self, KeyBackend};
+use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1, NodeIdV1};
 use std::{
     io::{BufRead, BufReader, Write},
     net::TcpListener,
@@ -26,6 +27,19 @@ pub fn enclave(genesis: &Path, validator: &Path, index: usize) -> String {
     };
     let seed = U256::from(index + 1).to_be_bytes();
     let keys = outbe_tee_enclave::keys::EnclaveKeys::new([0x07; 32], Some(seed)).unwrap();
+    let secret = bls::load_secp256k1_secret(
+        &validator.join("reth-p2p-secret.hex"),
+        &KeyBackend::Plaintext,
+    )
+    .unwrap();
+    let p2p_key = k256::ecdsa::SigningKey::from_bytes((&secret).into()).unwrap();
+    let reth_p2p_public: [u8; 33] = p2p_key
+        .verifying_key()
+        .to_encoded_point(true)
+        .as_bytes()
+        .try_into()
+        .unwrap();
+    let node_id = NodeIdV1 { reth_p2p_public };
     let tee_dir = validator.join("tee");
     std::fs::create_dir_all(&tee_dir).unwrap();
     use std::os::unix::fs::PermissionsExt as _;
@@ -35,7 +49,9 @@ pub fn enclave(genesis: &Path, validator: &Path, index: usize) -> String {
     let context = outbe_tee_enclave::transport::ServerContext {
         chain_id: B256::from(binding.chain_id),
         initialization: Arc::new(
-            outbe_tee_enclave::initialization::factory::development_for_network(binding),
+            outbe_tee_enclave::initialization::factory::development_for_network(
+                binding, &keys, node_id,
+            ),
         ),
         offer_key: Arc::new(OnceLock::new()),
         boot: Some(Arc::new(boot)),
