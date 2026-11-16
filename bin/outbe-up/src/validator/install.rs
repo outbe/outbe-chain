@@ -377,18 +377,19 @@ fn install_system_gramine_paths(root: &Path) -> Result<()> {
 }
 
 fn unique_manifest_path(manifest: &str, suffix: &str) -> Result<PathBuf> {
-    let prefix = "/opt/outbe-chain/releases/";
     let mut matches = BTreeSet::new();
-    for (start, _) in manifest.match_indices(prefix) {
-        let tail = &manifest[start..];
-        let end = tail
-            .find(|character: char| {
-                !(character.is_ascii_alphanumeric() || "/._-".contains(character))
-            })
-            .unwrap_or(tail.len());
-        let value = &tail[..end];
-        if value.ends_with(suffix) {
-            matches.insert(PathBuf::from(value));
+    for prefix in ["/opt/outbe-chain/releases/", "/opt/outbe/sgx/"] {
+        for (start, _) in manifest.match_indices(prefix) {
+            let tail = &manifest[start..];
+            let end = tail
+                .find(|character: char| {
+                    !(character.is_ascii_alphanumeric() || "/._-".contains(character))
+                })
+                .unwrap_or(tail.len());
+            let value = &tail[..end];
+            if value.ends_with(suffix) {
+                matches.insert(PathBuf::from(value));
+            }
         }
     }
     ensure!(
@@ -519,5 +520,20 @@ mod tests {
         fs::create_dir_all(crs.parent().unwrap()).unwrap();
         fs::write(crs, b"CRS").unwrap();
         validate_bundle(root.path(), &environment).unwrap();
+    }
+
+    #[test]
+    fn accepts_current_and_legacy_signed_gramine_paths() {
+        let current = "sgx.trusted_files = [\"file:/opt/outbe/sgx/bin/outbe-tee-enclave\"]";
+        assert_eq!(
+            unique_manifest_path(current, "/bin/outbe-tee-enclave").unwrap(),
+            Path::new("/opt/outbe/sgx/bin/outbe-tee-enclave")
+        );
+
+        let legacy = "file:/opt/outbe-chain/releases/abc/bin/outbe-tee-enclave";
+        assert_eq!(
+            unique_manifest_path(legacy, "/bin/outbe-tee-enclave").unwrap(),
+            Path::new("/opt/outbe-chain/releases/abc/bin/outbe-tee-enclave")
+        );
     }
 }

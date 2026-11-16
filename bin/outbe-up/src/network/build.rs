@@ -4,6 +4,7 @@ use eyre::{ensure, Result};
 use outbe_genesis_cli::{
     attestation::run_tee_stage, create_genesis::create_seeded_genesis, launch_bundle,
 };
+use outbe_primitives::tee_attestation_v1::{NetworkBindingV1, TeePolicyScheduleV1};
 use outbe_software_bundle::{sha256_file, verify_and_extract, SoftwareManifest};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -38,8 +39,21 @@ pub(super) struct NetworkManifest {
     pub(super) config_sha256: String,
     pub(super) software: SoftwareIdentity,
     pub(super) genesis: GenesisIdentity,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) signed_sgx: Option<SignedSgxIdentity>,
     pub(super) founders: Vec<FounderArtifact>,
     pub(super) joining: Option<JoiningArtifact>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub(super) struct SignedSgxIdentity {
+    pub(super) bundle_manifest_sha256: String,
+    pub(super) descriptor_sha256: String,
+    pub(super) network_binding: String,
+    pub(super) mrenclave: String,
+    pub(super) mrsigner: String,
+    pub(super) isv_prod_id: u16,
+    pub(super) isv_svn: u16,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -178,6 +192,9 @@ pub fn run(
             validators: &validators,
         })?)
     };
+    let genesis_block_hash = (!signing_required)
+        .then(|| genesis_identity(&final_genesis).map(|(hash, _)| hash))
+        .transpose()?;
     let manifest = NetworkManifest {
         version: MANIFEST_VERSION,
         state: if signing_required {
@@ -203,8 +220,9 @@ pub fn run(
             final_sha256: (!signing_required)
                 .then(|| sha256_file(&final_genesis))
                 .transpose()?,
-            genesis_block_hash: None,
+            genesis_block_hash,
         },
+        signed_sgx: None,
         founders,
         joining,
     };
@@ -222,6 +240,27 @@ pub fn run(
         println!("state: complete; ready for `outbe-up network prepare`");
     }
     Ok(())
+}
+
+pub(super) fn genesis_identity(path: &Path) -> Result<(String, NetworkBindingV1)> {
+    let genesis: Value = serde_json::from_slice(&fs::read(path)?)?;
+    let encoded = genesis
+        .pointer("/config/teeAttestationV1/policySchedule")
+        .and_then(Value::as_str)
+        .ok_or_else(|| eyre::eyre!("final genesis has no TEE policy schedule"))?;
+    let schedule = TeePolicyScheduleV1::decode_canonical(&hex::decode(
+        encoded.strip_prefix("0x").unwrap_or(encoded),
+    )?)
+    .map_err(|error| eyre::eyre!("invalid final TEE policy schedule: {error}"))?;
+    let policy = schedule
+        .active_policy(1)
+        .map_err(|error| eyre::eyre!("invalid final TEE policy: {error}"))?;
+    let binding = NetworkBindingV1 {
+        chain_id: schedule.chain_id,
+        genesis_hash: schedule.genesis_hash,
+        attestation_mode: policy.attestation_mode,
+    };
+    Ok((format!("{:#x}", schedule.genesis_hash), binding))
 }
 
 fn ensure_profile(config: &NetworkConfig, software: &SoftwareManifest) -> Result<()> {
@@ -305,6 +344,7 @@ pub(super) fn legacy_config(config: &NetworkConfig, software: &Path, keys: &Path
             "enclave_sgx",
             json!(!matches!(config.tee.runtime, EnclaveRuntime::Mock)),
         ),
+        ("enclave_runtime", json!(config.tee.runtime.as_env())),
     ] {
         root.insert(key.to_owned(), value);
     }
@@ -534,10 +574,12 @@ fn write_signing_request(
         "network": config.network.as_str(),
         "chain_id": config.chain_id,
         "software_commit": software.commit,
+        "software_release_tag": software.release_tag,
         "software_bundle_sha256": sha256_file(software_bundle)?,
         "seeded_genesis": "genesis.seeded.json",
         "seeded_genesis_sha256": sha256_file(seeded)?,
         "enclave_image": config.tee.enclave_image,
+        "enclave_runtime": config.tee.runtime.as_env(),
     });
     fs::write(
         root.join("sgx-signing-request.json"),
@@ -577,6 +619,10 @@ pub(super) fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::{B256, U256};
+    use outbe_primitives::tee_genesis_v1::{
+        initial_tee_policy_v1, tee_attestation_v1_genesis_field, InitialTeeProfileV1,
+    };
 
     #[test]
     fn resolves_per_founder_rpc_binding_without_public_wildcards() {
@@ -592,9 +638,28 @@ mod tests {
         assert_eq!(value["network"], "testnet");
         assert_eq!(value["tee"]["mode"], "gramine-direct-dev");
         assert_eq!(value["enclave_sgx"], false);
+        assert_eq!(value["enclave_runtime"], "mock");
         assert_eq!(
             value["balance"]["0x1111111111111111111111111111111111111111"],
             "1000000000000000000000"
         );
+    }
+
+    #[test]
+    fn reads_genesis_block_hash_and_network_binding() {
+        let hash = B256::repeat_byte(0x42);
+        let policy =
+            initial_tee_policy_v1(InitialTeeProfileV1::GramineDirectDev, 424_242, hash).unwrap();
+        let genesis = json!({
+            "config": {
+                "teeAttestationV1": tee_attestation_v1_genesis_field(&policy).unwrap()
+            }
+        });
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        fs::write(temp.path(), serde_json::to_vec(&genesis).unwrap()).unwrap();
+        let (actual, binding) = genesis_identity(temp.path()).unwrap();
+        assert_eq!(actual, format!("{hash:#x}"));
+        assert_eq!(binding.genesis_hash, hash);
+        assert_eq!(binding.chain_id, U256::from(424_242).to_be_bytes::<32>());
     }
 }

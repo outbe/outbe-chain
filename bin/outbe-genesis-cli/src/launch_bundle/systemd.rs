@@ -206,8 +206,18 @@ pub fn preflight_script(
     let manifest = quote(&format!("{enclave_dir}/outbe-tee-enclave.manifest.sgx"));
     let signature = quote(&format!("{enclave_dir}/outbe-tee-enclave.sig"));
     let enclave_check = if super::uses_production_tee_session(config) {
+        let runtime_check =
+            if config.get("enclave_runtime").and_then(Value::as_str) == Some("system-gramine") {
+                "if command -v gramine-sgx >/dev/null; then\n\
+  note \"enclave runtime\" \"system Gramine\"\n\
+else\n\
+  note \"enclave runtime\" \"MISSING gramine-sgx\"; fail=1\n\
+fi\n"
+            } else {
+                ""
+            };
         format!(
-            "manifest={manifest}\n\
+            "{runtime_check}manifest={manifest}\n\
 signature={signature}\n\
 if [ -f \"$manifest\" ] && [ -f \"$signature\" ]; then\n\
   note \"enclave manifest sha256\" \"$(sha256sum \"$manifest\" | cut -c1-16)\"\n\
@@ -260,6 +270,11 @@ done\n\
 for port in {tee_port} {rpc_port}; do\n\
   ss -ltn 2>/dev/null | grep -q \":$port \" && {{ note \"port $port\" \"already in use\"; fail=1; }}\n\
 done\n\
+\n\
+if command -v ufw >/dev/null 2>&1 \
+  && ufw status 2>/dev/null | grep -Eq '(^|[[:space:]]){rpc_port}(/tcp)?[[:space:]]+ALLOW'; then\n\
+  note \"firewall warning\" \"RPC port {rpc_port} has an allow rule; verify its source scope\"\n\
+fi\n\
 \n\
 if [ \"$fail\" = 0 ]; then echo; echo \"  preflight OK\"; else echo; echo \"  preflight FAILED\"; fi\n\
 exit \"$fail\"\n",

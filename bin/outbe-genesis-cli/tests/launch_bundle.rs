@@ -484,4 +484,20 @@ fn caddy_systemd_units_tee_renewal_and_enclave_modes() {
     assert!(node_dcap.contains("/opt/outbe/keys/validator-1"));
     assert!(node_dcap.contains("--consensus.listen-addr 0.0.0.0:30400"));
     assert!(node_dcap.contains("--tee-session-mode production-node-host"));
+
+    let tmp_system = tempfile::tempdir().expect("tmp_system");
+    let (_, out_system) = render_fixture(
+        tmp_system.path(),
+        Some(json!({
+            "enclave_runtime": "system-gramine",
+            "tee": {"mode": "dcap-required"}
+        })),
+    );
+    let enclave_system =
+        fs::read_to_string(out_system.join("validator-0/run-enclave.sh")).expect("system enclave");
+    assert!(enclave_system.contains("exec gramine-sgx outbe-tee-enclave"));
+    assert!(!enclave_system.contains("outbe-tee-enclave-launch"));
+    let preflight_system =
+        fs::read_to_string(out_system.join("validator-0/preflight.sh")).expect("preflight");
+    assert!(preflight_system.contains("MISSING gramine-sgx"));
 }

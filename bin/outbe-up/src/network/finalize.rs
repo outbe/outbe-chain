@@ -22,8 +22,8 @@ use walkdir::WalkDir;
 
 use super::{
     build::{
-        build_joining_artifacts, copy_tree, founder_artifacts, legacy_config, BuildArtifacts,
-        BuildState, NetworkManifest,
+        build_joining_artifacts, copy_tree, founder_artifacts, genesis_identity, legacy_config,
+        BuildArtifacts, BuildState, NetworkManifest, SignedSgxIdentity,
     },
     config::{NetworkConfig, TeePolicy},
 };
@@ -171,13 +171,33 @@ pub fn run(build: &Path, signed_sgx: &Path, output: &Path) -> Result<()> {
         &legacy,
     )
     .map_err(eyre::Report::msg)?;
-    verify_descriptor_binding(signed_sgx, &final_genesis, &validators, config.chain_id)?;
+    let descriptor =
+        verify_descriptor_binding(signed_sgx, &final_genesis, &validators, config.chain_id)?;
     launch_bundle::render(&legacy, &validators, &final_genesis, &keys)
         .map_err(eyre::Report::msg)?;
 
     network.state = BuildState::Complete;
     network.genesis.final_path = Some("genesis.json".into());
     network.genesis.final_sha256 = Some(sha256_file(&final_genesis)?);
+    let (genesis_block_hash, _) = genesis_identity(&final_genesis)?;
+    network.genesis.genesis_block_hash = Some(genesis_block_hash);
+    network.signed_sgx = Some(SignedSgxIdentity {
+        bundle_manifest_sha256: sha256_file(&signed_sgx.join(format!(
+            "metadata/{}-sgx-bundle.json",
+            config.network.as_str()
+        )))?,
+        descriptor_sha256: sha256_file(&signed_sgx.join("metadata/network-descriptor-v1.bin"))?,
+        network_binding: hex::encode(
+            descriptor
+                .network_binding
+                .encode_canonical()
+                .map_err(|error| eyre::eyre!("encode final network binding: {error}"))?,
+        ),
+        mrenclave: sgx.measurements.mrenclave,
+        mrsigner: sgx.measurements.mrsigner,
+        isv_prod_id: sgx.measurements.isv_prod_id,
+        isv_svn: sgx.measurements.isv_svn,
+    });
     network.founders = founder_artifacts(staging.path(), &config, &validators, false)?;
     network.joining = Some(build_joining_artifacts(&BuildArtifacts {
         root: staging.path(),
@@ -364,7 +384,7 @@ fn verify_descriptor_binding(
     genesis: &Path,
     validators: &[Value],
     chain_id: u64,
-) -> Result<()> {
+) -> Result<TrustedNetworkDescriptorV1> {
     let descriptor = read_descriptor(signed_sgx)?;
     let genesis: Value = serde_json::from_slice(&fs::read(genesis)?)?;
     let encoded = genesis
@@ -396,7 +416,7 @@ fn verify_descriptor_binding(
         descriptor.genesis_consensus_keys == keys,
         "signed SGX network descriptor has a different founding committee"
     );
-    Ok(())
+    Ok(descriptor)
 }
 
 fn read_descriptor(root: &Path) -> Result<TrustedNetworkDescriptorV1> {

@@ -258,8 +258,11 @@ impl NetworkConfig {
             )
         ) || matches!(
             (self.software_profile, self.tee.policy, self.tee.runtime),
-            (SoftwareProfile::Production, _, runtime)
-                if !matches!(runtime, EnclaveRuntime::Mock)
+            (
+                SoftwareProfile::Production,
+                TeePolicy::DcapRequired,
+                EnclaveRuntime::SystemGramine | EnclaveRuntime::BundledSgx
+            )
         );
         ensure!(
             runtime_is_compatible,
@@ -317,6 +320,7 @@ fn reserved_genesis_keys() -> BTreeSet<&'static str> {
         "rpc_bind_ip",
         "consensus_use_local_defaults",
         "enclave_sgx",
+        "enclave_runtime",
         "enclave_dir",
         "enclave_runner",
         "signed_enclave_dir",
@@ -428,7 +432,7 @@ tee:
         let mut config = config_with(4);
         config.software_profile = SoftwareProfile::Production;
         config.tee.runtime = EnclaveRuntime::SystemGramine;
-        config.validate().unwrap();
+        assert!(config.validate().is_err());
         config.tee.policy = TeePolicy::DcapRequired;
         config.tee.enclave_image =
             Some(format!("example.invalid/enclave@sha256:{}", "a".repeat(64)));

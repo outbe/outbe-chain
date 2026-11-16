@@ -52,12 +52,28 @@ impl NetworkBuild {
             sha256_file(&root.join("software-bundle.tar.zst"))? == manifest.software.archive_sha256,
             "software bundle changed after network build"
         );
+        let (genesis_block_hash, network_binding) =
+            super::build::genesis_identity(&root.join("genesis.json"))?;
         ensure!(
             manifest.genesis.final_path.as_deref() == Some("genesis.json")
                 && manifest.genesis.final_sha256.as_deref()
-                    == Some(sha256_file(&root.join("genesis.json"))?.as_str()),
+                    == Some(sha256_file(&root.join("genesis.json"))?.as_str())
+                && manifest.genesis.genesis_block_hash.as_deref()
+                    == Some(genesis_block_hash.as_str()),
             "final genesis is missing or changed after network build"
         );
+        if config.tee.policy == super::config::TeePolicy::DcapRequired {
+            let signed = manifest.signed_sgx.as_ref().ok_or_else(|| {
+                eyre::eyre!("completed DCAP network manifest has no signed SGX identity")
+            })?;
+            ensure!(
+                signed.network_binding
+                    == hex::encode(network_binding.encode_canonical().map_err(|error| {
+                        eyre::eyre!("encode final network binding: {error}")
+                    })?),
+                "signed SGX network binding does not match final genesis"
+            );
+        }
         for (index, (founder, artifact)) in
             config.founders.iter().zip(&manifest.founders).enumerate()
         {

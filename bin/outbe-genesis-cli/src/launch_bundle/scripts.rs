@@ -37,16 +37,26 @@ pub fn enclave_script(
     let validator_tee = format!("{validator_dir}/tee");
 
     if uses_production_tee_session(config) {
+        let runtime = config
+            .get("enclave_runtime")
+            .and_then(Value::as_str)
+            .unwrap_or("bundled-sgx");
         let default_enclave_dir = format!("{base_dir}/sgx");
         let enclave_dir = config
             .get("enclave_dir")
             .and_then(Value::as_str)
             .unwrap_or(&default_enclave_dir);
         let default_enclave_runner = format!("{enclave_dir}/bin/outbe-tee-enclave-launch");
-        let enclave_runner = config
-            .get("enclave_runner")
-            .and_then(Value::as_str)
-            .unwrap_or(&default_enclave_runner);
+        let configured_runner = config.get("enclave_runner").and_then(Value::as_str);
+        let runner_command = if runtime == "system-gramine" {
+            format!(
+                "{} {}",
+                quote(configured_runner.unwrap_or("gramine-sgx")),
+                quote("outbe-tee-enclave")
+            )
+        } else {
+            quote(configured_runner.unwrap_or(&default_enclave_runner))
+        };
         if mode != "dcap-required" {
             return Ok(format!(
                 "\n# TEE enclave under gramine-sgx on the host.\n\
@@ -56,13 +66,12 @@ mkdir -p {q_val_tee}\n\
 [ -e /dev/sgx_enclave ] \\\n  || {{ echo \"missing /dev/sgx_enclave: SGX driver not loaded\" >&2; exit 1; }}\n\
 \n\
 cd {q_enclave_dir}\n\
-exec {q_runner} \\\n\
+exec {runner_command} \\\n\
   --socket {q_endpoint} \\\n\
   --tee-dir /var/lib/outbe/tee \\\n\
   --chain-id {chain_id_hex}\n",
                 q_val_tee = quote(&validator_tee),
                 q_enclave_dir = quote(enclave_dir),
-                q_runner = quote(enclave_runner),
                 q_endpoint = quote(&endpoint),
             ));
         }
@@ -78,13 +87,12 @@ systemctl is-active --quiet aesmd.service \\\n\
   || {{ echo \"aesmd.service is not running; DCAP quoting will fail\" >&2; exit 1; }}\n\
 \n\
 cd {q_enclave_dir}\n\
-exec {q_runner} \\\n\
+exec {runner_command} \\\n\
   --socket {q_endpoint} \\\n\
   --tee-dir /var/lib/outbe/tee \\\n\
   --chain-id {chain_id_hex}\n",
             q_val_tee = quote(&validator_tee),
             q_enclave_dir = quote(enclave_dir),
-            q_runner = quote(enclave_runner),
             q_endpoint = quote(&endpoint),
         ));
     }
