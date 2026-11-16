@@ -21,6 +21,10 @@ contract PrepareUpgradeHarness is PrepareUpgrade {
     function _sourceCommit() internal view override returns (string memory) {
         return commit;
     }
+
+    function _executionDelayBlocks() internal pure override returns (uint256) {
+        return 50;
+    }
 }
 
 contract PrepareUpgradeTest is Test {

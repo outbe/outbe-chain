@@ -27,9 +27,12 @@ use outbe_system_common::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 ///      seeds it. Zero = nobody can initialize
 ///  10: approved_payload - mapping(proposal id => keccak256 of the approved
 ///      action payload). Zero = none or already applied
-///  11: approved_at - mapping(proposal id => block of the approval)
+///  11: unlock_at - mapping(proposal id => first block where `applyApproved`
+///      may run the action: the approval block plus its execution delay)
 ///  12: gas_markup_bps - markup on the Oracle gas price that the gas oracle
 ///      view gives to the IGP, in basis points (2000 = +20%)
+///  13: queued_approved_actions - approved proposal ids that the Vote
+///      begin-block step has not applied yet
 #[storage_schema]
 #[contract(addr = HYPERLANE_CONTROLLER_ADDRESS)]
 pub struct HyperlaneControllerContract {
@@ -67,10 +70,14 @@ pub struct HyperlaneControllerContract {
     pub approved_payload: outbe_primitives::storage::dsl::Map<U256, B256>,
 
     #[attribute(order = 11)]
-    pub approved_at: outbe_primitives::storage::dsl::Map<U256, u64>,
+    pub unlock_at: outbe_primitives::storage::dsl::Map<U256, u64>,
 
     #[attribute(order = 12)]
     pub gas_markup_bps: outbe_primitives::storage::dsl::Value<u32>,
+
+    /// Approved actions that the Vote begin-block step has not applied yet.
+    #[attribute(order = 13)]
+    pub queued_approved_actions: outbe_primitives::storage::dsl::List<U256>,
 }
 
 /// Composite key for the per-(validator, domain) checkpoint maps.

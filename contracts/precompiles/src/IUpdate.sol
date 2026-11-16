@@ -10,8 +10,8 @@ address constant UPDATE = 0x000000000000000000000000000000000000ee0b;
 /// @dev Vote manages this precompile. After approval, the inner cross-module API
 /// handles the proposal. (see: /crates/system/update/)
 /// An approved `upgradeContracts` proposal upgrades our UUPS contracts on the listed
-/// chains. Their owner CrosschainBridge (`0x…EE15`) makes the calls when anyone calls
-/// `applyApproved`.
+/// chains. Their owner CrosschainBridge (`0x…EE15`) makes the calls in `applyApproved`.
+/// The begin-block step of Vote calls it when the execution delay ends.
 interface IUpdate {
     /// Caller-facing domain revert.
     error ScheduledUpdateNotFound();
@@ -37,6 +37,7 @@ interface IUpdate {
     error UnexpectedAppliedClassification();
     error UnknownApprovedUpgrade(uint256 proposalId);
     error ApprovedPayloadMismatch(uint256 proposalId);
+    error ContractUpgradeLocked(uint256 proposalId, uint64 unlockHeight);
 
     enum ScheduledUpdateStatus {
         Scheduled,
@@ -64,11 +65,15 @@ interface IUpdate {
     /// @notice Emitted when `applyApproved` runs an approved contract upgrade.
     event ContractUpgradeApplied(uint256 indexed proposalId);
 
-    /// @notice Emitted when `applyApproved` drops an approved contract upgrade after the voting window.
+    /// @notice Emitted when `applyApproved` drops an approved contract upgrade one voting window
+    /// after its execution delay.
     event ContractUpgradeExpired(uint256 indexed proposalId);
 
     /// @notice Runs the approved `upgradeContracts` proposal `proposalId` once. Anyone can call it.
-    /// `payload` must be the approved JSON payload.
+    /// The begin-block step of Vote calls it at the end of the execution delay, and again
+    /// in the next blocks while it reverts.
+    /// `payload` must be the approved JSON payload. Before the approval height plus the
+    /// `executionDelayBlocks` of the payload, it reverts with `ContractUpgradeLocked`.
     function applyApproved(uint256 proposalId, bytes calldata payload) external;
 
     /// @notice Returns the active protocol version.

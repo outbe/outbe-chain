@@ -65,7 +65,13 @@ pub struct Update {
     #[attribute(order = 5)]
     pub approved_upgrades: outbe_primitives::storage::dsl::Map<U256, B256>,
 
-    /// Proposal id => block of the approval.
+    /// Proposal id => first block where `applyApproved` may run the batch: the
+    /// approval block plus the execution delay of the payload.
     #[attribute(order = 6)]
-    pub approved_upgrade_at: outbe_primitives::storage::dsl::Map<U256, u64>,
+    pub upgrade_unlock_at: outbe_primitives::storage::dsl::Map<U256, u64>,
+
+    /// Approved `upgradeContracts` proposals that the begin-block step has
+    /// not applied yet.
+    #[attribute(order = 7)]
+    pub queued_contract_upgrades: outbe_primitives::storage::dsl::List<U256>,
 }

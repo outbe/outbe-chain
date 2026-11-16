@@ -25,6 +25,10 @@ pub const MAX_PIPELINE_WWDS: usize = ((DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS
     .div_ceil(SECONDS_PER_DAY) as usize)
     + 1;
 pub const DEFAULT_GOVERNANCE_VOTING_WINDOW_BLOCKS: u64 = 86_400;
+/// The smallest execution delay that a governance proposal may set: the
+/// blocks between its approval and the first block where `applyApproved` may
+/// run it.
+pub const MIN_GOVERNANCE_EXECUTION_DELAY_BLOCKS: u64 = 50;
 pub const DEFAULT_VWAP_LOOKBACK_SECONDS: u64 = 8 * 60 * 60;
 pub const DEFAULT_VWAP_UPDATE_INTERVAL_SECONDS: u64 = 60 * 60;
 pub const DEFAULT_VWAP_POLICY_VERSION: u32 = 1;
@@ -360,6 +364,12 @@ pub fn get_metadosis_offering_period_seconds() -> u64 {
 
 pub fn get_governance_voting_window_blocks() -> u64 {
     parameters().governance_voting_window_blocks
+}
+
+/// The last block where an approved action that unlocks at `unlock_height`
+/// may run: one voting window after the unlock, included.
+pub fn approved_action_expiry(unlock_height: u64) -> u64 {
+    unlock_height.saturating_add(get_governance_voting_window_blocks())
 }
 
 pub fn get_vwap_lookback_seconds() -> u64 {

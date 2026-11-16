@@ -16,7 +16,9 @@ import {IUUPSUpgradeable} from "@shared/IUUPSUpgradeable.sol";
 ///      `--rpc-url` chain only) and `SOURCE_COMMIT` (the commit the implementations are built from,
 ///      required for a payload). A stack the deployer still owns, as one deployed with
 ///      `KEEP_DEPLOYER_AS_OWNER`, is upgraded directly, which needs the deployer's key. A stack where
-///      the deployer owns some proxies and governance the others reverts.
+///      the deployer owns some proxies and governance the others reverts. `EXECUTION_DELAY_BLOCKS`
+///      (required for a payload, at least 50) is the number of blocks between the approval of the
+///      vote and the first block where `applyApproved` may run the upgrades.
 abstract contract UpgradeProposal is Script {
     error MixedOwnership(address proxy);
     error MissingSourceCommit();
@@ -45,6 +47,11 @@ abstract contract UpgradeProposal is Script {
     /// @dev The deployer of the stack. The CREATE3 addresses of its proxies depend on it.
     function _deployerAddress(uint256 pk) internal view virtual returns (address) {
         return vm.envOr("DEPLOYER_ADDRESS", vm.addr(pk));
+    }
+
+    /// @dev The blocks between the approval and the first block where `applyApproved` may run.
+    function _executionDelayBlocks() internal view virtual returns (uint256) {
+        return vm.envUint("EXECUTION_DELAY_BLOCKS");
     }
 
     /// @dev The commit the implementations are built from.
@@ -101,7 +108,13 @@ abstract contract UpgradeProposal is Script {
         for (uint256 i = 1; i < upgrades.length; i++) {
             list = string.concat(list, ",", upgrades[i]);
         }
-        return string.concat('{"operation":"upgradeContracts","upgrades":[', list, "]}");
+        return string.concat(
+            '{"operation":"upgradeContracts","executionDelayBlocks":',
+            vm.toString(_executionDelayBlocks()),
+            ',"upgrades":[',
+            list,
+            "]}"
+        );
     }
 
     /// @dev Prints the payload and, on its own line, the source commit. The payload cannot carry
