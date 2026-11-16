@@ -305,7 +305,7 @@ fn approved_db(fail: bool, kind: u8) -> CacheDB<EmptyDB> {
                 id: U256::ONE,
                 vault: VAULT_FROM,
                 kind,
-                approved_at: 0,
+                unlock_at: 0,
             })
             .unwrap();
         router
@@ -549,7 +549,7 @@ fn approved_remove_retries_after_active_cca_drains_real_vault_shares() {
         IVaultRouter::VaultAction::RemoveVault
     ));
     assert_eq!(pending.vault, VAULT_FROM);
-    assert_eq!(pending.approvedAt, 0);
+    assert_eq!(pending.unlockAt, 0);
     assert_eq!(
         world.view(CCA, ASSET, ApprovalToken::allowanceCall {}),
         U256::MAX

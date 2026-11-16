@@ -5,8 +5,8 @@ use outbe_vaultrouter::{api::IVaultRouter, VaultRouterContract};
 
 fn vault_payload(operation: &str, vault: Address) -> String {
     match operation {
-        "addVault" => serde_json::json!({"operation":operation,"vault":vault,"asset":Address::repeat_byte(0x77),"isoCode":840}).to_string(),
-        _ => serde_json::json!({"operation":operation,"vault":vault}).to_string(),
+        "addVault" => serde_json::json!({"operation":operation,"executionDelayBlocks":50,"vault":vault,"asset":Address::repeat_byte(0x77),"isoCode":840}).to_string(),
+        _ => serde_json::json!({"operation":operation,"executionDelayBlocks":50,"vault":vault}).to_string(),
     }
 }
 
@@ -115,8 +115,8 @@ fn real_tally_stages_vault_actions_without_subcalls_and_nonapproved_has_no_effec
         let router = VaultRouterContract::new(storage.clone());
         let record = router.approved_vault_actions.get(add).unwrap().unwrap();
         assert_eq!(
-            (record.vault, record.kind, record.approved_at),
-            (vault, 1, height)
+            (record.vault, record.kind, record.unlock_at),
+            (vault, 1, height + 50)
         );
         assert_eq!(router.pending_vault_proposals.read(&vault).unwrap(), add);
         assert!(router
@@ -202,7 +202,7 @@ fn same_block_supersession_follows_real_tally_order_not_proposal_id() {
         assert_eq!(router.pending_vault_proposals.read(&vault).unwrap(), lower);
         assert!(router.approved_vault_actions.get(higher).unwrap().is_none());
         let record = router.approved_vault_actions.get(lower).unwrap().unwrap();
-        assert_eq!((record.kind, record.approved_at), (2, height));
+        assert_eq!((record.kind, record.unlock_at), (2, height + 50));
     }
     assert!(provider.sub_call_inputs().is_empty());
 }

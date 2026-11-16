@@ -13,6 +13,7 @@ fn stub_vault(provider: &mut HashMapStorageProvider) {
     provider.enable_sub_call_stub();
 }
 
+/// Stages an action that unlocks at `height`.
 fn stage(storage: &StorageHandle<'_>, id: u64, kind: u8, height: u64) {
     state::record_approved_vault_action(storage, U256::from(id), vault(), kind, height).unwrap();
 }
@@ -49,17 +50,21 @@ fn pending(
 fn pending_view_tracks_supersession_application_and_expiry_cleanup() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     stub_vault(&mut provider);
+    // An approval is never later than the current block.
+    provider.set_block_number(8);
+    // An approval is never later than the current block.
+    provider.set_block_number(8);
     StorageHandle::enter(&mut provider, |storage| {
         let missing = pending(&storage, 1).unwrap();
         assert!(matches!(missing.action, IVaultRouter::VaultAction::Unknown));
-        assert_eq!((missing.vault, missing.approvedAt), (Address::ZERO, 0));
+        assert_eq!((missing.vault, missing.unlockAt), (Address::ZERO, 0));
         stage(&storage, 1, REMOVE_VAULT, 7);
         let removal = pending(&storage, 1).unwrap();
         assert!(matches!(
             removal.action,
             IVaultRouter::VaultAction::RemoveVault
         ));
-        assert_eq!((removal.vault, removal.approvedAt), (vault(), 7));
+        assert_eq!((removal.vault, removal.unlockAt), (vault(), 7));
         stage(&storage, 2, ADD_VAULT, 8);
         assert!(matches!(
             pending(&storage, 1).unwrap().action,
@@ -70,7 +75,7 @@ fn pending_view_tracks_supersession_application_and_expiry_cleanup() {
             addition.action,
             IVaultRouter::VaultAction::AddVault
         ));
-        assert_eq!((addition.vault, addition.approvedAt), (vault(), 8));
+        assert_eq!((addition.vault, addition.unlockAt), (vault(), 8));
         apply(&storage, 2).unwrap();
         assert!(matches!(
             pending(&storage, 2).unwrap().action,
@@ -231,9 +236,11 @@ fn apply_uses_live_metadata_not_informational_proposal_declarations() {
 
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     stub_vault(&mut provider);
+    // The approval is at block 0. `applyApproved` runs at the end of the delay.
+    provider.set_block_number(50);
     StorageHandle::enter(&mut provider, |storage| {
         let payload = format!(
-            r#"{{"operation":"addVault","vault":"{:#x}","asset":"{:#x}","isoCode":978}}"#,
+            r#"{{"operation":"addVault","executionDelayBlocks":50,"vault":"{:#x}","asset":"{:#x}","isoCode":978}}"#,
             vault(),
             receiver(),
         );
@@ -346,7 +353,7 @@ fn canonical_order_supersedes_across_action_kinds_and_proposal_ids() {
         assert!(apply(&storage, 99).is_err());
         assert!(apply(&storage, 2).is_err());
         let record = state::approved_vault_action(&storage, U256::ONE).unwrap();
-        assert_eq!((record.kind, record.approved_at), (ADD_VAULT, 10));
+        assert_eq!((record.kind, record.unlock_at), (ADD_VAULT, 10));
     });
     assert!(provider.get_events(VAULT_ROUTER_ADDRESS).is_empty());
 }
@@ -736,4 +743,31 @@ fn pending_removal_does_not_block_settlement_of_existing_reservations() {
             assert!(state::approved_vault_action(&storage, U256::from(7)).is_ok());
         });
     }
+}
+
+#[test]
+fn apply_waits_for_the_execution_delay_of_the_action() {
+    const DELAY: u64 = 100;
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    stub_vault(&mut provider);
+    provider.set_block_number(7 + DELAY - 1);
+    StorageHandle::enter(&mut provider, |storage| {
+        state::record_approved_vault_action(&storage, U256::ONE, vault(), ADD_VAULT, 7 + DELAY)
+            .unwrap();
+        assert_revert::<IVaultRouter::ApprovedVaultActionLocked>(
+            &apply(&storage, 1).map(|_| ()).unwrap_err(),
+        );
+        assert!(matches!(
+            pending(&storage, 1).unwrap().action,
+            IVaultRouter::VaultAction::AddVault
+        ));
+    });
+    provider.set_block_number(7 + DELAY);
+    StorageHandle::enter(&mut provider, |storage| {
+        apply(&storage, 1).unwrap();
+        assert!(matches!(
+            pending(&storage, 1).unwrap().action,
+            IVaultRouter::VaultAction::Unknown
+        ));
+    });
 }

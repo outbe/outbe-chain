@@ -34,7 +34,7 @@
         "internalType": "address"
       },
       {
-        "name": "approvedAt",
+        "name": "unlockAt",
         "type": "uint64",
         "internalType": "uint64"
       }
@@ -1042,6 +1042,22 @@
         "name": "proposalId",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ApprovedVaultActionLocked",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "unlockHeight",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ]
   },

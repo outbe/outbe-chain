@@ -17,7 +17,7 @@ pub(crate) fn record_approved_vault_action(
     proposal_id: U256,
     vault: Address,
     kind: u8,
-    approved_at: u64,
+    unlock_at: u64,
 ) -> Result<()> {
     if proposal_id.is_zero() || vault.is_zero() || !matches!(kind, ADD_VAULT | REMOVE_VAULT) {
         return Err(VaultRouterError::InvalidApprovedVaultAction.into());
@@ -43,7 +43,7 @@ pub(crate) fn record_approved_vault_action(
                 id: proposal_id,
                 vault,
                 kind,
-                approved_at,
+                unlock_at,
             })?;
         contract.pending_vault_proposals.write(&vault, proposal_id)
     })

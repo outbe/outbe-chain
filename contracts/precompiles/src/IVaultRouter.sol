@@ -91,6 +91,7 @@ interface IVaultRouter {
     error ApprovedVaultActionNotFound(uint256 proposalId);
     error ApprovedVaultActionIndexInconsistent(uint256 proposalId);
     error InvalidApprovedVaultAction();
+    error ApprovedVaultActionLocked(uint256 proposalId, uint64 unlockHeight);
     error DateStep(uint8 kind, uint32 dateKey);
 
     event VaultAdded(uint16 indexed isoCode, address indexed asset, address indexed vault);
@@ -182,17 +183,20 @@ interface IVaultRouter {
     function liquidityTargetAt(uint256 index) external view returns (address targetAddress, StablesTarget targetType);
 
     /// @notice Applies a pending governance-approved vault action once. Anyone may call.
-    ///         A failed application remains retriable. Strictly after the governance
-    ///         window, deletes the record and emits ApprovedVaultActionExpired instead.
+    ///         Before the `executionDelayBlocks` of the approved payload end, reverts with
+    ///         ApprovedVaultActionLocked. A failed application remains retriable. Strictly
+    ///         after one governance window from the end of the delay, deletes the record
+    ///         and emits ApprovedVaultActionExpired instead.
     ///         Removal requires the router's live share balance in the vault to be zero.
     function applyApproved(uint256 proposalId) external;
 
     /// @notice Returns the pending approved action, or Unknown if no record remains.
+    ///         `unlockAt` is the first block where applyApproved may run it.
     /// @dev An expired action remains visible until applyApproved clears it.
     function approvedVaultAction(uint256 proposalId)
         external
         view
-        returns (VaultAction action, address vault, uint64 approvedAt);
+        returns (VaultAction action, address vault, uint64 unlockAt);
 
     /// @notice Deposits `assetsMinor` of `asset` into the asset's vault on behalf of the
     ///         caller. The caller (`msg.sender`) must be a registered liquidity source.

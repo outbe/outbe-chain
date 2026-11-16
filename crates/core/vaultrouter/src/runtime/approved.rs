@@ -16,7 +16,7 @@ pub(crate) fn approved_vault_action(
         return Ok(IVaultRouter::approvedVaultActionReturn {
             action: IVaultRouter::VaultAction::Unknown,
             vault: alloy_primitives::Address::ZERO,
-            approvedAt: 0,
+            unlockAt: 0,
         });
     }
     let record = state::approved_vault_action(storage, proposal_id)?;
@@ -24,19 +24,27 @@ pub(crate) fn approved_vault_action(
         action: IVaultRouter::VaultAction::try_from(record.kind)
             .map_err(|_| crate::errors::VaultRouterError::InvalidApprovedVaultAction)?,
         vault: record.vault,
-        approvedAt: record.approved_at,
+        unlockAt: record.unlock_at,
     })
 }
 
 pub(crate) fn apply_approved(storage: StorageHandle<'_>, proposal_id: U256) -> Result<()> {
     storage.with_checkpoint(|| {
         let record = state::approved_vault_action(&storage, proposal_id)?;
+        let unlock_height = record.unlock_at;
+        let expiry = unlock_height
+            .saturating_add(outbe_chain_constants::get_governance_voting_window_blocks());
+        let now = storage.block_number()?;
+        if now < unlock_height {
+            return Err(crate::errors::VaultRouterError::ApprovedVaultActionLocked {
+                proposal_id,
+                unlock_height,
+            }
+            .into());
+        }
         // Consume before any subcall. The checkpoint restores this on every failure.
         state::consume_approved_vault_action(&storage, &record)?;
-        let now = u128::from(storage.block_number()?);
-        let deadline = u128::from(record.approved_at)
-            + u128::from(outbe_chain_constants::get_governance_voting_window_blocks());
-        if now > deadline {
+        if now > expiry {
             return VaultRouterContract::new(storage.clone()).emit(
                 IVaultRouter::ApprovedVaultActionExpired {
                     proposalId: proposal_id,

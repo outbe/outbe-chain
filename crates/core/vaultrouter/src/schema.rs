@@ -70,8 +70,10 @@ pub struct ApprovedVaultAction {
     pub vault: Address,
     #[attribute(order = 1)]
     pub kind: u8,
+    /// The first block where `applyApproved` may run the action: the approval
+    /// block plus the execution delay of the proposal.
     #[attribute(order = 2)]
-    pub approved_at: u64,
+    pub unlock_at: u64,
 }
 
 /// EVM storage layout for the vaultrouter precompile.

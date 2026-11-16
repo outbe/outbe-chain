@@ -53,6 +53,13 @@ impl UpdateVotePayload {
         match self {
             Self::ScheduleUpdate(payload) => payload.validate(current_height),
             Self::RevokeEnclaveBindingV1(payload) => payload.validate(),
+            // Only a new proposal must meet the minimum execution delay.
+            Self::UpgradeContracts(payload)
+                if payload.execution_delay_blocks
+                    < outbe_chain_constants::MIN_GOVERNANCE_EXECUTION_DELAY_BLOCKS =>
+            {
+                Err(UpdateError::InvalidPayload)
+            }
             Self::UpgradeContracts(payload) => payload.validate(),
         }
     }
@@ -134,7 +141,8 @@ fn classify_domain_error(err: UpdateError) -> Result<TargetExecutionOutcome> {
         | UpdateError::VoteTargetInvariantFailure(_)
         | UpdateError::UnexpectedAppliedClassification
         | UpdateError::UnknownApprovedUpgrade { .. }
-        | UpdateError::ApprovedPayloadMismatch { .. } => {
+        | UpdateError::ApprovedPayloadMismatch { .. }
+        | UpdateError::ContractUpgradeLocked { .. } => {
             Err(UpdateError::VoteTargetInvariantFailure(err.to_string()).into())
         }
     }

@@ -12,6 +12,8 @@ use crate::sol_ext::{ICrosschainBridge, IUUPSUpgradeable};
 use crate::vote_target::UpdateVoteTarget;
 
 const APPROVED_AT: u64 = 30;
+const DELAY: u64 = 100;
+const UNLOCK: u64 = APPROVED_AT + DELAY;
 const SEPOLIA: u32 = 11_155_111;
 const BSC: u32 = 97;
 
@@ -26,7 +28,7 @@ fn upgrade(chain_id: u64, proxy: u8) -> String {
 fn upgrades(list: &[(u64, u8)]) -> String {
     let list: Vec<String> = list.iter().map(|&(c, p)| upgrade(c, p)).collect();
     format!(
-        r#"{{"operation":"upgradeContracts","upgrades":[{}]}}"#,
+        r#"{{"operation":"upgradeContracts","executionDelayBlocks":{DELAY},"upgrades":[{}]}}"#,
         list.join(",")
     )
 }
@@ -98,6 +100,7 @@ fn apply_approved_upgrades_locally_and_sends_one_message_to_each_other_chain() {
         (u64::from(SEPOLIA), 0xb2),
     ]);
     approve(&mut p, &payload);
+    p.set_block_number(UNLOCK);
     apply(&mut p, &payload).unwrap();
 
     let sent: Vec<_> = p
@@ -144,10 +147,30 @@ fn apply_approved_rejects_another_payload_and_drops_an_expired_upgrade() {
         IUpdate::ApprovedPayloadMismatch::SELECTOR
     );
 
-    p.set_block_number(
-        APPROVED_AT + outbe_chain_constants::get_governance_voting_window_blocks() + 1,
-    );
+    p.set_block_number(UNLOCK + outbe_chain_constants::get_governance_voting_window_blocks() + 1);
     apply(&mut p, &payload).unwrap();
     assert!(p.sub_call_inputs().is_empty());
     assert!(apply(&mut p, &payload).is_err());
+}
+
+#[test]
+fn apply_approved_waits_for_the_execution_delay_of_the_payload() {
+    let mut p = HashMapStorageProvider::new(TEST_CHAIN_ID);
+    p.enable_sub_call_stub();
+    let payload = upgrades(&[(TEST_CHAIN_ID, 0xb1)]);
+    approve(&mut p, &payload);
+
+    p.set_block_number(UNLOCK - 1);
+    let err = apply(&mut p, &payload).unwrap_err();
+    let expected = IUpdate::ContractUpgradeLocked {
+        proposalId: U256::ONE,
+        unlockHeight: UNLOCK,
+    }
+    .abi_encode();
+    assert!(matches!(err, PrecompileError::RevertBytes(ref bytes) if bytes[..] == expected[..]));
+    assert!(p.sub_call_inputs().is_empty());
+
+    p.set_block_number(UNLOCK);
+    apply(&mut p, &payload).unwrap();
+    assert_eq!(p.sub_call_inputs().len(), 1);
 }

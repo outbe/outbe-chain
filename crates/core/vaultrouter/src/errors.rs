@@ -20,6 +20,11 @@ pub enum VaultRouterError {
     ApprovedVaultActionIndexInconsistent(U256),
     #[error("invalid approved vault action")]
     InvalidApprovedVaultAction,
+    #[error("approved vault action {proposal_id} is locked until block {unlock_height}")]
+    ApprovedVaultActionLocked {
+        proposal_id: U256,
+        unlock_height: u64,
+    },
     #[error("ERC20 operation failed or returned malformed data")]
     TokenOperationFailed,
     #[error("zero address")]
@@ -127,6 +132,13 @@ impl From<VaultRouterError> for PrecompileError {
             VaultRouterError::InvalidApprovedVaultAction => {
                 revert_with(I::InvalidApprovedVaultAction {})
             }
+            VaultRouterError::ApprovedVaultActionLocked {
+                proposal_id,
+                unlock_height,
+            } => revert_with(I::ApprovedVaultActionLocked {
+                proposalId: proposal_id,
+                unlockHeight: unlock_height,
+            }),
             VaultRouterError::TokenOperationFailed => revert_with(I::TokenOperationFailed {}),
             VaultRouterError::InvalidLiquiditySource => revert_with(I::InvalidLiquiditySource {}),
             VaultRouterError::InvalidLiquidityTarget => revert_with(I::InvalidLiquidityTarget {}),

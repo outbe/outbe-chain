@@ -17,9 +17,9 @@ fn valid_payloads() -> Vec<String> {
     let asset = Address::repeat_byte(0x22);
     vec![
         format!(
-            r#"{{"operation":"addVault","vault":"{vault:#x}","asset":"{asset:#x}","isoCode":840}}"#
+            r#"{{"operation":"addVault","executionDelayBlocks":50,"vault":"{vault:#x}","asset":"{asset:#x}","isoCode":840}}"#
         ),
-        format!(r#"{{"operation":"removeVault","vault":"{vault:#x}"}}"#),
+        format!(r#"{{"operation":"removeVault","executionDelayBlocks":50,"vault":"{vault:#x}"}}"#),
         format!(r#"{{"operation":"addLiquiditySource","address":"{vault:#x}","type":4}}"#),
         format!(r#"{{"operation":"removeLiquiditySource","address":"{vault:#x}"}}"#),
         format!(r#"{{"operation":"addLiquidityTarget","address":"{vault:#x}","type":1}}"#),
@@ -45,6 +45,9 @@ fn rejects_invalid_shapes_fields_addresses_and_numeric_bounds() {
         "{}".into(),
         "{".into(),
         valid[0].replace("addVault", "unknown"),
+        valid[0].replace("\"executionDelayBlocks\":50,", ""),
+        valid[1].replace(":50,", ":49,"),
+        valid[2].replace("\"address\"", "\"executionDelayBlocks\":50,\"address\""),
         valid[0].replace(",\"isoCode\":840", ""),
         valid[0].replace("840", "65536"),
         valid[0].replace("840", "0"),

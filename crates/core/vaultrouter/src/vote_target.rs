@@ -13,6 +13,10 @@ use serde::Deserialize;
 
 use crate::{api::IVaultRouter, runtime, state};
 
+/// One action, as strict JSON with an `operation` field. `addVault` and
+/// `removeVault` run later through `applyApproved`. They also have
+/// `executionDelayBlocks`: the number of blocks between the approval and the
+/// first block where `applyApproved` may run them.
 #[derive(Debug, Deserialize)]
 #[serde(
     tag = "operation",
@@ -25,9 +29,11 @@ enum Action {
         vault: Address,
         asset: Address,
         iso_code: u16,
+        execution_delay_blocks: u64,
     },
     RemoveVault {
         vault: Address,
+        execution_delay_blocks: u64,
     },
     AddLiquiditySource {
         address: Address,
@@ -56,13 +62,14 @@ impl Action {
                 vault,
                 asset,
                 iso_code,
+                ..
             } => {
                 if asset.is_zero() || validate_currency_code(*iso_code).is_err() {
                     return Err(VoteTargetError::InvalidPayload.into());
                 }
                 vault
             }
-            Self::RemoveVault { vault } => vault,
+            Self::RemoveVault { vault, .. } => vault,
             Self::AddLiquiditySource { address, r#type } => {
                 if *r#type == 0 || IVaultRouter::StablesSource::try_from(*r#type).is_err() {
                     return Err(VoteTargetError::InvalidPayload.into());
@@ -88,19 +95,30 @@ impl Action {
     fn apply(&self, ctx: &BlockRuntimeContext<'_>, proposal_id: U256) -> Result<()> {
         let storage = ctx.storage.clone();
         match self {
-            Self::AddVault { vault, .. } => state::record_approved_vault_action(
+            Self::AddVault {
+                vault,
+                execution_delay_blocks,
+                ..
+            } => state::record_approved_vault_action(
                 &storage,
                 proposal_id,
                 *vault,
                 state::ADD_VAULT,
-                ctx.block.block_number,
+                ctx.block
+                    .block_number
+                    .saturating_add(*execution_delay_blocks),
             ),
-            Self::RemoveVault { vault } => state::record_approved_vault_action(
+            Self::RemoveVault {
+                vault,
+                execution_delay_blocks,
+            } => state::record_approved_vault_action(
                 &storage,
                 proposal_id,
                 *vault,
                 state::REMOVE_VAULT,
-                ctx.block.block_number,
+                ctx.block
+                    .block_number
+                    .saturating_add(*execution_delay_blocks),
             ),
             Self::AddLiquiditySource { address, r#type } => {
                 runtime::add_liquidity_source(storage, *address, *r#type)
@@ -128,7 +146,22 @@ impl VoteTarget for VaultRouterVoteTarget {
 
     fn validate(&self, payload: &[u8], _context: VoteTargetContext) -> Result<()> {
         decode_proposal_payload(payload)?;
-        Action::decode(payload).map(|_| ())
+        // Only a new proposal must meet the minimum execution delay.
+        if let Action::AddVault {
+            execution_delay_blocks,
+            ..
+        }
+        | Action::RemoveVault {
+            execution_delay_blocks,
+            ..
+        } = Action::decode(payload)?
+        {
+            if execution_delay_blocks < outbe_chain_constants::MIN_GOVERNANCE_EXECUTION_DELAY_BLOCKS
+            {
+                return Err(VoteTargetError::InvalidPayload.into());
+            }
+        }
+        Ok(())
     }
 
     fn handle_approved(
