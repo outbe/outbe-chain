@@ -68,6 +68,29 @@ impl EquivocationEvidenceMailbox {
         Self::default()
     }
 
+    /// Returns whether the handoff currently contains no evidence.
+    pub fn is_empty(&self) -> bool {
+        self.queue
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty()
+    }
+
+    /// Removes the oldest admissible entry, leaving blocked entries in place.
+    pub fn pop_if(
+        &self,
+        mut predicate: impl FnMut(&VerifiedEquivocationEvidence) -> bool,
+    ) -> Option<VerifiedEquivocationEvidence> {
+        let mut queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
+        let position = queue.iter().position(&mut predicate)?;
+        queue.remove(position)
+    }
+
+    /// Waits for a producer notification; enqueue retains one permit for a later waiter.
+    pub async fn notified(&self) {
+        self.notify.notified().await;
+    }
+
     pub fn push(&self, evidence: VerifiedEquivocationEvidence) -> EquivocationPushOutcome {
         let mut queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
         if queue.iter().any(|pending| {
@@ -209,6 +232,38 @@ mod tests {
         assert_eq!(mailbox.push(evidence(64, 1, 2)), Full);
         assert_eq!(mailbox.push(evidence(0, 1, 3)), Duplicate);
         assert_eq!(mailbox.queue.lock().unwrap().len(), 64);
+    }
+
+    #[tokio::test]
+    async fn mailbox_pop_if_preserves_blocked_entries_and_notifies() {
+        use super::{EquivocationEvidenceMailbox, EquivocationPushOutcome::*};
+        let mailbox = EquivocationEvidenceMailbox::new();
+        assert!(mailbox.is_empty());
+        assert_eq!(mailbox.push(evidence(1, 1, 1)), Enqueued);
+        assert!(!mailbox.is_empty());
+        assert_eq!(mailbox.push(evidence(2, 1, 2)), Enqueued);
+        tokio::time::timeout(std::time::Duration::from_secs(1), mailbox.notified())
+            .await
+            .expect("enqueue notification is retained");
+        assert!(mailbox.pop_if(|_| false).is_none());
+        assert_eq!(
+            mailbox
+                .pop_if(|ev| ev.accused_pubkey == [2; 48])
+                .unwrap()
+                .accused_pubkey,
+            [2; 48]
+        );
+        assert_eq!(mailbox.pop_if(|_| true).unwrap().accused_pubkey, [1; 48]);
+        assert!(mailbox.pop_if(|_| true).is_none());
+        assert!(mailbox.is_empty());
+        let waiter = mailbox.clone();
+        let task = tokio::spawn(async move { waiter.notified().await });
+        tokio::task::yield_now().await;
+        assert_eq!(mailbox.push(evidence(3, 1, 3)), Enqueued);
+        tokio::time::timeout(std::time::Duration::from_secs(1), task)
+            .await
+            .expect("wake consumer")
+            .expect("consumer joined");
     }
 
     #[test]

@@ -248,13 +248,13 @@ pub fn record_dkg_revealed_shares(count: usize) {
 pub use outbe_primitives::equivocation_evidence::EquivocationEvidenceKind as EquivocationKind;
 
 /// Records bounded raw evidence admission outcomes.
-pub(crate) fn record_equivocation_verify_admission(result: &'static str) {
+pub fn record_equivocation_verify_admission(result: &'static str) {
     counter!("outbe_consensus_equivocation_verify_admission_total", "result" => result)
         .increment(1);
 }
 
 /// Records individual-vote verification and bridge delivery outcomes.
-pub(crate) fn record_equivocation_verify(kind: EquivocationKind, result: &'static str) {
+pub fn record_equivocation_verify(kind: EquivocationKind, result: &'static str) {
     counter!("outbe_consensus_equivocation_verify_total",
         "kind" => kind.label(), "result" => result)
     .increment(1);
