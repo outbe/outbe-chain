@@ -463,6 +463,19 @@ mod tests {
     }
 
     #[test]
+    fn the_record_of_e_accepts_a_utc_date_and_rejects_an_invalid_one() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let storage = StorageHandle::new(&mut provider);
+        for day in [20240229, 20261231] {
+            link_wwd(storage.clone(), day, WorldwideDay::new(0)).unwrap();
+        }
+        for day in [20230229, 20261301, 20261232, 0] {
+            let error = link_wwd(storage.clone(), day, WorldwideDay::new(0)).unwrap_err();
+            assert_emission_error(error, EmissionError::InvalidEmissionDay { day });
+        }
+    }
+
+    #[test]
     fn link_wwd_is_idempotent_and_rejects_conflicts_or_allocated_days() {
         let mut provider = HashMapStorageProvider::new(1);
         let storage = StorageHandle::new(&mut provider);

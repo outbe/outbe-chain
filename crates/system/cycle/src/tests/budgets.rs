@@ -2,8 +2,8 @@
 
 use super::*;
 use crate::{
-    runtime::{handle_cycle_tick_with_triggers, run_due_tasks_with_specs},
-    triggers::{TriggerHandler, TriggerSpec},
+    runtime::{handle_cycle_tick_with_tasks, run_due_tasks_with_specs},
+    tasks::{TaskHandler, TaskSpec},
     ICycle,
 };
 use alloy_sol_types::SolEvent;
@@ -33,8 +33,8 @@ fn fatal(_: &BlockRuntimeContext) -> Result<()> {
     Err(PrecompileError::Fatal("backend".into()))
 }
 
-fn spec(id: u32, budget: u64, handler: fn(&BlockRuntimeContext<'_>) -> Result<()>) -> TriggerSpec {
-    TriggerSpec::new(id, "test", (60, 0), budget, TriggerHandler::Test(handler)).unwrap()
+fn spec(id: u32, budget: u64, handler: fn(&BlockRuntimeContext<'_>) -> Result<()>) -> TaskSpec {
+    TaskSpec::new(id, "test", (60, 0), budget, TaskHandler::Test(handler)).unwrap()
 }
 
 fn storage(ids: &[u32]) -> HashMapStorageProvider {
@@ -52,7 +52,7 @@ fn storage(ids: &[u32]) -> HashMapStorageProvider {
     storage
 }
 
-fn dispatch(ctx: &BlockRuntimeContext, specs: &[TriggerSpec]) -> Result<()> {
+fn dispatch(ctx: &BlockRuntimeContext, specs: &[TaskSpec]) -> Result<()> {
     run_due_tasks_with_specs(ctx, specs)
 }
 
@@ -60,9 +60,9 @@ fn dispatch(ctx: &BlockRuntimeContext, specs: &[TriggerSpec]) -> Result<()> {
 fn over_budget_rolls_back_and_propagates_pending_then_retries_once_next_block() {
     let mut storage = storage(&[0, 1, 2, 4]);
     let mut advance = spec(2, 100, independent);
-    advance.depends_on = &[TriggerId::ProcessEmissionDay];
+    advance.depends_on = &[TaskId::ProcessEmissionDay];
     let mut clearing = spec(4, 100, independent);
-    clearing.depends_on = &[TriggerId::AdvanceAuctions];
+    clearing.depends_on = &[TaskId::AdvanceAuctions];
     let mut specs = [
         spec(0, 50, write_then_spend),
         spec(1, 100, independent),
@@ -84,7 +84,7 @@ fn over_budget_rolls_back_and_propagates_pending_then_retries_once_next_block() 
     let logs = storage.get_events(CYCLE_ADDRESS);
     let over: Vec<_> = logs
         .iter()
-        .filter_map(|log| ICycle::CycleTriggerOverBudget::decode_log_data(log).ok())
+        .filter_map(|log| ICycle::CycleTaskOverBudget::decode_log_data(log).ok())
         .collect();
     assert_eq!(over.len(), 1);
     assert_eq!(
@@ -93,19 +93,19 @@ fn over_budget_rolls_back_and_propagates_pending_then_retries_once_next_block() 
     );
     assert_eq!(
         logs.iter()
-            .filter(|log| ICycle::CycleTriggerFailed::decode_log_data(log).is_ok())
+            .filter(|log| ICycle::CycleTaskFailed::decode_log_data(log).is_ok())
             .count(),
         0
     );
     assert_eq!(
         logs.iter()
-            .filter(|log| ICycle::CycleTriggerExecuted::decode_log_data(log).is_ok())
+            .filter(|log| ICycle::CycleTaskExecuted::decode_log_data(log).is_ok())
             .count(),
         1
     );
     let deferred: Vec<_> = logs
         .iter()
-        .filter_map(|log| ICycle::CycleTriggerDeferred::decode_log_data(log).ok())
+        .filter_map(|log| ICycle::CycleTaskDeferred::decode_log_data(log).ok())
         .collect();
     assert_eq!(deferred.len(), 2);
     assert!(deferred
@@ -133,7 +133,7 @@ fn over_budget_rolls_back_and_propagates_pending_then_retries_once_next_block() 
 fn ordinary_reverts_consume_dependencies_but_fatal_errors_stop_the_walk() {
     let mut storage = storage(&[0, 1, 2]);
     let mut dependent = spec(2, 100, independent);
-    dependent.depends_on = &[TriggerId::ProcessEmissionDay];
+    dependent.depends_on = &[TaskId::ProcessEmissionDay];
     storage.enter(|handle| {
         let ctx = runtime_context(block_ctx(2, GENESIS_TS + 61), handle);
         dispatch(&ctx, &[spec(0, 100, ordinary_revert), dependent]).unwrap();
@@ -152,8 +152,8 @@ fn ordinary_reverts_consume_dependencies_but_fatal_errors_stop_the_walk() {
 #[test]
 fn rejects_zero_budget() {
     assert!(matches!(
-        TriggerSpec::new(0, "test", (60, 0), 0, TriggerHandler::Test(independent)),
-        Err(crate::errors::CycleError::ZeroTriggerWorkBudget)
+        TaskSpec::new(0, "test", (60, 0), 0, TaskHandler::Test(independent)),
+        Err(crate::errors::CycleError::ZeroTaskWorkBudget)
     ));
 }
 
@@ -190,12 +190,12 @@ fn late_protocol_exhaustion_rolls_back_calendar_and_allocation_then_retries_acro
     });
     assert!(complete_gas > 1);
     let protocol = |budget| {
-        TriggerSpec::new(
+        TaskSpec::new(
             0,
             "protocol",
             (3_600, 0),
             budget,
-            TriggerHandler::ProcessEmissionDay,
+            TaskHandler::ProcessEmissionDay,
         )
         .unwrap()
     };
@@ -239,7 +239,7 @@ fn late_protocol_exhaustion_rolls_back_calendar_and_allocation_then_retries_acro
         storage
             .get_events(CYCLE_ADDRESS)
             .iter()
-            .filter(|log| ICycle::CycleTriggerOverBudget::decode_log_data(log).is_ok())
+            .filter(|log| ICycle::CycleTaskOverBudget::decode_log_data(log).is_ok())
             .count(),
         1
     );
@@ -253,14 +253,14 @@ fn late_protocol_exhaustion_rolls_back_calendar_and_allocation_then_retries_acro
     storage.enter(|handle| {
         let ctx = runtime_context(block_ctx(3, fire_ts + 1), handle);
         account_parent(&ctx, 3);
-        let triggers = [protocol(50_000_000)];
-        dispatch(&ctx, &triggers).unwrap();
+        let tasks = [protocol(50_000_000)];
+        dispatch(&ctx, &tasks).unwrap();
         assert!(is_day_allocated(&ctx, 20_240_101));
         assert!(!is_day_allocated(&ctx, 20_240_102));
         assert_eq!(active_utc_day(&ctx), 20_240_102);
         let settled =
             outbe_emission::api::get_emission_day_record(ctx.storage.clone(), 20_240_101).unwrap();
-        dispatch(&ctx, &triggers).unwrap();
+        dispatch(&ctx, &tasks).unwrap();
         assert_eq!(
             outbe_emission::api::get_emission_day_record(ctx.storage.clone(), 20_240_101).unwrap(),
             settled
@@ -271,16 +271,16 @@ fn late_protocol_exhaustion_rolls_back_calendar_and_allocation_then_retries_acro
 #[test]
 fn non_due_prerequisites_do_not_block_and_unmetered_provider_cannot_run_scopes() {
     let mut storage = storage(&[0, 2]);
-    let prerequisite = TriggerSpec::new(
+    let prerequisite = TaskSpec::new(
         0,
         "not_due",
         (SECONDS_PER_DAY, 0),
         100,
-        TriggerHandler::Test(fatal),
+        TaskHandler::Test(fatal),
     )
     .unwrap();
     let mut dependent = spec(2, 100, independent);
-    dependent.depends_on = &[TriggerId::ProcessEmissionDay];
+    dependent.depends_on = &[TaskId::ProcessEmissionDay];
     storage.enter(|handle| {
         let ctx = runtime_context(block_ctx(2, GENESIS_TS + 61), handle);
         dispatch(&ctx, &[prerequisite, dependent]).unwrap();
@@ -294,7 +294,7 @@ fn non_due_prerequisites_do_not_block_and_unmetered_provider_cannot_run_scopes()
 }
 
 #[test]
-fn bootstrap_without_triggers_creates_genesis_worldwide_day() {
+fn bootstrap_without_tasks_creates_genesis_worldwide_day() {
     let mut storage = cycle_storage();
     storage.enable_production_storage_gas_metering();
     storage.set_gas_limit(10_000_000);
@@ -306,7 +306,7 @@ fn bootstrap_without_triggers_creates_genesis_worldwide_day() {
                 .is_none()
         );
         let before = ctx.storage.gas_used().unwrap();
-        handle_cycle_tick_with_triggers(&ctx, 1, &[]).unwrap();
+        handle_cycle_tick_with_tasks(&ctx, 1, &[]).unwrap();
         assert!(ctx.storage.gas_used().unwrap() > before);
         assert!(
             outbe_metadosis::api::worldwide_day(ctx.storage.clone(), 20_240_101u32.into())
@@ -324,13 +324,13 @@ fn canonical_body_observers_keep_every_scoped_handler_sample_without_prefix() {
     storage.enter(|handle| {
         let ctx = runtime_context(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
         account_parent(&ctx, 2);
-        crate::runtime::take_trigger_gas_samples();
+        crate::runtime::take_task_gas_samples();
         crate::runtime::take_cycle_gas_samples();
         ctx.storage.deduct_gas(7_000).unwrap();
         let before = ctx.storage.gas_used().unwrap();
         run_cycle_tick(&ctx).unwrap();
         let body_gas = ctx.storage.gas_used().unwrap() - before;
-        let handlers = crate::runtime::take_trigger_gas_samples();
+        let handlers = crate::runtime::take_task_gas_samples();
         assert_eq!(
             handlers.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
             vec![0, 1, 2, 3, 4, 5, 6]

@@ -43,14 +43,14 @@ pub enum CycleError {
     ZeroAccountingProgress,
     #[error("accounting progress is not the next block: current={current}, attempted={attempted}")]
     AccountingProgressGap { current: u64, attempted: u64 },
-    #[error("trigger period is zero")]
-    ZeroTriggerPeriod,
-    #[error("trigger work budget is zero")]
-    ZeroTriggerWorkBudget,
+    #[error("task period is zero")]
+    ZeroTaskPeriod,
+    #[error("task work budget is zero")]
+    ZeroTaskWorkBudget,
     #[error("Cycle essential work capacity is insufficient or its gas counters are invalid")]
     InsufficientWorkCapacity,
-    #[error("Cycle trigger id {id} is outside the dispatcher outcome table")]
-    InvalidTriggerId { id: u32 },
+    #[error("Cycle task id {id} is outside the dispatcher outcome table")]
+    InvalidTaskId { id: u32 },
     #[error(
         "schedule slot does not fit in u64: period={period}, offset={offset}, timestamp={timestamp}"
     )]
@@ -70,9 +70,9 @@ pub enum CycleError {
 impl From<CycleError> for PrecompileError {
     fn from(error: CycleError) -> Self {
         match error {
-            error @ (CycleError::ZeroTriggerWorkBudget
+            error @ (CycleError::ZeroTaskWorkBudget
             | CycleError::InsufficientWorkCapacity
-            | CycleError::InvalidTriggerId { .. }) => PrecompileError::Fatal(error.to_string()),
+            | CycleError::InvalidTaskId { .. }) => PrecompileError::Fatal(error.to_string()),
             error @ CycleError::InvalidActiveUtcDay {
                 active: _,
                 block: _,
@@ -117,8 +117,8 @@ impl From<CycleError> for PrecompileError {
                     ICycle::AccountingProgressGap { current, attempted }.abi_encode(),
                 ))
             }
-            CycleError::ZeroTriggerPeriod => {
-                PrecompileError::RevertBytes(Bytes::from(ICycle::ZeroTriggerPeriod {}.abi_encode()))
+            CycleError::ZeroTaskPeriod => {
+                PrecompileError::RevertBytes(Bytes::from(ICycle::ZeroTaskPeriod {}.abi_encode()))
             }
             CycleError::ScheduleArithmeticOverflow {
                 period,
@@ -224,10 +224,7 @@ mod tests {
                 },
                 ICycle::AccountingProgressGap::SELECTOR,
             ),
-            (
-                CycleError::ZeroTriggerPeriod,
-                ICycle::ZeroTriggerPeriod::SELECTOR,
-            ),
+            (CycleError::ZeroTaskPeriod, ICycle::ZeroTaskPeriod::SELECTOR),
             (
                 CycleError::ScheduleArithmeticOverflow {
                     period: 2,

@@ -67,7 +67,7 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
         let ctx = BlockRuntimeContext::new(block_ctx(2, midnight - 1), storage.clone());
         (|| {
             let cycle = Cycle::new(storage.clone());
-            let trigger = isolate_nod_call_schedule(&cycle, midnight)?;
+            let task = isolate_nod_call_schedule(&cycle, midnight)?;
             let (oracle, index) = seed_closed_day_prices(&storage, midnight)?;
             let called_at = |group_key| {
                 outbe_nod::NodContract::new(storage.clone())
@@ -82,7 +82,7 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
             let ctx = BlockRuntimeContext::new(block_ctx(3, midnight), storage.clone());
             dispatch_and_call(&ctx)?;
             assert_eq!(called_at(first), midnight);
-            assert_eq!(cycle.last_executed_at.read(&trigger)?, midnight);
+            assert_eq!(cycle.last_executed_at.read(&task)?, midnight);
 
             // New work created after the daily run waits for the next UTC slot.
             let second = issue_nod(&storage, Address::repeat_byte(0x52), 14)?;
@@ -117,7 +117,7 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
             }
             assert_eq!(nod.call_sweep_day.read()?, 0);
             assert_eq!(called_at(second), late);
-            assert_eq!(cycle.last_executed_at.read(&trigger)?, late);
+            assert_eq!(cycle.last_executed_at.read(&task)?, late);
             let third = issue_nod(&storage, Address::repeat_byte(0x53), 15)?;
             let ctx = BlockRuntimeContext::new(block_ctx(14, late + 1), storage.clone());
             dispatch_and_call(&ctx)?;
@@ -216,9 +216,9 @@ fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
     provider.set_gas_limit(10_000_000_000);
     StorageHandle::enter(&mut provider, |storage| {
         let cycle = Cycle::new(storage.clone());
-        // No unrelated trigger is due. This test exercises the end-zone call continuation.
+        // No unrelated task is due. This test exercises the end-zone call continuation.
         // The test includes recovery after a daily scheduling attempt finds no finalized day.
-        for spec in ACTIVE_TRIGGERS {
+        for spec in ACTIVE_TASKS {
             cycle
                 .last_executed_at
                 .write(&spec.id, day_start + 10 * SECONDS_PER_DAY)
@@ -299,20 +299,20 @@ fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
     });
 }
 
-/// Isolates Nod's schedule. Unrelated triggers are not due, and the Nod daily
-/// call is due at `midnight`. Returns the Nod call trigger id.
+/// Isolates Nod's schedule. Unrelated tasks are not due, and the Nod daily
+/// call is due at `midnight`. Returns the Nod call task id.
 fn isolate_nod_call_schedule(
     cycle: &Cycle<'_>,
     midnight: u64,
 ) -> outbe_primitives::error::Result<u32> {
-    for spec in ACTIVE_TRIGGERS {
+    for spec in ACTIVE_TASKS {
         cycle
             .last_executed_at
             .write(&spec.id, midnight + 10 * SECONDS_PER_DAY)?;
     }
-    let trigger = TriggerId::ScheduleNodCallPass.as_u32();
-    cycle.last_executed_at.write(&trigger, midnight - 1)?;
-    Ok(trigger)
+    let task = TaskId::ScheduleNodCallPass.as_u32();
+    cycle.last_executed_at.write(&task, midnight - 1)?;
+    Ok(task)
 }
 
 /// Registers COEN/840 as the only reference currency and finalizes a VWAP of

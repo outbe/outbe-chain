@@ -1,9 +1,9 @@
-//! Per-block trigger dispatch loop.
+//! Per-block task dispatch loop.
 //!
 //! Runs from [`handle_cycle_tick`] on every
 //! block during the begin-zone CycleTick phase. Iterates the genesis-resolved
-//! trigger table
-//! and fires any trigger whose next slot has been reached.
+//! task table
+//! and fires any task whose next slot has been reached.
 
 use outbe_primitives::{
     block::{BlockRuntimeContext, MutationEntitlementContext, ProtocolModule},
@@ -15,7 +15,7 @@ use outbe_primitives::{
 use crate::errors::CycleError;
 use crate::schema::Cycle;
 use crate::state::{accounting_gate_blocks, EvmAccountingProgress};
-use crate::triggers::{active_triggers, last_fire_at, next_fire_at, Readiness, TriggerSpec};
+use crate::tasks::{active_tasks, last_fire_at, next_fire_at, Readiness, TaskSpec};
 use crate::ICycle;
 
 /// Protocol module for the begin-block cycle step.
@@ -44,15 +44,15 @@ impl ProtocolModule for CycleModule {
 
 #[cfg(feature = "test-utils")]
 std::thread_local! {
-    static TRIGGER_GAS_SAMPLES: std::cell::RefCell<Vec<(u32, u64)>> = const { std::cell::RefCell::new(Vec::new()) };
+    static TASK_GAS_SAMPLES: std::cell::RefCell<Vec<(u32, u64)>> = const { std::cell::RefCell::new(Vec::new()) };
     static CYCLE_GAS_SAMPLES: std::cell::RefCell<Vec<(u64, u64)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Drains gross handler-only gas samples on this test thread. Failed handlers
 /// retain spent gas, so samples include ordinary reverts as well as successes.
 #[cfg(feature = "test-utils")]
-pub fn take_trigger_gas_samples() -> Vec<(u32, u64)> {
-    TRIGGER_GAS_SAMPLES.with(|samples| core::mem::take(&mut *samples.borrow_mut()))
+pub fn take_task_gas_samples() -> Vec<(u32, u64)> {
+    TASK_GAS_SAMPLES.with(|samples| core::mem::take(&mut *samples.borrow_mut()))
 }
 
 /// Drains successful Cycle body samples `(gross_body_gas, gross_handler_gas)`.
@@ -84,26 +84,22 @@ pub fn handle_cycle_tick(
     ctx: &BlockRuntimeContext<'_>,
     metadosis_genesis_activation_height: u64,
 ) -> Result<()> {
-    handle_cycle_tick_with_triggers(
-        ctx,
-        metadosis_genesis_activation_height,
-        &active_triggers()?,
-    )
+    handle_cycle_tick_with_tasks(ctx, metadosis_genesis_activation_height, &active_tasks()?)
 }
 
-/// Runs the CycleTick body for a supplied trigger slice, including bootstrap,
+/// Runs the CycleTick body for a supplied task slice, including bootstrap,
 /// reward slicing, and bounded auction cleanup.
-pub fn handle_cycle_tick_with_triggers(
+pub fn handle_cycle_tick_with_tasks(
     ctx: &BlockRuntimeContext<'_>,
     metadosis_genesis_activation_height: u64,
-    triggers: &[TriggerSpec],
+    tasks: &[TaskSpec],
 ) -> Result<()> {
     #[cfg(feature = "test-utils")]
     let observation_before = ctx.storage.gas_used()?;
     if ctx.block.block_number == metadosis_genesis_activation_height {
         outbe_tributefactory::worldwideday::bootstrap_genesis_worldwide_days_command(ctx)?;
     }
-    let handler_gas = run_due_tasks_inner(ctx, triggers)?;
+    let handler_gas = run_due_tasks_inner(ctx, tasks)?;
     #[cfg(not(feature = "test-utils"))]
     let _ = handler_gas;
     crate::handler::process_agent_rewards(ctx)?;
@@ -113,7 +109,7 @@ pub fn handle_cycle_tick_with_triggers(
     Ok(())
 }
 
-/// Dispatches every active trigger whose `next_fire_at` is `<=
+/// Dispatches every active task whose `next_fire_at` is `<=
 /// ctx.block.timestamp`. Each handler runs in an atomic work-budget scope.
 /// Ordinary reverts consume the slot; budget exhaustion rolls back the handler
 /// and leaves it and its due dependents pending. Independent work can continue.
@@ -124,7 +120,7 @@ pub fn handle_cycle_tick_with_triggers(
 /// fires ProcessEmissionDay only on the first block at or past one second into
 /// the next UTC hour.
 pub fn run_due_tasks(ctx: &BlockRuntimeContext) -> Result<()> {
-    run_due_tasks_with_specs(ctx, &active_triggers()?)
+    run_due_tasks_with_specs(ctx, &active_tasks()?)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -135,22 +131,22 @@ enum WalkOutcome {
     Pending,
 }
 
-/// Explicit scheduler for a supplied trigger table.
-pub fn run_due_tasks_with_specs(ctx: &BlockRuntimeContext, triggers: &[TriggerSpec]) -> Result<()> {
-    let _ = run_due_tasks_inner(ctx, triggers)?;
+/// Explicit scheduler for a supplied task table.
+pub fn run_due_tasks_with_specs(ctx: &BlockRuntimeContext, tasks: &[TaskSpec]) -> Result<()> {
+    let _ = run_due_tasks_inner(ctx, tasks)?;
     Ok(())
 }
 
-fn run_due_tasks_inner(ctx: &BlockRuntimeContext, triggers: &[TriggerSpec]) -> Result<u64> {
+fn run_due_tasks_inner(ctx: &BlockRuntimeContext, tasks: &[TaskSpec]) -> Result<u64> {
     ctx.storage
         .metered_gas_remaining()?
         .ok_or(CycleError::InsufficientWorkCapacity)?;
     let mut outcomes = [WalkOutcome::NotRun; 9];
     let mut handler_gas = 0u64;
-    for spec in triggers {
+    for spec in tasks {
         let index = spec.id as usize;
         if index >= outcomes.len() {
-            return Err(CycleError::InvalidTriggerId { id: spec.id }.into());
+            return Err(CycleError::InvalidTaskId { id: spec.id }.into());
         }
         let Some(slot) = due_slot(ctx, spec)? else {
             continue;
@@ -185,7 +181,7 @@ fn run_due_tasks_inner(ctx: &BlockRuntimeContext, triggers: &[TriggerSpec]) -> R
                 .checked_add(consumed)
                 .ok_or(CycleError::InsufficientWorkCapacity)?;
             #[cfg(feature = "test-utils")]
-            TRIGGER_GAS_SAMPLES.with(|samples| samples.borrow_mut().push((spec.id, consumed)));
+            TASK_GAS_SAMPLES.with(|samples| samples.borrow_mut().push((spec.id, consumed)));
             match result {
                 Ok(Readiness::Done) => {
                     record_executed(ctx, spec, slot)?;
@@ -197,7 +193,7 @@ fn run_due_tasks_inner(ctx: &BlockRuntimeContext, triggers: &[TriggerSpec]) -> R
                     budget_gas,
                 }) => {
                     let mut cycle = ctx.storage.contract::<Cycle<'_>>();
-                    cycle.emit(ICycle::CycleTriggerOverBudget {
+                    cycle.emit(ICycle::CycleTaskOverBudget {
                         id: spec.id,
                         consumedGas: consumed_gas,
                         budgetGas: budget_gas,
@@ -218,12 +214,12 @@ fn run_due_tasks_inner(ctx: &BlockRuntimeContext, triggers: &[TriggerSpec]) -> R
 
 fn record_deferred(
     ctx: &BlockRuntimeContext,
-    spec: &TriggerSpec,
+    spec: &TaskSpec,
     slot: DueSlot,
     reason: u8,
 ) -> Result<()> {
     let mut cycle = ctx.storage.contract::<Cycle<'_>>();
-    cycle.emit(ICycle::CycleTriggerDeferred {
+    cycle.emit(ICycle::CycleTaskDeferred {
         id: spec.id,
         scheduledAt: slot.recorded_at,
         blockNumber: ctx.block.block_number,
@@ -233,7 +229,7 @@ fn record_deferred(
 }
 
 /// Writes the consumed slot outside the handler checkpoint.
-fn record_slot(ctx: &BlockRuntimeContext, spec: &TriggerSpec, recorded_at: u64) -> Result<()> {
+fn record_slot(ctx: &BlockRuntimeContext, spec: &TaskSpec, recorded_at: u64) -> Result<()> {
     let cycle: Cycle<'_> = ctx.storage.contract::<Cycle<'_>>();
     cycle.last_executed_at.write(&spec.id, recorded_at)?;
     cycle
@@ -242,13 +238,13 @@ fn record_slot(ctx: &BlockRuntimeContext, spec: &TriggerSpec, recorded_at: u64) 
     Ok(())
 }
 
-/// Records a successful slot and emits `CycleTriggerExecuted`.
-fn record_executed(ctx: &BlockRuntimeContext, spec: &TriggerSpec, slot: DueSlot) -> Result<()> {
+/// Records a successful slot and emits `CycleTaskExecuted`.
+fn record_executed(ctx: &BlockRuntimeContext, spec: &TaskSpec, slot: DueSlot) -> Result<()> {
     let block_ts = ctx.block.timestamp;
     let block_number = ctx.block.block_number;
     record_slot(ctx, spec, slot.recorded_at)?;
     let mut cycle: Cycle<'_> = ctx.storage.contract::<Cycle<'_>>();
-    cycle.emit(ICycle::CycleTriggerExecuted {
+    cycle.emit(ICycle::CycleTaskExecuted {
         id: spec.id,
         scheduledAt: slot.recorded_at,
         blockTimestamp: block_ts,
@@ -256,21 +252,21 @@ fn record_executed(ctx: &BlockRuntimeContext, spec: &TriggerSpec, slot: DueSlot)
     })?;
     tracing::info!(
         target: "outbe::cycle",
-        trigger_id = spec.id,
+        task_id = spec.id,
         label = spec.label,
         scheduled_at = slot.scheduled_at,
         recorded_at = slot.recorded_at,
         block_ts,
         block_number,
-        "cycle trigger fired"
+        "cycle task fired"
     );
     Ok(())
 }
 
-/// Records a reverted slot and emits `CycleTriggerFailed` with no error text.
+/// Records a reverted slot and emits `CycleTaskFailed` with no error text.
 fn record_failed(
     ctx: &BlockRuntimeContext,
-    spec: &TriggerSpec,
+    spec: &TaskSpec,
     slot: DueSlot,
     err: &PrecompileError,
 ) -> Result<()> {
@@ -278,7 +274,7 @@ fn record_failed(
     let block_number = ctx.block.block_number;
     record_slot(ctx, spec, slot.recorded_at)?;
     let mut cycle: Cycle<'_> = ctx.storage.contract::<Cycle<'_>>();
-    cycle.emit(ICycle::CycleTriggerFailed {
+    cycle.emit(ICycle::CycleTaskFailed {
         id: spec.id,
         scheduledAt: slot.recorded_at,
         blockTimestamp: block_ts,
@@ -286,19 +282,19 @@ fn record_failed(
     })?;
     tracing::error!(
         target: "outbe::cycle",
-        trigger_id = spec.id,
+        task_id = spec.id,
         label = spec.label,
         scheduled_at = slot.scheduled_at,
         recorded_at = slot.recorded_at,
         block_ts,
         block_number,
         error = ?err,
-        "cycle trigger handler reverted; checkpoint rolled back and the slot was consumed"
+        "cycle task handler reverted; checkpoint rolled back and the slot was consumed"
     );
     Ok(())
 }
 
-/// Slot that one trigger fires in the current block.
+/// Slot that one task fires in the current block.
 #[derive(Clone, Copy, Debug)]
 struct DueSlot {
     /// Next slot after `last_executed_at`.
@@ -308,13 +304,13 @@ struct DueSlot {
 }
 
 /// Returns the slot that `spec` fires in the current block, or `None` when
-/// the trigger does not fire.
-fn due_slot(ctx: &BlockRuntimeContext, spec: &TriggerSpec) -> Result<Option<DueSlot>> {
+/// the task does not fire.
+fn due_slot(ctx: &BlockRuntimeContext, spec: &TaskSpec) -> Result<Option<DueSlot>> {
     let block_ts = ctx.block.timestamp;
     let cycle: Cycle<'_> = ctx.storage.contract::<Cycle<'_>>();
     let last_executed_at = cycle.last_executed_at.read(&spec.id)?;
 
-    // First-ever encounter for this trigger: anchor `last_executed_at`
+    // First-ever encounter for this task: anchor `last_executed_at`
     // at the current block timestamp. The first real fire is then the
     // next slot strictly after this point. Without this anchor,
     // every chain would fire on its first block because real genesis
@@ -347,39 +343,39 @@ fn due_slot(ctx: &BlockRuntimeContext, spec: &TriggerSpec) -> Result<Option<DueS
 }
 
 /// Writes the current block timestamp as the first `last_executed_at` of `spec`.
-fn anchor_first_encounter(ctx: &BlockRuntimeContext, spec: &TriggerSpec) -> Result<()> {
+fn anchor_first_encounter(ctx: &BlockRuntimeContext, spec: &TaskSpec) -> Result<()> {
     let block_ts = ctx.block.timestamp;
     let cycle: Cycle<'_> = ctx.storage.contract::<Cycle<'_>>();
     cycle.last_executed_at.write(&spec.id, block_ts)?;
     tracing::debug!(
         target: "outbe::cycle",
-        trigger_id = spec.id,
+        task_id = spec.id,
         label = spec.label,
         block_ts,
-        "cycle trigger anchored on first encounter; first fire deferred to next slot"
+        "cycle task anchored on first encounter; first fire deferred to next slot"
     );
     Ok(())
 }
 
 /// Returns `true` when a due slot of `spec` must stay pending until a later
 /// block. The deferral changes no state.
-fn slot_deferred(ctx: &BlockRuntimeContext, spec: &TriggerSpec) -> Result<bool> {
-    // refuse to fire a gated trigger until Phase 1
+fn slot_deferred(ctx: &BlockRuntimeContext, spec: &TaskSpec) -> Result<bool> {
+    // refuse to fire a gated task until Phase 1
     // has accounted the parent block. Under the V2 reorder,
     // Phase 1 commits BEFORE Phase 2 (`CycleTick`). Thus
     // this gate is normally vacuously satisfied. It fires only when
-    // a regression reorders the phases or a new trigger reads state
+    // a regression reorders the phases or a new task reads state
     // that races the parent-finalization tx. Defer silently (no
-    // error, no state change), so the trigger retries on the next
+    // error, no state change), so the task retries on the next
     // block.
     let progress = EvmAccountingProgress::new(ctx);
     if accounting_gate_blocks(spec, &progress, &ctx.block)? {
         tracing::debug!(
             target: "outbe::cycle",
-            trigger_id = spec.id,
+            task_id = spec.id,
             label = spec.label,
             block_number = ctx.block.block_number,
-            "cycle trigger deferred: Phase 1 has not yet accounted the parent block"
+            "cycle task deferred: Phase 1 has not yet accounted the parent block"
         );
         return Ok(true);
     }

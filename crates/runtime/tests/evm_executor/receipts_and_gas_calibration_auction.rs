@@ -10,7 +10,7 @@ fn calibration_populated_auction_handlers() {
         == Some(&keccak256("IntexAuctionCompletedEmpty(uint32,uint64)"))));
     // The Cycle does not push parked router work. Any address pushes it.
     assert!(!logs.iter().any(
-        |log| outbe_cycle::ICycle::CycleTriggerExecuted::decode_log(log)
+        |log| outbe_cycle::ICycle::CycleTaskExecuted::decode_log(log)
             .is_ok_and(|event| event.data.id == 8)
     ));
 }
@@ -99,7 +99,7 @@ fn populated_auction(chain_count: u32) -> Calibration {
                 .utc_day_vwap_last_finalized
                 .write(20240101)
                 .unwrap();
-            for spec in outbe_cycle::triggers::ACTIVE_TRIGGERS {
+            for spec in outbe_cycle::tasks::ACTIVE_TASKS {
                 outbe_cycle::schema::Cycle::new(storage.clone())
                     .last_executed_at
                     .write(&spec.id, GENESIS + 60)
@@ -147,7 +147,7 @@ fn calibration_live_auction_start() {
                 },
             )
             .unwrap();
-            for spec in outbe_cycle::triggers::ACTIVE_TRIGGERS {
+            for spec in outbe_cycle::tasks::ACTIVE_TASKS {
                 outbe_cycle::schema::Cycle::new(storage.clone())
                     .last_executed_at
                     .write(
@@ -292,7 +292,7 @@ fn due_auctions(steps: &[DueStep]) -> (u64, Vec<Log>) {
                 }
                 step.schedule(&storage, midnight);
             }
-            for spec in outbe_cycle::triggers::ACTIVE_TRIGGERS {
+            for spec in outbe_cycle::tasks::ACTIVE_TASKS {
                 outbe_cycle::schema::Cycle::new(storage.clone())
                     .last_executed_at
                     .write(
@@ -339,10 +339,10 @@ fn due_auctions(steps: &[DueStep]) -> (u64, Vec<Log>) {
     );
     assert!(!logs
         .iter()
-        .any(|log| outbe_cycle::ICycle::CycleTriggerOverBudget::decode_log(log).is_ok()));
+        .any(|log| outbe_cycle::ICycle::CycleTaskOverBudget::decode_log(log).is_ok()));
     let gross = samples
         .iter()
-        .find(|(id, _)| *id == outbe_cycle::triggers::TriggerId::AdvanceAuctions.as_u32())
+        .find(|(id, _)| *id == outbe_cycle::tasks::TaskId::AdvanceAuctions.as_u32())
         .unwrap()
         .1;
     eprintln!("DUE AUCTIONS {steps:?}: advance gross={gross}");
@@ -362,9 +362,9 @@ fn calibration_four_due_auctions_at_midnight() {
         assert!(gross <= bound, "{step:?} gross={gross}, bound={bound}");
     }
     let (gross, logs) = due_auctions(&DueStep::ALL);
-    let budget = outbe_cycle::triggers::ACTIVE_TRIGGERS
+    let budget = outbe_cycle::tasks::ACTIVE_TASKS
         .iter()
-        .find(|spec| spec.id == outbe_cycle::triggers::TriggerId::AdvanceAuctions.as_u32())
+        .find(|spec| spec.id == outbe_cycle::tasks::TaskId::AdvanceAuctions.as_u32())
         .unwrap()
         .work_budget_gas();
     assert!(gross <= budget, "gross={gross}, budget={budget}");
@@ -430,7 +430,7 @@ fn seed_accepted_auction(storage: StorageHandle<'_>, timestamp: u64, batches: u1
         .write(&price, U256::from(2_000_000))
         .unwrap();
     accept_auction_batches(storage.clone(), day, 1, batches);
-    for spec in outbe_cycle::triggers::ACTIVE_TRIGGERS {
+    for spec in outbe_cycle::tasks::ACTIVE_TASKS {
         outbe_cycle::schema::Cycle::new(storage.clone())
             .last_executed_at
             .write(
@@ -477,7 +477,7 @@ fn accepted_1088_bid_auction_completes_before_incremental_cycle_cleanup() {
     );
     assert!(!logs
         .iter()
-        .any(|log| outbe_cycle::ICycle::CycleTriggerOverBudget::decode_log(log).is_ok()));
+        .any(|log| outbe_cycle::ICycle::CycleTaskOverBudget::decode_log(log).is_ok()));
     assert!(logs.iter().any(|log| {
         outbe_desis::precompile::IDesis::IntexAuctionCompleted::decode_log(log)
             .is_ok_and(|event| event.data.units == 3 && event.data.totalDemand == 1088)
@@ -569,7 +569,7 @@ fn accepted_bid_deadlines_retire_with_reverting_router_within_advance_budget() {
         );
         assert!(!logs
             .iter()
-            .any(|log| outbe_cycle::ICycle::CycleTriggerOverBudget::decode_log(log).is_ok()));
+            .any(|log| outbe_cycle::ICycle::CycleTaskOverBudget::decode_log(log).is_ok()));
         let cost = samples.iter().find(|(id, _)| *id == 2).unwrap().1;
         let bound =
             outbe_desis::constants::ADVANCE_DAY_BASE_GAS + outbe_desis::constants::ADVANCE_FAIL_GAS;

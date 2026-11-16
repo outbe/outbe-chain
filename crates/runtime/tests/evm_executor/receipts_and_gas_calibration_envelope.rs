@@ -54,7 +54,7 @@ fn calibration_supported_liveness_overlap() {
 
 #[test]
 fn calibrated_canonical_envelope_fits_artifact_limit() {
-    let handlers = outbe_cycle::triggers::ACTIVE_TRIGGERS
+    let handlers = outbe_cycle::tasks::ACTIVE_TASKS
         .iter()
         .try_fold(0u64, |sum, spec| sum.checked_add(spec.work_budget_gas()))
         .unwrap();
@@ -224,7 +224,7 @@ fn calibration_noop_and_calendar_horizon() {
             ),
             |storage| {
                 seed_cycle_tick_genesis(storage.clone(), GENESIS, proposer).unwrap();
-                for spec in outbe_cycle::triggers::ACTIVE_TRIGGERS {
+                for spec in outbe_cycle::tasks::ACTIVE_TASKS {
                     outbe_cycle::schema::Cycle::new(storage.clone())
                         .last_executed_at
                         .write(&spec.id, GENESIS + 1)

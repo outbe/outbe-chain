@@ -114,7 +114,7 @@ fn dispatch_cycle_tick_records_preloaded_proposer() {
         assert_eq!(
             cycle
                 .last_executed_at
-                .read(&outbe_cycle::triggers::TriggerId::ProcessEmissionDay.as_u32())
+                .read(&outbe_cycle::tasks::TaskId::ProcessEmissionDay.as_u32())
                 .unwrap(),
             1_700_000_000
         );
