@@ -46,7 +46,7 @@ pub(super) struct DirectDevRegistration {
 pub(super) fn direct_dev_registration() -> DirectDevRegistration {
     let fixture = replacement_fixture_for_mode(
         AttestationOperationV1::RegisterEnclave,
-        AttestationMode::GramineDirectDev,
+        AttestationMode::NoAttestationDev,
     );
     let candidate_submission = load_replacement_candidate_submission(&fixture.node_data_dir)
         .unwrap()
@@ -164,8 +164,8 @@ pub(super) fn replacement_fixture_for_mode(
             components: crate::test_utils::canonical_dcap_collateral_fixture(),
             transition_key_ready_proof,
         }),
-        AttestationMode::GramineDirectDev => AttestationEvidenceV1::GramineDirectDev(
-            outbe_primitives::tee_attestation_v1::GramineDirectEvidenceV1 {
+        AttestationMode::NoAttestationDev => AttestationEvidenceV1::NoAttestationDev(
+            outbe_primitives::tee_attestation_v1::NoAttestationDevEvidenceV1 {
                 transition_key_ready_proof: None,
                 intent,
                 dev_attestation_public: enclave_signer.verifying_key().to_bytes(),

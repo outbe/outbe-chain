@@ -202,7 +202,7 @@ fn gramine_direct_dev_onboarding_is_bound_to_testnet_genesis_policy() {
         Some(&resident),
         Some(&source_manifest),
     );
-    let EnclaveResponse::GramineDirectDevOnboardingArtifactPreparedV1 {
+    let EnclaveResponse::NoAttestationDevOnboardingArtifactPreparedV1 {
         request_hash: actual_hash,
         onboarding_artifact,
         ..
@@ -224,7 +224,7 @@ fn gramine_direct_dev_onboarding_is_bound_to_testnet_genesis_policy() {
         Some(&source_manifest),
         &source_keys,
     );
-    let EnclaveResponse::GramineDirectDevOnboardingArtifactPreparedV2 {
+    let EnclaveResponse::NoAttestationDevOnboardingArtifactPreparedV2 {
         request_hash: v2_hash,
         onboarding_artifact: v2_artifact,
         attestation_tag,

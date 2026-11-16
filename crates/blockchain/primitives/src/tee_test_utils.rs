@@ -1,7 +1,7 @@
 //! Reachable development-network fixtures for cross-crate tests.
 //!
 //! This module is available only behind `test-utils`. It constructs real
-//! `GramineDirectDev` signatures and never fabricates a DCAP verdict, so callers
+//! `NoAttestationDev` signatures and never fabricates a DCAP verdict, so callers
 //! cannot mistake it for hardware or QVL evidence.
 
 use std::collections::BTreeMap;
@@ -14,7 +14,7 @@ use serde_json::Value;
 use crate::{
     signer::OutbeEvmSigner,
     tee_attestation_v1::{
-        AttestationEvidenceV1, AttestationMode, AttestationOperationV1, GramineDirectEvidenceV1,
+        AttestationEvidenceV1, AttestationMode, AttestationOperationV1, NoAttestationDevEvidenceV1,
         NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1, RegistrationIntentV1, ResourceScheduleV1,
         TeeMeasurementRuleV1, TeePolicyV1, TransitionKeyReadyProofV1, ValidatorNodeBindingV1,
         INTEL_QE_VENDOR_ID,
@@ -67,7 +67,15 @@ pub fn signed_transition_key_ready_proof(
     proof
 }
 
+/// Transitional spelling for downstream callers; remove after the rename wave.
 pub fn gramine_direct_policy_v1(chain_id: u64, genesis_hash: B256) -> Result<TeePolicyV1, String> {
+    no_attestation_dev_policy_v1(chain_id, genesis_hash)
+}
+
+pub fn no_attestation_dev_policy_v1(
+    chain_id: u64,
+    genesis_hash: B256,
+) -> Result<TeePolicyV1, String> {
     let resource_schedule_hash = ResourceScheduleV1::normative()
         .and_then(|schedule| schedule.schedule_hash())
         .map_err(|error| format!("derive normative resource schedule: {error}"))?;
@@ -77,7 +85,7 @@ pub fn gramine_direct_policy_v1(chain_id: u64, genesis_hash: B256) -> Result<Tee
         genesis_hash,
         activation_height: 1,
         predecessor_policy_hash: B256::ZERO,
-        attestation_mode: AttestationMode::GramineDirectDev,
+        attestation_mode: AttestationMode::NoAttestationDev,
         intel_root_der_hash: B256::repeat_byte(0x72),
         quote_version: 3,
         tee_type: 0,
@@ -187,7 +195,7 @@ pub fn gramine_direct_bootstrap_v2(
             chain_id: policy.chain_id,
             genesis_hash: policy.genesis_hash,
             operation: AttestationOperationV1::RegisterEnclave,
-            attestation_mode: AttestationMode::GramineDirectDev,
+            attestation_mode: AttestationMode::NoAttestationDev,
             policy_hash,
             node_id: NodeIdV1 { reth_p2p_public },
             enclave_id: B256::repeat_byte(1),
@@ -241,7 +249,7 @@ pub fn gramine_direct_bootstrap_v2(
             .try_into()
             .map_err(|_| "GramineDirectDev test signature is not Ed25519-64")?;
         submissions.push(TeeBootstrapParticipantSubmissionV2 {
-            evidence: AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+            evidence: AttestationEvidenceV1::NoAttestationDev(NoAttestationDevEvidenceV1 {
                 transition_key_ready_proof: None,
                 intent,
                 dev_attestation_public: attestation_public,

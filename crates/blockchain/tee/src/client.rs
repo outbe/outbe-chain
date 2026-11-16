@@ -409,7 +409,7 @@ impl EnclaveClient {
         )
     }
 
-    /// Ask the enclave to sign one exact canonical GramineDirectDev
+    /// Ask the enclave to sign one exact canonical NoAttestationDev
     /// registration intent. This development transport never produces a quote
     /// or DCAP verdict.
     pub fn sign_registration_intent_dev_v1(
@@ -858,7 +858,7 @@ impl AuthorizedEnclaveClient {
         validate_generated_dcap_quote(intent, &canonical_intent, self.attestation_pub, response)
     }
 
-    /// Sign GramineDirectDev evidence through the authenticated production
+    /// Sign NoAttestationDev evidence through the authenticated production
     /// NodeHost session. The enclave itself permits this only while running in
     /// real SGX with remote attestation disabled (`SgxNoAttest`).
     pub fn sign_registration_intent_dev_v1(
@@ -977,18 +977,26 @@ impl AuthorizedEnclaveClient {
         validate_dcap_onboarding_response(self.attestation_pub, request_hash, response)
     }
 
+    /// Transitional spelling for downstream callers; remove after the rename wave.
     pub fn prepare_gramine_direct_dev_onboarding_artifact_v1(
+        &mut self,
+        context: DcapOnboardingContextV1,
+    ) -> Result<DcapOnboardingArtifactV1, TransportError> {
+        self.prepare_no_attestation_dev_onboarding_artifact_v1(context)
+    }
+
+    pub fn prepare_no_attestation_dev_onboarding_artifact_v1(
         &mut self,
         context: DcapOnboardingContextV1,
     ) -> Result<DcapOnboardingArtifactV1, TransportError> {
         let request_hash = context.context_hash();
         let response = self.request(
-            &EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 {
+            &EnclaveRequest::PrepareNoAttestationDevOnboardingArtifactV1 {
                 request_hash,
                 context: context.encode_canonical(),
             },
         )?;
-        let EnclaveResponse::GramineDirectDevOnboardingArtifactPreparedV1 {
+        let EnclaveResponse::NoAttestationDevOnboardingArtifactPreparedV1 {
             request_hash: actual_request_hash,
             onboarding_artifact,
         } = response
@@ -1002,7 +1010,7 @@ impl AuthorizedEnclaveClient {
         }
         let artifact =
             DcapOnboardingArtifactV1::decode_canonical(&onboarding_artifact).map_err(|code| {
-                crate::errors::TeeClientVerificationError::GramineDirectDevOnboardingArtifactNonCanonical {
+                crate::errors::TeeClientVerificationError::NoAttestationDevOnboardingArtifactNonCanonical {
                     code: code.code(),
                 }
             })?;
@@ -1082,7 +1090,7 @@ fn request_gramine_direct_dev_signature(
     intent: &RegistrationIntentV1,
     request: impl FnOnce(&EnclaveRequest) -> Result<EnclaveResponse, TransportError>,
 ) -> Result<[u8; 64], TransportError> {
-    if intent.attestation_mode != AttestationMode::GramineDirectDev
+    if intent.attestation_mode != AttestationMode::NoAttestationDev
         || intent.attestation_ed25519 != attestation_pub
     {
         return Err(TransportError::Attestation(

@@ -17,7 +17,7 @@ pub enum EnclaveWitnessEntryV1 {
         onboarding_artifact: Vec<u8>,
         attestation_tag: Vec<u8>,
     },
-    GramineDirectDevOnboardingArtifactPreparedV2 {
+    NoAttestationDevOnboardingArtifactPreparedV2 {
         request_hash: B256,
         onboarding_artifact: Vec<u8>,
         attestation_tag: Vec<u8>,
@@ -63,12 +63,12 @@ impl EnclaveWitnessEntryV1 {
                 },
             ) => a == b && ao == bo && aa == ba,
             (
-                GramineDirectDevOnboardingArtifactPreparedV2 {
+                NoAttestationDevOnboardingArtifactPreparedV2 {
                     request_hash: a,
                     onboarding_artifact: aa,
                     ..
                 },
-                GramineDirectDevOnboardingArtifactPreparedV2 {
+                NoAttestationDevOnboardingArtifactPreparedV2 {
                     request_hash: b,
                     onboarding_artifact: ba,
                     ..
@@ -132,11 +132,11 @@ impl TryFrom<EnclaveResponse> for EnclaveWitnessEntryV1 {
                 onboarding_artifact,
                 attestation_tag,
             },
-            R::GramineDirectDevOnboardingArtifactPreparedV2 {
+            R::NoAttestationDevOnboardingArtifactPreparedV2 {
                 request_hash,
                 onboarding_artifact,
                 attestation_tag,
-            } => Self::GramineDirectDevOnboardingArtifactPreparedV2 {
+            } => Self::NoAttestationDevOnboardingArtifactPreparedV2 {
                 request_hash,
                 onboarding_artifact,
                 attestation_tag,
@@ -180,11 +180,11 @@ impl From<EnclaveWitnessEntryV1> for EnclaveResponse {
                 onboarding_artifact,
                 attestation_tag,
             },
-            W::GramineDirectDevOnboardingArtifactPreparedV2 {
+            W::NoAttestationDevOnboardingArtifactPreparedV2 {
                 request_hash,
                 onboarding_artifact,
                 attestation_tag,
-            } => Self::GramineDirectDevOnboardingArtifactPreparedV2 {
+            } => Self::NoAttestationDevOnboardingArtifactPreparedV2 {
                 request_hash,
                 onboarding_artifact,
                 attestation_tag,

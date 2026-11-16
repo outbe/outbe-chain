@@ -139,7 +139,7 @@ pub(in crate::transport) fn complete_gramine_direct_dev_onboarding_ingest_respon
     })();
     match result {
         Ok(network_encryption_public) => {
-            EnclaveResponse::GramineDirectDevOnboardingArtifactIngestedV1 {
+            EnclaveResponse::NoAttestationDevOnboardingArtifactIngestedV1 {
                 network_encryption_public,
             }
         }

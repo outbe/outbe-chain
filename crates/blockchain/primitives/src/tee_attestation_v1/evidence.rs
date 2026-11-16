@@ -238,7 +238,7 @@ impl DcapEvidenceV1 {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GramineDirectEvidenceV1 {
+pub struct NoAttestationDevEvidenceV1 {
     pub intent: RegistrationIntentV1,
     pub dev_attestation_public: [u8; 32],
     pub dev_signature: [u8; 64],
@@ -246,9 +246,12 @@ pub struct GramineDirectEvidenceV1 {
     pub transition_key_ready_proof: Option<TransitionKeyReadyProofV1>,
 }
 
-impl GramineDirectEvidenceV1 {
+/// Transitional spelling for downstream callers; remove after the rename wave.
+pub type GramineDirectEvidenceV1 = NoAttestationDevEvidenceV1;
+
+impl NoAttestationDevEvidenceV1 {
     pub(super) fn encode_payload(&self) -> Result<Vec<u8>, CodecError> {
-        if self.intent.attestation_mode != AttestationMode::GramineDirectDev {
+        if self.intent.attestation_mode != AttestationMode::NoAttestationDev {
             return Err(CodecError::NonCanonical(
                 "Gramine evidence intent mode mismatch",
             ));
@@ -310,7 +313,7 @@ impl GramineDirectEvidenceV1 {
                 "DirectDev transition evidence version",
             ));
         }
-        if value.intent.attestation_mode != AttestationMode::GramineDirectDev {
+        if value.intent.attestation_mode != AttestationMode::NoAttestationDev {
             return Err(CodecError::NonCanonical(
                 "Gramine evidence intent mode mismatch",
             ));
@@ -327,27 +330,33 @@ impl GramineDirectEvidenceV1 {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AttestationEvidenceV1 {
     Dcap(DcapEvidenceV1),
-    GramineDirectDev(GramineDirectEvidenceV1),
+    NoAttestationDev(NoAttestationDevEvidenceV1),
 }
 
 impl AttestationEvidenceV1 {
+    /// Transitional expression constructor; patterns must use `NoAttestationDev`.
+    #[allow(non_snake_case)]
+    pub fn GramineDirectDev(value: NoAttestationDevEvidenceV1) -> Self {
+        Self::NoAttestationDev(value)
+    }
+
     pub fn intent(&self) -> &RegistrationIntentV1 {
         match self {
             Self::Dcap(v) => &v.intent,
-            Self::GramineDirectDev(v) => &v.intent,
+            Self::NoAttestationDev(v) => &v.intent,
         }
     }
     pub fn transition_key_ready_proof(&self) -> Option<&TransitionKeyReadyProofV1> {
         match self {
             Self::Dcap(v) => v.transition_key_ready_proof.as_ref(),
-            Self::GramineDirectDev(v) => v.transition_key_ready_proof.as_ref(),
+            Self::NoAttestationDev(v) => v.transition_key_ready_proof.as_ref(),
         }
     }
     pub fn encode_canonical(&self) -> Result<Vec<u8>, CodecError> {
         let (mode, payload) = match self {
             Self::Dcap(value) => (AttestationMode::DcapRequired, value.encode_payload()?),
-            Self::GramineDirectDev(value) => {
-                (AttestationMode::GramineDirectDev, value.encode_payload()?)
+            Self::NoAttestationDev(value) => {
+                (AttestationMode::NoAttestationDev, value.encode_payload()?)
             }
         };
         let mut out = Vec::new();
@@ -379,8 +388,8 @@ impl AttestationEvidenceV1 {
         let payload = decoder.take(payload_len)?;
         let value = match mode {
             AttestationMode::DcapRequired => Self::Dcap(DcapEvidenceV1::decode_payload(payload)?),
-            AttestationMode::GramineDirectDev => {
-                Self::GramineDirectDev(GramineDirectEvidenceV1::decode_payload(payload)?)
+            AttestationMode::NoAttestationDev => {
+                Self::NoAttestationDev(NoAttestationDevEvidenceV1::decode_payload(payload)?)
             }
         };
         decoder.finish()?;
@@ -397,7 +406,7 @@ impl AttestationEvidenceV1 {
     pub const fn mode(&self) -> AttestationMode {
         match self {
             Self::Dcap(_) => AttestationMode::DcapRequired,
-            Self::GramineDirectDev(_) => AttestationMode::GramineDirectDev,
+            Self::NoAttestationDev(_) => AttestationMode::NoAttestationDev,
         }
     }
 }

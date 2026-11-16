@@ -14,7 +14,9 @@
 use alloy_primitives::B256;
 
 /// Canonical DirectDev onboarding context used by the typed enclave request.
-pub type GramineDirectDevOnboardingContextV1 = crate::dcap_protocol::DcapOnboardingContextV1;
+pub type GramineDirectDevOnboardingContextV1 = NoAttestationDevOnboardingContextV1;
+
+pub type NoAttestationDevOnboardingContextV1 = crate::dcap_protocol::DcapOnboardingContextV1;
 
 mod enclave_request;
 mod enclave_response;

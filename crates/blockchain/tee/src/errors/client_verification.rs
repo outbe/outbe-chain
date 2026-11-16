@@ -32,7 +32,7 @@ pub enum TeeClientVerificationError {
     #[error("invalid onboarding verifier input dimensions: {code:#06x}")]
     InvalidOnboardingVerifierInputDimensions { code: u16 },
     #[error("GramineDirectDev onboarding artifact is non-canonical: {code:#06x}")]
-    GramineDirectDevOnboardingArtifactNonCanonical { code: u16 },
+    NoAttestationDevOnboardingArtifactNonCanonical { code: u16 },
     #[error("verification offset exceeds u32")]
     VerificationOffsetExceedsU32,
     #[error("verification offset overflow")]
@@ -82,7 +82,7 @@ impl From<TeeClientVerificationError> for TransportError {
             TeeClientVerificationError::StreamMissingCallContext
             | TeeClientVerificationError::EnclaveSessionNotConfigured
             | TeeClientVerificationError::TeeSidecarUnavailable
-            | TeeClientVerificationError::GramineDirectDevOnboardingArtifactNonCanonical {
+            | TeeClientVerificationError::NoAttestationDevOnboardingArtifactNonCanonical {
                 ..
             } => Self::EnclaveError(error.to_string()),
             TeeClientVerificationError::TrailingEnclaveCallBytes

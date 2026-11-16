@@ -3,7 +3,7 @@ use super::*;
 pub(super) fn evidence_intent(evidence: &AttestationEvidenceV1) -> &RegistrationIntentV1 {
     match evidence {
         AttestationEvidenceV1::Dcap(value) => &value.intent,
-        AttestationEvidenceV1::GramineDirectDev(value) => &value.intent,
+        AttestationEvidenceV1::NoAttestationDev(value) => &value.intent,
     }
 }
 
@@ -118,7 +118,7 @@ pub(super) fn validate_submission(
             crate::errors::TeeBootstrapError::SubmissionNotCanonicalCommitteeRegistration.into(),
         );
     }
-    if let AttestationEvidenceV1::GramineDirectDev(dev) = &submission.evidence {
+    if let AttestationEvidenceV1::NoAttestationDev(dev) = &submission.evidence {
         if dev.dev_attestation_public != intent.attestation_ed25519
             || dev.dev_signature != submission.enclave_signature
         {
@@ -206,7 +206,7 @@ mod validation_regression {
     ) -> &mut RegistrationIntentV1 {
         match &mut submission.evidence {
             AttestationEvidenceV1::Dcap(value) => &mut value.intent,
-            AttestationEvidenceV1::GramineDirectDev(value) => &mut value.intent,
+            AttestationEvidenceV1::NoAttestationDev(value) => &mut value.intent,
         }
     }
 
@@ -259,7 +259,7 @@ mod validation_regression {
         let (base, policy, committee) = fixture();
         for alter_public in [true, false] {
             let mut submission = base.clone();
-            let AttestationEvidenceV1::GramineDirectDev(dev) = &mut submission.evidence else {
+            let AttestationEvidenceV1::NoAttestationDev(dev) = &mut submission.evidence else {
                 unreachable!()
             };
             if alter_public {

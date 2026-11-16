@@ -255,7 +255,7 @@ pub fn export_from_network_source(
     let mut session = crate::try_with_enclave(|s| s.fork_connection())
         .ok_or_else(|| invalid(crate::errors::UpgradeTransferError::SourceEnclaveNotConfigured))?;
     let artifact = if legacy_direct_dev {
-        session.prepare_gramine_direct_dev_onboarding_artifact_v1(context)?
+        session.prepare_no_attestation_dev_onboarding_artifact_v1(context)?
     } else {
         let placeholder = export_placeholder(context)?;
         let response = session.export_upgrade_key_v1(proof, &placeholder)?;

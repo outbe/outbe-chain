@@ -421,7 +421,7 @@ mod tests {
         for foreign in [
             binding(3, 2, AttestationMode::DcapRequired),
             binding(1, 3, AttestationMode::DcapRequired),
-            binding(1, 2, AttestationMode::GramineDirectDev),
+            binding(1, 2, AttestationMode::NoAttestationDev),
         ] {
             assert!(matches!(
                 unseal_tribute_offer_and_group_sig(&blob, &TEST_SEALING_KEY, foreign, 1),

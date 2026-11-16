@@ -1,7 +1,7 @@
 //! Genesis-fixed authority for V1 TEE attestation.
 //!
 //! Every runnable chain must carry this field. Devnet and testnet may
-//! explicitly select `DcapRequired` or `GramineDirectDev`. Mainnet requires
+//! explicitly select `DcapRequired` or `NoAttestationDev`. Mainnet requires
 //! `DcapRequired`. Both use OST3, and neither can fall back at runtime.
 
 use std::sync::Arc;
@@ -412,8 +412,8 @@ fn validate_activation(
                     mainnet: MAINNET_CHAIN_ID,
                 }
             }
-            AttestationMode::GramineDirectDev => {
-                TeeAttestationActivationError::GramineDirectDevChainIdDisallowed {
+            AttestationMode::NoAttestationDev => {
+                TeeAttestationActivationError::NoAttestationDevChainIdDisallowed {
                     devnet: GRAMINE_DIRECT_DEV_CHAIN_ID,
                     testnet: TESTNET_CHAIN_ID,
                 }
@@ -743,7 +743,7 @@ mod tests {
             activation(
                 dev_chain_id,
                 dev_genesis_hash,
-                AttestationMode::GramineDirectDev,
+                AttestationMode::NoAttestationDev,
             ),
             dev_chain_id,
             dev_genesis_hash,
@@ -751,13 +751,13 @@ mod tests {
         .unwrap();
         assert_eq!(
             dev.policy_at(1).unwrap().attestation_mode,
-            AttestationMode::GramineDirectDev
+            AttestationMode::NoAttestationDev
         );
         let testnet = validate_activation(
             activation(
                 TESTNET_CHAIN_ID,
                 dev_genesis_hash,
-                AttestationMode::GramineDirectDev,
+                AttestationMode::NoAttestationDev,
             ),
             TESTNET_CHAIN_ID,
             dev_genesis_hash,
@@ -765,7 +765,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             testnet.policy_at(1).unwrap().attestation_mode,
-            AttestationMode::GramineDirectDev
+            AttestationMode::NoAttestationDev
         );
 
         let unknown_chain_id = TESTNET_CHAIN_ID + 1;
@@ -773,7 +773,7 @@ mod tests {
             activation(
                 unknown_chain_id,
                 dev_genesis_hash,
-                AttestationMode::GramineDirectDev,
+                AttestationMode::NoAttestationDev,
             ),
             unknown_chain_id,
             dev_genesis_hash,
@@ -785,7 +785,7 @@ mod tests {
             activation(
                 MAINNET_CHAIN_ID,
                 dev_genesis_hash,
-                AttestationMode::GramineDirectDev,
+                AttestationMode::NoAttestationDev,
             ),
             MAINNET_CHAIN_ID,
             dev_genesis_hash,

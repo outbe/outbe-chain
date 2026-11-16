@@ -278,9 +278,9 @@ impl InitializationState {
             .ok_or(CommandDenial::NotReady("enclave is not initialized"))?;
         if matches!(
             request,
-            EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 { .. }
-                | EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 { .. }
-                | EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 { .. }
+            EnclaveRequest::PrepareNoAttestationDevOnboardingArtifactV1 { .. }
+                | EnclaveRequest::PrepareNoAttestationDevOnboardingArtifactV2 { .. }
+                | EnclaveRequest::IngestNoAttestationDevOnboardingArtifactV1 { .. }
         ) && (!self.gramine_direct_dev_evidence_allowed
             || manifest.attestation_mode != AttestationMode::GramineDirectDev)
         {
@@ -520,12 +520,12 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         | EnclaveRequest::DkgNetworkKeyPartial { .. }
         | EnclaveRequest::DkgFinalizeNetworkKey { .. } => CommandClass::FoundingKeyless,
         EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 { .. }
-        | EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 { .. } => {
+        | EnclaveRequest::IngestNoAttestationDevOnboardingArtifactV1 { .. } => {
             CommandClass::KeylessOnboardingArtifact
         }
         EnclaveRequest::Payload { .. }
-        | EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 { .. }
-        | EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 { .. } => CommandClass::Ready,
+        | EnclaveRequest::PrepareNoAttestationDevOnboardingArtifactV1 { .. }
+        | EnclaveRequest::PrepareNoAttestationDevOnboardingArtifactV2 { .. } => CommandClass::Ready,
         EnclaveRequest::GetQuote { .. }
         | EnclaveRequest::GetInitializationChallenge
         | EnclaveRequest::Initialize { .. }
@@ -541,13 +541,13 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
 pub(crate) fn request_class_label(request: &EnclaveRequest) -> crate::telemetry::RequestClassLabel {
     use crate::telemetry::RequestClassLabel;
     match request {
-        EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 { .. } => {
+        EnclaveRequest::PrepareNoAttestationDevOnboardingArtifactV1 { .. } => {
             return RequestClassLabel::DevSourceSeal
         }
-        EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 { .. } => {
+        EnclaveRequest::PrepareNoAttestationDevOnboardingArtifactV2 { .. } => {
             return RequestClassLabel::DevSourceSeal
         }
-        EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 { .. } => {
+        EnclaveRequest::IngestNoAttestationDevOnboardingArtifactV1 { .. } => {
             return RequestClassLabel::DevRecipientIngest
         }
         _ => {}

@@ -22,12 +22,12 @@ fn assert_hash(bytes: &[u8], expected: &str) {
 #[test]
 fn network_and_stable_node_authorization_vectors() {
     assert_eq!(AttestationMode::DcapRequired as u8, 1);
-    assert_eq!(AttestationMode::GramineDirectDev as u8, 2);
+    assert_eq!(AttestationMode::NoAttestationDev as u8, 2);
     assert_eq!(NetworkBindingV1::CANONICAL_LEN, 66);
     let binding = NetworkBindingV1 {
         chain_id: [0x11; 32],
         genesis_hash: B256::repeat_byte(0x22),
-        attestation_mode: AttestationMode::GramineDirectDev,
+        attestation_mode: AttestationMode::NoAttestationDev,
     };
     let expected = hex::decode(concat!(
     "011111111111111111111111111111111111111111111111111111111111111111222222222222222222222222222222",
@@ -178,7 +178,7 @@ fn genesis_measurements_policy_and_mode_admission() {
         (u64::MAX, false),
     ] {
         assert_eq!(
-            is_attestation_mode_allowed_for_chain_id(chain_id, AttestationMode::GramineDirectDev),
+            is_attestation_mode_allowed_for_chain_id(chain_id, AttestationMode::NoAttestationDev),
             allowed
         );
     }
@@ -193,7 +193,7 @@ fn genesis_measurements_policy_and_mode_admission() {
         AttestationMode::DcapRequired
     ));
     let policy = initial_tee_policy_v1(
-        InitialTeeProfileV1::GramineDirectDev,
+        InitialTeeProfileV1::NoAttestationDev,
         DEVNET_CHAIN_ID,
         B256::repeat_byte(0x22),
     )
@@ -274,7 +274,7 @@ fn evidence_canonical_framing_vector() {
         chain_id: [0x11; 32],
         genesis_hash: B256::repeat_byte(0x22),
         operation: AttestationOperationV1::RegisterEnclave,
-        attestation_mode: AttestationMode::GramineDirectDev,
+        attestation_mode: AttestationMode::NoAttestationDev,
         policy_hash: B256::repeat_byte(0x33),
         node_id: node(),
         enclave_id: B256::repeat_byte(0x44),
@@ -289,7 +289,7 @@ fn evidence_canonical_framing_vector() {
         noise_responder_x25519: [0x88; 32],
         node_host_authorization_hash: B256::repeat_byte(0x99),
     };
-    let evidence = AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+    let evidence = AttestationEvidenceV1::NoAttestationDev(NoAttestationDevEvidenceV1 {
         intent: intent.clone(),
         dev_attestation_public: [0xaa; 32],
         dev_signature: [0xbb; 64],

@@ -341,7 +341,7 @@ fn gramine_direct_dev_onboarding_is_mode_gated_and_persists_before_activation() 
         Some(&resident),
         Some(&source_manifest),
     );
-    let EnclaveResponse::GramineDirectDevOnboardingArtifactPreparedV1 {
+    let EnclaveResponse::NoAttestationDevOnboardingArtifactPreparedV1 {
         onboarding_artifact,
         ..
     } = prepared
@@ -372,7 +372,7 @@ fn gramine_direct_dev_onboarding_is_mode_gated_and_persists_before_activation() 
         .unwrap();
     dcap_initialization.commit(pending, &dcap_keys).unwrap();
 
-    let request = EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 {
+    let request = EnclaveRequest::IngestNoAttestationDevOnboardingArtifactV1 {
         artifact: onboarding_artifact.clone(),
         expected_intent_hash: context.intent_hash,
         expected_network_encryption_public: context.network_encryption_public,
@@ -403,7 +403,7 @@ fn gramine_direct_dev_onboarding_is_mode_gated_and_persists_before_activation() 
         Some(&target_boot),
         Some(&target_initialization),
     );
-    let EnclaveResponse::GramineDirectDevOnboardingArtifactIngestedV1 {
+    let EnclaveResponse::NoAttestationDevOnboardingArtifactIngestedV1 {
         network_encryption_public,
     } = response
     else {

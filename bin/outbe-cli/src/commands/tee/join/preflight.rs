@@ -120,7 +120,7 @@ fn decode_submission_intent(submission: &DurableJoinSubmissionV1) -> Result<Regi
         .map_err(TeeJoinError::DecodeDurableCheckpoint)?;
     Ok(match evidence {
         AttestationEvidenceV1::Dcap(value) => value.intent,
-        AttestationEvidenceV1::GramineDirectDev(value) => value.intent,
+        AttestationEvidenceV1::NoAttestationDev(value) => value.intent,
     })
 }
 

@@ -113,7 +113,7 @@ fn with_operation(
 ) -> AttestationEvidenceV1 {
     match &mut evidence {
         AttestationEvidenceV1::Dcap(value) => value.intent.operation = operation,
-        AttestationEvidenceV1::GramineDirectDev(value) => value.intent.operation = operation,
+        AttestationEvidenceV1::NoAttestationDev(value) => value.intent.operation = operation,
     }
     evidence
 }
@@ -178,7 +178,7 @@ fn replacement_write_path_keeps_its_operation_and_signature_errors() {
 fn direct_dev_enclave_signature_mismatch_fails_operation_selection_first() {
     let fixture = replacement_fixture_for_mode(
         AttestationOperationV1::RegisterEnclave,
-        AttestationMode::GramineDirectDev,
+        AttestationMode::NoAttestationDev,
     );
     let source = read_replacement_submission(&fixture.paths.replacement_submission).unwrap();
     let evidence = AttestationEvidenceV1::decode_canonical(source.evidence()).unwrap();

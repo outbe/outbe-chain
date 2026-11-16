@@ -160,7 +160,7 @@ pub enum UpgradeError {
     #[error("upgrade submission has no relay transaction")]
     MissingRelayTransaction,
 
-    /// The candidate failed to generate `GramineDirectDev` evidence.
+    /// The candidate failed to generate `NoAttestationDev` evidence.
     #[error("generate DirectDev transition evidence: {0}")]
     GenerateDirectDevEvidence(#[source] TransportError),
 

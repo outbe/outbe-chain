@@ -16,7 +16,7 @@ fn entries(tag: u8) -> [W; 4] {
             onboarding_artifact: vec![0x31],
             attestation_tag: vec![tag],
         },
-        W::GramineDirectDevOnboardingArtifactPreparedV2 {
+        W::NoAttestationDevOnboardingArtifactPreparedV2 {
             request_hash,
             onboarding_artifact: vec![0x31],
             attestation_tag: vec![tag],
@@ -60,7 +60,7 @@ fn postcard_variant_vectors_and_tag_semantics() {
         match &mut changed {
             W::DcapVerificationFinishedV1 { request_hash, .. }
             | W::DcapOnboardingVerificationFinishedV1 { request_hash, .. }
-            | W::GramineDirectDevOnboardingArtifactPreparedV2 { request_hash, .. } => {
+            | W::NoAttestationDevOnboardingArtifactPreparedV2 { request_hash, .. } => {
                 *request_hash = B256::repeat_byte(0x12)
             }
             W::Payload {
@@ -73,7 +73,7 @@ fn postcard_variant_vectors_and_tag_semantics() {
         match &mut changed {
             W::DcapVerificationFinishedV1 { outcome, .. }
             | W::DcapOnboardingVerificationFinishedV1 { outcome, .. } => outcome.push(0x23),
-            W::GramineDirectDevOnboardingArtifactPreparedV2 {
+            W::NoAttestationDevOnboardingArtifactPreparedV2 {
                 onboarding_artifact,
                 ..
             } => onboarding_artifact.push(0x32),
@@ -117,7 +117,7 @@ fn onboarding_verifier_accepts_only_the_frozen_signed_domain() {
     use ed25519_dalek::{Signer as _, SigningKey};
     use outbe_tee::{
         dcap_protocol::{DcapOnboardingArtifactV1, DcapOnboardingContextV1},
-        prepare_gramine_direct_dev_onboarding_artifact_v1,
+        prepare_no_attestation_dev_onboarding_artifact_v1,
         witness::{
             EnclaveWitnessTapeV1, WitnessExecutionMode, WitnessExecutionScope, WitnessState,
         },
@@ -169,7 +169,7 @@ fn onboarding_verifier_accepts_only_the_frozen_signed_domain() {
         ),
     ] {
         let preimage = [domain, request_hash.as_slice(), json.as_bytes()].concat();
-        let entry = W::GramineDirectDevOnboardingArtifactPreparedV2 {
+        let entry = W::NoAttestationDevOnboardingArtifactPreparedV2 {
             request_hash,
             onboarding_artifact: encoded.clone(),
             attestation_tag: signing.sign(&preimage).to_bytes().to_vec(),
@@ -184,7 +184,7 @@ fn onboarding_verifier_accepts_only_the_frozen_signed_domain() {
             tape,
         )));
         let _scope = WitnessExecutionScope::enter(state);
-        let result = prepare_gramine_direct_dev_onboarding_artifact_v1(context);
+        let result = prepare_no_attestation_dev_onboarding_artifact_v1(context);
         if accepted {
             assert_eq!(result.unwrap(), artifact);
         } else {

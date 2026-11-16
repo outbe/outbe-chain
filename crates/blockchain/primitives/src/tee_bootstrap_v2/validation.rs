@@ -89,7 +89,7 @@ fn validate_authority_shape(payload: &TeeBootstrapV2) -> Result<(), CodecError> 
                 "DCAP TEE bootstrap collateral pool is empty",
             ));
         }
-        AttestationMode::GramineDirectDev if !payload.collateral_pool.is_empty() => {
+        AttestationMode::NoAttestationDev if !payload.collateral_pool.is_empty() => {
             return Err(CodecError::NonCanonical(
                 "GramineDirectDev TEE bootstrap must not carry DCAP collateral",
             ));
@@ -177,10 +177,10 @@ fn validate_participant_evidence(
                 used_components,
             )?;
         }
-        TeeBootstrapParticipantEvidenceV2::GramineDirectDev {
+        TeeBootstrapParticipantEvidenceV2::NoAttestationDev {
             dev_attestation_public,
             dev_signature,
-        } if payload.authority.policy.attestation_mode == AttestationMode::GramineDirectDev => {
+        } if payload.authority.policy.attestation_mode == AttestationMode::NoAttestationDev => {
             if dev_attestation_public != &participant.intent.attestation_ed25519
                 || dev_signature != &participant.enclave_signature
                 || !participant.intent.verify_enclave_signature(dev_signature)

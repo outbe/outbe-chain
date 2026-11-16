@@ -14,7 +14,7 @@ pub fn verify_complete_request(
 
     let evidence = match AttestationEvidenceV1::decode_canonical(evidence) {
         Ok(AttestationEvidenceV1::Dcap(evidence)) => evidence,
-        Ok(AttestationEvidenceV1::GramineDirectDev(_)) | Err(_) => {
+        Ok(AttestationEvidenceV1::NoAttestationDev(_)) | Err(_) => {
             return DcapVerificationOutcomeV1::Rejected(DcapRejectCodeV1::EvidenceNonCanonical);
         }
     };

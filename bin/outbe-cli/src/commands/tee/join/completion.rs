@@ -121,7 +121,7 @@ fn ingest_gramine_direct_dev_artifact(
     ctx: &OnboardingIngestContext<'_>,
 ) -> Result<[u8; 32]> {
     match enclave.request(
-        &EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 {
+        &EnclaveRequest::IngestNoAttestationDevOnboardingArtifactV1 {
             artifact,
             expected_intent_hash: ctx.intent_hash,
             expected_network_encryption_public: ctx.expected_offer_pub,
@@ -129,7 +129,7 @@ fn ingest_gramine_direct_dev_artifact(
             expected_network_encryption_epoch: ctx.tribute_offer_epoch,
         },
     )? {
-        EnclaveResponse::GramineDirectDevOnboardingArtifactIngestedV1 {
+        EnclaveResponse::NoAttestationDevOnboardingArtifactIngestedV1 {
             network_encryption_public,
         } if network_encryption_public == ctx.expected_offer_pub => Ok(network_encryption_public),
         other => Err(

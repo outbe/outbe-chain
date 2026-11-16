@@ -319,7 +319,7 @@ async fn direct_dev_prepare_builds_the_shared_calldata_and_relay_transaction() {
         decoded_evidence.evidence_hash().unwrap(),
         attempt.evidence_hash
     );
-    let AttestationEvidenceV1::GramineDirectDev(direct) = decoded_evidence else {
+    let AttestationEvidenceV1::NoAttestationDev(direct) = decoded_evidence else {
         panic!("expected GramineDirectDev evidence");
     };
     assert_eq!(direct.intent, decoded_intent);

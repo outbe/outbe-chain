@@ -696,7 +696,7 @@ mod tests {
                     minimum_tcb_evaluation_data_number: 1,
                 })
             }
-            AttestationMode::GramineDirectDev => InitialTeeProfileV1::GramineDirectDev,
+            AttestationMode::NoAttestationDev => InitialTeeProfileV1::NoAttestationDev,
         };
         let policy =
             initial_tee_policy_v1(profile, DEVNET_CHAIN_ID, B256::repeat_byte(0x72)).unwrap();
@@ -746,7 +746,7 @@ mod tests {
 
     #[tokio::test]
     async fn renewal_of_early_upgraded_node_selects_its_exact_staged_policy() {
-        let mut rpc = registry_rpc(true, AttestationMode::GramineDirectDev);
+        let mut rpc = registry_rpc(true, AttestationMode::NoAttestationDev);
         let mut successor = rpc.policy.clone();
         successor.policy_version += 1;
         successor.predecessor_policy_hash = rpc.policy.policy_hash().unwrap();
@@ -781,19 +781,19 @@ mod tests {
     async fn public_readers_keep_mode_neutral_binding_and_legacy_dcap_error_order() {
         let selector = NodeBindingSelectorV1::NodeHost([2; 33]);
         let bound = read_finalized_bound_renewal_view_v1(
-            &registry_rpc(true, AttestationMode::GramineDirectDev),
+            &registry_rpc(true, AttestationMode::NoAttestationDev),
             &selector,
         )
         .await
         .unwrap();
         assert_eq!(
             bound.policy.attestation_mode,
-            AttestationMode::GramineDirectDev
+            AttestationMode::NoAttestationDev
         );
         assert_eq!(bound.binding.binding_id, B256::repeat_byte(0x75));
 
         let legacy_error = read_finalized_renewal_view_v1(
-            &registry_rpc(false, AttestationMode::GramineDirectDev),
+            &registry_rpc(false, AttestationMode::NoAttestationDev),
             &selector,
         )
         .await
@@ -802,7 +802,7 @@ mod tests {
         assert!(legacy_error.contains("DCAP renewal is disabled"));
 
         let neutral_error = read_finalized_bound_renewal_view_v1(
-            &registry_rpc(false, AttestationMode::GramineDirectDev),
+            &registry_rpc(false, AttestationMode::NoAttestationDev),
             &selector,
         )
         .await

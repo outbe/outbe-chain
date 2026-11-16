@@ -103,13 +103,13 @@ fn committed_join_intent(
         {
             Ok(value.intent)
         }
-        AttestationEvidenceV1::GramineDirectDev(value)
+        AttestationEvidenceV1::NoAttestationDev(value)
             if value.intent.operation == AttestationOperationV1::RegisterEnclave
                 && value.dev_signature == *enclave_signature =>
         {
             Ok(value.intent)
         }
-        AttestationEvidenceV1::Dcap(_) | AttestationEvidenceV1::GramineDirectDev(_) => {
+        AttestationEvidenceV1::Dcap(_) | AttestationEvidenceV1::NoAttestationDev(_) => {
             Err(TransportError::Codec(
                 "committed join submission is not RegisterEnclave evidence".into(),
             ))
@@ -135,7 +135,7 @@ pub(super) fn candidate_promotion_intent<'a>(
             validate_candidate_key_ready_proof(manifest, value)?;
             Ok(&value.intent)
         }
-        AttestationEvidenceV1::GramineDirectDev(value)
+        AttestationEvidenceV1::NoAttestationDev(value)
             if is_candidate_promotion_operation(value.intent.operation)
                 && &value.dev_signature == enclave_signature =>
         {
@@ -144,7 +144,7 @@ pub(super) fn candidate_promotion_intent<'a>(
             }
             Ok(&value.intent)
         }
-        AttestationEvidenceV1::Dcap(_) | AttestationEvidenceV1::GramineDirectDev(_) => {
+        AttestationEvidenceV1::Dcap(_) | AttestationEvidenceV1::NoAttestationDev(_) => {
             Err(TransportError::Codec(disallowed_operation.into()))
         }
     }

@@ -148,7 +148,7 @@ fn development_expired_rejoin_uses_the_same_durable_promotion_journal() {
     } = direct_dev_registration();
     assert!(matches!(
         evidence,
-        AttestationEvidenceV1::GramineDirectDev(_)
+        AttestationEvidenceV1::NoAttestationDev(_)
     ));
     assert_eq!(
         promote_replacement_candidate(&fixture.node_data_dir, &fixture.authorization).unwrap(),

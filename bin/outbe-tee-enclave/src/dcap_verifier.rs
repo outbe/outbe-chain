@@ -381,7 +381,7 @@ pub(crate) fn complete_gramine_direct_dev_onboarding_response(
             };
         }
     };
-    EnclaveResponse::GramineDirectDevOnboardingArtifactPreparedV1 {
+    EnclaveResponse::NoAttestationDevOnboardingArtifactPreparedV1 {
         request_hash,
         onboarding_artifact,
     }
@@ -427,7 +427,7 @@ pub(crate) fn complete_gramine_direct_dev_onboarding_response_v2(
             }
         }
     };
-    EnclaveResponse::GramineDirectDevOnboardingArtifactPreparedV2 {
+    EnclaveResponse::NoAttestationDevOnboardingArtifactPreparedV2 {
         request_hash,
         onboarding_artifact,
         attestation_tag: keys.sign_attestation(&preimage).to_vec(),

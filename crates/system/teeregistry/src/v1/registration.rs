@@ -72,7 +72,7 @@ impl TeeRegistry<'_> {
             .map_err(|error| revert_codec("attestation evidence is not canonical", error))?;
         let intent = match &decoded {
             AttestationEvidenceV1::Dcap(value) => &value.intent,
-            AttestationEvidenceV1::GramineDirectDev(value) => &value.intent,
+            AttestationEvidenceV1::NoAttestationDev(value) => &value.intent,
         };
         Self::require_initial_binding_target_v1(intent, binding)
     }

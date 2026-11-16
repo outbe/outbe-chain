@@ -249,7 +249,7 @@ fn invalid_node_identity_hash_is_not_a_zero_match() {
         enclave_id: marks[2],
         node_id,
         policy_hash: marks[1],
-        attestation_mode: AttestationMode::GramineDirectDev,
+        attestation_mode: AttestationMode::NoAttestationDev,
         operation: AttestationOperationV1::TransitionEnclaveMeasurement,
         genesis_hash: marks[0],
         chain_id: [1; 32],

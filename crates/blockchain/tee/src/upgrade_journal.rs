@@ -640,13 +640,13 @@ pub fn generate_transition_evidence_v1(
     intent: RegistrationIntentV1,
     policy: &TeePolicyV1,
 ) -> Result<PreparedTransitionEvidenceV1, UpgradeError> {
-    if policy.attestation_mode == AttestationMode::GramineDirectDev {
+    if policy.attestation_mode == AttestationMode::NoAttestationDev {
         let evidence = if intent.operation == AttestationOperationV1::PrepareEnclaveUpgrade {
             let signature = candidate
                 .sign_registration_intent_dev_v1(&intent)
                 .map_err(UpgradeError::GenerateDirectDevEvidence)?;
-            AttestationEvidenceV1::GramineDirectDev(
-                outbe_primitives::tee_attestation_v1::GramineDirectEvidenceV1 {
+            AttestationEvidenceV1::NoAttestationDev(
+                outbe_primitives::tee_attestation_v1::NoAttestationDevEvidenceV1 {
                     intent: intent.clone(),
                     dev_attestation_public: intent.attestation_ed25519,
                     dev_signature: signature,
@@ -658,7 +658,7 @@ pub fn generate_transition_evidence_v1(
                 .generate_transition_evidence_dev_v1(&intent)
                 .map_err(UpgradeError::GenerateDirectDevEvidence)?
         };
-        let AttestationEvidenceV1::GramineDirectDev(dev) = &evidence else {
+        let AttestationEvidenceV1::NoAttestationDev(dev) = &evidence else {
             unreachable!();
         };
         return Ok(PreparedTransitionEvidenceV1 {

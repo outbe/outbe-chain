@@ -181,12 +181,12 @@ pub enum EnclaveResponse {
     DkgParticipantAnnounceV1 {
         participant: ParticipantAnnounce,
     },
-    /// Exact purpose-bound artifact produced for a GramineDirectDev registration.
-    GramineDirectDevOnboardingArtifactPreparedV1 {
+    /// Exact purpose-bound artifact produced for a NoAttestationDev registration.
+    NoAttestationDevOnboardingArtifactPreparedV1 {
         request_hash: B256,
         onboarding_artifact: Vec<u8>,
     },
-    GramineDirectDevOnboardingArtifactIngestedV1 {
+    NoAttestationDevOnboardingArtifactIngestedV1 {
         network_encryption_public: [u8; 32],
     },
     TransitionEvidenceDevV1 {
@@ -204,7 +204,7 @@ pub enum EnclaveResponse {
         message: String,
     },
     /// Signed DirectDev onboarding artifact prepared for one canonical request.
-    GramineDirectDevOnboardingArtifactPreparedV2 {
+    NoAttestationDevOnboardingArtifactPreparedV2 {
         request_hash: B256,
         onboarding_artifact: Vec<u8>,
         attestation_tag: Vec<u8>,
@@ -256,7 +256,7 @@ mod wire_compat_tests {
         let not_ready = EnclaveResponse::NotReady {
             message: String::new(),
         };
-        let prepared = EnclaveResponse::GramineDirectDevOnboardingArtifactPreparedV2 {
+        let prepared = EnclaveResponse::NoAttestationDevOnboardingArtifactPreparedV2 {
             request_hash: B256::ZERO,
             onboarding_artifact: Vec::new(),
             attestation_tag: Vec::new(),

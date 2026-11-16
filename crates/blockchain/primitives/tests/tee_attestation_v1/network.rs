@@ -24,7 +24,7 @@ fn network_binding_is_canonical_and_every_field_changes_its_hash() {
     assert_ne!(changed_genesis.binding_hash().unwrap(), expected_hash);
 
     let mut changed_mode = binding;
-    changed_mode.attestation_mode = AttestationMode::GramineDirectDev;
+    changed_mode.attestation_mode = AttestationMode::NoAttestationDev;
     assert_ne!(changed_mode.binding_hash().unwrap(), expected_hash);
 
     let mut trailing = encoded;
@@ -63,7 +63,7 @@ fn trusted_network_descriptor_is_canonical_and_enforces_network_attestation_poli
     );
 
     let mut direct = descriptor.clone();
-    direct.network_binding.attestation_mode = AttestationMode::GramineDirectDev;
+    direct.network_binding.attestation_mode = AttestationMode::NoAttestationDev;
     let direct_bytes = direct.encode_canonical().unwrap();
     assert_eq!(
         TrustedNetworkDescriptorV1::decode_canonical(&direct_bytes).unwrap(),
@@ -251,7 +251,7 @@ fn initialization_manifest_rejects_wrong_signer_and_intent_keys() {
     );
 
     let mut wrong_mode = intent_for_manifest(&manifest);
-    wrong_mode.attestation_mode = AttestationMode::GramineDirectDev;
+    wrong_mode.attestation_mode = AttestationMode::NoAttestationDev;
     assert_eq!(
         manifest.validate_intent_binding(&wrong_mode).unwrap_err(),
         CodecError::NonCanonical("registration intent does not match initialized enclave")

@@ -92,7 +92,7 @@ pub enum TeeAttestationActivationError {
         mainnet: u64,
     },
     #[error("GramineDirectDev requires devnet or testnet chain ID ({devnet} or {testnet})")]
-    GramineDirectDevChainIdDisallowed { devnet: u64, testnet: u64 },
+    NoAttestationDevChainIdDisallowed { devnet: u64, testnet: u64 },
     #[error("initial TEE policy does not bind the manifest resource schedule")]
     InitialPolicyResourceScheduleMismatch,
     #[error("TEE policy schedule does not match ChainSpec identity")]

@@ -1,6 +1,6 @@
 use alloy_primitives::B256;
 
-use super::{GramineDirectDevOnboardingContextV1, ParticipantAnnounce, PayloadLane};
+use super::{NoAttestationDevOnboardingContextV1, ParticipantAnnounce, PayloadLane};
 
 /// Infrastructure requests sent from the node to the enclave, plus the opaque
 /// [`Self::Payload`] carrier for upper-layer application protocols.
@@ -34,7 +34,7 @@ pub enum EnclaveRequest {
     },
     /// Generate a fresh DCAP quote for the exact canonical registration, renewal or transition intent.
     GenerateDcapQuote { intent: Vec<u8> },
-    /// Sign one exact GramineDirectDev registration intent inside the enclave.
+    /// Sign one exact NoAttestationDev registration intent inside the enclave.
     SignRegistrationIntentDevV1 { intent: Vec<u8> },
     /// Start one bounded, request-committed DCAP verification upload.
     BeginDcapVerificationV1 {
@@ -132,13 +132,13 @@ pub enum EnclaveRequest {
         round: u64,
         participant_bls: Vec<Vec<u8>>,
     },
-    /// Produce a deterministic offer-key onboarding artifact for one exact GramineDirectDev registration.
-    PrepareGramineDirectDevOnboardingArtifactV1 {
+    /// Produce a deterministic offer-key onboarding artifact for one exact NoAttestationDev registration.
+    PrepareNoAttestationDevOnboardingArtifactV1 {
         request_hash: B256,
         context: Vec<u8>,
     },
     /// Install an exact finalized DirectDev onboarding artifact into this initialized keyless enclave.
-    IngestGramineDirectDevOnboardingArtifactV1 {
+    IngestNoAttestationDevOnboardingArtifactV1 {
         artifact: Vec<u8>,
         expected_intent_hash: B256,
         expected_network_encryption_public: [u8; 32],
@@ -166,20 +166,20 @@ pub enum EnclaveRequest {
         export: bool,
     },
     /// Prepare a DirectDev onboarding artifact from the typed canonical context.
-    PrepareGramineDirectDevOnboardingArtifactV2 {
+    PrepareNoAttestationDevOnboardingArtifactV2 {
         #[serde(with = "canonical_onboarding_context")]
-        context: GramineDirectDevOnboardingContextV1,
+        context: NoAttestationDevOnboardingContextV1,
     },
     /// Opaque application-layer request envelope routed to the upper-layer enclave protocol.
     Payload { lane: PayloadLane, payload: Vec<u8> },
 }
 
 mod canonical_onboarding_context {
-    use super::GramineDirectDevOnboardingContextV1;
+    use super::NoAttestationDevOnboardingContextV1;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     pub fn serialize<S>(
-        context: &GramineDirectDevOnboardingContextV1,
+        context: &NoAttestationDevOnboardingContextV1,
         serializer: S,
     ) -> Result<S::Ok, S::Error>
     where
@@ -190,12 +190,12 @@ mod canonical_onboarding_context {
 
     pub fn deserialize<'de, D>(
         deserializer: D,
-    ) -> Result<GramineDirectDevOnboardingContextV1, D::Error>
+    ) -> Result<NoAttestationDevOnboardingContextV1, D::Error>
     where
         D: Deserializer<'de>,
     {
         let bytes = Vec::<u8>::deserialize(deserializer)?;
-        GramineDirectDevOnboardingContextV1::decode_canonical(&bytes)
+        NoAttestationDevOnboardingContextV1::decode_canonical(&bytes)
             .map_err(|error| serde::de::Error::custom(format!("{error:?}")))
     }
 }
@@ -241,17 +241,17 @@ impl EnclaveRequest {
             }
             Self::Health => "health",
             Self::DkgParticipantAnnounceV1 { .. } => "dkg_participant_announce_v1",
-            Self::PrepareGramineDirectDevOnboardingArtifactV1 { .. } => {
+            Self::PrepareNoAttestationDevOnboardingArtifactV1 { .. } => {
                 "prepare_gramine_direct_dev_onboarding_artifact_v1"
             }
-            Self::IngestGramineDirectDevOnboardingArtifactV1 { .. } => {
+            Self::IngestNoAttestationDevOnboardingArtifactV1 { .. } => {
                 "ingest_gramine_direct_dev_onboarding_artifact_v1"
             }
             Self::GenerateTransitionEvidenceDevV1 { .. } => "generate_transition_evidence_dev_v1",
             Self::RetireRemoteSessionsV1 { .. } => "retire_remote_sessions_v1",
             Self::AuthorizeRemoteSessionV2 { .. } => "authorize_remote_session_v2",
             Self::BeginUpgradeKeyTransferV1 { .. } => "begin_upgrade_key_transfer_v1",
-            Self::PrepareGramineDirectDevOnboardingArtifactV2 { .. } => {
+            Self::PrepareNoAttestationDevOnboardingArtifactV2 { .. } => {
                 "prepare_gramine_direct_dev_onboarding_artifact_v2"
             }
             Self::Payload { .. } => "payload",
@@ -270,8 +270,8 @@ impl EnclaveRequest {
             | Self::GenerateTransitionEvidenceDevV1 { .. }
             | Self::RetireRemoteSessionsV1 { .. }
             | Self::Health
-            | Self::PrepareGramineDirectDevOnboardingArtifactV1 { .. }
-            | Self::PrepareGramineDirectDevOnboardingArtifactV2 { .. }
+            | Self::PrepareNoAttestationDevOnboardingArtifactV1 { .. }
+            | Self::PrepareNoAttestationDevOnboardingArtifactV2 { .. }
             | Self::Payload { .. } => true,
             Self::BeginUpgradeKeyTransferV1 { .. }
             | Self::GetInitializationChallenge
@@ -298,7 +298,7 @@ impl EnclaveRequest {
             | Self::DcapOnboardingArtifactChunkV1 { .. }
             | Self::CommitDcapOnboardingArtifactRecordV1 { .. }
             | Self::FinishDcapOnboardingArtifactIngestV1 { .. }
-            | Self::IngestGramineDirectDevOnboardingArtifactV1 { .. } => false,
+            | Self::IngestNoAttestationDevOnboardingArtifactV1 { .. } => false,
         }
     }
 
@@ -308,7 +308,7 @@ impl EnclaveRequest {
     pub const fn consensus_witness_kind(&self) -> super::ConsensusWitnessKind {
         use super::ConsensusWitnessKind::{NonConsensus, Recorded, StreamFrame};
         match self {
-            Self::PrepareGramineDirectDevOnboardingArtifactV2 { .. } => Recorded,
+            Self::PrepareNoAttestationDevOnboardingArtifactV2 { .. } => Recorded,
             Self::BeginDcapVerificationV1 { .. }
             | Self::BeginDcapOnboardingVerificationV1 { .. }
             | Self::DcapVerificationChunkV1 { .. }
@@ -337,8 +337,8 @@ impl EnclaveRequest {
             | Self::FinishDcapOnboardingArtifactIngestV1 { .. }
             | Self::Health
             | Self::DkgParticipantAnnounceV1 { .. }
-            | Self::PrepareGramineDirectDevOnboardingArtifactV1 { .. }
-            | Self::IngestGramineDirectDevOnboardingArtifactV1 { .. }
+            | Self::PrepareNoAttestationDevOnboardingArtifactV1 { .. }
+            | Self::IngestNoAttestationDevOnboardingArtifactV1 { .. }
             | Self::GenerateTransitionEvidenceDevV1 { .. }
             | Self::RetireRemoteSessionsV1 { .. }
             | Self::AuthorizeRemoteSessionV2 { .. }
@@ -369,8 +369,8 @@ mod tests {
     use super::*;
     use crate::protocol::ConsensusWitnessKind;
 
-    fn onboarding_context() -> GramineDirectDevOnboardingContextV1 {
-        GramineDirectDevOnboardingContextV1 {
+    fn onboarding_context() -> NoAttestationDevOnboardingContextV1 {
+        NoAttestationDevOnboardingContextV1 {
             chain_id: [1; 32],
             genesis_hash: B256::repeat_byte(2),
             intent_hash: B256::repeat_byte(3),
@@ -387,11 +387,11 @@ mod tests {
 
     #[test]
     fn wire_ordinals_and_canonical_context_round_trip() {
-        let legacy = EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 {
+        let legacy = EnclaveRequest::PrepareNoAttestationDevOnboardingArtifactV1 {
             request_hash: B256::ZERO,
             context: vec![],
         };
-        let v2 = EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 {
+        let v2 = EnclaveRequest::PrepareNoAttestationDevOnboardingArtifactV2 {
             context: onboarding_context(),
         };
         let payload = EnclaveRequest::Payload {
@@ -425,7 +425,7 @@ mod tests {
             ConsensusWitnessKind::NonConsensus
         );
         assert_eq!(
-            EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 {
+            EnclaveRequest::PrepareNoAttestationDevOnboardingArtifactV2 {
                 context: onboarding_context(),
             }
             .consensus_witness_kind(),

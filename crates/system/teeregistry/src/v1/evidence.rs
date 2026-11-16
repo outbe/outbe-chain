@@ -338,7 +338,7 @@ impl TeeRegistry<'_> {
                 )?;
                 Ok((dcap.intent.clone(), verified))
             }
-            AttestationEvidenceV1::GramineDirectDev(dev) => {
+            AttestationEvidenceV1::NoAttestationDev(dev) => {
                 let (claims, evidence_hash) = self.verify_dev_claims_v1(
                     dev,
                     decoded,

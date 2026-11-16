@@ -16,7 +16,7 @@ fn entries() -> Vec<EnclaveWitnessEntryV1> {
             onboarding_artifact: vec![2],
             attestation_tag: tag.clone(),
         },
-        EnclaveWitnessEntryV1::GramineDirectDevOnboardingArtifactPreparedV2 {
+        EnclaveWitnessEntryV1::NoAttestationDevOnboardingArtifactPreparedV2 {
             request_hash: B256::ZERO,
             onboarding_artifact: vec![2],
             attestation_tag: tag.clone(),
@@ -52,7 +52,7 @@ fn semantic_equality_ignores_only_attestation_tag() {
             | EnclaveWitnessEntryV1::DcapOnboardingVerificationFinishedV1 {
                 attestation_tag, ..
             }
-            | EnclaveWitnessEntryV1::GramineDirectDevOnboardingArtifactPreparedV2 {
+            | EnclaveWitnessEntryV1::NoAttestationDevOnboardingArtifactPreparedV2 {
                 attestation_tag,
                 ..
             }
@@ -73,7 +73,7 @@ fn mutate_commitment(entry: &mut EnclaveWitnessEntryV1) {
     match entry {
         EnclaveWitnessEntryV1::DcapVerificationFinishedV1 { request_hash, .. }
         | EnclaveWitnessEntryV1::DcapOnboardingVerificationFinishedV1 { request_hash, .. }
-        | EnclaveWitnessEntryV1::GramineDirectDevOnboardingArtifactPreparedV2 {
+        | EnclaveWitnessEntryV1::NoAttestationDevOnboardingArtifactPreparedV2 {
             request_hash,
             ..
         } => {

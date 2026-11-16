@@ -160,7 +160,7 @@ impl ReplacementCandidateEnclaveV1 {
             return Err(TransportError::UnexpectedResponse);
         };
         let evidence = AttestationEvidenceV1::decode_canonical(&evidence).map_err(codec_error)?;
-        let AttestationEvidenceV1::GramineDirectDev(dev) = &evidence else {
+        let AttestationEvidenceV1::NoAttestationDev(dev) = &evidence else {
             return Err(TransportError::UnexpectedResponse);
         };
         if &dev.intent != intent || !intent.verify_enclave_signature(&dev.dev_signature) {
@@ -823,7 +823,7 @@ pub(super) fn validate_candidate_key_ready_proof(
 
 pub(super) fn validate_direct_dev_transition_proof(
     manifest: &EnclaveInitializationManifestV1,
-    evidence: &outbe_primitives::tee_attestation_v1::GramineDirectEvidenceV1,
+    evidence: &outbe_primitives::tee_attestation_v1::NoAttestationDevEvidenceV1,
 ) -> Result<(), TransportError> {
     let proof = evidence
         .transition_key_ready_proof

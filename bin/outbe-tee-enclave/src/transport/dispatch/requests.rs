@@ -133,8 +133,8 @@ pub(in crate::transport) fn dispatch_with_label(
             },
             None,
         ),
-        EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 { .. }
-        | EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 { .. } => (
+        EnclaveRequest::PrepareNoAttestationDevOnboardingArtifactV1 { .. }
+        | EnclaveRequest::PrepareNoAttestationDevOnboardingArtifactV2 { .. } => (
             EnclaveResponse::Error {
                 message:
                     "GramineDirectDev artifact creation requires an authenticated production session"
@@ -150,7 +150,7 @@ pub(in crate::transport) fn dispatch_with_label(
         req @ (EnclaveRequest::Health | EnclaveRequest::GetPublicKeys) => {
             (super::queries::dispatch(req, resident), None)
         }
-        EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 {
+        EnclaveRequest::IngestNoAttestationDevOnboardingArtifactV1 {
             artifact,
             expected_intent_hash,
             expected_network_encryption_public,

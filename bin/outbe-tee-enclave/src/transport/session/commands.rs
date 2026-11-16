@@ -119,7 +119,7 @@ impl CommandSession {
             quote_generator,
         } = context;
         match req {
-            EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 {
+            EnclaveRequest::PrepareNoAttestationDevOnboardingArtifactV1 {
                 request_hash,
                 context,
             } => (
@@ -136,7 +136,7 @@ impl CommandSession {
                 },
                 None,
             ),
-            EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 { context } => (
+            EnclaveRequest::PrepareNoAttestationDevOnboardingArtifactV2 { context } => (
                 match initialization.manifest() {
                     Ok(manifest) => complete_gramine_direct_dev_onboarding_response_v2(
                         context,

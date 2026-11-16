@@ -4,14 +4,18 @@ use super::*;
 #[repr(u8)]
 pub enum AttestationMode {
     DcapRequired = 0x01,
-    GramineDirectDev = 0x02,
+    NoAttestationDev = 0x02,
 }
 
 impl AttestationMode {
+    /// Transitional spelling for downstream callers; remove after the rename wave.
+    #[allow(non_upper_case_globals)]
+    pub const GramineDirectDev: Self = Self::NoAttestationDev;
+
     pub(crate) fn decode(value: u8) -> Result<Self, CodecError> {
         match value {
             0x01 => Ok(Self::DcapRequired),
-            0x02 => Ok(Self::GramineDirectDev),
+            0x02 => Ok(Self::NoAttestationDev),
             value => Err(CodecError::UnknownDiscriminant {
                 field: "attestation mode",
                 value,
@@ -144,7 +148,7 @@ impl TrustedNetworkDescriptorV1 {
 
     pub(super) fn validate(&self) -> Result<(), CodecError> {
         self.network_binding.validate()?;
-        if self.network_binding.attestation_mode == AttestationMode::GramineDirectDev {
+        if self.network_binding.attestation_mode == AttestationMode::NoAttestationDev {
             let chain_id = u64::try_from(alloy_primitives::U256::from_be_bytes(
                 self.network_binding.chain_id,
             ))

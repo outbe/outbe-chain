@@ -438,7 +438,7 @@ fn prepare_join_evidence(
             .map_err(TeeJoinError::DecodeDurableEvidence)?;
         let durable_intent = match &evidence {
             AttestationEvidenceV1::Dcap(value) => &value.intent,
-            AttestationEvidenceV1::GramineDirectDev(value) => &value.intent,
+            AttestationEvidenceV1::NoAttestationDev(value) => &value.intent,
         };
         if durable_intent != ctx.intent || durable.node_signature() != ctx.fresh_node_signature {
             return Err(TeeJoinError::DurableRegistrationConflict.into());
@@ -542,7 +542,7 @@ fn decode_evidence_node_id_hash(evidence: &[u8]) -> Result<B256> {
         .map_err(TeeJoinError::RedecodeEvidence)?
     {
         AttestationEvidenceV1::Dcap(value) => value.intent.node_id,
-        AttestationEvidenceV1::GramineDirectDev(value) => value.intent.node_id,
+        AttestationEvidenceV1::NoAttestationDev(value) => value.intent.node_id,
     }
     .node_id_hash()
     .map_err(|error| TeeJoinError::HashNodeIdentity(error).into())

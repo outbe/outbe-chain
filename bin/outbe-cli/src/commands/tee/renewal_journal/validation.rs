@@ -131,7 +131,7 @@ impl PreparedRenewalV1 {
                 dcap_evidence_hash_v1(&self.evidence)
                     .map_err(RenewalJournalError::HashDcapEvidence)?
             }
-            AttestationEvidenceV1::GramineDirectDev(value) => {
+            AttestationEvidenceV1::NoAttestationDev(value) => {
                 let direct_binding_matches = intent.attestation_mode
                     == AttestationMode::GramineDirectDev
                     && value.dev_attestation_public == value.intent.attestation_ed25519
@@ -208,7 +208,7 @@ impl PreparedRenewalV1 {
                     return Err(RenewalJournalError::LeaseExceedsCollateralCeiling.into());
                 }
             }
-            AttestationEvidenceV1::GramineDirectDev(_) => {
+            AttestationEvidenceV1::NoAttestationDev(_) => {
                 if self.collateral_valid_until != u64::MAX || self.collateral_margin != 0 {
                     return Err(RenewalJournalError::NonCanonicalDirectDevCollateral.into());
                 }
