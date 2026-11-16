@@ -10,6 +10,7 @@ pub mod gas;
 pub mod genesis;
 mod native_delegation;
 pub mod precompiles;
+mod selfdestruct_guard;
 pub mod storage;
 pub mod sub_call;
 pub use outbe_tee::tee_attestation_activation;
