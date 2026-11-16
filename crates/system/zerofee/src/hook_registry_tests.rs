@@ -70,7 +70,7 @@ fn waive_fee(
 ) -> Result<Option<ZeroFeeAuthorization>, ZeroFeePolicyError> {
     crate::registry()
         .classify(tx)?
-        .map(|candidate| crate::registry().authorize_fee_waiver(storage, candidate))
+        .map(|candidate| crate::registry().authorize_fee_waiver(storage, tx, candidate))
         .transpose()
 }
 
@@ -88,7 +88,8 @@ fn hook_cases() -> Vec<HookCase> {
             min_max_fee_per_gas: crate::oracle::MIN_ZERO_FEE_ORACLE_MAX_FEE_PER_GAS,
             max_calldata_bytes: crate::oracle::MAX_ZERO_FEE_ORACLE_CALLDATA_BYTES,
             max_gas_limit: crate::oracle::MAX_ZERO_FEE_ORACLE_GAS_LIMIT,
-            malformed_reason: "zero-fee oracle vote calldata is malformed: submitVote(ExchangeRateTuple[],GasTuple[]) decode failed",
+            malformed_reason: "zero-fee oracle vote calldata is malformed: \
+                submitVote(ExchangeRateTuple[],GasTuple[]) decode failed",
             delegate_role: ValidatorDelegateRole::Oracle,
         },
         HookCase {
@@ -99,7 +100,8 @@ fn hook_cases() -> Vec<HookCase> {
             min_max_fee_per_gas: crate::hyperlane::MIN_ZERO_FEE_CHECKPOINT_MAX_FEE_PER_GAS,
             max_calldata_bytes: crate::hyperlane::MAX_ZERO_FEE_CHECKPOINT_CALLDATA_BYTES,
             max_gas_limit: crate::hyperlane::MAX_ZERO_FEE_CHECKPOINT_GAS_LIMIT,
-            malformed_reason: "zero-fee oracle vote calldata is malformed: submitCheckpoint(uint32,bytes32,uint32,bytes32,bytes) decode failed",
+            malformed_reason: "zero-fee oracle vote calldata is malformed: \
+                submitCheckpoint(uint32,bytes32,uint32,bytes32,bytes) decode failed",
             delegate_role: ValidatorDelegateRole::Hyperlane,
         },
     ]

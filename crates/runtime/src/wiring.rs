@@ -115,9 +115,10 @@ impl UserTxFeePolicy for OutbeRuntime {
     fn authorize_fee_waiver(
         &self,
         storage: StorageHandle<'_>,
+        tx: &ZeroFeeTransaction<'_>,
         candidate: ZeroFeeCandidate,
     ) -> std::result::Result<ZeroFeeAuthorization, ZeroFeePolicyError> {
-        outbe_zerofee::registry().authorize_fee_waiver(storage, candidate)
+        outbe_zerofee::registry().authorize_fee_waiver(storage, tx, candidate)
     }
 
     fn classify_sponsorship(
@@ -139,9 +140,10 @@ impl TxPoolZeroFeePolicy for OutbeRuntime {
     fn authorize(
         &self,
         storage: StorageHandle<'_>,
+        tx: &ZeroFeeTransaction<'_>,
         candidate: ZeroFeeCandidate,
     ) -> std::result::Result<ZeroFeeAuthorization, ZeroFeePolicyError> {
-        outbe_zerofee::registry().authorize_fee_waiver(storage, candidate)
+        outbe_zerofee::registry().authorize_fee_waiver(storage, tx, candidate)
     }
 
     fn classify_bootstrap(&self, tx: &BootstrapTransactionView<'_>) -> Option<BootstrapCandidate> {

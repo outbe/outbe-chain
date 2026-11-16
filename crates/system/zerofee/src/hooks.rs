@@ -23,6 +23,10 @@ pub const HYPERLANE_SUBMIT_CHECKPOINT_HOOK: ZeroFeeHookTag =
 /// Own-lease `TeeRegistry.renewEnclave` zero-fee hook tag.
 pub const RENEW_ENCLAVE_HOOK: ZeroFeeHookTag = ZeroFeeHookTag::new(2, "RenewEnclave", Some(1));
 
+/// Equivocation evidence submission zero-fee hook tag.
+pub const SLASH_EQUIVOCATION_HOOK: ZeroFeeHookTag =
+    ZeroFeeHookTag::new(3, "SlashEquivocation", Some(1)).with_max_soft_failures_per_block(4);
+
 #[cfg(test)]
 mod failure_code_tests {
     use super::*;
@@ -129,6 +133,7 @@ pub trait ZeroFeeHook: Sync {
     fn authorize_fee_waiver(
         &self,
         storage: StorageHandle,
+        tx: &ZeroFeeTransaction<'_>,
         candidate: ZeroFeeCandidate,
     ) -> Result<ZeroFeeAuthorization, ZeroFeePolicyError>;
 }
@@ -163,11 +168,12 @@ impl ZeroFeeRegistry {
     pub fn authorize_fee_waiver(
         self,
         storage: StorageHandle,
+        tx: &ZeroFeeTransaction<'_>,
         candidate: ZeroFeeCandidate,
     ) -> Result<ZeroFeeAuthorization, ZeroFeePolicyError> {
         for hook in self.hooks {
             if hook.id() == candidate.hook {
-                return hook.authorize_fee_waiver(storage, candidate);
+                return hook.authorize_fee_waiver(storage, tx, candidate);
             }
         }
 

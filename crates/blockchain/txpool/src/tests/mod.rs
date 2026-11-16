@@ -137,6 +137,7 @@ impl TxPoolZeroFeePolicy for ScriptedPolicy {
     fn authorize(
         &self,
         _storage: outbe_primitives::storage::StorageHandle<'_>,
+        _tx: &ZeroFeeTransaction<'_>,
         candidate: ZeroFeeCandidate,
     ) -> Result<ZeroFeeAuthorization, ZeroFeePolicyError> {
         if self.authorize_ok {

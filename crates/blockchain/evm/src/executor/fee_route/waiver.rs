@@ -50,11 +50,15 @@ where
         let ctx = self.fee_route_context()?;
         let host = self.runtime_host.clone();
         let authorize_outcome = {
+            let tx = outbe_primitives::zero_fee_types::ZeroFeeTransaction::from_transaction(
+                recovered.tx(),
+                candidate.signer,
+            );
             let db = self.inner.evm.db_mut();
             let mut provider = DirectStorageProvider::new(db, ctx);
             let storage = StorageHandle::new(&mut provider);
             host.user_fee_policy()
-                .authorize_fee_waiver(storage, candidate)
+                .authorize_fee_waiver(storage, &tx, candidate)
                 .map(|_| ())
         };
         if let Err(error) = authorize_outcome {
