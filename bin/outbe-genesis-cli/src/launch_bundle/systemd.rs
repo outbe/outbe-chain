@@ -143,15 +143,27 @@ pub fn write_systemd_units(
         fs::write(&unit_path, unit.content).map_err(|err| GenesisError::io(&unit_path, err))?;
     }
 
-    let renewal_install = if enable_tee_renewal {
+    let renewal_start = if enable_tee_renewal {
         "as_root systemctl enable --now outbe-tee-renew.timer\n"
+    } else {
+        ""
+    };
+    let renewal_enable = if enable_tee_renewal {
+        "as_root systemctl enable outbe-tee-renew.timer\n"
     } else {
         ""
     };
     let base = quote(base_dir);
     let install = format!(
         "\n{root_helper}\n\n\
-# Install and start this machine's single founding validator.\n\
+# Install this machine's single founding validator. `--prepare-only` installs\n\
+# and enables the units without starting the network.\n\
+START=true\n\
+case \"${{1:-}}\" in\n\
+  \"\") ;;\n\
+  --prepare-only) START=false ;;\n\
+  *) echo \"usage: $0 [--prepare-only]\" >&2; exit 2 ;;\n\
+esac\n\
 UNIT_DIR=\"$(cd -- \"$(dirname -- \"${{BASH_SOURCE[0]}}\")/systemd\" && pwd)\"\n\
 \n\
 getent group outbe >/dev/null || as_root groupadd --system outbe\n\
@@ -161,8 +173,13 @@ as_root chown -R outbe:outbe {base}\n\
 as_root install -m 0644 \"$UNIT_DIR\"/outbe-* /etc/systemd/system/\n\
 as_root systemctl daemon-reload\n\
 \n\
-as_root systemctl enable --now outbe-validator.target\n\
-{renewal_install}\n\
+if \"$START\"; then\n\
+  as_root systemctl enable --now outbe-validator.target\n\
+  {renewal_start}\
+else\n\
+  as_root systemctl enable outbe-validator.target\n\
+  {renewal_enable}\
+fi\n\
 echo\n\
 echo \"founding validator services:\"\n\
 systemctl list-units 'outbe-*' --no-pager --no-legend | sed 's/^/  /'\n\

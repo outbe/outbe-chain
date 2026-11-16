@@ -56,6 +56,13 @@ enum NetworkCommand {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Verify and install every founding host without starting services.
+    Prepare {
+        #[arg(long)]
+        build: PathBuf,
+        #[arg(long)]
+        identity: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -127,6 +134,9 @@ impl Cli {
                     signed_sgx,
                     output,
                 } => network::finalize::run(&build, &signed_sgx, &output),
+                NetworkCommand::Prepare { build, identity } => {
+                    network::prepare::run(&build, identity.as_deref()).await
+                }
             },
             Command::Validator(args) => match args.command {
                 ValidatorCommand::ConfigExample => {
@@ -178,6 +188,16 @@ mod tests {
             "network.yaml",
             "--output",
             "network-build",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "network",
+            "prepare",
+            "--build",
+            "network-final",
+            "--identity",
+            "operator-key",
         ])
         .is_ok());
         assert!(Cli::try_parse_from([
