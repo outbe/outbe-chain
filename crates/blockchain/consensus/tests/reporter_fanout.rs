@@ -501,3 +501,160 @@ fn reporter_counts_self_finalization_once_across_epoch_rotation() {
         assert_eq!(counters[0].3, DebugValue::Counter(expected_delta));
     }
 }
+
+fn equivocation_activity(
+    kind: outbe_primitives::equivocation_evidence::EquivocationEvidenceKind,
+) -> (
+    Activity<HybridScheme<MinSig>, OutbeDigest>,
+    HybridScheme<MinSig>,
+    outbe_primitives::equivocation_evidence::VerifiedEquivocationEvidence,
+) {
+    use commonware_codec::Encode as _;
+    use commonware_consensus::simplex::types::{
+        ConflictingFinalize, ConflictingNotarize, Notarize, Nullify, NullifyFinalize,
+    };
+    use outbe_primitives::equivocation_evidence::{
+        canonical_equivocation_evidence_hash, EquivocationEvidenceKind as Kind,
+        VerifiedEquivocationEvidence,
+    };
+
+    let (keys, participants) = test_participants(3);
+    let dkg = bootstrap_dkg(3).unwrap();
+    let signers = outbe_consensus::test_harness::fixture_signer_schemes(
+        b"reporter-test",
+        &keys,
+        &participants,
+        outbe_consensus::test_harness::FixtureSignerSharing {
+            polynomial: &dkg.polynomial,
+            shares: &dkg.shares,
+        },
+    );
+    let verifier = HybridScheme::verifier(b"reporter-test", participants, dkg.polynomial).unwrap();
+    let proposal = |hash| {
+        Proposal::new(
+            Round::new(Epoch::new(0), View::new(300)),
+            View::new(0),
+            OutbeDigest::from(alloy_primitives::B256::repeat_byte(hash)),
+        )
+    };
+    let pubkey = bls12381::PublicKey::from(keys[0].clone()).encode();
+    let block = |att: &commonware_cryptography::certificate::Attestation<HybridScheme<MinSig>>,
+                 payload: &[u8]| {
+        let sig = att.signature.get().unwrap().bls_individual_vote.encode();
+        [pubkey.as_ref(), sig.as_ref(), payload].concat()
+    };
+    let (activity, first_block, second_block) = match kind {
+        Kind::ConflictingNotarize => {
+            let a = Notarize::sign(&signers[0], proposal(1)).unwrap();
+            let b = Notarize::sign(&signers[0], proposal(2)).unwrap();
+            let first = block(&a.attestation, &a.proposal.encode());
+            let second = block(&b.attestation, &b.proposal.encode());
+            (
+                Activity::ConflictingNotarize(ConflictingNotarize::new(a, b)),
+                first,
+                second,
+            )
+        }
+        Kind::ConflictingFinalize => {
+            let a = Finalize::sign(&signers[0], proposal(1)).unwrap();
+            let b = Finalize::sign(&signers[0], proposal(2)).unwrap();
+            let first = block(&a.attestation, &a.proposal.encode());
+            let second = block(&b.attestation, &b.proposal.encode());
+            (
+                Activity::ConflictingFinalize(ConflictingFinalize::new(a, b)),
+                first,
+                second,
+            )
+        }
+        Kind::NullifyFinalize => {
+            let a = Nullify::sign::<OutbeDigest>(&signers[0], proposal(1).round).unwrap();
+            let b = Finalize::sign(&signers[0], proposal(2)).unwrap();
+            let first = block(&a.attestation, &a.round.encode());
+            let second = block(&b.attestation, &b.proposal.encode());
+            (
+                Activity::NullifyFinalize(NullifyFinalize::new(a, b)),
+                first,
+                second,
+            )
+        }
+    };
+    let expected = VerifiedEquivocationEvidence {
+        kind,
+        epoch: 0,
+        accused_pubkey: pubkey.as_ref().try_into().unwrap(),
+        evidence_hash: canonical_equivocation_evidence_hash(&first_block, &second_block),
+        first_block,
+        second_block,
+    };
+    (activity, verifier, expected)
+}
+
+#[tokio::test]
+async fn reporter_forwards_all_equivocation_classes_off_thread_into_execution_bridge() {
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+    use outbe_consensus::{
+        finalization::finalize_verify::FinalizeVerifyActor, EquivocationVerifyActor,
+    };
+    use outbe_primitives::{
+        consensus::ConsensusExecutionBridge,
+        equivocation_evidence::{EquivocationEvidenceKind as Kind, EquivocationPushOutcome},
+    };
+
+    for kind in [
+        Kind::ConflictingNotarize,
+        Kind::ConflictingFinalize,
+        Kind::NullifyFinalize,
+    ] {
+        let (activity, verifier, mut expected) = equivocation_activity(kind);
+        let bridge = ConsensusExecutionBridge::new();
+        let (actor, mailbox) =
+            EquivocationVerifyActor::new(bridge.equivocation_evidence_mailbox().clone());
+        let (tx, mut rx) = mpsc::unbounded();
+        let (_, finalize_mailbox) = FinalizeVerifyActor::new(
+            outbe_consensus::hybrid::HybridSchemeProvider::new(),
+            outbe_consensus::finalization::late_sig_store::shared(
+                outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K,
+            ),
+        );
+        let mut reporter = OutbeReporter::new(
+            ReporterContinuity::default(),
+            ReporterCommittee {
+                validator_addresses: ordered_addresses(),
+                verifier_scheme: verifier,
+                epoch: Epoch::new(0),
+            },
+            ReporterDependencies {
+                finalization_mailbox: FinalizationMailbox::from_sender(tx),
+                bridge: Some(bridge.clone()),
+                witness_sink: Arc::new(FinalizedParentCertStore::new()),
+                finalize_verify_mailbox: finalize_mailbox,
+                equivocation_verify_mailbox: mailbox,
+            },
+        );
+        let recorder = DebuggingRecorder::new();
+        let feedback = metrics::with_local_recorder(&recorder, || reporter.report(activity));
+        assert!(matches!(feedback, commonware_actor::Feedback::Ok));
+        drop(reporter);
+        actor.run().await;
+        assert!(rx.try_recv().is_err());
+        let snapshot = recorder.snapshotter().snapshot().into_vec();
+        let counter = snapshot
+            .iter()
+            .find(|(key, _, _, _)| {
+                key.key().name() == "outbe_consensus_byzantine_evidence_total"
+                    && key
+                        .key()
+                        .labels()
+                        .any(|label| label.key() == "kind" && label.value() == kind.label())
+            })
+            .unwrap();
+        assert_eq!(counter.3, DebugValue::Counter(1));
+        // With both key fields shifted, Duplicate proves that the exact hash was delivered.
+        expected.epoch += 1;
+        expected.accused_pubkey = [0xEE; 48];
+        assert_eq!(
+            bridge.equivocation_evidence_mailbox().push(expected),
+            EquivocationPushOutcome::Duplicate
+        );
+    }
+}
