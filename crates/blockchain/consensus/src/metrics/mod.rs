@@ -17,7 +17,8 @@ pub use outbe_simplex::metrics::*;
 use std::time::Duration;
 use tracing::debug;
 
-/// Record whether the optional `--consensus.metrics-addr` HTTP exporter bound (`1`) or failed (`0`).
+/// Record whether the optional `--consensus.metrics-addr` HTTP exporter
+/// bound (`1`) or failed (`0`).
 pub fn record_metrics_exporter_up(up: bool) {
     gauge!("outbe_consensus_metrics_exporter_up").set(if up { 1.0 } else { 0.0 });
 }
@@ -167,7 +168,8 @@ pub fn record_epoch(epoch: u64) {
 /// connections. The commonware network layer does not expose a live-connection
 /// count at this seam. Operators must read it as membership, not connectivity.
 /// It does not drop when peers disconnect, so it is not a stall/partition
-/// signal on its own. Pair it with `outbe_consensus_current_view` vs `outbe_consensus_finalized_view`
+/// signal on its own. Pair it with `outbe_consensus_current_view`
+/// vs `outbe_consensus_finalized_view`
 /// for liveness diagnosis.
 pub fn record_commonware_p2p_active_peers(count: usize) {
     gauge!("outbe_consensus_tracked_peers").set(count as f64);
@@ -243,28 +245,19 @@ pub fn record_dkg_revealed_shares(count: usize) {
     counter!("outbe_dkg_revealed_shares_total").increment(count as u64);
 }
 
-/// The closed set of byzantine-equivocation kinds. Each carries its own telemetry
-/// label, so the `outbe_consensus_byzantine_evidence_total{kind=...}` metric and the
-/// `outbe::slashing::equivocation` warn! field can only ever take one of these
-/// three values. This closes the unbounded label-cardinality hole that a free
-/// `&str` parameter left open on a slashing-path counter.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EquivocationKind {
-    ConflictingNotarize,
-    ConflictingFinalize,
-    NullifyFinalize,
+pub use outbe_primitives::equivocation_evidence::EquivocationEvidenceKind as EquivocationKind;
+
+/// Records bounded raw evidence admission outcomes.
+pub(crate) fn record_equivocation_verify_admission(result: &'static str) {
+    counter!("outbe_consensus_equivocation_verify_admission_total", "result" => result)
+        .increment(1);
 }
 
-impl EquivocationKind {
-    /// The stable telemetry label (metric `kind` value and warn! field). These
-    /// strings are an external, operator-facing surface. Do not change them.
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::ConflictingNotarize => "conflicting_notarize",
-            Self::ConflictingFinalize => "conflicting_finalize",
-            Self::NullifyFinalize => "nullify_finalize",
-        }
-    }
+/// Records individual-vote verification and bridge delivery outcomes.
+pub(crate) fn record_equivocation_verify(kind: EquivocationKind, result: &'static str) {
+    counter!("outbe_consensus_equivocation_verify_total",
+        "kind" => kind.label(), "result" => result)
+    .increment(1);
 }
 
 /// Record a byzantine evidence detection event under its typed, closed-set label.
@@ -567,7 +560,8 @@ mod tests {
     }
 
     /// Pins the drop/decision telemetry labels. They are an external operator-facing
-    /// surface (`outbe_consensus_finalization_dropped_total`, `outbe_consensus_certification_dropped_total`,
+    /// surface (`outbe_consensus_finalization_dropped_total`,
+    /// `outbe_consensus_certification_dropped_total`,
     /// `outbe_dkg_boundary_requirement_total`, `outbe_dkg_boundary_unavailable_total`).
     /// A change must be deliberate, not an accidental rename.
     #[test]

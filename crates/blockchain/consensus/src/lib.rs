@@ -16,7 +16,9 @@ pub mod metrics;
 
 pub mod application_shutdown;
 pub mod args;
+mod equivocation_verify;
 pub mod execution_port;
+pub use equivocation_verify::{EquivocationVerifyActor, EquivocationVerifyMailbox};
 pub mod follow_transport;
 pub mod follower_shutdown;
 pub mod marshal_update_reporter;

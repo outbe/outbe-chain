@@ -178,6 +178,10 @@ fn build_reporter_with_continuity(
             bridge: None,
             witness_sink,
             finalize_verify_mailbox: verify_mailbox,
+            equivocation_verify_mailbox: outbe_consensus::EquivocationVerifyActor::new(
+                Default::default(),
+            )
+            .1,
         },
     );
     (reporter, rx)
