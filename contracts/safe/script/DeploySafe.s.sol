@@ -3,10 +3,6 @@ pragma solidity 0.8.30;
 
 import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
-import {Safe} from "safe-smart-account/contracts/Safe.sol";
-import {SafeL2} from "safe-smart-account/contracts/SafeL2.sol";
-import {CompatibilityFallbackHandler} from "safe-smart-account/contracts/handler/CompatibilityFallbackHandler.sol";
-import {SafeProxyFactory} from "safe-smart-account/contracts/proxies/SafeProxyFactory.sol";
 
 interface ICreate3Factory {
     function deploy(bytes32 salt, bytes calldata initCode) external payable returns (address deployed);
@@ -15,6 +11,31 @@ interface ICreate3Factory {
 
 interface ISafeProxy {
     function masterCopy() external view returns (address);
+}
+
+interface ISafe {
+    function setup(
+        address[] calldata owners,
+        uint256 threshold,
+        address to,
+        bytes calldata data,
+        address fallbackHandler,
+        address paymentToken,
+        uint256 payment,
+        address payable paymentReceiver
+    ) external;
+
+    function VERSION() external view returns (string memory);
+    function getThreshold() external view returns (uint256);
+    function getOwners() external view returns (address[] memory);
+}
+
+interface ISafeProxyFactory {
+    function proxyCreationCode() external pure returns (bytes memory);
+
+    function createChainSpecificProxyWithNonceL2(address singleton, bytes memory initializer, uint256 saltNonce)
+        external
+        returns (ISafeProxy proxy);
 }
 
 /// @dev Deploys the official Safe v1.5.0 contracts and one chain-specific Safe account on Outbe.
@@ -35,18 +56,23 @@ contract DeploySafe is Script {
         require(address(create3).code.length != 0, "CREATE3 factory is missing");
 
         vm.startBroadcast(deployerKey);
-        address singleton = _deploy(create3, deployer, "SafeL2", type(SafeL2).creationCode);
-        address proxyFactory = _deploy(create3, deployer, "SafeProxyFactory", type(SafeProxyFactory).creationCode);
-        address fallbackHandler =
-            _deploy(create3, deployer, "CompatibilityFallbackHandler", type(CompatibilityFallbackHandler).creationCode);
+        address singleton = _deploy(create3, deployer, "SafeL2", vm.getCode("SafeL2.sol:SafeL2"));
+        address proxyFactory =
+            _deploy(create3, deployer, "SafeProxyFactory", vm.getCode("SafeProxyFactory.sol:SafeProxyFactory"));
+        address fallbackHandler = _deploy(
+            create3,
+            deployer,
+            "CompatibilityFallbackHandler",
+            vm.getCode("CompatibilityFallbackHandler.sol:CompatibilityFallbackHandler")
+        );
 
         bytes memory initializer = abi.encodeCall(
-            Safe.setup, (owners, threshold, address(0), bytes(""), fallbackHandler, address(0), 0, payable(address(0)))
+            ISafe.setup, (owners, threshold, address(0), bytes(""), fallbackHandler, address(0), 0, payable(address(0)))
         );
-        address safe = _safeAddress(SafeProxyFactory(proxyFactory), singleton, initializer);
+        address safe = _safeAddress(ISafeProxyFactory(proxyFactory), singleton, initializer);
         if (safe.code.length == 0) {
             safe = address(
-                SafeProxyFactory(proxyFactory).createChainSpecificProxyWithNonceL2(singleton, initializer, SAFE_NONCE)
+                ISafeProxyFactory(proxyFactory).createChainSpecificProxyWithNonceL2(singleton, initializer, SAFE_NONCE)
             );
         }
         vm.stopBroadcast();
@@ -69,7 +95,7 @@ contract DeploySafe is Script {
         require(deployed.code.length != 0, "Safe dependency deployment failed");
     }
 
-    function _safeAddress(SafeProxyFactory factory, address singleton, bytes memory initializer)
+    function _safeAddress(ISafeProxyFactory factory, address singleton, bytes memory initializer)
         internal
         view
         returns (address)
@@ -100,12 +126,10 @@ contract DeploySafe is Script {
     {
         require(safe.code.length != 0, "Safe proxy is missing");
         require(ISafeProxy(safe).masterCopy() == singleton, "Safe singleton mismatch");
-        require(
-            keccak256(bytes(SafeL2(payable(safe)).VERSION())) == keccak256(bytes(SAFE_VERSION)), "Safe version mismatch"
-        );
-        require(SafeL2(payable(safe)).getThreshold() == threshold, "Safe threshold mismatch");
+        require(keccak256(bytes(ISafe(safe).VERSION())) == keccak256(bytes(SAFE_VERSION)), "Safe version mismatch");
+        require(ISafe(safe).getThreshold() == threshold, "Safe threshold mismatch");
 
-        address[] memory actualOwners = SafeL2(payable(safe)).getOwners();
+        address[] memory actualOwners = ISafe(safe).getOwners();
         require(actualOwners.length == owners.length, "Safe owners length mismatch");
         for (uint256 i; i < owners.length; ++i) {
             require(actualOwners[i] == owners[i], "Safe owners mismatch");

@@ -3,16 +3,14 @@
   out = "out"
   script = "script"
   libs = ["dependencies"]
-  solc = "0.8.30"
-  evm_version = "Prague"
-  bytecode_hash = "none"
-  cbor_metadata = false
-  optimizer = true
-  optimizer_runs = 10_000
-  via_ir = true
+  auto_detect_solc = true
   remappings = [
     "forge-std/=dependencies/forge-std-1.16.1/src/",
     "safe-smart-account/=dependencies/safe-smart-account-1.5.0/",
+  ]
+  compilation_restrictions = [
+    { paths = "src/SafeArtifacts.sol", version = "=0.7.6" },
+    { paths = "dependencies/safe-smart-account-1.5.0/**", version = "=0.7.6" },
   ]
 
 [rpc_endpoints]
