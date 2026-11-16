@@ -58,6 +58,7 @@
 
 pub mod constants;
 mod envelope;
+pub mod equivocation;
 pub mod errors;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod fixtures;
@@ -79,10 +80,11 @@ pub use constants::{
     FREE_TX_DAILY_GAS_LIMIT, FREE_TX_DAILY_LIMIT, FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT,
     MIN_FREE_TX_MAX_FEE_PER_GAS, SPONSORED_GAS_PER_BLOCK,
 };
+pub use equivocation::{SlashEquivocationHook, MAX_ZERO_FEE_SLASH_EQUIVOCATION_GAS_LIMIT};
 pub use hooks::{
     registry, ZeroFeeAuthorization, ZeroFeeCandidate, ZeroFeeHook, ZeroFeeHookTag,
     ZeroFeePolicyError, ZeroFeeRegistry, ZeroFeeTransaction, HYPERLANE_SUBMIT_CHECKPOINT_HOOK,
-    ORACLE_SUBMIT_VOTE_HOOK, RENEW_ENCLAVE_HOOK,
+    ORACLE_SUBMIT_VOTE_HOOK, RENEW_ENCLAVE_HOOK, SLASH_EQUIVOCATION_HOOK,
 };
 pub use outbe_primitives::addresses::ZEROFEE_ADDRESS;
 pub use runtime::{

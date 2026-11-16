@@ -5,6 +5,7 @@ use outbe_oracle::precompile::IOracle;
 use outbe_validatorset::delegation::ValidatorDelegateRole;
 
 use crate::envelope::{active_validator_for_role, ValidatorCallHook};
+use crate::equivocation::SlashEquivocationHook;
 use crate::renewal::RenewEnclaveHook;
 use crate::{hyperlane, oracle};
 
@@ -206,6 +207,7 @@ static ZERO_FEE_HOOKS: &[&dyn ZeroFeeHook] = &[
     &ORACLE_SUBMIT_VOTE_VALIDATOR_HOOK,
     &HYPERLANE_SUBMIT_CHECKPOINT_VALIDATOR_HOOK,
     &RENEW_ENCLAVE_HOOK_IMPL,
+    &SlashEquivocationHook,
 ];
 
 /// Returns the Outbe system zero-fee hook registry.
