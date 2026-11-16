@@ -58,6 +58,19 @@ pub const SIGNED_ENCLAVE_FILES: &[&str] = &[
     "outbe-tee-enclave.sig",
 ];
 
+/// Run one command with root privileges without requiring `sudo` when the
+/// generated installer is already running as root.
+pub(super) const ROOT_HELPER: &str = r#"as_root() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo -- "$@"
+  else
+    echo "root privileges required: run as root or install sudo" >&2
+    return 1
+  fi
+}"#;
+
 struct BundlePaths<'a> {
     output_dir: &'a Path,
     keys_dir: &'a Path,

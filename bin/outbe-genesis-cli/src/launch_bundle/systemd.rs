@@ -9,7 +9,7 @@ use serde_json::Value;
 use crate::error::GenesisError;
 use crate::network::rpc_bind_ip;
 
-use super::{port_of, quote, write_script};
+use super::{port_of, quote, write_script, ROOT_HELPER};
 
 /// Render `Caddyfile` for one validator host.
 pub fn caddyfile(config: &Value, host: &str) -> Result<String, GenesisError> {
@@ -69,31 +69,33 @@ pub fn caddy_install_script(
     let public_radicle = port_of(config, "public_radicle_status_port")?;
     let caddyfile_path = format!("{base_dir}/validator-{index}/Caddyfile");
     Ok(format!(
-        "\n# Publish this validator's RPC and Radicle status through caddy.\n\
+        "\n{root_helper}\n\n\
+# Publish this validator's RPC and Radicle status through caddy.\n\
 if ! command -v caddy >/dev/null; then\n\
   echo \"installing caddy...\"\n\
-  sudo apt-get update -qq\n\
-  sudo apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl >/dev/null\n\
+  as_root apt-get update -qq\n\
+  as_root apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl >/dev/null\n\
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \\\n\
-    | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg\n\
+    | as_root gpg --batch --yes --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg\n\
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \\\n\
-    | sudo tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null\n\
-  sudo apt-get update -qq\n\
-  sudo apt-get install -y -qq caddy >/dev/null\n\
+    | as_root tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null\n\
+  as_root apt-get update -qq\n\
+  as_root apt-get install -y -qq caddy >/dev/null\n\
 fi\n\
 \n\
-sudo install -m 644 {} /etc/caddy/Caddyfile\n\
-sudo systemctl enable --now caddy\n\
-sudo systemctl reload caddy 2>/dev/null || sudo systemctl restart caddy\n\
+as_root install -m 644 {} /etc/caddy/Caddyfile\n\
+as_root systemctl enable --now caddy\n\
+as_root systemctl reload caddy 2>/dev/null || as_root systemctl restart caddy\n\
 \n\
 # Let the world reach the published ports; the node's own ports stay loopback.\n\
-sudo ufw allow {public_rpc}/tcp >/dev/null 2>&1 || true\n\
-sudo ufw allow {public_radicle}/tcp >/dev/null 2>&1 || true\n\
+as_root ufw allow {public_rpc}/tcp >/dev/null 2>&1 || true\n\
+as_root ufw allow {public_radicle}/tcp >/dev/null 2>&1 || true\n\
 \n\
 echo \"published:\"\n\
 echo \"  RPC            http://$(curl -s -m 5 ifconfig.me || echo '<this-host>'):{public_rpc}\"\n\
 echo \"  Radicle status http://$(curl -s -m 5 ifconfig.me || echo '<this-host>'):{public_radicle}\"\n",
-        quote(&caddyfile_path)
+        quote(&caddyfile_path),
+        root_helper = ROOT_HELPER,
     ))
 }
 
@@ -142,29 +144,31 @@ pub fn write_systemd_units(
     }
 
     let renewal_install = if enable_tee_renewal {
-        "sudo systemctl enable --now outbe-tee-renew.timer\n"
+        "as_root systemctl enable --now outbe-tee-renew.timer\n"
     } else {
         ""
     };
     let base = quote(base_dir);
     let install = format!(
-        "\n# Install and start this machine's single founding validator.\n\
+        "\n{root_helper}\n\n\
+# Install and start this machine's single founding validator.\n\
 UNIT_DIR=\"$(cd -- \"$(dirname -- \"${{BASH_SOURCE[0]}}\")/systemd\" && pwd)\"\n\
 \n\
-getent group outbe >/dev/null || sudo groupadd --system outbe\n\
-id -u outbe >/dev/null 2>&1 || sudo useradd --system --gid outbe \\\n  --home-dir {base} --shell /usr/sbin/nologin outbe\n\
-sudo install -d -m 0700 {base}/validator-{index}/tee /var/lib/outbe/tee\n\
-sudo chown -R outbe:outbe {base}\n\
-sudo install -m 0644 \"$UNIT_DIR\"/outbe-* /etc/systemd/system/\n\
-sudo systemctl daemon-reload\n\
+getent group outbe >/dev/null || as_root groupadd --system outbe\n\
+id -u outbe >/dev/null 2>&1 || as_root useradd --system --gid outbe \\\n  --home-dir {base} --shell /usr/sbin/nologin outbe\n\
+as_root install -d -m 0700 {base}/validator-{index}/tee /var/lib/outbe/tee\n\
+as_root chown -R outbe:outbe {base}\n\
+as_root install -m 0644 \"$UNIT_DIR\"/outbe-* /etc/systemd/system/\n\
+as_root systemctl daemon-reload\n\
 \n\
-sudo systemctl enable --now outbe-validator.target\n\
+as_root systemctl enable --now outbe-validator.target\n\
 {renewal_install}\n\
 echo\n\
 echo \"founding validator services:\"\n\
 systemctl list-units 'outbe-*' --no-pager --no-legend | sed 's/^/  /'\n\
 echo\n\
-echo \"follow the node with: journalctl -u outbe-validator -f\"\n"
+echo \"follow the node with: journalctl -u outbe-validator -f\"\n",
+        root_helper = ROOT_HELPER,
     );
     write_script(&output_dir.join("install-systemd.sh"), &install)
 }

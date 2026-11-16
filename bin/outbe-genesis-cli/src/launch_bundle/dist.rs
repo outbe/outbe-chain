@@ -12,7 +12,7 @@ use crate::error::GenesisError;
 use crate::network::rpc_bind_ip;
 use crate::seed_codec::parse_u64;
 
-use super::{copy_dir_recursive, port_of, quote, write_script};
+use super::{copy_dir_recursive, port_of, quote, write_script, ROOT_HELPER};
 
 fn pack_validator_archive(
     output_dir: &Path,
@@ -107,7 +107,8 @@ pub fn build_distribution(
 
     let q_base = quote(base_dir);
     let unpack = format!(
-        "\n# Unpack this machine's archive into {base_dir}. Run it ON the target machine,\n\
+        "\n{root_helper}\n\n\
+# Unpack this machine's archive into {base_dir}. Run it ON the target machine,\n\
 # from the directory holding validator-<index>.tgz.\n\
 INDEX=\"${{1:?usage: unpack.sh <validator-index>}}\"\n\
 ARCHIVE=\"validator-$INDEX.tgz\"\n\
@@ -117,12 +118,13 @@ if command -v sha256sum >/dev/null && [ -f SHA256SUMS ]; then\n\
   grep \" $ARCHIVE\\$\" SHA256SUMS | sha256sum -c - || {{ echo \"checksum mismatch\" >&2; exit 1; }}\n\
 fi\n\
 \n\
-sudo mkdir -p {q_base}\n\
-sudo chown \"$USER\" {q_base}\n\
+as_root mkdir -p {q_base}\n\
+as_root chown \"$USER\" {q_base}\n\
 tar xzf \"$ARCHIVE\" -C {q_base}\n\
 chmod -R go-rwx {q_base}/keys\n\
 \n\
-echo \"unpacked into {base_dir}; next: {base_dir}/validator-$INDEX/install-systemd.sh\"\n"
+echo \"unpacked into {base_dir}; next: {base_dir}/validator-$INDEX/install-systemd.sh\"\n",
+        root_helper = ROOT_HELPER,
     );
     write_script(&dist.join("unpack.sh"), &unpack)?;
     Ok(names)
@@ -271,7 +273,7 @@ metrics `{metrics_port}`, Radicle status\n\
 ```bash\n\
 cd {base_dir}/validator-N\n\
 ./preflight.sh N        # verifies genesis/enclave/state before anything starts\n\
-sudo ./install-systemd.sh\n\
+./install-systemd.sh\n\
 ```\n\
 \n\
 `install-systemd.sh` installs one non-templated unit per role, starts the\n\

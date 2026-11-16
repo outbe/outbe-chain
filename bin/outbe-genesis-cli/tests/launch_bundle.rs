@@ -268,6 +268,10 @@ fn distribution_archives_and_signed_enclave_staging() {
         .permissions()
         .mode();
     assert!(unpack_mode & 0o111 != 0);
+    let unpack = fs::read_to_string(dist.join("unpack.sh")).expect("read unpack");
+    assert!(unpack.contains("if [ \"$(id -u)\" -eq 0 ]"));
+    assert!(unpack.contains("as_root mkdir"));
+    assert!(!unpack.contains("\nsudo "));
 
     for index in 0..4 {
         let archive_path = dist.join(format!("validator-{index}.tgz"));
@@ -369,8 +373,17 @@ fn caddy_systemd_units_tee_renewal_and_enclave_modes() {
     assert!(timer.contains("Persistent=true"));
     let install_systemd = fs::read_to_string(output_dir.join("validator-2/install-systemd.sh"))
         .expect("install-systemd");
+    assert!(install_systemd.contains("if [ \"$(id -u)\" -eq 0 ]"));
+    assert!(install_systemd.contains("as_root systemctl"));
+    assert!(!install_systemd.contains("\nsudo "));
     assert!(install_systemd.contains("enable --now outbe-tee-renew.timer"));
     assert!(install_systemd.contains("enable --now outbe-validator.target"));
+
+    let install_caddy =
+        fs::read_to_string(output_dir.join("validator-2/install-caddy.sh")).expect("install-caddy");
+    assert!(install_caddy.contains("as_root apt-get"));
+    assert!(install_caddy.contains("as_root systemctl"));
+    assert!(!install_caddy.contains("\nsudo "));
 
     let node2 =
         fs::read_to_string(output_dir.join("validator-2").join("run-node.sh")).expect("node2");
