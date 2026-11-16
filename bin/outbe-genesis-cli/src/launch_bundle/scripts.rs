@@ -10,7 +10,7 @@ use crate::error::GenesisError;
 use crate::network::{profiles_dir, rpc_bind_ip};
 use crate::seed_codec::parse_u64;
 
-use super::{port_of, quote, uses_production_tee_session, DEFAULT_MAX_VALIDATORS};
+use super::{port_of, quote, DEFAULT_MAX_VALIDATORS};
 
 /// Render `run-enclave.sh` for a validator.
 pub fn enclave_script(
@@ -20,11 +20,6 @@ pub fn enclave_script(
     direct_dev_binding: Option<&str>,
     direct_dev_node_id: Option<&str>,
 ) -> Result<String, GenesisError> {
-    let mode = config
-        .get("tee")
-        .and_then(|t| t.get("mode"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| GenesisError::validation("tee.mode is required"))?;
     let chain_id = parse_u64(
         config
             .get("chain_id")
@@ -35,67 +30,6 @@ pub fn enclave_script(
     let endpoint = format!("127.0.0.1:{port}");
     let validator_dir = format!("{base_dir}/validator-{index}");
     let validator_tee = format!("{validator_dir}/tee");
-
-    if uses_production_tee_session(config) {
-        let runtime = config
-            .get("enclave_runtime")
-            .and_then(Value::as_str)
-            .unwrap_or("bundled-sgx");
-        let default_enclave_dir = format!("{base_dir}/sgx");
-        let enclave_dir = config
-            .get("enclave_dir")
-            .and_then(Value::as_str)
-            .unwrap_or(&default_enclave_dir);
-        let default_enclave_runner = format!("{enclave_dir}/bin/outbe-tee-enclave-launch");
-        let configured_runner = config.get("enclave_runner").and_then(Value::as_str);
-        let runner_command = if runtime == "system-gramine" {
-            format!(
-                "{} {}",
-                quote(configured_runner.unwrap_or("gramine-sgx")),
-                quote("outbe-tee-enclave")
-            )
-        } else {
-            quote(configured_runner.unwrap_or(&default_enclave_runner))
-        };
-        if mode != "dcap-required" {
-            return Ok(format!(
-                "\n# TEE enclave under gramine-sgx on the host.\n\
-# The node refuses to start until this answers on {endpoint}.\n\
-mkdir -p {q_val_tee}\n\
-\n\
-[ -e /dev/sgx_enclave ] \\\n  || {{ echo \"missing /dev/sgx_enclave: SGX driver not loaded\" >&2; exit 1; }}\n\
-\n\
-cd {q_enclave_dir}\n\
-exec {runner_command} \\\n\
-  --socket {q_endpoint} \\\n\
-  --tee-dir /var/lib/outbe/tee \\\n\
-  --chain-id {chain_id_hex}\n",
-                q_val_tee = quote(&validator_tee),
-                q_enclave_dir = quote(enclave_dir),
-                q_endpoint = quote(&endpoint),
-            ));
-        }
-        return Ok(format!(
-            "\n# TEE enclave under gramine-sgx on the host.\n\
-# The node refuses to start until this answers on {endpoint}.\n\
-mkdir -p {q_val_tee}\n\
-\n\
-for device in /dev/sgx_enclave /dev/sgx_provision; do\n\
-  [ -e \"$device\" ] || {{ echo \"missing $device: SGX driver not loaded\" >&2; exit 1; }}\n\
-done\n\
-systemctl is-active --quiet aesmd.service \\\n\
-  || {{ echo \"aesmd.service is not running; DCAP quoting will fail\" >&2; exit 1; }}\n\
-\n\
-cd {q_enclave_dir}\n\
-exec {runner_command} \\\n\
-  --socket {q_endpoint} \\\n\
-  --tee-dir /var/lib/outbe/tee \\\n\
-  --chain-id {chain_id_hex}\n",
-            q_val_tee = quote(&validator_tee),
-            q_enclave_dir = quote(enclave_dir),
-            q_endpoint = quote(&endpoint),
-        ));
-    }
 
     let binding = direct_dev_binding.ok_or_else(|| {
         GenesisError::validation("gramine-direct-dev requires a genesis network binding")
@@ -214,11 +148,6 @@ pub fn node_script(
         .get("node_binary")
         .and_then(Value::as_str)
         .unwrap_or("outbe-chain");
-    let session_mode = if uses_production_tee_session(config) {
-        "  --tee-session-mode production-node-host \\\n"
-    } else {
-        ""
-    };
     let local_consensus_defaults = if config
         .get("consensus_use_local_defaults")
         .and_then(Value::as_bool)
@@ -256,7 +185,6 @@ export RUST_MIN_STACK=\"${{RUST_MIN_STACK:-16777216}}\"\n\
 \n\
 exec {q_binary} node \\\n\
   --validator \\\n\
-{session_mode}\
   --chain {q_genesis} \\\n\
   --datadir \"$DATA\" \\\n\
   --engine.persistence-threshold 0 \\\n\

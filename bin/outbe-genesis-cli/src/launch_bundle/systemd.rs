@@ -198,54 +198,19 @@ pub fn preflight_script(
 ) -> Result<String, GenesisError> {
     let tee_port = port_of(config, "tee_enclave_port")?;
     let rpc_port = port_of(config, "rpc_port")?;
-    let default_enclave_dir = format!("{base_dir}/sgx");
-    let enclave_dir = config
-        .get("enclave_dir")
+    let runner = config
+        .get("enclave_runner")
         .and_then(Value::as_str)
-        .unwrap_or(&default_enclave_dir);
-    let manifest = quote(&format!("{enclave_dir}/outbe-tee-enclave.manifest.sgx"));
-    let signature = quote(&format!("{enclave_dir}/outbe-tee-enclave.sig"));
-    let enclave_check = if super::uses_production_tee_session(config) {
-        let runtime_check =
-            if config.get("enclave_runtime").and_then(Value::as_str) == Some("system-gramine") {
-                "if command -v gramine-sgx >/dev/null; then\n\
-  note \"enclave runtime\" \"system Gramine\"\n\
-else\n\
-  note \"enclave runtime\" \"MISSING gramine-sgx\"; fail=1\n\
-fi\n"
-            } else {
-                ""
-            };
-        format!(
-            "{runtime_check}manifest={manifest}\n\
-signature={signature}\n\
-if [ -f \"$manifest\" ] && [ -f \"$signature\" ]; then\n\
-  note \"enclave manifest sha256\" \"$(sha256sum \"$manifest\" | cut -c1-16)\"\n\
-  note \"enclave signature sha256\" \"$(sha256sum \"$signature\" | cut -c1-16)\"\n\
-  if command -v gramine-sgx-sigstruct-view >/dev/null; then\n\
-    note \"enclave mr_enclave\" \"$(gramine-sgx-sigstruct-view \"$signature\" 2>/dev/null | grep -oE 'mr_enclave: [0-9a-f]+' | cut -c13-28)\"\n\
-    note \"enclave mr_signer\" \"$(gramine-sgx-sigstruct-view \"$signature\" 2>/dev/null | grep -oE 'mr_signer: [0-9a-f]+' | cut -c12-27)\"\n\
-  fi\n\
-  echo \"  ^ enclave artifacts must match across machines\"\n\
-else\n\
-  note \"enclave artifacts\" \"MISSING manifest or signature\"; fail=1\n\
-fi\n"
-        )
-    } else {
-        let runner = config
-            .get("enclave_runner")
-            .and_then(Value::as_str)
-            .unwrap_or("outbe-tee-enclave-confidential-vm");
-        format!(
-            "runner={}\n\
+        .unwrap_or("outbe-tee-enclave-confidential-vm");
+    let enclave_check = format!(
+        "runner={}\n\
 if [ -x \"$runner\" ] || command -v \"$runner\" >/dev/null 2>&1; then\n\
   note \"confidential VM signer\" \"outbe-tee-enclave-confidential-vm\"\n\
 else\n\
   note \"confidential VM signer\" \"MISSING $runner\"; fail=1\n\
 fi\n",
-            quote(runner)
-        )
-    };
+        quote(runner)
+    );
     Ok(format!(
         "\n# Read-only pre-launch check for validator {index}. Exits non-zero on anything\n\
 # that would make the network fail after start rather than before.\n\

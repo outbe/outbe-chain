@@ -30,10 +30,6 @@ fn pack_validator_archive(
             fs::copy(&item, &dst).map_err(|err| GenesisError::io(&dst, err))?;
         }
     }
-    let sgx = output_dir.join("sgx");
-    if sgx.is_dir() {
-        copy_dir_recursive(&sgx, &staging.join("sgx"))?;
-    }
     let crs = output_dir.join(".bb-crs/bn254_g1.dat");
     let staged_crs = staging.join(".bb-crs/bn254_g1.dat");
     fs::create_dir_all(staged_crs.parent().expect("CRS path has a parent"))
@@ -152,11 +148,6 @@ pub fn deploy_markdown(
             .get("chain_id")
             .ok_or_else(|| GenesisError::validation("chain_id is required"))?,
     )?;
-    let mode = config
-        .get("tee")
-        .and_then(|t| t.get("mode"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| GenesisError::validation("tee.mode is required"))?;
     let first_p2p = validators
         .first()
         .and_then(|v| v.get("p2p_address"))
@@ -187,49 +178,15 @@ pub fn deploy_markdown(
         .map(|enode| format!("  - `{enode}`"))
         .collect::<Vec<_>>()
         .join("\n");
-    let confidential_vm = config
-        .get("enclave_sgx")
-        .and_then(Value::as_bool)
-        .is_some_and(|enabled| !enabled);
-    let runtime_summary = if confidential_vm {
-        "confidential VM signer (VM attestation pending)".to_owned()
-    } else {
-        format!("TEE mode `{mode}`")
-    };
-    let runtime_warning = if confidential_vm {
-        "\n> The signer runs inside an operator-provided confidential VM. VM attestation is not \
-implemented yet, so the deployment trusts the operator and infrastructure.\n"
-    } else if mode == "dcap-required" {
-        ""
-    } else {
-        "\n> **`gramine-direct-dev`**: the enclave runs unattested. Use it for a \
-devnet only. A production network needs `tee.mode: dcap-required`, real \
-SGX hardware, and the exact release measurements.\n"
-    };
-    let runtime_prerequisites = if confidential_vm {
-        "- `outbe-tee-enclave-confidential-vm` is installed from the software bundle\n\
-- no SGX device, AESM, DCAP, or Gramine installation is required"
-    } else {
-        "- no system Gramine installation is required on SGX hosts: `sgx/` contains the\n\
-  pinned enclave launcher and runtime from the signed release bundle\n\
-- `outbe-cli` on every SGX validator host for automatic TEE renewal\n\
-- when `enclave_sgx` is enabled: SGX hardware exposing `/dev/sgx_enclave`\n\
-- for `dcap-required`: also `/dev/sgx_provision` and `aesmd.service`\n\
-- `outbe-tee-enclave-confidential-vm` on `PATH` only when `enclave_sgx: false`"
-    };
-    let runtime_process = if confidential_vm {
-        "`outbe-tee-enclave-confidential-vm` | one signer inside the confidential VM"
-    } else {
-        "bundled SGX launcher | selected explicitly by the legacy launch configuration"
-    };
-    let runtime_install_note = if confidential_vm {
-        "The services recover after clean or failed exits. `preflight.sh` is read-only: run it \
-first and compare the genesis digest it prints across all founding machines."
-    } else {
-        "The installer also enables the daily TEE renewal timer. The services recover after clean \
-or failed exits. `preflight.sh` is read-only: compare the genesis and enclave digests across all \
-founding machines."
-    };
+    let runtime_summary = "confidential VM signer (VM attestation pending)";
+    let runtime_warning = "\n> The signer runs inside an operator-provided confidential VM. VM \
+attestation is not implemented yet, so the deployment trusts the operator and infrastructure.\n";
+    let runtime_prerequisites =
+        "- `outbe-tee-enclave-confidential-vm` is installed from the software bundle";
+    let runtime_process =
+        "`outbe-tee-enclave-confidential-vm` | one signer inside the confidential VM";
+    let runtime_install_note = "The services recover after clean or failed exits. `preflight.sh` \
+is read-only: run it first and compare the genesis digest it prints across all founding machines.";
 
     let reth_p2p_port = port_of(config, "reth_p2p_port")?;
     let reth_discv5_port = port_of(config, "reth_discv5_port")?;

@@ -5,7 +5,7 @@ use clap::{Args, Parser, Subcommand};
 use eyre::{bail, ensure, Result, WrapErr as _};
 use xtask::{
     layer_boundaries, protocol_bench,
-    release::{elf, sgx, software, toolchain},
+    release::{canonical_json, elf, software, toolchain},
     stablecoin,
 };
 
@@ -96,8 +96,6 @@ enum ReleaseCommand {
     Build(SoftwareBuildArgs),
     /// Validate build specs, generate manifests and compare reproducible ELF outputs.
     Elf(ElfArgs),
-    /// Prepare, authorize and verify a pre-signed Gramine SGX bundle.
-    Sgx(SgxArgs),
     /// Verify project toolchain pins, APT closures and Intel DCAP native-QVL artifacts.
     Toolchain(ToolchainArgs),
 }
@@ -226,145 +224,6 @@ enum ElfCommand {
     },
 }
 
-#[derive(Debug, Args)]
-struct SgxArgs {
-    #[command(subcommand)]
-    command: SgxCommand,
-}
-
-// This command is parsed once and immediately executed. Keeping the manifest paths as
-// strongly typed clap fields is clearer than heap-boxing one arbitrary argument solely to
-// equalize enum layout.
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug, Subcommand)]
-enum SgxCommand {
-    /// Prepare an unsigned deterministic Gramine bundle from a verified ELF build.
-    Prepare {
-        #[arg(long, value_enum)]
-        network: sgx::SgxReleaseNetwork,
-        /// Approved seeded ChainSpec. Its chain identity and epoch-0 committee are measured into
-        /// the enclave.
-        #[arg(long)]
-        genesis: PathBuf,
-        #[arg(long)]
-        elf_output: PathBuf,
-        #[arg(long)]
-        output: PathBuf,
-    },
-    /// Compare two independently prepared unsigned bundles.
-    Compare {
-        #[arg(long)]
-        first: PathBuf,
-        #[arg(long)]
-        second: PathBuf,
-        #[arg(long)]
-        output: PathBuf,
-    },
-    /// Authorize an unsigned bundle with the protected network SGX key.
-    Sign {
-        #[arg(long, value_enum)]
-        network: sgx::SgxReleaseNetwork,
-        #[arg(long)]
-        unsigned: PathBuf,
-        #[arg(long)]
-        key_file: PathBuf,
-        #[arg(long)]
-        output: PathBuf,
-    },
-    /// Materialize the only allowed final-genesis change from a signed bundle.
-    FinalizeGenesis {
-        #[arg(long, value_enum)]
-        network: sgx::SgxReleaseNetwork,
-        /// Approved genesis without teeAttestationV1.
-        #[arg(long)]
-        seeded_genesis: PathBuf,
-        /// Signed SGX bundle whose measurements become the block-1 policy.
-        #[arg(long)]
-        bundle: PathBuf,
-        /// New final genesis. The command never overwrites an existing path.
-        #[arg(long)]
-        output: PathBuf,
-        /// Canonical evidence for the seeded-to-final transformation.
-        #[arg(long)]
-        evidence_output: PathBuf,
-    },
-    /// Verify checksums, SIGSTRUCT and the exact final genesis policy binding.
-    Verify {
-        #[arg(long, value_enum)]
-        network: sgx::SgxReleaseNetwork,
-        #[arg(long)]
-        bundle: PathBuf,
-        /// Final genesis whose block-1 policy must authorize this exact bundle.
-        #[arg(long)]
-        genesis: PathBuf,
-    },
-    /// Create a deterministic archive from an already verified signed bundle.
-    Archive {
-        #[arg(long, value_enum)]
-        network: sgx::SgxReleaseNetwork,
-        #[arg(long)]
-        bundle: PathBuf,
-        #[arg(long)]
-        output: PathBuf,
-    },
-    /// Build an immutable OCI image from an already verified signed bundle.
-    Image {
-        #[arg(long, value_enum)]
-        network: sgx::SgxReleaseNetwork,
-        #[arg(long)]
-        bundle: PathBuf,
-        #[arg(long)]
-        image: String,
-        #[arg(long)]
-        output: PathBuf,
-        /// Push by digest and emit BuildKit SBOM/provenance attestations.
-        #[arg(long)]
-        push: bool,
-    },
-    /// Promote one exact ELF, signed SGX bundle and OCI image to a verified ReleaseManifest.
-    Manifest {
-        #[arg(long, value_enum)]
-        network: sgx::SgxReleaseNetwork,
-        #[arg(long)]
-        elf_manifest: PathBuf,
-        #[arg(long)]
-        bundle: PathBuf,
-        #[arg(long)]
-        bundle_archive: PathBuf,
-        #[arg(long)]
-        oci_evidence: PathBuf,
-        #[arg(long)]
-        cosign_image_verification: PathBuf,
-        #[arg(long)]
-        cosign_sbom_verification: PathBuf,
-        #[arg(long)]
-        cosign_provenance_verification: PathBuf,
-        #[arg(long)]
-        sbom: PathBuf,
-        #[arg(long)]
-        elf_evidence: PathBuf,
-        #[arg(long)]
-        sgx_evidence: PathBuf,
-        #[arg(long)]
-        hardware_evidence: PathBuf,
-        #[arg(long)]
-        processor_dcap_archive: PathBuf,
-        #[arg(long)]
-        processor_dcap_evidence: PathBuf,
-        /// Approved genesis before the release policy is inserted.
-        #[arg(long)]
-        seeded_genesis: PathBuf,
-        /// Canonical evidence for the seeded-to-final genesis transformation.
-        #[arg(long)]
-        network_binding_evidence: PathBuf,
-        /// Final network genesis whose block-1 policy authorizes this enclave.
-        #[arg(long)]
-        genesis: PathBuf,
-        #[arg(long)]
-        output: PathBuf,
-    },
-}
-
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -377,7 +236,7 @@ fn main() -> Result<()> {
             );
         }
         Command::ProtocolBench(arguments) => {
-            let repo_root = sgx::repository_root()?;
+            let repo_root = default_workspace_root();
             let (action, options) = match arguments.command {
                 ProtocolBenchCommand::Run(options) => (protocol_bench::Action::Run, options),
                 ProtocolBenchCommand::BaselineCheck(options) => {
@@ -403,7 +262,7 @@ fn main() -> Result<()> {
                 let repo_root = if arguments.inside_container {
                     std::env::current_dir()?
                 } else {
-                    sgx::repository_root()?
+                    default_workspace_root()
                 };
                 let output = software::build(&software::BuildOptions {
                     repo_root: &repo_root,
@@ -415,17 +274,13 @@ fn main() -> Result<()> {
                 println!("software bundle: {}", output.display());
             }
             ReleaseCommand::Elf(elf_args) => run_elf_command(elf_args.command)?,
-            ReleaseCommand::Sgx(sgx_args) => {
-                let repo_root = sgx::repository_root()?;
-                run_sgx_command(&repo_root, sgx_args.command)?;
-            }
             ReleaseCommand::Toolchain(toolchain_args) => {
-                let repo_root = sgx::repository_root()?;
+                let repo_root = default_workspace_root();
                 run_toolchain_command(&repo_root, toolchain_args.command)?;
             }
         },
         Command::Stablecoin(stablecoin_args) => {
-            let repo_root = sgx::repository_root()?;
+            let repo_root = default_workspace_root();
             match stablecoin_args.command {
                 StablecoinCommand::AbiCheck => {
                     let report = stablecoin::check_abi_exports(&repo_root)?;
@@ -529,7 +384,7 @@ fn run_elf_command(command: ElfCommand) -> Result<()> {
         } => {
             let repo_root = match repo_root {
                 Some(repo_root) => repo_root,
-                None => sgx::repository_root()?,
+                None => default_workspace_root(),
             };
             run_elf_compare(&first, &second, &repo_root, &output)
         }
@@ -540,7 +395,7 @@ fn write_json_output(output: &Path, value: &serde_json::Value) -> Result<()> {
     if let Some(parent) = output.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(output, sgx::canonical_json(value)?)?;
+    fs::write(output, canonical_json(value)?)?;
     Ok(())
 }
 
@@ -586,141 +441,6 @@ fn run_elf_compare(first: &Path, second: &Path, repo_root: &Path, output: &Path)
     }
     if result != "passed" {
         bail!("ELF reproducibility comparison failed");
-    }
-    Ok(())
-}
-
-fn run_sgx_command(repo_root: &Path, command: SgxCommand) -> Result<()> {
-    match command {
-        SgxCommand::Prepare {
-            network,
-            genesis,
-            elf_output,
-            output,
-        } => {
-            sgx::prepare(repo_root, network, &genesis, &elf_output, &output)?;
-            println!(
-                "unsigned deterministic {network:?} SGX bundle: {}",
-                output.display()
-            );
-        }
-        SgxCommand::Compare {
-            first,
-            second,
-            output,
-        } => {
-            sgx::compare(&first, &second, &output)?;
-            println!(
-                "unsigned SGX reproducibility evidence: {}",
-                output.display()
-            );
-        }
-        SgxCommand::Sign {
-            network,
-            unsigned,
-            key_file,
-            output,
-        } => {
-            sgx::sign(repo_root, network, &unsigned, &key_file, &output)?;
-            println!("signed {network:?} SGX bundle: {}", output.display());
-        }
-        SgxCommand::FinalizeGenesis {
-            network,
-            seeded_genesis,
-            bundle,
-            output,
-            evidence_output,
-        } => {
-            sgx::finalize_genesis(
-                repo_root,
-                network,
-                &seeded_genesis,
-                &bundle,
-                (&output, &evidence_output),
-            )?;
-            println!(
-                "final {network:?} genesis: {} (evidence: {})",
-                output.display(),
-                evidence_output.display()
-            );
-        }
-        SgxCommand::Verify {
-            network,
-            bundle,
-            genesis,
-        } => {
-            sgx::verify_with_genesis(repo_root, network, &bundle, &genesis)?;
-            println!(
-                "verified signed {network:?} SGX bundle: {}",
-                bundle.display()
-            );
-        }
-        SgxCommand::Archive {
-            network,
-            bundle,
-            output,
-        } => {
-            sgx::archive(repo_root, network, &bundle, &output)?;
-            println!(
-                "deterministic signed {network:?} SGX archive: {}",
-                output.display()
-            );
-        }
-        SgxCommand::Image {
-            network,
-            bundle,
-            image,
-            output,
-            push,
-        } => {
-            sgx::build_image(repo_root, network, &bundle, (&image, push), &output)?;
-            println!("{network:?} SGX OCI evidence: {}", output.display());
-        }
-        SgxCommand::Manifest {
-            network,
-            elf_manifest,
-            bundle,
-            bundle_archive,
-            oci_evidence,
-            cosign_image_verification,
-            cosign_sbom_verification,
-            cosign_provenance_verification,
-            sbom,
-            elf_evidence,
-            sgx_evidence,
-            hardware_evidence,
-            processor_dcap_archive,
-            processor_dcap_evidence,
-            seeded_genesis,
-            network_binding_evidence,
-            genesis,
-            output,
-        } => {
-            sgx::finalize_release_manifest(
-                repo_root,
-                &sgx::VerifiedReleaseInputs {
-                    network,
-                    bundle,
-                    bundle_archive,
-                    cosign_image_verification,
-                    cosign_provenance_verification,
-                    cosign_sbom_verification,
-                    elf_evidence,
-                    elf_manifest,
-                    hardware_evidence,
-                    processor_dcap_archive,
-                    processor_dcap_evidence,
-                    oci_evidence,
-                    sbom,
-                    sgx_evidence,
-                    seeded_genesis,
-                    network_binding_evidence,
-                    genesis,
-                },
-                &output,
-            )?;
-            println!("verified {network:?} ReleaseManifest: {}", output.display());
-        }
     }
     Ok(())
 }

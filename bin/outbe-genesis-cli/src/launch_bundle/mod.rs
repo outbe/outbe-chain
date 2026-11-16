@@ -47,18 +47,6 @@ pub const DEFAULT_PORTS: &[(&str, u16)] = &[
 /// Protocol ceiling on the validator set, mirroring the ValidatorSet precompile default.
 pub const DEFAULT_MAX_VALIDATORS: u64 = 128;
 
-/// Files required below the install root of a signed SGX release bundle.
-pub const SIGNED_ENCLAVE_FILES: &[&str] = &[
-    "bin/outbe-tee-enclave",
-    "bin/outbe-tee-enclave-launch",
-    "gramine/loader",
-    "gramine/libpal.so",
-    "network-descriptor-v1.bin",
-    "outbe-tee-enclave.manifest",
-    "outbe-tee-enclave.manifest.sgx",
-    "outbe-tee-enclave.sig",
-];
-
 /// Run one command with root privileges without requiring `sudo` when the
 /// generated installer is already running as root.
 pub(super) const ROOT_HELPER: &str = r#"as_root() {
@@ -144,27 +132,10 @@ pub fn format_enode_host(host: &str) -> String {
     }
 }
 
-/// Determine whether the node should use `--tee-session-mode production-node-host`.
-pub fn uses_production_tee_session(config: &Value) -> bool {
-    let enclave_sgx = config
-        .get("enclave_sgx")
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
-    let is_dcap = config
-        .get("tee")
-        .and_then(|t| t.get("mode"))
-        .and_then(Value::as_str)
-        == Some("dcap-required");
-    enclave_sgx || is_dcap
-}
-
 fn direct_dev_network_binding(
     config: &Value,
     genesis_path: &Path,
 ) -> Result<Option<String>, GenesisError> {
-    if uses_production_tee_session(config) {
-        return Ok(None);
-    }
     let mode = config
         .get("tee")
         .and_then(|tee| tee.get("mode"))
@@ -283,53 +254,6 @@ fn stage_crs(config: &Value, output_dir: &Path) -> Result<(), GenesisError> {
         .map_err(|err| GenesisError::io(&destination, err))
 }
 
-/// Copy the complete signed SGX release runtime into the bundle and strip signing keys.
-pub fn stage_signed_enclave(
-    config: &Value,
-    output_dir: &Path,
-) -> Result<Option<PathBuf>, GenesisError> {
-    let Some(source) = config.get("signed_enclave_dir").and_then(Value::as_str) else {
-        return Ok(None);
-    };
-    if source.is_empty() {
-        return Ok(None);
-    }
-    let source_dir = Path::new(source);
-    let nested_install_root = source_dir.join("rootfs/opt/outbe/sgx");
-    let source_dir = if nested_install_root.is_dir() {
-        nested_install_root.as_path()
-    } else {
-        source_dir
-    };
-    for &name in SIGNED_ENCLAVE_FILES {
-        let origin = source_dir.join(name);
-        if !origin.is_file() {
-            return Err(GenesisError::validation(format!(
-                "`signed_enclave_dir` is missing {name}. Point it at either an \
-                 extracted signed release bundle or its rootfs/opt/outbe/sgx directory."
-            )));
-        }
-    }
-
-    let staged = output_dir.join("sgx");
-    if staged.exists() {
-        fs::remove_dir_all(&staged).map_err(|err| GenesisError::io(&staged, err))?;
-    }
-    copy_dir_recursive(source_dir, &staged)?;
-
-    let entries = WalkDir::new(&staged)
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|err| GenesisError::io(&staged, std::io::Error::other(err)))?;
-    for entry in entries {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("pem") {
-            fs::remove_file(path).map_err(|err| GenesisError::io(path, err))?;
-        }
-    }
-    Ok(Some(staged))
-}
-
 fn write_validator_scripts(
     config: &Value,
     index: usize,
@@ -416,12 +340,7 @@ fn write_validator_scripts(
     fs::write(&pairs_path, feeder_pairs(config)?)
         .map_err(|err| GenesisError::io(&pairs_path, err))?;
 
-    write_systemd_units(
-        &directory,
-        paths.base_dir,
-        index,
-        uses_production_tee_session(config),
-    )?;
+    write_systemd_units(&directory, paths.base_dir, index, false)?;
     Ok(())
 }
 
@@ -485,7 +404,6 @@ pub fn render(
         write_validator_scripts(config, index, validator, &paths, direct_dev)?;
     }
 
-    stage_signed_enclave(config, output_dir)?;
     stage_crs(config, output_dir)?;
     build_distribution(output_dir, validators, keys_dir, &base_dir)?;
 

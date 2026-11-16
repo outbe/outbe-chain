@@ -7,7 +7,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use alloy_primitives::U256;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use outbe_genesis_cli::attestation::run_tee_stage;
 use outbe_genesis_cli::inputs::SeedInputs;
 use outbe_genesis_cli::keys::{
     discover_validators, evm_address_from_key_file, radicle_node_id_from_public_key,
@@ -203,52 +202,33 @@ fn config_validation_matrix_and_rejections() {
     let mut bad_tee = minimal_config("./keys");
     bad_tee["tee"]["mode"] = json!("trust-me");
     let err = validate_config(&bad_tee).expect_err("bad tee mode");
-    assert!(err.to_string().contains("tee.mode"));
+    assert!(err.to_string().contains("confidential-vm"));
 
     for (network, chain_id) in [("devnet", 424242_u64), ("testnet", 54322345_u64)] {
-        for tee_mode in ["dcap-required", "gramine-direct-dev"] {
-            let mut cfg = merge_obj(
-                minimal_config("./keys"),
-                json!({
-                    "network": network,
-                    "chain_id": chain_id,
-                    "tee": {"mode": tee_mode},
-                }),
-            );
-            if tee_mode == "dcap-required" {
-                cfg["enclave_image"] =
-                    json!(format!("outbe-tee-enclave@sha256:{}", "ab".repeat(32)));
-            }
-            validate_config(&cfg).expect("canonical attestation matrix");
-        }
+        let cfg = merge_obj(
+            minimal_config("./keys"),
+            json!({
+                "network": network,
+                "chain_id": chain_id,
+            }),
+        );
+        validate_config(&cfg).expect("confidential VM network");
     }
 
-    let mut mainnet = merge_obj(
+    let mainnet = merge_obj(
         minimal_config("./keys"),
         json!({
             "network": "mainnet",
             "chain_id": 676,
-            "tee": {"mode": "dcap-required"},
-            "enclave_image": format!("outbe-tee-enclave@sha256:{}", "ab".repeat(32)),
             "price_feed_rest": "https://prices.outbe.net",
         }),
     );
-    validate_config(&mainnet).expect("mainnet valid");
+    let err = validate_config(&mainnet).expect_err("mainnet policy is not implemented");
+    assert!(err.to_string().contains("confidential-vm policy"));
     assert_eq!(
         network_identity(&mainnet).expect("identity"),
         ("mainnet".to_owned(), 676, "outbe-mainnet-1".to_owned())
     );
-
-    mainnet["tee"] = json!({"mode": "gramine-direct-dev"});
-    let err = validate_config(&mainnet).expect_err("mainnet rejects direct dev");
-    assert!(err.to_string().contains("Mainnet requires"));
-
-    let unpinned_dcap = merge_obj(
-        minimal_config("./keys"),
-        json!({"chain_id": 424242, "tee": {"mode": "dcap-required"}}),
-    );
-    let err = validate_config(&unpinned_dcap).expect_err("unpinned dcap");
-    assert!(err.to_string().contains("immutable digest"));
 
     let port_collision = merge_obj(minimal_config("./keys"), json!({"rpc_port": 9101}));
     let err = validate_config(&port_collision).expect_err("port collision");
@@ -269,19 +249,6 @@ fn config_validation_matrix_and_rejections() {
     ))
     .expect_err("unspecified RPC bind");
     assert!(err.to_string().contains("loopback or private"));
-
-    let dcap_no_measurements = merge_obj(
-        minimal_config("./keys"),
-        json!({"tee": {"mode": "dcap-required"}}),
-    );
-    let err = run_tee_stage(
-        "/nonexistent",
-        Path::new("/nonexistent"),
-        Path::new("/nonexistent"),
-        &dcap_no_measurements,
-    )
-    .expect_err("dcap without measurements");
-    assert!(err.to_string().contains("mrenclave"));
 }
 
 #[test]
@@ -567,8 +534,6 @@ fn seed_stage_end_to_end_and_reproducibility() {
         json!({
             "network": "mainnet",
             "chain_id": 676,
-            "tee": {"mode": "dcap-required"},
-            "enclave_image": format!("outbe-tee-enclave@sha256:{}", "ab".repeat(32)),
             "price_feed_rest": "https://prices.outbe.net",
         }),
     );

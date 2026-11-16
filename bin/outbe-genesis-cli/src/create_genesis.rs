@@ -117,8 +117,7 @@ pub fn run_create_genesis_with_min_stake(
 
 /// Build the approved pre-TEE genesis and return its ordered founding validators.
 ///
-/// This is the hand-off point for protected DCAP signing: the caller may either
-/// finalize the TEE policy immediately or sign the seeded network in CI first.
+/// The caller finalizes the confidential-VM policy after this deterministic seed stage.
 pub fn create_seeded_genesis(
     config: &Value,
     keys_dir: &Path,

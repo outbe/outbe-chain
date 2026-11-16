@@ -125,11 +125,11 @@ pub fn run(
     }
     fs::set_permissions(&keys, fs::Permissions::from_mode(0o700))?;
 
-    let legacy = legacy_config(&config, software_root.path(), &keys)?;
+    let genesis_config = genesis_cli_config(&config, software_root.path(), &keys)?;
     let seeded = staging.path().join("genesis.seeded.json");
     let keygen = software_root.path().join("bin/outbe-keygen");
     let validators = create_seeded_genesis(
-        &legacy,
+        &genesis_config,
         &keys,
         keygen
             .to_str()
@@ -147,10 +147,10 @@ pub fn run(
             .ok_or_else(|| eyre::eyre!("software path is not UTF-8"))?,
         &seeded,
         &final_genesis,
-        &legacy,
+        &genesis_config,
     )
     .map_err(eyre::Report::msg)?;
-    launch_bundle::render(&legacy, &validators, &final_genesis, &keys)
+    launch_bundle::render(&genesis_config, &validators, &final_genesis, &keys)
         .map_err(eyre::Report::msg)?;
 
     let founders = founder_artifacts(staging.path(), &config, &validators)?;
@@ -248,7 +248,11 @@ fn generate_keys(config: &NetworkConfig, software: &Path, keys: &Path) -> Result
     Ok(())
 }
 
-pub(super) fn legacy_config(config: &NetworkConfig, software: &Path, keys: &Path) -> Result<Value> {
+pub(super) fn genesis_cli_config(
+    config: &NetworkConfig,
+    software: &Path,
+    keys: &Path,
+) -> Result<Value> {
     let mut root = config
         .genesis
         .overrides
@@ -497,10 +501,10 @@ mod tests {
     }
 
     #[test]
-    fn legacy_config_carries_prefunds_and_runtime_axes() {
+    fn genesis_cli_config_carries_prefunds_and_runtime_axes() {
         let temp = tempfile::tempdir().unwrap();
         let config: NetworkConfig = serde_yaml_ng::from_str(super::super::config::EXAMPLE).unwrap();
-        let value = legacy_config(&config, temp.path(), &temp.path().join("keys")).unwrap();
+        let value = genesis_cli_config(&config, temp.path(), &temp.path().join("keys")).unwrap();
         assert_eq!(value["network"], "testnet");
         assert_eq!(value["tee"]["mode"], "gramine-direct-dev");
         assert_eq!(value["enclave_sgx"], false);

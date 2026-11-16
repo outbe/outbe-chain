@@ -6,7 +6,7 @@ are compiled from the shared Rust implementation so they cannot drift from the l
 
 ## Founding network
 
-Build the immutable software bundle once with `cargo xtask release software build`. The network
+Build the immutable software bundle once with `cargo xtask release build`. The network
 commands consume that bundle; they never compile source code.
 
 ```text
