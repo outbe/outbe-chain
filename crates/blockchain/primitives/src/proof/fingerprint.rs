@@ -15,6 +15,8 @@ use commonware_cryptography::bls12381::primitives::variant::Variant;
 
 use super::hybrid_wire::VrfProof;
 
+pub use crate::equivocation_evidence::canonical_equivocation_evidence_hash;
+
 pub use super::committee::{
     committee_set_hash_v2, committee_snapshot_key, CommitteeEntry, CommitteeSnapshot,
 };
