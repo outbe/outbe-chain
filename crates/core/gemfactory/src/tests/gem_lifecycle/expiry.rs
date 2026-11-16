@@ -185,41 +185,6 @@ fn a_settled_gem_is_never_forfeited() {
     });
 }
 
-#[test]
-fn forfeited_merchant_and_reward_gems_credit_once_and_a_settled_one_credits_nothing() {
-    with_storage(|storage| {
-        set_profile(storage, outbe_gem::config::PROFILE_PROD);
-        let issuers = [
-            ISSUER,
-            outbe_system_common::addresses::AGENT_REWARD_ADDRESS,
-            ISSUER,
-        ];
-        let gems: Vec<U256> = (0u64..)
-            .zip([1_000_000u64, 2_000_000, 4_000_000])
-            .zip(issuers)
-            .map(|((index, load), issuer)| {
-                let mut params = sample_params(holder(index));
-                params.issuer = issuer;
-                params.promis_load_minor = U256::from(load);
-                params.issued_at = T_NOW - 100 * SECONDS_PER_DAY;
-                add(storage, params)
-            })
-            .collect();
-        call_gem(storage, gems[0], T_NOW);
-        settle(storage, gems[2]);
-
-        let due = first_due_block(storage, gems[0]);
-        begin_block_at(storage, due);
-        assert!(item(storage, gems[0]).is_none());
-        assert!(item(storage, gems[1]).is_none());
-        assert_eq!(gem_state(storage, gems[2]), GemState::Settled as u8);
-        assert_eq!(unallocated(storage), U256::from(3_000_000u64));
-
-        begin_block_at(storage, due + SECONDS_PER_DAY);
-        assert_eq!(unallocated(storage), U256::from(3_000_000u64));
-    });
-}
-
 /// An entry that the sweep cannot retire credits nothing and leaves its group, so
 /// the gems behind it still drain. The burn and the credit share a checkpoint.
 #[test]

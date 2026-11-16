@@ -970,6 +970,41 @@ fn gem_id_holds_the_issuer() {
 }
 
 #[test]
+fn forfeited_gem_loads_go_to_the_promis_limit_once() {
+    let unit = six_decimal_unit();
+    with_storage(Some(U256::from(2u64) * unit), |storage| {
+        seed_day_vwap(storage, 840, U256::from(2u64) * unit);
+        let id = seed_and_send(storage, U256::from(3u64) * unit, six_decimal_u128());
+        set_source_price(storage, unit);
+        let merchant = merchant_gem_to(storage, id, BOB).unwrap();
+        let reward = issue_at_live_rate(storage, BOB, unit, 840, 840).unwrap();
+        let settled = issue_at_live_rate(storage, ALICE, unit, 840, 840).unwrap();
+        force_settled(storage, settled);
+        let group = gem_item(storage, merchant).group_key;
+        for gem_id in [reward, settled] {
+            assert_eq!(gem_item(storage, gem_id).group_key, group);
+        }
+        let mut gem = GemContract::new(storage.clone());
+        let terms = gem.read_call_terms(group).unwrap();
+        crate::called::mark_called(&mut gem, group, &terms, T_NOW).unwrap();
+        let forfeited = gem_item(storage, merchant).promis_load_minor
+            + gem_item(storage, reward).promis_load_minor;
+        let before = unallocated(storage);
+
+        let closed = day_closed(gem_view(storage, merchant).settlement_deadline());
+        daily_pass(&block_ctx(storage, closed)).unwrap();
+        assert_eq!(unallocated(storage), before + forfeited);
+        assert_eq!(
+            gem_view(storage, settled).item.state,
+            GemState::Settled as u8
+        );
+
+        daily_pass(&block_ctx(storage, closed + SECONDS_PER_DAY)).unwrap();
+        assert_eq!(unallocated(storage), before + forfeited);
+    });
+}
+
+#[test]
 fn a_reward_gem_is_in_the_market_sub_series() {
     with_storage(Some(U256::from(2u64) * six_decimal_unit()), |storage| {
         let gem_id = issue_at_live_rate(storage, ALICE, six_decimal_unit(), 840, 840).unwrap();
