@@ -99,7 +99,7 @@ fn the_daily_step_adds_base_fees_and_burn_addresses_after_the_seal_and_before_me
 
     let events = &storage.get_ordered_events()[events_before..];
     let position = |found: &dyn Fn(&alloy_primitives::Log) -> bool| {
-        events.iter().position(|log| found(log)).unwrap()
+        events.iter().position(found).unwrap()
     };
     let added = |code: u8, amount: u64| {
         move |log: &alloy_primitives::Log| {
