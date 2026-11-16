@@ -5,7 +5,6 @@ interface IGemFactory {
     error GemNotFound();
     error GemAlreadySettled();
     error GemNotSettled();
-    error GemNotCalled();
     error GemNotIssued();
     error SettlementDeadlinePassed();
     error SourceIntexNotFound();
@@ -24,7 +23,6 @@ interface IGemFactory {
     error ZeroPromisLoad();
     error EmptyMemberSlotDuringCleanup(bytes32 groupKey);
     error MissingMemberRecordDuringCleanup(bytes32 groupKey, uint256 gemId);
-    error PositionNotExpired();
     error MissingGroupForCall(bytes32 group);
     error IneligibleGroupMember(bytes32 groupKey, uint256 gemId);
     error CallPriceOverflow();

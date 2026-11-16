@@ -4,7 +4,7 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_core_common::series_id::SeriesId;
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_system_common::addresses::CREDIS_ADDRESS;
-#[cfg(any(test, feature = "e2e-test", feature = "test-utils"))]
+#[cfg(any(test, feature = "test-utils"))]
 use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 
 use crate::errors::CredisError;
@@ -352,8 +352,8 @@ impl CredisContract<'_> {
     /// The series a Credis issued at `issued_at` for `(issuance_currency, reference_currency)`
     /// belongs to: `SeriesId::for_pair(last_closed_day(issued_at), issuance_currency, reference_currency)`.
     ///
-    /// Test and e2e arming only. Production copies `series_id` from the reservation.
-    #[cfg(any(test, feature = "e2e-test", feature = "test-utils"))]
+    /// Tests only. Production copies `series_id` from the reservation.
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn series_of(
         issued_at: u64,
         issuance_currency: u16,

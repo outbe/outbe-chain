@@ -41,10 +41,6 @@ pub fn dispatch(
     // IntexFactory is a payable route, so the boundary credits value to this
     // address. Every selector the module has not published refuses it here.
     reject_value_unless_payable(data, PAYABLE_SELECTORS, &value)?;
-    #[cfg(feature = "e2e-test")]
-    if let Some(result) = crate::test_arming_e2e::dispatch(&storage, data) {
-        return result;
-    }
     dispatch_call(
         data,
         IIntexFactory::IIntexFactoryCalls::abi_decode,

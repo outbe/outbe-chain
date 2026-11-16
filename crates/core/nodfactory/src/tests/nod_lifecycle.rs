@@ -2224,28 +2224,25 @@ fn token_uri_turns_forfeited_past_the_settlement_deadline() {
     )));
 }
 
-#[cfg(feature = "e2e-test")]
+/// OIP-00384: the factory has no test-only functions. A call of each removed
+/// function (backdate, call-notice close, closed-day rescan) fails as an unknown function.
 #[test]
-fn static_test_command_is_rejected_before_group_validation() {
-    use crate::precompile::dispatch;
-    use crate::test_arming_e2e::INodFactoryTestArming;
-    use alloy_sol_types::SolCall;
+fn upton_factories_have_no_test_only_functions() {
+    use alloy_primitives::hex;
     use outbe_primitives::error::PrecompileError;
-    let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
-    provider.set_static(true);
-
-    let result = dispatch(
-        outbe_primitives::storage::StorageHandle::new(&mut provider),
-        &INodFactoryTestArming::closeCallNoticeForTestCall {
-            groupKey: alloy_primitives::B256::repeat_byte(1),
-            deadline: 1,
-        }
-        .abi_encode(),
-        Address::ZERO,
-        U256::ZERO,
-    );
-    assert!(
-        matches!(result, Err(PrecompileError::WriteProtection)),
-        "{result:?}"
-    );
+    for selector in [hex!("8bb11fed"), hex!("48c2054c"), hex!("a11926c2")] {
+        // Zero argument words pass the minimum-length check, so the selector lookup runs.
+        let calldata = [selector.as_slice(), &[0u8; 32 * 16]].concat();
+        let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
+        let result = crate::precompile::dispatch(
+            outbe_primitives::storage::StorageHandle::new(&mut provider),
+            &calldata,
+            alloy_primitives::Address::ZERO,
+            alloy_primitives::U256::ZERO,
+        );
+        let Err(PrecompileError::Revert(message)) = result else {
+            panic!("expected an unknown-selector revert, got {result:?}");
+        };
+        assert!(message.contains("unknown selector"), "{message}");
+    }
 }

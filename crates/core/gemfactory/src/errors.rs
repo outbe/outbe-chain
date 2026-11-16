@@ -20,9 +20,6 @@ pub enum GemFactoryError {
     #[error("gem is not settled")]
     GemNotSettled,
 
-    #[error("gem group is not called")]
-    GemNotCalled,
-
     #[error("gem is not Issued")]
     GemNotIssued,
 
@@ -77,9 +74,6 @@ pub enum GemFactoryError {
     #[error("gem group {group_key} member {gem_id} has no record during cleanup")]
     MissingMemberRecordDuringCleanup { group_key: B256, gem_id: U256 },
 
-    #[error("position has not expired")]
-    PositionNotExpired,
-
     #[error("gem group {group} has no record to call")]
     MissingGroupForCall { group: B256 },
 
@@ -113,7 +107,6 @@ impl From<GemFactoryError> for PrecompileError {
             GemFactoryError::GemNotFound => revert_with(I::GemNotFound {}),
             GemFactoryError::GemAlreadySettled => revert_with(I::GemAlreadySettled {}),
             GemFactoryError::GemNotSettled => revert_with(I::GemNotSettled {}),
-            GemFactoryError::GemNotCalled => revert_with(I::GemNotCalled {}),
             GemFactoryError::GemNotIssued => revert_with(I::GemNotIssued {}),
             GemFactoryError::SettlementDeadlinePassed => {
                 revert_with(I::SettlementDeadlinePassed {})
@@ -145,7 +138,6 @@ impl From<GemFactoryError> for PrecompileError {
                     gemId: gem_id,
                 })
             }
-            GemFactoryError::PositionNotExpired => revert_with(I::PositionNotExpired {}),
             GemFactoryError::MissingGroupForCall { group } => {
                 revert_with(I::MissingGroupForCall { group })
             }

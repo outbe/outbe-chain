@@ -42,15 +42,9 @@ impl GemParams {
     pub const DEV: Self = Self {
         call_window_seconds: 3 * SECONDS_PER_DAY_U32,
         call_threshold_seconds: 2 * SECONDS_PER_DAY_U32,
-        #[cfg(not(feature = "e2e-test"))]
         call_notice_period_seconds: 3 * SECONDS_PER_DAY_U32,
-        #[cfg(feature = "e2e-test")]
-        call_notice_period_seconds: 600,
         call_rate: 4,
-        #[cfg(not(feature = "e2e-test"))]
         position_validity: 7 * outbe_system_common::time::SECONDS_PER_DAY,
-        #[cfg(feature = "e2e-test")]
-        position_validity: 900,
     };
 
     pub fn from_selector(selector: u8, chain_id: u64) -> Result<Self> {

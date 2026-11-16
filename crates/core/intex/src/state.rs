@@ -267,13 +267,6 @@ impl IntexContract<'_> {
     pub fn first_cleanup_day(&self) -> Result<Option<u32>> {
         deadline_queue::first_day(&CleanupQueue(self))
     }
-
-    /// Moves a called group onto `close_at` in the forfeit queue.
-    #[cfg(feature = "e2e-test")]
-    pub fn requeue_called(&mut self, group: B256, close_at: u64) -> Result<()> {
-        deadline_queue::remove(&ForfeitQueue(self), group)?;
-        deadline_queue::push(&ForfeitQueue(self), group, close_at)
-    }
 }
 
 /// This daily queue stores called groups whose settlement window remains open.

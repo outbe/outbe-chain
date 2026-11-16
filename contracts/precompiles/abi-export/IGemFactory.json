@@ -624,11 +624,6 @@
   },
   {
     "type": "error",
-    "name": "GemNotCalled",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "GemNotFound",
     "inputs": []
   },
@@ -739,11 +734,6 @@
   {
     "type": "error",
     "name": "PositionExpired",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "PositionNotExpired",
     "inputs": []
   },
   {

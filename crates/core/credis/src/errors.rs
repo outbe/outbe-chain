@@ -28,7 +28,7 @@ pub enum CredisError {
     DateStep { kind: u8, date_key: u32 },
 }
 
-#[cfg(any(test, feature = "e2e-test", feature = "test-utils"))]
+#[cfg(any(test, feature = "test-utils"))]
 pub(crate) fn date_step_error(
     err: outbe_system_common::time::TimeError,
 ) -> outbe_primitives::error::PrecompileError {

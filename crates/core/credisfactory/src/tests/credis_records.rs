@@ -2484,73 +2484,6 @@ fn metadata_update_marks_each_settlement() {
     assert_eq!(updates, vec![id]);
 }
 
-#[cfg(feature = "e2e-test")]
-#[test]
-fn static_test_arming_is_rejected() {
-    use crate::test_arming_e2e::ICredisFactoryTestArming;
-    use alloy_sol_types::SolCall;
-    use outbe_primitives::error::PrecompileError;
-    let mut provider = prod_provider();
-    provider.set_static(true);
-    let result = crate::precompile::dispatch(
-        StorageHandle::new(&mut provider),
-        &ICredisFactoryTestArming::closeCallNoticeForTestCall {
-            credisId: U256::ONE,
-            deadline: 1,
-        }
-        .abi_encode(),
-        alice(),
-        U256::ZERO,
-    );
-    assert!(
-        matches!(result, Err(PrecompileError::WriteProtection)),
-        "{result:?}"
-    );
-}
-
-#[cfg(feature = "e2e-test")]
-#[test]
-fn test_arming_backdates_and_requeues_only_a_called_credis() {
-    use crate::test_arming_e2e::ICredisFactoryTestArming;
-    with_credis(|storage| {
-        let mut credis = CredisContract::new(storage.clone());
-        let id = rules::issue(&mut credis, params(alice())).unwrap();
-        let arm = |data: Vec<u8>| {
-            crate::precompile::dispatch(storage.clone(), &data, alice(), U256::ZERO)
-        };
-        let requeue = ICredisFactoryTestArming::closeCallNoticeForTestCall {
-            credisId: id,
-            deadline: at(5),
-        }
-        .abi_encode();
-        let err = arm(requeue.clone()).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            outbe_primitives::error::PrecompileError::from(
-                crate::errors::CredisFactoryError::NotCalled
-            )
-            .to_string()
-        );
-
-        arm(ICredisFactoryTestArming::backdateCredisForTestCall {
-            credisId: id,
-            issuedAt: at(0) - 30 * DAY,
-        }
-        .abi_encode())
-        .unwrap();
-        let record = credis.get_credis(id).unwrap();
-        assert_eq!(
-            (record.issued_at, record.last_settled_at),
-            (at(0) - 30 * DAY, at(0) - 30 * DAY)
-        );
-
-        assert!(call(&mut credis, id, at(10)).unwrap());
-        arm(requeue).unwrap();
-        let group = credis.get_credis(id).unwrap().series_id;
-        assert_eq!(credis.called_deadline.read(&group).unwrap(), at(5));
-    });
-}
-
 /// Off mainnet, an unset selector seals the short terms.
 #[test]
 fn issuance_off_mainnet_seals_the_dev_terms() {
@@ -2563,18 +2496,13 @@ fn issuance_off_mainnet_seals_the_dev_terms() {
             .unwrap();
         let id = open_pos(&mut credis);
         let record = credis.get_credis(id).unwrap();
-        let notice = if cfg!(feature = "e2e-test") {
-            600
-        } else {
-            3 * DAY
-        };
         assert_eq!(
             (
                 u64::from(record.call_window_seconds),
                 u64::from(record.call_threshold_seconds),
                 u64::from(record.call_notice_period_seconds)
             ),
-            (3 * DAY, 2 * DAY, notice)
+            (3 * DAY, 2 * DAY, 3 * DAY)
         );
         // The DEV call rate is 2, so the anchor 1.00 gives the call price 1.02.
         assert_eq!(record.call_rate, 2);
@@ -2586,4 +2514,27 @@ fn issuance_off_mainnet_seals_the_dev_terms() {
         id
     });
     assert!(!id.is_zero());
+}
+
+/// OIP-00384: the factory has no test-only functions. A call of each removed
+/// function (backdate, call-notice close, closed-day rescan) fails as an unknown function.
+#[test]
+fn upton_factories_have_no_test_only_functions() {
+    use alloy_primitives::hex;
+    use outbe_primitives::error::PrecompileError;
+    for selector in [hex!("1f145f13"), hex!("c36ee54e"), hex!("a11926c2")] {
+        // Zero argument words pass the minimum-length check, so the selector lookup runs.
+        let calldata = [selector.as_slice(), &[0u8; 32 * 16]].concat();
+        let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
+        let result = crate::precompile::dispatch(
+            outbe_primitives::storage::StorageHandle::new(&mut provider),
+            &calldata,
+            alloy_primitives::Address::ZERO,
+            alloy_primitives::U256::ZERO,
+        );
+        let Err(PrecompileError::Revert(message)) = result else {
+            panic!("expected an unknown-selector revert, got {result:?}");
+        };
+        assert!(message.contains("unknown selector"), "{message}");
+    }
 }

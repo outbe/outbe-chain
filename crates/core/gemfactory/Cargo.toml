@@ -37,9 +37,6 @@ revm.workspace = true
 [features]
 default = []
 test-utils = ["outbe-primitives/test-utils"]
-# Test-only arming of a paid Gem for scenarios that mine without a closed day.
-# Never enabled in a release build.
-e2e-test = ["outbe-gem/e2e-test"]
 
 [lints]
 workspace = true

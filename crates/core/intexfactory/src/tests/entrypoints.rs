@@ -194,3 +194,47 @@ fn a_node_local_failure_inside_the_call_notice_send_fails_the_drain() {
     send_notices_in_block(&mut provider).unwrap();
     assert_eq!(queue(&mut provider), (0, 0, [U256::ZERO; 2]));
 }
+
+/// OIP-00384: the factory has no test-only functions. A call of each removed
+/// function (VWAP seed, issue, call-notice close, closed-day rescan) fails as an unknown function.
+#[test]
+fn upton_factories_have_no_test_only_functions() {
+    use alloy_primitives::hex;
+    use outbe_primitives::error::PrecompileError;
+    for selector in [
+        hex!("db6e3ce5"),
+        hex!("63fc994a"),
+        hex!("5c76b9b6"),
+        hex!("a11926c2"),
+    ] {
+        // Zero argument words pass the minimum-length check, so the selector lookup runs.
+        let calldata = [selector.as_slice(), &[0u8; 32 * 16]].concat();
+        let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
+        let result = crate::precompile::dispatch(
+            outbe_primitives::storage::StorageHandle::new(&mut provider),
+            &calldata,
+            alloy_primitives::Address::ZERO,
+            alloy_primitives::U256::ZERO,
+        );
+        let Err(PrecompileError::Revert(message)) = result else {
+            panic!("expected an unknown-selector revert, got {result:?}");
+        };
+        assert!(message.contains("unknown selector"), "{message}");
+    }
+}
+
+/// OIP-00384: no build feature shortens the DEV call terms or the retry pause of a call
+/// notice. Each build gets the same values.
+#[test]
+fn development_profile_is_the_only_short_profile() {
+    use outbe_intex::config::IntexParams;
+    assert_eq!(crate::constants::NOTICE_RETRY_SECONDS, 300);
+    assert_eq!(
+        IntexParams::DEV.call_notice_period_seconds,
+        3 * SECONDS_PER_DAY_U32
+    );
+    assert_eq!(
+        IntexParams::DEV.transit_margin_seconds,
+        IntexParams::PROD.transit_margin_seconds
+    );
+}

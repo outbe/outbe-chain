@@ -50,14 +50,8 @@ impl IntexParams {
     pub const DEV: Self = Self {
         call_window_seconds: 3 * SECONDS_PER_DAY_U32,
         call_threshold_seconds: 2 * SECONDS_PER_DAY_U32,
-        #[cfg(not(feature = "e2e-test"))]
         call_notice_period_seconds: 3 * SECONDS_PER_DAY_U32,
-        #[cfg(feature = "e2e-test")]
-        call_notice_period_seconds: 600,
-        #[cfg(not(feature = "e2e-test"))]
         transit_margin_seconds: TRANSIT_MARGIN,
-        #[cfg(feature = "e2e-test")]
-        transit_margin_seconds: 60,
         call_rate: 4,
         commit_bond_minor: 100 * SCALE_1E6_U128,
         promis_load_launch_exponent: 12,

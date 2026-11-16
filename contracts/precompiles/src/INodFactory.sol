@@ -19,7 +19,6 @@ interface INodFactory {
     error IneligibleGroupMember(bytes32 groupKey, uint256 nodId);
     error MissingGroupRecordDuringCleanup(bytes32 groupKey);
     error MissingGroupForCall(bytes32 groupKey);
-    error GroupNotQueuedForTest();
     error CallPriceOverflow();
     error DateStep(uint8 kind, uint32 dateKey);
 

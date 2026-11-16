@@ -19,8 +19,6 @@ interface IIntexFactory {
     error InsufficientProofOfWork();
     error NotOriginRouter();
     error ForfeitedPromisLoadOverflow();
-    error NoCalledGroupForTest();
-    error IssueForTestCurrencyCountMismatch();
     error IssuanceChunkCountExceedsU16();
     error PriceExceedsWireType();
     error MarkedUpPriceOverflow();

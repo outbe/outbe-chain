@@ -37,10 +37,7 @@ impl CredisParams {
         call_rate: 2,
         call_window_seconds: 3 * SECONDS_PER_DAY_U32,
         call_threshold_seconds: 2 * SECONDS_PER_DAY_U32,
-        #[cfg(not(feature = "e2e-test"))]
         call_notice_period_seconds: 3 * SECONDS_PER_DAY_U32,
-        #[cfg(feature = "e2e-test")]
-        call_notice_period_seconds: 600,
     };
 
     pub fn from_selector(selector: u8, chain_id: u64) -> Result<Self> {

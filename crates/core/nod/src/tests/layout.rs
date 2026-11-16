@@ -45,3 +45,18 @@ fn nod_contract_slot_layout_is_pinned() {
         assert_eq!(nod.group_nod_count.base_slot(), U256::ZERO);
     });
 }
+
+/// OIP-00384: no build feature shortens the DEV call notice. Each build gets 3 days.
+#[test]
+fn development_profile_is_the_only_short_profile() {
+    use crate::config::NodParams;
+    use outbe_system_common::time::SECONDS_PER_DAY_U32;
+    assert_eq!(
+        NodParams::DEV.call_notice_period_seconds,
+        3 * SECONDS_PER_DAY_U32
+    );
+    assert_eq!(
+        NodParams::PROD.call_notice_period_seconds,
+        crate::constants::CALL_NOTICE_PERIOD
+    );
+}
