@@ -24,8 +24,8 @@ pub(super) enum BoundaryValue {
 ///
 /// A route that declares `ValuePolicy::Reject` then refuses any credited amount,
 /// so a call that would strand funds at a precompile stops before touching state.
-/// SELFDESTRUCT cannot strand value there either: the EVM sends it to address 0,
-/// and the Promis Limit burns it.
+/// SELFDESTRUCT cannot strand value at an exact route either: the EVM sends it to
+/// address 0, and the Promis Limit burns it.
 pub(super) fn classify_boundary_value(
     policy: ValuePolicy,
     value: &revm::interpreter::CallValue,

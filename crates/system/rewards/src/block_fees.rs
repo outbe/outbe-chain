@@ -18,9 +18,9 @@
 //! These are deterministic storage functions over an explicit
 //! [`BlockRuntimeContext`]. The executor wires them into the begin-zone CPA phase
 //! (escrow) and the `LateFinalizeCredits` phase (record + settle). At settle, the
-//! shared Promis Limit helper burns the entire native residue from `REWARDS_ADDRESS`.
-//! Only fractional protocol credit remains in the shared accumulator, never native
-//! funds on Rewards. `transfer_block_fees` then frees per-window state; the
+//! Promis Limit burns the residue from `REWARDS_ADDRESS` with code 42; the part below
+//! one minor stays on Rewards as the rest of that code. `transfer_block_fees` then frees
+//! per-window state; the
 //! `fees_transferred` tombstone stays until guard-ring eviction.
 
 use alloy_primitives::{Address, B256, U256};
@@ -190,7 +190,7 @@ pub fn seal_block_votes(
 
 /// Settle the matured window for `fb_hash` exactly once:
 /// 1. Pay each credited voter `pending * w(k_i) / D` from `REWARDS_ADDRESS`.
-/// 2. Burn the entire native residue through the shared Promis Limit helper.
+/// 2. Burn the residue into the Promis Limit with code 42.
 /// 3. Assert `sum payout + residue == pending`.
 ///
 /// Returns `(distributed, residue)` in native wei. The caller must checkpoint

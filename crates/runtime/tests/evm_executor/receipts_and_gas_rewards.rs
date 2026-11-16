@@ -160,7 +160,7 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
             .write(parent_number - 1)
             .unwrap();
     });
-    // Match production's EIP-161 preservation for the shared accumulator. The
+    // Match production's EIP-161 preservation for the Promis Limit. The
     // generic validator fixture does not install this native precompile marker.
     let marker_code = Bytecode::new_legacy([0xef].into());
     state.database.insert_account_info(
@@ -391,7 +391,7 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
     assert_rewards_bloom(late, burn_log);
     {
         // Read immediately after LateFinalizeCredits: later system transactions
-        // can route their own native burns into the same shared accumulator.
+        // can add their own amounts to the Promis Limit.
         let mut provider = super::DirectStorageProvider::new(
             executor.evm_mut().db_mut(),
             BlockContext {

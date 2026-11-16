@@ -412,6 +412,7 @@ fn record_failed_allocation_fallback(ctx: &BlockRuntimeContext, day: u32) -> Res
         if day > outbe_rewards::api::get_last_sealed_day(&ctx.storage)? {
             outbe_rewards::api::seal_votes_and_fees(ctx, day)?;
         }
+        outbe_promislimit::PromisLimitContract::new(ctx.storage.clone()).settle_day_burns()?;
         outbe_agentreward::api::abandon_day_agent_rewards(ctx, day.into())?;
         if !cap.is_zero() {
             outbe_promislimit::PromisLimitContract::new(ctx.storage.clone())
