@@ -59,6 +59,35 @@ struct DispatchOutcome {
     refund: i64,
 }
 
+#[cfg(test)]
+std::thread_local! {
+    pub(super) static PANIC_WITH_NATIVE_FRAME: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+impl DispatchOutcome {
+    fn panicked(
+        runtime: &OutbeDispatchRuntime<'_>,
+        entry_depth: usize,
+        depth_after: usize,
+    ) -> Self {
+        // A Halt would clear an already-latched node-local abort in translate_outcome.
+        let error = if let Err(error) = runtime.abort_bridge.check_subcall() {
+            PrecompileError::SubCall(error)
+        } else if depth_after != entry_depth {
+            PrecompileError::Fatal("precompile subcall unwound with dirty journal depth".into())
+        } else {
+            PrecompileError::Halt(revm::precompile::PrecompileHalt::other_static(
+                "precompile dispatch panicked",
+            ))
+        };
+        Self {
+            result: Err(error),
+            actual_gas: 0,
+            refund: 0,
+        }
+    }
+}
+
 /// Dispatch one outbe precompile call with full context access.
 pub(super) fn outbe_ctx_dispatch<DB>(
     ctx: &mut EthEvmContext<DB>,
@@ -69,7 +98,7 @@ where
     DB: Database + Debug,
     DB::Error: Debug,
 {
-    use revm::context_interface::{Block as _, ContextTr};
+    use revm::context_interface::{Block as _, ContextTr, JournalTr as _};
 
     let Some(route) = routes::resolve(runtime.host.as_ref(), &inputs.bytecode_address) else {
         return Ok(None);
@@ -79,39 +108,57 @@ where
     // Materialize the exact calldata before choosing the consensus gas charge.
     // SharedBuffer and top-level Bytes calls must pay the same activation charge.
     let data: Bytes = inputs.input.bytes_local(ctx.local());
-    let base_gas = route
-        .base_gas(runtime.host.as_ref(), data.as_ref())
-        .max(PRECOMPILE_BASE_GAS);
-    let timestamp = match outbe_primitives::time::timestamp_secs(ctx.block().timestamp()) {
-        Ok(timestamp) => timestamp,
-        Err(error) => {
-            let outcome = DispatchOutcome {
-                result: Err(if inputs.gas_limit < base_gas {
-                    PrecompileError::OutOfGas
-                } else {
-                    error.into()
-                }),
-                actual_gas: base_gas,
-                refund: 0,
-            };
-            return Ok(Some(translate_outcome(
-                outcome,
-                &runtime,
-                inputs.gas_limit,
-            )?));
-        }
-    };
-    let call = DispatchCall {
-        inputs,
-        route,
-        host: std::sync::Arc::clone(&runtime.host),
-        data,
-        block_number,
-        chain_id,
-        timestamp,
-        base_gas,
-    };
-    let outcome = call.execute(ctx, &runtime);
+    let entry_depth = ctx.journal().depth();
+    // Every provider and storage guard must unwind before inspecting the journal.
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        #[cfg(test)]
+        PANIC_WITH_NATIVE_FRAME.with(|armed| {
+            if armed.replace(false) {
+                ctx.journal_mut().checkpoint();
+                panic!("secret native frame panic");
+            }
+        });
+        let base_gas = route
+            .base_gas(runtime.host.as_ref(), data.as_ref())
+            .max(PRECOMPILE_BASE_GAS);
+        let timestamp = match outbe_primitives::time::timestamp_secs(ctx.block().timestamp()) {
+            Ok(timestamp) => timestamp,
+            Err(error) => {
+                return DispatchOutcome {
+                    result: Err(if inputs.gas_limit < base_gas {
+                        PrecompileError::OutOfGas
+                    } else {
+                        error.into()
+                    }),
+                    actual_gas: base_gas,
+                    refund: 0,
+                };
+            }
+        };
+        let call = DispatchCall {
+            inputs,
+            route,
+            host: std::sync::Arc::clone(&runtime.host),
+            data,
+            block_number,
+            chain_id,
+            timestamp,
+            base_gas,
+        };
+        call.execute(ctx, &runtime)
+    }))
+    .unwrap_or_else(|_| {
+        let depth_after = ctx.journal().depth();
+        tracing::error!(
+            target: "outbe::precompile",
+            address = ?inputs.bytecode_address,
+            caller = ?inputs.caller,
+            entry_depth,
+            depth_after,
+            "precompile dispatch panicked"
+        );
+        DispatchOutcome::panicked(&runtime, entry_depth, depth_after)
+    });
     Ok(Some(translate_outcome(
         outcome,
         &runtime,
