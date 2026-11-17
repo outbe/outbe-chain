@@ -53,7 +53,7 @@ contract BodyVersionTest is Test {
         encoded = BridgeMsgCodec.encodeIntexAuctionResult(1, AuctionResultLib.day(7, 5e6, 3));
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "auctionResult.version");
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_INTEX_AUCTION_RESULT, "auctionResult.msgType");
-        assertEq(encoded.length, 22, "auctionResult.length");
+        assertEq(encoded.length, BridgeMsgCodec.MIN_LEN_INTEX_AUCTION_RESULT, "auctionResult.length");
 
         encoded = BridgeMsgCodec.encodeIntexSeriesCallNotice(20260212, CALLED_AT, MarkBatchLib.one("20260212-TRY-U"));
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "markCalled.version");

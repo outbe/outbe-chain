@@ -73,10 +73,7 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
 
     /// @dev Count `IntexAuctionStartSent` emissions in the recorded logs (one per fan-out leg).
     function _countStageSent() internal returns (uint256 n) {
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        for (uint256 i; i < logs.length; ++i) {
-            if (logs[i].topics[0] == STAGE_SENT_SIG) n++;
-        }
+        return _countTopic(STAGE_SENT_SIG);
     }
 
     // --- Cancel ---
@@ -184,7 +181,11 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         vm.recordLogs();
         vm.prank(desis);
         origin.sendIntexAuctionClearingStart(DAY, TARGET_B, IntexGas.INTEX_AUCTION_CLEARING_START);
-        assertEq(_countStageSent(), 1, "the removed target still takes the day's clearing");
+        assertEq(
+            _countTopic(IOriginRouter.IntexAuctionClearingStartSent.selector),
+            1,
+            "the removed target still takes the day's clearing"
+        );
 
         vm.prank(desis);
         vm.expectRevert(IOriginRouter.NoTargets.selector);
@@ -247,6 +248,28 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         origin.registerRemoteMessenger(TARGET_B, _interop(TARGET_B, peerB));
         origin.retryMessageSend(0);
         assertTrue(origin.getFailedMessageSend(0).sent);
+    }
+
+    function test_sent_event_comes_once_when_the_message_leaves() public {
+        origin.registerRemoteMessenger(TARGET_B, ""); // B's leg fails, A's leaves
+        vm.recordLogs();
+        _fireStart(DAY);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint256 sent;
+        uint256 failed;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics[0] == IOriginRouter.IntexAuctionStartSent.selector) sent++;
+            if (logs[i].topics[0] == IOriginRouter.MessageSendFailed.selector) failed++;
+        }
+        assertEq(sent, 1, "only the leg that left");
+        assertEq(failed, 1, "the kept leg");
+
+        origin.registerRemoteMessenger(TARGET_B, _interop(TARGET_B, peerB));
+        vm.expectEmit(false, true, true, true, address(origin));
+        emit IOriginRouter.IntexAuctionStartSent(bytes32(0), DAY, TARGET_B);
+        vm.recordLogs();
+        origin.retryMessageSend(0);
+        assertEq(_countTopic(IOriginRouter.MessageSendFailed.selector), 0, "no failure on a retry that works");
     }
 
     function test_flush_rejectsReentry() public {

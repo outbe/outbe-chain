@@ -227,7 +227,7 @@ contract IntexAuctionClaimsTest is Test {
         assertEq(_units(alice), 3);
     }
 
-    function test_AForfeitedSeriesRedeemsTheWinNoteWithoutUnits() public {
+    function test_win_note_is_redeemed_or_expired() public {
         _bid(3, 1);
         _createSeries(0);
         _finalize(_winner(alice), 0, 0);
@@ -237,7 +237,7 @@ contract IntexAuctionClaimsTest is Test {
         assertEq(uint8(intex.readData(CreateSeriesLib.seriesId(DAY)).state), uint8(IIntexNFT1155.IntexState.Forfeited));
 
         vm.expectEmit(true, true, true, true, address(auction));
-        emit IIntexAuction.IntexAuctionWinNoteRedeemed(DAY, alice, CreateSeriesLib.seriesId(DAY));
+        emit IIntexAuction.IntexAuctionWinNoteExpired(DAY, alice, CreateSeriesLib.seriesId(DAY));
         auction.redeemWinNote(DAY, alice);
 
         assertEq(_units(alice), 0, "nothing issued");

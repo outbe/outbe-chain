@@ -142,12 +142,12 @@ contract EscrowAdapterTest is Test {
 
     function test_Wire_ZeroPaymentToken() public {
         EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
-        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "paymentToken"));
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "asset"));
         vm.prank(admin);
         newEscrow.setDependencies(auction, address(compact), address(0));
     }
 
-    function test_SetDependencies_EmitsTheNewValues() public {
+    function test_setting_events_hold_only_new_values() public {
         EscrowAdapter freshEscrow = DeployProxy.escrowAdapter(admin, bridger);
         vm.expectEmit(true, true, true, true);
         emit IEscrowAdapter.EscrowDependenciesSet(

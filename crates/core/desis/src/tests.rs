@@ -1035,6 +1035,31 @@ fn a_cancel_after_the_clearing_start_has_no_effect() {
     assert!(sent_cancels(&provider).is_empty());
 }
 
+#[test]
+fn desis_collects_each_page_once() {
+    use crate::precompile::IDesis;
+    use alloy_sol_types::SolEvent;
+    let mut provider = fixture_provider(&[SRC_CHAIN]);
+    StorageHandle::enter(&mut provider, |s| {
+        open_revealing(&s);
+        submit_one_batch(&s, SRC_CHAIN, bids(2, 500_000));
+        submit_one_batch(&s, SRC_CHAIN, bids(2, 500_000));
+    });
+    let collected: Vec<_> = provider
+        .get_events(outbe_system_common::addresses::DESIS_ADDRESS)
+        .iter()
+        .filter_map(|log| IDesis::IntexAuctionBidsCollected::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(
+        collected.len(),
+        1,
+        "a page Desis already has gives no event"
+    );
+    assert_eq!(collected[0].pageIndex, 0);
+    assert_eq!(collected[0].totalPages, 1);
+    assert_eq!(collected[0].bidsCount, 2);
+}
+
 // --- Late start ---
 
 /// A brief that comes hours after the midnight still opens at that midnight and prices

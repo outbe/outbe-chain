@@ -32,7 +32,7 @@ contract MockIntexFactory {
         shouldRevert = v;
     }
 
-    function distribute(uint32 emissionDay, uint32 srcChainId) external payable {
+    function burnIntexAuctionProceeds(uint32 emissionDay, uint32 srcChainId) external payable {
         require(!shouldRevert, "distribute failed");
         calls++;
         lastEmissionDay = emissionDay;

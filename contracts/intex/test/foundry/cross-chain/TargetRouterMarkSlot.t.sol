@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {Vm} from "forge-std/Vm.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
@@ -164,7 +165,12 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
     function test_ARepeatedCalledIsADuplicate() public {
         intex.createSeries(CreateSeriesLib.params(DAY, 10, 0));
         _deliver(_called());
-        _expectIgnored(BridgeMsgCodec.MSG_INTEX_SERIES_CALL_NOTICE, InboundReason.DUPLICATE);
+        // A series that is already called gets no event.
+        vm.recordLogs();
         _deliver(_called());
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; ++i) {
+            assertTrue(logs[i].topics[0] != ITargetRouter.MessageIgnored.selector, "no ignore event");
+        }
     }
 }

@@ -134,7 +134,7 @@ contract TargetRouterProceedsTest is CrossChainTest {
         target.setProceedsRoute(address(tokenBridge), address(0));
     }
 
-    function test_RefundInstructions_RoutesProceeds() public {
+    function test_proceeds_of_a_page_carry_the_page_index() public {
         escrow.setTotalPaid(AMOUNT);
 
         _deliverRefund(SERIES_ID);
@@ -143,7 +143,7 @@ contract TargetRouterProceedsTest is CrossChainTest {
         assertEq(tokenBridge.lastDomain(), OUTBE_CHAIN_ID);
         assertEq(tokenBridge.lastTo(), originRouter);
         assertEq(tokenBridge.lastAmount(), AMOUNT);
-        assertEq(tokenBridge.lastExtraData(), abi.encode(SERIES_ID));
+        assertEq(tokenBridge.lastExtraData(), abi.encode(SERIES_ID, uint32(0)));
         assertEq(tokenBridge.lastGas(), IntexGas.PROCEEDS_COMPOSE);
         assertEq(tokenBridge.valueReceived(), tokenBridge.fee());
         // Router approved the bridge to pull the proceeds.

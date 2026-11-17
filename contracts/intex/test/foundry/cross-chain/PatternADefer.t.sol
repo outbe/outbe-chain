@@ -273,7 +273,8 @@ contract PatternADeferTest is CrossChainTest {
         uint256 j;
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].topics.length != 0 && logs[i].topics[0] == topic) {
-                sizes[j++] = abi.decode(logs[i].data, (uint256));
+                (,, uint32 bidsCount) = abi.decode(logs[i].data, (uint32, uint32, uint32));
+                sizes[j++] = bidsCount;
             }
         }
     }

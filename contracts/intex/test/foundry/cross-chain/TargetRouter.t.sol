@@ -97,21 +97,21 @@ contract TargetRouterTest is CrossChainTest {
     function test_wire_revert_zero_address() public {
         TargetRouter newRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "auction"));
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "intexAuction"));
         newRouter.setDependencies(address(0), address(intex), admin);
     }
 
     function test_wire_revert_zero_intex() public {
         TargetRouter newRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "intex"));
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "intexContract"));
         newRouter.setDependencies(address(auction), address(0), admin);
     }
 
     function test_wire_revert_zero_escrowAdapter() public {
         TargetRouter newRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "escrowAdapter"));
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "escrow"));
         newRouter.setDependencies(address(auction), address(intex), address(0));
     }
 

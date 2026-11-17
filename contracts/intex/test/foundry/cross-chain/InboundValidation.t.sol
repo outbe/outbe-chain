@@ -180,12 +180,13 @@ contract InboundValidationTest is CrossChainTest {
         _deliver(BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter), packet);
     }
 
-    function test_OM_BodySrcChainIdMismatch_IsAcknowledgedAsAConflict() public {
+    function test_message_ignored_holds_the_receive_id() public {
         // Build a well-formed BIDS_BATCH whose body-srcChainId (0xDEAD) disagrees with the
         // authenticated source chainId (BNB_CHAIN_ID = 1): never acceptable, so acknowledged, not retried.
         bytes memory packet = BridgeMsgCodec.encodeBidsPage(42, 0xDEAD, 0, 1, new address[](0), new uint256[](0));
-        vm.expectEmit(false, true, false, true, address(outbeRouter));
-        emit IOriginRouter.MessageIgnored(bytes32(0), BNB_CHAIN_ID, InboundReason.CONFLICT);
+        bytes32 receiveId = keccak256(abi.encode(_interop(BNB_CHAIN_ID, address(bnbRouter)), packet));
+        vm.expectEmit(true, true, false, true, address(outbeRouter));
+        emit IOriginRouter.MessageIgnored(receiveId, BNB_CHAIN_ID, InboundReason.CONFLICT);
         _deliver(BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter), packet);
     }
 

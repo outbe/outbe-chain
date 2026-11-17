@@ -46,9 +46,10 @@ contract RecordingDesis {
     }
 
     function collectIntexAuctionBids(
+        bytes32,
         uint32 emissionDay,
         uint32 srcChainId,
-        uint16, /* batchIndex */
+        uint16, /* pageIndex */
         uint16 totalPages,
         address[] calldata bidderAddresses,
         uint256[] calldata packedBids
@@ -64,7 +65,9 @@ contract RecordingDesis {
         }
     }
 
-    function completeIntexAuctionBids(uint32, uint32 srcChainId, uint16 totalPages, uint32 totalBids) external {
+    function completeIntexAuctionBids(bytes32, uint32, uint32 srcChainId, uint16 totalPages, uint32 totalBids)
+        external
+    {
         doneSrcChainId = srcChainId;
         doneTotalBatches = totalPages;
         doneTotalBids = totalBids;
@@ -82,7 +85,7 @@ contract RecordingFactory {
     uint256 public lastValue;
     uint256 public calls;
 
-    function distribute(uint32 emissionDay, uint32 srcChainId) external payable {
+    function burnIntexAuctionProceeds(uint32 emissionDay, uint32 srcChainId) external payable {
         lastDay = emissionDay;
         lastSrcChainId = srcChainId;
         lastValue = msg.value;
