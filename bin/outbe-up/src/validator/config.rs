@@ -283,7 +283,7 @@ feeder:
     }
 
     #[test]
-    fn unattested_runtime_is_limited_to_supported_networks() {
+    fn unattested_runtime_accepts_product_networks_only() {
         let config = |chain_id| {
             serde_yaml_ng::from_str::<OperatorConfig>(&format!(
                 r#"
@@ -305,7 +305,8 @@ feeder:
         };
 
         config(54322345).validate().unwrap();
-        assert!(config(676)
+        config(676).validate().unwrap();
+        assert!(config(123)
             .validate()
             .unwrap_err()
             .to_string()

@@ -2,7 +2,7 @@
 //!
 //! The development profile is selected explicitly in genesis, never as a
 //! fallback for an unavailable DCAP verifier. It is admitted on the devnet and
-//! testnet identities so the same fresh testnet topology can run without SGX.
+//! testnet, and mainnet identities so those topologies can run without SGX.
 //! `DcapRequired` construction still requires the exact signed-enclave
 //! measurement tuple. This API cannot emit a placeholder DCAP policy.
 
@@ -25,10 +25,9 @@ use crate::{
 pub const GRAMINE_DIRECT_DEV_CHAIN_ID: u64 = DEVNET_CHAIN_ID;
 
 /// Returns whether an explicitly configured development policy may use this
-/// fresh-network identity. Testnet keeps requiring an explicit genesis
-/// `GramineDirectDev` policy. This is not a runtime fallback from DCAP.
+/// product-network identity. This is not a runtime fallback from DCAP.
 pub const fn is_gramine_direct_dev_chain_id(chain_id: u64) -> bool {
-    chain_id == DEVNET_CHAIN_ID || chain_id == TESTNET_CHAIN_ID
+    chain_id == DEVNET_CHAIN_ID || chain_id == TESTNET_CHAIN_ID || chain_id == MAINNET_CHAIN_ID
 }
 
 /// Returns whether the chain has a production DCAP identity.
@@ -116,6 +115,7 @@ pub fn initial_tee_policy_v1(
             return Err(TeeGenesisPolicyError::InvalidGramineDirectDevChainId {
                 devnet: DEVNET_CHAIN_ID,
                 testnet: TESTNET_CHAIN_ID,
+                mainnet: MAINNET_CHAIN_ID,
             });
         }
         _ => {}
@@ -231,7 +231,7 @@ mod tests {
     }
 
     #[test]
-    fn devnet_and_testnet_accept_both_modes_while_mainnet_requires_dcap() {
+    fn product_networks_accept_both_modes() {
         let genesis_hash = B256::repeat_byte(0x33);
         assert!(initial_tee_policy_v1(
             InitialTeeProfileV1::DcapRequired(dcap_measurement()),
@@ -275,14 +275,14 @@ mod tests {
             MAINNET_CHAIN_ID,
             genesis_hash,
         )
-        .is_err());
+        .is_ok());
         assert!(initial_tee_policy_v1(
             InitialTeeProfileV1::GramineDirectDev,
             TESTNET_CHAIN_ID + 1,
             genesis_hash,
         )
         .unwrap_err()
-        .contains("devnet or testnet chain ID"));
+        .contains("devnet, testnet, or mainnet chain ID"));
     }
 
     #[test]

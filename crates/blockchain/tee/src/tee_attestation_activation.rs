@@ -1,8 +1,8 @@
 //! Genesis-fixed authority for V1 TEE attestation.
 //!
-//! Every runnable chain must carry this field. Devnet and testnet may
-//! explicitly select `DcapRequired` or `GramineDirectDev`. Mainnet requires
-//! `DcapRequired`. Both use OST3, and neither can fall back at runtime.
+//! Every runnable chain must carry this field and explicitly select
+//! `DcapRequired` or `GramineDirectDev`. Both use OST3, and neither can fall
+//! back at runtime.
 
 use std::sync::Arc;
 
@@ -416,6 +416,7 @@ fn validate_activation(
                 TeeAttestationActivationError::GramineDirectDevChainIdDisallowed {
                     devnet: GRAMINE_DIRECT_DEV_CHAIN_ID,
                     testnet: TESTNET_CHAIN_ID,
+                    mainnet: MAINNET_CHAIN_ID,
                 }
             }
         });
@@ -736,7 +737,7 @@ mod tests {
     }
 
     #[test]
-    fn dev_mode_is_valid_for_devnet_and_testnet_but_not_unknown_identities() {
+    fn dev_mode_is_valid_for_product_networks_but_not_unknown_identities() {
         let dev_chain_id = GRAMINE_DIRECT_DEV_CHAIN_ID;
         let dev_genesis_hash = B256::repeat_byte(0x66);
         let dev = validate_activation(
@@ -779,9 +780,9 @@ mod tests {
             dev_genesis_hash,
         )
         .unwrap_err()
-        .contains("devnet or testnet chain ID"));
+        .contains("devnet, testnet, or mainnet chain ID"));
 
-        assert!(validate_activation(
+        let mainnet = validate_activation(
             activation(
                 MAINNET_CHAIN_ID,
                 dev_genesis_hash,
@@ -790,8 +791,11 @@ mod tests {
             MAINNET_CHAIN_ID,
             dev_genesis_hash,
         )
-        .unwrap_err()
-        .contains("devnet or testnet chain ID"));
+        .unwrap();
+        assert_eq!(
+            mainnet.policy_at(1).unwrap().attestation_mode,
+            AttestationMode::GramineDirectDev
+        );
 
         let devnet_dcap = validate_activation(
             activation(

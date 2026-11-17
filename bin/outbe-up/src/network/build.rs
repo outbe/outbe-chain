@@ -293,8 +293,6 @@ pub(super) fn genesis_cli_config(
         ),
         ("rpc_bind_ip", json!(rpc_bind(config)?)),
         ("tee", json!({"mode": "gramine-direct-dev"})),
-        ("enclave_sgx", json!(false)),
-        ("enclave_runtime", json!("confidential-vm")),
         (
             "enclave_runner",
             json!("/opt/outbe-chain/outbe-tee-enclave-confidential-vm"),
@@ -507,8 +505,9 @@ mod tests {
         let value = genesis_cli_config(&config, temp.path(), &temp.path().join("keys")).unwrap();
         assert_eq!(value["network"], "testnet");
         assert_eq!(value["tee"]["mode"], "gramine-direct-dev");
-        assert_eq!(value["enclave_sgx"], false);
-        assert_eq!(value["enclave_runtime"], "confidential-vm");
+        assert!(value.get("enclave_sgx").is_none());
+        assert!(value.get("enclave_runtime").is_none());
+        outbe_genesis_cli::network::validate_config(&value).unwrap();
         assert_eq!(
             value["balance"]["0x1111111111111111111111111111111111111111"],
             "1000000000000000000000"

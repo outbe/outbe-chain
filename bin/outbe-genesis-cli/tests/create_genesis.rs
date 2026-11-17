@@ -223,8 +223,7 @@ fn config_validation_matrix_and_rejections() {
             "price_feed_rest": "https://prices.outbe.net",
         }),
     );
-    let err = validate_config(&mainnet).expect_err("mainnet policy is not implemented");
-    assert!(err.to_string().contains("confidential-vm policy"));
+    validate_config(&mainnet).expect("mainnet confidential VM policy");
     assert_eq!(
         network_identity(&mainnet).expect("identity"),
         ("mainnet".to_owned(), 676, "outbe-mainnet-1".to_owned())

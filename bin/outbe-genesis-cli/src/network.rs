@@ -269,24 +269,19 @@ fn validate_tee(config: &Value, obj: &Map<String, Value>) -> Result<(), GenesisE
             unknown_tee.join(", ")
         )));
     }
-    let (network, chain_id, _) = network_identity(config)?;
+    let (network, _, _) = network_identity(config)?;
     let mode = tee.get("mode").and_then(Value::as_str).unwrap_or("");
     if network == "mainnet" {
         validate_mainnet(obj)?;
     }
-    validate_tee_mode(mode, chain_id)
+    validate_tee_mode(mode)
 }
 
-fn validate_tee_mode(mode: &str, chain_id: u64) -> Result<(), GenesisError> {
+fn validate_tee_mode(mode: &str) -> Result<(), GenesisError> {
     if mode != "gramine-direct-dev" {
         return Err(GenesisError::validation(
             "only the confidential-vm genesis policy is supported",
         ));
-    }
-    if chain_id != DEVNET_CHAIN_ID && chain_id != TESTNET_CHAIN_ID {
-        return Err(GenesisError::validation(format!(
-            "the confidential-vm policy requires the devnet or testnet chain id ({DEVNET_CHAIN_ID} or {TESTNET_CHAIN_ID}), not {chain_id}"
-        )));
     }
     Ok(())
 }
