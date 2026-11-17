@@ -126,8 +126,8 @@ pub struct FrozenReshareTarget {
 }
 
 /// Exact local identity evaluated against one canonical finalized state view.
-/// `expected_enclave_id` is present for the production NodeHost session and
-/// binds startup to its committed manifest. Development transport may omit it.
+/// `expected_enclave_id` pins the resident manifest or sidecar identity, including
+/// Development quotes. Its presence does not imply a durable NodeHost session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LocalTeeRuntimeIdentityV1 {
     pub reth_p2p_public: [u8; 33],

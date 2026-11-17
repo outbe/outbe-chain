@@ -159,7 +159,10 @@ pub(crate) async fn prepare(
     );
 
     let tee_admission_anchor = if args.is_validator {
-        if expected_enclave_id.is_some() {
+        if matches!(
+            tee_session,
+            outbe_consensus::args::ResolvedTeeSession::ProductionNodeHost
+        ) {
             outbe_tee::load_finalized_join_admission_anchor(&node_data_dir)
                 .wrap_err("load durable validator join admission anchor")?
                 .map(|durable| {

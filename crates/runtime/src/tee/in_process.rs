@@ -171,6 +171,48 @@ mod tests {
     use outbe_tee::TeeAuthorityState;
 
     #[test]
+    fn development_quote_identity_matches_the_canonical_registration_identity() {
+        use outbe_primitives::tee_attestation_v1::{AttestationOperationV1, RegistrationIntentV1};
+        use outbe_tee::protocol::EnclaveResponse;
+        let context = support::context(9);
+        let manifest = context.manifest();
+        let intent = RegistrationIntentV1 {
+            chain_id: manifest.chain_id,
+            genesis_hash: manifest.genesis_hash,
+            operation: AttestationOperationV1::RegisterEnclave,
+            attestation_mode: manifest.attestation_mode,
+            policy_hash: alloy_primitives::B256::repeat_byte(1),
+            node_id: manifest.node_id.clone(),
+            enclave_id: manifest.enclave_id().unwrap(),
+            binding_id: alloy_primitives::B256::repeat_byte(2),
+            binding_version: 1,
+            registration_version: 1,
+            renewal_nonce: 0,
+            transition_nonce: 0,
+            requested_valid_until: 1000,
+            recipient_x25519: manifest.recipient_x25519,
+            attestation_ed25519: manifest.attestation_ed25519,
+            noise_responder_x25519: manifest.noise_responder_x25519,
+            node_host_authorization_hash: manifest.node_host_authorization_hash().unwrap(),
+        };
+        let quote = EnclaveResponse::Quote {
+            mrenclave: Default::default(),
+            mrsigner: Default::default(),
+            isv_svn: 0,
+            report_data: Default::default(),
+            recipient_x25519_pub: intent.recipient_x25519,
+            attestation_pub: intent.attestation_ed25519,
+            noise_static_pub: intent.noise_responder_x25519,
+            quote_body: Vec::new(),
+            attestation: "none".to_owned(),
+        };
+        assert_eq!(
+            sidecar_enclave_id(&quote).unwrap(),
+            intent.derived_enclave_id().unwrap()
+        );
+    }
+
+    #[test]
     fn node_host_key_is_stable_and_loss_never_regenerates_identity() {
         let root = tempfile::tempdir().unwrap();
         let first = load_node_host_key(root.path()).unwrap().public();
