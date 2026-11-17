@@ -116,13 +116,25 @@ fn slot_60_is_retired_and_policy_registry_occupies_slots_74_and_75() {
 }
 
 #[test]
-fn genesis_seeds_the_usd_policy_rate() {
+fn genesis_holds_no_policy_rate() {
     with_bare_oracle(|_storage, oracle| {
         crate::genesis::init_from_genesis(
             oracle,
             &crate::genesis::OracleGenesisConfig::default_config(),
         )
         .unwrap();
-        assert_eq!(oracle.get_policy_rate(840).unwrap(), U256::from(38_800u64));
+        // Each reference currency is a rate vote target, and none has a rate
+        // before the first tally.
+        assert_eq!(
+            oracle.policy_rate_currencies.read_all().unwrap(),
+            crate::constants::REFERENCE_CURRENCIES.to_vec()
+        );
+        for iso_code in crate::constants::REFERENCE_CURRENCIES {
+            let error = oracle.get_policy_rate(iso_code).unwrap_err();
+            assert_typed_revert(
+                &error,
+                crate::errors::OracleError::NoPolicyRate { iso_code },
+            );
+        }
     });
 }

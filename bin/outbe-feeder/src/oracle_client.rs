@@ -229,6 +229,15 @@ impl OracleClient {
             .await?;
         Ok(targets.bases.into_iter().zip(targets.quotes).collect())
     }
+    /// The currencies that are policy rate vote targets at `head`.
+    pub async fn rate_targets(&self, head: &Head) -> Result<Vec<u16>> {
+        self.call(
+            head,
+            ORACLE_ADDRESS,
+            IOracle::getPolicyRateCurrenciesCall {},
+        )
+        .await
+    }
     pub async fn price_observation(
         &self,
         head: &Head,

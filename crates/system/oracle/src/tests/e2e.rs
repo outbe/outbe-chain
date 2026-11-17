@@ -145,7 +145,7 @@ fn init_from_genesis_imports_every_custom_config_collection() {
                 (Address::new([0x11; 20]), Address::new([0xAAu8; 20])),
                 (Address::new([0x22; 20]), Address::new([0xBBu8; 20])),
             ],
-            policy_rates: reference_policy_rates(),
+            policy_rate_currencies: crate::constants::REFERENCE_CURRENCIES.to_vec(),
             penalty_counters: vec![],
             aggregate_votes: vec![],
             snapshots: vec![],
@@ -707,7 +707,7 @@ fn export_genesis_round_trips_the_full_oracle_state() {
                 entries: vec![(COEN, usd(), coen_iso(41), coen_iso(1))],
             },
         ],
-        policy_rates: reference_policy_rates(),
+        policy_rate_currencies: crate::constants::REFERENCE_CURRENCIES.to_vec(),
         penalty_counters: vec![(v1, 7, 2, 1), (v2, 3, 0, 4)],
         snapshots: vec![crate::genesis::GenesisSnapshot {
             timestamp: 5000,
@@ -1256,7 +1256,6 @@ fn gas_cost_vwap_50h_window_with_varying_snapshot_counts() {
 fn policy_and_pair_registries_are_independent() {
     with_bare_oracle(|_storage, oracle| {
         let config = crate::genesis::OracleGenesisConfig {
-            policy_rates: reference_policy_rates(),
             pairs: vec![(COEN, AssetType::IsoCurrency(156).into())],
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
@@ -1266,7 +1265,6 @@ fn policy_and_pair_registries_are_independent() {
             oracle.policy_rate_currencies.read_all().unwrap(),
             crate::constants::REFERENCE_CURRENCIES.to_vec()
         );
-        assert_eq!(oracle.get_policy_rate(392).unwrap(), TEST_RATE);
         assert_eq!(oracle.pair_count.read().unwrap(), 1);
         assert!(oracle.pair_index_of(AddressPair::new_coen_to(840)).unwrap() == 0);
         assert!(oracle.pair_index_of(AddressPair::new_coen_to(392)).unwrap() == 0);
@@ -1293,43 +1291,27 @@ fn init_from_genesis_rejects_a_ratio_above_one() {
 }
 
 #[test]
-fn init_from_genesis_rejects_noncanonical_policy_rates() {
-    for (name, policy_rates, expected) in [
+fn reference_currency_needs_a_rate_source() {
+    for (name, policy_rate_currencies, expected) in [
         (
             "zero iso",
-            vec![crate::genesis::PolicyRate {
-                iso_code: 0,
-                annual_rate_1e6: TEST_RATE,
-            }],
+            vec![0],
             crate::errors::OracleError::PolicyIsoCodeZero,
         ),
         (
-            "zero rate",
-            vec![crate::genesis::PolicyRate {
-                iso_code: 840,
-                annual_rate_1e6: U256::ZERO,
-            }],
-            crate::errors::OracleError::PolicyRateZero { iso_code: 840 },
-        ),
-        (
             "duplicate",
-            vec![policy_rate(840), policy_rate(840)],
+            vec![840, 840],
             crate::errors::OracleError::DuplicatePolicyIsoCode { iso_code: 840 },
         ),
         (
-            "unsorted",
-            vec![policy_rate(978), policy_rate(840)],
-            crate::errors::OracleError::PolicyRatesNotSorted,
-        ),
-        (
-            "reference currency without a rate",
-            vec![policy_rate(840)],
+            "reference currency that is no rate vote target",
+            vec![840],
             crate::errors::OracleError::MissingPolicyRate { iso_code: 156 },
         ),
     ] {
         with_bare_oracle(|_storage, oracle| {
             let config = crate::genesis::OracleGenesisConfig {
-                policy_rates,
+                policy_rate_currencies,
                 ..crate::genesis::OracleGenesisConfig::default_config()
             };
             let error = crate::genesis::init_from_genesis(oracle, &config).unwrap_err();
@@ -1396,13 +1378,13 @@ fn currency_alpha_code_precompile_returns_the_iso_letter_code() {
 }
 
 #[test]
-fn get_policy_rate_precompile_returns_the_raw_six_decimal_annual_rate() {
+fn get_policy_rate_precompile_returns_the_rate_and_its_publication_time() {
     with_bare_oracle(|storage, oracle| {
-        let config = crate::genesis::OracleGenesisConfig {
-            policy_rates: reference_policy_rates(),
-            ..crate::genesis::OracleGenesisConfig::default_config()
-        };
+        let config = crate::genesis::OracleGenesisConfig::default_config();
         crate::genesis::init_from_genesis(oracle, &config).unwrap();
+        oracle
+            .set_policy_rate_for_test(840, TEST_RATE, TEST_RATE_PUBLISHED_AT)
+            .unwrap();
 
         use crate::precompile::IOracle;
         use alloy_sol_types::SolCall;
@@ -1412,7 +1394,8 @@ fn get_policy_rate_precompile_returns_the_raw_six_decimal_annual_rate() {
             &crate::precompile::dispatch(storage, &call, Address::ZERO, U256::ZERO).unwrap(),
         )
         .unwrap();
-        assert_eq!(decoded, TEST_RATE);
+        assert_eq!(decoded.rate, TEST_RATE);
+        assert_eq!(decoded.publishedAt, TEST_RATE_PUBLISHED_AT);
     });
 }
 
@@ -1420,7 +1403,6 @@ fn get_policy_rate_precompile_returns_the_raw_six_decimal_annual_rate() {
 fn policy_rate_precompile_enumerates_and_rejects_absence() {
     with_bare_oracle(|storage, oracle| {
         let config = crate::genesis::OracleGenesisConfig {
-            policy_rates: reference_policy_rates(),
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
         crate::genesis::init_from_genesis(oracle, &config).unwrap();

@@ -17,6 +17,10 @@ interface IOracle {
     error PairNotVoteTarget();
     error DuplicateGasChainInVote(uint32 chainId);
     error GasChainNotVoteTarget(uint32 chainId);
+    error DuplicateRateCurrencyInVote(uint16 currency);
+    error RateCurrencyNotVoteTarget(uint16 currency);
+    error RatePublicationTimeInvalid(uint16 currency, uint64 publishedAt);
+    error VoteRateExceedsCap(uint16 currency, uint256 rate, uint256 max);
     error AlreadyVotedThisPeriod();
     error VotePriceExceedsCap(uint256 price, uint256 max);
     error VoteVolumeExceedsCap(uint256 volume, uint256 max);
@@ -43,8 +47,6 @@ interface IOracle {
     error SlashPercentOutOfRange(uint256 slash_fraction);
     error PolicyIsoCodeZero();
     error DuplicatePolicyIsoCode(uint16 iso_code);
-    error PolicyRatesNotSorted();
-    error PolicyRateZero(uint16 iso_code);
     error MissingPolicyRate(uint16 iso_code);
     error AggregateVoteValidatorZero();
     error DuplicateAggregateVoteValidator();
@@ -83,6 +85,9 @@ interface IOracle {
     /// @dev The VWAP of UTC day D is the event with `windowEnd` 00:00 of day D+1.
     ///      Uses all three indexable topics. No further field can be indexed.
     event Vwap24hSet(uint64 indexed windowEnd, address indexed base, address indexed quote, uint256 vwap);
+    /// @notice A tally closed a new policy rate or a new publication time for
+    ///         `currency`. `rate` is annual at scale 1e6.
+    event PolicyRateSet(uint16 indexed currency, uint256 rate, uint64 publishedAt);
 
     /// @notice One quoted rate in an aggregate vote.
     /// @dev `base` and `quote` must match the direction the pair was registered
@@ -102,6 +107,14 @@ interface IOracle {
     struct GasTuple {
         uint32 chainId;
         uint256 gasPrice;
+    }
+
+    /// @notice Policy rate vote for one currency: the annual overnight rate at
+    ///         scale 1e6, and the time at which the source published it.
+    struct RateTuple {
+        uint16 currency;
+        uint256 rate;
+        uint64 publishedAt;
     }
 
     /// @notice Returns the current exchange rate for a market, quoted in the
@@ -225,10 +238,12 @@ interface IOracle {
     /// @notice Delegate feeder consent from validator to feeder address.
     function delegateFeederConsent(address feeder) external;
 
-    /// @notice Submit aggregate oracle vote: the prices of the pairs and the
-    ///         gas prices of the remote chains. Each gas chain must be a gas
-    ///         vote target, at most once.
-    function submitVote(ExchangeRateTuple[] calldata tuples, GasTuple[] calldata gas) external;
+    /// @notice Submit aggregate oracle vote: the prices of the pairs, the gas
+    ///         prices of the remote chains and the policy rates. Each gas
+    ///         chain must be a gas vote target, at most once. Each rate
+    ///         currency must be a rate vote target, at most once.
+    function submitVote(ExchangeRateTuple[] calldata tuples, GasTuple[] calldata gas, RateTuple[] calldata rates)
+        external;
 
     /// @notice Deactivate a pair's vote target status (system-only).
     function deactivateVoteTarget(address base, address quote) external;
@@ -365,12 +380,14 @@ interface IOracle {
     ///         the table does not have.
     function currencyAlphaCode(uint16 isoCode) external view returns (string memory alphaCode);
 
-    /// @notice Returns every ISO code with an independently configured policy rate.
+    /// @notice Returns every ISO code that is a policy rate vote target.
     function getPolicyRateCurrencies() external view returns (uint16[] memory isoCodes);
 
-    /// @notice Returns the annualized policy rate (scale 1e6) for an ISO 4217
-    ///         code. Reverts when no policy rate is configured for the code.
-    function getPolicyRate(uint16 isoCode) external view returns (uint256 rate);
+    /// @notice Returns the last closed annual policy rate (scale 1e6) of an
+    ///         ISO 4217 code and the time at which its source published it.
+    ///         A rate of zero is a rate. Reverts with `NoPolicyRate` when no
+    ///         tally closed a rate for the code.
+    function getPolicyRate(uint16 isoCode) external view returns (uint256 rate, uint64 publishedAt);
 
     /// @notice Returns each chain with a gas price vote target, its gas price
     ///         in COEN-wei per unit of gas, and the time of the tally that

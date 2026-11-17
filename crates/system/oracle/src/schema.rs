@@ -200,11 +200,13 @@ pub struct OracleContract {
     // Slots 70-73 are retired holes. Do not reuse. They held the partial-day
     // aggregates of the 50-hour VWAP of a WorldwideDay.
 
-    // === Independent policy-rate registry (slots 74-75) ===
-    // Membership is enumerated independently of reference currencies and
-    // registered Oracle pairs. Rates are annualized at scale 1e6.
+    // === Policy rates (slots 74-75, 90-92) ===
+    // Currencies with a policy rate vote target: the sources file on mainnet,
+    // the genesis on other networks.
     #[slot(74)]
     pub policy_rate_currencies: StorageVec<u16>,
+    // Last closed rate of a currency, annual at scale 1e6. Zero is a rate:
+    // `policy_rate_published_at` tells if the currency has one.
     pub policy_rate: Mapping<u16, U256>,
 
     // === Hourly VWAP aggregates (slots 76-78) ===
@@ -251,6 +253,15 @@ pub struct OracleContract {
     // === Gas reward band (slot 89) ===
     // FP18, as `config_reward_band`, for the gas price votes.
     pub config_gas_reward_band: Slot<U256>,
+
+    // === Policy rates, continued (slots 90-92) ===
+    // Time at which the source published the last closed rate of a currency,
+    // in Unix seconds. Zero means the currency has no rate.
+    pub policy_rate_published_at: Mapping<u16, u64>,
+    // Pending rate votes: validator -> currency -> rate and publication time.
+    // A publication time of zero means no vote.
+    pub(crate) vote_policy_rate: Mapping<Address, Mapping<u16, U256>>,
+    pub(crate) vote_policy_rate_published_at: Mapping<Address, Mapping<u16, u64>>,
 }
 
 #[cfg(test)]
@@ -314,5 +325,8 @@ mod tests {
         assert_eq!(c.gas_price_timestamp.base_slot(), U256::from(87));
         assert_eq!(c.vote_gas_price.base_slot(), U256::from(88));
         assert_eq!(c.config_gas_reward_band.slot(), U256::from(89));
+        assert_eq!(c.policy_rate_published_at.base_slot(), U256::from(90));
+        assert_eq!(c.vote_policy_rate.base_slot(), U256::from(91));
+        assert_eq!(c.vote_policy_rate_published_at.base_slot(), U256::from(92));
     }
 }

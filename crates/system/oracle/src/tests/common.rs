@@ -87,25 +87,11 @@ pub(super) fn pair_key(base: Address, quote: Address) -> AddressPair {
     AddressPair::from_addresses(base, quote)
 }
 
-/// Test currency rate (4.30 %, scale 1e6) used when building
-/// `ReferenceCurrency` genesis entries.
+/// Test policy rate: 4.30 % annual at scale 1e6.
 pub(super) const TEST_RATE: U256 = U256::from_limbs([43_000u64, 0, 0, 0]);
 
-/// Builds an independent policy-rate entry for genesis tests.
-pub(super) fn policy_rate(iso_code: u16) -> crate::genesis::PolicyRate {
-    crate::genesis::PolicyRate {
-        iso_code,
-        annual_rate_1e6: TEST_RATE,
-    }
-}
-
-/// A test policy rate for every reference currency, as genesis requires.
-pub(super) fn reference_policy_rates() -> Vec<crate::genesis::PolicyRate> {
-    crate::constants::REFERENCE_CURRENCIES
-        .into_iter()
-        .map(policy_rate)
-        .collect()
-}
+/// Publication time of [`TEST_RATE`] in tests.
+pub(super) const TEST_RATE_PUBLISHED_AT: u64 = 1_700_000_000;
 
 pub(super) const ATOMIC_DAY_START: u64 = 1_753_228_800;
 
@@ -432,7 +418,7 @@ pub(super) fn submit_sample_vote(
     voter: Address,
 ) -> (Address, Address, U256, U256) {
     let vote = (COEN, USDT, fixed18(50), fixed18(1000));
-    oracle.submit_vote(voter, &[vote], &[]).unwrap();
+    oracle.submit_vote(voter, &[vote], &[], &[]).unwrap();
     vote
 }
 

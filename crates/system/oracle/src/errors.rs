@@ -44,6 +44,18 @@ pub enum OracleError {
     DuplicateGasChainInVote { chain_id: u32 },
     #[error("chain {chain_id} is not a gas vote target")]
     GasChainNotVoteTarget { chain_id: u32 },
+    #[error("duplicate rate currency {currency} in vote submission")]
+    DuplicateRateCurrencyInVote { currency: u16 },
+    #[error("currency {currency} is not a rate vote target")]
+    RateCurrencyNotVoteTarget { currency: u16 },
+    #[error("rate of currency {currency} has the publication time {published_at}: zero or after the block time")]
+    RatePublicationTimeInvalid { currency: u16, published_at: u64 },
+    #[error("rate {rate} of currency {currency} exceeds {max}")]
+    VoteRateExceedsCap {
+        currency: u16,
+        rate: U256,
+        max: U256,
+    },
     #[error("validator already voted this period")]
     AlreadyVotedThisPeriod,
     #[error("vote price {price} exceeds {max}")]
@@ -105,11 +117,7 @@ pub enum OracleError {
     PolicyIsoCodeZero,
     #[error("duplicate policy iso_code: {iso_code}")]
     DuplicatePolicyIsoCode { iso_code: u16 },
-    #[error("policy rates must be sorted in ascending ISO order")]
-    PolicyRatesNotSorted,
-    #[error("policy rate must be non-zero for iso_code {iso_code}")]
-    PolicyRateZero { iso_code: u16 },
-    #[error("reference currency {iso_code} has no policy rate")]
+    #[error("reference currency {iso_code} is not a rate vote target")]
     MissingPolicyRate { iso_code: u16 },
 
     // -- genesis aggregate votes --------------------------------------------
@@ -210,6 +218,34 @@ impl From<OracleError> for PrecompileError {
             OracleError::GasChainNotVoteTarget { chain_id } => PrecompileError::RevertBytes(
                 Bytes::from(IOracle::GasChainNotVoteTarget { chainId: chain_id }.abi_encode()),
             ),
+            OracleError::DuplicateRateCurrencyInVote { currency } => PrecompileError::RevertBytes(
+                Bytes::from(IOracle::DuplicateRateCurrencyInVote { currency }.abi_encode()),
+            ),
+            OracleError::RateCurrencyNotVoteTarget { currency } => PrecompileError::RevertBytes(
+                Bytes::from(IOracle::RateCurrencyNotVoteTarget { currency }.abi_encode()),
+            ),
+            OracleError::RatePublicationTimeInvalid {
+                currency,
+                published_at,
+            } => PrecompileError::RevertBytes(Bytes::from(
+                IOracle::RatePublicationTimeInvalid {
+                    currency,
+                    publishedAt: published_at,
+                }
+                .abi_encode(),
+            )),
+            OracleError::VoteRateExceedsCap {
+                currency,
+                rate,
+                max,
+            } => PrecompileError::RevertBytes(Bytes::from(
+                IOracle::VoteRateExceedsCap {
+                    currency,
+                    rate,
+                    max,
+                }
+                .abi_encode(),
+            )),
             OracleError::AlreadyVotedThisPeriod => PrecompileError::RevertBytes(Bytes::from(
                 IOracle::AlreadyVotedThisPeriod {}.abi_encode(),
             )),
@@ -308,12 +344,6 @@ impl From<OracleError> for PrecompileError {
             OracleError::DuplicatePolicyIsoCode { iso_code } => PrecompileError::RevertBytes(
                 Bytes::from(IOracle::DuplicatePolicyIsoCode { iso_code }.abi_encode()),
             ),
-            OracleError::PolicyRatesNotSorted => PrecompileError::RevertBytes(Bytes::from(
-                IOracle::PolicyRatesNotSorted {}.abi_encode(),
-            )),
-            OracleError::PolicyRateZero { iso_code } => PrecompileError::RevertBytes(Bytes::from(
-                IOracle::PolicyRateZero { iso_code }.abi_encode(),
-            )),
             OracleError::MissingPolicyRate { iso_code } => PrecompileError::RevertBytes(
                 Bytes::from(IOracle::MissingPolicyRate { iso_code }.abi_encode()),
             ),

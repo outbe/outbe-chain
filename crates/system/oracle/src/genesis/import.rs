@@ -6,9 +6,7 @@ use outbe_system_common::address_pair::AddressPair;
 use std::collections::BTreeSet;
 
 use super::validate::validate_genesis_config;
-use super::{
-    GenesisAggregateVote, GenesisScurveEntry, GenesisSnapshot, OracleGenesisConfig, PolicyRate,
-};
+use super::{GenesisAggregateVote, GenesisScurveEntry, GenesisSnapshot, OracleGenesisConfig};
 use crate::errors::OracleError;
 use crate::schema::OracleContract;
 
@@ -27,7 +25,7 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
     write_config_slots(oracle, config)?;
     import_pairs(oracle, config)?;
     import_feeder_delegations(oracle, &config.feeder_delegations)?;
-    import_policy_rates(oracle, &config.policy_rates)?;
+    import_rate_currencies(oracle, &config.policy_rate_currencies)?;
     import_penalty_counters(oracle, &config.penalty_counters)?;
     import_aggregate_votes(oracle, &config.aggregate_votes)?;
     import_snapshots(oracle, &config.snapshots)?;
@@ -91,13 +89,10 @@ fn import_feeder_delegations(
     Ok(())
 }
 
-/// Import the policy-rate registry.
-fn import_policy_rates(oracle: &mut OracleContract, policy_rates: &[PolicyRate]) -> Result<()> {
-    for policy in policy_rates {
-        oracle.policy_rate_currencies.push(policy.iso_code)?;
-        oracle
-            .policy_rate
-            .write(&policy.iso_code, policy.annual_rate_1e6)?;
+/// Imports the policy rate vote targets. Genesis gives no rate.
+fn import_rate_currencies(oracle: &mut OracleContract, currencies: &[u16]) -> Result<()> {
+    for iso_code in currencies {
+        oracle.policy_rate_currencies.push(*iso_code)?;
     }
     Ok(())
 }

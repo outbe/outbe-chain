@@ -377,10 +377,10 @@ pub fn get_scurve_value(storage: StorageHandle, timestamp: u64, pair: AddressPai
     scurve::scurve_value(&oracle, pair, timestamp)
 }
 
-/// Annualized policy rate (scale `1e6`) for an independently registered ISO
-/// 4217 code. The Credis Factory calls it at issuance to pin the position's
-/// settlement policy without coupling it to reference-currency membership.
-pub fn get_policy_rate(storage: StorageHandle, iso_code: u16) -> Result<U256> {
+/// The last closed annual policy rate (scale `1e6`) of an ISO 4217 code and
+/// the time at which its source published it. The Credis reservation pins
+/// this rate. Fails with `NoPolicyRate` for a currency with no closed rate.
+pub fn get_policy_rate(storage: StorageHandle, iso_code: u16) -> Result<(U256, u64)> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     oracle.get_policy_rate(iso_code)
 }

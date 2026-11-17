@@ -12,7 +12,7 @@ use outbe_genesis_cli::seed_codec::{
     StorageBuilder,
 };
 use outbe_genesis_cli::seed_economy::clear_seeded_metadosis_days;
-use outbe_genesis_cli::seed_oracle::{seed_oracle, DEFAULT_POLICY_RATES};
+use outbe_genesis_cli::seed_oracle::seed_oracle;
 use outbe_genesis_cli::seed_validators::{seed_staking, seed_validator_set};
 use serde_json::{json, Value};
 
@@ -154,8 +154,13 @@ fn default_reference_and_policy_registries_use_the_frozen_slots() {
         let key = hex32(data_slot(74u64) + U256::from(index));
         assert_eq!(storage.entries[&key], hex32(iso_code));
     }
-    let slot = mapping_key(&u32_bytes(840), 75);
-    assert_eq!(storage.entries[&slot], hex32(38_800u64));
+    // Genesis holds no policy rate and no publication time.
+    assert!(!storage
+        .entries
+        .contains_key(&mapping_key(&u32_bytes(840), 75)));
+    assert!(!storage
+        .entries
+        .contains_key(&mapping_key(&u32_bytes(840), 90)));
 }
 
 #[test]
@@ -172,15 +177,28 @@ fn oracle_seed_writes_the_gas_chains_to_slot_85() {
 }
 
 #[test]
-fn every_reference_currency_needs_a_policy_rate() {
-    let policy_rates: Vec<Value> = DEFAULT_POLICY_RATES
-        .iter()
-        .filter(|&&(iso_code, _)| iso_code != 978)
-        .map(|&(iso_code, rate)| json!({"iso_code": iso_code, "annual_rate_1e6": rate}))
-        .collect();
-    let cfg = json!({ "policy_rates": policy_rates });
-    let err = seed_oracle(&mut StorageBuilder::new(), &cfg).expect_err("missing policy rate");
-    assert!(err.to_string().contains("no policy rate: [978]"));
+fn reference_currency_needs_a_rate_source() {
+    let cfg = json!({ "policy_rate_currencies": [156, 344, 392, 826, 840] });
+    let err = seed_oracle(&mut StorageBuilder::new(), &cfg).expect_err("missing rate target");
+    assert!(err
+        .to_string()
+        .contains("no policy rate vote target: [978]"));
+}
+
+#[test]
+fn genesis_holds_no_policy_rate() {
+    let cfg = json!({ "policy_rates": [{"iso_code": 840, "annual_rate_1e6": 38_800}] });
+    let err = seed_oracle(&mut StorageBuilder::new(), &cfg).expect_err("genesis policy rate");
+    assert!(err.to_string().contains("oracle.policy_rates was removed"));
+}
+
+#[test]
+fn rate_source_is_optional_for_another_priced_currency() {
+    let cfg = json!({ "policy_rate_currencies": [156, 344, 392, 826, 840, 978, 124] });
+    let mut storage = StorageBuilder::new();
+    seed_oracle(&mut storage, &cfg).expect("seed_oracle");
+    assert_eq!(storage.entries[&hex32(74u64)], hex32(7u64));
+    assert_eq!(storage.entries[&hex32(data_slot(74u64))], hex32(124u64));
 }
 
 #[test]

@@ -7,18 +7,8 @@ use outbe_system_common::math::reference_price::is_coen_iso_market;
 use outbe_system_common::reference_currency::REFERENCE_CURRENCY_LETTERS;
 use outbe_system_common::units::{SCALE_1E18, SCALE_1E18_U128, SCALE_1E6_U128, SCALE_1E6_U256};
 
-/// Genesis policy rate of each reference currency, as `(iso_code, annual_rate_1e6)`
-/// in ascending ISO order: the overnight rate of that currency.
-/// Keep in sync with `DEFAULT_POLICY_RATES` in
-/// `bin/outbe-genesis-cli/src/seed_oracle.rs`.
-pub const DEFAULT_POLICY_RATES: [(u16, u64); 6] = [
-    (156, 12_624), // CNY DR001 1.2624%, CFETS, 2026-10-19
-    (344, 23_667), // HKD HONIA 2.36666%, TMA 30-day compounded, 2026-10-02
-    (392, 12_280), // JPY TONA 1.228%, BoJ, 2026-10-15
-    (826, 37_344), // GBP SONIA 3.7344%, BoE, 2026-10-16
-    (840, 38_800), // USD SOFR 3.88%, NY Fed, 2026-10-16
-    (978, 24_410), // EUR €STR 2.441%, ECB, 2026-10-19
-];
+/// Cap of a policy rate vote: an annual rate of 100% at scale 1e6.
+pub const MAX_POLICY_RATE_VOTE: u64 = 1_000_000;
 
 /// Maximum age of a live COEN/ISO rate used by economic transaction paths. The raw
 /// Oracle query ABI intentionally remains historical.

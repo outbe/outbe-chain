@@ -185,9 +185,10 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
 fn seed_issuance_oracle(storage: StorageHandle<'_>) -> eyre::Result<()> {
     let price = U256::from(2_000_000);
     publish_day_type_rate(&storage, price, 1, NOW)?;
-    OracleContract::new(storage.clone())
-        .policy_rate
-        .write(&840, U256::from(43_000))?;
+    let oracle = OracleContract::new(storage.clone());
+    oracle.policy_rate.write(&840, U256::from(43_000))?;
+    // A publication time marks the rate as closed.
+    oracle.policy_rate_published_at.write(&840, 1)?;
     let day = previous_date_key(timestamp_to_date_key(NOW)).expect("date step");
     record_finalized_day_vwap(&storage, 840, day, price)?;
 

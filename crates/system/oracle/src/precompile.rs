@@ -170,7 +170,13 @@ fn policy_rate_currencies(oracle: &OracleContract) -> Result<Bytes> {
 }
 
 fn policy_rate(oracle: &OracleContract, c: IOracle::getPolicyRateCall) -> Result<Bytes> {
-    view(c, |c| oracle.get_policy_rate(c.isoCode))
+    view(c, |c| {
+        let (rate, published_at) = oracle.get_policy_rate(c.isoCode)?;
+        Ok(IOracle::getPolicyRateReturn {
+            rate,
+            publishedAt: published_at,
+        })
+    })
 }
 
 fn gas_prices(oracle: &OracleContract) -> Result<Bytes> {
@@ -371,7 +377,12 @@ fn submit_vote(
             .map(|t| (t.base, t.quote, t.exchangeRate, t.volume))
             .collect();
         let gas: Vec<_> = c.gas.iter().map(|g| (g.chainId, g.gasPrice)).collect();
-        let (validator, tuple_count) = oracle.submit_vote(sender, &tuples, &gas)?;
+        let rates: Vec<_> = c
+            .rates
+            .iter()
+            .map(|r| (r.currency, r.rate, r.publishedAt))
+            .collect();
+        let (validator, tuple_count) = oracle.submit_vote(sender, &tuples, &gas, &rates)?;
         // Emit event after successful vote; the count excludes rejected tuples.
         Ok(IOracle::VoteSubmitted {
             validator,

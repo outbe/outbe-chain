@@ -42,7 +42,8 @@ pub(crate) fn quote(
         .filter(|v| !v.is_zero())
         .ok_or(VaultRouterError::PledgePriceUnavailable)?;
     let (gratis_minor, entry_price_minor) = checked_quote(amount, decimals, valuation)?;
-    let policy_rate = api::get_policy_rate(storage.clone(), currency)?;
+    // The last closed rate. The publication time is not checked here.
+    let (policy_rate, _published_at) = api::get_policy_rate(storage.clone(), currency)?;
     let call_terms = outbe_credis::config::read(storage)?;
     let now = storage.now_secs()?;
     let day = previous_date_key(timestamp_to_date_key(now)).map_err(date_step_error)?;

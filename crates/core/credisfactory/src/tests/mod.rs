@@ -235,6 +235,11 @@ pub fn seed_oracle(storage: StorageHandle<'_>, coen_iso_rate: U256) {
         .policy_rate
         .write(&ISSUANCE_ISO, policy_rate())
         .unwrap();
+    // A publication time marks the rate as closed.
+    oracle
+        .policy_rate_published_at
+        .write(&ISSUANCE_ISO, 1)
+        .unwrap();
 }
 
 /// Registers `COEN/<iso>` and admits `iso` to the reference-currency registry, so

@@ -528,6 +528,11 @@
         "name": "rate",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "publishedAt",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "stateMutability": "view"
@@ -998,6 +1003,28 @@
             "internalType": "uint256"
           }
         ]
+      },
+      {
+        "name": "rates",
+        "type": "tuple[]",
+        "internalType": "struct IOracle.RateTuple[]",
+        "components": [
+          {
+            "name": "currency",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "rate",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "publishedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          }
+        ]
       }
     ],
     "outputs": [],
@@ -1111,6 +1138,31 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PolicyRateSet",
+    "inputs": [
+      {
+        "name": "currency",
+        "type": "uint16",
+        "indexed": true,
+        "internalType": "uint16"
+      },
+      {
+        "name": "rate",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "publishedAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
       }
     ],
     "anonymous": false
@@ -1375,6 +1427,17 @@
   },
   {
     "type": "error",
+    "name": "DuplicateRateCurrencyInVote",
+    "inputs": [
+      {
+        "name": "currency",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "GasChainNotVoteTarget",
     "inputs": [
       {
@@ -1592,10 +1655,10 @@
   },
   {
     "type": "error",
-    "name": "PolicyRateZero",
+    "name": "RateCurrencyNotVoteTarget",
     "inputs": [
       {
-        "name": "iso_code",
+        "name": "currency",
         "type": "uint16",
         "internalType": "uint16"
       }
@@ -1603,8 +1666,19 @@
   },
   {
     "type": "error",
-    "name": "PolicyRatesNotSorted",
-    "inputs": []
+    "name": "RatePublicationTimeInvalid",
+    "inputs": [
+      {
+        "name": "currency",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "publishedAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
   },
   {
     "type": "error",
@@ -1702,6 +1776,27 @@
     "inputs": [
       {
         "name": "price",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "max",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "VoteRateExceedsCap",
+    "inputs": [
+      {
+        "name": "currency",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "rate",
         "type": "uint256",
         "internalType": "uint256"
       },
