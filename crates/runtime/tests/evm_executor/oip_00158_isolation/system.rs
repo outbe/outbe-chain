@@ -137,14 +137,21 @@ fn local_transport_panics_abort_block_in_both_enclave_roles_without_failure_rece
     }
 }
 
-#[test]
-fn tight_step_gas_rolls_back_and_detached_replay_uses_reserved_system_call() {
-    let config = config(Failure::EndOog);
+struct ProposedEndOogBlock {
+    begin: Vec<Recovered<TransactionSigned>>,
+    ends: Vec<Recovered<TransactionSigned>>,
+    receipts: Vec<Receipt>,
+    final_extra_data: Bytes,
+    state_root: B256,
+}
+
+fn propose_end_oog_block(config: &OutbeEvmConfig) -> ProposedEndOogBlock {
     let mut state = seeded(|_| {});
-    let (ctx, begin) = context(&config);
+    let (ctx, begin) = context(config);
     let prefix_len = begin.len();
     let evm = config.evm_with_env(&mut state, test_evm_env(BLOCK, REWARDS_ADDRESS));
     let mut executor = config.create_executor(evm, ctx);
+    assert!(!executor.is_verifier_witness_mode());
     with_phase1_verify_disabled(|| executor.apply_pre_execution_changes()).unwrap();
     for tx in begin.clone() {
         executor.execute_transaction(tx).unwrap();
@@ -156,26 +163,81 @@ fn tight_step_gas_rolls_back_and_detached_replay_uses_reserved_system_call() {
         .all(|r| r.success));
     let ends = executor.take_staged_end_block_txs();
     assert_eq!(ends.len(), 5);
+    assert!(ends.iter().all(|tx| tx.tx().gas_limit() == 0));
     executor.prepare_final_header_artifacts(0).unwrap();
+    let final_extra_data = executor.final_extra_data.clone();
     let (evm, result) = executor.finish().unwrap();
     drop(evm);
     assert_eq!(result.gas_used, 0);
     for slot in 0..32 {
         assert_eq!(state.storage(PROBE, U256::from(slot)).unwrap(), U256::ZERO);
     }
+    state.merge_transitions(BundleRetention::Reverts);
+    let state_root = post_state_root(&state.bundle_state);
+    ProposedEndOogBlock {
+        begin,
+        ends,
+        receipts: result.receipts,
+        final_extra_data,
+        state_root,
+    }
+}
+
+fn validate_end_oog_block(proposed: &ProposedEndOogBlock) {
+    let validator_config =
+        OutbeEvmConfig::new(test_chain_spec(), IsolationHost::new(Failure::EndOog));
+    let mut state = seeded(|_| {});
+    let proposer = test_evm_signer().address();
+    let tx_count = proposed.begin.len() + proposed.ends.len();
+    let (mut ctx, _) = block_two_execution_ctx(
+        Some(tx_count),
+        proposed.final_extra_data.clone(),
+        proposer,
+        PARENT,
+    );
+    ctx.expected_begin_system_txs = proposed.begin.clone();
+    ctx.block_hash = Some(B256::repeat_byte(0x97));
+    let evm = validator_config.evm_with_env(&mut state, test_evm_env(BLOCK, REWARDS_ADDRESS));
+    let mut validator = validator_config.create_executor(evm, ctx);
+    assert!(validator.is_verifier_witness_mode());
+    with_phase1_verify_disabled(|| validator.apply_pre_execution_changes()).unwrap();
+    for tx in proposed.begin.iter().chain(proposed.ends.iter()).cloned() {
+        validator.execute_transaction(tx).unwrap();
+    }
+    let (evm, result) = validator.finish().unwrap();
+    drop(evm);
+    failure(&result.receipts[proposed.begin.len()], 202);
+    assert_eq!(result.receipts, proposed.receipts);
+    assert_eq!(result.gas_used, 0);
+    for slot in 0..32 {
+        assert_eq!(state.storage(PROBE, U256::from(slot)).unwrap(), U256::ZERO);
+    }
+    state.merge_transitions(BundleRetention::Reverts);
+    assert_eq!(post_state_root(&state.bundle_state), proposed.state_root);
+}
+
+#[test]
+fn tight_step_gas_rolls_back_and_detached_replay_uses_reserved_system_call() {
+    let config = config(Failure::EndOog);
+    let proposed = propose_end_oog_block(&config);
+    validate_end_oog_block(&proposed);
 
     let mut replay = seeded(|_| {});
-    trace_state(&config, &mut replay, prefix_len + ends.len());
+    trace_state(
+        &config,
+        &mut replay,
+        proposed.begin.len() + proposed.ends.len(),
+    );
     let mut tracer =
         TxTracer::new(config.evm_with_env(&mut replay, test_evm_env(BLOCK, REWARDS_ADDRESS)));
-    for tx in begin {
+    for tx in proposed.begin {
         assert!(tracer
             .trace(config.tx_env(&tx))
             .unwrap()
             .result
             .is_success());
     }
-    let tx_env = config.tx_env(&ends[0]);
+    let tx_env = config.tx_env(&proposed.ends[0]);
     let matched = match_detached_trace_tx(
         &EvmTransactWitnessInput {
             attached_state: None,
@@ -202,7 +264,7 @@ fn tight_step_gas_rolls_back_and_detached_replay_uses_reserved_system_call() {
     ));
     assert_eq!(traced.result.tx_gas_used(), 60_000);
     assert!(traced.result.logs().is_empty());
-    for tx in ends.into_iter().skip(1) {
+    for tx in proposed.ends.into_iter().skip(1) {
         assert!(tracer
             .trace(config.tx_env(&tx))
             .unwrap()
