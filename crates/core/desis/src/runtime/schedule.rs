@@ -84,28 +84,33 @@ fn day_windows(
 fn due_work_gas(contract: &DesisContract<'_>, emission_day: EmissionDate, now: u64) -> Result<u64> {
     let mut stage = contract.read_stage(emission_day)?;
     let (anchor, windows) = day_windows(contract, emission_day, stage, now)?;
-    let mut gas = ADVANCE_DAY_BASE_GAS;
     if contract.cancel_reason.read(&emission_day)? != 0 {
-        return Ok(gas + ADVANCE_START_GAS);
+        return Ok(ADVANCE_DAY_BASE_GAS + ADVANCE_START_GAS);
     }
-    loop {
-        match stage {
-            AuctionStage::Completed | AuctionStage::Canceled | AuctionStage::Failed => {
-                return Ok(gas)
-            }
-            _ if windows.unfinished_past_deadline(stage, now) => return Ok(gas + ADVANCE_FAIL_GAS),
-            // A start leaves at least `MIN_COMMIT_WINDOW_SECONDS` of commit, or cancels the day.
-            AuctionStage::None if now >= anchor => return Ok(gas + ADVANCE_START_GAS),
-            AuctionStage::CommittingBids if now >= windows.commit_end => {
-                gas += ADVANCE_DAY_BASE_GAS;
-                stage = AuctionStage::RevealingBids;
-            }
-            // The larger of the two ends of the reveal stage: the clearing start or the cancel.
-            AuctionStage::RevealingBids if now >= windows.reveal_end => {
-                return Ok(gas + ADVANCE_REVEAL_END_GAS.max(ADVANCE_START_GAS));
-            }
-            _ => return Ok(gas),
+    let mut gas = ADVANCE_DAY_BASE_GAS;
+    // A commit end flips the stage, and the reveal end can be due in the same run.
+    if stage == AuctionStage::CommittingBids
+        && now >= windows.commit_end
+        && !windows.unfinished_past_deadline(stage, now)
+    {
+        gas += ADVANCE_DAY_BASE_GAS;
+        stage = AuctionStage::RevealingBids;
+    }
+    Ok(gas + step_gas(stage, anchor, windows, now))
+}
+
+/// The work of the one step due for a day at `stage`, after any commit end.
+fn step_gas(stage: AuctionStage, anchor: u64, windows: Windows, now: u64) -> u64 {
+    match stage {
+        AuctionStage::Completed | AuctionStage::Canceled | AuctionStage::Failed => 0,
+        _ if windows.unfinished_past_deadline(stage, now) => ADVANCE_FAIL_GAS,
+        // A start leaves at least `MIN_COMMIT_WINDOW_SECONDS` of commit, or cancels the day.
+        AuctionStage::None if now >= anchor => ADVANCE_START_GAS,
+        // The larger of the two ends of the reveal stage: the clearing start or the cancel.
+        AuctionStage::RevealingBids if now >= windows.reveal_end => {
+            ADVANCE_REVEAL_END_GAS.max(ADVANCE_START_GAS)
         }
+        _ => 0,
     }
 }
 
@@ -113,58 +118,74 @@ fn due_work_gas(contract: &DesisContract<'_>, emission_day: EmissionDate, now: u
 /// the bids at reveal end, and end a day that found no result by its last clearing time. A
 /// cancel that a brief or Metadosis asked for comes first.
 fn advance_day(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u64) -> Result<()> {
-    loop {
-        let mut contract = storage.contract::<DesisContract>();
-        let stage = contract.read_stage(emission_day)?;
-        let (anchor, windows) = day_windows(&contract, emission_day, stage, now)?;
-        if let Some(reason) = pending_cancel(&contract, emission_day, stage)? {
-            return cancel_auction(storage, &mut contract, emission_day, stage, reason);
+    while advance_step(storage, emission_day, now)? {}
+    Ok(())
+}
+
+/// One step of a day's schedule. `true` when the day moved on and another step may be due.
+fn advance_step(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u64) -> Result<bool> {
+    let mut contract = storage.contract::<DesisContract>();
+    let stage = contract.read_stage(emission_day)?;
+    let (anchor, windows) = day_windows(&contract, emission_day, stage, now)?;
+    if let Some(reason) = pending_cancel(&contract, emission_day, stage)? {
+        cancel_auction(storage, &mut contract, emission_day, stage, reason)?;
+        return Ok(false);
+    }
+    match stage {
+        AuctionStage::Completed | AuctionStage::Canceled | AuctionStage::Failed => {
+            contract.remove_sched_active(emission_day).map(|()| false)
         }
-        match stage {
-            AuctionStage::Completed | AuctionStage::Canceled | AuctionStage::Failed => {
-                return contract.remove_sched_active(emission_day);
-            }
-            _ if windows.unfinished_past_deadline(stage, now) => {
-                return if stage == AuctionStage::None {
-                    cancel_auction(
-                        storage,
-                        &mut contract,
-                        emission_day,
-                        stage,
-                        CANCELED_LATE_START,
-                    )
-                } else {
-                    fail_auction(storage, &mut contract, emission_day, stage)
-                };
-            }
-            AuctionStage::None if now >= anchor => {
-                // The chain has to run the windows the START message announces.
-                #[cfg(feature = "e2e-test")]
-                contract.auction_at.write(&emission_day, ts32(anchor)?)?;
-                if let StartOutcome::Retired =
-                    start_auction(storage, &mut contract, emission_day, windows, now)?
-                {
-                    return Ok(());
-                }
-            }
-            AuctionStage::CommittingBids if now >= windows.commit_end => {
-                contract.write_stage(emission_day, AuctionStage::RevealingBids)?;
-            }
-            // The clearing needs the size, so a day with no brief by now is cancelled.
-            AuctionStage::RevealingBids if now >= windows.reveal_end => {
-                if contract.desis_limit_set.read(&emission_day)? == 0 {
-                    return cancel_auction(
-                        storage,
-                        &mut contract,
-                        emission_day,
-                        stage,
-                        CANCELED_NO_LIMIT,
-                    );
-                }
-                return arm_clearing(storage, emission_day, now);
-            }
-            _ => return Ok(()),
+        _ if windows.unfinished_past_deadline(stage, now) => {
+            end_past_deadline(storage, &mut contract, emission_day, stage).map(|()| false)
         }
+        AuctionStage::None if now >= anchor => {
+            // The chain has to run the windows the START message announces.
+            #[cfg(feature = "e2e-test")]
+            contract.auction_at.write(&emission_day, ts32(anchor)?)?;
+            let outcome = start_auction(storage, &mut contract, emission_day, windows, now)?;
+            Ok(matches!(outcome, StartOutcome::Started))
+        }
+        AuctionStage::CommittingBids if now >= windows.commit_end => contract
+            .write_stage(emission_day, AuctionStage::RevealingBids)
+            .map(|()| true),
+        AuctionStage::RevealingBids if now >= windows.reveal_end => {
+            end_reveal(storage, &mut contract, emission_day, now).map(|()| false)
+        }
+        _ => Ok(false),
+    }
+}
+
+/// A day out of time: one that never started is a late start, a started one failed.
+fn end_past_deadline(
+    storage: &StorageHandle<'_>,
+    contract: &mut DesisContract<'_>,
+    emission_day: EmissionDate,
+    stage: AuctionStage,
+) -> Result<()> {
+    if stage == AuctionStage::None {
+        cancel_auction(storage, contract, emission_day, stage, CANCELED_LATE_START)
+    } else {
+        fail_auction(storage, contract, emission_day, stage)
+    }
+}
+
+/// The clearing needs the size, so a day with no brief by the end of its reveal is cancelled.
+fn end_reveal(
+    storage: &StorageHandle<'_>,
+    contract: &mut DesisContract<'_>,
+    emission_day: EmissionDate,
+    now: u64,
+) -> Result<()> {
+    if contract.desis_limit_set.read(&emission_day)? == 0 {
+        cancel_auction(
+            storage,
+            contract,
+            emission_day,
+            AuctionStage::RevealingBids,
+            CANCELED_NO_LIMIT,
+        )
+    } else {
+        arm_clearing(storage, emission_day, now)
     }
 }
 
