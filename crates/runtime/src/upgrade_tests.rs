@@ -74,7 +74,16 @@ async fn restart_after_installed_candidate_only_reconciles_the_promoted_checkpoi
         io.fail = fail;
         assert_worker(
             io,
-            &[Action::Inspect, Action::Manifest, Action::Promoted],
+            &if fail.is_none() {
+                vec![
+                    Action::Inspect,
+                    Action::Manifest,
+                    Action::Promoted,
+                    Action::Inspect,
+                ]
+            } else {
+                vec![Action::Inspect, Action::Manifest, Action::Promoted]
+            },
             false,
         )
         .await;
@@ -82,7 +91,7 @@ async fn restart_after_installed_candidate_only_reconciles_the_promoted_checkpoi
 }
 
 #[tokio::test]
-async fn finalized_recovery_promotes_and_records_before_notifying_restart() {
+async fn finalized_recovery_promotes_and_records_without_requesting_restart() {
     let io = RecordingIo::new().unwrap();
     io.checkpoint(finalized(context()));
     *io.authorization.borrow_mut() = Some(Ok(finalized_view(105)));
@@ -94,8 +103,9 @@ async fn finalized_recovery_promotes_and_records_before_notifying_restart() {
             Action::Authorize,
             Action::Promote,
             Action::Promoted,
+            Action::Inspect,
         ],
-        true,
+        false,
     )
     .await;
 }
@@ -138,8 +148,9 @@ async fn submitted_finalized_binding_wins_over_a_crossed_activation_cutoff() {
             Action::Finalize(105, B256::repeat_byte(13)),
             Action::Promote,
             Action::Promoted,
+            Action::Inspect,
         ],
-        true,
+        false,
     )
     .await;
 }
@@ -399,4 +410,353 @@ async fn submitted_missing_binding_before_cutoff_waits_without_terminal_checkpoi
         false,
     )
     .await;
+}
+
+struct LivePromotionFixture {
+    manifest: outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1,
+    view: outbe_tee::FinalizedRegistryViewV1,
+    actions: std::cell::RefCell<Vec<&'static str>>,
+    fail: bool,
+}
+impl UpgradePromotionIo for LivePromotionFixture {
+    type Authorization = outbe_tee::FinalizedRegistryViewV1;
+    fn inspect_journal(&self) -> eyre::Result<Option<UpgradeJournalSnapshotV1>> {
+        Ok(None)
+    }
+    fn committed_manifest(
+        &self,
+    ) -> eyre::Result<outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1> {
+        Ok(self.manifest.clone())
+    }
+    fn successor_status(
+        &self,
+    ) -> Result<
+        outbe_execution::tee_remote_session::LocalFinalizedSuccessorStatusV1,
+        LocalRegistryAdmissionError,
+    > {
+        unreachable!()
+    }
+    fn replacement_authorization(
+        &self,
+        node: &outbe_primitives::tee_attestation_v1::NodeIdV1,
+    ) -> Result<ports::PromotionAuthorization<Self::Authorization>, LocalRegistryAdmissionError>
+    {
+        assert_eq!(node, &self.manifest.node_id);
+        Ok(ports::PromotionAuthorization {
+            authorization: self.view,
+            view: self.view,
+        })
+    }
+    fn promote_candidate(&self, authorization: &Self::Authorization) -> eyre::Result<()> {
+        assert_eq!(authorization, &self.view);
+        self.actions.borrow_mut().push("durable");
+        if self.fail {
+            return Err(
+                crate::admission_authority::live::LiveTeeError::CandidateNotAdmitted.into(),
+            );
+        }
+        Ok(())
+    }
+    fn record_finalized(&self, height: u64, hash: B256) -> eyre::Result<()> {
+        assert_eq!(
+            (height, hash),
+            (self.view.block_number, self.view.block_hash)
+        );
+        self.actions.borrow_mut().push("finalized");
+        Ok(())
+    }
+    fn record_promoted(&self) -> eyre::Result<()> {
+        self.actions.borrow_mut().push("promoted");
+        Ok(())
+    }
+    fn record_missed_cutoff(&self, _: u64, _: u64) -> eyre::Result<()> {
+        unreachable!()
+    }
+}
+
+#[tokio::test]
+async fn live_upgrade_and_lease_guard_share_identity_anchor_and_context_without_restart() {
+    use crate::admission::{TeeLeaseGuardAnchorsV1, TeeLeaseGuardConfigV1, TeeLeaseGuardGateV1};
+    use crate::admission_authority::{guard::run_lease_guard, live::*, test_support as support};
+    use outbe_tee::{TeeAuthorityChannel, TeeAuthorityState};
+    for fail in [false, true] {
+        let old = support::context(9);
+        let candidate = support::context(10);
+        let (provider, chain, identity) =
+            support::provider(&old, 7, 1_800_000_000, 1_800_001_000, false);
+        let shared = support::SharedProvider(Arc::new(std::sync::Mutex::new(provider)));
+        let authority = TeeAuthorityChannel::default();
+        let mut watch = authority.subscribe();
+        let anchors = TeeLeaseGuardAnchorsV1 {
+            gate: TeeLeaseGuardGateV1::Armed,
+            durable: None,
+        };
+        let owner = Arc::new(
+            LiveTeeRuntimeV1::new(
+                LiveTeeSnapshotV1 {
+                    identity,
+                    anchors,
+                    context: old.clone(),
+                },
+                authority.clone(),
+            )
+            .unwrap(),
+        );
+        let notify = Arc::new(tokio::sync::Notify::new());
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let guard = run_lease_guard(
+            shared.clone(),
+            (
+                Arc::new(crate::OutbeRuntime::new()),
+                Arc::new(crate::OutbeRuntime::new()),
+            ),
+            TeeLeaseGuardConfigV1 {
+                chain,
+                identity,
+                anchors,
+                finalization_notify: notify.clone(),
+                armed: tokio::sync::watch::channel(false).0,
+            },
+            (authority.clone(), Some(owner.clone())),
+            shutdown.clone(),
+        );
+        tokio::pin!(guard);
+        tokio::select! { result = &mut guard => panic!("guard stopped: {result:?}"), () = support::wait_for_state(&mut watch, TeeAuthorityState::Armed { enclave_id: old.manifest().enclave_id().unwrap(), valid_until: 1_800_001_000 }) => {} }
+        assert!(watch.snapshot().is_authority_open());
+        let (successor, _, _) =
+            support::provider(&candidate, 105, 1_800_000_000, 1_800_001_000, false);
+        let head = successor.finalized_block_num_hash().unwrap().unwrap();
+        let view = outbe_tee::FinalizedRegistryViewV1 {
+            chain_id: U256::from(chain.chain_id).to_be_bytes(),
+            genesis_hash: chain.genesis_hash,
+            block_number: head.number,
+            block_hash: head.hash,
+            state_root: successor
+                .sealed_header(head.number)
+                .unwrap()
+                .unwrap()
+                .header()
+                .inner
+                .state_root,
+            consensus_timestamp: 1_800_000_000,
+        };
+        *shared.0.lock().unwrap() = successor;
+        notify.notify_one();
+        tokio::select! { result = &mut guard => panic!("guard died before promotion: {result:?}"), () = support::wait_for_state(&mut watch, TeeAuthorityState::SuspendedPolicyMismatch) => {} }
+        assert!(guard.as_mut().now_or_never().is_none());
+
+        let io = ports::LiveUpgradeIo {
+            inner: LivePromotionFixture {
+                manifest: old.manifest().clone(),
+                view,
+                actions: Default::default(),
+                fail,
+            },
+            provider: shared.clone(),
+            protocol: Arc::new(crate::OutbeRuntime::new()),
+            chain,
+            owner: owner.clone(),
+            candidate: candidate.clone(),
+        };
+        let promoted = tokio::sync::Notify::new();
+        assert_eq!(
+            promotion::reconcile_submitted(&io, &promoted),
+            Some(if fail {
+                CycleOutcome::Stop
+            } else {
+                CycleOutcome::Wait
+            })
+        );
+        assert!(
+            promoted.notified().now_or_never().is_none(),
+            "promotion never requests an execution restart"
+        );
+        if fail {
+            let snapshot = owner.lock().unwrap();
+            assert_eq!(snapshot.identity, identity);
+            assert_eq!(snapshot.anchors, anchors);
+            assert!(Arc::ptr_eq(&snapshot.context, &old));
+            assert_eq!(
+                authority.snapshot(),
+                TeeAuthorityState::SuspendedPolicyMismatch
+            );
+            assert_eq!(*io.inner.actions.borrow(), ["finalized", "durable"]);
+        } else {
+            let snapshot = owner.lock().unwrap().clone();
+            assert!(Arc::ptr_eq(&snapshot.context, &candidate));
+            assert_eq!(
+                snapshot.identity.expected_enclave_id,
+                Some(candidate.manifest().enclave_id().unwrap())
+            );
+            assert_eq!(
+                snapshot
+                    .anchors
+                    .gate
+                    .pending_anchor()
+                    .unwrap()
+                    .finalized_hash,
+                head.hash
+            );
+            assert_eq!(
+                *io.inner.actions.borrow(),
+                ["finalized", "durable", "promoted"]
+            );
+            let armed = TeeAuthorityState::Armed {
+                enclave_id: candidate.manifest().enclave_id().unwrap(),
+                valid_until: 1_800_001_000,
+            };
+            support::wait_for_state(&mut watch, armed).await;
+            notify.notify_one();
+            assert!(guard.as_mut().now_or_never().is_none());
+            assert_eq!(
+                watch.snapshot(),
+                TeeAuthorityState::Armed {
+                    enclave_id: candidate.manifest().enclave_id().unwrap(),
+                    valid_until: 1_800_001_000
+                }
+            );
+            assert!(owner.lock().unwrap().anchors.gate.is_armed());
+            *shared.0.lock().unwrap() =
+                support::provider(&candidate, 106, 1_800_000_000, 1_800_001_000, true).0;
+            notify.notify_one();
+            tokio::select! { result = &mut guard => panic!("guard died after promotion: {result:?}"), () = support::wait_for_state(&mut watch, TeeAuthorityState::SuspendedJailed) => {} }
+            assert!(guard.as_mut().now_or_never().is_none());
+        }
+        assert!(old.offer_key_ready().unwrap());
+        assert!(candidate.offer_key_ready().unwrap());
+        shutdown.cancel();
+        assert_eq!(guard.await.unwrap(), None);
+    }
+}
+
+#[tokio::test]
+async fn successful_promotion_keeps_polling_without_promoting_the_active_candidate_again() {
+    let io = RecordingIo::new().unwrap();
+    io.checkpoint(finalized(context()));
+    io.checkpoint(UpgradeJournalStateV1::Promoted {
+        context: context(),
+        security: security(),
+        submission: submission(),
+        finalized_height: 105,
+        finalized_hash: B256::repeat_byte(13),
+    });
+    io.journal.borrow_mut().push_back(Ok(None));
+    *io.authorization.borrow_mut() = Some(Ok(finalized_view(105)));
+    assert_worker(
+        io,
+        &[
+            Action::Inspect,
+            Action::Manifest,
+            Action::Authorize,
+            Action::Promote,
+            Action::Promoted,
+            Action::Inspect,
+            Action::Inspect,
+            Action::Inspect,
+        ],
+        false,
+    )
+    .await;
+}
+
+#[test]
+fn advanced_finalized_head_retries_promotion_with_a_fresh_view() {
+    use crate::admission::{TeeLeaseGuardAnchorsV1, TeeLeaseGuardGateV1};
+    use crate::admission_authority::{live::*, test_support as support};
+    let old = support::context(9);
+    let candidate = support::context(10);
+    let (original, chain, identity) =
+        support::provider(&old, 7, 1_800_000_000, 1_800_001_000, false);
+    let owner = Arc::new(
+        LiveTeeRuntimeV1::new(
+            LiveTeeSnapshotV1 {
+                identity,
+                anchors: TeeLeaseGuardAnchorsV1 {
+                    gate: TeeLeaseGuardGateV1::Armed,
+                    durable: None,
+                },
+                context: old.clone(),
+            },
+            outbe_tee::TeeAuthorityChannel::default(),
+        )
+        .unwrap(),
+    );
+    owner
+        .refresh(&original, &crate::OutbeRuntime::new(), &chain)
+        .unwrap();
+    let (authorized, _, _) =
+        support::provider(&candidate, 105, 1_800_000_000, 1_800_001_000, false);
+    let checkpoint = authorized.finalized_block_num_hash().unwrap().unwrap();
+    let header = authorized.sealed_header(105).unwrap().unwrap();
+    let view = outbe_tee::FinalizedRegistryViewV1 {
+        chain_id: U256::from(chain.chain_id).to_be_bytes(),
+        genesis_hash: chain.genesis_hash,
+        block_number: 105,
+        block_hash: checkpoint.hash,
+        state_root: header.header().inner.state_root,
+        consensus_timestamp: 1_800_000_000,
+    };
+    let (mut advanced, _, _) =
+        support::provider(&candidate, 106, 1_800_000_001, 1_800_001_000, false);
+    advanced
+        .inner
+        .add_header(checkpoint.hash, header.header().clone());
+    advanced
+        .historical_states
+        .insert(checkpoint.hash, authorized.inner.clone());
+    let fresh = advanced.finalized_block_num_hash().unwrap().unwrap();
+    let mut io = ports::LiveUpgradeIo {
+        inner: LivePromotionFixture {
+            manifest: old.manifest().clone(),
+            view,
+            actions: Default::default(),
+            fail: false,
+        },
+        provider: advanced,
+        protocol: Arc::new(crate::OutbeRuntime::new()),
+        chain,
+        owner: owner.clone(),
+        candidate: candidate.clone(),
+    };
+    let promoted = tokio::sync::Notify::new();
+    assert_eq!(
+        promotion::reconcile_submitted(&io, &promoted),
+        Some(CycleOutcome::Wait)
+    );
+    assert_eq!(*io.inner.actions.borrow(), ["finalized"]);
+    assert!(Arc::ptr_eq(&owner.lock().unwrap().context, &old));
+    io.inner.view = outbe_tee::FinalizedRegistryViewV1 {
+        block_number: fresh.number,
+        block_hash: fresh.hash,
+        consensus_timestamp: 1_800_000_001,
+        ..view
+    };
+    let context = UpgradeContextV1 {
+        candidate_manifest_hash: candidate.manifest().authorization_hash().unwrap(),
+        ..fixtures::context()
+    };
+    assert_eq!(
+        promotion::recover_finalized(&io, &context, checkpoint, &promoted),
+        CycleOutcome::Wait
+    );
+    assert_eq!(
+        *io.inner.actions.borrow(),
+        ["finalized", "durable", "promoted"]
+    );
+    assert!(Arc::ptr_eq(&owner.lock().unwrap().context, &candidate));
+    assert!(owner.authority.snapshot().is_authority_open());
+    io.inner.view.chain_id = [0; 32];
+    assert_eq!(
+        promotion::reconcile_submitted(&io, &promoted),
+        Some(CycleOutcome::Stop)
+    );
+    assert_eq!(
+        io.inner
+            .actions
+            .borrow()
+            .iter()
+            .filter(|action| **action == "durable")
+            .count(),
+        1
+    );
 }

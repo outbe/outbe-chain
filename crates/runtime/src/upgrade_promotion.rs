@@ -7,7 +7,7 @@ pub(crate) fn recover_finalized(
     io: &impl UpgradePromotionIo,
     context: &UpgradeContextV1,
     checkpoint: BlockNumHash,
-    promoted: &tokio::sync::Notify,
+    _promoted: &tokio::sync::Notify,
 ) -> CycleOutcome {
     let BlockNumHash {
         number: finalized_height,
@@ -22,20 +22,20 @@ pub(crate) fn recover_finalized(
             return CycleOutcome::Stop;
         }
         info!(finalized_height, %finalized_hash, "reconciled already-promoted enclave candidate");
-        return CycleOutcome::Stop;
+        return CycleOutcome::Wait;
     }
     match io.replacement_authorization(&committed.node_id) {
         Ok(authorized) => {
-            if !promote_and_record(
+            if let Err(error) = promote_and_record(
                 io,
                 &authorized.authorization,
+                authorized.view,
                 "record finalized enclave promotion failed",
             ) {
-                return CycleOutcome::Stop;
+                return promotion_failure(error);
             }
-            info!(finalized_height, %finalized_hash, "finalized enclave candidate promoted; execution restart required");
-            promoted.notify_one();
-            CycleOutcome::Stop
+            info!(finalized_height, %finalized_hash, "finalized enclave candidate promotion completed without execution restart");
+            CycleOutcome::Wait
         }
         Err(error) => {
             tracing::error!(error = %error, "reconstruct finalized candidate promotion authority failed");
@@ -47,22 +47,28 @@ pub(crate) fn recover_finalized(
 fn promote_and_record<I: UpgradePromotionIo>(
     io: &I,
     authorization: &I::Authorization,
+    view: outbe_tee::FinalizedRegistryViewV1,
     checkpoint_error: &'static str,
-) -> bool {
-    if let Err(error) = io.promote_candidate(authorization) {
-        tracing::error!(error = %error, "promote finalized enclave candidate failed");
-        return false;
+) -> eyre::Result<()> {
+    io.promote_at(authorization, view)?;
+    io.record_promoted().wrap_err(checkpoint_error)
+}
+
+fn promotion_failure(error: eyre::Report) -> CycleOutcome {
+    tracing::error!(%error, "finalized enclave candidate promotion failed");
+    if matches!(
+        error.downcast_ref::<crate::admission_authority::live::LiveTeeError>(),
+        Some(crate::admission_authority::live::LiveTeeError::FinalizedViewMismatch)
+    ) {
+        CycleOutcome::Wait
+    } else {
+        CycleOutcome::Stop
     }
-    if let Err(error) = io.record_promoted() {
-        tracing::error!(error = %format!("{error:#}"), "{checkpoint_error}");
-        return false;
-    }
-    true
 }
 
 pub(crate) fn reconcile_submitted(
     io: &impl UpgradePromotionIo,
-    promoted: &tokio::sync::Notify,
+    _promoted: &tokio::sync::Notify,
 ) -> Option<CycleOutcome> {
     let committed = match io.committed_manifest() {
         Ok(committed) => committed,
@@ -82,20 +88,20 @@ pub(crate) fn reconcile_submitted(
                 tracing::error!(error = %format!("{error:#}"), "record finalized enclave transition failed");
                 return Some(CycleOutcome::Stop);
             }
-            if !promote_and_record(
+            if let Err(error) = promote_and_record(
                 io,
                 &authorized.authorization,
+                authorized.view,
                 "record enclave candidate promotion failed",
             ) {
-                return Some(CycleOutcome::Stop);
+                return Some(promotion_failure(error));
             }
             info!(
                 finalized_height = authorized.view.block_number,
                 finalized_hash = %authorized.view.block_hash,
-                "finalized enclave candidate promoted; execution restart required"
+                "finalized enclave candidate promotion completed without execution restart"
             );
-            promoted.notify_one();
-            Some(CycleOutcome::Stop)
+            Some(CycleOutcome::Wait)
         }
         Err(
             outbe_execution::tee_remote_session::LocalRegistryAdmissionError::ReplacementBindingMissing,
