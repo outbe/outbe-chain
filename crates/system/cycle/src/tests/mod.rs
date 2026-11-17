@@ -207,6 +207,7 @@ mod emission_day;
 mod genesis_nod;
 mod hourly;
 mod schedule;
+mod worker_isolation;
 
 pub(super) fn seed_reward_cca(storage: &outbe_primitives::storage::StorageHandle<'_>) {
     let cca = Address::repeat_byte(0xc1);

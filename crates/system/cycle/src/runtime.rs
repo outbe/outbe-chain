@@ -15,7 +15,7 @@ use outbe_primitives::{
 use crate::errors::CycleError;
 use crate::schema::Cycle;
 use crate::state::{accounting_gate_blocks, EvmAccountingProgress};
-use crate::tasks::{active_tasks, last_fire_at, next_fire_at, Readiness, TaskSpec};
+use crate::tasks::{active_tasks, last_fire_at, next_fire_at, CycleWorkerId, Readiness, TaskSpec};
 use crate::ICycle;
 
 /// Protocol module for the begin-block cycle step.
@@ -102,17 +102,68 @@ pub fn handle_cycle_tick_with_tasks(
     let handler_gas = run_due_tasks_inner(ctx, tasks)?;
     #[cfg(not(feature = "test-utils"))]
     let _ = handler_gas;
-    crate::handler::process_agent_rewards(ctx)?;
-    outbe_desis::process_cleanup(ctx.storage.clone())?;
+    run_isolated_cycle_worker(
+        ctx,
+        CycleWorkerId::AgentRewards,
+        crate::tasks::AGENT_REWARDS_WORKER_BUDGET_GAS,
+        crate::handler::process_agent_rewards,
+    )?;
+    run_isolated_cycle_worker(
+        ctx,
+        CycleWorkerId::DesisCleanup,
+        crate::tasks::DESIS_CLEANUP_WORKER_BUDGET_GAS,
+        |ctx| outbe_desis::process_cleanup(ctx.storage.clone()),
+    )?;
     #[cfg(feature = "test-utils")]
     record_cycle_gas_sample(ctx, observation_before, handler_gas)?;
     Ok(())
+}
+
+/// Runs one atomic tail page; recoverable failures leave its cursors pending.
+pub(crate) fn run_isolated_cycle_worker(
+    ctx: &BlockRuntimeContext<'_>,
+    worker_id: CycleWorkerId,
+    budget_gas: u64,
+    run: impl FnOnce(&BlockRuntimeContext<'_>) -> Result<()>,
+) -> Result<()> {
+    let result = ctx.storage.with_trigger_budget(budget_gas, || {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(ctx))) {
+            Ok(result) => result,
+            Err(_) => {
+                tracing::error!(target: "outbe::cycle", worker_id = worker_id.as_u8(),
+                    block_number = ctx.block.block_number, "cycle worker panicked");
+                Err(PrecompileError::revert("cycle worker panicked"))
+            }
+        }
+    });
+    match result {
+        Ok(()) => Ok(()),
+        Err(
+            err @ (PrecompileError::Revert(_)
+            | PrecompileError::RevertBytes(_)
+            | PrecompileError::TriggerBudgetExceeded { .. }
+            | PrecompileError::Halt(_)
+            | PrecompileError::WriteProtection),
+        ) => {
+            tracing::warn!(target: "outbe::cycle", worker_id = worker_id.as_u8(),
+                block_number = ctx.block.block_number, error = ?err,
+                "cycle worker failed; rolled back for retry");
+            ctx.storage
+                .contract::<Cycle<'_>>()
+                .emit(ICycle::CycleWorkerFailed {
+                    workerId: worker_id.as_u8(),
+                    blockNumber: ctx.block.block_number,
+                })
+        }
+        Err(other) => Err(other),
+    }
 }
 
 /// Dispatches every active task whose `next_fire_at` is `<=
 /// ctx.block.timestamp`. Each handler runs in an atomic work-budget scope.
 /// Ordinary reverts consume the slot; budget exhaustion rolls back the handler
 /// and leaves it and its due dependents pending. Independent work can continue.
+/// Isolated economic panics, halts, and write protection also consume the slot.
 /// Other errors reject CycleTick.
 ///
 /// The typical case is a slow-running chain that produces blocks every few
@@ -168,48 +219,73 @@ fn run_due_tasks_inner(ctx: &BlockRuntimeContext, tasks: &[TaskSpec]) -> Result<
             record_slot(ctx, spec, slot.recorded_at)?;
             outcomes[index] = WalkOutcome::ConsumedFailure;
         } else {
-            let before = ctx.storage.gas_used()?;
-            let result = ctx
-                .storage
-                .with_trigger_budget(spec.work_budget_gas(), || spec.handler.run(ctx));
-            let consumed = ctx
-                .storage
-                .gas_used()?
-                .checked_sub(before)
-                .ok_or(CycleError::InsufficientWorkCapacity)?;
-            handler_gas = handler_gas
-                .checked_add(consumed)
-                .ok_or(CycleError::InsufficientWorkCapacity)?;
-            #[cfg(feature = "test-utils")]
-            TASK_GAS_SAMPLES.with(|samples| samples.borrow_mut().push((spec.id, consumed)));
-            match result {
-                Ok(Readiness::Done) => {
-                    record_executed(ctx, spec, slot)?;
-                    outcomes[index] = WalkOutcome::Executed;
-                }
-                Ok(Readiness::NotReady) => outcomes[index] = WalkOutcome::Pending,
-                Err(PrecompileError::TriggerBudgetExceeded {
-                    consumed_gas,
-                    budget_gas,
-                }) => {
-                    let mut cycle = ctx.storage.contract::<Cycle<'_>>();
-                    cycle.emit(ICycle::CycleTaskOverBudget {
-                        id: spec.id,
-                        consumedGas: consumed_gas,
-                        budgetGas: budget_gas,
-                        blockNumber: ctx.block.block_number,
-                    })?;
-                    outcomes[index] = WalkOutcome::Pending;
-                }
-                Err(err @ (PrecompileError::Revert(_) | PrecompileError::RevertBytes(_))) => {
-                    record_failed(ctx, spec, slot, &err)?;
-                    outcomes[index] = WalkOutcome::ConsumedFailure;
-                }
-                Err(err) => return Err(err),
-            }
+            outcomes[index] = run_due_task(ctx, spec, slot, &mut handler_gas)?;
         }
     }
     Ok(handler_gas)
+}
+
+fn run_due_task(
+    ctx: &BlockRuntimeContext,
+    spec: &TaskSpec,
+    slot: DueSlot,
+    handler_gas: &mut u64,
+) -> Result<WalkOutcome> {
+    let before = ctx.storage.gas_used()?;
+    let result = ctx.storage.with_trigger_budget(spec.work_budget_gas(), || {
+        if !spec.isolates_panic {
+            return spec.handler.run(ctx);
+        }
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| spec.handler.run(ctx))) {
+            Ok(result) => result,
+            Err(_) => {
+                tracing::error!(target: "outbe::cycle", task_id = spec.id,
+                label = spec.label, block_number = ctx.block.block_number, "cycle task panicked");
+                Err(PrecompileError::revert("cycle task panicked"))
+            }
+        }
+    });
+    let consumed = ctx
+        .storage
+        .gas_used()?
+        .checked_sub(before)
+        .ok_or(CycleError::InsufficientWorkCapacity)?;
+    *handler_gas = handler_gas
+        .checked_add(consumed)
+        .ok_or(CycleError::InsufficientWorkCapacity)?;
+    #[cfg(feature = "test-utils")]
+    TASK_GAS_SAMPLES.with(|samples| samples.borrow_mut().push((spec.id, consumed)));
+    match result {
+        Ok(Readiness::Done) => {
+            record_executed(ctx, spec, slot)?;
+            Ok(WalkOutcome::Executed)
+        }
+        Ok(Readiness::NotReady) => Ok(WalkOutcome::Pending),
+        Err(PrecompileError::TriggerBudgetExceeded {
+            consumed_gas,
+            budget_gas,
+        }) => {
+            let mut cycle = ctx.storage.contract::<Cycle<'_>>();
+            cycle.emit(ICycle::CycleTaskOverBudget {
+                id: spec.id,
+                consumedGas: consumed_gas,
+                budgetGas: budget_gas,
+                blockNumber: ctx.block.block_number,
+            })?;
+            Ok(WalkOutcome::Pending)
+        }
+        Err(err @ (PrecompileError::Revert(_) | PrecompileError::RevertBytes(_))) => {
+            record_failed(ctx, spec, slot, &err)?;
+            Ok(WalkOutcome::ConsumedFailure)
+        }
+        Err(err @ (PrecompileError::Halt(_) | PrecompileError::WriteProtection))
+            if spec.isolates_panic =>
+        {
+            record_failed(ctx, spec, slot, &err)?;
+            Ok(WalkOutcome::ConsumedFailure)
+        }
+        Err(err) => Err(err),
+    }
 }
 
 fn record_deferred(

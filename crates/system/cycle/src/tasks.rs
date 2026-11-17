@@ -10,6 +10,21 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 use crate::errors::CycleError;
 
+/// Stable identifier for Cycle tail-worker failure events.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum CycleWorkerId {
+    AgentRewards = 1,
+    DesisCleanup = 2,
+}
+
+impl CycleWorkerId {
+    #[must_use]
+    pub const fn as_u8(self) -> u8 {
+        self as u8
+    }
+}
+
 /// Stable on-chain identifier for each task. The module emits it as
 /// the indexed `id` in [`crate::ICycle::CycleTaskExecuted`] and
 /// [`crate::ICycle::CycleTaskFailed`], and persists it in the
@@ -63,6 +78,9 @@ pub struct TaskSpec {
     /// replaying every missed one. ProcessEmissionDay owns its UTC-day decision,
     /// so replaying every missed hourly slot would duplicate orchestration.
     pub coalesces_backlog: bool,
+    /// Recover a handler panic locally instead of failing the block.
+    /// False for ProcessEmissionDay; true for the economic tasks.
+    pub isolates_panic: bool,
     /// Tasks whose failure in the current walk blocks this task.
     /// Empty means the task is independent. The dispatcher reads this
     /// only after the task is due.
@@ -99,7 +117,7 @@ impl TaskSpec {
     /// Cadence is `(period_seconds, start_offset_seconds)`, both in UTC seconds.
     /// Zero periods and zero work allowances are rejected.
     /// `start_offset_seconds >= period_seconds` stays valid.
-    /// The two behavior flags start false. `depends_on` starts empty.
+    /// The behavior flags start false. `depends_on` starts empty.
     /// The task table and fixtures set them.
     pub const fn new(
         id: u32,
@@ -122,6 +140,7 @@ impl TaskSpec {
             start_offset_seconds,
             requires_accounting_window: false,
             coalesces_backlog: false,
+            isolates_panic: false,
             depends_on: &[],
             handler,
         })
@@ -190,6 +209,13 @@ pub const PROCESS_EMISSION_DAY_PERIOD_SECONDS: u64 = 3_600;
 /// than 00:00:01 of E+1. The auction tasks share the offset to land in the slot of the brief.
 pub const PROCESS_EMISSION_DAY_START_OFFSET_SECONDS: u64 = 1;
 
+/// Agent rewards: 16,505,700 measured storage gas for 256 accrual and 3x256 cleanup
+/// entries, multiplied by four and rounded up to 1,000 gas.
+pub const AGENT_REWARDS_WORKER_BUDGET_GAS: u64 = 66_023_000;
+/// Desis cleanup: 2,880,000 worst-case gas for four headers and 256 bid clears,
+/// multiplied by four and rounded up to 1,000 gas.
+pub const DESIS_CLEANUP_WORKER_BUDGET_GAS: u64 = 11_520_000;
+
 /// Active task table in permanent numeric-id order.
 /// The dispatcher walks this array in order inside one block.
 /// A handler revert records the slot and continues the walk.
@@ -243,6 +269,7 @@ pub const fn active_tasks() -> core::result::Result<[TaskSpec; 7], CycleError> {
             ));
             spec.requires_accounting_window = false;
             spec.coalesces_backlog = true;
+            spec.isolates_panic = true;
             spec
         },
         // Gated like `process_emission_day`, so the brief it writes and this start
@@ -265,6 +292,7 @@ pub const fn active_tasks() -> core::result::Result<[TaskSpec; 7], CycleError> {
             ));
             spec.requires_accounting_window = true;
             spec.coalesces_backlog = true;
+            spec.isolates_panic = true;
             spec.depends_on = &[TaskId::ProcessEmissionDay];
             spec
         },
@@ -282,6 +310,7 @@ pub const fn active_tasks() -> core::result::Result<[TaskSpec; 7], CycleError> {
             ));
             spec.requires_accounting_window = false;
             spec.coalesces_backlog = true;
+            spec.isolates_panic = true;
             spec
         },
         // Polls the fan-in gate that `advance_auctions` arms, on the same cadence.
@@ -302,6 +331,7 @@ pub const fn active_tasks() -> core::result::Result<[TaskSpec; 7], CycleError> {
             ));
             spec.requires_accounting_window = false;
             spec.coalesces_backlog = true;
+            spec.isolates_panic = true;
             spec.depends_on = &[TaskId::AdvanceAuctions];
             spec
         },
@@ -320,6 +350,7 @@ pub const fn active_tasks() -> core::result::Result<[TaskSpec; 7], CycleError> {
             ));
             spec.requires_accounting_window = false;
             spec.coalesces_backlog = true;
+            spec.isolates_panic = true;
             spec
         },
         // Schedules the latest completed UTC day for the call sweep.
@@ -334,6 +365,7 @@ pub const fn active_tasks() -> core::result::Result<[TaskSpec; 7], CycleError> {
             ));
             spec.requires_accounting_window = false;
             spec.coalesces_backlog = true;
+            spec.isolates_panic = true;
             spec
         },
     ])
@@ -410,6 +442,52 @@ pub const fn last_fire_at(
 #[cfg(test)]
 mod protocol_parameter_tests {
     use super::*;
+
+    #[test]
+    fn cycle_worker_ids_and_worker_failed_abi_event_are_stable() {
+        use alloy_sol_types::SolEvent;
+
+        assert_eq!(CycleWorkerId::AgentRewards.as_u8(), 1);
+        assert_eq!(CycleWorkerId::DesisCleanup.as_u8(), 2);
+        let event = crate::ICycle::CycleWorkerFailed {
+            workerId: 1,
+            blockNumber: 42,
+        };
+        let log = event.encode_log_data();
+        assert_eq!(log.topics().len(), 2);
+        assert_eq!(
+            log.topics()[0],
+            crate::ICycle::CycleWorkerFailed::SIGNATURE_HASH
+        );
+        assert_eq!(
+            log.topics()[1],
+            alloy_primitives::B256::from(alloy_primitives::U256::from(1))
+        );
+        assert_eq!(log.data.len(), 32);
+        let decoded = crate::ICycle::CycleWorkerFailed::decode_log_data(&log)
+            .expect("worker failure event round-trips");
+        assert_eq!(decoded.workerId, event.workerId);
+        assert_eq!(decoded.blockNumber, event.blockNumber);
+    }
+
+    #[test]
+    fn only_economic_cycle_tasks_enable_panic_isolation_and_worker_budgets_follow_headroom_rule() {
+        assert!(!ACTIVE_TASKS[0].isolates_panic);
+        assert!(ACTIVE_TASKS[1..].iter().all(|spec| spec.isolates_panic));
+        assert!(
+            !TaskSpec::new(9, "t", (60, 0), 1_000, TaskHandler::ScheduleNodCallPass)
+                .unwrap()
+                .isolates_panic
+        );
+        assert_eq!(AGENT_REWARDS_WORKER_BUDGET_GAS, 66_023_000);
+        assert_eq!(DESIS_CLEANUP_WORKER_BUDGET_GAS, 11_520_000);
+        for (budget, measured) in [
+            (AGENT_REWARDS_WORKER_BUDGET_GAS, 16_505_700u64),
+            (DESIS_CLEANUP_WORKER_BUDGET_GAS, 2_880_000),
+        ] {
+            assert_eq!(budget, (measured * 4).div_ceil(1_000) * 1_000);
+        }
+    }
 
     #[test]
     fn calibrated_budgets_are_nonzero_and_follow_checked_headroom_rule() {
