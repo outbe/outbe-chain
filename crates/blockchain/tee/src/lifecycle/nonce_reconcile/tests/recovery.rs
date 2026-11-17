@@ -24,12 +24,20 @@ async fn empty_and_completed_renewal_are_terminal_without_sending() {
             .unwrap(),
         ServiceTxReconciliationV1::Completed
     );
+    use std::os::unix::fs::MetadataExt as _;
+    let path = _root.path().join("tee-service-tx-v1/journal.json");
+    let inode = std::fs::metadata(&path).unwrap().ino();
+    let terminal = std::fs::read(&path).unwrap();
+    chain.at.height += 1;
+    chain.at.hash = B256::repeat_byte(20);
     assert_eq!(
         reconcile_service_tx_v1(&chain, &mut journal, &live)
             .await
             .unwrap(),
         ServiceTxReconciliationV1::Completed
     );
+    assert_eq!(std::fs::metadata(&path).unwrap().ino(), inode);
+    assert_eq!(std::fs::read(&path).unwrap(), terminal);
     assert_eq!(
         journal.load().unwrap().unwrap().state,
         ServiceTxStateV1::Completed

@@ -321,10 +321,27 @@ async fn restarted_process_discards_old_recipient_only_after_chain_reconciliatio
     for finalized in [false, true] {
         let (_root, mut journal, _old, record, mut chain) = fixture();
         journal.begin(record.clone()).unwrap();
+        let fresh = context(10);
+        let path = _root.path().join("tee-service-tx-v1/journal.json");
+        let before = std::fs::read(&path).unwrap();
+        for nonces in [[3, 4, 4], [4, 4, 5]] {
+            chain.nonces = nonces;
+            assert_eq!(
+                reconcile_service_tx_v1(&chain, &mut journal, &fresh)
+                    .await
+                    .unwrap(),
+                ServiceTxReconciliationV1::WaitForFinality {
+                    latest_nonce: nonces[1],
+                    pending_nonce: nonces[2],
+                }
+            );
+            assert_eq!(journal.load().unwrap().unwrap(), record);
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+        }
+        chain.nonces = [5; 3];
         if finalized {
             chain.binding = Some(applied(&record));
         }
-        let fresh = context(10);
         assert_eq!(
             reconcile_service_tx_v1(&chain, &mut journal, &fresh)
                 .await
@@ -333,8 +350,23 @@ async fn restarted_process_discards_old_recipient_only_after_chain_reconciliatio
                 mutation_finalized: finalized
             }
         );
-        assert_eq!(chain.reads.load(Ordering::SeqCst), 1);
-        assert_eq!(chain.receipt_reads.load(Ordering::SeqCst), 1);
+        assert_eq!(chain.reads.load(Ordering::SeqCst), 3);
+        assert_eq!(chain.receipt_reads.load(Ordering::SeqCst), 3);
+        use std::os::unix::fs::MetadataExt as _;
+        let inode = std::fs::metadata(&path).unwrap().ino();
+        let terminal = std::fs::read(&path).unwrap();
+        chain.at.height += 1;
+        chain.at.hash = B256::repeat_byte(20);
+        assert_eq!(
+            reconcile_service_tx_v1(&chain, &mut journal, &fresh)
+                .await
+                .unwrap(),
+            ServiceTxReconciliationV1::DiscardLostIdentity {
+                mutation_finalized: finalized
+            }
+        );
+        assert_eq!(std::fs::metadata(&path).unwrap().ino(), inode);
+        assert_eq!(std::fs::read(&path).unwrap(), terminal);
         assert_eq!(
             journal.load().unwrap().unwrap().state,
             ServiceTxStateV1::DiscardedLostIdentity

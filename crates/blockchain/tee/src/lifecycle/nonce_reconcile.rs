@@ -56,11 +56,19 @@ pub async fn reconcile_service_tx_v1<P: LifecycleChainPort>(
     {
         return Err(ReconcileError::FinalizedMutationConflict);
     }
-    if let Some((outcome, state)) = terminal_outcome(&record, live, applied)? {
-        journal.finish(record.tx_hash, state, at)?;
+    let manifest = live.manifest();
+    let same_process = record.public_intent.target.enclave_id == manifest.enclave_id()?
+        && record.public_intent.target.recipient_x25519.as_slice() == manifest.recipient_x25519;
+    if let Some((outcome, state)) = terminal_outcome(&record, same_process, applied) {
+        if !matches!(
+            record.state,
+            ServiceTxStateV1::Completed | ServiceTxStateV1::DiscardedLostIdentity
+        ) {
+            journal.finish(record.tx_hash, state, at)?;
+        }
         return Ok(outcome);
     }
-    reconcile_nonce(port, journal, &record, at).await
+    reconcile_nonce(port, journal, &record, at, same_process).await
 }
 
 async fn reconcile_nonce<P: LifecycleChainPort>(
@@ -68,6 +76,7 @@ async fn reconcile_nonce<P: LifecycleChainPort>(
     journal: &mut ServiceTxJournalV1,
     record: &ServiceTxRecordV1,
     at: LifecycleCheckpointV1,
+    same_process: bool,
 ) -> Result<ServiceTxReconciliationV1, ReconcileError<P::Error>> {
     let finalized = port
         .account_nonce(record.sender, LifecycleNonceTagV1::Finalized(at))
@@ -79,15 +88,29 @@ async fn reconcile_nonce<P: LifecycleChainPort>(
         .account_nonce(record.sender, LifecycleNonceTagV1::Pending)
         .await?;
     if finalized > record.nonce {
-        journal.finish(record.tx_hash, ServiceTxStateV1::RebuildRequired, at)?;
-        return Ok(ServiceTxReconciliationV1::RebuildAndResign {
-            nonce: finalized.max(latest).max(pending),
-        });
+        let (outcome, state) = if same_process {
+            (
+                ServiceTxReconciliationV1::RebuildAndResign {
+                    nonce: finalized.max(latest).max(pending),
+                },
+                ServiceTxStateV1::RebuildRequired,
+            )
+        } else {
+            (
+                ServiceTxReconciliationV1::DiscardLostIdentity {
+                    mutation_finalized: false,
+                },
+                ServiceTxStateV1::DiscardedLostIdentity,
+            )
+        };
+        journal.finish(record.tx_hash, state, at)?;
+        return Ok(outcome);
     }
     if record.state == ServiceTxStateV1::RebuildRequired {
         return Err(ReconcileError::CheckpointMismatch);
     }
-    if latest > record.nonce || pending > record.nonce {
+    // A lost recipient does not make its broadcast transaction unmineable.
+    if !same_process || latest > record.nonce || pending > record.nonce {
         return Ok(ServiceTxReconciliationV1::WaitForFinality {
             latest_nonce: latest,
             pending_nonce: pending,
@@ -170,15 +193,13 @@ fn validate_receipt<E: std::error::Error + 'static>(
     Ok(())
 }
 
-fn terminal_outcome<E: std::error::Error + 'static>(
+fn terminal_outcome(
     record: &ServiceTxRecordV1,
-    live: &InProcessTeeContext,
+    same_process: bool,
     applied: bool,
-) -> Result<Option<(ServiceTxReconciliationV1, ServiceTxStateV1)>, ReconcileError<E>> {
-    let manifest = live.manifest();
-    let same_process = record.public_intent.target.enclave_id == manifest.enclave_id()?
-        && record.public_intent.target.recipient_x25519.as_slice() == manifest.recipient_x25519;
-    let terminal = if !same_process || record.state == ServiceTxStateV1::DiscardedLostIdentity {
+) -> Option<(ServiceTxReconciliationV1, ServiceTxStateV1)> {
+    let settled = applied || record.state == ServiceTxStateV1::Completed;
+    if record.state == ServiceTxStateV1::DiscardedLostIdentity || (!same_process && settled) {
         Some((
             ServiceTxReconciliationV1::DiscardLostIdentity {
                 mutation_finalized: applied,
@@ -198,8 +219,7 @@ fn terminal_outcome<E: std::error::Error + 'static>(
         Some((outcome, ServiceTxStateV1::Completed))
     } else {
         None
-    };
-    Ok(terminal)
+    }
 }
 
 fn mutation_applied(record: &ServiceTxRecordV1, view: &LifecycleRegistryStateV1) -> bool {
