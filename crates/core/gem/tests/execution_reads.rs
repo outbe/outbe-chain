@@ -12,6 +12,7 @@ const ISSUED_AT: u64 = 1_704_067_200;
 
 fn params(owner: Address) -> GemAddParams {
     GemAddParams {
+        issuer: owner,
         owner,
         promis_load_minor: U256::from(1_000_000u64),
         entry_price_minor: U256::from(500_000u64),
@@ -40,7 +41,7 @@ fn reverted_issuance_rolls_back_state_and_events() {
         )
         .unwrap();
         let expected =
-            GemContract::generate_gem_id(series, 0, owner, storage.block_number().unwrap());
+            GemContract::generate_gem_id(series, 0, owner, owner, storage.block_number().unwrap());
         let outcome: Result<U256> = storage.with_checkpoint(|| {
             let gem_id = api::add_gem(&storage, params.clone())?;
             assert_eq!(gem_id, expected);

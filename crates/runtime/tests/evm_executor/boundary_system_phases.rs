@@ -550,7 +550,12 @@ fn oracle_slash_window_runs_after_boundary_activation() {
         );
         let staking = outbe_staking::contract::Staking::new(storage.clone());
         assert_eq!(staking.stake_amount.read(&old_active)?, U256::from(990u64));
-        assert_eq!(storage.balance(STAKING_ADDRESS)?, U256::from(990u64));
+        assert_eq!(
+            storage.balance(STAKING_ADDRESS)?,
+            U256::from(990u64)
+                + outbe_promislimit::PromisLimitContract::new(storage.clone())
+                    .burn_rest(outbe_promislimit::BurnSource::ValidatorStake)?
+        );
         Ok::<_, outbe_primitives::error::PrecompileError>(())
     })
     .expect("validator state should be readable");
@@ -634,7 +639,10 @@ fn enclave_upgrade_deadline_uses_configured_slash_and_credits_promis_limit_once(
             enforce_enclave_upgrade_deadline(&ctx).unwrap();
             assert_eq!(staking.get_stake(validator).unwrap(), stake - slashed);
             assert_eq!(staking.get_total_staked().unwrap(), stake - slashed);
-            assert_eq!(storage.balance(STAKING_ADDRESS).unwrap(), stake - slashed);
+            assert_eq!(
+                storage.balance(STAKING_ADDRESS).unwrap(),
+                stake - slashed + U256::from(expected_percent)
+            );
             let validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             assert_eq!(
                 validators.get_validator(validator).unwrap().unwrap().status,
@@ -646,13 +654,26 @@ fn enclave_upgrade_deadline_uses_configured_slash_and_credits_promis_limit_once(
             assert!(registry.upgrade_sweep_due_v1().unwrap().is_none());
             let limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
             assert_eq!(limit.promis_limit().unwrap(), U256::from(expected_percent));
-            assert_eq!(limit.rest_minor().unwrap(), U256::from(expected_percent));
+            assert_eq!(
+                limit
+                    .burn_rest(outbe_promislimit::BurnSource::ValidatorStake)
+                    .unwrap(),
+                U256::from(expected_percent)
+            );
 
             enforce_enclave_upgrade_deadline(&ctx).unwrap();
             assert_eq!(staking.get_stake(validator).unwrap(), stake - slashed);
-            assert_eq!(storage.balance(STAKING_ADDRESS).unwrap(), stake - slashed);
+            assert_eq!(
+                storage.balance(STAKING_ADDRESS).unwrap(),
+                stake - slashed + U256::from(expected_percent)
+            );
             assert_eq!(limit.promis_limit().unwrap(), U256::from(expected_percent));
-            assert_eq!(limit.rest_minor().unwrap(), U256::from(expected_percent));
+            assert_eq!(
+                limit
+                    .burn_rest(outbe_promislimit::BurnSource::ValidatorStake)
+                    .unwrap(),
+                U256::from(expected_percent)
+            );
         });
     }
 }

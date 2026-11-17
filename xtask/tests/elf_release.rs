@@ -7,12 +7,12 @@ use std::process::Command;
 use serde_json::{json, Value};
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
+use xtask::release::canonical_json;
 use xtask::release::elf::{
     artifact_build_plan, artifact_check_plan, build_manifest, load_and_validate_build_spec,
     resolve_release_identity, validate_release_manifest_v1, verify_outputs, verify_version_text,
     ReleaseManifestOptions, EXPECTED_ARTIFACTS, EXPECTED_CHECKSUM_PATHS,
 };
-use xtask::release::sgx::canonical_json;
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

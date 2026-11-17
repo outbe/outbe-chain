@@ -8,7 +8,7 @@ use outbe_gem::{precompile::IGem, GemAddParams};
 use outbe_gemfactory::precompile::IGemFactory;
 use outbe_primitives::storage::{StorageHandle, SubCallStatus};
 use outbe_system_common::addresses::{GEM_ADDRESS, GEM_FACTORY_ADDRESS};
-use outbe_vaultrouter::api::IVaultRouter::StablesSource;
+use outbe_vaultrouter::precompile::IVaultRouter::StablecoinSource;
 use settlement::{Quote, Rail, World, ASSET, OWNER, TIMESTAMP};
 
 /// `called_at` stamps the Gem's group as called at that time.
@@ -21,7 +21,7 @@ const GEM: Gem = Gem { called_at: None };
 
 impl Rail for Gem {
     const FACTORY: Address = GEM_FACTORY_ADDRESS;
-    const SOURCE: StablesSource = StablesSource::GemCostAmount;
+    const SOURCE: StablecoinSource = StablecoinSource::GemCostAmount;
 
     fn seed(self, storage: &StorageHandle<'_>, issuance_currency: u16) -> (U256, u64) {
         let profile = outbe_gem::config::read(storage).unwrap();
@@ -29,6 +29,7 @@ impl Rail for Gem {
         let gem_id = outbe_gem::api::add_gem(
             storage,
             GemAddParams {
+                issuer: OWNER,
                 owner: OWNER,
                 promis_load_minor: U256::from(1_500_000),
                 entry_price_minor: entry_price,
@@ -85,11 +86,12 @@ impl Rail for Gem {
         }
     }
 
-    fn settle_call(self, id: U256, snapshot_id: U256) -> Bytes {
+    fn settle_call(self, id: U256, snapshot_id: U256, cost: U256) -> Bytes {
         IGemFactory::settleGemCall {
             gemId: id,
             asset: ASSET,
             snapshotId: snapshot_id,
+            amountCapMinor: cost,
         }
         .abi_encode()
         .into()
@@ -100,7 +102,8 @@ impl Rail for Gem {
             .evm
             .logs()
             .iter()
-            .filter_map(|log| IGemFactory::GemSettled::decode_log_data(&log.data).ok())
+            .filter(|log| log.address == GEM_ADDRESS)
+            .filter_map(|log| IGem::GemSettled::decode_log_data(&log.data).ok())
             .collect();
         assert_eq!(settled.len(), 1);
         assert_eq!(settled[0].owner, OWNER);
@@ -139,6 +142,11 @@ fn a_third_party_pays_and_the_units_stay_with_the_owner() {
 #[test]
 fn payment_failures_restore_balances_allowances_and_logs() {
     settlement::payment_failures_restore_balances_allowances_and_logs(GEM);
+}
+
+#[test]
+fn a_payer_that_approved_only_the_factory_fails() {
+    settlement::a_payer_that_approved_only_the_factory_fails(GEM);
 }
 
 #[test]

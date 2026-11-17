@@ -41,7 +41,12 @@ fn assert_slash_credits_promis_limit(storage: StorageHandle<'_>, slashed: U256) 
     let contract = PromisLimitContract::new(storage.clone());
     let unit = UNITS_PER_PROTOCOL_MINOR;
     assert_eq!(contract.promis_limit().unwrap(), slashed / unit);
-    assert_eq!(contract.rest_minor().unwrap(), slashed % unit);
+    assert_eq!(
+        contract
+            .burn_rest(outbe_promislimit::BurnSource::ValidatorStake)
+            .unwrap(),
+        slashed % unit
+    );
     assert_eq!(storage.balance(PROMIS_LIMIT_ADDRESS).unwrap(), U256::ZERO);
 }
 

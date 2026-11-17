@@ -1,6 +1,7 @@
 //! Outbe genesis creation, precompile storage seeding, and launch bundle generator.
 
 pub mod attestation;
+mod base_genesis;
 pub mod create_genesis;
 pub mod error;
 pub mod inputs;

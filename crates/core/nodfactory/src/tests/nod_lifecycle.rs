@@ -1883,7 +1883,7 @@ fn days_closed_behind_a_stalled_call_sweep_are_walked_in_order() {
 
 /// Promis Limit moves by the unpaid loads, not by reaching
 /// Forfeited or emitting `NodGroupForfeited`. A paid-but-unmined member is
-/// not credited. If `checked_credit` were removed, this delta
+/// not credited. If the add were removed, this delta
 /// would fail while the events and burns could still look complete.
 #[test]
 fn forfeit_credits_distinct_unpaid_loads_and_ignores_paid_members() {

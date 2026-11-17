@@ -108,7 +108,7 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
         let mut provider = env();
         provider.stub_sub_call_at_selector(
             VAULT_ROUTER_ADDRESS,
-            outbe_vaultrouter::api::IVaultRouter::releaseReservationCall::SELECTOR,
+            outbe_vaultrouter::precompile::IVaultRouter::releaseReservationCall::SELECTOR,
             Bytes::from(principal.to_be_bytes::<32>().to_vec()),
         );
         let id = StorageHandle::enter(&mut provider, |storage| {

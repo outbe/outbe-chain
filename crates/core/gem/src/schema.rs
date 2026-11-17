@@ -22,6 +22,8 @@ pub enum GemState {
 /// from the live profile when it opens, and every later member inherits that copy.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GemAddParams {
+    /// The position owner for a merchant gem, the AgentReward contract for a reward gem.
+    pub issuer: Address,
     pub owner: Address,
     pub promis_load_minor: U256,
     pub entry_price_minor: U256,
@@ -72,6 +74,8 @@ pub struct GemItemState {
     /// The call price of the gem inside its series: 0 for the series-date VWAP.
     #[attribute(order = 11)]
     pub sub_series_id: u16,
+    #[attribute(order = 12)]
+    pub issuer: Address,
 }
 
 impl GemItemState {
@@ -95,13 +99,25 @@ impl GemItemState {
         ))
     }
 
+    /// The id derives from the issue block, so it matches only in that block.
+    #[must_use]
+    pub fn is_issued_in(&self, block_number: u64) -> bool {
+        GemContract::generate_gem_id(
+            self.series_id,
+            self.sub_series_id,
+            self.issuer,
+            self.owner,
+            block_number,
+        ) == self.gem_id
+    }
+
     #[must_use]
     pub fn is_settled(&self) -> bool {
         self.state == GemState::Settled as u8
     }
 }
 
-/// Shared group record. The record is deleted once both the unpaid count and
+/// Shared group record. The record is deleted once both the unsettled count and
 /// `settled_gems` reach zero.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[storage_record(exists_field = full_day_after_issue)]
@@ -113,7 +129,7 @@ pub struct GemGroupState {
     pub full_day_after_issue: WorldwideDay,
     #[attribute(order = 1)]
     pub reference_currency: u16,
-    /// Paid members still holding the group open.
+    /// Settled members still holding the group open.
     #[attribute(order = 2)]
     pub settled_gems: u64,
 }
@@ -150,7 +166,7 @@ pub struct GemView {
 }
 
 impl GemView {
-    /// `called_at` as the ABI reports it: the group's while the gem is unpaid, the
+    /// `called_at` as the ABI reports it: the group's while the gem is unsettled, the
     /// gem's own copy once settled.
     #[must_use]
     pub fn called_at(&self) -> u64 {
@@ -195,7 +211,7 @@ impl GemView {
 #[storage_schema]
 #[contract(addr = GEM_ADDRESS)]
 pub struct GemContract {
-    // --- Group membership: unpaid gems for the cleanup, with a count,
+    // --- Group membership: unsettled gems for the cleanup, with a count,
     // positional map and reverse map for swap removal.
     #[attribute(order = 1)]
     pub group_gem_count: outbe_primitives::storage::dsl::Map<B256, u32>,
@@ -307,11 +323,11 @@ pub struct GemContract {
     #[attribute(order = 41)]
     pub owner_id_position: outbe_primitives::storage::dsl::Map<U256, u32>,
 
-    /// Promis load of the group's unpaid gems, returned at once when it is forfeited.
+    /// Promis load of the group's unsettled gems, returned at once when it is forfeited.
     #[attribute(order = 42)]
-    pub group_unpaid_load: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub group_unsettled_load_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    // --- This queue stores forfeited groups whose unpaid gems await deletion.
+    // --- This queue stores forfeited groups whose unsettled gems await deletion.
     // It schedules groups by day, like the forfeit queue.
     #[attribute(order = 43)]
     pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
@@ -366,9 +382,9 @@ pub struct GemContract {
     #[attribute(order = 65)]
     pub group_sub_series_reference_currency: outbe_primitives::storage::dsl::Map<B256, u16>,
     #[attribute(order = 66)]
-    pub group_sub_series_unpaid_count: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub group_sub_series_unsettled_count: outbe_primitives::storage::dsl::Map<B256, u32>,
     #[attribute(order = 67)]
-    pub group_sub_series_unpaid_load: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub group_sub_series_unsettled_load_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
 }
 
 /// Summary of one `(series_id, sub_series_id)` within a call group.
@@ -378,21 +394,23 @@ pub struct GroupSubSeriesSummary {
     pub sub_series_id: u16,
     pub issuance_currency: u16,
     pub reference_currency: u16,
-    pub unpaid_count: u32,
-    pub unpaid_load: U256,
+    pub unsettled_count: u32,
+    pub unsettled_load_minor: U256,
 }
 
 impl GemContract<'_> {
-    /// `keccak256(series_id || sub_series_id_be || owner || block_number_be)`: one gem per
-    /// owner, sub-series and block.
+    /// `keccak256(series_id || sub_series_id_be || issuer || owner || block_number_be)`: one
+    /// gem per issuer, owner, sub-series and block.
     pub fn generate_gem_id(
         series_id: SeriesId,
         sub_series_id: u16,
+        issuer: Address,
         owner: Address,
         block_number: u64,
     ) -> U256 {
         series_id.right_id(&[
             &sub_series_id.to_be_bytes(),
+            issuer.as_slice(),
             owner.as_slice(),
             &block_number.to_be_bytes(),
         ])
@@ -416,23 +434,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn gem_id_hashes_the_series_sub_series_owner_and_block() {
+    fn gem_id_hashes_the_series_sub_series_issuer_owner_and_block() {
         let series = SeriesId::from_bytes(*b"20261102-EUR-U");
+        let issuer = Address::repeat_byte(0x22);
         let owner = Address::repeat_byte(0x11);
         assert_eq!(
-            GemContract::generate_gem_id(series, 0, owner, 1),
+            GemContract::generate_gem_id(series, 0, issuer, owner, 1),
             U256::from_be_bytes(
                 alloy_primitives::b256!(
-                    "f784299ac3118dc85ddb52184520b287410841519878181a0b741fa2f865c219"
+                    "43dc02fc340d447cd8cf192bedac0453bc024ab654317fea632bc562e9104b5f"
                 )
                 .0
             )
         );
         assert_eq!(
-            GemContract::generate_gem_id(series, 1, owner, 1),
+            GemContract::generate_gem_id(series, 1, issuer, owner, 1),
             U256::from_be_bytes(
                 alloy_primitives::b256!(
-                    "55f14188e745f03dcf717aafed0aecd574862369e409bf4b3ca77c12c57b6718"
+                    "9577f3545373b5231a80b96ef09cc02b23f513eabb299af6d164d22db47a82ab"
                 )
                 .0
             )

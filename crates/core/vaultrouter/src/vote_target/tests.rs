@@ -20,10 +20,10 @@ fn valid_payloads() -> Vec<String> {
             r#"{{"operation":"addVault","vault":"{vault:#x}","asset":"{asset:#x}","isoCode":840}}"#
         ),
         format!(r#"{{"operation":"removeVault","vault":"{vault:#x}"}}"#),
-        format!(r#"{{"operation":"addLiquiditySource","address":"{vault:#x}","type":4}}"#),
-        format!(r#"{{"operation":"removeLiquiditySource","address":"{vault:#x}"}}"#),
-        format!(r#"{{"operation":"addLiquidityTarget","address":"{vault:#x}","type":1}}"#),
-        format!(r#"{{"operation":"removeLiquidityTarget","address":"{vault:#x}"}}"#),
+        format!(r#"{{"operation":"addStablecoinSource","address":"{vault:#x}","type":4}}"#),
+        format!(r#"{{"operation":"removeStablecoinSource","address":"{vault:#x}"}}"#),
+        format!(r#"{{"operation":"addStablecoinTarget","address":"{vault:#x}","type":1}}"#),
+        format!(r#"{{"operation":"removeStablecoinTarget","address":"{vault:#x}"}}"#),
     ]
 }
 
@@ -187,10 +187,10 @@ fn provider_failure_propagates_and_rolls_back_partial_route_writes() {
                 "operation {operation}"
             );
             let router = VaultRouterContract::new(storage);
-            assert_eq!(router.liquidity_sources.len().unwrap(), 0);
+            assert_eq!(router.stablecoin_sources.len().unwrap(), 0);
             assert_eq!(
                 router
-                    .liquidity_source_types
+                    .stablecoin_source_types
                     .read(&Address::repeat_byte(0x11))
                     .unwrap(),
                 0
@@ -205,8 +205,7 @@ fn failed_supersession_restores_previous_approval_and_index() {
     let vault = Address::repeat_byte(0x11);
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
-        state::record_approved_vault_action(&storage, U256::ONE, vault, state::ADD_VAULT, 7)
-            .unwrap();
+        state::record_vault_action(&storage, U256::ONE, vault, state::ADD_VAULT, 7).unwrap();
     });
     provider.fail_after_mutation_at(1);
     StorageHandle::enter(&mut provider, |storage| {
@@ -239,19 +238,10 @@ fn failed_supersession_restores_previous_approval_and_index() {
             U256::ONE
         );
         assert_eq!(
-            router
-                .approved_vault_actions
-                .get(U256::ONE)
-                .unwrap()
-                .unwrap()
-                .kind,
+            router.vault_actions.get(U256::ONE).unwrap().unwrap().kind,
             state::ADD_VAULT
         );
-        assert!(router
-            .approved_vault_actions
-            .get(U256::from(2))
-            .unwrap()
-            .is_none());
+        assert!(router.vault_actions.get(U256::from(2)).unwrap().is_none());
     });
     assert!(provider.sub_call_inputs().is_empty());
 }

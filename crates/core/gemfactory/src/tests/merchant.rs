@@ -114,6 +114,43 @@ fn an_expired_position_returns_its_remainder() {
     });
 }
 
+#[test]
+fn position_of_15_units_issues_6_and_gives_back_9() {
+    let unit = six_decimal_unit();
+    with_storage(Some(unit), |storage| {
+        seed_day_vwap(storage, 840, unit);
+        let promis_load = 15 * six_decimal_u128() / u128::from(SENT_UNITS);
+        let id = seed_and_send(storage, unit, promis_load);
+        assert_eq!(sent_capacity(promis_load), U256::from(15u64) * unit);
+        let gem_id = runtime::issue_merchant_gem(
+            storage,
+            crate::schema::MerchantGemIssueParams {
+                caller: ALICE,
+                position_id: id,
+                owner: BOB,
+                promis_load_minor: U256::from(6u64) * unit,
+                issuance_currency: 840,
+                reference_currency: 840,
+            },
+        )
+        .unwrap();
+
+        let closed = day_closed(T_NOW + POSITION_VALIDITY_SECONDS);
+        let block = daily_pass(&block_ctx(storage, closed)).unwrap();
+        assert_eq!(unallocated(storage), U256::from(9u64) * unit);
+        assert_eq!(positions_expired::cleanup_positions(&block).unwrap(), 1);
+        assert!(GemFactoryContract::new(storage.clone())
+            .positions
+            .get(id)
+            .unwrap()
+            .is_none());
+        assert_eq!(gem_view(storage, gem_id).item.owner, BOB);
+
+        daily_pass(&block_ctx(storage, closed + SECONDS_PER_DAY)).unwrap();
+        assert_eq!(unallocated(storage), U256::from(9u64) * unit);
+    });
+}
+
 /// A storage fault is this node's own: it fails the block instead of skipping the hour.
 #[test]
 fn a_storage_fault_in_the_position_sweep_fails_the_block() {
@@ -762,7 +799,8 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_group() {
     let events = provider.get_ordered_events();
     let issued: Vec<_> = events
         .iter()
-        .filter_map(|log| crate::precompile::IGemFactory::GemIssued::decode_log(log).ok())
+        .filter(|log| log.address == outbe_system_common::addresses::GEM_ADDRESS)
+        .filter_map(|log| outbe_gem::precompile::IGem::GemIssued::decode_log(log).ok())
         .map(|log| log.data)
         .collect();
     assert_eq!(issued.len(), 2);
@@ -856,6 +894,7 @@ fn a_series_numbers_each_source_call_price_on_first_use() {
                 GemContract::generate_gem_id(
                     item.series_id,
                     sub_series,
+                    ALICE,
                     item.owner,
                     storage.block_number().unwrap(),
                 )
@@ -881,7 +920,9 @@ fn a_series_numbers_each_source_call_price_on_first_use() {
 #[test]
 fn one_owner_gets_one_gem_of_a_sub_series_in_a_block() {
     let unit = six_decimal_unit();
-    with_storage(Some(U256::from(2u64) * unit), |storage| {
+    let mut provider = test_storage(Some(U256::from(2u64) * unit));
+    let id = StorageHandle::enter(&mut provider, |storage| {
+        let storage = &storage;
         seed_day_vwap(storage, 840, U256::from(2u64) * unit);
         let id = seed_and_send(storage, U256::from(3u64) * unit, six_decimal_u128());
         merchant_gem_to(storage, id, BOB).unwrap();
@@ -896,6 +937,71 @@ fn one_owner_gets_one_gem_of_a_sub_series_in_a_block() {
             )
             .to_string()
         );
+        id
+    });
+    provider.set_block_number(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        merchant_gem_to(&storage, id, BOB).unwrap();
+    });
+}
+
+#[test]
+fn gem_id_holds_the_issuer() {
+    let unit = six_decimal_unit();
+    with_storage(Some(U256::from(2u64) * unit), |storage| {
+        seed_day_vwap(storage, 840, U256::from(2u64) * unit);
+        let id = seed_and_send(storage, U256::from(3u64) * unit, six_decimal_u128());
+        set_source_price(storage, unit);
+        let merchant = gem_item(storage, merchant_gem_to(storage, id, BOB).unwrap());
+        let reward = gem_item(
+            storage,
+            issue_at_live_rate(storage, BOB, unit, 840, 840).unwrap(),
+        );
+        assert_ne!(merchant.gem_id, reward.gem_id);
+        assert_eq!(
+            (merchant.series_id, merchant.sub_series_id, merchant.owner),
+            (reward.series_id, reward.sub_series_id, reward.owner)
+        );
+        assert_eq!(merchant.issuer, ALICE);
+        assert_eq!(
+            reward.issuer,
+            outbe_system_common::addresses::AGENT_REWARD_ADDRESS
+        );
+    });
+}
+
+#[test]
+fn forfeited_gem_loads_go_to_the_promis_limit_once() {
+    let unit = six_decimal_unit();
+    with_storage(Some(U256::from(2u64) * unit), |storage| {
+        seed_day_vwap(storage, 840, U256::from(2u64) * unit);
+        let id = seed_and_send(storage, U256::from(3u64) * unit, six_decimal_u128());
+        set_source_price(storage, unit);
+        let merchant = merchant_gem_to(storage, id, BOB).unwrap();
+        let reward = issue_at_live_rate(storage, BOB, unit, 840, 840).unwrap();
+        let settled = issue_at_live_rate(storage, ALICE, unit, 840, 840).unwrap();
+        force_settled(storage, settled);
+        let group = gem_item(storage, merchant).group_key;
+        for gem_id in [reward, settled] {
+            assert_eq!(gem_item(storage, gem_id).group_key, group);
+        }
+        let mut gem = GemContract::new(storage.clone());
+        let terms = gem.read_call_terms(group).unwrap();
+        crate::called::mark_called(&mut gem, group, &terms, T_NOW).unwrap();
+        let forfeited = gem_item(storage, merchant).promis_load_minor
+            + gem_item(storage, reward).promis_load_minor;
+        let before = unallocated(storage);
+
+        let closed = day_closed(gem_view(storage, merchant).settlement_deadline());
+        daily_pass(&block_ctx(storage, closed)).unwrap();
+        assert_eq!(unallocated(storage), before + forfeited);
+        assert_eq!(
+            gem_view(storage, settled).item.state,
+            GemState::Settled as u8
+        );
+
+        daily_pass(&block_ctx(storage, closed + SECONDS_PER_DAY)).unwrap();
+        assert_eq!(unallocated(storage), before + forfeited);
     });
 }
 

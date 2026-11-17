@@ -129,12 +129,10 @@ fn deadline_retirement_fits_budget_for_1088_and_64_accepted_bids() {
                 .count(),
             1
         );
-        let returned = logs
-            .iter()
-            .filter_map(|log| IDesis::DesisLimitReturned::decode_log_data(log).ok())
-            .collect::<Vec<_>>();
-        assert_eq!(returned.len(), 1);
-        assert_eq!(returned[0].amountMinor, U256::from(10 * LOAD_MINOR));
+        assert_eq!(
+            super::desis_limit_returns(&provider),
+            vec![U256::from(10 * LOAD_MINOR)]
+        );
     }
 }
 

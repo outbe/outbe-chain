@@ -35,7 +35,7 @@ pub use payload::{
 pub use schema::Update;
 pub use state::ScheduledUpdateInfo;
 pub use version::{encode_protocol_version, ProtocolVersion};
-pub use vote_target::UpdateVoteTarget;
+pub use vote_target::{apply_due_contract_upgrades, UpdateVoteTarget};
 
 #[cfg(test)]
 mod tests;

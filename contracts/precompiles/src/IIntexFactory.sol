@@ -40,7 +40,7 @@ interface IIntexFactory {
     ///         `owner`, paying the cost in `asset`. Any caller may pay. The
     ///         settled units stay with the owner. Allowed while uncalled (voluntary)
     ///         and once called (forced, until the deadline).
-    /// @dev Approve IntexFactory for the `quoteSettlement` amount before calling.
+    /// @dev Approve the VaultRouter for the `quoteSettlement` amount before calling.
     ///      Payment is deposited into the reserve vault through VaultRouter.
     /// @param asset Token registered with the vault router under either of the
     ///        series' currencies. The issuance currency converts through COEN at

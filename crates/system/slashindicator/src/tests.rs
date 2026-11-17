@@ -92,11 +92,22 @@ fn register_and_activate_with_pubkey_and_stake(
     }
 }
 
+fn slash_rest(storage: &StorageHandle<'_>) -> U256 {
+    PromisLimitContract::new(storage.clone())
+        .burn_rest(outbe_promislimit::BurnSource::ValidatorStake)
+        .unwrap()
+}
+
 fn assert_slash_credits_promis_limit(storage: StorageHandle<'_>, slashed: U256) {
     let contract = PromisLimitContract::new(storage.clone());
     let unit = UNITS_PER_PROTOCOL_MINOR;
     assert_eq!(contract.promis_limit().unwrap(), slashed / unit);
-    assert_eq!(contract.rest_minor().unwrap(), slashed % unit);
+    assert_eq!(
+        contract
+            .burn_rest(outbe_promislimit::BurnSource::ValidatorStake)
+            .unwrap(),
+        slashed % unit
+    );
     assert_eq!(storage.balance(PROMIS_LIMIT_ADDRESS).unwrap(), U256::ZERO);
 }
 
@@ -258,7 +269,7 @@ fn direct_miss_felony_timestamp_overflow_is_side_effect_free_and_retryable() {
                 assert_eq!(staking.get_total_staked().unwrap(), U256::from(920_000));
                 assert_eq!(
                     storage.balance(STAKING_ADDRESS).unwrap(),
-                    U256::from(920_000)
+                    U256::from(920_000) + slash_rest(&storage)
                 );
             });
             let felony_event = if proposer {
@@ -544,10 +555,10 @@ fn test_evidence_reward() {
 
         // Verify evidence reward paid to submitter
         // slashed = 1_000_000 * 8 / 100 = 80_000
-        // reward  = 80_000 * 100 / 100 = 80_000
+        // reward  = 80_000 * 100 / 100 = 80_000, paid from the slash, so nothing burns
         let ctx = storage.clone();
         assert_eq!(ctx.balance(SUBMITTER).unwrap(), U256::from(80_000u64));
-        assert_slash_credits_promis_limit(ctx, U256::from(80_000u64));
+        assert_slash_credits_promis_limit(ctx, U256::ZERO);
     });
 }
 
@@ -572,7 +583,10 @@ fn evidence_reward_matches_wide_oracle_at_full_range() {
                     (U512::from(stake) * U512::from(effective) / U512::from(100)).to::<U256>();
                 assert_eq!(storage.balance(SUBMITTER).unwrap(), expected);
                 assert!(expected <= stake);
-                assert_eq!(storage.balance(STAKING_ADDRESS).unwrap(), U256::ZERO);
+                assert_eq!(
+                    storage.balance(STAKING_ADDRESS).unwrap(),
+                    slash_rest(&storage)
+                );
                 assert_eq!(Staking::new(storage).get_stake(VAL_A).unwrap(), U256::ZERO);
             });
         }
@@ -681,7 +695,7 @@ fn signed_evidence_invalid_reward_checkpoint_rolls_back_and_allows_identical_ret
         );
         assert_eq!(
             storage.balance(STAKING_ADDRESS).unwrap(),
-            U256::from(920_000)
+            U256::from(920_000) + slash_rest(&storage)
         );
         assert_eq!(storage.balance(SUBMITTER).unwrap(), U256::from(8_000));
     });
@@ -1122,24 +1136,6 @@ fn admit_percent_word_rejects_wide_word_before_narrowing() {
     assert_eq!(
         crate::runtime::admit_percent_word(U256::ZERO, 100, "evidence_reward_percent").unwrap(),
         100
-    );
-}
-
-#[test]
-fn floor_percent_matches_division_for_large_amounts() {
-    let max = U256::MAX;
-    assert_eq!(crate::runtime::floor_percent(max, 100), max);
-    assert_eq!(
-        crate::runtime::floor_percent(max, 1),
-        max / U256::from(100u64)
-    );
-    assert_eq!(
-        crate::runtime::floor_percent(U256::from(150u64), 1),
-        U256::from(1u64)
-    );
-    assert_eq!(
-        crate::runtime::floor_percent(U256::from(80u64), 1),
-        U256::ZERO
     );
 }
 

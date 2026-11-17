@@ -1735,7 +1735,12 @@ fn a_distribution_that_fails_after_any_write_reverts_and_credits_once_on_retry()
         assert_eq!(
             provider
                 .get_events(outbe_system_common::addresses::AGENT_REWARD_ADDRESS)
-                .len(),
+                .iter()
+                .filter(|log| {
+                    use alloy_sol_types::SolEvent;
+                    crate::precompile::IAgentReward::RewardAccrued::decode_log_data(log).is_ok()
+                })
+                .count(),
             expected.len(),
             "failure {failure_at}: one accrual event per credit"
         );

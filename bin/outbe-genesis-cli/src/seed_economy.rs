@@ -10,7 +10,7 @@ use crate::keccak::keccak256;
 use crate::seed_codec::{
     address_as_u256, address_bytes, alloc_balance_hex, data_slot, parse_u256, parse_u32, parse_u64,
     u32_bytes, StorageBuilder, METADOSIS_ADDRESS, ORACLE_ADDRESS, TRIBUTE_ADDRESS,
-    TRIBUTE_FACTORY_ADDRESS, VAULT_ROUTER_LIQUIDITY_SOURCES, VAULT_ROUTER_LIQUIDITY_TARGETS,
+    TRIBUTE_FACTORY_ADDRESS, VAULT_ROUTER_STABLECOIN_SOURCES, VAULT_ROUTER_STABLECOIN_TARGETS,
 };
 use crate::seed_oracle::seed_oracle;
 
@@ -195,10 +195,10 @@ pub fn seed_address_set_with_types(
     Ok(())
 }
 
-/// Seed VaultRouter default factory liquidity source/target registries.
+/// Seed VaultRouter default factory stablecoin source/target registries.
 pub fn seed_vault_router(storage: &mut StorageBuilder) -> Result<(), GenesisError> {
-    seed_address_set_with_types(storage, 4, 6, &VAULT_ROUTER_LIQUIDITY_SOURCES)?;
-    seed_address_set_with_types(storage, 7, 9, &VAULT_ROUTER_LIQUIDITY_TARGETS)?;
+    seed_address_set_with_types(storage, 4, 6, &VAULT_ROUTER_STABLECOIN_SOURCES)?;
+    seed_address_set_with_types(storage, 7, 9, &VAULT_ROUTER_STABLECOIN_TARGETS)?;
     Ok(())
 }
 

@@ -2,8 +2,10 @@
 //! not part of the protocol update.
 //!
 //! The vote tally runs where sub-calls are not available. So an approved
-//! proposal only stores the hash of its payload. Permissionless
-//! `applyApproved(proposalId, payload)` runs it later: it asks CrosschainBridge
+//! proposal only stores the hash of its payload and enters a queue.
+//! `applyApproved(proposalId, payload)` runs it later. The begin-block step of
+//! Vote calls it when the execution delay ends, and anyone else may call it
+//! too. It asks CrosschainBridge
 //! (`0x…EE15`), the owner of the contracts, to call
 //! `proxy.upgradeToAndCall(implementation, callData)` for each upgrade. On
 //! Outbe that is one `callLocal` for each upgrade. Each other chain gets one
@@ -13,8 +15,9 @@
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::error::Result;
-use outbe_system_common::addresses::CROSSCHAIN_BRIDGE_ADDRESS;
-use outbe_system_common::vote_target::decode_stored_proposal_payload;
+use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::{CROSSCHAIN_BRIDGE_ADDRESS, UPDATE_ADDRESS};
+use outbe_system_common::vote_target::{decode_stored_proposal_payload, PayloadApprovals};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -48,17 +51,20 @@ impl ContractUpgrade {
 
 /// JSON payload that upgrades a batch of contracts on the listed chains in
 /// one proposal. The upgrades on one chain run in the listed order.
+/// `executionDelayBlocks` is the number of blocks between the approval and the
+/// first block where `applyApproved` may run the batch.
 ///
 /// ```json
-/// {"operation":"upgradeContracts", "upgrades":[
+/// {"operation":"upgradeContracts", "executionDelayBlocks":28800, "upgrades":[
 ///   {"chainId":11155111, "proxy":"0x…", "implementation":"0x…", "callData":"0x"},
 ///   {"chainId":97, "proxy":"0x…", "implementation":"0x…", "callData":"0x"}
 /// ]}
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct UpgradeContractsPayload {
     pub operation: String,
+    pub execution_delay_blocks: u64,
     pub upgrades: Vec<ContractUpgrade>,
 }
 
@@ -130,21 +136,24 @@ impl UpgradeContractsPayload {
 }
 
 impl Update<'_> {
-    /// Stores the hash of an approved `upgradeContracts` payload.
+    /// Stores the hash of an approved `upgradeContracts` payload and its
+    /// unlock block, and queues the proposal for the begin-block step.
     pub(crate) fn approve_contract_upgrade(
         &self,
         proposal_id: U256,
         payload: &[u8],
-        block_number: u64,
+        unlock_height: u64,
     ) -> Result<()> {
         self.approved_upgrades
             .write(&proposal_id, keccak256(payload))?;
-        self.approved_upgrade_at.write(&proposal_id, block_number)
+        self.upgrade_unlock_at.write(&proposal_id, unlock_height)?;
+        self.queued_contract_upgrades.push(proposal_id)
     }
 
     /// Runs an approved batch once, inside one checkpoint: every upgrade is
-    /// sent, or none. A batch that waited longer than the voting window is
-    /// dropped.
+    /// sent, or none. The batch runs only after the execution delay of its
+    /// payload. A batch that waited longer than one voting window after that
+    /// delay is dropped.
     pub fn apply_approved(&mut self, proposal_id: U256, payload: &[u8]) -> Result<()> {
         let approved = self.approved_upgrades.read(&proposal_id)?;
         if approved == B256::ZERO {
@@ -153,15 +162,21 @@ impl Update<'_> {
         if keccak256(payload) != approved {
             return Err(UpdateError::ApprovedPayloadMismatch { proposal_id }.into());
         }
+        let unlock_height = self.upgrade_unlock_at.read(&proposal_id)?;
+        if self.storage.block_number()? < unlock_height {
+            return Err(UpdateError::ContractUpgradeLocked {
+                proposal_id,
+                unlock_height,
+            }
+            .into());
+        }
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             // Consume first. The checkpoint restores it if an upgrade fails.
             self.approved_upgrades.write(&proposal_id, B256::ZERO)?;
-            let deadline = self
-                .approved_upgrade_at
-                .read(&proposal_id)?
-                .saturating_add(outbe_chain_constants::get_governance_voting_window_blocks());
-            if self.storage.block_number()? > deadline {
+            if self.storage.block_number()?
+                > outbe_chain_constants::approved_action_expiry(unlock_height)
+            {
                 return self.emit(IUpdate::ContractUpgradeExpired {
                     proposalId: proposal_id,
                 });
@@ -180,13 +195,28 @@ impl Update<'_> {
     }
 }
 
+/// Vote begin-block step: calls `applyApproved` for each queued batch whose
+/// execution delay ended. The sub-call runs in the frame of Update, so Update
+/// is the caller of CrosschainBridge.
+pub fn apply_due_contract_upgrades(storage: &StorageHandle<'_>, block_number: u64) -> Result<()> {
+    let update = Update::new(storage.clone());
+    PayloadApprovals {
+        target: UPDATE_ADDRESS,
+        module: "Update",
+        queue: &update.queued_contract_upgrades,
+        hashes: &update.approved_upgrades,
+        unlocks: &update.upgrade_unlock_at,
+    }
+    .apply_due(storage, block_number)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::payload::UpdateVotePayload;
 
     #[test]
-    fn upgrade_contracts_payload_requires_the_operation_and_valid_unique_upgrades() {
+    fn upgrade_contracts_payload_requires_the_operation_the_delay_and_valid_unique_upgrades() {
         let upgrade = |chain_id: u32, proxy: u8| {
             serde_json::json!({
                 "chainId": chain_id,
@@ -197,6 +227,7 @@ mod tests {
         };
         let valid = serde_json::json!({
             "operation": UPGRADE_CONTRACTS_OPERATION,
+            "executionDelayBlocks": outbe_chain_constants::MIN_GOVERNANCE_EXECUTION_DELAY_BLOCKS,
             "upgrades": [upgrade(11_155_111, 1), upgrade(97, 1), upgrade(97, 3)],
         });
         assert!(matches!(
@@ -204,14 +235,26 @@ mod tests {
             UpdateVotePayload::UpgradeContracts(_)
         ));
         let zero = format!("{:#x}", Address::ZERO);
-        let mut cases = vec![
-            serde_json::json!({"operation": "setBridgePaused", "upgrades": [upgrade(97, 1)]}),
-            serde_json::json!({"operation": UPGRADE_CONTRACTS_OPERATION, "upgrades": []}),
-            serde_json::json!({
-                "operation": UPGRADE_CONTRACTS_OPERATION,
-                "upgrades": [upgrade(97, 1), upgrade(97, 1)],
-            }),
-        ];
+        let mut cases = Vec::new();
+        for (field, value) in [
+            ("operation", serde_json::json!("setBridgePaused")),
+            ("executionDelayBlocks", serde_json::json!(49)),
+            ("upgrades", serde_json::json!([])),
+            (
+                "upgrades",
+                serde_json::json!([upgrade(97, 1), upgrade(97, 1)]),
+            ),
+        ] {
+            let mut case = valid.clone();
+            case[field] = value;
+            cases.push(case);
+        }
+        let mut no_delay = valid.clone();
+        no_delay
+            .as_object_mut()
+            .unwrap()
+            .remove("executionDelayBlocks");
+        cases.push(no_delay);
         for (field, value) in [
             ("chainId", serde_json::json!(0)),
             ("proxy", serde_json::json!(zero)),
@@ -230,7 +273,9 @@ mod tests {
         cases.push(no_call_data);
         for case in cases {
             assert_eq!(
-                UpdateVotePayload::from_value(&case).unwrap_err(),
+                UpdateVotePayload::from_value(&case)
+                    .and_then(|payload| payload.validate(0))
+                    .unwrap_err(),
                 UpdateError::InvalidPayload,
                 "{case}"
             );

@@ -6,9 +6,18 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::addresses::{STABLECOIN_ADDRESS_PREFIX, STABLECOIN_MARKER_CODE};
 use outbe_system_common::stablecoin::stablecoin_address;
 
-pub use crate::abi::IStablecoinFactory;
 use crate::errors::{AbiDecodeError, StablecoinFactoryError};
 use crate::schema::StablecoinFactoryContract;
+
+// Generated ABI methods follow the Solidity argument lists.
+#[allow(clippy::too_many_arguments)]
+mod abi {
+    alloy_sol_types::sol!(
+        #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+        "../../../contracts/precompiles/src/IStablecoinFactory.sol"
+    );
+}
+pub use abi::IStablecoinFactory;
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here

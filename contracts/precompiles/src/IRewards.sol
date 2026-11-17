@@ -8,6 +8,6 @@ interface IRewards {
     event BlockFeeEscrowed(bytes32 indexed fbHash, uint64 indexed fbNumber, uint256 feeSumNative);
     event VoterFeeTransferred(bytes32 indexed fbHash, address indexed voter, uint256 amountNative);
     /// @dev Transferred plus rest equals the escrow. Rest is this window's native
-    /// residue, burned in full by the shared Promis Limit helper.
+    /// residue, burned into the Promis Limit with code 42.
     event BlockFeesTransferred(bytes32 indexed fbHash, uint256 transferredNative, uint256 restNative);
 }
