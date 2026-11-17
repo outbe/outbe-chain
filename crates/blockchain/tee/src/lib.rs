@@ -34,6 +34,7 @@ pub mod finalized_admission;
 pub mod host_collateral;
 pub use outbe_dcap::verifier;
 pub mod journal_storage;
+pub mod lifecycle;
 pub mod metrics;
 #[cfg(feature = "native-dcap")]
 pub use outbe_dcap::native_qvl;

@@ -382,3 +382,77 @@ fn promote_pending_manifest(paths: &NodeHostPaths) -> Result<(), TransportError>
     File::open(&paths.root)?.sync_all()?;
     Ok(())
 }
+
+impl NodeHostIdentityV1 {
+    /// Authorization uses only the persistent host keys, not the process enclave identity.
+    pub fn authorization_witness_v1(
+        &self,
+        node_host: &NodeHostNoiseKey,
+    ) -> crate::in_process::Result<
+        outbe_primitives::tee_attestation_v1::NodeHostAuthorizationWitnessV1,
+    > {
+        use outbe_primitives::tee_attestation_v1::NodeHostAuthorizationWitnessV1;
+        let witness = NodeHostAuthorizationWitnessV1 {
+            chain_id: self.network_binding.chain_id,
+            genesis_hash: self.network_binding.genesis_hash,
+            attestation_mode: self.network_binding.attestation_mode,
+            node_id: self.node_id(),
+            node_host_noise_x25519: node_host.public(),
+        };
+        witness.encode_canonical()?;
+        Ok(witness)
+    }
+}
+
+#[cfg(test)]
+pub(super) mod process_identity_tests {
+    use super::*;
+    use outbe_primitives::tee_attestation_v1::*;
+
+    pub(crate) fn manifest(seed: u8, host: [u8; 32]) -> EnclaveInitializationManifestV1 {
+        let node = k256::ecdsa::SigningKey::from_slice(&[3; 32]).unwrap();
+        EnclaveInitializationManifestV1 {
+            chain_id: alloy_primitives::U256::from(424242).to_be_bytes(),
+            genesis_hash: B256::repeat_byte(2),
+            attestation_mode: AttestationMode::NoAttestationDev,
+            node_id: NodeIdV1 {
+                reth_p2p_public: node
+                    .verifying_key()
+                    .to_encoded_point(true)
+                    .as_bytes()
+                    .try_into()
+                    .unwrap(),
+            },
+            initialization_challenge: [seed; 32],
+            node_host_noise_x25519: host,
+            recipient_x25519: [seed; 32],
+            noise_responder_x25519: [seed; 32],
+            attestation_ed25519: ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
+                .verifying_key()
+                .to_bytes(),
+        }
+    }
+
+    #[test]
+    fn host_authorization_is_stable_across_ephemeral_enclave_restarts() {
+        let root = tempfile::tempdir().unwrap();
+        let host = NodeHostNoiseKey::create_new(&root.path().join("host.key")).unwrap();
+        let active = manifest(9, host.public());
+        let identity = NodeHostIdentityV1 {
+            network_binding: active.network_binding(),
+            reth_p2p_public: active.node_id.reth_p2p_public,
+        };
+        let expected = identity.authorization_witness_v1(&host).unwrap();
+        for process in [active, manifest(10, host.public())] {
+            assert_eq!(
+                NodeHostAuthorizationWitnessV1::from_manifest(&process).unwrap(),
+                expected
+            );
+        }
+        let loaded = NodeHostNoiseKey::load(&root.path().join("host.key")).unwrap();
+        assert_eq!(
+            identity.authorization_witness_v1(&loaded).unwrap(),
+            expected
+        );
+    }
+}
