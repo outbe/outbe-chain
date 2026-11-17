@@ -5,8 +5,6 @@ use outbe_execution::tee_remote_session::{
     inspect_local_finalized_successor_status_v1, RegistryChainIdentity,
 };
 
-const TEE_LEASE_GUARD_POLL_SECS: u64 = 1;
-
 /// Exact finalized checkpoint at which a node may arm its local lease guard
 /// after replaying stale or pre-registration history. This is process-local
 /// startup authority, never consensus or wire state.
@@ -362,7 +360,7 @@ where
     Ok(admission)
 }
 
-fn read_consistent_finalized_head<P>(
+pub(super) fn read_consistent_finalized_head<P>(
     provider: &P,
     context: &'static str,
 ) -> eyre::Result<Option<(alloy_eips::BlockNumHash, u64)>>
@@ -397,7 +395,7 @@ where
     Err(last_error.into())
 }
 
-fn read_local_tee_admission_at_block<P>(
+pub(super) fn read_local_tee_admission_at_block<P>(
     protocol: &dyn EngineProtocolState,
     provider: &P,
     chain: RegistryChainIdentity,
@@ -661,53 +659,34 @@ where
         + Sync
         + 'static,
 {
-    let TeeLeaseGuardConfigV1 {
-        chain,
-        identity,
-        mut anchors,
-        finalization_notify,
-        armed,
-    } = config;
-    let mut retired_at = 0;
-    let mut interval = tokio::time::interval(Duration::from_secs(TEE_LEASE_GUARD_POLL_SECS));
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    loop {
-        // Each local finalization wakes the guard at once. The interval
-        // remains a fallback for missed wake-ups.
-        tokio::select! {
-            _ = shutdown.cancelled() => return Ok(None),
-            _ = finalization_notify.notified() => {}
-            _ = interval.tick() => {}
-        }
-        if anchors.gate.is_armed() {
-            retire_superseded_remote_sessions_v1(
-                &provider,
-                chain,
-                session.as_ref(),
-                &mut retired_at,
-            )?;
-        }
-        let admission = read_gated_finalized_local_tee_admission(
-            protocol.as_ref(),
-            &provider,
-            chain,
-            identity,
-            &mut anchors,
-        )
-        .map_err(|error| error.wrap_err("finalized TEE lease admission failed closed"))?;
-        if let Some(reason) = admission.and_then(tee_lease_admission_rejection) {
-            return Ok(Some(reason));
-        }
-        if anchors.gate.is_armed() && !*armed.borrow() {
-            // Receivers may be gone (consensus stopped). The guard still runs.
-            let _ = armed.send(true);
-        }
-    }
+    let authority = outbe_tee::TeeAuthorityChannel::default();
+    outbe_tee::install_tee_authority_watch(authority.subscribe())?;
+    let live = outbe_tee::in_process_tee_context()
+        .map(|context| {
+            crate::admission_authority::live::LiveTeeRuntimeV1::new(
+                crate::admission_authority::live::LiveTeeSnapshotV1 {
+                    identity: config.identity,
+                    anchors: config.anchors,
+                    context,
+                },
+                authority.clone(),
+            )
+            .map(Arc::new)
+        })
+        .transpose()?;
+    crate::admission_authority::guard::run_lease_guard(
+        provider,
+        (protocol, session),
+        config,
+        (authority, live),
+        shutdown,
+    )
+    .await
 }
 
 /// Ask the enclave to retire remote sessions once the local finalized chain
 /// schedules a successor retirement above `retired_at`.
-fn retire_superseded_remote_sessions_v1<P>(
+pub(super) fn retire_superseded_remote_sessions_v1<P>(
     provider: &P,
     chain: RegistryChainIdentity,
     session: &dyn outbe_execution::tee_remote_session::TeeSessionStateReader,
@@ -741,8 +720,8 @@ where
     Ok(())
 }
 
-/// A canonical lease rejection is an expected stop. Failure to read that state
-/// is still an operational error, even though both stop the local node.
+/// Retains canonical rejection diagnostics and records typed guard failures.
+/// Authority loss does not control the resident execution lifetime.
 pub(crate) fn tee_lease_exit_reason(
     verdict: Option<eyre::Result<String>>,
     shutdown: &outbe_execution::shutdown::NodeShutdown,

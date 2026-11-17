@@ -106,8 +106,8 @@ fn validator_gate_stays_pending_after_tee_join_until_validator_binding_and_offer
     assert!(dual_anchors.gate.is_armed());
 }
 
-#[tokio::test]
-async fn validator_gate_never_arms_or_signals_armed_on_terminal_rejection_or_offer_mismatch() {
+#[test]
+fn validator_gate_never_arms_on_rejection_or_offer_mismatch() {
     use outbe_consensus::validators::{LocalTeeRuntimeAdmissionV1, LocalTeeRuntimeRejectionV1};
 
     let valid_until = 1_800_001_000;
@@ -149,32 +149,6 @@ async fn validator_gate_never_arms_or_signals_armed_on_terminal_rejection_or_off
     );
     assert!(!anchors.gate.is_armed());
 
-    let notify = std::sync::Arc::new(tokio::sync::Notify::new());
-    notify.notify_one();
-    let (armed_tx, armed_rx) = tokio::sync::watch::channel(false);
-    let guard_verdict = super::run_tee_lease_guard_v1(
-        jailed_provider,
-        std::sync::Arc::new(crate::OutbeRuntime::new()),
-        std::sync::Arc::new(crate::OutbeRuntime::new()),
-        crate::admission::TeeLeaseGuardConfigV1 {
-            chain,
-            identity,
-            anchors,
-            finalization_notify: notify,
-            armed: armed_tx,
-        },
-        tokio_util::sync::CancellationToken::new(),
-    )
-    .await
-    .expect("jailed validator returns a clean terminal rejection string");
-    assert!(guard_verdict
-        .expect("must reject jailed validator")
-        .contains("jailed"));
-    assert!(
-        !*armed_rx.borrow(),
-        "run_tee_lease_guard_v1 must never publish armed=true on a rejected check"
-    );
-
     // Scenario 3b: ValidatorBindingMismatch -> gate stays Pending, armed watch stays false.
     let (mismatch_provider, _, _, mismatch_hashes) = build_tee_admission_mock_provider(
         &[(7, valid_until - 100), (10, valid_until - 50)],
@@ -207,29 +181,6 @@ async fn validator_gate_never_arms_or_signals_armed_on_terminal_rejection_or_off
         ))
     );
     assert!(!mismatch_anchors.gate.is_armed());
-    let notify = std::sync::Arc::new(tokio::sync::Notify::new());
-    notify.notify_one();
-    let (armed_tx, armed_rx) = tokio::sync::watch::channel(false);
-    let mismatch_guard = super::run_tee_lease_guard_v1(
-        mismatch_provider,
-        std::sync::Arc::new(crate::OutbeRuntime::new()),
-        std::sync::Arc::new(crate::OutbeRuntime::new()),
-        crate::admission::TeeLeaseGuardConfigV1 {
-            chain,
-            identity,
-            anchors: mismatch_anchors,
-            finalization_notify: notify,
-            armed: armed_tx,
-        },
-        tokio_util::sync::CancellationToken::new(),
-    )
-    .await
-    .expect("binding mismatch returns a clean terminal rejection string");
-    assert!(mismatch_guard
-        .expect("must reject binding mismatch")
-        .contains("disagree"));
-    assert!(!*armed_rx.borrow());
-
     // Scenario 3c: Offer key mismatch when validator binding is Ready -> fails closed with LocalEnclaveOfferKeyMismatch.
     let (ready_provider, _, _, ready_hashes) = build_tee_admission_mock_provider(
         &[(7, valid_until - 100), (10, valid_until - 50)],
@@ -295,29 +246,6 @@ async fn validator_gate_never_arms_or_signals_armed_on_terminal_rejection_or_off
         ))
     );
     assert!(!expired_anchors.gate.is_armed());
-    let notify = std::sync::Arc::new(tokio::sync::Notify::new());
-    notify.notify_one();
-    let (armed_tx, armed_rx) = tokio::sync::watch::channel(false);
-    let expired_guard = super::run_tee_lease_guard_v1(
-        expired_now_provider,
-        std::sync::Arc::new(crate::OutbeRuntime::new()),
-        std::sync::Arc::new(crate::OutbeRuntime::new()),
-        crate::admission::TeeLeaseGuardConfigV1 {
-            chain,
-            identity,
-            anchors: expired_anchors,
-            finalization_notify: notify,
-            armed: armed_tx,
-        },
-        tokio_util::sync::CancellationToken::new(),
-    )
-    .await
-    .expect("expired lease returns a clean terminal rejection string");
-    assert!(expired_guard
-        .expect("must reject expired lease")
-        .contains("expired"));
-    assert!(!*armed_rx.borrow());
-
     // Scenario 3e: Provider state read failure -> returns Err and never arms or signals armed=true.
     let mut failing_provider = ready_provider;
     failing_provider.fail_state_read = true;
@@ -339,23 +267,4 @@ async fn validator_gate_never_arms_or_signals_armed_on_terminal_rejection_or_off
         .is_err()
     );
     assert!(!failing_anchors.gate.is_armed());
-    let notify = std::sync::Arc::new(tokio::sync::Notify::new());
-    notify.notify_one();
-    let (armed_tx, armed_rx) = tokio::sync::watch::channel(false);
-    assert!(super::run_tee_lease_guard_v1(
-        failing_provider,
-        std::sync::Arc::new(crate::OutbeRuntime::new()),
-        std::sync::Arc::new(crate::OutbeRuntime::new()),
-        crate::admission::TeeLeaseGuardConfigV1 {
-            chain,
-            identity,
-            anchors: failing_anchors,
-            finalization_notify: notify,
-            armed: armed_tx,
-        },
-        tokio_util::sync::CancellationToken::new(),
-    )
-    .await
-    .is_err());
-    assert!(!*armed_rx.borrow());
 }

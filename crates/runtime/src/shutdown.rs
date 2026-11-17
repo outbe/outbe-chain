@@ -96,8 +96,6 @@ pub(crate) fn consensus_shutdown_result(
 pub(crate) enum LauncherExitCause {
     NodeExited,
     ConsensusExited,
-    UpgradeRequested,
-    TeeLeaseRejected,
     CtrlC,
 }
 
@@ -168,10 +166,9 @@ impl Drop for ConsensusThreadGuard {
 pub(crate) async fn wait_for_launcher_exit(
     shutdown: &outbe_execution::shutdown::NodeShutdown,
     consensus_dead_rx: Option<&mut oneshot::Receiver<()>>,
-    upgrade_promotion: &tokio::sync::Notify,
+    _upgrade_promotion: &tokio::sync::Notify,
     tee_lease_exit_rx: Option<&mut tokio::sync::mpsc::UnboundedReceiver<eyre::Result<String>>>,
 ) -> LauncherExitCause {
-    let has_consensus = consensus_dead_rx.is_some();
     let consensus_dead = async {
         match consensus_dead_rx {
             Some(rx) => {
@@ -180,13 +177,18 @@ pub(crate) async fn wait_for_launcher_exit(
             None => std::future::pending().await,
         }
     };
-    // `None` is an absent lease guard, not a dropped sender. A dropped sender
-    // is `TeeLeaseGuardStoppedWithoutVerdict` and would shut the node down.
+    // A lost authority publisher fails closed through TeeAuthorityWatch. Execution
+    // retains its resident key and must stay alive even if the guard has failed.
     let tee_lease_exit = async {
-        match tee_lease_exit_rx {
-            Some(rx) => rx.recv().await,
-            None => std::future::pending().await,
+        if let Some(rx) = tee_lease_exit_rx {
+            while let Some(verdict) = rx.recv().await {
+                let reason = tee_lease_exit_reason(Some(verdict), shutdown);
+                tracing::error!(%reason, "TEE authority guard stopped; execution remains alive");
+            }
+            let reason = tee_lease_exit_reason(None, shutdown);
+            tracing::error!(%reason, "TEE authority publisher lost; execution remains alive");
         }
+        std::future::pending::<()>().await;
     };
     tokio::select! {
         () = shutdown.engine_exited() => {
@@ -197,23 +199,7 @@ pub(crate) async fn wait_for_launcher_exit(
             info!("consensus node exited");
             LauncherExitCause::ConsensusExited
         }
-        () = upgrade_promotion.notified() => {
-            info!("finalized enclave upgrade requested execution restart");
-            LauncherExitCause::UpgradeRequested
-        }
-        rejection = tee_lease_exit => {
-            let reason = tee_lease_exit_reason(rejection, shutdown);
-            if has_consensus {
-                tracing::error!(
-                    reason = %reason, "finalized TEE lease guard requested node shutdown"
-                );
-            } else {
-                tracing::error!(
-                    reason = %reason, "finalized TEE lease guard requested full-node shutdown"
-                );
-            }
-            LauncherExitCause::TeeLeaseRejected
-        }
+        () = tee_lease_exit => unreachable!("authority monitoring never exits execution"),
         signal = tokio::signal::ctrl_c() => {
             if let Err(error) = signal {
                 shutdown.record_failure(
@@ -348,36 +334,6 @@ mod tests {
 
     fn shutdown() -> outbe_execution::shutdown::NodeShutdown {
         outbe_execution::shutdown::NodeShutdown::default()
-    }
-
-    #[tokio::test]
-    async fn absent_lease_receiver_waits_for_another_exit() {
-        let upgrade = Arc::new(tokio::sync::Notify::new());
-        let notify = Arc::clone(&upgrade);
-        let task =
-            tokio::spawn(
-                async move { wait_for_launcher_exit(&shutdown(), None, &notify, None).await },
-            );
-        tokio::task::yield_now().await;
-        assert!(
-            !task.is_finished(),
-            "absent lease receiver must not resolve as TeeLeaseRejected"
-        );
-        upgrade.notify_one();
-        let cause = tokio::time::timeout(Duration::from_secs(2), task)
-            .await
-            .expect("upgrade notify")
-            .expect("join");
-        assert_eq!(cause, LauncherExitCause::UpgradeRequested);
-    }
-
-    #[tokio::test]
-    async fn closed_lease_receiver_is_tee_lease_rejected() {
-        let upgrade = tokio::sync::Notify::new();
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        drop(tx);
-        let cause = wait_for_launcher_exit(&shutdown(), None, &upgrade, Some(&mut rx)).await;
-        assert_eq!(cause, LauncherExitCause::TeeLeaseRejected);
     }
 
     #[tokio::test]

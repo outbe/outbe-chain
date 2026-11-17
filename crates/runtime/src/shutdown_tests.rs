@@ -299,3 +299,82 @@ fn test_fullnode_drops_node_tx_consensus_thread_exits() {
         "blocking_recv must return Err when sender is dropped"
     );
 }
+
+#[tokio::test]
+async fn launcher_ignores_promotion_and_lost_lease_publisher_until_engine_exit() {
+    use futures::FutureExt as _;
+    for lost_publisher in [false, true] {
+        let shutdown = outbe_execution::shutdown::NodeShutdown::default();
+        let promoted = tokio::sync::Notify::new();
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let lease = if lost_publisher {
+            drop(sender);
+            Some(&mut receiver)
+        } else {
+            promoted.notify_one();
+            None
+        };
+        let waiting = crate::shutdown::wait_for_launcher_exit(&shutdown, None, &promoted, lease);
+        tokio::pin!(waiting);
+        assert!(
+            waiting.as_mut().now_or_never().is_none(),
+            "authority loss or promotion must not stop execution"
+        );
+    }
+}
+
+#[tokio::test]
+async fn lost_lease_guard_closes_authority_even_when_the_live_owner_survives() {
+    use crate::admission::{TeeLeaseGuardAnchorsV1, TeeLeaseGuardConfigV1, TeeLeaseGuardGateV1};
+    use crate::admission_authority::{guard::run_lease_guard, live::*, test_support as support};
+    use futures::FutureExt as _;
+    use outbe_tee::{TeeAuthorityChannel, TeeAuthorityState};
+    let context = support::context(9);
+    let (provider, chain, identity) =
+        support::provider(&context, 7, 1_800_000_000, 1_800_001_000, false);
+    let channel = TeeAuthorityChannel::default();
+    let anchors = TeeLeaseGuardAnchorsV1 {
+        gate: TeeLeaseGuardGateV1::Armed,
+        durable: None,
+    };
+    let owner = Arc::new(
+        LiveTeeRuntimeV1::new(
+            LiveTeeSnapshotV1 {
+                identity,
+                anchors,
+                context: context.clone(),
+            },
+            channel.clone(),
+        )
+        .unwrap(),
+    );
+    owner
+        .refresh(&provider, &crate::OutbeRuntime::new(), &chain)
+        .unwrap();
+    let mut guard = Box::pin(run_lease_guard(
+        provider,
+        (
+            Arc::new(crate::OutbeRuntime::new()),
+            Arc::new(crate::OutbeRuntime::new()),
+        ),
+        TeeLeaseGuardConfigV1 {
+            chain,
+            identity,
+            anchors,
+            finalization_notify: Arc::new(tokio::sync::Notify::new()),
+            armed: tokio::sync::watch::channel(true).0,
+        },
+        (channel.clone(), Some(owner.clone())),
+        tokio_util::sync::CancellationToken::new(),
+    ));
+    assert!(guard.as_mut().now_or_never().is_none());
+    assert!(channel.snapshot().is_authority_open());
+    drop(guard);
+    assert_eq!(
+        channel.snapshot(),
+        TeeAuthorityState::SuspendedPolicyMismatch
+    );
+    assert!(channel.snapshot().has_verified_resident_key());
+    assert!(Arc::ptr_eq(&owner.lock().unwrap().context, &context));
+    assert!(context.offer_key_ready().unwrap());
+}

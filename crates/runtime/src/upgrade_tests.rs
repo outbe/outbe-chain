@@ -82,7 +82,7 @@ async fn restart_after_installed_candidate_only_reconciles_the_promoted_checkpoi
 }
 
 #[tokio::test]
-async fn finalized_recovery_promotes_and_records_before_notifying_restart() {
+async fn finalized_recovery_promotes_and_records_without_requesting_restart() {
     let io = RecordingIo::new().unwrap();
     io.checkpoint(finalized(context()));
     *io.authorization.borrow_mut() = Some(Ok(finalized_view(105)));
@@ -95,7 +95,7 @@ async fn finalized_recovery_promotes_and_records_before_notifying_restart() {
             Action::Promote,
             Action::Promoted,
         ],
-        true,
+        false,
     )
     .await;
 }
@@ -139,7 +139,7 @@ async fn submitted_finalized_binding_wins_over_a_crossed_activation_cutoff() {
             Action::Promote,
             Action::Promoted,
         ],
-        true,
+        false,
     )
     .await;
 }
@@ -399,4 +399,204 @@ async fn submitted_missing_binding_before_cutoff_waits_without_terminal_checkpoi
         false,
     )
     .await;
+}
+
+struct LivePromotionFixture {
+    manifest: outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1,
+    view: outbe_tee::FinalizedRegistryViewV1,
+    actions: std::cell::RefCell<Vec<&'static str>>,
+    fail: bool,
+}
+impl UpgradePromotionIo for LivePromotionFixture {
+    type Authorization = outbe_tee::FinalizedRegistryViewV1;
+    fn inspect_journal(&self) -> eyre::Result<Option<UpgradeJournalSnapshotV1>> {
+        Ok(None)
+    }
+    fn committed_manifest(
+        &self,
+    ) -> eyre::Result<outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1> {
+        Ok(self.manifest.clone())
+    }
+    fn successor_status(
+        &self,
+    ) -> Result<
+        outbe_execution::tee_remote_session::LocalFinalizedSuccessorStatusV1,
+        LocalRegistryAdmissionError,
+    > {
+        unreachable!()
+    }
+    fn replacement_authorization(
+        &self,
+        node: &outbe_primitives::tee_attestation_v1::NodeIdV1,
+    ) -> Result<ports::PromotionAuthorization<Self::Authorization>, LocalRegistryAdmissionError>
+    {
+        assert_eq!(node, &self.manifest.node_id);
+        Ok(ports::PromotionAuthorization {
+            authorization: self.view,
+            view: self.view,
+        })
+    }
+    fn promote_candidate(&self, authorization: &Self::Authorization) -> eyre::Result<()> {
+        assert_eq!(authorization, &self.view);
+        self.actions.borrow_mut().push("durable");
+        if self.fail {
+            return Err(
+                crate::admission_authority::live::LiveTeeError::CandidateNotAdmitted.into(),
+            );
+        }
+        Ok(())
+    }
+    fn record_finalized(&self, height: u64, hash: B256) -> eyre::Result<()> {
+        assert_eq!(
+            (height, hash),
+            (self.view.block_number, self.view.block_hash)
+        );
+        self.actions.borrow_mut().push("finalized");
+        Ok(())
+    }
+    fn record_promoted(&self) -> eyre::Result<()> {
+        self.actions.borrow_mut().push("promoted");
+        Ok(())
+    }
+    fn record_missed_cutoff(&self, _: u64, _: u64) -> eyre::Result<()> {
+        unreachable!()
+    }
+}
+
+#[tokio::test]
+async fn live_upgrade_and_lease_guard_share_identity_anchor_and_context_without_restart() {
+    use crate::admission::{TeeLeaseGuardAnchorsV1, TeeLeaseGuardConfigV1, TeeLeaseGuardGateV1};
+    use crate::admission_authority::{guard::run_lease_guard, live::*, test_support as support};
+    use outbe_tee::{TeeAuthorityChannel, TeeAuthorityState};
+    for fail in [false, true] {
+        let old = support::context(9);
+        let candidate = support::context(10);
+        let (provider, chain, identity) =
+            support::provider(&old, 7, 1_800_000_000, 1_800_001_000, false);
+        let shared = support::SharedProvider(Arc::new(std::sync::Mutex::new(provider)));
+        let authority = TeeAuthorityChannel::default();
+        let mut watch = authority.subscribe();
+        let anchors = TeeLeaseGuardAnchorsV1 {
+            gate: TeeLeaseGuardGateV1::Armed,
+            durable: None,
+        };
+        let owner = Arc::new(
+            LiveTeeRuntimeV1::new(
+                LiveTeeSnapshotV1 {
+                    identity,
+                    anchors,
+                    context: old.clone(),
+                },
+                authority.clone(),
+            )
+            .unwrap(),
+        );
+        let notify = Arc::new(tokio::sync::Notify::new());
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let guard = run_lease_guard(
+            shared.clone(),
+            (
+                Arc::new(crate::OutbeRuntime::new()),
+                Arc::new(crate::OutbeRuntime::new()),
+            ),
+            TeeLeaseGuardConfigV1 {
+                chain,
+                identity,
+                anchors,
+                finalization_notify: notify.clone(),
+                armed: tokio::sync::watch::channel(false).0,
+            },
+            (authority.clone(), Some(owner.clone())),
+            shutdown.clone(),
+        );
+        tokio::pin!(guard);
+        tokio::select! { result = &mut guard => panic!("guard stopped: {result:?}"), result = watch.changed() => result.unwrap() }
+        assert!(watch.snapshot().is_authority_open());
+        let (successor, _, _) =
+            support::provider(&candidate, 105, 1_800_000_000, 1_800_001_000, false);
+        let head = successor.finalized_block_num_hash().unwrap().unwrap();
+        let view = outbe_tee::FinalizedRegistryViewV1 {
+            chain_id: U256::from(chain.chain_id).to_be_bytes(),
+            genesis_hash: chain.genesis_hash,
+            block_number: head.number,
+            block_hash: head.hash,
+            state_root: successor
+                .sealed_header(head.number)
+                .unwrap()
+                .unwrap()
+                .header()
+                .inner
+                .state_root,
+            consensus_timestamp: 1_800_000_000,
+        };
+        *shared.0.lock().unwrap() = successor;
+        let io = ports::LiveUpgradeIo {
+            inner: LivePromotionFixture {
+                manifest: old.manifest().clone(),
+                view,
+                actions: Default::default(),
+                fail,
+            },
+            provider: shared.clone(),
+            protocol: Arc::new(crate::OutbeRuntime::new()),
+            chain,
+            owner: owner.clone(),
+            candidate: candidate.clone(),
+        };
+        let promoted = tokio::sync::Notify::new();
+        assert_eq!(
+            promotion::reconcile_submitted(&io, &promoted),
+            Some(CycleOutcome::Stop)
+        );
+        assert!(
+            promoted.notified().now_or_never().is_none(),
+            "promotion never requests an execution restart"
+        );
+        if fail {
+            let snapshot = owner.lock().unwrap();
+            assert_eq!(snapshot.identity, identity);
+            assert_eq!(snapshot.anchors, anchors);
+            assert!(Arc::ptr_eq(&snapshot.context, &old));
+            assert_eq!(
+                authority.snapshot(),
+                TeeAuthorityState::SuspendedPolicyMismatch
+            );
+            assert_eq!(*io.inner.actions.borrow(), ["finalized", "durable"]);
+        } else {
+            let snapshot = owner.lock().unwrap().clone();
+            assert!(Arc::ptr_eq(&snapshot.context, &candidate));
+            assert_eq!(
+                snapshot.identity.expected_enclave_id,
+                Some(candidate.manifest().enclave_id().unwrap())
+            );
+            assert_eq!(
+                snapshot
+                    .anchors
+                    .gate
+                    .pending_anchor()
+                    .unwrap()
+                    .finalized_hash,
+                head.hash
+            );
+            assert_eq!(
+                *io.inner.actions.borrow(),
+                ["finalized", "durable", "promoted"]
+            );
+            watch.changed().await.unwrap();
+            notify.notify_one();
+            tokio::select! { result = &mut guard => panic!("guard stopped after promotion: {result:?}"), result = watch.changed() => result.unwrap() }
+            assert_eq!(
+                watch.snapshot(),
+                TeeAuthorityState::Armed {
+                    enclave_id: candidate.manifest().enclave_id().unwrap(),
+                    valid_until: 1_800_001_000
+                }
+            );
+            assert!(owner.lock().unwrap().anchors.gate.is_armed());
+        }
+        assert!(old.offer_key_ready().unwrap());
+        assert!(candidate.offer_key_ready().unwrap());
+        shutdown.cancel();
+        assert_eq!(guard.await.unwrap(), None);
+    }
 }

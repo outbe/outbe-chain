@@ -7,7 +7,7 @@ pub(crate) fn recover_finalized(
     io: &impl UpgradePromotionIo,
     context: &UpgradeContextV1,
     checkpoint: BlockNumHash,
-    promoted: &tokio::sync::Notify,
+    _promoted: &tokio::sync::Notify,
 ) -> CycleOutcome {
     let BlockNumHash {
         number: finalized_height,
@@ -29,12 +29,12 @@ pub(crate) fn recover_finalized(
             if !promote_and_record(
                 io,
                 &authorized.authorization,
+                authorized.view,
                 "record finalized enclave promotion failed",
             ) {
                 return CycleOutcome::Stop;
             }
-            info!(finalized_height, %finalized_hash, "finalized enclave candidate promoted; execution restart required");
-            promoted.notify_one();
+            info!(finalized_height, %finalized_hash, "finalized enclave candidate promotion completed without execution restart");
             CycleOutcome::Stop
         }
         Err(error) => {
@@ -47,9 +47,10 @@ pub(crate) fn recover_finalized(
 fn promote_and_record<I: UpgradePromotionIo>(
     io: &I,
     authorization: &I::Authorization,
+    view: outbe_tee::FinalizedRegistryViewV1,
     checkpoint_error: &'static str,
 ) -> bool {
-    if let Err(error) = io.promote_candidate(authorization) {
+    if let Err(error) = io.promote_at(authorization, view) {
         tracing::error!(error = %error, "promote finalized enclave candidate failed");
         return false;
     }
@@ -62,7 +63,7 @@ fn promote_and_record<I: UpgradePromotionIo>(
 
 pub(crate) fn reconcile_submitted(
     io: &impl UpgradePromotionIo,
-    promoted: &tokio::sync::Notify,
+    _promoted: &tokio::sync::Notify,
 ) -> Option<CycleOutcome> {
     let committed = match io.committed_manifest() {
         Ok(committed) => committed,
@@ -85,6 +86,7 @@ pub(crate) fn reconcile_submitted(
             if !promote_and_record(
                 io,
                 &authorized.authorization,
+                authorized.view,
                 "record enclave candidate promotion failed",
             ) {
                 return Some(CycleOutcome::Stop);
@@ -92,9 +94,8 @@ pub(crate) fn reconcile_submitted(
             info!(
                 finalized_height = authorized.view.block_number,
                 finalized_hash = %authorized.view.block_hash,
-                "finalized enclave candidate promoted; execution restart required"
+                "finalized enclave candidate promotion completed without execution restart"
             );
-            promoted.notify_one();
             Some(CycleOutcome::Stop)
         }
         Err(

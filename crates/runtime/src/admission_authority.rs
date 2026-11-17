@@ -1,4 +1,7 @@
-//! Pure admission-to-authority contract; lifecycle publication is wired separately.
+//! Finalized admission publication and the shared in-memory lifecycle owner.
+
+pub(crate) mod guard;
+pub(crate) mod live;
 
 use alloy_primitives::B256;
 use outbe_consensus::validators::{LocalTeeRuntimeAdmissionV1, LocalTeeRuntimeRejectionV1};
@@ -7,13 +10,6 @@ use outbe_tee::TeeAuthorityState;
 use crate::errors::TeeAuthorityError;
 
 /// Only the activation-height founder path may run before a finalized registry lease.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "The lease guard selects this policy when wiring the admission contract in the next integration wave."
-    )
-)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum BootstrapAdmissionPolicy {
     /// Founding TEE DKG completed in this process; block one is not finalized yet.
@@ -24,13 +20,6 @@ pub(crate) enum BootstrapAdmissionPolicy {
 
 /// Interprets finalized admission alongside an already verified resident key.
 /// A mismatch is an invariant failure: the caller must close authority and report it.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "The lease guard wires this admission contract in the next integration wave."
-    )
-)]
 pub(crate) fn admitted_authority_state(
     admission: LocalTeeRuntimeAdmissionV1,
     enclave_id: B256,
@@ -76,6 +65,17 @@ pub(crate) fn admitted_authority_state(
             TeeAuthorityState::SuspendedPolicyMismatch
         }
     })
+}
+
+/// Failure never erases a previously verified execution key.
+fn publish_failure(channel: &outbe_tee::TeeAuthorityChannel, has_resident: bool) {
+    channel.publish(
+        if has_resident || channel.snapshot().has_verified_resident_key() {
+            TeeAuthorityState::SuspendedPolicyMismatch
+        } else {
+            TeeAuthorityState::UnkeyedAwaitingAdmission
+        },
+    );
 }
 
 #[cfg(test)]
@@ -270,3 +270,6 @@ mod tests {
             .is::<outbe_primitives::error::PrecompileError>());
     }
 }
+
+#[cfg(test)]
+pub(crate) mod test_support;
