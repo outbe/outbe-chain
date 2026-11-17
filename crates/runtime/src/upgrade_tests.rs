@@ -325,11 +325,11 @@ async fn all_pre_submission_states_keep_waiting_before_activation() {
 #[tokio::test]
 async fn staged_policy_failures_stop_before_submitted_authorization() {
     use outbe_primitives::tee_genesis_v1::{
-        initial_tee_policy_v1, InitialTeeProfileV1, GRAMINE_DIRECT_DEV_CHAIN_ID,
+        initial_tee_policy_v1, InitialTeeProfileV1, NO_ATTESTATION_DEV_CHAIN_ID,
     };
     let mut policy = initial_tee_policy_v1(
         InitialTeeProfileV1::NoAttestationDev,
-        GRAMINE_DIRECT_DEV_CHAIN_ID,
+        NO_ATTESTATION_DEV_CHAIN_ID,
         B256::repeat_byte(1),
     )
     .unwrap();

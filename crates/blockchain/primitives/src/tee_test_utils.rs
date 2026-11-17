@@ -67,11 +67,6 @@ pub fn signed_transition_key_ready_proof(
     proof
 }
 
-/// Transitional spelling for downstream callers; remove after the rename wave.
-pub fn gramine_direct_policy_v1(chain_id: u64, genesis_hash: B256) -> Result<TeePolicyV1, String> {
-    no_attestation_dev_policy_v1(chain_id, genesis_hash)
-}
-
 pub fn no_attestation_dev_policy_v1(
     chain_id: u64,
     genesis_hash: B256,
@@ -112,7 +107,7 @@ pub fn no_attestation_dev_policy_v1(
     };
     policy
         .encode_canonical()
-        .map_err(|error| format!("encode GramineDirectDev test policy: {error}"))?;
+        .map_err(|error| format!("encode NoAttestationDev test policy: {error}"))?;
     Ok(policy)
 }
 
@@ -120,7 +115,7 @@ pub fn tee_attestation_v1_extra_field(policy: &TeePolicyV1) -> Result<Value, Str
     tee_attestation_v1_genesis_field(policy).map_err(|error| error.to_string())
 }
 
-pub fn gramine_direct_bootstrap_v2(
+pub fn no_attestation_dev_bootstrap_v2(
     policy: TeePolicyV1,
     committee_snapshot_hash: B256,
     committee_snapshot_block: u64,
@@ -128,12 +123,12 @@ pub fn gramine_direct_bootstrap_v2(
     validators: &[DevValidatorV1],
 ) -> Result<TeeBootstrapV2, String> {
     if validators.is_empty() {
-        return Err("GramineDirectDev test committee is empty".into());
+        return Err("NoAttestationDev test committee is empty".into());
     }
 
     let policy_hash = policy
         .policy_hash()
-        .map_err(|error| format!("hash GramineDirectDev test policy: {error}"))?;
+        .map_err(|error| format!("hash NoAttestationDev test policy: {error}"))?;
     let mut signers = BTreeMap::<Address, OutbeEvmSigner>::new();
     let mut submissions = Vec::with_capacity(validators.len());
     for (index, validator) in validators.iter().enumerate() {
@@ -141,23 +136,23 @@ pub fn gramine_direct_bootstrap_v2(
             .map_err(|error| format!("construct test validator signer: {error}"))?;
         let address = signer.address();
         if signers.insert(address, signer.clone()).is_some() {
-            return Err("GramineDirectDev test committee contains a duplicate validator".into());
+            return Err("NoAttestationDev test committee contains a duplicate validator".into());
         }
 
         let ordinal = u64::try_from(index)
-            .map_err(|_| "GramineDirectDev test validator index exceeds u64")?;
+            .map_err(|_| "NoAttestationDev test validator index exceeds u64")?;
         let attestation_seed = deterministic_key(
             b"outbe/test/gramine-direct/attestation",
             &validator.evm_secret,
             ordinal,
         );
         let attestation = Ed25519KeyPair::from_seed_unchecked(&attestation_seed)
-            .map_err(|_| "construct GramineDirectDev test attestation key")?;
+            .map_err(|_| "construct NoAttestationDev test attestation key")?;
         let attestation_public: [u8; 32] = attestation
             .public_key()
             .as_ref()
             .try_into()
-            .map_err(|_| "GramineDirectDev test attestation key is not Ed25519-32")?;
+            .map_err(|_| "NoAttestationDev test attestation key is not Ed25519-32")?;
         let recipient_x25519 = deterministic_key(
             b"outbe/test/gramine-direct/recipient",
             &validator.evm_secret,
@@ -184,13 +179,13 @@ pub fn gramine_direct_bootstrap_v2(
             ordinal,
         );
         let node_signer = k256::ecdsa::SigningKey::from_bytes((&node_secret).into())
-            .map_err(|_| "construct GramineDirectDev test NodeHost signer")?;
+            .map_err(|_| "construct NoAttestationDev test NodeHost signer")?;
         let reth_p2p_public = node_signer
             .verifying_key()
             .to_encoded_point(true)
             .as_bytes()
             .try_into()
-            .map_err(|_| "GramineDirectDev test NodeHost key is not SEC1-33")?;
+            .map_err(|_| "NoAttestationDev test NodeHost key is not SEC1-33")?;
         let mut intent = RegistrationIntentV1 {
             chain_id: policy.chain_id,
             genesis_hash: policy.genesis_hash,
@@ -212,13 +207,13 @@ pub fn gramine_direct_bootstrap_v2(
         };
         intent.enclave_id = intent
             .derived_enclave_id()
-            .map_err(|error| format!("derive GramineDirectDev test enclave ID: {error}"))?;
+            .map_err(|error| format!("derive NoAttestationDev test enclave ID: {error}"))?;
         let intent_hash = intent
             .intent_hash()
-            .map_err(|error| format!("hash GramineDirectDev test intent: {error}"))?;
+            .map_err(|error| format!("hash NoAttestationDev test intent: {error}"))?;
         let (node_signature_body, node_recovery) = node_signer
             .sign_prehash(intent_hash.as_slice())
-            .map_err(|_| "sign GramineDirectDev test intent as NodeHost")?;
+            .map_err(|_| "sign NoAttestationDev test intent as NodeHost")?;
         let mut node_signature = [0_u8; 65];
         node_signature[..64].copy_from_slice(node_signature_body.to_bytes().as_slice());
         node_signature[64] = node_recovery.to_byte();
@@ -229,17 +224,17 @@ pub fn gramine_direct_bootstrap_v2(
             node_id_hash: intent
                 .node_id
                 .node_id_hash()
-                .map_err(|error| format!("hash GramineDirectDev test NodeHost: {error}"))?,
+                .map_err(|error| format!("hash NoAttestationDev test NodeHost: {error}"))?,
         };
         let binding_hash = validator_binding
             .binding_hash()
-            .map_err(|error| format!("hash GramineDirectDev validator binding: {error}"))?;
+            .map_err(|error| format!("hash NoAttestationDev validator binding: {error}"))?;
         let validator_signature = signer
             .sign_hash(&binding_hash)
-            .map_err(|error| format!("sign GramineDirectDev validator binding: {error}"))?;
+            .map_err(|error| format!("sign NoAttestationDev validator binding: {error}"))?;
         let (node_binding_body, node_binding_recovery) = node_signer
             .sign_prehash(binding_hash.as_slice())
-            .map_err(|_| "sign GramineDirectDev NodeHost binding")?;
+            .map_err(|_| "sign NoAttestationDev NodeHost binding")?;
         let mut node_binding_signature = [0_u8; 65];
         node_binding_signature[..64].copy_from_slice(node_binding_body.to_bytes().as_slice());
         node_binding_signature[64] = node_binding_recovery.to_byte();
@@ -247,7 +242,7 @@ pub fn gramine_direct_bootstrap_v2(
             .sign(intent_hash.as_slice())
             .as_ref()
             .try_into()
-            .map_err(|_| "GramineDirectDev test signature is not Ed25519-64")?;
+            .map_err(|_| "NoAttestationDev test signature is not Ed25519-64")?;
         submissions.push(TeeBootstrapParticipantSubmissionV2 {
             evidence: AttestationEvidenceV1::NoAttestationDev(NoAttestationDevEvidenceV1 {
                 transition_key_ready_proof: None,
@@ -274,20 +269,20 @@ pub fn gramine_direct_bootstrap_v2(
         network_encryption_group_public_key: Bytes::from(vec![0x24; 96]),
     };
     let mut payload = crate::tee_bootstrap_v2::assembly::assemble_unsigned(authority, submissions)
-        .map_err(|error| format!("assemble GramineDirectDev OST3 test payload: {error}"))?;
+        .map_err(|error| format!("assemble NoAttestationDev OST3 test payload: {error}"))?;
     let signing_hash = payload
         .signing_hash()
-        .map_err(|error| format!("hash GramineDirectDev OST3 test payload: {error}"))?;
+        .map_err(|error| format!("hash NoAttestationDev OST3 test payload: {error}"))?;
     for signature in &mut payload.committee_signatures {
         let signer = signers
             .get(&signature.validator)
             .ok_or_else(|| "assembled OST3 signer is absent from test committee".to_owned())?;
         signature.signature = signer
             .sign_hash(&signing_hash)
-            .map_err(|error| format!("sign GramineDirectDev OST3 test payload: {error}"))?;
+            .map_err(|error| format!("sign NoAttestationDev OST3 test payload: {error}"))?;
     }
     crate::tee_bootstrap_v2::codec::encode_canonical(&payload)
-        .map_err(|error| format!("validate GramineDirectDev OST3 test payload: {error}"))?;
+        .map_err(|error| format!("validate NoAttestationDev OST3 test payload: {error}"))?;
     Ok(payload)
 }
 

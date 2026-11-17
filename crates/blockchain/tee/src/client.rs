@@ -417,7 +417,7 @@ impl EnclaveClient {
         intent: &RegistrationIntentV1,
     ) -> Result<[u8; 64], TransportError> {
         let attestation_pub = self.attestation_pub();
-        request_gramine_direct_dev_signature(attestation_pub, intent, |request| {
+        request_no_attestation_dev_signature(attestation_pub, intent, |request| {
             self.request(request)
         })
     }
@@ -866,7 +866,7 @@ impl AuthorizedEnclaveClient {
         intent: &RegistrationIntentV1,
     ) -> Result<[u8; 64], TransportError> {
         let attestation_pub = self.attestation_pub;
-        request_gramine_direct_dev_signature(attestation_pub, intent, |request| {
+        request_no_attestation_dev_signature(attestation_pub, intent, |request| {
             self.request(request)
         })
     }
@@ -977,14 +977,6 @@ impl AuthorizedEnclaveClient {
         validate_dcap_onboarding_response(self.attestation_pub, request_hash, response)
     }
 
-    /// Transitional spelling for downstream callers; remove after the rename wave.
-    pub fn prepare_gramine_direct_dev_onboarding_artifact_v1(
-        &mut self,
-        context: DcapOnboardingContextV1,
-    ) -> Result<DcapOnboardingArtifactV1, TransportError> {
-        self.prepare_no_attestation_dev_onboarding_artifact_v1(context)
-    }
-
     pub fn prepare_no_attestation_dev_onboarding_artifact_v1(
         &mut self,
         context: DcapOnboardingContextV1,
@@ -1005,7 +997,7 @@ impl AuthorizedEnclaveClient {
         };
         if actual_request_hash != request_hash {
             return Err(TransportError::EnclaveError(
-                "GramineDirectDev onboarding response context hash mismatch".into(),
+                "NoAttestationDev onboarding response context hash mismatch".into(),
             ));
         }
         let artifact =
@@ -1016,7 +1008,7 @@ impl AuthorizedEnclaveClient {
             })?;
         if artifact.context != context {
             return Err(TransportError::EnclaveError(
-                "GramineDirectDev onboarding artifact context mismatch".into(),
+                "NoAttestationDev onboarding artifact context mismatch".into(),
             ));
         }
         Ok(artifact)
@@ -1085,7 +1077,7 @@ impl AuthorizedEnclaveClient {
     }
 }
 
-fn request_gramine_direct_dev_signature(
+fn request_no_attestation_dev_signature(
     attestation_pub: [u8; 32],
     intent: &RegistrationIntentV1,
     request: impl FnOnce(&EnclaveRequest) -> Result<EnclaveResponse, TransportError>,
@@ -1094,7 +1086,7 @@ fn request_gramine_direct_dev_signature(
         || intent.attestation_ed25519 != attestation_pub
     {
         return Err(TransportError::Attestation(
-            "GramineDirectDev registration intent does not bind this enclave and mode".into(),
+            "NoAttestationDev registration intent does not bind this enclave and mode".into(),
         ));
     }
     let canonical = intent.encode_canonical().map_err(TransportError::codec)?;
@@ -1107,12 +1099,12 @@ fn request_gramine_direct_dev_signature(
         } if echoed == canonical => {
             let signature: [u8; 64] = enclave_signature.try_into().map_err(|_| {
                 TransportError::Attestation(
-                    "enclave returned a non-canonical GramineDirectDev Ed25519 signature".into(),
+                    "enclave returned a non-canonical NoAttestationDev Ed25519 signature".into(),
                 )
             })?;
             if !intent.verify_enclave_signature(&signature) {
                 return Err(TransportError::Attestation(
-                    "enclave returned an invalid GramineDirectDev intent signature".into(),
+                    "enclave returned an invalid NoAttestationDev intent signature".into(),
                 ));
             }
             Ok(signature)

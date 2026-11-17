@@ -603,7 +603,7 @@ fn development_session_can_prepare_direct_dev_onboarding_artifact() {
     let context = crate::test_utils::onboarding_context_fixture([1, 2, 3, 4, 5, 6, 7, 8, 9], 1, 2);
 
     let response = session
-        .prepare_gramine_direct_dev_onboarding_artifact_v2_raw(context)
+        .prepare_no_attestation_dev_onboarding_artifact_v2_raw(context)
         .expect("development DirectDev request");
 
     assert!(matches!(response, EnclaveResponse::Ack));
@@ -611,7 +611,7 @@ fn development_session_can_prepare_direct_dev_onboarding_artifact() {
         .served
         .lock()
         .unwrap()
-        .contains(&"prepare_gramine_direct_dev_onboarding_artifact_v2"));
+        .contains(&"prepare_no_attestation_dev_onboarding_artifact_v2"));
     server.stop.store(true, Ordering::Relaxed);
 }
 

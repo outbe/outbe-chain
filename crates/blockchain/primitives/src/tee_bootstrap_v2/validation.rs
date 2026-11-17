@@ -91,7 +91,7 @@ fn validate_authority_shape(payload: &TeeBootstrapV2) -> Result<(), CodecError> 
         }
         AttestationMode::NoAttestationDev if !payload.collateral_pool.is_empty() => {
             return Err(CodecError::NonCanonical(
-                "GramineDirectDev TEE bootstrap must not carry DCAP collateral",
+                "NoAttestationDev TEE bootstrap must not carry DCAP collateral",
             ));
         }
         _ => {}
@@ -186,7 +186,7 @@ fn validate_participant_evidence(
                 || !participant.intent.verify_enclave_signature(dev_signature)
             {
                 return Err(CodecError::NonCanonical(
-                    "GramineDirectDev evidence does not prove the intent attestation key",
+                    "NoAttestationDev evidence does not prove the intent attestation key",
                 ));
             }
         }

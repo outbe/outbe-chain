@@ -21,13 +21,13 @@ use crate::{
     },
 };
 
-/// Primary chain ID for the runnable Gramine Direct devnet.
-pub const GRAMINE_DIRECT_DEV_CHAIN_ID: u64 = DEVNET_CHAIN_ID;
+/// Primary chain ID for the runnable no-attestation devnet.
+pub const NO_ATTESTATION_DEV_CHAIN_ID: u64 = DEVNET_CHAIN_ID;
 
 /// Returns whether an explicitly configured development policy may use this
 /// fresh-network identity. Testnet keeps requiring an explicit genesis
 /// `NoAttestationDev` policy. This is not a runtime fallback from DCAP.
-pub const fn is_gramine_direct_dev_chain_id(chain_id: u64) -> bool {
+pub const fn is_no_attestation_dev_chain_id(chain_id: u64) -> bool {
     chain_id == DEVNET_CHAIN_ID || chain_id == TESTNET_CHAIN_ID
 }
 
@@ -45,7 +45,7 @@ pub const fn is_attestation_mode_allowed_for_chain_id(
 ) -> bool {
     match mode {
         AttestationMode::DcapRequired => is_dcap_required_chain_id(chain_id),
-        AttestationMode::NoAttestationDev => is_gramine_direct_dev_chain_id(chain_id),
+        AttestationMode::NoAttestationDev => is_no_attestation_dev_chain_id(chain_id),
     }
 }
 
@@ -74,10 +74,6 @@ pub enum InitialTeeProfileV1 {
 }
 
 impl InitialTeeProfileV1 {
-    /// Transitional spelling for downstream callers; remove after the rename wave.
-    #[allow(non_upper_case_globals)]
-    pub const GramineDirectDev: Self = Self::NoAttestationDev;
-
     pub const fn attestation_mode(self) -> AttestationMode {
         match self {
             Self::DcapRequired(_) => AttestationMode::DcapRequired,
@@ -345,7 +341,7 @@ mod tests {
     fn development_field_is_canonical_but_not_hardware_evidence() {
         let policy = initial_tee_policy_v1(
             InitialTeeProfileV1::NoAttestationDev,
-            GRAMINE_DIRECT_DEV_CHAIN_ID,
+            NO_ATTESTATION_DEV_CHAIN_ID,
             B256::repeat_byte(0x44),
         )
         .unwrap();

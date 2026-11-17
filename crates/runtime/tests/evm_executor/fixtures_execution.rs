@@ -181,12 +181,12 @@ pub(super) fn sample_tee_bootstrap_payload_for(
     validators: &[outbe_primitives::tee_test_utils::DevValidatorV1],
 ) -> outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2 {
     use outbe_primitives::tee_test_utils::{
-        gramine_direct_bootstrap_v2, no_attestation_dev_policy_v1,
+        no_attestation_dev_bootstrap_v2, no_attestation_dev_policy_v1,
     };
 
     let policy = no_attestation_dev_policy_v1(CHAIN_ID, MAINNET.genesis_hash())
         .expect("test NoAttestationDev policy is canonical");
-    gramine_direct_bootstrap_v2(
+    no_attestation_dev_bootstrap_v2(
         policy,
         committee_snapshot_hash,
         block_number,

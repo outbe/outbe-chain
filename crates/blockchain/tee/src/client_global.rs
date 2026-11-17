@@ -381,24 +381,17 @@ pub fn verify_dcap_registration_and_seal_v1(
     crate::client::validate_dcap_onboarding_response(key, expected, response)
 }
 
-/// Transitional spelling for downstream callers; remove after the rename wave.
-pub fn prepare_gramine_direct_dev_onboarding_artifact_v1(
-    context: DcapOnboardingContextV1,
-) -> Result<DcapOnboardingArtifactV1, TransportError> {
-    prepare_no_attestation_dev_onboarding_artifact_v1(context)
-}
-
 pub fn prepare_no_attestation_dev_onboarding_artifact_v1(
     context: DcapOnboardingContextV1,
 ) -> Result<DcapOnboardingArtifactV1, TransportError> {
     let expected = context.context_hash();
     let (key, response) = crate::witness::consensus_call(
-        "PrepareGramineDirectDevOnboardingArtifactV2",
+        "PrepareNoAttestationDevOnboardingArtifactV2",
         || {
             let (key, response) = try_with_enclave(|session| {
                 (
                     session.attestation_pub(),
-                    session.prepare_gramine_direct_dev_onboarding_artifact_v2_raw(context),
+                    session.prepare_no_attestation_dev_onboarding_artifact_v2_raw(context),
                 )
             })
             .ok_or_else(|| {

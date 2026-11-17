@@ -242,17 +242,17 @@ impl EnclaveRequest {
             Self::Health => "health",
             Self::DkgParticipantAnnounceV1 { .. } => "dkg_participant_announce_v1",
             Self::PrepareNoAttestationDevOnboardingArtifactV1 { .. } => {
-                "prepare_gramine_direct_dev_onboarding_artifact_v1"
+                "prepare_no_attestation_dev_onboarding_artifact_v1"
             }
             Self::IngestNoAttestationDevOnboardingArtifactV1 { .. } => {
-                "ingest_gramine_direct_dev_onboarding_artifact_v1"
+                "ingest_no_attestation_dev_onboarding_artifact_v1"
             }
             Self::GenerateTransitionEvidenceDevV1 { .. } => "generate_transition_evidence_dev_v1",
             Self::RetireRemoteSessionsV1 { .. } => "retire_remote_sessions_v1",
             Self::AuthorizeRemoteSessionV2 { .. } => "authorize_remote_session_v2",
             Self::BeginUpgradeKeyTransferV1 { .. } => "begin_upgrade_key_transfer_v1",
             Self::PrepareNoAttestationDevOnboardingArtifactV2 { .. } => {
-                "prepare_gramine_direct_dev_onboarding_artifact_v2"
+                "prepare_no_attestation_dev_onboarding_artifact_v2"
             }
             Self::Payload { .. } => "payload",
         }

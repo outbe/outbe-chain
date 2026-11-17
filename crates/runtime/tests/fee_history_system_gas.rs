@@ -23,8 +23,8 @@ use outbe_primitives::{
     },
     system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT,
     tee_test_utils::{
-        gramine_direct_bootstrap_v2, no_attestation_dev_policy_v1, tee_attestation_v1_extra_field,
-        DevValidatorV1,
+        no_attestation_dev_bootstrap_v2, no_attestation_dev_policy_v1,
+        tee_attestation_v1_extra_field, DevValidatorV1,
     },
     OutbeHeader, OutbePayloadAttributes,
 };
@@ -264,7 +264,7 @@ async fn rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
     // carries the same hash. The single genesis validator signs the payload.
     let bridge = ConsensusExecutionBridge::new();
     bridge.set_pending_tee_bootstrap(
-        gramine_direct_bootstrap_v2(
+        no_attestation_dev_bootstrap_v2(
             tee_policy,
             boundary_for_single_validator(proposer).committee_set_hash,
             1,

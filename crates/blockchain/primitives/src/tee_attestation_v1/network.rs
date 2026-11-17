@@ -8,10 +8,6 @@ pub enum AttestationMode {
 }
 
 impl AttestationMode {
-    /// Transitional spelling for downstream callers; remove after the rename wave.
-    #[allow(non_upper_case_globals)]
-    pub const GramineDirectDev: Self = Self::NoAttestationDev;
-
     pub(crate) fn decode(value: u8) -> Result<Self, CodecError> {
         match value {
             0x01 => Ok(Self::DcapRequired),

@@ -246,9 +246,6 @@ pub struct NoAttestationDevEvidenceV1 {
     pub transition_key_ready_proof: Option<TransitionKeyReadyProofV1>,
 }
 
-/// Transitional spelling for downstream callers; remove after the rename wave.
-pub type GramineDirectEvidenceV1 = NoAttestationDevEvidenceV1;
-
 impl NoAttestationDevEvidenceV1 {
     pub(super) fn encode_payload(&self) -> Result<Vec<u8>, CodecError> {
         if self.intent.attestation_mode != AttestationMode::NoAttestationDev {
@@ -334,12 +331,6 @@ pub enum AttestationEvidenceV1 {
 }
 
 impl AttestationEvidenceV1 {
-    /// Transitional expression constructor; patterns must use `NoAttestationDev`.
-    #[allow(non_snake_case)]
-    pub fn GramineDirectDev(value: NoAttestationDevEvidenceV1) -> Self {
-        Self::NoAttestationDev(value)
-    }
-
     pub fn intent(&self) -> &RegistrationIntentV1 {
         match self {
             Self::Dcap(v) => &v.intent,

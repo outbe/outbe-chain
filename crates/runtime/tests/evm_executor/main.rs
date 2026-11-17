@@ -49,7 +49,7 @@ use outbe_primitives::reshare_artifact::{
 use outbe_primitives::storage::{
     direct::DirectStorageProvider, hashmap::HashMapStorageProvider, StorageHandle,
 };
-use outbe_primitives::tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID;
+use outbe_primitives::tee_genesis_v1::NO_ATTESTATION_DEV_CHAIN_ID;
 use outbe_primitives::OutbeHeader;
 use outbe_stablecoin::StablecoinContract;
 use outbe_stablecoinfactory::{precompile::IStablecoinFactory, StablecoinFactoryContract};

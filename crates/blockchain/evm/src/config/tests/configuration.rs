@@ -26,10 +26,10 @@ fn new_with_bridge_installs_cache_summary_provider() {
 #[test]
 fn config_fixture_uses_the_gramine_direct_dev_chain_identity() {
     let chain_spec = test_chain_spec();
-    assert_eq!(chain_spec.chain().id(), GRAMINE_DIRECT_DEV_CHAIN_ID);
+    assert_eq!(chain_spec.chain().id(), NO_ATTESTATION_DEV_CHAIN_ID);
     assert_eq!(
         chain_spec.genesis.config.chain_id,
-        GRAMINE_DIRECT_DEV_CHAIN_ID
+        NO_ATTESTATION_DEV_CHAIN_ID
     );
 }
 
@@ -64,7 +64,7 @@ fn evm_config_binds_factory_to_canonical_chain_spec_genesis() {
         .with_evm_signer(signer)
         .build_signed_phase1_tx(
             2,
-            GRAMINE_DIRECT_DEV_CHAIN_ID,
+            NO_ATTESTATION_DEV_CHAIN_ID,
             expected,
             Some(metadata),
             None,

@@ -394,19 +394,11 @@ impl EnclaveSession {
             |client| client.verify_dcap_registration_and_seal_v1_raw(request),
         )
     }
-    pub(crate) fn prepare_gramine_direct_dev_onboarding_artifact_v2_raw(
+    pub(crate) fn prepare_no_attestation_dev_onboarding_artifact_v2_raw(
         &mut self,
         context: DcapOnboardingContextV1,
     ) -> Result<EnclaveResponse, TransportError> {
         self.request(&EnclaveRequest::PrepareNoAttestationDevOnboardingArtifactV2 { context })
-    }
-
-    /// Transitional spelling for downstream callers; remove after the rename wave.
-    pub fn prepare_gramine_direct_dev_onboarding_artifact_v1(
-        &mut self,
-        context: DcapOnboardingContextV1,
-    ) -> Result<DcapOnboardingArtifactV1, TransportError> {
-        self.prepare_no_attestation_dev_onboarding_artifact_v1(context)
     }
 
     pub fn prepare_no_attestation_dev_onboarding_artifact_v1(

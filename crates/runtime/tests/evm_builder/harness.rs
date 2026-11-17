@@ -11,7 +11,7 @@ use outbe_primitives::consensus::ConsensusExecutionBridge;
 use outbe_primitives::storage::{
     direct::DirectStorageProvider, hashmap::HashMapStorageProvider, StorageHandle,
 };
-use outbe_primitives::tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID;
+use outbe_primitives::tee_genesis_v1::NO_ATTESTATION_DEV_CHAIN_ID;
 use outbe_primitives::OutbeHeader;
 use reth_ethereum::chainspec::ChainSpec;
 use reth_ethereum::{
@@ -207,7 +207,7 @@ pub(super) fn genesis_dev_tee_bootstrap(
     committee_snapshot_hash: B256,
 ) -> outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2 {
     use outbe_primitives::tee_test_utils::{
-        gramine_direct_bootstrap_v2, no_attestation_dev_policy_v1, DevValidatorV1,
+        no_attestation_dev_bootstrap_v2, no_attestation_dev_policy_v1, DevValidatorV1,
     };
 
     let mut secret = [0_u8; 32];
@@ -215,11 +215,11 @@ pub(super) fn genesis_dev_tee_bootstrap(
     let mut consensus_public = [0_u8; 48];
     consensus_public[0] = 1;
     let policy = no_attestation_dev_policy_v1(
-        GRAMINE_DIRECT_DEV_CHAIN_ID,
+        NO_ATTESTATION_DEV_CHAIN_ID,
         test_chain_spec().genesis_hash(),
     )
     .expect("test NoAttestationDev policy is canonical");
-    gramine_direct_bootstrap_v2(
+    no_attestation_dev_bootstrap_v2(
         policy,
         committee_snapshot_hash,
         1,
@@ -250,8 +250,8 @@ pub(super) fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
     let mut spec = reth_chainspec::ChainSpecBuilder::from(&*MAINNET)
         .paris_activated()
         .build();
-    spec.chain = GRAMINE_DIRECT_DEV_CHAIN_ID.into();
-    spec.genesis.config.chain_id = GRAMINE_DIRECT_DEV_CHAIN_ID;
+    spec.chain = NO_ATTESTATION_DEV_CHAIN_ID.into();
+    spec.genesis.config.chain_id = NO_ATTESTATION_DEV_CHAIN_ID;
     spec.genesis.timestamp = TEST_BLOCK_ONE_TIMESTAMP - 1;
     let policy = no_attestation_dev_policy_v1(spec.chain().id(), spec.genesis_hash())
         .expect("test NoAttestationDev policy is canonical");

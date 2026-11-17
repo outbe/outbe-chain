@@ -31,7 +31,7 @@ pub enum TeeClientVerificationError {
     PolicyLengthExceedsU32,
     #[error("invalid onboarding verifier input dimensions: {code:#06x}")]
     InvalidOnboardingVerifierInputDimensions { code: u16 },
-    #[error("GramineDirectDev onboarding artifact is non-canonical: {code:#06x}")]
+    #[error("NoAttestationDev onboarding artifact is non-canonical: {code:#06x}")]
     NoAttestationDevOnboardingArtifactNonCanonical { code: u16 },
     #[error("verification offset exceeds u32")]
     VerificationOffsetExceedsU32,

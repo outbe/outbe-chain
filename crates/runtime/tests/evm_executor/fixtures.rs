@@ -3,7 +3,7 @@ use std::sync::Arc;
 pub use super::fixtures_execution::*;
 use super::*;
 
-pub const CHAIN_ID: u64 = GRAMINE_DIRECT_DEV_CHAIN_ID;
+pub const CHAIN_ID: u64 = NO_ATTESTATION_DEV_CHAIN_ID;
 
 pub(super) const TEST_BLOCK_TIMESTAMP_BASE: u64 = 1_700_000_000;
 

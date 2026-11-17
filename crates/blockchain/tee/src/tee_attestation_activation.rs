@@ -16,7 +16,7 @@ use outbe_primitives::{
     },
     tee_genesis_v1::{
         initial_tee_policy_v1, is_attestation_mode_allowed_for_chain_id, InitialTeeProfileV1,
-        ProductionSgxMeasurementV1, GRAMINE_DIRECT_DEV_CHAIN_ID,
+        ProductionSgxMeasurementV1, NO_ATTESTATION_DEV_CHAIN_ID,
     },
     OutbeHeader,
 };
@@ -407,14 +407,14 @@ fn validate_activation(
         return Err(match initial_policy.attestation_mode {
             AttestationMode::DcapRequired => {
                 TeeAttestationActivationError::DcapRequiredChainIdDisallowed {
-                    devnet: GRAMINE_DIRECT_DEV_CHAIN_ID,
+                    devnet: NO_ATTESTATION_DEV_CHAIN_ID,
                     testnet: TESTNET_CHAIN_ID,
                     mainnet: MAINNET_CHAIN_ID,
                 }
             }
             AttestationMode::NoAttestationDev => {
                 TeeAttestationActivationError::NoAttestationDevChainIdDisallowed {
-                    devnet: GRAMINE_DIRECT_DEV_CHAIN_ID,
+                    devnet: NO_ATTESTATION_DEV_CHAIN_ID,
                     testnet: TESTNET_CHAIN_ID,
                 }
             }
@@ -737,7 +737,7 @@ mod tests {
 
     #[test]
     fn dev_mode_is_valid_for_devnet_and_testnet_but_not_unknown_identities() {
-        let dev_chain_id = GRAMINE_DIRECT_DEV_CHAIN_ID;
+        let dev_chain_id = NO_ATTESTATION_DEV_CHAIN_ID;
         let dev_genesis_hash = B256::repeat_byte(0x66);
         let dev = validate_activation(
             activation(
