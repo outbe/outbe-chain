@@ -57,8 +57,9 @@ pub struct ConsensusArgs {
     #[arg(long = "consensus.signing-key", value_name = "PATH")]
     pub signing_key: Option<PathBuf>,
 
-    /// Path to the secp256k1 EVM key used to sign system transaction artifacts.
-    /// Defaults to sibling `evm-key.hex` next to `--consensus.signing-key`.
+    /// Path to the secp256k1 EVM key for validators or keyed full-node admission.
+    /// Only validators default to sibling `evm-key.hex` next to `--consensus.signing-key`.
+    /// Providing this key does not enable the validator role.
     #[arg(long = "validator.evm-key", value_name = "PATH")]
     pub validator_evm_key: Option<PathBuf>,
 
@@ -181,12 +182,9 @@ pub struct ConsensusArgs {
     pub reth_passphrase: Option<String>,
 
     /// Path or `host:port` endpoint for the `outbe-tee-enclave` sidecar.
-    /// Every `teeAttestationV1` ChainSpec requires it. The local session selection
-    /// is independent from the genesis-fixed attestation policy.
-    /// `DcapRequired` always needs NodeHost. `NoAttestationDev` can use
-    /// either the development transport or an explicitly selected production
-    /// NodeHost session. Missing or rejected transport stops startup and never
-    /// selects an in-process stub or another attestation mode.
+    /// Optional when using the in-process TEE context. Retained for the legacy
+    /// sidecar during migration; session selection does not change the
+    /// genesis-fixed attestation policy or permit a fallback on transport failure.
     #[arg(long = "tee-enclave-socket", value_name = "PATH")]
     pub tee_enclave_socket: Option<PathBuf>,
 
@@ -365,12 +363,6 @@ impl ConsensusArgs {
                  the signing key will be ignored. Add --validator to run as a validator."
             );
         }
-        if !self.is_validator && self.validator_evm_key.is_some() {
-            tracing::warn!(
-                "--validator.evm-key provided without --validator; \
-                 the EVM signer key will be ignored. Add --validator to run as a validator."
-            );
-        }
     }
 
     fn validate_key_material(&self) -> eyre::Result<()> {
@@ -391,15 +383,15 @@ impl ConsensusArgs {
 
     /// Effective validator EVM-key path.
     ///
-    /// Returns `None` for full-node mode. In validator mode, an explicit
-    /// `--validator.evm-key` wins. Otherwise the default is sibling
-    /// `evm-key.hex` next to `--consensus.signing-key`.
+    /// An explicit `--validator.evm-key` applies to validators and keyed full nodes.
+    /// Only validators infer sibling `evm-key.hex` from `--consensus.signing-key`.
+    /// Full nodes without an explicit EVM key remain keyless followers.
     pub fn effective_validator_evm_key(&self) -> eyre::Result<Option<PathBuf>> {
-        if !self.is_validator {
-            return Ok(None);
-        }
         if let Some(path) = &self.validator_evm_key {
             return Ok(Some(path.clone()));
+        }
+        if !self.is_validator {
+            return Ok(None);
         }
         let Some(signing_key) = &self.signing_key else {
             return Err(crate::errors::ArgsError::ValidatorEvmKeyRequiresSigningKey.into());
@@ -755,11 +747,29 @@ mod tests {
     }
 
     #[test]
-    fn test_full_node_ignores_validator_evm_key() {
+    fn test_keyed_full_node_preserves_explicit_evm_key() {
         let mut args = default_args();
         args.validator_evm_key = Some(PathBuf::from("/secure/evm.hex"));
         assert!(args.validate().is_ok());
+        assert_eq!(
+            args.effective_validator_evm_key().unwrap(),
+            Some(PathBuf::from("/secure/evm.hex"))
+        );
+        assert!(!args.is_validator);
+    }
+
+    #[test]
+    fn keyless_follower_never_infers_evm_key_or_requires_sidecar() {
+        let mut args = default_args();
+        args.upstream = Some("http://upstream:8545".to_owned());
+        args.signing_key = Some(PathBuf::from("/validator/signing-key.hex"));
+        assert!(args.validate().is_ok());
         assert_eq!(args.effective_validator_evm_key().unwrap(), None);
+        assert_eq!(args.tee_enclave_socket, None);
+        assert!(!args.is_validator);
+        let validator = validator_args();
+        assert!(validator.validate().is_ok());
+        assert_eq!(validator.tee_enclave_socket, None);
     }
 
     #[test]

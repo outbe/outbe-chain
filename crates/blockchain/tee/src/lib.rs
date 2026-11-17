@@ -8,6 +8,9 @@
 //! Legacy transport, attestation, and witness APIs remain available until their
 //! callers switch to the in-process context.
 
+pub mod authority;
+pub use authority::{TeeAuthorityChannel, TeeAuthorityState, TeeAuthorityWatch};
+
 pub mod in_process;
 pub mod in_process_dispatch;
 pub mod resident;

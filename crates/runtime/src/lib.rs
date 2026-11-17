@@ -4,6 +4,7 @@
 //! domain implementations and launches the process.
 
 mod admission;
+pub(crate) mod admission_authority;
 mod authority;
 mod configuration;
 mod consensus;

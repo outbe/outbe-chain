@@ -251,3 +251,17 @@ impl LaunchError {
 pub(crate) fn display_error<E: std::fmt::Display>(error: E) -> String {
     error.to_string()
 }
+
+/// Admission failures retained as typed causes for the runtime authority lifecycle.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum TeeAuthorityError {
+    /// The resident key is not the finalized chain's canonical offer key.
+    #[error("resident offer key {resident} differs from finalized chain key {canonical}")]
+    ResidentOfferKeyMismatch { resident: B256, canonical: B256 },
+    /// Resident context inspection failed without erasing its typed cause.
+    #[error("inspect resident TEE authority: {0}")]
+    Resident(#[from] outbe_tee::in_process::InProcessError),
+    /// Reading finalized admission facts failed without erasing its typed cause.
+    #[error("read finalized TEE authority: {0}")]
+    FinalizedState(#[from] outbe_primitives::error::PrecompileError),
+}

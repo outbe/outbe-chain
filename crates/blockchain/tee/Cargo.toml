@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+tokio = { workspace = true }
 outbe-simplex.workspace = true
 commonware-cryptography.workspace = true
 commonware-utils.workspace = true
@@ -57,7 +58,6 @@ outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-tee = { path = ".", features = ["test-utils", "sgx-noattest"] }
 k256.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true }
 commonware-runtime.workspace = true
 hex.workspace = true
 
