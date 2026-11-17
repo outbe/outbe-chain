@@ -1,4 +1,4 @@
-use super::finality::{CertifiedBlockFixture, FinalityCommitteeFixture};
+use crate::lifecycle::test_finality::{CertifiedBlockFixture, FinalityCommitteeFixture};
 use alloy_primitives::{B256, U256};
 
 use commonware_consensus::types::Epoch;

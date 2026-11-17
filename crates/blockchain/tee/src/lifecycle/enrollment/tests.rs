@@ -1,12 +1,10 @@
+use crate::lifecycle::test_finality as finality;
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::tee_attestation_v1::*;
 use outbe_tee::in_process::InProcessTeeContext;
 use outbe_tee::lifecycle::{enrollment::*, *};
 
 mod chain;
-#[allow(dead_code)]
-#[path = "../../../tests/in_process_dkg_and_admission/finality.rs"]
-mod finality;
 #[allow(dead_code)]
 #[path = "../../../tests/in_process_dkg_and_admission/fixtures.rs"]
 mod fixtures;

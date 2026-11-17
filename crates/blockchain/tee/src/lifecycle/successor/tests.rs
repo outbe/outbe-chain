@@ -1,10 +1,9 @@
 use super::*;
 use crate::lifecycle::renewal::tests::support::{self, Chain, Signer};
+use crate::lifecycle::test_finality as finality;
 use crate::lifecycle::*;
 use crate::registry_view::FinalizedStagedSuccessorPolicyV1;
 use alloy_primitives::B256;
-#[path = "../../../tests/in_process_dkg_and_admission/finality.rs"]
-mod finality;
 mod fixtures;
 
 #[tokio::test]
