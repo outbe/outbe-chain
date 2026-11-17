@@ -576,7 +576,7 @@ contract IntexAuction is
     // --- Internal helpers ---
     /// @notice Compute the current auction stage from the schedule and emission-day state.
     /// @dev Reverts `AuctionNotFound` when the series has no entry. Stage resolution:
-    ///      - A cancelled day short-circuits to `Cancelled`.
+    ///      - A cancelled day short-circuits to `Canceled`.
     ///      - A cleared auction short-circuits to `Completed`. The `cleared` flag, set by
     ///        `completeAuction`, also covers a no-sale clearing whose rate is 0.
     ///      - A day with no result by the time its first bid can be refunded is `Failed`:

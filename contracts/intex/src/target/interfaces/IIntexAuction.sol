@@ -20,7 +20,7 @@ interface IIntexAuction {
         Failed
     }
 
-    /// @notice Emission-day state: `Live` from `startAuction`, `Cancelled` from `cancelAuction`.
+    /// @notice Emission-day state: `Live` from `startAuction`, `Canceled` from `cancelAuction`.
     /// @dev `Unknown` is a day that neither message reached.
     enum DayState {
         Unknown,

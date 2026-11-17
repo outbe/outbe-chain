@@ -7,7 +7,7 @@ use outbe_system_common::time::EmissionDate;
 
 /// Auction lifecycle stage, in order: a scheduled day waits in `None`, takes commits in
 /// `CommittingBids`, reveals in `RevealingBids` and gathers the chains' bids in `CollectingBids`.
-/// It ends `Completed`, `Cancelled` (cancelled before its result) or `Failed` (it started and
+/// It ends `Completed`, `Canceled` (canceled before its result) or `Failed` (it started and
 /// found no result).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
