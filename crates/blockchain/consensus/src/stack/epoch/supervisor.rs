@@ -64,7 +64,7 @@ where
             // genesis-bootstrap iteration where no prior DKG completion ran.
             let current_subchannels = self.acquire_epoch_subchannels().await?;
 
-            let (mut engine_handle_task, mut radicle_signer) =
+            let (mut engine_handle_task, signer_enabled) =
                 self.start_engine(&ctx, current_subchannels).await?;
             // -- g. Engine event loop ----------------------------------------
             // Monitors engine, component exits, and block-height-driven reshare triggers.
@@ -73,7 +73,7 @@ where
             let mut stack_shutdown = ctx.stopped();
 
             loop {
-            let active_validator = self.local_validator_active()?;
+            let active_validator = self.local_validator_accountable();
             let reshare_active = self.rotation.reshare_in_progress;
             let wait_for_execution_finalized_height = async {
                 if reshare_active {
@@ -96,19 +96,18 @@ where
                 desired_signer = super::signer::wait_for_authority_role_change(
                     &mut self.radicle_updates,
                     &mut authority,
-                    radicle_signer,
+                    signer_enabled,
                     active_validator,
                     self.state.signing_share.is_some(),
                 ) => {
                     let desired_signer = desired_signer?;
                     info!(
                         epoch = %self.state.current_epoch,
-                        previous_signer = radicle_signer,
+                        previous_signer = signer_enabled,
                         desired_signer,
-                        "local TEE or canonical voting gate changed; preserving same-epoch Simplex identity"
+                        "local TEE or canonical voting gate changed; replacing same-epoch Simplex role"
                     );
-                    radicle_signer = desired_signer;
-                    self.bridge.set_operating_mode(super::simplex::effective_validator_operating_mode(radicle_signer));
+                    return Ok(EpochLoopOutcome::ReplaceSigner);
                 },
 
                 // Engine exit -> clean shutdown.
@@ -147,10 +146,9 @@ where
                     match consensus_tip_changed {
                         Ok(()) => {
                             latest_consensus_tip = *self.consensus_tip_rx.borrow_and_update();
-                            radicle_signer = super::signer::authority_signer_enabled(
-                                authority.as_ref(), self.local_validator_active()?, self.state.signing_share.is_some(), self.radicle_status.snapshot().voting_gate,
-                            )?;
-                            self.bridge.set_operating_mode(super::simplex::effective_validator_operating_mode(radicle_signer));
+                            if super::signer::authority_signer_enabled(
+                                authority.as_ref(), self.local_validator_accountable(), self.state.signing_share.is_some(), self.radicle_status.snapshot().voting_gate,
+                            )? != signer_enabled {return Ok(EpochLoopOutcome::ReplaceSigner);}
                             if let Some(current_height) = pending_provider_ready_height {
                                 let _ = self.execution_finalized_height_tx.send(current_height);
                             }

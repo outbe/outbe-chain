@@ -77,7 +77,9 @@ fn assemble_submission(
     ) -> eyre::Result<(AttestationEvidenceV1, [u8; 64])>,
 ) -> eyre::Result<TeeBootstrapParticipantSubmissionV2> {
     let policy = request.policy;
-    let policy_hash = policy.policy_hash()?;
+    let policy_hash = policy
+        .policy_hash()
+        .map_err(|error| crate::errors::TeeBootstrapError::InvalidPolicy(format!("{error}")))?;
     let (intent, node_id_hash) = request.into_intent(identity, policy_hash)?;
     let intent_hash = intent.intent_hash().map_err(|error| {
         crate::errors::TeeBootstrapError::InvalidRegistrationIntent(format!("{error}"))

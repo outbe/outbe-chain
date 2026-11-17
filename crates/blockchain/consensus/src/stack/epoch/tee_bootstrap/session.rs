@@ -28,13 +28,19 @@ impl StartupEnclave {
             .ok_or(crate::errors::StackEpochError::TeeEnclaveEndpointInvalidUtf8)?;
         Ok(Self::Sidecar(Box::new(match mode {
             crate::args::ResolvedTeeSession::ProductionNodeHost => {
-                RuntimeEnclaveClient::Production(outbe_tee::connect_committed_node_host_enclave(
-                    endpoint, data,
-                )?)
+                RuntimeEnclaveClient::Production(
+                    outbe_tee::connect_committed_node_host_enclave(endpoint, data).map_err(
+                        crate::errors::StackEpochError::production_node_host_reconnect_failed,
+                    )?,
+                )
             }
-            crate::args::ResolvedTeeSession::Development => RuntimeEnclaveClient::Development(
-                Box::new(outbe_tee::EnclaveClient::connect_endpoint(endpoint)?),
-            ),
+            crate::args::ResolvedTeeSession::Development => {
+                RuntimeEnclaveClient::Development(Box::new(
+                    outbe_tee::EnclaveClient::connect_endpoint(endpoint).map_err(
+                        crate::errors::StackEpochError::no_attestation_dev_reconnect_failed,
+                    )?,
+                ))
+            }
         })))
     }
     pub(super) fn manifest(
@@ -44,9 +50,11 @@ impl StartupEnclave {
         match self {
             Self::Resident(context) => Ok(Some(context.manifest().clone())),
             Self::Sidecar(client) => match client.as_ref() {
-                RuntimeEnclaveClient::Production(_) => {
-                    Ok(Some(outbe_tee::load_committed_enclave_manifest_v1(data)?))
-                }
+                RuntimeEnclaveClient::Production(_) => Ok(Some(
+                    outbe_tee::load_committed_enclave_manifest_v1(data).map_err(
+                        crate::errors::StackEpochError::committed_node_host_manifest_load_failed,
+                    )?,
+                )),
                 RuntimeEnclaveClient::Development(_) => Ok(None),
             },
         }

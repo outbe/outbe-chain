@@ -2,7 +2,10 @@
 use super::super::*;
 use super::runtime::*;
 use super::transport::EpochSubchannels;
+#[cfg(test)]
+mod gates_tests;
 mod proposal;
+mod sender;
 
 /// Build the leader-elector config for an epoch start.
 ///
@@ -40,12 +43,21 @@ pub fn epoch_elector_config(
 }
 
 pub const fn effective_validator_operating_mode(
-    radicle_signer: bool,
+    signer_enabled: bool,
 ) -> outbe_primitives::consensus::ConsensusOperatingMode {
-    if radicle_signer {
+    if signer_enabled {
         outbe_primitives::consensus::ConsensusOperatingMode::Signer
     } else {
         outbe_primitives::consensus::ConsensusOperatingMode::Verifier
+    }
+}
+
+/// Signer WAL is never opened with verifier identity; promotion reuses all old signer votes.
+pub(crate) fn epoch_partition(epoch: Epoch, signer_enabled: bool) -> String {
+    if signer_enabled {
+        format!("outbe-simplex-{epoch}")
+    } else {
+        format!("outbe-simplex-verifier-{epoch}")
     }
 }
 
@@ -73,14 +85,14 @@ where
         } = channels;
         crate::hybrid::election::require_nonempty_committee(self.state.participants.len())?;
         // -- b. Build HybridScheme for this epoch ------------------------
-        let radicle_signer = super::signer::authority_signer_enabled(
+        let signer_enabled = super::signer::authority_signer_enabled(
             self.protocol.tee_authority_watch().as_ref(),
-            self.local_validator_active()?,
+            self.local_validator_accountable(),
             self.state.signing_share.is_some(),
             self.radicle_status.snapshot().voting_gate,
         )?;
         let has_share = self.state.signing_share.is_some();
-        let scheme = if has_share {
+        let scheme = if signer_enabled {
             HybridScheme::<MinSig>::signer_with_vrf_provider(
                 &config::outbe_app_namespace(),
                 self.state.participants.clone(),
@@ -124,20 +136,26 @@ where
         let provider = self.node.provider().clone();
         let local_key = self.signing_key.public_key();
         let permission: proposal::Permission = std::sync::Arc::new(move || {
-            has_share
-                && authority
-                    .as_ref()
-                    .is_some_and(|watch| watch.snapshot().is_authority_open())
-                && matches!(
-                    radicle.snapshot().voting_gate,
-                    RadicleVotingGate::SignerAllowed
-                )
-                && validators::read_validators_at_latest(protocol.as_ref(), &provider)
-                    .is_ok_and(|active| active.public_keys.contains(&local_key))
+            super::signer::authority_signer_enabled(
+                authority.as_ref(),
+                super::signer::local_validator_accountable(
+                    protocol.as_ref(),
+                    &provider,
+                    &local_key,
+                ),
+                has_share,
+                radicle.snapshot().voting_gate,
+            )
+            .unwrap_or(false)
         });
-
-        let signing_permission = permission.clone();
-        let scheme = scheme.with_signing_gate(move || signing_permission());
+        let vote = (
+            sender::VoteSenderGate::new(vote.0, permission.clone()),
+            vote.1,
+        );
+        let cert = (
+            sender::VoteSenderGate::new(cert.0, permission.clone()),
+            cert.1,
+        );
         let application = proposal::ProposalGate::new(self.application.clone(), permission);
 
         // -- c. Create reporter for this epoch ---------------------------
@@ -237,7 +255,7 @@ where
             forward: simplex::ForwardPolicy::Disabled,
             reporter: combined_reporter,
             strategy: commonware_parallel::Sequential,
-            partition: format!("outbe-simplex-{}", self.state.current_epoch),
+            partition: epoch_partition(self.state.current_epoch, signer_enabled),
             mailbox_size: nonzero_usize(config::ENGINE_MAILBOX_SIZE, "ENGINE_MAILBOX_SIZE")?,
             epoch: self.state.current_epoch,
             floor: simplex::Floor::Genesis(floor_digest),
@@ -260,12 +278,12 @@ where
             simplex_cfg,
         );
         self.bridge
-            .set_operating_mode(effective_validator_operating_mode(radicle_signer));
+            .set_operating_mode(effective_validator_operating_mode(signer_enabled));
         let engine_handle_task = engine.start(vote, cert, res);
 
         info!(epoch = %self.state.current_epoch,
             "simplex engine started - blocks can now be produced");
 
-        Ok((engine_handle_task, radicle_signer))
+        Ok((engine_handle_task, signer_enabled))
     }
 }

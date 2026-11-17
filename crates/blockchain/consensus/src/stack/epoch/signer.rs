@@ -280,13 +280,13 @@ fn authorize_current_signer(
 /// TEE admission narrows the ordinary validator role; it never creates one.
 pub(super) fn authority_signer_enabled(
     authority: Option<&outbe_tee::TeeAuthorityWatch>,
-    active_validator: bool,
+    accountable_validator: bool,
     has_share: bool,
     gate: RadicleVotingGate,
 ) -> Result<bool> {
     let ordinary = radicle_signer_enabled(gate, has_share)?;
     Ok(ordinary
-        && active_validator
+        && accountable_validator
         && authority.is_some_and(|watch| watch.snapshot().is_authority_open()))
 }
 
@@ -294,10 +294,26 @@ impl<E, N: StackNodeAccess> super::runtime::EpochSupervisor<E, N>
 where
     E: Clock,
 {
-    pub(super) fn local_validator_active(&self) -> Result<bool> {
-        let active =
-            validators::read_validators_at_latest(self.protocol.as_ref(), self.node.provider())?;
-        Ok(active.public_keys.contains(&self.signing_key.public_key()))
+    pub(super) fn local_validator_accountable(&self) -> bool {
+        local_validator_accountable(
+            self.protocol.as_ref(),
+            self.node.provider(),
+            &self.signing_key.public_key(),
+        )
+    }
+}
+
+pub(super) fn local_validator_accountable(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    provider: &(impl reth_ethereum::storage::StateProviderFactory + ?Sized),
+    local_key: &bls12381::PublicKey,
+) -> bool {
+    match validators::read_accountable_validators_at_latest(protocol, provider) {
+        Ok(members) => members.public_keys.contains(local_key),
+        Err(error) => {
+            warn!(%error, "validator eligibility read failed; keeping local voting closed");
+            false
+        }
     }
 }
 
@@ -305,7 +321,7 @@ pub(super) async fn wait_for_authority_role_change(
     updates: &mut tokio::sync::watch::Receiver<outbe_radicle::integration::RadicleStatusSnapshot>,
     authority: &mut Option<outbe_tee::TeeAuthorityWatch>,
     current_signer: bool,
-    active_validator: bool,
+    accountable_validator: bool,
     has_share: bool,
 ) -> Result<bool> {
     let mut authority_closed = false;
@@ -313,7 +329,7 @@ pub(super) async fn wait_for_authority_role_change(
     loop {
         let desired = authority_signer_enabled(
             authority.as_ref(),
-            active_validator,
+            accountable_validator,
             has_share,
             updates.borrow().voting_gate,
         )?;
@@ -346,49 +362,6 @@ pub(super) async fn wait_for_authority_role_change(
 mod authority_tests {
     use super::*;
     use outbe_tee::{TeeAuthorityChannel, TeeAuthorityState as State};
-
-    #[test]
-    fn authority_never_bypasses_active_share_or_radicle_requirements() {
-        let channel = TeeAuthorityChannel::new(State::ArmedBootstrap {
-            enclave_id: B256::repeat_byte(1),
-        });
-        let watch = channel.subscribe();
-        let states = [
-            State::ArmedBootstrap {
-                enclave_id: B256::repeat_byte(1),
-            },
-            State::SuspendedJailed,
-            State::SuspendedLeaseExpired,
-            State::SuspendedPolicyMismatch,
-            State::UnkeyedAwaitingAdmission,
-            State::Armed {
-                enclave_id: B256::repeat_byte(1),
-                valid_until: 100,
-            },
-        ];
-        for state in states {
-            channel.publish(state);
-            for active in [false, true] {
-                for share in [false, true] {
-                    for gate in [
-                        RadicleVotingGate::Verifier,
-                        RadicleVotingGate::SignerAllowed,
-                    ] {
-                        assert_eq!(
-                            authority_signer_enabled(Some(&watch), active, share, gate).unwrap(),
-                            state.is_authority_open()
-                                && active
-                                && share
-                                && matches!(gate, RadicleVotingGate::SignerAllowed)
-                        );
-                    }
-                }
-            }
-        }
-        assert!(
-            !authority_signer_enabled(None, true, true, RadicleVotingGate::SignerAllowed).unwrap()
-        );
-    }
 
     #[tokio::test]
     async fn live_authority_watch_demotes_and_reopens_without_terminating() {

@@ -10,8 +10,6 @@ use commonware_cryptography::{bls12381, Signer as _, Verifier as _};
 use outbe_primitives::tee_attestation_v1::*;
 use std::collections::{BTreeMap, BTreeSet};
 
-const ANNOUNCE_NAMESPACE: &[u8] = b"outbe/tee/dkg-participant-announce/v1";
-
 impl InProcessTeeContext {
     fn ceremony_binding(&self, id: B256, round: u64, participants: &[Vec<u8>]) -> Result<B256> {
         let hash = dkg_participant_set_hash_v1(participants)?;
@@ -47,7 +45,7 @@ impl InProcessTeeContext {
             enc_sig: self
                 .keys
                 .tee_bls_key
-                .sign(ANNOUNCE_NAMESPACE, digest.as_slice())
+                .sign(DKG_PARTICIPANT_ANNOUNCE_DOMAIN_V1, digest.as_slice())
                 .encode()
                 .to_vec(),
         })
@@ -85,7 +83,7 @@ impl InProcessTeeContext {
             let canonical = pk_bytes.is_empty() && sig_bytes.is_empty();
             if !canonical
                 || !context_matches
-                || !pk.verify(ANNOUNCE_NAMESPACE, digest.as_slice(), &sig)
+                || !pk.verify(DKG_PARTICIPANT_ANNOUNCE_DOMAIN_V1, digest.as_slice(), &sig)
             {
                 return Err(InProcessError::IdentityMismatch);
             }
@@ -241,7 +239,7 @@ impl InProcessTeeContext {
                     group_public_key,
                 })
             }
-            _ => Err(InProcessError::IdentityMismatch),
+            _ => Err(InProcessError::UnsupportedCeremonyRequest),
         }
     }
 }
@@ -266,6 +264,10 @@ mod tests {
     fn announcement_and_open_enforce_ceremony_and_signed_recipient_binding() {
         let context =
             test_support::context(AttestationMode::NoAttestationDev, ProofSourceV1::NoHardware);
+        assert!(matches!(
+            context.founding_request(&EnclaveRequest::Health),
+            Err(InProcessError::UnsupportedCeremonyRequest)
+        ));
         let participants = vec![context.tee_bls_public_bytes()];
         let hash = dkg_participant_set_hash_v1(&participants).unwrap();
         let id = dkg_ceremony_id_v1(&context.manifest.network_binding(), 0, hash).unwrap();

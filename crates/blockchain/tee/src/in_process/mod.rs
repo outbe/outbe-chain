@@ -21,6 +21,8 @@ pub enum InProcessError {
     CeremonyCodec(#[from] commonware_codec::Error),
     #[error("hardware quote parsing rejected input")]
     Quote(#[from] outbe_dcap::errors::QuoteParseError),
+    #[error("request is not supported by the founding ceremony channel")]
+    UnsupportedCeremonyRequest,
     #[error("hardware attestation source unavailable")]
     HardwareProofUnavailable,
     #[error("resident state lock poisoned")]
