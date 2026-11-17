@@ -249,6 +249,92 @@ fn remote_and_local_generic_calls() {
     });
 }
 
+/// `(quote gas limit, hook metadata)` of each remote call since `start`.
+fn sent_gas_limits(p: &HashMapStorageProvider, start: usize) -> Vec<(U256, Bytes)> {
+    let inputs = &p.sub_call_inputs()[start..];
+    let quotes = inputs.iter().filter_map(|input| {
+        IInterchainAccountRouter::quoteGasPaymentCall::abi_decode(&input.calldata)
+            .ok()
+            .map(|call| call._gasLimit)
+    });
+    let metadata = inputs.iter().filter_map(|input| {
+        IInterchainAccountRouter::callRemoteCall::abi_decode(&input.calldata)
+            .ok()
+            .map(|call| call._hookMetadata)
+    });
+    quotes.zip(metadata).collect()
+}
+
+fn hook_metadata(gas_limit: u64) -> Bytes {
+    let mut metadata = vec![0, 1];
+    metadata.extend_from_slice(&[0u8; 32]);
+    metadata.extend_from_slice(&U256::from(gas_limit).to_be_bytes::<32>());
+    metadata.extend_from_slice(CROSSCHAIN_BRIDGE_ADDRESS.as_slice());
+    metadata.into()
+}
+
+#[test]
+fn a_remote_call_pays_for_its_gas_limit() {
+    let mut p = initialized_provider();
+    stub_router_and_ism(&mut p, U256::ZERO, &[v(1)], 1);
+    p.clear_events(CROSSCHAIN_BRIDGE_ADDRESS);
+    let start = p.sub_call_inputs().len();
+    let calls = vec![ICrosschainBridge::Call {
+        to: sepolia_ism(),
+        value: U256::ZERO,
+        data: Bytes::new(),
+    }];
+    let default: Bytes = ICrosschainBridge::callRemoteCall {
+        domain: SEPOLIA,
+        calls: calls.clone(),
+    }
+    .abi_encode()
+    .into();
+    let with_limit = |gas_limit: u64| -> Bytes {
+        ICrosschainBridge::callRemoteWithGasLimitCall {
+            domain: SEPOLIA,
+            calls: calls.clone(),
+            gasLimit: U256::from(gas_limit),
+        }
+        .abi_encode()
+        .into()
+    };
+    StorageHandle::enter(&mut p, |storage| {
+        let caller = HYPERLANE_CONTROLLER_ADDRESS;
+        dispatch(storage.clone(), &default, caller, U256::ZERO).unwrap();
+        dispatch(storage.clone(), &with_limit(750_000), caller, U256::ZERO).unwrap();
+
+        let err = dispatch(storage.clone(), &with_limit(0), caller, U256::ZERO).unwrap_err();
+        assert_eq!(
+            revert_selector(err),
+            ICrosschainBridge::InvalidGasLimit::SELECTOR
+        );
+        let err = dispatch(storage, &with_limit(750_000), stranger(), U256::ZERO).unwrap_err();
+        assert_eq!(
+            revert_selector(err),
+            ICrosschainBridge::CallerNotAllowed::SELECTOR
+        );
+    });
+
+    assert_eq!(
+        sent_gas_limits(&p, start),
+        [
+            (U256::from(200_000), hook_metadata(200_000)),
+            (U256::from(750_000), hook_metadata(750_000)),
+        ]
+    );
+    let limits: Vec<U256> = p
+        .get_events(CROSSCHAIN_BRIDGE_ADDRESS)
+        .iter()
+        .map(|log| {
+            ICrosschainBridge::RemoteCallDispatched::decode_log_data(log)
+                .unwrap()
+                .gasLimit
+        })
+        .collect();
+    assert_eq!(limits, [U256::from(200_000), U256::from(750_000)]);
+}
+
 #[test]
 fn only_an_allowed_caller_may_call_local_or_remote() {
     let mut p = initialized_provider();

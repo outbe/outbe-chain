@@ -93,14 +93,12 @@ async function main() {
   console.log(`  Committed! tx: ${commitReceipt?.hash}`);
 
   // === WAIT FOR REVEAL PHASE ===
-  const commitDeadline = await auction.getCommitDeadline(orderIdHex);
-  const destBlock = await destProvider.getBlock('latest');
-  const now = destBlock!.timestamp;
-  const waitSeconds = Number(commitDeadline) - now + 2; // +2s buffer
-
-  if (waitSeconds > 0) {
-    console.log(`\n  Waiting ${waitSeconds}s for reveal phase...`);
-    await sleep(waitSeconds * 1000);
+  // The deadline is a block number: reveal opens at that block, so the reveal tx must land in
+  // it or later. Wait until the chain head is one block before it.
+  const commitDeadline = Number(await auction.getCommitDeadline(orderIdHex));
+  console.log(`\n  Waiting for reveal phase (block ${commitDeadline})...`);
+  while ((await destProvider.getBlockNumber()) < commitDeadline - 1) {
+    await sleep(1000);
   }
 
   // === PHASE 2: REVEAL ===

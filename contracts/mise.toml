@@ -5,7 +5,7 @@
 
 [env]
 # Self-contained Forge sub-projects (soldeer deps, forge toolchain).
-FORGE_PROJECTS = "intent intex tokens crosschain precompiles"
+FORGE_PROJECTS = "intent intex tokens crosschain precompiles safe"
 # Sub-projects that export ABIs. crosschain is absent: it has no export-abi task.
 ABI_PROJECTS = "intent intex precompiles tokens"
 

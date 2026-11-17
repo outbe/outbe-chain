@@ -22,6 +22,7 @@ import {IntentCreate3} from "./IntentCreate3.sol";
 ///   CONTRACT_SALT         - salt string for deterministic deployment (default SALT_VERSION)
 ///   COMPACT_ADDRESS       - The Compact address
 ///   COLLATERAL_BPS        - collateral requirement in basis points (e.g. 1000 = 10%)
+///   WCOEN_ADDRESS         - WCOEN, on Outbe Chain only: slashed COEN and WCOEN go to address 0
 contract DeploySolverEscrow is Script {
     function run() public virtual {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PK");
@@ -59,7 +60,7 @@ contract DeploySolverEscrow is Script {
             Create3Proxy.deploy(
                 Create3Factory(factory),
                 IntentCreate3.salt(IntentCreate3.SOLVER_ESCROW, salt),
-                address(new SolverEscrow(compact, lockTag)),
+                address(new SolverEscrow(compact, lockTag, vm.envOr("WCOEN_ADDRESS", address(0)))),
                 abi.encodeCall(SolverEscrow.initialize, (deployer, collateralBps))
             );
         }

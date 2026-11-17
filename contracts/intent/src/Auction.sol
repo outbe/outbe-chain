@@ -9,7 +9,9 @@ import {OrderValidator} from "./libs/OrderValidator.sol";
 
 /// @title Auction
 /// @notice Commit-reveal Vickrey auction for competitive solver selection
-/// @dev Phases: commit (10s) -> reveal (10s) -> getWinner. The window of an order is fixed when it starts.
+/// @dev Phases: commit (5 blocks) -> reveal (5 blocks) -> getWinner. The window of an order is fixed
+///      when it starts. The phases count blocks of this chain, not seconds, so the block time of
+///      the chain sets their length in time.
 ///      Winner = highest outputAmount, pays second-highest price.
 ///      UUPS upgradeable behind an ERC1967 proxy. The owner authorizes upgrades.
 contract Auction is IAuction, OwnableUpgradeable, UUPSUpgradeable {
@@ -27,9 +29,9 @@ contract Auction is IAuction, OwnableUpgradeable, UUPSUpgradeable {
 
     /// @custom:storage-location erc7201:outbe.intent.Auction
     struct AuctionStorage {
-        /// @notice Duration of the commit phase in seconds
+        /// @notice Duration of the commit phase in blocks
         uint256 commitPeriod;
-        /// @notice Duration of the reveal phase in seconds
+        /// @notice Duration of the reveal phase in blocks
         uint256 revealPeriod;
         /// @notice Maximum number of revealed quotes allowed per order
         uint256 maxQuotesPerOrder;
@@ -39,6 +41,7 @@ contract Auction is IAuction, OwnableUpgradeable, UUPSUpgradeable {
         mapping(bytes32 => Quote[]) quotes;
         /// @notice Auction window per order. commit and resetAuction set it, so a later period change
         ///         applies only to auctions that start after it (startedAt 0 = no auction).
+        ///         startedAt is a block number.
         mapping(bytes32 => Window) window;
         /// @notice Per-order auction epoch. Every resetAuction increments it, so prior-round commits
         ///         become unreachable without enumerating the (non-enumerable) commits mapping.
@@ -77,8 +80,8 @@ contract Auction is IAuction, OwnableUpgradeable, UUPSUpgradeable {
     function initialize(address _owner) external initializer {
         __Ownable_init(_owner);
         AuctionStorage storage $ = _s();
-        $.commitPeriod = 10 seconds;
-        $.revealPeriod = 10 seconds;
+        $.commitPeriod = 5;
+        $.revealPeriod = 5;
         $.maxQuotesPerOrder = 10;
     }
 
@@ -195,12 +198,12 @@ contract Auction is IAuction, OwnableUpgradeable, UUPSUpgradeable {
 
     // ============ View Functions ============
 
-    /// @notice Duration of the commit phase in seconds
+    /// @notice Duration of the commit phase in blocks
     function commitPeriod() public view returns (uint256) {
         return _s().commitPeriod;
     }
 
-    /// @notice Duration of the reveal phase in seconds
+    /// @notice Duration of the reveal phase in blocks
     function revealPeriod() public view returns (uint256) {
         return _s().revealPeriod;
     }
@@ -282,7 +285,7 @@ contract Auction is IAuction, OwnableUpgradeable, UUPSUpgradeable {
     /// @notice Starts the auction window of an order with the current periods
     function _startWindow(bytes32 orderId) internal {
         _s().window[orderId] = Window({
-            startedAt: uint64(block.timestamp),
+            startedAt: uint64(block.number),
             commitPeriod: uint64(_s().commitPeriod),
             revealPeriod: uint64(_s().revealPeriod)
         });
@@ -293,8 +296,8 @@ contract Auction is IAuction, OwnableUpgradeable, UUPSUpgradeable {
         Window memory w = _s().window[orderId];
         if (w.startedAt == 0) return PHASE_NONE;
         uint256 commitEnd = uint256(w.startedAt) + w.commitPeriod;
-        if (block.timestamp < commitEnd) return PHASE_COMMIT;
-        if (block.timestamp < commitEnd + w.revealPeriod) return PHASE_REVEAL;
+        if (block.number < commitEnd) return PHASE_COMMIT;
+        if (block.number < commitEnd + w.revealPeriod) return PHASE_REVEAL;
         return PHASE_ENDED;
     }
 }
