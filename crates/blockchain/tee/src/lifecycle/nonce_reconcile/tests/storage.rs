@@ -45,3 +45,43 @@ fn interrupted_scratch_never_replaces_committed_state_and_symlinks_are_rejected(
     assert!(ServiceTxJournalV1::open(root.path()).is_err());
     assert_eq!(std::fs::read(&outside).unwrap(), b"unchanged");
 }
+
+#[test]
+fn pending_replacement_requires_same_account_nonce_and_new_process_identity() {
+    let (root, mut journal, _live, original, _) = fixture();
+    journal.begin(original.clone()).unwrap();
+    let path = root.path().join("tee-service-tx-v1/journal.json");
+    let before = std::fs::read(&path).unwrap();
+    let (_, _, _, different_nonce, _) = fixture_with_identity_and_nonce(10, 5);
+    let mut same_identity = original.clone();
+    same_identity.public_intent.target.valid_until += 1;
+    let (_, _, _, replacement, _) = fixture_with_identity_and_nonce(10, 4);
+    let (_, _, _, different_sender, _) = fixture_for_account(10, 4, 7);
+    let mut different_chain = replacement.clone();
+    different_chain.finalized_checkpoint.genesis_hash = B256::repeat_byte(99);
+    let mut old_signed_bytes = original.clone();
+    old_signed_bytes.public_intent = replacement.public_intent.clone();
+    for rejected in [
+        different_nonce,
+        same_identity,
+        different_sender,
+        different_chain,
+        old_signed_bytes,
+    ] {
+        assert!(matches!(
+            journal.begin(rejected),
+            Err(ServiceTxJournalError::UnresolvedTransaction)
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+    assert_eq!(
+        (replacement.sender, replacement.nonce),
+        (original.sender, original.nonce)
+    );
+    assert_ne!(replacement.tx_hash, original.tx_hash);
+    journal.begin(replacement.clone()).unwrap();
+    assert_eq!(journal.load().unwrap(), Some(replacement.clone()));
+    drop(journal);
+    let journal = ServiceTxJournalV1::open(root.path()).unwrap();
+    assert_eq!(journal.load().unwrap(), Some(replacement));
+}

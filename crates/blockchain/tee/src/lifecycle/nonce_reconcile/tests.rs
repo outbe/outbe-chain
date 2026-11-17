@@ -168,16 +168,26 @@ fn context(seed: u8) -> InProcessTeeContext {
     )
     .unwrap()
 }
-fn fixture() -> (
+type Fixture = (
     tempfile::TempDir,
     ServiceTxJournalV1,
     InProcessTeeContext,
     ServiceTxRecordV1,
     Chain,
-) {
+);
+
+fn fixture() -> Fixture {
+    fixture_with_identity_and_nonce(9, 4)
+}
+
+fn fixture_with_identity_and_nonce(seed: u8, nonce: u64) -> Fixture {
+    fixture_for_account(seed, nonce, 3)
+}
+
+fn fixture_for_account(seed: u8, nonce: u64, account_seed: u8) -> Fixture {
     let root = tempfile::tempdir().unwrap();
     let journal = ServiceTxJournalV1::open(root.path()).unwrap();
-    let live = context(9);
+    let live = context(seed);
     let at = LifecycleCheckpointV1 {
         height: 10,
         hash: B256::repeat_byte(10),
@@ -189,12 +199,13 @@ fn fixture() -> (
     };
     let tx = TxEip1559 {
         chain_id: at.chain_id,
-        nonce: 4,
+        nonce,
         gas_limit: 500000,
+        input: live.recipient_public().to_vec().into(),
         to: alloy_primitives::TxKind::Call(outbe_primitives::addresses::TEE_REGISTRY_ADDRESS),
         ..Default::default()
     };
-    let signer = k256::ecdsa::SigningKey::from_slice(&[3; 32]).unwrap();
+    let signer = k256::ecdsa::SigningKey::from_slice(&[account_seed; 32]).unwrap();
     let (signature, recovery) = signer
         .sign_prehash_recoverable(tx.signature_hash().as_slice())
         .unwrap();
@@ -208,7 +219,7 @@ fn fixture() -> (
         tx_hash: keccak256(&raw),
         raw_signed_tx: raw.into(),
         sender,
-        nonce: 4,
+        nonce,
         kind: ServiceTxKindV1::Register,
         public_intent: ServiceTxIntentV1 {
             target: ServiceBindingTargetV1 {
@@ -324,15 +335,21 @@ async fn restarted_process_discards_old_recipient_only_after_chain_reconciliatio
         let fresh = context(10);
         let path = _root.path().join("tee-service-tx-v1/journal.json");
         let before = std::fs::read(&path).unwrap();
-        for nonces in [[3, 4, 4], [4, 4, 5]] {
+        for nonces in [[3, 4, 4], [4, 4, 4], [4, 4, 5], [4, 5, 5]] {
             chain.nonces = nonces;
             assert_eq!(
                 reconcile_service_tx_v1(&chain, &mut journal, &fresh)
                     .await
                     .unwrap(),
-                ServiceTxReconciliationV1::WaitForFinality {
-                    latest_nonce: nonces[1],
-                    pending_nonce: nonces[2],
+                if nonces[1] <= record.nonce && nonces[2] <= record.nonce {
+                    ServiceTxReconciliationV1::ReplaceLostIdentity {
+                        nonce: record.nonce,
+                    }
+                } else {
+                    ServiceTxReconciliationV1::WaitForFinality {
+                        latest_nonce: nonces[1],
+                        pending_nonce: nonces[2],
+                    }
                 }
             );
             assert_eq!(journal.load().unwrap().unwrap(), record);
@@ -350,8 +367,8 @@ async fn restarted_process_discards_old_recipient_only_after_chain_reconciliatio
                 mutation_finalized: finalized
             }
         );
-        assert_eq!(chain.reads.load(Ordering::SeqCst), 3);
-        assert_eq!(chain.receipt_reads.load(Ordering::SeqCst), 3);
+        assert_eq!(chain.reads.load(Ordering::SeqCst), 5);
+        assert_eq!(chain.receipt_reads.load(Ordering::SeqCst), 5);
         use std::os::unix::fs::MetadataExt as _;
         let inode = std::fs::metadata(&path).unwrap().ino();
         let terminal = std::fs::read(&path).unwrap();

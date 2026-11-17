@@ -11,6 +11,9 @@ pub enum ServiceTxReconciliationV1 {
         mutation_finalized: bool,
     },
     ReplayExact,
+    ReplaceLostIdentity {
+        nonce: u64,
+    },
     WaitForFinality {
         latest_nonce: u64,
         pending_nonce: u64,
@@ -110,13 +113,20 @@ async fn reconcile_nonce<P: LifecycleChainPort>(
         return Err(ReconcileError::CheckpointMismatch);
     }
     // A lost recipient does not make its broadcast transaction unmineable.
-    if !same_process || latest > record.nonce || pending > record.nonce {
+    if latest > record.nonce || pending > record.nonce {
         return Ok(ServiceTxReconciliationV1::WaitForFinality {
             latest_nonce: latest,
             pending_nonce: pending,
         });
     }
-    Ok(ServiceTxReconciliationV1::ReplayExact)
+    // A same-nonce replacement cannot execute alongside the old signed transaction.
+    Ok(if same_process {
+        ServiceTxReconciliationV1::ReplayExact
+    } else {
+        ServiceTxReconciliationV1::ReplaceLostIdentity {
+            nonce: record.nonce,
+        }
+    })
 }
 
 fn validate_checkpoint<E: std::error::Error + 'static>(

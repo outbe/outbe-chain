@@ -170,6 +170,25 @@ impl ServiceTxRecordV1 {
         }
         Ok(())
     }
+
+    fn replaces_lost_identity(&self, old: &Self) -> bool {
+        let same_slot = (
+            self.sender,
+            self.nonce,
+            self.finalized_checkpoint.chain_id,
+            self.finalized_checkpoint.genesis_hash,
+        ) == (
+            old.sender,
+            old.nonce,
+            old.finalized_checkpoint.chain_id,
+            old.finalized_checkpoint.genesis_hash,
+        );
+        let next = &self.public_intent.target;
+        let previous = &old.public_intent.target;
+        let new_identity = (next.enclave_id, next.recipient_x25519)
+            != (previous.enclave_id, previous.recipient_x25519);
+        same_slot && new_identity && self.tx_hash != old.tx_hash
+    }
 }
 
 /// Holds the persistent inode lock for the whole load/reconcile/submit sequence.
@@ -235,7 +254,8 @@ impl ServiceTxJournalV1 {
         Ok(Some(wire.record))
     }
 
-    /// Persist before sending. An unresolved earlier nonce cannot be silently replaced.
+    /// Persist before sending. Pending replacement requires a new process identity
+    /// and signed transaction at the exact same account nonce on the same chain.
     pub fn begin(&mut self, record: ServiceTxRecordV1) -> Result<(), ServiceTxJournalError> {
         if self.poisoned {
             return Err(ServiceTxJournalError::DurabilityUncertain);
@@ -248,7 +268,7 @@ impl ServiceTxJournalV1 {
             if old == record {
                 return Ok(());
             }
-            if old.state == ServiceTxStateV1::Pending {
+            if old.state == ServiceTxStateV1::Pending && !record.replaces_lost_identity(&old) {
                 return Err(ServiceTxJournalError::UnresolvedTransaction);
             }
         }
