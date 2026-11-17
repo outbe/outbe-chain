@@ -221,8 +221,7 @@ fn numeric_id(flag: &str) -> Result<u32> {
 fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
     let keys = root.join("keys");
     let validator = root.join("validator-0");
-    let tee = root.join("tee");
-    for path in [&keys, &validator, &tee] {
+    for path in [&keys, &validator] {
         if let Ok(metadata) = fs::symlink_metadata(path) {
             ensure!(
                 !metadata.file_type().is_symlink(),
@@ -247,7 +246,6 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
     ] {
         create_owned_dir(&root.join(relative), 0o750, uid, gid)?;
     }
-    create_owned_dir(&tee, 0o700, uid, gid)?;
     let secrets = [
         "signing-key.hex",
         "evm-key.hex",

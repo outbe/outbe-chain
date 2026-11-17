@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{support::process::STATE_ROOT, validator::config::OperatorConfig};
 
-const JOURNAL_VERSION: u32 = 1;
+const JOURNAL_VERSION: u32 = 2;
 const JOURNAL_NAME: &str = "validator-state.json";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

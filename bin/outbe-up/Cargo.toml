@@ -10,7 +10,7 @@ name = "outbe-up"
 path = "src/main.rs"
 
 [dependencies]
-alloy-primitives.workspace = true
+alloy-primitives = { workspace = true, features = ["std"] }
 alloy-sol-types.workspace = true
 clap.workspace = true
 eyre.workspace = true
@@ -19,8 +19,6 @@ indicatif.workspace = true
 k256.workspace = true
 outbe-snapshot.workspace = true
 outbe-operator-systemd.workspace = true
-outbe-primitives = { workspace = true, features = ["tee-attestation-v1"] }
-rand.workspace = true
 reqwest.workspace = true
 rustix.workspace = true
 serde.workspace = true
