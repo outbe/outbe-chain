@@ -34,16 +34,16 @@ contract UpgradeTest is Test {
 
     function test_Auction_KeepsStateAcrossUpgrade() public {
         Auction auction = Proxies.auction(owner);
-        assertEq(auction.commitPeriod(), 10 seconds, "default commit period");
+        assertEq(auction.commitPeriod(), 5, "default commit period");
         auction.setRouter(operator);
-        auction.setCommitPeriod(30 seconds);
+        auction.setCommitPeriod(30);
 
         _upgrade(address(auction), address(new Auction()));
 
         assertEq(auction.owner(), owner, "owner");
         assertEq(auction.router(), operator, "router");
-        assertEq(auction.commitPeriod(), 30 seconds, "commit period");
-        assertEq(auction.revealPeriod(), 10 seconds, "reveal period");
+        assertEq(auction.commitPeriod(), 30, "commit period");
+        assertEq(auction.revealPeriod(), 5, "reveal period");
         assertEq(auction.maxQuotesPerOrder(), 10, "max quotes");
     }
 
