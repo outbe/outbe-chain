@@ -44,16 +44,18 @@ impl OracleContract<'_> {
         )
     }
 
-    /// Emits `Vwap24hSet` for each vote target that has a 24-hour VWAP in the
-    /// window that ends at the whole hour `window_end`.
-    pub(crate) fn emit_vwap_24h_set(&mut self, window_end: u64) -> Result<()> {
+    /// The step of the whole hour `window_end`. It emits `Vwap24hSet` for each
+    /// vote target that has a 24-hour VWAP in the window that ends at that
+    /// hour. Then it starts an S-curve for each reference currency whose VWAP
+    /// is above its curve.
+    pub(crate) fn close_vwap_24h_hour(&mut self, window_end: u64) -> Result<()> {
         let Some(start) = window_end.checked_sub(VWAP_24H_WINDOW_SECONDS) else {
             return Ok(());
         };
         let share = outbe_chain_constants::get_day_vwap_min_coverage();
         let vwaps = self
             .vote_target_values(|pair| self.judged_window_vwap(pair, start, window_end, share))?;
-        for (pair, vwap) in vwaps {
+        for &(pair, vwap) in &vwaps {
             let event = IOracle::Vwap24hSet {
                 windowEnd: window_end,
                 base: pair.address1(),
@@ -63,7 +65,7 @@ impl OracleContract<'_> {
             self.storage
                 .emit_event(ORACLE_ADDRESS, event.encode_log_data())?;
         }
-        Ok(())
+        crate::scurve::process_hourly_scurves(self, window_end, &vwaps)
     }
 
     /// VWAP over the closed window `[start, cutoff)`, judged by round coverage

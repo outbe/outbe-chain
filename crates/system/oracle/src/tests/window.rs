@@ -444,7 +444,7 @@ fn vwap_24h_set_tells_the_price_of_the_hour() {
                 .write_snapshot(day + k * hour + 60, &[(usd, coen_iso(2), coen_iso(1))])
                 .unwrap();
         }
-        oracle.emit_vwap_24h_set(day + 24 * hour).unwrap();
+        oracle.close_vwap_24h_hour(day + 24 * hour).unwrap();
     });
 
     let events: Vec<_> = provider

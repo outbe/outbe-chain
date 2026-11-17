@@ -195,36 +195,7 @@
         "internalType": "address[]"
       },
       {
-        "name": "peakDays",
-        "type": "uint64[]",
-        "internalType": "uint64[]"
-      },
-      {
-        "name": "peakPrices",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getAllScurveDataForPair",
-    "inputs": [
-      {
-        "name": "base",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "quote",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "peakDays",
+        "name": "startHours",
         "type": "uint64[]",
         "internalType": "uint64[]"
       },
@@ -628,6 +599,35 @@
   },
   {
     "type": "function",
+    "name": "getScurve",
+    "inputs": [
+      {
+        "name": "base",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "startHour",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "peakPrice",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getScurveValue",
     "inputs": [
       {
@@ -651,50 +651,6 @@
         "name": "value",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getScurveValues",
-    "inputs": [
-      {
-        "name": "base",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "quote",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "timestamp",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "targetDay",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "peakDays",
-        "type": "uint64[]",
-        "internalType": "uint64[]"
-      },
-      {
-        "name": "peakPrices",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
-      },
-      {
-        "name": "values",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
       }
     ],
     "stateMutability": "view"
@@ -989,50 +945,6 @@
   },
   {
     "type": "function",
-    "name": "getWorldwideDayVwapSnapshot",
-    "inputs": [
-      {
-        "name": "worldwideDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "startTime",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "endTime",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "bases",
-        "type": "address[]",
-        "internalType": "address[]"
-      },
-      {
-        "name": "quotes",
-        "type": "address[]",
-        "internalType": "address[]"
-      },
-      {
-        "name": "vwaps",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
-      },
-      {
-        "name": "lookbackSeconds",
-        "type": "uint64[]",
-        "internalType": "uint64[]"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "isVoteTarget",
     "inputs": [
       {
@@ -1265,7 +1177,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "peakDay",
+        "name": "startHour",
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
@@ -1413,37 +1325,6 @@
     "anonymous": false
   },
   {
-    "type": "event",
-    "name": "WorldwideDayVwapSet",
-    "inputs": [
-      {
-        "name": "worldwideDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "startTime",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "endTime",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "pairCount",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
     "type": "error",
     "name": "AggregateVoteAlreadyExists",
     "inputs": []
@@ -1545,6 +1426,11 @@
   {
     "type": "error",
     "name": "InvalidLookbackSeconds",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidScurveStartHour",
     "inputs": []
   },
   {
@@ -1777,11 +1663,6 @@
   },
   {
     "type": "error",
-    "name": "ScurveWriteIndexOverflow",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "SlashPercentOutOfRange",
     "inputs": [
       {
@@ -1910,11 +1791,6 @@
   {
     "type": "error",
     "name": "VwapRangeTooWide",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "WorldwideDayVwapSnapshotNotFound",
     "inputs": []
   }
 ]

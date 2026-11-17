@@ -15,9 +15,6 @@ use crate::constants::{
 use crate::errors::OracleError;
 use crate::schema::OracleContract;
 
-const WWD_SUFFIX_START_SECONDS: u64 = 10 * 60 * 60;
-const WWD_PREFIX_END_SECONDS: u64 = 12 * 60 * 60;
-
 /// Price-volume and volume sums of one VWAP aggregation family, keyed by
 /// period start (or by ring cell for the hourly family).
 struct VwapBucket<'storage> {
@@ -81,22 +78,6 @@ impl OracleContract<'_> {
         capacity = capacity
             .min((U256::MAX - daily_pv) / rate)
             .min(U256::MAX - daily_volume);
-
-        let seconds_since_midnight = timestamp % SECONDS_PER_DAY;
-        if seconds_since_midnight >= WWD_SUFFIX_START_SECONDS {
-            let suffix_pv = self.wwd_suffix_pv_sum.get_nested(&pair).read(&day)?;
-            let suffix_volume = self.wwd_suffix_vol_sum.get_nested(&pair).read(&day)?;
-            capacity = capacity
-                .min((U256::MAX - suffix_pv) / rate)
-                .min(U256::MAX - suffix_volume);
-        }
-        if seconds_since_midnight < WWD_PREFIX_END_SECONDS {
-            let prefix_pv = self.wwd_prefix_pv_sum.get_nested(&pair).read(&day)?;
-            let prefix_volume = self.wwd_prefix_vol_sum.get_nested(&pair).read(&day)?;
-            capacity = capacity
-                .min((U256::MAX - prefix_pv) / rate)
-                .min(U256::MAX - prefix_volume);
-        }
 
         Ok(capacity)
     }
@@ -194,7 +175,6 @@ impl OracleContract<'_> {
         volume: U256,
     ) -> Result<()> {
         let utc_day_ts = timestamp - (timestamp % SECONDS_PER_DAY);
-        let seconds_since_midnight = timestamp % SECONDS_PER_DAY;
         let hour_start = timestamp - (timestamp % VWAP_HOUR_SECONDS);
         let vol = if volume.is_zero() {
             zero_volume_weight(pair)
@@ -216,23 +196,6 @@ impl OracleContract<'_> {
         };
         daily.add(pair, utc_day_ts, pv, vol)?;
         self.accumulate_hourly_vwap(pair, hour_start, pv, vol)?;
-
-        if seconds_since_midnight >= WWD_SUFFIX_START_SECONDS {
-            let suffix = VwapBucket {
-                pv_sum: self.wwd_suffix_pv_sum.get_nested(&pair),
-                vol_sum: self.wwd_suffix_vol_sum.get_nested(&pair),
-                errors: ("WWD suffix sum accumulation", "WWD suffix volume sum"),
-            };
-            suffix.add(pair, utc_day_ts, pv, vol)?;
-        }
-        if seconds_since_midnight < WWD_PREFIX_END_SECONDS {
-            let prefix = VwapBucket {
-                pv_sum: self.wwd_prefix_pv_sum.get_nested(&pair),
-                vol_sum: self.wwd_prefix_vol_sum.get_nested(&pair),
-                errors: ("WWD prefix sum accumulation", "WWD prefix volume sum"),
-            };
-            prefix.add(pair, utc_day_ts, pv, vol)?;
-        }
         Ok(())
     }
 

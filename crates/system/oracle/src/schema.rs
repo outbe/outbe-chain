@@ -3,7 +3,6 @@ use outbe_macros::contract;
 use outbe_primitives::storage::types::{Mapping, Slot, StorageVec};
 use outbe_system_common::address_pair::AddressPair;
 use outbe_system_common::addresses::ORACLE_ADDRESS;
-use outbe_system_common::time::WorldwideDay;
 pub use outbe_system_common::units::SCALE_1E18;
 
 /// Which pair a parallel-column group is talking about. It labels two indices:
@@ -157,32 +156,14 @@ pub struct OracleContract {
     // (`settlement_iso_to_denom_string`) are retired holes. 44 held the second
     // half of the registry entry back when a pair needed two parallel columns.
 
-    // === WorldwideDay VWAP Snapshots (slots 47-49, 52) ===
-    // slot 47: mapping(worldwide_day => exists)
-    #[slot(47)]
-    pub worldwide_day_vwap_exists: Mapping<WorldwideDay, bool>,
-    // slot 48: mapping(worldwide_day => start_time)
-    pub worldwide_day_vwap_start: Mapping<WorldwideDay, u64>,
-    // slot 49: mapping(worldwide_day => end_time)
-    pub worldwide_day_vwap_end: Mapping<WorldwideDay, u64>,
-    // Slots 50 (`worldwide_day_vwap_pair_count`) and 51
-    // (`worldwide_day_vwap_pair`) are retired holes. Do not reuse. They existed
-    // only to name the pair behind a per-day entry ordinal. The column below is
-    // keyed by the registry index instead, so the pair is already in
-    // `pair_by_index`.
-    // slot 52: mapping(worldwide_day => mapping(pair_index => vwap))
-    // Inner key is the registry [`PairIndex`]. It is the same key space as
-    // `pair_by_index`, so `1..=pair_count` enumerates the day. An absent entry
-    // reads as zero and means "no VWAP for that pair on that day".
-    // slot 52 - pinned: without this anchor the running slot counter would slide
-    // it up into the retired 50-51 hole.
-    #[slot(52)]
-    pub worldwide_day_vwap_value: Mapping<WorldwideDay, Mapping<PairIndex, U256>>,
+    // Slots 47-52 are retired holes. Do not reuse. Slots 47-49 and 52 held the
+    // 50-hour VWAP snapshot of a WorldwideDay.
 
     // === Daily Rolling VWAP Aggregates (slots 53-54) ===
     // Updated on every write_snapshot. Keyed by (pair, utc_day_timestamp).
     // utc_day_timestamp = timestamp - (timestamp % 86400).
     // slot 53: mapping(pair => mapping(utc_day_ts => cumulative price*volume sum))
+    #[slot(53)]
     pub daily_pv_sum: Mapping<AddressPair, Mapping<u64, U256>>,
     // slot 54: mapping(pair => mapping(utc_day_ts => cumulative volume sum))
     pub daily_vol_sum: Mapping<AddressPair, Mapping<u64, U256>>,
@@ -216,27 +197,19 @@ pub struct OracleContract {
     // Slot 60 held annual policy rates while they were incorrectly coupled to
     // reference-currency membership. It is retired. Do not reuse.
 
-    // === Exact WorldwideDay edge aggregates (slots 70-73) ===
-    // A WorldwideDay formation window starts at 10:00 UTC on the preceding
-    // calendar day and ends at 12:00 UTC on the following calendar day. These
-    // permanent partial-day aggregates let the canonical 50-hour VWAP compose
-    // that exact half-open interval without retaining or rescanning raw
-    // snapshots. Keys are (pair, UTC-midnight timestamp), like daily_pv_sum.
-    #[slot(70)]
-    pub wwd_suffix_pv_sum: Mapping<AddressPair, Mapping<u64, U256>>,
-    pub wwd_suffix_vol_sum: Mapping<AddressPair, Mapping<u64, U256>>,
-    pub wwd_prefix_pv_sum: Mapping<AddressPair, Mapping<u64, U256>>,
-    pub wwd_prefix_vol_sum: Mapping<AddressPair, Mapping<u64, U256>>,
+    // Slots 70-73 are retired holes. Do not reuse. They held the partial-day
+    // aggregates of the 50-hour VWAP of a WorldwideDay.
 
     // === Independent policy-rate registry (slots 74-75) ===
     // Membership is enumerated independently of reference currencies and
     // registered Oracle pairs. Rates are annualized at scale 1e6.
+    #[slot(74)]
     pub policy_rate_currencies: StorageVec<u16>,
     pub policy_rate: Mapping<u16, U256>,
 
     // === Hourly VWAP aggregates (slots 76-78) ===
-    // A ring of 24 cells per pair keyed by UTC hour of day. `hourly_vwap_hour`
-    // names the hour a cell holds. The cell holds nothing for any other hour.
+    // A ring of `HOURLY_VWAP_CELLS` cells per pair. `hourly_vwap_hour` names
+    // the hour a cell holds. The cell holds nothing for any other hour.
     pub(crate) hourly_vwap_hour: Mapping<AddressPair, Mapping<u64, u64>>,
     pub(crate) hourly_pv_sum: Mapping<AddressPair, Mapping<u64, U256>>,
     pub(crate) hourly_vol_sum: Mapping<AddressPair, Mapping<u64, U256>>,
@@ -254,17 +227,19 @@ pub struct OracleContract {
     #[slot(81)]
     pub(crate) sources_synced: Slot<u64>,
 
-    // === S-curve ring (slots 82-84) ===
-    // Curves each pair ever started. Curve `n` sits in slot `n % SCURVE_RING_SLOTS`.
-    pub(crate) scurve_len: Mapping<AddressPair, u64>,
-    // The WorldwideDay a curve starts at.
-    pub(crate) scurve_peak_wwd: Mapping<AddressPair, Mapping<u64, WorldwideDay>>,
-    // The WWD VWAP of that day, in the pair-registered scale.
-    pub(crate) scurve_peak_price: Mapping<AddressPair, Mapping<u64, U256>>,
+    // === S-curve (slots 82-83) ===
+    // Each pair keeps one curve: the newest. The whole UTC hour the curve
+    // starts at, in Unix seconds. Zero means the pair has no curve.
+    pub(crate) scurve_start_hour: Mapping<AddressPair, u64>,
+    // The 24-hour VWAP of that hour, in the pair-registered scale.
+    pub(crate) scurve_peak_price: Mapping<AddressPair, U256>,
+    // Slot 84 is a retired hole. Do not reuse. It held the peak prices of the
+    // ring of 32 curves.
 
     // === Remote gas prices (slots 85-88) ===
     // Chains with a gas price vote target: the sources file on mainnet, the
     // genesis on other networks. Each is one more target of each tally.
+    #[slot(85)]
     pub gas_chains: StorageVec<u32>,
     // COEN-wei per unit of gas on a chain: the median of the last tally that
     // reached quorum for that chain, and the time of that tally.
@@ -320,18 +295,10 @@ mod tests {
         assert_eq!(c.snapshot_rate.base_slot(), U256::from(30));
         assert_eq!(c.snapshot_volume.base_slot(), U256::from(31));
         assert_eq!(c.pair_by_index.base_slot(), U256::from(43));
-        assert_eq!(c.worldwide_day_vwap_exists.base_slot(), U256::from(47));
-        assert_eq!(c.worldwide_day_vwap_start.base_slot(), U256::from(48));
-        assert_eq!(c.worldwide_day_vwap_end.base_slot(), U256::from(49));
-        assert_eq!(c.worldwide_day_vwap_value.base_slot(), U256::from(52));
         assert_eq!(c.daily_pv_sum.base_slot(), U256::from(53));
         assert_eq!(c.daily_vol_sum.base_slot(), U256::from(54));
         assert_eq!(c.utc_day_vwap_value.base_slot(), U256::from(58));
         assert_eq!(c.utc_day_vwap_last_finalized.slot(), U256::from(59));
-        assert_eq!(c.wwd_suffix_pv_sum.base_slot(), U256::from(70));
-        assert_eq!(c.wwd_suffix_vol_sum.base_slot(), U256::from(71));
-        assert_eq!(c.wwd_prefix_pv_sum.base_slot(), U256::from(72));
-        assert_eq!(c.wwd_prefix_vol_sum.base_slot(), U256::from(73));
         assert_eq!(c.policy_rate_currencies.base_slot(), U256::from(74));
         assert_eq!(c.policy_rate.base_slot(), U256::from(75));
         assert_eq!(c.hourly_vwap_hour.base_slot(), U256::from(76));
@@ -340,9 +307,8 @@ mod tests {
         assert_eq!(c.hourly_snapshot_count.base_slot(), U256::from(79));
         assert_eq!(c.hour_first_block.base_slot(), U256::from(80));
         assert_eq!(c.sources_synced.slot(), U256::from(81));
-        assert_eq!(c.scurve_len.base_slot(), U256::from(82));
-        assert_eq!(c.scurve_peak_wwd.base_slot(), U256::from(83));
-        assert_eq!(c.scurve_peak_price.base_slot(), U256::from(84));
+        assert_eq!(c.scurve_start_hour.base_slot(), U256::from(82));
+        assert_eq!(c.scurve_peak_price.base_slot(), U256::from(83));
         assert_eq!(c.gas_chains.base_slot(), U256::from(85));
         assert_eq!(c.gas_price.base_slot(), U256::from(86));
         assert_eq!(c.gas_price_timestamp.base_slot(), U256::from(87));

@@ -75,8 +75,6 @@ pub enum OracleError {
     InvalidVwapRange,
     #[error("end_time - start_time must be <= lookback_duration")]
     VwapRangeTooWide,
-    #[error("worldwide day VWAP snapshot not found")]
-    WorldwideDayVwapSnapshotNotFound,
     #[error("no finalized VWAP for that UTC day")]
     NoFinalizedUtcDayVwap,
     #[error("malformed or unfinalized VWAP snapshot id")]
@@ -139,8 +137,8 @@ pub enum OracleError {
     // -- storage invariants -------------------------------------------------
     #[error("Oracle snapshot write index overflow")]
     SnapshotWriteIndexOverflow,
-    #[error("Oracle S-curve write index overflow")]
-    ScurveWriteIndexOverflow,
+    #[error("an S-curve start must be a whole UTC hour above zero")]
+    InvalidScurveStartHour,
     #[error("snapshot timestamp precedes the previous snapshot")]
     SnapshotOutOfOrder,
     #[error("No rate for pair {pair}")]
@@ -262,9 +260,6 @@ impl From<OracleError> for PrecompileError {
             OracleError::VwapRangeTooWide => {
                 PrecompileError::RevertBytes(Bytes::from(IOracle::VwapRangeTooWide {}.abi_encode()))
             }
-            OracleError::WorldwideDayVwapSnapshotNotFound => PrecompileError::RevertBytes(
-                Bytes::from(IOracle::WorldwideDayVwapSnapshotNotFound {}.abi_encode()),
-            ),
             OracleError::NoFinalizedUtcDayVwap => PrecompileError::RevertBytes(Bytes::from(
                 IOracle::NoFinalizedUtcDayVwap {}.abi_encode(),
             )),
@@ -357,8 +352,8 @@ impl From<OracleError> for PrecompileError {
             OracleError::SnapshotWriteIndexOverflow => PrecompileError::RevertBytes(Bytes::from(
                 IOracle::SnapshotWriteIndexOverflow {}.abi_encode(),
             )),
-            OracleError::ScurveWriteIndexOverflow => PrecompileError::RevertBytes(Bytes::from(
-                IOracle::ScurveWriteIndexOverflow {}.abi_encode(),
+            OracleError::InvalidScurveStartHour => PrecompileError::RevertBytes(Bytes::from(
+                IOracle::InvalidScurveStartHour {}.abi_encode(),
             )),
             OracleError::SnapshotOutOfOrder => PrecompileError::RevertBytes(Bytes::from(
                 IOracle::SnapshotOutOfOrder {}.abi_encode(),
@@ -407,8 +402,8 @@ mod tests {
                 IOracle::SnapshotWriteIndexOverflow::SELECTOR,
             ),
             (
-                OracleError::ScurveWriteIndexOverflow,
-                IOracle::ScurveWriteIndexOverflow::SELECTOR,
+                OracleError::InvalidScurveStartHour,
+                IOracle::InvalidScurveStartHour::SELECTOR,
             ),
             (
                 OracleError::PairNotRegistered {

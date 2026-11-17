@@ -182,7 +182,7 @@ fn exhausted_existing_aggregate_omits_snapshot_without_penalizing_valid_votes() 
         let timestamp = 1_780_012_800u64 + 60 * 60;
         let day = timestamp - timestamp % SECONDS_PER_DAY;
         oracle
-            .wwd_prefix_pv_sum
+            .daily_pv_sum
             .get_nested(&pair)
             .write(&day, U256::MAX)
             .unwrap();
@@ -216,7 +216,7 @@ fn limited_existing_headroom_omits_snapshot_without_penalizing_any_validator() {
         let rate = coen_iso(2);
         let unit_volume = coen_iso(1);
         oracle
-            .wwd_prefix_pv_sum
+            .daily_pv_sum
             .get_nested(&pair)
             .write(&day, U256::MAX - rate * unit_volume + U256::ONE)
             .unwrap();

@@ -5,12 +5,11 @@ use crate::schema::{OracleContract, SCALE_1E18};
 use alloy_primitives::{Address, U256};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_system_common::time::{WorldwideDay, SECONDS_PER_DAY};
+use outbe_system_common::time::SECONDS_PER_DAY;
 
 use super::common::*;
 
 /// The WWD that holds Unix time 0.
-const EPOCH_WWD: WorldwideDay = WorldwideDay::new(19_700_101);
 
 // -----------------------------------------------------------------------
 // Genesis config tests
@@ -471,13 +470,8 @@ fn precompile_dispatch_round_trips_the_whole_query_surface() {
             )
             .unwrap();
 
-        crate::scurve::store_scurve_entry(
-            &mut oracle,
-            pair_key(COEN, usd()),
-            EPOCH_WWD,
-            coen_iso(160),
-        )
-        .unwrap();
+        crate::scurve::store_scurve_entry(&mut oracle, pair_key(COEN, usd()), 3_600, coen_iso(160))
+            .unwrap();
 
         use crate::precompile::IOracle;
         use alloy_sol_types::SolCall;
@@ -516,43 +510,23 @@ fn precompile_dispatch_round_trips_the_whole_query_surface() {
         assert_eq!(decoded.quotes, vec![usd(), ETH]);
         assert_eq!(decoded.lookbackSeconds, vec![2_000, 2_000]);
 
-        let scurve_values = IOracle::getScurveValuesCall {
-            base: COEN,
-            quote: usd(),
-            timestamp: 3_000,
-        }
-        .abi_encode();
-        let decoded = IOracle::getScurveValuesCall::abi_decode_returns(
-            &crate::precompile::dispatch(
-                storage.clone(),
-                &scurve_values,
-                Address::ZERO,
-                U256::ZERO,
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(decoded.targetDay, u64::from(EPOCH_WWD));
-        assert_eq!(decoded.peakDays, vec![u64::from(EPOCH_WWD)]);
-        assert_eq!(decoded.values, vec![coen_iso(160)]);
-
-        let scurve_data = IOracle::getAllScurveDataForPairCall {
+        let scurve = IOracle::getScurveCall {
             base: COEN,
             quote: usd(),
         }
         .abi_encode();
-        let decoded = IOracle::getAllScurveDataForPairCall::abi_decode_returns(
-            &crate::precompile::dispatch(storage.clone(), &scurve_data, Address::ZERO, U256::ZERO)
+        let decoded = IOracle::getScurveCall::abi_decode_returns(
+            &crate::precompile::dispatch(storage.clone(), &scurve, Address::ZERO, U256::ZERO)
                 .unwrap(),
         )
         .unwrap();
-        assert_eq!(decoded.peakDays, vec![u64::from(EPOCH_WWD)]);
-        assert_eq!(decoded.peakPrices, vec![coen_iso(160)]);
+        assert_eq!(decoded.startHour, 3_600);
+        assert_eq!(decoded.peakPrice, coen_iso(160));
 
         let nominal_components = IOracle::getNominalPriceComponentsCall {
             base: COEN,
             quote: usd(),
-            timestamp: 3_000,
+            timestamp: 3_600,
         }
         .abi_encode();
         let decoded = IOracle::getNominalPriceComponentsCall::abi_decode_returns(
@@ -572,7 +546,7 @@ fn precompile_dispatch_round_trips_the_whole_query_surface() {
         let nominal = IOracle::getNominalPriceCall {
             base: COEN,
             quote: usd(),
-            timestamp: 3_000,
+            timestamp: 3_600,
         }
         .abi_encode();
         let decoded = IOracle::getNominalPriceCall::abi_decode_returns(
@@ -632,41 +606,6 @@ fn genesis_imports_price_snapshots() {
         assert_eq!(oracle.snapshot_write_idx.read().unwrap(), 2);
         assert_eq!(oracle.snapshot_timestamp.read(&0u64).unwrap(), 1000);
         assert_eq!(oracle.snapshot_timestamp.read(&1u64).unwrap(), 2000);
-    });
-}
-
-#[test]
-fn genesis_imports_every_curve_of_a_pair() {
-    with_storage(|storage| {
-        let config = crate::genesis::OracleGenesisConfig {
-            scurve_entries: vec![
-                crate::genesis::GenesisScurveEntry {
-                    base: COEN,
-                    quote: usd(),
-                    peak_day: WorldwideDay::new(19_700_102),
-                    peak_price: coen_iso(500),
-                },
-                crate::genesis::GenesisScurveEntry {
-                    base: COEN,
-                    quote: usd(),
-                    peak_day: WorldwideDay::new(19_700_111),
-                    peak_price: coen_iso(600),
-                },
-            ],
-            ..crate::genesis::OracleGenesisConfig::default_config()
-        };
-
-        let mut oracle = OracleContract::new(storage.clone());
-        crate::genesis::init_from_genesis(&mut oracle, &config).unwrap();
-
-        assert_eq!(oracle.pair_at(1).unwrap(), pair_key(COEN, usd()));
-        assert_eq!(
-            crate::scurve::get_all_scurve_data_for_pair(&oracle, pair_key(COEN, usd())).unwrap(),
-            (
-                vec![19_700_102, 19_700_111],
-                vec![coen_iso(500), coen_iso(600)]
-            )
-        );
     });
 }
 
@@ -752,15 +691,12 @@ fn assert_exported_snapshot(exported: &crate::genesis::OracleGenesisConfig) {
 }
 
 /// Asserts that `exported` holds the one COEN/USD S-curve that starts at
-/// WWD 1970-01-02.
+/// 1970-01-02 00:00 UTC.
 fn assert_exported_scurve_entry(exported: &crate::genesis::OracleGenesisConfig) {
     assert_eq!(exported.scurve_entries.len(), 1);
     assert_eq!(exported.scurve_entries[0].base, COEN);
     assert_eq!(exported.scurve_entries[0].quote, usd());
-    assert_eq!(
-        exported.scurve_entries[0].peak_day,
-        WorldwideDay::new(19_700_102)
-    );
+    assert_eq!(exported.scurve_entries[0].start_hour, 86_400);
 }
 
 #[test]
@@ -796,7 +732,7 @@ fn export_genesis_round_trips_the_full_oracle_state() {
         scurve_entries: vec![crate::genesis::GenesisScurveEntry {
             base: COEN,
             quote: usd(),
-            peak_day: WorldwideDay::new(19_700_102),
+            start_hour: 86_400,
             peak_price: coen_iso(100),
         }],
         vote_period: 2,
@@ -848,7 +784,10 @@ fn export_genesis_round_trips_the_full_oracle_state() {
             &[(v1, Penalty::Success, 7), (v2, Penalty::Miss, 4)],
         );
         assert_eq!(oracle.snapshot_write_idx.read().unwrap(), 1);
-        assert_eq!(oracle.scurve_len.read(&pair_key(COEN, usd())).unwrap(), 1);
+        assert_eq!(
+            crate::scurve::curve(&oracle, pair_key(COEN, usd())).unwrap(),
+            Some((86_400, coen_iso(100)))
+        );
     });
 }
 
@@ -883,239 +822,6 @@ fn export_genesis_omits_a_zero_initial_rate() {
         assert!(exported.initial_rates.is_empty());
     });
 }
-/// The old rule took the last snapshot of a UTC day as the peak price. Now the
-/// WWD VWAP is the peak price, so one high last snapshot moves it only by its
-/// volume share.
-#[test]
-fn one_high_last_snapshot_of_a_utc_day_starts_no_curve() {
-    let mut provider = HashMapStorageProvider::new(1);
-    provider.set_block_number(1);
-    let wwd = WorldwideDay::new(20260302);
-    let start_time = wwd.start_timestamp().unwrap();
-    // The UTC day with the date of the WWD is the middle 24 h of its window.
-    let utc_day_end = start_time + 38 * 60 * 60;
-    StorageHandle::enter(&mut provider, |storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        let pair = AddressPair::new_coen_to(840);
-        oracle.register_pair(pair).unwrap();
-        let index = oracle.pair_index_of(pair).unwrap();
-        oracle
-            .record_utc_day_vwap(wwd.value(), index, coen_iso(100))
-            .unwrap();
-        let older = WorldwideDay::new(20260301);
-        assert!(
-            crate::scurve::store_scurve_entry(&mut oracle, pair, older, coen_iso(300)).unwrap()
-        );
-
-        oracle
-            .write_snapshot(start_time + 1_500, &[(pair, coen_iso(100), coen_iso(9))])
-            .unwrap();
-        oracle
-            .write_snapshot(utc_day_end - 1, &[(pair, coen_iso(1_000), coen_iso(1))])
-            .unwrap();
-        oracle
-            .store_worldwide_day_vwap_snapshot(wwd, start_time, start_time + 50 * 60 * 60)
-            .unwrap();
-
-        // The WWD VWAP is 190: below the curve of 300, so no new curve starts.
-        assert_eq!(
-            oracle.get_worldwide_day_vwap_for_pair(wwd, index).unwrap(),
-            Some(coen_iso(190))
-        );
-        assert_eq!(oracle.scurve_len.read(&pair).unwrap(), 1);
-    });
-}
-
-#[test]
-fn store_worldwide_day_vwap_snapshot_round_trips_every_pair() {
-    use crate::precompile::IOracle;
-    use alloy_sol_types::{SolCall, SolEvent};
-    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-
-    let mut provider = HashMapStorageProvider::new(1);
-    provider.set_block_number(1);
-    let worldwide_day = outbe_system_common::time::WorldwideDay::new(20260302);
-    let start_time = worldwide_day.start_timestamp().unwrap();
-    let end_time = start_time + 50 * 60 * 60;
-    StorageHandle::enter(&mut provider, |storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .config_lookback_duration
-            .write(SECONDS_PER_DAY)
-            .unwrap();
-        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
-        oracle
-            .register_pair(AddressPair::from_addresses(usd(), ETH))
-            .unwrap();
-
-        oracle
-            .write_snapshot(
-                start_time + 1_500,
-                &[
-                    (pair_key(COEN, usd()), coen_iso(110), coen_iso(1)),
-                    (pair_key(usd(), ETH), fixed18(2_200), SCALE_1E18),
-                ],
-            )
-            .unwrap();
-
-        oracle
-            .store_worldwide_day_vwap_snapshot(worldwide_day, start_time, end_time)
-            .unwrap();
-
-        let (start_time, end_time, bases, quotes, vwaps, lookbacks) = oracle
-            .get_worldwide_day_vwap_snapshot(worldwide_day)
-            .unwrap();
-        assert_eq!(start_time, worldwide_day.start_timestamp().unwrap());
-        assert_eq!(
-            end_time,
-            worldwide_day.start_timestamp().unwrap() + 50 * 60 * 60
-        );
-        assert_eq!(bases, vec![COEN, usd()]);
-        assert_eq!(quotes, vec![usd(), ETH]);
-        assert_eq!(vwaps, vec![coen_iso(110), fixed18(2_200)]);
-        assert_eq!(lookbacks, vec![50 * 60 * 60, 50 * 60 * 60]);
-        assert_eq!(
-            oracle
-                .get_worldwide_day_vwap_for_pair(
-                    worldwide_day,
-                    oracle.pair_index_of(pair_key(COEN, usd())).unwrap()
-                )
-                .unwrap(),
-            Some(coen_iso(110))
-        );
-        // A registered pair with no data that day reads as absent, not as some
-        // neighbouring entry's value.
-        oracle.register_pair(pair_key(BTC, USDT)).unwrap();
-        assert_eq!(
-            oracle
-                .get_worldwide_day_vwap_for_pair(
-                    worldwide_day,
-                    oracle.pair_index_of(pair_key(BTC, USDT)).unwrap()
-                )
-                .unwrap(),
-            None
-        );
-
-        let call = IOracle::getWorldwideDayVwapSnapshotCall {
-            worldwideDay: 20260302,
-        }
-        .abi_encode();
-        let decoded = IOracle::getWorldwideDayVwapSnapshotCall::abi_decode_returns(
-            &crate::precompile::dispatch(storage.clone(), &call, Address::ZERO, U256::ZERO)
-                .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(decoded.startTime, worldwide_day.start_timestamp().unwrap());
-        assert_eq!(
-            decoded.endTime,
-            worldwide_day.start_timestamp().unwrap() + 50 * 60 * 60
-        );
-        assert_eq!(decoded.bases, vec![COEN, usd()]);
-        assert_eq!(decoded.quotes, vec![usd(), ETH]);
-        assert_eq!(decoded.vwaps, vec![coen_iso(110), fixed18(2_200)]);
-    });
-
-    let wwd_events: Vec<_> = provider
-        .get_ordered_events()
-        .iter()
-        .filter_map(|log| IOracle::WorldwideDayVwapSet::decode_log(log).ok())
-        .map(|ev| ev.data)
-        .collect();
-    assert_eq!(wwd_events.len(), 1);
-    assert_eq!(wwd_events[0].worldwideDay, 20260302);
-    assert_eq!(wwd_events[0].startTime, start_time);
-    assert_eq!(wwd_events[0].endTime, end_time);
-    assert_eq!(wwd_events[0].pairCount, 2);
-}
-
-#[test]
-fn day_type_pair_vwap_reports_missing_data_without_reverting() {
-    with_storage(|storage| {
-        let wwd = outbe_system_common::time::WorldwideDay::new(20260302u32);
-        let start_time = wwd.start_timestamp().unwrap();
-        let end_time = start_time + 50 * 60 * 60;
-
-        // Pair not registered yet -> typed None, not an error.
-        assert_eq!(
-            crate::api::day_type_pair_vwap(storage.clone(), wwd).unwrap(),
-            None
-        );
-
-        let mut oracle = OracleContract::new(storage.clone());
-        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
-
-        // No window data -> store is a deterministic no-op returning false,
-        // not a "no VWAP data" revert leaking to the caller.
-        assert!(!crate::api::store_worldwide_day_vwap_snapshot(
-            storage.clone(),
-            wwd,
-            start_time,
-            end_time,
-        )
-        .unwrap());
-        assert_eq!(
-            crate::api::day_type_pair_vwap(storage.clone(), wwd).unwrap(),
-            None,
-            "no snapshot written -> None"
-        );
-
-        // Window with data -> store writes (true) and the COEN VWAP resolves.
-        oracle
-            .write_snapshot(
-                start_time + 1_500,
-                &[(pair_key(COEN, usd()), coen_iso(110), coen_iso(1))],
-            )
-            .unwrap();
-        assert!(crate::api::store_worldwide_day_vwap_snapshot(
-            storage.clone(),
-            wwd,
-            start_time,
-            end_time,
-        )
-        .unwrap());
-        assert_eq!(
-            crate::api::day_type_pair_vwap(storage.clone(), wwd).unwrap(),
-            Some(coen_iso(110))
-        );
-    });
-}
-
-#[test]
-fn worldwide_day_vwap_uses_the_exact_half_open_50_hour_window() {
-    with_bare_coen840_oracle(|oracle, pair| {
-        let worldwide_day = outbe_system_common::time::WorldwideDay::new(20260815);
-        let start = worldwide_day.start_timestamp().unwrap();
-        let end = start + 50 * 60 * 60;
-
-        for (timestamp, price, volume) in [
-            (start - 1, 900, 1),
-            (start, 10, 1),
-            (
-                worldwide_day.to_timestamp_utc().unwrap() + 12 * 60 * 60,
-                20,
-                2,
-            ),
-            (end - 1, 30, 3),
-            (end, 900, 1),
-        ] {
-            oracle
-                .write_snapshot(timestamp, &[(pair, coen_iso(price), coen_iso(volume))])
-                .unwrap();
-        }
-
-        assert!(oracle
-            .store_worldwide_day_vwap_snapshot(worldwide_day, start, end)
-            .unwrap());
-        let index = oracle.pair_index_of(pair).unwrap();
-        assert_eq!(
-            oracle
-                .get_worldwide_day_vwap_for_pair(worldwide_day, index)
-                .unwrap(),
-            Some(U256::from(23_333_333u64))
-        );
-    });
-}
-
 #[test]
 fn explicit_long_vwap_uses_daily_interiors_and_exact_raw_edges() {
     with_bare_coen840_oracle(|oracle, pair| {
@@ -1181,27 +887,6 @@ fn range_vwap_rejects_a_window_wider_than_the_lookback_duration() {
         assert_typed_revert(&error, crate::errors::OracleError::VwapRangeTooWide);
         let error = oracle.calculate_vwaps(day, day + 86_401).unwrap_err();
         assert_typed_revert(&error, crate::errors::OracleError::VwapRangeTooWide);
-    });
-}
-
-#[test]
-fn worldwide_day_snapshot_rejects_noncanonical_bounds_without_writes() {
-    with_bare_coen840_oracle(|oracle, pair| {
-        let worldwide_day = outbe_system_common::time::WorldwideDay::new(20260815);
-        let start = worldwide_day.start_timestamp().unwrap();
-        let end = start + 50 * 60 * 60;
-        oracle
-            .write_snapshot(start, &[(pair, coen_iso(10), coen_iso(1))])
-            .unwrap();
-
-        let error = oracle
-            .store_worldwide_day_vwap_snapshot(worldwide_day, start + 1, end)
-            .unwrap_err();
-        assert_typed_revert(&error, crate::errors::OracleError::InvalidVwapRange);
-        assert!(!oracle
-            .worldwide_day_vwap_exists
-            .read(&worldwide_day)
-            .unwrap());
     });
 }
 
@@ -1779,16 +1464,14 @@ fn policy_rate_precompile_enumerates_and_rejects_absence() {
 // -----------------------------------------------------------------------
 
 /// `None` distinguishes "this chain cannot price that currency at all" from
-/// `Some(0)`, "the pair exists but the day has no data yet". TributeFactory maps
-/// the first to `IssuanceCurrencyNotRegistered` and the second to
-/// `CurrencyPriceUnavailable`, so the two must not collapse.
+/// `Some(0)`, "the pair exists but has no 24-hour VWAP in this hour".
+/// TributeFactory maps the first to `IssuanceCurrencyNotRegistered` and the
+/// second to `CurrencyPriceUnavailable`, so the two must not collapse.
 #[test]
 fn tribute_pricing_separates_an_unregistered_issuance_from_unpriced_inputs() {
-    let day = 20260302u32.into();
-
-    with_storage(|storage| {
+    with_storage_at(ATOMIC_DAY_START + 24 * 3_600, |storage| {
         assert_eq!(
-            crate::api::tribute_pricing_inputs(storage.clone(), 840, 978, day).unwrap(),
+            crate::api::tribute_pricing_inputs(storage.clone(), 840, 978).unwrap(),
             None,
             "no COEN/840 pair is registered"
         );
@@ -1797,10 +1480,10 @@ fn tribute_pricing_separates_an_unregistered_issuance_from_unpriced_inputs() {
             .register_pair(AddressPair::new_coen_to(840))
             .unwrap();
         assert_eq!(
-            crate::api::tribute_pricing_inputs(storage, 840, 978, day).unwrap(),
+            crate::api::tribute_pricing_inputs(storage, 840, 978).unwrap(),
             Some(crate::api::TributePricingInputs {
-                issuance_wwd_vwap_minor: U256::ZERO,
-                reference_wwd_vwap_minor: U256::ZERO,
+                issuance_vwap_minor: U256::ZERO,
+                reference_vwap_minor: U256::ZERO,
                 reference_scurve_minor: U256::ZERO,
             }),
             "registered issuance with cold pricing remains distinguishable"
@@ -1808,62 +1491,41 @@ fn tribute_pricing_separates_an_unregistered_issuance_from_unpriced_inputs() {
     });
 }
 
-/// The API prices each currency from its own `COEN/<iso>` pair. A pair that does
-/// not have COEN as its base never leaks into the answer.
+/// An offer reads the 24-hour VWAP of each currency at its hour, and the
+/// S-curve of the reference currency only.
 #[test]
-fn tribute_pricing_reads_both_wwd_legs_and_only_the_reference_curve() {
-    let eur: Address = AssetType::IsoCurrency(978).into();
-    let day = outbe_system_common::time::WorldwideDay::new(20260302u32);
-    let start_time = day.start_timestamp().unwrap();
-
-    with_bare_oracle(|storage, oracle| {
-        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
-        oracle.register_pair(AddressPair::new_coen_to(978)).unwrap();
-        // COEN is not the base. This pair must not be mistaken for a COEN/<iso> pair.
-        oracle
-            .register_pair(AddressPair::from_addresses(usd(), ETH))
-            .unwrap();
-
-        oracle
-            .write_snapshot(
-                start_time + 1_500,
-                &[
-                    (pair_key(COEN, usd()), coen_iso(110), coen_iso(1)),
-                    (pair_key(COEN, eur), coen_iso(90), coen_iso(1)),
-                    (pair_key(usd(), ETH), fixed18(2_200), SCALE_1E18),
-                ],
-            )
-            .unwrap();
-        oracle
-            .store_worldwide_day_vwap_snapshot(day, start_time, start_time + 50 * 60 * 60)
-            .unwrap();
+fn offer_reads_the_24_hour_vwaps_and_the_reference_curve_of_its_hour() {
+    let hour = 3_600;
+    let now = ATOMIC_DAY_START + 24 * hour + 30 * 60;
+    with_storage_at(now, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let usd = AddressPair::new_coen_to(840);
+        let eur = AddressPair::new_coen_to(978);
+        oracle.register_pair(usd).unwrap();
+        oracle.register_pair(eur).unwrap();
+        note_hours(&mut oracle, ATOMIC_DAY_START, ATOMIC_DAY_START + 25 * hour);
+        for k in 0..24 {
+            oracle
+                .write_snapshot(
+                    ATOMIC_DAY_START + k * hour + 60,
+                    &[
+                        (usd, coen_iso(2), coen_iso(1)),
+                        (eur, coen_iso(3), coen_iso(1)),
+                    ],
+                )
+                .unwrap();
+        }
+        // Each currency has a curve. The offer reads the curve of the reference.
+        crate::scurve::store_scurve_entry(&mut oracle, usd, ATOMIC_DAY_START, coen_iso(5)).unwrap();
+        crate::scurve::store_scurve_entry(&mut oracle, eur, ATOMIC_DAY_START, coen_iso(7)).unwrap();
 
         assert_eq!(
-            crate::api::tribute_pricing_inputs(storage.clone(), 840, 978, day).unwrap(),
+            crate::api::tribute_pricing_inputs(storage, 978, 840).unwrap(),
             Some(crate::api::TributePricingInputs {
-                issuance_wwd_vwap_minor: coen_iso(110),
-                reference_wwd_vwap_minor: coen_iso(90),
-                reference_scurve_minor: U256::ZERO,
+                issuance_vwap_minor: coen_iso(3),
+                reference_vwap_minor: coen_iso(2),
+                reference_scurve_minor: crate::scurve::compute_scurve_value(coen_iso(5), 1),
             })
-        );
-
-        // A curve on the issuance currency must never brake Tribute pricing.
-        // The API returns only the independently selected reference currency curve.
-        crate::scurve::store_scurve_entry(oracle, pair_key(COEN, usd()), day, coen_iso(500))
-            .unwrap();
-        crate::scurve::store_scurve_entry(oracle, pair_key(COEN, eur), day, coen_iso(320)).unwrap();
-        assert_eq!(
-            crate::api::tribute_pricing_inputs(storage.clone(), 840, 978, day).unwrap(),
-            Some(crate::api::TributePricingInputs {
-                issuance_wwd_vwap_minor: coen_iso(110),
-                reference_wwd_vwap_minor: coen_iso(90),
-                reference_scurve_minor: coen_iso(320),
-            })
-        );
-        // ETH is quoted against USD, not COEN, so it is not an issuance currency.
-        assert_eq!(
-            crate::api::tribute_pricing_inputs(storage, 826, 978, day).unwrap(),
-            None
         );
     });
 }

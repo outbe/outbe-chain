@@ -11,7 +11,7 @@ use crate::constants::{DAY_TYPE_ISO, DEFAULT_POLICY_RATES};
 use crate::types::AssetType;
 use alloy_primitives::{Address, U256};
 use outbe_system_common::asset_type::COEN_ASSET;
-use outbe_system_common::time::{WorldwideDay, SECONDS_PER_DAY};
+use outbe_system_common::time::SECONDS_PER_DAY;
 
 pub use export::export_genesis;
 pub use import::init_from_genesis;
@@ -32,8 +32,8 @@ pub struct GenesisScurveEntry {
     pub base: Address,
     /// Quote asset of the pair.
     pub quote: Address,
-    /// The WorldwideDay the curve starts at.
-    pub peak_day: WorldwideDay,
+    /// The whole UTC hour the curve starts at, in Unix seconds.
+    pub start_hour: u64,
     /// Peak price in the COEN/840 S-Curve's six-decimal scale.
     pub peak_price: U256,
 }

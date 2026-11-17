@@ -358,16 +358,14 @@ fn seed_offer_world(storage: StorageHandle<'_>, target_days: &[WorldwideDay]) {
 
     let mut oracle = OracleContract::new(storage.clone());
     init_from_genesis(&mut oracle, &OracleGenesisConfig::default_config()).unwrap();
-    let pair = AddressPair::new_coen_to(840);
-    for worldwide_day in target_days {
-        let start = worldwide_day.start_timestamp().unwrap();
-        oracle
-            .write_snapshot(start + 1, &[(pair, U256::from(100), U256::ONE)])
-            .unwrap();
-        oracle
-            .store_worldwide_day_vwap_snapshot(*worldwide_day, start, start + 50 * 60 * 60)
-            .unwrap();
-    }
+    // An offer reads the 24-hour VWAP of its hour.
+    outbe_oracle::test_support::seed_covered_trailing_window(
+        &storage,
+        AddressPair::new_coen_to(840),
+        U256::from(100),
+        U256::ONE,
+    )
+    .unwrap();
 }
 
 #[test]

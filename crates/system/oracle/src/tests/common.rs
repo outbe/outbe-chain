@@ -131,31 +131,25 @@ pub(super) fn seed_native_oracle(provider: &mut HashMapStorageProvider) {
     });
 }
 
-pub(super) fn seed_native_oracle_with_snapshot(provider: &mut HashMapStorageProvider) {
-    seed_native_oracle(provider);
-    StorageHandle::enter(provider, |storage| {
-        OracleContract::new(storage)
-            .write_snapshot(
-                ATOMIC_DAY_START + 100,
-                &[(pair_key(COEN, usd()), coen_iso(125), coen_iso(2))],
-            )
-            .unwrap();
-    });
-}
-
 /// Seeds one COEN/USD snapshot in every hour of the UTC day at
 /// [`ATOMIC_DAY_START`], with hour notes, so the day has a covered VWAP.
 pub(super) fn seed_native_oracle_with_covered_day(provider: &mut HashMapStorageProvider) {
     seed_native_oracle(provider);
     StorageHandle::enter(provider, |storage| {
         let mut oracle = OracleContract::new(storage);
+        // Two pairs, so the day has two writes.
+        let eur = AddressPair::new_coen_to(978);
+        oracle.register_pair(eur).unwrap();
         let day_end = ATOMIC_DAY_START + SECONDS_PER_DAY;
         note_hours(&mut oracle, ATOMIC_DAY_START, day_end + 3_600);
         for hour in (ATOMIC_DAY_START..day_end).step_by(3_600) {
             oracle
                 .write_snapshot(
                     hour + 100,
-                    &[(pair_key(COEN, usd()), coen_iso(125), coen_iso(2))],
+                    &[
+                        (pair_key(COEN, usd()), coen_iso(125), coen_iso(2)),
+                        (eur, coen_iso(110), coen_iso(2)),
+                    ],
                 )
                 .unwrap();
         }
@@ -169,17 +163,6 @@ pub(super) fn write_snapshot_mutation(storage: StorageHandle<'_>) -> PrecompileR
     )
 }
 
-pub(super) fn store_wwd_snapshot_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
-    let worldwide_day = outbe_system_common::time::WorldwideDay::from_timestamp(ATOMIC_DAY_START);
-    let start_time = worldwide_day.start_timestamp().unwrap();
-    OracleContract::new(storage).store_worldwide_day_vwap_snapshot(
-        worldwide_day,
-        start_time,
-        start_time + 50 * 60 * 60,
-    )?;
-    Ok(())
-}
-
 pub(super) fn finalize_utc_day_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
     OracleContract::new(storage).finalize_utc_day_vwap(
         outbe_system_common::time::timestamp_to_date_key(ATOMIC_DAY_START),
@@ -190,7 +173,7 @@ pub(super) fn store_scurve_mutation(storage: StorageHandle<'_>) -> PrecompileRes
     crate::scurve::store_scurve_entry(
         &mut OracleContract::new(storage),
         pair_key(COEN, usd()),
-        outbe_system_common::time::WorldwideDay::from_timestamp(ATOMIC_DAY_START),
+        ATOMIC_DAY_START,
         coen_iso(125),
     )
     .map(|_| ())

@@ -156,7 +156,7 @@ oracle:
   scurve_seeds:
     - pair_base: COEN
       pair_quote: "840"
-      peak_day: 20241220
+      start_hour: 1734652800 # 2024-12-20 00:00 UTC
       peak_price: "1000000"
 
 # No genesis worldwide day. The runtime creates the first one itself at block 1

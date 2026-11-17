@@ -31,7 +31,7 @@ outbe-stablecoin.workspace = true
 outbe-stablecoinfactory.workspace = true
 outbe-nod = { workspace = true, features = ["test-enclave"] }
 outbe-nodfactory = { workspace = true, features = ["test-utils"] }
-outbe-oracle.workspace = true
+outbe-oracle = { workspace = true, features = ["test-utils"] }
 outbe-primitives = { workspace = true, features = ["bench-utils", "test-utils"] }
 outbe-zk.workspace = true
 outbe-promis = { workspace = true, features = ["test-enclave"] }

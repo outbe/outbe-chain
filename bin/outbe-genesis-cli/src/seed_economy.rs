@@ -9,8 +9,9 @@ use crate::error::GenesisError;
 use crate::keccak::keccak256;
 use crate::seed_codec::{
     address_as_u256, address_bytes, alloc_balance_hex, data_slot, parse_u256, parse_u32, parse_u64,
-    u32_bytes, StorageBuilder, METADOSIS_ADDRESS, ORACLE_ADDRESS, TRIBUTE_ADDRESS,
-    TRIBUTE_FACTORY_ADDRESS, VAULT_ROUTER_STABLECOIN_SOURCES, VAULT_ROUTER_STABLECOIN_TARGETS,
+    u32_bytes, wwd_to_day_timestamp, StorageBuilder, METADOSIS_ADDRESS, ORACLE_ADDRESS,
+    TRIBUTE_ADDRESS, TRIBUTE_FACTORY_ADDRESS, VAULT_ROUTER_STABLECOIN_SOURCES,
+    VAULT_ROUTER_STABLECOIN_TARGETS,
 };
 use crate::seed_oracle::seed_oracle;
 
@@ -216,8 +217,10 @@ pub fn clear_seeded_metadosis_days(seed: &mut Value) -> Result<(), GenesisError>
     Ok(())
 }
 
-/// Retarget `metadosis.worldwide_days[].wwd` and `oracle.scurve_seeds[].peak_day` to `day`.
-pub fn override_worldwide_day(seed: &mut Value, day: u32) {
+/// Retarget `metadosis.worldwide_days[].wwd` to `day` and
+/// `oracle.scurve_seeds[].start_hour` to 00:00 UTC of `day`.
+pub fn override_worldwide_day(seed: &mut Value, day: u32) -> Result<(), GenesisError> {
+    let start_hour = wwd_to_day_timestamp(day)?;
     if let Some(wwds) = seed
         .pointer_mut("/metadosis/worldwide_days")
         .and_then(Value::as_array_mut)
@@ -234,10 +237,11 @@ pub fn override_worldwide_day(seed: &mut Value, day: u32) {
     {
         for s in scurves {
             if let Some(obj) = s.as_object_mut() {
-                obj.insert("peak_day".to_owned(), Value::Number(day.into()));
+                obj.insert("start_hour".to_owned(), Value::Number(start_hour.into()));
             }
         }
     }
+    Ok(())
 }
 
 /// Seed Tribute, Metadosis, and Oracle sections into `alloc`.

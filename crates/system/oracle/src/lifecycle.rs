@@ -91,7 +91,7 @@ fn run_begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
     let vote_period = oracle.config_vote_period.read()?;
 
     if block_number > 0 && oracle.record_hour_block(timestamp, block_number)? {
-        oracle.emit_vwap_24h_set(timestamp - timestamp % VWAP_HOUR_SECONDS)?;
+        oracle.close_vwap_24h_hour(timestamp - timestamp % VWAP_HOUR_SECONDS)?;
     }
 
     // Tally at end of vote period (skip block 0)

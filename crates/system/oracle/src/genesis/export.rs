@@ -4,7 +4,6 @@
 use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 use outbe_system_common::address_pair::AddressPair;
-use outbe_system_common::time::WorldwideDay;
 use std::collections::BTreeSet;
 
 use super::{
@@ -134,18 +133,18 @@ fn export_snapshots(oracle: &OracleContract) -> Result<Vec<GenesisSnapshot>> {
     Ok(snapshots)
 }
 
-/// Export the stored S-curves, oldest first within each pair.
+/// Export the S-curve of each pair that has one.
 fn export_scurve_entries(oracle: &OracleContract) -> Result<Vec<GenesisScurveEntry>> {
-    let (bases, quotes, peak_days, peak_prices) = crate::scurve::get_all_scurve_data(oracle)?;
+    let (bases, quotes, start_hours, peak_prices) = crate::scurve::get_all_scurve_data(oracle)?;
     Ok(bases
         .into_iter()
         .zip(quotes)
-        .zip(peak_days.into_iter().zip(peak_prices))
+        .zip(start_hours.into_iter().zip(peak_prices))
         .map(
-            |((base, quote), (peak_day, peak_price))| GenesisScurveEntry {
+            |((base, quote), (start_hour, peak_price))| GenesisScurveEntry {
                 base,
                 quote,
-                peak_day: WorldwideDay::new(peak_day as u32),
+                start_hour,
                 peak_price,
             },
         )

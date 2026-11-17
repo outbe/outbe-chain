@@ -42,48 +42,6 @@ fn pair_by_index_occupies_slot_43_as_a_two_word_value() {
     });
 }
 
-#[test]
-fn worldwide_day_partial_aggregates_occupy_slots_70_through_73() {
-    use outbe_primitives::storage::types::StorageKey;
-    use outbe_system_common::addresses::ORACLE_ADDRESS;
-
-    with_bare_oracle(|storage, oracle| {
-        let pair = AddressPair::new_coen_to(840);
-        let day = 1_780_012_800u64;
-        let markers = [11u64, 12, 13, 14];
-        oracle
-            .wwd_suffix_pv_sum
-            .get_nested(&pair)
-            .write(&day, U256::from(markers[0]))
-            .unwrap();
-        oracle
-            .wwd_suffix_vol_sum
-            .get_nested(&pair)
-            .write(&day, U256::from(markers[1]))
-            .unwrap();
-        oracle
-            .wwd_prefix_pv_sum
-            .get_nested(&pair)
-            .write(&day, U256::from(markers[2]))
-            .unwrap();
-        oracle
-            .wwd_prefix_vol_sum
-            .get_nested(&pair)
-            .write(&day, U256::from(markers[3]))
-            .unwrap();
-
-        for (base, marker) in (70u64..=73).zip(markers) {
-            let outer = pair.mapping_slot(U256::from(base));
-            let slot = day.mapping_slot(outer);
-            assert_eq!(
-                storage.sload(ORACLE_ADDRESS, slot).unwrap(),
-                U256::from(marker),
-                "WWD partial aggregate moved from slot {base}"
-            );
-        }
-    });
-}
-
 /// Every retired slot in the settlement range must stay empty. The frozen V1
 /// plan still opens slots 41/42, so a resurrected writer would change what
 /// that plan proves. Slots 40/45/46 must stay clear so the holes remain

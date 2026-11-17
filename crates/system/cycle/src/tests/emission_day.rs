@@ -255,9 +255,7 @@ fn wwd_step_runs_once_a_day() {
     });
 
     // Advance day by day to 2024-01-05:
-    // - On 2024-01-02 00:00 UTC (day_offset = 1), WWD 20240101 forming_end (2024-01-02 12:00 UTC) > cutoff_ts,
-    //   so forming_snapshot_finalized[20240101] is still false.
-    // - On 2024-01-03 00:00 UTC (day_offset = 2), A6 snapshots WWD 20240101's forming VWAP from Oracle.
+    // - The daily step A6 stores no price.
     // - On 2024-01-05 00:00 UTC (day_offset = 4), WWD 20231231 closes/seals, leaving 20240101..=20240106.
     let mut block_no = 3u64;
     for day_offset in 1..=4u64 {
@@ -270,29 +268,6 @@ fn wwd_step_runs_once_a_day() {
             let expected_day = timestamp_to_date_key(midnight_ts);
             let factory = TributeFactoryContract::new(ctx.storage.clone());
             assert_eq!(factory.last_wwd_advance_day.read().unwrap(), expected_day);
-            if day_offset == 1 {
-                assert!(!factory
-                    .forming_snapshot_finalized
-                    .read(&WorldwideDay::new(20_240_101))
-                    .unwrap());
-            }
-            if day_offset == 2 {
-                assert!(
-                    factory
-                        .forming_snapshot_finalized
-                        .read(&WorldwideDay::new(20_240_101))
-                        .unwrap(),
-                    "A6 at 2024-01-03 00:00 UTC must finalize forming snapshot of WWD 20240101"
-                );
-                assert!(
-                    outbe_oracle::api::has_worldwide_day_vwap_snapshot(
-                        ctx.storage.clone(),
-                        WorldwideDay::new(20_240_101)
-                    )
-                    .unwrap(),
-                    "A6 at 2024-01-03 00:00 UTC must store forming VWAP snapshot of WWD 20240101"
-                );
-            }
         });
         block_no += 1;
     }
@@ -329,7 +304,6 @@ fn wwd_step_runs_once_a_day() {
     // - At 13:00 UTC (after WWD 20240101 offering_end = 12:00 UTC and after WWD 20240104 forming_end = 12:00 UTC):
     //   * `is_offering_day(20240101)` is false by block timestamp (`now >= offering_end`).
     //   * `is_day_sealed(20240101)` is still false and 20240101 remains in `pipeline_wwd`.
-    //   * `forming_snapshot_finalized[20240104]` is still false (forming snapshot is taken at 00:00 UTC).
     let events_before_intraday = storage.get_events(TRIBUTE_FACTORY_ADDRESS).len();
     for hour in 1..=23u64 {
         let ts_hour = GENESIS_TS + 4 * SECONDS_PER_DAY + hour * 3_600;
@@ -359,13 +333,6 @@ fn wwd_step_runs_once_a_day() {
                         .unwrap()
                         .contains(&WorldwideDay::new(20_240_101)),
                     "WWD 20240101 must remain in pipeline at 13:00 UTC; A6 runs at 00:00 UTC"
-                );
-                assert!(
-                    !factory
-                        .forming_snapshot_finalized
-                        .read(&WorldwideDay::new(20_240_104))
-                        .unwrap(),
-                    "WWD 20240104 forming snapshot must not be finalized at 13:00 UTC"
                 );
             }
         });
@@ -479,13 +446,6 @@ fn wwd_step_runs_once_a_day() {
                 .unwrap()
                 .is_none(),
             "A6 retry at 01:00 UTC must leave the retired WWD 20240101 alone"
-        );
-        assert!(
-            factory
-                .forming_snapshot_finalized
-                .read(&WorldwideDay::new(20_240_104))
-                .unwrap(),
-            "A6 retry at 01:00 UTC must finalize forming snapshot of WWD 20240104"
         );
         assert!(
             factory

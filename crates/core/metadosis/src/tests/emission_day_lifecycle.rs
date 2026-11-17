@@ -348,7 +348,7 @@ fn first_wwd_for_genesis_splits_3_or_4_empty_emission_days_across_noon_utc() {
 }
 
 #[test]
-fn wwd_lifecycle_gates_activation_on_forming_vwap_and_seals_on_close() {
+fn wwd_takes_offers_only_by_the_time_and_seals_on_close() {
     with_storage(|storage| {
         let wwd = WorldwideDay::new(20261001);
         let genesis_ts = date_key_to_utc_timestamp(20261001).unwrap() + 12 * 3_600;
@@ -371,22 +371,19 @@ fn wwd_lifecycle_gates_activation_on_forming_vwap_and_seals_on_close() {
         );
         assert!(!tribute.is_day_sealed(wwd).unwrap());
         assert!(!api::is_offering_day(storage.clone(), wwd).unwrap());
-        assert!(!factory.forming_snapshot_finalized.read(&wwd).unwrap());
 
-        // The daily step on 2026-10-03 00:00 UTC snapshots forming. No oracle
-        // prices are present, so the snapshot is finalized empty.
-        let snapshot_ts = proj.forming_end + 12 * 3_600;
-        advance_at(&storage, snapshot_ts, genesis_ts);
-        assert!(factory.forming_snapshot_finalized.read(&wwd).unwrap());
-        assert!(!outbe_oracle::api::has_worldwide_day_vwap_snapshot(storage.clone(), wwd).unwrap());
+        // The daily step on 2026-10-03 00:00 UTC stores no price.
+        let step_ts = proj.forming_end + 12 * 3_600;
+        advance_at(&storage, step_ts, genesis_ts);
+        assert!(!api::is_offering_day(storage.clone(), wwd).unwrap());
 
-        // Same UTC day, at offerings_start: no stored forming price, so the day
-        // takes no offers.
+        // Same UTC day, at offerings_start: the day takes offers by the time,
+        // with no oracle price.
         storage
             .set_block_timestamp(U256::from(proj.offerings_start))
             .unwrap();
-        assert!(!api::is_offering_day(storage.clone(), wwd).unwrap());
-        assert!(!api::offering_worldwide_days(storage.clone())
+        assert!(api::is_offering_day(storage.clone(), wwd).unwrap());
+        assert!(api::offering_worldwide_days(storage.clone())
             .unwrap()
             .contains(&wwd));
 
@@ -417,11 +414,8 @@ fn wwd_without_price_runs_as_empty_day() {
         assert_eq!(linked.wwd, wwd);
         assert_eq!(linked.state, metadosis_state::PENDING);
 
-        let snapshot_ts = proj.forming_end + 12 * 3_600;
-        advance_at(&storage, snapshot_ts, genesis_ts);
-        let factory = TributeFactoryContract::new(storage.clone());
-        assert!(factory.forming_snapshot_finalized.read(&wwd).unwrap());
-        assert!(!outbe_oracle::api::has_worldwide_day_vwap_snapshot(storage.clone(), wwd).unwrap());
+        let step_ts = proj.forming_end + 12 * 3_600;
+        advance_at(&storage, step_ts, genesis_ts);
         assert_eq!(
             api::emission_day(storage.clone(), emission_day)
                 .unwrap()
@@ -433,14 +427,16 @@ fn wwd_without_price_runs_as_empty_day() {
         storage
             .set_block_timestamp(U256::from(proj.offerings_start))
             .unwrap();
-        assert!(!api::is_offering_day(storage.clone(), wwd).unwrap());
+        // The day takes offers by the time. An offer fails because no currency
+        // has a 24-hour VWAP.
+        assert!(api::is_offering_day(storage.clone(), wwd).unwrap());
         let offer_err =
             outbe_tributefactory::worldwideday::genesis::submit_signed_test_offer_for_day(
                 storage.clone(),
                 wwd,
             )
-            .expect_err("offer_tribute must revert when forming VWAP snapshot is absent");
-        assert_eq!(
+            .expect_err("offer_tribute must revert when no currency has a 24-hour VWAP");
+        assert_ne!(
             offer_err.to_string(),
             outbe_primitives::error::PrecompileError::from(
                 outbe_tributefactory::errors::TributeFactoryError::WorldwideDayNotOffering {

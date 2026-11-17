@@ -219,7 +219,7 @@ fn import_scurve_entries(
 ) -> Result<()> {
     for entry in scurve_entries {
         let pair = oracle.require_pair_from(entry.base, entry.quote)?;
-        crate::scurve::store_scurve_entry(oracle, pair, entry.peak_day, entry.peak_price)?;
+        crate::scurve::store_scurve_entry(oracle, pair, entry.start_hour, entry.peak_price)?;
     }
     Ok(())
 }

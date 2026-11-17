@@ -217,14 +217,14 @@ fn optional_seed_profile_is_copied_to_genesis_config_and_rejects_conflicts() {
 fn fresh_metadosis_clears_seeded_days_as_expected() {
     let mut seed = json!({
         "metadosis": {"worldwide_days": [{"wwd": 20260807}], "other": 7},
-        "oracle": {"scurve_seeds": [{"peak_day": 20260807}]}
+        "oracle": {"scurve_seeds": [{"start_hour": 1786060800}]}
     });
     clear_seeded_metadosis_days(&mut seed).expect("clear_seeded_metadosis_days");
     assert_eq!(seed["metadosis"]["worldwide_days"], json!([]));
     assert_eq!(seed["metadosis"]["other"], json!(7));
     assert_eq!(
         seed["oracle"]["scurve_seeds"],
-        json!([{"peak_day": 20260807}])
+        json!([{"start_hour": 1786060800}])
     );
 }
 

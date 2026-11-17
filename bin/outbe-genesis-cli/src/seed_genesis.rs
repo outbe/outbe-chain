@@ -49,7 +49,7 @@ pub fn apply_seed(
     seed_protocol_constants(genesis, &seed_owned)?;
 
     if let Some(worldwide_day) = options.worldwide_day {
-        override_worldwide_day(&mut seed_owned, worldwide_day);
+        override_worldwide_day(&mut seed_owned, worldwide_day)?;
     }
     if options.fresh_metadosis {
         clear_seeded_metadosis_days(&mut seed_owned)?;
