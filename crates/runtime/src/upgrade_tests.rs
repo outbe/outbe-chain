@@ -658,3 +658,105 @@ async fn successful_promotion_keeps_polling_without_promoting_the_active_candida
     )
     .await;
 }
+
+#[test]
+fn advanced_finalized_head_retries_promotion_with_a_fresh_view() {
+    use crate::admission::{TeeLeaseGuardAnchorsV1, TeeLeaseGuardGateV1};
+    use crate::admission_authority::{live::*, test_support as support};
+    let old = support::context(9);
+    let candidate = support::context(10);
+    let (original, chain, identity) =
+        support::provider(&old, 7, 1_800_000_000, 1_800_001_000, false);
+    let owner = Arc::new(
+        LiveTeeRuntimeV1::new(
+            LiveTeeSnapshotV1 {
+                identity,
+                anchors: TeeLeaseGuardAnchorsV1 {
+                    gate: TeeLeaseGuardGateV1::Armed,
+                    durable: None,
+                },
+                context: old.clone(),
+            },
+            outbe_tee::TeeAuthorityChannel::default(),
+        )
+        .unwrap(),
+    );
+    owner
+        .refresh(&original, &crate::OutbeRuntime::new(), &chain)
+        .unwrap();
+    let (authorized, _, _) =
+        support::provider(&candidate, 105, 1_800_000_000, 1_800_001_000, false);
+    let checkpoint = authorized.finalized_block_num_hash().unwrap().unwrap();
+    let header = authorized.sealed_header(105).unwrap().unwrap();
+    let view = outbe_tee::FinalizedRegistryViewV1 {
+        chain_id: U256::from(chain.chain_id).to_be_bytes(),
+        genesis_hash: chain.genesis_hash,
+        block_number: 105,
+        block_hash: checkpoint.hash,
+        state_root: header.header().inner.state_root,
+        consensus_timestamp: 1_800_000_000,
+    };
+    let (mut advanced, _, _) =
+        support::provider(&candidate, 106, 1_800_000_001, 1_800_001_000, false);
+    advanced
+        .inner
+        .add_header(checkpoint.hash, header.header().clone());
+    advanced
+        .historical_states
+        .insert(checkpoint.hash, authorized.inner.clone());
+    let fresh = advanced.finalized_block_num_hash().unwrap().unwrap();
+    let mut io = ports::LiveUpgradeIo {
+        inner: LivePromotionFixture {
+            manifest: old.manifest().clone(),
+            view,
+            actions: Default::default(),
+            fail: false,
+        },
+        provider: advanced,
+        protocol: Arc::new(crate::OutbeRuntime::new()),
+        chain,
+        owner: owner.clone(),
+        candidate: candidate.clone(),
+    };
+    let promoted = tokio::sync::Notify::new();
+    assert_eq!(
+        promotion::reconcile_submitted(&io, &promoted),
+        Some(CycleOutcome::Wait)
+    );
+    assert_eq!(*io.inner.actions.borrow(), ["finalized"]);
+    assert!(Arc::ptr_eq(&owner.lock().unwrap().context, &old));
+    io.inner.view = outbe_tee::FinalizedRegistryViewV1 {
+        block_number: fresh.number,
+        block_hash: fresh.hash,
+        consensus_timestamp: 1_800_000_001,
+        ..view
+    };
+    let context = UpgradeContextV1 {
+        candidate_manifest_hash: candidate.manifest().authorization_hash().unwrap(),
+        ..fixtures::context()
+    };
+    assert_eq!(
+        promotion::recover_finalized(&io, &context, checkpoint, &promoted),
+        CycleOutcome::Wait
+    );
+    assert_eq!(
+        *io.inner.actions.borrow(),
+        ["finalized", "durable", "promoted"]
+    );
+    assert!(Arc::ptr_eq(&owner.lock().unwrap().context, &candidate));
+    assert!(owner.authority.snapshot().is_authority_open());
+    io.inner.view.chain_id = [0; 32];
+    assert_eq!(
+        promotion::reconcile_submitted(&io, &promoted),
+        Some(CycleOutcome::Stop)
+    );
+    assert_eq!(
+        io.inner
+            .actions
+            .borrow()
+            .iter()
+            .filter(|action| **action == "durable")
+            .count(),
+        1
+    );
+}

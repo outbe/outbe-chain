@@ -26,13 +26,13 @@ pub(crate) fn recover_finalized(
     }
     match io.replacement_authorization(&committed.node_id) {
         Ok(authorized) => {
-            if !promote_and_record(
+            if let Err(error) = promote_and_record(
                 io,
                 &authorized.authorization,
                 authorized.view,
                 "record finalized enclave promotion failed",
             ) {
-                return CycleOutcome::Stop;
+                return promotion_failure(error);
             }
             info!(finalized_height, %finalized_hash, "finalized enclave candidate promotion completed without execution restart");
             CycleOutcome::Wait
@@ -49,16 +49,21 @@ fn promote_and_record<I: UpgradePromotionIo>(
     authorization: &I::Authorization,
     view: outbe_tee::FinalizedRegistryViewV1,
     checkpoint_error: &'static str,
-) -> bool {
-    if let Err(error) = io.promote_at(authorization, view) {
-        tracing::error!(error = %error, "promote finalized enclave candidate failed");
-        return false;
+) -> eyre::Result<()> {
+    io.promote_at(authorization, view)?;
+    io.record_promoted().wrap_err(checkpoint_error)
+}
+
+fn promotion_failure(error: eyre::Report) -> CycleOutcome {
+    tracing::error!(%error, "finalized enclave candidate promotion failed");
+    if matches!(
+        error.downcast_ref::<crate::admission_authority::live::LiveTeeError>(),
+        Some(crate::admission_authority::live::LiveTeeError::FinalizedViewMismatch)
+    ) {
+        CycleOutcome::Wait
+    } else {
+        CycleOutcome::Stop
     }
-    if let Err(error) = io.record_promoted() {
-        tracing::error!(error = %format!("{error:#}"), "{checkpoint_error}");
-        return false;
-    }
-    true
 }
 
 pub(crate) fn reconcile_submitted(
@@ -83,13 +88,13 @@ pub(crate) fn reconcile_submitted(
                 tracing::error!(error = %format!("{error:#}"), "record finalized enclave transition failed");
                 return Some(CycleOutcome::Stop);
             }
-            if !promote_and_record(
+            if let Err(error) = promote_and_record(
                 io,
                 &authorized.authorization,
                 authorized.view,
                 "record enclave candidate promotion failed",
             ) {
-                return Some(CycleOutcome::Stop);
+                return Some(promotion_failure(error));
             }
             info!(
                 finalized_height = authorized.view.block_number,

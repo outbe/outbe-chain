@@ -55,7 +55,6 @@ where
                 state.is_authority_open()
             }
             Err(error) => {
-                super::publish_failure(&authority, false);
                 let next = authority.snapshot();
                 if failed_state != Some(next) {
                     tracing::warn!(%error, ?next, "TEE authority suspended; lease guard remains alive");

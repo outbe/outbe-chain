@@ -178,7 +178,7 @@ where
                 || !header_matches
             {
                 return Err(
-                    crate::admission_authority::live::LiveTeeError::FinalizedViewMismatch.into(),
+                    crate::admission_authority::live::LiveTeeError::CandidateNotAdmitted.into(),
                 );
             }
             let mut identity = self.owner.lock()?.identity;

@@ -287,7 +287,11 @@ pub(crate) async fn wait_for_state(
     watch: &mut outbe_tee::TeeAuthorityWatch,
     expected: outbe_tee::TeeAuthorityState,
 ) {
-    while watch.snapshot() != expected {
-        watch.changed().await.unwrap();
-    }
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while watch.snapshot() != expected {
+            watch.changed().await.unwrap();
+        }
+    })
+    .await
+    .expect("authority did not reach the expected state within five seconds");
 }

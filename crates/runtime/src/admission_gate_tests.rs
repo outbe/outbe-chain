@@ -638,7 +638,7 @@ async fn live_admission_invariant_failure_closes_authority_with_typed_error_and_
         channel.snapshot(),
         TeeAuthorityState::SuspendedPolicyMismatch
     );
-    tokio::select! { result = &mut guard => panic!("guard stopped on invariant failure: {result:?}"), result = armed_rx.changed() => result.unwrap() }
+    tokio::select! { result = &mut guard => panic!("guard stopped on invariant failure: {result:?}"), result = tokio::time::timeout(std::time::Duration::from_secs(5), armed_rx.changed()) => result.expect("guard readiness did not change within five seconds").unwrap() }
     assert!(!*armed_rx.borrow());
     assert!(Arc::ptr_eq(&owner.lock().unwrap().context, &context));
     assert!(context.offer_key_ready().unwrap());
