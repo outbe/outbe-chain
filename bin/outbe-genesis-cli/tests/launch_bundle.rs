@@ -125,7 +125,6 @@ fn render_writes_valid_bash_scripts_and_stable_bootnodes() {
             "run-radicle.sh",
             "run-node.sh",
             "run-feeder.sh",
-            "run-tee-renew.sh",
             "install-systemd.sh",
         ] {
             let script = directory.join(name);
@@ -336,16 +335,14 @@ fn caddy_systemd_units_and_confidential_vm_runtime() {
         }
     }
 
-    let timer =
-        fs::read_to_string(unit_dir.join("outbe-tee-renew.timer")).expect("read renew timer");
-    assert!(timer.contains("OnCalendar=daily"));
-    assert!(timer.contains("Persistent=true"));
+    assert!(!unit_dir.join("outbe-tee-renew.timer").exists());
+    assert!(!unit_dir.join("outbe-tee-renew.service").exists());
     let install_systemd = fs::read_to_string(output_dir.join("validator-2/install-systemd.sh"))
         .expect("install-systemd");
     assert!(install_systemd.contains("if [ \"$(id -u)\" -eq 0 ]"));
     assert!(install_systemd.contains("as_root systemctl"));
     assert!(!install_systemd.contains("\nsudo "));
-    assert!(!install_systemd.contains("enable --now outbe-tee-renew.timer"));
+    assert!(install_systemd.contains("disable --now outbe-tee-renew.timer"));
     assert!(install_systemd.contains("enable --now outbe-validator.target"));
 
     let install_caddy =
@@ -379,9 +376,6 @@ fn caddy_systemd_units_and_confidential_vm_runtime() {
     assert!(fs::read_to_string(rpc_dir.join("feeder.toml"))
         .expect("rpc feeder")
         .contains("rpc_endpoint = \"http://10.0.0.3:8545\""));
-    assert!(fs::read_to_string(rpc_dir.join("run-tee-renew.sh"))
-        .expect("rpc renew")
-        .contains("--rpc-url http://10.0.0.3:8545"));
     assert!(fs::read_to_string(rpc_dir.join("Caddyfile"))
         .expect("rpc caddy")
         .contains("reverse_proxy 10.0.0.3:8545"));

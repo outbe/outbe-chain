@@ -11,7 +11,7 @@ use crate::{
         rpc::RpcClient,
         validator_address,
         wait::{wait_for_rpc_chain, wait_for_sync, wait_for_verifier, wait_transaction_finalized},
-        ENCLAVE_SERVICE, FULL_NODE, RENEW_TIMER, VALIDATOR_SERVICE, VALIDATOR_TARGET,
+        ENCLAVE_SERVICE, FULL_NODE, VALIDATOR_SERVICE, VALIDATOR_TARGET,
     },
 };
 
@@ -100,7 +100,6 @@ pub async fn run() -> Result<()> {
     progress.stage("switching the same data directory to validator mode");
     process::systemctl(&["disable", "--now", FULL_NODE])?;
     process::systemctl(&["enable", "--now", VALIDATOR_TARGET])?;
-    process::systemctl(&["enable", "--now", RENEW_TIMER])?;
     wait_for_rpc_chain(&local, journal.config.network.chain_id, &mut progress).await?;
     wait_for_verifier(&local, &remote, &mut progress).await?;
 

@@ -311,6 +311,13 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
 }
 
 fn install_units() -> Result<()> {
+    let _ = process::command_succeeds("systemctl", &["disable", "--now", "outbe-tee-renew.timer"]);
+    for name in ["outbe-tee-renew.timer", "outbe-tee-renew.service"] {
+        let path = Path::new("/etc/systemd/system").join(name);
+        if path.exists() {
+            fs::remove_file(path)?;
+        }
+    }
     for (name, content) in assets::systemd_units()? {
         let path = Path::new("/etc/systemd/system").join(name);
         process::write_file(&path, content.as_bytes(), 0o644)?;

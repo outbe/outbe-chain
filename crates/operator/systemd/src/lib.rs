@@ -1,9 +1,7 @@
 //! Canonical systemd policy for Outbe validator hosts.
 
 const SERVICE_TEMPLATE: &str = include_str!("../templates/service.unit");
-const ONESHOT_TEMPLATE: &str = include_str!("../templates/oneshot.unit");
 const TARGET_TEMPLATE: &str = include_str!("../templates/target.unit");
-const TIMER_TEMPLATE: &str = include_str!("../templates/timer.unit");
 
 /// One rendered systemd asset.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -34,14 +32,6 @@ struct ServiceSpec {
     sandbox_directives: Vec<String>,
     limit_nofile: u64,
     wanted_by: &'static str,
-}
-
-struct OneshotSpec {
-    name: &'static str,
-    description: &'static str,
-    unit_directives: Vec<String>,
-    service_directives: Vec<String>,
-    sandbox_directives: Vec<String>,
 }
 
 struct FoundingService<'a> {
@@ -128,25 +118,6 @@ pub fn joining_units(outbe_up: &str) -> Vec<UnitFile> {
             limit_nofile: 65_535,
             wanted_by: "outbe-validator.target",
         }),
-        render_oneshot(&OneshotSpec {
-            name: "outbe-tee-renew.service",
-            description: "Outbe TEE lease renewal",
-            unit_directives: lines(&[
-                "After=network-online.target outbe-enclave.service",
-                "Requisite=outbe-enclave.service",
-            ]),
-            service_directives: lines(&[
-                "EnvironmentFile=/opt/outbe-chain/validator.env",
-                "ExecStart=/opt/outbe-chain/outbe-cli tee renew \\",
-                "  --enclave-socket 127.0.0.1:17000 \\",
-                "  --node-data-dir /opt/outbe-chain/validator-0/data \\",
-                "  --reth-p2p-secret-key /opt/outbe-chain/keys/reth-p2p-secret.hex \\",
-                "  --private-key-file /opt/outbe-chain/keys/evm-key.hex \\",
-                "  --rpc-url ${OUTBE_CERTIFIED_RPC}",
-            ]),
-            sandbox_directives: lines(&["ReadWritePaths=/opt/outbe-chain/validator-0/data"]),
-        }),
-        render_timer("Outbe TEE lease renewal check"),
         render_target("Outbe validator stack"),
     ];
     units.sort_by(|left, right| left.name.cmp(&right.name));
@@ -216,20 +187,6 @@ pub fn founding_units(config: FoundingConfig<'_>) -> Vec<UnitFile> {
             ]),
             limit_nofile: 65_535,
         })),
-        render_oneshot(&OneshotSpec {
-            name: "outbe-tee-renew.service",
-            description: "Outbe TEE lease renewal",
-            unit_directives: lines(&[
-                "After=network-online.target outbe-enclave.service outbe-validator.service",
-                "Requisite=outbe-enclave.service outbe-validator.service",
-            ]),
-            service_directives: lines(&[
-                &format!("WorkingDirectory={validator_dir}"),
-                &format!("ExecStart={validator_dir}/run-tee-renew.sh"),
-            ]),
-            sandbox_directives: lines(&[&format!("ReadWritePaths={}", config.base_dir)]),
-        }),
-        render_timer("Outbe TEE lease renewal check"),
         render_target("Outbe validator stack"),
     ];
     units.sort_by(|left, right| left.name.cmp(&right.name));
@@ -368,27 +325,6 @@ fn render_service(spec: &ServiceSpec) -> UnitFile {
             ("SANDBOX_DIRECTIVES", join(&spec.sandbox_directives)),
             ("WANTED_BY", spec.wanted_by.to_owned()),
         ],
-    )
-}
-
-fn render_oneshot(spec: &OneshotSpec) -> UnitFile {
-    render_unit(
-        spec.name,
-        ONESHOT_TEMPLATE,
-        &[
-            ("DESCRIPTION", spec.description.to_owned()),
-            ("UNIT_DIRECTIVES", join(&spec.unit_directives)),
-            ("SERVICE_DIRECTIVES", join(&spec.service_directives)),
-            ("SANDBOX_DIRECTIVES", join(&spec.sandbox_directives)),
-        ],
-    )
-}
-
-fn render_timer(description: &str) -> UnitFile {
-    render_unit(
-        "outbe-tee-renew.timer",
-        TIMER_TEMPLATE,
-        &[("DESCRIPTION", description.to_owned())],
     )
 }
 

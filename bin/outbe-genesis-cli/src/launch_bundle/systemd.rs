@@ -99,39 +99,11 @@ echo \"  Radicle status http://$(curl -s -m 5 ifconfig.me || echo '<this-host>')
     ))
 }
 
-/// Render `run-tee-renew.sh` for one validator.
-pub fn tee_renew_script(
-    config: &Value,
-    index: usize,
-    base_dir: &str,
-    keys_dir: &str,
-    validator_host: &str,
-) -> Result<String, GenesisError> {
-    let key_dir = format!("{keys_dir}/validator-{index}");
-    let tee_port = port_of(config, "tee_enclave_port")?;
-    let rpc_port = port_of(config, "rpc_port")?;
-    let rpc_bind = rpc_bind_ip(config, validator_host)?;
-    Ok(format!(
-        "\nKEY=\"$(tr -d '[:space:]' < {q_evm_key})\"\n\
-exec {q_cli} tee renew \\\n\
-  --enclave-socket 127.0.0.1:{tee_port} \\\n\
-  --node-data-dir {q_data_dir} \\\n\
-  --reth-p2p-secret-key {q_p2p_secret} \\\n\
-  --private-key \"$KEY\" \\\n\
-  --rpc-url http://{rpc_bind}:{rpc_port}\n",
-        q_evm_key = quote(&format!("{key_dir}/evm-key.hex")),
-        q_cli = quote(&format!("{base_dir}/outbe-cli")),
-        q_data_dir = quote(&format!("{base_dir}/validator-{index}/data")),
-        q_p2p_secret = quote(&format!("{key_dir}/reth-p2p-secret.hex")),
-    ))
-}
-
 /// Write the services and installer for one founding-validator host.
 pub fn write_systemd_units(
     output_dir: &Path,
     base_dir: &str,
     index: usize,
-    enable_tee_renewal: bool,
 ) -> Result<(), GenesisError> {
     let unit_dir = output_dir.join("systemd");
     fs::create_dir_all(&unit_dir).map_err(|err| GenesisError::io(&unit_dir, err))?;
@@ -143,16 +115,6 @@ pub fn write_systemd_units(
         fs::write(&unit_path, unit.content).map_err(|err| GenesisError::io(&unit_path, err))?;
     }
 
-    let renewal_start = if enable_tee_renewal {
-        "as_root systemctl enable --now outbe-tee-renew.timer\n"
-    } else {
-        ""
-    };
-    let renewal_enable = if enable_tee_renewal {
-        "as_root systemctl enable outbe-tee-renew.timer\n"
-    } else {
-        ""
-    };
     let base = quote(base_dir);
     let install = format!(
         "\n{root_helper}\n\n\
@@ -170,15 +132,15 @@ getent group outbe >/dev/null || as_root groupadd --system outbe\n\
 id -u outbe >/dev/null 2>&1 || as_root useradd --system --gid outbe \\\n  --home-dir {base} --shell /usr/sbin/nologin outbe\n\
 as_root install -d -m 0700 {base}/validator-{index}/tee /var/lib/outbe/tee\n\
 as_root chown -R outbe:outbe {base}\n\
+as_root systemctl disable --now outbe-tee-renew.timer >/dev/null 2>&1 || true\n\
+as_root rm -f /etc/systemd/system/outbe-tee-renew.timer /etc/systemd/system/outbe-tee-renew.service\n\
 as_root install -m 0644 \"$UNIT_DIR\"/outbe-* /etc/systemd/system/\n\
 as_root systemctl daemon-reload\n\
 \n\
 if \"$START\"; then\n\
   as_root systemctl enable --now outbe-validator.target\n\
-  {renewal_start}\
 else\n\
   as_root systemctl enable outbe-validator.target\n\
-  {renewal_enable}\
 fi\n\
 echo\n\
 echo \"founding validator services:\"\n\

@@ -39,7 +39,7 @@ mod tests {
     #[test]
     fn all_units_render_without_tokens() {
         let units = systemd_units().unwrap();
-        assert_eq!(units.len(), 8);
+        assert_eq!(units.len(), 6);
         assert!(units.iter().all(|(_, unit)| !unit.contains("@@")));
     }
 

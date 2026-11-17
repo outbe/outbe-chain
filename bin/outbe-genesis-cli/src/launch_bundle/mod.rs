@@ -25,9 +25,7 @@ pub use self::scripts::{
     enclave_script, feeder_config, feeder_pairs, feeder_pairs_file, feeder_pairs_settings,
     feeder_pairs_table, feeder_script, node_script, radicle_script,
 };
-pub use self::systemd::{
-    caddy_install_script, caddyfile, preflight_script, tee_renew_script, write_systemd_units,
-};
+pub use self::systemd::{caddy_install_script, caddyfile, preflight_script, write_systemd_units};
 
 /// Default port numbers shared across validator hosts.
 pub const DEFAULT_PORTS: &[(&str, u16)] = &[
@@ -306,10 +304,6 @@ fn write_validator_scripts(
     fs::write(&caddyfile_path, caddyfile(config, host)?)
         .map_err(|err| GenesisError::io(&caddyfile_path, err))?;
     write_script(
-        &directory.join("run-tee-renew.sh"),
-        &tee_renew_script(config, index, paths.base_dir, paths.remote_keys_dir, host)?,
-    )?;
-    write_script(
         &directory.join("preflight.sh"),
         &preflight_script(config, paths.base_dir, index)?,
     )?;
@@ -340,7 +334,7 @@ fn write_validator_scripts(
     fs::write(&pairs_path, feeder_pairs(config)?)
         .map_err(|err| GenesisError::io(&pairs_path, err))?;
 
-    write_systemd_units(&directory, paths.base_dir, index, false)?;
+    write_systemd_units(&directory, paths.base_dir, index)?;
     Ok(())
 }
 
