@@ -24,9 +24,11 @@ use x25519_dalek::{PublicKey, StaticSecret};
 use outbe_enclave::offer_encrypt::encrypt_tribute_offer_with;
 use outbe_enclave::protocol::{EncryptedTributeOffer, WorldwideDay};
 use outbe_enclave::OFFER_HKDF_SALT;
+use outbe_tee::resident::OfferKeyHandle;
 use outbe_tee_enclave::compute::compute_token_id;
 use outbe_tee_enclave::crypto::ecdhe_tribute_offer_decrypt;
 use outbe_tee_enclave::process::{process_tribute_offer_batch, TributeOfferKeyMaterial};
+use zeroize::Zeroizing;
 
 /// Enclave-resident offer secret. Production uses the DKG-derived key. This bench
 /// uses a fixed test scalar. Derivation cost is one-time at bootstrap, not per offer.
@@ -50,9 +52,9 @@ fn offer_public() -> [u8; 32] {
     PublicKey::from(&StaticSecret::from(OFFER_SK)).to_bytes()
 }
 
-fn key_material() -> TributeOfferKeyMaterial<'static> {
+fn key_material(handle: &OfferKeyHandle) -> TributeOfferKeyMaterial<'_> {
     TributeOfferKeyMaterial {
-        tribute_offer_private_key: &OFFER_SK,
+        tribute_offer_private_key: handle,
         salt: &OFFER_HKDF_SALT,
     }
 }
@@ -94,6 +96,7 @@ fn make_batch(n: usize) -> Vec<EncryptedTributeOffer> {
 /// Component costs: isolate the two heavy primitives so the batch number can be
 /// attributed (decrypt vs Poseidon vs the rest).
 fn bench_components(c: &mut Criterion) {
+    let handle = OfferKeyHandle::from_legacy_secret(Zeroizing::new(OFFER_SK));
     let offer = make_offer(Address::repeat_byte(0xAB));
     let ephemeral = offer.ephemeral_pubkey.to_be_bytes::<32>();
     let owner = Address::repeat_byte(0xAB);
@@ -104,7 +107,7 @@ fn bench_components(c: &mut Criterion) {
     g.bench_function("decrypt", |b| {
         b.iter(|| {
             ecdhe_tribute_offer_decrypt(
-                &OFFER_SK,
+                &handle,
                 &OFFER_HKDF_SALT,
                 std::hint::black_box(&ephemeral),
                 std::hint::black_box(&offer.nonce),
@@ -128,7 +131,8 @@ fn bench_components(c: &mut Criterion) {
 
     // Full single-offer path (decrypt + parse + economics + Poseidon).
     let one = vec![offer.clone()];
-    let key = key_material();
+    let handle = OfferKeyHandle::from_legacy_secret(Zeroizing::new(OFFER_SK));
+    let key = key_material(&handle);
     g.bench_function("process_one_full", |b| {
         b.iter(|| {
             process_tribute_offer_batch(std::hint::black_box(&key), std::hint::black_box(&one))
@@ -141,7 +145,8 @@ fn bench_components(c: &mut Criterion) {
 /// Batch throughput: elements/sec == offers/sec the enclave can settle, ignoring
 /// transport. The per-block on-chain budget divided by this gives offers/block.
 fn bench_batch_throughput(c: &mut Criterion) {
-    let key = key_material();
+    let handle = OfferKeyHandle::from_legacy_secret(Zeroizing::new(OFFER_SK));
+    let key = key_material(&handle);
     let mut g = c.benchmark_group("batch");
     for &n in &[1usize, 10, 100, 500] {
         let batch = make_batch(n);

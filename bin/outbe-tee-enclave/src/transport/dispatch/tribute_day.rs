@@ -6,6 +6,7 @@ use outbe_enclave::{
     protocol::EnclaveResponse,
     tribute_day::{self, LysisFractionsRequestV1, TributeDayOpRequestV2},
 };
+use outbe_tee::resident::StateKeyHandle;
 
 use super::{
     requests::DomainDispatchResult,
@@ -34,8 +35,8 @@ fn require_resident_key(
 fn derive_tribute_key(
     derived: &DerivedTributeOfferKey,
     chain: B256,
-) -> EnclaveResult<zeroize::Zeroizing<[u8; 32]>> {
-    crate::tribute_encryption::derive_tribute_state_key(derived.group_sig(), chain, 0)
+) -> EnclaveResult<StateKeyHandle> {
+    crate::tribute_encryption::derive_tribute_state_key(&derived.resident_material(), chain, 0)
         .map_err(|_| TransportDispatchError::TributeKeyUnavailable.into())
 }
 
@@ -79,7 +80,7 @@ pub(super) fn read(
 
 fn dispatch_tribute_op<R>(
     (keys, offer_key, chain, request_chain_id): (&EnclaveKeys, &SharedTributeOfferKey, B256, u64),
-    op_fn: impl FnOnce(&[u8; 32], &[u8; 32]) -> crate::errors::Result<R>,
+    op_fn: impl FnOnce(&StateKeyHandle, &StateKeyHandle) -> crate::errors::Result<R>,
     hash_fn: impl FnOnce() -> Result<B256, serde_json::Error>,
     preimage_fn: fn(B256, &R) -> Result<Vec<u8>, serde_json::Error>,
     wrap_fn: fn(R, B256, Vec<u8>) -> EnclaveResponse,
@@ -87,8 +88,11 @@ fn dispatch_tribute_op<R>(
     response((|| -> EnclaveResult<EnclaveResponse> {
         let derived = require_resident_key(offer_key, chain, request_chain_id)?;
         let tribute_state_key = derive_tribute_key(derived, chain)?;
-        let record = op_fn(derived.secret(), &tribute_state_key)
-            .map_err(|_| TransportDispatchError::TributeDayOperationFailed)?;
+        let record = op_fn(
+            derived.resident_material().offer_key_handle().key_handle(),
+            &tribute_state_key,
+        )
+        .map_err(|_| TransportDispatchError::TributeDayOperationFailed)?;
         let inputs_canonical_hash =
             hash_fn().map_err(|_| TransportDispatchError::CannotEncodeTributeDayInputs)?;
         let preimage = preimage_fn(inputs_canonical_hash, &record)
@@ -103,14 +107,14 @@ fn dispatch_tribute_op<R>(
 
 fn dispatch_amount_read(
     (keys, offer_key, chain, record_chain_id): (&EnclaveKeys, &SharedTributeOfferKey, B256, u64),
-    read_fn: impl FnOnce(&[u8; 32]) -> crate::errors::Result<alloy_primitives::U256>,
+    read_fn: impl FnOnce(&StateKeyHandle) -> crate::errors::Result<alloy_primitives::U256>,
     hash_fn: impl FnOnce() -> Result<B256, serde_json::Error>,
     preimage_fn: fn(B256, alloy_primitives::U256) -> Vec<u8>,
     wrap_fn: fn(alloy_primitives::U256, B256, Vec<u8>) -> EnclaveResponse,
 ) -> DomainDispatchResult {
     response((|| -> EnclaveResult<EnclaveResponse> {
         let derived = require_resident_key(offer_key, chain, record_chain_id)?;
-        let amount = read_fn(derived.secret())
+        let amount = read_fn(derived.resident_material().offer_key_handle().key_handle())
             .map_err(|_| TransportDispatchError::TributeDayDecryptionFailed)?;
         let inputs_canonical_hash =
             hash_fn().map_err(|_| TransportDispatchError::CannotEncodeTributeDayReadInputs)?;
@@ -133,10 +137,10 @@ pub(super) fn execute_lysis_fractions(
         let derived = require_resident_key(offer_key, chain, request.chain_id)?;
         let tribute_state_key = derive_tribute_key(derived, chain)?;
         let nod_state_key =
-            crate::nod_encryption::derive_nod_state_key(derived.group_sig(), chain, 0)
+            crate::nod_encryption::derive_nod_state_key(&derived.resident_material(), chain, 0)
                 .map_err(|_| TransportDispatchError::NodKeyUnavailable)?;
         let result = crate::tribute_day::execute_lysis_fractions(
-            derived.secret(),
+            derived.resident_material().offer_key_handle().key_handle(),
             &tribute_state_key,
             &nod_state_key,
             request,
@@ -163,8 +167,11 @@ pub(super) fn read_day_fractions(
 ) -> DomainDispatchResult {
     response((|| -> EnclaveResult<EnclaveResponse> {
         let derived = require_resident_key(offer_key, chain, record.chain_id)?;
-        let fractions = crate::tribute_day::read_day_fractions(derived.secret(), record)
-            .map_err(|_| TransportDispatchError::TributeDayDecryptionFailed)?;
+        let fractions = crate::tribute_day::read_day_fractions(
+            derived.resident_material().offer_key_handle().key_handle(),
+            record,
+        )
+        .map_err(|_| TransportDispatchError::TributeDayDecryptionFailed)?;
         let inputs_canonical_hash = tribute_day::day_fractions_read_inputs_hash(record)
             .map_err(|_| TransportDispatchError::CannotEncodeTributeDayReadInputs)?;
         let preimage =

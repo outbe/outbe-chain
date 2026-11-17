@@ -126,6 +126,16 @@ pub fn request_runtime_enclave_client(
 pub fn try_with_domain_enclave(
     request: &protocol::EnclaveRequest,
 ) -> Option<([u8; 32], Result<protocol::EnclaveResponse, TransportError>)> {
+    if let Some(context) = outbe_tee::in_process_tee_context() {
+        let response = request
+            .encode_wire(PayloadLane::Execution)
+            .and_then(|wire| {
+                outbe_tee::try_in_process_request(request.call_meta(), &wire)
+                    .ok_or(TransportError::UnexpectedResponse)?
+                    .and_then(|response| protocol::EnclaveResponse::from_wire_response(&response))
+            });
+        return Some((context.attestation_public(), response));
+    }
     try_with_enclave(|session| {
         (
             session.attestation_pub(),
@@ -140,6 +150,14 @@ pub fn try_with_domain_enclave(
 pub fn try_domain_account_query(
     request: &protocol::EnclaveRequest,
 ) -> Option<Result<protocol::EnclaveResponse, TransportError>> {
+    if outbe_tee::in_process_tee_context().is_some()
+        && !request.allows_lane(PayloadLane::AccountQuery)
+    {
+        return Some(Err(outbe_tee::InProcessDispatchError::LaneDenied {
+            lane: PayloadLane::AccountQuery,
+        }
+        .into()));
+    }
     let wire_req = match request.encode_wire(PayloadLane::AccountQuery) {
         Ok(wire_req) => wire_req,
         Err(err) => return Some(Err(err)),
@@ -157,6 +175,12 @@ pub fn canary_domain_request(
 ) -> Result<([u8; 32], protocol::EnclaveResponse), TransportError> {
     let key = canary_attestation_pub()
         .ok_or(outbe_tee::errors::TeeClientVerificationError::EnclaveSessionNotConfigured)?;
+    if outbe_tee::in_process_tee_context().is_some() && !request.allows_lane(PayloadLane::Canary) {
+        return Err(outbe_tee::InProcessDispatchError::LaneDenied {
+            lane: PayloadLane::Canary,
+        }
+        .into());
+    }
     let wire_req = request.encode_wire(PayloadLane::Canary)?;
     let wire_resp = canary_request_with_meta(request.call_meta(), &wire_req)?;
     let decoded = protocol::EnclaveResponse::from_wire_response(&wire_resp)?;
@@ -287,3 +311,6 @@ pub fn consensus_domain_call(
     let decoded = protocol::EnclaveResponse::from_wire_response(&wire_resp)?;
     Ok((key, decoded))
 }
+
+#[cfg(feature = "engine")]
+pub mod domain_in_process;

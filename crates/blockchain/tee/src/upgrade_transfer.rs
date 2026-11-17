@@ -251,6 +251,18 @@ pub fn export_from_network_source(
     legacy_direct_dev: bool,
 ) -> Result<Vec<u8>, TransportError> {
     proof.validate()?;
+    if let Some(runtime) = crate::in_process_tee_context() {
+        return runtime
+            .export_from_network_source_v1(context, proof, legacy_direct_dev)
+            .map_err(crate::InProcessDispatchError::from)?
+            .encode_canonical()
+            .map_err(|code| {
+                crate::InProcessDispatchError::Resident(crate::in_process::InProcessError::Dcap(
+                    code,
+                ))
+                .into()
+            });
+    }
     // Fork under the execution lock, release it before any network/proof work.
     let mut session = crate::try_with_enclave(|s| s.fork_connection())
         .ok_or_else(|| invalid(crate::errors::UpgradeTransferError::SourceEnclaveNotConfigured))?;

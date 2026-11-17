@@ -103,6 +103,11 @@ pub fn tee_consensus_call(
     consensus_call(
         meta.label,
         || {
+            if let Some(context) = crate::in_process_tee_context() {
+                let response = crate::try_in_process_request(meta, request)
+                    .ok_or_else(missing_sidecar_err)??;
+                return Ok((context.attestation_public(), response));
+            }
             let (session_key, wire_result) = crate::try_with_enclave(|session| {
                 (
                     session.attestation_pub(),
@@ -156,6 +161,15 @@ pub fn tee_session_call(
         return Some(Err(crate::TransportError::Codec(
             "recordable call routed to non-consensus tee_session_call".into(),
         )));
+    }
+    if let Some(context) = crate::in_process_tee_context() {
+        let key = context.attestation_public();
+        return Some((|| {
+            let response = crate::try_in_process_request(meta, request)
+                .ok_or(crate::TransportError::UnexpectedResponse)??;
+            authenticate(&key, &response)?;
+            Ok((key, response))
+        })());
     }
     crate::try_with_enclave(|session| tee_session_call_on(session, meta, request, authenticate))
 }

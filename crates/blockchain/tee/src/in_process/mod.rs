@@ -3,6 +3,7 @@ pub mod admission;
 mod context;
 pub mod dkg;
 mod proof_source;
+mod runtime_dispatch;
 pub use context::InProcessTeeContext;
 pub use proof_source::{HardwareProofSourceV1, ProofSourceV1};
 

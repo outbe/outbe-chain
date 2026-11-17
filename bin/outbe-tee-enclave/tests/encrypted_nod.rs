@@ -8,17 +8,24 @@ use outbe_core_common::{
 };
 use outbe_enclave::nod_decrypt::decrypt_nod_for_owner;
 use outbe_system_common::time::WorldwideDay;
+use outbe_tee::resident::StateKeyHandle;
 use outbe_tee_enclave::{
-    nod_encryption::{decrypt_nod, derive_view_key, encrypt_nod_for_tribute},
+    nod_encryption::{decrypt_nod, encrypt_nod_for_tribute},
     tribute_encryption::encrypt_tribute,
 };
+
 #[test]
 fn self_contained_nod_rederives_keys_and_separates_divergent_amounts() {
-    let tribute_key = [7u8; 32];
-    let nod_key = [8u8; 32];
+    let tribute_key = StateKeyHandle::for_test([7u8; 32]);
+    let nod_key = StateKeyHandle::for_test([8u8; 32]);
     let day = WorldwideDay::new(20250115);
     let owner_address = Address::repeat_byte(3);
-    let nod_view_key = derive_view_key(&nod_key, owner_address).unwrap();
+    let nod_view_key = outbe_tee_enclave::crypto::hkdf_sha256(
+        &[8; 32],
+        owner_address.as_slice(),
+        b"outbe/nod/view-key/v1",
+    )
+    .unwrap();
     let tribute = encrypt_tribute(
         &tribute_key,
         TributeContextV2 {
@@ -120,7 +127,7 @@ fn self_contained_nod_rederives_keys_and_separates_divergent_amounts() {
         U256::from(123)
     );
     assert!(decrypt_nod_for_owner(&[12u8; 32], &first).is_err());
-    assert!(decrypt_nod(&[9u8; 32], &first).is_err());
+    assert!(decrypt_nod(&StateKeyHandle::for_test([9u8; 32]), &first).is_err());
     let mut tampered = first.clone();
     tampered.terms.owner = Address::repeat_byte(9);
     assert!(decrypt_nod(&nod_key, &tampered).is_err());

@@ -1,6 +1,7 @@
 //! Handle ledgers requests after session admission.
 
 use outbe_enclave::protocol::{EnclaveRequest, EnclaveResponse};
+use outbe_tee::resident::StateKeyHandle;
 
 use super::requests::{domain_error, into_domain_response, DomainDispatchResult, RequestContext};
 
@@ -57,8 +58,9 @@ fn apply_gratis(
             "ApplyGratisOp: no resident group key (DKG not complete)",
         ));
     };
-    let state_key = crate::gratis::derive_gratis_state_key(derived.group_sig(), chain_id, 0)
-        .map_err(domain_error)?;
+    let state_key =
+        crate::gratis::derive_gratis_state_key(&derived.resident_material(), chain_id, 0)
+            .map_err(domain_error)?;
     let mut result = crate::gratis::apply_op(&state_key, &request);
     // Co-located Fidelity cohort section. This arm applies it atomically with
     // the Gratis op under the section's own independent key domain. A failing section
@@ -67,16 +69,15 @@ fn apply_gratis(
         (&result.status, &request.fidelity)
     {
         let fidelity_outcome =
-            crate::fidelity::derive_fidelity_state_key(derived.group_sig(), chain_id, 0).and_then(
-                |fidelity_key| {
+            crate::fidelity::derive_fidelity_state_key(&derived.resident_material(), chain_id, 0)
+                .and_then(|fidelity_key| {
                     crate::fidelity::apply_cohort_section(
                         &fidelity_key,
                         request.account,
                         request.amount,
                         section,
                     )
-                },
-            );
+                });
         match fidelity_outcome {
             Ok(outcome) => result.fidelity = Some(outcome),
             Err(e) => {
@@ -150,9 +151,12 @@ fn query_fidelity(
             "QueryFidelityIndex: no resident group key (DKG not complete)",
         ));
     };
-    let state_key =
-        crate::fidelity::derive_fidelity_state_key(derived.group_sig(), context.chain_id, 0)
-            .map_err(domain_error)?;
+    let state_key = crate::fidelity::derive_fidelity_state_key(
+        &derived.resident_material(),
+        context.chain_id,
+        0,
+    )
+    .map_err(domain_error)?;
     match crate::fidelity::query_index(&state_key, context.chain_id, &request) {
         Ok(mut result) => {
             let preimage = match outbe_enclave::protocol::fidelity_query_attestation_preimage(
@@ -203,8 +207,9 @@ fn apply_promis(
             "ApplyPromisOp: no resident group key (DKG not complete)",
         ));
     };
-    let state_key = crate::promis::derive_promis_state_key(derived.group_sig(), chain_id, 0)
-        .map_err(domain_error)?;
+    let state_key =
+        crate::promis::derive_promis_state_key(&derived.resident_material(), chain_id, 0)
+            .map_err(domain_error)?;
     let mut result = crate::promis::apply_op(&state_key, &request);
     let preimage = match outbe_enclave::protocol::promis_op_attestation_preimage(
         result.inputs_canonical_hash,
@@ -234,16 +239,19 @@ fn mine_gratis_from_promis(
             "MineGratisFromPromisV1: no resident group key (DKG not complete)",
         ));
     };
-    let promis_state_key = crate::promis::derive_promis_state_key(derived.group_sig(), chain_id, 0)
-        .map_err(domain_error)?;
-    let gratis_state_key = crate::gratis::derive_gratis_state_key(derived.group_sig(), chain_id, 0)
-        .map_err(domain_error)?;
-    let fidelity_state_key =
-        crate::fidelity::derive_fidelity_state_key(derived.group_sig(), chain_id, 0)
+    let promis_state_key =
+        crate::promis::derive_promis_state_key(&derived.resident_material(), chain_id, 0)
             .map_err(domain_error)?;
+    let gratis_state_key =
+        crate::gratis::derive_gratis_state_key(&derived.resident_material(), chain_id, 0)
+            .map_err(domain_error)?;
+    let fidelity_state_key =
+        crate::fidelity::derive_fidelity_state_key(&derived.resident_material(), chain_id, 0)
+            .map_err(domain_error)?;
+    let material = derived.resident_material();
     let mut result = crate::promis::apply_mine_gratis(
         crate::promis::MineGratisKeys {
-            offer_secret: derived.secret(),
+            offer_secret: material.offer_key_handle(),
             promis_state_key: &promis_state_key,
             gratis_state_key: &gratis_state_key,
             fidelity_state_key: &fidelity_state_key,
@@ -312,22 +320,20 @@ fn derive_account_keys(
             ));
         }
     }
-    let sealed = (|| -> crate::errors::Result<crate::crypto::EncryptedShare> {
+    let sealed = (|| -> crate::errors::Result<_> {
         let domain = crate::confidential::domain_for(ledger);
-        let state_key = domain.derive_state_key(derived.group_sig(), chain_id, 0)?;
-        let view_key = domain.account_keys.derive_view_key(&state_key, account)?;
-        let modify_key = domain.account_keys.derive_modify_key(&state_key, account)?;
-        let mut plaintext = zeroize::Zeroizing::new([0u8; 64]);
-        plaintext[..32].copy_from_slice(view_key.as_slice());
-        plaintext[32..].copy_from_slice(modify_key.as_slice());
-        crate::crypto::encrypt_share(&requester_ephemeral_pubkey, plaintext.as_slice())
+        let state_key = domain.derive_state_key(&derived.resident_material(), chain_id, 0)?;
+        let account_keys = domain
+            .account_keys
+            .derive_account_keys(&state_key, account)?;
+        domain.export_sealed_account_keys(&account_keys, &sig65, &requester_ephemeral_pubkey)
     })();
     sealed
         .map(|blob| EnclaveResponse::AccountKeysSealed {
             account,
-            sealed: blob.ciphertext,
+            sealed: blob.sealed,
             nonce: blob.nonce,
-            enclave_ephemeral_pubkey: blob.ephemeral_pub,
+            enclave_ephemeral_pubkey: blob.enclave_ephemeral_pubkey,
         })
         .map_err(domain_error)
 }
@@ -335,7 +341,7 @@ fn derive_account_keys(
 fn fidelity_request(
     context: RequestContext<'_>,
     operation: &str,
-    apply: impl FnOnce(&[u8; 32]) -> crate::errors::Result<EnclaveResponse>,
+    apply: impl FnOnce(&StateKeyHandle) -> crate::errors::Result<EnclaveResponse>,
 ) -> DomainDispatchResult {
     let Some(derived) = context.offer_key.get() else {
         return Err(domain_error(format!(
@@ -343,8 +349,12 @@ fn fidelity_request(
         )));
     };
     into_domain_response(
-        crate::fidelity::derive_fidelity_state_key(derived.group_sig(), context.chain_id, 0)
-            .and_then(|key| apply(&key)),
+        crate::fidelity::derive_fidelity_state_key(
+            &derived.resident_material(),
+            context.chain_id,
+            0,
+        )
+        .and_then(|key| apply(&key)),
     )
 }
 

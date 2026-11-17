@@ -211,6 +211,18 @@ impl InProcessTeeContext {
             modify_label,
         )?)
     }
+    /// Borrow opaque resident material without exposing secret bytes or holding a lane lock.
+    pub fn with_offer_material<T>(
+        &self,
+        operation: impl FnOnce(&ResidentOfferMaterial) -> T,
+    ) -> Result<T> {
+        Ok(operation(self.material()?.as_ref()))
+    }
+    /// Activate deterministic material only in isolated test fixtures.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn activate_for_test(&self, material: ResidentOfferMaterial) -> Result<()> {
+        self.activate(material, None)
+    }
     /// Borrow the opaque offer handle while keeping its resident owner alive.
     pub fn with_offer_key_handle<T>(
         &self,

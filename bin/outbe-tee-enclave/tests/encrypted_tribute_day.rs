@@ -3,6 +3,7 @@ use outbe_core_common::tribute_encryption::{TributeAmountsV2, TributeContextV2};
 use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_enclave::tribute_day::{TributeDayOpRequestV2, TributeDayOperationV2};
 use outbe_system_common::time::WorldwideDay;
+use outbe_tee::resident::StateKeyHandle;
 use outbe_tee_enclave::{
     tribute_day::{apply_day_operation, read_day_amount},
     tribute_encryption::encrypt_tribute,
@@ -10,8 +11,8 @@ use outbe_tee_enclave::{
 
 #[test]
 fn encrypted_day_issue_burn_freeze_and_retirement_preserve_frozen_history() {
-    let secret = [7; 32];
-    let tribute_key = [11; 32];
+    let secret = StateKeyHandle::for_test([7; 32]);
+    let tribute_key = StateKeyHandle::for_test([11; 32]);
     let day = WorldwideDay::new(20250115);
     let context = TributeContextV2 {
         chain_id: 54322345,
@@ -93,9 +94,9 @@ fn day_request(amount: U256) -> TributeDayOpRequestV2 {
 
 #[test]
 fn encrypted_day_rejects_wrong_key_and_modified_context_or_ciphertext() {
-    let secret = [7; 32];
+    let secret = StateKeyHandle::for_test([7; 32]);
     let record = apply_day_operation(&secret, &secret, &day_request(U256::from(71))).unwrap();
-    assert!(read_day_amount(&[8; 32], &record).is_err());
+    assert!(read_day_amount(&StateKeyHandle::for_test([8; 32]), &record).is_err());
     for change in [
         (|record: &mut outbe_core_common::tribute_day_encryption::EncryptedTributeDayAmountV2| {
             record.chain_id += 1
@@ -117,7 +118,7 @@ fn encrypted_day_rejects_wrong_key_and_modified_context_or_ciphertext() {
 
 #[test]
 fn exact_predecessor_and_public_state_change_the_deterministic_write_context() {
-    let secret = [7; 32];
+    let secret = StateKeyHandle::for_test([7; 32]);
     let request = day_request(U256::from(71));
     let record = apply_day_operation(&secret, &secret, &request).unwrap();
     let branch = apply_day_operation(
@@ -167,7 +168,7 @@ fn exact_predecessor_and_public_state_change_the_deterministic_write_context() {
 
 #[test]
 fn an_overflow_fails_without_replacing_previous_state() {
-    let secret = [7; 32];
+    let secret = StateKeyHandle::for_test([7; 32]);
     let request = day_request(U256::MAX);
     let previous = apply_day_operation(&secret, &secret, &request).unwrap();
     assert!(apply_day_operation(

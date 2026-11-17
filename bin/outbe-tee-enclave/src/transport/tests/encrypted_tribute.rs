@@ -31,8 +31,12 @@ fn private_reads_use_the_common_key_across_enclave_identities_and_bind_the_respo
     let day = WorldwideDay::new(20250115);
     let chain_id = 54322345u64;
     let chain = B256::from(alloy_primitives::U256::from(chain_id));
-    let tribute_state_key =
-        crate::tribute_encryption::derive_tribute_state_key(&group_sig, chain, 0).unwrap();
+    let tribute_state_key = crate::tribute_encryption::derive_tribute_state_key(
+        &DerivedTributeOfferKey::for_test(secret, group_sig.to_vec(), 0, 0).resident_material(),
+        chain,
+        0,
+    )
+    .unwrap();
     let context = TributeContextV2 {
         chain_id,
         tribute_id: WwdEntityId::from_day_and_digest(day, [0x22; 32]),
@@ -147,8 +151,14 @@ fn day_request() -> outbe_enclave::tribute_day::TributeDayOpRequestV2 {
 #[test]
 fn private_day_commands_require_ready_local_authority_and_installed_network_key() {
     let enclave = Enclave::new(0x51);
-    let record =
-        crate::tribute_day::apply_day_operation(&[7; 32], &[8; 32], &day_request()).unwrap();
+    let record = crate::tribute_day::apply_day_operation(
+        outbe_tee::resident::OfferKeyHandle::from_legacy_secret(Zeroizing::new([7; 32]))
+            .key_handle(),
+        outbe_tee::resident::OfferKeyHandle::from_legacy_secret(Zeroizing::new([8; 32]))
+            .key_handle(),
+        &day_request(),
+    )
+    .unwrap();
     for request in [
         DomainRequest::ApplyTributeDayOpV2 {
             request: Box::new(day_request()),

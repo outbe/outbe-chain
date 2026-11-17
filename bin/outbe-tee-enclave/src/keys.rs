@@ -19,6 +19,7 @@ use zeroize::{Zeroize as _, Zeroizing};
 
 use outbe_primitives::tee_attestation_v1::NetworkBindingV1;
 use outbe_tee::protocol::EnclaveResponse;
+use outbe_tee::resident::OfferKeyHandle;
 
 use crate::crypto::{hkdf_sha256, x25519_public};
 use crate::dkg::PrivKey;
@@ -96,6 +97,7 @@ pub struct EnclaveKeys {
     noise_public: [u8; 32],
     /// X25519 offer secret (the decrypt key) + its public (clients encrypt to it).
     tribute_offer_secret: Zeroizing<[u8; 32]>,
+    tribute_offer_handle: OfferKeyHandle,
     tribute_offer_public: [u8; 32],
     /// Persistent per-enclave Ed25519 attestation signing key.
     attestation_signing: ed25519_dalek::SigningKey,
@@ -187,6 +189,7 @@ impl EnclaveKeys {
             sealed_network_binding,
             noise_private,
             noise_public,
+            tribute_offer_handle: OfferKeyHandle::from_legacy_secret(tribute_offer_secret.clone()),
             tribute_offer_secret,
             tribute_offer_public,
             attestation_signing,
@@ -302,7 +305,7 @@ impl EnclaveKeys {
     /// same value), so the derived key is identical on every validator.
     pub fn tribute_offer_key_material(&self) -> TributeOfferKeyMaterial<'_> {
         TributeOfferKeyMaterial {
-            tribute_offer_private_key: &self.tribute_offer_secret,
+            tribute_offer_private_key: &self.tribute_offer_handle,
             salt: &outbe_enclave::OFFER_HKDF_SALT,
         }
     }
@@ -313,7 +316,7 @@ impl EnclaveKeys {
     /// The dev and DKG-derived offer keys share it alike.
     pub fn tribute_offer_key_material_with<'a>(
         &'a self,
-        secret: &'a [u8; 32],
+        secret: &'a OfferKeyHandle,
     ) -> TributeOfferKeyMaterial<'a> {
         TributeOfferKeyMaterial {
             tribute_offer_private_key: secret,
@@ -377,11 +380,11 @@ mod tests {
     fn domain_attestation_key_preserves_identity_seed_signatures() {
         for seed in [[0; 32], [0x42; 32]] {
             let daemon = EnclaveKeys::new(seed, Some(seed)).unwrap();
-            let domain = crate::crypto::AttestationKeyPair::from_identity_seed(&seed).unwrap();
+            let domain = outbe_tee::resident::ResidentTeeKeys::from_seed(seed).unwrap();
             let message = b"outbe attestation compatibility";
             assert_eq!(domain.attestation_pub(), daemon.attestation_pub());
             assert_eq!(
-                domain.sign_attestation(message),
+                domain.sign_domain_attestation(message),
                 daemon.sign_attestation(message)
             );
         }

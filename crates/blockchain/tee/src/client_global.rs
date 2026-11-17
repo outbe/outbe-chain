@@ -1,18 +1,14 @@
-//! Process-global enclave client shared by every enclave-using module.
+//! Process-global resident context and the temporary sidecar fallback.
 //!
-//! Production installs an [`AuthorizedEnclaveClient`] after node-signed,
-//! write-once initialization. The separate dev/mock path may install the
-//! development [`EnclaveClient`]. Both expose only requests and the
-//! manifest/quote-bound attestation key needed by runtime consumers. The
-//! Execution requests use [`try_with_enclave`]. Account-key RPC queries and
-//! canary probes use separate authenticated connections. TEE transport
-//! infrastructure lives here rather than in a business module.
-//!
-//! Determinism: the enclave returns byte-identical output across validators (same
-//! resident keys), so routing a request through this global does not affect
-//! consensus determinism. The call is a blocking UDS/TCP round-trip made straight
-//! from the execution path. It never holds a `StorageHandle` across it and never
-//! spawns a thread.
+//! The resident context and its domain callback are installed atomically and
+//! shared by execution, canary and account-query lanes. Direct calls acquire
+//! no execution-session lock. Domain adapters enforce each payload allowlist.
+//! The legacy sidecar retains one authenticated connection and lock per lane
+//! until its remaining callers migrate; direct requests never fall back on error.
+
+#[cfg(any(test, feature = "test-utils"))]
+pub use crate::in_process_dispatch::set_in_process_tee_context_for_test;
+pub use crate::in_process_dispatch::{in_process_tee_context, install_in_process_tee_context};
 
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::Instant;
@@ -118,6 +114,7 @@ impl EnclaveSessions {
         f(&mut guard)
     }
 
+    #[cfg(test)]
     pub(crate) fn canary_request(
         &self,
         request: &EnclaveRequest,
@@ -155,6 +152,7 @@ impl EnclaveSessions {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn account_query_request(
         &self,
         request: &EnclaveRequest,
@@ -195,7 +193,7 @@ static ENCLAVE_SESSION: OnceLock<EnclaveSessions> = OnceLock::new();
 
 /// True once a process-global enclave session is installed.
 pub fn is_enclave_configured() -> bool {
-    ENCLAVE_SESSION.get().is_some()
+    in_process_tee_context().is_some() || ENCLAVE_SESSION.get().is_some()
 }
 
 /// Install the separate dev/mock client once. The session keeps `endpoint` so it
@@ -240,7 +238,14 @@ pub fn try_with_enclave<R>(f: impl FnOnce(&mut EnclaveSession) -> R) -> Option<R
 pub fn try_account_query(
     request: &EnclaveRequest,
 ) -> Option<Result<EnclaveResponse, TransportError>> {
-    Some(ENCLAVE_SESSION.get()?.account_query_request(request))
+    try_account_query_with_meta(
+        CallMeta {
+            label: request.label(),
+            idempotent: request.is_idempotent(),
+            recordable: false,
+        },
+        request,
+    )
 }
 
 /// Run an authorized account-query [`EnclaveRequest::Payload`] with explicit call metadata.
@@ -248,6 +253,11 @@ pub fn try_account_query_with_meta(
     meta: CallMeta,
     request: &EnclaveRequest,
 ) -> Option<Result<EnclaveResponse, TransportError>> {
+    if let Some(result) =
+        crate::in_process_dispatch::request_on_lane(meta, request, PayloadLane::AccountQuery)
+    {
+        return Some(result);
+    }
     Some(
         ENCLAVE_SESSION
             .get()?
@@ -258,10 +268,14 @@ pub fn try_account_query_with_meta(
 /// Run only the canary's existing read-only probes on its own authenticated
 /// connection. It acquires no execution-session mutex, including on reconnects.
 pub fn canary_request(request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
-    ENCLAVE_SESSION
-        .get()
-        .ok_or(crate::errors::TeeClientVerificationError::EnclaveSessionNotConfigured)?
-        .canary_request(request)
+    canary_request_with_meta(
+        CallMeta {
+            label: request.label(),
+            idempotent: request.is_idempotent(),
+            recordable: false,
+        },
+        request,
+    )
 }
 
 /// Run a canary probe [`EnclaveRequest::Payload`] with explicit call metadata.
@@ -269,6 +283,11 @@ pub fn canary_request_with_meta(
     meta: CallMeta,
     request: &EnclaveRequest,
 ) -> Result<EnclaveResponse, TransportError> {
+    if let Some(result) =
+        crate::in_process_dispatch::request_on_lane(meta, request, PayloadLane::Canary)
+    {
+        return result;
+    }
     ENCLAVE_SESSION
         .get()
         .ok_or(crate::errors::TeeClientVerificationError::EnclaveSessionNotConfigured)?
@@ -277,6 +296,9 @@ pub fn canary_request_with_meta(
 
 /// Read the install-time attestation pin without waiting for enclave I/O.
 pub fn canary_attestation_pub() -> Option<[u8; 32]> {
+    if let Some(context) = in_process_tee_context() {
+        return Some(context.attestation_public());
+    }
     Some(ENCLAVE_SESSION.get()?.attestation_pub)
 }
 
@@ -313,6 +335,15 @@ pub fn verify_dcap_evidence_v1(
     let (key, response) = crate::witness::consensus_call(
         "verify_dcap_evidence_v1",
         || {
+            if let Some(context) = in_process_tee_context() {
+                return Ok((
+                    context.attestation_public(),
+                    context
+                        .verify_dcap_evidence_response_v1(evidence, policy, block_timestamp)
+                        .map_err(crate::InProcessDispatchError::from)?,
+                ));
+            }
+
             let (key, response) = try_with_enclave(|session| {
                 (
                     session.attestation_pub(),
@@ -360,6 +391,15 @@ pub fn verify_dcap_registration_and_seal_v1(
     let (key, response) = crate::witness::consensus_call(
         "verify_dcap_registration_and_seal_v1",
         || {
+            if let Some(context) = in_process_tee_context() {
+                return Ok((
+                    context.attestation_public(),
+                    context
+                        .verify_dcap_registration_response_v1(request)
+                        .map_err(crate::InProcessDispatchError::from)?,
+                ));
+            }
+
             let (key, response) = try_with_enclave(|session| {
                 (
                     session.attestation_pub(),
@@ -388,6 +428,20 @@ pub fn prepare_no_attestation_dev_onboarding_artifact_v1(
     let (key, response) = crate::witness::consensus_call(
         "PrepareNoAttestationDevOnboardingArtifactV2",
         || {
+            if let Some(runtime) = in_process_tee_context() {
+                let response = runtime
+                    .prepare_no_attestation_dev_onboarding_artifact_v2(context)
+                    .map_err(crate::InProcessDispatchError::from)?;
+                return Ok((
+                    runtime.attestation_public(),
+                    EnclaveResponse::NoAttestationDevOnboardingArtifactPreparedV2 {
+                        request_hash: response.request_hash,
+                        onboarding_artifact: response.onboarding_artifact,
+                        attestation_tag: response.attestation_tag.to_vec(),
+                    },
+                ));
+            }
+
             let (key, response) = try_with_enclave(|session| {
                 (
                     session.attestation_pub(),
@@ -408,6 +462,20 @@ pub fn prepare_no_attestation_dev_onboarding_artifact_v1(
 /// mandatory local enclave. `None` is a fresh/keyless state, not a replacement
 /// or recovery path.
 pub fn resident_network_encryption_public_key_state_v1() -> Result<Option<B256>, TransportError> {
+    if let Some(context) = in_process_tee_context() {
+        return if context
+            .offer_key_ready()
+            .map_err(crate::InProcessDispatchError::from)?
+        {
+            Ok(Some(B256::from(
+                context
+                    .network_encryption_public()
+                    .map_err(crate::InProcessDispatchError::from)?,
+            )))
+        } else {
+            Ok(None)
+        };
+    }
     let Some(result) = try_with_enclave(|session| session.request(&EnclaveRequest::GetPublicKeys))
     else {
         return Err(TransportError::EnclaveError(

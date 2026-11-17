@@ -9,6 +9,7 @@
 //! callers switch to the in-process context.
 
 pub mod in_process;
+pub mod in_process_dispatch;
 pub mod resident;
 use outbe_dcap::byte_cursor;
 pub mod call_context;
@@ -66,6 +67,10 @@ pub use errors::{
     DevIdentityMismatchError, QuoteParseError, TeeCryptoError, TransportError,
 };
 pub use host_collateral::acquire_dcap_collateral_v1;
+pub use in_process_dispatch::{
+    in_process_tee_context, install_in_process_tee_context, try_in_process_request,
+    InProcessDispatchError, InProcessPayloadHandler,
+};
 pub use node_host::{
     clear_committed_join_checkpoint, connect_committed_node_host_enclave,
     connect_or_initialize_node_host_enclave, construct_finalized_replacement_authorization_v1,

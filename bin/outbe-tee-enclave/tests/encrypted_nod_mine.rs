@@ -7,13 +7,14 @@ use outbe_enclave::{
     },
 };
 use outbe_system_common::time::WorldwideDay;
+use outbe_tee::resident::StateKeyHandle;
 use outbe_tee_enclave::{gratis, nod_encryption::encrypt_nod, nod_mine};
 
 #[test]
 fn private_mine_replays_exactly_and_preserves_other_gratis_writers() {
-    let network = [7; 32];
-    let key = [9; 32];
-    let fidelity_key = [13; 32];
+    let network = StateKeyHandle::for_test([7; 32]);
+    let key = StateKeyHandle::for_test([9; 32]);
+    let fidelity_key = StateKeyHandle::for_test([13; 32]);
     let account = Address::repeat_byte(3);
     let amount = U256::from(123);
     let day = WorldwideDay::new(20250115);
@@ -28,7 +29,7 @@ fn private_mine_replays_exactly_and_preserves_other_gratis_writers() {
         reference_currency: 978,
     };
     let nod = encrypt_nod(&network, terms, amount).unwrap();
-    let modify_key = gratis::derive_modify_key(&key, account).unwrap();
+    let modify_key = gratis::derive_account_keys(&key, account).unwrap();
     let chain = B256::from(U256::ONE);
     let auth = |op, value, nonce| ModifyAuth {
         mac: gratis::modify_mac(
@@ -84,7 +85,12 @@ fn private_mine_replays_exactly_and_preserves_other_gratis_writers() {
     resumed.fidelity.timestamp = 1_000_002;
     resumed.fidelity.first_qualified_start = 1_000_000;
     assert!(nod_mine::apply(&network, &key, &fidelity_key, &resumed).is_ok());
-    let view_key = gratis::derive_view_key(&key, account).unwrap();
+    let view_key = outbe_tee_enclave::crypto::hkdf_sha256(
+        &[9; 32],
+        account.as_slice(),
+        b"outbe/gratis/view-key/v1",
+    )
+    .unwrap();
     assert_eq!(
         outbe_enclave::gratis_decrypt::decrypt_gratis_balance(
             &view_key,
@@ -113,7 +119,12 @@ fn private_mine_replays_exactly_and_preserves_other_gratis_writers() {
     let after = gratis::apply_op(&key, &burn);
     assert!(matches!(after.status, GratisOpStatus::Applied));
     assert_eq!(
-        gratis::decrypt_balance(&view_key, account, &after.new_balance).unwrap(),
+        gratis::decrypt_balance(
+            &gratis::derive_view_key(&key, account).unwrap(),
+            account,
+            &after.new_balance
+        )
+        .unwrap(),
         U256::from(100)
     );
     let mut invalid_fidelity = request;

@@ -34,9 +34,9 @@ pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> Doma
             super::tribute::read_amounts(keys, offer_key, chain_id, &tributes)
         }
         EnclaveRequest::ProcessTributeOfferBatch { offers } => {
-            let derived = offer_key.get();
-            let km = match derived {
-                Some(d) => keys.tribute_offer_key_material_with(d.secret()),
+            let derived = offer_key.get().map(|key| key.resident_material());
+            let km = match &derived {
+                Some(d) => keys.tribute_offer_key_material_with(d.offer_key_handle()),
                 None => keys.tribute_offer_key_material(),
             };
             let (results, inputs_canonical_hash) = process_tribute_offer_batch(&km, &offers);

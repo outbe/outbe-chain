@@ -29,6 +29,9 @@ impl AppErrorDescriptor {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum TransportError {
+    /// Direct resident/domain failure with its structured cause intact.
+    #[error("in-process TEE dispatch failed: {0}")]
+    InProcess(#[from] crate::in_process_dispatch::InProcessDispatchError),
     /// Socket read or write failed.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
@@ -211,7 +214,8 @@ impl TransportError {
     pub fn is_node_local(&self) -> bool {
         matches!(
             self,
-            Self::Io(_)
+            Self::InProcess(crate::in_process_dispatch::InProcessDispatchError::Resident(_))
+                | Self::Io(_)
                 | Self::IoTimeout { .. }
                 | Self::Noise(_)
                 | Self::FrameTooLarge(_)
@@ -225,6 +229,7 @@ impl TransportError {
     /// Return the stable label for the `outbe_tee_client_request_errors_total{class}` counter.
     pub fn metric_class(&self) -> &'static str {
         match self {
+            Self::InProcess(_) => "in_process",
             Self::Io(_) => "io",
             Self::IoTimeout { .. } => "io_timeout",
             Self::FrameTooLarge(_) => "frame_too_large",

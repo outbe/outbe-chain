@@ -34,12 +34,14 @@ pub(super) fn mine(
         if request.nod.terms.chain_id != resident_chain_id(chain)? {
             return Err(TransportDispatchError::NodMineChainMismatch.into());
         }
-        let nod_key = crate::nod_encryption::derive_nod_state_key(key.group_sig(), chain, 0)
-            .map_err(|_| TransportDispatchError::NodKeyUnavailable)?;
-        let gratis = crate::gratis::derive_gratis_state_key(key.group_sig(), chain, 0)
+        let nod_key =
+            crate::nod_encryption::derive_nod_state_key(&key.resident_material(), chain, 0)
+                .map_err(|_| TransportDispatchError::NodKeyUnavailable)?;
+        let gratis = crate::gratis::derive_gratis_state_key(&key.resident_material(), chain, 0)
             .map_err(|_| TransportDispatchError::GratisKeyUnavailable)?;
-        let fidelity = crate::fidelity::derive_fidelity_state_key(key.group_sig(), chain, 0)
-            .map_err(|_| TransportDispatchError::FidelityKeyUnavailable)?;
+        let fidelity =
+            crate::fidelity::derive_fidelity_state_key(&key.resident_material(), chain, 0)
+                .map_err(|_| TransportDispatchError::FidelityKeyUnavailable)?;
         let mut result = match crate::nod_mine::apply(&nod_key, &gratis, &fidelity, request) {
             Ok(result) => result,
             Err(TeeError::TributeOfferReject(reason)) => {
@@ -79,8 +81,9 @@ pub(super) fn read_amount(
         if nod.terms.chain_id != resident_chain_id(chain)? {
             return Err(TransportDispatchError::NodReadChainMismatch.into());
         }
-        let nod_key = crate::nod_encryption::derive_nod_state_key(key.group_sig(), chain, 0)
-            .map_err(|_| TransportDispatchError::NodKeyUnavailable)?;
+        let nod_key =
+            crate::nod_encryption::derive_nod_state_key(&key.resident_material(), chain, 0)
+                .map_err(|_| TransportDispatchError::NodKeyUnavailable)?;
         let amount = crate::nod_encryption::decrypt_nod(&nod_key, nod)
             .map_err(|_| TransportDispatchError::InvalidEncryptedNod)?;
         let inputs = nod_mine::nod_read_hash(nod)
@@ -114,10 +117,11 @@ pub(super) fn encrypt_for_tribute(
             return Err(TransportDispatchError::NodTributeEncryptChainMismatch.into());
         }
         let tribute_key =
-            crate::tribute_encryption::derive_tribute_state_key(key.group_sig(), chain, 0)
+            crate::tribute_encryption::derive_tribute_state_key(&key.resident_material(), chain, 0)
                 .map_err(|_| TransportDispatchError::TributeKeyUnavailable)?;
-        let nod_key = crate::nod_encryption::derive_nod_state_key(key.group_sig(), chain, 0)
-            .map_err(|_| TransportDispatchError::NodKeyUnavailable)?;
+        let nod_key =
+            crate::nod_encryption::derive_nod_state_key(&key.resident_material(), chain, 0)
+                .map_err(|_| TransportDispatchError::NodKeyUnavailable)?;
         let inputs = response_auth::hash(
             b"outbe/nod/tribute-create-inputs/v1",
             &(input.tribute, &input.terms, input.amount),
@@ -156,14 +160,15 @@ pub(super) fn issue_from_tribute(
             return Err(TransportDispatchError::NodTributeEncryptChainMismatch.into());
         }
         let tribute_key =
-            crate::tribute_encryption::derive_tribute_state_key(key.group_sig(), chain, 0)
+            crate::tribute_encryption::derive_tribute_state_key(&key.resident_material(), chain, 0)
                 .map_err(|_| TransportDispatchError::TributeKeyUnavailable)?;
-        let nod_key = crate::nod_encryption::derive_nod_state_key(key.group_sig(), chain, 0)
-            .map_err(|_| TransportDispatchError::NodKeyUnavailable)?;
+        let nod_key =
+            crate::nod_encryption::derive_nod_state_key(&key.resident_material(), chain, 0)
+                .map_err(|_| TransportDispatchError::NodKeyUnavailable)?;
         let inputs = response_auth::hash(b"outbe/nod/issue-from-tribute-inputs/v1", request)
             .map_err(|_| TransportDispatchError::InvalidNodTributeEncryptInputs)?;
         let outcome = crate::nod_encryption::issue_nod_from_tribute(
-            key.secret(),
+            key.resident_material().offer_key_handle().key_handle(),
             &tribute_key,
             &nod_key,
             request,
@@ -193,8 +198,9 @@ pub(super) fn apply_group_load_op(
         if request.chain_id != resident_chain_id(chain)? {
             return Err(TransportDispatchError::NodReadChainMismatch.into());
         }
-        let nod_key = crate::nod_encryption::derive_nod_state_key(key.group_sig(), chain, 0)
-            .map_err(|_| TransportDispatchError::NodKeyUnavailable)?;
+        let nod_key =
+            crate::nod_encryption::derive_nod_state_key(&key.resident_material(), chain, 0)
+                .map_err(|_| TransportDispatchError::NodKeyUnavailable)?;
         let inputs = nod_mine::nod_group_load_inputs_hash(request)
             .map_err(|_| TransportDispatchError::InvalidNodReadInputs)?;
         let record = crate::nod_encryption::apply_nod_group_load_operation(&nod_key, request)
@@ -224,8 +230,9 @@ pub(super) fn read_group_load(
         if record.chain_id != resident_chain_id(chain)? {
             return Err(TransportDispatchError::NodReadChainMismatch.into());
         }
-        let nod_key = crate::nod_encryption::derive_nod_state_key(key.group_sig(), chain, 0)
-            .map_err(|_| TransportDispatchError::NodKeyUnavailable)?;
+        let nod_key =
+            crate::nod_encryption::derive_nod_state_key(&key.resident_material(), chain, 0)
+                .map_err(|_| TransportDispatchError::NodKeyUnavailable)?;
         let amount = crate::nod_encryption::read_nod_group_load(&nod_key, record)
             .map_err(|_| TransportDispatchError::InvalidEncryptedNod)?;
         let inputs = nod_mine::nod_group_load_read_hash(record)
@@ -252,8 +259,9 @@ pub(super) fn encrypt_quote(
         if context.chain_id != resident_chain_id(chain)? {
             return Err(TransportDispatchError::NodReadChainMismatch.into());
         }
-        let nod_key = crate::nod_encryption::derive_nod_state_key(key.group_sig(), chain, 0)
-            .map_err(|_| TransportDispatchError::NodKeyUnavailable)?;
+        let nod_key =
+            crate::nod_encryption::derive_nod_state_key(&key.resident_material(), chain, 0)
+                .map_err(|_| TransportDispatchError::NodKeyUnavailable)?;
         let inputs = response_auth::hash(
             b"outbe/nod/quote-encrypt-inputs/v1",
             &(nod, context, payment_minor),

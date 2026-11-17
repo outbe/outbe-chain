@@ -25,10 +25,14 @@ pub(super) fn process_offers(
             .get()
             .ok_or(TransportDispatchError::NoResidentNetworkKey)?;
         let chain_id = resident_chain_id(chain)?;
-        let tribute_state_key =
-            crate::tribute_encryption::derive_tribute_state_key(derived.group_sig(), chain, 0)
-                .map_err(|_| TransportDispatchError::TributeKeyUnavailable)?;
-        let key = keys.tribute_offer_key_material_with(derived.secret());
+        let tribute_state_key = crate::tribute_encryption::derive_tribute_state_key(
+            &derived.resident_material(),
+            chain,
+            0,
+        )
+        .map_err(|_| TransportDispatchError::TributeKeyUnavailable)?;
+        let material = derived.resident_material();
+        let key = keys.tribute_offer_key_material_with(material.offer_key_handle());
         let (results, inputs_canonical_hash) =
             crate::encrypted_tribute_offer::process_encrypted_tribute_offer_batch(
                 &key,
@@ -59,9 +63,12 @@ pub(super) fn read_amounts(
             .get()
             .ok_or(TransportDispatchError::NoResidentNetworkKey)?;
         let chain_id = resident_chain_id(chain)?;
-        let tribute_state_key =
-            crate::tribute_encryption::derive_tribute_state_key(derived.group_sig(), chain, 0)
-                .map_err(|_| TransportDispatchError::TributeKeyUnavailable)?;
+        let tribute_state_key = crate::tribute_encryption::derive_tribute_state_key(
+            &derived.resident_material(),
+            chain,
+            0,
+        )
+        .map_err(|_| TransportDispatchError::TributeKeyUnavailable)?;
         let amounts = tributes
             .iter()
             .map(|tribute| -> EnclaveResult<_> {

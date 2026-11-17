@@ -6,13 +6,15 @@ use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_enclave::protocol::{EncryptedTributeOffer, TributeOfferStatus, TributeZkContext};
 use outbe_enclave::tribute_decrypt::decrypt_tribute_for_owner;
 use outbe_system_common::time::WorldwideDay;
+use outbe_tee::resident::OfferKeyHandle;
 use outbe_tee_enclave::encrypted_tribute_offer::process_encrypted_tribute_offer_batch;
 use outbe_tee_enclave::process::TributeOfferKeyMaterial;
-use outbe_tee_enclave::tribute_encryption::{decrypt_tribute, derive_view_key, encrypt_tribute};
+use outbe_tee_enclave::tribute_encryption::{decrypt_tribute, encrypt_tribute};
 use x25519_dalek::{PublicKey, StaticSecret};
+use zeroize::Zeroizing;
 
 struct Fixture {
-    tribute_state_key: [u8; 32],
+    tribute_state_key: OfferKeyHandle,
     view_key: [u8; 32],
     enclave_public: [u8; 32],
     encrypted: EncryptedTributeV2,
@@ -20,11 +22,16 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
-    let tribute_state_key = [7u8; 32];
-    let enclave_public = PublicKey::from(&StaticSecret::from(tribute_state_key)).to_bytes();
+    let tribute_state_key = OfferKeyHandle::from_legacy_secret(Zeroizing::new([7u8; 32]));
+    let enclave_public = tribute_state_key.public();
     let day = WorldwideDay::new(20250115);
     let owner = Address::repeat_byte(0x33);
-    let view_key = *derive_view_key(&tribute_state_key, owner).unwrap();
+    let view_key = outbe_tee_enclave::crypto::hkdf_sha256(
+        &[7; 32],
+        owner.as_slice(),
+        b"outbe/tribute/view-key/v1",
+    )
+    .unwrap();
     let context = TributeContextV2 {
         chain_id: 54322345,
         tribute_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(0x22)),
@@ -39,7 +46,7 @@ fn fixture() -> Fixture {
         issuance_amount_minor: U256::from(100_000_000),
         nominal_amount_minor: U256::from(50_000_000),
     };
-    let encrypted = encrypt_tribute(&tribute_state_key, context, &amounts).unwrap();
+    let encrypted = encrypt_tribute(tribute_state_key.key_handle(), context, &amounts).unwrap();
     Fixture {
         tribute_state_key,
         view_key,
@@ -61,7 +68,7 @@ fn creator_and_enclave_can_read_the_same_encrypted_tribute_without_a_saved_amoun
 
     assert_eq!(encrypted.encrypted_amounts.len(), 88);
     assert_eq!(
-        decrypt_tribute(&tribute_state_key, &encrypted).unwrap(),
+        decrypt_tribute(tribute_state_key.key_handle(), &encrypted).unwrap(),
         amounts
     );
     assert_eq!(
@@ -69,13 +76,13 @@ fn creator_and_enclave_can_read_the_same_encrypted_tribute_without_a_saved_amoun
         amounts
     );
     assert_eq!(
-        decrypt_tribute(&tribute_state_key, &encrypted).unwrap(),
+        decrypt_tribute(tribute_state_key.key_handle(), &encrypted).unwrap(),
         amounts
     );
 }
 
 fn assert_unreadable(f: &Fixture, encrypted: &EncryptedTributeV2) {
-    assert!(decrypt_tribute(&f.tribute_state_key, encrypted).is_err());
+    assert!(decrypt_tribute(f.tribute_state_key.key_handle(), encrypted).is_err());
     assert!(decrypt_tribute_for_owner(&f.view_key, encrypted).is_err());
 }
 
@@ -108,7 +115,11 @@ fn ciphertext_and_metadata_cannot_be_substituted_between_tributes() {
 #[test]
 fn wrong_state_and_view_keys_are_rejected() {
     let f = fixture();
-    assert!(decrypt_tribute(&[19u8; 32], &f.encrypted).is_err());
+    assert!(decrypt_tribute(
+        OfferKeyHandle::from_legacy_secret(Zeroizing::new([19u8; 32])).key_handle(),
+        &f.encrypted
+    )
+    .is_err());
     assert!(decrypt_tribute_for_owner(&[19u8; 32], &f.encrypted).is_err());
 }
 
@@ -133,7 +144,7 @@ fn empty_truncated_and_nonimmutable_blobs_cannot_be_read_as_zero_amounts() {
 fn shared_network_keys_replay_identically_and_serialized_records_contain_only_ciphertext() {
     let f = fixture();
     let restarted = encrypt_tribute(
-        &f.tribute_state_key,
+        f.tribute_state_key.key_handle(),
         f.encrypted.context.clone(),
         &f.amounts,
     )
@@ -141,7 +152,7 @@ fn shared_network_keys_replay_identically_and_serialized_records_contain_only_ci
     assert_eq!(f.encrypted, restarted);
     let wire = postcard::to_allocvec(&f.encrypted).unwrap();
     for plaintext in [
-        f.tribute_state_key,
+        [7; 32],
         f.view_key,
         f.amounts.issuance_amount_minor.to_be_bytes::<32>(),
         f.amounts.nominal_amount_minor.to_be_bytes::<32>(),
@@ -193,7 +204,7 @@ fn offer_creator_owns_the_tribute_while_proof_binding_uses_the_transaction_calle
     };
     let (results, _) = process_encrypted_tribute_offer_batch(
         &key,
-        &f.tribute_state_key,
+        f.tribute_state_key.key_handle(),
         f.encrypted.context.chain_id,
         &[offer.clone()],
     );
@@ -212,14 +223,14 @@ fn offer_creator_owns_the_tribute_while_proof_binding_uses_the_transaction_calle
         .unwrap()
     );
     assert_eq!(
-        decrypt_tribute(&f.tribute_state_key, tribute).unwrap(),
+        decrypt_tribute(f.tribute_state_key.key_handle(), tribute).unwrap(),
         f.amounts
     );
     let first_binding = result.zk_expected_hashes.as_ref().unwrap().binding_hash;
     offer.owner = Address::repeat_byte(0x88);
     let (other, _) = process_encrypted_tribute_offer_batch(
         &key,
-        &f.tribute_state_key,
+        f.tribute_state_key.key_handle(),
         f.encrypted.context.chain_id,
         &[offer],
     );

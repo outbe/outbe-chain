@@ -79,3 +79,36 @@ impl InProcessTeeContext {
         Ok(proof)
     }
 }
+
+impl InProcessTeeContext {
+    /// Verify the same genesis-rooted upgrade proof used by the streaming donor before sealing.
+    pub(crate) fn export_from_network_source_v1(
+        &self,
+        context: crate::dcap_protocol::DcapOnboardingContextV1,
+        proof: &crate::upgrade_transfer::UpgradeKeyProofV1,
+        legacy_direct_dev: bool,
+    ) -> Result<DcapOnboardingArtifactV1> {
+        self.proof_source
+            .ensure_available(self.manifest.attestation_mode)?;
+        self.validate_source(&context)?;
+        if legacy_direct_dev {
+            let prepared = self.prepare_no_attestation_dev_onboarding_artifact_v2(context)?;
+            return DcapOnboardingArtifactV1::decode_canonical(&prepared.onboarding_artifact)
+                .map_err(InProcessError::Dcap);
+        }
+        let mut verifier = super::FinalizedAdmissionVerifierV1::new(
+            &self.descriptor,
+            &context,
+            &proof.anchor_outcome,
+        )?
+        .for_upgrade();
+        for transition in &proof.committee_transitions {
+            verifier.advance_committee(transition)?;
+        }
+        verifier.verify_admission(&proof.admission)?;
+        Ok(crate::resident::encrypt_onboarding_artifact_v1(
+            self.material()?.as_ref(),
+            context,
+        )?)
+    }
+}

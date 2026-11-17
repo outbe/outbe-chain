@@ -19,6 +19,7 @@
 //!     `EGETKEY` key under `gramine-sgx` (a `mock`-gated dev key only off-hardware).
 //!   - [`gramine`] - the real `/dev/attestation/*` quote/seal/measurement surface.
 
+pub mod crypto;
 pub mod dcap_verifier;
 pub mod dkg;
 pub mod errors;
@@ -41,7 +42,7 @@ pub mod test_utils;
 pub mod transport;
 
 pub use outbe_enclave::{
-    compute, confidential, crypto, encrypted_tribute_offer, fidelity, fidelity_cipher, gratis,
+    compute, confidential, encrypted_tribute_offer, fidelity, fidelity_cipher, gratis,
     gratis_cipher, nod_encryption, nod_mine, payload, process, promis, promis_cipher, protocol,
     tribute_day, tribute_encryption, zk_claim,
 };

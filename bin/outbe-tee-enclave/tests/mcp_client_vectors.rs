@@ -8,10 +8,12 @@ use outbe_enclave::protocol::{
     PromisOp,
 };
 use outbe_primitives::tee_signatures::recover_signer;
+use outbe_tee::resident::{AccountKeysHandle, OfferKeyHandle};
 use outbe_tee_enclave::crypto::{decrypt_share, encrypt_share_deterministic, EncryptedShare};
 use outbe_tee_enclave::{gratis, promis};
 use serde_json::Value;
 use x25519_dalek::{PublicKey, StaticSecret};
+use zeroize::Zeroizing;
 
 const VECTORS: &str = include_str!("fixtures/mcp_client_vectors.json");
 
@@ -97,7 +99,7 @@ fn mcp_modify_macs_match_the_enclave() {
         let op = v["op"].as_u64().unwrap();
         let mac = match v["ledger"].as_str().unwrap() {
             "Gratis" => gratis::modify_mac(
-                &key,
+                &AccountKeysHandle::for_test(account, [0; 32], key),
                 &gratis::ModifyOperation {
                     account,
                     op: [GratisOp::Mint, GratisOp::Burn, GratisOp::Pledge][op as usize],
@@ -107,7 +109,7 @@ fn mcp_modify_macs_match_the_enclave() {
                 },
             ),
             "Promis" => promis::modify_mac(
-                &key,
+                &AccountKeysHandle::for_test(account, [0; 32], key),
                 &promis::ModifyOperation {
                     account,
                     op: [PromisOp::Mint, PromisOp::Burn][op as usize],
@@ -135,6 +137,7 @@ fn mcp_opens_the_balances_the_enclave_writes() {
     let all = vectors();
     let v = &all["balances"];
     let view = word(&v["viewKey"]);
+    let view_handle = OfferKeyHandle::from_legacy_secret(Zeroizing::new(view));
     let account: Address = v["account"].as_str().unwrap().parse().unwrap();
     let decimal = |value: &Value| U256::from_str_radix(value.as_str().unwrap(), 10).unwrap();
     let version = |value: &Value| value.as_str().unwrap().parse::<u64>().unwrap();
@@ -142,7 +145,7 @@ fn mcp_opens_the_balances_the_enclave_writes() {
     let promis = &v["promis"];
     let promis_field = promis["field"].as_u64().unwrap() as u8;
     let blob = write_promis_amount(
-        &view,
+        view_handle.key_handle(),
         BalanceTransition {
             account,
             field: promis_field,
@@ -154,7 +157,7 @@ fn mcp_opens_the_balances_the_enclave_writes() {
     .unwrap();
     assert_eq!(blob, bytes(&promis["blob"]));
     assert_eq!(
-        read_promis_amount(&view, account, promis_field, &blob)
+        read_promis_amount(view_handle.key_handle(), account, promis_field, &blob)
             .unwrap()
             .1,
         decimal(&promis["amount"])
@@ -167,7 +170,7 @@ fn mcp_opens_the_balances_the_enclave_writes() {
     for gratis in v["gratis"].as_array().unwrap() {
         let field = gratis["field"].as_u64().unwrap() as u8;
         let blob = write_amount(
-            &view,
+            view_handle.key_handle(),
             BalanceTransition {
                 account,
                 field,
@@ -179,7 +182,9 @@ fn mcp_opens_the_balances_the_enclave_writes() {
         .unwrap();
         assert_eq!(blob, bytes(&gratis["blob"]));
         assert_eq!(
-            read_amount(&view, account, field, &blob).unwrap().1,
+            read_amount(view_handle.key_handle(), account, field, &blob)
+                .unwrap()
+                .1,
             decimal(&gratis["amount"])
         );
         if field == 0 {
@@ -195,7 +200,7 @@ fn mcp_opens_the_balances_the_enclave_writes() {
 fn mcp_opens_the_nod_amount_the_enclave_encrypts() {
     use outbe_core_common::nod_encryption::NodTermsV1;
     use outbe_enclave::nod_decrypt::decrypt_nod_for_owner;
-    use outbe_tee_enclave::nod_encryption::{derive_view_key, encrypt_nod};
+    use outbe_tee_enclave::nod_encryption::encrypt_nod;
 
     let all = vectors();
     let v = &all["nod"];
@@ -219,10 +224,20 @@ fn mcp_opens_the_nod_amount_the_enclave_encrypts() {
         issuance_currency: v["issuanceCurrency"].as_u64().unwrap() as u16,
         reference_currency: v["referenceCurrency"].as_u64().unwrap() as u16,
     };
-    let view_key = derive_view_key(&nod_state_key, terms.owner).unwrap();
+    let view_key = outbe_tee_enclave::crypto::hkdf_sha256(
+        &nod_state_key,
+        terms.owner.as_slice(),
+        b"outbe/nod/view-key/v1",
+    )
+    .unwrap();
     assert_eq!(terms.nod_id, decimal(&v["nodId"]));
-    assert_eq!(*view_key, word(&v["viewKey"]));
-    let nod = encrypt_nod(&nod_state_key, terms, decimal(&v["gratisAmount"])).unwrap();
+    assert_eq!(view_key, word(&v["viewKey"]));
+    let nod = encrypt_nod(
+        OfferKeyHandle::from_legacy_secret(Zeroizing::new(nod_state_key)).key_handle(),
+        terms,
+        decimal(&v["gratisAmount"]),
+    )
+    .unwrap();
     assert_eq!(
         nod.encryption_binding,
         B256::from(word(&v["encryptionBinding"]))

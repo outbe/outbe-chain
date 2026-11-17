@@ -15,6 +15,16 @@ pub struct DerivedTributeOfferKey {
 }
 
 impl DerivedTributeOfferKey {
+    /// Import legacy sealed material without exposing raw engine keys.
+    pub(crate) fn resident_material(&self) -> outbe_tee::resident::ResidentOfferMaterial {
+        outbe_tee::resident::ResidentOfferMaterial::from_legacy_parts(
+            self.secret.clone(),
+            self.group_sig.clone(),
+            self.key_epoch,
+            self.tribute_offer_epoch,
+        )
+    }
+
     /// The resident offer secret (never leaves the enclave).
     pub(crate) fn secret(&self) -> &[u8; 32] {
         &self.secret
