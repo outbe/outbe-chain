@@ -3,8 +3,12 @@ use super::{
     sender::VoteSenderGate,
 };
 use crate::{
-    digest::Digest, stack::epoch::signer::authority_signer_enabled,
-    validators::validator_status_can_vote,
+    digest::Digest,
+    stack::epoch::signer::authority_signer_enabled,
+    validators::{
+        validator_status_can_vote, VALIDATOR_STATUS_ACTIVE, VALIDATOR_STATUS_EXITING,
+        VALIDATOR_STATUS_PENDING,
+    },
 };
 use alloy_primitives::B256;
 use commonware_actor::{Feedback, Unreliable};
@@ -21,7 +25,7 @@ use outbe_radicle::integration::RadicleVotingGate;
 use outbe_tee::{TeeAuthorityChannel, TeeAuthorityState as State};
 use std::{
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
     time::SystemTime,
@@ -99,7 +103,12 @@ async fn canonical_role_matrix_gates_votes_certificates_and_proposals() {
         (State::UnkeyedAwaitingAdmission, false),
     ];
     // Stable ABI ACTIVE/EXITING retain authority; PENDING (including readiness) and JAILED do not.
-    let statuses = [(2, true), (3, true), (1, false), (6, false)];
+    let statuses = [
+        (VALIDATOR_STATUS_ACTIVE, true),
+        (VALIDATOR_STATUS_EXITING, true),
+        (VALIDATOR_STATUS_PENDING, false),
+        (crate::protocol_state::VALIDATOR_STATUS_JAILED, false),
+    ];
     for (state, open) in states {
         for (status, eligible) in statuses {
             for (share, radicle) in [(false, false), (false, true), (true, false), (true, true)] {
@@ -176,14 +185,21 @@ async fn assert_proposals(permission: Permission, expected: bool) {
 }
 
 #[test]
-fn closure_after_sender_check_drops_packet_and_reopening_resumes() {
+fn live_authority_and_cached_membership_gate_after_check_and_resume() {
     let channel = TeeAuthorityChannel::new(State::ArmedBootstrap {
         enclave_id: B256::repeat_byte(1),
     });
     let watch = channel.subscribe();
+    let accountable = Arc::new(AtomicBool::new(true));
+    let cached = accountable.clone();
     let permission: Permission = Arc::new(move || {
-        authority_signer_enabled(Some(&watch), true, true, RadicleVotingGate::SignerAllowed)
-            .unwrap()
+        authority_signer_enabled(
+            Some(&watch),
+            cached.load(Ordering::Acquire),
+            true,
+            RadicleVotingGate::SignerAllowed,
+        )
+        .unwrap()
     });
     let count = Arc::new(AtomicUsize::new(0));
     let inner = CountingSender {
@@ -202,4 +218,12 @@ fn closure_after_sender_check_drops_packet_and_reopening_resumes() {
     });
     assert_eq!(sender.send(Recipients::All, vec![2], true).len(), 1);
     assert_eq!(count.load(Ordering::SeqCst), 1);
+    let checked = sender.check(Recipients::All).unwrap();
+    accountable.store(false, Ordering::Release);
+    assert!(!checked.send(vec![3], true).accepted());
+    assert!(sender.send(Recipients::All, vec![4], true).is_empty());
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+    accountable.store(true, Ordering::Release);
+    assert_eq!(sender.send(Recipients::All, vec![5], true).len(), 1);
+    assert_eq!(count.load(Ordering::SeqCst), 2);
 }

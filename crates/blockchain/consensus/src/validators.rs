@@ -518,9 +518,16 @@ pub fn read_consensus_validators_at_latest(
     read_consensus_validators_from_state(protocol, &state)
 }
 
+pub(crate) const VALIDATOR_STATUS_PENDING: u8 = 1;
+pub(crate) const VALIDATOR_STATUS_ACTIVE: u8 = 2;
+pub(crate) const VALIDATOR_STATUS_EXITING: u8 = 3;
+
 /// Stable ValidatorSet ABI statuses ACTIVE (2) and EXITING (3) retain voting authority.
 pub(crate) fn validator_status_can_vote(status: u8) -> bool {
-    matches!(status, 2 | 3)
+    match status {
+        VALIDATOR_STATUS_PENDING => false,
+        status => matches!(status, VALIDATOR_STATUS_ACTIVE | VALIDATOR_STATUS_EXITING),
+    }
 }
 
 /// Read accountable ACTIVE/EXITING members, excluding jail-retained and pending identities.

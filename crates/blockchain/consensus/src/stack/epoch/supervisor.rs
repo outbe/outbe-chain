@@ -1,6 +1,10 @@
 //! Preserve select ordering while delegating domain events to epoch operations.
 use super::super::*;
 use super::runtime::*;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 impl<E, N: StackNodeAccess> EpochSupervisor<E, N>
 where
@@ -64,8 +68,10 @@ where
             // genesis-bootstrap iteration where no prior DKG completion ran.
             let current_subchannels = self.acquire_epoch_subchannels().await?;
 
-            let (mut engine_handle_task, signer_enabled) =
-                self.start_engine(&ctx, current_subchannels).await?;
+            let accountable = Arc::new(AtomicBool::new(self.local_validator_accountable()));
+            let (mut engine_handle_task, signer_enabled) = self
+                .start_engine(&ctx, current_subchannels, accountable.clone())
+                .await?;
             // -- g. Engine event loop ----------------------------------------
             // Monitors engine, component exits, and block-height-driven reshare triggers.
 
@@ -73,7 +79,7 @@ where
             let mut stack_shutdown = ctx.stopped();
 
             loop {
-            let active_validator = self.local_validator_accountable();
+            let accountable_validator = accountable.load(Ordering::Acquire);
             let reshare_active = self.rotation.reshare_in_progress;
             let wait_for_execution_finalized_height = async {
                 if reshare_active {
@@ -97,7 +103,7 @@ where
                     &mut self.radicle_updates,
                     &mut authority,
                     signer_enabled,
-                    active_validator,
+                    accountable_validator,
                     self.state.signing_share.is_some(),
                 ) => {
                     let desired_signer = desired_signer?;
@@ -146,9 +152,15 @@ where
                     match consensus_tip_changed {
                         Ok(()) => {
                             latest_consensus_tip = *self.consensus_tip_rx.borrow_and_update();
-                            if super::signer::authority_signer_enabled(
-                                authority.as_ref(), self.local_validator_accountable(), self.state.signing_share.is_some(), self.radicle_status.snapshot().voting_gate,
-                            )? != signer_enabled {return Ok(EpochLoopOutcome::ReplaceSigner);}
+                            accountable.store(self.local_validator_accountable(), Ordering::Release);
+                            let desired_signer = super::signer::authority_signer_enabled(
+                                authority.as_ref(), accountable.load(Ordering::Acquire), self.state.signing_share.is_some(), self.radicle_status.snapshot().voting_gate,
+                            )?;
+                            if desired_signer != signer_enabled {
+                                info!(epoch = %self.state.current_epoch, previous_signer = signer_enabled, desired_signer,
+                                    "canonical tip changed validator eligibility; replacing same-epoch Simplex role");
+                                return Ok(EpochLoopOutcome::ReplaceSigner);
+                            }
                             if let Some(current_height) = pending_provider_ready_height {
                                 let _ = self.execution_finalized_height_tx.send(current_height);
                             }
@@ -204,6 +216,8 @@ where
                         }
                     }
 
+                    // A consensus tip can precede its execution state; refresh after provider catch-up too.
+                    accountable.store(self.local_validator_accountable(), Ordering::Release);
                     match self.activate_pending(&ctx, current_height, &mut engine_handle_task).await? {
                         EventAction::Outcome(outcome) => return Ok(outcome),
                         EventAction::Continue => continue,
@@ -287,7 +301,7 @@ where
                     .await
                     .wrap_err_with(|| {
                         format!(
-                            "reacquire same-epoch channels while replacing Radicle role in epoch {current_epoch}"
+                            "reacquire same-epoch channels while replacing signer role in epoch {current_epoch}"
                         ,current_epoch = self.state.current_epoch)
                     })?,
                 );

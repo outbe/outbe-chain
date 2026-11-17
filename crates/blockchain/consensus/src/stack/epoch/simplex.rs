@@ -2,6 +2,10 @@
 use super::super::*;
 use super::runtime::*;
 use super::transport::EpochSubchannels;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 #[cfg(test)]
 mod gates_tests;
 mod proposal;
@@ -79,6 +83,7 @@ where
         &mut self,
         ctx: &E,
         channels: EpochSubchannels<E>,
+        accountable: Arc<AtomicBool>,
     ) -> Result<(commonware_runtime::Handle<()>, bool)> {
         let crate::epoch_subchannels::EpochSubchannels {
             vote, cert, res, ..
@@ -87,7 +92,7 @@ where
         // -- b. Build HybridScheme for this epoch ------------------------
         let signer_enabled = super::signer::authority_signer_enabled(
             self.protocol.tee_authority_watch().as_ref(),
-            self.local_validator_accountable(),
+            accountable.load(Ordering::Acquire),
             self.state.signing_share.is_some(),
             self.radicle_status.snapshot().voting_gate,
         )?;
@@ -132,17 +137,10 @@ where
 
         let authority = self.protocol.tee_authority_watch();
         let radicle = self.radicle_status.clone();
-        let protocol = self.protocol.clone();
-        let provider = self.node.provider().clone();
-        let local_key = self.signing_key.public_key();
         let permission: proposal::Permission = std::sync::Arc::new(move || {
             super::signer::authority_signer_enabled(
                 authority.as_ref(),
-                super::signer::local_validator_accountable(
-                    protocol.as_ref(),
-                    &provider,
-                    &local_key,
-                ),
+                accountable.load(Ordering::Acquire),
                 has_share,
                 radicle.snapshot().voting_gate,
             )
