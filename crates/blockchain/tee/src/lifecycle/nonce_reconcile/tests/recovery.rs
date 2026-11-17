@@ -144,6 +144,61 @@ async fn candidate_prepare_cancel_and_transition_reconcile_distinct_mutations() 
     ] {
         let (_root, mut journal, live, mut record, mut chain) = fixture();
         record.kind = kind;
+        if kind == ServiceTxKindV1::UpgradePrepare {
+            use alloy_sol_types::SolCall as _;
+            use outbe_primitives::{tee_attestation_v1::*, tee_registry_abi_v1::ITeeRegistryV1};
+            let manifest = live.manifest();
+            let intent = RegistrationIntentV1 {
+                chain_id: manifest.chain_id,
+                genesis_hash: manifest.genesis_hash,
+                operation: AttestationOperationV1::PrepareEnclaveUpgrade,
+                attestation_mode: manifest.attestation_mode,
+                policy_hash: record.public_intent.target.policy_hash,
+                node_id: manifest.node_id.clone(),
+                enclave_id: manifest.enclave_id().unwrap(),
+                binding_id: B256::repeat_byte(55),
+                binding_version: 2,
+                registration_version: 2,
+                renewal_nonce: 0,
+                transition_nonce: 1,
+                requested_valid_until: 2000,
+                recipient_x25519: manifest.recipient_x25519,
+                attestation_ed25519: manifest.attestation_ed25519,
+                noise_responder_x25519: manifest.noise_responder_x25519,
+                node_host_authorization_hash: manifest.node_host_authorization_hash().unwrap(),
+            };
+            let signature = live.sign_registration_intent_dev_v1(&intent).unwrap();
+            let evidence = AttestationEvidenceV1::NoAttestationDev(NoAttestationDevEvidenceV1 {
+                intent,
+                dev_attestation_public: manifest.attestation_ed25519,
+                dev_signature: signature,
+                transition_key_ready_proof: None,
+            })
+            .encode_canonical()
+            .unwrap();
+            let calldata = ITeeRegistryV1::prepareEnclaveUpgradeCall {
+                evidence: evidence.into(),
+                nodeSignature: vec![0; 65].into(),
+                enclaveSignature: signature.to_vec().into(),
+            }
+            .abi_encode();
+            let mut encoded = &record.raw_signed_tx[1..];
+            use alloy_consensus::transaction::RlpEcdsaDecodableTx as _;
+            let mut tx = TxEip1559::rlp_decode_signed(&mut encoded)
+                .unwrap()
+                .tx()
+                .clone();
+            tx.input = calldata.into();
+            let key = k256::ecdsa::SigningKey::from_slice(&[3; 32]).unwrap();
+            let (sig, id) = key
+                .sign_prehash_recoverable(tx.signature_hash().as_slice())
+                .unwrap();
+            let sig = alloy_primitives::Signature::from_signature_and_parity(sig, id.is_y_odd());
+            let mut raw = vec![2];
+            tx.into_signed(sig).rlp_encode(&mut raw);
+            record.tx_hash = keccak256(&raw);
+            record.raw_signed_tx = raw.into();
+        }
         chain.binding = Some(applied(&record));
         let candidate = LifecycleUpgradeCandidateV1 {
             context_hash: B256::repeat_byte(4),

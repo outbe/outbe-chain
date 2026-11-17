@@ -38,6 +38,7 @@ pub enum ReconcileError<E: std::error::Error + 'static> {
 }
 
 /// Only observes the resident context. Nonce contention cannot clear RAM key ownership.
+/// UpgradePrepare callers pass the candidate context, not the unchanged source context.
 pub async fn reconcile_service_tx_v1<P: LifecycleChainPort>(
     port: &P,
     journal: &mut ServiceTxJournalV1,
@@ -60,8 +61,8 @@ pub async fn reconcile_service_tx_v1<P: LifecycleChainPort>(
         return Err(ReconcileError::FinalizedMutationConflict);
     }
     let manifest = live.manifest();
-    let same_process = record.public_intent.target.enclave_id == manifest.enclave_id()?
-        && record.public_intent.target.recipient_x25519.as_slice() == manifest.recipient_x25519;
+    let same_process =
+        record.process_identity()? == (manifest.enclave_id()?, manifest.recipient_x25519.into());
     if let Some((outcome, state)) = terminal_outcome(&record, same_process, applied) {
         if !matches!(
             record.state,
@@ -71,7 +72,12 @@ pub async fn reconcile_service_tx_v1<P: LifecycleChainPort>(
         }
         return Ok(outcome);
     }
-    reconcile_nonce(port, journal, &record, at, same_process).await
+    let expired_renew = record.kind == ServiceTxKindV1::Renew
+        && view
+            .binding
+            .as_ref()
+            .is_some_and(|binding| at.timestamp >= binding.valid_until);
+    reconcile_nonce(port, journal, &record, at, (same_process, expired_renew)).await
 }
 
 async fn reconcile_nonce<P: LifecycleChainPort>(
@@ -79,8 +85,9 @@ async fn reconcile_nonce<P: LifecycleChainPort>(
     journal: &mut ServiceTxJournalV1,
     record: &ServiceTxRecordV1,
     at: LifecycleCheckpointV1,
-    same_process: bool,
+    identity_and_expiry: (bool, bool),
 ) -> Result<ServiceTxReconciliationV1, ReconcileError<P::Error>> {
+    let (same_process, expired_renew) = identity_and_expiry;
     let finalized = port
         .account_nonce(record.sender, LifecycleNonceTagV1::Finalized(at))
         .await?;
@@ -108,6 +115,14 @@ async fn reconcile_nonce<P: LifecycleChainPort>(
         };
         journal.finish(record.tx_hash, state, at)?;
         return Ok(outcome);
+    }
+    if expired_renew && latest <= record.nonce && pending <= record.nonce {
+        if record.state != ServiceTxStateV1::RebuildRequired {
+            journal.finish(record.tx_hash, ServiceTxStateV1::RebuildRequired, at)?;
+        }
+        return Ok(ServiceTxReconciliationV1::RebuildAndResign {
+            nonce: record.nonce,
+        });
     }
     if record.state == ServiceTxStateV1::RebuildRequired {
         return Err(ReconcileError::CheckpointMismatch);
