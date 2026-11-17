@@ -363,7 +363,7 @@ fn seed_offer_world(storage: StorageHandle<'_>, worldwide_day: WorldwideDay) {
     );
     storage
         .with_scoped_mutation::<CycleLifecyclePurpose, _>(binding, || {
-            crate::worldwideday::create_worldwide_day_for_date(&context, worldwide_day)
+            crate::worldwide_day::open_worldwide_day_for_date(&context, worldwide_day)
         })
         .unwrap();
 
@@ -835,8 +835,8 @@ fn an_offer_after_the_offering_window_fails_on_an_unsealed_day() {
 
     StorageHandle::enter(&mut provider, |storage| {
         seed_offer_world(storage.clone(), TARGET_WWD_A);
-        assert!(crate::worldwideday::is_offering_day(storage.clone(), TARGET_WWD_A).unwrap());
-        let offering_end = crate::worldwideday::worldwide_day(storage.clone(), TARGET_WWD_A)
+        assert!(crate::worldwide_day::is_offering_day(storage.clone(), TARGET_WWD_A).unwrap());
+        let offering_end = crate::worldwide_day::worldwide_day(storage.clone(), TARGET_WWD_A)
             .unwrap()
             .unwrap()
             .offering_end;
@@ -847,6 +847,6 @@ fn an_offer_after_the_offering_window_fails_on_an_unsealed_day() {
         assert!(!TributeContract::new(storage.clone())
             .is_day_sealed(TARGET_WWD_A)
             .unwrap());
-        assert!(!crate::worldwideday::is_offering_day(storage.clone(), TARGET_WWD_A).unwrap());
+        assert!(!crate::worldwide_day::is_offering_day(storage.clone(), TARGET_WWD_A).unwrap());
     });
 }

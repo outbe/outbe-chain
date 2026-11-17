@@ -73,10 +73,10 @@ fn fixture_with_tributes(limit: u64, tributes: &[(u64, u16)]) -> HashMapStorageP
                             tribute_price_minor: U256::from(2),
                         })?;
                     }
-                    outbe_tributefactory::worldwideday::create_worldwide_day(
+                    outbe_tributefactory::worldwide_day::open_worldwide_day(
                         &mut factory,
                         WWD,
-                        outbe_tributefactory::worldwideday::NewWwdSchedule {
+                        outbe_tributefactory::worldwide_day::NewWwdSchedule {
                             day: DAY,
                             forming_start,
                             forming_end,
@@ -85,7 +85,7 @@ fn fixture_with_tributes(limit: u64, tributes: &[(u64, u16)]) -> HashMapStorageP
                         },
                     )?;
                     // A6 seals the WorldwideDay.
-                    tribute.seal_day(WWD)?;
+                    tribute.seal_worldwide_day(WWD)?;
                     Ok(())
                 },
             )

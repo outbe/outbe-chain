@@ -116,11 +116,13 @@ fn encrypted_issue_preserves_ciphertext_events_and_public_reads_without_enclave(
         );
         assert!(record.calculation_view().is_err());
         assert!(contract.get_day_totals(record.worldwide_day).is_err());
-        in_process_ready(&storage, || contract.seal_day(record.worldwide_day));
+        in_process_ready(&storage, || {
+            contract.seal_worldwide_day(record.worldwide_day)
+        });
         assert!(contract.is_day_sealed(record.worldwide_day).unwrap());
         let emission_day = record.worldwide_day.value();
         outbe_emission::api::link_wwd(storage.clone(), emission_day, record.worldwide_day).unwrap();
-        let call = ITribute::getDayTotalsCall {
+        let call = ITribute::dayTotalsCall {
             emissionDay: emission_day,
         };
         let output = outbe_tribute::precompile::dispatch(
@@ -130,7 +132,7 @@ fn encrypted_issue_preserves_ciphertext_events_and_public_reads_without_enclave(
             U256::ZERO,
         )
         .unwrap();
-        let returned = ITribute::getDayTotalsCall::abi_decode_returns(&output).unwrap();
+        let returned = ITribute::dayTotalsCall::abi_decode_returns(&output).unwrap();
         assert_eq!(returned.tributeCount, 1);
         assert!(!returned.tributeNominalTotalMinor.is_empty());
     });

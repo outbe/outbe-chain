@@ -97,7 +97,7 @@ pub fn handle_cycle_tick_with_tasks(
     #[cfg(feature = "test-utils")]
     let observation_before = ctx.storage.gas_used()?;
     if ctx.block.block_number == metadosis_genesis_activation_height {
-        outbe_tributefactory::worldwideday::bootstrap_genesis_worldwide_days_command(ctx)?;
+        outbe_tributefactory::worldwide_day::bootstrap_genesis_worldwide_days_command(ctx)?;
     }
     let handler_gas = run_due_tasks_inner(ctx, tasks)?;
     #[cfg(not(feature = "test-utils"))]

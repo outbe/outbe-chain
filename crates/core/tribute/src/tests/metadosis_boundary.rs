@@ -38,7 +38,7 @@ fn day_mutators_reject_a_missing_lease_without_writes() {
         let day = tribute.worldwide_day;
         open_cycle(&storage, metadosis_process_ready_binding, || {
             tc.issue(&tribute)?;
-            tc.seal_day(day)?;
+            tc.seal_worldwide_day(day)?;
             Ok(())
         });
         let totals = tc.get_day_totals(day).unwrap();
@@ -59,7 +59,10 @@ fn day_mutators_reject_a_missing_lease_without_writes() {
             .to_string(),
             MISMATCH
         );
-        assert_eq!(tc.seal_day(day).unwrap_err().to_string(), MISMATCH);
+        assert_eq!(
+            tc.seal_worldwide_day(day).unwrap_err().to_string(),
+            MISMATCH
+        );
         assert_eq!(
             crate::state_api::retire_completed_day(&storage, day)
                 .unwrap_err()
@@ -87,7 +90,7 @@ fn day_mutators_keep_a_timestamp_overflow() {
         storage.set_block_timestamp(U256::MAX).unwrap();
         let mut tc = TributeContract::new(storage);
         let day = WorldwideDay::new(20260920);
-        let error = tc.seal_day(day).unwrap_err();
+        let error = tc.seal_worldwide_day(day).unwrap_err();
         assert_eq!(error.to_string(), "revert: timestamp exceeds u64");
         assert!(!matches!(error, PrecompileError::Revert(message) if message.contains("lease")));
         assert!(!tc.is_day_sealed(day).unwrap());
@@ -105,7 +108,7 @@ fn day_mutators_follow_the_caller_binding() {
     StorageHandle::enter(&mut provider, |storage| {
         let mut tc = TributeContract::new(storage.clone());
         open_cycle(&storage, metadosis_init_genesis_binding, || {
-            tc.seal_day(day_a)?;
+            tc.seal_worldwide_day(day_a)?;
             assert!(tc.is_day_sealed(day_a)?);
             Ok(())
         });
@@ -117,19 +120,22 @@ fn day_mutators_follow_the_caller_binding() {
         );
         storage
             .with_scoped_mutation::<CycleLifecyclePurpose, _>(binding, || {
-                tc.seal_day(day_b)?;
+                tc.seal_worldwide_day(day_b)?;
                 assert!(tc.is_day_sealed(day_b)?);
-                assert_eq!(tc.seal_day(day_c).unwrap_err().to_string(), MISMATCH);
+                assert_eq!(
+                    tc.seal_worldwide_day(day_c).unwrap_err().to_string(),
+                    MISMATCH
+                );
                 Ok(())
             })
             .unwrap();
         open_cycle(&storage, metadosis_advance_due_binding, || {
-            tc.seal_day(day_a)?;
+            tc.seal_worldwide_day(day_a)?;
             assert!(tc.is_day_sealed(day_a)?);
             Ok(())
         });
         open_cycle(&storage, metadosis_process_ready_binding, || {
-            tc.seal_day(day_d)?;
+            tc.seal_worldwide_day(day_d)?;
             assert!(tc.is_day_sealed(day_d)?);
             Ok(())
         });

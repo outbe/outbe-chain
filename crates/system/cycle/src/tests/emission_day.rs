@@ -313,7 +313,7 @@ fn wwd_step_runs_once_a_day() {
         ] {
             handle.set_block_timestamp(U256::from(ts)).unwrap();
             assert_eq!(
-                outbe_tributefactory::worldwideday::is_offering_day(
+                outbe_tributefactory::worldwide_day::is_offering_day(
                     handle.clone(),
                     WorldwideDay::new(20_240_101)
                 )
@@ -341,7 +341,7 @@ fn wwd_step_runs_once_a_day() {
             let factory = TributeFactoryContract::new(ctx.storage.clone());
             assert_eq!(factory.last_wwd_advance_day.read().unwrap(), 20_240_105);
             if hour == 13 {
-                assert!(!outbe_tributefactory::worldwideday::is_offering_day(
+                assert!(!outbe_tributefactory::worldwide_day::is_offering_day(
                     ctx.storage.clone(),
                     WorldwideDay::new(20_240_101)
                 )

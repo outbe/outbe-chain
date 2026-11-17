@@ -17,7 +17,7 @@ use crate::schema::TributeFactoryContract;
 
 use super::{
     aggregate::{
-        close_worldwide_day, create_worldwide_day, NewWwdSchedule, ValidatedWwdAggregate,
+        close_worldwide_day, open_worldwide_day, NewWwdSchedule, ValidatedWwdAggregate,
         WwdProjection,
     },
     constants::{MAX_PIPELINE_WWDS, SECONDS_PER_HOUR},
@@ -69,14 +69,11 @@ pub fn compute_wwd_schedule(wwd: WorldwideDay) -> Result<(NewWwdSchedule, u64)> 
     ))
 }
 
-pub fn create_worldwide_day_for_date(
-    ctx: &BlockRuntimeContext<'_>,
-    wwd: WorldwideDay,
-) -> Result<()> {
+pub fn open_worldwide_day_for_date(ctx: &BlockRuntimeContext<'_>, wwd: WorldwideDay) -> Result<()> {
     let (schedule, _) = compute_wwd_schedule(wwd)?;
     outbe_emission::api::link_wwd(ctx.storage.clone(), schedule.day, wwd)?;
     let mut factory = TributeFactoryContract::new(ctx.storage.clone());
-    create_worldwide_day(&mut factory, wwd, schedule)?;
+    open_worldwide_day(&mut factory, wwd, schedule)?;
     Ok(())
 }
 
@@ -116,7 +113,7 @@ pub fn advance_worldwide_days(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     }
 
     // 2. Create open WWDs up to X + 1 (whose forming window starts at 10:00 UTC on day X).
-    create_open_worldwide_days(ctx, block_utc_day, cutoff_ts, last_day == 0)?;
+    open_worldwide_days(ctx, block_utc_day, cutoff_ts, last_day == 0)?;
 
     // 3. Snapshot forming VWAP for every open pipeline WWD whose forming window ended at or before 00:00 UTC of day X.
     let aggregate = ValidatedWwdAggregate::load_and_validate(ctx.storage.clone())?;
@@ -132,7 +129,7 @@ pub fn advance_worldwide_days(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     Ok(())
 }
 
-fn create_open_worldwide_days(
+fn open_worldwide_days(
     ctx: &BlockRuntimeContext<'_>,
     block_utc_day: u32,
     cutoff_ts: u64,
@@ -174,7 +171,7 @@ fn create_open_worldwide_days(
         if factory.worldwide_days.get(wwd)?.is_none() {
             let (schedule, _) = compute_wwd_schedule(wwd)?;
             if schedule.offering_end > cutoff_ts {
-                create_worldwide_day_for_date(ctx, wwd)?;
+                open_worldwide_day_for_date(ctx, wwd)?;
             }
         }
         wwd_ts = wwd_ts.saturating_add(SECONDS_PER_DAY);

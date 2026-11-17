@@ -363,10 +363,9 @@ pub(crate) fn run_advance_worldwide_days_step(
     ctx: &BlockRuntimeContext,
     block_utc_day: u32,
 ) -> Result<()> {
-    match ctx
-        .storage
-        .with_checkpoint(|| outbe_tributefactory::worldwideday::advance_worldwide_days_command(ctx))
-    {
+    match ctx.storage.with_checkpoint(|| {
+        outbe_tributefactory::worldwide_day::advance_worldwide_days_command(ctx)
+    }) {
         Ok(()) => Ok(()),
         Err(err) if is_recoverable_step_error(&err) => {
             tracing::warn!(

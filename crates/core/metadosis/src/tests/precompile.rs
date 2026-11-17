@@ -67,12 +67,10 @@ fn worldwide_day_and_emission_day_abi_preserve_bidirectional_link() {
                 expected_offering_end,
             )
         );
-        // `getActiveWorldwideDays` lists offering days. This WWD has no forming
+        // `activeWorldwideDays` lists offering days. This WWD has no forming
         // VWAP and the block clock is outside its offering window.
-        let active: Vec<u32> = query_tribute_factory(
-            storage.clone(),
-            ITributeFactory::getActiveWorldwideDaysCall {},
-        );
+        let active: Vec<u32> =
+            query_tribute_factory(storage.clone(), ITributeFactory::activeWorldwideDaysCall {});
         assert!(active.is_empty());
 
         let ed = query(storage, IEmission::getEmissionDayCall { day: 20261014 });
@@ -109,10 +107,10 @@ pub(super) fn seed_offering_day(storage: StorageHandle<'_>) {
             binding,
             || {
                 let mut factory = TributeFactoryContract::new(storage.clone());
-                outbe_tributefactory::worldwideday::create_worldwide_day(
+                outbe_tributefactory::worldwide_day::open_worldwide_day(
                     &mut factory,
                     wwd,
-                    outbe_tributefactory::worldwideday::NewWwdSchedule {
+                    outbe_tributefactory::worldwide_day::NewWwdSchedule {
                         day,
                         forming_start,
                         forming_end,
