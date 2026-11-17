@@ -1,7 +1,7 @@
 use super::TEST_CHAIN_ID;
 use alloy_primitives::B256;
 use outbe_primitives::tee_attestation_v1::{AttestationMode, TeeMeasurementRuleV1, TeePolicyV1};
-use outbe_primitives::tee_test_utils::gramine_direct_policy_v1;
+use outbe_primitives::tee_test_utils::no_attestation_dev_policy_v1;
 
 /// The first policy of a chain: version 1, active from height 1, with no
 /// predecessor.
@@ -53,6 +53,6 @@ fn policy_fixture(
             admit_from_height: activation_height,
             admit_until_height_exclusive: u64::MAX,
         }],
-        ..gramine_direct_policy_v1(TEST_CHAIN_ID, genesis_hash).unwrap()
+        ..no_attestation_dev_policy_v1(TEST_CHAIN_ID, genesis_hash).unwrap()
     }
 }

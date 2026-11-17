@@ -61,11 +61,11 @@ pub enum TeeRegistryError {
     RenewalCannotReplaceMeasurement,
 
     /// Direct-dev policy has no active measurement rule at the current height.
-    #[error("GramineDirectDev policy has no active measurement projection")]
+    #[error("NoAttestationDev policy has no active measurement projection")]
     DirectDevNoActiveMeasurement,
 
     /// Direct-dev policy has multiple overlapping measurement rules.
-    #[error("GramineDirectDev policy has overlapping measurement projections")]
+    #[error("NoAttestationDev policy has overlapping measurement projections")]
     DirectDevOverlappingMeasurements,
 
     /// Version or nonce counter overflows `u64`.
@@ -299,15 +299,15 @@ pub enum TeeRegistryError {
     DcapOnboardingVerifierUnavailable(String),
 
     /// Direct-dev evidence signature does not match the registration intent.
-    #[error("GramineDirectDev evidence signature does not bind the registration intent")]
+    #[error("NoAttestationDev evidence signature does not bind the registration intent")]
     DirectDevSignatureMismatch,
 
     /// Direct-dev registration occurred before the OST3 offer-key commitment.
-    #[error("GramineDirectDev registration requires the OST3 offer-key commitment")]
+    #[error("NoAttestationDev registration requires the OST3 offer-key commitment")]
     DirectDevRegistrationRequiresOfferKeyCommitment,
 
     /// Direct-dev onboarding artifact generation failed.
-    #[error("purpose-bound GramineDirectDev onboarding artifact failed: {0}")]
+    #[error("purpose-bound NoAttestationDev onboarding artifact failed: {0}")]
     DirectDevOnboardingArtifactFailed(String),
 
     /// Upgrade candidate replay has a different evidence hash.
