@@ -358,30 +358,6 @@
   },
   {
     "type": "function",
-    "name": "getFinalizedWindowVwap",
-    "inputs": [
-      {
-        "name": "currency",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "snapshotId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "vwap",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getGasPrices",
     "inputs": [],
     "outputs": [
@@ -974,42 +950,6 @@
   },
   {
     "type": "function",
-    "name": "getVwapPolicy",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "policyVersion",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "vwapLookbackSeconds",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "vwapUpdateIntervalSeconds",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getVwapSnapshotId",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "snapshotId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getWorldwideDayVwap",
     "inputs": [
       {
@@ -1189,6 +1129,43 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "vwap24h",
+    "inputs": [
+      {
+        "name": "currency",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "snapshotId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "vwap",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "vwap24hSnapshotId",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "snapshotId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "event",
@@ -1568,11 +1545,6 @@
   {
     "type": "error",
     "name": "InvalidLookbackSeconds",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidVwapPolicy",
     "inputs": []
   },
   {

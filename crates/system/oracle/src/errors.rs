@@ -79,8 +79,6 @@ pub enum OracleError {
     WorldwideDayVwapSnapshotNotFound,
     #[error("no finalized VWAP for that UTC day")]
     NoFinalizedUtcDayVwap,
-    #[error("unsupported trailing VWAP policy")]
-    InvalidVwapPolicy,
     #[error("malformed or unfinalized VWAP snapshot id")]
     InvalidVwapSnapshot,
 
@@ -269,9 +267,6 @@ impl From<OracleError> for PrecompileError {
             ),
             OracleError::NoFinalizedUtcDayVwap => PrecompileError::RevertBytes(Bytes::from(
                 IOracle::NoFinalizedUtcDayVwap {}.abi_encode(),
-            )),
-            OracleError::InvalidVwapPolicy => PrecompileError::RevertBytes(Bytes::from(
-                IOracle::InvalidVwapPolicy {}.abi_encode(),
             )),
             OracleError::InvalidVwapSnapshot => PrecompileError::RevertBytes(Bytes::from(
                 IOracle::InvalidVwapSnapshot {}.abi_encode(),

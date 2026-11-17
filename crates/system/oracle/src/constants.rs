@@ -35,8 +35,9 @@ pub(crate) const MAX_SNAPSHOT_EVICTIONS_PER_WRITE: u64 = 16;
 /// Width of one hourly VWAP aggregate cell.
 pub(crate) const VWAP_HOUR_SECONDS: u64 = 60 * 60;
 
-/// Hourly cells kept per pair. A cell is reused for the same hour a day later.
-pub(crate) const HOURLY_VWAP_CELLS: u64 = 24;
+/// Hourly cells kept per pair: the 24 hours of the 24-hour VWAP window and the
+/// hour that is open. So a read of the window finds each of its hours in a cell.
+pub(crate) const HOURLY_VWAP_CELLS: u64 = 25;
 
 /// Minimum coverage share of a finalized window: two thirds. It applies three
 /// times. Every hour needs that share of the tally rounds its blocks allowed
@@ -44,9 +45,9 @@ pub(crate) const HOURLY_VWAP_CELLS: u64 = 24;
 /// hours must count; an hour without blocks does not. The hours that count must
 /// together hold that share of the rounds the window's blocks allowed. Possible
 /// rounds are blocks divided by `vote_period`. Examples:
-/// - Eight hours at exactly two thirds pass.
-/// - Six full hours pass, with two empty hours or not.
-/// - Five full hours, or six hours at two thirds each, do not pass.
+/// - Twenty-four hours at exactly two thirds pass.
+/// - Sixteen full hours pass, with eight empty hours or not.
+/// - Fifteen full hours, or sixteen hours at two thirds each, do not pass.
 pub(crate) const MIN_WINDOW_COVERAGE: (u64, u64) = (2, 3);
 
 /// Maximum number of closed UTC days the begin-block lifecycle finalizes in a

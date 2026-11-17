@@ -8,7 +8,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 use outbe_core_common::series_id::SeriesId;
 use outbe_oracle::{
-    api::{self, current_vwap_snapshot, get_finalized_window_vwap},
+    api::{self, current_vwap_24h_snapshot, vwap_24h},
     schema::OracleContract,
 };
 use outbe_primitives::{error::Result, storage::StorageHandle};
@@ -37,8 +37,8 @@ pub(crate) fn quote(
         .map_err(|_| VaultRouterError::InvalidAssetCurrency)?;
     api::check_reference_currency(currency)?;
     api::check_reference_currency(reference_currency)?;
-    let snapshot = current_vwap_snapshot(storage.clone())?;
-    let valuation = get_finalized_window_vwap(storage.clone(), currency, snapshot)?
+    let snapshot = current_vwap_24h_snapshot(storage.clone())?;
+    let valuation = vwap_24h(storage.clone(), currency, snapshot)?
         .filter(|v| !v.is_zero())
         .ok_or(VaultRouterError::PledgePriceUnavailable)?;
     let (gratis_minor, entry_price_minor) = checked_quote(amount, decimals, valuation)?;

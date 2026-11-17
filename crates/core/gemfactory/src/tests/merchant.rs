@@ -656,7 +656,7 @@ fn issue_merchant_gem_ignores_the_trailing_settlement_window() {
     let vwap = U256::from(3u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         seed_day_vwap(storage, 840, vwap);
-        let snapshot = outbe_oracle::api::current_vwap_snapshot(storage.clone()).unwrap();
+        let snapshot = outbe_oracle::api::current_vwap_24h_snapshot(storage.clone()).unwrap();
         OracleContract::new(storage.clone())
             .write_snapshot(
                 snapshot.cutoff() - 1,

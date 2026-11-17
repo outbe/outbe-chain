@@ -33,7 +33,6 @@ interface IOracle {
     error VwapRangeTooWide();
     error WorldwideDayVwapSnapshotNotFound();
     error NoFinalizedUtcDayVwap();
-    error InvalidVwapPolicy();
     error InvalidVwapSnapshot();
     error NotReferenceCurrency(uint16 iso_code);
     error NoPolicyRate(uint16 iso_code);
@@ -286,24 +285,16 @@ interface IOracle {
     ///      COEN/ISO uses 6 decimals. A generic pair uses 18 decimals.
     function getDayVwap(address base, address quote) external view returns (uint256 vwap);
 
-    /// @notice Returns the trailing VWAP policy pinned by the protocol constants:
-    ///         snapshots cover `[cutoff - vwapLookbackSeconds, cutoff)` with a
-    ///         cutoff every `vwapUpdateIntervalSeconds` from the UTC epoch.
-    function getVwapPolicy()
-        external
-        view
-        returns (uint32 policyVersion, uint64 vwapLookbackSeconds, uint64 vwapUpdateIntervalSeconds);
+    /// @notice Returns the snapshot of the 24-hour VWAP at the current block.
+    /// @dev The id is the end of the window: the last whole UTC hour at or
+    ///      before the block time, in Unix seconds. The window starts 24 hours
+    ///      before it.
+    function vwap24hSnapshotId() external view returns (uint256 snapshotId);
 
-    /// @notice Returns the trailing VWAP snapshot required at the current block.
-    /// @dev Layout: `policyVersion << 128 | vwapLookbackSeconds << 96 |
-    ///      vwapUpdateIntervalSeconds << 64 | cutoff`. The window starts at
-    ///      `cutoff - vwapLookbackSeconds`.
-    function getVwapSnapshotId() external view returns (uint256 snapshotId);
-
-    /// @notice Returns the finalized COEN/`currency` VWAP over a trailing snapshot
-    ///         window, at six decimals.
+    /// @notice Returns the 24-hour COEN/`currency` VWAP of one snapshot window,
+    ///         at six decimals.
     /// @dev Any well-formed closed snapshot is readable. Compare `snapshotId` with
-    ///      `getVwapSnapshotId()` to price against the current one. Reverts for:
+    ///      `vwap24hSnapshotId()` to price against the current one. Reverts for:
     ///      - an unregistered currency
     ///      - a malformed or open snapshot
     ///      - a window without a positive price
@@ -312,7 +303,7 @@ interface IOracle {
     ///      rounds its blocks allowed. Hours that do not count are left out of the
     ///      VWAP. The hours that count must together cover two thirds of the whole
     ///      window's rounds.
-    function getFinalizedWindowVwap(uint16 currency, uint256 snapshotId) external view returns (uint256 vwap);
+    function vwap24h(uint16 currency, uint256 snapshotId) external view returns (uint256 vwap);
 
     /// @notice Returns the finalized VWAP for one UTC calendar day.
     /// @param utcDay yyyymmdd UTC date key (e.g. 20260625). Reverts if the day

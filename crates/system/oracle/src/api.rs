@@ -10,9 +10,7 @@ use crate::scurve;
 
 pub use crate::constants::{DAY_TYPE_ISO, DAY_TYPE_PAIR, REFERENCE_CURRENCIES};
 pub use crate::types::{currency_address, AddressPair, AssetType, COEN_ASSET};
-pub use crate::window::{
-    active_vwap_policy, get_vwap_snapshot_id, VwapPolicy, VwapSnapshotId, DEFAULT_VWAP_POLICY,
-};
+pub use crate::window::{vwap_24h_snapshot_id, VwapSnapshotId};
 
 use alloy_primitives::{Address, U256};
 
@@ -101,16 +99,17 @@ pub fn coen_rate_for_opt(storage: StorageHandle, iso_code: u16) -> Result<Option
     Ok((!stored.is_zero()).then_some(stored))
 }
 
-/// Snapshot required at the current block under the active policy.
-pub fn current_vwap_snapshot(storage: StorageHandle) -> Result<VwapSnapshotId> {
+/// The snapshot of the current block: its 24-hour window ends at the last
+/// whole UTC hour.
+pub fn current_vwap_24h_snapshot(storage: StorageHandle) -> Result<VwapSnapshotId> {
     let now = storage.now_secs()?;
-    get_vwap_snapshot_id(now, &active_vwap_policy())
+    vwap_24h_snapshot_id(now)
 }
 
-/// Finalized COEN/`iso_code` VWAP over the snapshot's window, in the pair's
+/// The 24-hour COEN/`iso_code` VWAP of the snapshot's window, in the pair's
 /// six-decimal scale. `None` when the pair is unregistered or the window holds no
 /// positive price. An open or malformed snapshot is an error.
-pub fn get_finalized_window_vwap(
+pub fn vwap_24h(
     storage: StorageHandle,
     iso_code: u16,
     snapshot: VwapSnapshotId,
@@ -120,11 +119,11 @@ pub fn get_finalized_window_vwap(
     if oracle.pair_index_of(pair)? == 0 {
         return Ok(None);
     }
-    oracle.finalized_window_vwap(pair, snapshot)
+    oracle.vwap_24h(pair, snapshot)
 }
 
-/// Both COEN legs of a cross-currency settlement, read from the one trailing
-/// snapshot required at the current block.
+/// Both COEN legs of a cross-currency settlement, read from the one 24-hour
+/// snapshot of the current block.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SettlementFxRates {
     pub snapshot: VwapSnapshotId,
@@ -138,14 +137,13 @@ pub fn settlement_fx_rates(
     issuance_currency: u16,
     reference_currency: u16,
 ) -> Result<Option<SettlementFxRates>> {
-    let snapshot = current_vwap_snapshot(storage.clone())?;
+    let snapshot = current_vwap_24h_snapshot(storage.clone())?;
     let Some(issuance_currency_vwap_minor) =
-        get_finalized_window_vwap(storage.clone(), issuance_currency, snapshot)?
+        vwap_24h(storage.clone(), issuance_currency, snapshot)?
     else {
         return Ok(None);
     };
-    let Some(reference_currency_vwap_minor) =
-        get_finalized_window_vwap(storage, reference_currency, snapshot)?
+    let Some(reference_currency_vwap_minor) = vwap_24h(storage, reference_currency, snapshot)?
     else {
         return Ok(None);
     };

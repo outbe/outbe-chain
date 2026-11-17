@@ -124,7 +124,7 @@ impl OracleContract<'_> {
     /// `[date_key_to_utc_timestamp(utc_day), +SECONDS_PER_DAY)`.
     ///
     /// The day is judged by round coverage like a VWAP window (see
-    /// [`Self::finalized_window_vwap`]), with the share of
+    /// [`Self::vwap_24h`]), with the share of
     /// `oracle.dayVwapMinCoverage` (two thirds in production). A pair that fails coverage or has no
     /// data for the day is skipped, so catch-up blocks after a halt cannot set
     /// a day price. If no pair passes, nothing is written. The day then stays

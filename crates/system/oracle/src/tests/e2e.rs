@@ -1387,12 +1387,12 @@ fn finalize_utc_day_vwap_writes_nothing_for_a_day_without_data() {
 }
 
 #[test]
-fn trailing_vwap_views_select_and_read_the_current_snapshot() {
+fn vwap_24h_reads_have_the_24_hour_names() {
     use crate::precompile::{dispatch, IOracle};
     use alloy_sol_types::SolCall;
 
     let hour = 3_600;
-    let now = ATOMIC_DAY_START + 10 * hour + 37 * 60;
+    let now = ATOMIC_DAY_START + 24 * hour + 37 * 60;
     with_storage_at(now, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
         crate::genesis::init_from_genesis(
@@ -1400,12 +1400,8 @@ fn trailing_vwap_views_select_and_read_the_current_snapshot() {
             &crate::genesis::OracleGenesisConfig::default_config(),
         )
         .unwrap();
-        note_hours(
-            &mut oracle,
-            ATOMIC_DAY_START + 2 * hour,
-            ATOMIC_DAY_START + 11 * hour,
-        );
-        for k in 2..10 {
+        note_hours(&mut oracle, ATOMIC_DAY_START, ATOMIC_DAY_START + 25 * hour);
+        for k in 0..24 {
             oracle
                 .write_snapshot(
                     ATOMIC_DAY_START + k * hour,
@@ -1415,29 +1411,17 @@ fn trailing_vwap_views_select_and_read_the_current_snapshot() {
         }
         let call = |data: Vec<u8>| dispatch(storage.clone(), &data, Address::ZERO, U256::ZERO);
 
-        let policy = IOracle::getVwapPolicyCall::abi_decode_returns(
-            &call(IOracle::getVwapPolicyCall {}.abi_encode()).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(
-            (
-                policy.policyVersion,
-                policy.vwapLookbackSeconds,
-                policy.vwapUpdateIntervalSeconds
-            ),
-            (1, 28_800, 3_600)
-        );
-
-        let snapshot_id = IOracle::getVwapSnapshotIdCall::abi_decode_returns(
-            &call(IOracle::getVwapSnapshotIdCall {}.abi_encode()).unwrap(),
+        let snapshot_id = IOracle::vwap24hSnapshotIdCall::abi_decode_returns(
+            &call(IOracle::vwap24hSnapshotIdCall {}.abi_encode()).unwrap(),
         )
         .unwrap();
         let snapshot = crate::window::VwapSnapshotId::from_u256(snapshot_id).unwrap();
-        assert_eq!(snapshot.cutoff(), ATOMIC_DAY_START + 10 * hour);
+        assert_eq!(snapshot.cutoff(), ATOMIC_DAY_START + 24 * hour);
+        assert_eq!(snapshot_id, U256::from(ATOMIC_DAY_START + 24 * hour));
 
         let read = |snapshot_id: U256| {
             call(
-                IOracle::getFinalizedWindowVwapCall {
+                IOracle::vwap24hCall {
                     currency: 840,
                     snapshotId: snapshot_id,
                 }
@@ -1445,13 +1429,10 @@ fn trailing_vwap_views_select_and_read_the_current_snapshot() {
             )
         };
         assert_eq!(
-            IOracle::getFinalizedWindowVwapCall::abi_decode_returns(&read(snapshot_id).unwrap())
-                .unwrap(),
+            IOracle::vwap24hCall::abi_decode_returns(&read(snapshot_id).unwrap()).unwrap(),
             coen_iso(2)
         );
-        let next =
-            crate::window::get_vwap_snapshot_id(now + hour, &crate::window::DEFAULT_VWAP_POLICY)
-                .unwrap();
+        let next = crate::window::vwap_24h_snapshot_id(now + hour).unwrap();
         let error = |err: crate::errors::OracleError| {
             outbe_primitives::error::PrecompileError::from(err).to_string()
         };
@@ -1462,7 +1443,7 @@ fn trailing_vwap_views_select_and_read_the_current_snapshot() {
             invalid
         );
         let unregistered = call(
-            IOracle::getFinalizedWindowVwapCall {
+            IOracle::vwap24hCall {
                 currency: 978,
                 snapshotId: snapshot_id,
             }
@@ -1474,6 +1455,16 @@ fn trailing_vwap_views_select_and_read_the_current_snapshot() {
                 pair: AddressPair::new_coen_to(978),
             })
         );
+
+        // The names of the 8-hour window and the VWAP policy are gone.
+        for old in [
+            "getFinalizedWindowVwap(uint16,uint256)",
+            "getVwapSnapshotId()",
+            "getVwapPolicy()",
+        ] {
+            let selector = alloy_primitives::keccak256(old)[..4].to_vec();
+            assert!(call(selector).is_err(), "{old}");
+        }
     });
 }
 
@@ -1494,6 +1485,14 @@ fn get_utc_day_vwap_precompile_returns_the_finalized_value() {
                 .unwrap();
         }
         oracle.finalize_utc_day_vwap(utc_day).unwrap();
+
+        // The VWAP of a UTC day is the 24-hour VWAP at 00:00 of the next day.
+        storage.set_block_timestamp(U256::from(day_end)).unwrap();
+        let at_midnight = crate::window::vwap_24h_snapshot_id(day_end).unwrap();
+        assert_eq!(
+            oracle.vwap_24h(pair_key(COEN, usd()), at_midnight).unwrap(),
+            Some(coen_iso(150))
+        );
 
         use crate::precompile::IOracle;
         use alloy_sol_types::SolCall;

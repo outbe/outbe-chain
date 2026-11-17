@@ -6,7 +6,7 @@
 
 use crate::errors::OracleError;
 use crate::schema::OracleContract;
-use crate::window::{active_vwap_policy, get_vwap_snapshot_id, VwapSnapshotId};
+use crate::window::{vwap_24h_snapshot_id, VwapSnapshotId};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent, SolInterface};
 use outbe_primitives::dispatch::{dispatch_call, metadata, mutate_void, reject_value, view};
@@ -98,9 +98,8 @@ pub fn dispatch(
             getTwap(c) => twap(oracle, c),
             getTwaps(c) => twaps(oracle, c),
             getDayVwap(c) => day_vwap(oracle, c),
-            getVwapPolicy(_) => vwap_policy(),
-            getVwapSnapshotId(_) => vwap_snapshot_id(oracle),
-            getFinalizedWindowVwap(c) => finalized_window_vwap(oracle, c),
+            vwap24hSnapshotId(_) => vwap_24h_snapshot(oracle),
+            vwap24h(c) => vwap_24h(oracle, c),
             getWorldwideDayVwap(c) => worldwide_day_vwap(oracle, c),
             getWorldwideDayVwapSnapshot(c) => worldwide_day_vwap_snapshot(oracle, c),
             getScurveValues(c) => scurve_values(oracle, c),
@@ -480,33 +479,19 @@ fn day_vwap(oracle: &OracleContract, c: IOracle::getDayVwapCall) -> Result<Bytes
     })
 }
 
-fn vwap_policy() -> Result<Bytes> {
-    metadata::<IOracle::getVwapPolicyCall>(|| {
-        let policy = active_vwap_policy();
-        Ok(IOracle::getVwapPolicyReturn {
-            policyVersion: policy.policy_version,
-            vwapLookbackSeconds: policy.vwap_lookback_seconds,
-            vwapUpdateIntervalSeconds: policy.vwap_update_interval_seconds,
-        })
-    })
-}
-
-fn vwap_snapshot_id(oracle: &OracleContract) -> Result<Bytes> {
-    metadata::<IOracle::getVwapSnapshotIdCall>(|| {
+fn vwap_24h_snapshot(oracle: &OracleContract) -> Result<Bytes> {
+    metadata::<IOracle::vwap24hSnapshotIdCall>(|| {
         let now = oracle.storage.now_secs()?;
-        Ok(get_vwap_snapshot_id(now, &active_vwap_policy())?.to_u256())
+        Ok(vwap_24h_snapshot_id(now)?.to_u256())
     })
 }
 
-fn finalized_window_vwap(
-    oracle: &OracleContract,
-    c: IOracle::getFinalizedWindowVwapCall,
-) -> Result<Bytes> {
+fn vwap_24h(oracle: &OracleContract, c: IOracle::vwap24hCall) -> Result<Bytes> {
     view(c, |c| {
         let pair = oracle.require_pair(AddressPair::new_coen_to(c.currency))?;
         let snapshot = VwapSnapshotId::from_u256(c.snapshotId)?;
         oracle
-            .finalized_window_vwap(pair, snapshot)?
+            .vwap_24h(pair, snapshot)?
             .ok_or_else(|| OracleError::NoVwapData.into())
     })
 }

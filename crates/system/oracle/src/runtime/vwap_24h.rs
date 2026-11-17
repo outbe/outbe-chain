@@ -1,11 +1,11 @@
-//! VWAP of a finalized snapshot window, judged by round coverage.
+//! The 24-hour VWAP of a closed snapshot window, judged by round coverage.
 
 use alloy_primitives::U256;
 use outbe_primitives::error::Result;
 use outbe_system_common::address_pair::AddressPair;
 
 use super::VwapAccumulator;
-use crate::constants::{MIN_WINDOW_COVERAGE, VWAP_HOUR_SECONDS};
+use crate::constants::VWAP_HOUR_SECONDS;
 use crate::coverage::{hour_spans, CoverageTally};
 use crate::errors::OracleError;
 use crate::schema::OracleContract;
@@ -15,7 +15,8 @@ use crate::window::VwapSnapshotId;
 impl OracleContract<'_> {
     /// VWAP over the snapshot's window once its cutoff has passed.
     ///
-    /// Coverage is judged three times by the share in [`crate::constants::MIN_WINDOW_COVERAGE`]:
+    /// Coverage is judged three times by the coverage share of the UTC day VWAP
+    /// (`get_day_vwap_min_coverage`), so the two values are equal at 00:00:
     /// - An hour counts only when the pair has at least that share of the tally
     ///   rounds the hour's blocks allowed.
     /// - At least that share of the window's hours must count. An hour without
@@ -27,11 +28,7 @@ impl OracleContract<'_> {
     /// Hours that do not count contribute neither price nor volume. `None` when
     /// the window has no hour note, fails a test, holds no observation, or has
     /// no positive price.
-    pub fn finalized_window_vwap(
-        &self,
-        pair: AddressPair,
-        snapshot: VwapSnapshotId,
-    ) -> Result<Option<U256>> {
+    pub fn vwap_24h(&self, pair: AddressPair, snapshot: VwapSnapshotId) -> Result<Option<U256>> {
         if snapshot.cutoff() > self.storage.timestamp()?.saturating_to::<u64>() {
             return Err(OracleError::InvalidVwapSnapshot.into());
         }
@@ -39,13 +36,12 @@ impl OracleContract<'_> {
             pair,
             snapshot.start(),
             snapshot.cutoff(),
-            MIN_WINDOW_COVERAGE,
+            outbe_chain_constants::get_day_vwap_min_coverage(),
         )
     }
 
     /// VWAP over the closed window `[start, cutoff)`, judged by round coverage
-    /// as in [`Self::finalized_window_vwap`] with `share` in place of
-    /// [`MIN_WINDOW_COVERAGE`].
+    /// as in [`Self::vwap_24h`] with `share` as the coverage share.
     pub(crate) fn judged_window_vwap(
         &self,
         pair: AddressPair,
