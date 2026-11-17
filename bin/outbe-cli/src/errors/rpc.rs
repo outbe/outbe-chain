@@ -3,9 +3,6 @@
 /// Errors returned by the JSON-RPC client.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum RpcError {
-    /// The transport does not support the upgrade-key RPC method.
-    #[error("upgrade-key RPC unsupported")]
-    UpgradeKeyUnsupported,
     /// The transport does not support `eth_call` at an explicit block.
     #[error("eth_call at an explicit block is unsupported")]
     EthCallAtUnsupported,
@@ -15,12 +12,6 @@ pub(crate) enum RpcError {
     /// The transport does not support the RPC method for finalized blocks.
     #[error("finalized block RPC is unsupported")]
     FinalizedBlockUnsupported,
-    /// The transport does not support the RPC method for Outbe finalization.
-    #[error("outbe finalization RPC is unsupported")]
-    OutbeFinalizationUnsupported,
-    /// The transport does not support the `eth_getProof` RPC method.
-    #[error("eth_getProof RPC is unsupported")]
-    EthGetProofUnsupported,
     /// The HTTP client builder failed.
     #[error("build RPC client: {0}")]
     ClientBuild(#[source] reqwest::Error),
@@ -56,10 +47,6 @@ pub(crate) enum RpcError {
     #[cfg(test)]
     #[error("eth_call not mocked")]
     EthCallNotMocked,
-    /// The mock proof handler is not configured.
-    #[cfg(test)]
-    #[error("proof not mocked")]
-    ProofNotMocked,
     /// Cloned error from a mock RPC response.
     #[cfg(test)]
     #[error("{0}")]
