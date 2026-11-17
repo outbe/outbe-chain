@@ -6,6 +6,19 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+outbe-simplex.workspace = true
+commonware-cryptography.workspace = true
+commonware-utils.workspace = true
+commonware-parallel.workspace = true
+commonware-codec.workspace = true
+commonware-consensus.workspace = true
+rand_core.workspace = true
+rand-commonware.workspace = true
+rand-core-commonware.workspace = true
+alloy-consensus.workspace = true
+alloy-rlp.workspace = true
+reth-primitives-traits.workspace = true
+reth-trie.workspace = true
 outbe-dcap = { workspace = true, features = ["collateral"] }
 alloy-genesis.workspace = true
 reth-chainspec.workspace = true

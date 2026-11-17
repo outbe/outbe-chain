@@ -1,16 +1,15 @@
-//! `outbe-tee` - host-side TEE transport, attestation, DKG, and witness infrastructure.
+//! Blockchain-layer TEE infrastructure and resident cryptographic operations.
 //!
-//! Architecture: the DKG actor and all gossip / ceremony bookkeeping live on
-//! the **node (host)**. The secret material and key assembly live **inside the
-//! enclave**. This crate is the pure blockchain-layer TEE infrastructure:
-//! domain-neutral wire framing + Noise-IK sessions, DCAP verification and
-//! onboarding, witness tape recording/replay, and domain-neutral client AEAD
-//! and attestation primitives (`tee_encrypt`, `tee_decrypt`, `tee_call`).
+//! Process secrets and derived slot keys live only in RAM inside `outbe-tee`,
+//! behind opaque handles. Resident state is never persisted to disk. Domain
+//! adapters supply byte labels and contexts; this crate has no dependencies on
+//! `core/` or `system/` and contains no application protocol rules.
 //!
-//! This crate MUST NOT contain enclave-resident secret material or domain
-//! protocol logic. Enclave-resident secrets live in `bin/outbe-tee-enclave` and
-//! `crates/core/enclave`.
+//! Legacy transport, attestation, and witness APIs remain available until their
+//! callers switch to the in-process context.
 
+pub mod in_process;
+pub mod resident;
 use outbe_dcap::byte_cursor;
 pub mod call_context;
 pub mod canary;

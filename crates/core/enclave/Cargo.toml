@@ -17,7 +17,7 @@ engine = [
     "dep:ark-ff",
     "dep:rand_core",
 ]
-dev-keys = ["engine"]
+dev-keys = ["engine", "outbe-tee/test-utils"]
 test-utils = ["host", "outbe-tee/test-utils"]
 
 [dependencies]
