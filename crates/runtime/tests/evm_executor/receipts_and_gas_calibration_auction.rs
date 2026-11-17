@@ -6,9 +6,8 @@ use super::*;
 fn calibration_populated_auction_handlers() {
     let (_, samples, logs, _) = populated_auction(16);
     assert_eq!(samples.len(), 7);
-    assert!(logs
-        .iter()
-        .any(|log| log.data.topics().first() == Some(&keccak256("DesisCompleted(uint32,uint32,uint64,uint64)"))));
+    assert!(logs.iter().any(|log| log.data.topics().first()
+        == Some(&keccak256("DesisCompleted(uint32,uint32,uint64,uint64)"))));
     // The Cycle does not push parked router work. Any address pushes it.
     assert!(!logs.iter().any(
         |log| outbe_cycle::ICycle::CycleTaskExecuted::decode_log(log)
