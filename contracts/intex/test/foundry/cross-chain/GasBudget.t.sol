@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {AuctionResultLib} from "../helpers/AuctionResultLib.sol";
+
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
@@ -339,7 +341,7 @@ contract AuctionGasBudgetTest is CrossChainTest {
         escrow = DeployProxy.escrowAdapter(admin, admin);
         compact = new MockTheCompact();
         paymentToken = new MockWCOEN();
-        escrow.wire(admin, address(compact), address(paymentToken));
+        escrow.setDependencies(admin, address(compact), address(paymentToken));
         compact.setResetPeriodSeconds(0);
 
         router.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(originRouter)));
@@ -389,7 +391,7 @@ contract AuctionGasBudgetTest is CrossChainTest {
         uint256 spent = _deliver(_startPacket(rows));
 
         emit log_named_uint("auction_start_36prices", spent);
-        assertLt(spent, IntexGas.auctionStart(rows), "auction start must fit the quote");
+        assertLt(spent, IntexGas.startAuction(rows), "auction start must fit the quote");
     }
 
     function test_TheQuoteCoversAuctionStageCollectingBidsWithNoBids() public {
@@ -413,7 +415,7 @@ contract AuctionGasBudgetTest is CrossChainTest {
             paymentToken.mint(who[i], 1e18);
             vm.prank(who[i]);
             paymentToken.approve(address(escrow), type(uint256).max);
-            escrow.lockFunds(EMISSION_DAY, who[i], 1e6, 1_000_000, 1);
+            escrow.lockIntexAuctionAsset(EMISSION_DAY, who[i], 1e6, 1_000_000, 1);
         }
 
         uint256 spent = _deliver(BridgeMsgCodec.encodeRefundInstructions(EMISSION_DAY, 0, 1, 600_000, 1e6, who, 0, 0));
@@ -426,9 +428,11 @@ contract AuctionGasBudgetTest is CrossChainTest {
         _deliver(_startPacket(1));
         vm.warp(block.timestamp + 1 days);
         vm.prank(address(router));
-        auction.startAwaitingResult(EMISSION_DAY);
+        auction.startAuctionClearing(EMISSION_DAY);
 
-        uint256 spent = _deliver(BridgeMsgCodec.encodeAuctionResult(EMISSION_DAY, ISSUED_UNITS, ENTRY_PRICE, 0));
+        uint256 spent = _deliver(
+            BridgeMsgCodec.encodeAuctionResult(EMISSION_DAY, AuctionResultLib.day(ISSUED_UNITS, ENTRY_PRICE, 0))
+        );
 
         emit log_named_uint("auction_result", spent);
         assertLt(spent, IntexGas.AUCTION_RESULT, "auction result must fit the quote");
@@ -535,17 +539,17 @@ contract BidStub {
         bidCount = n;
     }
 
-    function startAwaitingResult(uint32) external {}
+    function startAuctionClearing(uint32) external {}
 
     function getAuctionDetails(uint32)
         external
         view
-        returns (IIntexAuction.AuctionData memory data, IIntexAuction.SubmittedBidData[] memory bids)
+        returns (IIntexAuction.AuctionData memory data, IIntexAuction.SubmittedIntexAuctionBidData[] memory bids)
     {
-        bids = new IIntexAuction.SubmittedBidData[](bidCount);
+        bids = new IIntexAuction.SubmittedIntexAuctionBidData[](bidCount);
         for (uint256 i = 0; i < bidCount; ++i) {
-            bids[i] = IIntexAuction.SubmittedBidData({
-                bidderAddress: address(uint160(0xCAFE + i)),
+            bids[i] = IIntexAuction.SubmittedIntexAuctionBidData({
+                bidder: address(uint160(0xCAFE + i)),
                 intexQuantity: 1,
                 intexBidRate: 100e6,
                 timestamp: uint32(block.timestamp),
@@ -555,23 +559,23 @@ contract BidStub {
         }
     }
 
-    function revealedBidsCount(uint32) external view returns (uint256) {
+    function revealedIntexAuctionBidsCount(uint32) external view returns (uint256) {
         return bidCount;
     }
 
-    function revealedBidsSlice(uint32, uint256 offset, uint256 limit)
+    function revealedIntexAuctionBidsSlice(uint32, uint256 offset, uint256 limit)
         external
         view
-        returns (IIntexAuction.SubmittedBidData[] memory slice)
+        returns (IIntexAuction.SubmittedIntexAuctionBidData[] memory slice)
     {
         uint256 length = bidCount;
-        if (offset >= length) return new IIntexAuction.SubmittedBidData[](0);
+        if (offset >= length) return new IIntexAuction.SubmittedIntexAuctionBidData[](0);
         uint256 end = offset + limit;
         if (end > length) end = length;
-        slice = new IIntexAuction.SubmittedBidData[](end - offset);
+        slice = new IIntexAuction.SubmittedIntexAuctionBidData[](end - offset);
         for (uint256 i = 0; i < slice.length; ++i) {
-            slice[i] = IIntexAuction.SubmittedBidData({
-                bidderAddress: address(uint160(0xCAFE + offset + i)),
+            slice[i] = IIntexAuction.SubmittedIntexAuctionBidData({
+                bidder: address(uint160(0xCAFE + offset + i)),
                 intexQuantity: 1,
                 intexBidRate: 100e6,
                 timestamp: uint32(block.timestamp),
@@ -581,7 +585,7 @@ contract BidStub {
         }
     }
 
-    function getAuctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
+    function auctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
         return IIntexAuction.AuctionStage.AwaitingResult;
     }
 }

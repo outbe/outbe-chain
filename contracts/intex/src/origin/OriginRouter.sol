@@ -277,7 +277,7 @@ contract OriginRouter is
         $.seriesTargets[params.emissionDay] = snapshot; // freeze the fan-out set for the whole day
         bytes memory payload = _encodeAuctionStageStart(params);
         for (uint256 i = 0; i < snapshot.length; ++i) {
-            bytes32 sendId = _sendOrPark(snapshot[i], payload, IntexGas.auctionStart(params.prices.length));
+            bytes32 sendId = _sendOrPark(snapshot[i], payload, IntexGas.startAuction(params.prices.length));
             emit AuctionStageSent(sendId, params.emissionDay, BridgeMsgCodec.MSG_AUCTION_STAGE_START);
         }
     }
@@ -322,17 +322,23 @@ contract OriginRouter is
     function sendAuctionResult(
         uint32 dstChainId,
         uint32 emissionDay,
-        uint32 issuedUnits,
-        uint64 auctionClearingRate,
-        uint32 wonBidsCount
+        uint32 wonQuantity,
+        uint32 wonBidsCount,
+        uint32 quantity,
+        uint64 clearingRate,
+        uint64 totalDemand
     ) external payable onlyRole(DESIS_ROLE) returns (bytes32 sendId) {
         _requireSeriesTarget(emissionDay, dstChainId);
-        sendId = _sendOrPark(
-            dstChainId,
-            BridgeMsgCodec.encodeAuctionResult(emissionDay, issuedUnits, auctionClearingRate, wonBidsCount),
-            IntexGas.AUCTION_RESULT
-        );
-        emit AuctionResultSent(sendId, emissionDay, issuedUnits, auctionClearingRate);
+        BridgeMsgCodec.IntexAuctionChainResult memory result = BridgeMsgCodec.IntexAuctionChainResult({
+            wonQuantity: wonQuantity,
+            wonBidsCount: wonBidsCount,
+            quantity: quantity,
+            clearingRate: clearingRate,
+            totalDemand: totalDemand
+        });
+        sendId =
+            _sendOrPark(dstChainId, BridgeMsgCodec.encodeAuctionResult(emissionDay, result), IntexGas.AUCTION_RESULT);
+        emit IntexAuctionResultSent(sendId, emissionDay, dstChainId, wonQuantity, wonBidsCount);
     }
 
     /// @inheritdoc IOriginRouter
@@ -527,13 +533,13 @@ contract OriginRouter is
             p.revealEnd,
             p.issuanceEnd,
             p.promisLoadMinor,
-            p.minIntexBidRate,
+            p.minBidRate,
             p.prices,
             p.callNoticePeriod,
             p.callWindow,
             p.callThreshold,
-            p.minIntexBidQuantity,
-            p.commitBondMinor
+            p.minBidQuantity,
+            p.bidBondMinor
         );
     }
 

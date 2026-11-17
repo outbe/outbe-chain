@@ -16,23 +16,23 @@ interface IIntexAuction {
         RevealingBids,
         AwaitingResult,
         Completed,
-        Cancelled,
+        Canceled,
         Failed
     }
 
-    /// @notice Emission-day state: `Live` from `auctionStart`, `Cancelled` from `cancelAuction`.
+    /// @notice Emission-day state: `Live` from `startAuction`, `Cancelled` from `cancelAuction`.
     /// @dev `Unknown` is a day that neither message reached.
     enum DayState {
         Unknown,
         Live,
-        Cancelled
+        Canceled
     }
 
     /// @notice Revealed bid payload. Slot-packed: slot 0 holds
-    ///         `bidderAddress` (20B) + `intexBidRate` (4B) + `intexQuantity` (2B) + `timestamp` (4B) = 30B.
-    struct SubmittedBidData {
+    ///         `bidder` (20B) + `intexBidRate` (4B) + `intexQuantity` (2B) + `timestamp` (4B) = 30B.
+    struct SubmittedIntexAuctionBidData {
         /// @notice Bidder IBA address.
-        address bidderAddress;
+        address bidder;
         /// @notice Bid rate the bidder accepts (`1e6` fixed-point, % of the escrow basis).
         uint32 intexBidRate;
         /// @notice Requested quantity (Intex units).
@@ -46,7 +46,7 @@ interface IIntexAuction {
     }
 
     /// @notice Auction schedule - stage-end timestamps.
-    /// @dev Computed on the Outbe side (Desis) and passed into `auctionStart`.
+    /// @dev Computed on the Outbe side (Desis) and passed into `startAuction`.
     struct AuctionSchedule {
         /// @notice End of the commit stage (UNIX seconds).
         uint32 commitEnd;
@@ -82,21 +82,21 @@ interface IIntexAuction {
         IntexCallTrigger callTrigger;
         /// @notice Minimum allowed bid rate (`1e6` fixed-point, % of the escrow basis). Reveal
         ///         rejects bids below it.
-        uint32 minIntexBidRate;
+        uint32 minBidRate;
         /// @notice Minimum quantity per bid (Intex units).
-        uint16 minIntexBidQuantity;
+        uint16 minBidQuantity;
         /// @notice One row per currency the day can clear in. The bid's reference
         ///         currency must appear here.
         ReferenceCurrencyPrice[] prices;
         /// @notice Entry bond in protocol units (1e6), scaled to the payment token by the escrow.
-        ///         Taken at `commitBid` and returned on reveal/cancel. 0 disables the bond.
-        uint128 commitBondMinor;
+        ///         Taken at `commitIntexAuctionBid` and returned on reveal/cancel. 0 disables the bond.
+        uint128 bidBondMinor;
     }
 
     /// @notice Auction results and statistics (final, set at clearing).
-    struct AuctionResult {
+    struct IntexAuctionResult {
         /// @notice Uniform auction clearing rate (`1e6` fixed-point) used to issue Intex.
-        uint64 auctionClearingRate;
+        uint64 clearingRate;
         /// @notice Number of winning bids (provided by Outbe).
         uint32 wonBidsCount;
         /// @notice Number of Intex units issued.
@@ -117,66 +117,68 @@ interface IIntexAuction {
         DayState dayState;
         AuctionSchedule schedule;
         AuctionParams params;
-        AuctionResult result;
+        IntexAuctionResult result;
     }
 
     // --- Events ---
 
-    /// @notice Emitted when the auction stage is updated.
-    /// @param emissionDay Emission day (yyyymmdd, uint32).
-    /// @param auctionStage Target stage.
-    /// @param timestamp New stage timestamp (UNIX seconds).
-    /// @param reason Optional reason (e.g. "Day cancelled - no auction"). Empty if not applicable.
-    event AuctionStageUpdated(uint32 indexed emissionDay, AuctionStage auctionStage, uint32 timestamp, string reason);
+    /// @notice Emitted when the auction of the day starts on this chain, with its windows and terms.
+    event IntexAuctionStarted(
+        uint32 indexed emissionDay,
+        uint64 commitEnd,
+        uint64 revealEnd,
+        uint64 issuanceEnd,
+        uint256 unitPromisLoadMinor,
+        uint32 minBidRate,
+        uint32 minBidQuantity,
+        uint256 bidBondMinor
+    );
 
-    /// @notice Emitted when an auction is cleared.
-    /// @param emissionDay Emission day (yyyymmdd).
-    /// @param auctionClearingRate Uniform auction clearing rate (`1e6` fixed-point).
-    /// @param issuedUnits Total number of issued Intex units.
-    event AuctionClearingExecuted(uint32 indexed emissionDay, uint64 auctionClearingRate, uint32 issuedUnits);
+    /// @notice Emitted when Outbe says that the day is canceled.
+    /// @param reason The reason of `DesisCanceled` on Outbe.
+    event IntexAuctionCanceled(uint32 indexed emissionDay, uint8 reason);
 
-    /// @notice Emitted on `commitBid` with the sealed commit hash.
-    /// @param emissionDay Emission day (yyyymmdd).
-    /// @param bidder Bidder address (commit owner).
-    /// @param commitHash The committed `keccak256(signature)`.
-    event BidCommitted(uint32 indexed emissionDay, address indexed bidder, bytes32 commitHash);
+    /// @notice Emitted when the clearing start first arrives and the reveal ends on this chain.
+    event IntexAuctionClearingStarted(uint32 indexed emissionDay);
 
-    /// @notice Emitted on `revealBid` after a successful reveal.
-    /// @param emissionDay Emission day (yyyymmdd).
-    /// @param bidder Bidder address.
-    /// @param quantity Revealed Intex quantity.
-    /// @param bidRate Revealed bid rate (`1e6` fixed-point, % of the escrow basis).
-    event BidRevealed(
+    /// @notice Emitted when the result of Outbe completes the auction on this chain: the won quantity and
+    ///         winning bids of this chain, and the totals of the day. With no sale, the counts are 0.
+    event IntexAuctionCompleted(
+        uint32 indexed emissionDay,
+        uint32 wonQuantity,
+        uint32 wonBidsCount,
+        uint32 quantity,
+        uint64 clearingRate,
+        uint64 totalDemand
+    );
+
+    /// @notice Emitted when a bidder commits a bid.
+    event IntexAuctionBidCommitted(uint32 indexed emissionDay, address indexed bidder, bytes32 commitHash);
+
+    /// @notice Emitted when a bidder reveals a bid.
+    event IntexAuctionBidRevealed(
         uint32 indexed emissionDay,
         address indexed bidder,
-        uint16 indexed quantity,
+        uint32 quantity,
         uint32 bidRate,
         uint16 issuanceCurrency,
         uint16 referenceCurrency
     );
 
-    /// @notice Emitted on `cancelCommit` after the bidder withdraws their commit during the commit
-    ///         stage.
-    /// @param emissionDay Emission day (yyyymmdd).
-    /// @param bidder Bidder address.
-    event CommitCancelled(uint32 indexed emissionDay, address indexed bidder);
+    /// @notice Emitted when a bidder cancels its commit in the commit stage.
+    event IntexAuctionBidCanceled(uint32 indexed emissionDay, address indexed bidder);
 
-    /// @notice Emitted on `wire` after the escrow contract address is set.
-    /// @param previous Escrow contract address before the update.
-    /// @param current Escrow contract address after the update.
-    event EscrowWired(address previous, address current);
+    /// @notice Emitted when an admin sets the escrow.
+    event EscrowSet(address escrow);
 
-    /// @notice Emitted on `setIntexContract` after the Intex collection address is set.
-    /// @param previous Collection address before the update.
-    /// @param current Collection address after the update.
-    event IntexWired(address previous, address current);
+    /// @notice Emitted when an admin sets the Intex contract.
+    event IntexContractSet(address intexContract);
 
-    /// @notice Emitted when a WinNote is redeemed, with or without Intex. The mint holds the
-    ///         units issued, and the escrow payout holds the change.
-    /// @param emissionDay Emission day (yyyymmdd).
-    /// @param bidder Winner whose WinNote was redeemed.
-    /// @param seriesId Series the WinNote names.
-    event WinNoteRedeemed(uint32 indexed emissionDay, address indexed bidder, bytes14 indexed seriesId);
+    /// @notice Emitted when a redeem issues the units of a WinNote.
+    event IntexAuctionWinNoteRedeemed(uint32 indexed emissionDay, address indexed bidder, bytes14 indexed seriesId);
+
+    /// @notice Emitted when a redeem finds the series of the WinNote forfeited: no Intex is issued.
+    event IntexAuctionWinNoteExpired(uint32 indexed emissionDay, address indexed bidder, bytes14 indexed seriesId);
 
     // --- Errors ---
 
@@ -189,19 +191,19 @@ interface IIntexAuction {
     /// @notice Operation requires a different stage.
     error StageRequired(AuctionStage requiredStage, AuctionStage currentStage);
     /// @notice Commit already registered for this bidder in this auction.
-    error BidAlreadyCommitted();
+    error IntexAuctionBidAlreadyCommitted();
     /// @notice Commit not found for this bidder in this auction.
-    error BidNotFound();
+    error IntexAuctionBidNotFound();
     /// @notice Bid already revealed for this bidder in this auction.
-    error BidAlreadyRevealed();
+    error IntexAuctionBidAlreadyRevealed();
     /// @notice Reveal payload does not match the commit hash.
     error RevealHashMismatch();
-    /// @notice Bid rate is below `minIntexBidRate`.
-    error BidBelowMinIntexBidRate();
+    /// @notice Bid rate is below `minBidRate`.
+    error IntexAuctionBidBelowMinBidRate();
     /// @notice Bid rate exceeds 100% of the escrow basis (scale `1e6`).
-    error BidRateAboveMax(uint32 bidRate);
-    /// @notice Bid quantity is below `minIntexBidQuantity`.
-    error BidBelowMinIntexBidQuantity();
+    error IntexAuctionBidRateAboveMax(uint32 bidRate);
+    /// @notice Bid quantity is below `minBidQuantity`.
+    error IntexAuctionBidBelowMinBidQuantity();
     /// @notice `issuedUnits * promisLoadMinor` exceeds the uint128 loaded-Promis range.
     error IssuedPromisOverflow(uint32 issuedUnits, uint128 promisLoadMinor);
     /// @notice Auction does not exist.
@@ -209,9 +211,9 @@ interface IIntexAuction {
     /// @notice Auction already exists.
     error AuctionAlreadyExists();
     /// @notice Clearing result claims more winners than were revealed on-chain.
-    error WonBidsExceedRevealed(uint32 wonBidsCount, uint32 revealedBidsCount);
+    error WonIntexAuctionBidsExceedRevealed(uint32 wonBidsCount, uint32 revealedBidsCount);
     /// @notice Clearing rate is below the configured minimum bid rate.
-    error ClearingRateBelowMin(uint64 clearingRate, uint32 minIntexBidRate);
+    error ClearingRateBelowMin(uint64 clearingRate, uint32 minBidRate);
     /// @notice Schedule timestamps are not strictly increasing or are in the past.
     error InvalidSchedule();
     /// @notice The day is cancelled.
@@ -228,10 +230,10 @@ interface IIntexAuction {
     error EscrowHasLiveLocks();
     /// @notice The collection holds no series for the bid's day and currency pair yet.
     error SeriesNotCreated(uint32 emissionDay, uint16 issuanceCurrency, uint16 referenceCurrency);
-    /// @notice `claimCommitBond` was called before the no-reveal penalty window elapsed.
-    /// @param claimableAt Earliest unix-seconds timestamp the bond can be claimed at.
+    /// @notice `unlockIntexAuctionBidBond` was called before the no-reveal penalty window elapsed.
+    /// @param unlockableAt Earliest unix-seconds timestamp the bond can be unlocked at.
     /// @param nowTs Current block timestamp.
-    error CommitBondNotYetClaimable(uint32 claimableAt, uint32 nowTs);
+    error IntexAuctionBidBondNotYetUnlockable(uint32 unlockableAt, uint32 nowTs);
 
     // --- Admin ---
 
@@ -240,12 +242,12 @@ interface IIntexAuction {
     ///      changes only once it has nothing left to claim (`hasOutstandingLocks` is false). Every
     ///      claim is permissionless, so anyone can bring it there.
     /// @param _escrow Escrow contract address.
-    function wire(address _escrow) external;
+    function setEscrow(address _escrow) external;
 
     /// @notice Set the Intex collection winners' units are issued on. It changes only once the
-    ///         escrow has nothing left to claim, like `wire`.
-    /// @param _intex Collection address.
-    function setIntexContract(address _intex) external;
+    ///         escrow has nothing left to claim, like `setEscrow`.
+    /// @param _intexContract Collection address.
+    function setIntexContract(address _intexContract) external;
 
     // --- Lifecycle ---
 
@@ -256,7 +258,7 @@ interface IIntexAuction {
     /// @param emissionDay Emission day (yyyymmdd, uint32).
     /// @param schedule Stage-end timestamps.
     /// @param params Auction input parameters.
-    function auctionStart(uint32 emissionDay, AuctionSchedule calldata schedule, AuctionParams calldata params) external;
+    function startAuction(uint32 emissionDay, AuctionSchedule calldata schedule, AuctionParams calldata params) external;
 
     /// @notice Cancel the auction of `emissionDay` at any stage before its result.
     /// @dev A day this chain has not started yet is recorded as cancelled, so its later start
@@ -269,40 +271,44 @@ interface IIntexAuction {
     /// @notice Move the auction to `AwaitingResult` (the bridge-driven signal from Outbe that it collects the bids).
     /// @dev Early signal snaps `revealEnd` forward; `issuanceEnd` is unchanged.
     /// @param emissionDay Emission day (yyyymmdd).
-    function startAwaitingResult(uint32 emissionDay) external;
+    function startAuctionClearing(uint32 emissionDay) external;
 
-    /// @notice Execute auction clearing with final data from Outbe.
-    /// @dev `issuedPromisLoadMinor` is derived on-chain (`issuedUnits * promisLoadMinor`).
+    /// @notice Complete the auction with the result of Outbe.
+    /// @dev `issuedPromisLoadMinor` is derived on-chain (`quantity * promisLoadMinor`).
     /// @param emissionDay Emission day (yyyymmdd).
-    /// @param issuedUnits Final number of issued Intex units.
-    /// @param auctionClearingRate Uniform clearing rate (`1e6` fixed-point) calculated by Outbe.
-    /// @param wonBidsCount Number of winning bids (from Outbe).
-    function executeAuctionClearing(
+    /// @param wonQuantity Intex quantity this chain's winners won.
+    /// @param wonBidsCount Winning bids of this chain.
+    /// @param quantity Intex quantity the day issued on all chains.
+    /// @param clearingRate Uniform clearing rate (`1e6` fixed-point) calculated by Outbe.
+    /// @param totalDemand Intex quantity all revealed bids asked for.
+    function completeAuction(
         uint32 emissionDay,
-        uint32 issuedUnits,
-        uint64 auctionClearingRate,
-        uint32 wonBidsCount
+        uint32 wonQuantity,
+        uint32 wonBidsCount,
+        uint32 quantity,
+        uint64 clearingRate,
+        uint64 totalDemand
     ) external;
 
     // --- User Actions ---
 
     /// @notice Commit a sealed bid hash for an auction.
-    /// @dev When the series carries a non-zero `commitBondMinor`, the bond moves from the caller
+    /// @dev When the series carries a non-zero `bidBondMinor`, the bond moves from the caller
     ///      into escrow in the same transaction. This requires prior payment-token
     ///      approval on the escrow adapter. Reveal/cancel return it immediately. A live-day
-    ///      no-reveal locks it until `revealEnd + UNREVEALED_BOND_LOCK_PERIOD` (see `claimCommitBond`).
+    ///      no-reveal locks it until `revealEnd + UNREVEALED_BOND_LOCK_PERIOD` (see `unlockIntexAuctionBidBond`).
     /// @param emissionDay Emission day (yyyymmdd).
     /// @param commitHash `keccak256(signature)`, where `signature` is an EIP-712 typed-data
     ///                   signature over `RevealBid(uint32 emissionDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)`
     ///                   under the `IntexAuction` v1 domain (`chainId`, `verifyingContract = address(this)`).
-    function commitBid(uint32 emissionDay, bytes32 commitHash) external;
+    function commitIntexAuctionBid(uint32 emissionDay, bytes32 commitHash) external;
 
     /// @notice Cancel an existing commit during the commit stage.
     /// @dev Only callable before `commitEnd`. Once the commit window closes a commit can no longer
     ///      be cancelled or revealed. An unrevealed commit is permanently forfeited (its bond
-    ///      stays claimable via `claimCommitBond`). Cancelling returns the bond immediately.
+    ///      stays claimable via `unlockIntexAuctionBidBond`). Cancelling returns the bond immediately.
     /// @param emissionDay Emission day (yyyymmdd).
-    function cancelCommit(uint32 emissionDay) external;
+    function cancelIntexAuctionBid(uint32 emissionDay) external;
 
     /// @notice Reveal a bid.
     /// @dev Returns the commit bond (if any) before locking the bid escrow, so the bond can fund
@@ -315,7 +321,7 @@ interface IIntexAuction {
     /// @param chainId Chain id. It must equal `block.chainid`. This is a redundant check: the EIP-712
     ///                domain already binds it inside the signature.
     /// @param signature 65-byte ECDSA signature over the EIP-712 `RevealBid` typed data.
-    function revealBid(
+    function revealIntexAuctionBid(
         uint32 emissionDay,
         uint16 quantity,
         uint32 bidRate,
@@ -330,10 +336,10 @@ interface IIntexAuction {
     ///         - A loser of a finalized day collects its principal and its bid is cleared.
     ///         - A bidder whose day never finalized collects its principal after the escrow's
     ///           delay. Its bid stays until the day finalizes, since the bids relay may still read it.
-    ///         The escrow-local `claimAbandonedRefund` is the fallback if this contract stops working.
+    ///         The escrow-local `returnAbandonedIntexAuctionAsset` is the fallback if this contract stops working.
     /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder whose refund is being claimed.
-    function claimRefund(uint32 emissionDay, address bidder) external;
+    function returnIntexAuctionAsset(uint32 emissionDay, address bidder) external;
 
     /// @notice Permissionless redeem of a winner's WinNote. The units always go to `bidder`.
     ///         The escrow pays any change still in it. Once its series was forfeited, the
@@ -345,11 +351,11 @@ interface IIntexAuction {
     /// @notice Permissionless commit-bond claim for a bidder who committed but never revealed.
     ///         A cancelled-day auction releases immediately. Otherwise the bond is claimable
     ///         only after `revealEnd + UNREVEALED_BOND_LOCK_PERIOD`. Pays the stored bidder, not the
-    ///         caller. The escrow-local time-based valve (`claimAbandonedCommitBond`) is the fallback
+    ///         caller. The escrow-local time-based valve (`unlockAbandonedIntexAuctionBidBond`) is the fallback
     ///         if the auction contract itself is rotated away.
     /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder whose bond is being claimed.
-    function claimCommitBond(uint32 emissionDay, address bidder) external;
+    function unlockIntexAuctionBidBond(uint32 emissionDay, address bidder) external;
 
     // --- Views ---
 
@@ -361,17 +367,17 @@ interface IIntexAuction {
     /// @notice How many bids the day has revealed.
     /// @param emissionDay Emission day (yyyymmdd).
     /// @return count Revealed bid count.
-    function revealedBidsCount(uint32 emissionDay) external view returns (uint256 count);
+    function revealedIntexAuctionBidsCount(uint32 emissionDay) external view returns (uint256 count);
 
     /// @notice A window of the day's revealed bids, so a relay can read only what it is about to send.
     /// @param emissionDay Emission day (yyyymmdd).
     /// @param offset First bid to return.
     /// @param limit How many bids at most.
     /// @return slice The bids in `[offset, offset + limit)`, clipped to what the day holds.
-    function revealedBidsSlice(uint32 emissionDay, uint256 offset, uint256 limit)
+    function revealedIntexAuctionBidsSlice(uint32 emissionDay, uint256 offset, uint256 limit)
         external
         view
-        returns (SubmittedBidData[] memory slice);
+        returns (SubmittedIntexAuctionBidData[] memory slice);
 
     /// @notice Get auction information plus the revealed bids by series id.
     /// @param emissionDay Emission day (yyyymmdd).
@@ -380,10 +386,10 @@ interface IIntexAuction {
     function getAuctionDetails(uint32 emissionDay)
         external
         view
-        returns (AuctionData memory auctionData, SubmittedBidData[] memory bidsData);
+        returns (AuctionData memory auctionData, SubmittedIntexAuctionBidData[] memory bidsData);
 
     /// @notice Get the current auction stage by series id.
     /// @param emissionDay Emission day (yyyymmdd).
     /// @return Current auction stage.
-    function getAuctionStage(uint32 emissionDay) external view returns (AuctionStage);
+    function auctionStage(uint32 emissionDay) external view returns (AuctionStage);
 }

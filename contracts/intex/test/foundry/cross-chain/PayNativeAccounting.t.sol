@@ -223,19 +223,19 @@ contract PayNativeAccountingTest is CrossChainTest {
 
 /// @dev Auction stub with one bid, so an inbound CLEARING produces exactly one relayed batch - one bridge fee.
 contract StubAuction {
-    function auctionStart(uint32, IIntexAuction.AuctionSchedule calldata, IIntexAuction.AuctionParams calldata)
+    function startAuction(uint32, IIntexAuction.AuctionSchedule calldata, IIntexAuction.AuctionParams calldata)
         external {}
-    function startAwaitingResult(uint32) external {}
-    function executeAuctionClearing(uint32, uint32, uint64, uint32) external {}
+    function startAuctionClearing(uint32) external {}
+    function completeAuction(uint32, uint32, uint32, uint32, uint64, uint64) external {}
 
     function getAuctionDetails(uint32)
         external
         view
-        returns (IIntexAuction.AuctionData memory data, IIntexAuction.SubmittedBidData[] memory bids)
+        returns (IIntexAuction.AuctionData memory data, IIntexAuction.SubmittedIntexAuctionBidData[] memory bids)
     {
-        bids = new IIntexAuction.SubmittedBidData[](1);
-        bids[0] = IIntexAuction.SubmittedBidData({
-            bidderAddress: address(0xCAFE),
+        bids = new IIntexAuction.SubmittedIntexAuctionBidData[](1);
+        bids[0] = IIntexAuction.SubmittedIntexAuctionBidData({
+            bidder: address(0xCAFE),
             intexQuantity: 1,
             intexBidRate: 100e6,
             timestamp: uint32(block.timestamp),
@@ -244,23 +244,23 @@ contract StubAuction {
         });
     }
 
-    function revealedBidsCount(uint32) external view returns (uint256) {
+    function revealedIntexAuctionBidsCount(uint32) external view returns (uint256) {
         return 1;
     }
 
-    function revealedBidsSlice(uint32, uint256 offset, uint256 limit)
+    function revealedIntexAuctionBidsSlice(uint32, uint256 offset, uint256 limit)
         external
         view
-        returns (IIntexAuction.SubmittedBidData[] memory slice)
+        returns (IIntexAuction.SubmittedIntexAuctionBidData[] memory slice)
     {
         uint256 length = 1;
-        if (offset >= length) return new IIntexAuction.SubmittedBidData[](0);
+        if (offset >= length) return new IIntexAuction.SubmittedIntexAuctionBidData[](0);
         uint256 end = offset + limit;
         if (end > length) end = length;
-        slice = new IIntexAuction.SubmittedBidData[](end - offset);
+        slice = new IIntexAuction.SubmittedIntexAuctionBidData[](end - offset);
         for (uint256 i = 0; i < slice.length; ++i) {
-            slice[i] = IIntexAuction.SubmittedBidData({
-                bidderAddress: address(uint160(0xCAFE + offset + i)),
+            slice[i] = IIntexAuction.SubmittedIntexAuctionBidData({
+                bidder: address(uint160(0xCAFE + offset + i)),
                 intexQuantity: 1,
                 intexBidRate: 100e6,
                 timestamp: uint32(block.timestamp),
@@ -270,7 +270,7 @@ contract StubAuction {
         }
     }
 
-    function getAuctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
+    function auctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
         return IIntexAuction.AuctionStage.AwaitingResult;
     }
 }

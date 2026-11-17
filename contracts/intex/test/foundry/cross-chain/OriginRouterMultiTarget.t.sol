@@ -220,18 +220,18 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
     function test_addressed_membership_enforced() public {
         _fireStart(DAY);
         vm.prank(desis);
-        origin.sendAuctionResult(TARGET_A, DAY, 100, 1e6, 5); // in snapshot: ok
+        origin.sendAuctionResult(TARGET_A, DAY, 0, 5, 100, 1e6, 0); // in snapshot: ok
 
         vm.prank(desis);
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.NotSeriesTarget.selector, DAY, uint32(9)));
-        origin.sendAuctionResult(9, DAY, 100, 1e6, 5);
+        origin.sendAuctionResult(9, DAY, 0, 5, 100, 1e6, 0);
     }
 
     function test_addressed_removedButSnapshotted_stillRoutes() public {
         _fireStart(DAY);
         origin.removeTarget(TARGET_B); // gone from the registry, still in the day's snapshot
         vm.prank(desis);
-        origin.sendAuctionResult(TARGET_B, DAY, 100, 1e6, 5); // must not revert
+        origin.sendAuctionResult(TARGET_B, DAY, 0, 5, 100, 1e6, 0); // must not revert
     }
 
     // --- Per-leg park + flush ---

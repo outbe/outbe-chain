@@ -71,13 +71,14 @@ interface IOriginRouter {
     /// @param dstChainId Target chain of the send.
     event IntexAuctionCancelSent(bytes32 indexed sendId, uint32 indexed emissionDay, uint32 indexed dstChainId);
 
-    /// @notice Emitted when an auction result is sent to a target chain.
-    /// @param sendId Bridge send identifier.
-    /// @param emissionDay Emission day (yyyymmdd).
-    /// @param issuedUnits Number of Intex units issued.
-    /// @param clearingRate Uniform clearing rate (`1e6` fixed-point).
-    event AuctionResultSent(
-        bytes32 indexed sendId, uint32 indexed emissionDay, uint32 issuedUnits, uint64 clearingRate
+    /// @notice Emitted when the result leaves for one chain, with the won quantity and winning bids of
+    ///         that chain.
+    event IntexAuctionResultSent(
+        bytes32 indexed sendId,
+        uint32 indexed emissionDay,
+        uint32 indexed dstChainId,
+        uint32 wonQuantity,
+        uint32 wonBidsCount
     );
 
     /// @notice Emitted when issuance instructions are sent to a target chain.
@@ -159,7 +160,7 @@ interface IOriginRouter {
         /// @notice PROMIS-units per Intex unit (1e6).
         uint128 promisLoadMinor;
         /// @notice Minimum acceptable bid rate (`1e6` fixed-point, % of the escrow basis).
-        uint32 minIntexBidRate;
+        uint32 minBidRate;
         /// @notice Entry and call price of every currency the day can clear in.
         ReferenceCurrencyPrice[] prices;
         /// @notice Called->deadline window in seconds (0 = default).
@@ -169,9 +170,9 @@ interface IOriginRouter {
         /// @notice Call-trigger threshold in seconds.
         uint32 callThreshold;
         /// @notice Minimum quantity per bid (Intex units).
-        uint16 minIntexBidQuantity;
+        uint16 minBidQuantity;
         /// @notice Commit-entry bond in protocol units (1e6). 0 disables the bond.
-        uint128 commitBondMinor;
+        uint128 bidBondMinor;
     }
 
     /// @notice Issuance instruction parameters. The struct groups them so that the calldata layout
@@ -268,9 +269,11 @@ interface IOriginRouter {
     function sendAuctionResult(
         uint32 dstChainId,
         uint32 emissionDay,
-        uint32 issuedUnits,
-        uint64 auctionClearingRate,
-        uint32 wonBidsCount
+        uint32 wonQuantity,
+        uint32 wonBidsCount,
+        uint32 quantity,
+        uint64 clearingRate,
+        uint64 totalDemand
     ) external payable returns (bytes32 sendId);
     /// @notice Send one chain one chunk (`chunkIndex` of `totalChunks`) of the series of `emissionDay` it must
     ///         create. Restricted to `INTEX_FACTORY_ROLE`.

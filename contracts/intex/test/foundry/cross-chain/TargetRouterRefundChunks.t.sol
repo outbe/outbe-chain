@@ -20,11 +20,11 @@ contract SummingEscrowAdapter {
         paymentToken = token;
     }
 
-    function dayPaymentToken(uint32) external view returns (IERC20) {
+    function dayIntexAuctionAsset(uint32) external view returns (IERC20) {
         return paymentToken;
     }
 
-    function finalizeAuction(uint32, bytes32, address[] calldata winners, uint16, uint16, uint64, uint128 basis, bool)
+    function chargeIntexAuctionAsset(uint32, address[] calldata winners, uint16, uint16, uint64, uint128 basis, bool)
         external
         pure
         returns (uint128 totalPaid)
@@ -32,7 +32,7 @@ contract SummingEscrowAdapter {
         totalPaid = uint128(basis * winners.length);
     }
 
-    function getAuctionStatus(uint32) external pure returns (bool, bool, uint128) {
+    function auctionStatus(uint32) external pure returns (bool, bool, uint128) {
         return (false, false, 0);
     }
 
@@ -156,7 +156,7 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
         MockWCOEN token = new MockWCOEN();
         MockTheCompact compact = new MockTheCompact();
         EscrowAdapter escrow = DeployProxy.escrowAdapter(address(this), address(this));
-        escrow.wire(address(this), address(compact), address(token));
+        escrow.setDependencies(address(this), address(compact), address(token));
         compact.setResetPeriodSeconds(0);
         escrow.grantRole(escrow.RELAYER_ROLE(), address(target));
         escrow.grantRole(escrow.AUCTION_ROLE(), address(this));
@@ -168,15 +168,19 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
             token.mint(bidders[i], 1e18);
             vm.prank(bidders[i]);
             token.approve(address(escrow), type(uint256).max);
-            escrow.lockFunds(DAY, bidders[i], 1e6, 1_000_000, 1);
+            escrow.lockIntexAuctionAsset(DAY, bidders[i], 1e6, 1_000_000, 1);
         }
 
         _deliverChunkFor(bidders[0], 0, 2);
         _deliverChunkFor(bidders[1], 1, 2);
 
-        assertTrue(escrow.getBidLock(DAY, bidders[0]).status == IEscrowAdapter.LockStatus.Won, "first chunk settled");
         assertTrue(
-            escrow.getBidLock(DAY, bidders[1]).status == IEscrowAdapter.LockStatus.Won, "second chunk settled too"
+            escrow.getIntexAuctionBidLock(DAY, bidders[0]).status == IEscrowAdapter.LockStatus.Won,
+            "first chunk settled"
+        );
+        assertTrue(
+            escrow.getIntexAuctionBidLock(DAY, bidders[1]).status == IEscrowAdapter.LockStatus.Won,
+            "second chunk settled too"
         );
     }
 

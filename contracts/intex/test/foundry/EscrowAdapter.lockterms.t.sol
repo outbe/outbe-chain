@@ -31,7 +31,7 @@ contract EscrowAdapterLockTermsTest is Test {
         token = new MockWCOEN();
         compact.setResetPeriodSeconds(0);
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(token));
+        escrow.setDependencies(auction, address(compact), address(token));
 
         token.mint(bidder, LOCK);
         vm.prank(bidder);
@@ -40,9 +40,9 @@ contract EscrowAdapterLockTermsTest is Test {
 
     function test_TheLockKeepsTheBidRateAndQuantity() public {
         vm.prank(auction);
-        escrow.lockFunds(DAY, bidder, BASIS, 800_000, 30);
+        escrow.lockIntexAuctionAsset(DAY, bidder, BASIS, 800_000, 30);
 
-        IEscrowAdapter.BidLock memory lock = escrow.getBidLock(DAY, bidder);
+        IEscrowAdapter.IntexAuctionBidLock memory lock = escrow.getIntexAuctionBidLock(DAY, bidder);
         assertEq(lock.bidRate, 800_000, "bid rate");
         assertEq(lock.quantity, 30, "quantity");
         assertEq(lock.lockedAmount, LOCK, "amount");
@@ -52,7 +52,7 @@ contract EscrowAdapterLockTermsTest is Test {
     ///      storage write.
     function test_TheWholeLockFitsOneWord() public {
         vm.prank(auction);
-        escrow.lockFunds(DAY, bidder, BASIS, 800_000, 30);
+        escrow.lockIntexAuctionAsset(DAY, bidder, BASIS, 800_000, 30);
 
         bytes32 dayMap = keccak256(abi.encode(uint256(DAY), uint256(STORAGE_SLOT) + 5));
         uint256 word = uint256(vm.load(address(escrow), keccak256(abi.encode(bidder, dayMap))));
@@ -68,12 +68,12 @@ contract EscrowAdapterLockTermsTest is Test {
     function test_AZeroBidRateIsRejected() public {
         vm.prank(auction);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroValue.selector, "bidRate"));
-        escrow.lockFunds(DAY, bidder, BASIS, 0, 30);
+        escrow.lockIntexAuctionAsset(DAY, bidder, BASIS, 0, 30);
     }
 
     function test_AZeroQuantityIsRejected() public {
         vm.prank(auction);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroValue.selector, "quantity"));
-        escrow.lockFunds(DAY, bidder, BASIS, 800_000, 0);
+        escrow.lockIntexAuctionAsset(DAY, bidder, BASIS, 800_000, 0);
     }
 }

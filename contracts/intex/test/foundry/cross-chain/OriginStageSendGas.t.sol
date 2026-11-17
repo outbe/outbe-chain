@@ -47,12 +47,12 @@ abstract contract OriginStageSendGasBase is Test {
         p.revealEnd = uint32(block.timestamp + 2 days);
         p.issuanceEnd = uint32(block.timestamp + 3 days);
         p.promisLoadMinor = 1e12;
-        p.minIntexBidRate = 1_000_000;
+        p.minBidRate = 1_000_000;
         p.callNoticePeriod = 86_400;
         p.callWindow = 86_400;
         p.callThreshold = 3_600;
-        p.minIntexBidQuantity = 1;
-        p.commitBondMinor = 1_000_000;
+        p.minBidQuantity = 1;
+        p.bidBondMinor = 1_000_000;
     }
 
     function _start(uint32 day) internal returns (uint256 spent) {

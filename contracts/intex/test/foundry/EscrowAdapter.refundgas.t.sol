@@ -114,7 +114,7 @@ abstract contract RefundGasBase is CrossChainTest {
         vm.etch(COMPACT, vm.parseBytes(vm.trim(vm.readFile("../predeploys/the_compact.code.hex"))));
         token = IERC20(address(new MockWCOEN()));
         escrow = DeployProxy.escrowAdapter(admin, admin);
-        escrow.wire(admin, COMPACT, address(token));
+        escrow.setDependencies(admin, COMPACT, address(token));
         escrow.grantRole(escrow.AUCTION_ROLE(), admin);
         escrow.grantRole(escrow.RELAYER_ROLE(), admin);
         escrow.setProceedsRecipient(makeAddr("proceeds"));
@@ -140,7 +140,7 @@ abstract contract RefundGasBase is CrossChainTest {
             deal(address(token), who, amount + held);
             vm.prank(who);
             token.approve(address(escrow), type(uint256).max);
-            escrow.lockFunds(DAY, who, BASIS, bidRate, QUANTITY);
+            escrow.lockIntexAuctionAsset(DAY, who, BASIS, bidRate, QUANTITY);
         }
     }
 
@@ -151,7 +151,7 @@ abstract contract RefundGasBase is CrossChainTest {
     function _finalize(uint256 n) internal returns (uint256 spent) {
         address[] memory winners = _winners(n);
         uint256 before = gasleft();
-        escrow.finalizeAuction(DAY, bytes32(uint256(1)), winners, 0, 0, CLEARING_RATE, BASIS, false);
+        escrow.chargeIntexAuctionAsset(DAY, winners, 0, 0, CLEARING_RATE, BASIS, false);
         spent = before - gasleft();
     }
 }
@@ -202,12 +202,12 @@ contract RefundClaimUnfinalizedGasTest is RefundGasBase {
     function setUp() public {
         _setUpEscrow();
         _lock(0, 1, BID_RATE, 0);
-        vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
+        vm.warp(block.timestamp + escrow.UNFINALIZED_RETURN_DELAY());
     }
 
     function test_ClaimOnADayThatNeverFinalized() public {
         uint256 before = gasleft();
-        escrow.releaseRefund(DAY, _bidder(0));
+        escrow.returnIntexAuctionAsset(DAY, _bidder(0));
         emit log_named_uint("claim_unfinalized", before - gasleft());
     }
 }
@@ -221,24 +221,24 @@ contract RefundClaimFinalizedGasTest is RefundGasBase {
         _lock(2, 1, BID_RATE, 0);
         _elapseCompactResetPeriod();
 
-        escrow.finalizeAuction(DAY, bytes32(uint256(1)), _winners(2), 0, 0, CLEARING_RATE, BASIS, true);
+        escrow.chargeIntexAuctionAsset(DAY, _winners(2), 0, 0, CLEARING_RATE, BASIS, true);
     }
 
     function test_ClaimAsAWinner() public {
         uint256 before = gasleft();
-        escrow.releaseRefund(DAY, _bidder(0));
+        escrow.returnIntexAuctionAsset(DAY, _bidder(0));
         emit log_named_uint("claim_finalized_winner", before - gasleft());
     }
 
     function test_ClaimAsAWinnerHoldingTheToken() public {
         uint256 before = gasleft();
-        escrow.releaseRefund(DAY, _bidder(1));
+        escrow.returnIntexAuctionAsset(DAY, _bidder(1));
         emit log_named_uint("claim_finalized_winner_held", before - gasleft());
     }
 
     function test_ClaimAsALoser() public {
         uint256 before = gasleft();
-        escrow.releaseRefund(DAY, _bidder(2));
+        escrow.returnIntexAuctionAsset(DAY, _bidder(2));
         emit log_named_uint("claim_finalized_loser", before - gasleft());
     }
 
@@ -249,7 +249,7 @@ contract RefundClaimFinalizedGasTest is RefundGasBase {
     }
 
     function test_CloseAWinWhoseChangeWasRefunded() public {
-        escrow.releaseRefund(DAY, _bidder(0));
+        escrow.returnIntexAuctionAsset(DAY, _bidder(0));
         uint256 before = gasleft();
         escrow.redeemWinNote(DAY, _bidder(0));
         emit log_named_uint("close_win_without_change", before - gasleft());
@@ -297,7 +297,7 @@ contract RefundDayGasTest is RefundGasBase {
     /// @dev The day's only chunk: it settles its winners and routes the day's proceeds.
     function _deliverClosingChunk(uint16 winnerCount) internal returns (uint256 spent) {
         spent = _deliverChunk(winnerCount, 0, 1);
-        (, bool finalized,) = escrow.getAuctionStatus(DAY);
+        (, bool finalized,) = escrow.auctionStatus(DAY);
         assertTrue(finalized, "the only chunk closes the day");
     }
 
@@ -310,7 +310,7 @@ contract RefundDayGasTest is RefundGasBase {
     function test_AChunkThatDoesNotCloseTheDay() public {
         uint256 spent = _deliverChunk(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN, 0, 2);
         emit log_named_uint("day_chunk_64w_open", spent);
-        (, bool finalized,) = escrow.getAuctionStatus(DAY);
+        (, bool finalized,) = escrow.auctionStatus(DAY);
         assertFalse(finalized, "an unfinished day stays open");
         assertEq(token.balanceOf(address(router)), 0, "the chunk's proceeds left with it");
         assertLt(

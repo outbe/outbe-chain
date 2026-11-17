@@ -14,7 +14,7 @@ import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 
 /// @dev Auction stand-in whose every day reads as failed.
 contract FailedDayAuction {
-    function getAuctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
+    function auctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
         return IIntexAuction.AuctionStage.Failed;
     }
 }
@@ -33,7 +33,7 @@ contract ClosableEscrowAdapter {
         closed = true;
     }
 
-    function finalizeAuction(uint32, bytes32, address[] calldata, uint16, uint16, uint64, uint128, bool)
+    function chargeIntexAuctionAsset(uint32, address[] calldata, uint16, uint16, uint64, uint128, bool)
         external
         returns (uint128)
     {
@@ -41,7 +41,7 @@ contract ClosableEscrowAdapter {
         return 0;
     }
 
-    function getAuctionStatus(uint32) external view returns (bool, bool, uint128) {
+    function auctionStatus(uint32) external view returns (bool, bool, uint128) {
         return (false, closed, 0);
     }
 }

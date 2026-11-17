@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {AuctionResultLib} from "../helpers/AuctionResultLib.sol";
+
 import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {BidPackLib} from "../helpers/BidPackLib.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
@@ -48,7 +50,7 @@ contract BodyVersionTest is Test {
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_BIDS_REMAINING, "bidsRemaining.msgType");
         assertEq(encoded.length, BridgeMsgCodec.MIN_LEN_BIDS_REMAINING, "bidsRemaining.length");
 
-        encoded = BridgeMsgCodec.encodeAuctionResult(1, 7, 5e6, 3);
+        encoded = BridgeMsgCodec.encodeAuctionResult(1, AuctionResultLib.day(7, 5e6, 3));
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "auctionResult.version");
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_AUCTION_RESULT, "auctionResult.msgType");
         assertEq(encoded.length, 22, "auctionResult.length");
@@ -84,24 +86,23 @@ contract BodyVersionTest is Test {
         assertEq(schedule.issuanceEnd, 300);
         assertEq(params.prices[0].isoCode, 10);
         assertEq(params.promisLoadMinor, 1e6);
-        assertEq(params.minIntexBidRate, 5e6);
+        assertEq(params.minBidRate, 5e6);
         assertEq(params.prices[0].entryPriceMinor, 7e6);
         assertEq(params.prices[0].callPriceMinor, 13e6);
         assertEq(params.callTrigger.callNoticePeriod, 5);
         assertEq(params.callTrigger.callWindow, 6);
         assertEq(params.callTrigger.callThreshold, 7);
-        assertEq(params.minIntexBidQuantity, 3);
-        assertEq(params.commitBondMinor, 17e6);
+        assertEq(params.minBidQuantity, 3);
+        assertEq(params.bidBondMinor, 17e6);
     }
 
     function test_BridgeCodec_AuctionResult_RoundTrip() public view {
-        bytes memory packet = BridgeMsgCodec.encodeAuctionResult(42, 7, 13e6, 5);
-        (uint32 emissionDay, uint32 issuedCount, uint64 clearingPrice, uint32 wonCount) =
-            this.exposedDecodeAuctionResult(packet);
+        bytes memory packet = BridgeMsgCodec.encodeAuctionResult(42, AuctionResultLib.day(7, 13e6, 5));
+        (uint32 emissionDay, BridgeMsgCodec.IntexAuctionChainResult memory r) = this.exposedDecodeAuctionResult(packet);
         assertEq(emissionDay, 42);
-        assertEq(issuedCount, 7);
-        assertEq(clearingPrice, 13e6);
-        assertEq(wonCount, 5);
+        assertEq(r.quantity, 7);
+        assertEq(r.clearingRate, 13e6);
+        assertEq(r.wonBidsCount, 5);
     }
 
     function test_BridgeCodec_MarkCalled_RoundTrip() public view {
@@ -122,7 +123,7 @@ contract BodyVersionTest is Test {
     }
 
     function test_BridgeCodec_UnknownBodyVersion_AuctionResult_Reverts() public {
-        bytes memory packet = BridgeMsgCodec.encodeAuctionResult(1, 1, 1, 1);
+        bytes memory packet = BridgeMsgCodec.encodeAuctionResult(1, AuctionResultLib.day(1, 1, 1));
         packet[0] = 0x42;
         vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.UnsupportedBodyVersion.selector, 0x42));
         this.exposedDecodeAuctionResult(packet);
@@ -224,7 +225,11 @@ contract BodyVersionTest is Test {
         return BridgeMsgCodec.decodeAuctionStageCollectingBids(p);
     }
 
-    function exposedDecodeAuctionResult(bytes calldata p) external pure returns (uint32, uint32, uint64, uint32) {
+    function exposedDecodeAuctionResult(bytes calldata p)
+        external
+        pure
+        returns (uint32, BridgeMsgCodec.IntexAuctionChainResult memory)
+    {
         return BridgeMsgCodec.decodeAuctionResult(p);
     }
 

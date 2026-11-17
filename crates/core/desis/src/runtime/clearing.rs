@@ -241,20 +241,18 @@ fn clear_inner(
     // Send AUCTION_RESULT to every snapshot chain; skipped/zero-winner chains get
     // wonBidsCount 0 so their local auction still completes.
     for &chain_id in snapshot {
-        let won_bids_count = result
-            .winner_chains
-            .iter()
-            .filter(|&&c| c == chain_id)
-            .count() as u32;
+        let (won_bids_count, won_quantity) = chain_winnings(&result, chain_id);
         storage.call(
             ORIGIN_ROUTER_ADDRESS,
             U256::ZERO,
             IOriginRouter::sendAuctionResultCall {
                 dstChainId: chain_id,
                 emissionDay: emission_day.into(),
-                issuedUnits: result.issued_units,
-                auctionClearingRate: u64::from(result.clearing_rate),
+                wonQuantity: won_quantity,
                 wonBidsCount: won_bids_count,
+                quantity: result.issued_units,
+                clearingRate: u64::from(result.clearing_rate),
+                totalDemand: total_demand,
             }
             .abi_encode()
             .into(),
@@ -409,4 +407,17 @@ fn require_stage(
         return Err(DesisError::InvalidStageTransition.into());
     }
     Ok(())
+}
+
+/// The winning bids of `chain_id` and the Intex quantity they won.
+fn chain_winnings(result: &ClearingResult, chain_id: u32) -> (u32, u32) {
+    result
+        .winner_chains
+        .iter()
+        .zip(&result.winner_quantities)
+        .filter(|(chain, _)| **chain == chain_id)
+        .fold((0u32, 0u32), |(bids, quantity), (_, won)| {
+            let won = u32::try_from(*won).unwrap_or(u32::MAX);
+            (bids.saturating_add(1), quantity.saturating_add(won))
+        })
 }

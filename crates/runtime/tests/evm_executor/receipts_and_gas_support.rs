@@ -684,9 +684,11 @@ fn assert_deferred_state(
         let first_result = router_abi::IOriginRouter::sendAuctionResultCall {
             dstChainId: 1,
             emissionDay: 20240101,
-            issuedUnits: 0,
-            auctionClearingRate: 0,
+            wonQuantity: 0,
             wonBidsCount: 0,
+            quantity: 0,
+            clearingRate: 0,
+            totalDemand: 0,
         }
         .abi_encode();
         let counter = U256::from_be_bytes(keccak256(first_result).0);

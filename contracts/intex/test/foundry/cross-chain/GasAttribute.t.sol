@@ -50,7 +50,7 @@ contract GasAttributeTest is CrossChainTest {
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         vm.prank(desis);
         outbe.sendAuctionStageStart(p);
-        _assertLastGas(IntexGas.auctionStart(1));
+        _assertLastGas(IntexGas.startAuction(1));
     }
 
     function test_variableMessage_gasScalesWithItemCount() public {

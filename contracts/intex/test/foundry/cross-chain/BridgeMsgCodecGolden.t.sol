@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {AuctionResultLib} from "../helpers/AuctionResultLib.sol";
+
 import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {BidPackLib} from "../helpers/BidPackLib.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
@@ -63,9 +65,17 @@ contract BridgeMsgCodecGoldenTest is Test {
     }
 
     function test_Golden_AuctionResult() public pure {
-        bytes memory encoded =
-            BridgeMsgCodec.encodeAuctionResult(0x11223344, 0x55667788, 0x99AABBCCDDEEFF00, 0xA1B2C3D4);
-        assertEq(encoded, hex"0105112233445566778899aabbccddeeff00a1b2c3d4");
+        bytes memory encoded = BridgeMsgCodec.encodeAuctionResult(
+            0x11223344,
+            BridgeMsgCodec.IntexAuctionChainResult({
+                wonQuantity: 0x55667788,
+                wonBidsCount: 0x99AABBCC,
+                quantity: 0xA1B2C3D4,
+                clearingRate: 0x0102030405060708,
+                totalDemand: 0xF1F2F3F4F5F6F7F8
+            })
+        );
+        assertEq(encoded, hex"01051122334455667788" hex"99aabbcca1b2c3d40102030405060708f1f2f3f4f5f6f7f8");
         assertEq(encoded.length, BridgeMsgCodec.MIN_LEN_AUCTION_RESULT);
     }
 
@@ -123,24 +133,32 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(schedule.issuanceEnd, 0xDDEEFF00, "issuanceEnd");
         assertEq(params.prices[0].isoCode, 0xD1D2, "priceIsoCode");
         assertEq(params.promisLoadMinor, 0x0102030405060708090A0B0C0D0E0F10, "promisLoadMinor");
-        assertEq(params.minIntexBidRate, 0x1A2B3C4D, "minIntexBidRate");
+        assertEq(params.minBidRate, 0x1A2B3C4D, "minBidRate");
         assertEq(params.prices[0].entryPriceMinor, 0x1122334455667788, "entryPrice");
         assertEq(params.prices[0].callPriceMinor, 0xA1B2C3D4E5F60718, "callPriceMinor");
         assertEq(params.callTrigger.callNoticePeriod, 0xCAFEBABE, "callNoticePeriod");
         assertEq(params.callTrigger.callWindow, 0x5678, "callWindow");
         assertEq(params.callTrigger.callThreshold, 0x9ABC, "callThreshold");
-        assertEq(params.minIntexBidQuantity, 0xABCD, "minIntexBidQuantity");
-        assertEq(params.commitBondMinor, 0xF1F2F3F4F5F6F7F8F9FAFBFCFDFEFF01, "commitBondMinor");
+        assertEq(params.minBidQuantity, 0xABCD, "minBidQuantity");
+        assertEq(params.bidBondMinor, 0xF1F2F3F4F5F6F7F8F9FAFBFCFDFEFF01, "bidBondMinor");
     }
 
     function test_RoundTrip_AuctionResult_AllFields() public view {
-        (uint32 emissionDay, uint32 issuedUnits, uint64 clearingPrice, uint32 wonBidsCount) = this.exposedDecodeAuctionResult(
-            BridgeMsgCodec.encodeAuctionResult(0x11223344, 0x55667788, 0x99AABBCCDDEEFF00, 0xA1B2C3D4)
-        );
+        BridgeMsgCodec.IntexAuctionChainResult memory sent = BridgeMsgCodec.IntexAuctionChainResult({
+            wonQuantity: 0x55667788,
+            wonBidsCount: 0x99AABBCC,
+            quantity: 0xA1B2C3D4,
+            clearingRate: 0x0102030405060708,
+            totalDemand: 0xF1F2F3F4F5F6F7F8
+        });
+        (uint32 emissionDay, BridgeMsgCodec.IntexAuctionChainResult memory r) =
+            this.exposedDecodeAuctionResult(BridgeMsgCodec.encodeAuctionResult(0x11223344, sent));
         assertEq(emissionDay, 0x11223344, "emissionDay");
-        assertEq(issuedUnits, 0x55667788, "issuedUnits");
-        assertEq(clearingPrice, 0x99AABBCCDDEEFF00, "clearingPrice");
-        assertEq(wonBidsCount, 0xA1B2C3D4, "wonBidsCount");
+        assertEq(r.wonQuantity, sent.wonQuantity, "wonQuantity");
+        assertEq(r.wonBidsCount, sent.wonBidsCount, "wonBidsCount");
+        assertEq(r.quantity, sent.quantity, "quantity");
+        assertEq(r.clearingRate, sent.clearingRate, "clearingRate");
+        assertEq(r.totalDemand, sent.totalDemand, "totalDemand");
     }
 
     function test_RoundTrip_BidsBatch_AllFields() public view {
@@ -276,7 +294,11 @@ contract BridgeMsgCodecGoldenTest is Test {
 
     // External calldata wrappers for the internal decoders.
 
-    function exposedDecodeAuctionResult(bytes calldata p) external pure returns (uint32, uint32, uint64, uint32) {
+    function exposedDecodeAuctionResult(bytes calldata p)
+        external
+        pure
+        returns (uint32, BridgeMsgCodec.IntexAuctionChainResult memory)
+    {
         return BridgeMsgCodec.decodeAuctionResult(p);
     }
 

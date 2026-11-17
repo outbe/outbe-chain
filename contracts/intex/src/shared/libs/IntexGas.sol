@@ -97,7 +97,7 @@ library IntexGas {
         return BIDS_BASE + itemCount * BIDS_PER_ITEM;
     }
 
-    function auctionStart(uint256 priceCount) internal pure returns (uint256) {
+    function startAuction(uint256 priceCount) internal pure returns (uint256) {
         return AUCTION_STAGE_START_BASE + priceCount * AUCTION_STAGE_START_PER_PRICE;
     }
 

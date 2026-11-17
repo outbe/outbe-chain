@@ -143,15 +143,15 @@ contract LocalHyperlaneGateway is IERC7786GatewaySource, IGatewayQuote {
 /// @dev Bids live in storage and `setUp` seeds them, so the relay reads them cold as in production.
 ///      `GasBudget.t.sol`'s stub fabricates them in memory and misses two slots per bid.
 contract StoredBidStub {
-    IIntexAuction.SubmittedBidData[] private _bids;
+    IIntexAuction.SubmittedIntexAuctionBidData[] private _bids;
     uint256 private _visible;
     uint256 private _flipGas;
 
     function seed(uint256 count) external {
         for (uint256 i = 0; i < count; ++i) {
             _bids.push(
-                IIntexAuction.SubmittedBidData({
-                    bidderAddress: address(uint160(0xCAFE + i)),
+                IIntexAuction.SubmittedIntexAuctionBidData({
+                    bidder: address(uint160(0xCAFE + i)),
                     intexBidRate: 100e6,
                     intexQuantity: 1,
                     timestamp: uint32(block.timestamp),
@@ -171,7 +171,7 @@ contract StoredBidStub {
     }
 
     /// @dev Burns what the real flip costs (452k, `GasBudget.t.sol`) so a budget test pays for it.
-    function startAwaitingResult(uint32) external view {
+    function startAuctionClearing(uint32) external view {
         uint256 floorGas = gasleft() - _flipGas;
         uint256 spin;
         while (gasleft() > floorGas) {
@@ -179,24 +179,24 @@ contract StoredBidStub {
         }
     }
 
-    function getAuctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
+    function auctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
         return IIntexAuction.AuctionStage.AwaitingResult;
     }
 
-    function revealedBidsCount(uint32) external view returns (uint256) {
+    function revealedIntexAuctionBidsCount(uint32) external view returns (uint256) {
         return _visible;
     }
 
-    function revealedBidsSlice(uint32, uint256 offset, uint256 limit)
+    function revealedIntexAuctionBidsSlice(uint32, uint256 offset, uint256 limit)
         external
         view
-        returns (IIntexAuction.SubmittedBidData[] memory slice)
+        returns (IIntexAuction.SubmittedIntexAuctionBidData[] memory slice)
     {
         uint256 length = _visible;
-        if (offset >= length) return new IIntexAuction.SubmittedBidData[](0);
+        if (offset >= length) return new IIntexAuction.SubmittedIntexAuctionBidData[](0);
         uint256 end = offset + limit;
         if (end > length) end = length;
-        slice = new IIntexAuction.SubmittedBidData[](end - offset);
+        slice = new IIntexAuction.SubmittedIntexAuctionBidData[](end - offset);
         for (uint256 i = 0; i < slice.length; ++i) {
             slice[i] = _bids[offset + i];
         }

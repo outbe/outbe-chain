@@ -540,19 +540,29 @@
         "internalType": "uint32"
       },
       {
-        "name": "issuedUnits",
+        "name": "wonQuantity",
         "type": "uint32",
         "internalType": "uint32"
-      },
-      {
-        "name": "auctionClearingRate",
-        "type": "uint64",
-        "internalType": "uint64"
       },
       {
         "name": "wonBidsCount",
         "type": "uint32",
         "internalType": "uint32"
+      },
+      {
+        "name": "quantity",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "clearingRate",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "totalDemand",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [
@@ -622,7 +632,7 @@
             "internalType": "uint128"
           },
           {
-            "name": "minIntexBidRate",
+            "name": "minBidRate",
             "type": "uint32",
             "internalType": "uint32"
           },
@@ -664,12 +674,12 @@
             "internalType": "uint32"
           },
           {
-            "name": "minIntexBidQuantity",
+            "name": "minBidQuantity",
             "type": "uint16",
             "internalType": "uint16"
           },
           {
-            "name": "commitBondMinor",
+            "name": "bidBondMinor",
             "type": "uint128",
             "internalType": "uint128"
           }
@@ -1047,37 +1057,6 @@
   },
   {
     "type": "event",
-    "name": "AuctionResultSent",
-    "inputs": [
-      {
-        "name": "sendId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "issuedUnits",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "clearingRate",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "AuctionStageSent",
     "inputs": [
       {
@@ -1289,6 +1268,43 @@
         "name": "dstChainId",
         "type": "uint32",
         "indexed": true,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IntexAuctionResultSent",
+    "inputs": [
+      {
+        "name": "sendId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "wonQuantity",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "wonBidsCount",
+        "type": "uint32",
+        "indexed": false,
         "internalType": "uint32"
       }
     ],

@@ -2,6 +2,7 @@
 pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {IERC6909} from "@openzeppelin/contracts/interfaces/IERC6909.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
@@ -40,7 +41,7 @@ contract EscrowAdapterTest is Test {
     uint32 constant CLEARING_RATE = 600_000;
 
     /// @dev Stand-in for the inbound bridge message id that carries refund instructions. Threaded
-    ///      through `finalizeAuction` into the emitted events.
+    ///      through `chargeIntexAuctionAsset` into the emitted events.
     bytes32 constant RECEIVE_ID = bytes32(uint256(0xDEADBEEF));
 
     /// @dev Live ERC6909 balance held by the escrow in The Compact for the active lockId.
@@ -55,7 +56,7 @@ contract EscrowAdapterTest is Test {
 
         // Wire dependencies (no allow-list precondition anymore).
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(paymentToken));
+        escrow.setDependencies(auction, address(compact), address(paymentToken));
         vm.prank(admin);
         escrow.setProceedsRecipient(proceedsRecipient);
 
@@ -75,7 +76,7 @@ contract EscrowAdapterTest is Test {
 
     function _refund(uint32 emissionDay, address bidder) internal {
         vm.prank(auction);
-        escrow.releaseRefund(emissionDay, bidder);
+        escrow.returnIntexAuctionAsset(emissionDay, bidder);
     }
 
     // --- Constructor Tests ---
@@ -93,9 +94,9 @@ contract EscrowAdapterTest is Test {
 
     // --- Wire Tests ---
     function test_Wire() public view {
-        assertEq(escrow.intexAuctionContract(), auction);
+        assertEq(escrow.intexAuction(), auction);
         assertEq(address(escrow.compact()), address(compact));
-        assertEq(address(escrow.paymentToken()), address(paymentToken));
+        assertEq(address(escrow.intexAuctionAsset()), address(paymentToken));
         assertTrue(escrow.hasRole(escrow.AUCTION_ROLE(), auction));
         assertTrue(escrow.allocatorId() > 0);
     }
@@ -112,7 +113,7 @@ contract EscrowAdapterTest is Test {
         compact2.__registerAllocator(address(0xDEAD), "");
 
         vm.prank(admin);
-        escrow.wire(auction, address(compact2), address(paymentToken));
+        escrow.setDependencies(auction, address(compact2), address(paymentToken));
 
         assertTrue(escrow.allocatorId() != allocatorBefore);
         assertTrue(escrow.lockTag() != lockTagBefore);
@@ -121,7 +122,7 @@ contract EscrowAdapterTest is Test {
     function test_HasOutstandingLocks_ReflectsLockState() public {
         assertFalse(escrow.hasOutstandingLocks());
         vm.prank(auction);
-        escrow.lockFunds(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
         assertTrue(escrow.hasOutstandingLocks());
     }
 
@@ -129,50 +130,48 @@ contract EscrowAdapterTest is Test {
         EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "intexAuction"));
         vm.prank(admin);
-        newEscrow.wire(address(0), address(compact), address(paymentToken));
+        newEscrow.setDependencies(address(0), address(compact), address(paymentToken));
     }
 
     function test_Wire_ZeroCompact() public {
         EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "compact"));
         vm.prank(admin);
-        newEscrow.wire(auction, address(0), address(paymentToken));
+        newEscrow.setDependencies(auction, address(0), address(paymentToken));
     }
 
     function test_Wire_ZeroPaymentToken() public {
         EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "paymentToken"));
         vm.prank(admin);
-        newEscrow.wire(auction, address(compact), address(0));
+        newEscrow.setDependencies(auction, address(compact), address(0));
     }
 
-    function test_Wire_EmitsWired_OnInitial() public {
+    function test_SetDependencies_EmitsTheNewValues() public {
         EscrowAdapter freshEscrow = DeployProxy.escrowAdapter(admin, bridger);
-        // Initial wire: every `*Old` field is the zero address.
         vm.expectEmit(true, true, true, true);
-        emit IEscrowAdapter.Wired(address(0), auction, address(0), address(compact), address(0), address(paymentToken));
-        vm.prank(admin);
-        freshEscrow.wire(auction, address(compact), address(paymentToken));
-    }
-
-    function test_Wire_EmitsWired_OnRotation() public {
-        // Rotate the auction address. The asset stays, so no version is retired.
-        // setUp wired `escrow` with (auction, compact, paymentToken). Only the auction rotates,
-        // so its old value is non-zero and the rest carry their prior addresses.
-        address newAuction = address(0xBEEF);
-        vm.expectEmit(true, true, true, true);
-        emit IEscrowAdapter.Wired(
-            auction, newAuction, address(compact), address(compact), address(paymentToken), address(paymentToken)
+        emit IEscrowAdapter.EscrowDependenciesSet(
+            auction, address(compact), address(paymentToken), paymentToken.decimals()
         );
         vm.prank(admin);
-        escrow.wire(newAuction, address(compact), address(paymentToken));
+        freshEscrow.setDependencies(auction, address(compact), address(paymentToken));
+    }
+
+    function test_SetDependencies_RotationEmitsOnlyTheNewValues() public {
+        address newAuction = address(0xBEEF);
+        vm.expectEmit(true, true, true, true);
+        emit IEscrowAdapter.EscrowDependenciesSet(
+            newAuction, address(compact), address(paymentToken), paymentToken.decimals()
+        );
+        vm.prank(admin);
+        escrow.setDependencies(newAuction, address(compact), address(paymentToken));
     }
 
     function test_Wire_OnlyAdmin() public {
         EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
         vm.expectRevert();
         vm.prank(outsider);
-        newEscrow.wire(auction, address(compact), address(paymentToken));
+        newEscrow.setDependencies(auction, address(compact), address(paymentToken));
     }
 
     // --- LockFunds Tests ---
@@ -180,19 +179,19 @@ contract EscrowAdapterTest is Test {
         uint256 balanceBefore = paymentToken.balanceOf(bidder1);
 
         vm.prank(auction);
-        escrow.lockFunds(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
         // Check bidder balance decreased
         assertEq(paymentToken.balanceOf(bidder1), balanceBefore - LOCK_AMOUNT);
 
         // Check lock data
-        IEscrowAdapter.BidLock memory lock = escrow.getBidLock(emissionDay1, bidder1);
+        IEscrowAdapter.IntexAuctionBidLock memory lock = escrow.getIntexAuctionBidLock(emissionDay1, bidder1);
         assertEq(lock.lockedAmount, LOCK_AMOUNT);
         assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Locked));
         assertTrue(lock.lockedAt > 0);
 
         // Check auction stats
-        (bool hasLocks, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(emissionDay1);
+        (bool hasLocks, bool isFinalized, uint128 totalLocked) = escrow.auctionStatus(emissionDay1);
         assertTrue(hasLocks);
         assertFalse(isFinalized);
         assertEq(totalLocked, LOCK_AMOUNT);
@@ -201,13 +200,13 @@ contract EscrowAdapterTest is Test {
 
     function test_LockFunds_MultipleBidders() public {
         vm.prank(auction);
-        escrow.lockFunds(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
         vm.prank(auction);
-        escrow.lockFunds(emissionDay1, bidder2, LOCK_UNITS * 2, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(emissionDay1, bidder2, LOCK_UNITS * 2, 1_000_000, 1);
 
         // Check auction stats
-        (bool hasLocks, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(emissionDay1);
+        (bool hasLocks, bool isFinalized, uint128 totalLocked) = escrow.auctionStatus(emissionDay1);
         assertTrue(hasLocks);
         assertFalse(isFinalized);
         assertEq(totalLocked, LOCK_AMOUNT * 3);
@@ -217,13 +216,13 @@ contract EscrowAdapterTest is Test {
     function test_LockFunds_ZeroBidder() public {
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "bidder"));
         vm.prank(auction);
-        escrow.lockFunds(emissionDay1, address(0), LOCK_UNITS, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(emissionDay1, address(0), LOCK_UNITS, 1_000_000, 1);
     }
 
     function test_LockFunds_ZeroAmount() public {
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroValue.selector, "amount"));
         vm.prank(auction);
-        escrow.lockFunds(emissionDay1, bidder1, 0, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(emissionDay1, bidder1, 0, 1_000_000, 1);
     }
 
     /// @notice cheap sanity floor on `emissionDay`. The `AUCTION_ROLE` gate already guarantees
@@ -232,30 +231,30 @@ contract EscrowAdapterTest is Test {
     function test_LockFunds_ZeroEmissionDay() public {
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroValue.selector, "emissionDay"));
         vm.prank(auction);
-        escrow.lockFunds(0, bidder1, LOCK_UNITS, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(0, bidder1, LOCK_UNITS, 1_000_000, 1);
     }
 
     function test_LockFunds_AlreadyLocked() public {
         vm.prank(auction);
-        escrow.lockFunds(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
-        vm.expectRevert(IEscrowAdapter.BidAlreadyLocked.selector);
+        vm.expectRevert(IEscrowAdapter.IntexAuctionBidAlreadyLocked.selector);
         vm.prank(auction);
-        escrow.lockFunds(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
     }
 
     function test_LockFunds_OnlyAuctionRole() public {
         vm.expectRevert();
         vm.prank(outsider);
-        escrow.lockFunds(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
         vm.expectRevert();
         vm.prank(admin);
-        escrow.lockFunds(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
         vm.expectRevert();
         vm.prank(bridger);
-        escrow.lockFunds(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
     }
 
     // --- FinalizeAuction Tests ---
@@ -266,7 +265,7 @@ contract EscrowAdapterTest is Test {
         amount = uint128(_protocol(quantity, BASIS, bidRate) * WCOEN_SCALE);
         paymentToken.mint(bidder, amount);
         vm.prank(auction);
-        escrow.lockFunds(emissionDay1, bidder, BASIS, bidRate, quantity);
+        escrow.lockIntexAuctionAsset(emissionDay1, bidder, BASIS, bidRate, quantity);
     }
 
     function _paidAtClearing(uint16 quantity) internal pure returns (uint128) {
@@ -286,7 +285,7 @@ contract EscrowAdapterTest is Test {
 
     function _finalize(address[] memory winners) internal returns (uint128) {
         vm.prank(bridger);
-        return escrow.finalizeAuction(emissionDay1, RECEIVE_ID, winners, 0, 0, CLEARING_RATE, BASIS, true);
+        return escrow.chargeIntexAuctionAsset(emissionDay1, winners, 0, 0, CLEARING_RATE, BASIS, true);
     }
 
     function test_FinalizeAuction_LoserIsLeftToClaim() public {
@@ -296,13 +295,13 @@ contract EscrowAdapterTest is Test {
         _finalize(new address[](0));
 
         assertEq(paymentToken.balanceOf(bidder1), bidderBalanceBefore, "nothing is pushed to a loser");
-        (bool hasLocks, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(emissionDay1);
+        (bool hasLocks, bool isFinalized, uint128 totalLocked) = escrow.auctionStatus(emissionDay1);
         assertTrue(hasLocks);
         assertTrue(isFinalized);
         assertEq(totalLocked, locked);
         assertEq(_liveCompactBalance(), locked);
 
-        IEscrowAdapter.BidLock memory lock = escrow.getBidLock(emissionDay1, bidder1);
+        IEscrowAdapter.IntexAuctionBidLock memory lock = escrow.getIntexAuctionBidLock(emissionDay1, bidder1);
         assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Locked));
     }
 
@@ -323,9 +322,9 @@ contract EscrowAdapterTest is Test {
         _refund(emissionDay1, bidder1); // at once
 
         assertEq(paymentToken.balanceOf(bidder1), balBefore + locked, "full principal refunded");
-        IEscrowAdapter.BidLock memory lock = escrow.getBidLock(emissionDay1, bidder1);
+        IEscrowAdapter.IntexAuctionBidLock memory lock = escrow.getIntexAuctionBidLock(emissionDay1, bidder1);
         assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.None), "lock deleted");
-        (,, uint128 totalLocked) = escrow.getAuctionStatus(emissionDay1);
+        (,, uint128 totalLocked) = escrow.auctionStatus(emissionDay1);
         assertEq(totalLocked, 0, "totalLocked cleared (bidder2 at finalize, bidder1 on claim)");
 
         _refund(emissionDay1, bidder1);
@@ -337,7 +336,9 @@ contract EscrowAdapterTest is Test {
         uint256 recipientBalanceBefore = paymentToken.balanceOf(proceedsRecipient);
 
         vm.expectEmit(true, true, false, true);
-        emit IEscrowAdapter.AuctionEscrowFinalized(RECEIVE_ID, emissionDay1, 0, locked, 1);
+        emit IEscrowAdapter.IntexAuctionAssetCharged(emissionDay1, bidder1, address(paymentToken), locked);
+        vm.expectEmit(true, true, false, true);
+        emit IEscrowAdapter.IntexAuctionWinNoteCreated(emissionDay1, bidder1, 3);
         uint128 routed = _finalize(_winners(bidder1));
 
         // Proceeds handed to the configured recipient for cross-chain routing, not the caller.
@@ -345,11 +346,11 @@ contract EscrowAdapterTest is Test {
         assertEq(paymentToken.balanceOf(proceedsRecipient), recipientBalanceBefore + locked);
         assertEq(paymentToken.balanceOf(bridger), 0);
 
-        IEscrowAdapter.BidLock memory lock = escrow.getBidLock(emissionDay1, bidder1);
+        IEscrowAdapter.IntexAuctionBidLock memory lock = escrow.getIntexAuctionBidLock(emissionDay1, bidder1);
         assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Won), "the units wait for the winner");
         assertEq(lock.lockedAmount, 0, "no change left");
         assertEq(lock.quantity, 3, "the units won");
-        (, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(emissionDay1);
+        (, bool isFinalized, uint128 totalLocked) = escrow.auctionStatus(emissionDay1);
         assertTrue(isFinalized);
         assertEq(totalLocked, 0);
     }
@@ -361,36 +362,43 @@ contract EscrowAdapterTest is Test {
         uint256 recipientBalanceBefore = paymentToken.balanceOf(proceedsRecipient);
 
         vm.expectEmit(true, true, false, true);
-        emit IEscrowAdapter.AuctionEscrowFinalized(RECEIVE_ID, emissionDay1, locked - paid, paid, 1);
+        emit IEscrowAdapter.IntexAuctionAssetCharged(emissionDay1, bidder1, address(paymentToken), paid);
         _finalize(_winners(bidder1));
 
         assertEq(paymentToken.balanceOf(proceedsRecipient), recipientBalanceBefore + paid, "payment routed");
         assertEq(paymentToken.balanceOf(bidder1), bidderBalanceBefore, "the refund waits for its claim");
-        assertEq(uint8(escrow.getBidLock(emissionDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Won));
-        (,, uint128 totalLocked) = escrow.getAuctionStatus(emissionDay1);
+        assertEq(
+            uint8(escrow.getIntexAuctionBidLock(emissionDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Won)
+        );
+        (,, uint128 totalLocked) = escrow.auctionStatus(emissionDay1);
         assertEq(totalLocked, locked - paid, "only the refund stays held");
 
         _refund(emissionDay1, bidder1);
 
         assertEq(paymentToken.balanceOf(bidder1), bidderBalanceBefore + locked - paid, "refund claimed at once");
-        (,, totalLocked) = escrow.getAuctionStatus(emissionDay1);
+        (,, totalLocked) = escrow.auctionStatus(emissionDay1);
         assertEq(totalLocked, 0);
         assertEq(_liveCompactBalance(), 0);
     }
 
     function test_FinalizeAuction_MultipleBidders() public {
-        uint128 locked1 = _lockBid(bidder1, 900_000, 1);
-        uint128 locked2 = _lockBid(bidder2, 700_000, 4);
-        uint128 paid = _paidAtClearing(1) + _paidAtClearing(4);
+        _lockBid(bidder1, 900_000, 1);
+        _lockBid(bidder2, 700_000, 4);
 
         vm.expectEmit(true, true, false, true);
-        emit IEscrowAdapter.AuctionEscrowFinalized(RECEIVE_ID, emissionDay1, locked1 + locked2 - paid, paid, 2);
+        emit IEscrowAdapter.IntexAuctionAssetCharged(emissionDay1, bidder1, address(paymentToken), _paidAtClearing(1));
+        vm.expectEmit(true, true, false, true);
+        emit IEscrowAdapter.IntexAuctionWinNoteCreated(emissionDay1, bidder1, 1);
+        vm.expectEmit(true, true, false, true);
+        emit IEscrowAdapter.IntexAuctionAssetCharged(emissionDay1, bidder2, address(paymentToken), _paidAtClearing(4));
+        vm.expectEmit(true, true, false, true);
+        emit IEscrowAdapter.IntexAuctionWinNoteCreated(emissionDay1, bidder2, 4);
         _finalize(_winners(bidder1, bidder2));
 
         _refund(emissionDay1, bidder1);
         _refund(emissionDay1, bidder2);
 
-        (, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(emissionDay1);
+        (, bool isFinalized, uint128 totalLocked) = escrow.auctionStatus(emissionDay1);
         assertTrue(isFinalized);
         assertEq(totalLocked, 0);
         assertEq(_liveCompactBalance(), 0);
@@ -400,10 +408,10 @@ contract EscrowAdapterTest is Test {
         uint128 locked = _lockBid(bidder1, 500_000, 1);
 
         vm.prank(bridger);
-        uint128 routed = escrow.finalizeAuction(emissionDay1, RECEIVE_ID, new address[](0), 0, 0, 0, 0, true);
+        uint128 routed = escrow.chargeIntexAuctionAsset(emissionDay1, new address[](0), 0, 0, 0, 0, true);
 
         assertEq(routed, 0);
-        (, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(emissionDay1);
+        (, bool isFinalized, uint128 totalLocked) = escrow.auctionStatus(emissionDay1);
         assertTrue(isFinalized, "a chain with no winners still closes its day");
         assertEq(totalLocked, locked);
     }
@@ -415,7 +423,7 @@ contract EscrowAdapterTest is Test {
         address[] memory winners = _winners(bidder1);
         vm.expectRevert(IEscrowAdapter.AlreadyFinalized.selector);
         vm.prank(bridger);
-        escrow.finalizeAuction(emissionDay1, RECEIVE_ID, winners, 0, 0, CLEARING_RATE, BASIS, true);
+        escrow.chargeIntexAuctionAsset(emissionDay1, winners, 0, 0, CLEARING_RATE, BASIS, true);
     }
 
     function test_FinalizeAuction_ZeroBidder_EmitsBidderRefundFailed() public {
@@ -423,20 +431,20 @@ contract EscrowAdapterTest is Test {
         _lockBid(bidder1, 900_000, 1);
 
         vm.expectEmit(true, true, true, true);
-        emit IEscrowAdapter.BidderRefundFailed(
-            RECEIVE_ID, emissionDay1, address(0), abi.encodeWithSelector(IEscrowAdapter.LockNotActive.selector)
+        emit IEscrowAdapter.IntexAuctionWinNoteCreateFailed(
+            emissionDay1, address(0), abi.encodeWithSelector(IEscrowAdapter.LockNotActive.selector)
         );
         _finalize(_winners(address(0)));
 
         // bidder1's lock is still recoverable by the bidder through its refund.
-        IEscrowAdapter.BidLock memory lock = escrow.getBidLock(emissionDay1, bidder1);
+        IEscrowAdapter.IntexAuctionBidLock memory lock = escrow.getIntexAuctionBidLock(emissionDay1, bidder1);
         assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Locked));
     }
 
     function test_FinalizeAuction_LockNotActive_EmitsBidderRefundFailed() public {
         vm.expectEmit(true, true, true, true);
-        emit IEscrowAdapter.BidderRefundFailed(
-            RECEIVE_ID, emissionDay1, bidder1, abi.encodeWithSelector(IEscrowAdapter.LockNotActive.selector)
+        emit IEscrowAdapter.IntexAuctionWinNoteCreateFailed(
+            emissionDay1, bidder1, abi.encodeWithSelector(IEscrowAdapter.LockNotActive.selector)
         );
         _finalize(_winners(bidder1));
     }
@@ -448,17 +456,20 @@ contract EscrowAdapterTest is Test {
         uint128 locked2 = _lockBid(bidder2, 900_000, 1);
 
         vm.expectEmit(true, true, true, true);
-        emit IEscrowAdapter.BidderRefundFailed(
-            RECEIVE_ID,
+        emit IEscrowAdapter.IntexAuctionWinNoteCreateFailed(
             emissionDay1,
             bidder1,
-            abi.encodeWithSelector(IEscrowAdapter.PaymentExceedsLock.selector, locked1, uint256(_paidAtClearing(1)))
+            abi.encodeWithSelector(IEscrowAdapter.ChargeExceedsLock.selector, locked1, uint256(_paidAtClearing(1)))
         );
         _finalize(_winners(bidder1, bidder2));
 
-        assertEq(uint8(escrow.getBidLock(emissionDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Locked));
-        assertEq(uint8(escrow.getBidLock(emissionDay1, bidder2).status), uint8(IEscrowAdapter.LockStatus.Won));
-        (,, uint128 totalLocked) = escrow.getAuctionStatus(emissionDay1);
+        assertEq(
+            uint8(escrow.getIntexAuctionBidLock(emissionDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Locked)
+        );
+        assertEq(
+            uint8(escrow.getIntexAuctionBidLock(emissionDay1, bidder2).status), uint8(IEscrowAdapter.LockStatus.Won)
+        );
+        (,, uint128 totalLocked) = escrow.auctionStatus(emissionDay1);
         assertEq(totalLocked, locked1 + locked2 - _paidAtClearing(1));
     }
 
@@ -466,25 +477,32 @@ contract EscrowAdapterTest is Test {
         uint128 locked = _lockBid(bidder1, 500_000, 1);
 
         vm.expectEmit(true, true, true, true);
-        emit IEscrowAdapter.BidderRefundFailed(
-            RECEIVE_ID,
+        emit IEscrowAdapter.IntexAuctionWinNoteCreateFailed(
             emissionDay1,
             bidder1,
-            abi.encodeWithSelector(IEscrowAdapter.PaymentExceedsLock.selector, locked, uint256(_paidAtClearing(1)))
+            abi.encodeWithSelector(IEscrowAdapter.ChargeExceedsLock.selector, locked, uint256(_paidAtClearing(1)))
         );
         _finalize(_winners(bidder1));
 
         // Lock remains active for recovery.
-        IEscrowAdapter.BidLock memory lock = escrow.getBidLock(emissionDay1, bidder1);
+        IEscrowAdapter.IntexAuctionBidLock memory lock = escrow.getIntexAuctionBidLock(emissionDay1, bidder1);
         assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Locked));
     }
 
-    function test_FinalizeAuction_AllFail_EmitsFinalizationNoOp() public {
+    function test_FinalizeAuction_AllFail_CreatesNoWinNote() public {
         _lockBid(bidder1, 500_000, 1);
 
-        vm.expectEmit(true, false, false, true, address(escrow));
-        emit IEscrowAdapter.FinalizationNoOp(emissionDay1, 1);
+        vm.recordLogs();
         _finalize(_winners(bidder1));
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint256 created;
+        uint256 failed;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics[0] == IEscrowAdapter.IntexAuctionWinNoteCreated.selector) created++;
+            if (logs[i].topics[0] == IEscrowAdapter.IntexAuctionWinNoteCreateFailed.selector) failed++;
+        }
+        assertEq(created, 0, "no note");
+        assertEq(failed, 1, "one failure event for the winner");
     }
 
     function test_FinalizeAuction_OnlyBridgeRole() public {
@@ -493,22 +511,22 @@ contract EscrowAdapterTest is Test {
 
         vm.expectRevert();
         vm.prank(outsider);
-        escrow.finalizeAuction(emissionDay1, RECEIVE_ID, winners, 0, 0, CLEARING_RATE, BASIS, true);
+        escrow.chargeIntexAuctionAsset(emissionDay1, winners, 0, 0, CLEARING_RATE, BASIS, true);
 
         vm.expectRevert();
         vm.prank(admin);
-        escrow.finalizeAuction(emissionDay1, RECEIVE_ID, winners, 0, 0, CLEARING_RATE, BASIS, true);
+        escrow.chargeIntexAuctionAsset(emissionDay1, winners, 0, 0, CLEARING_RATE, BASIS, true);
 
         vm.expectRevert();
         vm.prank(auction);
-        escrow.finalizeAuction(emissionDay1, RECEIVE_ID, winners, 0, 0, CLEARING_RATE, BASIS, true);
+        escrow.chargeIntexAuctionAsset(emissionDay1, winners, 0, 0, CLEARING_RATE, BASIS, true);
     }
 
     // --- IAllocator Tests ---
     function test_Attest_ValidLockId() public {
         // First lock some funds to set lockId
         vm.prank(auction);
-        escrow.lockFunds(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
         uint256 lockId = escrow.lockId();
         bytes4 result = escrow.attest(address(0), address(0), address(0), lockId, 0);
@@ -518,7 +536,7 @@ contract EscrowAdapterTest is Test {
     function test_Attest_InvalidLockId() public {
         // First lock some funds to set lockId
         vm.prank(auction);
-        escrow.lockFunds(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.UnexpectedLockId.selector, uint256(999)));
         escrow.attest(address(0), address(0), address(0), 999, 0);
@@ -539,31 +557,31 @@ contract EscrowAdapterTest is Test {
     // --- View Functions Tests ---
     function test_GetBidLock() public {
         vm.prank(auction);
-        escrow.lockFunds(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
-        IEscrowAdapter.BidLock memory lock = escrow.getBidLock(emissionDay1, bidder1);
+        IEscrowAdapter.IntexAuctionBidLock memory lock = escrow.getIntexAuctionBidLock(emissionDay1, bidder1);
         assertEq(lock.lockedAmount, LOCK_AMOUNT);
         assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Locked));
     }
 
     function test_GetBidLock_NonExistent() public view {
-        IEscrowAdapter.BidLock memory lock = escrow.getBidLock(emissionDay1, bidder1);
+        IEscrowAdapter.IntexAuctionBidLock memory lock = escrow.getIntexAuctionBidLock(emissionDay1, bidder1);
         assertEq(lock.lockedAmount, 0);
         assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.None));
     }
 
     function test_GetAuctionStatus() public {
         // Before any locks
-        (bool hasLocks, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(emissionDay1);
+        (bool hasLocks, bool isFinalized, uint128 totalLocked) = escrow.auctionStatus(emissionDay1);
         assertFalse(hasLocks);
         assertFalse(isFinalized);
         assertEq(totalLocked, 0);
 
         // After lock
         vm.prank(auction);
-        escrow.lockFunds(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
-        (hasLocks, isFinalized, totalLocked) = escrow.getAuctionStatus(emissionDay1);
+        (hasLocks, isFinalized, totalLocked) = escrow.auctionStatus(emissionDay1);
         assertTrue(hasLocks);
         assertFalse(isFinalized);
         assertEq(totalLocked, LOCK_AMOUNT);
@@ -577,10 +595,10 @@ contract EscrowAdapterTest is Test {
     // --- Events Tests ---
     function test_Events_FundsLocked() public {
         vm.expectEmit(true, true, false, true);
-        emit IEscrowAdapter.FundsLocked(emissionDay1, bidder1, LOCK_AMOUNT);
+        emit IEscrowAdapter.IntexAuctionAssetLocked(emissionDay1, bidder1, address(paymentToken), LOCK_AMOUNT);
 
         vm.prank(auction);
-        escrow.lockFunds(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
     }
 
     function test_Events_FundsRefunded() public {
@@ -588,16 +606,20 @@ contract EscrowAdapterTest is Test {
         _finalize(_winners(bidder1));
 
         vm.expectEmit(true, true, true, true);
-        emit IEscrowAdapter.FundsRefunded(bytes32(0), emissionDay1, bidder1, locked - _paidAtClearing(1));
+        emit IEscrowAdapter.IntexAuctionAssetReturned(
+            emissionDay1, bidder1, address(paymentToken), locked - _paidAtClearing(1), 0
+        );
         _refund(emissionDay1, bidder1);
     }
 
-    function test_Events_AuctionEscrowFinalized() public {
-        uint128 locked = _lockBid(bidder1, 800_000, 5);
+    function test_each_winner_gets_a_charge_and_a_win_note() public {
+        _lockBid(bidder1, 800_000, 5);
         uint128 paid = _paidAtClearing(5);
 
         vm.expectEmit(true, true, false, true);
-        emit IEscrowAdapter.AuctionEscrowFinalized(RECEIVE_ID, emissionDay1, locked - paid, paid, 1);
+        emit IEscrowAdapter.IntexAuctionAssetCharged(emissionDay1, bidder1, address(paymentToken), paid);
+        vm.expectEmit(true, true, false, true);
+        emit IEscrowAdapter.IntexAuctionWinNoteCreated(emissionDay1, bidder1, 5);
         _finalize(_winners(bidder1));
     }
 
@@ -606,18 +628,18 @@ contract EscrowAdapterTest is Test {
         // Swap active token when no locks are held.
         MockWCOEN rotated = new MockWCOEN();
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(rotated));
+        escrow.setDependencies(auction, address(compact), address(rotated));
 
-        assertEq(address(escrow.paymentToken()), address(rotated));
+        assertEq(address(escrow.intexAuctionAsset()), address(rotated));
     }
 
     function test_Wire_RewireSameDependenciesStaysAllowedWithLocks() public {
         vm.prank(auction);
-        escrow.lockFunds(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(paymentToken));
-        assertEq(escrow.intexAuctionContract(), auction);
+        escrow.setDependencies(auction, address(compact), address(paymentToken));
+        assertEq(escrow.intexAuction(), auction);
     }
 
     /// @dev The previous auction's bidders claim through it, so it stays while anything is left.
@@ -629,47 +651,50 @@ contract EscrowAdapterTest is Test {
 
         vm.prank(admin);
         vm.expectRevert(IEscrowAdapter.LocksOutstanding.selector);
-        escrow.wire(address(0xBEEF), address(compact), address(paymentToken));
+        escrow.setDependencies(address(0xBEEF), address(compact), address(paymentToken));
 
         vm.prank(auction);
         escrow.redeemWinNote(emissionDay1, bidder1);
         assertFalse(escrow.hasOutstandingLocks(), "closed");
 
         vm.prank(admin);
-        escrow.wire(address(0xBEEF), address(compact), address(paymentToken));
-        assertEq(escrow.intexAuctionContract(), address(0xBEEF));
+        escrow.setDependencies(address(0xBEEF), address(compact), address(paymentToken));
+        assertEq(escrow.intexAuction(), address(0xBEEF));
     }
 
-    // --- releaseRefund ---
+    // --- returnIntexAuctionAsset ---
 
     function test_ClaimRefund_AfterDelay_Succeeds() public {
         vm.prank(auction);
-        escrow.lockFunds(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
         uint256 balanceBefore = paymentToken.balanceOf(bidder1);
 
-        vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
+        vm.warp(block.timestamp + escrow.UNFINALIZED_RETURN_DELAY());
 
-        // A refund is not bridge-triggered, so the emitted receiveId is the zero sentinel.
         vm.expectEmit(true, true, true, true);
-        emit IEscrowAdapter.FundsRefunded(bytes32(0), emissionDay1, bidder1, LOCK_AMOUNT);
+        emit IEscrowAdapter.IntexAuctionAssetReturned(emissionDay1, bidder1, address(paymentToken), LOCK_AMOUNT, 0);
         _refund(emissionDay1, bidder1);
 
         assertEq(paymentToken.balanceOf(bidder1), balanceBefore + LOCK_AMOUNT);
-        assertEq(uint8(escrow.getBidLock(emissionDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.None));
+        assertEq(
+            uint8(escrow.getIntexAuctionBidLock(emissionDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.None)
+        );
     }
 
     function test_ClaimRefund_BeforeDelay_Reverts() public {
         uint32 lockedAt = uint32(block.timestamp);
         vm.prank(auction);
-        escrow.lockFunds(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
         // One second before the delay elapses.
-        uint32 claimableAt = lockedAt + escrow.UNFINALIZED_REFUND_DELAY();
+        uint32 claimableAt = lockedAt + escrow.UNFINALIZED_RETURN_DELAY();
         vm.warp(claimableAt - 1);
 
         vm.expectRevert(
-            abi.encodeWithSelector(IEscrowAdapter.RefundNotYetClaimable.selector, claimableAt, claimableAt - 1)
+            abi.encodeWithSelector(
+                IEscrowAdapter.IntexAuctionAssetNotYetReturnable.selector, claimableAt, claimableAt - 1
+            )
         );
         _refund(emissionDay1, bidder1);
     }
@@ -682,8 +707,8 @@ contract EscrowAdapterTest is Test {
 
     function test_ClaimRefund_DoubleClaim_Reverts() public {
         vm.prank(auction);
-        escrow.lockFunds(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
-        vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
+        escrow.lockIntexAuctionAsset(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
+        vm.warp(block.timestamp + escrow.UNFINALIZED_RETURN_DELAY());
 
         _refund(emissionDay1, bidder1);
 
@@ -698,8 +723,8 @@ contract EscrowAdapterTest is Test {
 
     function test_ClaimRefund_ForcedWithdrawalReturnsFalse_Reverts() public {
         vm.prank(auction);
-        escrow.lockFunds(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
-        vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
+        escrow.lockIntexAuctionAsset(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
+        vm.warp(block.timestamp + escrow.UNFINALIZED_RETURN_DELAY());
 
         // The Compact's forced withdrawal returns false (e.g. reset period not elapsed). The
         // adapter must surface this as the dedicated ForcedWithdrawalFailed, not a generic error.
@@ -729,28 +754,7 @@ contract EscrowAdapterTest is Test {
         _refund(emissionDay1, bidder1);
 
         assertEq(paymentToken.balanceOf(bidder1) - balanceBefore, locked, "full principal returned");
-        (,, uint128 totalLocked) = escrow.getAuctionStatus(emissionDay1);
+        (,, uint128 totalLocked) = escrow.auctionStatus(emissionDay1);
         assertEq(totalLocked, 0, "the day's total releases with it");
-    }
-
-    // --- message-id threading ---
-
-    /// @dev A finalize call stamps its inbound bridge message id onto every event it emits, so an
-    ///      indexer can attribute the whole chunk to one cross-chain packet.
-    function test_GuidThreading_AllFinalizeEvents_CarryPacketGuid() public {
-        bytes32 packet = keccak256("inbound-packet-A");
-        uint128 locked = _lockBid(bidder2, 900_000, 1);
-        uint128 paid = _paidAtClearing(1);
-        address[] memory winners = _winners(bidder1, bidder2);
-
-        vm.expectEmit(true, true, true, true);
-        emit IEscrowAdapter.BidderRefundFailed(
-            packet, emissionDay1, bidder1, abi.encodeWithSelector(IEscrowAdapter.LockNotActive.selector)
-        );
-        vm.expectEmit(true, true, false, true);
-        emit IEscrowAdapter.AuctionEscrowFinalized(packet, emissionDay1, locked - paid, paid, 2);
-
-        vm.prank(bridger);
-        escrow.finalizeAuction(emissionDay1, packet, winners, 0, 0, CLEARING_RATE, BASIS, true);
     }
 }

@@ -68,7 +68,7 @@ library BridgeMsgCodec {
     /// @notice Bytes per reference-price row: [iso(2)][entry(8)][call(8)].
     uint16 internal constant REFERENCE_PRICE_LEN = 18;
     uint16 internal constant MIN_LEN_AUCTION_STAGE_COLLECTING_BIDS = 6;
-    uint16 internal constant MIN_LEN_AUCTION_RESULT = 22;
+    uint16 internal constant MIN_LEN_AUCTION_RESULT = 34;
     // AUCTION_CANCEL: [ver(1)][type(1)][emissionDay(4)][reason(1)]
     uint16 internal constant MIN_LEN_AUCTION_CANCEL = 7;
     // MARK_CALLED: header + abi.encode(emissionDay, calledAt, seriesIds). One series is 5 words.
@@ -255,8 +255,8 @@ library BridgeMsgCodec {
     /// @notice Encodes AUCTION_STAGE_START message.
     /// @dev encodePacked layout, 69 bytes of head plus 18 per priced currency:
     ///      [bodyVersion(1)][msgType(1)][emissionDay(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
-    ///      [promisLoadMinor(16)][minIntexBidRate(4)][callNoticePeriod(4)][callWindow(4)]
-    ///      [callThreshold(4)][minIntexBidQuantity(2)][commitBondMinor(16)][priceCount(1)]
+    ///      [promisLoadMinor(16)][minBidRate(4)][callNoticePeriod(4)][callWindow(4)]
+    ///      [callThreshold(4)][minBidQuantity(2)][bidBondMinor(16)][priceCount(1)]
     ///      then [isoCode(2)][entryPrice(8)][callPrice(8)] per currency.
     /// @param _emissionDay The emission day (yyyymmdd).
     /// @param _commitEnd The commit-stage end timestamp.
@@ -336,22 +336,40 @@ library BridgeMsgCodec {
         return abi.encodePacked(BODY_VERSION_V1, MSG_AUCTION_STAGE_COLLECTING_BIDS, _emissionDay);
     }
 
+    /// @notice The result of a day for one chain.
+    struct IntexAuctionChainResult {
+        /// @notice Intex quantity this chain's winners won.
+        uint32 wonQuantity;
+        /// @notice Winning bids of this chain.
+        uint32 wonBidsCount;
+        /// @notice Intex quantity the day issued on all chains.
+        uint32 quantity;
+        /// @notice Uniform clearing rate (`1e6` fixed-point).
+        uint64 clearingRate;
+        /// @notice Intex quantity all revealed bids asked for.
+        uint64 totalDemand;
+    }
+
     /// @notice Encodes AUCTION_RESULT message.
-    /// @dev encodePacked layout (22 bytes):
-    ///      [bodyVersion(1)][msgType(1)][emissionDay(4)][issuedUnits(4)][auctionClearingRate(8)][wonBidsCount(4)]
+    /// @dev encodePacked layout (34 bytes): [bodyVersion(1)][msgType(1)][emissionDay(4)][wonQuantity(4)]
+    ///      [wonBidsCount(4)][quantity(4)][clearingRate(8)][totalDemand(8)]
     /// @param _emissionDay The emission day (yyyymmdd).
-    /// @param _issuedUnits The number of intex issued by the cleared auction.
-    /// @param _auctionClearingRate The uniform auction clearing rate (`1e6` fixed-point).
-    /// @param _wonBidsCount The number of winning bids.
+    /// @param _result The result of the day for the receiving chain.
     /// @return The wire-encoded AUCTION_RESULT message.
-    function encodeAuctionResult(
-        uint32 _emissionDay,
-        uint32 _issuedUnits,
-        uint64 _auctionClearingRate,
-        uint32 _wonBidsCount
-    ) internal pure returns (bytes memory) {
+    function encodeAuctionResult(uint32 _emissionDay, IntexAuctionChainResult memory _result)
+        internal
+        pure
+        returns (bytes memory)
+    {
         return abi.encodePacked(
-            BODY_VERSION_V1, MSG_AUCTION_RESULT, _emissionDay, _issuedUnits, _auctionClearingRate, _wonBidsCount
+            BODY_VERSION_V1,
+            MSG_AUCTION_RESULT,
+            _emissionDay,
+            _result.wonQuantity,
+            _result.wonBidsCount,
+            _result.quantity,
+            _result.clearingRate,
+            _result.totalDemand
         );
     }
 
@@ -382,8 +400,8 @@ library BridgeMsgCodec {
     ///         Kept `external` so the struct construction lives in the linked library, off the
     ///         router's runtime size (EIP-170). Mirrors `encodeAuctionStageStart`'s layout:
     ///         [bodyVersion(1)][msgType(1)][emissionDay(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
-    ///         [promisLoadMinor(16)][minIntexBidRate(4)][callNoticePeriod(4)][callWindow(4)]
-    ///         [callThreshold(4)][minIntexBidQuantity(2)][commitBondMinor(16)][priceCount(1)]
+    ///         [promisLoadMinor(16)][minBidRate(4)][callNoticePeriod(4)][callWindow(4)]
+    ///         [callThreshold(4)][minBidQuantity(2)][bidBondMinor(16)][priceCount(1)]
     /// @param _msg The wire-encoded AUCTION_STAGE_START message.
     /// @return emissionDay The emission day (yyyymmdd).
     /// @return schedule The decoded commit/reveal/issuance schedule.
@@ -412,10 +430,10 @@ library BridgeMsgCodec {
                 callThreshold: uint32(bytes4(_msg[46:50])),
                 callNoticePeriod: uint32(bytes4(_msg[38:42]))
             }),
-            minIntexBidRate: uint32(bytes4(_msg[34:38])),
-            minIntexBidQuantity: uint16(bytes2(_msg[50:52])),
+            minBidRate: uint32(bytes4(_msg[34:38])),
+            minBidQuantity: uint16(bytes2(_msg[50:52])),
             prices: new IIntexAuction.ReferenceCurrencyPrice[](0),
-            commitBondMinor: uint128(bytes16(_msg[52:68]))
+            bidBondMinor: uint128(bytes16(_msg[52:68]))
         });
 
         params.prices = _referencePrices(_msg);
@@ -701,25 +719,25 @@ library BridgeMsgCodec {
     }
 
     /// @notice Decodes AUCTION_RESULT message.
-    /// @dev encodePacked layout (22 bytes):
-    ///      [bodyVersion(1)][msgType(1)][emissionDay(4)][issuedUnits(4)][auctionClearingRate(8)][wonBidsCount(4)]
-    ///      Reverts `InvalidPayloadLength` unless exactly 22 bytes, then `UnsupportedBodyVersion`.
+    /// @dev Reverts `InvalidPayloadLength` unless exactly 34 bytes, then `UnsupportedBodyVersion`.
     /// @param _msg The wire-encoded AUCTION_RESULT message.
     /// @return emissionDay The emission day (yyyymmdd).
-    /// @return issuedUnits The number of intex issued by the cleared auction.
-    /// @return auctionClearingRate The uniform auction clearing rate (`1e6` fixed-point).
-    /// @return wonBidsCount The number of winning bids.
+    /// @return result The result of the day for this chain.
     function decodeAuctionResult(bytes calldata _msg)
         internal
         pure
-        returns (uint32 emissionDay, uint32 issuedUnits, uint64 auctionClearingRate, uint32 wonBidsCount)
+        returns (uint32 emissionDay, IntexAuctionChainResult memory result)
     {
         _assertExactLength(_msg, MSG_AUCTION_RESULT, MIN_LEN_AUCTION_RESULT);
         _assertBodyVersion(_msg);
         emissionDay = uint32(bytes4(_msg[2:6]));
-        issuedUnits = uint32(bytes4(_msg[6:10]));
-        auctionClearingRate = uint64(bytes8(_msg[10:18]));
-        wonBidsCount = uint32(bytes4(_msg[18:22]));
+        result = IntexAuctionChainResult({
+            wonQuantity: uint32(bytes4(_msg[6:10])),
+            wonBidsCount: uint32(bytes4(_msg[10:14])),
+            quantity: uint32(bytes4(_msg[14:18])),
+            clearingRate: uint64(bytes8(_msg[18:26])),
+            totalDemand: uint64(bytes8(_msg[26:34]))
+        });
     }
 
     /// @notice Decodes ISSUANCE_INSTRUCTIONS message.

@@ -87,9 +87,9 @@ fn the_start_message_carries_only_the_stored_day_config() {
         let message = announced(&config);
         assert_eq!(message.emissionDay, EMISSION_DAY.value());
         assert_eq!(message.promisLoadMinor, config.promis_load_minor);
-        assert_eq!(message.minIntexBidRate, config.min_bid_rate);
-        assert_eq!(message.minIntexBidQuantity, config.min_bid_quantity);
-        assert_eq!(message.commitBondMinor, config.bid_bond_minor);
+        assert_eq!(message.minBidRate, config.min_bid_rate);
+        assert_eq!(message.minBidQuantity, config.min_bid_quantity);
+        assert_eq!(message.bidBondMinor, config.bid_bond_minor);
         assert_eq!(message.callWindow, config.call_trigger.call_window_seconds);
         assert_eq!(
             message.callThreshold,

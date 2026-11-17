@@ -57,27 +57,27 @@ contract IntexAuctionClaimsTest is Test {
         token = new MockWCOEN();
 
         vm.startPrank(admin);
-        escrow.wire(address(auction), address(compact), address(token));
+        escrow.setDependencies(address(auction), address(compact), address(token));
         escrow.setProceedsRecipient(makeAddr("proceeds"));
-        auction.wire(address(escrow));
+        auction.setEscrow(address(escrow));
         auction.setIntexContract(address(intex));
         intex.grantRole(intex.AUCTION_ROLE(), address(auction));
         vm.stopPrank();
 
         startTs = block.timestamp;
         vm.prank(relayer);
-        auction.auctionStart(
+        auction.startAuction(
             DAY,
             IIntexAuction.AuctionSchedule({
                 commitEnd: uint32(startTs + 100), revealEnd: uint32(startTs + 200), issuanceEnd: uint32(startTs + 300)
             }),
             IIntexAuction.AuctionParams({
                 promisLoadMinor: BASIS,
-                minIntexBidRate: 1,
+                minBidRate: 1,
                 prices: ReferenceCurrencyPriceLib.onePriced(USD, 1e6, 200),
                 callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
-                minIntexBidQuantity: 1,
-                commitBondMinor: 0
+                minBidQuantity: 1,
+                bidBondMinor: 0
             })
         );
     }
@@ -102,9 +102,9 @@ contract IntexAuctionClaimsTest is Test {
         bytes memory aliceSig = _signature(aliceKey, aliceQuantity);
         bytes memory bobSig = _signature(bobKey, bobQuantity);
         vm.prank(alice);
-        auction.commitBid(DAY, keccak256(aliceSig));
+        auction.commitIntexAuctionBid(DAY, keccak256(aliceSig));
         vm.prank(bob);
-        auction.commitBid(DAY, keccak256(bobSig));
+        auction.commitIntexAuctionBid(DAY, keccak256(bobSig));
         vm.warp(startTs + 101);
         _reveal(alice, aliceQuantity, aliceSig);
         _reveal(bob, bobQuantity, bobSig);
@@ -115,7 +115,7 @@ contract IntexAuctionClaimsTest is Test {
         token.mint(who, _protocol(quantity, BASIS, RATE) * WCOEN_SCALE);
         vm.startPrank(who);
         token.approve(address(escrow), type(uint256).max);
-        auction.revealBid(DAY, quantity, RATE, USD, USD, uint64(block.chainid), signature);
+        auction.revealIntexAuctionBid(DAY, quantity, RATE, USD, USD, uint64(block.chainid), signature);
         vm.stopPrank();
     }
 
@@ -126,7 +126,7 @@ contract IntexAuctionClaimsTest is Test {
 
     function _finalize(address[] memory winners, uint16 partialIndex, uint16 partialWon) internal {
         vm.prank(relayer);
-        escrow.finalizeAuction(DAY, bytes32(0), winners, partialIndex, partialWon, CLEARING_RATE, BASIS, true);
+        escrow.chargeIntexAuctionAsset(DAY, winners, partialIndex, partialWon, CLEARING_RATE, BASIS, true);
     }
 
     function _winner(address who) internal pure returns (address[] memory winners) {
@@ -148,14 +148,16 @@ contract IntexAuctionClaimsTest is Test {
         _finalize(_winner(alice), 0, 0);
 
         vm.expectEmit(true, true, true, true, address(auction));
-        emit IIntexAuction.WinNoteRedeemed(DAY, alice, CreateSeriesLib.seriesId(DAY));
+        emit IIntexAuction.IntexAuctionWinNoteRedeemed(DAY, alice, CreateSeriesLib.seriesId(DAY));
         vm.prank(bob);
         auction.redeemWinNote(DAY, alice);
 
         assertEq(_units(alice), 3, "the units won");
         assertEq(token.balanceOf(alice), _change(3), "the change");
-        assertEq(uint8(escrow.getBidLock(DAY, alice).status), uint8(IEscrowAdapter.LockStatus.None), "lock gone");
-        assertFalse(auction.revealedBidsByBidder(DAY, alice), "bid gone");
+        assertEq(
+            uint8(escrow.getIntexAuctionBidLock(DAY, alice).status), uint8(IEscrowAdapter.LockStatus.None), "lock gone"
+        );
+        assertFalse(auction.revealedIntexAuctionBidsByBidder(DAY, alice), "bid gone");
     }
 
     function test_APartialWinnerIssuesItsShare() public {
@@ -185,7 +187,7 @@ contract IntexAuctionClaimsTest is Test {
         _finalize(_winner(alice), 0, 0);
         auction.redeemWinNote(DAY, alice);
 
-        vm.expectRevert(IIntexAuction.BidNotFound.selector);
+        vm.expectRevert(IIntexAuction.IntexAuctionBidNotFound.selector);
         auction.redeemWinNote(DAY, alice);
         assertEq(_units(alice), 3);
     }
@@ -205,7 +207,7 @@ contract IntexAuctionClaimsTest is Test {
     function test_TheChangeCanBeRefundedBeforeTheUnitsAreIssued() public {
         _bid(3, 1);
         _finalize(_winner(alice), 0, 0);
-        auction.claimRefund(DAY, alice);
+        auction.returnIntexAuctionAsset(DAY, alice);
         assertEq(token.balanceOf(alice), _change(3));
 
         _createSeries(0);
@@ -235,13 +237,15 @@ contract IntexAuctionClaimsTest is Test {
         assertEq(uint8(intex.readData(CreateSeriesLib.seriesId(DAY)).state), uint8(IIntexNFT1155.IntexState.Forfeited));
 
         vm.expectEmit(true, true, true, true, address(auction));
-        emit IIntexAuction.WinNoteRedeemed(DAY, alice, CreateSeriesLib.seriesId(DAY));
+        emit IIntexAuction.IntexAuctionWinNoteRedeemed(DAY, alice, CreateSeriesLib.seriesId(DAY));
         auction.redeemWinNote(DAY, alice);
 
         assertEq(_units(alice), 0, "nothing issued");
         assertEq(token.balanceOf(alice), _change(3), "the change still returns");
-        assertEq(uint8(escrow.getBidLock(DAY, alice).status), uint8(IEscrowAdapter.LockStatus.None), "lock gone");
-        assertFalse(auction.revealedBidsByBidder(DAY, alice), "bid gone");
+        assertEq(
+            uint8(escrow.getIntexAuctionBidLock(DAY, alice).status), uint8(IEscrowAdapter.LockStatus.None), "lock gone"
+        );
+        assertFalse(auction.revealedIntexAuctionBidsByBidder(DAY, alice), "bid gone");
     }
 
     /// @dev A bidder that cannot hold the units loses nothing else: its change stays refundable.
@@ -255,15 +259,15 @@ contract IntexAuctionClaimsTest is Test {
         vm.expectRevert(bytes("reject-1155"));
         auction.redeemWinNote(DAY, alice);
 
-        auction.claimRefund(DAY, alice);
+        auction.returnIntexAuctionAsset(DAY, alice);
         assertEq(token.balanceOf(alice), _change(3));
-        assertTrue(auction.revealedBidsByBidder(DAY, alice), "the WinNote waits for a holder");
+        assertTrue(auction.revealedIntexAuctionBidsByBidder(DAY, alice), "the WinNote waits for a holder");
     }
 
     function test_AnIssuedBidCannotBeRevealedAgain() public {
         bytes memory aliceSig = _signature(aliceKey, 3);
         vm.prank(alice);
-        auction.commitBid(DAY, keccak256(aliceSig));
+        auction.commitIntexAuctionBid(DAY, keccak256(aliceSig));
         vm.warp(startTs + 101);
         _reveal(alice, 3, aliceSig);
         _createSeries(0);
@@ -271,8 +275,8 @@ contract IntexAuctionClaimsTest is Test {
         auction.redeemWinNote(DAY, alice);
 
         vm.prank(alice);
-        vm.expectRevert(IIntexAuction.BidNotFound.selector);
-        auction.revealBid(DAY, 3, RATE, USD, USD, uint64(block.chainid), aliceSig);
+        vm.expectRevert(IIntexAuction.IntexAuctionBidNotFound.selector);
+        auction.revealIntexAuctionBid(DAY, 3, RATE, USD, USD, uint64(block.chainid), aliceSig);
     }
 
     function test_TheRelayerRoleCannotIssue() public {
@@ -292,65 +296,67 @@ contract IntexAuctionClaimsTest is Test {
         _finalize(_winner(alice), 0, 0);
 
         vm.prank(alice);
-        auction.claimRefund(DAY, bob);
+        auction.returnIntexAuctionAsset(DAY, bob);
 
         assertEq(token.balanceOf(bob), _protocol(1, BASIS, RATE) * WCOEN_SCALE, "the whole principal");
-        assertFalse(auction.revealedBidsByBidder(DAY, bob), "bid gone");
-        assertEq(uint8(escrow.getBidLock(DAY, bob).status), uint8(IEscrowAdapter.LockStatus.None), "lock gone");
+        assertFalse(auction.revealedIntexAuctionBidsByBidder(DAY, bob), "bid gone");
+        assertEq(
+            uint8(escrow.getIntexAuctionBidLock(DAY, bob).status), uint8(IEscrowAdapter.LockStatus.None), "lock gone"
+        );
     }
 
     function test_AWinnerRefundKeepsItsBidForTheIssue() public {
         _bid(3, 1);
         _finalize(_winner(alice), 0, 0);
 
-        auction.claimRefund(DAY, alice);
+        auction.returnIntexAuctionAsset(DAY, alice);
         assertEq(token.balanceOf(alice), _change(3));
-        assertTrue(auction.revealedBidsByBidder(DAY, alice), "the bid waits for the issue");
+        assertTrue(auction.revealedIntexAuctionBidsByBidder(DAY, alice), "the bid waits for the issue");
     }
 
     /// @dev Before the day finalizes, the bids relay may still read the bid, so a refund leaves it.
     function test_AnOpenDayRefundKeepsTheBidUntilTheDayFinalizes() public {
         _bid(3, 1);
-        vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
+        vm.warp(block.timestamp + escrow.UNFINALIZED_RETURN_DELAY());
 
-        auction.claimRefund(DAY, bob);
+        auction.returnIntexAuctionAsset(DAY, bob);
         assertEq(token.balanceOf(bob), _protocol(1, BASIS, RATE) * WCOEN_SCALE, "the whole principal");
-        assertTrue(auction.revealedBidsByBidder(DAY, bob), "the bid stays");
-        IIntexAuction.SubmittedBidData[] memory bids = auction.revealedBidsSlice(DAY, 0, 2);
-        assertEq(bids[1].bidderAddress, bob, "the relay still reads the real bid");
+        assertTrue(auction.revealedIntexAuctionBidsByBidder(DAY, bob), "the bid stays");
+        IIntexAuction.SubmittedIntexAuctionBidData[] memory bids = auction.revealedIntexAuctionBidsSlice(DAY, 0, 2);
+        assertEq(bids[1].bidder, bob, "the relay still reads the real bid");
         assertEq(bids[1].intexQuantity, 1);
 
         vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
-        auction.claimRefund(DAY, bob);
+        auction.returnIntexAuctionAsset(DAY, bob);
 
         _finalize(new address[](0), 0, 0);
-        auction.claimRefund(DAY, bob);
-        assertFalse(auction.revealedBidsByBidder(DAY, bob), "cleared once the day finalized");
+        auction.returnIntexAuctionAsset(DAY, bob);
+        assertFalse(auction.revealedIntexAuctionBidsByBidder(DAY, bob), "cleared once the day finalized");
         assertEq(token.balanceOf(bob), _protocol(1, BASIS, RATE) * WCOEN_SCALE, "paid once");
     }
 
     function test_TheAuctionClearsABidTheEscrowValvePaidOut() public {
         _bid(3, 1);
         _finalize(_winner(alice), 0, 0);
-        vm.warp(block.timestamp + escrow.REFUND_ABANDON_DELAY());
-        escrow.claimAbandonedRefund(DAY, bob);
+        vm.warp(block.timestamp + escrow.RETURN_ABANDON_DELAY());
+        escrow.returnAbandonedIntexAuctionAsset(DAY, bob);
 
-        auction.claimRefund(DAY, bob);
-        assertFalse(auction.revealedBidsByBidder(DAY, bob), "bid gone");
+        auction.returnIntexAuctionAsset(DAY, bob);
+        assertFalse(auction.revealedIntexAuctionBidsByBidder(DAY, bob), "bid gone");
         assertEq(token.balanceOf(bob), _protocol(1, BASIS, RATE) * WCOEN_SCALE, "paid once");
     }
 
     function test_TheRevealedBidIsReadableUntilItIsCleared() public {
         _bid(3, 1);
-        IIntexAuction.SubmittedBidData memory bid = auction.revealedBidOf(DAY, alice);
-        assertEq(bid.bidderAddress, alice);
+        IIntexAuction.SubmittedIntexAuctionBidData memory bid = auction.getRevealedIntexAuctionBid(DAY, alice);
+        assertEq(bid.bidder, alice);
         assertEq(bid.intexQuantity, 3);
         assertEq(bid.issuanceCurrency, USD);
 
         _createSeries(0);
         _finalize(_winner(alice), 0, 0);
         auction.redeemWinNote(DAY, alice);
-        assertEq(auction.revealedBidOf(DAY, alice).bidderAddress, address(0), "cleared with the WinNote");
+        assertEq(auction.getRevealedIntexAuctionBid(DAY, alice).bidder, address(0), "cleared with the WinNote");
     }
 
     function test_TheCollectionStaysWhileAWinIsOpen() public {
@@ -367,8 +373,8 @@ contract IntexAuctionClaimsTest is Test {
     }
 
     function test_ARefundNeedsABid() public {
-        vm.expectRevert(IIntexAuction.BidNotFound.selector);
-        auction.claimRefund(DAY, makeAddr("stranger"));
+        vm.expectRevert(IIntexAuction.IntexAuctionBidNotFound.selector);
+        auction.returnIntexAuctionAsset(DAY, makeAddr("stranger"));
     }
 
     function test_GasOfTheClaims() public {
@@ -377,7 +383,7 @@ contract IntexAuctionClaimsTest is Test {
         _finalize(_winner(alice), 0, 0);
 
         uint256 before = gasleft();
-        auction.claimRefund(DAY, bob);
+        auction.returnIntexAuctionAsset(DAY, bob);
         emit log_named_uint("auction_claim_refund_loser", before - gasleft());
 
         before = gasleft();
@@ -389,7 +395,7 @@ contract IntexAuctionClaimsTest is Test {
         _bid(3, 1);
         _createSeries(0);
         _finalize(_winner(alice), 0, 0);
-        auction.claimRefund(DAY, alice);
+        auction.returnIntexAuctionAsset(DAY, alice);
 
         uint256 before = gasleft();
         auction.redeemWinNote(DAY, alice);

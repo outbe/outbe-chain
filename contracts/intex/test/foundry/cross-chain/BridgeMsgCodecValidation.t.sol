@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {AuctionResultLib} from "../helpers/AuctionResultLib.sol";
+
 import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {BidPackLib} from "../helpers/BidPackLib.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
@@ -88,7 +90,8 @@ contract BridgeMsgCodecValidationTest is Test {
     }
 
     function test_AuctionResult_OverLong_Reverts() public {
-        bytes memory tooLong = abi.encodePacked(BridgeMsgCodec.encodeAuctionResult(1, 7, 5e6, 3), hex"00");
+        bytes memory tooLong =
+            abi.encodePacked(BridgeMsgCodec.encodeAuctionResult(1, AuctionResultLib.day(7, 5e6, 3)), hex"00");
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
@@ -144,7 +147,8 @@ contract BridgeMsgCodecValidationTest is Test {
             7,
             "clearing"
         );
-        (uint32 rs,,,) = this.exposedDecodeAuctionResult(BridgeMsgCodec.encodeAuctionResult(9, 1, 1, 1));
+        (uint32 rs,) =
+            this.exposedDecodeAuctionResult(BridgeMsgCodec.encodeAuctionResult(9, AuctionResultLib.day(1, 1, 1)));
         assertEq(rs, 9, "result");
         assertEq(
             this.exposedDecodeMarkCalled(
@@ -280,7 +284,11 @@ contract BridgeMsgCodecValidationTest is Test {
         return BridgeMsgCodec.decodeAuctionStageCollectingBids(p);
     }
 
-    function exposedDecodeAuctionResult(bytes calldata p) external pure returns (uint32, uint32, uint64, uint32) {
+    function exposedDecodeAuctionResult(bytes calldata p)
+        external
+        pure
+        returns (uint32, BridgeMsgCodec.IntexAuctionChainResult memory)
+    {
         return BridgeMsgCodec.decodeAuctionResult(p);
     }
 

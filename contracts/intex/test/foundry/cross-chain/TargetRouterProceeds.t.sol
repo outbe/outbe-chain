@@ -11,7 +11,7 @@ import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-/// @dev Minimal EscrowAdapter stand-in. `finalizeAuction` returns a configured totalPaid. The mock
+/// @dev Minimal EscrowAdapter stand-in. `chargeIntexAuctionAsset` returns a configured totalPaid. The mock
 ///      also exposes `paymentToken`.
 contract MockEscrowAdapter {
     IERC20 public paymentToken;
@@ -21,7 +21,7 @@ contract MockEscrowAdapter {
         paymentToken = token;
     }
 
-    function dayPaymentToken(uint32) external view returns (IERC20) {
+    function dayIntexAuctionAsset(uint32) external view returns (IERC20) {
         return paymentToken;
     }
 
@@ -29,7 +29,7 @@ contract MockEscrowAdapter {
         totalPaidToReturn = v;
     }
 
-    function finalizeAuction(uint32, bytes32, address[] calldata, uint16, uint16, uint64, uint128, bool)
+    function chargeIntexAuctionAsset(uint32, address[] calldata, uint16, uint16, uint64, uint128, bool)
         external
         view
         returns (uint128)
@@ -37,7 +37,7 @@ contract MockEscrowAdapter {
         return totalPaidToReturn;
     }
 
-    function getAuctionStatus(uint32) external pure returns (bool, bool, uint128) {
+    function auctionStatus(uint32) external pure returns (bool, bool, uint128) {
         return (false, false, 0);
     }
 }

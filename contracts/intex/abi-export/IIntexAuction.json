@@ -1,109 +1,22 @@
 [
   {
     "type": "function",
-    "name": "auctionStart",
+    "name": "auctionStage",
     "inputs": [
       {
         "name": "emissionDay",
         "type": "uint32",
         "internalType": "uint32"
-      },
-      {
-        "name": "schedule",
-        "type": "tuple",
-        "internalType": "struct IIntexAuction.AuctionSchedule",
-        "components": [
-          {
-            "name": "commitEnd",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "revealEnd",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "issuanceEnd",
-            "type": "uint32",
-            "internalType": "uint32"
-          }
-        ]
-      },
-      {
-        "name": "params",
-        "type": "tuple",
-        "internalType": "struct IIntexAuction.AuctionParams",
-        "components": [
-          {
-            "name": "promisLoadMinor",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
-            "name": "callTrigger",
-            "type": "tuple",
-            "internalType": "struct IIntexAuction.IntexCallTrigger",
-            "components": [
-              {
-                "name": "callWindow",
-                "type": "uint32",
-                "internalType": "uint32"
-              },
-              {
-                "name": "callThreshold",
-                "type": "uint32",
-                "internalType": "uint32"
-              },
-              {
-                "name": "callNoticePeriod",
-                "type": "uint32",
-                "internalType": "uint32"
-              }
-            ]
-          },
-          {
-            "name": "minIntexBidRate",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "minIntexBidQuantity",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "prices",
-            "type": "tuple[]",
-            "internalType": "struct IIntexAuction.ReferenceCurrencyPrice[]",
-            "components": [
-              {
-                "name": "isoCode",
-                "type": "uint16",
-                "internalType": "uint16"
-              },
-              {
-                "name": "entryPriceMinor",
-                "type": "uint64",
-                "internalType": "uint64"
-              },
-              {
-                "name": "callPriceMinor",
-                "type": "uint64",
-                "internalType": "uint64"
-              }
-            ]
-          },
-          {
-            "name": "commitBondMinor",
-            "type": "uint128",
-            "internalType": "uint128"
-          }
-        ]
       }
     ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "enum IIntexAuction.AuctionStage"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -125,7 +38,7 @@
   },
   {
     "type": "function",
-    "name": "cancelCommit",
+    "name": "cancelIntexAuctionBid",
     "inputs": [
       {
         "name": "emissionDay",
@@ -138,43 +51,7 @@
   },
   {
     "type": "function",
-    "name": "claimCommitBond",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "bidder",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "claimRefund",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "bidder",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "commitBid",
+    "name": "commitIntexAuctionBid",
     "inputs": [
       {
         "name": "emissionDay",
@@ -192,7 +69,7 @@
   },
   {
     "type": "function",
-    "name": "executeAuctionClearing",
+    "name": "completeAuction",
     "inputs": [
       {
         "name": "emissionDay",
@@ -200,19 +77,29 @@
         "internalType": "uint32"
       },
       {
-        "name": "issuedUnits",
+        "name": "wonQuantity",
         "type": "uint32",
         "internalType": "uint32"
-      },
-      {
-        "name": "auctionClearingRate",
-        "type": "uint64",
-        "internalType": "uint64"
       },
       {
         "name": "wonBidsCount",
         "type": "uint32",
         "internalType": "uint32"
+      },
+      {
+        "name": "quantity",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "clearingRate",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "totalDemand",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [],
@@ -294,12 +181,12 @@
                 ]
               },
               {
-                "name": "minIntexBidRate",
+                "name": "minBidRate",
                 "type": "uint32",
                 "internalType": "uint32"
               },
               {
-                "name": "minIntexBidQuantity",
+                "name": "minBidQuantity",
                 "type": "uint16",
                 "internalType": "uint16"
               },
@@ -326,7 +213,7 @@
                 ]
               },
               {
-                "name": "commitBondMinor",
+                "name": "bidBondMinor",
                 "type": "uint128",
                 "internalType": "uint128"
               }
@@ -335,10 +222,10 @@
           {
             "name": "result",
             "type": "tuple",
-            "internalType": "struct IIntexAuction.AuctionResult",
+            "internalType": "struct IIntexAuction.IntexAuctionResult",
             "components": [
               {
-                "name": "auctionClearingRate",
+                "name": "clearingRate",
                 "type": "uint64",
                 "internalType": "uint64"
               },
@@ -364,10 +251,10 @@
       {
         "name": "bidsData",
         "type": "tuple[]",
-        "internalType": "struct IIntexAuction.SubmittedBidData[]",
+        "internalType": "struct IIntexAuction.SubmittedIntexAuctionBidData[]",
         "components": [
           {
-            "name": "bidderAddress",
+            "name": "bidder",
             "type": "address",
             "internalType": "address"
           },
@@ -477,12 +364,12 @@
                 ]
               },
               {
-                "name": "minIntexBidRate",
+                "name": "minBidRate",
                 "type": "uint32",
                 "internalType": "uint32"
               },
               {
-                "name": "minIntexBidQuantity",
+                "name": "minBidQuantity",
                 "type": "uint16",
                 "internalType": "uint16"
               },
@@ -509,7 +396,7 @@
                 ]
               },
               {
-                "name": "commitBondMinor",
+                "name": "bidBondMinor",
                 "type": "uint128",
                 "internalType": "uint128"
               }
@@ -518,10 +405,10 @@
           {
             "name": "result",
             "type": "tuple",
-            "internalType": "struct IIntexAuction.AuctionResult",
+            "internalType": "struct IIntexAuction.IntexAuctionResult",
             "components": [
               {
-                "name": "auctionClearingRate",
+                "name": "clearingRate",
                 "type": "uint64",
                 "internalType": "uint64"
               },
@@ -549,25 +436,6 @@
   },
   {
     "type": "function",
-    "name": "getAuctionStage",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint8",
-        "internalType": "enum IIntexAuction.AuctionStage"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "redeemWinNote",
     "inputs": [
       {
@@ -586,7 +454,25 @@
   },
   {
     "type": "function",
-    "name": "revealBid",
+    "name": "returnIntexAuctionAsset",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "revealIntexAuctionBid",
     "inputs": [
       {
         "name": "emissionDay",
@@ -629,7 +515,7 @@
   },
   {
     "type": "function",
-    "name": "revealedBidsCount",
+    "name": "revealedIntexAuctionBidsCount",
     "inputs": [
       {
         "name": "emissionDay",
@@ -648,7 +534,7 @@
   },
   {
     "type": "function",
-    "name": "revealedBidsSlice",
+    "name": "revealedIntexAuctionBidsSlice",
     "inputs": [
       {
         "name": "emissionDay",
@@ -670,10 +556,10 @@
       {
         "name": "slice",
         "type": "tuple[]",
-        "internalType": "struct IIntexAuction.SubmittedBidData[]",
+        "internalType": "struct IIntexAuction.SubmittedIntexAuctionBidData[]",
         "components": [
           {
-            "name": "bidderAddress",
+            "name": "bidder",
             "type": "address",
             "internalType": "address"
           },
@@ -709,33 +595,7 @@
   },
   {
     "type": "function",
-    "name": "setIntexContract",
-    "inputs": [
-      {
-        "name": "_intex",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "startAwaitingResult",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "wire",
+    "name": "setEscrow",
     "inputs": [
       {
         "name": "_escrow",
@@ -747,8 +607,171 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "setIntexContract",
+    "inputs": [
+      {
+        "name": "_intexContract",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "startAuction",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "schedule",
+        "type": "tuple",
+        "internalType": "struct IIntexAuction.AuctionSchedule",
+        "components": [
+          {
+            "name": "commitEnd",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "revealEnd",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "issuanceEnd",
+            "type": "uint32",
+            "internalType": "uint32"
+          }
+        ]
+      },
+      {
+        "name": "params",
+        "type": "tuple",
+        "internalType": "struct IIntexAuction.AuctionParams",
+        "components": [
+          {
+            "name": "promisLoadMinor",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "callTrigger",
+            "type": "tuple",
+            "internalType": "struct IIntexAuction.IntexCallTrigger",
+            "components": [
+              {
+                "name": "callWindow",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "callThreshold",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "callNoticePeriod",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          },
+          {
+            "name": "minBidRate",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "minBidQuantity",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "prices",
+            "type": "tuple[]",
+            "internalType": "struct IIntexAuction.ReferenceCurrencyPrice[]",
+            "components": [
+              {
+                "name": "isoCode",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "entryPriceMinor",
+                "type": "uint64",
+                "internalType": "uint64"
+              },
+              {
+                "name": "callPriceMinor",
+                "type": "uint64",
+                "internalType": "uint64"
+              }
+            ]
+          },
+          {
+            "name": "bidBondMinor",
+            "type": "uint128",
+            "internalType": "uint128"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "startAuctionClearing",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "unlockIntexAuctionBidBond",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
-    "name": "AuctionClearingExecuted",
+    "name": "EscrowSet",
+    "inputs": [
+      {
+        "name": "escrow",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IntexAuctionBidCanceled",
     "inputs": [
       {
         "name": "emissionDay",
@@ -757,54 +780,17 @@
         "internalType": "uint32"
       },
       {
-        "name": "auctionClearingRate",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "issuedUnits",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "AuctionStageUpdated",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
+        "name": "bidder",
+        "type": "address",
         "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "auctionStage",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum IIntexAuction.AuctionStage"
-      },
-      {
-        "name": "timestamp",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "reason",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
+        "internalType": "address"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "BidCommitted",
+    "name": "IntexAuctionBidCommitted",
     "inputs": [
       {
         "name": "emissionDay",
@@ -829,7 +815,7 @@
   },
   {
     "type": "event",
-    "name": "BidRevealed",
+    "name": "IntexAuctionBidRevealed",
     "inputs": [
       {
         "name": "emissionDay",
@@ -845,9 +831,9 @@
       },
       {
         "name": "quantity",
-        "type": "uint16",
-        "indexed": true,
-        "internalType": "uint16"
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
       },
       {
         "name": "bidRate",
@@ -872,7 +858,7 @@
   },
   {
     "type": "event",
-    "name": "CommitCancelled",
+    "name": "IntexAuctionCanceled",
     "inputs": [
       {
         "name": "emissionDay",
@@ -881,55 +867,128 @@
         "internalType": "uint32"
       },
       {
-        "name": "bidder",
-        "type": "address",
+        "name": "reason",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IntexAuctionClearingStarted",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
         "indexed": true,
-        "internalType": "address"
+        "internalType": "uint32"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "EscrowWired",
+    "name": "IntexAuctionCompleted",
     "inputs": [
       {
-        "name": "previous",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
       },
       {
-        "name": "current",
-        "type": "address",
+        "name": "wonQuantity",
+        "type": "uint32",
         "indexed": false,
-        "internalType": "address"
+        "internalType": "uint32"
+      },
+      {
+        "name": "wonBidsCount",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "quantity",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "clearingRate",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "totalDemand",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "IntexWired",
+    "name": "IntexAuctionStarted",
     "inputs": [
       {
-        "name": "previous",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
       },
       {
-        "name": "current",
-        "type": "address",
+        "name": "commitEnd",
+        "type": "uint64",
         "indexed": false,
-        "internalType": "address"
+        "internalType": "uint64"
+      },
+      {
+        "name": "revealEnd",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "issuanceEnd",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "unitPromisLoadMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "minBidRate",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "minBidQuantity",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidBondMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "WinNoteRedeemed",
+    "name": "IntexAuctionWinNoteExpired",
     "inputs": [
       {
         "name": "emissionDay",
@@ -953,6 +1012,44 @@
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "IntexAuctionWinNoteRedeemed",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "seriesId",
+        "type": "bytes14",
+        "indexed": true,
+        "internalType": "bytes14"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IntexContractSet",
+    "inputs": [
+      {
+        "name": "intexContract",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "error",
     "name": "AuctionAlreadyExists",
     "inputs": []
@@ -969,42 +1066,6 @@
   },
   {
     "type": "error",
-    "name": "BidAlreadyCommitted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "BidAlreadyRevealed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "BidBelowMinIntexBidQuantity",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "BidBelowMinIntexBidRate",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "BidNotFound",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "BidRateAboveMax",
-    "inputs": [
-      {
-        "name": "bidRate",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "ClearingRateBelowMin",
     "inputs": [
       {
@@ -1013,7 +1074,7 @@
         "internalType": "uint64"
       },
       {
-        "name": "minIntexBidRate",
+        "name": "minBidRate",
         "type": "uint32",
         "internalType": "uint32"
       }
@@ -1021,10 +1082,35 @@
   },
   {
     "type": "error",
-    "name": "CommitBondNotYetClaimable",
+    "name": "EscrowHasLiveLocks",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IntexAuctionBidAlreadyCommitted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IntexAuctionBidAlreadyRevealed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IntexAuctionBidBelowMinBidQuantity",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IntexAuctionBidBelowMinBidRate",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IntexAuctionBidBondNotYetUnlockable",
     "inputs": [
       {
-        "name": "claimableAt",
+        "name": "unlockableAt",
         "type": "uint32",
         "internalType": "uint32"
       },
@@ -1037,8 +1123,19 @@
   },
   {
     "type": "error",
-    "name": "EscrowHasLiveLocks",
+    "name": "IntexAuctionBidNotFound",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IntexAuctionBidRateAboveMax",
+    "inputs": [
+      {
+        "name": "bidRate",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
   },
   {
     "type": "error",
@@ -1137,7 +1234,7 @@
   },
   {
     "type": "error",
-    "name": "WonBidsExceedRevealed",
+    "name": "WonIntexAuctionBidsExceedRevealed",
     "inputs": [
       {
         "name": "wonBidsCount",

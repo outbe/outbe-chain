@@ -52,7 +52,7 @@ contract IntexAuctionFuzzTest is Test {
 
         vm.startPrank(admin);
         auction.grantRole(auction.RELAYER_ROLE(), bridger);
-        auction.wire(address(escrow));
+        auction.setEscrow(address(escrow));
         vm.stopPrank();
     }
 
@@ -66,9 +66,11 @@ contract IntexAuctionFuzzTest is Test {
         _commit(emissionDay, iba1, sig);
         _enterReveal(emissionDay);
 
-        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.BidRateAboveMax.selector, rate));
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.IntexAuctionBidRateAboveMax.selector, rate));
         vm.prank(iba1);
-        auction.revealBid(emissionDay, quantity, rate, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
+        auction.revealIntexAuctionBid(
+            emissionDay, quantity, rate, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig
+        );
     }
 
     function test_Fuzz_RevealBid_HandsTheEscrowTheDaysBasis(uint256 qSeed, uint256 rSeed) public {
@@ -82,7 +84,9 @@ contract IntexAuctionFuzzTest is Test {
         _enterReveal(emissionDay);
 
         vm.prank(iba1);
-        auction.revealBid(emissionDay, quantity, rate, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
+        auction.revealIntexAuctionBid(
+            emissionDay, quantity, rate, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig
+        );
 
         assertEq(escrow.lockedFunds(emissionDay, iba1), ESCROW_BASIS, "the escrow sizes the lock from the basis");
     }
@@ -95,25 +99,25 @@ contract IntexAuctionFuzzTest is Test {
         uint32 wonBidsCount = uint32(bound(wonSeed, 0, revealed + 3));
 
         if (issued > 0 && clearingRate == 0) {
-            vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "auctionClearingRate"));
+            vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "clearingRate"));
             vm.prank(bridger);
-            auction.executeAuctionClearing(emissionDay, issued, clearingRate, wonBidsCount);
+            auction.completeAuction(emissionDay, 0, wonBidsCount, issued, clearingRate, 0);
         } else if (wonBidsCount > revealed) {
             vm.expectRevert(
-                abi.encodeWithSelector(IIntexAuction.WonBidsExceedRevealed.selector, wonBidsCount, revealed)
+                abi.encodeWithSelector(IIntexAuction.WonIntexAuctionBidsExceedRevealed.selector, wonBidsCount, revealed)
             );
             vm.prank(bridger);
-            auction.executeAuctionClearing(emissionDay, issued, clearingRate, wonBidsCount);
+            auction.completeAuction(emissionDay, 0, wonBidsCount, issued, clearingRate, 0);
         } else if (issued > 0 && clearingRate < MIN_RATE) {
             vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ClearingRateBelowMin.selector, clearingRate, MIN_RATE));
             vm.prank(bridger);
-            auction.executeAuctionClearing(emissionDay, issued, clearingRate, wonBidsCount);
+            auction.completeAuction(emissionDay, 0, wonBidsCount, issued, clearingRate, 0);
         } else {
             vm.prank(bridger);
-            auction.executeAuctionClearing(emissionDay, issued, clearingRate, wonBidsCount);
+            auction.completeAuction(emissionDay, 0, wonBidsCount, issued, clearingRate, 0);
             IIntexAuction.AuctionData memory a = auction.getAuctionInfo(emissionDay);
             assertEq(a.result.issuedUnits, issued, "issuedUnits");
-            assertEq(a.result.auctionClearingRate, clearingRate, "clearingRate");
+            assertEq(a.result.clearingRate, clearingRate, "clearingRate");
             assertEq(a.result.wonBidsCount, wonBidsCount, "wonBidsCount");
         }
     }
@@ -123,7 +127,7 @@ contract IntexAuctionFuzzTest is Test {
         uint32 revealed = _setupIssuanceWithTwoReveals(emissionDay);
 
         vm.prank(bridger);
-        auction.executeAuctionClearing(emissionDay, type(uint32).max, MIN_RATE, revealed);
+        auction.completeAuction(emissionDay, 0, revealed, type(uint32).max, MIN_RATE, 0);
 
         IIntexAuction.AuctionData memory a = auction.getAuctionInfo(emissionDay);
         assertEq(a.result.issuedUnits, type(uint32).max, "issuedUnits accepted unbounded");
@@ -163,19 +167,19 @@ contract IntexAuctionFuzzTest is Test {
         });
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
             promisLoadMinor: PROMIS_LOAD_MINOR,
-            minIntexBidRate: MIN_RATE,
+            minBidRate: MIN_RATE,
             prices: ReferenceCurrencyPriceLib.onePriced(840, ENTRY_PRICE, 200),
             callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
-            minIntexBidQuantity: MIN_QTY,
-            commitBondMinor: 0
+            minBidQuantity: MIN_QTY,
+            bidBondMinor: 0
         });
         vm.prank(bridger);
-        auction.auctionStart(emissionDay, schedule, params);
+        auction.startAuction(emissionDay, schedule, params);
     }
 
     function _commit(uint32 emissionDay, address bidder, bytes memory sig) internal {
         vm.prank(bidder);
-        auction.commitBid(emissionDay, keccak256(sig));
+        auction.commitIntexAuctionBid(emissionDay, keccak256(sig));
     }
 
     function _enterReveal(uint32) internal {
@@ -190,9 +194,9 @@ contract IntexAuctionFuzzTest is Test {
         _commit(emissionDay, iba2, s2);
         _enterReveal(emissionDay);
         vm.prank(iba1);
-        auction.revealBid(emissionDay, 5, 50, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), s1);
+        auction.revealIntexAuctionBid(emissionDay, 5, 50, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), s1);
         vm.prank(iba2);
-        auction.revealBid(emissionDay, 5, 50, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), s2);
+        auction.revealIntexAuctionBid(emissionDay, 5, 50, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), s2);
         vm.warp(block.timestamp + 120);
         return 2;
     }

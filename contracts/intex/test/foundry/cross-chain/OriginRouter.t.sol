@@ -99,13 +99,13 @@ contract OriginRouterTest is CrossChainTest {
             revealEnd: uint32(block.timestamp + 5400),
             issuanceEnd: uint32(block.timestamp + 7200),
             promisLoadMinor: 1000,
-            minIntexBidRate: 50e6,
+            minBidRate: 50e6,
             prices: ReferenceCurrencyPriceLib.one(840, 100e6, 25e6),
             callNoticePeriod: 0,
             callWindow: 0,
             callThreshold: 0,
-            minIntexBidQuantity: 1,
-            commitBondMinor: 0
+            minBidQuantity: 1,
+            bidBondMinor: 0
         });
     }
 
@@ -175,7 +175,7 @@ contract OriginRouterTest is CrossChainTest {
     function test_sendAuctionResult_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        originRouter.sendAuctionResult{value: 0.1 ether}(BNB_CHAIN_ID, EMISSION_DAY, 10_000, 100e6, 50);
+        originRouter.sendAuctionResult{value: 0.1 ether}(BNB_CHAIN_ID, EMISSION_DAY, 0, 50, 10_000, 100e6, 0);
     }
 
     function test_sendIssuanceInstructions_revert_unauthorized() public {

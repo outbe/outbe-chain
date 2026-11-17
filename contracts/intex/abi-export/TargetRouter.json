@@ -668,7 +668,7 @@
         "internalType": "address"
       },
       {
-        "name": "_intex",
+        "name": "_intexContract",
         "type": "address",
         "internalType": "address"
       },

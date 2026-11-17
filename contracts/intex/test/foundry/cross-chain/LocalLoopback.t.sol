@@ -188,7 +188,7 @@ contract LocalLoopbackTest is Test {
 
         escrow = DeployProxy.escrowAdapter(address(this), address(this));
         compact = new MockTheCompact();
-        escrow.wire(address(auction), address(compact), address(wcoen));
+        escrow.setDependencies(address(auction), address(compact), address(wcoen));
         escrow.setProceedsRecipient(address(target));
         compact.setResetPeriodSeconds(0);
 
@@ -203,7 +203,7 @@ contract LocalLoopbackTest is Test {
         target.wire(address(auction), address(intex), address(escrow));
         target.setProceedsRoute(address(tokenBridge), address(origin));
 
-        auction.wire(address(escrow));
+        auction.setEscrow(address(escrow));
         auction.setIntexContract(address(intex));
         intex.grantRole(intex.AUCTION_ROLE(), address(auction));
         auction.grantRole(auction.RELAYER_ROLE(), address(target));
@@ -224,9 +224,9 @@ contract LocalLoopbackTest is Test {
         p.revealEnd = uint32(startTs + 200);
         p.issuanceEnd = uint32(startTs + 300);
         p.promisLoadMinor = PROMIS_LOAD_MINOR;
-        p.minIntexBidRate = 600_000;
+        p.minBidRate = 600_000;
         p.prices = ReferenceCurrencyPriceLib.one(840, 1e6, 200);
-        p.minIntexBidQuantity = 1;
+        p.minBidQuantity = 1;
     }
 
     function _sig(address bidder, uint16 qty, uint32 rate, uint256 pk) internal view returns (bytes memory) {
@@ -249,32 +249,32 @@ contract LocalLoopbackTest is Test {
     function _commitAndReveal(address bidder, uint16 qty, uint32 rate, uint256 pk) internal {
         bytes memory signature = _sig(bidder, qty, rate, pk);
         vm.prank(bidder);
-        auction.revealBid(DAY, qty, rate, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), signature);
+        auction.revealIntexAuctionBid(DAY, qty, rate, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), signature);
     }
 
     function test_FullWalk_OriginAsTarget() public {
         // 1. STAGE_START broadcast lands synchronously: bridge -> TargetRouter -> auction.
         vm.prank(address(desis));
         origin.sendAuctionStageStart(_stageStartParams());
-        assertEq(uint8(auction.getAuctionStage(DAY)), uint8(IIntexAuction.AuctionStage.CommittingBids), "not started");
+        assertEq(uint8(auction.auctionStage(DAY)), uint8(IIntexAuction.AuctionStage.CommittingBids), "not started");
         uint32[] memory snapshot = origin.targetsOf(DAY);
         assertEq(snapshot.length, 1, "snapshot size");
         assertEq(snapshot[0], local, "snapshot chain");
 
         // 2. Commits during the commit window.
         vm.prank(iba1);
-        auction.commitBid(DAY, keccak256(_sig(iba1, 30, 800_000, iba1Pk)));
+        auction.commitIntexAuctionBid(DAY, keccak256(_sig(iba1, 30, 800_000, iba1Pk)));
         vm.prank(iba2);
-        auction.commitBid(DAY, keccak256(_sig(iba2, 40, 700_000, iba2Pk)));
+        auction.commitIntexAuctionBid(DAY, keccak256(_sig(iba2, 40, 700_000, iba2Pk)));
 
         // 3. Past commitEnd, the stage computes to RevealingBids. Reveals lock escrow
         //    (qty * load * rate / 1e6), converted to 18-decimal WCOEN.
         vm.warp(startTs + 101);
-        assertEq(uint8(auction.getAuctionStage(DAY)), uint8(IIntexAuction.AuctionStage.RevealingBids), "not revealing");
+        assertEq(uint8(auction.auctionStage(DAY)), uint8(IIntexAuction.AuctionStage.RevealingBids), "not revealing");
         _commitAndReveal(iba1, 30, 800_000, iba1Pk);
         _commitAndReveal(iba2, 40, 700_000, iba2Pk);
-        assertEq(uint256(escrow.getBidLock(DAY, iba1).lockedAmount), 24e18, "iba1 lock");
-        assertEq(uint256(escrow.getBidLock(DAY, iba2).lockedAmount), 28e18, "iba2 lock");
+        assertEq(uint256(escrow.getIntexAuctionBidLock(DAY, iba1).lockedAmount), 24e18, "iba1 lock");
+        assertEq(uint256(escrow.getIntexAuctionBidLock(DAY, iba2).lockedAmount), 28e18, "iba2 lock");
 
         // 4. CLEARING: the delivery itself fires the nested bids relay (BIDS_BATCH + BIDS_DONE)
         //    back through the bridge to the origin. This makes three chained same-tx deliveries.
@@ -291,10 +291,10 @@ contract LocalLoopbackTest is Test {
 
         // 5. AUCTION_RESULT: supply 50 -> iba1 wins 30, iba2 wins 20 at the uniform rate 700k.
         vm.prank(address(desis));
-        origin.sendAuctionResult(local, DAY, 50, 700_000, 2);
-        IIntexAuction.AuctionResult memory result = auction.getAuctionInfo(DAY).result;
+        origin.sendAuctionResult(local, DAY, 0, 2, 50, 700_000, 0);
+        IIntexAuction.IntexAuctionResult memory result = auction.getAuctionInfo(DAY).result;
         assertEq(result.issuedUnits, 50, "issued");
-        assertEq(result.auctionClearingRate, 700_000, "clearing rate");
+        assertEq(result.clearingRate, 700_000, "clearing rate");
 
         // 6. REFUND_INSTRUCTIONS: the delivery takes each winner's payment AND routes the paid wCOEN to
         //    the origin (direct hand-over + unwrap + factory hand-off), all inside the refund budget.
@@ -305,10 +305,12 @@ contract LocalLoopbackTest is Test {
         vm.prank(address(desis));
         origin.sendRefundInstructions(local, DAY, 0, 1, 700_000, PROMIS_LOAD_MINOR, bidders, 1, 20);
 
-        assertEq(uint8(escrow.getBidLock(DAY, iba1).status), uint8(IEscrowAdapter.LockStatus.Won), "iba1 not won");
-        assertEq(escrow.getBidLock(DAY, iba2).quantity, 20, "iba2 partial");
-        auction.claimRefund(DAY, iba1);
-        auction.claimRefund(DAY, iba2);
+        assertEq(
+            uint8(escrow.getIntexAuctionBidLock(DAY, iba1).status), uint8(IEscrowAdapter.LockStatus.Won), "iba1 not won"
+        );
+        assertEq(escrow.getIntexAuctionBidLock(DAY, iba2).quantity, 20, "iba2 partial");
+        auction.returnIntexAuctionAsset(DAY, iba1);
+        auction.returnIntexAuctionAsset(DAY, iba2);
         assertEq(wcoen.balanceOf(iba1), INITIAL_WCOEN_BALANCE - 24e18 + 3e18, "iba1 refund"); // paid 30*1*0.7
         assertEq(wcoen.balanceOf(iba2), INITIAL_WCOEN_BALANCE - 28e18 + 14e18, "iba2 refund"); // paid 20*1*0.7
         assertEq(factory.calls(), 1, "proceeds not distributed");

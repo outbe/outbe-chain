@@ -435,13 +435,13 @@ pub(crate) fn intex_auction_start_params(
         revealEnd: reveal_end,
         issuanceEnd: issuance_end,
         promisLoadMinor: config.promis_load_minor,
-        minIntexBidRate: config.min_bid_rate,
+        minBidRate: config.min_bid_rate,
         prices,
         callNoticePeriod: config.call_trigger.call_notice_period_seconds,
         callWindow: config.call_trigger.call_window_seconds,
         callThreshold: config.call_trigger.call_threshold_seconds,
-        minIntexBidQuantity: config.min_bid_quantity,
-        commitBondMinor: config.bid_bond_minor,
+        minBidQuantity: config.min_bid_quantity,
+        bidBondMinor: config.bid_bond_minor,
     })
 }
 

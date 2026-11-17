@@ -39,7 +39,7 @@ function reentryGuarded(address bridge, uint32 srcChainId, address peer, address
 /// @notice Stub Auction that, during the inbound STAGE_START dispatch, tries to re-enter the router's inbound
 ///         entry. The re-entry reverts iff `receiveMessage` carries `nonReentrant`.
 /// @dev Does NOT inherit `IIntexAuction`. The high-level call dispatches by selector, so
-///      matching the `auctionStart` signature here is sufficient.
+///      matching the `startAuction` signature here is sufficient.
 contract ReentrancyProbeAuction {
     address public immutable bridge;
     uint32 public immutable srcChainId;
@@ -55,7 +55,7 @@ contract ReentrancyProbeAuction {
         router = router_;
     }
 
-    function auctionStart(uint32, IIntexAuction.AuctionSchedule calldata, IIntexAuction.AuctionParams calldata)
+    function startAuction(uint32, IIntexAuction.AuctionSchedule calldata, IIntexAuction.AuctionParams calldata)
         external
     {
         observed = true;

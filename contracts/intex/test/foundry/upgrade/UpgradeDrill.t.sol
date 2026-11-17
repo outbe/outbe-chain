@@ -120,30 +120,28 @@ contract UpgradeDrillTest is CrossChainTest {
         });
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
             promisLoadMinor: 1000,
-            minIntexBidRate: 1,
+            minBidRate: 1,
             prices: ReferenceCurrencyPriceLib.onePriced(840, 1, 1),
             callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
-            minIntexBidQuantity: 1,
-            commitBondMinor: 0
+            minBidQuantity: 1,
+            bidBondMinor: 0
         });
 
         vm.startPrank(admin);
-        auction.wire(escrow);
-        auction.auctionStart(20260614, schedule, params);
+        auction.setEscrow(escrow);
+        auction.startAuction(20260614, schedule, params);
         vm.stopPrank();
         vm.prank(bidder);
-        auction.commitBid(20260614, keccak256("commit"));
+        auction.commitIntexAuctionBid(20260614, keccak256("commit"));
 
         IntexAuctionV2 newImpl = new IntexAuctionV2();
         vm.prank(admin);
         auction.upgradeToAndCall(address(newImpl), "");
 
         _assertUpgraded(address(auction), address(newImpl));
-        assertEq(address(auction.escrowContract()), escrow, "escrow wiring lost");
-        assertEq(auction.committedBidsByHash(20260614, bidder), keccak256("commit"), "commit lost");
-        assertEq(
-            uint8(auction.getAuctionStage(20260614)), uint8(IIntexAuction.AuctionStage.CommittingBids), "stage lost"
-        );
+        assertEq(address(auction.escrow()), escrow, "escrow wiring lost");
+        assertEq(auction.committedIntexAuctionBidsByHash(20260614, bidder), keccak256("commit"), "commit lost");
+        assertEq(uint8(auction.auctionStage(20260614)), uint8(IIntexAuction.AuctionStage.CommittingBids), "stage lost");
     }
 
     function test_Drill_EscrowAdapter() public {
@@ -153,7 +151,7 @@ contract UpgradeDrillTest is CrossChainTest {
         address auction = makeAddr("auction");
 
         vm.prank(admin);
-        escrow.wire(auction, address(compactMock), address(token));
+        escrow.setDependencies(auction, address(compactMock), address(token));
         uint96 allocatorId = escrow.allocatorId();
         bytes12 lockTag = escrow.lockTag();
 
@@ -162,8 +160,8 @@ contract UpgradeDrillTest is CrossChainTest {
         escrow.upgradeToAndCall(address(newImpl), "");
 
         _assertUpgraded(address(escrow), address(newImpl));
-        assertEq(escrow.intexAuctionContract(), auction, "auction wiring lost");
-        assertEq(address(escrow.paymentToken()), address(token), "token wiring lost");
+        assertEq(escrow.intexAuction(), auction, "auction wiring lost");
+        assertEq(address(escrow.intexAuctionAsset()), address(token), "token wiring lost");
         assertEq(escrow.allocatorId(), allocatorId, "allocatorId lost");
         assertEq(escrow.lockTag(), lockTag, "lockTag lost");
         assertTrue(escrow.hasRole(escrow.AUCTION_ROLE(), auction), "auction role lost");

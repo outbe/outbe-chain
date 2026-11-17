@@ -53,7 +53,7 @@ library TargetInbound {
         (uint32 emissionDay, IIntexAuction.AuctionSchedule memory schedule, IIntexAuction.AuctionParams memory params) =
             BridgeMsgCodec.decodeAuctionParams(message);
 
-        try $.auction.auctionStart(emissionDay, schedule, params) {
+        try $.auction.startAuction(emissionDay, schedule, params) {
             emit ITargetRouter.AuctionStageReceived(srcChainId, emissionDay, BridgeMsgCodec.MSG_AUCTION_STAGE_START);
         } catch (bytes memory reason) {
             bytes4 selector = _selectorOf(reason);
@@ -85,7 +85,7 @@ library TargetInbound {
     {
         uint32 emissionDay = BridgeMsgCodec.decodeAuctionStageCollectingBids(message);
 
-        try $.auction.startAwaitingResult(emissionDay) {}
+        try $.auction.startAuctionClearing(emissionDay) {}
         catch (bytes memory reason) {
             bytes4 selector = _selectorOf(reason);
             uint8 why;
@@ -135,22 +135,20 @@ library TargetInbound {
     ///      A day whose reveal stage has not closed yet (clock skew) propagates so the bridge
     ///      redelivers.
     function handleAuctionResult(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message) external {
-        (uint32 emissionDay, uint32 issuedUnits, uint64 auctionClearingRate, uint32 wonBidsCount) =
+        (uint32 emissionDay, BridgeMsgCodec.IntexAuctionChainResult memory r) =
             BridgeMsgCodec.decodeAuctionResult(message);
 
-        try $.auction.executeAuctionClearing(emissionDay, issuedUnits, auctionClearingRate, wonBidsCount) {
-            emit ITargetRouter.AuctionResultReceived(srcChainId, emissionDay, issuedUnits, auctionClearingRate);
-        } catch (bytes memory reason) {
+        try $.auction
+            .completeAuction(emissionDay, r.wonQuantity, r.wonBidsCount, r.quantity, r.clearingRate, r.totalDemand) {}
+        catch (bytes memory reason) {
             bytes4 selector = _selectorOf(reason);
             uint8 why;
             if (selector == IIntexAuction.StageRequired.selector) {
                 IIntexAuction.AuctionStage current = _stageRequiredCurrent(reason);
                 if (current == IIntexAuction.AuctionStage.Completed) {
-                    why = _sameResult($, emissionDay, issuedUnits, auctionClearingRate, wonBidsCount)
-                        ? InboundReason.DUPLICATE
-                        : InboundReason.CONFLICT;
+                    why = _sameResult($, emissionDay, r) ? InboundReason.DUPLICATE : InboundReason.CONFLICT;
                 } else if (
-                    current == IIntexAuction.AuctionStage.Cancelled || current == IIntexAuction.AuctionStage.Failed
+                    current == IIntexAuction.AuctionStage.Canceled || current == IIntexAuction.AuctionStage.Failed
                 ) {
                     why = InboundReason.OBSOLETE;
                 } else {
@@ -159,7 +157,7 @@ library TargetInbound {
             } else if (selector == IIntexAuction.AuctionNotFound.selector) {
                 why = InboundReason.NOT_FOUND;
             } else if (
-                selector == IIntexAuction.WonBidsExceedRevealed.selector
+                selector == IIntexAuction.WonIntexAuctionBidsExceedRevealed.selector
                     || selector == IIntexAuction.ClearingRateBelowMin.selector
                     || selector == IIntexAuction.ZeroValue.selector
                     || selector == IIntexAuction.IssuedPromisOverflow.selector
@@ -201,8 +199,8 @@ library TargetInbound {
             return;
         }
 
-        (, bool finalized,) = $.escrowAdapter.getAuctionStatus(emissionDay);
-        if (!finalized) $.escrowAdapter.finalizeAuction(emissionDay, receiveId, new address[](0), 0, 0, 0, 0, true);
+        (, bool finalized,) = $.escrowAdapter.auctionStatus(emissionDay);
+        if (!finalized) $.escrowAdapter.chargeIntexAuctionAsset(emissionDay, new address[](0), 0, 0, 0, 0, true);
     }
 
     /// @dev Whether the auction this chain holds for `emissionDay` was opened under the START's terms. The reveal
@@ -222,20 +220,17 @@ library TargetInbound {
     function _sameResult(
         TargetRouterStorage storage $,
         uint32 emissionDay,
-        uint32 issuedUnits,
-        uint64 auctionClearingRate,
-        uint32 wonBidsCount
+        BridgeMsgCodec.IntexAuctionChainResult memory result
     ) private view returns (bool) {
-        IIntexAuction.AuctionResult memory r = $.auction.getAuctionInfo(emissionDay).result;
-        return
-            r.issuedUnits == issuedUnits && r.auctionClearingRate == auctionClearingRate
-                && r.wonBidsCount == wonBidsCount;
+        IIntexAuction.IntexAuctionResult memory r = $.auction.getAuctionInfo(emissionDay).result;
+        return r.issuedUnits == result.quantity && r.clearingRate == result.clearingRate
+            && r.wonBidsCount == result.wonBidsCount;
     }
 
     /// @dev Whether this chain reads the day as failed. A day it never opened is not.
     function _failed(TargetRouterStorage storage $, uint32 emissionDay) private view returns (bool) {
         if (address($.auction).code.length == 0) return false;
-        try $.auction.getAuctionStage(emissionDay) returns (IIntexAuction.AuctionStage stage) {
+        try $.auction.auctionStage(emissionDay) returns (IIntexAuction.AuctionStage stage) {
             return stage == IIntexAuction.AuctionStage.Failed;
         } catch {
             return false;
@@ -244,7 +239,7 @@ library TargetInbound {
 
     /// @dev Whether the day has ended: no stage message or result can apply to it any more.
     function _ended(IIntexAuction.AuctionStage stage) private pure returns (bool) {
-        return stage == IIntexAuction.AuctionStage.Completed || stage == IIntexAuction.AuctionStage.Cancelled
+        return stage == IIntexAuction.AuctionStage.Completed || stage == IIntexAuction.AuctionStage.Canceled
             || stage == IIntexAuction.AuctionStage.Failed;
     }
 
@@ -401,7 +396,7 @@ library TargetInbound {
     /// @notice Decode REFUND_INSTRUCTIONS and forward finalization instructions to the EscrowAdapter.
     /// @dev `receiveId` is the escrow finalization tag. The handler acknowledges without effect a chunk
     ///      already applied, or one arriving after the escrow closed the day or the day failed.
-    ///      Bidders it would have settled recover through the auction's `claimRefund` path.
+    ///      Bidders it would have settled recover through the auction's `returnIntexAuctionAsset` path.
     function handleRefundInstructions(
         TargetRouterStorage storage $,
         uint32 srcChainId,
@@ -432,7 +427,7 @@ library TargetInbound {
             _ignore(srcChainId, BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS, chunkKey, InboundReason.CONFLICT);
             return;
         }
-        (, bool finalized,) = $.escrowAdapter.getAuctionStatus(emissionDay);
+        (, bool finalized,) = $.escrowAdapter.auctionStatus(emissionDay);
         if (finalized || _failed($, emissionDay)) {
             _ignore(srcChainId, BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS, chunkKey, InboundReason.OBSOLETE);
             return;
@@ -445,9 +440,7 @@ library TargetInbound {
         bool completesDay = seen >= totalChunks;
 
         uint128 totalPaid = $.escrowAdapter
-            .finalizeAuction(
-                emissionDay, receiveId, winners, partialIndex, partialWon, clearingRate, basis, completesDay
-            );
+            .chargeIntexAuctionAsset(emissionDay, winners, partialIndex, partialWon, clearingRate, basis, completesDay);
         $.refundProgress[emissionDay] = RefundProgress({totalChunks: totalChunks, chunksSeen: seen});
         // Each chunk sends its own payments, so a chunk that never lands holds back no other.
         if (totalPaid > 0) {

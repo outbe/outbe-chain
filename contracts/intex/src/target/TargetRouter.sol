@@ -156,21 +156,24 @@ contract TargetRouter is
 
     // --- Admin ---
     /// @inheritdoc ITargetRouter
-    function wire(address _auction, address _intex, address _escrowAdapter) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function wire(address _auction, address _intexContract, address _escrowAdapter)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
         if (_auction == address(0)) revert ZeroAddress("auction");
-        if (_intex == address(0)) revert ZeroAddress("intex");
+        if (_intexContract == address(0)) revert ZeroAddress("intex");
         if (_escrowAdapter == address(0)) revert ZeroAddress("escrowAdapter");
 
         TargetRouterStorage storage $ = _ts();
         IEscrowAdapter current = $.escrowAdapter;
         // A day in flight finalizes on the escrow that took its locks, so the venue stays until nothing is left.
         bool changing =
-            _auction != address($.auction) || _intex != address($.intex) || _escrowAdapter != address(current);
+            _auction != address($.auction) || _intexContract != address($.intex) || _escrowAdapter != address(current);
         if (address(current) != address(0) && changing && current.hasOutstandingLocks()) {
             revert EscrowHasLiveLocks();
         }
         $.auction = IIntexAuction(_auction);
-        $.intex = IIntexNFT1155(_intex);
+        $.intex = IIntexNFT1155(_intexContract);
         $.escrowAdapter = IEscrowAdapter(_escrowAdapter);
     }
 
@@ -257,7 +260,7 @@ contract TargetRouter is
     function relayBids(uint32 emissionDay) external nonReentrant {
         TargetRouterStorage storage $ = _ts();
         if ($.bidsRelay[emissionDay].done) revert NoBidsToRelay(emissionDay);
-        if ($.auction.getAuctionStage(emissionDay) != IIntexAuction.AuctionStage.AwaitingResult) {
+        if ($.auction.auctionStage(emissionDay) != IIntexAuction.AuctionStage.AwaitingResult) {
             revert NoBidsToRelay(emissionDay);
         }
         uint16 batchBefore = $.bidsRelay[emissionDay].nextBatch;
@@ -286,7 +289,7 @@ contract TargetRouter is
         BidsRelayProgress storage progress = $.bidsRelay[emissionDay];
         if (progress.done) return;
 
-        uint256 bidsCount = $.auction.revealedBidsCount(emissionDay);
+        uint256 bidsCount = $.auction.revealedIntexAuctionBidsCount(emissionDay);
         uint16 totalBatches = progress.totalBatches;
         if (totalBatches == 0) {
             uint256 maxChunk = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN;
@@ -334,11 +337,11 @@ contract TargetRouter is
         address[] memory bidderAddresses = new address[](chunkLen);
         uint256[] memory packedBids = new uint256[](chunkLen);
         if (chunkLen != 0) {
-            IIntexAuction.SubmittedBidData[] memory bids =
-                _ts().auction.revealedBidsSlice(emissionDay, offset, chunkLen);
+            IIntexAuction.SubmittedIntexAuctionBidData[] memory bids =
+                _ts().auction.revealedIntexAuctionBidsSlice(emissionDay, offset, chunkLen);
             for (uint256 i = 0; i < chunkLen; i++) {
-                IIntexAuction.SubmittedBidData memory bid = bids[i];
-                bidderAddresses[i] = bid.bidderAddress;
+                IIntexAuction.SubmittedIntexAuctionBidData memory bid = bids[i];
+                bidderAddresses[i] = bid.bidder;
                 packedBids[i] = BridgeMsgCodec.packBid(
                     bid.intexQuantity, bid.intexBidRate, bid.timestamp, bid.issuanceCurrency, bid.referenceCurrency
                 );
@@ -422,7 +425,7 @@ contract TargetRouter is
     function _handOverProceeds(uint32 emissionDay, uint128 amount) private {
         TargetRouterStorage storage $ = _ts();
         IOriginRouter origin = IOriginRouter($.originRouter);
-        IERC20 token = $.escrowAdapter.dayPaymentToken(emissionDay);
+        IERC20 token = $.escrowAdapter.dayIntexAuctionAsset(emissionDay);
         address wcoen = origin.wcoen();
         if (address(token) != wcoen) revert ProceedsTokenNotBridged(address(token), wcoen);
 
@@ -435,7 +438,7 @@ contract TargetRouter is
         TargetRouterStorage storage $ = _ts();
         address to = $.originRouter;
         bytes memory extraData = abi.encode(emissionDay);
-        IERC20 token = $.escrowAdapter.dayPaymentToken(emissionDay);
+        IERC20 token = $.escrowAdapter.dayIntexAuctionAsset(emissionDay);
         IERC20 bridgeToken = $.tokenBridge.token();
         if (token != bridgeToken) revert ProceedsTokenNotBridged(address(token), address(bridgeToken));
 
