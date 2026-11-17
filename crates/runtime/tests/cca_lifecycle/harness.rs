@@ -13,7 +13,7 @@ pub(crate) use outbe_ccaregistry::{
     schema::CcaContract,
 };
 pub(crate) use outbe_evm::OutbeEvmFactory;
-pub(crate) use outbe_gemfactory::precompile::IGemFactory;
+pub(crate) use outbe_gem::precompile::IGem;
 pub(crate) use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     storage::{direct::DirectStorageProvider, StorageHandle},
@@ -269,7 +269,7 @@ pub(super) fn claim_by_tx(
     let issued = result
         .logs()
         .iter()
-        .find_map(|log| IGemFactory::GemIssued::decode_log(log).ok())
+        .find_map(|log| IGem::GemIssued::decode_log(log).ok())
         .expect("the claim emits GemIssued")
         .data;
     assert_eq!(issued.gemId, gem_id);

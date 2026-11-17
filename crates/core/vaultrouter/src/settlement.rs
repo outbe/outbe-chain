@@ -15,6 +15,7 @@ pub use outbe_core_common::settlement::{SettlementCost, SettlementPayment};
 
 pub use crate::errors::SettlementError;
 
+use crate::errors::VaultRouterError;
 use crate::precompile::IVaultRouter;
 use crate::sol_ext::{IReferenceCurrency, IERC20};
 
@@ -52,6 +53,13 @@ impl Quote {
             _ => Ok(()),
         }
     }
+
+    pub fn require_within_cap(&self, cap: U256) -> Result<()> {
+        if self.payment_minor > cap {
+            return Err(SettlementError::CostAboveCap.into());
+        }
+        Ok(())
+    }
 }
 
 /// Prices `cost` in `asset`. The reference currency matches first, so a
@@ -84,6 +92,21 @@ pub fn quote(
         payment_minor,
         snapshot,
     })
+}
+
+/// Rejects a payer whose allowance to the vault router or balance is below `cap`.
+pub fn require_funds(
+    storage: &StorageHandle<'_>,
+    payer: Address,
+    asset: Address,
+    cap: U256,
+) -> Result<()> {
+    if allowance(storage, asset, payer, VAULT_ROUTER_ADDRESS)? < cap
+        || balance_of(storage, asset, payer)? < cap
+    {
+        return Err(SettlementError::InsufficientFunds.into());
+    }
+    Ok(())
 }
 
 /// Asks the vault router to take exactly `amount` of `asset` directly from `payer` and to
@@ -139,4 +162,24 @@ fn decimals(storage: &StorageHandle<'_>, asset: Address) -> Result<u8> {
     let ret = storage.staticcall(asset, IERC20::decimalsCall {}.abi_encode().into())?;
     IERC20::decimalsCall::abi_decode_returns(&ret)
         .map_err(|_| SettlementError::AssetDecimals.into())
+}
+
+fn allowance(
+    storage: &StorageHandle<'_>,
+    asset: Address,
+    owner: Address,
+    spender: Address,
+) -> Result<U256> {
+    let ret = storage.staticcall(
+        asset,
+        IERC20::allowanceCall { owner, spender }.abi_encode().into(),
+    )?;
+    IERC20::allowanceCall::abi_decode_returns(&ret)
+        .map_err(|_| VaultRouterError::TokenOperationFailed.into())
+}
+
+fn balance_of(storage: &StorageHandle<'_>, asset: Address, account: Address) -> Result<U256> {
+    let ret = storage.staticcall(asset, IERC20::balanceOfCall { account }.abi_encode().into())?;
+    IERC20::balanceOfCall::abi_decode_returns(&ret)
+        .map_err(|_| VaultRouterError::TokenOperationFailed.into())
 }

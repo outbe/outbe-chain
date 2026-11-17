@@ -63,10 +63,10 @@ impl DeadlineHandler<B256> for GemForfeit<'_, '_> {
         error.record_pass_failure()
     }
 
-    /// Returns the load of the group's unpaid gems in one credit and hands the gems to
+    /// Returns the load of the group's unsettled gems in one credit and hands the gems to
     /// the cleanup. Nobody realized the load, so it goes back to the Promis reserve.
     fn process_member(&mut self, group: B256, _member: B256) -> Result<()> {
-        let load = self.gem.group_unpaid_load.read(&group)?;
+        let load = self.gem.group_unsettled_load_minor.read(&group)?;
         let sub_series = self.gem.group_sub_series(group)?;
         if !load.is_zero() {
             outbe_promislimit::PromisLimitContract::new(self.storage.clone())
@@ -84,8 +84,8 @@ impl DeadlineHandler<B256> for GemForfeit<'_, '_> {
                 subSeriesId: sub.sub_series_id,
                 issuanceCurrency: sub.issuance_currency,
                 referenceCurrency: sub.reference_currency,
-                forfeitedCount: sub.unpaid_count,
-                forfeitedAmountMinor: sub.unpaid_load,
+                forfeitedCount: sub.unsettled_count,
+                forfeitedAmountMinor: sub.unsettled_load_minor,
             })?;
         }
         Ok(())

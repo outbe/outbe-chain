@@ -85,7 +85,7 @@ impl Rail for Intex {
         }
     }
 
-    fn settle_call(self, _id: U256, snapshot_id: U256) -> Bytes {
+    fn settle_call(self, _id: U256, snapshot_id: U256, _cost: U256) -> Bytes {
         IIntexFactory::settleIntexCall {
             intexId: outbe_intex::intex_id(SeriesId::from(FixedBytes(SERIES))),
             owner: OWNER,

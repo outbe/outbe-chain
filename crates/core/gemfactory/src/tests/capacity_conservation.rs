@@ -106,7 +106,9 @@ fn daily_pass_shares_series_and_position_allowance_across_reentry() {
             let group = B256::from(U256::from(n).to_be_bytes::<32>());
             gem.group_called_at.write(&group, 1).unwrap();
             gem.group_gem_count.write(&group, 1).unwrap();
-            gem.group_unpaid_load.write(&group, U256::from(1)).unwrap();
+            gem.group_unsettled_load_minor
+                .write(&group, U256::from(1))
+                .unwrap();
             gem.push_called(group, EXPIRES).unwrap();
         }
         let ctx = BlockRuntimeContext::new(

@@ -52,6 +52,7 @@ fn a_direct_settlement_through_a_leg_the_window_never_priced_is_refused_without_
                 asset: SETTLEMENT_ASSET,
                 snapshot_id: required,
             },
+            amount_cap(),
         )
     });
     assert_eq!(

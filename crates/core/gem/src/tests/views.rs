@@ -415,7 +415,7 @@ fn a_gem_reads_forfeited_past_the_call_deadline() {
     });
 }
 
-/// A settled gem keeps the call stamp it was paid under, even after its deadline.
+/// A settled gem keeps the call stamp it was settled under, even after its deadline.
 #[test]
 fn a_settled_gem_keeps_its_call_stamp_in_the_view() {
     let mut provider = provider_at(T_NOW);
@@ -485,6 +485,18 @@ fn gem_contract_slot_layout_is_pinned() {
         assert_eq!(
             gem.min_call_threshold_seconds.base_slot(),
             U256::from(33u64)
+        );
+        assert_eq!(
+            gem.group_unsettled_load_minor.base_slot(),
+            U256::from(52u64)
+        );
+        assert_eq!(
+            gem.group_sub_series_unsettled_count.base_slot(),
+            U256::from(75u64)
+        );
+        assert_eq!(
+            gem.group_sub_series_unsettled_load_minor.base_slot(),
+            U256::from(76u64)
         );
         assert_eq!(GemState::Settled as u8, 2);
     });

@@ -17,6 +17,7 @@ interface IGemFactory {
     error InsufficientCapacity();
     error PositionExpired();
     error InsufficientProofOfWork();
+    error CannotMineInIssueBlock();
     error InvalidCurrency(uint16 currency);
     error OracleUnavailable();
     error InvalidOwner();
@@ -37,8 +38,9 @@ interface IGemFactory {
     /// @notice Issue one Merchant gem to `owner` in the currencies the merchant names,
     ///         draining the position's capacity. Only the position's merchant (the caller)
     ///         may call. `issuanceCurrency` is any ISO 4217 code, `referenceCurrency` an
-    ///         oracle reference currency. One owner gets one Gem of a series in each block,
-    ///         so a second one in the same currencies and block reverts `AlreadyExists`.
+    ///         oracle reference currency. A merchant issues one owner one Gem of a sub-series
+    ///         in each block, so a second one in the same sub-series and block reverts
+    ///         `AlreadyExists`.
     function issueGem(
         uint256 positionId,
         address owner,
@@ -49,19 +51,22 @@ interface IGemFactory {
 
     /// @notice Settle a gem paying its cost in `asset`. Any caller may pay. The
     ///         gem stays with its owner.
-    /// @dev Approve the VaultRouter for the `quoteSettlement` amount before calling.
+    /// @dev Approve the VaultRouter for `amountCapMinor` before calling.
     ///      Payment is deposited into the Reserve through VaultRouter.
     /// @param asset Settlement asset the gem accepts.
     /// @param snapshotId The trailing VWAP snapshot `quoteSettlement` returned. An
     ///        issuance-currency payment naming any other snapshot reverts. Ignored
     ///        on the reference rail.
-    function settleGem(uint256 gemId, address asset, uint256 snapshotId) external;
+    /// @param amountCapMinor The most the payer pays, in `asset` units. A payer whose
+    ///        allowance or balance is below it reverts `InsufficientFunds`; a cost above
+    ///        it reverts `CostAboveCap`. The call takes only the cost.
+    function settleGem(uint256 gemId, address asset, uint256 snapshotId, uint256 amountCapMinor) external;
     /// @notice Burn a settled gem and mint confidential Promis to its owner,
     ///         gated by off-chain proof of work. Any caller may submit. The owner's Promis
     ///         modify key authorizes the call: `mac = HMAC(modifyKey, op-preimage)`.
     ///         `opNonce` MUST equal the owner's current on-chain promis op-nonce (fetch it via
     ///         `outbe_deriveKeys` + `IPromis.opNonceOf`). The bound amount is the gem's load.
-    ///         Returns the minted Promis.
+    ///         A gem is not mined in its issue block. Returns the minted Promis.
     /// @dev    `nonce` solves SHA256("OUTBE_GEM_MINING_V1" || `gemId` || owner || uint64(0) ||
     ///         `nonce`) to the protocol difficulty. The owner is the gem's, not the caller's.
     function minePromis(uint256 gemId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256 promisMinor);
@@ -144,16 +149,6 @@ interface IGemFactory {
         uint64 callThreshold,
         uint64 callNoticePeriod
     );
-    /// @notice A new gem was issued (agent reward or merchant flow).
-    event GemIssued(
-        uint256 indexed gemId,
-        address indexed owner,
-        bytes14 indexed seriesId,
-        uint16 subSeriesId,
-        uint16 issuanceCurrency,
-        uint16 referenceCurrency,
-        bytes payload
-    );
     /// @notice A merchant sent Intex units into a new position.
     event GemPositionCreated(
         uint256 indexed positionId,
@@ -162,15 +157,6 @@ interface IGemFactory {
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
         bytes payload
-    );
-    /// @notice A gem's Cost Amount was settled into the Reserve: `amountMinor` of `asset`.
-    event GemSettled(
-        uint256 indexed gemId,
-        address indexed owner,
-        address asset,
-        uint16 issuanceCurrency,
-        uint16 referenceCurrency,
-        uint256 amountMinor
     );
     /// @notice The `positions` positions whose validity ended in `expiryHour` (unix time
     ///         / 3600) returned the capacity they never issued, and the cleanup deletes them.

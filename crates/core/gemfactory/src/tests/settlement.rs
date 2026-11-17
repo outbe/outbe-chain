@@ -38,6 +38,7 @@ fn erc20_settle_asks_the_router_to_take_the_cost_from_the_caller() {
             gemId: gem_id,
             asset: SETTLEMENT_ASSET,
             snapshotId: U256::ZERO,
+            amountCapMinor: amount_cap(),
         };
         let res = crate::precompile::dispatch(storage.clone(), &call.abi_encode(), BOB, U256::ZERO);
         assert_eq!(
@@ -86,6 +87,7 @@ fn erc20_settle_rejects_a_foreign_currency_asset_before_paying() {
                 asset: SETTLEMENT_ASSET_EUR,
                 snapshot_id: U256::ZERO,
             },
+            amount_cap(),
         );
         assert_eq!(
             res.unwrap_err().to_string(),
@@ -220,6 +222,7 @@ fn settling_on_an_unregistered_issuance_leg_is_refused() {
                 asset: SETTLEMENT_ASSET_EUR,
                 snapshot_id: U256::ZERO,
             },
+            amount_cap(),
         );
         assert_eq!(
             res.unwrap_err().to_string(),
@@ -279,6 +282,7 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
                 asset: SETTLEMENT_ASSET,
                 snapshot_id: U256::ZERO,
             },
+            amount_cap(),
         );
         assert_eq!(
             res.unwrap_err().to_string(),
@@ -430,6 +434,7 @@ fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
                 asset: SETTLEMENT_ASSET_EUR,
                 snapshot_id: quoted,
             },
+            amount_cap(),
         );
         assert_eq!(
             err_msg(stale),
@@ -457,6 +462,7 @@ fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
                 asset: SETTLEMENT_ASSET_EUR,
                 snapshot_id: required,
             },
+            amount_cap(),
         );
         assert_eq!(
             err_msg(late),
@@ -507,6 +513,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
                 asset: SETTLEMENT_ASSET_EUR,
                 snapshot_id: quoted,
             },
+            amount_cap(),
         );
         assert_eq!(
             res.unwrap_err().to_string(),
@@ -527,6 +534,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
                 asset: SETTLEMENT_ASSET_EUR,
                 snapshot_id: quoted,
             },
+            amount_cap(),
         );
         assert_eq!(
             err_msg(res),
@@ -556,6 +564,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
                 asset: SETTLEMENT_ASSET_EUR,
                 snapshot_id: other_policy.to_u256(),
             },
+            amount_cap(),
         );
         assert_eq!(
             err_msg(res),
@@ -577,6 +586,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
                 asset: SETTLEMENT_ASSET,
                 snapshot_id: quoted,
             },
+            amount_cap(),
         );
         assert_eq!(
             err_msg(reference),
@@ -694,6 +704,7 @@ fn gem_cost_load(item: &GemItemState) -> U256 {
         entry_price_minor: _,
         series_id: _,
         sub_series_id: _,
+        issuer: _,
     } = item;
     *promis_load_minor
 }
@@ -778,4 +789,77 @@ fn two_merchants_sending_one_series_in_a_block_get_separate_positions() {
         GemFactoryContract::generate_position_id(series, ALICE, 1),
         GemFactoryContract::generate_position_id(series, ALICE, 2)
     );
+}
+
+fn settle_capped(storage: &StorageHandle<'_>, gem_id: U256, snapshot: U256, cap: U256) -> String {
+    runtime::settle_gem(
+        storage,
+        gem_id,
+        SettlementPayment {
+            payer: BOB,
+            asset: SETTLEMENT_ASSET,
+            snapshot_id: snapshot,
+        },
+        cap,
+    )
+    .unwrap_err()
+    .to_string()
+}
+
+fn settlement_error(error: outbe_vaultrouter::settlement::SettlementError) -> String {
+    outbe_primitives::error::PrecompileError::from(error).to_string()
+}
+
+#[test]
+fn settle_gem_checks_the_funds_before_the_cost() {
+    let unit = six_decimal_unit();
+    for short in [
+        IERC20::balanceOfCall::SELECTOR,
+        IERC20::allowanceCall::SELECTOR,
+    ] {
+        let mut provider = test_storage(Some(U256::from(2u64) * unit));
+        provider.stub_sub_call_at_selector(SETTLEMENT_ASSET, short, word(1));
+        StorageHandle::enter(&mut provider, |storage| {
+            let storage = &storage;
+            let gem_id =
+                issue_at_live_rate(storage, ALICE, U256::from(10u64) * unit, 840, 840).unwrap();
+            let (_, cost, snapshot) =
+                runtime::quote_settlement(storage, gem_id, SETTLEMENT_ASSET).unwrap();
+            for cap in [U256::from(2u64), cost + U256::ONE] {
+                assert_eq!(
+                    settle_capped(storage, gem_id, snapshot, cap),
+                    settlement_error(
+                        outbe_vaultrouter::settlement::SettlementError::InsufficientFunds
+                    )
+                );
+            }
+            assert_eq!(gem_view(storage, gem_id).item.state, GemState::Issued as u8);
+        });
+    }
+}
+
+#[test]
+fn settle_gem_takes_only_the_cost_within_the_cap() {
+    let unit = six_decimal_unit();
+    let mut provider = test_storage(Some(U256::from(2u64) * unit));
+    let cost = StorageHandle::enter(&mut provider, |storage| {
+        let storage = &storage;
+        let gem_id =
+            issue_at_live_rate(storage, ALICE, U256::from(10u64) * unit, 840, 840).unwrap();
+        let (_, cost, snapshot) =
+            runtime::quote_settlement(storage, gem_id, SETTLEMENT_ASSET).unwrap();
+        assert_eq!(
+            settle_capped(storage, gem_id, snapshot, cost - U256::ONE),
+            settlement_error(outbe_vaultrouter::settlement::SettlementError::CostAboveCap)
+        );
+        // The router does not run, so an admitted payment stops at its `depositFrom`.
+        assert_eq!(
+            settle_capped(storage, gem_id, snapshot, cost + U256::ONE),
+            outbe_vaultrouter::test_support::unanswered_deposit_from().to_string()
+        );
+        assert_eq!(gem_view(storage, gem_id).item.state, GemState::Issued as u8);
+        cost
+    });
+    let deposit = outbe_vaultrouter::test_support::last_deposit_from(&provider).unwrap();
+    assert_eq!((deposit.payer, deposit.assetsMinor), (BOB, cost));
 }

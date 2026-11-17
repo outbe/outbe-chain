@@ -85,6 +85,14 @@ fn stub_settlement_asset(
         word(iso_code),
     );
     storage.stub_sub_call_at_selector(asset, IERC20::decimalsCall::SELECTOR, word(decimals));
+    let cap = alloy_primitives::Bytes::from(amount_cap().to_be_bytes::<32>().to_vec());
+    storage.stub_sub_call_at_selector(asset, IERC20::balanceOfCall::SELECTOR, cap.clone());
+    storage.stub_sub_call_at_selector(asset, IERC20::allowanceCall::SELECTOR, cap);
+}
+
+/// A cap above every quoted cost that the stubbed allowance and balance cover.
+fn amount_cap() -> U256 {
+    U256::from(u128::MAX)
 }
 
 fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
@@ -197,6 +205,7 @@ fn admitted_at_quote(storage: &StorageHandle<'_>, gem_id: U256, asset: Address) 
             asset,
             snapshot_id: snapshot,
         },
+        amount_cap(),
     );
     assert_eq!(
         res.unwrap_err().to_string(),
@@ -230,13 +239,26 @@ fn register_currency(storage: &StorageHandle<'_>, iso: u16, rate: U256) {
     seed_day_vwap(storage, iso, rate);
 }
 
-// The paid `settle_gem` path (Reserve vault deposit) is not exercisable in the
+// The payment path of `settle_gem` (Reserve vault deposit) is not exercisable in the
 // storage-only harness: the router does not run. Mine coverage
-// records Settled through `gem_api::settle_gem`, which does not deposit. Localnet covers the paid settle.
+// records Settled through `gem_api::settle_gem`, which does not deposit. Localnet covers the real settle.
 
 /// Records Settled. The body stays until it is mined.
 fn force_settled(storage: &StorageHandle<'_>, gem_id: U256) {
     record_settled(storage, gem_id);
+}
+
+/// One settled Gem of `load` Promis owned by Alice, priced at 2 COEN/USD, in the block
+/// before the provider's.
+fn settled_gem(load: U256) -> (HashMapStorageProvider, U256) {
+    let mut provider = test_storage(Some(U256::from(2u64) * six_decimal_unit()));
+    let gem_id = StorageHandle::enter(&mut provider, |storage| {
+        let gem_id = issue_at_live_rate(&storage, ALICE, load, 840, 840).unwrap();
+        force_settled(&storage, gem_id);
+        gem_id
+    });
+    provider.set_block_number(1);
+    (provider, gem_id)
 }
 
 /// Records Settled the way `settle_gem` does once payment is in, without the payment.

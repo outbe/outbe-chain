@@ -29,6 +29,7 @@ impl Rail for Gem {
         let gem_id = outbe_gem::api::add_gem(
             storage,
             GemAddParams {
+                issuer: OWNER,
                 owner: OWNER,
                 promis_load_minor: U256::from(1_500_000),
                 entry_price_minor: entry_price,
@@ -85,11 +86,12 @@ impl Rail for Gem {
         }
     }
 
-    fn settle_call(self, id: U256, snapshot_id: U256) -> Bytes {
+    fn settle_call(self, id: U256, snapshot_id: U256, cost: U256) -> Bytes {
         IGemFactory::settleGemCall {
             gemId: id,
             asset: ASSET,
             snapshotId: snapshot_id,
+            amountCapMinor: cost,
         }
         .abi_encode()
         .into()
@@ -100,7 +102,8 @@ impl Rail for Gem {
             .evm
             .logs()
             .iter()
-            .filter_map(|log| IGemFactory::GemSettled::decode_log_data(&log.data).ok())
+            .filter(|log| log.address == GEM_ADDRESS)
+            .filter_map(|log| IGem::GemSettled::decode_log_data(&log.data).ok())
             .collect();
         assert_eq!(settled.len(), 1);
         assert_eq!(settled[0].owner, OWNER);

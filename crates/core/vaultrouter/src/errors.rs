@@ -248,6 +248,10 @@ pub enum SettlementError {
     SnapshotMismatch { authorized: U256, required: U256 },
     #[error("settlement token moved an unexpected amount")]
     AmountMismatch,
+    #[error("payer allowance or balance is below the amount cap")]
+    InsufficientFunds,
+    #[error("settlement cost is above the amount cap")]
+    CostAboveCap,
 }
 
 impl From<SettlementError> for PrecompileError {
@@ -275,6 +279,8 @@ impl From<SettlementError> for PrecompileError {
                 required,
             }),
             SettlementError::AmountMismatch => revert_with(I::AmountMismatch {}),
+            SettlementError::InsufficientFunds => revert_with(I::InsufficientFunds {}),
+            SettlementError::CostAboveCap => revert_with(I::CostAboveCap {}),
         }
     }
 }
