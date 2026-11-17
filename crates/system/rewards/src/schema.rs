@@ -88,8 +88,8 @@ pub struct Rewards {
     /// Escrowed fees in native COEN minor units (wei; 10^18 per COEN), keyed by
     /// `fb_hash`. One six-decimal protocol unit equals 10^12 native units. Recorded instead of
     /// the eager per-voter transfer. Settled at `N+K` across the credited voter
-    /// set with a decay-weighted, fixed-denominator transfer. All residue burns
-    /// through the shared Promis Limit native-credit accumulator.
+    /// set with a decay-weighted, fixed-denominator transfer. The residue burns into the
+    /// Promis Limit with code 42.
     pub pending_fees: Mapping<B256, U256>,
 
     /// Per-finalized-block guard: the escrowed fee has been settled exactly once.

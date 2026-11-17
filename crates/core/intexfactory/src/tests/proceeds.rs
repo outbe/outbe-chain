@@ -1,7 +1,7 @@
 use super::*;
 
 use alloy_sol_types::SolEvent;
-use outbe_promislimit::PromisLimitContract;
+use outbe_promislimit::{BurnSource, PromisLimitContract};
 use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 
 use crate::constants::ORIGIN_ROUTER_ADDRESS;
@@ -78,14 +78,19 @@ fn coen_below_one_protocol_minor_carries_into_the_next_delivery() {
         deliver(&s, 10, U256::from(2u64) * unit + rest);
         assert_eq!(pool(&s), before + U256::from(2u64));
         assert_eq!(
-            PromisLimitContract::new(s.clone()).rest_minor().unwrap(),
+            PromisLimitContract::new(s.clone())
+                .burn_rest(BurnSource::IntexAuctionProceeds)
+                .unwrap(),
             rest
         );
+        assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), rest);
 
         deliver(&s, 10, unit - rest);
         assert_eq!(pool(&s), before + U256::from(3u64));
         assert_eq!(
-            PromisLimitContract::new(s.clone()).rest_minor().unwrap(),
+            PromisLimitContract::new(s.clone())
+                .burn_rest(BurnSource::IntexAuctionProceeds)
+                .unwrap(),
             U256::ZERO
         );
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
@@ -99,24 +104,24 @@ fn coen_below_one_protocol_minor_carries_into_the_next_delivery() {
 }
 
 #[test]
-fn proceeds_burn_under_the_proceeds_source() {
-    use outbe_promislimit::{precompile::IPromisLimit, BurnSource};
+fn proceeds_burn_under_the_proceeds_code() {
+    use outbe_promislimit::precompile::IPromisLimit;
     use outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS;
 
     let mut storage = factory_provider();
     let amount = UNITS_PER_PROTOCOL_MINOR;
     StorageHandle::enter(&mut storage, |s| deliver(&s, 10, amount));
 
-    let burns: Vec<IPromisLimit::NativeBurnedToPromisLimit> = storage
+    let adds: Vec<IPromisLimit::PromisLimitAdded> = storage
         .get_events(PROMIS_LIMIT_ADDRESS)
         .iter()
         .filter_map(|log| {
-            IPromisLimit::NativeBurnedToPromisLimit::decode_raw_log(log.topics(), &log.data).ok()
+            IPromisLimit::PromisLimitAdded::decode_raw_log(log.topics(), &log.data).ok()
         })
         .collect();
-    assert_eq!(burns.len(), 1);
-    assert_eq!(burns[0].source, BurnSource::Proceeds as u8);
-    assert_eq!(burns[0].burnedUnit, amount);
+    assert_eq!(adds.len(), 1);
+    assert_eq!(adds[0].source, BurnSource::IntexAuctionProceeds as u8);
+    assert_eq!(adds[0].amountMinor, U256::ONE);
 }
 
 #[test]
@@ -132,7 +137,9 @@ fn proceeds_above_the_factory_balance_change_nothing() {
         assert_eq!(pool(&s), before);
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), unit);
         assert_eq!(
-            PromisLimitContract::new(s.clone()).rest_minor().unwrap(),
+            PromisLimitContract::new(s.clone())
+                .burn_rest(BurnSource::IntexAuctionProceeds)
+                .unwrap(),
             U256::ZERO
         );
     });

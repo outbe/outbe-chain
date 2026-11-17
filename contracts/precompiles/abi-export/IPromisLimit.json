@@ -13,21 +13,8 @@
     "stateMutability": "view"
   },
   {
-    "type": "function",
-    "name": "restMinor",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "restMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
     "type": "event",
-    "name": "NativeBurnedToPromisLimit",
+    "name": "PromisLimitAdded",
     "inputs": [
       {
         "name": "source",
@@ -36,7 +23,7 @@
         "internalType": "uint8"
       },
       {
-        "name": "burnedUnit",
+        "name": "amountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -45,24 +32,22 @@
     "anonymous": false
   },
   {
-    "type": "error",
-    "name": "UnauthorizedBurnCaller",
+    "type": "event",
+    "name": "PromisLimitSubtracted",
     "inputs": [
       {
-        "name": "caller",
-        "type": "address",
-        "internalType": "address"
+        "name": "target",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
       },
       {
-        "name": "source",
-        "type": "uint8",
-        "internalType": "uint8"
+        "name": "amountMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "Underflow",
-    "inputs": []
+    ],
+    "anonymous": false
   }
 ]

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
+import {DEAD_ADDRESS} from "@shared/BurnAddress.sol";
+
 contract WCOEN {
     string public name = "Wrapped COEN";
     string public symbol = "WCOEN";
@@ -79,10 +81,29 @@ contract WCOEN {
         }
 
         balanceOf[src] -= wad;
+        if (dst == address(0) || dst == DEAD_ADDRESS) {
+            _burnTo(src, dst, wad);
+            return true;
+        }
         balanceOf[dst] += wad;
 
         emit Transfer(src, dst, wad);
 
         return true;
+    }
+
+    /// @dev A transfer to a burn address unwraps there, so the node burns the native COEN.
+    function _burnTo(address src, address dst, uint256 wad) private {
+        _totalSupply -= wad;
+        emit Transfer(src, dst, wad);
+
+        bool success;
+        if (dst == DEAD_ADDRESS) {
+            emit Transfer(DEAD_ADDRESS, address(0), wad);
+            (success,) = payable(DEAD_ADDRESS).call{value: wad}("");
+        } else {
+            (success,) = payable(address(0)).call{value: wad}("");
+        }
+        if (!success) revert NativeTransferFailed(dst, wad);
     }
 }

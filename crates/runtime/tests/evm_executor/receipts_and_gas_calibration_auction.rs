@@ -484,10 +484,13 @@ fn accepted_1088_bid_auction_completes_before_incremental_cycle_cleanup() {
     }));
     assert_eq!(
         logs.iter()
-            .filter(
-                |log| outbe_desis::precompile::IDesis::DesisLimitReturned::decode_log(log)
-                    .is_ok_and(|event| event.data.amountMinor == U256::from(7))
-            )
+            .filter(|log| {
+                outbe_promislimit::precompile::IPromisLimit::PromisLimitAdded::decode_log(log)
+                    .is_ok_and(|event| {
+                        event.data.source == outbe_promislimit::LimitSource::DesisLimit as u8
+                            && event.data.amountMinor == U256::from(7)
+                    })
+            })
             .count(),
         1
     );
@@ -560,10 +563,13 @@ fn accepted_bid_deadlines_retire_with_reverting_router_within_advance_budget() {
         );
         assert_eq!(
             logs.iter()
-                .filter(
-                    |log| outbe_desis::precompile::IDesis::DesisLimitReturned::decode_log(log)
-                        .is_ok_and(|event| event.data.amountMinor == U256::from(3_000_007))
-                )
+                .filter(|log| {
+                    outbe_promislimit::precompile::IPromisLimit::PromisLimitAdded::decode_log(log)
+                        .is_ok_and(|event| {
+                            event.data.source == outbe_promislimit::LimitSource::DesisLimit as u8
+                                && event.data.amountMinor == U256::from(3_000_007)
+                        })
+                })
                 .count(),
             1
         );

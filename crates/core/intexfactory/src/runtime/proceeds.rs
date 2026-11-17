@@ -2,7 +2,7 @@ use super::*;
 
 use outbe_promislimit::{BurnSource, PromisLimitContract};
 
-/// Burns the proceeds into the Promis Limit; COEN below one minor carries in its shared rest.
+/// Burns the proceeds into the Promis Limit; COEN below one minor stays as the rest of code 43.
 pub fn distribute(
     storage: &StorageHandle<'_>,
     caller: Address,
@@ -16,11 +16,7 @@ pub fn distribute(
     if amount.is_zero() {
         return Err(IntexFactoryError::ZeroAmount.into());
     }
-    let _credited = PromisLimitContract::new(storage.clone()).burn_to_promis_limit(
-        INTEX_FACTORY_ADDRESS,
-        amount,
-        BurnSource::Proceeds,
-    )?;
+    PromisLimitContract::new(storage.clone()).burn(BurnSource::IntexAuctionProceeds, amount)?;
     emit_event(
         storage,
         crate::precompile::IIntexFactory::IntexAuctionProceedsBurned {

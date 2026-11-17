@@ -349,7 +349,7 @@ fn start_auction(
 }
 
 /// Return a retiring day's unused Desis Limit to PromisLimit and record a zero
-/// allocation. A zero remainder is still reported, and is not credited.
+/// allocation. A zero remainder is not credited.
 fn refund_unused_desis_limit(
     storage: &StorageHandle<'_>,
     contract: &mut DesisContract<'_>,
@@ -363,12 +363,9 @@ fn refund_unused_desis_limit(
         emissionDay: emission_day.into(),
         amountMinor: U256::ZERO,
     })?;
-    contract.emit(IDesis::DesisLimitReturned {
-        emissionDay: emission_day.into(),
-        amountMinor: unused,
-    })?;
     if !unused.is_zero() {
-        PromisLimitContract::new(storage.clone()).checked_credit(unused)?;
+        PromisLimitContract::new(storage.clone())
+            .add(outbe_promislimit::LimitSource::DesisLimit, unused)?;
     }
     Ok(())
 }

@@ -624,9 +624,16 @@ fn failed_felony_rolls_back_both_markers_and_penalty_effects() {
     for method in 0..5 {
         with_storage(|storage| {
             setup(storage.clone(), &accused_sk());
-            // A provider-side burn failure occurs after both marker writes and jail.
+            // A provider-side burn failure occurs after both marker writes and jail: the rest
+            // of code 44 makes the 80_000 slash cross a minor that the empty escrow lacks.
             storage
                 .decrease_balance(STAKING_ADDRESS, U256::from(1_000_000))
+                .unwrap();
+            outbe_promislimit::PromisLimitContract::new(storage.clone())
+                .burn(
+                    outbe_promislimit::BurnSource::ValidatorStake,
+                    outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR - U256::from(50_000),
+                )
                 .unwrap();
             let mut si = SlashIndicator::new(storage.clone());
             let (a, b, result) = submit_pair(&mut si, method, 1, 5);

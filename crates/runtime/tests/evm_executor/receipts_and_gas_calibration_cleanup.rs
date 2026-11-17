@@ -52,8 +52,8 @@ pub(super) fn verify_accepted_auction_cleanup(
             }
             previous = remaining;
             let promis = outbe_promislimit::PromisLimitContract::new(storage.clone());
-            let balance = (promis.promis_limit().unwrap(), promis.rest_minor().unwrap());
-            assert_eq!(balance, (returned, U256::ZERO));
+            let balance = promis.promis_limit().unwrap();
+            assert_eq!(balance, returned);
             assert_eq!(*credit.get_or_insert(balance), balance);
             let runtime = BlockRuntimeContext::new(
                 BlockContext {
@@ -112,7 +112,8 @@ pub(super) fn verify_accepted_auction_cleanup(
             || outbe_desis::precompile::IDesis::IntexAuctionFailed::decode_log(log).is_ok()
             || outbe_intexfactory::precompile::IIntexFactory::IntexSeriesOpened::decode_log(log)
                 .is_ok()
-            || outbe_desis::precompile::IDesis::DesisLimitReturned::decode_log(log).is_ok()
+            || outbe_promislimit::precompile::IPromisLimit::PromisLimitAdded::decode_log(log)
+                .is_ok()
     }));
 }
 
