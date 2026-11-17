@@ -4,7 +4,7 @@ use std::{
     io::Write,
     net::Ipv4Addr,
     os::unix::fs::PermissionsExt,
-    path::Path,
+    path::{Path, PathBuf},
     str::FromStr,
 };
 
@@ -88,6 +88,9 @@ pub struct Topology {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Genesis {
+    /// Optional pre-TEE genesis JSON used instead of the generated base genesis.
+    #[serde(default)]
+    pub base: Option<PathBuf>,
     #[serde(default)]
     pub timestamp: Option<u64>,
     #[serde(default)]
@@ -211,6 +214,15 @@ impl NetworkConfig {
                 ensure!(value > 0, "genesis.{name} must be non-zero");
             }
         }
+        if self.genesis.base.is_some() {
+            ensure!(
+                self.genesis.timestamp.is_none()
+                    && self.genesis.epoch_length_blocks.is_none()
+                    && self.genesis.dkg_prepare_window_blocks.is_none()
+                    && self.genesis.dkg_activation_grace_blocks.is_none(),
+                "genesis timestamp, epoch, and DKG parameters must come from genesis.base when it is set"
+            );
+        }
         let reserved = reserved_genesis_keys();
         if let Some(key) = self
             .genesis
@@ -251,6 +263,7 @@ fn reserved_genesis_keys() -> BTreeSet<&'static str> {
         "validators",
         "keys_dir",
         "tee",
+        "base_genesis",
         "timestamp",
         "epoch_length_blocks",
         "dkg_prepare_window_blocks",

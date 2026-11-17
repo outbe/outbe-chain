@@ -53,7 +53,7 @@ pub const SEED_SECTIONS: [&str; 16] = [
 
 pub const TEE_KEYS: [&str; 1] = ["mode"];
 
-const STATIC_TOP_LEVEL_KEYS: [&str; 39] = [
+const STATIC_TOP_LEVEL_KEYS: [&str; 40] = [
     "network",
     "validators",
     "keys_dir",
@@ -75,6 +75,7 @@ const STATIC_TOP_LEVEL_KEYS: [&str; 39] = [
     "fresh_metadosis",
     "contracts_dir",
     "base_profile",
+    "base_genesis",
     "enclave_runner",
     "crs_path",
     "allow_stale_timestamp",

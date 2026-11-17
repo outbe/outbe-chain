@@ -24,6 +24,9 @@ use crate::yaml::load_yaml;
 
 /// Build the base Reth genesis structure from `config`.
 pub fn build_base_genesis(config: &Value) -> Result<Value, GenesisError> {
+    if let Some(path) = config.get("base_genesis").and_then(Value::as_str) {
+        return load_base_genesis(Path::new(path), config);
+    }
     let now = current_unix_timestamp();
     let timestamp = match config.get("timestamp") {
         Some(val) => parse_u64(val)?,
@@ -97,6 +100,45 @@ pub fn build_base_genesis(config: &Value) -> Result<Value, GenesisError> {
         "coinbase": format!("0x{}", "00".repeat(20)),
         "alloc": {}
     }))
+}
+
+fn load_base_genesis(path: &Path, config: &Value) -> Result<Value, GenesisError> {
+    for key in [
+        "timestamp",
+        "epoch_length_blocks",
+        "dkg_prepare_window_blocks",
+        "dkg_activation_grace_blocks",
+        "gas_limit",
+    ] {
+        if config.get(key).is_some() {
+            return Err(GenesisError::validation(format!(
+                "`{key}` cannot be combined with `base_genesis`; define it in the base genesis"
+            )));
+        }
+    }
+    let raw = fs::read_to_string(path).map_err(|error| GenesisError::io(path, error))?;
+    let genesis: Value = serde_json::from_str(&raw)?;
+    let expected_chain_id = u64_or_default(config, "chain_id", DEFAULT_CHAIN_ID)?;
+    let chain_id = genesis
+        .pointer("/config/chainId")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| GenesisError::validation("base_genesis missing numeric config.chainId"))?;
+    if chain_id != expected_chain_id {
+        return Err(GenesisError::validation(format!(
+            "base_genesis chain id {chain_id} does not match configured chain id {expected_chain_id}"
+        )));
+    }
+    if genesis.pointer("/config/teeAttestationV1").is_some() {
+        return Err(GenesisError::validation(
+            "base_genesis must not contain config.teeAttestationV1",
+        ));
+    }
+    if genesis.get("alloc").is_none_or(|value| !value.is_object()) {
+        return Err(GenesisError::validation(
+            "base_genesis alloc must be a JSON object",
+        ));
+    }
+    Ok(genesis)
 }
 
 fn u64_or_default(config: &Value, key: &str, default: u64) -> Result<u64, GenesisError> {
@@ -418,4 +460,33 @@ fn format_utc_iso8601(timestamp: u64) -> Result<String, GenesisError> {
         dt.minute(),
         dt.second()
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn loads_a_matching_pre_tee_base_genesis() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("genesis.json");
+        fs::write(
+            &path,
+            serde_json::to_vec(&json!({
+                "config": {"chainId": 54_322_345},
+                "alloc": {},
+                "timestamp": "0x1"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let config = json!({
+            "chain_id": 54_322_345,
+            "base_genesis": path
+        });
+        assert_eq!(
+            build_base_genesis(&config).unwrap()["config"]["chainId"],
+            54_322_345
+        );
+    }
 }

@@ -28,8 +28,10 @@ founders and waits for RPC, execution peers, consensus signer state, threshold s
 finalized block. Repeating `prepare` or `start` for the same artifacts is safe.
 
 `network.yaml` keeps SSH endpoints separate from node advertise/RPC addresses, supports four or
-more founders, prefunded accounts and explicit genesis overrides. Private consensus topologies
-must opt into `topology.use_local_defaults`; it is never inferred from the network name.
+more founders, prefunded accounts and explicit genesis overrides. `genesis.base` may reference a
+custom pre-TEE genesis JSON; `build` verifies its chain ID, copies it into the immutable artifacts,
+then applies the fresh founder set and network policy. Private consensus topologies must opt into
+`topology.use_local_defaults`; it is never inferred from the network name.
 
 ## Joining validator
 

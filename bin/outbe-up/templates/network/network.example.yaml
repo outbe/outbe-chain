@@ -40,6 +40,9 @@ topology:
   use_local_defaults: true
 
 genesis:
+  # Optional pre-TEE genesis JSON. Paths are resolved relative to this file.
+  # When set, timestamp, epoch length, and DKG windows come from that file.
+  # base: ./custom-genesis.json
   # Omit timestamp for a fresh launch time. Set it to reproduce one exact genesis.
   # timestamp: 1793795928
   epoch_length_blocks: 1200

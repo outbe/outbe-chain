@@ -59,6 +59,20 @@ impl NetworkBuild {
                 && manifest.genesis.genesis_block_hash == genesis_block_hash,
             "final genesis is missing or changed after network build"
         );
+        let base_identity = (
+            manifest.genesis.base_path.as_deref(),
+            manifest.genesis.base_sha256.as_deref(),
+        );
+        ensure!(
+            matches!(base_identity, (Some(_), Some(_)) | (None, None)),
+            "network manifest has an incomplete base genesis identity"
+        );
+        if let (Some(path), Some(expected)) = base_identity {
+            ensure!(
+                sha256_file(&root.join(path))? == expected,
+                "base genesis is missing or changed after network build"
+            );
+        }
         for (index, (founder, artifact)) in
             config.founders.iter().zip(&manifest.founders).enumerate()
         {

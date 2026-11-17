@@ -53,6 +53,10 @@ pub(super) struct SoftwareIdentity {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub(super) struct GenesisIdentity {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) base_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) base_sha256: Option<String>,
     pub(super) seeded_path: String,
     pub(super) seeded_sha256: String,
     pub(super) final_path: String,
@@ -124,6 +128,7 @@ pub fn run(
         software_bundle,
         staging.path().join("software-bundle.tar.zst"),
     )?;
+    let base_genesis = stage_base_genesis(config_path, &config, staging.path())?;
 
     let keys = staging.path().join("secrets/founder-keys");
     match existing_keys {
@@ -132,7 +137,12 @@ pub fn run(
     }
     fs::set_permissions(&keys, fs::Permissions::from_mode(0o700))?;
 
-    let genesis_config = genesis_cli_config(&config, software_root.path(), &keys)?;
+    let genesis_config = genesis_cli_config(
+        &config,
+        software_root.path(),
+        &keys,
+        base_genesis.as_deref(),
+    )?;
     let seeded = staging.path().join("genesis.seeded.json");
     let keygen = software_root.path().join("bin/outbe-keygen");
     let validators = create_seeded_genesis(
@@ -184,6 +194,13 @@ pub fn run(
             target: software.target,
         },
         genesis: GenesisIdentity {
+            base_path: base_genesis
+                .as_ref()
+                .map(|_| "genesis.base.json".to_owned()),
+            base_sha256: base_genesis
+                .as_ref()
+                .map(|path| sha256_file(path))
+                .transpose()?,
             seeded_path: "genesis.seeded.json".into(),
             seeded_sha256: sha256_file(&seeded)?,
             final_path: "genesis.json".into(),
@@ -205,6 +222,54 @@ pub fn run(
     println!(
         "Next: outbe-up network prepare --artifacts {}",
         output.display()
+    );
+    Ok(())
+}
+
+fn stage_base_genesis(
+    config_path: &Path,
+    config: &NetworkConfig,
+    staging: &Path,
+) -> Result<Option<std::path::PathBuf>> {
+    let Some(configured) = &config.genesis.base else {
+        return Ok(None);
+    };
+    let source = if configured.is_absolute() {
+        configured.clone()
+    } else {
+        config_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(configured)
+    };
+    ensure!(
+        source.is_file(),
+        "genesis.base does not exist: {}",
+        source.display()
+    );
+    let genesis: Value = serde_json::from_slice(&fs::read(&source)?)?;
+    ensure_base_genesis(&genesis, config.chain_id)?;
+    let destination = staging.join("genesis.base.json");
+    fs::copy(source, &destination)?;
+    Ok(Some(destination))
+}
+
+fn ensure_base_genesis(genesis: &Value, chain_id: u64) -> Result<()> {
+    ensure!(
+        genesis.is_object(),
+        "genesis.base must contain a JSON object"
+    );
+    ensure!(
+        genesis.pointer("/config/chainId").and_then(Value::as_u64) == Some(chain_id),
+        "genesis.base config.chainId must match network chain_id {chain_id}"
+    );
+    ensure!(
+        genesis.pointer("/config/teeAttestationV1").is_none(),
+        "genesis.base must be a pre-TEE genesis without config.teeAttestationV1"
+    );
+    ensure!(
+        genesis.get("alloc").is_some_and(Value::is_object),
+        "genesis.base alloc must be a JSON object"
     );
     Ok(())
 }
@@ -266,6 +331,7 @@ pub(super) fn genesis_cli_config(
     config: &NetworkConfig,
     software: &Path,
     keys: &Path,
+    base_genesis: Option<&Path>,
 ) -> Result<Value> {
     let mut root = config
         .genesis
@@ -313,6 +379,9 @@ pub(super) fn genesis_cli_config(
         ),
     ] {
         root.insert(key.to_owned(), value);
+    }
+    if let Some(path) = base_genesis {
+        root.insert("base_genesis".into(), json!(path));
     }
     for (key, value) in [
         ("timestamp", config.genesis.timestamp),
@@ -525,7 +594,8 @@ mod tests {
     fn genesis_cli_config_carries_prefunds_and_runtime_axes() {
         let temp = tempfile::tempdir().unwrap();
         let config: NetworkConfig = serde_yaml_ng::from_str(super::super::config::EXAMPLE).unwrap();
-        let value = genesis_cli_config(&config, temp.path(), &temp.path().join("keys")).unwrap();
+        let value =
+            genesis_cli_config(&config, temp.path(), &temp.path().join("keys"), None).unwrap();
         assert_eq!(value["network"], "testnet");
         assert_eq!(value["tee"]["mode"], "gramine-direct-dev");
         assert!(value.get("enclave_sgx").is_none());
@@ -569,5 +639,20 @@ mod tests {
         assert!(!yaml.contains("$serde_json"));
         let decoded: OperatorConfig = serde_yaml_ng::from_str(&yaml).unwrap();
         assert_eq!(decoded.network.chain_id, config.chain_id);
+    }
+
+    #[test]
+    fn validates_a_custom_pre_tee_base_genesis() {
+        let genesis = json!({
+            "config": {"chainId": 54_322_345},
+            "alloc": {},
+            "timestamp": "0x1"
+        });
+        ensure_base_genesis(&genesis, 54_322_345).unwrap();
+        assert!(ensure_base_genesis(&genesis, 676).is_err());
+
+        let mut finalized = genesis;
+        finalized["config"]["teeAttestationV1"] = json!({});
+        assert!(ensure_base_genesis(&finalized, 54_322_345).is_err());
     }
 }
