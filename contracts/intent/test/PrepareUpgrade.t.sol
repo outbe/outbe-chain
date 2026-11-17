@@ -63,7 +63,7 @@ contract PrepareUpgradeTest is Test {
         escrow = SolverEscrow(
             _deploy(
                 IntentCreate3.SOLVER_ESCROW,
-                address(new SolverEscrow(compact, LOCK_TAG)),
+                address(new SolverEscrow(compact, LOCK_TAG, address(0))),
                 abi.encodeCall(SolverEscrow.initialize, (deployer, 1000))
             )
         );

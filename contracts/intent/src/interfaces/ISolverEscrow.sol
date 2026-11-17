@@ -64,7 +64,8 @@ interface ISolverEscrow {
     /// @notice Unlock solver collateral after successful fill, returning custody to the solver
     function unlockCollateral(bytes32 orderId) external;
 
-    /// @notice Slash locked collateral into the escrow's slashed pool
+    /// @notice Slash locked collateral into the escrow's slashed pool. On Outbe Chain, native
+    ///         COEN and WCOEN go to address 0 instead
     function slashCollateral(bytes32 orderId) external;
 
     /// @notice Collateral basis points (e.g. 1000 = 10%)

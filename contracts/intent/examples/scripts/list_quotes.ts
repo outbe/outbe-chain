@@ -5,7 +5,7 @@ import { getTokenDecimals, getProviderByDomain, getOrderData } from '../lib/comm
 import Table from 'cli-table3';
 
 function formatDeadline(deadline: bigint) {
-  return Number(deadline) > 0 ? new Date(Number(deadline) * 1000).toISOString() : 'N/A';
+  return deadline > 0n ? `block ${deadline}` : 'N/A';
 }
 
 /**

@@ -15,11 +15,15 @@ interface IInterchainAccountRouter {
     }
 
     /// @dev Dispatches `_calls` for the caller's Interchain Account on `_destination` to execute.
+    /// `_hookMetadata` (StandardHookMetadata) carries the gas limit that the IGP charges for.
     /// The caller must supply the IGP fee (see {quoteGasPayment}) as `msg.value`.
-    function callRemote(uint32 _destination, Call[] calldata _calls) external payable returns (bytes32);
+    function callRemote(uint32 _destination, Call[] calldata _calls, bytes calldata _hookMetadata)
+        external
+        payable
+        returns (bytes32);
 
-    /// @dev Native fee required by {callRemote} for `_destination`.
-    function quoteGasPayment(uint32 _destination) external view returns (uint256);
+    /// @dev Native fee required by {callRemote} for `_destination` and `_gasLimit`.
+    function quoteGasPayment(uint32 _destination, uint256 _gasLimit) external view returns (uint256);
 
     /// @dev Interchain Account of `_owner` on `_destination`: the account that executes the
     /// calls of {callRemote}.
