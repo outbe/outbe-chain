@@ -4,6 +4,7 @@ use crate::{
     errors::Result,
 };
 use alloy_primitives::{Address, U256};
+use outbe_tee::resident::StateKeyHandle;
 
 pub const GRATIS_SPEC: EnvelopeCipherSpec = EnvelopeCipherSpec {
     marker: b"GRA2",
@@ -13,7 +14,7 @@ pub const GRATIS_SPEC: EnvelopeCipherSpec = EnvelopeCipherSpec {
 };
 
 pub fn read_amount(
-    key: &[u8; 32],
+    key: &StateKeyHandle,
     account: Address,
     field: u8,
     blob: &[u8],
@@ -21,7 +22,7 @@ pub fn read_amount(
     GRATIS_SPEC.read_amount(key, account, field, blob)
 }
 
-pub fn write_amount(key: &[u8; 32], transition: BalanceTransition) -> Result<Vec<u8>> {
+pub fn write_amount(key: &StateKeyHandle, transition: BalanceTransition) -> Result<Vec<u8>> {
     GRATIS_SPEC.write_amount(key, transition)
 }
 
@@ -32,7 +33,7 @@ mod tests {
 
     #[test]
     fn divergence_and_version_exhaustion_are_safe() {
-        let key = [9; 32];
+        let key = StateKeyHandle::for_test([9; 32]);
         let account = Address::repeat_byte(3);
         let a = write_amount(
             &key,

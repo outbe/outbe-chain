@@ -9,6 +9,9 @@
 //! determinism).
 
 use alloy_primitives::{Address, B256, U256};
+use outbe_tee::resident::{
+    AccountKeysHandle, OfferKeyHandle, ResidentOfferMaterial, StateKeyHandle,
+};
 
 use crate::protocol::{
     GratisOp, GratisOpRequest, GratisOpStatus, MineGratisFromPromisRequestV1,
@@ -18,28 +21,30 @@ use crate::protocol::{
 
 use crate::confidential::{FIELD_BALANCE, PROMIS};
 use crate::errors::{PromisRejectReason, Result};
-use zeroize::Zeroizing;
 
 /// Derive the resident Promis state key from the DKG group signature. See
 /// [`crate::confidential::Domain::derive_state_key`].
 pub fn derive_promis_state_key(
-    group_sig: &[u8],
+    material: &ResidentOfferMaterial,
     chain_id: B256,
     epoch: u64,
-) -> Result<Zeroizing<[u8; 32]>> {
-    PROMIS.derive_state_key(group_sig, chain_id, epoch)
+) -> Result<StateKeyHandle> {
+    PROMIS.derive_state_key(material, chain_id, epoch)
 }
 
 /// Per-account view key: read capability AND the AEAD key for the account's
 /// balance blob. See [`crate::confidential::AccountKeyDerivation::derive_view_key`].
-pub fn derive_view_key(state_key: &[u8; 32], account: Address) -> Result<Zeroizing<[u8; 32]>> {
+pub fn derive_view_key(state_key: &StateKeyHandle, account: Address) -> Result<StateKeyHandle> {
     PROMIS.account_keys.derive_view_key(state_key, account)
 }
 
-/// Per-account modify key: authorizes writes (via HMAC). It never decrypts state.
-/// See [`crate::confidential::AccountKeyDerivation::derive_modify_key`].
-pub fn derive_modify_key(state_key: &[u8; 32], account: Address) -> Result<Zeroizing<[u8; 32]>> {
-    PROMIS.account_keys.derive_modify_key(state_key, account)
+/// Opaque per-account read and modify capabilities for authorization and sealed owner export.
+/// See [`crate::confidential::AccountKeyDerivation::derive_account_keys`].
+pub fn derive_account_keys(
+    state_key: &StateKeyHandle,
+    account: Address,
+) -> Result<AccountKeysHandle> {
+    PROMIS.account_keys.derive_account_keys(state_key, account)
 }
 
 /// The account operation covered by a Promis authorization.
@@ -47,13 +52,17 @@ pub type ModifyOperation = crate::confidential::ModifyOperation<PromisOp>;
 
 /// `HMAC-SHA256(modify_key, preimage)` - the write authorization the client sends
 /// and the enclave re-checks. See [`crate::confidential::ModifyDomain::modify_mac`].
-pub fn modify_mac(modify_key: &[u8; 32], operation: &ModifyOperation) -> [u8; 32] {
+pub fn modify_mac(modify_key: &AccountKeysHandle, operation: &ModifyOperation) -> [u8; 32] {
     PROMIS
         .authorization
         .modify_mac(modify_key, &operation.authorization())
 }
 
-fn verify_modify_auth(modify_key: &[u8; 32], operation: &ModifyOperation, mac: &[u8; 32]) -> bool {
+fn verify_modify_auth(
+    modify_key: &AccountKeysHandle,
+    operation: &ModifyOperation,
+    mac: &[u8; 32],
+) -> bool {
     PROMIS
         .authorization
         .verify_modify_auth(modify_key, &operation.authorization(), mac)
@@ -62,7 +71,7 @@ fn verify_modify_auth(modify_key: &[u8; 32], operation: &ModifyOperation, mac: &
 /// Client-side helper: decrypt an account's Promis balance blob with its view key
 /// (the key delivered by `DeriveAccountKeys`). Same primitive the enclave uses, so
 /// a client reproduces the plaintext without ever touching the state key.
-pub fn decrypt_balance(view_key: &[u8; 32], account: Address, blob: &[u8]) -> Result<U256> {
+pub fn decrypt_balance(view_key: &StateKeyHandle, account: Address, blob: &[u8]) -> Result<U256> {
     crate::promis_cipher::read_amount(view_key, account, FIELD_BALANCE, blob).map(|(_, v)| v)
 }
 
@@ -90,7 +99,7 @@ fn rejected_promis_op(reason: PromisRejectReason) -> PromisOpResult {
 /// `state_key` + `req`. Sets `inputs_canonical_hash`. The caller (dispatch) signs
 /// and fills `attestation_tag`. Business rejections come back as
 /// `PromisOpStatus::Rejected` (-> precompile revert), never a panic.
-pub fn apply_op(state_key: &[u8; 32], req: &PromisOpRequest) -> PromisOpResult {
+pub fn apply_op(state_key: &StateKeyHandle, req: &PromisOpRequest) -> PromisOpResult {
     let inputs_canonical_hash = crate::protocol::promis_op_canonical_hash(req);
     let mut result = match apply_op_inner(state_key, req) {
         Ok(r) => r,
@@ -102,7 +111,7 @@ pub fn apply_op(state_key: &[u8; 32], req: &PromisOpRequest) -> PromisOpResult {
 
 /// Mint/Burn - modify-key gated and keyed by `req.account`.
 fn apply_op_inner(
-    state_key: &[u8; 32],
+    state_key: &StateKeyHandle,
     req: &PromisOpRequest,
 ) -> core::result::Result<PromisOpResult, PromisRejectReason> {
     if req.amount.is_zero() {
@@ -113,7 +122,7 @@ fn apply_op_inner(
     }
     let modify_key = PROMIS
         .account_keys
-        .derive_modify_key(state_key, req.account)?;
+        .derive_account_keys(state_key, req.account)?;
     let operation = ModifyOperation {
         account: req.account,
         op: req.op,
@@ -193,12 +202,11 @@ fn apply_op_inner(
 }
 
 /// Resident enclave keys needed for [`apply_mine_gratis`].
-#[derive(Clone, Copy)]
 pub struct MineGratisKeys<'a> {
-    pub offer_secret: &'a [u8; 32],
-    pub promis_state_key: &'a [u8; 32],
-    pub gratis_state_key: &'a [u8; 32],
-    pub fidelity_state_key: &'a [u8; 32],
+    pub offer_secret: &'a OfferKeyHandle,
+    pub promis_state_key: &'a StateKeyHandle,
+    pub gratis_state_key: &'a StateKeyHandle,
+    pub fidelity_state_key: &'a StateKeyHandle,
 }
 
 fn rejected_mine_gratis(
@@ -312,14 +320,25 @@ mod tests {
 
     const CHAIN: B256 = B256::repeat_byte(0xC2);
 
-    fn state_key() -> [u8; 32] {
-        *derive_promis_state_key(b"a-group-threshold-signature-~48-bytes-long!!", CHAIN, 0).unwrap()
+    fn state_key() -> StateKeyHandle {
+        derive_promis_state_key(
+            &crate::dev::offer_material(b"a-group-threshold-signature-~48-bytes-long!!", CHAIN),
+            CHAIN,
+            0,
+        )
+        .unwrap()
     }
     fn alice() -> Address {
         Address::repeat_byte(0x11)
     }
-    fn auth(sk: &[u8; 32], acct: Address, op: PromisOp, amount: U256, nonce: u64) -> ModifyAuth {
-        let mk = PROMIS.account_keys.derive_modify_key(sk, acct).unwrap();
+    fn auth(
+        sk: &StateKeyHandle,
+        acct: Address,
+        op: PromisOp,
+        amount: U256,
+        nonce: u64,
+    ) -> ModifyAuth {
+        let mk = PROMIS.account_keys.derive_account_keys(sk, acct).unwrap();
         ModifyAuth {
             mac: PROMIS.authorization.modify_mac(
                 &mk,
@@ -436,7 +455,10 @@ mod tests {
     fn modify_mac_binds_every_input_and_is_separated_from_the_gratis_domain() {
         use crate::confidential::GRATIS;
         let sk = state_key();
-        let mk = PROMIS.account_keys.derive_modify_key(&sk, alice()).unwrap();
+        let mk = PROMIS
+            .account_keys
+            .derive_account_keys(&sk, alice())
+            .unwrap();
         let base = PROMIS.authorization.modify_mac(
             &mk,
             &crate::confidential::ModifyAuthorization {
@@ -585,6 +607,7 @@ mod tests {
             ),
         ];
         for (ledger, account, op, amount, op_nonce, chain_id, expected) in vectors {
+            let key = AccountKeysHandle::for_test(account, [0; 32], key);
             let mac = ledger.authorization.modify_mac(
                 &key,
                 &crate::confidential::ModifyAuthorization {

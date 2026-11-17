@@ -1,9 +1,9 @@
 //! Deterministic confidential ledger keys, slot ciphertexts, and write authorizations.
-use crate::crypto::{chacha20poly1305_decrypt, chacha20poly1305_encrypt, hkdf_sha256};
 use crate::errors::{Result, TeeError};
 use crate::protocol::{GratisOp, Ledger, PromisOp};
 use alloy_primitives::{Address, B256, U256};
-use ring::hmac;
+use outbe_tee::resident::{self, AccountKeysHandle, ResidentOfferMaterial, StateKeyHandle};
+use outbe_tee::tee_decrypt::V2EnvelopeDomain;
 use zeroize::Zeroizing;
 
 /// Every ledger uses field zero for its primary balance.
@@ -11,6 +11,7 @@ pub const FIELD_BALANCE: u8 = 0;
 
 /// Immutable labels separate each ledger from the other confidential ledgers.
 pub struct Domain {
+    ledger: Ledger,
     state_info: &'static [u8],
     pub account_keys: AccountKeyDerivation,
     pub authorization: ModifyDomain,
@@ -77,12 +78,13 @@ impl<Op: OperationTag> ModifyOperation<Op> {
 /// A borrowed slot context keeps the key outside persistent enclave state.
 pub struct SlotCipher<'a> {
     domain: &'a SlotCipherDomain,
-    view_key: &'a [u8; 32],
+    view_key: &'a StateKeyHandle,
     account: Address,
     field: u8,
 }
 
 pub const GRATIS: Domain = Domain {
+    ledger: Ledger::Gratis,
     state_info: b"outbe/gratis/state-key/v1/",
     account_keys: AccountKeyDerivation {
         view_info: b"outbe/gratis/view-key/v1",
@@ -94,6 +96,7 @@ pub const GRATIS: Domain = Domain {
 };
 
 pub const PROMIS: Domain = Domain {
+    ledger: Ledger::Promis,
     state_info: b"outbe/promis/state-key/v1/",
     account_keys: AccountKeyDerivation {
         view_info: b"outbe/promis/view-key/v1",
@@ -105,6 +108,7 @@ pub const PROMIS: Domain = Domain {
 };
 
 pub const FIDELITY: Domain = Domain {
+    ledger: Ledger::Fidelity,
     state_info: b"outbe/fidelity/state-key/v1/",
     account_keys: AccountKeyDerivation {
         view_info: b"outbe/fidelity/view-key/v1",
@@ -116,6 +120,7 @@ pub const FIDELITY: Domain = Domain {
 };
 
 pub const TRIBUTE: Domain = Domain {
+    ledger: Ledger::Tribute,
     state_info: b"outbe/tribute/state-key/v1/",
     account_keys: AccountKeyDerivation {
         view_info: b"outbe/tribute/view-key/v1",
@@ -127,6 +132,7 @@ pub const TRIBUTE: Domain = Domain {
 };
 
 pub const NOD: Domain = Domain {
+    ledger: Ledger::Nod,
     state_info: b"outbe/nod/state-key/v1/",
     account_keys: AccountKeyDerivation {
         view_info: b"outbe/nod/view-key/v1",
@@ -150,50 +156,62 @@ pub fn domain_for(ledger: Ledger) -> &'static Domain {
 impl Domain {
     pub fn derive_state_key(
         &self,
-        group_sig: &[u8],
+        material: &ResidentOfferMaterial,
         chain_id: B256,
         epoch: u64,
-    ) -> Result<Zeroizing<[u8; 32]>> {
-        let mut info = self.state_info.to_vec();
-        info.extend_from_slice(epoch.to_string().as_bytes());
-        Ok(Zeroizing::new(hkdf_sha256(
-            chain_id.as_slice(),
-            group_sig,
-            &info,
-        )?))
+    ) -> Result<StateKeyHandle> {
+        Ok(material.derive_state_key_handle(self.state_info, chain_id, epoch)?)
+    }
+
+    /// Derive the owner proof internally; callers cannot substitute an unrelated hash.
+    pub fn export_sealed_account_keys(
+        &self,
+        keys: &AccountKeysHandle,
+        owner_signature: &[u8; 65],
+        requester_ephemeral_x25519: &[u8; 32],
+    ) -> Result<resident::SealedAccountKeysExport> {
+        let message = crate::protocol::derive_account_keys_message(
+            self.ledger,
+            keys.account(),
+            B256::from(*requester_ephemeral_x25519),
+        );
+        Ok(resident::export_sealed_account_keys(
+            keys,
+            crate::protocol::eip191_hash(&message),
+            owner_signature,
+            requester_ephemeral_x25519,
+            b"outbe/tee/dkg-share/v1",
+        )?)
     }
 }
 
 impl AccountKeyDerivation {
     pub fn derive_view_key(
         &self,
-        state_key: &[u8; 32],
+        state_key: &StateKeyHandle,
         account: Address,
-    ) -> Result<Zeroizing<[u8; 32]>> {
-        Ok(Zeroizing::new(hkdf_sha256(
-            state_key,
-            account.as_slice(),
-            self.view_info,
-        )?))
+    ) -> Result<StateKeyHandle> {
+        Ok(state_key.derive_subkey(account.as_slice(), self.view_info)?)
     }
 
-    pub fn derive_modify_key(
+    pub fn derive_account_keys(
         &self,
-        state_key: &[u8; 32],
+        state_key: &StateKeyHandle,
         account: Address,
-    ) -> Result<Zeroizing<[u8; 32]>> {
-        Ok(Zeroizing::new(hkdf_sha256(
+    ) -> Result<AccountKeysHandle> {
+        Ok(resident::derive_account_keys_handle(
             state_key,
-            account.as_slice(),
+            account,
+            self.view_info,
             self.modify_info,
-        )?))
+        )?)
     }
 }
 
 impl SlotCipherDomain {
     pub fn slot<'a>(
         &'a self,
-        view_key: &'a [u8; 32],
+        view_key: &'a StateKeyHandle,
         account: Address,
         field: u8,
     ) -> SlotCipher<'a> {
@@ -204,49 +222,24 @@ impl SlotCipherDomain {
             field,
         }
     }
-    pub fn slot_nonce(&self, key: &[u8; 32], ikm: &[u8], version: u64) -> Result<[u8; 12]> {
-        let mut buf = ikm.to_vec();
-        buf.extend_from_slice(&version.to_be_bytes());
-        let okm = hkdf_sha256(key, &buf, self.nonce_info)?;
-        let mut nonce = [0u8; 12];
-        nonce.copy_from_slice(&okm[..12]);
-        Ok(nonce)
-    }
 }
 
 impl SlotCipher<'_> {
     pub fn read_blob(&self, blob: &[u8]) -> Result<(u64, Vec<u8>)> {
-        let view_key = self.view_key;
-        let account = self.account;
-        let field = self.field;
-        if blob.is_empty() {
-            return Ok((0, Vec::new()));
-        }
-        if blob.len() < 8 {
-            return Err(TeeError::DecryptFailed);
-        }
-        let mut vbytes = [0u8; 8];
-        vbytes.copy_from_slice(&blob[..8]);
-        let version = u64::from_be_bytes(vbytes);
-        let mut ikm = account.as_slice().to_vec();
-        ikm.push(field);
-        let nonce = self.domain.slot_nonce(view_key, &ikm, version)?;
-        let pt = chacha20poly1305_decrypt(view_key, &nonce, &blob[8..])?;
-        Ok((version, pt))
+        let (version, plaintext) =
+            self.view_key
+                .slot_decrypt(self.domain.nonce_info, self.account, self.field, blob)?;
+        Ok((version, plaintext.to_vec()))
     }
 
     pub fn write_blob(&self, prev_version: u64, plaintext: &[u8]) -> Result<Vec<u8>> {
-        let view_key = self.view_key;
-        let account = self.account;
-        let field = self.field;
-        let version = prev_version.saturating_add(1);
-        let mut ikm = account.as_slice().to_vec();
-        ikm.push(field);
-        let nonce = self.domain.slot_nonce(view_key, &ikm, version)?;
-        let ct = chacha20poly1305_encrypt(view_key, &nonce, plaintext)?;
-        let mut blob = version.to_be_bytes().to_vec();
-        blob.extend_from_slice(&ct);
-        Ok(blob)
+        Ok(self.view_key.slot_encrypt(
+            self.domain.nonce_info,
+            self.account,
+            self.field,
+            prev_version,
+            plaintext,
+        )?)
     }
 
     pub fn read_u256(&self, version: Option<u64>, blob: &[u8]) -> Result<U256> {
@@ -269,8 +262,8 @@ impl SlotCipher<'_> {
 }
 
 impl ModifyDomain {
-    fn modify_preimage(&self, request: &ModifyAuthorization) -> Vec<u8> {
-        let mut b = self.modify_tag.to_vec();
+    fn modify_payload(&self, request: &ModifyAuthorization) -> Vec<u8> {
+        let mut b = Vec::new();
         b.extend_from_slice(request.account.as_slice());
         b.push(request.op_tag);
         b.extend_from_slice(&request.amount.to_be_bytes::<32>());
@@ -279,22 +272,23 @@ impl ModifyDomain {
         b
     }
 
-    pub fn modify_mac(&self, modify_key: &[u8; 32], request: &ModifyAuthorization) -> [u8; 32] {
-        let key = hmac::Key::new(hmac::HMAC_SHA256, modify_key);
-        let tag = hmac::sign(&key, &self.modify_preimage(request));
-        let mut out = [0u8; 32];
-        out.copy_from_slice(tag.as_ref());
-        out
+    pub fn modify_mac(&self, keys: &AccountKeysHandle, request: &ModifyAuthorization) -> [u8; 32] {
+        resident::compute_modify_mac(keys, self.modify_tag, &self.modify_payload(request))
     }
 
     pub fn verify_modify_auth(
         &self,
-        modify_key: &[u8; 32],
+        keys: &AccountKeysHandle,
         request: &ModifyAuthorization,
         mac: &[u8; 32],
     ) -> bool {
-        let key = hmac::Key::new(hmac::HMAC_SHA256, modify_key);
-        hmac::verify(&key, &self.modify_preimage(request), mac).is_ok()
+        keys.account() == request.account
+            && resident::verify_modify_mac(
+                keys,
+                self.modify_tag,
+                &self.modify_payload(request),
+                mac,
+            )
     }
 }
 
@@ -331,7 +325,7 @@ pub fn event_amount_input_hash(canonical_hash: B256) -> B256 {
 impl EnvelopeCipherSpec {
     pub(crate) fn read_amount(
         &self,
-        key: &[u8; 32],
+        key: &StateKeyHandle,
         account: Address,
         field: u8,
         blob: &[u8],
@@ -353,7 +347,7 @@ impl EnvelopeCipherSpec {
 
     pub(crate) fn write_amount(
         &self,
-        key: &[u8; 32],
+        key: &StateKeyHandle,
         transition: BalanceTransition,
     ) -> Result<Vec<u8>> {
         let BalanceTransition {
@@ -375,76 +369,41 @@ impl EnvelopeCipherSpec {
         )
     }
 
+    fn envelope_domain<'a>(&'a self, scope: &'a [u8]) -> V2EnvelopeDomain<'a> {
+        V2EnvelopeDomain {
+            marker: self.marker,
+            scope,
+            key_info: self.key_info,
+            nonce_info: self.nonce_info,
+        }
+    }
+
     pub(crate) fn read_envelope(
         &self,
-        key: &[u8; 32],
+        key: &StateKeyHandle,
         account: Address,
         scope: &[u8],
         blob: &[u8],
     ) -> Result<(u64, Vec<u8>)> {
-        if blob.is_empty() {
-            return Ok((0, Vec::new()));
-        }
-        if blob.len() < ENVELOPE_HEADER_LEN + ENVELOPE_TAG_LEN || &blob[8..12] != self.marker {
-            return Err(TeeError::DecryptFailed);
-        }
-        let version =
-            u64::from_be_bytes(blob[..8].try_into().map_err(|_| TeeError::DecryptFailed)?);
-        if version == 0 {
-            return Err(TeeError::DecryptFailed);
-        }
-        let (opening, nonce) = self.opening_material(
-            key,
-            account,
-            scope,
-            (version, &blob[12..ENVELOPE_HEADER_LEN]),
-        )?;
-        let plaintext = chacha20poly1305_decrypt(&opening, &nonce, &blob[ENVELOPE_HEADER_LEN..])?;
-        Ok((version, plaintext))
+        let (version, plaintext) =
+            key.decrypt_v2_envelope(account, self.envelope_domain(scope), blob)?;
+        Ok((version, plaintext.to_vec()))
     }
 
     pub(crate) fn write_envelope(
         &self,
-        key: &[u8; 32],
+        key: &StateKeyHandle,
         (account, scope): (Address, &[u8]),
-        (previous_version, binding_payload): (u64, &[u8]),
+        transition: (u64, &[u8]),
         plaintext: &[u8],
     ) -> Result<Vec<u8>> {
-        let version = previous_version
-            .checked_add(1)
-            .ok_or(TeeError::EncryptFailed)?;
-        let mut context = self.binding_tag.to_vec();
-        context.extend_from_slice(account.as_slice());
-        context.extend_from_slice(scope);
-        context.extend_from_slice(&version.to_be_bytes());
-        context.extend_from_slice(binding_payload);
-        let context = Zeroizing::new(context);
-        let binding = hmac::sign(&hmac::Key::new(hmac::HMAC_SHA256, key), &context);
-        let (sealing, nonce) =
-            self.opening_material(key, account, scope, (version, binding.as_ref()))?;
-        let ciphertext = chacha20poly1305_encrypt(&sealing, &nonce, plaintext)?;
-        let mut blob = version.to_be_bytes().to_vec();
-        blob.extend_from_slice(self.marker);
-        blob.extend_from_slice(binding.as_ref());
-        blob.extend_from_slice(&ciphertext);
-        Ok(blob)
-    }
-
-    pub(crate) fn opening_material(
-        &self,
-        key: &[u8; 32],
-        account: Address,
-        scope: &[u8],
-        (version, binding): (u64, &[u8]),
-    ) -> Result<(Zeroizing<[u8; 32]>, [u8; 12])> {
-        let mut context = account.as_slice().to_vec();
-        context.extend_from_slice(scope);
-        context.extend_from_slice(&version.to_be_bytes());
-        context.extend_from_slice(binding);
-        let derived = Zeroizing::new(hkdf_sha256(key, &context, self.key_info)?);
-        let nonce_bytes = hkdf_sha256(&*derived, &context, self.nonce_info)?;
-        let mut nonce = [0u8; 12];
-        nonce.copy_from_slice(&nonce_bytes[..12]);
-        Ok((derived, nonce))
+        transition.0.checked_add(1).ok_or(TeeError::EncryptFailed)?;
+        Ok(key.encrypt_v2_envelope(
+            account,
+            self.envelope_domain(scope),
+            self.binding_tag,
+            transition,
+            plaintext,
+        )?)
     }
 }

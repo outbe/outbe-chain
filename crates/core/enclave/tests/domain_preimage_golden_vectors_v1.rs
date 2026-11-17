@@ -5,9 +5,10 @@
 use alloy_primitives::{hex, Address, B256, U256};
 use outbe_enclave::{
     confidential::{domain_for, ModifyAuthorization},
-    crypto::{hkdf_sha256, AttestationKeyPair},
+    crypto::hkdf_sha256,
     protocol::{derive_account_keys_message, eip191_hash, Ledger},
 };
+use outbe_tee::resident::{AccountKeysHandle, StateKeyHandle};
 
 #[test]
 fn owner_derive_account_keys_eip191_vectors() {
@@ -72,19 +73,33 @@ fn confidential_ledger_domain_vectors() {
     ] {
         let domain = domain_for(ledger);
         let state_key = domain
-            .derive_state_key(&[0x44; 32], B256::repeat_byte(0x11), 7)
+            .derive_state_key(
+                &outbe_enclave::dev::offer_material(&[0x44; 32], B256::repeat_byte(0x11)),
+                B256::repeat_byte(0x11),
+                7,
+            )
             .unwrap();
-        assert_eq!(hex::encode(*state_key), state);
+        assert_key_vector(&state_key, state);
         let view_key = domain
             .account_keys
             .derive_view_key(&state_key, request.account)
             .unwrap();
         let modify_key = domain
             .account_keys
-            .derive_modify_key(&state_key, request.account)
+            .derive_account_keys(&state_key, request.account)
             .unwrap();
-        assert_eq!(hex::encode(*view_key), view);
-        assert_eq!(hex::encode(*modify_key), modify);
+        assert_key_vector(&view_key, view);
+        assert_eq!(
+            domain.authorization.modify_mac(&modify_key, &request),
+            domain.authorization.modify_mac(
+                &AccountKeysHandle::for_test(
+                    request.account,
+                    [0; 32],
+                    hex::decode(modify).unwrap().try_into().unwrap()
+                ),
+                &request
+            ),
+        );
         assert_eq!(
             hex::encode(domain.authorization.modify_mac(&modify_key, &request)),
             mac
@@ -128,7 +143,7 @@ fn tee_identity_kdf_reference_vectors() {
 fn production_attestation_identity_public_key_vector() {
     // Python cryptography Ed25519 public key from HKDF secret 3107bac1... on seed 00..1f.
     let identity_seed: [u8; 32] = std::array::from_fn(|i| u8::try_from(i).unwrap());
-    let key = AttestationKeyPair::from_identity_seed(&identity_seed).unwrap();
+    let key = outbe_tee::resident::ResidentTeeKeys::from_seed(identity_seed).unwrap();
     assert_eq!(
         hex::encode(key.attestation_pub()),
         "4eca380880bfe19d2e38151e9c97aade3a8b9f7c169c1b212af5e57a78dd9ace"
@@ -151,3 +166,12 @@ mod responses;
 mod result_bindings;
 #[path = "domain_preimage_golden_vectors_v1/signed_clients.rs"]
 mod signed_clients;
+
+// Compare an opaque derivation through a cryptographic operation, never through key extraction.
+fn assert_key_vector(handle: &StateKeyHandle, expected: &str) {
+    let expected = StateKeyHandle::for_test(hex::decode(expected).unwrap().try_into().unwrap());
+    assert_eq!(
+        handle.compute_mac(b"golden", b"key parity"),
+        expected.compute_mac(b"golden", b"key parity")
+    );
+}

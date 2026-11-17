@@ -5,7 +5,6 @@ use crate::host::nod_mine::{
 };
 use crate::{
     confidential::{SlotCipherDomain, NOD},
-    crypto::hkdf_sha256,
     errors::{Result, TeeError, TributeDayRejectReason},
     tribute_encryption::decrypt_tribute,
 };
@@ -17,7 +16,7 @@ use outbe_core_common::{
     },
     tribute_encryption::EncryptedTributeV2,
 };
-use ring::hmac;
+use outbe_tee::resident::{ResidentOfferMaterial, StateKeyHandle};
 use zeroize::Zeroizing;
 
 const AMOUNT: SlotCipherDomain = SlotCipherDomain {
@@ -32,22 +31,22 @@ const QUOTE_AMOUNT: SlotCipherDomain = SlotCipherDomain {
 
 /// Derive the resident NOD state key from the DKG group signature.
 pub fn derive_nod_state_key(
-    group_sig: &[u8],
+    material: &ResidentOfferMaterial,
     chain_id: B256,
     epoch: u64,
-) -> Result<Zeroizing<[u8; 32]>> {
-    NOD.derive_state_key(group_sig, chain_id, epoch)
+) -> Result<StateKeyHandle> {
+    NOD.derive_state_key(material, chain_id, epoch)
 }
 
 /// Derive the per-owner NOD view key from `nod_state_key`.
-pub fn derive_view_key(state_key: &[u8; 32], owner: Address) -> Result<Zeroizing<[u8; 32]>> {
+pub fn derive_view_key(state_key: &StateKeyHandle, owner: Address) -> Result<StateKeyHandle> {
     NOD.account_keys.derive_view_key(state_key, owner)
 }
 
 /// The caller authenticates the certified action and source membership first.
 pub fn encrypt_nod_for_tribute(
-    tribute_state_key: &[u8; 32],
-    nod_state_key: &[u8; 32],
+    tribute_state_key: &StateKeyHandle,
+    nod_state_key: &StateKeyHandle,
     tribute: &EncryptedTributeV2,
     terms: NodTermsV1,
     amount: U256,
@@ -79,7 +78,7 @@ pub fn encrypt_nod_for_tribute(
 
 /// Encrypt already authenticated immutable terms; production issuance supplies a verified source.
 pub fn encrypt_nod(
-    nod_state_key: &[u8; 32],
+    nod_state_key: &StateKeyHandle,
     terms: NodTermsV1,
     amount: U256,
 ) -> Result<EncryptedNodV1> {
@@ -96,7 +95,7 @@ pub fn encrypt_nod(
     Ok(nod)
 }
 
-pub fn decrypt_nod(nod_state_key: &[u8; 32], nod: &EncryptedNodV1) -> Result<U256> {
+pub fn decrypt_nod(nod_state_key: &StateKeyHandle, nod: &EncryptedNodV1) -> Result<U256> {
     if !nod.has_valid_encoding() {
         return Err(TeeError::DecryptFailed);
     }
@@ -116,28 +115,24 @@ pub fn decrypt_nod(nod_state_key: &[u8; 32], nod: &EncryptedNodV1) -> Result<U25
     Ok(amount)
 }
 
-fn binding(nod_state_key: &[u8; 32], terms: &NodTermsV1, amount: U256) -> B256 {
+fn binding(nod_state_key: &StateKeyHandle, terms: &NodTermsV1, amount: U256) -> B256 {
     let mut input = b"outbe/nod/issuance-binding/v2".to_vec();
     input.extend_from_slice(terms.digest().as_slice());
     input.extend_from_slice(&amount.to_be_bytes::<32>());
     let input = Zeroizing::new(input);
-    let tag = hmac::sign(&hmac::Key::new(hmac::HMAC_SHA256, nod_state_key), &input);
+    let tag = nod_state_key.compute_mac(b"", &input);
     B256::from_slice(tag.as_ref())
 }
 
-fn amount_key(nod_state_key: &[u8; 32], nod: &EncryptedNodV1) -> Result<Zeroizing<[u8; 32]>> {
+fn amount_key(nod_state_key: &StateKeyHandle, nod: &EncryptedNodV1) -> Result<StateKeyHandle> {
     let view_key = derive_view_key(nod_state_key, nod.terms.owner)?;
-    Ok(Zeroizing::new(hkdf_sha256(
-        nod.context_digest().as_slice(),
-        &*view_key,
-        &nod.amount_key_info(),
-    )?))
+    Ok(view_key.derive_with_salt(nod.context_digest().as_slice(), &nod.amount_key_info())?)
 }
 
 pub fn issue_nod_from_tribute(
-    network_secret: &[u8; 32],
-    tribute_state_key: &[u8; 32],
-    nod_state_key: &[u8; 32],
+    network_secret: &StateKeyHandle,
+    tribute_state_key: &StateKeyHandle,
+    nod_state_key: &StateKeyHandle,
     request: &IssueNodFromTributeRequestV1,
 ) -> Result<IssueNodFromTributeOutcomeV1> {
     let source = &request.tribute.context;
@@ -194,7 +189,7 @@ pub fn issue_nod_from_tribute(
 }
 
 pub fn seal_group_load(
-    nod_state_key: &[u8; 32],
+    nod_state_key: &StateKeyHandle,
     (chain_id, scope): (u64, B256),
     (previous_version, inputs_hash): (u64, B256),
     amount: U256,
@@ -202,10 +197,7 @@ pub fn seal_group_load(
     let mut operation_context = b"outbe/nod/group-load-operation/v1".to_vec();
     operation_context.extend_from_slice(scope.as_slice());
     operation_context.extend_from_slice(inputs_hash.as_slice());
-    let tag = hmac::sign(
-        &hmac::Key::new(hmac::HMAC_SHA256, nod_state_key),
-        &operation_context,
-    );
+    let tag = nod_state_key.compute_mac(b"", &operation_context);
     let mut record = EncryptedNodGroupLoadV1 {
         chain_id,
         scope,
@@ -219,7 +211,7 @@ pub fn seal_group_load(
 }
 
 pub fn read_nod_group_load(
-    nod_state_key: &[u8; 32],
+    nod_state_key: &StateKeyHandle,
     record: &EncryptedNodGroupLoadV1,
 ) -> Result<U256> {
     GROUP_LOAD
@@ -228,7 +220,7 @@ pub fn read_nod_group_load(
 }
 
 pub fn apply_nod_group_load_operation(
-    nod_state_key: &[u8; 32],
+    nod_state_key: &StateKeyHandle,
     request: &NodGroupLoadOpRequestV1,
 ) -> Result<EncryptedNodGroupLoadV1> {
     let (previous_version, amount) = match &request.previous {
@@ -280,7 +272,7 @@ pub fn apply_nod_group_load_operation(
 }
 
 pub fn encrypt_nod_quote(
-    nod_state_key: &[u8; 32],
+    nod_state_key: &StateKeyHandle,
     nod: &EncryptedNodV1,
     context: &NodQuoteContextV1,
     payment_minor: U256,
@@ -295,11 +287,10 @@ pub fn encrypt_nod_quote(
     }
     let _ = decrypt_nod(nod_state_key, nod)?;
     let view_key = derive_view_key(nod_state_key, context.owner)?;
-    let key = Zeroizing::new(hkdf_sha256(
+    let key = view_key.derive_with_salt(
         context.context_digest().as_slice(),
-        &*view_key,
         &context.quote_key_info(),
-    )?);
+    )?;
     let plaintext = Zeroizing::new(payment_minor.to_be_bytes::<32>());
     QUOTE_AMOUNT
         .slot(&key, context.crypto_slot(), 0)

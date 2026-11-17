@@ -1,5 +1,6 @@
 //! Stateless encrypted day arithmetic. Each write binds the exact predecessor.
 
+use outbe_tee::resident::StateKeyHandle;
 use std::collections::BTreeMap;
 
 use alloy_primitives::{B256, U256};
@@ -7,7 +8,6 @@ use outbe_core_common::tribute_day_encryption::{
     EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1,
 };
 use outbe_system_common::time::{EmissionDate, WorldwideDay};
-use ring::hmac;
 use zeroize::Zeroizing;
 
 use crate::{
@@ -28,18 +28,15 @@ const DAY_FRACTIONS: SlotCipherDomain = SlotCipherDomain {
     nonce_info: b"outbe/tribute/day-fractions/nonce/v1",
 };
 
-fn sign_operation_hash(secret: &[u8; 32], domain: &[u8], inputs_hash: B256) -> B256 {
+fn sign_operation_hash(secret: &StateKeyHandle, domain: &[u8], inputs_hash: B256) -> B256 {
     let mut operation_context = domain.to_vec();
     operation_context.extend_from_slice(inputs_hash.as_slice());
-    let tag = hmac::sign(
-        &hmac::Key::new(hmac::HMAC_SHA256, secret),
-        &operation_context,
-    );
+    let tag = secret.compute_mac(b"", &operation_context);
     B256::from_slice(tag.as_ref())
 }
 
 pub fn read_day_amount(
-    network_secret: &[u8; 32],
+    network_secret: &StateKeyHandle,
     record: &EncryptedTributeDayAmountV2,
 ) -> Result<U256> {
     DAY_AMOUNT
@@ -48,8 +45,8 @@ pub fn read_day_amount(
 }
 
 pub fn apply_day_operation(
-    network_secret: &[u8; 32],
-    tribute_state_key: &[u8; 32],
+    network_secret: &StateKeyHandle,
+    tribute_state_key: &StateKeyHandle,
     request: &TributeDayOpRequestV2,
 ) -> Result<EncryptedTributeDayAmountV2> {
     let (previous_version, amount) = match &request.previous {
@@ -87,7 +84,7 @@ pub fn apply_day_operation(
 }
 
 fn apply_amount(
-    tribute_state_key: &[u8; 32],
+    tribute_state_key: &StateKeyHandle,
     request: &TributeDayOpRequestV2,
     amount: U256,
 ) -> Result<U256> {
@@ -119,7 +116,7 @@ fn apply_amount(
 }
 
 pub fn seal_day_fractions(
-    network_secret: &[u8; 32],
+    network_secret: &StateKeyHandle,
     (chain_id, worldwide_day, emission_day, completed_at): (u64, WorldwideDay, EmissionDate, u64),
     inputs_hash: B256,
     fractions: &BTreeMap<u16, u64>,
@@ -145,7 +142,7 @@ pub fn seal_day_fractions(
 }
 
 pub fn read_day_fractions(
-    network_secret: &[u8; 32],
+    network_secret: &StateKeyHandle,
     record: &EncryptedTributeDayFractionsV1,
 ) -> Result<BTreeMap<u16, u64>> {
     if record.version() != Some(1) {
@@ -196,8 +193,8 @@ struct PricedTributes<'a> {
 }
 
 fn collect_priced_tributes<'a>(
-    network_secret: &[u8; 32],
-    tribute_state_key: &[u8; 32],
+    network_secret: &StateKeyHandle,
+    tribute_state_key: &StateKeyHandle,
     request: &'a LysisFractionsRequestV1,
 ) -> Result<PricedTributes<'a>> {
     let day_nominal = &request.day_nominal;
@@ -250,7 +247,7 @@ fn collect_priced_tributes<'a>(
 }
 
 fn evaluate_tributes_for_lysis(
-    nod_state_key: &[u8; 32],
+    nod_state_key: &StateKeyHandle,
     request: &LysisFractionsRequestV1,
     priced: &PricedTributes<'_>,
     u256_fractions: &BTreeMap<u16, U256>,
@@ -298,7 +295,7 @@ fn evaluate_tributes_for_lysis(
 }
 
 fn seal_series_loads(
-    nod_state_key: &[u8; 32],
+    nod_state_key: &StateKeyHandle,
     chain_id: u64,
     inputs_hash: B256,
     series_totals: BTreeMap<B256, (u64, U256)>,
@@ -325,9 +322,9 @@ fn seal_series_loads(
 }
 
 pub fn execute_lysis_fractions(
-    network_secret: &[u8; 32],
-    tribute_state_key: &[u8; 32],
-    nod_state_key: &[u8; 32],
+    network_secret: &StateKeyHandle,
+    tribute_state_key: &StateKeyHandle,
+    nod_state_key: &StateKeyHandle,
     request: &LysisFractionsRequestV1,
 ) -> Result<LysisFractionsResultV1> {
     let priced = collect_priced_tributes(network_secret, tribute_state_key, request)?;

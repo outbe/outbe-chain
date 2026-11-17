@@ -9,7 +9,6 @@
 /// cannot read. Both derive the fidelity key from this single `(group_sig, chain)`
 /// pair.
 use alloy_primitives::{B256, U256};
-use x25519_dalek::{PublicKey, StaticSecret};
 
 /// Shared dev group signature for the fidelity test-enclave key.
 pub const FIDELITY_GROUP_SIG: &[u8] = b"outbe-dev-fidelity-group-signature-fixed-seed";
@@ -33,6 +32,22 @@ pub fn fidelity_chain() -> B256 {
 /// Public key corresponding to [`OFFER_SECRET_KEY`].
 #[must_use]
 pub fn offer_public_key() -> [u8; 32] {
-    let secret = StaticSecret::from(OFFER_SECRET_KEY);
-    PublicKey::from(&secret).to_bytes()
+    offer_key().public()
 }
+
+/// Build resident material for deterministic development and golden-vector fixtures.
+pub fn offer_material(
+    group_signature: &[u8],
+    chain_id: B256,
+) -> outbe_tee::resident::ResidentOfferMaterial {
+    outbe_tee::resident::ResidentOfferMaterial::for_test(group_signature.to_vec(), chain_id, 0, 0)
+        .expect("fixed development key material")
+}
+
+/// Fixed development offer handle, never a production root.
+pub fn offer_key() -> outbe_tee::resident::OfferKeyHandle {
+    outbe_tee::resident::OfferKeyHandle::for_test(OFFER_SECRET_KEY)
+}
+
+/// Historical cryptographic fixtures; never built by the production engine feature.
+pub mod crypto_fixtures;

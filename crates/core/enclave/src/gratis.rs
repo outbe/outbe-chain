@@ -3,41 +3,48 @@ use crate::confidential::{FIELD_BALANCE, GRATIS};
 use crate::errors::{GratisRejectReason, Result};
 use crate::protocol::{GratisOp, GratisOpRequest, GratisOpResult, GratisOpStatus};
 use alloy_primitives::{Address, B256, U256};
-use zeroize::Zeroizing;
+use outbe_tee::resident::{AccountKeysHandle, ResidentOfferMaterial, StateKeyHandle};
 
 /// Pledged-blob field tag; differs from `FIELD_BALANCE` so the two blobs never share a nonce.
 const FIELD_PLEDGED: u8 = 1;
 /// Derive the resident Gratis state key from the DKG group signature. See
 /// [`crate::confidential::Domain::derive_state_key`].
 pub fn derive_gratis_state_key(
-    group_sig: &[u8],
+    material: &ResidentOfferMaterial,
     chain_id: B256,
     epoch: u64,
-) -> Result<Zeroizing<[u8; 32]>> {
-    GRATIS.derive_state_key(group_sig, chain_id, epoch)
+) -> Result<StateKeyHandle> {
+    GRATIS.derive_state_key(material, chain_id, epoch)
 }
 
 /// Per-account view key: read capability AND the AEAD key for the account's
 /// balance blobs, so a holder can decrypt its own state client-side.
-pub fn derive_view_key(state_key: &[u8; 32], account: Address) -> Result<Zeroizing<[u8; 32]>> {
+pub fn derive_view_key(state_key: &StateKeyHandle, account: Address) -> Result<StateKeyHandle> {
     GRATIS.account_keys.derive_view_key(state_key, account)
 }
 
-/// Per-account modify key: authorizes writes (via HMAC). It never decrypts state.
-pub fn derive_modify_key(state_key: &[u8; 32], account: Address) -> Result<Zeroizing<[u8; 32]>> {
-    GRATIS.account_keys.derive_modify_key(state_key, account)
+/// Opaque per-account read and modify capabilities for authorization and sealed owner export.
+pub fn derive_account_keys(
+    state_key: &StateKeyHandle,
+    account: Address,
+) -> Result<AccountKeysHandle> {
+    GRATIS.account_keys.derive_account_keys(state_key, account)
 }
 
 /// The account operation covered by a Gratis authorization.
 pub type ModifyOperation = crate::confidential::ModifyOperation<GratisOp>;
 
-pub fn modify_mac(modify_key: &[u8; 32], operation: &ModifyOperation) -> [u8; 32] {
+pub fn modify_mac(modify_key: &AccountKeysHandle, operation: &ModifyOperation) -> [u8; 32] {
     GRATIS
         .authorization
         .modify_mac(modify_key, &operation.authorization())
 }
 
-fn verify_modify_auth(modify_key: &[u8; 32], operation: &ModifyOperation, mac: &[u8; 32]) -> bool {
+fn verify_modify_auth(
+    modify_key: &AccountKeysHandle,
+    operation: &ModifyOperation,
+    mac: &[u8; 32],
+) -> bool {
     GRATIS
         .authorization
         .verify_modify_auth(modify_key, &operation.authorization(), mac)
@@ -45,7 +52,7 @@ fn verify_modify_auth(modify_key: &[u8; 32], operation: &ModifyOperation, mac: &
 
 /// Decrypt a `version || ct` amount blob. An empty blob is a fresh slot (`0`).
 fn read_amount(
-    view_key: &[u8; 32],
+    view_key: &StateKeyHandle,
     account: Address,
     field: u8,
     blob: &[u8],
@@ -53,15 +60,13 @@ fn read_amount(
     crate::gratis_cipher::read_amount(view_key, account, field, blob)
 }
 
-/// Client-side helper: decrypt an account's balance blob with its view key (the
-/// key that `DeriveAccountKeys` delivers). It uses the same primitive as the
-/// enclave, so a client reproduces the plaintext without ever touching the state key.
-pub fn decrypt_balance(view_key: &[u8; 32], account: Address, blob: &[u8]) -> Result<U256> {
+/// Resident read helper. Wallets use the owner-local `gratis_decrypt` module.
+pub fn decrypt_balance(view_key: &StateKeyHandle, account: Address, blob: &[u8]) -> Result<U256> {
     read_amount(view_key, account, FIELD_BALANCE, blob).map(|(_, v)| v)
 }
 
-/// Client-side helper: decrypt an account's pledged blob with its view key.
-pub fn decrypt_pledged(view_key: &[u8; 32], account: Address, blob: &[u8]) -> Result<U256> {
+/// Resident pledged-balance read helper.
+pub fn decrypt_pledged(view_key: &StateKeyHandle, account: Address, blob: &[u8]) -> Result<U256> {
     read_amount(view_key, account, FIELD_PLEDGED, blob).map(|(_, v)| v)
 }
 
@@ -97,7 +102,7 @@ fn rejected_gratis_op(reason: GratisRejectReason) -> GratisOpResult {
 /// `state_key` + `req`. Sets `inputs_canonical_hash`. The caller (dispatch) signs
 /// and fills `attestation_tag`. This function returns business rejections as
 /// `GratisOpStatus::Rejected` (-> precompile revert), never as a panic.
-pub fn apply_op(state_key: &[u8; 32], req: &GratisOpRequest) -> GratisOpResult {
+pub fn apply_op(state_key: &StateKeyHandle, req: &GratisOpRequest) -> GratisOpResult {
     let inputs_canonical_hash = crate::protocol::gratis_op_canonical_hash(req);
     let mut result = match apply_op_inner(state_key, req) {
         Ok(r) => r,
@@ -108,11 +113,11 @@ pub fn apply_op(state_key: &[u8; 32], req: &GratisOpRequest) -> GratisOpResult {
 }
 
 fn prepare_owner_result(
-    state_key: &[u8; 32],
+    state_key: &StateKeyHandle,
     req: &GratisOpRequest,
     r: &mut GratisOpResult,
 ) -> Result<Option<GratisRejectReason>> {
-    let modify_key = derive_modify_key(state_key, req.account)?;
+    let modify_key = derive_account_keys(state_key, req.account)?;
     if !verify_modify_auth(
         &modify_key,
         &ModifyOperation {
@@ -133,7 +138,7 @@ fn prepare_owner_result(
     Ok(None)
 }
 
-fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisOpResult> {
+fn apply_op_inner(state_key: &StateKeyHandle, req: &GratisOpRequest) -> Result<GratisOpResult> {
     if req.amount.is_zero() || req.account.is_zero() {
         return Ok(rejected_gratis_op(
             GratisRejectReason::AmountAndAccountMustBeNonzero,
@@ -214,14 +219,25 @@ mod tests {
     use super::*;
     use crate::protocol::ModifyAuth;
     const CHAIN: B256 = B256::repeat_byte(0xC1);
-    fn state_key() -> [u8; 32] {
-        *derive_gratis_state_key(b"a-group-threshold-signature-~48-bytes-long!!", CHAIN, 0).unwrap()
+    fn state_key() -> StateKeyHandle {
+        derive_gratis_state_key(
+            &crate::dev::offer_material(b"a-group-threshold-signature-~48-bytes-long!!", CHAIN),
+            CHAIN,
+            0,
+        )
+        .unwrap()
     }
     fn alice() -> Address {
         Address::repeat_byte(0x11)
     }
-    fn auth(sk: &[u8; 32], acct: Address, op: GratisOp, amount: U256, nonce: u64) -> ModifyAuth {
-        let mk = derive_modify_key(sk, acct).unwrap();
+    fn auth(
+        sk: &StateKeyHandle,
+        acct: Address,
+        op: GratisOp,
+        amount: U256,
+        nonce: u64,
+    ) -> ModifyAuth {
+        let mk = derive_account_keys(sk, acct).unwrap();
         ModifyAuth {
             mac: modify_mac(
                 &mk,
@@ -254,10 +270,15 @@ mod tests {
     #[test]
     fn gratis_known_answer_vectors() {
         const KAT_GROUP_SIG: &[u8] = b"kat-fixed-gratis-group-signature-48b-padding";
-        let sk = derive_gratis_state_key(KAT_GROUP_SIG, CHAIN, 0).unwrap();
+        let sk =
+            derive_gratis_state_key(&crate::dev::offer_material(KAT_GROUP_SIG, CHAIN), CHAIN, 0)
+                .unwrap();
         assert_eq!(
-            alloy_primitives::hex::encode(sk.as_slice()),
-            "ee0bcead11e31dbafbf16c5b7fb2aa659045c38a7259db9002aa66bc9d9b08b3"
+            sk.compute_mac(b"kat", b"state"),
+            StateKeyHandle::for_test(alloy_primitives::hex!(
+                "ee0bcead11e31dbafbf16c5b7fb2aa659045c38a7259db9002aa66bc9d9b08b3"
+            ))
+            .compute_mac(b"kat", b"state")
         );
         let vk = derive_view_key(&sk, alice()).unwrap();
         let blob = crate::gratis_cipher::write_amount(
@@ -276,7 +297,19 @@ mod tests {
             "00000000000000014752413246232be65ee469056f27d81bd908bab2cd61705404526e19acfa103c5f924bfb368f1a38d1b119051b1b5fb22425659291417af423d4475f231b154efb71e9de9e128688bc118a0bf920c64f413581a4"
         );
         assert_eq!(
-            crate::gratis_decrypt::decrypt_gratis_balance(&vk, alice(), &blob).unwrap(),
+            crate::gratis_decrypt::decrypt_gratis_balance(
+                &crate::crypto::hkdf_sha256(
+                    &alloy_primitives::hex!(
+                        "ee0bcead11e31dbafbf16c5b7fb2aa659045c38a7259db9002aa66bc9d9b08b3"
+                    ),
+                    alice().as_slice(),
+                    b"outbe/gratis/view-key/v1"
+                )
+                .unwrap(),
+                alice(),
+                &blob
+            )
+            .unwrap(),
             U256::from(1000u64),
         );
         let pledged = test_amount(&vk, FIELD_PLEDGED, 1000).unwrap();
@@ -285,7 +318,7 @@ mod tests {
             U256::from(1000u64)
         );
         assert!(decrypt_balance(&vk, alice(), &pledged).is_err());
-        let mk = derive_modify_key(&sk, alice()).unwrap();
+        let mk = derive_account_keys(&sk, alice()).unwrap();
         let mac = modify_mac(
             &mk,
             &ModifyOperation {
@@ -335,7 +368,7 @@ mod tests {
             GratisOpStatus::Rejected { .. }
         ));
     }
-    fn test_amount(key: &[u8; 32], field: u8, amount: u64) -> Result<Vec<u8>> {
+    fn test_amount(key: &StateKeyHandle, field: u8, amount: u64) -> Result<Vec<u8>> {
         crate::gratis_cipher::write_amount(
             key,
             crate::confidential::BalanceTransition {
@@ -347,7 +380,7 @@ mod tests {
             },
         )
     }
-    fn pledged(sk: &[u8; 32], amount: u64) -> Vec<u8> {
+    fn pledged(sk: &StateKeyHandle, amount: u64) -> Vec<u8> {
         let vk = derive_view_key(sk, alice()).unwrap();
         test_amount(&vk, FIELD_PLEDGED, amount).unwrap()
     }
@@ -539,28 +572,60 @@ mod tests {
     }
 
     #[test]
-    fn derive_view_key_returns_zeroizing() {
-        let sk: Zeroizing<[u8; 32]> =
-            derive_gratis_state_key(b"a-group-threshold-signature-~48-bytes-long!!", CHAIN, 0)
-                .unwrap();
+    fn derived_handles_match_key_vectors() {
+        let sk = derive_gratis_state_key(
+            &crate::dev::offer_material(b"a-group-threshold-signature-~48-bytes-long!!", CHAIN),
+            CHAIN,
+            0,
+        )
+        .unwrap();
         assert_eq!(
-            *sk,
-            alloy_primitives::hex!(
+            sk.aead_encrypt(&[0; 12], b"golden").unwrap(),
+            StateKeyHandle::for_test(alloy_primitives::hex!(
                 "b0acf797d345d88dfebd4b12df2f1b62852e8136e54e0d8a35a001c20a7aab7c"
-            )
+            ))
+            .aead_encrypt(&[0; 12], b"golden")
+            .unwrap()
         );
-        let vk: Zeroizing<[u8; 32]> = derive_view_key(&sk, alice()).unwrap();
+        let vk = derive_view_key(&sk, alice()).unwrap();
         assert_eq!(
-            *vk,
-            alloy_primitives::hex!(
+            vk.aead_encrypt(&[0; 12], b"golden").unwrap(),
+            StateKeyHandle::for_test(alloy_primitives::hex!(
                 "56a2b1d12dbc33ca80a830adf878434eb278584a2e1cb87645cb42fe133f1598"
-            )
+            ))
+            .aead_encrypt(&[0; 12], b"golden")
+            .unwrap()
         );
-        let mk: Zeroizing<[u8; 32]> = derive_modify_key(&sk, alice()).unwrap();
+        let mk = derive_account_keys(&sk, alice()).unwrap();
+        assert_eq!(mk.account(), alice());
         assert_eq!(
-            *mk,
-            alloy_primitives::hex!(
-                "2c1a89c4080e2e568dd2aa76ea4a72d0b1af8685655278b465e232ca25c8a602"
+            GRATIS.authorization.modify_mac(
+                &mk,
+                &ModifyOperation {
+                    account: alice(),
+                    op: GratisOp::Mint,
+                    amount: U256::from(1),
+                    op_nonce: 0,
+                    chain_id: CHAIN
+                }
+                .authorization()
+            ),
+            GRATIS.authorization.modify_mac(
+                &AccountKeysHandle::for_test(
+                    alice(),
+                    [0; 32],
+                    alloy_primitives::hex!(
+                        "2c1a89c4080e2e568dd2aa76ea4a72d0b1af8685655278b465e232ca25c8a602"
+                    )
+                ),
+                &ModifyOperation {
+                    account: alice(),
+                    op: GratisOp::Mint,
+                    amount: U256::from(1),
+                    op_nonce: 0,
+                    chain_id: CHAIN
+                }
+                .authorization()
             )
         );
     }
