@@ -14,11 +14,6 @@ where
     P: ChainSpecParser<ChainSpec = ChainSpec<OutbeHeader>>,
     V: RpcModuleValidator,
 {
-    // TEE offer decryption routes exclusively through the enclave sidecar
-    // (`--tee-enclave-socket` -> persistent production NodeHost authorization).
-    // The offer-decryption key exists only inside the enclave (single path, no
-    // in-process key material).
-
     // Pool lifetime hardening. Must run BEFORE CLI parsing: clap reads these as
     // its own defaults, so explicit `--txpool.*` flags still win.
     let _ = outbe_default_txpool_values().try_init();
@@ -152,6 +147,8 @@ where
         let radicle_status_for_rpc = radicle_status.clone();
         // Canary-fed enclave health. The tee-canary worker (spawned after node launch)
         // publishes it, and `outbe_consensusStatus.enclave` reads it.
+        let tee_authority = outbe_tee::TeeAuthorityChannel::default();
+        outbe_consensus::protocol_state::install_tee_authority_watch(tee_authority.subscribe())?;
         let tee_canary_status = outbe_tee::TeeEnclaveHealthChannel::disabled();
         let tee_canary_status_for_rpc = tee_canary_status.clone();
 
@@ -207,7 +204,8 @@ where
                     let domain_api = crate::domain_rpc::OutbeDomainRpcHandler::new(
                         provider,
                         (proof_chain_id, genesis_hash),
-                    );
+                    ).with_authority_watch(outbe_tee::tee_authority_watch()
+                        .ok_or(outbe_consensus::protocol_state::EngineProtocolError::NotInstalled)?);
                     crate::domain_rpc::register_outbe_rpc_if_configured(
                         ctx.modules,
                         outbe_api.into_rpc(),
@@ -224,7 +222,6 @@ where
         shutdown.observe_engine_exit(&node.task_executor, node_exit_future)?;
 
         let tee::TeeRuntimeWorkers {
-            mut tee_lease_exit_rx,
             tee_lease_guard_handle,
             tee_canary_handle,
             upgrade_promotion,
@@ -234,13 +231,13 @@ where
             tee_lease_armed_tx: _tee_lease_armed_tx,
         } = tee::start_runtime_workers(
             (
-                Arc::clone(&runtime_for_launcher) as Arc<dyn EngineProtocolState>,
+                Arc::clone(&runtime_for_launcher),
                 Arc::clone(&runtime_for_launcher) as Arc<dyn TeeSessionStateReader>,
             ),
             (&node, &args),
             (proof_chain_id, genesis_hash, &node_data_dir),
             (local_tee_identity, tee_admission_anchor, &initial_tee_policy),
-            (tee_canary_status.clone(), shutdown_token.clone(), shutdown.clone()),
+            (tee_canary_status.clone(), tee_authority, shutdown_token.clone(), shutdown.clone()),
         )
         .await?;
 
@@ -313,7 +310,7 @@ where
                 &shutdown,
                 Some(&mut consensus_dead_rx),
                 &upgrade_promotion,
-                tee_lease_exit_rx.as_mut(),
+                None,
             ).await;
 
             tracing::debug!(?exit_cause, "draining application before global execution shutdown");
@@ -323,7 +320,7 @@ where
                 &shutdown,
                 None,
                 &upgrade_promotion,
-                tee_lease_exit_rx.as_mut(),
+                None,
             ).await;
         }
 

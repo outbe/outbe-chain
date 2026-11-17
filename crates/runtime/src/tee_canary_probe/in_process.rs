@@ -12,13 +12,17 @@ use tokio_util::sync::CancellationToken;
 struct ResidentCanaryRequester(Arc<InProcessTeeContext>);
 
 impl ResidentCanaryRequester {
+    fn context(&self) -> Arc<InProcessTeeContext> {
+        outbe_tee::in_process_tee_context().unwrap_or_else(|| Arc::clone(&self.0))
+    }
+
     fn dispatch(&self, request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
+        let context = self.context();
         match request {
             // Health is sidecar-only. The worker feature-detects this locally,
             // then uses GetPublicKeys and Canary payloads on subsequent ticks.
             EnclaveRequest::Health => Err(InProcessDispatchError::UnsupportedRequest.into()),
             EnclaveRequest::GetPublicKeys => {
-                let context = &self.0;
                 let ready = context
                     .offer_key_ready()
                     .map_err(InProcessDispatchError::from)?;
@@ -44,7 +48,7 @@ impl ResidentCanaryRequester {
                 lane: PayloadLane::Canary,
                 payload,
             } => outbe_enclave::host::domain_in_process::dispatch_payload(
-                &self.0,
+                &context,
                 PayloadLane::Canary,
                 payload,
             ),
@@ -76,7 +80,7 @@ impl EnclaveRequester for ResidentCanaryRequester {
     }
 
     fn attestation_pub(&self) -> Option<[u8; 32]> {
-        Some(self.0.attestation_public())
+        Some(self.context().attestation_public())
     }
 }
 

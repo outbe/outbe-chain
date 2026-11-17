@@ -69,7 +69,7 @@ where
     }
 }
 
-pub(super) fn tick<P>(
+pub(crate) fn tick<P>(
     (provider, protocol): (&P, &dyn EngineProtocolState),
     (chain, identity): (
         &outbe_execution::tee_remote_session::RegistryChainIdentity,

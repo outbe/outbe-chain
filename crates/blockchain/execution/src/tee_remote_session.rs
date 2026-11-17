@@ -107,6 +107,10 @@ impl ConsensusFinalizedBlockV1 {
 
 #[derive(Debug, thiserror::Error)]
 pub enum LocalRegistryAdmissionError {
+    #[error("local resident context does not match the finalized target binding")]
+    LocalContextMismatch,
+    #[error("resident identity validation failed")]
+    Resident(#[from] outbe_tee::in_process::InProcessError),
     #[error("local consensus-finalized block is unavailable")]
     FinalizedBlockUnavailable,
     #[error("local consensus-finalized block identity is malformed")]
@@ -197,6 +201,19 @@ pub enum ExternalRegistryAdmissionError {
     Admission(#[from] RemoteSessionAdmissionError),
 }
 
+/// Explicit local transport; direct admission never creates an IPC ticket.
+pub enum LocalRemoteSessionTargetV1<'a> {
+    Sidecar(&'a mut AuthorizedEnclaveClient),
+    InProcess(&'a outbe_tee::in_process::InProcessTeeContext),
+}
+
+/// Finalized authority with the transport distinction preserved for the caller.
+#[derive(Debug)]
+pub enum LocalRemoteSessionAuthorizationV1 {
+    Sidecar(RemoteSessionTicketV1),
+    InProcess(RemoteSessionAdmissionV1),
+}
+
 /// Production node-local route for authorizing one remote session.
 ///
 /// This deep module owns the complete authority sequence. It:
@@ -209,11 +226,11 @@ pub enum ExternalRegistryAdmissionError {
 /// this interface and carries no authority.
 pub fn authorize_local_finalized_remote_session_v1<P>(
     provider: &P,
-    local_enclave: &mut AuthorizedEnclaveClient,
+    local_enclave: LocalRemoteSessionTargetV1<'_>,
     chain: RegistryChainIdentity,
     request: RemoteSessionRequest<'_>,
     session: &dyn TeeSessionStateReader,
-) -> Result<RemoteSessionTicketV1, LocalRegistryAdmissionError>
+) -> Result<LocalRemoteSessionAuthorizationV1, LocalRegistryAdmissionError>
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
@@ -279,14 +296,25 @@ where
 {
     fn authorize(
         self,
-        local_enclave: &mut AuthorizedEnclaveClient,
-    ) -> Result<RemoteSessionTicketV1, LocalRegistryAdmissionError> {
-        let admission = self.admit()?;
-        local_enclave
-            .authorize_remote_session(&admission)
-            .map_err(Into::into)
+        local_enclave: LocalRemoteSessionTargetV1<'_>,
+    ) -> Result<LocalRemoteSessionAuthorizationV1, LocalRegistryAdmissionError> {
+        match local_enclave {
+            LocalRemoteSessionTargetV1::Sidecar(client) => client
+                .authorize_remote_session(&self.admit()?)
+                .map(LocalRemoteSessionAuthorizationV1::Sidecar)
+                .map_err(Into::into),
+            LocalRemoteSessionTargetV1::InProcess(context) => self
+                .admit_for_context(Some(context))
+                .map(LocalRemoteSessionAuthorizationV1::InProcess),
+        }
     }
     fn admit(self) -> Result<RemoteSessionAdmissionV1, LocalRegistryAdmissionError> {
+        self.admit_for_context(None)
+    }
+    fn admit_for_context(
+        self,
+        context: Option<&outbe_tee::in_process::InProcessTeeContext>,
+    ) -> Result<RemoteSessionAdmissionV1, LocalRegistryAdmissionError> {
         with_local_finalized_registry(
             self.provider,
             self.chain.chain_id,
@@ -301,6 +329,46 @@ where
                     .node_binding(storage.clone(), self.request.target_node)
                     .map_err(registry_error)?
                     .ok_or(LocalRegistryAdmissionError::TargetBindingMissing)?;
+
+                if let Some(context) = context {
+                    let manifest = context.manifest();
+                    let enclave_id = manifest
+                        .enclave_id()
+                        .map_err(outbe_tee::in_process::InProcessError::from)?;
+                    let host = context
+                        .authorization_witness()?
+                        .authorization_hash()
+                        .map_err(outbe_tee::in_process::InProcessError::from)?;
+                    let identity_matches = (
+                        &manifest.node_id,
+                        manifest.chain_id,
+                        manifest.genesis_hash,
+                        context.identity().network_binding,
+                        context.identity().reth_p2p_public,
+                    ) == (
+                        self.request.target_node,
+                        view.chain_id,
+                        view.genesis_hash,
+                        manifest.network_binding(),
+                        manifest.node_id.reth_p2p_public,
+                    );
+                    let binding_matches = (
+                        target.enclave_id,
+                        target.node_host_authorization_hash,
+                        target.noise_responder_x25519.0,
+                        target.attestation_ed25519.0,
+                        target.recipient_x25519.0,
+                    ) == (
+                        enclave_id,
+                        host,
+                        context.noise_public(),
+                        manifest.attestation_ed25519,
+                        manifest.recipient_x25519,
+                    );
+                    if !identity_matches || !binding_matches {
+                        return Err(LocalRegistryAdmissionError::LocalContextMismatch);
+                    }
+                }
 
                 if !binding_codes_admitted(
                     reader,

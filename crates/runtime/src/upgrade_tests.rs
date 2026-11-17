@@ -540,11 +540,32 @@ async fn live_upgrade_and_lease_guard_share_identity_anchor_and_context_without_
                 .state_root,
             consensus_timestamp: 1_800_000_000,
         };
+        let waiting = ports::LiveUpgradeIo {
+            inner: LivePromotionFixture {
+                manifest: old.manifest().clone(),
+                view,
+                actions: Default::default(),
+                fail,
+            },
+            provider: shared.clone(),
+            protocol: Arc::new(crate::OutbeRuntime::new()),
+            chain,
+            owner: owner.clone(),
+        };
+        let state_before = authority.snapshot();
+        assert_eq!(super::poll_once(&waiting, &config()), CycleOutcome::Wait);
+        assert!(waiting.inner.actions.borrow().is_empty());
+        assert_eq!(authority.snapshot(), state_before);
         *shared.0.lock().unwrap() = successor;
         notify.notify_one();
         tokio::select! { result = &mut guard => panic!("guard died before promotion: {result:?}"), () = support::wait_for_state(&mut watch, TeeAuthorityState::SuspendedPolicyMismatch) => {} }
         assert!(guard.as_mut().now_or_never().is_none());
 
+        owner.stage_candidate(candidate.clone()).unwrap();
+        let _dispatch = outbe_tee::client_global::set_in_process_tee_context_for_test(Some((
+            old.clone(),
+            outbe_enclave::host::domain_in_process::dispatch_payload,
+        )));
         let io = ports::LiveUpgradeIo {
             inner: LivePromotionFixture {
                 manifest: old.manifest().clone(),
@@ -556,7 +577,6 @@ async fn live_upgrade_and_lease_guard_share_identity_anchor_and_context_without_
             protocol: Arc::new(crate::OutbeRuntime::new()),
             chain,
             owner: owner.clone(),
-            candidate: candidate.clone(),
         };
         let promoted = tokio::sync::Notify::new();
         assert_eq!(
@@ -576,6 +596,10 @@ async fn live_upgrade_and_lease_guard_share_identity_anchor_and_context_without_
             assert_eq!(snapshot.identity, identity);
             assert_eq!(snapshot.anchors, anchors);
             assert!(Arc::ptr_eq(&snapshot.context, &old));
+            assert!(Arc::ptr_eq(
+                &outbe_tee::in_process_tee_context().unwrap(),
+                &old
+            ));
             assert_eq!(
                 authority.snapshot(),
                 TeeAuthorityState::SuspendedPolicyMismatch
@@ -584,6 +608,11 @@ async fn live_upgrade_and_lease_guard_share_identity_anchor_and_context_without_
         } else {
             let snapshot = owner.lock().unwrap().clone();
             assert!(Arc::ptr_eq(&snapshot.context, &candidate));
+            assert!(Arc::ptr_eq(
+                &outbe_tee::in_process_tee_context().unwrap(),
+                &candidate
+            ));
+            assert!(owner.staged_candidate().unwrap().is_none());
             assert_eq!(
                 snapshot.identity.expected_enclave_id,
                 Some(candidate.manifest().enclave_id().unwrap())
@@ -705,6 +734,11 @@ fn advanced_finalized_head_retries_promotion_with_a_fresh_view() {
         .historical_states
         .insert(checkpoint.hash, authorized.inner.clone());
     let fresh = advanced.finalized_block_num_hash().unwrap().unwrap();
+    owner.stage_candidate(candidate.clone()).unwrap();
+    let _dispatch = outbe_tee::client_global::set_in_process_tee_context_for_test(Some((
+        old.clone(),
+        outbe_enclave::host::domain_in_process::dispatch_payload,
+    )));
     let mut io = ports::LiveUpgradeIo {
         inner: LivePromotionFixture {
             manifest: old.manifest().clone(),
@@ -716,7 +750,6 @@ fn advanced_finalized_head_retries_promotion_with_a_fresh_view() {
         protocol: Arc::new(crate::OutbeRuntime::new()),
         chain,
         owner: owner.clone(),
-        candidate: candidate.clone(),
     };
     let promoted = tokio::sync::Notify::new();
     assert_eq!(
@@ -759,4 +792,56 @@ fn advanced_finalized_head_retries_promotion_with_a_fresh_view() {
             .count(),
         1
     );
+}
+
+#[test]
+fn restaged_candidate_cannot_be_overwritten_by_an_older_promotion() {
+    use crate::admission::{
+        LocalTeeAdmissionAnchorV1, TeeLeaseGuardAnchorsV1, TeeLeaseGuardGateV1,
+    };
+    use crate::admission_authority::{live::*, test_support as support};
+    let old = support::context(9);
+    let candidate = support::context(10);
+    let newer = support::context(11);
+    let (_, _, identity) = support::provider(&old, 7, 1_800_000_000, 1_800_001_000, false);
+    let owner = LiveTeeRuntimeV1::new(
+        LiveTeeSnapshotV1 {
+            identity,
+            anchors: TeeLeaseGuardAnchorsV1 {
+                gate: TeeLeaseGuardGateV1::Armed,
+                durable: None,
+            },
+            context: old.clone(),
+        },
+        outbe_tee::TeeAuthorityChannel::default(),
+    )
+    .unwrap();
+    owner.stage_candidate(candidate.clone()).unwrap();
+    owner.stage_candidate(newer.clone()).unwrap();
+    let _dispatch = outbe_tee::client_global::set_in_process_tee_context_for_test(Some((
+        old.clone(),
+        outbe_enclave::host::domain_in_process::dispatch_payload,
+    )));
+    let result = owner.promote(
+        candidate,
+        LocalTeeAdmissionAnchorV1 {
+            finalized_height: 8,
+            finalized_hash: B256::repeat_byte(8),
+        },
+        outbe_consensus::validators::LocalTeeRuntimeAdmissionV1::Ready {
+            valid_until: 1_800_001_000,
+        },
+        B256::from(old.network_encryption_public().unwrap()),
+        || panic!("stale candidate must not have durable effects"),
+    );
+    assert!(matches!(result, Err(LiveTeeError::CandidateMismatch)));
+    assert!(Arc::ptr_eq(&owner.lock().unwrap().context, &old));
+    assert!(Arc::ptr_eq(
+        &owner.staged_candidate().unwrap().unwrap(),
+        &newer
+    ));
+    assert!(Arc::ptr_eq(
+        &outbe_tee::in_process_tee_context().unwrap(),
+        &old
+    ));
 }

@@ -631,6 +631,7 @@ pub(crate) async fn require_upstream_fullnode_tee_admission(
     })
 }
 
+#[derive(Clone)]
 pub(crate) struct TeeLeaseGuardConfigV1 {
     pub(crate) chain: RegistryChainIdentity,
     pub(crate) identity: outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
@@ -642,46 +643,6 @@ pub(crate) struct TeeLeaseGuardConfigV1 {
     pub(crate) finalization_notify: Arc<tokio::sync::Notify>,
     /// Publishes `true` when the gate becomes `Armed`.
     pub(crate) armed: tokio::sync::watch::Sender<bool>,
-}
-
-pub(crate) async fn run_tee_lease_guard_v1<P>(
-    provider: P,
-    protocol: Arc<dyn EngineProtocolState>,
-    session: Arc<dyn outbe_execution::tee_remote_session::TeeSessionStateReader>,
-    config: TeeLeaseGuardConfigV1,
-    shutdown: tokio_util::sync::CancellationToken,
-) -> eyre::Result<Option<String>>
-where
-    P: BlockIdReader
-        + HeaderProvider<Header = OutbeHeader>
-        + StateProviderFactory
-        + Send
-        + Sync
-        + 'static,
-{
-    let authority = outbe_tee::TeeAuthorityChannel::default();
-    outbe_tee::install_tee_authority_watch(authority.subscribe())?;
-    let live = outbe_tee::in_process_tee_context()
-        .map(|context| {
-            crate::admission_authority::live::LiveTeeRuntimeV1::new(
-                crate::admission_authority::live::LiveTeeSnapshotV1 {
-                    identity: config.identity,
-                    anchors: config.anchors,
-                    context,
-                },
-                authority.clone(),
-            )
-            .map(Arc::new)
-        })
-        .transpose()?;
-    crate::admission_authority::guard::run_lease_guard(
-        provider,
-        (protocol, session),
-        config,
-        (authority, live),
-        shutdown,
-    )
-    .await
 }
 
 /// Ask the enclave to retire remote sessions once the local finalized chain
@@ -703,6 +664,11 @@ where
     }
     let status = inspect_local_finalized_successor_status_v1(provider, chain, session)?;
     if status.retirement_height <= *retired_at {
+        return Ok(());
+    }
+    if outbe_tee::in_process_tee_context().is_some() {
+        // Direct admission is checked per call; this process has no IPC tickets to retire.
+        *retired_at = status.retirement_height;
         return Ok(());
     }
     let activation_height = status.retirement_height;

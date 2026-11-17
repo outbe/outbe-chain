@@ -65,6 +65,19 @@ pub struct DcapSeededChainSpecBindingV1 {
 }
 
 impl DcapSeededChainSpecBindingV1 {
+    /// Read the trusted genesis committee from the selected canonical chain spec.
+    pub fn from_chain_spec(
+        spec: &ChainSpec<OutbeHeader>,
+    ) -> Result<Self, TeeAttestationActivationError> {
+        let genesis = serde_json::to_value(&spec.genesis)
+            .map_err(TeeAttestationActivationError::parse_seeded_json)?;
+        Ok(Self {
+            chain_id: spec.chain().id(),
+            genesis_hash: spec.genesis_hash(),
+            genesis_consensus_keys: genesis_consensus_keys_v1(&genesis)?,
+        })
+    }
+
     pub fn from_genesis_path(
         path: &std::path::Path,
     ) -> Result<Self, TeeAttestationActivationError> {

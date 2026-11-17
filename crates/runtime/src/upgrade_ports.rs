@@ -18,6 +18,9 @@ pub(crate) struct PromotionAuthorization<A> {
 pub(crate) trait UpgradePromotionIo {
     type Authorization;
 
+    fn promotion_ready(&self) -> eyre::Result<bool> {
+        Ok(true)
+    }
     fn inspect_journal(&self) -> eyre::Result<Option<UpgradeJournalSnapshotV1>>;
     fn committed_manifest(&self) -> eyre::Result<EnclaveInitializationManifestV1>;
     fn successor_status(
@@ -112,20 +115,12 @@ where
 
 /// The startup integrator supplies the same owner to the lease guard and this
 /// adapter. Candidate construction and global dispatcher wiring stay outside it.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "The startup integrator connects this adapter to the shared live owner in the next lifecycle stage."
-    )
-)]
 pub(crate) struct LiveUpgradeIo<I, P> {
     pub(crate) inner: I,
     pub(crate) provider: P,
     pub(crate) protocol: Arc<dyn outbe_consensus::protocol_state::EngineProtocolState>,
     pub(crate) chain: RegistryChainIdentity,
     pub(crate) owner: Arc<crate::admission_authority::live::LiveTeeRuntimeV1>,
-    pub(crate) candidate: Arc<outbe_tee::in_process::InProcessTeeContext>,
 }
 
 impl<I: UpgradePromotionIo, P> UpgradePromotionIo for LiveUpgradeIo<I, P>
@@ -133,11 +128,14 @@ where
     P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
     type Authorization = I::Authorization;
+    fn promotion_ready(&self) -> eyre::Result<bool> {
+        Ok(self.owner.staged_candidate()?.is_some())
+    }
     fn inspect_journal(&self) -> eyre::Result<Option<UpgradeJournalSnapshotV1>> {
         self.inner.inspect_journal()
     }
     fn committed_manifest(&self) -> eyre::Result<EnclaveInitializationManifestV1> {
-        self.inner.committed_manifest()
+        Ok(self.owner.lock()?.context.manifest().clone())
     }
     fn successor_status(
         &self,
@@ -158,6 +156,11 @@ where
         authorization: &Self::Authorization,
         view: FinalizedRegistryViewV1,
     ) -> eyre::Result<()> {
+        let Some(candidate) = self.owner.staged_candidate()? else {
+            return Err(
+                crate::admission_authority::live::LiveTeeError::CandidateNotAdmitted.into(),
+            );
+        };
         let result = (|| {
             let header = self.provider.sealed_header(view.block_number)?;
             let network = (view.chain_id, view.genesis_hash);
@@ -165,7 +168,7 @@ where
                 alloy_primitives::U256::from(self.chain.chain_id).to_be_bytes(),
                 self.chain.genesis_hash,
             );
-            let manifest = self.candidate.manifest();
+            let manifest = candidate.manifest();
             let header_matches = header.is_some_and(|header| {
                 (
                     header.hash(),
@@ -182,7 +185,7 @@ where
                 );
             }
             let mut identity = self.owner.lock()?.identity;
-            identity.expected_enclave_id = Some(self.candidate.manifest().enclave_id()?);
+            identity.expected_enclave_id = Some(candidate.manifest().enclave_id()?);
             let admission = crate::admission::read_local_tee_admission_at_block(
                 self.protocol.as_ref(),
                 &self.provider,
@@ -209,7 +212,7 @@ where
                 );
             }
             self.owner.promote(
-                self.candidate.clone(),
+                candidate.clone(),
                 crate::admission::LocalTeeAdmissionAnchorV1 {
                     finalized_height: view.block_number,
                     finalized_hash: view.block_hash,

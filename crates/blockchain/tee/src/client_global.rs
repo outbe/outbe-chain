@@ -8,7 +8,9 @@
 
 #[cfg(any(test, feature = "test-utils"))]
 pub use crate::in_process_dispatch::set_in_process_tee_context_for_test;
-pub use crate::in_process_dispatch::{in_process_tee_context, install_in_process_tee_context};
+pub use crate::in_process_dispatch::{
+    in_process_tee_context, install_in_process_tee_context, replace_in_process_tee_context,
+};
 
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::Instant;

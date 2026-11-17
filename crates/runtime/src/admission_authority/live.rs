@@ -23,16 +23,13 @@ pub(crate) enum LiveTeeError {
     #[error("finalized TEE policy no longer permits authority")]
     PolicyMismatch,
     #[error("candidate finalized checkpoint does not match the local chain")]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "The startup integrator connects the live promotion adapter in the next lifecycle stage."
-        )
-    )]
     FinalizedViewMismatch,
     #[error("TEE authority rejected")]
     Authority(#[from] TeeAuthorityError),
+    #[error("legacy enclave public identity unavailable")]
+    LegacyIdentityUnavailable,
+    #[error("in-process dispatcher replacement failed")]
+    Dispatch(#[from] outbe_tee::InProcessDispatchError),
     #[error("resident TEE operation failed")]
     Resident(#[from] outbe_tee::in_process::InProcessError),
     #[error("candidate manifest is invalid")]
@@ -52,6 +49,8 @@ pub(crate) struct LiveTeeSnapshotV1 {
 /// Global execution dispatch is connected to this owner by the startup integrator.
 pub(crate) struct LiveTeeRuntimeV1 {
     active: Mutex<LiveTeeSnapshotV1>,
+    staged_candidate: Mutex<Option<Arc<InProcessTeeContext>>>,
+    armed: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
     bootstrap_allowed: AtomicBool,
     pub(crate) authority: TeeAuthorityChannel,
 }
@@ -72,8 +71,51 @@ impl LiveTeeRuntimeV1 {
         Ok(Self {
             bootstrap_allowed: AtomicBool::new(bootstrap_allowed),
             active: Mutex::new(active),
+            staged_candidate: Mutex::new(None),
+            armed: Mutex::new(None),
             authority,
         })
+    }
+
+    pub(crate) fn bind_armed(
+        &self,
+        sender: tokio::sync::watch::Sender<bool>,
+    ) -> Result<(), LiveTeeError> {
+        *self.armed.lock().map_err(|_| LiveTeeError::LockPoisoned)? = Some(sender);
+        Ok(())
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "The onboarding supervisor stages verified RAM candidates before promotion."
+        )
+    )]
+    pub(crate) fn stage_candidate(
+        &self,
+        candidate: Arc<InProcessTeeContext>,
+    ) -> Result<(), LiveTeeError> {
+        let active = self.lock()?;
+        if candidate.identity() != active.context.identity() || !candidate.offer_key_ready()? {
+            return Err(LiveTeeError::CandidateMismatch);
+        }
+        *self
+            .staged_candidate
+            .lock()
+            .map_err(|_| LiveTeeError::LockPoisoned)? = Some(candidate);
+        Ok(())
+    }
+
+    pub(crate) fn staged_candidate(
+        &self,
+    ) -> Result<Option<Arc<InProcessTeeContext>>, LiveTeeError> {
+        let _active = self.lock()?;
+        Ok(self
+            .staged_candidate
+            .lock()
+            .map_err(|_| LiveTeeError::LockPoisoned)?
+            .clone())
     }
 
     pub(crate) fn lock(&self) -> Result<MutexGuard<'_, LiveTeeSnapshotV1>, LiveTeeError> {
@@ -121,18 +163,22 @@ impl LiveTeeRuntimeV1 {
         if result.is_err() {
             super::publish_failure(&self.authority, has_resident);
         }
+        if let Some(armed) = self
+            .armed
+            .lock()
+            .map_err(|_| LiveTeeError::LockPoisoned)?
+            .as_ref()
+        {
+            let open = self.authority.snapshot().is_authority_open();
+            if *armed.borrow() != open {
+                armed.send_replace(open);
+            }
+        }
         result
     }
 
     /// Validate everything before the durable effect; publication is last under
     /// the same lock used by admission so an old guard tick cannot reopen A.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "The startup integrator connects the live promotion adapter in the next lifecycle stage."
-        )
-    )]
     pub(crate) fn promote(
         &self,
         candidate: Arc<InProcessTeeContext>,
@@ -181,18 +227,33 @@ impl LiveTeeRuntimeV1 {
             if !state.has_finalized_lease() {
                 return Err(LiveTeeError::CandidateNotAdmitted);
             }
-            durable().map_err(LiveTeeError::Durable)?;
-            *active = LiveTeeSnapshotV1 {
-                identity: LocalTeeRuntimeIdentityV1 {
-                    expected_enclave_id: Some(enclave_id),
-                    ..active.identity
-                },
-                anchors: TeeLeaseGuardAnchorsV1 {
-                    gate: crate::admission::TeeLeaseGuardGateV1::Pending(anchor),
-                    durable: None,
-                },
-                context: candidate,
-            };
+            let expected = Arc::clone(&active.context);
+            let mut staged = self
+                .staged_candidate
+                .lock()
+                .map_err(|_| LiveTeeError::LockPoisoned)?;
+            if staged
+                .as_ref()
+                .is_none_or(|current| !Arc::ptr_eq(current, &candidate))
+            {
+                return Err(LiveTeeError::CandidateMismatch);
+            }
+            outbe_tee::replace_in_process_tee_context(&expected, candidate.clone(), || {
+                durable().map_err(LiveTeeError::Durable)?;
+                *active = LiveTeeSnapshotV1 {
+                    identity: LocalTeeRuntimeIdentityV1 {
+                        expected_enclave_id: Some(enclave_id),
+                        ..active.identity
+                    },
+                    anchors: TeeLeaseGuardAnchorsV1 {
+                        gate: crate::admission::TeeLeaseGuardGateV1::Pending(anchor),
+                        durable: None,
+                    },
+                    context: candidate,
+                };
+                *staged = None;
+                Ok::<_, LiveTeeError>(())
+            })?;
             self.bootstrap_allowed.store(false, Ordering::Relaxed);
             super::publish_state(&self.authority, state);
             Ok(())

@@ -31,11 +31,21 @@ pub(crate) async fn run_upgrade_promotion_worker_v1<P>(
     provider: P,
     session: Arc<dyn outbe_execution::tee_remote_session::TeeSessionStateReader>,
     config: UpgradePromotionWorkerConfigV1,
+    live: Option<(
+        Arc<crate::admission_authority::live::LiveTeeRuntimeV1>,
+        Arc<dyn outbe_consensus::protocol_state::EngineProtocolState>,
+    )>,
 ) where
-    P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory + Send + Sync + 'static,
+    P: BlockIdReader
+        + HeaderProvider<Header = OutbeHeader>
+        + StateProviderFactory
+        + Clone
+        + Send
+        + Sync
+        + 'static,
 {
     let io = NodeUpgradeIo {
-        provider,
+        provider: provider.clone(),
         chain: RegistryChainIdentity {
             chain_id: config.chain_id,
             genesis_hash: config.genesis_hash,
@@ -43,7 +53,18 @@ pub(crate) async fn run_upgrade_promotion_worker_v1<P>(
         node_data_dir: config.node_data_dir.clone(),
         session,
     };
-    run_worker(&io, config).await;
+    if let Some((owner, protocol)) = live {
+        let live = crate::upgrade_ports::LiveUpgradeIo {
+            chain: io.chain,
+            inner: io,
+            provider,
+            owner,
+            protocol,
+        };
+        run_worker(&live, config).await;
+    } else {
+        run_worker(&io, config).await;
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,6 +83,14 @@ fn poll_once(
     io: &impl UpgradePromotionIo,
     config: &UpgradePromotionWorkerConfigV1,
 ) -> CycleOutcome {
+    match io.promotion_ready() {
+        Ok(false) => return CycleOutcome::Wait,
+        Ok(true) => {}
+        Err(error) => {
+            tracing::error!(%error, "read staged RAM candidate failed");
+            return CycleOutcome::Stop;
+        }
+    }
     match io.inspect_journal() {
         Ok(Some(snapshot)) => promotion::resume_checkpoint(io, snapshot, config),
         Ok(None) => CycleOutcome::Wait,

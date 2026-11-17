@@ -78,8 +78,8 @@ pub use errors::{
 };
 pub use host_collateral::acquire_dcap_collateral_v1;
 pub use in_process_dispatch::{
-    in_process_tee_context, install_in_process_tee_context, try_in_process_request,
-    InProcessDispatchError, InProcessPayloadHandler,
+    in_process_tee_context, install_in_process_tee_context, replace_in_process_tee_context,
+    try_in_process_request, InProcessDispatchError, InProcessPayloadHandler,
 };
 pub use node_host::{
     clear_committed_join_checkpoint, connect_committed_node_host_enclave,

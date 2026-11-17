@@ -73,6 +73,12 @@ pub enum EngineProtocolError {
     /// No engine protocol state is installed.
     #[error("engine protocol state is not installed")]
     NotInstalled,
+    /// Synchronous resident activation publication failed.
+    #[error("refresh TEE authority after resident activation")]
+    TeeRefresh(#[source] eyre::Report),
+    /// The runtime activation callback must be bound only once.
+    #[error("TEE activation callback already installed")]
+    TeeRefreshAlreadyInstalled,
     /// Binding the shared infrastructure authority port failed.
     #[error("install TEE authority watch: {0}")]
     TeeAuthority(#[from] outbe_tee::TeeAuthorityInstallError),
@@ -85,6 +91,11 @@ pub fn install_tee_authority_watch(watch: TeeAuthorityWatch) -> Result<(), Engin
 
 /// Object-safe chain reads used by the engine.
 pub trait EngineProtocolState: Send + Sync + 'static {
+    /// Publish resident activation synchronously before constructing a consensus signer.
+    fn refresh_tee_authority(&self) -> Result<(), EngineProtocolError> {
+        Err(EngineProtocolError::NotInstalled)
+    }
+
     /// Process-local authority updates, absent until runtime installs the publisher.
     fn tee_authority_watch(&self) -> Option<TeeAuthorityWatch> {
         outbe_tee::tee_authority_watch()
@@ -175,6 +186,12 @@ mod tests {
     #[test]
     fn authority_install_failure_preserves_its_infrastructure_source() {
         use std::error::Error;
+        let refresh =
+            EngineProtocolError::TeeRefresh(outbe_tee::in_process::InProcessError::NotReady.into());
+        assert!(refresh
+            .source()
+            .unwrap()
+            .is::<outbe_tee::in_process::InProcessError>());
         let error =
             EngineProtocolError::from(outbe_tee::TeeAuthorityInstallError::AlreadyInstalled);
         assert_eq!(

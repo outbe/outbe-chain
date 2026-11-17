@@ -49,10 +49,9 @@ pub(crate) use admission::{
 };
 pub(crate) use admission::{
     read_gated_finalized_local_tee_admission, require_upstream_fullnode_tee_admission,
-    require_validator_tee_recovery_complete_v1, run_tee_lease_guard_v1,
-    tee_lease_admission_rejection, tee_lease_exit_reason,
-    validator_admission_anchor_from_durable_v1, validator_recovery_startup_admission_rejection,
-    TeeLeaseGuardGateV1,
+    require_validator_tee_recovery_complete_v1, tee_lease_admission_rejection,
+    tee_lease_exit_reason, validator_admission_anchor_from_durable_v1,
+    validator_recovery_startup_admission_rejection, TeeLeaseGuardGateV1,
 };
 pub(crate) use clap::Parser;
 pub(crate) use commonware_runtime::{Runner, Spawner, Supervisor};

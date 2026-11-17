@@ -14,8 +14,9 @@ use outbe_execution::tee_remote_session::{
     authorize_local_finalized_remote_session_v1,
     construct_local_finalized_replacement_authorization_v1,
     construct_local_finalized_replacement_authorization_with_view_v1,
-    ExternalRegistryAdmissionError, LocalRegistryAdmissionError, RegistryChainIdentity,
-    RemoteSessionRequest, ReplacementAuthorizationRequest, TrustedFinalizedRegistryCheckpointV1,
+    ExternalRegistryAdmissionError, LocalRegistryAdmissionError, LocalRemoteSessionAuthorizationV1,
+    LocalRemoteSessionTargetV1, RegistryChainIdentity, RemoteSessionRequest,
+    ReplacementAuthorizationRequest, TrustedFinalizedRegistryCheckpointV1,
 };
 use outbe_primitives::{
     header::{OutbeHeader, OutbePrimitives},
@@ -394,7 +395,7 @@ fn production_facade_installs_current_finalized_ticket_in_live_enclave() {
 
     let ticket = authorize_local_finalized_remote_session_v1(
         &finalized,
-        &mut target_client,
+        LocalRemoteSessionTargetV1::Sidecar(&mut target_client),
         RegistryChainIdentity {
             chain_id,
             genesis_hash,
@@ -412,6 +413,9 @@ fn production_facade_installs_current_finalized_ticket_in_live_enclave() {
         &outbe_runtime::OutbeRuntime::new(),
     )
     .unwrap();
+    let LocalRemoteSessionAuthorizationV1::Sidecar(ticket) = ticket else {
+        panic!("sidecar authorization")
+    };
     assert_eq!(ticket.finalized_block_hash(), block_hash);
     assert_eq!(ticket.deadline(), now + 500);
     let mut remote = RemoteEnclaveClient::connect_endpoint(&endpoint, &ticket, &source_host)
@@ -884,3 +888,6 @@ fn chain_id_word(chain_id: u64) -> [u8; 32] {
 #[path = "tee_remote_session/provider.rs"]
 mod provider;
 use provider::FinalizedMockProvider;
+
+#[path = "tee_remote_session/in_process.rs"]
+mod in_process;

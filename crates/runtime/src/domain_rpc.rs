@@ -183,8 +183,10 @@ impl<P> OutbeDomainRpcHandler<P> {
         self
     }
 
-    #[cfg(test)]
-    fn with_authority_watch(mut self, watch: outbe_tee::authority::TeeAuthorityWatch) -> Self {
+    pub(crate) fn with_authority_watch(
+        mut self,
+        watch: outbe_tee::authority::TeeAuthorityWatch,
+    ) -> Self {
         self.authority_watch = Some(watch);
         self
     }

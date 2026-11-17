@@ -4,7 +4,7 @@ use crate::{
     protocol::{EnclaveRequest, EnclaveResponse, PayloadLane},
     CallMeta, InstallError, TransportError,
 };
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, RwLock};
 
 /// Domain adapter supplied by the engine owner, preserving typed failures.
 pub type InProcessPayloadHandler =
@@ -13,6 +13,10 @@ pub type InProcessPayloadHandler =
 /// Structured failures at the in-process infrastructure/domain boundary.
 #[derive(Debug, thiserror::Error)]
 pub enum InProcessDispatchError {
+    #[error("in-process runtime lock poisoned")]
+    LockPoisoned,
+    #[error("active in-process context changed or is not installed")]
+    ContextChanged,
     #[error("resident operation failed: {0}")]
     Resident(#[from] InProcessError),
     #[error("request is not permitted on lane {lane:?}")]
@@ -28,16 +32,21 @@ struct Runtime {
     context: Arc<InProcessTeeContext>,
     payload: InProcessPayloadHandler,
 }
-static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+static RUNTIME: RwLock<Option<Runtime>> = RwLock::new(None);
 
 /// Install one identity and its domain callback atomically for all three lanes.
 pub fn install_in_process_tee_context(
     context: Arc<InProcessTeeContext>,
     payload: InProcessPayloadHandler,
 ) -> Result<(), InstallError> {
-    RUNTIME
-        .set(Runtime { context, payload })
-        .map_err(|_| InstallError::AlreadyInitialized)
+    let mut runtime = RUNTIME
+        .write()
+        .map_err(|_| InstallError::Probe(InProcessDispatchError::LockPoisoned.into()))?;
+    if runtime.is_some() {
+        return Err(InstallError::AlreadyInitialized);
+    }
+    *runtime = Some(Runtime { context, payload });
+    Ok(())
 }
 
 fn runtime() -> Option<Runtime> {
@@ -45,7 +54,49 @@ fn runtime() -> Option<Runtime> {
     if let Some(runtime) = TEST_RUNTIME.with(|slot| slot.borrow().clone()) {
         return runtime;
     }
-    RUNTIME.get().cloned()
+    RUNTIME.read().ok()?.clone()
+}
+
+/// Commit promotion while preventing dispatch from observing a partial owner swap.
+/// The callback must not re-enter dispatch and must validate before its first effect.
+pub fn replace_in_process_tee_context<E: From<InProcessDispatchError>>(
+    expected: &Arc<InProcessTeeContext>,
+    candidate: Arc<InProcessTeeContext>,
+    commit: impl FnOnce() -> Result<(), E>,
+) -> Result<(), E> {
+    fn replace<E: From<InProcessDispatchError>>(
+        slot: &mut Option<Runtime>,
+        expected: &Arc<InProcessTeeContext>,
+        candidate: Arc<InProcessTeeContext>,
+        commit: impl FnOnce() -> Result<(), E>,
+    ) -> Result<(), E> {
+        let runtime = slot
+            .as_mut()
+            .filter(|runtime| Arc::ptr_eq(&runtime.context, expected))
+            .ok_or(InProcessDispatchError::ContextChanged)?;
+        commit()?;
+        runtime.context = candidate;
+        Ok(())
+    }
+    #[cfg(any(test, feature = "test-utils"))]
+    if TEST_RUNTIME.with(|slot| slot.borrow().is_some()) {
+        return TEST_RUNTIME.with(|slot| {
+            replace(
+                slot.borrow_mut().as_mut().expect("test override"),
+                expected,
+                candidate,
+                commit,
+            )
+        });
+    }
+    replace(
+        &mut *RUNTIME
+            .write()
+            .map_err(|_| InProcessDispatchError::LockPoisoned)?,
+        expected,
+        candidate,
+        commit,
+    )
 }
 
 /// Read the installed RAM owner without acquiring an execution/session lock.

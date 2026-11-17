@@ -242,6 +242,7 @@ where
                 attestation_mode = ?payload.authority.policy.attestation_mode,
                 "mandatory OST3 bootstrap coordinated - payload ready for block 1"
             );
+            protocol.refresh_tee_authority()?;
             bridge.set_pending_tee_bootstrap(payload);
         } else if shareless_verifier {
             require_shareless_resident_offer_key()?;
