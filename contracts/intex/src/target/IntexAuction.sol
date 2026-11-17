@@ -180,26 +180,25 @@ contract IntexAuction is
     /// @inheritdoc IIntexAuction
     function auctionStart(
         uint32 emissionDay,
-        IIntexAuction.DayState dayState,
         IIntexAuction.AuctionSchedule calldata schedule,
         IIntexAuction.AuctionParams calldata params
     ) external override onlyRole(RELAYER_ROLE) {
         IntexAuctionStorage storage $ = _s();
+        IIntexAuction.AuctionData storage a = $.auctions[emissionDay];
+        if (a.dayState == IIntexAuction.DayState.Cancelled) revert AuctionCanceled();
         // `commitEnd == 0` is the canonical existence sentinel for an auction entry.
-        if ($.auctions[emissionDay].schedule.commitEnd != 0) revert AuctionAlreadyExists();
-        if (dayState == IIntexAuction.DayState.Unknown) revert InvalidDayState();
+        if (a.schedule.commitEnd != 0) revert AuctionAlreadyExists();
 
-        // Schedule timestamps must be strictly increasing. A live auction's
-        // commit stage must end in the future. A cancelled day is a cancelled record only.
+        // Schedule timestamps must be strictly increasing, and the commit stage must end in the future.
         if (
             schedule.revealEnd <= schedule.commitEnd || schedule.issuanceEnd <= schedule.revealEnd
-                || (dayState == IIntexAuction.DayState.Live && schedule.commitEnd <= block.timestamp)
+                || schedule.commitEnd <= block.timestamp
         ) {
             revert InvalidSchedule();
         }
 
         $.auctions[emissionDay] = IIntexAuction.AuctionData({
-            dayState: dayState,
+            dayState: IIntexAuction.DayState.Live,
             schedule: schedule,
             params: params,
             result: IIntexAuction.AuctionResult({
@@ -207,15 +206,24 @@ contract IntexAuction is
             })
         });
 
-        if (dayState == IIntexAuction.DayState.Cancelled) {
-            emit AuctionStageUpdated(
-                emissionDay, IIntexAuction.AuctionStage.Cancelled, uint32(block.timestamp), "Day cancelled - no auction"
-            );
-        } else {
-            emit AuctionStageUpdated(
-                emissionDay, IIntexAuction.AuctionStage.CommittingBids, uint32(block.timestamp), ""
-            );
+        emit AuctionStageUpdated(emissionDay, IIntexAuction.AuctionStage.CommittingBids, uint32(block.timestamp), "");
+    }
+
+    /// @inheritdoc IIntexAuction
+    function cancelAuction(uint32 emissionDay, uint8) external override onlyRole(RELAYER_ROLE) {
+        IIntexAuction.AuctionData storage a = _s().auctions[emissionDay];
+        if (a.dayState == IIntexAuction.DayState.Cancelled) revert AuctionCanceled();
+        if (a.schedule.commitEnd != 0) {
+            IIntexAuction.AuctionStage currentStage = _getAuctionStage(emissionDay);
+            if (
+                currentStage == IIntexAuction.AuctionStage.Completed
+                    || currentStage == IIntexAuction.AuctionStage.Failed
+            ) {
+                revert StageRequired(IIntexAuction.AuctionStage.AwaitingResult, currentStage);
+            }
         }
+        a.dayState = IIntexAuction.DayState.Cancelled;
+        emit AuctionStageUpdated(emissionDay, IIntexAuction.AuctionStage.Cancelled, uint32(block.timestamp), "");
     }
 
     /// @inheritdoc IIntexAuction
@@ -438,10 +446,13 @@ contract IntexAuction is
         if (a.schedule.commitEnd == 0) revert AuctionNotFound();
 
         // A bond that outlives its reveal window belongs to a no-reveal. It waits until the end of
-        // the penalty window anchored at the (possibly snapped-forward) `revealEnd`.
-        uint32 claimableAt = a.schedule.revealEnd + UNREVEALED_BOND_LOCK_PERIOD;
-        if (uint32(block.timestamp) < claimableAt) {
-            revert CommitBondNotYetClaimable(claimableAt, uint32(block.timestamp));
+        // the penalty window anchored at the (possibly snapped-forward) `revealEnd`. A cancelled
+        // day has no reveal to miss.
+        if (a.dayState != IIntexAuction.DayState.Cancelled) {
+            uint32 claimableAt = a.schedule.revealEnd + UNREVEALED_BOND_LOCK_PERIOD;
+            if (uint32(block.timestamp) < claimableAt) {
+                revert CommitBondNotYetClaimable(claimableAt, uint32(block.timestamp));
+            }
         }
 
         // Pays the stored bidder. Reverts CommitBondNotFound in the escrow when no bond is live.
@@ -553,11 +564,10 @@ contract IntexAuction is
     /// @return Current auction stage.
     function _getAuctionStage(uint32 emissionDay) internal view returns (IIntexAuction.AuctionStage) {
         IIntexAuction.AuctionData storage a = _s().auctions[emissionDay];
-        if (a.schedule.commitEnd == 0) revert AuctionNotFound();
-
         if (a.dayState == IIntexAuction.DayState.Cancelled) {
             return IIntexAuction.AuctionStage.Cancelled;
         }
+        if (a.schedule.commitEnd == 0) revert AuctionNotFound();
 
         if (_s().cleared[emissionDay]) {
             return IIntexAuction.AuctionStage.Completed;

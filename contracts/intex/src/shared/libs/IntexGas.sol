@@ -24,6 +24,8 @@ library IntexGas {
 
     /// @dev 147k.
     uint256 internal constant AUCTION_RESULT = 225_000;
+    /// @dev 85k: the cancel and the close of the day in the escrow.
+    uint256 internal constant AUCTION_CANCEL = 225_000;
 
     /// @dev Cut from slotting, the dearer path: 114k at one series and 322k at eight.
     uint256 internal constant MARK_CALLED_BASE = 130_000;

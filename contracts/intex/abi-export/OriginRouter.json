@@ -509,6 +509,24 @@
   },
   {
     "type": "function",
+    "name": "sendAuctionCancel",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "reason",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
     "name": "sendAuctionResult",
     "inputs": [
       {
@@ -654,11 +672,6 @@
             "name": "commitBondMinor",
             "type": "uint128",
             "internalType": "uint128"
-          },
-          {
-            "name": "dayState",
-            "type": "uint8",
-            "internalType": "uint8"
           }
         ]
       }
@@ -1252,6 +1265,31 @@
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IntexAuctionCancelSent",
+    "inputs": [
+      {
+        "name": "sendId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
       }
     ],
     "anonymous": false

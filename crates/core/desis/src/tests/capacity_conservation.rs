@@ -61,6 +61,7 @@ fn world_selling(units: u16) -> HashMapStorageProvider {
                 .unwrap();
             oracle.utc_day_vwap_last_finalized.write(day).unwrap();
         }
+        crate::api::schedule_auction(s.clone(), DAY).unwrap();
         crate::api::brief_auction(
             s.clone(),
             crate::api::AuctionBrief {

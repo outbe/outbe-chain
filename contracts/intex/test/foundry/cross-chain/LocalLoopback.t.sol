@@ -227,7 +227,6 @@ contract LocalLoopbackTest is Test {
         p.minIntexBidRate = 600_000;
         p.prices = ReferenceCurrencyPriceLib.one(840, 1e6, 200);
         p.minIntexBidQuantity = 1;
-        p.dayState = 1;
     }
 
     function _sig(address bidder, uint16 qty, uint32 rate, uint256 pk) internal view returns (bytes memory) {

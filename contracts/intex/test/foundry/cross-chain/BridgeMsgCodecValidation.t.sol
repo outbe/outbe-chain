@@ -11,7 +11,6 @@ import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 
 /// @dev PR-A Tier-1 input-validation hardening of BridgeMsgCodec:
 ///      - fixed-width decoders assert exact length (truncation silent-truncation).
-///      - the STAGE_START `dayState` byte decodes strictly.
 ///      - outbound encoders cap payload arrays at `MAX_PAYLOAD_ARRAY_LEN`.
 ///      - `decode*` deliberately does NOT cap (inbound is A3's drop-don't-block job).
 ///
@@ -25,7 +24,7 @@ contract BridgeMsgCodecValidationTest is Test {
 
     function test_AuctionStageStart_OverLong_Reverts() public {
         bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
-            1, 100, 200, 300, 1e6, 1e6, ReferenceCurrencyPriceLib.one(840, 2e6, 4e6), 5, 6, 7, 1, 9e6, 1
+            1, 100, 200, 300, 1e6, 1e6, ReferenceCurrencyPriceLib.one(840, 2e6, 4e6), 5, 6, 7, 1, 9e6
         );
         bytes memory tooLong = abi.encodePacked(packet, hex"00");
         vm.expectRevert(
@@ -56,7 +55,7 @@ contract BridgeMsgCodecValidationTest is Test {
 
     function test_AuctionStageStart_Truncated_RevertsTyped() public {
         bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
-            1, 100, 200, 300, 1e6, 1e6, ReferenceCurrencyPriceLib.one(840, 2e6, 4e6), 5, 6, 7, 1, 9e6, 1
+            1, 100, 200, 300, 1e6, 1e6, ReferenceCurrencyPriceLib.one(840, 2e6, 4e6), 5, 6, 7, 1, 9e6
         );
         bytes memory truncated = new bytes(packet.length - 1);
         for (uint256 i = 0; i < truncated.length; i++) {
@@ -131,22 +130,12 @@ contract BridgeMsgCodecValidationTest is Test {
         this.exposedDecodeMarkCalled(tooShort);
     }
 
-    function testFuzz_AuctionStageStart_DayStateByteAboveCancelled_Reverts(uint8 state) public {
-        state = uint8(bound(state, 3, 255));
-        bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
-            1, 100, 200, 300, 1e6, 1e6, ReferenceCurrencyPriceLib.one(840, 2e6, 4e6), 5, 6, 7, 1, 9e6, 1
-        );
-        packet[68] = bytes1(state);
-        vm.expectRevert(IIntexAuction.InvalidDayState.selector);
-        BridgeMsgCodec.decodeAuctionParams(packet);
-    }
-
     // --- Happy-path round-trips still pass after the exact-length guard ---
 
     function test_FixedWidth_RoundTrips_StillPass() public view {
-        (uint32 s,,,) = BridgeMsgCodec.decodeAuctionParams(
+        (uint32 s,,) = BridgeMsgCodec.decodeAuctionParams(
             BridgeMsgCodec.encodeAuctionStageStart(
-                42, 1, 2, 3, 1e6, 1, ReferenceCurrencyPriceLib.one(840, 2, 4e6), 5, 6, 7, 1, 9e6, 1
+                42, 1, 2, 3, 1e6, 1, ReferenceCurrencyPriceLib.one(840, 2, 4e6), 5, 6, 7, 1, 9e6
             )
         );
         assertEq(s, 42, "stageStart");

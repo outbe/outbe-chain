@@ -55,12 +55,9 @@ contract ReentrancyProbeAuction {
         router = router_;
     }
 
-    function auctionStart(
-        uint32,
-        IIntexAuction.DayState,
-        IIntexAuction.AuctionSchedule calldata,
-        IIntexAuction.AuctionParams calldata
-    ) external {
+    function auctionStart(uint32, IIntexAuction.AuctionSchedule calldata, IIntexAuction.AuctionParams calldata)
+        external
+    {
         observed = true;
         guardHeld = reentryGuarded(bridge, srcChainId, peer, router);
     }
@@ -131,7 +128,7 @@ contract RouterReentrancyTest is CrossChainTest {
         bnbRouter.wire(address(probeAuction), address(probeAuction), address(probeAuction));
 
         bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
-            42, 100, 200, 300, 1e6, 5e6, ReferenceCurrencyPriceLib.one(840, 7e6, 4e6), 5, 6, 7, 3, 9e6, 1
+            42, 100, 200, 300, 1e6, 5e6, ReferenceCurrencyPriceLib.one(840, 7e6, 4e6), 5, 6, 7, 3, 9e6
         );
 
         _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
@@ -150,7 +147,6 @@ contract RouterReentrancyTest is CrossChainTest {
         IOriginRouter.AuctionStageStartParams memory p;
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         p.emissionDay = 42;
-        p.dayState = 1;
         vm.prank(address(probeDesis));
         outbeRouter.sendAuctionStageStart(p);
 

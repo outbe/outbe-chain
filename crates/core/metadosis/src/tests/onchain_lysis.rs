@@ -267,7 +267,7 @@ fn native_completion_briefs_the_emission_day() {
         let day = outbe_system_common::time::EmissionDate::new(DAY);
         assert_eq!(
             desis.auction_stage.read(&day).unwrap(),
-            outbe_desis::schema::AuctionStage::Briefed as u8
+            outbe_desis::schema::AuctionStage::None as u8
         );
     });
 }

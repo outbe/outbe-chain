@@ -47,7 +47,6 @@ contract GasAttributeTest is CrossChainTest {
         IOriginRouter.AuctionStageStartParams memory p;
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         p.emissionDay = 42;
-        p.dayState = 1;
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         vm.prank(desis);
         outbe.sendAuctionStageStart(p);
@@ -59,7 +58,6 @@ contract GasAttributeTest is CrossChainTest {
         IOriginRouter.AuctionStageStartParams memory sp;
         sp.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         sp.emissionDay = 42;
-        sp.dayState = 1;
         vm.prank(desis);
         outbe.sendAuctionStageStart(sp);
 

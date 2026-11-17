@@ -84,7 +84,6 @@ contract OriginRouterProceedsTest is CrossChainTest {
         IOriginRouter.AuctionStageStartParams memory p;
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         p.emissionDay = day;
-        p.dayState = 1;
         vm.prank(address(desis));
         origin.sendAuctionStageStart(p);
     }

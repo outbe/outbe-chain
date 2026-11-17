@@ -28,6 +28,8 @@ library BridgeMsgCodec {
     uint8 internal constant MSG_MARK_CALLED = 8;
     /// @dev Target -> origin: the day's relay stopped with chunks left, so the origin sends another round.
     uint8 internal constant MSG_BIDS_REMAINING = 9;
+    /// @dev Outbe -> target chain: the day is cancelled before its result.
+    uint8 internal constant MSG_AUCTION_CANCEL = 10;
 
     /// @notice Upper bound on every caller-supplied cross-chain payload array
     ///         (`BIDS_BATCH`, `ISSUANCE_INSTRUCTIONS`, `REFUND_INSTRUCTIONS`).
@@ -62,11 +64,13 @@ library BridgeMsgCodec {
     uint16 internal constant HEADER_LEN = 2;
 
     // Fixed head of AUCTION_STAGE_START; the price rows follow it.
-    uint16 internal constant MIN_LEN_AUCTION_STAGE_START = 70;
+    uint16 internal constant MIN_LEN_AUCTION_STAGE_START = 69;
     /// @notice Bytes per reference-price row: [iso(2)][entry(8)][call(8)].
     uint16 internal constant REFERENCE_PRICE_LEN = 18;
     uint16 internal constant MIN_LEN_AUCTION_STAGE_COLLECTING_BIDS = 6;
     uint16 internal constant MIN_LEN_AUCTION_RESULT = 22;
+    // AUCTION_CANCEL: [ver(1)][type(1)][emissionDay(4)][reason(1)]
+    uint16 internal constant MIN_LEN_AUCTION_CANCEL = 7;
     // MARK_CALLED: header + abi.encode(emissionDay, calledAt, seriesIds). One series is 5 words.
     uint16 internal constant MIN_LEN_MARK_CALLED = HEADER_LEN + 160;
     // BIDS_DONE: [ver(1)][type(1)][emissionDay(4)][srcChainId(4)][totalBatches(2)][totalBids(4)]
@@ -249,10 +253,10 @@ library BridgeMsgCodec {
     }
 
     /// @notice Encodes AUCTION_STAGE_START message.
-    /// @dev encodePacked layout, 70 bytes of head plus 18 per priced currency:
+    /// @dev encodePacked layout, 69 bytes of head plus 18 per priced currency:
     ///      [bodyVersion(1)][msgType(1)][emissionDay(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
     ///      [promisLoadMinor(16)][minIntexBidRate(4)][callNoticePeriod(4)][callWindow(4)]
-    ///      [callThreshold(4)][minIntexBidQuantity(2)][commitBondMinor(16)][dayState(1)][priceCount(1)]
+    ///      [callThreshold(4)][minIntexBidQuantity(2)][commitBondMinor(16)][priceCount(1)]
     ///      then [isoCode(2)][entryPrice(8)][callPrice(8)] per currency.
     /// @param _emissionDay The emission day (yyyymmdd).
     /// @param _commitEnd The commit-stage end timestamp.
@@ -267,7 +271,6 @@ library BridgeMsgCodec {
     /// @param _minIntexBidQuantity The minimum acceptable intex bid quantity.
     /// @param _commitBondMinor The commit-entry bond (payment-token minor units). 0 disables the
     ///        bond.
-    /// @param _dayState The final emission-day state (1 = Live, 2 = Cancelled).
     /// @return The wire-encoded AUCTION_STAGE_START message.
     function encodeAuctionStageStart(
         uint32 _emissionDay,
@@ -281,17 +284,14 @@ library BridgeMsgCodec {
         uint32 _callWindow,
         uint32 _callThreshold,
         uint16 _minIntexBidQuantity,
-        uint128 _commitBondMinor,
-        uint8 _dayState
+        uint128 _commitBondMinor
     ) internal pure returns (bytes memory) {
         // The row count is one byte on the wire.
         if (_prices.length > type(uint8).max) {
             revert PayloadArrayTooLong(_prices.length, type(uint8).max);
         }
-        // A live day must price something to bid against. A cancelled one is a closed record.
-        if (_prices.length == 0 && _dayState != uint8(IIntexAuction.DayState.Cancelled)) {
-            revert MissingReferencePrices();
-        }
+        // A day must price something to bid against.
+        if (_prices.length == 0) revert MissingReferencePrices();
         bytes memory rows = abi.encodePacked(uint8(_prices.length));
         for (uint256 i = 0; i < _prices.length; ++i) {
             rows = abi.encodePacked(rows, _prices[i].isoCode, _prices[i].entryPriceMinor, _prices[i].callPriceMinor);
@@ -315,9 +315,17 @@ library BridgeMsgCodec {
             _callThreshold,
             _minIntexBidQuantity,
             _commitBondMinor,
-            _dayState,
             rows
         );
+    }
+
+    /// @notice Encodes AUCTION_CANCEL message.
+    /// @dev encodePacked layout (7 bytes): [bodyVersion(1)][msgType(1)][emissionDay(4)][reason(1)]
+    /// @param _emissionDay The emission day (yyyymmdd).
+    /// @param _reason The reason code of the cancel on Outbe.
+    /// @return The wire-encoded AUCTION_CANCEL message.
+    function encodeAuctionCancel(uint32 _emissionDay, uint8 _reason) internal pure returns (bytes memory) {
+        return abi.encodePacked(BODY_VERSION_V1, MSG_AUCTION_CANCEL, _emissionDay, _reason);
     }
 
     /// @notice Encodes AUCTION_STAGE_COLLECTING_BIDS message.
@@ -375,10 +383,9 @@ library BridgeMsgCodec {
     ///         router's runtime size (EIP-170). Mirrors `encodeAuctionStageStart`'s layout:
     ///         [bodyVersion(1)][msgType(1)][emissionDay(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
     ///         [promisLoadMinor(16)][minIntexBidRate(4)][callNoticePeriod(4)][callWindow(4)]
-    ///         [callThreshold(4)][minIntexBidQuantity(2)][commitBondMinor(16)][dayState(1)][priceCount(1)]
+    ///         [callThreshold(4)][minIntexBidQuantity(2)][commitBondMinor(16)][priceCount(1)]
     /// @param _msg The wire-encoded AUCTION_STAGE_START message.
     /// @return emissionDay The emission day (yyyymmdd).
-    /// @return dayState The final emission-day state (Live or Cancelled).
     /// @return schedule The decoded commit/reveal/issuance schedule.
     /// @return params The decoded auction params.
     function decodeAuctionParams(bytes calldata _msg)
@@ -386,7 +393,6 @@ library BridgeMsgCodec {
         pure
         returns (
             uint32 emissionDay,
-            IIntexAuction.DayState dayState,
             IIntexAuction.AuctionSchedule memory schedule,
             IIntexAuction.AuctionParams memory params
         )
@@ -394,9 +400,6 @@ library BridgeMsgCodec {
         _assertMinLength(_msg, MSG_AUCTION_STAGE_START, MIN_LEN_AUCTION_STAGE_START);
         _assertBodyVersion(_msg);
         emissionDay = uint32(bytes4(_msg[2:6]));
-        uint8 rawDayState = uint8(_msg[68]);
-        if (rawDayState > uint8(IIntexAuction.DayState.Cancelled)) revert IIntexAuction.InvalidDayState();
-        dayState = IIntexAuction.DayState(rawDayState);
         schedule = IIntexAuction.AuctionSchedule({
             commitEnd: uint32(bytes4(_msg[6:10])),
             revealEnd: uint32(bytes4(_msg[10:14])),
@@ -424,7 +427,7 @@ library BridgeMsgCodec {
         pure
         returns (IIntexAuction.ReferenceCurrencyPrice[] memory rows)
     {
-        uint256 count = uint8(_msg[69]);
+        uint256 count = uint8(_msg[68]);
         if (_msg.length != MIN_LEN_AUCTION_STAGE_START + count * REFERENCE_PRICE_LEN) {
             revert InvalidPayloadLength(MSG_AUCTION_STAGE_START, _msg.length, MIN_LEN_AUCTION_STAGE_START);
         }
@@ -674,6 +677,18 @@ library BridgeMsgCodec {
         if (bidderAddresses.length > MAX_BIDS_BATCH) revert BidsBatchTooLarge(bidderAddresses.length, MAX_BIDS_BATCH);
     }
 
+    /// @notice Decodes AUCTION_CANCEL message.
+    /// @dev Reverts `InvalidPayloadLength` unless exactly 7 bytes, then `UnsupportedBodyVersion`.
+    /// @param _msg The wire-encoded AUCTION_CANCEL message.
+    /// @return emissionDay The emission day (yyyymmdd).
+    /// @return reason The reason code of the cancel on Outbe.
+    function decodeAuctionCancel(bytes calldata _msg) internal pure returns (uint32 emissionDay, uint8 reason) {
+        _assertExactLength(_msg, MSG_AUCTION_CANCEL, MIN_LEN_AUCTION_CANCEL);
+        _assertBodyVersion(_msg);
+        emissionDay = uint32(bytes4(_msg[2:6]));
+        reason = uint8(_msg[6]);
+    }
+
     /// @notice Decodes AUCTION_STAGE_COLLECTING_BIDS message.
     /// @dev encodePacked layout (6 bytes): [bodyVersion(1)][msgType(1)][emissionDay(4)]
     ///      Reverts `InvalidPayloadLength` unless exactly 6 bytes, then `UnsupportedBodyVersion`.
@@ -819,6 +834,7 @@ library BridgeMsgCodec {
         if (_msgType == MSG_AUCTION_STAGE_START) return MIN_LEN_AUCTION_STAGE_START;
         if (_msgType == MSG_AUCTION_STAGE_COLLECTING_BIDS) return MIN_LEN_AUCTION_STAGE_COLLECTING_BIDS;
         if (_msgType == MSG_AUCTION_RESULT) return MIN_LEN_AUCTION_RESULT;
+        if (_msgType == MSG_AUCTION_CANCEL) return MIN_LEN_AUCTION_CANCEL;
         if (_msgType == MSG_MARK_CALLED) return MIN_LEN_MARK_CALLED;
         if (_msgType == MSG_BIDS_BATCH) return MIN_LEN_BIDS_BATCH;
         if (_msgType == MSG_BIDS_DONE) return MIN_LEN_BIDS_DONE;

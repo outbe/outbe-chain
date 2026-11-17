@@ -16,11 +16,11 @@ use crate::constants::{
     ADVANCE_DAY_BASE_GAS, ADVANCE_FAIL_GAS, ADVANCE_REVEAL_END_GAS, ADVANCE_START_GAS,
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, CANCELED_BELOW_ONE_UNIT, CANCELED_LATE_START,
     CANCELED_NO_LIMIT, CANCELED_UNPRICED, CLEARING_BID_GAS, CLEARING_CHUNK_GAS, CLEARING_FIXED_GAS,
-    CLEARING_HISTORY_DAYS, CLEARING_MIN_BIDS, COMMIT_WINDOW_SECONDS, DAY_STATE_CANCELLED,
-    DAY_STATE_LIVE, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE,
-    INTEX_ISSUANCE_WINDOW_SECONDS, MAX_BID_BATCHES, MAX_PAYLOAD_ARRAY_LEN, MAX_REFUND_CHUNKS,
-    MAX_TARGET_CHAINS, MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, PROMIS_LOAD_OVERRIDE,
-    RESULT_DELIVERY_MARGIN_SECONDS, REVEAL_WINDOW_SECONDS,
+    CLEARING_HISTORY_DAYS, CLEARING_MIN_BIDS, COMMIT_WINDOW_SECONDS, IGNORED_CONFLICT,
+    IGNORED_NOT_FOUND, IGNORED_OBSOLETE, INTEX_ISSUANCE_WINDOW_SECONDS, MAX_BID_BATCHES,
+    MAX_PAYLOAD_ARRAY_LEN, MAX_REFUND_CHUNKS, MAX_TARGET_CHAINS, MIN_COMMIT_WINDOW_SECONDS,
+    ORIGIN_ROUTER_ADDRESS, PROMIS_LOAD_OVERRIDE, RESULT_DELIVERY_MARGIN_SECONDS,
+    REVEAL_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
@@ -33,19 +33,27 @@ use crate::sol_ext::IOriginRouter;
 // Auction lifecycle
 // ---------------------------------------------------------------------------
 
-/// Validate every technical prerequisite before the API may classify
-/// an oversized Desis Limit as the sole committed business rejection. Returns the
-/// schedule anchor: 00:00 UTC of the day after the emission day.
-pub(crate) fn preflight_brief(
+/// Schedule the auction of `emission_day`: it starts at 00:00 UTC of the next day. A day that
+/// is already scheduled or ended stays as it is.
+pub(crate) fn schedule_auction(
     storage: &StorageHandle<'_>,
     emission_day: EmissionDate,
-) -> Result<u32> {
+) -> Result<()> {
+    let mut contract = storage.contract::<DesisContract>();
+    if contract.sched_active_slot.read(&emission_day)? != 0
+        || contract.read_stage(emission_day)? != AuctionStage::None
+    {
+        return Ok(());
+    }
+    let anchor = auction_anchor(emission_day)?;
+    contract.auction_at.write(&emission_day, anchor)?;
+    contract.push_sched_active(emission_day)
+}
+
+/// 00:00 UTC of the day after the emission day, where its schedule starts.
+fn auction_anchor(emission_day: EmissionDate) -> Result<u32> {
     if !emission_day.is_valid() {
         return Err(DesisError::InvalidEmissionDay(emission_day).into());
-    }
-    let contract = storage.contract::<DesisContract>();
-    if contract.read_stage(emission_day)? != AuctionStage::None {
-        return Err(DesisError::InvalidStageTransition.into());
     }
     let anchor = emission_day
         .next()
@@ -54,29 +62,71 @@ pub(crate) fn preflight_brief(
     u32::try_from(anchor).map_err(|_| DesisError::BriefAnchorExceedsU32.into())
 }
 
+/// Whether the day has no result yet: scheduled, or started and not past its reveal stage.
+fn is_open(contract: &DesisContract<'_>, emission_day: EmissionDate) -> Result<bool> {
+    Ok(match contract.read_stage(emission_day)? {
+        AuctionStage::None => contract.sched_active_slot.read(&emission_day)? != 0,
+        AuctionStage::CommittingBids | AuctionStage::RevealingBids => true,
+        _ => false,
+    })
+}
+
+/// Whether the day can still take its brief: open, not briefed and not being cancelled.
+pub(crate) fn takes_brief(storage: &StorageHandle<'_>, emission_day: EmissionDate) -> Result<bool> {
+    let contract = storage.contract::<DesisContract>();
+    Ok(is_open(&contract, emission_day)?
+        && contract.desis_limit_set.read(&emission_day)? == 0
+        && contract.cancel_reason.read(&emission_day)? == 0)
+}
+
 /// `desis_limit_minor` is the brief's limit, already narrowed to the auction domain.
-pub(crate) fn record_preflighted_brief(
-    storage: StorageHandle<'_>,
+pub(crate) fn record_desis_limit(
+    storage: &StorageHandle<'_>,
     brief: crate::api::AuctionBrief,
     desis_limit_minor: u128,
-    anchor: u32,
 ) -> Result<()> {
     let crate::api::AuctionBrief {
         emission_day,
         has_limit,
         ..
     } = brief;
-    let mut contract = storage.contract::<DesisContract>();
-    contract.write_stage(emission_day, AuctionStage::Briefed)?;
+    let contract = storage.contract::<DesisContract>();
     contract
         .pending_desis_limit_minor
         .write(&emission_day, U256::from(desis_limit_minor))?;
     contract
         .brief_has_limit
         .write(&emission_day, u8::from(has_limit))?;
-    contract.auction_at.write(&emission_day, anchor)?;
-    contract.push_sched_active(emission_day)?;
+    contract.desis_limit_set.write(&emission_day, 1)
+}
+
+/// Ask the next schedule step of a day that has no result yet to cancel it.
+pub(crate) fn request_cancel(
+    storage: &StorageHandle<'_>,
+    emission_day: EmissionDate,
+    reason: u8,
+) -> Result<()> {
+    let contract = storage.contract::<DesisContract>();
+    if is_open(&contract, emission_day)? && contract.cancel_reason.read(&emission_day)? == 0 {
+        contract.cancel_reason.write(&emission_day, reason)?;
+    }
     Ok(())
+}
+
+/// The cancel reason of the day's brief at `promis_load_minor`, if the brief cannot hold an auction.
+pub(crate) fn brief_cancel_reason(
+    contract: &DesisContract<'_>,
+    emission_day: EmissionDate,
+    promis_load_minor: u128,
+) -> Result<Option<u8>> {
+    if contract.desis_limit_set.read(&emission_day)? == 0 {
+        return Ok(None);
+    }
+    if contract.brief_has_limit.read(&emission_day)? == 0 {
+        return Ok(Some(CANCELED_NO_LIMIT));
+    }
+    let limit = contract.pending_desis_limit_minor.read(&emission_day)?;
+    Ok((limit < U256::from(promis_load_minor)).then_some(CANCELED_BELOW_ONE_UNIT))
 }
 
 /// Table bound, not a policy: the widest rung the load can climb to.
@@ -308,7 +358,7 @@ fn fix_call_terms(storage: &StorageHandle<'_>, config: &mut AuctionConfig) -> Re
     Ok(())
 }
 
-/// What one AUCTION_STAGE_START message announces besides its day state.
+/// What one AUCTION_STAGE_START message announces.
 #[derive(Clone, Copy)]
 pub(crate) struct StageStart<'a> {
     pub(crate) emission_day: EmissionDate,
@@ -318,13 +368,9 @@ pub(crate) struct StageStart<'a> {
     pub(crate) issuance_end: u32,
 }
 
-/// Broadcast AUCTION_STAGE_START with the given schedule and day state.
-fn send_stage_start(
-    storage: &StorageHandle<'_>,
-    start: StageStart<'_>,
-    day_state: u8,
-) -> Result<()> {
-    let stage_params = stage_start_params(start, day_state)?;
+/// Broadcast AUCTION_STAGE_START with the given schedule.
+fn send_stage_start(storage: &StorageHandle<'_>, start: StageStart<'_>) -> Result<()> {
+    let stage_params = stage_start_params(start)?;
     // Relay-float-funded: value 0, so the router self-quotes and pays the bridge fee from its float.
     storage.call(
         ORIGIN_ROUTER_ADDRESS,
@@ -338,10 +384,28 @@ fn send_stage_start(
     Ok(())
 }
 
+/// Broadcast AUCTION_CANCEL to every chain the day started on.
+fn send_auction_cancel(
+    storage: &StorageHandle<'_>,
+    emission_day: EmissionDate,
+    reason: u8,
+) -> Result<()> {
+    storage.call(
+        ORIGIN_ROUTER_ADDRESS,
+        U256::ZERO,
+        IOriginRouter::sendAuctionCancelCall {
+            emissionDay: emission_day.into(),
+            reason,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    Ok(())
+}
+
 /// The AUCTION_STAGE_START payload. Every condition comes from the stored day config.
 pub(crate) fn stage_start_params(
     start: StageStart<'_>,
-    day_state: u8,
 ) -> Result<IOriginRouter::AuctionStageStartParams> {
     let StageStart {
         emission_day,
@@ -371,7 +435,6 @@ pub(crate) fn stage_start_params(
         callThreshold: config.call_trigger.call_threshold_seconds,
         minIntexBidQuantity: config.min_intex_bid_quantity,
         commitBondMinor: config.commit_bond_minor,
-        dayState: day_state,
     })
 }
 

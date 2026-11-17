@@ -85,6 +85,8 @@ fn populated_auction(chain_count: u32) -> Calibration {
                 }
             }
             auction.day_bid_count.write(&day, chain_count * 2).unwrap();
+            outbe_desis::api::schedule_auction(storage.clone(), EmissionDate::new(20240102))
+                .unwrap();
             outbe_desis::api::brief_auction(
                 storage.clone(),
                 outbe_desis::api::AuctionBrief {
@@ -137,6 +139,8 @@ fn calibration_live_auction_start() {
             outbe_oracle::schema::OracleContract::new(storage.clone())
                 .utc_day_vwap_last_finalized
                 .write(20240101)
+                .unwrap();
+            outbe_desis::api::schedule_auction(storage.clone(), EmissionDate::new(20240101))
                 .unwrap();
             outbe_desis::api::brief_auction(
                 storage.clone(),
@@ -242,6 +246,8 @@ impl DueStep {
             .pending_desis_limit_minor
             .write(&day, U256::from(10_000_000_000_000u64))
             .unwrap();
+        auction.brief_has_limit.write(&day, 1).unwrap();
+        auction.desis_limit_set.write(&day, 1).unwrap();
         let count = auction.sched_active_count.read().unwrap();
         auction.sched_active_at.write(&count, day.value()).unwrap();
         auction.sched_active_slot.write(&day, count + 1).unwrap();
@@ -280,6 +286,7 @@ fn due_auctions(steps: &[DueStep]) -> (u64, Vec<Log>) {
                 .unwrap();
             for step in steps {
                 if matches!(step, DueStep::Start) {
+                    outbe_desis::api::schedule_auction(storage.clone(), step.day()).unwrap();
                     outbe_desis::api::brief_auction(
                         storage.clone(),
                         outbe_desis::api::AuctionBrief {

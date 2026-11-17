@@ -64,7 +64,6 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
     function _params(uint32 day) internal pure returns (IOriginRouter.AuctionStageStartParams memory p) {
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         p.emissionDay = day;
-        p.dayState = 1;
     }
 
     function _fireStart(uint32 day) internal {
@@ -78,6 +77,37 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].topics[0] == STAGE_SENT_SIG) n++;
         }
+    }
+
+    // --- Cancel ---
+    function test_cancel_goes_to_the_frozen_snapshot_of_the_day() public {
+        _fireStart(DAY);
+        origin.removeTarget(TARGET_B);
+
+        vm.recordLogs();
+        vm.prank(desis);
+        origin.sendAuctionCancel(DAY, 1);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint256 sent;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics[0] == IOriginRouter.IntexAuctionCancelSent.selector) {
+                assertEq(uint256(logs[i].topics[2]), DAY, "day");
+                sent++;
+            }
+        }
+        assertEq(sent, 2, "both chains the day started on, also the removed one");
+    }
+
+    function test_cancel_revert_dayNeverStarted() public {
+        vm.prank(desis);
+        vm.expectRevert(IOriginRouter.NoTargets.selector);
+        origin.sendAuctionCancel(DAY, 1);
+    }
+
+    function test_cancel_revert_notDesis() public {
+        _fireStart(DAY);
+        vm.expectRevert();
+        origin.sendAuctionCancel(DAY, 1);
     }
 
     // --- Registry ---

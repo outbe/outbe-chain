@@ -217,6 +217,8 @@ contract TargetRouter is
             TargetInbound.handleAuctionStageCollectingBids(_ts(), srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_AUCTION_RESULT) {
             TargetInbound.handleAuctionResult(_ts(), srcChainId, message);
+        } else if (msgType == BridgeMsgCodec.MSG_AUCTION_CANCEL) {
+            TargetInbound.handleAuctionCancel(_ts(), srcChainId, receiveId, message);
         } else if (msgType == BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS) {
             TargetInbound.handleIssuanceInstructions(_ts(), srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS) {

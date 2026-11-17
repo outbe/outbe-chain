@@ -255,36 +255,33 @@ fn each_cancel_reason_balances_and_a_repeat_tick_is_quiet() {
 }
 
 #[test]
-fn an_oversized_brief_cancels_in_order_and_a_second_brief_is_rejected() {
+fn an_oversized_brief_cancels_in_order_and_a_second_brief_is_returned() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |s| {
+        crate::api::schedule_auction(s.clone(), EMISSION_DAY).unwrap();
+        let oversized = crate::api::AuctionBrief {
+            emission_day: EMISSION_DAY,
+            desis_limit_minor: U256::MAX,
+            has_limit: true,
+        };
         assert!(matches!(
-            crate::api::brief_auction(
-                s.clone(),
-                crate::api::AuctionBrief {
-                    emission_day: EMISSION_DAY,
-                    desis_limit_minor: U256::MAX,
-                    has_limit: true,
-                },
-            )
-            .unwrap(),
+            crate::api::brief_auction(s.clone(), oversized).unwrap(),
             crate::api::AuctionBriefReceipt::ReturnedToPromisLimit { .. }
         ));
+        runtime::schedule_tick(&s, NOW).unwrap();
         assert_eq!(
             s.contract::<DesisContract>()
                 .read_stage(EMISSION_DAY)
                 .unwrap(),
             AuctionStage::Cancelled
         );
-        assert!(crate::api::brief_auction(
-            s.clone(),
-            crate::api::AuctionBrief {
-                emission_day: EMISSION_DAY,
-                desis_limit_minor: U256::MAX,
-                has_limit: true,
-            },
-        )
-        .is_err());
+        assert!(matches!(
+            crate::api::brief_auction(s.clone(), oversized).unwrap(),
+            crate::api::AuctionBriefReceipt::ReturnedToPromisLimit {
+                reason: crate::api::AuctionBriefRejectionReason::AuctionClosed,
+                ..
+            }
+        ));
     });
     let names: Vec<_> = logs(&storage)
         .iter()

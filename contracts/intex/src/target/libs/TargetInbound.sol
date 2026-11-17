@@ -43,33 +43,27 @@ library TargetInbound {
     /// @dev The handler acknowledges these cases without effect, because no later state makes such a
     ///      START applicable:
     ///      - an auction the day already has (same terms -> duplicate, other terms -> conflict)
+    ///      - a day a cancel reached first (conflict)
     ///      - a schedule the day can no longer honour
     ///      - an unknown day state
     ///      Anything else propagates so the bridge redelivers.
     function handleAuctionStageStart(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
         external
     {
-        (
-            uint32 emissionDay,
-            IIntexAuction.DayState dayState,
-            IIntexAuction.AuctionSchedule memory schedule,
-            IIntexAuction.AuctionParams memory params
-        ) = BridgeMsgCodec.decodeAuctionParams(message);
+        (uint32 emissionDay, IIntexAuction.AuctionSchedule memory schedule, IIntexAuction.AuctionParams memory params) =
+            BridgeMsgCodec.decodeAuctionParams(message);
 
-        try $.auction.auctionStart(emissionDay, dayState, schedule, params) {
+        try $.auction.auctionStart(emissionDay, schedule, params) {
             emit ITargetRouter.AuctionStageReceived(srcChainId, emissionDay, BridgeMsgCodec.MSG_AUCTION_STAGE_START);
         } catch (bytes memory reason) {
             bytes4 selector = _selectorOf(reason);
             uint8 why;
             if (selector == IIntexAuction.AuctionAlreadyExists.selector) {
-                why = _sameAuction($, emissionDay, dayState, schedule, params)
-                    ? InboundReason.DUPLICATE
-                    : InboundReason.CONFLICT;
+                why = _sameAuction($, emissionDay, schedule, params) ? InboundReason.DUPLICATE : InboundReason.CONFLICT;
+            } else if (selector == IIntexAuction.AuctionCanceled.selector) {
+                why = InboundReason.CONFLICT;
             } else if (selector == IIntexAuction.InvalidSchedule.selector) {
-                bool late = dayState == IIntexAuction.DayState.Live && schedule.commitEnd <= block.timestamp;
-                why = late ? InboundReason.LATE : InboundReason.INVALID;
-            } else if (selector == IIntexAuction.InvalidDayState.selector) {
-                why = InboundReason.INVALID;
+                why = schedule.commitEnd <= block.timestamp ? InboundReason.LATE : InboundReason.INVALID;
             } else {
                 LowLevelCall.bubbleRevert(reason);
             }
@@ -178,18 +172,49 @@ library TargetInbound {
         }
     }
 
+    /// @notice Decode AUCTION_CANCEL, cancel the day on the Auction contract and close it in the escrow as a
+    ///         result of zero units does, so every lock and bond is returned at once.
+    /// @dev The handler acknowledges these cases without effect:
+    ///      - a day that is already cancelled (duplicate)
+    ///      - a day with a result, or one that failed (obsolete)
+    ///      A day this chain has not started is recorded as cancelled.
+    function handleAuctionCancel(
+        TargetRouterStorage storage $,
+        uint32 srcChainId,
+        bytes32 receiveId,
+        bytes calldata message
+    ) external {
+        (uint32 emissionDay, uint8 reason) = BridgeMsgCodec.decodeAuctionCancel(message);
+
+        try $.auction.cancelAuction(emissionDay, reason) {}
+        catch (bytes memory err) {
+            bytes4 selector = _selectorOf(err);
+            uint8 why;
+            if (selector == IIntexAuction.AuctionCanceled.selector) {
+                why = InboundReason.DUPLICATE;
+            } else if (selector == IIntexAuction.StageRequired.selector) {
+                why = InboundReason.OBSOLETE;
+            } else {
+                LowLevelCall.bubbleRevert(err);
+            }
+            _ignore(srcChainId, BridgeMsgCodec.MSG_AUCTION_CANCEL, bytes32(uint256(emissionDay)), why);
+            return;
+        }
+
+        (, bool finalized,) = $.escrowAdapter.getAuctionStatus(emissionDay);
+        if (!finalized) $.escrowAdapter.finalizeAuction(emissionDay, receiveId, new address[](0), 0, 0, 0, 0, true);
+    }
+
     /// @dev Whether the auction this chain holds for `emissionDay` was opened under the START's terms. The reveal
     ///      end is left out: CLEARING snaps it forward, and a START repeated after that is still the same START.
     function _sameAuction(
         TargetRouterStorage storage $,
         uint32 emissionDay,
-        IIntexAuction.DayState dayState,
         IIntexAuction.AuctionSchedule memory schedule,
         IIntexAuction.AuctionParams memory params
     ) private view returns (bool) {
         IIntexAuction.AuctionData memory a = $.auction.getAuctionInfo(emissionDay);
-        return a.dayState == dayState && a.schedule.commitEnd == schedule.commitEnd
-            && a.schedule.issuanceEnd == schedule.issuanceEnd
+        return a.schedule.commitEnd == schedule.commitEnd && a.schedule.issuanceEnd == schedule.issuanceEnd
             && keccak256(abi.encode(a.params)) == keccak256(abi.encode(params));
     }
 

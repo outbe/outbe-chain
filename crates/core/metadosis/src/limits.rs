@@ -211,6 +211,7 @@ mod tests {
                     U256::from(remaining as u64)
                 );
                 let day = EmissionDate::new(20260101);
+                outbe_desis::api::schedule_auction(storage.clone(), day).unwrap();
                 brief_auction(storage.clone(), day.value(), &split).unwrap();
                 let desis = outbe_desis::DesisContract::new(storage.clone());
                 assert_eq!(
@@ -280,6 +281,7 @@ mod tests {
             .unwrap();
             assert!(split.desis_limit_minor > U256::from(u128::MAX));
             let day = EmissionDate::new(20260101);
+            outbe_desis::api::schedule_auction(storage.clone(), day).unwrap();
             assert_eq!(
                 brief_auction(storage.clone(), day.value(), &split).unwrap(),
                 U256::ZERO
@@ -292,10 +294,10 @@ mod tests {
             );
             assert_eq!(
                 outbe_desis::DesisContract::new(storage)
-                    .auction_stage
+                    .cancel_reason
                     .read(&day)
                     .unwrap(),
-                outbe_desis::AuctionStage::Cancelled as u8
+                outbe_desis::constants::CANCELED_LIMIT_OVERFLOW
             );
         });
     }

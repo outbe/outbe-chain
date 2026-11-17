@@ -283,6 +283,17 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
+    function sendAuctionCancel(uint32 emissionDay, uint8 reason) external payable onlyRole(DESIS_ROLE) {
+        uint32[] memory snapshot = _os().seriesTargets[emissionDay];
+        if (snapshot.length == 0) revert NoTargets();
+        bytes memory payload = BridgeMsgCodec.encodeAuctionCancel(emissionDay, reason);
+        for (uint256 i = 0; i < snapshot.length; ++i) {
+            bytes32 sendId = _sendOrPark(snapshot[i], payload, IntexGas.AUCTION_CANCEL);
+            emit IntexAuctionCancelSent(sendId, emissionDay, snapshot[i]);
+        }
+    }
+
+    /// @inheritdoc IOriginRouter
     function sendAuctionStageCollectingBids(uint32 emissionDay, uint32 dstChainId, uint256 gasLimit)
         external
         payable
@@ -528,8 +539,7 @@ contract OriginRouter is
             p.callWindow,
             p.callThreshold,
             p.minIntexBidQuantity,
-            p.commitBondMinor,
-            p.dayState
+            p.commitBondMinor
         );
     }
 

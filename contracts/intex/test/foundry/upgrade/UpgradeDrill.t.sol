@@ -129,7 +129,7 @@ contract UpgradeDrillTest is CrossChainTest {
 
         vm.startPrank(admin);
         auction.wire(escrow);
-        auction.auctionStart(20260614, IIntexAuction.DayState.Live, schedule, params);
+        auction.auctionStart(20260614, schedule, params);
         vm.stopPrank();
         vm.prank(bidder);
         auction.commitBid(20260614, keccak256("commit"));
@@ -186,7 +186,6 @@ contract UpgradeDrillTest is CrossChainTest {
         IOriginRouter.AuctionStageStartParams memory p;
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         p.emissionDay = day;
-        p.dayState = 1;
         vm.prank(address(desisMock));
         origin.sendAuctionStageStart(p);
         vm.prank(admin);

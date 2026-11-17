@@ -29,12 +29,11 @@ contract BridgeMsgCodecGoldenTest is Test {
             0x5678,
             0x9ABC,
             0xABCD,
-            0xF1F2F3F4F5F6F7F8F9FAFBFCFDFEFF01,
-            0x01
+            0xF1F2F3F4F5F6F7F8F9FAFBFCFDFEFF01
         );
         assertEq(
             encoded,
-            hex"0103112233445566778899aabbccddeeff000102030405060708090a0b0c0d0e0f101a2b3c4dcafebabe0000567800009abcabcdf1f2f3f4f5f6f7f8f9fafbfcfdfeff010101d1d21122334455667788a1b2c3d4e5f60718"
+            hex"0103112233445566778899aabbccddeeff000102030405060708090a0b0c0d0e0f101a2b3c4dcafebabe0000567800009abcabcdf1f2f3f4f5f6f7f8f9fafbfcfdfeff0101d1d21122334455667788a1b2c3d4e5f60718"
         );
         assertEq(encoded.length, BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_START + BridgeMsgCodec.REFERENCE_PRICE_LEN);
     }
@@ -44,6 +43,19 @@ contract BridgeMsgCodecGoldenTest is Test {
             BridgeMsgCodec.encodeBidsRemaining(0x0A0B0C0D, 0x01020304, 0x0011, 0x0022),
             hex"01090a0b0c0d0102030400110022"
         );
+    }
+
+    function test_Golden_AuctionCancel() public view {
+        bytes memory encoded = BridgeMsgCodec.encodeAuctionCancel(0x0A0B0C0D, 0x05);
+        assertEq(encoded, hex"010a0a0b0c0d05");
+        assertEq(encoded.length, BridgeMsgCodec.MIN_LEN_AUCTION_CANCEL);
+        (uint32 day, uint8 reason) = this.exposedDecodeAuctionCancel(encoded);
+        assertEq(day, 0x0A0B0C0D, "emissionDay");
+        assertEq(reason, 0x05, "reason");
+    }
+
+    function exposedDecodeAuctionCancel(bytes calldata message) external pure returns (uint32, uint8) {
+        return BridgeMsgCodec.decodeAuctionCancel(message);
     }
 
     function test_Golden_AuctionStageCollectingBids() public pure {
@@ -87,7 +99,6 @@ contract BridgeMsgCodecGoldenTest is Test {
     function test_RoundTrip_AuctionStageStart_AllFields() public view {
         (
             uint32 emissionDay,
-            IIntexAuction.DayState dayState,
             IIntexAuction.AuctionSchedule memory schedule,
             IIntexAuction.AuctionParams memory params
         ) = BridgeMsgCodec.decodeAuctionParams(
@@ -103,12 +114,10 @@ contract BridgeMsgCodecGoldenTest is Test {
                 0x5678,
                 0x9ABC,
                 0xABCD,
-                0xF1F2F3F4F5F6F7F8F9FAFBFCFDFEFF01,
-                0x02
+                0xF1F2F3F4F5F6F7F8F9FAFBFCFDFEFF01
             )
         );
         assertEq(emissionDay, 0x11223344, "emissionDay");
-        assertEq(uint8(dayState), uint8(IIntexAuction.DayState.Cancelled), "dayState");
         assertEq(schedule.commitEnd, 0x55667788, "commitEnd");
         assertEq(schedule.revealEnd, 0x99AABBCC, "revealEnd");
         assertEq(schedule.issuanceEnd, 0xDDEEFF00, "issuanceEnd");

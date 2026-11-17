@@ -255,6 +255,7 @@ fn brief_at_rate_from(s: &StorageHandle, brief: RateBrief) {
         .start_timestamp()
         .expect("date timestamp");
     seed_rate(s, start, brief.rate);
+    crate::api::schedule_auction(s.clone(), brief.emission_day).unwrap();
     assert_eq!(
         crate::api::brief_auction(
             s.clone(),
@@ -439,23 +440,65 @@ fn chain_done_after_one_batch(s: &StorageHandle, arrived: u8, marked_total: u32)
 
 // --- Auction brief ---
 
+/// Schedule the fixture day, as the allocation of its emission day does.
+fn schedule(s: &StorageHandle) {
+    crate::api::schedule_auction(s.clone(), EMISSION_DAY).unwrap();
+}
+
+fn live_brief(desis_limit_minor: U256, has_limit: bool) -> crate::api::AuctionBrief {
+    crate::api::AuctionBrief {
+        emission_day: EMISSION_DAY,
+        desis_limit_minor,
+        has_limit,
+    }
+}
+
+fn closed(desis_limit_minor: U256) -> AuctionBriefReceipt {
+    AuctionBriefReceipt::ReturnedToPromisLimit {
+        reason: AuctionBriefRejectionReason::AuctionClosed,
+        desis_limit_minor,
+        max_accepted: U256::ZERO,
+    }
+}
+
+#[test]
+fn the_allocation_schedules_the_auction_at_the_midnight_after_its_day() {
+    with_storage(|s| {
+        schedule(&s);
+        schedule(&s);
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(EMISSION_DAY).unwrap(),
+            AuctionStage::None
+        );
+        let anchor = contract.auction_at.read(&EMISSION_DAY).unwrap();
+        assert_eq!(u64::from(anchor), ANCHOR);
+        assert_eq!(
+            u64::from(anchor),
+            EMISSION_DAY.next().unwrap().start_timestamp().unwrap()
+        );
+        assert_eq!(contract.sched_active_count.read().unwrap(), 1);
+        assert_eq!(
+            contract.sched_active_at.read(&0).unwrap(),
+            EMISSION_DAY.value()
+        );
+    });
+}
+
 #[test]
 fn brief_auction_records_the_brief() {
     with_storage(|s| {
+        schedule(&s);
         let receipt = crate::api::brief_auction(
             s.clone(),
-            crate::api::AuctionBrief {
-                emission_day: EMISSION_DAY,
-                desis_limit_minor: U256::from(10 * PROMIS_LOAD_MINOR),
-                has_limit: true,
-            },
+            live_brief(U256::from(10 * PROMIS_LOAD_MINOR), true),
         )
         .unwrap();
         assert_eq!(receipt, AuctionBriefReceipt::Accepted);
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
-            AuctionStage::Briefed
+            AuctionStage::None
         );
         assert_eq!(
             contract
@@ -465,15 +508,7 @@ fn brief_auction_records_the_brief() {
             U256::from(10 * PROMIS_LOAD_MINOR)
         );
         assert_eq!(contract.brief_has_limit.read(&EMISSION_DAY).unwrap(), 1);
-        assert_eq!(
-            u64::from(contract.auction_at.read(&EMISSION_DAY).unwrap()),
-            NOW - NOW % SECONDS_PER_DAY
-        );
-        assert_eq!(contract.sched_active_count.read().unwrap(), 1);
-        assert_eq!(
-            contract.sched_active_at.read(&0).unwrap(),
-            EMISSION_DAY.value()
-        );
+        assert_eq!(contract.desis_limit_set.read(&EMISSION_DAY).unwrap(), 1);
         // A brief carries no terms: the day is priced when its auction starts.
         assert!(contract
             .read_auction_config(EMISSION_DAY)
@@ -486,112 +521,119 @@ fn brief_auction_records_the_brief() {
 #[test]
 fn brief_auction_records_a_brief_with_no_limit() {
     with_storage(|s| {
-        assert!(crate::api::brief_auction(
-            s.clone(),
-            crate::api::AuctionBrief {
-                emission_day: EmissionDate::new(0),
-                desis_limit_minor: U256::ZERO,
-                has_limit: false,
-            },
-        )
-        .is_err());
-        assert!(crate::api::brief_auction(
-            s.clone(),
-            crate::api::AuctionBrief {
-                emission_day: EmissionDate::new(0),
-                desis_limit_minor: U256::from(PROMIS_LOAD_MINOR),
-                has_limit: true,
-            },
-        )
-        .is_err());
+        for limit in [U256::ZERO, U256::from(PROMIS_LOAD_MINOR)] {
+            assert!(crate::api::brief_auction(
+                s.clone(),
+                crate::api::AuctionBrief {
+                    emission_day: EmissionDate::new(0),
+                    desis_limit_minor: limit,
+                    has_limit: true,
+                },
+            )
+            .is_err());
+        }
 
-        let receipt = crate::api::brief_auction(
-            s.clone(),
-            crate::api::AuctionBrief {
-                emission_day: EMISSION_DAY,
-                desis_limit_minor: U256::from(PROMIS_LOAD_MINOR),
-                has_limit: false,
-            },
-        )
-        .unwrap();
+        schedule(&s);
+        let receipt =
+            crate::api::brief_auction(s.clone(), live_brief(U256::from(PROMIS_LOAD_MINOR), false))
+                .unwrap();
         assert_eq!(receipt, AuctionBriefReceipt::Accepted);
         let contract = s.contract::<DesisContract>();
-        assert_eq!(
-            contract.read_stage(EMISSION_DAY).unwrap(),
-            AuctionStage::Briefed
-        );
         assert_eq!(contract.brief_has_limit.read(&EMISSION_DAY).unwrap(), 0);
+        assert_eq!(contract.desis_limit_set.read(&EMISSION_DAY).unwrap(), 1);
     });
 }
 
 #[test]
-fn strict_request_desis_limit_commits_the_exact_live_brief() {
+fn a_brief_for_a_day_with_no_auction_returns_its_limit() {
     with_storage(|s| {
-        let receipt = crate::api::brief_auction(
-            s.clone(),
-            crate::api::AuctionBrief {
-                emission_day: EMISSION_DAY,
-                desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
-                has_limit: true,
-            },
-        )
-        .expect("strict request brief");
-
-        assert_eq!(receipt, AuctionBriefReceipt::Accepted);
-        let contract = s.contract::<DesisContract>();
+        let limit = U256::from(7 * PROMIS_LOAD_MINOR);
         assert_eq!(
-            contract.read_stage(EMISSION_DAY).unwrap(),
-            AuctionStage::Briefed
+            crate::api::brief_auction(s.clone(), live_brief(limit, true)).unwrap(),
+            closed(limit)
         );
-        assert_eq!(
-            contract
-                .pending_desis_limit_minor
-                .read(&EMISSION_DAY)
-                .unwrap(),
-            U256::from(7 * PROMIS_LOAD_MINOR)
-        );
-        assert_eq!(contract.brief_has_limit.read(&EMISSION_DAY).unwrap(), 1);
-        // The brief carries no prices; the auction prices the day at its start.
-        assert!(contract
-            .read_auction_config(EMISSION_DAY)
-            .unwrap()
-            .reference_prices
-            .is_empty());
+        assert_no_request_brief_state(&s);
     });
 }
 
 #[test]
-fn strict_request_desis_limit_propagates_duplicate_refusal_without_overwrite() {
-    with_storage(|s| {
-        crate::api::brief_auction(
-            s.clone(),
-            crate::api::AuctionBrief {
-                emission_day: EMISSION_DAY,
-                desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
-                has_limit: true,
-            },
-        )
-        .unwrap();
-
-        assert!(crate::api::brief_auction(
-            s.clone(),
-            crate::api::AuctionBrief {
-                emission_day: EMISSION_DAY,
-                desis_limit_minor: U256::from(9 * PROMIS_LOAD_MINOR),
-                has_limit: true
-            },
-        )
-        .is_err());
-
+fn a_second_brief_returns_its_limit_and_keeps_the_first() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(NOW));
+    StorageHandle::enter(&mut storage, |s| {
+        schedule(&s);
+        assert_eq!(
+            crate::api::brief_auction(
+                s.clone(),
+                live_brief(U256::from(10 * PROMIS_LOAD_MINOR), true)
+            )
+            .unwrap(),
+            AuctionBriefReceipt::Accepted
+        );
+        let second = U256::from(7 * PROMIS_LOAD_MINOR);
+        assert_eq!(
+            crate::api::brief_auction(s.clone(), live_brief(second, true)).unwrap(),
+            closed(second)
+        );
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract
                 .pending_desis_limit_minor
                 .read(&EMISSION_DAY)
                 .unwrap(),
-            U256::from(7 * PROMIS_LOAD_MINOR)
+            U256::from(10 * PROMIS_LOAD_MINOR),
+            "the first brief stays intact"
         );
         assert_eq!(contract.sched_active_count.read().unwrap(), 1);
+    });
+
+    let logs = storage.get_events(outbe_system_common::addresses::DESIS_ADDRESS);
+    assert_eq!(logs.len(), 1, "the returned brief emits nothing");
+    assert!(is_desis_limit_set(&logs[0]));
+}
+
+#[test]
+fn a_brief_after_the_start_sets_the_size_of_the_live_auction() {
+    with_storage(|s| {
+        seed_rate(&s, ANCHOR, ENTRY_PRICE);
+        schedule(&s);
+        runtime::schedule_tick(&s, NOW).unwrap();
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(EMISSION_DAY).unwrap(),
+            AuctionStage::CommittingBids
+        );
+        let config = contract.read_auction_config(EMISSION_DAY).unwrap();
+
+        assert_eq!(
+            crate::api::brief_auction(s.clone(), live_brief(U256::from(7 * LOAD_MINOR), true))
+                .unwrap(),
+            AuctionBriefReceipt::Accepted
+        );
+        runtime::schedule_tick(&s, NOW + 3_600).unwrap();
+        let after = s.contract::<DesisContract>();
+        assert_eq!(
+            after.read_stage(EMISSION_DAY).unwrap(),
+            AuctionStage::CommittingBids
+        );
+        assert_eq!(
+            after.pending_desis_limit_minor.read(&EMISSION_DAY).unwrap(),
+            U256::from(7 * LOAD_MINOR)
+        );
+        assert_eq!(after.read_auction_config(EMISSION_DAY).unwrap(), config);
+
+        let top_up = U256::from(9 * LOAD_MINOR);
+        assert_eq!(
+            crate::api::brief_auction(s.clone(), live_brief(top_up, true)).unwrap(),
+            closed(top_up)
+        );
+        assert_eq!(
+            s.contract::<DesisContract>()
+                .pending_desis_limit_minor
+                .read(&EMISSION_DAY)
+                .unwrap(),
+            U256::from(7 * LOAD_MINOR)
+        );
     });
 }
 
@@ -620,25 +662,25 @@ fn assert_no_request_brief_state(storage: &StorageHandle<'_>) {
         U256::ZERO
     );
     assert_eq!(contract.brief_has_limit.read(&EMISSION_DAY).unwrap(), 0);
-    assert_eq!(contract.auction_at.read(&EMISSION_DAY).unwrap(), 0);
-    assert_eq!(contract.sched_active_count.read().unwrap(), 0);
-    assert_eq!(contract.sched_active_at.read(&0).unwrap(), 0u32);
-    assert_eq!(contract.sched_active_slot.read(&EMISSION_DAY).unwrap(), 0);
+    assert_eq!(contract.desis_limit_set.read(&EMISSION_DAY).unwrap(), 0);
+    assert_eq!(contract.cancel_reason.read(&EMISSION_DAY).unwrap(), 0);
 }
 
-#[test]
-fn strict_request_desis_limit_rolls_back_every_partial_write_boundary() {
+/// A provider with the fixture day scheduled and its mutation count reset.
+fn scheduled_provider() -> HashMapStorageProvider {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| schedule(&storage));
+    provider.clear_mutation_failure();
+    provider
+}
+
+/// Brief the scheduled day once with a failure after each of its writes and events. Each run
+/// leaves no brief state and no event.
+fn assert_brief_rolls_back_at_each_mutation(desis_limit_minor: U256) {
     let mutation_count = {
-        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        let mut provider = scheduled_provider();
         let result = StorageHandle::enter(&mut provider, |storage| {
-            crate::api::brief_auction(
-                storage,
-                crate::api::AuctionBrief {
-                    emission_day: EMISSION_DAY,
-                    desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
-                    has_limit: true,
-                },
-            )
+            crate::api::brief_auction(storage, live_brief(desis_limit_minor, true))
         });
         assert!(result.is_ok());
         provider.clear_mutation_failure()
@@ -649,17 +691,10 @@ fn strict_request_desis_limit_rolls_back_every_partial_write_boundary() {
     );
 
     for operation in 0..mutation_count {
-        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        let mut provider = scheduled_provider();
         provider.fail_after_mutation_at(operation);
         let result = StorageHandle::enter(&mut provider, |storage| {
-            crate::api::brief_auction(
-                storage,
-                crate::api::AuctionBrief {
-                    emission_day: EMISSION_DAY,
-                    desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
-                    has_limit: true,
-                },
-            )
+            crate::api::brief_auction(storage, live_brief(desis_limit_minor, true))
         });
         assert!(
             result.is_err(),
@@ -674,126 +709,27 @@ fn strict_request_desis_limit_rolls_back_every_partial_write_boundary() {
 }
 
 #[test]
-fn strict_request_desis_limit_never_tops_up_a_live_auction() {
-    with_storage(|storage| {
-        crate::api::brief_auction(
-            storage.clone(),
-            crate::api::AuctionBrief {
-                emission_day: EMISSION_DAY,
-                desis_limit_minor: U256::from(7 * LOAD_MINOR),
-                has_limit: true,
-            },
-        )
-        .unwrap();
-        runtime::schedule_tick(&storage, NOW).unwrap();
-
-        let before = storage.contract::<DesisContract>();
-        assert_eq!(
-            before.read_stage(EMISSION_DAY).unwrap(),
-            AuctionStage::CommittingBids
-        );
-        let config = before.read_auction_config(EMISSION_DAY).unwrap();
-        let anchor = before.auction_at.read(&EMISSION_DAY).unwrap();
-
-        assert!(crate::api::brief_auction(
-            storage.clone(),
-            crate::api::AuctionBrief {
-                emission_day: EMISSION_DAY,
-                desis_limit_minor: U256::from(9 * LOAD_MINOR),
-                has_limit: true
-            },
-        )
-        .is_err());
-
-        let after = storage.contract::<DesisContract>();
-        assert_eq!(
-            after.read_stage(EMISSION_DAY).unwrap(),
-            AuctionStage::CommittingBids
-        );
-        assert_eq!(
-            after.pending_desis_limit_minor.read(&EMISSION_DAY).unwrap(),
-            U256::from(7 * LOAD_MINOR)
-        );
-        assert_eq!(after.read_auction_config(EMISSION_DAY).unwrap(), config);
-        assert_eq!(after.auction_at.read(&EMISSION_DAY).unwrap(), anchor);
-        assert_eq!(after.sched_active_count.read().unwrap(), 1);
-        assert_eq!(
-            outbe_promislimit::PromisLimitContract::new(storage)
-                .promis_limit()
-                .unwrap(),
-            U256::ZERO
-        );
-    });
+fn a_brief_rolls_back_every_partial_write_and_event_fault() {
+    assert_brief_rolls_back_at_each_mutation(U256::from(7 * PROMIS_LOAD_MINOR));
+    assert_brief_rolls_back_at_each_mutation(U256::MAX);
 }
 
-#[test]
-fn brief_auction_duplicate_propagates_without_committed_failure_event() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(NOW));
-    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
-    storage.stub_sub_call_at(
-        outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
-        Bytes::from(vec![0u8; 32]),
-    );
-    StorageHandle::enter(&mut storage, |s| {
+/// Schedule the day, brief `desis_limit_minor`, and run the next schedule step.
+fn overflow_brief(
+    storage: &mut HashMapStorageProvider,
+    desis_limit_minor: U256,
+) -> AuctionBriefReceipt {
+    StorageHandle::enter(storage, |s| {
+        schedule(&s);
+        let receipt =
+            crate::api::brief_auction(s.clone(), live_brief(desis_limit_minor, true)).unwrap();
         assert_eq!(
-            crate::api::brief_auction(
-                s.clone(),
-                crate::api::AuctionBrief {
-                    emission_day: EMISSION_DAY,
-                    desis_limit_minor: U256::from(10 * PROMIS_LOAD_MINOR),
-                    has_limit: true
-                },
-            )
-            .unwrap(),
-            AuctionBriefReceipt::Accepted
-        );
-        assert!(crate::api::brief_auction(
-            s.clone(),
-            crate::api::AuctionBrief {
-                emission_day: EMISSION_DAY,
-                desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
-                has_limit: true
-            },
-        )
-        .is_err());
-        let contract = s.contract::<DesisContract>();
-        assert_eq!(
-            contract
-                .pending_desis_limit_minor
-                .read(&EMISSION_DAY)
+            s.contract::<DesisContract>()
+                .read_stage(EMISSION_DAY)
                 .unwrap(),
-            U256::from(10 * PROMIS_LOAD_MINOR),
-            "the first brief stays intact"
+            AuctionStage::None
         );
-        assert_eq!(contract.sched_active_count.read().unwrap(), 1);
-    });
-
-    let logs = storage.get_events(outbe_system_common::addresses::DESIS_ADDRESS);
-    assert_eq!(logs.len(), 1, "the rejected duplicate emits nothing");
-    assert!(is_desis_limit_set(&logs[0]));
-}
-
-#[test]
-fn brief_auction_oversized_limit_returns_typed_rejection() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    StorageHandle::enter(&mut storage, |s| {
-        assert_eq!(
-            crate::api::brief_auction(
-                s.clone(),
-                crate::api::AuctionBrief {
-                    emission_day: EMISSION_DAY,
-                    desis_limit_minor: U256::MAX,
-                    has_limit: true
-                },
-            )
-            .unwrap(),
-            AuctionBriefReceipt::ReturnedToPromisLimit {
-                reason: AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
-                desis_limit_minor: U256::MAX,
-                max_accepted: U256::from(u128::MAX),
-            }
-        );
+        runtime::schedule_tick(&s, NOW).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
@@ -807,8 +743,21 @@ fn brief_auction_oversized_limit_returns_typed_rejection() {
                 .unwrap(),
             U256::ZERO
         );
-    });
+        receipt
+    })
+}
 
+#[test]
+fn desis_limit_above_2_128_cancels_the_auction() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    assert_eq!(
+        overflow_brief(&mut storage, U256::MAX),
+        AuctionBriefReceipt::ReturnedToPromisLimit {
+            reason: AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
+            desis_limit_minor: U256::MAX,
+            max_accepted: U256::from(u128::MAX),
+        }
+    );
     let logs = storage.get_events(outbe_system_common::addresses::DESIS_ADDRESS);
     assert_eq!(
         overflow_limit_events(logs),
@@ -818,52 +767,30 @@ fn brief_auction_oversized_limit_returns_typed_rejection() {
             U256::ZERO,
         ]
     );
+    assert!(desis_limit_returns(&storage).is_empty());
 }
 
 #[test]
 fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
     with_storage(|storage| {
+        schedule(&storage);
         assert_eq!(
-            crate::api::brief_auction(
-                storage.clone(),
-                crate::api::AuctionBrief {
-                    emission_day: EMISSION_DAY,
-                    desis_limit_minor: U256::from(u128::MAX),
-                    has_limit: true
-                },
-            )
-            .unwrap(),
+            crate::api::brief_auction(storage.clone(), live_brief(U256::from(u128::MAX), true))
+                .unwrap(),
             AuctionBriefReceipt::Accepted
         );
     });
 
     let supply = U256::from(u128::MAX).checked_add(U256::from(1_u8)).unwrap();
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    StorageHandle::enter(&mut provider, |storage| {
-        assert_eq!(
-            crate::api::brief_auction(
-                storage.clone(),
-                crate::api::AuctionBrief {
-                    emission_day: EMISSION_DAY,
-                    desis_limit_minor: supply,
-                    has_limit: true
-                },
-            )
-            .unwrap(),
-            AuctionBriefReceipt::ReturnedToPromisLimit {
-                reason: AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
-                desis_limit_minor: supply,
-                max_accepted: U256::from(u128::MAX),
-            }
-        );
-        assert_eq!(
-            storage
-                .contract::<DesisContract>()
-                .read_stage(EMISSION_DAY)
-                .unwrap(),
-            AuctionStage::Cancelled
-        );
-    });
+    assert_eq!(
+        overflow_brief(&mut provider, supply),
+        AuctionBriefReceipt::ReturnedToPromisLimit {
+            reason: AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
+            desis_limit_minor: supply,
+            max_accepted: U256::from(u128::MAX),
+        }
+    );
     let logs = provider.get_events(outbe_system_common::addresses::DESIS_ADDRESS);
     assert_eq!(
         overflow_limit_events(logs),
@@ -876,7 +803,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
 }
 
 #[test]
-fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events() {
+fn invalid_day_and_anchor_overflow_are_errors_without_business_events() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut provider, |storage| {
         assert!(crate::api::brief_auction(
@@ -888,123 +815,218 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
             },
         )
         .is_err());
-
-        brief_at(&storage, EMISSION_DAY, 1, true);
-        assert!(crate::api::brief_auction(
-            storage.clone(),
-            crate::api::AuctionBrief {
-                emission_day: EMISSION_DAY,
-                desis_limit_minor: U256::MAX,
-                has_limit: true
-            },
-        )
-        .is_err());
-
+        assert!(crate::api::schedule_auction(storage.clone(), EmissionDate::new(0)).is_err());
         // Its auction would anchor at 2106-02-08, past the u32 timestamps the wire carries.
-        assert!(crate::api::brief_auction(
-            storage,
-            crate::api::AuctionBrief {
-                emission_day: EmissionDate::new(21060207),
-                desis_limit_minor: U256::MAX,
-                has_limit: true
-            },
-        )
-        .is_err());
+        assert!(crate::api::schedule_auction(storage, EmissionDate::new(21060207)).is_err());
     });
-    let logs = provider.get_events(outbe_system_common::addresses::DESIS_ADDRESS);
-    assert_eq!(logs.len(), 1, "only the accepted brief emits");
-    assert!(is_desis_limit_set(&logs[0]));
+    assert!(provider
+        .get_events(outbe_system_common::addresses::DESIS_ADDRESS)
+        .is_empty());
+}
+
+// --- Start by the date and cancel before the result ---
+
+/// The reason of every AUCTION_CANCEL the provider sent.
+#[cfg(not(feature = "e2e-test"))]
+fn sent_cancels(storage: &HashMapStorageProvider) -> Vec<u8> {
+    use crate::sol_ext::IOriginRouter::sendAuctionCancelCall;
+    storage
+        .sub_call_inputs()
+        .iter()
+        .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
+        .filter_map(|input| sendAuctionCancelCall::abi_decode(&input.calldata).ok())
+        .map(|call| call.reason)
+        .collect()
+}
+
+/// Whether the provider sent a COLLECTING_BIDS round.
+#[cfg(not(feature = "e2e-test"))]
+fn sent_clearing_start(storage: &HashMapStorageProvider) -> bool {
+    use crate::sol_ext::IOriginRouter::sendAuctionStageCollectingBidsCall;
+    storage
+        .sub_call_inputs()
+        .iter()
+        .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
+        .any(|input| sendAuctionStageCollectingBidsCall::abi_decode(&input.calldata).is_ok())
+}
+
+#[cfg(not(feature = "e2e-test"))]
+fn stage_of(s: &StorageHandle) -> AuctionStage {
+    s.contract::<DesisContract>()
+        .read_stage(EMISSION_DAY)
+        .unwrap()
+}
+
+#[cfg(not(feature = "e2e-test"))]
+const REVEAL_END: u64 =
+    ANCHOR + crate::constants::COMMIT_WINDOW_SECONDS + crate::constants::REVEAL_WINDOW_SECONDS;
+
+/// A day started by the date, with no brief yet.
+#[cfg(not(feature = "e2e-test"))]
+fn started_without_brief() -> HashMapStorageProvider {
+    let mut provider = fixture_provider(&[SRC_CHAIN]);
+    StorageHandle::enter(&mut provider, |s| {
+        seed_rate(&s, ANCHOR, ENTRY_PRICE);
+        schedule(&s);
+        runtime::schedule_tick(&s, NOW).unwrap();
+        assert_eq!(stage_of(&s), AuctionStage::CommittingBids);
+    });
+    provider
 }
 
 #[test]
-fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
-    let mutation_count = {
-        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-        let result = StorageHandle::enter(&mut provider, |storage| {
-            crate::api::brief_auction(
-                storage,
-                crate::api::AuctionBrief {
-                    emission_day: EMISSION_DAY,
-                    desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
-                    has_limit: true,
-                },
-            )
-        });
-        assert_eq!(result.unwrap(), AuctionBriefReceipt::Accepted);
-        provider.clear_mutation_failure()
-    };
-    assert!(mutation_count > 1);
-
-    for operation in 0..mutation_count {
-        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-        provider.fail_after_mutation_at(operation);
-        let result = StorageHandle::enter(&mut provider, |storage| {
-            crate::api::brief_auction(
-                storage,
-                crate::api::AuctionBrief {
-                    emission_day: EMISSION_DAY,
-                    desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
-                    has_limit: true,
-                },
-            )
-        });
-        assert!(result.is_err(), "mutation {operation} must propagate");
-        assert_eq!(provider.clear_mutation_failure(), operation + 1);
-        StorageHandle::enter(&mut provider, |storage| {
-            assert_no_request_brief_state(&storage)
-        });
-        assert!(provider.get_ordered_events().is_empty());
-    }
-
-    let mut rejection_provider = HashMapStorageProvider::new(CHAIN_ID);
-    rejection_provider.fail_after_mutation_at(0);
-    let result = StorageHandle::enter(&mut rejection_provider, |storage| {
-        crate::api::brief_auction(
-            storage,
-            crate::api::AuctionBrief {
-                emission_day: EMISSION_DAY,
-                desis_limit_minor: U256::MAX,
-                has_limit: true,
-            },
-        )
+#[cfg(not(feature = "e2e-test"))]
+fn auction_starts_before_its_size() {
+    let mut provider = started_without_brief();
+    assert_eq!(sent_starts(&provider), vec![EMISSION_DAY.value()]);
+    StorageHandle::enter(&mut provider, |s| {
+        let brief_at = ANCHOR + 12 * 3600;
+        runtime::schedule_tick(&s, brief_at).unwrap();
+        assert_eq!(
+            crate::api::brief_auction(s.clone(), live_brief(U256::from(7 * LOAD_MINOR), true))
+                .unwrap(),
+            AuctionBriefReceipt::Accepted
+        );
+        runtime::schedule_tick(&s, REVEAL_END).unwrap();
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(EMISSION_DAY).unwrap(),
+            AuctionStage::CollectingBids
+        );
+        assert_eq!(
+            contract
+                .pending_desis_limit_units
+                .read(&EMISSION_DAY)
+                .unwrap(),
+            7
+        );
     });
-    assert!(result.is_err());
-    assert_eq!(rejection_provider.clear_mutation_failure(), 1);
-    assert!(rejection_provider.get_ordered_events().is_empty());
-    StorageHandle::enter(&mut rejection_provider, |storage| {
-        assert_no_request_brief_state(&storage)
+    assert!(sent_clearing_start(&provider));
+    assert!(sent_cancels(&provider).is_empty());
+}
+
+#[test]
+#[cfg(not(feature = "e2e-test"))]
+fn cancel_before_the_result() {
+    let mut provider = started_without_brief();
+    let returned = StorageHandle::enter(&mut provider, |s| {
+        runtime::schedule_tick(&s, ANCHOR + crate::constants::COMMIT_WINDOW_SECONDS).unwrap();
+        assert_eq!(stage_of(&s), AuctionStage::RevealingBids);
+        let limit = U256::from(LOAD_MINOR - 1);
+        crate::api::brief_auction(s.clone(), live_brief(limit, true)).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + crate::constants::COMMIT_WINDOW_SECONDS + 3_600)
+            .unwrap();
+        assert_eq!(stage_of(&s), AuctionStage::Cancelled);
+        assert_eq!(
+            s.contract::<DesisContract>()
+                .sched_active_count
+                .read()
+                .unwrap(),
+            0
+        );
+        limit
     });
+    assert_eq!(
+        sent_cancels(&provider),
+        vec![crate::constants::CANCELED_BELOW_ONE_UNIT]
+    );
+    assert_eq!(desis_limit_returns(&provider), vec![returned]);
+    assert!(!sent_clearing_start(&provider));
+}
+
+#[test]
+#[cfg(not(feature = "e2e-test"))]
+fn a_brief_with_no_limit_cancels_the_started_auction() {
+    let mut provider = started_without_brief();
+    StorageHandle::enter(&mut provider, |s| {
+        crate::api::brief_auction(s.clone(), live_brief(U256::ZERO, false)).unwrap();
+        runtime::schedule_tick(&s, NOW + 3_600).unwrap();
+        assert_eq!(stage_of(&s), AuctionStage::Cancelled);
+    });
+    assert_eq!(
+        sent_cancels(&provider),
+        vec![crate::constants::CANCELED_NO_LIMIT]
+    );
+}
+
+#[test]
+#[cfg(not(feature = "e2e-test"))]
+fn no_brief_at_the_end_of_the_reveal_stage_cancels_the_auction() {
+    let mut provider = started_without_brief();
+    StorageHandle::enter(&mut provider, |s| {
+        runtime::schedule_tick(&s, ANCHOR + crate::constants::COMMIT_WINDOW_SECONDS).unwrap();
+        runtime::schedule_tick(&s, REVEAL_END).unwrap();
+        assert_eq!(stage_of(&s), AuctionStage::Cancelled);
+
+        let late = U256::from(7 * LOAD_MINOR);
+        assert_eq!(
+            crate::api::brief_auction(s.clone(), live_brief(late, true)).unwrap(),
+            closed(late)
+        );
+    });
+    assert_eq!(
+        sent_cancels(&provider),
+        vec![crate::constants::CANCELED_NO_LIMIT]
+    );
+    assert!(!sent_clearing_start(&provider));
+}
+
+#[test]
+#[cfg(not(feature = "e2e-test"))]
+fn a_failed_metadosis_cancels_the_started_auction() {
+    let mut provider = started_without_brief();
+    StorageHandle::enter(&mut provider, |s| {
+        crate::api::cancel_auction(s.clone(), EMISSION_DAY).unwrap();
+        assert_eq!(stage_of(&s), AuctionStage::CommittingBids);
+        let limit = U256::from(7 * LOAD_MINOR);
+        assert_eq!(
+            crate::api::brief_auction(s.clone(), live_brief(limit, true)).unwrap(),
+            closed(limit),
+            "a day that waits for its cancel takes no brief"
+        );
+        runtime::schedule_tick(&s, NOW + 3_600).unwrap();
+        assert_eq!(stage_of(&s), AuctionStage::Cancelled);
+    });
+    assert_eq!(
+        sent_cancels(&provider),
+        vec![crate::constants::CANCELED_NO_LIMIT]
+    );
+}
+
+#[test]
+#[cfg(not(feature = "e2e-test"))]
+fn a_cancel_of_a_day_that_never_started_sends_no_message() {
+    let mut provider = fixture_provider(&[SRC_CHAIN]);
+    StorageHandle::enter(&mut provider, |s| {
+        schedule(&s);
+        crate::api::cancel_auction(s.clone(), EMISSION_DAY).unwrap();
+        runtime::schedule_tick(&s, NOW).unwrap();
+        assert_eq!(stage_of(&s), AuctionStage::Cancelled);
+    });
+    assert!(sent_cancels(&provider).is_empty());
+    assert!(sent_starts(&provider).is_empty());
+}
+
+#[test]
+#[cfg(not(feature = "e2e-test"))]
+fn a_cancel_after_the_clearing_start_has_no_effect() {
+    let mut provider = fixture_provider(&[SRC_CHAIN]);
+    StorageHandle::enter(&mut provider, |s| {
+        open_clearing(&s, 3);
+        assert_eq!(stage_of(&s), AuctionStage::CollectingBids);
+        crate::api::cancel_auction(s.clone(), EMISSION_DAY).unwrap();
+        assert_eq!(
+            s.contract::<DesisContract>()
+                .cancel_reason
+                .read(&EMISSION_DAY)
+                .unwrap(),
+            0
+        );
+    });
+    assert!(sent_cancels(&provider).is_empty());
 }
 
 // --- Late start ---
-
-#[test]
-fn a_brief_anchors_at_the_midnight_after_its_emission_day() {
-    with_storage(|s| {
-        assert_eq!(
-            crate::api::brief_auction(
-                s.clone(),
-                crate::api::AuctionBrief {
-                    emission_day: EMISSION_DAY,
-                    desis_limit_minor: U256::from(LOAD_MINOR),
-                    has_limit: true
-                },
-            )
-            .unwrap(),
-            AuctionBriefReceipt::Accepted
-        );
-        let anchor = s
-            .contract::<DesisContract>()
-            .auction_at
-            .read(&EMISSION_DAY)
-            .unwrap();
-        assert_eq!(u64::from(anchor), ANCHOR);
-        assert_eq!(
-            u64::from(anchor),
-            EMISSION_DAY.next().unwrap().start_timestamp().unwrap()
-        );
-    });
-}
 
 /// A brief that comes hours after the midnight still opens at that midnight and prices
 /// from its own emission day, not from the day before the late start.
@@ -1129,11 +1151,10 @@ fn a_start_past_the_minimum_commit_window_cancels_the_day_and_returns_its_limit(
     );
 }
 
-/// A late day goes out as a cancelled START. A router that cannot take it therefore keeps
-/// the day briefed for the next tick and does not cancel it unannounced.
+/// A late day never started on any chain, so its cancel sends no message and needs no router.
 #[test]
 #[cfg(not(feature = "e2e-test"))]
-fn a_late_day_is_cancelled_only_once_its_cancelled_start_is_sent() {
+fn a_late_day_is_cancelled_with_no_message() {
     let start = LAST_START + 1;
     let outcome = start_at(start, false, |s| {
         brief_at_rate_from(
@@ -1146,11 +1167,15 @@ fn a_late_day_is_cancelled_only_once_its_cancelled_start_is_sent() {
             },
         );
     });
-    assert_eq!(outcome, (AuctionStage::Briefed, U256::ZERO, false));
+    assert_eq!(
+        outcome,
+        (AuctionStage::Cancelled, U256::from(10 * LOAD_MINOR), true)
+    );
 }
 
 #[cfg(not(feature = "e2e-test"))]
 fn native_brief_at_now(s: &StorageHandle) {
+    crate::api::schedule_auction(s.clone(), EMISSION_DAY).unwrap();
     crate::api::brief_auction(
         s.clone(),
         crate::api::AuctionBrief {
@@ -1175,8 +1200,8 @@ fn a_late_native_brief_cancels_its_day() {
     );
 }
 
-/// A day that never started is still a late start past its whole issuance window, so
-/// its targets hear of it. Only a started day can fail.
+/// A day that never started is a late start, also past its whole issuance window. Only a
+/// started day can fail.
 #[test]
 #[cfg(not(feature = "e2e-test"))]
 fn a_brief_past_the_issuance_window_is_still_a_late_start() {
@@ -1187,8 +1212,8 @@ fn a_brief_past_the_issuance_window_is_still_a_late_start() {
     );
 }
 
-/// Past its issuance window, a day whose START the router still refuses is cancelled with
-/// no message. Its limit therefore does not wait on the router forever.
+/// Past its issuance window, a day that never started is cancelled with no message, so its
+/// limit does not wait on the router.
 #[test]
 #[cfg(not(feature = "e2e-test"))]
 fn a_briefed_day_the_router_never_takes_is_cancelled_past_its_issuance_window() {
@@ -2256,21 +2281,20 @@ fn a_zero_limit_briefed_with_a_limit_is_cancelled_below_one_unit() {
     assert!(returns.is_empty());
 }
 
-/// The `dayState` of every AUCTION_STAGE_START message the provider sent.
-fn sent_day_states(storage: &HashMapStorageProvider) -> Vec<u8> {
+/// The emission day of every AUCTION_STAGE_START message the provider sent.
+fn sent_starts(storage: &HashMapStorageProvider) -> Vec<u32> {
     use crate::sol_ext::IOriginRouter::sendAuctionStageStartCall;
     storage
         .sub_call_inputs()
         .iter()
         .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
         .filter_map(|input| sendAuctionStageStartCall::abi_decode(&input.calldata).ok())
-        .map(|call| call.params.dayState)
+        .map(|call| call.params.emissionDay)
         .collect()
 }
 
 #[test]
 fn a_day_briefed_with_no_limit_is_cancelled_with_no_limit() {
-    use crate::constants::DAY_STATE_CANCELLED;
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
     storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
@@ -2289,7 +2313,7 @@ fn a_day_briefed_with_no_limit_is_cancelled_with_no_limit() {
         .clone();
 
     assert_eq!(stage, AuctionStage::Cancelled);
-    assert_eq!(sent_day_states(&storage), vec![DAY_STATE_CANCELLED]);
+    assert!(sent_starts(&storage).is_empty());
     assert!(below_one_unit(&events).is_none());
     assert!(events.iter().any(|log| {
         use alloy_sol_types::SolEvent;

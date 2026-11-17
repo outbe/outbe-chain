@@ -65,6 +65,12 @@ interface IOriginRouter {
     /// @param stageType Codec message type (start/reveal/clearing).
     event AuctionStageSent(bytes32 indexed sendId, uint32 indexed emissionDay, uint8 stageType);
 
+    /// @notice Emitted when the cancel of a day is sent to a target chain.
+    /// @param sendId Bridge send identifier (0 when the send failed and was kept).
+    /// @param emissionDay Emission day (yyyymmdd).
+    /// @param dstChainId Target chain of the send.
+    event IntexAuctionCancelSent(bytes32 indexed sendId, uint32 indexed emissionDay, uint32 indexed dstChainId);
+
     /// @notice Emitted when an auction result is sent to a target chain.
     /// @param sendId Bridge send identifier.
     /// @param emissionDay Emission day (yyyymmdd).
@@ -166,8 +172,6 @@ interface IOriginRouter {
         uint16 minIntexBidQuantity;
         /// @notice Commit-entry bond in protocol units (1e6). 0 disables the bond.
         uint128 commitBondMinor;
-        /// @notice Final emission-day state (1 = Live, 2 = Cancelled).
-        uint8 dayState;
     }
 
     /// @notice Issuance instruction parameters. The struct groups them so that the calldata layout
@@ -256,6 +260,8 @@ interface IOriginRouter {
     /// @notice Broadcast auction stage start to every registered target, and take a snapshot of the
     ///         target set for the day. Restricted to `DESIS_ROLE`.
     function sendAuctionStageStart(AuctionStageStartParams calldata params) external payable;
+    /// @notice Broadcast the cancel of a started day to every chain of its snapshot. Restricted to `DESIS_ROLE`.
+    function sendAuctionCancel(uint32 emissionDay, uint8 reason) external payable;
     /// @notice Broadcast the collecting-bids stage to one chain of the day's snapshot. Restricted to `DESIS_ROLE`.
     function sendAuctionStageCollectingBids(uint32 emissionDay, uint32 dstChainId, uint256 gasLimit) external payable;
     /// @notice Send auction result to a single target chain. Restricted to `DESIS_ROLE`.

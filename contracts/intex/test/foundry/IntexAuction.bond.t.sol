@@ -77,7 +77,7 @@ contract IntexAuctionBondTest is Test {
 
         startTs = block.timestamp;
         vm.prank(bridger);
-        auction.auctionStart(emissionDay, IIntexAuction.DayState.Live, _schedule(), _params(BOND_PROTOCOL));
+        auction.auctionStart(emissionDay, _schedule(), _params(BOND_PROTOCOL));
     }
 
     // --- Helpers ---
@@ -154,7 +154,7 @@ contract IntexAuctionBondTest is Test {
     function test_CommitBid_ZeroBond_SkipsEscrow() public {
         uint32 freeSeries = emissionDay + 1;
         vm.prank(bridger);
-        auction.auctionStart(freeSeries, IIntexAuction.DayState.Live, _schedule(), _params(0));
+        auction.auctionStart(freeSeries, _schedule(), _params(0));
 
         // No approval needed when the series carries no bond.
         address pauper = address(0xF00D);
@@ -214,17 +214,15 @@ contract IntexAuctionBondTest is Test {
 
     // --- claimCommitBond ---
 
-    function test_ClaimCommitBond_CancelledDay_HasNoBond() public {
-        uint32 cancelledSeries = emissionDay + 7;
+    function test_ClaimCommitBond_CancelledDay_ReleasesAtOnce() public {
+        _commit();
         vm.prank(bridger);
-        auction.auctionStart(cancelledSeries, IIntexAuction.DayState.Cancelled, _schedule(), _params(BOND_PROTOCOL));
+        auction.cancelAuction(emissionDay, 1);
 
-        // A cancelled day is cancelled before anyone can commit, so its penalty window passes with no
-        // bond for the escrow to release.
-        vm.warp(uint256(startTs) + REVEAL_OFFSET + auction.UNREVEALED_BOND_LOCK_PERIOD());
+        // A cancelled day has no reveal to miss, so its bond waits for no penalty window.
         vm.prank(outsider);
-        vm.expectRevert(IEscrowAdapter.CommitBondNotFound.selector);
-        auction.claimCommitBond(cancelledSeries, iba1);
+        auction.claimCommitBond(emissionDay, iba1);
+        assertEq(paymentToken.balanceOf(iba1), 1000e18, "the whole bond is back");
     }
 
     function test_ClaimCommitBond_NoReveal_RevertsBeforeWindow() public {

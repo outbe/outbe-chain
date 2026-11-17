@@ -5,34 +5,33 @@ use outbe_macros::{contract, storage_schema};
 use outbe_system_common::addresses::DESIS_ADDRESS;
 use outbe_system_common::time::EmissionDate;
 
-/// Auction lifecycle stage, in order: a day is `Briefed`, takes commits in `CommittingBids`,
-/// reveals in `RevealingBids` and gathers the chains' bids in `CollectingBids`. It ends
-/// `Completed`, `Cancelled` (it could not start) or `Failed` (it started and found no result).
+/// Auction lifecycle stage, in order: a scheduled day waits in `None`, takes commits in
+/// `CommittingBids`, reveals in `RevealingBids` and gathers the chains' bids in `CollectingBids`.
+/// It ends `Completed`, `Cancelled` (cancelled before its result) or `Failed` (it started and
+/// found no result).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum AuctionStage {
     #[default]
     None = 0,
-    Briefed = 1,
-    CommittingBids = 2,
-    RevealingBids = 3,
-    CollectingBids = 4,
-    Completed = 5,
-    Cancelled = 6,
-    Failed = 7,
+    CommittingBids = 1,
+    RevealingBids = 2,
+    CollectingBids = 3,
+    Completed = 4,
+    Cancelled = 5,
+    Failed = 6,
 }
 
 impl AuctionStage {
     pub fn from_u8(value: u8) -> Result<Self, crate::DesisError> {
         match value {
             0 => Ok(Self::None),
-            1 => Ok(Self::Briefed),
-            2 => Ok(Self::CommittingBids),
-            3 => Ok(Self::RevealingBids),
-            4 => Ok(Self::CollectingBids),
-            5 => Ok(Self::Completed),
-            6 => Ok(Self::Cancelled),
-            7 => Ok(Self::Failed),
+            1 => Ok(Self::CommittingBids),
+            2 => Ok(Self::RevealingBids),
+            3 => Ok(Self::CollectingBids),
+            4 => Ok(Self::Completed),
+            5 => Ok(Self::Cancelled),
+            6 => Ok(Self::Failed),
             _ => Err(crate::DesisError::InvalidStageTransition),
         }
     }
@@ -251,13 +250,19 @@ pub struct DesisContract {
     #[attribute(order = 29)]
     pub gate_active_slot: outbe_primitives::storage::dsl::Map<EmissionDate, u32>,
 
-    // --- Auction brief ---
+    // --- Desis Limit ---
     /// emission_day -> Desis Limit awaiting the auction, in raw PROMIS minor units.
     #[attribute(order = 30)]
     pub pending_desis_limit_minor: outbe_primitives::storage::dsl::Map<EmissionDate, U256>,
     /// emission_day -> 1 when the day was briefed with a limit to sell.
     #[attribute(order = 31)]
     pub brief_has_limit: outbe_primitives::storage::dsl::Map<EmissionDate, u8>,
+    /// emission_day -> 1 once the brief of the day arrived, with or without a limit.
+    #[attribute(order = 52)]
+    pub desis_limit_set: outbe_primitives::storage::dsl::Map<EmissionDate, u8>,
+    /// emission_day -> reason of a cancel that the next schedule step carries out (0 = none).
+    #[attribute(order = 53)]
+    pub cancel_reason: outbe_primitives::storage::dsl::Map<EmissionDate, u8>,
     /// Days with a scheduled auction (dense active set for the begin-block tick).
     #[attribute(order = 32)]
     pub sched_active_count: outbe_primitives::storage::dsl::Value<u32>,

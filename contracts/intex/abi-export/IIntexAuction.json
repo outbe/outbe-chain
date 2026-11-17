@@ -9,11 +9,6 @@
         "internalType": "uint32"
       },
       {
-        "name": "dayState",
-        "type": "uint8",
-        "internalType": "enum IIntexAuction.DayState"
-      },
-      {
         "name": "schedule",
         "type": "tuple",
         "internalType": "struct IIntexAuction.AuctionSchedule",
@@ -105,6 +100,24 @@
             "internalType": "uint128"
           }
         ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "cancelAuction",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "reason",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ],
     "outputs": [],
@@ -946,6 +959,11 @@
   },
   {
     "type": "error",
+    "name": "AuctionCanceled",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "AuctionNotFound",
     "inputs": []
   },
@@ -1025,11 +1043,6 @@
   {
     "type": "error",
     "name": "InvalidCommitHash",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidDayState",
     "inputs": []
   },
   {

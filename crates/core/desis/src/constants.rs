@@ -73,11 +73,9 @@ pub const MIN_COMMIT_WINDOW_SECONDS: u64 = 16 * 3600;
 #[cfg(feature = "e2e-test")]
 pub const MIN_COMMIT_WINDOW_SECONDS: u64 = 300;
 
-/// `dayState` wire values carried by AUCTION_STAGE_START.
-pub const DAY_STATE_LIVE: u8 = 1;
-pub const DAY_STATE_CANCELLED: u8 = 2;
-
-/// `IDesis.IntexAuctionCanceled` reason codes. Priority at start is this order.
+/// `IDesis.IntexAuctionCanceled` reason codes. At the start, a missing limit comes first, then a
+/// day with no price, a sub-unit limit and a late start. A cancel after the start whose brief
+/// never came, or whose Metadosis failed, is a missing limit too.
 pub const CANCELED_NO_LIMIT: u8 = 1;
 pub const CANCELED_UNPRICED: u8 = 2;
 pub const CANCELED_BELOW_ONE_UNIT: u8 = 3;

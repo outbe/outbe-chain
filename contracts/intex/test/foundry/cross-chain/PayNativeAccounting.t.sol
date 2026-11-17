@@ -223,12 +223,8 @@ contract PayNativeAccountingTest is CrossChainTest {
 
 /// @dev Auction stub with one bid, so an inbound CLEARING produces exactly one relayed batch - one bridge fee.
 contract StubAuction {
-    function auctionStart(
-        uint32,
-        IIntexAuction.DayState,
-        IIntexAuction.AuctionSchedule calldata,
-        IIntexAuction.AuctionParams calldata
-    ) external {}
+    function auctionStart(uint32, IIntexAuction.AuctionSchedule calldata, IIntexAuction.AuctionParams calldata)
+        external {}
     function startAwaitingResult(uint32) external {}
     function executeAuctionClearing(uint32, uint32, uint64, uint32) external {}
 

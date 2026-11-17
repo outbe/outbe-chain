@@ -200,7 +200,7 @@ fn schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_due_after_
         let briefed = outbe_system_common::time::EmissionDate::new(20260905);
         assert_eq!(
             desis.auction_stage.read(&briefed).unwrap(),
-            outbe_desis::schema::AuctionStage::Briefed as u8
+            outbe_desis::schema::AuctionStage::None as u8
         );
         assert_eq!(desis.brief_has_limit.read(&briefed).unwrap(), 0);
     });

@@ -38,7 +38,7 @@ contract IntexAuctionUupsTest is Test {
             commitBondMinor: 0
         });
         vm.prank(bridger);
-        auction.auctionStart(emissionDay, IIntexAuction.DayState.Live, schedule, params);
+        auction.auctionStart(emissionDay, schedule, params);
     }
 
     function test_Initialize_GrantsRoles() public view {

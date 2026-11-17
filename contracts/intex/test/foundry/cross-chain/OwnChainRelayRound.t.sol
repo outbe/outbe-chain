@@ -24,12 +24,8 @@ contract BidsStub {
         count = n;
     }
 
-    function auctionStart(
-        uint32,
-        IIntexAuction.DayState,
-        IIntexAuction.AuctionSchedule calldata,
-        IIntexAuction.AuctionParams calldata
-    ) external {}
+    function auctionStart(uint32, IIntexAuction.AuctionSchedule calldata, IIntexAuction.AuctionParams calldata)
+        external {}
 
     function startAwaitingResult(uint32) external {}
 
@@ -146,7 +142,6 @@ contract OwnChainRelayRoundTest is Test {
         IOriginRouter.AuctionStageStartParams memory p;
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         p.emissionDay = DAY;
-        p.dayState = 1;
         vm.prank(desis);
         origin.sendAuctionStageStart(p);
         _relayAll();

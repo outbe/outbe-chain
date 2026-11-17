@@ -53,7 +53,6 @@ abstract contract OriginStageSendGasBase is Test {
         p.callThreshold = 3_600;
         p.minIntexBidQuantity = 1;
         p.commitBondMinor = 1_000_000;
-        p.dayState = 1;
     }
 
     function _start(uint32 day) internal returns (uint256 spent) {

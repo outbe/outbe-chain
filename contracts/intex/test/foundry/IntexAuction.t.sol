@@ -100,9 +100,7 @@ contract AuctionTest is Test {
     ///      the current `block.timestamp` via `_schedule()`.
     function _start(uint32 emissionDay, uint32 minIntexBidRate, uint16 minIntexBidQuantity) internal {
         vm.prank(bridger);
-        auction.auctionStart(
-            emissionDay, IIntexAuction.DayState.Live, _schedule(), _params(minIntexBidRate, minIntexBidQuantity)
-        );
+        auction.auctionStart(emissionDay, _schedule(), _params(minIntexBidRate, minIntexBidQuantity));
     }
 
     /// @dev Warp past `commitEnd` so the timestamp-computed stage is `RevealingBids`.
@@ -430,15 +428,29 @@ contract AuctionTest is Test {
         _reveal(emissionDay, iba2, 5, 120, iba2PrivateKey);
     }
 
-    function test_CancelledDay_AuctionBornCancelled() public {
+    function test_CancelAuction_UnknownDay_StaysCancelled() public {
         uint32 emissionDay = 20250120;
         vm.prank(bridger);
-        auction.auctionStart(emissionDay, IIntexAuction.DayState.Cancelled, _schedule(), _params(1, 1));
+        auction.cancelAuction(emissionDay, 1);
+        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.Cancelled));
 
+        vm.expectRevert(IIntexAuction.AuctionCanceled.selector);
+        vm.prank(bridger);
+        auction.auctionStart(emissionDay, _schedule(), _params(1, 1));
+
+        vm.expectRevert(IIntexAuction.AuctionNotFound.selector);
+        vm.prank(iba1);
+        auction.commitBid(emissionDay, keccak256("commit"));
+    }
+
+    function test_CancelAuction_CommitStage_ClosesCommits() public {
+        uint32 emissionDay = 20250140;
+        _start(emissionDay, 1, 1);
+        vm.prank(bridger);
+        auction.cancelAuction(emissionDay, 1);
         assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.Cancelled));
 
         bytes memory signature = _createSignature(emissionDay, iba1, 1, 1, iba1PrivateKey);
-        bytes32 commitHash = keccak256(signature);
         vm.expectRevert(
             abi.encodeWithSelector(
                 IIntexAuction.StageRequired.selector,
@@ -447,7 +459,57 @@ contract AuctionTest is Test {
             )
         );
         vm.prank(iba1);
-        auction.commitBid(emissionDay, commitHash);
+        auction.commitBid(emissionDay, keccak256(signature));
+    }
+
+    function test_CancelAuction_RevealStage_ClosesReveals() public {
+        uint256 startTs = block.timestamp;
+        uint32 emissionDay = 20250141;
+        _start(emissionDay, 1, 1);
+        _commit(emissionDay, iba1, 5, 20, iba1PrivateKey);
+        _enterRevealStage(emissionDay, startTs);
+        vm.prank(bridger);
+        auction.cancelAuction(emissionDay, 1);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IIntexAuction.StageRequired.selector,
+                IIntexAuction.AuctionStage.RevealingBids,
+                IIntexAuction.AuctionStage.Cancelled
+            )
+        );
+        _reveal(emissionDay, iba1, 5, 20, iba1PrivateKey);
+    }
+
+    function test_CancelAuction_RevertWhen_DayHasAResultOrIsCancelled() public {
+        uint256 startTs = block.timestamp;
+        uint32 emissionDay = 20250142;
+        _start(emissionDay, 1, 1);
+        _enterRevealStage(emissionDay, startTs);
+        vm.warp(startTs + REVEAL_OFFSET + 1);
+        vm.startPrank(bridger);
+        auction.startAwaitingResult(emissionDay);
+        auction.executeAuctionClearing(emissionDay, 0, 0, 0);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IIntexAuction.StageRequired.selector,
+                IIntexAuction.AuctionStage.AwaitingResult,
+                IIntexAuction.AuctionStage.Completed
+            )
+        );
+        auction.cancelAuction(emissionDay, 1);
+
+        uint32 other = emissionDay + 1;
+        auction.cancelAuction(other, 1);
+        vm.expectRevert(IIntexAuction.AuctionCanceled.selector);
+        auction.cancelAuction(other, 1);
+        vm.stopPrank();
+    }
+
+    function test_CancelAuction_RevertWhen_NotRelayer() public {
+        vm.expectRevert();
+        vm.prank(iba1);
+        auction.cancelAuction(20250143, 1);
     }
 
     function test_Views_BySeriesId() public {
@@ -564,11 +626,11 @@ contract AuctionTest is Test {
 
         vm.expectRevert();
         vm.prank(admin);
-        auction.auctionStart(emissionDay, IIntexAuction.DayState.Live, _schedule(), _params(10, 1));
+        auction.auctionStart(emissionDay, _schedule(), _params(10, 1));
 
         vm.expectRevert();
         vm.prank(iba1);
-        auction.auctionStart(emissionDay, IIntexAuction.DayState.Live, _schedule(), _params(10, 1));
+        auction.auctionStart(emissionDay, _schedule(), _params(10, 1));
     }
 
     function test_AccessControl_StartAwaitingResult() public {
@@ -633,7 +695,7 @@ contract AuctionTest is Test {
         IIntexAuction.AuctionParams memory params = _params(floor, 1);
         params.promisLoadMinor = type(uint128).max; // ceiling so the clearing product overflows uint128
         vm.prank(bridger);
-        auction.auctionStart(emissionDay, IIntexAuction.DayState.Live, _schedule(), params);
+        auction.auctionStart(emissionDay, _schedule(), params);
 
         _enterRevealStage(emissionDay, startTs);
         vm.warp(startTs + REVEAL_OFFSET + 1);
@@ -750,7 +812,7 @@ contract AuctionTest is Test {
         });
         vm.expectRevert(IIntexAuction.InvalidSchedule.selector);
         vm.prank(bridger);
-        auction.auctionStart(emissionDay, IIntexAuction.DayState.Live, pastSchedule, _params(10, 1));
+        auction.auctionStart(emissionDay, pastSchedule, _params(10, 1));
 
         // Schedule not strictly increasing (revealEnd <= commitEnd).
         IIntexAuction.AuctionSchedule memory nonIncreasing = IIntexAuction.AuctionSchedule({
@@ -760,35 +822,16 @@ contract AuctionTest is Test {
         });
         vm.expectRevert(IIntexAuction.InvalidSchedule.selector);
         vm.prank(bridger);
-        auction.auctionStart(emissionDay, IIntexAuction.DayState.Live, nonIncreasing, _params(10, 1));
+        auction.auctionStart(emissionDay, nonIncreasing, _params(10, 1));
 
         // Valid start succeeds.
         vm.prank(bridger);
-        auction.auctionStart(emissionDay, IIntexAuction.DayState.Live, _schedule(), _params(10, 1));
+        auction.auctionStart(emissionDay, _schedule(), _params(10, 1));
 
         // AuctionAlreadyExists
         vm.expectRevert(IIntexAuction.AuctionAlreadyExists.selector);
         vm.prank(bridger);
-        auction.auctionStart(emissionDay, IIntexAuction.DayState.Live, _schedule(), _params(10, 1));
-    }
-
-    function test_AuctionStart_RevertWhen_UnknownDayState() public {
-        vm.expectRevert(IIntexAuction.InvalidDayState.selector);
-        vm.prank(bridger);
-        auction.auctionStart(20250135, IIntexAuction.DayState.Unknown, _schedule(), _params(10, 1));
-    }
-
-    function test_AuctionStart_CancelledDay_AllowsPastCommitEnd() public {
-        uint32 emissionDay = 20250136;
-        IIntexAuction.AuctionSchedule memory pastSchedule = IIntexAuction.AuctionSchedule({
-            commitEnd: uint32(block.timestamp),
-            revealEnd: uint32(block.timestamp + 200),
-            issuanceEnd: uint32(block.timestamp + 300)
-        });
-        vm.prank(bridger);
-        auction.auctionStart(emissionDay, IIntexAuction.DayState.Cancelled, pastSchedule, _params(10, 1));
-
-        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.Cancelled));
+        auction.auctionStart(emissionDay, _schedule(), _params(10, 1));
     }
 
     function test_Wire_Validation() public {

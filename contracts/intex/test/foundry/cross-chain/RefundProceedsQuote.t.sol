@@ -35,7 +35,6 @@ contract RefundProceedsQuoteTest is CrossChainTest {
         IOriginRouter.AuctionStageStartParams memory sp;
         sp.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         sp.emissionDay = DAY;
-        sp.dayState = 1;
         vm.prank(desis);
         outbe.sendAuctionStageStart(sp);
     }

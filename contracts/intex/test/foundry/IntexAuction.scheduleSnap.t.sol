@@ -45,7 +45,7 @@ contract IntexAuctionScheduleSnapTest is Test {
             commitBondMinor: 0
         });
         vm.prank(bridger);
-        auction.auctionStart(emissionDay, IIntexAuction.DayState.Live, s, p);
+        auction.auctionStart(emissionDay, s, p);
     }
 
     function test_ClearingSignal_Early_SnapsRevealEnd() public {

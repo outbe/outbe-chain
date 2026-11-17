@@ -20,8 +20,8 @@ interface IIntexAuction {
         Failed
     }
 
-    /// @notice Emission-day state, final at `auctionStart`.
-    /// @dev `Live` = live auction, `Cancelled` = cancelled record. `Unknown` never persists.
+    /// @notice Emission-day state: `Live` from `auctionStart`, `Cancelled` from `cancelAuction`.
+    /// @dev `Unknown` is a day that neither message reached.
     enum DayState {
         Unknown,
         Live,
@@ -214,8 +214,8 @@ interface IIntexAuction {
     error ClearingRateBelowMin(uint64 clearingRate, uint32 minIntexBidRate);
     /// @notice Schedule timestamps are not strictly increasing or are in the past.
     error InvalidSchedule();
-    /// @notice `auctionStart` requires a final Live or Cancelled day state.
-    error InvalidDayState();
+    /// @notice The day is cancelled.
+    error AuctionCanceled();
     /// @notice The day does not carry a price for this reference currency.
     error ReferenceCurrencyNotPriced(uint32 emissionDay, uint16 isoCode);
     /// @notice The declared issuance currency is not an ISO 4217 code.
@@ -251,19 +251,20 @@ interface IIntexAuction {
 
     /// @notice Create and start a new auction for `emissionDay`.
     /// @dev The schedule (`commitEnd`/`revealEnd`/`issuanceEnd`) is computed on the
-    ///      Outbe side (Desis) and passed in. `dayState` is final at creation:
-    ///      Live opens the commit stage, Cancelled records the series born Cancelled.
-    ///      Stage transitions follow the stored timestamps.
+    ///      Outbe side (Desis) and passed in. Stage transitions follow the stored timestamps.
+    ///      A day that a cancel reached first stays cancelled (`AuctionCanceled`).
     /// @param emissionDay Emission day (yyyymmdd, uint32).
-    /// @param dayState Final emission-day state (Live or Cancelled).
     /// @param schedule Stage-end timestamps.
     /// @param params Auction input parameters.
-    function auctionStart(
-        uint32 emissionDay,
-        DayState dayState,
-        AuctionSchedule calldata schedule,
-        AuctionParams calldata params
-    ) external;
+    function auctionStart(uint32 emissionDay, AuctionSchedule calldata schedule, AuctionParams calldata params) external;
+
+    /// @notice Cancel the auction of `emissionDay` at any stage before its result.
+    /// @dev A day this chain has not started yet is recorded as cancelled, so its later start
+    ///      fails. A cleared or failed day reverts `StageRequired`, and a cancelled one
+    ///      `AuctionCanceled`.
+    /// @param emissionDay Emission day (yyyymmdd).
+    /// @param reason Reason code of the cancel on Outbe.
+    function cancelAuction(uint32 emissionDay, uint8 reason) external;
 
     /// @notice Move the auction to `AwaitingResult` (the bridge-driven signal from Outbe that it collects the bids).
     /// @dev Early signal snaps `revealEnd` forward; `issuanceEnd` is unchanged.

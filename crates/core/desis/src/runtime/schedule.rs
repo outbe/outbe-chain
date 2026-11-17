@@ -67,10 +67,10 @@ fn day_windows(
     now: u64,
 ) -> Result<(u64, Windows)> {
     let stored_anchor = u64::from(contract.auction_at.read(&emission_day)?);
-    // An e2e day never reaches its production anchor, so a briefed day starts
-    // from the tick that observes the brief.
+    // An e2e day never reaches its production anchor, so a scheduled day starts
+    // from the tick that observes it.
     #[cfg(feature = "e2e-test")]
-    let anchor = if stage == AuctionStage::Briefed {
+    let anchor = if stage == AuctionStage::None {
         now
     } else {
         stored_anchor
@@ -85,27 +85,24 @@ fn due_work_gas(contract: &DesisContract<'_>, emission_day: EmissionDate, now: u
     let mut stage = contract.read_stage(emission_day)?;
     let (anchor, windows) = day_windows(contract, emission_day, stage, now)?;
     let mut gas = ADVANCE_DAY_BASE_GAS;
+    if contract.cancel_reason.read(&emission_day)? != 0 {
+        return Ok(gas + ADVANCE_START_GAS);
+    }
     loop {
         match stage {
             AuctionStage::Completed | AuctionStage::Cancelled | AuctionStage::Failed => {
                 return Ok(gas)
             }
-            _ if windows.unfinished_past_deadline(stage, now) => {
-                let end = if stage == AuctionStage::Briefed {
-                    ADVANCE_START_GAS
-                } else {
-                    ADVANCE_FAIL_GAS
-                };
-                return Ok(gas + end);
-            }
+            _ if windows.unfinished_past_deadline(stage, now) => return Ok(gas + ADVANCE_FAIL_GAS),
             // A start leaves at least `MIN_COMMIT_WINDOW_SECONDS` of commit, or cancels the day.
-            AuctionStage::Briefed if now >= anchor => return Ok(gas + ADVANCE_START_GAS),
+            AuctionStage::None if now >= anchor => return Ok(gas + ADVANCE_START_GAS),
             AuctionStage::CommittingBids if now >= windows.commit_end => {
                 gas += ADVANCE_DAY_BASE_GAS;
                 stage = AuctionStage::RevealingBids;
             }
+            // The larger of the two ends of the reveal stage: the clearing start or the cancel.
             AuctionStage::RevealingBids if now >= windows.reveal_end => {
-                return Ok(gas + ADVANCE_REVEAL_END_GAS);
+                return Ok(gas + ADVANCE_REVEAL_END_GAS.max(ADVANCE_START_GAS));
             }
             _ => return Ok(gas),
         }
@@ -113,24 +110,34 @@ fn due_work_gas(contract: &DesisContract<'_>, emission_day: EmissionDate, now: u
 }
 
 /// Walk one day's schedule: start at the anchor, move to `RevealingBids` at commit end, collect
-/// the bids at reveal end, and end a day that found no result by its last clearing time.
+/// the bids at reveal end, and end a day that found no result by its last clearing time. A
+/// cancel that a brief or Metadosis asked for comes first.
 fn advance_day(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u64) -> Result<()> {
     loop {
         let mut contract = storage.contract::<DesisContract>();
         let stage = contract.read_stage(emission_day)?;
         let (anchor, windows) = day_windows(&contract, emission_day, stage, now)?;
+        if let Some(reason) = pending_cancel(&contract, emission_day, stage)? {
+            return cancel_auction(storage, &mut contract, emission_day, stage, reason);
+        }
         match stage {
             AuctionStage::Completed | AuctionStage::Cancelled | AuctionStage::Failed => {
                 return contract.remove_sched_active(emission_day);
             }
             _ if windows.unfinished_past_deadline(stage, now) => {
-                return if stage == AuctionStage::Briefed {
-                    end_unstarted(storage, &mut contract, emission_day, windows, now)
+                return if stage == AuctionStage::None {
+                    cancel_auction(
+                        storage,
+                        &mut contract,
+                        emission_day,
+                        stage,
+                        CANCELED_LATE_START,
+                    )
                 } else {
                     fail_auction(storage, &mut contract, emission_day, stage)
                 };
             }
-            AuctionStage::Briefed if now >= anchor => {
+            AuctionStage::None if now >= anchor => {
                 // The chain has to run the windows the START message announces.
                 #[cfg(feature = "e2e-test")]
                 contract.auction_at.write(&emission_day, ts32(anchor)?)?;
@@ -143,7 +150,17 @@ fn advance_day(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u64
             AuctionStage::CommittingBids if now >= windows.commit_end => {
                 contract.write_stage(emission_day, AuctionStage::RevealingBids)?;
             }
+            // The clearing needs the size, so a day with no brief by now is cancelled.
             AuctionStage::RevealingBids if now >= windows.reveal_end => {
+                if contract.desis_limit_set.read(&emission_day)? == 0 {
+                    return cancel_auction(
+                        storage,
+                        &mut contract,
+                        emission_day,
+                        stage,
+                        CANCELED_NO_LIMIT,
+                    );
+                }
                 return arm_clearing(storage, emission_day, now);
             }
             _ => return Ok(()),
@@ -151,36 +168,49 @@ fn advance_day(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u64
     }
 }
 
-/// A day that never started, out of time: it is sent as a late start while the router accepts
-/// it, and is cancelled otherwise.
-fn end_unstarted(
-    storage: &StorageHandle<'_>,
-    contract: &mut DesisContract<'_>,
+/// The cancel a day with no result waits for: one that was asked for, or one its brief gives a
+/// started day.
+fn pending_cancel(
+    contract: &DesisContract<'_>,
     emission_day: EmissionDate,
-    windows: Windows,
-    now: u64,
-) -> Result<()> {
-    let started_late = storage
-        .with_checkpoint(|| start_auction(storage, contract, emission_day, windows, now))
-        .is_ok();
-    if started_late {
-        Ok(())
-    } else {
-        cancel_unstarted(storage, contract, emission_day)
+    stage: AuctionStage,
+) -> Result<Option<u8>> {
+    if !matches!(
+        stage,
+        AuctionStage::None | AuctionStage::CommittingBids | AuctionStage::RevealingBids
+    ) {
+        return Ok(None);
     }
+    let asked = contract.cancel_reason.read(&emission_day)?;
+    if asked != 0 {
+        return Ok(Some(asked));
+    }
+    if stage == AuctionStage::None {
+        return Ok(None);
+    }
+    let promis_load_minor = u128::try_from(contract.config_promis_load_minor.read(&emission_day)?)
+        .map_err(|_| DesisError::InvalidEmissionDay(emission_day))?;
+    brief_cancel_reason(contract, emission_day, promis_load_minor)
 }
 
-/// A day whose START no chain ever took. It never ran, so it is cancelled with no message.
-fn cancel_unstarted(
+/// Cancel a day before its result. A started day sends the cancel to every chain it started on.
+/// A day that never started is cancelled with no message.
+fn cancel_auction(
     storage: &StorageHandle<'_>,
     contract: &mut DesisContract<'_>,
     emission_day: EmissionDate,
+    stage: AuctionStage,
+    reason: u8,
 ) -> Result<()> {
+    if stage != AuctionStage::None {
+        send_auction_cancel(storage, emission_day, reason)?;
+    }
     contract.emit(IDesis::IntexAuctionCanceled {
         emissionDay: emission_day.into(),
-        reason: CANCELED_LATE_START,
+        reason,
     })?;
     refund_unused_desis_limit(storage, contract, emission_day)?;
+    contract.cancel_reason.write(&emission_day, 0)?;
     contract.write_stage(emission_day, AuctionStage::Cancelled)?;
     contract.remove_sched_active(emission_day)
 }
@@ -238,7 +268,7 @@ impl Windows {
     /// its last clearing time.
     fn unfinished_past_deadline(&self, stage: AuctionStage, now: u64) -> bool {
         match stage {
-            AuctionStage::Briefed => now >= self.issuance_end,
+            AuctionStage::None => now >= self.issuance_end,
             AuctionStage::CommittingBids
             | AuctionStage::RevealingBids
             | AuctionStage::CollectingBids => now >= self.last_clearing,
@@ -266,8 +296,8 @@ enum StartOutcome {
     Retired,
 }
 
-/// Dispatch the START message for a briefed day: a day with no limit, an unpriced, sub-unit
-/// or late day is born cancelled, otherwise it starts live.
+/// Start a scheduled day. An unpriced or late day, or one whose brief came with no limit or a
+/// sub-unit limit, is cancelled with no message. Any other day starts live.
 fn start_auction(
     storage: &StorageHandle<'_>,
     contract: &mut DesisContract<'_>,
@@ -306,34 +336,23 @@ fn start_auction(
         issuance_end: ts32(issuance_end)?,
     };
 
-    // A day nobody could price cannot hold an auction, and ends as a day with no limit does.
-    // But unlike that day, it was briefed with a limit, which has to be returned.
+    let brief = brief_cancel_reason(contract, emission_day, config.promis_load_minor)?;
     let unpriced = config.reference_prices.is_empty();
-    let no_limit = contract.brief_has_limit.read(&emission_day)? == 0;
-    let desis_limit_minor = contract.pending_desis_limit_minor.read(&emission_day)?;
-    let below_one_unit = desis_limit_minor < U256::from(config.promis_load_minor);
     let late = commit_end.saturating_sub(now) < MIN_COMMIT_WINDOW_SECONDS;
-    if unpriced || no_limit || below_one_unit || late {
-        send_stage_start(storage, start, DAY_STATE_CANCELLED)?;
-        contract.write_stage(emission_day, AuctionStage::Cancelled)?;
-        let reason = if no_limit {
-            CANCELED_NO_LIMIT
-        } else if unpriced {
-            CANCELED_UNPRICED
-        } else if below_one_unit {
-            CANCELED_BELOW_ONE_UNIT
-        } else {
-            CANCELED_LATE_START
-        };
-        contract.emit(IDesis::IntexAuctionCanceled {
-            emissionDay: emission_day.into(),
-            reason,
-        })?;
-        refund_unused_desis_limit(storage, contract, emission_day)?;
-        contract.remove_sched_active(emission_day)?;
+    let reason = [
+        brief.filter(|reason| *reason == CANCELED_NO_LIMIT),
+        unpriced.then_some(CANCELED_UNPRICED),
+        brief,
+        late.then_some(CANCELED_LATE_START),
+    ]
+    .into_iter()
+    .flatten()
+    .next();
+    if let Some(reason) = reason {
+        cancel_auction(storage, contract, emission_day, AuctionStage::None, reason)?;
         return Ok(StartOutcome::Retired);
     }
-    send_stage_start(storage, start, DAY_STATE_LIVE)?;
+    send_stage_start(storage, start)?;
     contract.write_stage(emission_day, AuctionStage::CommittingBids)?;
     contract.emit(IDesis::IntexAuctionCreated {
         emissionDay: emission_day.into(),

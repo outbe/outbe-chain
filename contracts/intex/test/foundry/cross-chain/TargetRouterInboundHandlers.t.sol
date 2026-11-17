@@ -259,6 +259,90 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Won), "lock advanced to Won via handler");
     }
 
+    // --- _handleAuctionCancel: the day ends as a result of zero units does ---
+
+    function _cancel() internal {
+        _deliver(BridgeMsgCodec.encodeAuctionCancel(EMISSION_DAY, 1));
+    }
+
+    function _lock() internal {
+        paymentToken.mint(bidder, 1e18);
+        vm.prank(admin);
+        escrow.lockFunds(EMISSION_DAY, bidder, 1e6, 1_000_000, 1);
+    }
+
+    function test_cancel_before_the_result_in_the_commit_stage() public {
+        _seedAuction();
+        _cancel();
+        assertEq(uint8(auction.getAuctionStage(EMISSION_DAY)), uint8(IIntexAuction.AuctionStage.Cancelled));
+        (, bool finalized,) = escrow.getAuctionStatus(EMISSION_DAY);
+        assertTrue(finalized, "the escrow closes the day");
+    }
+
+    function test_cancel_before_the_result_in_the_reveal_stage_returns_each_lock_at_once() public {
+        _seedAuction();
+        vm.warp(block.timestamp + 1 days);
+        _lock();
+        _cancel();
+
+        (uint128 amount, uint32 claimableAt) = escrow.getClaimableRefund(EMISSION_DAY, bidder);
+        assertGt(amount, 0, "the lock is owed");
+        assertEq(claimableAt, 0, "at once, with no wait for the unfinalized delay");
+    }
+
+    function test_cancel_before_the_result_twice_is_a_duplicate() public {
+        _seedAuction();
+        _cancel();
+        vm.expectEmit(true, true, true, true, address(bnbRouter));
+        emit ITargetRouter.InboundMessageIgnored(
+            OUTBE_CHAIN_ID, BridgeMsgCodec.MSG_AUCTION_CANCEL, bytes32(uint256(EMISSION_DAY)), 1
+        );
+        _cancel();
+    }
+
+    function test_cancel_after_the_result_has_no_effect() public {
+        _seedAuction();
+        vm.warp(block.timestamp + 2 days);
+        vm.startPrank(address(bnbRouter));
+        auction.startAwaitingResult(EMISSION_DAY);
+        auction.executeAuctionClearing(EMISSION_DAY, 0, 0, 0);
+        vm.stopPrank();
+
+        vm.expectEmit(true, true, true, true, address(bnbRouter));
+        emit ITargetRouter.InboundMessageIgnored(
+            OUTBE_CHAIN_ID, BridgeMsgCodec.MSG_AUCTION_CANCEL, bytes32(uint256(EMISSION_DAY)), 2
+        );
+        _cancel();
+        assertEq(uint8(auction.getAuctionStage(EMISSION_DAY)), uint8(IIntexAuction.AuctionStage.Completed));
+    }
+
+    function test_cancel_before_the_start_makes_the_start_a_conflict() public {
+        _cancel();
+        assertEq(uint8(auction.getAuctionStage(EMISSION_DAY)), uint8(IIntexAuction.AuctionStage.Cancelled));
+
+        vm.expectEmit(true, true, true, true, address(bnbRouter));
+        emit ITargetRouter.InboundMessageIgnored(
+            OUTBE_CHAIN_ID, BridgeMsgCodec.MSG_AUCTION_STAGE_START, bytes32(uint256(EMISSION_DAY)), 3
+        );
+        _deliver(
+            BridgeMsgCodec.encodeAuctionStageStart(
+                EMISSION_DAY,
+                uint32(block.timestamp + 1 days),
+                uint32(block.timestamp + 2 days),
+                uint32(block.timestamp + 3 days),
+                PROMIS_LOAD_MINOR,
+                60e6,
+                ReferenceCurrencyPriceLib.one(840, ENTRY_PRICE, ENTRY_PRICE),
+                0,
+                0,
+                0,
+                1,
+                0
+            )
+        );
+        assertEq(uint8(auction.getAuctionStage(EMISSION_DAY)), uint8(IIntexAuction.AuctionStage.Cancelled));
+    }
+
     // --- Helpers ---
 
     function _seedAuction() internal {
@@ -277,7 +361,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
             commitBondMinor: 0
         });
         vm.prank(address(bnbRouter));
-        auction.auctionStart(EMISSION_DAY, IIntexAuction.DayState.Live, schedule, params);
+        auction.auctionStart(EMISSION_DAY, schedule, params);
     }
 
     function _seedSeriesOnIntex() internal {

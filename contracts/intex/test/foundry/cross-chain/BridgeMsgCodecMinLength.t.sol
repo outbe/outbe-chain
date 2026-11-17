@@ -2,6 +2,7 @@
 pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
+import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
@@ -31,33 +32,30 @@ contract BridgeMsgCodecMinLengthTest is Test {
         assertEq(smallest.length, BridgeMsgCodec.MIN_LEN_ISSUANCE_INSTRUCTIONS, "issuance floor");
     }
 
-    function test_StageStartFloorIsADayWithNoPricedCurrency() public view {
-        // A day the oracle could price in nothing is cancelled, and its message carries no rows.
-        bytes memory smallest = this.encodeStageStart(
-            new IOriginRouter.ReferenceCurrencyPrice[](0), uint8(IIntexAuction.DayState.Cancelled)
+    function test_StageStartFloorIsADayWithOnePricedCurrency() public view {
+        bytes memory smallest = this.encodeStageStart(ReferenceCurrencyPriceLib.one(840, 2e6, 4e6));
+        assertEq(
+            smallest.length,
+            BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_START + BridgeMsgCodec.REFERENCE_PRICE_LEN,
+            "stage start floor"
         );
-        assertEq(smallest.length, BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_START, "stage start floor");
 
-        (, IIntexAuction.DayState dayState,, IIntexAuction.AuctionParams memory params) =
-            BridgeMsgCodec.decodeAuctionParams(smallest);
-        assertEq(uint8(dayState), uint8(IIntexAuction.DayState.Cancelled), "cancelled");
-        assertEq(params.prices.length, 0, "no rows");
+        (,, IIntexAuction.AuctionParams memory params) = BridgeMsgCodec.decodeAuctionParams(smallest);
+        assertEq(params.prices.length, 1, "one row");
     }
 
-    function test_ALiveDayMustPriceSomething() public {
+    function test_ADayMustPriceSomething() public {
         vm.expectRevert(BridgeMsgCodec.MissingReferencePrices.selector);
-        this.encodeStageStart(new IOriginRouter.ReferenceCurrencyPrice[](0), uint8(IIntexAuction.DayState.Live));
+        this.encodeStageStart(new IOriginRouter.ReferenceCurrencyPrice[](0));
     }
 
     /// External so the encoder runs one call deep, as a real send does.
-    function encodeStageStart(IOriginRouter.ReferenceCurrencyPrice[] calldata rows, uint8 dayState)
+    function encodeStageStart(IOriginRouter.ReferenceCurrencyPrice[] calldata rows)
         external
         pure
         returns (bytes memory)
     {
-        return BridgeMsgCodec.encodeAuctionStageStart(
-            20_250_101, 100, 200, 300, 1e6, 1e6, rows, 5, 6, 7, 1, 9e6, dayState
-        );
+        return BridgeMsgCodec.encodeAuctionStageStart(20_250_101, 100, 200, 300, 1e6, 1e6, rows, 5, 6, 7, 1, 9e6);
     }
 
     function test_EveryFloorAdmitsWhatTheEncoderProduces() public pure {

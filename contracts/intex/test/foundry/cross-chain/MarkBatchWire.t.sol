@@ -64,7 +64,6 @@ contract MarkBatchWireTest is CrossChainTest {
         IOriginRouter.AuctionStageStartParams memory p;
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         p.emissionDay = EMISSION_DAY;
-        p.dayState = 1;
         vm.prank(address(desis));
         outbeRouter.sendAuctionStageStart(p);
     }

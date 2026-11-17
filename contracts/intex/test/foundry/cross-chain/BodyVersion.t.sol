@@ -27,7 +27,7 @@ contract BodyVersionTest is Test {
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_BIDS_BATCH, "bidsBatch.msgType");
 
         encoded = BridgeMsgCodec.encodeAuctionStageStart(
-            1, 100, 200, 300, 1e6, 1e6, ReferenceCurrencyPriceLib.one(840, 2e6, 4e6), 5, 6, 7, 1, 9e6, 1
+            1, 100, 200, 300, 1e6, 1e6, ReferenceCurrencyPriceLib.one(840, 2e6, 4e6), 5, 6, 7, 1, 9e6
         );
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "stageStart.version");
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_AUCTION_STAGE_START, "stageStart.msgType");
@@ -73,17 +73,12 @@ contract BodyVersionTest is Test {
 
     function test_BridgeCodec_AuctionStageStart_RoundTrip() public view {
         bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
-            42, 100, 200, 300, 1e6, 5e6, ReferenceCurrencyPriceLib.one(10, 7e6, 13e6), 5, 6, 7, 3, 17e6, 1
+            42, 100, 200, 300, 1e6, 5e6, ReferenceCurrencyPriceLib.one(10, 7e6, 13e6), 5, 6, 7, 3, 17e6
         );
-        (
-            uint32 emissionDay,
-            IIntexAuction.DayState dayState,
-            IIntexAuction.AuctionSchedule memory schedule,
-            IIntexAuction.AuctionParams memory params
-        ) = BridgeMsgCodec.decodeAuctionParams(packet);
+        (uint32 emissionDay, IIntexAuction.AuctionSchedule memory schedule, IIntexAuction.AuctionParams memory params) =
+            BridgeMsgCodec.decodeAuctionParams(packet);
 
         assertEq(emissionDay, 42);
-        assertEq(uint8(dayState), uint8(IIntexAuction.DayState.Live));
         assertEq(schedule.commitEnd, 100);
         assertEq(schedule.revealEnd, 200);
         assertEq(schedule.issuanceEnd, 300);
@@ -119,7 +114,7 @@ contract BodyVersionTest is Test {
 
     function test_BridgeCodec_UnknownBodyVersion_AuctionStageStart_Reverts() public {
         bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
-            1, 100, 200, 300, 1e6, 1e6, ReferenceCurrencyPriceLib.one(840, 2e6, 4e6), 5, 6, 7, 1, 9e6, 1
+            1, 100, 200, 300, 1e6, 1e6, ReferenceCurrencyPriceLib.one(840, 2e6, 4e6), 5, 6, 7, 1, 9e6
         );
         packet[0] = 0xFF;
         vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.UnsupportedBodyVersion.selector, 0xFF));

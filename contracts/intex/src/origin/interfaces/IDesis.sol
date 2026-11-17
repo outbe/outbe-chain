@@ -9,7 +9,6 @@ interface IDesis {
     /// @notice Auction lifecycle stages. Values map 1:1 to the Rust `AuctionStage` enum.
     enum AuctionStage {
         None,
-        Briefed,
         CommittingBids,
         RevealingBids,
         CollectingBids,

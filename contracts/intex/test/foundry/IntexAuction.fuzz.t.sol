@@ -170,7 +170,7 @@ contract IntexAuctionFuzzTest is Test {
             commitBondMinor: 0
         });
         vm.prank(bridger);
-        auction.auctionStart(emissionDay, IIntexAuction.DayState.Live, schedule, params);
+        auction.auctionStart(emissionDay, schedule, params);
     }
 
     function _commit(uint32 emissionDay, address bidder, bytes memory sig) internal {

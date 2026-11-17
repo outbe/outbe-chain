@@ -1,6 +1,6 @@
 //! One `advance_auctions` run moves every scheduled day that has a due step (OIP-00377).
 use super::*;
-use crate::constants::{ADVANCE_DAY_BASE_GAS, DAY_STATE_LIVE, MAX_TARGET_CHAINS};
+use crate::constants::{ADVANCE_DAY_BASE_GAS, MAX_TARGET_CHAINS};
 use crate::sol_ext::IOriginRouter::{
     sendAuctionStageCollectingBidsCall, sendAuctionStageStartCall,
 };
@@ -34,6 +34,8 @@ fn schedule_started(
         .pending_desis_limit_minor
         .write(&day, U256::from(10 * LOAD_MINOR))
         .unwrap();
+    contract.brief_has_limit.write(&day, 1).unwrap();
+    contract.desis_limit_set.write(&day, 1).unwrap();
     contract.push_sched_active(day).unwrap();
 }
 
@@ -94,7 +96,7 @@ fn advance_auctions_moves_each_due_auction() {
         schedule_revealing(&s, PROMIS_LOAD_MINOR);
         schedule_committing(&s);
         brief(&s, true);
-        assert_eq!(stage(&s, EMISSION_DAY), AuctionStage::Briefed);
+        assert_eq!(stage(&s, EMISSION_DAY), AuctionStage::None);
     });
     metered(&mut provider);
     let calls_before = provider.sub_call_inputs().len();
@@ -116,9 +118,9 @@ fn advance_auctions_moves_each_due_auction() {
         .iter()
         .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
         .filter_map(|input| sendAuctionStageStartCall::abi_decode(&input.calldata).ok())
-        .map(|call| (call.params.emissionDay, call.params.dayState))
+        .map(|call| call.params.emissionDay)
         .collect();
-    assert_eq!(starts, vec![(EMISSION_DAY.value(), DAY_STATE_LIVE)]);
+    assert_eq!(starts, vec![EMISSION_DAY.value()]);
     let collecting: Vec<_> = sent
         .iter()
         .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
@@ -227,7 +229,7 @@ fn a_small_budget_stops_before_overrun_and_the_next_run_moves_the_rest() {
         assert!(s.gas_used().unwrap() - before <= small);
         assert_eq!(stage(&s, COMMITTING), AuctionStage::RevealingBids);
         assert_eq!(stage(&s, REVEALING), AuctionStage::RevealingBids);
-        assert_eq!(stage(&s, EMISSION_DAY), AuctionStage::Briefed);
+        assert_eq!(stage(&s, EMISSION_DAY), AuctionStage::None);
         // The next run starts with the first day that this run did not reach.
         assert_eq!(
             s.contract::<DesisContract>()

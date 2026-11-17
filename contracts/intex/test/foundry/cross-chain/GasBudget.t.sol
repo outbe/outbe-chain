@@ -378,8 +378,7 @@ contract AuctionGasBudgetTest is CrossChainTest {
             0,
             0,
             1,
-            0,
-            1
+            0
         );
     }
 
@@ -433,6 +432,15 @@ contract AuctionGasBudgetTest is CrossChainTest {
 
         emit log_named_uint("auction_result", spent);
         assertLt(spent, IntexGas.AUCTION_RESULT, "auction result must fit the quote");
+    }
+
+    function test_TheQuoteCoversAuctionCancel() public {
+        _deliver(_startPacket(1));
+
+        uint256 spent = _deliver(BridgeMsgCodec.encodeAuctionCancel(EMISSION_DAY, 1));
+
+        emit log_named_uint("auction_cancel", spent);
+        assertLt(spent, IntexGas.AUCTION_CANCEL, "auction cancel must fit the quote");
     }
 }
 
@@ -601,7 +609,6 @@ contract OriginInboundGasTest is CrossChainTest {
         // Freeze the day's snapshot so the target is allowed to feed bids into it.
         IOriginRouter.AuctionStageStartParams memory p;
         p.emissionDay = EMISSION_DAY;
-        p.dayState = 1;
         p.prices = ReferenceCurrencyPriceLib.one(840, ENTRY_PRICE, ENTRY_PRICE);
         vm.prank(address(desis));
         originRouter.sendAuctionStageStart(p);

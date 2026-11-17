@@ -71,7 +71,6 @@ contract IntexAuctionLockTermsTest is Test {
         vm.prank(relayer);
         auction.auctionStart(
             DAY,
-            IIntexAuction.DayState.Live,
             IIntexAuction.AuctionSchedule({
                 commitEnd: uint32(startTs + 100), revealEnd: uint32(startTs + 200), issuanceEnd: uint32(startTs + 300)
             }),

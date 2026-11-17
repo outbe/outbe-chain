@@ -239,6 +239,10 @@ fn allocate_emission_limit_inner(ctx: &BlockRuntimeContext, prev_day: u32) -> Re
         )
         .map(|_| ()),
     )?;
+    wrap(
+        "schedule_auction",
+        outbe_desis::api::schedule_auction(ctx.storage.clone(), prev_day.into()),
+    )?;
 
     let g4 = gas(ctx);
     tracing::debug!(target: "outbe::cycle::gas", step_gas = gas_sample_delta(g4, g3), cumulative = g4, total = gas_sample_delta(g4, g0), "after day allocation record");
