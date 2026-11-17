@@ -47,14 +47,7 @@ tee:
 # remote_base_dir: /opt/outbe
 # remote_keys_dir: /opt/outbe/keys
 
-# Hardware-free dev lane only:
-# enclave_sgx: false
-# Optional absolute path to `outbe-tee-enclave-mock`.
-# enclave_runner: /opt/outbe/outbe-tee-enclave-mock
-# With the default `enclave_sgx: true`, both TEE policies run the signed
-# gramine-sgx bundle. Point these at its checkout on each machine.
-# enclave_dir: /opt/outbe-chain/enclave
-# `enclave_runner` can also override the bundled SGX launcher.
+# TEE lifecycle runs inside the node process; no sidecar is required.
 
 # Binaries on the validator machines; default to PATH lookups.
 # node_binary: outbe-chain
@@ -83,7 +76,6 @@ tee:
 # metrics_port: 9101
 # radicle_port: 8776
 # radicle_status_port: 8876
-# tee_enclave_port: 17000
 # feeder_health_port: 9002
 
 # output: genesis.json                # also settable via --output

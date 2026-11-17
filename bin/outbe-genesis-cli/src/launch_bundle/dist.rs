@@ -30,10 +30,6 @@ fn pack_validator_archive(
             fs::copy(&item, &dst).map_err(|err| GenesisError::io(&dst, err))?;
         }
     }
-    let sgx = output_dir.join("sgx");
-    if sgx.is_dir() {
-        copy_dir_recursive(&sgx, &staging.join("sgx"))?;
-    }
     let crs = output_dir.join(".bb-crs/bn254_g1.dat");
     let staged_crs = staging.join(".bb-crs/bn254_g1.dat");
     fs::create_dir_all(staged_crs.parent().expect("CRS path has a parent"))
@@ -200,7 +196,6 @@ SGX hardware, and the exact release measurements.\n"
     let authrpc_port = port_of(config, "authrpc_port")?;
     let metrics_port = port_of(config, "metrics_port")?;
     let radicle_status_port = port_of(config, "radicle_status_port")?;
-    let tee_enclave_port = port_of(config, "tee_enclave_port")?;
     let feeder_health_port = port_of(config, "feeder_health_port")?;
     let first_host = first_p2p
         .rsplit_once(':')
@@ -227,7 +222,7 @@ every machine, because each founder runs on its own host.\n\
 \n\
 The generator writes one self-contained archive per machine under `dist/`. Each\n\
 archive contains the shared genesis and bootnodes, systemd units and installer,\n\
-launch scripts, the selected enclave runtime, and **only that validator's** keys.\n\
+launch scripts, and **only that validator's** keys.\n\
 \n\
 ```bash\n\
 # From the generated output directory, for machine N (0..3):\n\
@@ -255,37 +250,29 @@ Between the four machines:\n\
 RPC uses its explicit loopback/private bind `{rpc_bind}:{rpc_port}`. Everything\n\
 else stays on loopback and must not be exposed: authrpc `{authrpc_port}`,\n\
 metrics `{metrics_port}`, Radicle status\n\
-`{radicle_status_port}`, the enclave socket\n\
-`{tee_enclave_port}` and the feeder health endpoint\n\
+`{radicle_status_port}` and the feeder health endpoint\n\
 `{feeder_health_port}`.\n\
 \n\
 ## 3. Prerequisites on every machine\n\
 \n\
 - Python 3.11+ - reads the shared storage TOML at launch\n\
-- no system Gramine installation is required on SGX hosts: `sgx/` contains the\n\
-  pinned enclave launcher and runtime from the signed release bundle\n\
-- `outbe-cli` on every SGX validator host for automatic TEE renewal\n\
 - the `outbe-chain`, `outbe-radicle` and `outbe-feeder` binaries on `PATH`\n\
   (or set `node_binary`, `radicle_binary` and `feeder_binary` in the yaml to\n\
   absolute paths and regenerate)\n\
-- when `enclave_sgx` is enabled: SGX hardware exposing `/dev/sgx_enclave`\n\
-- for `dcap-required`: also `/dev/sgx_provision` and `aesmd.service`\n\
-- `outbe-tee-enclave-mock` on `PATH` (or `enclave_runner` pointing to it) only\n\
-  when `enclave_sgx: false`; otherwise the signed SGX runtime is used\n\
 \n\
 ## 4. Start each machine\n\
 \n\
 ```bash\n\
 cd {base_dir}/validator-N\n\
-./preflight.sh N        # verifies genesis/enclave/state before anything starts\n\
+./preflight.sh N        # verifies genesis/CRS/state before anything starts\n\
 ./install-systemd.sh\n\
 ```\n\
 \n\
-`install-systemd.sh` installs one non-templated unit per role, starts the\n\
-`outbe-validator.target`, and enables the daily TEE renewal timer for a NodeHost SGX\n\
-session. The services recover after clean or failed exits. `preflight.sh`\n\
+`install-systemd.sh` installs one non-templated unit per role and starts the\n\
+`outbe-validator.target`. The node manages its resident TEE lifecycle and renewal.\n\
+The services recover after clean or failed exits. `preflight.sh`\n\
 is read-only: run it first and compare the genesis digest it prints across all\n\
-four machines. When SGX is enabled, compare the enclave digest too.\n\
+four machines.\n\
 \n\
 Inspect the stack with `systemctl status outbe-validator.target` and follow the\n\
 node with `journalctl -u outbe-validator -f`.\n\
@@ -319,7 +306,7 @@ number and `validator list` shows four active validators.\n\
 | Component | Process | Notes |\n\
 |---|---|---|\n\
 | Execution + consensus | `outbe-chain node` | one binary, no Engine API split |\n\
-| TEE enclave | bundled SGX launcher or `outbe-tee-enclave-mock` | selected explicitly with `enclave_sgx`; there is no runtime fallback |\n\
+| TEE | resident inside `outbe-chain node` | autonomous lifecycle and renewal |\n\
 | Radicle | `outbe-radicle` | validator startup requires its control socket |\n\
 | Price feeder | `outbe-feeder` | submits oracle votes |\n\
 \n\
