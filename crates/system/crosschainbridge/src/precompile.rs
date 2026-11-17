@@ -55,6 +55,10 @@ pub fn dispatch(
                     CrosschainBridgeContract::require_allowed_caller(sender)?;
                     gov.call_remote(c.domain, &c.calls)
                 }),
+                callRemoteWithGasLimit(c) => mutate(&storage, c, caller, |sender, c| {
+                    CrosschainBridgeContract::require_allowed_caller(sender)?;
+                    gov.call_remote_with_gas_limit(c.domain, &c.calls, c.gasLimit)
+                }),
                 remoteAccount(c) => view(c, |c| gov.remote_account(c.domain)),
             }
         },

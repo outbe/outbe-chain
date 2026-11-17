@@ -26,11 +26,12 @@ interface ICrosschainBridge {
     error InvalidDomain();
     error LocalDomainNotAllowed(uint32 domain);
     error EmptyCalls();
+    error InvalidGasLimit();
     error ZeroFund();
     error InsufficientBalance(uint256 required, uint256 available);
     error UndecodableReturn(string value);
 
-    event RemoteCallDispatched(uint32 indexed domain, bytes32 indexed messageId, uint256 fee);
+    event RemoteCallDispatched(uint32 indexed domain, bytes32 indexed messageId, uint256 fee, uint256 gasLimit);
     event LocalCallExecuted(address indexed target, uint256 value);
     event Funded(address indexed from, uint256 amount);
 
@@ -42,8 +43,14 @@ interface ICrosschainBridge {
     function callLocal(Call calldata call) external returns (bytes memory);
 
     /// Runs `calls` on `domain` through the Interchain Account of the owner, in one message.
-    /// The owner balance pays the dispatch fee. Same caller list as `callLocal`.
+    /// The owner balance pays the dispatch fee for a destination gas limit of 200000. Same
+    /// caller list as `callLocal`.
     function callRemote(uint32 domain, Call[] calldata calls) external returns (bytes32 messageId);
+
+    /// As `callRemote`, with the dispatch fee for `gasLimit` gas on `domain`.
+    function callRemoteWithGasLimit(uint32 domain, Call[] calldata calls, uint256 gasLimit)
+        external
+        returns (bytes32 messageId);
 
     /// Interchain Account of the owner on `domain`. It executes every remote call of the owner,
     /// so it is the governance owner of contracts on that chain.

@@ -29,6 +29,9 @@ pub enum CrosschainBridgeError {
     #[error("remote call list must be non-empty")]
     EmptyCalls,
 
+    #[error("gas limit must be non-zero")]
+    InvalidGasLimit,
+
     #[error("fund requires a non-zero value")]
     ZeroFund,
 
@@ -58,6 +61,9 @@ impl From<CrosschainBridgeError> for PrecompileError {
                 ICrosschainBridge::LocalDomainNotAllowed { domain }.abi_encode()
             }
             CrosschainBridgeError::EmptyCalls => ICrosschainBridge::EmptyCalls {}.abi_encode(),
+            CrosschainBridgeError::InvalidGasLimit => {
+                ICrosschainBridge::InvalidGasLimit {}.abi_encode()
+            }
             CrosschainBridgeError::ZeroFund => ICrosschainBridge::ZeroFund {}.abi_encode(),
             CrosschainBridgeError::InsufficientBalance {
                 required,
