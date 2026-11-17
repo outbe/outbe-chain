@@ -16,14 +16,15 @@ binary version.
 
 `prepare` verifies the config, network, manifest, every bundled file, and the bootstrap binary. It
 then creates host-local identities and installs services without starting them. `sync` optionally
-restores a verified snapshot and synchronizes a keyless full node. `promote` performs TEE admission,
-bonds the network minimum stake, switches the same data directory to validator mode, and submits
-validator readiness. DKG activation continues in the background and is visible through `status`.
-
-For hardware-free dev/test networks created with a `NoAttestationDev` genesis TEE policy, set
-`tee.runtime: mock`. The operator bundle must then carry
-`outbe-tee-enclave-mock`; no SGX hardware, AESM, DCAP, Gramine, or Docker is required. This mode is
-unattested and must never be used for production or mainnet.
+restores a verified snapshot before starting the validator target. Its single node process runs with
+`--validator --validator.evm-key ... --upstream ...`, autonomously obtains its resident TEE key,
+and synchronizes the chain. Fund the validator address before `sync` for registration gas and stake.
+`promote` checks local TEE health through `outbe_consensusStatus.enclave`, verifies finalized
+synchronization against the certified RPC, bonds the minimum stake, delegates oracle votes to the
+feeder, and submits validator readiness. It never stops or restarts the node: its TEE key remains
+in memory throughout `sync -> promote`. The node owns TEE admission and renewal; the operator
+journal records only external economic/role transactions and snapshot progress, not key readiness.
+DKG activation continues in the background and is visible through `status`.
 
 The editable configuration example lives at `templates/validator/operator-config.example.yaml`.
 Systemd policy comes from the shared `outbe-operator-systemd` crate used by both joining and

@@ -7,75 +7,10 @@ use std::{
 };
 
 use eyre::{bail, ensure, Context, Result};
-use k256::ecdsa::SigningKey;
-use zeroize::Zeroizing;
 
 use crate::{support::process, validator::rpc::RpcClient};
 
-const ENCLAVE_ADDRESS: &str = "127.0.0.1:17000";
 const RADICLE_SOCKET: &str = "/opt/outbe-chain/keys/radicle/node/outbe-control.sock";
-
-pub fn enclave() -> Result<()> {
-    let runtime = required_env("OUTBE_ENCLAVE_RUNTIME")?;
-    let chain_id = required_env("OUTBE_CHAIN_ID")?
-        .parse::<u64>()
-        .wrap_err("OUTBE_CHAIN_ID must be a positive decimal integer")?;
-    ensure!(chain_id > 0, "OUTBE_CHAIN_ID must be positive");
-    let chain_hex = format!("0x{chain_id:064x}");
-    let mut command = match runtime.as_str() {
-        "system-gramine" => {
-            let mut command = Command::new("gramine-sgx");
-            command.arg("outbe-tee-enclave").current_dir(process::ROOT);
-            command
-        }
-        "bundled-sgx" => {
-            let sgx = Path::new(process::ROOT).join("sgx");
-            let mut command = Command::new(sgx.join("bin/outbe-tee-enclave-launch"));
-            command.current_dir(&sgx);
-            command
-        }
-        "mock" => {
-            let root = Path::new(process::ROOT);
-            let network_binding = required_env("OUTBE_DEV_NETWORK_BINDING")?;
-            let reth_p2p_public = compressed_public_key(&root.join("keys/reth-p2p-secret.hex"))?;
-            let mut command = Command::new(root.join("outbe-tee-enclave-mock"));
-            command
-                .current_dir(root)
-                .env(
-                    "TEE_DEV_DKG_SEED",
-                    private_hex(&root.join("tee/dev-dkg-seed.hex"))?,
-                )
-                .env(
-                    "TEE_DEV_OFFER_SECRET",
-                    private_hex(&root.join("tee/dev-offer-secret.hex"))?,
-                )
-                .args([
-                    "--dev-network-binding",
-                    &network_binding,
-                    "--dev-reth-p2p-public",
-                    &reth_p2p_public,
-                ]);
-            command
-        }
-        _ => {
-            bail!("OUTBE_ENCLAVE_RUNTIME must be system-gramine, bundled-sgx, or mock");
-        }
-    };
-    let tee_dir = if runtime == "bundled-sgx" {
-        "/var/lib/outbe/tee"
-    } else {
-        "/opt/outbe-chain/tee"
-    };
-    command.args([
-        "--socket",
-        ENCLAVE_ADDRESS,
-        "--tee-dir",
-        tee_dir,
-        "--chain-id",
-        &chain_hex,
-    ]);
-    Err(command.exec()).wrap_err("failed to exec enclave runtime")
-}
 
 pub fn feeder() -> Result<()> {
     let chain_id = required_env("OUTBE_CHAIN_ID")?;
@@ -127,34 +62,15 @@ pub fn feeder() -> Result<()> {
     Err(command.exec()).wrap_err("failed to exec outbe-feeder")
 }
 
-pub async fn wait_enclave(timeout: u64) -> Result<()> {
-    wait_for("TEE enclave", timeout, None, || async {
-        tokio::net::TcpStream::connect(ENCLAVE_ADDRESS)
-            .await
-            .map(|_| ())
-            .wrap_err("enclave socket is not ready")
-    })
-    .await
-}
-
 pub async fn wait_validator_dependencies(timeout: u64) -> Result<()> {
-    wait_for(
-        "TEE enclave and Radicle control socket",
-        timeout,
-        None,
-        || async {
-            let metadata =
-                fs::metadata(RADICLE_SOCKET).wrap_err("Radicle control socket is absent")?;
-            ensure!(
-                metadata.file_type().is_socket(),
-                "Radicle control path is not a socket"
-            );
-            tokio::net::TcpStream::connect(ENCLAVE_ADDRESS)
-                .await
-                .map(|_| ())
-                .wrap_err("enclave socket is not ready")
-        },
-    )
+    wait_for("Radicle control socket", timeout, None, || async {
+        let metadata = fs::metadata(RADICLE_SOCKET).wrap_err("Radicle control socket is absent")?;
+        ensure!(
+            metadata.file_type().is_socket(),
+            "Radicle control path is not a socket"
+        );
+        Ok(())
+    })
     .await
 }
 
@@ -223,38 +139,6 @@ fn local_rpc_url() -> Result<String> {
         "OUTBE_RPC_BIND_IP must be a loopback or private IPv4 address"
     );
     Ok(format!("http://{bind}:8545"))
-}
-
-fn private_hex(path: &Path) -> Result<String> {
-    let value = fs::read_to_string(path).wrap_err_with(|| {
-        format!(
-            "failed to read development enclave secret: {}",
-            path.display()
-        )
-    })?;
-    ensure!(
-        value.len() == 64
-            && value
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
-        "development enclave secret is not canonical: {}",
-        path.display()
-    );
-    Ok(value)
-}
-
-fn compressed_public_key(path: &Path) -> Result<String> {
-    let encoded = Zeroizing::new(
-        fs::read_to_string(path)
-            .wrap_err_with(|| format!("failed to read Reth P2P key: {}", path.display()))?,
-    );
-    let mut secret = Zeroizing::new([0_u8; 32]);
-    hex::decode_to_slice(encoded.trim(), secret.as_mut())
-        .wrap_err("Reth P2P key is not 32-byte hex")?;
-    let signing = SigningKey::from_slice(secret.as_ref()).wrap_err("invalid Reth P2P key")?;
-    Ok(hex::encode(
-        signing.verifying_key().to_encoded_point(true).as_bytes(),
-    ))
 }
 
 fn valid_key(value: &str) -> bool {

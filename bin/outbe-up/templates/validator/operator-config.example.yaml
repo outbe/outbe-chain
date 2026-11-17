@@ -11,12 +11,6 @@ network:
     - "REPLACE_WITH_96_HEX_BLS_KEY@192.0.2.20:30400"
   use_local_defaults: false
 
-tee:
-  # Use mock only for a dev/test network whose genesis TEE policy is
-  # NoAttestationDev. It runs the mock enclave without SGX/DCAP.
-  runtime: bundled-sgx
-  lease_duration_seconds: auto
-
 feeder:
   public_toml: |
     [oracle]

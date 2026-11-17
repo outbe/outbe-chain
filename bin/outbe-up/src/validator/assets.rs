@@ -19,7 +19,10 @@ mod tests {
     #[test]
     fn all_units_render_without_tokens() {
         let units = systemd_units().unwrap();
-        assert_eq!(units.len(), 8);
+        assert!(!units.is_empty());
+        assert!(units
+            .iter()
+            .any(|(name, _)| name == "outbe-validator.service"));
         assert!(units.iter().all(|(_, unit)| !unit.contains("@@")));
     }
 

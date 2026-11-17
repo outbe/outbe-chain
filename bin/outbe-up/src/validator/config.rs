@@ -8,10 +8,6 @@ use std::{
 
 use alloy_primitives::Address;
 use eyre::{bail, ensure, Context, Result};
-use outbe_primitives::tee_attestation_v1::{
-    AttestationMode, NetworkBindingV1, TeePolicyScheduleV1,
-};
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -22,7 +18,6 @@ pub const CONFIG_VERSION: u32 = 1;
 pub struct OperatorConfig {
     pub version: u32,
     pub network: NetworkConfig,
-    pub tee: TeeConfig,
     pub feeder: FeederConfig,
 }
 
@@ -38,70 +33,6 @@ pub struct NetworkConfig {
     pub consensus_peers: Vec<String>,
     #[serde(default)]
     pub use_local_defaults: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TeeConfig {
-    pub runtime: EnclaveRuntime,
-    pub lease_duration_seconds: LeaseDuration,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum LeaseDuration {
-    Seconds(u64),
-    Mode(LeaseDurationMode),
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum LeaseDurationMode {
-    Auto,
-}
-
-impl LeaseDuration {
-    pub fn resolve(self, minimum: u64, maximum: u64) -> Result<u64> {
-        ensure!(
-            minimum <= maximum,
-            "finalized TEE policy has an invalid lease range {minimum}..={maximum} seconds"
-        );
-        match self {
-            Self::Mode(LeaseDurationMode::Auto) => Ok(maximum),
-            Self::Seconds(seconds) => {
-                ensure!(
-                    (minimum..=maximum).contains(&seconds),
-                    "tee.lease_duration_seconds={seconds} is outside the finalized TEE policy range {minimum}..={maximum} seconds"
-                );
-                Ok(seconds)
-            }
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum EnclaveRuntime {
-    BundledSgx,
-    SystemGramine,
-    Mock,
-}
-
-impl EnclaveRuntime {
-    pub const fn as_env(self) -> &'static str {
-        match self {
-            Self::BundledSgx => "bundled-sgx",
-            Self::SystemGramine => "system-gramine",
-            Self::Mock => "mock",
-        }
-    }
-
-    pub const fn session_mode(self) -> &'static str {
-        match self {
-            Self::Mock => "development",
-            Self::BundledSgx | Self::SystemGramine => "production-node-host",
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -141,13 +72,6 @@ impl OperatorConfig {
         } else {
             ""
         };
-        let development_binding = match self.tee.runtime {
-            EnclaveRuntime::Mock => {
-                write_development_secrets(root)?;
-                development_network_binding(root, self.network.chain_id)?
-            }
-            EnclaveRuntime::BundledSgx | EnclaveRuntime::SystemGramine => String::new(),
-        };
         let env = format!(
             concat!(
                 "OUTBE_EXTERNAL_IP=\"{}\"\n",
@@ -157,9 +81,6 @@ impl OperatorConfig {
                 "OUTBE_BOOTNODES=\"{}\"\n",
                 "OUTBE_CONSENSUS_PEERS=\"{}\"\n",
                 "OUTBE_CONSENSUS_EXTRA_ARGS=\"{}\"\n",
-                "OUTBE_ENCLAVE_RUNTIME=\"{}\"\n",
-                "OUTBE_TEE_SESSION_MODE=\"{}\"\n",
-                "OUTBE_DEV_NETWORK_BINDING=\"{}\"\n",
                 "OUTBE_CHAIN_ID=\"{}\"\n"
             ),
             self.network.external_ip,
@@ -169,9 +90,6 @@ impl OperatorConfig {
             self.network.bootnodes.join(","),
             self.network.consensus_peers.join(","),
             extra,
-            self.tee.runtime.as_env(),
-            self.tee.runtime.session_mode(),
-            development_binding,
             self.network.chain_id,
         );
         write_private(&root.join("validator.env"), env.as_bytes())?;
@@ -224,19 +142,6 @@ impl OperatorConfig {
         {
             bail!("network.consensus_peers contains an invalid peer");
         }
-        if let LeaseDuration::Seconds(seconds) = self.tee.lease_duration_seconds {
-            ensure!(seconds > 0, "tee.lease_duration_seconds must be positive");
-        }
-        if matches!(self.tee.runtime, EnclaveRuntime::Mock) {
-            ensure!(
-                outbe_primitives::tee_genesis_v1::is_attestation_mode_allowed_for_chain_id(
-                    self.network.chain_id,
-                    AttestationMode::NoAttestationDev,
-                ),
-                "tee.runtime=mock is forbidden for network.chain_id={}",
-                self.network.chain_id
-            );
-        }
         ensure!(
             !self.feeder.public_toml.trim().is_empty(),
             "feeder.public_toml is empty"
@@ -257,53 +162,6 @@ impl NetworkConfig {
 
 const fn default_rpc_bind_ip() -> Ipv4Addr {
     Ipv4Addr::LOCALHOST
-}
-
-fn development_network_binding(root: &Path, chain_id: u64) -> Result<String> {
-    let genesis: serde_json::Value = serde_json::from_slice(&fs::read(root.join("genesis.json"))?)?;
-    let encoded = genesis
-        .pointer("/config/teeAttestationV1/policySchedule")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| eyre::eyre!("genesis.json has no TEE policy schedule"))?;
-    let schedule = TeePolicyScheduleV1::decode_canonical(&hex::decode(
-        encoded.strip_prefix("0x").unwrap_or(encoded),
-    )?)
-    .wrap_err("invalid genesis TEE policy schedule")?;
-    ensure!(
-        schedule.chain_id == alloy_primitives::U256::from(chain_id).to_be_bytes::<32>(),
-        "genesis TEE policy chain id does not match operator config"
-    );
-    let policy = schedule
-        .active_policy(1)
-        .wrap_err("genesis TEE policy has no active policy at height 1")?;
-    ensure!(
-        policy.attestation_mode == AttestationMode::NoAttestationDev,
-        "tee.runtime=mock requires a NoAttestationDev genesis TEE policy"
-    );
-    Ok(hex::encode(
-        NetworkBindingV1 {
-            chain_id: schedule.chain_id,
-            genesis_hash: schedule.genesis_hash,
-            attestation_mode: policy.attestation_mode,
-        }
-        .encode_canonical()
-        .wrap_err("failed to encode development network binding")?,
-    ))
-}
-
-fn write_development_secrets(root: &Path) -> Result<()> {
-    let tee = root.join("tee");
-    fs::create_dir(&tee)?;
-    fs::set_permissions(&tee, fs::Permissions::from_mode(0o700))?;
-    for name in ["dev-dkg-seed.hex", "dev-offer-secret.hex"] {
-        let mut secret = [0_u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut secret);
-        if secret.iter().all(|byte| *byte == 0) {
-            secret[31] = 1;
-        }
-        write_private(&tee.join(name), hex::encode(secret).as_bytes())?;
-    }
-    Ok(())
 }
 
 fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -347,9 +205,6 @@ network:
   bootnodes: ["enode://abc@192.0.2.1:30303"]
   consensus_peers: ["{}@192.0.2.1:30400"]
   use_local_defaults: true
-tee:
-  runtime: bundled-sgx
-  lease_duration_seconds: auto
 feeder:
   public_toml: |
     [oracle]
@@ -360,118 +215,5 @@ feeder:
         .unwrap();
         config.validate().unwrap();
         assert_eq!(config.network.rpc_bind_ip, Ipv4Addr::LOCALHOST);
-        assert!(matches!(
-            config.tee.lease_duration_seconds,
-            LeaseDuration::Mode(LeaseDurationMode::Auto)
-        ));
-    }
-
-    #[test]
-    fn resolves_lease_duration_against_policy() {
-        assert_eq!(
-            LeaseDuration::Mode(LeaseDurationMode::Auto)
-                .resolve(3_600, 1_209_600)
-                .unwrap(),
-            1_209_600
-        );
-        assert_eq!(
-            LeaseDuration::Seconds(86_400)
-                .resolve(3_600, 1_209_600)
-                .unwrap(),
-            86_400
-        );
-        assert!(LeaseDuration::Seconds(2_592_000)
-            .resolve(3_600, 1_209_600)
-            .unwrap_err()
-            .to_string()
-            .contains("outside the finalized TEE policy range"));
-    }
-
-    #[test]
-    fn accepts_existing_numeric_lease_config() {
-        let config: TeeConfig =
-            serde_yaml_ng::from_str("runtime: bundled-sgx\nlease_duration_seconds: 86400\n")
-                .unwrap();
-        assert!(matches!(
-            config.lease_duration_seconds,
-            LeaseDuration::Seconds(86_400)
-        ));
-    }
-
-    #[test]
-    fn runtime_selects_the_expected_session_mode() {
-        assert_eq!(EnclaveRuntime::Mock.session_mode(), "development");
-        assert_eq!(
-            EnclaveRuntime::BundledSgx.session_mode(),
-            "production-node-host"
-        );
-        assert_eq!(
-            EnclaveRuntime::SystemGramine.session_mode(),
-            "production-node-host"
-        );
-    }
-
-    #[test]
-    fn mock_runtime_is_limited_to_development_networks() {
-        let config = |chain_id| {
-            serde_yaml_ng::from_str::<OperatorConfig>(&format!(
-                r#"
-version: 1
-network:
-  chain_id: {chain_id}
-  certified_rpc: https://rpc.example
-  external_ip: 192.0.2.10
-  bootnodes: ["enode://abc@192.0.2.1:30303"]
-  consensus_peers: ["{}@192.0.2.1:30400"]
-tee:
-  runtime: mock
-  lease_duration_seconds: auto
-feeder:
-  public_toml: |
-    [oracle]
-    sources = "local"
-"#,
-                "c".repeat(96),
-            ))
-            .unwrap()
-        };
-
-        config(54322345).validate().unwrap();
-        assert!(config(676)
-            .validate()
-            .unwrap_err()
-            .to_string()
-            .contains("forbidden"));
-    }
-
-    #[test]
-    fn derives_direct_dev_binding_from_genesis_policy() {
-        let root = tempfile::tempdir().unwrap();
-        let mut genesis: serde_json::Value =
-            serde_json::from_slice(include_bytes!("../../../../release/testnet-genesis.json"))
-                .unwrap();
-        let encoded = genesis
-            .pointer("/config/teeAttestationV1/policySchedule")
-            .and_then(serde_json::Value::as_str)
-            .unwrap();
-        let mut schedule = TeePolicyScheduleV1::decode_canonical(
-            &hex::decode(encoded.trim_start_matches("0x")).unwrap(),
-        )
-        .unwrap();
-        schedule.entries[0].policy.attestation_mode = AttestationMode::NoAttestationDev;
-        *genesis
-            .pointer_mut("/config/teeAttestationV1/policySchedule")
-            .unwrap() = serde_json::Value::String(format!(
-            "0x{}",
-            hex::encode(schedule.encode_canonical().unwrap())
-        ));
-        fs::write(
-            root.path().join("genesis.json"),
-            serde_json::to_vec(&genesis).unwrap(),
-        )
-        .unwrap();
-
-        let binding = development_network_binding(root.path(), 54322345).unwrap();
-        assert_eq!(binding.len(), NetworkBindingV1::CANONICAL_LEN * 2);
     }
 }
