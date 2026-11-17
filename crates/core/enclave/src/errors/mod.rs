@@ -61,6 +61,8 @@ impl From<DkgSeamOrderError> for TeeError {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum TeeError {
+    #[error("{}", resident_error_message(.0))]
+    Resident(#[from] outbe_tee::resident::TeeCryptoError),
     /// The nonce size is not 12 bytes.
     #[error("invalid nonce size: expected 12 bytes, got {0}")]
     InvalidNonce(usize),
@@ -140,6 +142,22 @@ pub enum TeeError {
     /// Attestation preimage JSON did not serialize. The source stays structured.
     #[error("attestation preimage serialization failed: {0}")]
     AttestationPreimageSerialization(#[from] serde_json::Error),
+}
+
+// Resident causes stay typed while existing signed rejection text stays byte-identical.
+fn resident_error_message(error: &outbe_tee::resident::TeeCryptoError) -> &'static str {
+    use outbe_tee::{errors::TeeCryptoError as Primitive, resident::TeeCryptoError as Resident};
+    match error {
+        Resident::InvalidEnvelope
+        | Resident::Primitive(Primitive::InvalidEnvelope | Primitive::DecryptionFailed) => {
+            "AEAD decryption failed (bad key, nonce, or tampered ciphertext)"
+        }
+        Resident::Primitive(Primitive::HkdfExpand | Primitive::HkdfFill) => {
+            "HKDF-SHA256 derivation failed"
+        }
+        Resident::Primitive(Primitive::AeadSeal) => "AEAD encryption failed",
+        _ => "resident cryptographic operation failed",
+    }
 }
 
 impl TeeError {

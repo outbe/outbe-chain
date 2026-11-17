@@ -5,10 +5,11 @@ use crate::{
     protocol::{FidelityCohortOp, GratisOp, GratisOpRequest, GratisOpStatus},
 };
 use alloy_primitives::{B256, U256};
+use outbe_tee::resident::StateKeyHandle;
 pub fn apply(
-    nod_state_key: &[u8; 32],
-    gratis_key: &[u8; 32],
-    fidelity_key: &[u8; 32],
+    nod_state_key: &StateKeyHandle,
+    gratis_key: &StateKeyHandle,
+    fidelity_key: &StateKeyHandle,
     request: &MineEncryptedNodRequestV1,
 ) -> Result<MineEncryptedNodResultV1> {
     if request.fidelity.op != FidelityCohortOp::In {

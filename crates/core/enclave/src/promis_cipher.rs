@@ -4,6 +4,7 @@ use crate::{
     errors::Result,
 };
 use alloy_primitives::{Address, U256};
+use outbe_tee::resident::StateKeyHandle;
 
 pub const PROMIS_SPEC: EnvelopeCipherSpec = EnvelopeCipherSpec {
     marker: b"PRO2",
@@ -13,7 +14,7 @@ pub const PROMIS_SPEC: EnvelopeCipherSpec = EnvelopeCipherSpec {
 };
 
 pub fn read_amount(
-    key: &[u8; 32],
+    key: &StateKeyHandle,
     account: Address,
     field: u8,
     blob: &[u8],
@@ -21,6 +22,6 @@ pub fn read_amount(
     PROMIS_SPEC.read_amount(key, account, field, blob)
 }
 
-pub fn write_amount(key: &[u8; 32], transition: BalanceTransition) -> Result<Vec<u8>> {
+pub fn write_amount(key: &StateKeyHandle, transition: BalanceTransition) -> Result<Vec<u8>> {
     PROMIS_SPEC.write_amount(key, transition)
 }

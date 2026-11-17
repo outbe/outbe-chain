@@ -23,6 +23,7 @@
 //! surfaces as a state-root mismatch on re-execution.
 
 use alloy_primitives::{Address, B256, U256};
+use outbe_tee::resident::OfferKeyHandle;
 
 use crate::protocol::{EncryptedTributeOffer, TributeOfferResult, TributeOfferStatus};
 
@@ -35,7 +36,7 @@ use crate::zk_claim::derive_expected_hashes;
 /// The enclave-resident offer decryption key material (derived from the sealed
 /// root seed via the HKDF chain). Borrowed for the duration of a batch call.
 pub struct TributeOfferKeyMaterial<'a> {
-    pub tribute_offer_private_key: &'a [u8; 32],
+    pub tribute_offer_private_key: &'a OfferKeyHandle,
     pub salt: &'a [u8; 32],
 }
 
@@ -180,8 +181,10 @@ mod tests {
     }
 
     fn key() -> TributeOfferKeyMaterial<'static> {
+        static OFFER_HANDLE: std::sync::OnceLock<OfferKeyHandle> = std::sync::OnceLock::new();
         TributeOfferKeyMaterial {
-            tribute_offer_private_key: &OFFER_SK,
+            tribute_offer_private_key: OFFER_HANDLE
+                .get_or_init(|| OfferKeyHandle::for_test(OFFER_SK)),
             salt: &SALT,
         }
     }

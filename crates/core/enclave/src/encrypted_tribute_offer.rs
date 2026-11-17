@@ -14,11 +14,12 @@ use crate::{
 use alloy_primitives::{Address, B256};
 use outbe_core_common::tribute_encryption::{TributeAmountsV2, TributeContextV2};
 use outbe_core_common::wwd_entity_id::WwdEntityId;
+use outbe_tee::resident::StateKeyHandle;
 use zeroize::Zeroizing;
 
 pub fn process_encrypted_tribute_offer_batch(
     key: &TributeOfferKeyMaterial<'_>,
-    tribute_state_key: &[u8; 32],
+    tribute_state_key: &StateKeyHandle,
     chain_id: u64,
     offers: &[EncryptedTributeOffer],
 ) -> (Vec<EncryptedTributeOfferResultV2>, B256) {
@@ -54,7 +55,7 @@ fn decrypt_payload(
 
 fn process_one(
     key: &TributeOfferKeyMaterial<'_>,
-    tribute_state_key: &[u8; 32],
+    tribute_state_key: &StateKeyHandle,
     chain_id: u64,
     offer: &EncryptedTributeOffer,
 ) -> EnclaveResult<EncryptedTributeOfferResultV2> {
