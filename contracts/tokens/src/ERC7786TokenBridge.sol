@@ -13,6 +13,7 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 
 import {IStablecoin} from "@precompiles/IStablecoin.sol";
 
+import {DEAD_ADDRESS} from "@shared/BurnAddress.sol";
 import {IGatewayQuote} from "./interfaces/IGatewayQuote.sol";
 import {IERC7786TokenReceiver} from "./interfaces/IERC7786TokenReceiver.sol";
 
@@ -78,6 +79,7 @@ contract ERC7786TokenBridge is OwnableUpgradeable, UUPSUpgradeable, ReentrancyGu
     error RemoteBridgeNotSet(uint32 domain);
     error DomainTooLarge(uint256 chainId);
     error UnauthorizedBridge(address caller);
+    error UnauthorizedToken(address caller);
     error UnauthorizedRemoteBridge(bytes sender);
     error DecimalsMismatch(uint8 sourceDecimals, uint8 localDecimals);
 
@@ -171,6 +173,18 @@ contract ERC7786TokenBridge is OwnableUpgradeable, UUPSUpgradeable, ReentrancyGu
             bridge.sendMessage{value: msg.value}(_remoteBridge(destinationDomain), payload, _gasAttributes(gasLimit));
 
         emit CrosschainTransferSent(sendId, destinationDomain, msg.sender, to, amount);
+    }
+
+    /// @notice Sends `amount`, which the token has just burned from 0x…dEaD, to 0x…dEaD on
+    ///         `destinationDomain`. Only the token can call it, so no backing moves without that burn.
+    function sendBurned(uint32 destinationDomain, uint256 amount) external payable returns (bytes32 sendId) {
+        if (msg.sender != address(token)) revert UnauthorizedToken(msg.sender);
+        if (amount == 0) revert InvalidAmount();
+
+        bytes memory payload = _encodePayload(DEAD_ADDRESS, DEAD_ADDRESS, amount, "");
+        sendId = bridge.sendMessage{value: msg.value}(_remoteBridge(destinationDomain), payload, new bytes[](0));
+
+        emit CrosschainTransferSent(sendId, destinationDomain, DEAD_ADDRESS, DEAD_ADDRESS, amount);
     }
 
     function receiveMessage(bytes32 receiveId, bytes calldata sender, bytes calldata payload)

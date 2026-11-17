@@ -2,8 +2,8 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::error::Result;
 use outbe_stablecoinpolicy::api::policy_exists;
 
-use crate::abi::IStablecoin;
 use crate::errors::StablecoinStateError;
+use crate::precompile::IStablecoin;
 use crate::schema::{
     role_key, StablecoinContract, ADMIN_ROLE, CAP_MANAGER_ROLE, GUARDIAN_ROLE, OPERATIONAL_ROLES,
 };
@@ -47,7 +47,7 @@ impl StablecoinContract<'_> {
         })
     }
 
-    pub fn begin_admin_transfer(&mut self, actor: Address, candidate: Address) -> Result<()> {
+    pub fn start_admin_transfer(&mut self, actor: Address, candidate: Address) -> Result<()> {
         self.require_role(ADMIN_ROLE, actor)?;
         if candidate == Address::ZERO || candidate == actor {
             return Err(StablecoinStateError::InvalidPendingAdmin { candidate }.into());
@@ -100,6 +100,16 @@ impl StablecoinContract<'_> {
             self.roles.write(&role_key(ADMIN_ROLE, actor), true)?;
             self.admin.write(actor)?;
             self.pending_admin.write(Address::ZERO)?;
+            self.emit(IStablecoin::RoleRevoked {
+                role: ADMIN_ROLE,
+                account: previous,
+                actor,
+            })?;
+            self.emit(IStablecoin::RoleGranted {
+                role: ADMIN_ROLE,
+                account: actor,
+                actor,
+            })?;
             self.emit(IStablecoin::AdminTransferred {
                 previousAdmin: previous,
                 newAdmin: actor,
@@ -131,7 +141,7 @@ impl StablecoinContract<'_> {
         })
     }
 
-    pub fn set_supply_cap(&mut self, actor: Address, new_cap: U256) -> Result<()> {
+    pub fn change_supply_cap(&mut self, actor: Address, new_cap: U256) -> Result<()> {
         self.require_role(CAP_MANAGER_ROLE, actor)?;
         let supply = self.total_supply.read()?;
         if new_cap < supply {
@@ -149,14 +159,14 @@ impl StablecoinContract<'_> {
         storage.with_checkpoint(|| {
             self.supply_cap.write(new_cap)?;
             self.emit(IStablecoin::SupplyCapChanged {
-                previousCap: previous,
-                newCap: new_cap,
+                previousCapMinor: previous,
+                newCapMinor: new_cap,
                 actor,
             })
         })
     }
 
-    pub fn set_policy_id(&mut self, actor: Address, new_policy_id: U256) -> Result<()> {
+    pub fn change_policy(&mut self, actor: Address, new_policy_id: U256) -> Result<()> {
         self.require_role(crate::schema::COMPLIANCE_ROLE, actor)?;
         if !policy_exists(self.storage.clone(), new_policy_id)? {
             return Err(StablecoinStateError::UnknownPolicy {

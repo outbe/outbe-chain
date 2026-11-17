@@ -1,4 +1,4 @@
-//! CCA-gated liquidity moves between registered reserve vaults.
+//! CCA-gated stablecoin moves between registered reserve vaults.
 
 use alloy_primitives::{Address, U256};
 
@@ -12,14 +12,14 @@ use super::calls::{
     vault_asset, vault_deposit, vault_preview_withdraw, vault_withdraw,
 };
 use super::SELF;
-use crate::api::IVaultRouter;
 use crate::errors::VaultRouterError;
+use crate::precompile::IVaultRouter;
 use crate::schema::VaultRouterContract;
 
-/// `rebalance`: moves `amount` of liquidity from `vault_from` to `vault_to`. The caller
+/// `rebalance`: moves `amount` of stablecoin from `vault_from` to `vault_to`. The caller
 /// supplies `asset_to` (the destination vault's underlying asset) at the oracle cross rate
 /// and receives `asset_from` in return. As a result, the router never holds a standing
-/// allowance and never sources liquidity itself. The caller must have approved this router
+/// allowance and never sources stablecoins itself. The caller must have approved this router
 /// for at least the required amount beforehand. `max_amount_to` bounds what the router may
 /// pull if the rate moved between the caller's quote and this call.
 pub(crate) fn rebalance(
@@ -71,13 +71,13 @@ pub(crate) fn rebalance(
         erc20_transfer(&storage, asset_from, caller, amount)?;
 
         let mut contract = VaultRouterContract::new(storage.clone());
-        contract.emit(IVaultRouter::LiquidityRebalanced {
+        contract.emit(IVaultRouter::StablecoinRebalanced {
             cca: caller,
             vaultFrom: vault_from,
             vaultTo: vault_to,
-            assetsWithdrawnMinor: amount,
+            withdrawnAmountMinor: amount,
             burnedShares: burned,
-            assetsDepositedMinor: amount_to,
+            depositedAmountMinor: amount_to,
             mintedShares: minted,
         })?;
         Ok(amount_to)

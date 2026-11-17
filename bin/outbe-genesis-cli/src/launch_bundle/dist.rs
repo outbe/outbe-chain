@@ -30,10 +30,6 @@ fn pack_validator_archive(
             fs::copy(&item, &dst).map_err(|err| GenesisError::io(&dst, err))?;
         }
     }
-    let sgx = output_dir.join("sgx");
-    if sgx.is_dir() {
-        copy_dir_recursive(&sgx, &staging.join("sgx"))?;
-    }
     let crs = output_dir.join(".bb-crs/bn254_g1.dat");
     let staged_crs = staging.join(".bb-crs/bn254_g1.dat");
     fs::create_dir_all(staged_crs.parent().expect("CRS path has a parent"))
@@ -152,11 +148,6 @@ pub fn deploy_markdown(
             .get("chain_id")
             .ok_or_else(|| GenesisError::validation("chain_id is required"))?,
     )?;
-    let mode = config
-        .get("tee")
-        .and_then(|t| t.get("mode"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| GenesisError::validation("tee.mode is required"))?;
     let first_p2p = validators
         .first()
         .and_then(|v| v.get("p2p_address"))
@@ -180,18 +171,22 @@ pub fn deploy_markdown(
         rows.push(format!("| validator-{index} | `{p2p}` | `{addr}` |"));
     }
     let rows_joined = rows.join("\n");
+    let founder_count = validators.len();
+    let last_founder = founder_count.saturating_sub(1);
     let bootnode_lines = enodes
         .iter()
         .map(|enode| format!("  - `{enode}`"))
         .collect::<Vec<_>>()
         .join("\n");
-    let dev_warning = if mode == "dcap-required" {
-        ""
-    } else {
-        "\n> **`gramine-direct-dev`**: the enclave runs unattested. Use it for a \
-devnet only. A production network needs `tee.mode: dcap-required`, real \
-SGX hardware, and the exact release measurements.\n"
-    };
+    let runtime_summary = "confidential VM signer (VM attestation pending)";
+    let runtime_warning = "\n> The signer runs inside an operator-provided confidential VM. VM \
+attestation is not implemented yet, so the deployment trusts the operator and infrastructure.\n";
+    let runtime_prerequisites =
+        "- `outbe-tee-enclave-confidential-vm` is installed from the software bundle";
+    let runtime_process =
+        "`outbe-tee-enclave-confidential-vm` | one signer inside the confidential VM";
+    let runtime_install_note = "The services recover after clean or failed exits. `preflight.sh` \
+is read-only: run it first and compare the genesis digest it prints across all founding machines.";
 
     let reth_p2p_port = port_of(config, "reth_p2p_port")?;
     let reth_discv5_port = port_of(config, "reth_discv5_port")?;
@@ -214,8 +209,8 @@ SGX hardware, and the exact release measurements.\n"
     Ok(format!(
         "# Deploying this network\n\
 \n\
-Chain id `{chain_id}`, four founding validators, TEE mode `{mode}`.\n\
-{dev_warning}\n\
+Chain id `{chain_id}`, {founder_count} founding validators, {runtime_summary}.\n\
+{runtime_warning}\n\
 | Machine | Consensus p2p | Validator address |\n\
 |---|---|---|\n\
 {rows_joined}\n\
@@ -230,7 +225,7 @@ archive contains the shared genesis and bootnodes, systemd units and installer,\
 launch scripts, the selected enclave runtime, and **only that validator's** keys.\n\
 \n\
 ```bash\n\
-# From the generated output directory, for machine N (0..3):\n\
+# From the generated output directory, for machine N (0..{last_founder}):\n\
 scp dist/validator-N.tgz dist/SHA256SUMS dist/unpack.sh <machine-N>:~/\n\
 ssh <machine-N>\n\
 cd ~\n\
@@ -243,7 +238,7 @@ Never copy one validator's archive or key directory to another machine.\n\
 \n\
 ## 2. Open the ports\n\
 \n\
-Between the four machines:\n\
+Between all founding machines:\n\
 \n\
 | Port | Purpose |\n\
 |---|---|\n\
@@ -262,16 +257,10 @@ metrics `{metrics_port}`, Radicle status\n\
 ## 3. Prerequisites on every machine\n\
 \n\
 - Python 3.11+ - reads the shared storage TOML at launch\n\
-- no system Gramine installation is required on SGX hosts: `sgx/` contains the\n\
-  pinned enclave launcher and runtime from the signed release bundle\n\
-- `outbe-cli` on every SGX validator host for automatic TEE renewal\n\
 - the `outbe-chain`, `outbe-radicle` and `outbe-feeder` binaries on `PATH`\n\
   (or set `node_binary`, `radicle_binary` and `feeder_binary` in the yaml to\n\
   absolute paths and regenerate)\n\
-- when `enclave_sgx` is enabled: SGX hardware exposing `/dev/sgx_enclave`\n\
-- for `dcap-required`: also `/dev/sgx_provision` and `aesmd.service`\n\
-- `outbe-tee-enclave-mock` on `PATH` (or `enclave_runner` pointing to it) only\n\
-  when `enclave_sgx: false`; otherwise the signed SGX runtime is used\n\
+{runtime_prerequisites}\n\
 \n\
 ## 4. Start each machine\n\
 \n\
@@ -281,18 +270,15 @@ cd {base_dir}/validator-N\n\
 ./install-systemd.sh\n\
 ```\n\
 \n\
-`install-systemd.sh` installs one non-templated unit per role, starts the\n\
-`outbe-validator.target`, and enables the daily TEE renewal timer for a NodeHost SGX\n\
-session. The services recover after clean or failed exits. `preflight.sh`\n\
-is read-only: run it first and compare the genesis digest it prints across all\n\
-four machines. When SGX is enabled, compare the enclave digest too.\n\
+`install-systemd.sh` installs one non-templated unit per role and starts the\n\
+`outbe-validator.target`. {runtime_install_note}\n\
 \n\
 Inspect the stack with `systemctl status outbe-validator.target` and follow the\n\
 node with `journalctl -u outbe-validator -f`.\n\
 \n\
-**Start all four machines within a few minutes of each other.** Block 1 carries\n\
+**Start all {founder_count} machines within a few minutes of each other.** Block 1 carries\n\
 the founding DKG ceremony and needs every genesis validator online - unlike a\n\
-later reshare it does not complete on a threshold. If it fails, stop all four,\n\
+later reshare it does not complete on a threshold. If it fails, stop all founders,\n\
 delete `{base_dir}/validator-N/data` on each machine, and start again; the\n\
 genesis itself stays valid.\n\
 \n\
@@ -304,7 +290,7 @@ curl -s -X POST http://{rpc_bind}:{rpc_port} \\\n\
   -H 'content-type: application/json' \\\n\
   -d '{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_blockNumber\",\"params\":[]}}'\n\
 \n\
-# all four validators active\n\
+# all {founder_count} validators active\n\
 outbe-cli --rpc-url http://{rpc_bind}:{rpc_port} validator list\n\
 \n\
 # feeder health\n\
@@ -312,14 +298,14 @@ curl -s http://127.0.0.1:{feeder_health_port}/health\n\
 ```\n\
 \n\
 The network is healthy when every machine reports an advancing non-zero block\n\
-number and `validator list` shows four active validators.\n\
+number and `validator list` shows {founder_count} active validators.\n\
 \n\
 ## What runs where\n\
 \n\
 | Component | Process | Notes |\n\
 |---|---|---|\n\
 | Execution + consensus | `outbe-chain node` | one binary, no Engine API split |\n\
-| TEE enclave | bundled SGX launcher or `outbe-tee-enclave-mock` | selected explicitly with `enclave_sgx`; there is no runtime fallback |\n\
+| TEE signer | {runtime_process} |\n\
 | Radicle | `outbe-radicle` | validator startup requires its control socket |\n\
 | Price feeder | `outbe-feeder` | submits oracle votes |\n\
 \n\

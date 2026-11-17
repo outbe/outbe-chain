@@ -70,7 +70,7 @@ impl DeadlineHandler<B256> for GemForfeit<'_, '_> {
         let sub_series = self.gem.group_sub_series(group)?;
         if !load.is_zero() {
             outbe_promislimit::PromisLimitContract::new(self.storage.clone())
-                .checked_credit(load)?;
+                .add(outbe_promislimit::LimitSource::Gem, load)?;
         }
         if self.gem.group_gem_count.read(&group)? == 0 {
             self.gem.remove_called(group)?;

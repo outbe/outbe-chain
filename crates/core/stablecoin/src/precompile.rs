@@ -4,9 +4,13 @@ use outbe_primitives::dispatch::{dispatch_call, mutate, mutate_void, view};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-pub use crate::abi::IStablecoin;
 use crate::errors::{AbiDecodeError, StablecoinStateError};
 use crate::schema::StablecoinContract;
+
+alloy_sol_types::sol!(
+    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+    "../../../contracts/precompiles/src/IStablecoin.sol"
+);
 
 const ERC165_INTERFACE_ID: [u8; 4] = [0x01, 0xff, 0xc9, 0xa7];
 const ERC7943_FUNGIBLE_INTERFACE_ID: [u8; 4] = [0x3e, 0xdb, 0xb4, 0xc4];
@@ -184,18 +188,18 @@ pub fn dispatch(
                 revokeRole(call) => mutate_void(&storage, call, caller, |actor, call| {
                     token.revoke_role(actor, call.role, call.account)
                 }),
-                setSupplyCap(call) => mutate_void(&storage, call, caller, |actor, call| {
-                    token.set_supply_cap(actor, call.newCap)
+                changeSupplyCap(call) => mutate_void(&storage, call, caller, |actor, call| {
+                    token.change_supply_cap(actor, call.newCap)
                 }),
-                setPolicyId(call) => mutate_void(&storage, call, caller, |actor, call| {
-                    token.set_policy_id(actor, call.newPolicyId)
+                changePolicy(call) => mutate_void(&storage, call, caller, |actor, call| {
+                    token.change_policy(actor, call.newPolicyId)
                 }),
                 pause(call) => mutate_void(&storage, call, caller, |actor, _| token.pause(actor)),
                 unpause(call) => {
                     mutate_void(&storage, call, caller, |actor, _| token.unpause(actor))
                 }
-                beginAdminTransfer(call) => mutate_void(&storage, call, caller, |actor, call| {
-                    token.begin_admin_transfer(actor, call.candidate)
+                startAdminTransfer(call) => mutate_void(&storage, call, caller, |actor, call| {
+                    token.start_admin_transfer(actor, call.candidate)
                 }),
                 cancelAdminTransfer(call) => mutate_void(&storage, call, caller, |actor, _| {
                     token.cancel_admin_transfer(actor)

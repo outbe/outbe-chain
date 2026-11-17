@@ -4,15 +4,6 @@ run-name: Standard release preflight — ${{ github.ref_name }}
 
 on:
   workflow_dispatch:
-    inputs:
-      profile:
-        description: Software profile to build
-        required: true
-        default: production
-        type: choice
-        options:
-          - production
-          - development
 
 permissions:
   contents: read
@@ -28,11 +19,10 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/build-software-bundle
         with:
-          profile: ${{ inputs.profile }}
           output: ${{ runner.temp }}/outbe-software
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: outbe-software-${{ inputs.profile }}
+          name: outbe-software
           path: ${{ runner.temp }}/outbe-software
           if-no-files-found: error
           retention-days: 7

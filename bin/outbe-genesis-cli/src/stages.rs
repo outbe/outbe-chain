@@ -3,108 +3,22 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use alloy_primitives::U256;
 use serde_json::{json, Map, Value};
-use time::OffsetDateTime;
 
 use crate::error::GenesisError;
 use crate::inputs::{SeedInputs, SeedOptions};
 use crate::launch_bundle;
 use crate::network::{
-    base_profile_path, deep_merge, default_contracts_dir, profiles_dir, DEFAULT_CHAIN_ID,
-    DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS, DEFAULT_DKG_PREPARE_WINDOW_BLOCKS,
-    DEFAULT_EPOCH_LENGTH_BLOCKS, DEFAULT_GAS_LIMIT, DEFAULT_PREFUND_COEN_UNITS, MAINNET_CHAIN_ID,
-    MAX_GENESIS_AGE_SECONDS, SEED_SECTIONS,
+    base_profile_path, deep_merge, default_contracts_dir, profiles_dir, DEFAULT_PREFUND_COEN_UNITS,
+    MAINNET_CHAIN_ID, SEED_SECTIONS,
 };
 use crate::seed_codec::{parse_u256, parse_u64, timestamp_to_utc_date_key};
 use crate::seed_genesis::apply_seed;
 use crate::yaml::load_yaml;
 
-/// Build the base Reth genesis structure from `config`.
-pub fn build_base_genesis(config: &Value) -> Result<Value, GenesisError> {
-    let now = current_unix_timestamp();
-    let timestamp = match config.get("timestamp") {
-        Some(val) => parse_u64(val)?,
-        None => now,
-    };
-    let age = now as i64 - timestamp as i64;
-    let allow_stale = config
-        .get("allow_stale_timestamp")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    if age > MAX_GENESIS_AGE_SECONDS && !allow_stale {
-        return Err(GenesisError::validation(format!(
-            "`timestamp: {timestamp}` is {}h in the past. The TEE lease \
-             runs from the genesis timestamp, so block 1 would fail with \
-             'requested lease is already expired'. Drop the key to stamp now, or \
-             set `allow_stale_timestamp: true` to reproduce an existing genesis.",
-            age.div_euclid(3600)
-        )));
-    }
-
-    let genesis_time = format_utc_iso8601(timestamp)?;
-    let chain_id = u64_or_default(config, "chain_id", DEFAULT_CHAIN_ID)?;
-    let epoch_length_blocks =
-        u64_or_default(config, "epoch_length_blocks", DEFAULT_EPOCH_LENGTH_BLOCKS)?;
-    let dkg_prepare_window_blocks = u64_or_default(
-        config,
-        "dkg_prepare_window_blocks",
-        DEFAULT_DKG_PREPARE_WINDOW_BLOCKS,
-    )?;
-    let dkg_activation_grace_blocks = u64_or_default(
-        config,
-        "dkg_activation_grace_blocks",
-        DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS,
-    )?;
-    let gas_limit = match config.get("gas_limit") {
-        Some(Value::String(s)) => s.clone(),
-        Some(other) => other.to_string(),
-        None => DEFAULT_GAS_LIMIT.to_owned(),
-    };
-
-    Ok(json!({
-        "config": {
-            "chainId": chain_id,
-            "genesisTime": genesis_time,
-            "homesteadBlock": 0,
-            "eip150Block": 0,
-            "eip155Block": 0,
-            "eip158Block": 0,
-            "byzantiumBlock": 0,
-            "constantinopleBlock": 0,
-            "petersburgBlock": 0,
-            "istanbulBlock": 0,
-            "berlinBlock": 0,
-            "londonBlock": 0,
-            "mergeNetsplitBlock": 0,
-            "terminalTotalDifficulty": 0,
-            "terminalTotalDifficultyPassed": true,
-            "shanghaiTime": 0,
-            "cancunTime": 0,
-            "pragueTime": 0,
-            "epochLengthBlocks": epoch_length_blocks,
-            "dkgPrepareWindowBlocks": dkg_prepare_window_blocks,
-            "dkgActivationGraceBlocks": dkg_activation_grace_blocks
-        },
-        "nonce": "0x0",
-        "timestamp": format!("0x{timestamp:x}"),
-        "extraData": "0x",
-        "gasLimit": gas_limit,
-        "difficulty": "0x0",
-        "mixHash": format!("0x{}", "00".repeat(32)),
-        "coinbase": format!("0x{}", "00".repeat(20)),
-        "alloc": {}
-    }))
-}
-
-fn u64_or_default(config: &Value, key: &str, default: u64) -> Result<u64, GenesisError> {
-    match config.get(key) {
-        Some(val) => parse_u64(val),
-        None => Ok(default),
-    }
-}
+pub use crate::base_genesis::build_base_genesis;
 
 /// Prefund founding validators in `genesis["alloc"]`.
 pub fn prefund_validators(
@@ -150,7 +64,12 @@ pub fn prefund_validators(
 
 /// Build the protocol seed sections by merging the network's overrides on top of `testnet.yaml`.
 pub fn build_seed(config: &Value) -> Result<Value, GenesisError> {
-    let baseline = load_yaml(&base_profile_path())?;
+    let profile = config
+        .get("base_profile")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .unwrap_or_else(base_profile_path);
+    let baseline = load_yaml(&profile)?;
     let is_mainnet = config.get("chain_id").and_then(Value::as_u64) == Some(MAINNET_CHAIN_ID)
         || config.get("network").and_then(Value::as_str) == Some("mainnet");
     let mut seed_map = Map::new();
@@ -392,25 +311,4 @@ pub fn seed_genesis_from_config(
     let content =
         fs::read_to_string(&seeded_path).map_err(|err| GenesisError::io(&seeded_path, err))?;
     Ok(serde_json::from_str(&content)?)
-}
-
-fn current_unix_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
-fn format_utc_iso8601(timestamp: u64) -> Result<String, GenesisError> {
-    let dt = OffsetDateTime::from_unix_timestamp(timestamp as i64)
-        .map_err(|e| GenesisError::validation(format!("invalid timestamp {timestamp}: {e}")))?;
-    Ok(format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        dt.year(),
-        u8::from(dt.month()),
-        dt.day(),
-        dt.hour(),
-        dt.minute(),
-        dt.second()
-    ))
 }

@@ -8,6 +8,7 @@ pragma solidity ^0.8.30;
 ///      issuer solvency, creditworthiness, fee eligibility, or payment-lane eligibility.
 interface IStablecoinFactory {
     /// @notice Emitted once after token initialization and every Factory index commit atomically.
+    ///         The token emits RoleGranted for each of its six first roles before this event.
     /// @dev Solidity permits at most three indexed fields on a non-anonymous event. proposalId is
     ///      therefore canonical event data while tokenId, token, and issuer are indexed.
     event StablecoinCreated(
@@ -17,9 +18,9 @@ interface IStablecoinFactory {
         uint256 proposalId,
         string name,
         string ticker,
-        uint16 iso4217,
+        uint16 isoCode,
         uint8 decimals,
-        uint256 supplyCap,
+        uint256 supplyCapMinor,
         uint256 policyId
     );
 

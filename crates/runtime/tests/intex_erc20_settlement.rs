@@ -11,7 +11,7 @@ use outbe_intexfactory::precompile::IIntexFactory;
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::addresses::{INTEX_ADDRESS, INTEX_FACTORY_ADDRESS};
 use outbe_system_common::time::EmissionDate;
-use outbe_vaultrouter::api::IVaultRouter::StablesSource;
+use outbe_vaultrouter::precompile::IVaultRouter::StablecoinSource;
 use settlement::{Quote, Rail, World, ASSET, OWNER, TIMESTAMP};
 
 sol! {
@@ -29,7 +29,7 @@ struct Intex;
 
 impl Rail for Intex {
     const FACTORY: Address = INTEX_FACTORY_ADDRESS;
-    const SOURCE: StablesSource = StablesSource::IntexCostAmount;
+    const SOURCE: StablecoinSource = StablecoinSource::IntexCostAmount;
     const EXTRA_COUNTERPARTIES: &'static [Address] = &[INTEX_NFT1155_ADDRESS];
 
     fn seed(self, storage: &StorageHandle<'_>, issuance_currency: u16) -> (U256, u64) {
@@ -144,6 +144,11 @@ fn a_third_party_pays_and_the_units_stay_with_the_owner() {
 #[test]
 fn payment_failures_restore_balances_allowances_and_logs() {
     settlement::payment_failures_restore_balances_allowances_and_logs(Intex);
+}
+
+#[test]
+fn a_payer_that_approved_only_the_factory_fails() {
+    settlement::a_payer_that_approved_only_the_factory_fails(Intex);
 }
 
 #[test]

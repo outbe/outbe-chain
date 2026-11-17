@@ -92,16 +92,13 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
     let mut state = state_with_active_validators_seeded(&validators, |storage| {
         outbe_validatorset::write_committee_snapshot(storage.clone(), 0, &snapshot).unwrap();
         let mut promis = outbe_promislimit::PromisLimitContract::new(storage.clone());
-        storage.set_balance(proposer, prior_remainder).unwrap();
         promis
-            .burn_to_promis_limit(
-                proposer,
-                prior_remainder,
-                outbe_promislimit::runtime::BurnSource::ProposalBond,
-            )
+            .burn(outbe_promislimit::BurnSource::PriorityFees, prior_remainder)
             .unwrap();
         if fail_shared_burn {
-            promis.checked_credit(U256::MAX).unwrap();
+            promis
+                .add(outbe_promislimit::LimitSource::Nod, U256::MAX)
+                .unwrap();
         }
         if invalid_slash_percent {
             let si = outbe_slashindicator::contract::SlashIndicator::new(storage.clone());
@@ -155,7 +152,7 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
             )
             .unwrap();
         storage
-            .set_balance(REWARDS_ADDRESS, matured_fee + parent_fee)
+            .set_balance(REWARDS_ADDRESS, matured_fee + parent_fee + prior_remainder)
             .unwrap();
         ctx.storage
             .contract::<outbe_cycle::schema::Accounting<'_>>()
@@ -163,7 +160,7 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
             .write(parent_number - 1)
             .unwrap();
     });
-    // Match production's EIP-161 preservation for the shared accumulator. The
+    // Match production's EIP-161 preservation for the Promis Limit. The
     // generic validator fixture does not install this native precompile marker.
     let marker_code = Bytecode::new_legacy([0xef].into());
     state.database.insert_account_info(
@@ -306,12 +303,18 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
             assert_eq!(rewards.pending_reward_day.read(&settled_hash)?, day);
             assert_eq!(rewards.day_fee_sum_native.read(&day)?, parent_fee);
             assert_eq!(rewards.day_total_votes.read(&day)?, U256::from(4));
-            assert_eq!(storage.balance(REWARDS_ADDRESS)?, matured_fee + parent_fee);
+            assert_eq!(
+                storage.balance(REWARDS_ADDRESS)?,
+                matured_fee + parent_fee + prior_remainder
+            );
             for voter in &voters {
                 assert_eq!(storage.balance(*voter)?, U256::ZERO);
             }
             let promis = outbe_promislimit::PromisLimitContract::new(storage.clone());
-            assert_eq!(promis.rest_minor()?, prior_remainder);
+            assert_eq!(
+                promis.burn_rest(outbe_promislimit::BurnSource::PriorityFees)?,
+                prior_remainder
+            );
             assert_eq!(
                 promis.promis_limit()?,
                 if fail_shared_burn {
@@ -366,7 +369,7 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
         .logs
         .iter()
         .filter_map(|log| {
-            outbe_promislimit::precompile::IPromisLimit::NativeBurnedToPromisLimit::decode_log(log)
+            outbe_promislimit::precompile::IPromisLimit::PromisLimitAdded::decode_log(log)
                 .ok()
                 .map(|burn| (log, burn))
         })
@@ -379,13 +382,16 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
     );
     assert_eq!(
         burn.source,
-        outbe_promislimit::runtime::BurnSource::BlockFee as u8
+        outbe_promislimit::BurnSource::PriorityFees as u8
     );
-    assert_eq!(burn.burnedUnit, summary.restNative);
+    assert_eq!(
+        burn.amountMinor,
+        (summary.restNative + prior_remainder) / unit
+    );
     assert_rewards_bloom(late, burn_log);
     {
         // Read immediately after LateFinalizeCredits: later system transactions
-        // can route their own native burns into the same shared accumulator.
+        // can add their own amounts to the Promis Limit.
         let mut provider = super::DirectStorageProvider::new(
             executor.evm_mut().db_mut(),
             BlockContext {
@@ -403,8 +409,16 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
         let storage = StorageHandle::new(&mut provider);
         let promis = outbe_promislimit::PromisLimitContract::new(storage.clone());
         assert_eq!(promis.promis_limit().unwrap(), U256::from(4_001));
-        assert_eq!(promis.rest_minor().unwrap(), U256::from(1));
-        assert_eq!(storage.balance(REWARDS_ADDRESS).unwrap(), parent_fee);
+        assert_eq!(
+            promis
+                .burn_rest(outbe_promislimit::BurnSource::PriorityFees)
+                .unwrap(),
+            U256::from(1)
+        );
+        assert_eq!(
+            storage.balance(REWARDS_ADDRESS).unwrap(),
+            parent_fee + U256::from(1)
+        );
     }
     for tx in system_txs {
         executor
@@ -412,12 +426,16 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
             .expect("remaining begin prefix");
     }
     assert!(
-        executor.receipts()[2..].iter().all(|receipt| receipt
-            .logs
+        executor.receipts()[2..]
             .iter()
-            .all(|log| log.address != REWARDS_ADDRESS &&
-                outbe_promislimit::precompile::IPromisLimit::NativeBurnedToPromisLimit::decode_log(log)
-                    .map_or(true, |burn| burn.source != outbe_promislimit::BurnSource::BlockFee as u8))),
+            .all(
+                |receipt| receipt.logs.iter().all(|log| log.address != REWARDS_ADDRESS
+                    && outbe_promislimit::precompile::IPromisLimit::PromisLimitAdded::decode_log(
+                        log
+                    )
+                    .map_or(true, |burn| burn.source
+                        != outbe_promislimit::BurnSource::PriorityFees as u8))
+            ),
         "Rewards and shared-burn logs must not leak into CycleTick or other system receipts"
     );
     drop(executor);
@@ -442,7 +460,10 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
             U256::from(2_000) * unit + U256::from(1)
         );
     }
-    assert_eq!(storage.balance(REWARDS_ADDRESS).unwrap(), parent_fee);
+    assert_eq!(
+        storage.balance(REWARDS_ADDRESS).unwrap(),
+        parent_fee + U256::from(1)
+    );
     assert!(outbe_rewards::schema::Rewards::new(storage)
         .fees_transferred
         .read(&settled_hash)

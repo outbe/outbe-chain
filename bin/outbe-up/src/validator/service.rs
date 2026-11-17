@@ -16,61 +16,36 @@ const ENCLAVE_ADDRESS: &str = "127.0.0.1:17000";
 const RADICLE_SOCKET: &str = "/opt/outbe-chain/keys/radicle/node/outbe-control.sock";
 
 pub fn enclave() -> Result<()> {
-    let runtime = required_env("OUTBE_ENCLAVE_RUNTIME")?;
     let chain_id = required_env("OUTBE_CHAIN_ID")?
         .parse::<u64>()
         .wrap_err("OUTBE_CHAIN_ID must be a positive decimal integer")?;
     ensure!(chain_id > 0, "OUTBE_CHAIN_ID must be positive");
     let chain_hex = format!("0x{chain_id:064x}");
-    let mut command = match runtime.as_str() {
-        "system-gramine" => {
-            let mut command = Command::new("gramine-sgx");
-            command.arg("outbe-tee-enclave").current_dir(process::ROOT);
-            command
-        }
-        "bundled-sgx" => {
-            let sgx = Path::new(process::ROOT).join("sgx");
-            let mut command = Command::new(sgx.join("bin/outbe-tee-enclave-launch"));
-            command.current_dir(&sgx);
-            command
-        }
-        "mock" => {
-            let root = Path::new(process::ROOT);
-            let network_binding = required_env("OUTBE_DEV_NETWORK_BINDING")?;
-            let reth_p2p_public = compressed_public_key(&root.join("keys/reth-p2p-secret.hex"))?;
-            let mut command = Command::new(root.join("outbe-tee-enclave-mock"));
-            command
-                .current_dir(root)
-                .env(
-                    "TEE_DEV_DKG_SEED",
-                    private_hex(&root.join("tee/dev-dkg-seed.hex"))?,
-                )
-                .env(
-                    "TEE_DEV_OFFER_SECRET",
-                    private_hex(&root.join("tee/dev-offer-secret.hex"))?,
-                )
-                .args([
-                    "--dev-network-binding",
-                    &network_binding,
-                    "--dev-reth-p2p-public",
-                    &reth_p2p_public,
-                ]);
-            command
-        }
-        _ => {
-            bail!("OUTBE_ENCLAVE_RUNTIME must be system-gramine, bundled-sgx, or mock");
-        }
-    };
-    let tee_dir = if runtime == "bundled-sgx" {
-        "/var/lib/outbe/tee"
-    } else {
-        "/opt/outbe-chain/tee"
-    };
+    let root = Path::new(process::ROOT);
+    let network_binding = required_env("OUTBE_DEV_NETWORK_BINDING")?;
+    let reth_p2p_public = compressed_public_key(&root.join("keys/reth-p2p-secret.hex"))?;
+    let mut command = Command::new(root.join("outbe-tee-enclave-confidential-vm"));
+    command
+        .current_dir(root)
+        .env(
+            "TEE_DEV_DKG_SEED",
+            private_hex(&root.join("tee/dev-dkg-seed.hex"))?,
+        )
+        .env(
+            "TEE_DEV_OFFER_SECRET",
+            private_hex(&root.join("tee/dev-offer-secret.hex"))?,
+        )
+        .args([
+            "--dev-network-binding",
+            &network_binding,
+            "--dev-reth-p2p-public",
+            &reth_p2p_public,
+        ]);
     command.args([
         "--socket",
         ENCLAVE_ADDRESS,
         "--tee-dir",
-        tee_dir,
+        "/opt/outbe-chain/tee",
         "--chain-id",
         &chain_hex,
     ]);

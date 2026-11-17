@@ -3,7 +3,7 @@ pragma solidity ^0.8.0;
 
 /// @notice Local stablecoin vault routing and authorization surface.
 interface IVaultRouter {
-    enum StablesSource {
+    enum StablecoinSource {
         Unknown,
         IntexCostAmount,
         CredisCostAmount,
@@ -11,7 +11,7 @@ interface IVaultRouter {
         NodCostAmount
     }
 
-    enum StablesTarget {
+    enum StablecoinTarget {
         Unknown,
         Credis
     }
@@ -43,16 +43,16 @@ interface IVaultRouter {
     }
 
     error TokenOperationFailed();
-    error InvalidLiquiditySource();
-    error InvalidLiquidityTarget();
+    error InvalidStablecoinSource();
+    error InvalidStablecoinTarget();
     error ReserveVaultNotConfigured();
     error ReserveVaultAlreadyAdded();
     error ReserveVaultNotFound();
     error ReserveVaultHasShares(address vault, uint256 shares);
     error ReserveVaultRemovalPending(address vault, uint256 proposalId);
     error ReserveVaultOwnerNotRenounced(address currentOwner);
-    error LiquiditySourceNotFound();
-    error LiquidityTargetNotFound();
+    error StablecoinSourceNotFound();
+    error StablecoinTargetNotFound();
     error InsufficientSharesForWithdraw(uint256 availableShares, uint256 requiredShares);
     error SameVaultRebalance();
     error InvalidRebalanceAmount();
@@ -90,39 +90,54 @@ interface IVaultRouter {
     error AmountMismatch();
     error InsufficientFunds();
     error CostAboveCap();
-    error ApprovedVaultActionNotFound(uint256 proposalId);
-    error ApprovedVaultActionIndexInconsistent(uint256 proposalId);
-    error InvalidApprovedVaultAction();
+    error VaultActionNotFound(uint256 proposalId);
+    error VaultActionIndexInconsistent(uint256 proposalId);
+    error InvalidVaultAction();
     error DateStep(uint8 kind, uint32 dateKey);
 
     event VaultAdded(uint16 indexed isoCode, address indexed asset, address indexed vault);
     event VaultRemoved(uint16 indexed isoCode, address indexed asset, address indexed vault);
-    event ApprovedVaultActionExpired(uint256 indexed proposalId, address indexed vault);
-    event LiquiditySourceAdded(address indexed sourceAddress, StablesSource sourceType);
-    event LiquiditySourceRemoved(address indexed sourceAddress, StablesSource sourceType);
-    event LiquidityTargetAdded(address indexed targetAddress, StablesTarget targetType);
-    event LiquidityTargetRemoved(address indexed targetAddress, StablesTarget targetType);
+    /// @notice A vote approved a proposal to add or remove `vault`. The action waits for
+    ///         applyVaultAction. If an older action for `vault` waited, VaultActionCanceled
+    ///         of the older action comes first, in the same transaction.
+    event VaultActionCreated(uint256 indexed proposalId, address indexed vault, VaultAction indexed kind);
+    /// @notice An address applied the vault action in time. VaultAdded or VaultRemoved follows
+    ///         in the same transaction.
+    event VaultActionApplied(uint256 indexed proposalId, address indexed vault);
+    /// @notice An address applied the vault action after its window. The vault does not change.
+    event VaultActionExpired(uint256 indexed proposalId, address indexed vault);
+    /// @notice A vote approved the newer action `newProposalId` for the same vault. The older
+    ///         action cannot complete.
+    event VaultActionCanceled(uint256 indexed proposalId, address indexed vault, uint256 newProposalId);
+    event StablecoinSourceAdded(address indexed sourceAddress, StablecoinSource sourceType);
+    event StablecoinSourceRemoved(address indexed sourceAddress, StablecoinSource sourceType);
+    event StablecoinTargetAdded(address indexed targetAddress, StablecoinTarget targetType);
+    event StablecoinTargetRemoved(address indexed targetAddress, StablecoinTarget targetType);
 
-    event LiquidityDeposited(
-        address indexed source, address indexed vault, uint256 assetsMinor, uint256 shares, StablesSource sourceType
+    event StablecoinDeposited(
+        address indexed sourceAddress,
+        address indexed vault,
+        uint256 amountMinor,
+        uint256 shares,
+        StablecoinSource sourceType
     );
 
-    event LiquidityWithdrawn(
-        address indexed target,
+    event StablecoinWithdrawn(
+        address indexed targetAddress,
         address indexed receiver,
         address indexed vault,
-        uint256 assetsMinor,
+        uint256 amountMinor,
         uint256 burnedShares,
-        StablesTarget targetType
+        StablecoinTarget targetType
     );
 
-    event LiquidityRebalanced(
+    event StablecoinRebalanced(
         address indexed cca,
         address indexed vaultFrom,
         address indexed vaultTo,
-        uint256 assetsWithdrawnMinor,
+        uint256 withdrawnAmountMinor,
         uint256 burnedShares,
-        uint256 assetsDepositedMinor,
+        uint256 depositedAmountMinor,
         uint256 mintedShares
     );
 
@@ -171,43 +186,58 @@ interface IVaultRouter {
         view
         returns (address[] memory assets);
 
-    /// @notice Returns the number of liquidity sources.
-    function liquiditySourcesCount() external view returns (uint256);
+    /// @notice Returns the number of stablecoin sources.
+    function stablecoinSourcesCount() external view returns (uint256);
 
-    /// @notice Returns the liquidity source at `index`. Reverts if out of bounds.
-    function liquiditySourceAt(uint256 index) external view returns (address sourceAddress, StablesSource sourceType);
-
-    /// @notice Returns the number of liquidity targets.
-    function liquidityTargetsCount() external view returns (uint256);
-
-    /// @notice Returns the liquidity target at `index`. Reverts if out of bounds.
-    function liquidityTargetAt(uint256 index) external view returns (address targetAddress, StablesTarget targetType);
-
-    /// @notice Applies a pending governance-approved vault action once. Anyone may call.
-    ///         A failed application remains retriable. Strictly after the governance
-    ///         window, deletes the record and emits ApprovedVaultActionExpired instead.
-    ///         Removal requires the router's live share balance in the vault to be zero.
-    function applyApproved(uint256 proposalId) external;
-
-    /// @notice Returns the pending approved action, or Unknown if no record remains.
-    /// @dev An expired action remains visible until applyApproved clears it.
-    function approvedVaultAction(uint256 proposalId)
+    /// @notice Returns the stablecoin source at `index`. Reverts if out of bounds.
+    function stablecoinSourceAt(uint256 index)
         external
         view
-        returns (VaultAction action, address vault, uint64 approvedAt);
+        returns (address sourceAddress, StablecoinSource sourceType);
+
+    /// @notice Returns the number of stablecoin targets.
+    function stablecoinTargetsCount() external view returns (uint256);
+
+    /// @notice Returns the stablecoin target at `index`. Reverts if out of bounds.
+    function stablecoinTargetAt(uint256 index)
+        external
+        view
+        returns (address targetAddress, StablecoinTarget targetType);
+
+    /// @notice Applies a pending vault action once. Anyone may call. In time, deletes the
+    ///         record, emits VaultActionApplied, and then adds or removes the vault.
+    ///         A failed application remains retriable. Strictly after the governance
+    ///         window, deletes the record and emits VaultActionExpired instead.
+    ///         Removal requires the router's live share balance in the vault to be zero.
+    function applyVaultAction(uint256 proposalId) external;
+
+    /// @notice Returns the pending vault action, or Unknown if no record remains.
+    /// @dev An expired action remains visible until applyVaultAction clears it.
+    function getVaultAction(uint256 proposalId)
+        external
+        view
+        returns (VaultAction action, address vault, uint64 createdAt);
 
     /// @notice Deposits `assetsMinor` of `asset` into the asset's vault on behalf of the
-    ///         caller. The caller (`msg.sender`) must be a registered liquidity source.
+    ///         caller. The caller (`msg.sender`) must be a registered stablecoin source.
     function deposit(address asset, uint256 assetsMinor) external returns (uint256 shares);
 
+    /// @notice Takes `assetsMinor` of `asset` directly from `payer` and deposits it into the
+    ///         asset's vault. The caller (`msg.sender`) must be a registered stablecoin source
+    ///         and is the `sourceAddress` of StablecoinDeposited. `payer` must approve this
+    ///         router. Reverts with AmountMismatch if the router does not receive exactly
+    ///         `assetsMinor`.
+    /// @dev A settlement factory names only its own caller as `payer`.
+    function depositFrom(address payer, address asset, uint256 assetsMinor) external returns (uint256 shares);
+
     /// @notice Redeems `amountMinor` of `asset` from the vault and tops it up into `receiver`.
-    ///         The caller (`msg.sender`) must be a registered liquidity target.
+    ///         The caller (`msg.sender`) must be a registered stablecoin target.
     function withdraw(address asset, uint256 amountMinor, address receiver) external returns (uint256 burnedShares);
 
     /// @notice Returns vault shares currently held by this provider.
     function sharesBalance(address vault) external view returns (uint256);
 
-    /// @notice Moves `assetsMinor` of liquidity from `vaultFrom` to `vaultTo`. The caller
+    /// @notice Moves `assetsMinor` of stablecoin from `vaultFrom` to `vaultTo`. The caller
     ///         supplies the destination asset at the oracle cross rate and receives the source
     ///         asset in exchange. The caller must have approved this router for at least the
     ///         required amount. `maxAssetsToMinor` bounds what the router may pull if the rate
@@ -227,7 +257,7 @@ interface IVaultRouter {
     ///         `amountMinor` of `asset`. This checks share coverage only; `reserveStables`
     ///         also rejects pending vault removals. Returns false rather than reverting
     ///         when `asset` has no vault.
-    function hasLiquidity(address asset, uint256 amountMinor) external view returns (bool sufficient);
+    function hasStablecoin(address asset, uint256 amountMinor) external view returns (bool sufficient);
 
     /// @notice Redeems `amountMinor` of `asset` from its origin vault and holds it in this
     ///         router's custody for `credisOwner`, guaranteeing it can later be
@@ -235,7 +265,7 @@ interface IVaultRouter {
     ///         may pledge the Gratis collateral for this reservation. The quote fixes the
     ///         pledge valuation and the Credis call terms: `referenceCurrency`, its previous
     ///         closed UTC-day VWAP as the call anchor, and the issuance currency's policy rate.
-    ///         Reverts if the selected vault has a pending approved removal, even after
+    ///         Reverts if the selected vault has a pending removal vault action, even after
     ///         its deadline, until the action is cleared or superseded.
     function reserveStables(
         address credisOwner,
@@ -248,7 +278,7 @@ interface IVaultRouter {
     /// @notice Validates `receiver` as the reservation's Credis owner, pays `amountMinor` to
     ///         the recorded CCA to cover COEN delivered to that owner, and
     ///         returns any unused remainder to the origin vault. Caller must be a
-    ///         registered liquidity target. `receiver` must be the Credis
+    ///         registered stablecoin target. `receiver` must be the Credis
     ///         owner. Reverts if the reservation is missing, expired, or too small.
     /// @dev Only CredisFactory may call. `receiver` binds the Credis owner.
     ///      `receiver` cannot redirect the payout.

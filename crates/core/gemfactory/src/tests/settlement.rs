@@ -17,20 +17,22 @@ fn settlement_takes_the_rail_the_asset_matched() {
     });
 }
 
-/// The stubbed token answers `true` without moving a balance, so the direct path
-/// must refuse the payment and leave the gem unsettled.
+/// The factory asks the router to take the quoted cost directly from its own caller. The
+/// router does not run here, so the gem stays unsettled.
 #[test]
-fn erc20_settle_refuses_a_transfer_that_moves_nothing() {
+fn erc20_settle_asks_the_router_to_take_the_cost_from_the_caller() {
     let rate = U256::from(2u64) * six_decimal_unit();
-    with_storage(Some(rate), |storage| {
+    let mut provider = test_storage(Some(rate));
+    let quoted = StorageHandle::enter(&mut provider, |storage| {
         let gem_id = issue_at_live_rate(
-            storage,
+            &storage,
             ALICE,
             U256::from(10u64) * six_decimal_unit(),
             840,
             840,
         )
         .unwrap();
+        let (_, quoted, _) = runtime::quote_settlement(&storage, gem_id, SETTLEMENT_ASSET).unwrap();
 
         let call = crate::precompile::IGemFactory::settleGemCall {
             gemId: gem_id,
@@ -41,13 +43,27 @@ fn erc20_settle_refuses_a_transfer_that_moves_nothing() {
         let res = crate::precompile::dispatch(storage.clone(), &call.abi_encode(), BOB, U256::ZERO);
         assert_eq!(
             res.unwrap_err().to_string(),
-            outbe_primitives::error::PrecompileError::from(
-                outbe_vaultrouter::settlement::SettlementError::AmountMismatch
-            )
-            .to_string()
+            outbe_vaultrouter::test_support::unanswered_deposit_from().to_string()
         );
-        assert_eq!(gem_view(storage, gem_id).item.state, GemState::Issued as u8);
+        assert_eq!(
+            gem_view(&storage, gem_id).item.state,
+            GemState::Issued as u8
+        );
+        quoted
     });
+    let pull = outbe_vaultrouter::test_support::last_deposit_from(&provider).unwrap();
+    assert_eq!(
+        (pull.payer, pull.asset, pull.assetsMinor),
+        (BOB, SETTLEMENT_ASSET, quoted)
+    );
+    // The factory neither takes nor approves the asset itself.
+    assert!(!provider.sub_call_inputs().iter().any(|input| {
+        input.target == SETTLEMENT_ASSET
+            && (input
+                .calldata
+                .starts_with(&IERC20::transferFromCall::SELECTOR)
+                || input.calldata.starts_with(&IERC20::approveCall::SELECTOR))
+    }));
 }
 
 #[test]
@@ -501,10 +517,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
         );
         assert_eq!(
             res.unwrap_err().to_string(),
-            outbe_primitives::error::PrecompileError::from(
-                outbe_vaultrouter::settlement::SettlementError::AmountMismatch
-            )
-            .to_string()
+            outbe_vaultrouter::test_support::unanswered_deposit_from().to_string()
         );
     });
 
@@ -579,9 +592,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
             err_msg(reference),
             format!(
                 "{:?}",
-                outbe_primitives::error::PrecompileError::from(
-                    outbe_vaultrouter::settlement::SettlementError::AmountMismatch
-                )
+                outbe_vaultrouter::test_support::unanswered_deposit_from()
             )
         );
         assert_eq!(
@@ -841,19 +852,14 @@ fn settle_gem_takes_only_the_cost_within_the_cap() {
             settle_capped(storage, gem_id, snapshot, cost - U256::ONE),
             settlement_error(outbe_vaultrouter::settlement::SettlementError::CostAboveCap)
         );
-        // The stubbed token moves no balance, so an admitted payment stops at the delta check.
+        // The router does not run, so an admitted payment stops at its `depositFrom`.
         assert_eq!(
             settle_capped(storage, gem_id, snapshot, cost + U256::ONE),
-            settlement_error(outbe_vaultrouter::settlement::SettlementError::AmountMismatch)
+            outbe_vaultrouter::test_support::unanswered_deposit_from().to_string()
         );
         assert_eq!(gem_view(storage, gem_id).item.state, GemState::Issued as u8);
         cost
     });
-    let pulled: Vec<U256> = provider
-        .sub_call_inputs()
-        .iter()
-        .filter_map(|input| IERC20::transferFromCall::abi_decode(&input.calldata).ok())
-        .map(|call| call.amount)
-        .collect();
-    assert_eq!(pulled, vec![cost]);
+    let deposit = outbe_vaultrouter::test_support::last_deposit_from(&provider).unwrap();
+    assert_eq!((deposit.payer, deposit.assetsMinor), (BOB, cost));
 }

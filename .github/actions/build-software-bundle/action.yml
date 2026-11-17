@@ -2,9 +2,6 @@ name: Build Outbe software bundle
 description: Build the deterministic software bundle with the pinned release toolchain
 
 inputs:
-  profile:
-    description: Software profile to build
-    required: true
   output:
     description: Empty directory that receives the bundle
     required: true
@@ -23,7 +20,6 @@ runs:
     - name: Build and verify software bundle
       shell: bash
       env:
-        OUTBE_SOFTWARE_PROFILE: ${{ inputs.profile }}
         OUTBE_SOFTWARE_OUTPUT: ${{ inputs.output }}
         OUTBE_SOFTWARE_RELEASE_TAG: ${{ inputs.release_tag }}
         OUTBE_SOFTWARE_NO_CACHE: ${{ inputs.no_cache }}
@@ -31,7 +27,6 @@ runs:
         set -euo pipefail
         args=(
           release build
-          --profile "${OUTBE_SOFTWARE_PROFILE}"
           --output "${OUTBE_SOFTWARE_OUTPUT}"
         )
         if [[ -n "${OUTBE_SOFTWARE_RELEASE_TAG}" ]]; then

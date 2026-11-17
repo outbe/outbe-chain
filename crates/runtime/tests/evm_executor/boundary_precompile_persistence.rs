@@ -10,15 +10,13 @@ fn marker_list_covers_stateful_precompiles() {
     use outbe_runtime::precompiles::outbe_exact_precompile_addresses;
     use outbe_system_common::addresses::{
         CODE_REGISTRY_ADDRESS, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS,
-        VAULT_ROUTER_ADDRESS, ZEROFEE_ADDRESS, ZKPROOF_VERIFY_ADDRESS,
+        VAULT_ROUTER_ADDRESS, ZEROFEE_ADDRESS,
     };
 
     // Dispatch-registered precompiles that legitimately need NO runtime 0xEF
     // marker. Each state-owning exemption must have canonical genesis-marker
     // evidence in `tests/genesis.rs`. An unproven exemption permits silent pruning.
-    const MARKER_EXEMPT: [Address; 6] = [
-        // Stateless verifier - no EVM storage to preserve.
-        ZKPROOF_VERIFY_ADDRESS,
+    const MARKER_EXEMPT: [Address; 5] = [
         // Seeded with genesis marker bytecode by outbe-genesis-cli, so these
         // accounts are never EIP-161-empty.
         ZEROFEE_ADDRESS,

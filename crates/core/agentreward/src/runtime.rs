@@ -163,11 +163,12 @@ impl AgentRewardContract<'_> {
             if storage.now_secs()? < deadline {
                 return Err(AgentRewardError::RewardBalanceNotExpired(deadline).into());
             }
-            outbe_promislimit::PromisLimitContract::new(storage.clone()).checked_credit(balance)?;
+            outbe_promislimit::PromisLimitContract::new(storage.clone())
+                .add(outbe_promislimit::LimitSource::AgentReward, balance)?;
             self.write_pool_claimable_reward(pool, address, U256::ZERO)?;
             self.reward_balance_deadlines
                 .write(&Self::reward_balance_key(pool, address), 0)?;
-            self.emit(IAgentReward::RewardBalanceExpired {
+            self.emit(IAgentReward::AgentRewardExpired {
                 account: address,
                 pool: pool as u8,
                 promisLoadMinor: balance,

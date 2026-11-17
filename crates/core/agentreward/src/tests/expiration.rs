@@ -276,7 +276,7 @@ fn failures_preserve_deadlines_and_return_accounting() {
                     .unwrap();
             } else {
                 PromisLimitContract::new(storage.clone())
-                    .checked_credit(U256::MAX)
+                    .add(outbe_promislimit::LimitSource::AgentReward, U256::MAX)
                     .unwrap();
             }
             storage

@@ -349,7 +349,7 @@ pub fn settle_gem(
 
     let quote = settlement::quote(storage, asset, currencies(&gem), &settlement_cost(&gem))?;
     quote.require_snapshot(snapshot_id)?;
-    settlement::require_funds(storage, GEM_FACTORY_ADDRESS, payer, asset, amount_cap_minor)?;
+    settlement::require_funds(storage, payer, asset, amount_cap_minor)?;
     quote.require_within_cap(amount_cap_minor)?;
     storage.clone().with_checkpoint(|| {
         // Settle before payment so a token callback cannot settle the gem twice.
@@ -357,13 +357,7 @@ pub fn settle_gem(
         let (item, group) =
             gem_api::load_pair(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
         gem_api::record_settled(storage, item, group)?;
-        settlement::collect(
-            storage,
-            GEM_FACTORY_ADDRESS,
-            payer,
-            asset,
-            quote.payment_minor,
-        )?;
+        settlement::collect(storage, payer, asset, quote.payment_minor)?;
         GemContract::new(storage.clone()).emit(GemSettled {
             gemId: gem_id,
             owner: gem.item.owner,

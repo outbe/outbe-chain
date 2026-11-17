@@ -1,3 +1,5 @@
+use alloy_primitives::LogData;
+
 use super::*;
 use crate::state::{self, ADD_VAULT, REMOVE_VAULT};
 
@@ -14,13 +16,13 @@ fn stub_vault(provider: &mut HashMapStorageProvider) {
 }
 
 fn stage(storage: &StorageHandle<'_>, id: u64, kind: u8, height: u64) {
-    state::record_approved_vault_action(storage, U256::from(id), vault(), kind, height).unwrap();
+    state::record_vault_action(storage, U256::from(id), vault(), kind, height).unwrap();
 }
 
 fn apply(storage: &StorageHandle<'_>, id: u64) -> outbe_primitives::error::Result<Bytes> {
     dispatch(
         storage.clone(),
-        &IVaultRouter::applyApprovedCall {
+        &IVaultRouter::applyVaultActionCall {
             proposalId: U256::from(id),
         }
         .abi_encode(),
@@ -29,20 +31,72 @@ fn apply(storage: &StorageHandle<'_>, id: u64) -> outbe_primitives::error::Resul
     )
 }
 
+fn created(id: u64, kind: u8) -> LogData {
+    IVaultRouter::VaultActionCreated {
+        proposalId: U256::from(id),
+        vault: vault(),
+        kind: IVaultRouter::VaultAction::try_from(kind).unwrap(),
+    }
+    .encode_log_data()
+}
+
+fn applied(id: u64) -> LogData {
+    IVaultRouter::VaultActionApplied {
+        proposalId: U256::from(id),
+        vault: vault(),
+    }
+    .encode_log_data()
+}
+
+fn expired(id: u64) -> LogData {
+    IVaultRouter::VaultActionExpired {
+        proposalId: U256::from(id),
+        vault: vault(),
+    }
+    .encode_log_data()
+}
+
+fn canceled(id: u64, new_id: u64) -> LogData {
+    IVaultRouter::VaultActionCanceled {
+        proposalId: U256::from(id),
+        vault: vault(),
+        newProposalId: U256::from(new_id),
+    }
+    .encode_log_data()
+}
+
+fn vault_added() -> LogData {
+    IVaultRouter::VaultAdded {
+        isoCode: USD_ISO_CODE,
+        asset: asset(),
+        vault: vault(),
+    }
+    .encode_log_data()
+}
+
+fn vault_removed() -> LogData {
+    IVaultRouter::VaultRemoved {
+        isoCode: USD_ISO_CODE,
+        asset: asset(),
+        vault: vault(),
+    }
+    .encode_log_data()
+}
+
 fn pending(
     storage: &StorageHandle<'_>,
     id: u64,
-) -> outbe_primitives::error::Result<IVaultRouter::approvedVaultActionReturn> {
+) -> outbe_primitives::error::Result<IVaultRouter::getVaultActionReturn> {
     let output = dispatch(
         storage.clone(),
-        &IVaultRouter::approvedVaultActionCall {
+        &IVaultRouter::getVaultActionCall {
             proposalId: U256::from(id),
         }
         .abi_encode(),
         stranger(),
         U256::ZERO,
     )?;
-    Ok(IVaultRouter::approvedVaultActionCall::abi_decode_returns(&output).unwrap())
+    Ok(IVaultRouter::getVaultActionCall::abi_decode_returns(&output).unwrap())
 }
 
 #[test]
@@ -52,14 +106,14 @@ fn pending_view_tracks_supersession_application_and_expiry_cleanup() {
     StorageHandle::enter(&mut provider, |storage| {
         let missing = pending(&storage, 1).unwrap();
         assert!(matches!(missing.action, IVaultRouter::VaultAction::Unknown));
-        assert_eq!((missing.vault, missing.approvedAt), (Address::ZERO, 0));
+        assert_eq!((missing.vault, missing.createdAt), (Address::ZERO, 0));
         stage(&storage, 1, REMOVE_VAULT, 7);
         let removal = pending(&storage, 1).unwrap();
         assert!(matches!(
             removal.action,
             IVaultRouter::VaultAction::RemoveVault
         ));
-        assert_eq!((removal.vault, removal.approvedAt), (vault(), 7));
+        assert_eq!((removal.vault, removal.createdAt), (vault(), 7));
         stage(&storage, 2, ADD_VAULT, 8);
         assert!(matches!(
             pending(&storage, 1).unwrap().action,
@@ -70,7 +124,7 @@ fn pending_view_tracks_supersession_application_and_expiry_cleanup() {
             addition.action,
             IVaultRouter::VaultAction::AddVault
         ));
-        assert_eq!((addition.vault, addition.approvedAt), (vault(), 8));
+        assert_eq!((addition.vault, addition.createdAt), (vault(), 8));
         apply(&storage, 2).unwrap();
         assert!(matches!(
             pending(&storage, 2).unwrap().action,
@@ -103,27 +157,26 @@ fn pending_view_does_not_hide_corrupt_actions_or_indexes() {
             .pending_vault_proposals
             .write(&vault(), U256::from(2))
             .unwrap();
-        assert_revert::<IVaultRouter::ApprovedVaultActionIndexInconsistent>(
+        assert_revert::<IVaultRouter::VaultActionIndexInconsistent>(
             &pending(&storage, 1).map(|_| ()).unwrap_err(),
         );
         router
             .pending_vault_proposals
             .write(&vault(), U256::ONE)
             .unwrap();
-        let mut record = router
-            .approved_vault_actions
-            .get(U256::ONE)
-            .unwrap()
-            .unwrap();
+        let mut record = router.vault_actions.get(U256::ONE).unwrap().unwrap();
         record.kind = 3;
-        router.approved_vault_actions.delete(U256::ONE).unwrap();
-        router.approved_vault_actions.create(&record).unwrap();
-        assert_revert::<IVaultRouter::InvalidApprovedVaultAction>(
+        router.vault_actions.delete(U256::ONE).unwrap();
+        router.vault_actions.create(&record).unwrap();
+        assert_revert::<IVaultRouter::InvalidVaultAction>(
             &pending(&storage, 1).map(|_| ()).unwrap_err(),
         );
     });
     assert!(provider.sub_call_inputs().is_empty());
-    assert!(provider.get_events(VAULT_ROUTER_ADDRESS).is_empty());
+    assert_eq!(
+        provider.get_events(VAULT_ROUTER_ADDRESS),
+        &vec![created(1, ADD_VAULT)]
+    );
 }
 
 #[test]
@@ -132,8 +185,8 @@ fn layout_preserves_old_slots_and_appends_pending_maps() {
     StorageHandle::enter(&mut provider, |storage| {
         let router = VaultRouterContract::new(storage.clone());
         router.assets.insert(asset()).unwrap();
-        router.liquidity_sources.insert(source_account()).unwrap();
-        router.liquidity_targets.insert(target_account()).unwrap();
+        router.stablecoin_sources.insert(source_account()).unwrap();
+        router.stablecoin_targets.insert(target_account()).unwrap();
         for slot in [1, 4, 7] {
             assert_eq!(
                 storage
@@ -143,8 +196,8 @@ fn layout_preserves_old_slots_and_appends_pending_maps() {
             );
         }
         assert_eq!(router.asset_vaults.base_slot(), U256::from(3));
-        assert_eq!(router.liquidity_source_types.base_slot(), U256::from(6));
-        assert_eq!(router.liquidity_target_types.base_slot(), U256::from(9));
+        assert_eq!(router.stablecoin_source_types.base_slot(), U256::from(6));
+        assert_eq!(router.stablecoin_target_types.base_slot(), U256::from(9));
         assert_eq!(router.reference_currency_vaults.base_slot(), U256::from(10));
         assert_eq!(
             router.vault_reference_currencies.base_slot(),
@@ -153,7 +206,7 @@ fn layout_preserves_old_slots_and_appends_pending_maps() {
         assert_eq!(router.reservation_nonce.slot(), U256::from(12));
         assert_eq!(router.reservations.base_slot(), U256::from(13));
         assert_eq!(router.vault_assets.base_slot(), U256::from(35));
-        assert_eq!(router.approved_vault_actions.base_slot(), U256::from(36));
+        assert_eq!(router.vault_actions.base_slot(), U256::from(36));
         assert_eq!(router.pending_vault_proposals.base_slot(), U256::from(39));
         assert_eq!(
             storage.sload(VAULT_ROUTER_ADDRESS, U256::ZERO).unwrap(),
@@ -218,10 +271,19 @@ fn unrelated_caller_can_apply_add_then_remove_once() {
         assert_eq!(router.vault_reference_currencies.read(&vault()).unwrap(), 0);
         assert!(apply(&storage, 2).is_err());
     });
-    let events = provider.get_events(VAULT_ROUTER_ADDRESS);
-    assert_eq!(events.len(), 2);
-    IVaultRouter::VaultAdded::decode_log_data(&events[0]).unwrap();
-    IVaultRouter::VaultRemoved::decode_log_data(&events[1]).unwrap();
+    // Each vault action has one start event and one end event. Applied comes before the
+    // vault event in the same transaction.
+    assert_eq!(
+        provider.get_events(VAULT_ROUTER_ADDRESS),
+        &vec![
+            created(1, ADD_VAULT),
+            applied(1),
+            vault_added(),
+            created(2, REMOVE_VAULT),
+            applied(2),
+            vault_removed(),
+        ]
+    );
 }
 
 #[test]
@@ -297,7 +359,10 @@ fn expiry_is_strict_and_expired_cleanup_needs_no_subcalls() {
         stage(&storage, 1, ADD_VAULT, 10);
         apply(&storage, 1).unwrap(); // Equality is not expired.
     });
-    assert_eq!(provider.get_events(VAULT_ROUTER_ADDRESS).len(), 1);
+    assert_eq!(
+        provider.get_events(VAULT_ROUTER_ADDRESS),
+        &vec![created(1, ADD_VAULT), applied(1), vault_added()]
+    );
 
     let mut provider = HashMapStorageProvider::new(CHAIN_ID); // No subcall stubs.
     provider.set_block_number(11 + window);
@@ -305,7 +370,7 @@ fn expiry_is_strict_and_expired_cleanup_needs_no_subcalls() {
         stage(&storage, 1, ADD_VAULT, 10);
         apply(&storage, 1).unwrap();
         let router = VaultRouterContract::new(storage.clone());
-        assert!(!router.approved_vault_actions.exists(U256::ONE).unwrap());
+        assert!(!router.vault_actions.exists(U256::ONE).unwrap());
         assert_eq!(
             router.pending_vault_proposals.read(&vault()).unwrap(),
             U256::ZERO
@@ -313,10 +378,10 @@ fn expiry_is_strict_and_expired_cleanup_needs_no_subcalls() {
         assert!(router.assets.is_empty().unwrap());
         assert!(apply(&storage, 1).is_err());
     });
-    let events = provider.get_events(VAULT_ROUTER_ADDRESS);
-    assert_eq!(events.len(), 1);
-    let expired = IVaultRouter::ApprovedVaultActionExpired::decode_log_data(&events[0]).unwrap();
-    assert_eq!((expired.proposalId, expired.vault), (U256::ONE, vault()));
+    assert_eq!(
+        provider.get_events(VAULT_ROUTER_ADDRESS),
+        &vec![created(1, ADD_VAULT), expired(1)]
+    );
 }
 
 #[test]
@@ -332,8 +397,10 @@ fn expiry_addition_is_widened_near_u64_max() {
             .contains(&vault())
             .unwrap());
     });
-    IVaultRouter::VaultAdded::decode_log_data(&provider.get_events(VAULT_ROUTER_ADDRESS)[0])
-        .unwrap();
+    assert_eq!(
+        provider.get_events(VAULT_ROUTER_ADDRESS),
+        &vec![created(1, ADD_VAULT), applied(1), vault_added()]
+    );
 }
 
 #[test]
@@ -345,10 +412,20 @@ fn canonical_order_supersedes_across_action_kinds_and_proposal_ids() {
         stage(&storage, 1, ADD_VAULT, 10);
         assert!(apply(&storage, 99).is_err());
         assert!(apply(&storage, 2).is_err());
-        let record = state::approved_vault_action(&storage, U256::ONE).unwrap();
-        assert_eq!((record.kind, record.approved_at), (ADD_VAULT, 10));
+        let record = state::vault_action(&storage, U256::ONE).unwrap();
+        assert_eq!((record.kind, record.created_at), (ADD_VAULT, 10));
     });
-    assert!(provider.get_events(VAULT_ROUTER_ADDRESS).is_empty());
+    // Canceled of the older action comes before Created of the new action.
+    assert_eq!(
+        provider.get_events(VAULT_ROUTER_ADDRESS),
+        &vec![
+            created(99, ADD_VAULT),
+            canceled(99, 2),
+            created(2, REMOVE_VAULT),
+            canceled(2, 1),
+            created(1, ADD_VAULT),
+        ]
+    );
 }
 
 #[test]
@@ -376,9 +453,13 @@ fn failed_validation_and_bad_token_returns_restore_pending_and_indexes() {
                 router.pending_vault_proposals.read(&vault()).unwrap(),
                 U256::ONE
             );
-            assert!(router.approved_vault_actions.exists(U256::ONE).unwrap());
+            assert!(router.vault_actions.exists(U256::ONE).unwrap());
         });
-        assert!(provider.get_events(VAULT_ROUTER_ADDRESS).is_empty());
+        // A failed application leaves no Applied event.
+        assert_eq!(
+            provider.get_events(VAULT_ROUTER_ADDRESS),
+            &vec![created(1, ADD_VAULT)]
+        );
     }
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     stub_vault(&mut provider);
@@ -386,7 +467,7 @@ fn failed_validation_and_bad_token_returns_restore_pending_and_indexes() {
     StorageHandle::enter(&mut provider, |storage| {
         stage(&storage, 1, ADD_VAULT, 0);
         assert!(apply(&storage, 1).is_err());
-        assert!(state::approved_vault_action(&storage, U256::ONE).is_ok());
+        assert!(state::vault_action(&storage, U256::ONE).is_ok());
     });
 }
 
@@ -400,12 +481,12 @@ fn inconsistent_index_and_nonpayable_apply_do_not_consume_record() {
             .pending_vault_proposals
             .write(&vault(), U256::from(2))
             .unwrap();
-        assert_revert::<IVaultRouter::ApprovedVaultActionIndexInconsistent>(
+        assert_revert::<IVaultRouter::VaultActionIndexInconsistent>(
             &apply(&storage, 1).unwrap_err(),
         );
         assert!(dispatch(
             storage.clone(),
-            &IVaultRouter::applyApprovedCall {
+            &IVaultRouter::applyVaultActionCall {
                 proposalId: U256::ONE
             }
             .abi_encode(),
@@ -413,7 +494,7 @@ fn inconsistent_index_and_nonpayable_apply_do_not_consume_record() {
             U256::ONE
         )
         .is_err());
-        assert!(router.approved_vault_actions.exists(U256::ONE).unwrap());
+        assert!(router.vault_actions.exists(U256::ONE).unwrap());
     });
 }
 
@@ -445,7 +526,7 @@ fn removal_with_live_shares_preserves_pending_and_indexes_then_retries_at_zero()
             let calls_before = provider.sub_call_inputs().len();
             let events_before = provider.get_events(VAULT_ROUTER_ADDRESS).len();
             StorageHandle::enter(&mut provider, |storage| {
-                let record = state::approved_vault_action(&storage, U256::from(7)).unwrap();
+                let record = state::vault_action(&storage, U256::from(7)).unwrap();
                 let error = apply(&storage, 7).unwrap_err();
                 let PrecompileError::RevertBytes(bytes) = error else {
                     panic!("expected ReserveVaultHasShares");
@@ -453,7 +534,7 @@ fn removal_with_live_shares_preserves_pending_and_indexes_then_retries_at_zero()
                 let error = IVaultRouter::ReserveVaultHasShares::abi_decode(&bytes).unwrap();
                 assert_eq!((error.vault, error.shares), (vault(), shares));
                 assert_eq!(
-                    state::approved_vault_action(&storage, U256::from(7)).unwrap(),
+                    state::vault_action(&storage, U256::from(7)).unwrap(),
                     record
                 );
                 assert_registered_removal_indexes(&storage, has_other_vault);
@@ -482,7 +563,7 @@ fn removal_with_live_shares_preserves_pending_and_indexes_then_retries_at_zero()
             StorageHandle::enter(&mut provider, |storage| {
                 apply(&storage, 7).unwrap();
                 let router = VaultRouterContract::new(storage.clone());
-                assert!(!router.approved_vault_actions.exists(U256::from(7)).unwrap());
+                assert!(!router.vault_actions.exists(U256::from(7)).unwrap());
                 assert_eq!(
                     router.pending_vault_proposals.read(&vault()).unwrap(),
                     U256::ZERO
@@ -510,10 +591,8 @@ fn removal_with_live_shares_preserves_pending_and_indexes_then_retries_at_zero()
                 }
             });
             let events = provider.get_events(VAULT_ROUTER_ADDRESS);
-            assert_eq!(events.len(), events_before + 1);
-            let removed =
-                IVaultRouter::VaultRemoved::decode_log_data(events.last().unwrap()).unwrap();
-            assert_eq!(removed.vault, vault());
+            assert_eq!(events[events_before - 1], created(7, REMOVE_VAULT));
+            assert_eq!(events[events_before..], [applied(7), vault_removed()]);
         }
     }
 }
@@ -565,9 +644,12 @@ fn removal_missing_or_malformed_share_query_fails_closed() {
             stage(&storage, 7, REMOVE_VAULT, 0);
             assert!(apply(&storage, 7).is_err());
             assert_registered_removal_indexes(&storage, false);
-            assert!(state::approved_vault_action(&storage, U256::from(7)).is_ok());
+            assert!(state::vault_action(&storage, U256::from(7)).is_ok());
         });
-        assert!(provider.get_events(VAULT_ROUTER_ADDRESS).is_empty());
+        assert_eq!(
+            provider.get_events(VAULT_ROUTER_ADDRESS),
+            &vec![created(7, REMOVE_VAULT)]
+        );
         let calls = provider.sub_call_inputs();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].target, vault());
@@ -592,19 +674,16 @@ fn expired_removal_cleans_pending_without_querying_live_shares_or_changing_regis
             .contains(&vault())
             .unwrap());
         assert_eq!(router.vault_assets.read(&vault()).unwrap(), asset());
-        assert!(!router.approved_vault_actions.exists(U256::from(7)).unwrap());
+        assert!(!router.vault_actions.exists(U256::from(7)).unwrap());
         assert_eq!(
             router.pending_vault_proposals.read(&vault()).unwrap(),
             U256::ZERO
         );
     });
     assert!(provider.sub_call_inputs().is_empty());
-    let events = provider.get_events(VAULT_ROUTER_ADDRESS);
-    assert_eq!(events.len(), 1);
-    let expired = IVaultRouter::ApprovedVaultActionExpired::decode_log_data(&events[0]).unwrap();
     assert_eq!(
-        (expired.proposalId, expired.vault),
-        (U256::from(7), vault())
+        provider.get_events(VAULT_ROUTER_ADDRESS),
+        &vec![created(7, REMOVE_VAULT), expired(7)]
     );
 }
 
@@ -624,7 +703,7 @@ fn pending_removal_blocks_new_reservations_even_after_expiry_until_cleanup() {
             let router = VaultRouterContract::new(storage.clone());
             assert_eq!(router.reservation_nonce.read().unwrap(), U256::ZERO);
             assert!(!router.reservations.exists(U256::ONE).unwrap());
-            assert!(state::approved_vault_action(&storage, U256::from(7)).is_ok());
+            assert!(state::vault_action(&storage, U256::from(7)).is_ok());
             if block > window {
                 apply(&storage, 7).unwrap();
                 assert_eq!(reserve_in(&storage, USD_ISO_CODE).unwrap(), U256::ONE);
@@ -644,14 +723,8 @@ fn reservation_admission_uses_current_action_for_the_selected_vault_only() {
                     stage(&storage, 9, REMOVE_VAULT, 0);
                     stage(&storage, 1, ADD_VAULT, 0);
                 }
-                _ => state::record_approved_vault_action(
-                    &storage,
-                    U256::ONE,
-                    vault_to(),
-                    REMOVE_VAULT,
-                    0,
-                )
-                .unwrap(),
+                _ => state::record_vault_action(&storage, U256::ONE, vault_to(), REMOVE_VAULT, 0)
+                    .unwrap(),
             }
             assert_eq!(reserve_in(&storage, USD_ISO_CODE).unwrap(), U256::ONE);
         });
@@ -664,21 +737,17 @@ fn reservation_admission_fails_closed_on_corrupt_pending_records() {
         with_reservable_vault(U256::from(100), |storage| {
             stage(&storage, 7, ADD_VAULT, 0);
             let router = VaultRouterContract::new(storage.clone());
-            let mut record = router
-                .approved_vault_actions
-                .get(U256::from(7))
-                .unwrap()
-                .unwrap();
-            router.approved_vault_actions.delete(U256::from(7)).unwrap();
+            let mut record = router.vault_actions.get(U256::from(7)).unwrap().unwrap();
+            router.vault_actions.delete(U256::from(7)).unwrap();
             match scenario {
                 0 => {} // Dangling pending ID.
                 1 => {
                     record.kind = 3;
-                    router.approved_vault_actions.create(&record).unwrap();
+                    router.vault_actions.create(&record).unwrap();
                 }
                 _ => {
                     record.vault = vault_to();
-                    router.approved_vault_actions.create(&record).unwrap();
+                    router.vault_actions.create(&record).unwrap();
                     router
                         .pending_vault_proposals
                         .write(&vault_to(), U256::from(7))
@@ -687,9 +756,9 @@ fn reservation_admission_fails_closed_on_corrupt_pending_records() {
             }
             let error = reserve_in(&storage, USD_ISO_CODE).unwrap_err();
             match scenario {
-                0 => assert_revert::<IVaultRouter::ApprovedVaultActionNotFound>(&error),
-                1 => assert_revert::<IVaultRouter::InvalidApprovedVaultAction>(&error),
-                _ => assert_revert::<IVaultRouter::ApprovedVaultActionIndexInconsistent>(&error),
+                0 => assert_revert::<IVaultRouter::VaultActionNotFound>(&error),
+                1 => assert_revert::<IVaultRouter::InvalidVaultAction>(&error),
+                _ => assert_revert::<IVaultRouter::VaultActionIndexInconsistent>(&error),
             }
             assert_eq!(router.reservation_nonce.read().unwrap(), U256::ZERO);
             assert!(!router.reservations.exists(U256::ONE).unwrap());
@@ -718,7 +787,7 @@ fn pending_removal_does_not_block_settlement_of_existing_reservations() {
                         id,
                         receiver(),
                         U256::from(4),
-                        IVaultRouter::StablesTarget::Credis,
+                        IVaultRouter::StablecoinTarget::Credis,
                     )
                     .unwrap(),
                     U256::from(4)
@@ -733,7 +802,83 @@ fn pending_removal_does_not_block_settlement_of_existing_reservations() {
                 .unwrap()
                 .asset
                 .is_zero());
-            assert!(state::approved_vault_action(&storage, U256::from(7)).is_ok());
+            assert!(state::vault_action(&storage, U256::from(7)).is_ok());
         });
     }
+}
+
+#[test]
+fn vault_action_has_one_start_and_one_end_event() {
+    let window = outbe_chain_constants::get_governance_voting_window_blocks();
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    stub_vault(&mut provider);
+    StorageHandle::enter(&mut provider, |storage| {
+        stage(&storage, 1, ADD_VAULT, 0);
+        apply(&storage, 1).unwrap();
+        stage(&storage, 2, REMOVE_VAULT, 0);
+        stage(&storage, 3, REMOVE_VAULT, 0);
+    });
+    provider.set_block_number(1 + window);
+    StorageHandle::enter(&mut provider, |storage| {
+        apply(&storage, 3).unwrap();
+    });
+    let events = provider.get_events(VAULT_ROUTER_ADDRESS).clone();
+    for (id, kind, end) in [
+        (1, ADD_VAULT, applied(1)),
+        (2, REMOVE_VAULT, canceled(2, 3)),
+        (3, REMOVE_VAULT, expired(3)),
+    ] {
+        let topic = U256::from(id).into();
+        let own: Vec<_> = events
+            .iter()
+            .filter(|event| event.topics().get(1) == Some(&topic))
+            .cloned()
+            .collect();
+        assert_eq!(own, [created(id, kind), end], "proposal {id}");
+    }
+}
+
+#[test]
+fn vault_action_applied_comes_before_the_vault_event() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    stub_vault(&mut provider);
+    StorageHandle::enter(&mut provider, |storage| {
+        stage(&storage, 1, ADD_VAULT, 0);
+    });
+    provider.clear_events(VAULT_ROUTER_ADDRESS);
+    StorageHandle::enter(&mut provider, |storage| {
+        apply(&storage, 1).unwrap();
+    });
+    assert_eq!(
+        provider.get_events(VAULT_ROUTER_ADDRESS),
+        &vec![applied(1), vault_added()]
+    );
+}
+
+#[test]
+fn replaced_vault_action_is_canceled_before_the_new_one_is_created() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        stage(&storage, 4, ADD_VAULT, 0);
+    });
+    provider.clear_events(VAULT_ROUTER_ADDRESS);
+    StorageHandle::enter(&mut provider, |storage| {
+        stage(&storage, 5, REMOVE_VAULT, 1);
+        assert!(matches!(
+            pending(&storage, 4).unwrap().action,
+            IVaultRouter::VaultAction::Unknown
+        ));
+    });
+    assert_eq!(
+        provider.get_events(VAULT_ROUTER_ADDRESS),
+        &vec![canceled(4, 5), created(5, REMOVE_VAULT)]
+    );
+    let created = IVaultRouter::VaultActionCreated::decode_log_data(
+        &provider.get_events(VAULT_ROUTER_ADDRESS)[1],
+    )
+    .unwrap();
+    assert!(matches!(
+        created.kind,
+        IVaultRouter::VaultAction::RemoveVault
+    ));
 }

@@ -31,17 +31,16 @@ contract FactorySettlement {
     function decimals() external pure returns (uint8) { return 6; }
 
     function approve(address spender, uint256 amount) external returns (bool) {
-        if (mode == 2 && msg.sender == factory) return false;
         allowance[msg.sender][spender] = amount;
         if (mode == 7) assembly { return(0, 0) }
         return true;
     }
 
     function transferFrom(address from, address to, uint256 amount) external returns (bool) {
-        if ((mode == 1 && msg.sender == factory) || (mode == 3 && msg.sender == ROUTER)) return false;
+        if (mode == 1 && msg.sender == ROUTER) return false;
         if (mode == 6) assembly { mstore(0, 2) return(0, 32) }
         if (mode == 8) return true;
-        if (mode == 5 && msg.sender == factory) {
+        if (mode == 5 && msg.sender == ROUTER) {
             (bool ok,) = factory.call(reentry);
             require(!ok, "REENTERED_SETTLEMENT");
             callbackRejected = true;

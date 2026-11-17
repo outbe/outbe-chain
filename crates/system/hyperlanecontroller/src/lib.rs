@@ -37,7 +37,7 @@ pub use liveness::{
 };
 pub use runtime::{consensus_threshold, validate_validators, ControllerBootstrap};
 pub use schema::HyperlaneControllerContract;
-pub use vote_target::HyperlaneVoteTarget;
+pub use vote_target::{apply_due_approved_actions, HyperlaneVoteTarget};
 
 #[cfg(test)]
 mod tests;

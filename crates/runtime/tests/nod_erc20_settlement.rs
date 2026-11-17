@@ -13,8 +13,8 @@ use outbe_primitives::{
     chain::CHAIN_ID,
     storage::{StorageHandle, SubCallStatus},
 };
-use outbe_system_common::addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS};
-use outbe_vaultrouter::api::IVaultRouter::StablesSource;
+use outbe_system_common::addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
+use outbe_vaultrouter::precompile::IVaultRouter::StablecoinSource;
 use settlement::{Quote, Rail, World, ASSET, FACTORY_FLOAT, OWNER, THIRD_PARTY};
 
 const GRATIS_LOAD: u64 = 1_000;
@@ -30,7 +30,7 @@ const NOD: Nod = Nod {
 
 impl Rail for Nod {
     const FACTORY: Address = NOD_FACTORY_ADDRESS;
-    const SOURCE: StablesSource = StablesSource::NodCostAmount;
+    const SOURCE: StablecoinSource = StablecoinSource::NodCostAmount;
 
     fn seed(self, storage: &StorageHandle<'_>, issuance_currency: u16) -> (U256, u64) {
         test_enclave::install();
@@ -140,6 +140,11 @@ fn payment_failures_restore_balances_allowances_and_logs() {
 }
 
 #[test]
+fn a_payer_that_approved_only_the_factory_fails() {
+    settlement::a_payer_that_approved_only_the_factory_fails(NOD);
+}
+
+#[test]
 fn optional_empty_token_returns_are_accepted() {
     settlement::optional_empty_token_returns_are_accepted(NOD);
 }
@@ -227,7 +232,7 @@ fn insufficient_allowance_and_balance_revert_without_payment() {
             payer,
             ASSET,
             settlement::IFixture::approveCall {
-                spender: NOD_FACTORY_ADDRESS,
+                spender: VAULT_ROUTER_ADDRESS,
                 amount: allowance,
             },
         );

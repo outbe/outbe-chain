@@ -1,7 +1,7 @@
 [
   {
     "type": "function",
-    "name": "applyApproved",
+    "name": "applyVaultAction",
     "inputs": [
       {
         "name": "proposalId",
@@ -11,35 +11,6 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "approvedVaultAction",
-    "inputs": [
-      {
-        "name": "proposalId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "action",
-        "type": "uint8",
-        "internalType": "enum IVaultRouter.VaultAction"
-      },
-      {
-        "name": "vault",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "approvedAt",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -142,7 +113,65 @@
   },
   {
     "type": "function",
-    "name": "hasLiquidity",
+    "name": "depositFrom",
+    "inputs": [
+      {
+        "name": "payer",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "assetsMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "shares",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getVaultAction",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "action",
+        "type": "uint8",
+        "internalType": "enum IVaultRouter.VaultAction"
+      },
+      {
+        "name": "vault",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "createdAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "hasStablecoin",
     "inputs": [
       {
         "name": "asset",
@@ -160,80 +189,6 @@
         "name": "sufficient",
         "type": "bool",
         "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "liquiditySourceAt",
-    "inputs": [
-      {
-        "name": "index",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "sourceAddress",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "sourceType",
-        "type": "uint8",
-        "internalType": "enum IVaultRouter.StablesSource"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "liquiditySourcesCount",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "liquidityTargetAt",
-    "inputs": [
-      {
-        "name": "index",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "targetAddress",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "targetType",
-        "type": "uint8",
-        "internalType": "enum IVaultRouter.StablesTarget"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "liquidityTargetsCount",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -592,6 +547,80 @@
   },
   {
     "type": "function",
+    "name": "stablecoinSourceAt",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "sourceAddress",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "sourceType",
+        "type": "uint8",
+        "internalType": "enum IVaultRouter.StablecoinSource"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "stablecoinSourcesCount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "stablecoinTargetAt",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "targetAddress",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "targetType",
+        "type": "uint8",
+        "internalType": "enum IVaultRouter.StablecoinTarget"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "stablecoinTargetsCount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "vaultReferenceCurrency",
     "inputs": [
       {
@@ -637,230 +666,6 @@
       }
     ],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "event",
-    "name": "ApprovedVaultActionExpired",
-    "inputs": [
-      {
-        "name": "proposalId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "vault",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LiquidityDeposited",
-    "inputs": [
-      {
-        "name": "source",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "vault",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "assetsMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "shares",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "sourceType",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum IVaultRouter.StablesSource"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LiquidityRebalanced",
-    "inputs": [
-      {
-        "name": "cca",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "vaultFrom",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "vaultTo",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "assetsWithdrawnMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "burnedShares",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "assetsDepositedMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "mintedShares",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LiquiditySourceAdded",
-    "inputs": [
-      {
-        "name": "sourceAddress",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "sourceType",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum IVaultRouter.StablesSource"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LiquiditySourceRemoved",
-    "inputs": [
-      {
-        "name": "sourceAddress",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "sourceType",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum IVaultRouter.StablesSource"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LiquidityTargetAdded",
-    "inputs": [
-      {
-        "name": "targetAddress",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "targetType",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum IVaultRouter.StablesTarget"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LiquidityTargetRemoved",
-    "inputs": [
-      {
-        "name": "targetAddress",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "targetType",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum IVaultRouter.StablesTarget"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LiquidityWithdrawn",
-    "inputs": [
-      {
-        "name": "target",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "receiver",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "vault",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "assetsMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "burnedShares",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "targetType",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum IVaultRouter.StablesTarget"
-      }
-    ],
-    "anonymous": false
   },
   {
     "type": "event",
@@ -981,6 +786,299 @@
   },
   {
     "type": "event",
+    "name": "StablecoinDeposited",
+    "inputs": [
+      {
+        "name": "sourceAddress",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "vault",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amountMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "shares",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "sourceType",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum IVaultRouter.StablecoinSource"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "StablecoinRebalanced",
+    "inputs": [
+      {
+        "name": "cca",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "vaultFrom",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "vaultTo",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "withdrawnAmountMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "burnedShares",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "depositedAmountMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "mintedShares",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "StablecoinSourceAdded",
+    "inputs": [
+      {
+        "name": "sourceAddress",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "sourceType",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum IVaultRouter.StablecoinSource"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "StablecoinSourceRemoved",
+    "inputs": [
+      {
+        "name": "sourceAddress",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "sourceType",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum IVaultRouter.StablecoinSource"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "StablecoinTargetAdded",
+    "inputs": [
+      {
+        "name": "targetAddress",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "targetType",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum IVaultRouter.StablecoinTarget"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "StablecoinTargetRemoved",
+    "inputs": [
+      {
+        "name": "targetAddress",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "targetType",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum IVaultRouter.StablecoinTarget"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "StablecoinWithdrawn",
+    "inputs": [
+      {
+        "name": "targetAddress",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "receiver",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "vault",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amountMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "burnedShares",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "targetType",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum IVaultRouter.StablecoinTarget"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VaultActionApplied",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "vault",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VaultActionCanceled",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "vault",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newProposalId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VaultActionCreated",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "vault",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "kind",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "enum IVaultRouter.VaultAction"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VaultActionExpired",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "vault",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "VaultAdded",
     "inputs": [
       {
@@ -1033,28 +1131,6 @@
     "type": "error",
     "name": "AmountMismatch",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ApprovedVaultActionIndexInconsistent",
-    "inputs": [
-      {
-        "name": "proposalId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ApprovedVaultActionNotFound",
-    "inputs": [
-      {
-        "name": "proposalId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
   },
   {
     "type": "error",
@@ -1147,11 +1223,6 @@
   },
   {
     "type": "error",
-    "name": "InvalidApprovedVaultAction",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InvalidAsset",
     "inputs": []
   },
@@ -1167,16 +1238,6 @@
   },
   {
     "type": "error",
-    "name": "InvalidLiquiditySource",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidLiquidityTarget",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InvalidRebalanceAmount",
     "inputs": []
   },
@@ -1187,12 +1248,17 @@
   },
   {
     "type": "error",
-    "name": "LiquiditySourceNotFound",
+    "name": "InvalidStablecoinSource",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "LiquidityTargetNotFound",
+    "name": "InvalidStablecoinTarget",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidVaultAction",
     "inputs": []
   },
   {
@@ -1399,6 +1465,16 @@
   },
   {
     "type": "error",
+    "name": "StablecoinSourceNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StablecoinTargetNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "TimestampOverflow",
     "inputs": []
   },
@@ -1438,6 +1514,28 @@
     "type": "error",
     "name": "UnsupportedAssetDecimalsSimple",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultActionIndexInconsistent",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "VaultActionNotFound",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
