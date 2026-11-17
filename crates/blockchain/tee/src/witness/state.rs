@@ -148,7 +148,14 @@ fn local_answer(
             Err(TransportError::EnclaveError(message))
         }
         Err(error) => {
-            if matches!(error, TransportError::EnclaveError(_)) {
+            if matches!(
+                error,
+                TransportError::EnclaveError(_)
+                    | TransportError::InProcess(
+                        crate::InProcessDispatchError::Domain(_)
+                            | crate::InProcessDispatchError::LaneDenied { .. }
+                    )
+            ) {
                 unsigned_failure(state)?;
             } else {
                 locked(state)?.latch(BlockWitnessFault::LocalUnavailable);

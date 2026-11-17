@@ -88,17 +88,31 @@ fn dispatch(context: &InProcessTeeContext, request: EnclaveRequest) -> Result<En
             tribute::encrypted_offers(context, &offers)
         }
         EnclaveRequest::ReadTributeAmountsV2 { tributes } => tribute::read(context, &tributes),
-        request @ (EnclaveRequest::ApplyTributeDayOpV2 { .. }
-        | EnclaveRequest::ReadTributeDayAmountV2 { .. }
-        | EnclaveRequest::ExecuteLysisFractionsV1 { .. }
-        | EnclaveRequest::ReadTributeDayFractionsV1 { .. }) => tribute::day(context, request),
-        request @ (EnclaveRequest::MineEncryptedNodV1 { .. }
-        | EnclaveRequest::ReadNodAmountV1 { .. }
-        | EnclaveRequest::EncryptNodForTributeV1 { .. }
-        | EnclaveRequest::IssueNodFromTributeV1 { .. }
-        | EnclaveRequest::ApplyNodGroupLoadOpV1 { .. }
-        | EnclaveRequest::ReadNodGroupLoadV1 { .. }
-        | EnclaveRequest::EncryptNodQuoteV1 { .. }) => nod::dispatch(context, request),
+        EnclaveRequest::ApplyTributeDayOpV2 { request } => tribute::day_apply(context, &request),
+        EnclaveRequest::ReadTributeDayAmountV2 { record } => tribute::day_read(context, &record),
+        EnclaveRequest::ExecuteLysisFractionsV1 { request } => tribute::lysis(context, &request),
+        EnclaveRequest::ReadTributeDayFractionsV1 { record } => {
+            tribute::day_fractions_read(context, &record)
+        }
+        EnclaveRequest::MineEncryptedNodV1 { request } => nod::mine(context, &request),
+        EnclaveRequest::ReadNodAmountV1 { nod } => nod::read_amount(context, &nod),
+        EnclaveRequest::EncryptNodForTributeV1 {
+            tribute,
+            terms,
+            amount,
+        } => nod::encrypt_for_tribute(context, &tribute, terms, amount),
+        EnclaveRequest::IssueNodFromTributeV1 { request } => {
+            nod::issue_from_tribute(context, &request)
+        }
+        EnclaveRequest::ApplyNodGroupLoadOpV1 { request } => {
+            nod::apply_group_load(context, &request)
+        }
+        EnclaveRequest::ReadNodGroupLoadV1 { record } => nod::read_group_load(context, &record),
+        EnclaveRequest::EncryptNodQuoteV1 {
+            nod,
+            context: quote,
+            payment_minor,
+        } => nod::encrypt_quote(context, &nod, &quote, payment_minor),
     }
 }
 

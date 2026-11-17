@@ -307,3 +307,100 @@ fn resident_proposer_enclave_verifier_and_offline_replay_have_identical_witness_
         }
     }
 }
+
+#[test]
+fn unsigned_resident_domain_refusals_reject_candidates_without_aborting_proposal() {
+    use outbe_tee::{witness::CandidateRejection, CallMeta};
+    let _policy = PolicyReset;
+    set_witness_policy_for_test(Some(WitnessPolicy::EnclaveBacked));
+    let context = ready(7);
+    let leader = context.attestation_public();
+    let _runtime =
+        set_in_process_tee_context_for_test(Some((Arc::clone(&context), dispatch_payload)));
+    let request = EnclaveRequest::ApplyTributeDayOpV2 {
+        request: Box::new(crate::tribute_day::TributeDayOpRequestV2 {
+            chain_id: 778,
+            worldwide_day: 20250115u32.into(),
+            previous: None,
+            public_state_hash: B256::ZERO,
+            operation: crate::tribute_day::TributeDayOperationV2::Freeze,
+        }),
+    };
+    let payload = postcard::to_allocvec(&request).unwrap();
+    // A valid leader entry lets the verifier reach the local-failure classification seam.
+    let leader_payload =
+        postcard::to_allocvec(&EnclaveRequest::ProcessEncryptedTributeOfferBatchV2 {
+            offers: Vec::new(),
+        })
+        .unwrap();
+    let leader_entry = EnclaveWitnessEntryV1::try_from(
+        dispatch_payload(&context, PayloadLane::Execution, &leader_payload).unwrap(),
+    )
+    .unwrap();
+    for (lane, keyless) in [
+        (PayloadLane::Execution, false),
+        (PayloadLane::AccountQuery, false),
+        (PayloadLane::Execution, true),
+    ] {
+        for mode in [
+            WitnessExecutionMode::ProposerRecord,
+            WitnessExecutionMode::VerifierWithEnclave,
+        ] {
+            let _keyless_runtime = keyless.then(|| {
+                set_in_process_tee_context_for_test(Some((
+                    crate::host::domain_in_process::tests::context(9),
+                    dispatch_payload,
+                )))
+            });
+            let state = Arc::new(Mutex::new(WitnessState::new(
+                mode,
+                Some(leader),
+                EnclaveWitnessTapeV1 {
+                    prefix: Vec::new(),
+                    txs: vec![TxWitnessV1 {
+                        tx_index: 0,
+                        entries: vec![leader_entry.clone()],
+                    }],
+                },
+            )));
+            state.lock().unwrap().tx_index = Some(0);
+            state.lock().unwrap().is_user_candidate = true;
+            let _execution = enter_execution_witness(Arc::clone(&state));
+            let error = outbe_tee::tee_consensus_call(
+                CallMeta::recorded(request.label()),
+                &WireRequest::Payload {
+                    lane,
+                    payload: payload.clone(),
+                },
+                || TransportError::UnexpectedResponse,
+                |_, _| Ok(()),
+            )
+            .unwrap_err();
+            if keyless {
+                assert!(matches!(
+                    error,
+                    TransportError::InProcess(outbe_tee::InProcessDispatchError::Resident(_))
+                ));
+            } else {
+                assert!(matches!(
+                    error,
+                    TransportError::InProcess(
+                        outbe_tee::InProcessDispatchError::Domain(_)
+                            | outbe_tee::InProcessDispatchError::LaneDenied { .. }
+                    )
+                ));
+            }
+            let state = state.lock().unwrap();
+            let proposer = mode == WitnessExecutionMode::ProposerRecord;
+            assert_eq!(
+                state.candidate_rejection,
+                (proposer && !keyless).then_some(CandidateRejection::UnsignedEnclaveError)
+            );
+            assert_eq!(
+                state.first_witness_fault,
+                (!proposer || keyless).then_some(BlockWitnessFault::LocalUnavailable)
+            );
+            assert!(state.staged.is_empty());
+        }
+    }
+}

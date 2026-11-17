@@ -76,83 +76,92 @@ pub(super) fn read(
         attestation_tag,
     })
 }
-pub(super) fn day(
+pub(super) fn day_apply(
     context: &InProcessTeeContext,
-    request: EnclaveRequest,
+    request: &tribute_day::TributeDayOpRequestV2,
 ) -> Result<EnclaveResponse> {
     context.with_offer_key_handle(|offer| -> Result<EnclaveResponse> {
         let secret = offer.key_handle();
-        match request {
-            EnclaveRequest::ApplyTributeDayOpV2 { request } => {
-                require_chain(context, request.chain_id)?;
-                let tribute = state(context, crate::tribute_encryption::derive_tribute_state_key)?;
-                let record = tribute_day::apply_day_operation(secret, &tribute, &request)?;
-                let inputs_canonical_hash = tribute_day::day_operation_inputs_hash(&request)?;
-                let attestation_tag = sign(
-                    context,
-                    &tribute_day::day_operation_attestation_preimage(
-                        inputs_canonical_hash,
-                        &record,
-                    )?,
-                );
-                Ok(EnclaveResponse::TributeDayOpAppliedV2 {
-                    record,
-                    inputs_canonical_hash,
-                    attestation_tag,
-                })
-            }
-            EnclaveRequest::ReadTributeDayAmountV2 { record } => {
-                require_chain(context, record.chain_id)?;
-                let amount = tribute_day::read_day_amount(secret, &record)?;
-                let inputs_canonical_hash = tribute_day::day_read_inputs_hash(&record)?;
-                let attestation_tag = sign(
-                    context,
-                    &tribute_day::day_read_attestation_preimage(inputs_canonical_hash, amount),
-                );
-                Ok(EnclaveResponse::TributeDayAmountReadV2 {
-                    amount,
-                    inputs_canonical_hash,
-                    attestation_tag,
-                })
-            }
-            EnclaveRequest::ExecuteLysisFractionsV1 { request } => {
-                require_chain(context, request.chain_id)?;
-                let tribute = state(context, crate::tribute_encryption::derive_tribute_state_key)?;
-                let nod = state(context, crate::nod_encryption::derive_nod_state_key)?;
-                let result =
-                    tribute_day::execute_lysis_fractions(secret, &tribute, &nod, &request)?;
-                let inputs_canonical_hash = tribute_day::lysis_fractions_inputs_hash(&request)?;
-                let attestation_tag = sign(
-                    context,
-                    &tribute_day::lysis_fractions_attestation_preimage(
-                        inputs_canonical_hash,
-                        &result,
-                    )?,
-                );
-                Ok(EnclaveResponse::LysisFractionsExecutedV1 {
-                    result: Box::new(result),
-                    inputs_canonical_hash,
-                    attestation_tag,
-                })
-            }
-            EnclaveRequest::ReadTributeDayFractionsV1 { record } => {
-                require_chain(context, record.chain_id)?;
-                let fractions = tribute_day::read_day_fractions(secret, &record)?;
-                let inputs_canonical_hash = tribute_day::day_fractions_read_inputs_hash(&record)?;
-                let attestation_tag = sign(
-                    context,
-                    &tribute_day::day_fractions_read_attestation_preimage(
-                        inputs_canonical_hash,
-                        &fractions,
-                    )?,
-                );
-                Ok(EnclaveResponse::TributeDayFractionsReadV1 {
-                    fractions,
-                    inputs_canonical_hash,
-                    attestation_tag,
-                })
-            }
-            _ => unreachable!("exhaustive parent routes only day operations"),
-        }
+        require_chain(context, request.chain_id)?;
+        let tribute = state(context, crate::tribute_encryption::derive_tribute_state_key)?;
+        let record = tribute_day::apply_day_operation(secret, &tribute, request)?;
+        let inputs_canonical_hash = tribute_day::day_operation_inputs_hash(request)?;
+        let attestation_tag = sign(
+            context,
+            &tribute_day::day_operation_attestation_preimage(inputs_canonical_hash, &record)?,
+        );
+        Ok(EnclaveResponse::TributeDayOpAppliedV2 {
+            record,
+            inputs_canonical_hash,
+            attestation_tag,
+        })
+    })?
+}
+
+pub(super) fn day_read(
+    context: &InProcessTeeContext,
+    record: &outbe_core_common::tribute_day_encryption::EncryptedTributeDayAmountV2,
+) -> Result<EnclaveResponse> {
+    context.with_offer_key_handle(|offer| -> Result<EnclaveResponse> {
+        let secret = offer.key_handle();
+        require_chain(context, record.chain_id)?;
+        let amount = tribute_day::read_day_amount(secret, record)?;
+        let inputs_canonical_hash = tribute_day::day_read_inputs_hash(record)?;
+        let attestation_tag = sign(
+            context,
+            &tribute_day::day_read_attestation_preimage(inputs_canonical_hash, amount),
+        );
+        Ok(EnclaveResponse::TributeDayAmountReadV2 {
+            amount,
+            inputs_canonical_hash,
+            attestation_tag,
+        })
+    })?
+}
+
+pub(super) fn lysis(
+    context: &InProcessTeeContext,
+    request: &tribute_day::LysisFractionsRequestV1,
+) -> Result<EnclaveResponse> {
+    context.with_offer_key_handle(|offer| -> Result<EnclaveResponse> {
+        let secret = offer.key_handle();
+        require_chain(context, request.chain_id)?;
+        let tribute = state(context, crate::tribute_encryption::derive_tribute_state_key)?;
+        let nod = state(context, crate::nod_encryption::derive_nod_state_key)?;
+        let result = tribute_day::execute_lysis_fractions(secret, &tribute, &nod, request)?;
+        let inputs_canonical_hash = tribute_day::lysis_fractions_inputs_hash(request)?;
+        let attestation_tag = sign(
+            context,
+            &tribute_day::lysis_fractions_attestation_preimage(inputs_canonical_hash, &result)?,
+        );
+        Ok(EnclaveResponse::LysisFractionsExecutedV1 {
+            result: Box::new(result),
+            inputs_canonical_hash,
+            attestation_tag,
+        })
+    })?
+}
+
+pub(super) fn day_fractions_read(
+    context: &InProcessTeeContext,
+    record: &outbe_core_common::tribute_day_encryption::EncryptedTributeDayFractionsV1,
+) -> Result<EnclaveResponse> {
+    context.with_offer_key_handle(|offer| -> Result<EnclaveResponse> {
+        let secret = offer.key_handle();
+        require_chain(context, record.chain_id)?;
+        let fractions = tribute_day::read_day_fractions(secret, record)?;
+        let inputs_canonical_hash = tribute_day::day_fractions_read_inputs_hash(record)?;
+        let attestation_tag = sign(
+            context,
+            &tribute_day::day_fractions_read_attestation_preimage(
+                inputs_canonical_hash,
+                &fractions,
+            )?,
+        );
+        Ok(EnclaveResponse::TributeDayFractionsReadV1 {
+            fractions,
+            inputs_canonical_hash,
+            attestation_tag,
+        })
     })?
 }
