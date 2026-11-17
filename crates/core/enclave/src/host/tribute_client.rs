@@ -44,7 +44,7 @@ pub fn read_tribute_amounts(
     }
 }
 
-/// Thread-local mock enclave hook for deterministic unit tests without a sidecar.
+/// Thread-local mock enclave hook for deterministic unit tests without a resident enclave.
 #[cfg(any(test, feature = "test-utils"))]
 pub type TestLocalEnclaveHook = std::sync::Arc<
     dyn Fn(&EnclaveRequest) -> Result<([u8; 32], EnclaveResponse), TransportError> + Send + Sync,
@@ -82,7 +82,7 @@ pub(crate) fn request_local_enclave(
     consensus_domain_call(
         request.label(),
         &request,
-        || outbe_tee::errors::TeeClientVerificationError::TeeSidecarNotConfigured.into(),
+        || outbe_tee::InProcessDispatchError::ContextNotInstalled.into(),
         |key, response| authenticate_request(&request, key, response),
     )
 }

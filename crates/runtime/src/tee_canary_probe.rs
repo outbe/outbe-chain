@@ -412,7 +412,7 @@ mod tests {
             ("get_public_keys", Ok(public_keys_ready())),
             ("process_tribute_offer_batch", Ok(bad_batch)),
         ]);
-        let (outcome, _, _) = run_canary_probe(&fake, &TributeCanaryProbe, Some(false));
+        let outcome = run_canary_probe(&fake, &TributeCanaryProbe);
         match outcome {
             CanaryTickOutcome::Failure {
                 unreachable,

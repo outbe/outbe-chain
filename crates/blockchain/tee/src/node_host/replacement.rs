@@ -4,10 +4,7 @@ use super::durable_submission::{
     DurableSubmission, DurableSubmissionKind, PossessionErrors,
 };
 use super::filesystem::remove_file_and_sync_directory;
-use super::identity::{
-    discover_initialization_manifest, initialize_authorized_endpoint, manifest_for_challenge,
-    read_committed_identity,
-};
+use super::identity::read_committed_identity;
 use super::journal_records::{persist_exact_checkpoint, CheckedRelayInput, ExactCheckpoint};
 use super::locked_state::{lock_node_host_state, require_committed_node_host_state};
 use super::path_exists;
@@ -20,13 +17,10 @@ use super::reconcile_replacement_state;
 use super::replace_bytes_atomically;
 use super::replacement_authorization;
 use super::replacement_binding::validate_finalized_replacement_binding;
-use super::validate_identity;
-use super::validate_manifest_identity;
 use super::write_bytes_once_or_exact;
 use super::BoundedRecordBytes;
 use super::FinalizedReplacementAuthorizationV1;
 use super::FinalizedReplacementBindingV1;
-use super::NodeHostIdentityV1;
 use super::NodeHostPaths;
 use super::NodeHostStateLock;
 use super::ReplacementCandidateRecordV1;
@@ -34,10 +28,7 @@ use super::ReplacementCandidateRelayV1;
 use super::ReplacementCandidateSubmissionV1;
 use super::MAX_INITIALIZATION_MANIFEST_BYTES;
 
-use crate::finalized_admission::{FinalizedAdmissionBeginInputV1, FinalizedAdmissionIngestInputV1};
-use crate::AuthorizedEnclaveClient;
-use crate::GeneratedDcapQuoteV1;
-use crate::NodeHostNoiseKey;
+use crate::node_host::NodeHostIdentityKey;
 use crate::TransportError;
 
 use alloy_primitives::B256;
@@ -54,157 +45,10 @@ use std::fs::File;
 
 use std::path::Path;
 
-/// Authenticated session to one staged replacement enclave. The normal startup
-/// path continues to use the committed enclave until an I6 finalized-state
-/// capability authorizes promotion.
-pub struct ReplacementCandidateEnclaveV1 {
-    client: AuthorizedEnclaveClient,
-    manifest: EnclaveInitializationManifestV1,
-}
-
-impl ReplacementCandidateEnclaveV1 {
-    #[must_use]
-    pub const fn manifest(&self) -> &EnclaveInitializationManifestV1 {
-        &self.manifest
-    }
-
-    pub fn generate_dcap_quote(
-        &mut self,
-        intent: &RegistrationIntentV1,
-    ) -> Result<GeneratedDcapQuoteV1, TransportError> {
-        let generated = self.client.generate_dcap_quote(intent)?;
-        if intent.operation == AttestationOperationV1::TransitionEnclaveMeasurement {
-            let proof = generated
-                .transition_key_ready_proof
-                .as_ref()
-                .ok_or_else(|| {
-                    TransportError::Attestation(
-                        "replacement candidate returned no transition key-ready proof".into(),
-                    )
-                })?;
-            let expected_manifest_hash = self.manifest.authorization_hash().map_err(codec_error)?;
-            if proof.candidate_manifest_hash != expected_manifest_hash {
-                return Err(TransportError::Attestation(
-                    "transition key-ready proof targets another candidate manifest".into(),
-                ));
-            }
-        }
-        Ok(generated)
-    }
-
-    pub fn request(
-        &mut self,
-        request: &crate::protocol::EnclaveRequest,
-    ) -> Result<crate::protocol::EnclaveResponse, TransportError> {
-        self.client.request(request)
-    }
-
-    pub fn ingest_upgrade_key_v1(
-        &mut self,
-        proof: &crate::upgrade_transfer::UpgradeKeyProofV1,
-        artifact: &[u8],
-    ) -> Result<crate::protocol::EnclaveResponse, TransportError> {
-        self.client.transfer_upgrade_key_v1(proof, artifact, false)
-    }
-
-    pub fn ingest_finalized_admission_v1(
-        &mut self,
-        input: FinalizedAdmissionIngestInputV1<'_>,
-    ) -> Result<[u8; 32], TransportError> {
-        self.client.ingest_finalized_admission_v1(input)
-    }
-
-    pub fn begin_finalized_admission_v1(
-        &mut self,
-        input: FinalizedAdmissionBeginInputV1<'_>,
-    ) -> Result<B256, TransportError> {
-        self.client.begin_finalized_admission_v1(input)
-    }
-
-    pub fn upload_finalized_admission_record_v1(
-        &mut self,
-        request_hash: B256,
-        kind: crate::finalized_admission::FinalizedAdmissionRecordKindV1,
-        record: &[u8],
-    ) -> Result<(), TransportError> {
-        self.client
-            .upload_finalized_admission_record_v1(request_hash, kind, record)
-    }
-
-    pub fn finish_finalized_admission_v1(
-        &mut self,
-        request_hash: B256,
-        expected_network_encryption_public: [u8; 32],
-    ) -> Result<[u8; 32], TransportError> {
-        self.client
-            .finish_finalized_admission_v1(request_hash, expected_network_encryption_public)
-    }
-
-    pub fn sign_registration_intent_dev_v1(
-        &mut self,
-        intent: &RegistrationIntentV1,
-    ) -> Result<[u8; 64], TransportError> {
-        self.client.sign_registration_intent_dev_v1(intent)
-    }
-
-    pub fn generate_transition_evidence_dev_v1(
-        &mut self,
-        intent: &RegistrationIntentV1,
-    ) -> Result<AttestationEvidenceV1, TransportError> {
-        let bytes = intent.encode_canonical().map_err(codec_error)?;
-        let response = self.client.request(
-            &crate::protocol::EnclaveRequest::GenerateTransitionEvidenceDevV1 { intent: bytes },
-        )?;
-        let crate::protocol::EnclaveResponse::TransitionEvidenceDevV1 { evidence } = response
-        else {
-            return Err(TransportError::UnexpectedResponse);
-        };
-        let evidence = AttestationEvidenceV1::decode_canonical(&evidence).map_err(codec_error)?;
-        let AttestationEvidenceV1::NoAttestationDev(dev) = &evidence else {
-            return Err(TransportError::UnexpectedResponse);
-        };
-        if &dev.intent != intent || !intent.verify_enclave_signature(&dev.dev_signature) {
-            return Err(TransportError::Attestation(
-                "DirectDev transition response differs from request".into(),
-            ));
-        }
-        let proof = evidence
-            .transition_key_ready_proof()
-            .ok_or(crate::errors::NodeHostRecordError::MissingKeyReadyProof)?;
-        proof
-            .verify_for_transition(intent, proof.resident_offer_public)
-            .map_err(codec_error)?;
-        if proof.candidate_manifest_hash
-            != self.manifest().authorization_hash().map_err(codec_error)?
-        {
-            return Err(TransportError::Attestation(
-                "transition proof targets another manifest".into(),
-            ));
-        }
-        Ok(evidence)
-    }
-}
-
-/// Stage one fresh enclave under the already committed NodeHost identity
-/// and persistent NodeHost key. The committed enclave remains the normal
-/// startup target.
-pub fn prepare_node_host_enclave_replacement_candidate<F, E>(
-    endpoint: &str,
-    node_data_dir: &Path,
-    identity: NodeHostIdentityV1,
-    sign_authorization: F,
-) -> Result<ReplacementCandidateEnclaveV1, TransportError>
-where
-    F: Fn(B256) -> Result<[u8; 65], E>,
-    E: std::fmt::Display,
-{
-    prepare_enclave_replacement_candidate(endpoint, node_data_dir, identity, sign_authorization)
-}
-
 // A replacement operation owns this lock for its entire state transition.
 struct LockedReplacementState {
     paths: NodeHostPaths,
-    node_host: NodeHostNoiseKey,
+    node_host: NodeHostIdentityKey,
     _state_lock: NodeHostStateLock,
 }
 
@@ -241,7 +85,7 @@ fn locked_replacement_state(
     if let Some(error) = requirement.missing_error() {
         require_committed_node_host_state(&paths, error)?;
     }
-    let node_host = NodeHostNoiseKey::load(&paths.noise_key)?;
+    let node_host = NodeHostIdentityKey::load(&paths.identity_key)?;
     reconcile_replacement_state(&paths, &node_host)?;
     Ok(LockedReplacementState {
         paths,
@@ -517,7 +361,7 @@ fn resolve_completed_promotion(
 fn validate_staged_promotion(
     paths: &NodeHostPaths,
     active: &EnclaveInitializationManifestV1,
-    node_host: &NodeHostNoiseKey,
+    node_host: &NodeHostIdentityKey,
     authorization: &FinalizedReplacementAuthorizationV1,
 ) -> Result<ReplacementCandidateRecordV1, TransportError> {
     let candidate = read_replacement_candidate(&paths.replacement_candidate)?;
@@ -572,169 +416,10 @@ fn finish_promotion(
     Ok(candidate.manifest)
 }
 
-fn prepare_enclave_replacement_candidate<F, E>(
-    endpoint: &str,
-    node_data_dir: &Path,
-    identity: NodeHostIdentityV1,
-    sign_authorization: F,
-) -> Result<ReplacementCandidateEnclaveV1, TransportError>
-where
-    F: Fn(B256) -> Result<[u8; 65], E>,
-    E: std::fmt::Display,
-{
-    validate_identity(&identity)?;
-    let (paths, _state_lock) = lock_node_host_state(node_data_dir)?;
-    if !path_exists(&paths.manifest)? || path_exists(&paths.pending_manifest)? {
-        return Err(TransportError::Codec(
-            "replacement candidate requires one unambiguous committed NodeHost manifest".into(),
-        ));
-    }
-    if !path_exists(&paths.noise_key)? {
-        return Err(TransportError::Codec(
-            "committed NodeHost manifest exists but its persistent Noise key is missing; refusing recovery"
-                .into(),
-        ));
-    }
-    let node_host = NodeHostNoiseKey::load(&paths.noise_key)?;
-    reconcile_replacement_state(&paths, &node_host)?;
-    let active = read_manifest(&paths.manifest)?;
-    validate_manifest_identity(&active, &identity, &node_host)?;
-    let preparation = CandidatePreparation {
-        endpoint,
-        paths: &paths,
-        identity: &identity,
-        node_host: &node_host,
-        active: &active,
-        sign_authorization: &sign_authorization,
-    };
-    if path_exists(&paths.replacement_candidate)? {
-        let record = read_replacement_candidate(&paths.replacement_candidate)?;
-        validate_replacement_candidate(&record, &active, &identity, &node_host)?;
-        return preparation.resume(record);
-    }
-    preparation.create()
-}
-
-struct CandidatePreparation<'a, F> {
-    endpoint: &'a str,
-    paths: &'a NodeHostPaths,
-    identity: &'a NodeHostIdentityV1,
-    node_host: &'a NodeHostNoiseKey,
-    active: &'a EnclaveInitializationManifestV1,
-    sign_authorization: &'a F,
-}
-
-impl<F, E> CandidatePreparation<'_, F>
-where
-    F: Fn(B256) -> Result<[u8; 65], E>,
-    E: std::fmt::Display,
-{
-    fn resume(
-        &self,
-        record: ReplacementCandidateRecordV1,
-    ) -> Result<ReplacementCandidateEnclaveV1, TransportError> {
-        if let Ok(client) = AuthorizedEnclaveClient::connect_endpoint(
-            self.endpoint,
-            &record.manifest,
-            self.node_host,
-        ) {
-            return Ok(ReplacementCandidateEnclaveV1 {
-                client,
-                manifest: record.manifest,
-            });
-        }
-        if path_exists(&self.paths.replacement_submission)? {
-            return Err(TransportError::Codec(
-                "durable replacement submission exists but its candidate enclave cannot reconnect"
-                    .into(),
-            ));
-        }
-        let refreshed_manifest = self.refresh_candidate(&record)?;
-        let client = initialize_authorized_endpoint(
-            self.endpoint,
-            &refreshed_manifest,
-            self.node_host,
-            self.sign_authorization,
-        )?;
-        Ok(ReplacementCandidateEnclaveV1 {
-            client,
-            manifest: refreshed_manifest,
-        })
-    }
-
-    fn refresh_candidate(
-        &self,
-        record: &ReplacementCandidateRecordV1,
-    ) -> Result<EnclaveInitializationManifestV1, TransportError> {
-        let challenge = AuthorizedEnclaveClient::discover_endpoint(self.endpoint)?;
-        let refreshed_manifest = manifest_for_challenge(self.identity, self.node_host, &challenge);
-        let refreshed_record = ReplacementCandidateRecordV1 {
-            predecessor_manifest_hash: record.predecessor_manifest_hash,
-            manifest: refreshed_manifest.clone(),
-        };
-        validate_replacement_candidate(
-            &refreshed_record,
-            self.active,
-            self.identity,
-            self.node_host,
-        )?;
-        if refreshed_manifest.recipient_x25519 != record.manifest.recipient_x25519
-            || refreshed_manifest.attestation_ed25519 != record.manifest.attestation_ed25519
-            || refreshed_manifest.noise_responder_x25519 != record.manifest.noise_responder_x25519
-        {
-            return Err(TransportError::Codec(
-                "replacement endpoint changed candidate enclave identity during resume".into(),
-            ));
-        }
-        replace_bytes_atomically(
-            &self.paths.replacement_candidate,
-            &self.paths.replacement_candidate_next,
-            &self.paths.replacement_write_scratch,
-            &refreshed_record.encode_canonical()?,
-            &self.paths.root,
-        )?;
-        Ok(refreshed_manifest)
-    }
-
-    fn create(&self) -> Result<ReplacementCandidateEnclaveV1, TransportError> {
-        let manifest =
-            discover_initialization_manifest(self.endpoint, self.identity, self.node_host)?;
-        let record = ReplacementCandidateRecordV1 {
-            predecessor_manifest_hash: self.active.authorization_hash().map_err(codec_error)?,
-            manifest: manifest.clone(),
-        };
-        validate_replacement_candidate(&record, self.active, self.identity, self.node_host)?;
-        replace_bytes_atomically(
-            &self.paths.replacement_candidate,
-            &self.paths.replacement_candidate_next,
-            &self.paths.replacement_write_scratch,
-            &record.encode_canonical()?,
-            &self.paths.root,
-        )?;
-        let client = initialize_authorized_endpoint(
-            self.endpoint,
-            &manifest,
-            self.node_host,
-            self.sign_authorization,
-        )?;
-        Ok(ReplacementCandidateEnclaveV1 { client, manifest })
-    }
-}
-
-fn validate_replacement_candidate(
-    record: &ReplacementCandidateRecordV1,
-    active: &EnclaveInitializationManifestV1,
-    identity: &NodeHostIdentityV1,
-    node_host: &NodeHostNoiseKey,
-) -> Result<(), TransportError> {
-    validate_manifest_identity(&record.manifest, identity, node_host)?;
-    validate_replacement_candidate_state(record, active, node_host)
-}
-
 pub(super) fn validate_replacement_candidate_state(
     record: &ReplacementCandidateRecordV1,
     active: &EnclaveInitializationManifestV1,
-    node_host: &NodeHostNoiseKey,
+    node_host: &NodeHostIdentityKey,
 ) -> Result<(), TransportError> {
     if replacement_node_host_key_changed(record, active, node_host)
         || replacement_chain_identity_changed(record, active)
@@ -771,7 +456,7 @@ pub(super) fn validate_replacement_candidate_state(
 fn replacement_node_host_key_changed(
     record: &ReplacementCandidateRecordV1,
     active: &EnclaveInitializationManifestV1,
-    node_host: &NodeHostNoiseKey,
+    node_host: &NodeHostIdentityKey,
 ) -> bool {
     active.node_host_noise_x25519 != node_host.public()
         || record.manifest.node_host_noise_x25519 != node_host.public()

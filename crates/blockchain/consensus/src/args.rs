@@ -2,49 +2,6 @@
 
 use std::{fmt, net::SocketAddr, path::PathBuf};
 
-use outbe_primitives::tee_attestation_v1::AttestationMode;
-
-/// Local authorization protocol used between one node and its enclave.
-///
-/// This is deliberately independent from [`AttestationMode`]: a development
-/// network may run a production NodeHost-authorized enclave inside real SGX
-/// while publishing only `NoAttestationDev` evidence.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
-pub enum TeeSessionMode {
-    /// Preserve the historical policy defaults: DCAP uses NodeHost. The
-    /// hardware-free development lane uses its separate development transport.
-    #[default]
-    PolicyDefault,
-    /// Require the authenticated, sealed production NodeHost session.
-    ProductionNodeHost,
-    /// Require the separate development/mock transport.
-    Development,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ResolvedTeeSession {
-    ProductionNodeHost,
-    Development,
-}
-
-impl TeeSessionMode {
-    pub fn resolve(
-        self,
-        policy: AttestationMode,
-    ) -> Result<ResolvedTeeSession, crate::errors::ArgsError> {
-        match (self, policy) {
-            (Self::PolicyDefault, AttestationMode::DcapRequired)
-            | (Self::ProductionNodeHost, _) => Ok(ResolvedTeeSession::ProductionNodeHost),
-            (Self::PolicyDefault | Self::Development, AttestationMode::NoAttestationDev) => {
-                Ok(ResolvedTeeSession::Development)
-            }
-            (Self::Development, AttestationMode::DcapRequired) => {
-                Err(crate::errors::ArgsError::DcapRequiredForbidsDevSession)
-            }
-        }
-    }
-}
-
 /// CLI arguments for the Outbe consensus layer.
 #[derive(Clone, clap::Args)]
 pub struct ConsensusArgs {
@@ -181,24 +138,6 @@ pub struct ConsensusArgs {
     )]
     pub reth_passphrase: Option<String>,
 
-    /// Path or `host:port` endpoint for the `outbe-tee-enclave` sidecar.
-    /// Optional when using the in-process TEE context. Retained for the legacy
-    /// sidecar during migration; session selection does not change the
-    /// genesis-fixed attestation policy or permit a fallback on transport failure.
-    #[arg(long = "tee-enclave-socket", value_name = "PATH")]
-    pub tee_enclave_socket: Option<PathBuf>,
-
-    /// Local node-to-enclave authorization protocol. This never changes the
-    /// genesis-fixed attestation policy and never provides a fallback. Use
-    /// `production-node-host` with a NoAttestationDev chain to run the
-    /// production enclave under real SGX with remote attestation disabled.
-    #[arg(
-        long = "tee-session-mode",
-        value_enum,
-        default_value_t = TeeSessionMode::PolicyDefault
-    )]
-    pub tee_session_mode: TeeSessionMode,
-
     /// Local liveness deadline (seconds) for the one-time TEE DKG + bootstrap on a
     /// fresh chain (block 0). The whole ceremony must finish before block 1. If it
     /// times out (or fails), node startup fails fast. The node halts rather than
@@ -287,8 +226,6 @@ impl fmt::Debug for ConsensusArgs {
                 "reth_passphrase_configured",
                 &self.reth_passphrase.is_some(),
             )
-            .field("tee_enclave_configured", &self.tee_enclave_socket.is_some())
-            .field("tee_session_mode", &self.tee_session_mode)
             .field(
                 "radicle_control_socket_configured",
                 &self.radicle_control_socket.is_some(),
@@ -526,36 +463,14 @@ mod tests {
     }
 
     #[test]
-    fn local_tee_session_mode_is_independent_from_attestation_policy() {
-        use outbe_primitives::tee_attestation_v1::AttestationMode;
-
-        assert_eq!(
-            TeeSessionMode::PolicyDefault
-                .resolve(AttestationMode::DcapRequired)
-                .unwrap(),
-            ResolvedTeeSession::ProductionNodeHost
-        );
-        assert_eq!(
-            TeeSessionMode::PolicyDefault
-                .resolve(AttestationMode::NoAttestationDev)
-                .unwrap(),
-            ResolvedTeeSession::Development
-        );
-        assert_eq!(
-            TeeSessionMode::ProductionNodeHost
-                .resolve(AttestationMode::NoAttestationDev)
-                .unwrap(),
-            ResolvedTeeSession::ProductionNodeHost
-        );
-        assert_eq!(
-            TeeSessionMode::Development
-                .resolve(AttestationMode::NoAttestationDev)
-                .unwrap(),
-            ResolvedTeeSession::Development
-        );
-        assert!(TeeSessionMode::Development
-            .resolve(AttestationMode::DcapRequired)
-            .is_err());
+    fn removed_sidecar_flags_are_rejected() {
+        for (flag, value) in [
+            ("--tee-enclave-socket", "/tmp/tee.sock"),
+            ("--tee-session-mode", "policy-default"),
+        ] {
+            let error = TestConsensusCli::try_parse_from(["test", flag, value]).unwrap_err();
+            assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+        }
     }
 
     #[test]
@@ -777,7 +692,6 @@ mod tests {
                 args.effective_validator_evm_key().unwrap(),
                 expected.map(PathBuf::from)
             );
-            assert_eq!(args.tee_enclave_socket, None);
         }
         let mut keyless = default_args();
         keyless.signing_key = Some(PathBuf::from("/ignored/signing-key.hex"));

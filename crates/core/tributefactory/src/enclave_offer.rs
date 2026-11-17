@@ -1,27 +1,7 @@
-//! Host-side TEE enclave client for tribute-offer decryption.
+//! Resident TEE tribute-offer decryption and authenticated public results.
 //!
-//! When the node starts with `--tee-enclave-socket`, [`init_enclave_client`] connects to
-//! the enclave sidecar and installs a process-global client. The connect step validates
-//! the quote/key bindings and pins the Noise-IK static key of the sidecar. After that,
-//! every offer decryption routes through the enclave via
-//! [`process_tribute_offer_batch_via_enclave`]. The offer key exists only inside the
-//! enclave, and there is no in-process key path. The enclave parses and validates the
-//! L1<->L2 linkage (`creator`, `tribute_draft_id`), but withholds it from the host
-//! (Enclave Return Rule). The enclave returns the public draft fields, and the host uses
-//! them to issue the tribute.
-//!
-//! Determinism: every node's enclave holds the same shared offer key, so the same
-//! ciphertext decrypts identically on all validators (re-execution agrees). The
-//! enclave call is a **blocking** TCP or Unix domain socket request from the precompile path.
-//! It never holds a `StorageHandle` across an await and never spawns a
-//! thread (the `StorageHandle` `!Send` constraint). A dead sidecar (after the
-//! session's one bounded reconnect + retry) surfaces as `PrecompileError::EnclaveUnavailable`
-//! (`tee_sidecar_unavailable`). This is a node-local fault, never a deterministic
-//! revert, and it matches the gratis/promis/fidelity enclave paths. Only per-offer
-//! rejections that the enclave reports inside the results are deterministic and
-//! revert.
-
-use std::path::Path;
+//! The shared offer key stays behind the in-process handle API. Missing
+//! resident context is a node-local fault, not a deterministic EVM revert.
 
 use alloy_primitives::B256;
 use outbe_enclave::protocol::{
@@ -30,64 +10,11 @@ use outbe_enclave::protocol::{
 };
 use outbe_enclave::{try_with_domain_enclave, verify_tribute_offer_attestation};
 use outbe_primitives::error::PrecompileError;
-use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
-use outbe_tee::EnclaveClient;
 
-use crate::errors::{EnclaveInitError, TributeFactoryError};
-
-/// True once the process-global enclave client is installed.
-/// Offers always use the enclave. A missing client returns `PrecompileError::EnclaveUnavailable` with
-/// `tee_sidecar_unavailable`.
-/// This node-local fault rejects block execution.
-pub fn is_enclave_configured() -> bool {
-    outbe_tee::is_enclave_configured()
-}
-
-/// Connect to the enclave sidecar at `socket`, validate its structural key
-/// bindings, verify it answers an encrypted request, and install the global
-/// offer-decryption client. The authorized manifest and enclave-resident native QVL
-/// paths enforce production enclave identity and DCAP admission.
-pub fn init_enclave_client(socket: &Path) -> eyre::Result<()> {
-    // A `host:port` endpoint connects over TCP (enclave under Gramine); a path
-    // connects over the Unix domain socket (native sidecar).
-    let endpoint = socket
-        .to_str()
-        .ok_or(EnclaveInitError::InvalidEndpointUtf8)?;
-    let mut client = EnclaveClient::connect_endpoint(endpoint).map_err(|source| {
-        EnclaveInitError::ConnectFailed {
-            socket: socket.display().to_string(),
-            source,
-        }
-    })?;
-    // Verify the encrypted channel works before installing the client.
-    match client.request(&EnclaveRequest::GetPublicKeys) {
-        Ok(EnclaveResponse::PublicKeys { .. }) => {}
-        Ok(other) => return Err(EnclaveInitError::UnexpectedHandshakeResponse(other).into()),
-        Err(e) => return Err(EnclaveInitError::GetPublicKeysFailed(e).into()),
-    }
-    // Report the enclave's declared attestation mode. This connect-time path does
-    // not verify DCAP. Native QVL + TeeRegistry enforce production admission.
-    let mode = client.attestation_label();
-    if client.is_hardware_attested() {
-        let (mrenclave, mrsigner, isv_svn) = client.measurements();
-        tracing::info!(
-            attestation = %mode, %mrenclave, %mrsigner, isv_svn,
-            "TEE enclave reports SGX/DCAP quote metadata; connect-time validation is structural only"
-        );
-    } else {
-        tracing::warn!(
-            attestation = %mode,
-            "TEE enclave is UNATTESTED: mode is `{mode}`; this development connection \
-             provides no SGX confidentiality or DCAP admission"
-        );
-    }
-    outbe_tee::install_enclave_client(client, endpoint.to_owned())
-        .map_err(EnclaveInitError::InstallFailed)?;
-    Ok(())
-}
+use crate::errors::TributeFactoryError;
 
 /// Process a batch of offers through the enclave. The enclave decrypts the offers
-/// (the offer key stays in SGX) and applies each offer's node-resolved price. It
+/// (the offer key stays resident) and applies each offer's node-resolved price. It
 /// computes economics + Poseidon `token_id` and returns the public `TributeOfferResult[]`.
 /// The host then issues the Tributes from those fields plus its own request inputs
 /// (no host recompute of the private economics).

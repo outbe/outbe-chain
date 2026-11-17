@@ -1,48 +1,55 @@
 //! Lane and error compatibility regressions.
 use super::*;
 
+thread_local! {
+    static OBSERVED_LANES: std::cell::RefCell<Vec<(PayloadLane, &'static str)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn lane_probe(
+    context: &InProcessTeeContext,
+    lane: PayloadLane,
+    payload: &[u8],
+) -> Result<WireResponse, TransportError> {
+    let request = EnclaveRequest::decode_wire_canonical(payload)?;
+    assert!(request.allows_lane(lane));
+    OBSERVED_LANES.with(|lanes| lanes.borrow_mut().push((lane, request.label())));
+    let response = match request {
+        EnclaveRequest::DeriveAccountKeys { account, .. } => EnclaveResponse::AccountKeysSealed {
+            account,
+            sealed: vec![0xAA; 80],
+            nonce: [0xBB; 12],
+            enclave_ephemeral_pubkey: [0xCC; 32],
+        },
+        EnclaveRequest::ProcessTributeOfferBatch { .. } => {
+            let hash = B256::repeat_byte(0x41);
+            let pre = crate::protocol::tribute_offer_attestation_preimage(hash, &[]).unwrap();
+            EnclaveResponse::TributeOfferBatch {
+                results: Vec::new(),
+                inputs_canonical_hash: hash,
+                attestation_tag: context.sign_domain_attestation(&pre).to_vec(),
+            }
+        }
+        EnclaveRequest::ProcessEncryptedTributeOfferBatchV2 { .. } => {
+            let hash = B256::repeat_byte(0x42);
+            let pre = crate::tribute_v2::encrypted_offer_attestation_preimage(hash, &[]).unwrap();
+            EnclaveResponse::EncryptedTributeOfferBatchV2 {
+                results: Vec::new(),
+                inputs_canonical_hash: hash,
+                attestation_tag: context.sign_domain_attestation(&pre).to_vec(),
+            }
+        }
+        other => panic!("unexpected request {}", other.label()),
+    };
+    response.into_wire_response()
+}
+
 #[test]
 fn payload_lane_isolation_enforces_account_query_canary_and_execution_matrix() {
-    let signer = SigningKey::from_bytes(&[0x93; 32]);
-    let pubkey = signer.verifying_key().to_bytes();
-    let observed_lanes = Arc::new(Mutex::new(Vec::new()));
-    let lanes_clone = Arc::clone(&observed_lanes);
-
-    let server = spawn_mock_dev_enclave(pubkey, move |lane, req| {
-        lanes_clone.lock().unwrap().push((lane, req.label()));
-        match req {
-            EnclaveRequest::DeriveAccountKeys { account, .. } => {
-                Ok(EnclaveResponse::AccountKeysSealed {
-                    account,
-                    sealed: vec![0xAA; 80],
-                    nonce: [0xBB; 12],
-                    enclave_ephemeral_pubkey: [0xCC; 32],
-                })
-            }
-            EnclaveRequest::ProcessTributeOfferBatch { .. } => {
-                let hash = B256::repeat_byte(0x41);
-                let pre = crate::protocol::tribute_offer_attestation_preimage(hash, &[]).unwrap();
-                Ok(EnclaveResponse::TributeOfferBatch {
-                    results: Vec::new(),
-                    inputs_canonical_hash: hash,
-                    attestation_tag: signer.sign(&pre).to_bytes().to_vec(),
-                })
-            }
-            EnclaveRequest::ProcessEncryptedTributeOfferBatchV2 { .. } => {
-                let hash = B256::repeat_byte(0x42);
-                let pre =
-                    crate::tribute_v2::encrypted_offer_attestation_preimage(hash, &[]).unwrap();
-                Ok(EnclaveResponse::EncryptedTributeOfferBatchV2 {
-                    results: Vec::new(),
-                    inputs_canonical_hash: hash,
-                    attestation_tag: signer.sign(&pre).to_bytes().to_vec(),
-                })
-            }
-            other => Err(format!("unexpected request {}", other.label())),
-        }
-    });
-    let client = EnclaveClient::connect_endpoint(&server.endpoint).unwrap();
-    let _ = outbe_tee::install_enclave_client(client, server.endpoint.clone());
+    let _resident = set_in_process_tee_context_for_test(Some((
+        crate::host::domain_in_process::tests::context(0x93),
+        lane_probe,
+    )));
 
     let derive = EnclaveRequest::DeriveAccountKeys {
         ledger: Ledger::Gratis,
@@ -95,7 +102,7 @@ fn payload_lane_isolation_enforces_account_query_canary_and_execution_matrix() {
     assert!(canary_domain_request(&exec_only).is_err());
     assert!(try_domain_account_query(&exec_only).unwrap().is_err());
 
-    let lanes = observed_lanes.lock().unwrap().clone();
+    let lanes = OBSERVED_LANES.with(|lanes| lanes.take());
     assert_eq!(
         lanes,
         vec![

@@ -425,10 +425,6 @@ pub enum StackEpochError {
         source: crate::follow::BoundaryObservationError,
     },
 
-    /// Indicates that a mandatory TEE chain requires the enclave socket argument.
-    #[error("mandatory TEE chain requires --tee-enclave-socket before consensus startup")]
-    MandatoryTeeRequiresEnclaveSocket,
-
     /// Indicates that the mandatory teeAttestationV1 ChainSpec configuration is invalid.
     #[error("invalid mandatory teeAttestationV1 ChainSpec: {reason}")]
     InvalidTeeAttestationChainSpec {
@@ -471,10 +467,6 @@ pub enum StackEpochError {
     #[error("OST3 deterministic block-1 lease overflows u64")]
     Ost3Block1LeaseOverflow,
 
-    /// Indicates that the TEE enclave endpoint path is not valid UTF-8.
-    #[error("TEE enclave endpoint is not valid UTF-8")]
-    TeeEnclaveEndpointInvalidUtf8,
-
     /// Indicates that the Reth P2P signing key is invalid.
     #[error("invalid Reth P2P signing key: {reason}")]
     InvalidRethP2pSigningKey {
@@ -489,27 +481,6 @@ pub enum StackEpochError {
     /// Indicates that a protected Reth custody file was not installed as network hex.
     #[error("protected Reth P2P identity is not installed on the node network config")]
     ProtectedRethIdentityNotInstalled,
-
-    /// Indicates that reconnecting to the production NodeHost enclave failed.
-    #[error("production NodeHost reconnect failed: {reason}")]
-    ProductionNodeHostReconnectFailed {
-        /// Error description.
-        reason: String,
-    },
-
-    /// Indicates that loading the committed NodeHost manifest failed.
-    #[error("committed NodeHost manifest load failed: {reason}")]
-    CommittedNodeHostManifestLoadFailed {
-        /// Error description.
-        reason: String,
-    },
-
-    /// Indicates that reconnecting to the NoAttestationDev enclave failed.
-    #[error("NoAttestationDev enclave reconnect failed: {reason}")]
-    NoAttestationDevReconnectFailed {
-        /// Error description.
-        reason: String,
-    },
 
     /// Indicates that the startup TEE DKG ceremony failed.
     #[error("TEE DKG ceremony failed: {reason}")]
@@ -665,27 +636,6 @@ impl StackEpochError {
     /// Creates an error when the Reth P2P signing key is invalid.
     pub fn invalid_reth_p2p_signing_key(error: impl std::fmt::Display) -> Self {
         Self::InvalidRethP2pSigningKey {
-            reason: error.to_string(),
-        }
-    }
-
-    /// Creates an error when reconnecting to the production NodeHost enclave fails.
-    pub fn production_node_host_reconnect_failed(error: impl std::fmt::Display) -> Self {
-        Self::ProductionNodeHostReconnectFailed {
-            reason: error.to_string(),
-        }
-    }
-
-    /// Creates an error when loading the committed NodeHost manifest fails.
-    pub fn committed_node_host_manifest_load_failed(error: impl std::fmt::Display) -> Self {
-        Self::CommittedNodeHostManifestLoadFailed {
-            reason: error.to_string(),
-        }
-    }
-
-    /// Creates an error when reconnecting to the NoAttestationDev enclave fails.
-    pub fn no_attestation_dev_reconnect_failed(error: impl std::fmt::Display) -> Self {
-        Self::NoAttestationDevReconnectFailed {
             reason: error.to_string(),
         }
     }

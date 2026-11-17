@@ -58,10 +58,8 @@ pub async fn emit() {
 }
 
 fn emit_tee_client() {
-    record_request_duration("health", Duration::from_millis(5));
-    record_request_error("health", "codec");
-    record_reconnect("ok");
-    record_session_generation(1);
+    record_request_duration("get_public_keys", Duration::from_millis(5));
+    record_request_error("get_public_keys", "codec");
 }
 
 async fn emit_staleness() {
@@ -672,7 +670,7 @@ mod canary {
     use outbe_tee::{
         canary::{TeeEnclaveHealthChannel, TeeEnclaveHealthState},
         errors::TransportError,
-        protocol::{EnclaveHealthStatusV1, EnclaveRequest, EnclaveResponse},
+        protocol::{EnclaveRequest, EnclaveResponse},
     };
     use tokio_util::sync::CancellationToken;
 
@@ -769,9 +767,6 @@ mod canary {
     impl EnclaveRequester for FakeEnclaveRequester {
         fn request(&self, request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
             match request {
-                EnclaveRequest::Health => Ok(EnclaveResponse::HealthStatus {
-                    status: Box::new(health()),
-                }),
                 EnclaveRequest::GetPublicKeys => Ok(EnclaveResponse::PublicKeys {
                     offer_key_ready: true,
                     recipient_x25519_pub: [0x0B; 32],
@@ -828,16 +823,5 @@ mod canary {
             }
             .into_wire_response()
         }
-    }
-
-    fn health() -> EnclaveHealthStatusV1 {
-        serde_json::from_value(serde_json::json!({
-            "uptime_s": 10, "offer_key_ready": true,
-            "heap": { "current_bytes": 1024, "peak_bytes": 2048 },
-            "requests": { "total": 2, "errored": 1, "denied": 0 },
-            "classes": { "initialized": 0, "founding_keyless": 0, "keyless_onboarding": 0,
-                "ready": 2, "dev_source_seal": 0, "dev_recipient_ingest": 0 }
-        }))
-        .expect("enclave health fixture")
     }
 }

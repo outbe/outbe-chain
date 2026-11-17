@@ -14,26 +14,16 @@ use std::{
 
 use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_sol_types::SolCall as _;
-use outbe_primitives::tee_attestation_v1::{AttestationMode, DcapEvidenceV1};
 use outbe_primitives::{
-    tee_attestation_v1::{
-        AttestationEvidenceV1, AttestationOperationV1, RegistrationIntentV1, TeePolicyV1,
-        TransitionKeyReadyProofV1,
-    },
+    tee_attestation_v1::{AttestationEvidenceV1, RegistrationIntentV1, TransitionKeyReadyProofV1},
     tee_registry_abi_v1::ITeeRegistryV1,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{acquire_dcap_collateral_v1, dcap_collateral_validity_window_v1};
-use crate::{
-    journal_storage::{sync_directory, JournalPaths, JournalSnapshotV1},
-    registry_view::FinalizedRenewalChainViewV1,
-    ReplacementCandidateEnclaveV1, SGX_COMBINED_SEAL_MAGIC,
-};
+use crate::journal_storage::{sync_directory, JournalPaths, JournalSnapshotV1};
 
 mod context;
 mod errors;
-mod identity;
 mod journal_validation;
 mod storage;
 mod wire;
@@ -44,10 +34,6 @@ mod compatibility_tests;
 mod tests;
 
 pub use errors::UpgradeError;
-pub use identity::{
-    ensure_transition_source_or_target_v1, transition_target_matches_v1,
-    validate_candidate_identity_v1,
-};
 use journal_validation::validate_checkpoint_transition;
 pub use journal_validation::{security_material, SecurityMaterial};
 use storage::{
@@ -55,12 +41,9 @@ use storage::{
 };
 
 const DIRECTORY: &str = "tee-upgrade-v1";
-pub const UPGRADE_SEALED_ROOT_FILENAME: &str = "sealed_root.bin";
-const SEALED_ROOT: &str = UPGRADE_SEALED_ROOT_FILENAME;
 const DIRECTORY_MODE: u32 = 0o700;
 const FILE_MODE: u32 = 0o600;
 const MAX_JOURNAL_BYTES: u64 = 4 * 1024 * 1024;
-const MAX_SEALED_ROOT_BYTES: u64 = 1024 * 1024;
 const MAX_RELAY_VARIANTS: usize = 8;
 
 /// Signed relay transaction record persisted in lifecycle journals.
@@ -279,87 +262,6 @@ pub fn prepare_upgrade_journal_unchecked_v1(
     context: UpgradeContextV1,
 ) -> Result<UpgradeJournalSnapshotV1, UpgradeError> {
     prepare_upgrade_journal_with_check_v1(node_data_dir, context, || Ok(()))
-}
-
-pub fn copy_same_platform_sealed_root_and_checkpoint_v1(
-    node_data_dir: &Path,
-) -> Result<UpgradeJournalSnapshotV1, UpgradeError> {
-    let guard = UpgradeJournalGuardV1::acquire(node_data_dir)?;
-    let current = guard.load()?.ok_or(UpgradeError::CandidateNotPrepared)?;
-    match current.lifecycle {
-        UpgradeJournalStateV1::CandidatePrepared { context } => {
-            let sealed_root_hash = copy_same_platform_sealed_root_v1(&context)?;
-            guard.store(UpgradeJournalSnapshotV1::new(
-                UpgradeJournalStateV1::KeyProvisioned {
-                    context,
-                    sealed_root_hash,
-                },
-            ))?;
-            guard.load()?.ok_or(UpgradeError::CheckpointDisappeared(
-                "key-provisioned checkpoint",
-            ))
-        }
-        UpgradeJournalStateV1::KeyProvisioned {
-            context,
-            sealed_root_hash,
-        } => {
-            let actual = copy_same_platform_sealed_root_v1(&context)?;
-            if actual != sealed_root_hash {
-                return Err(UpgradeError::CandidateSealedRootChanged);
-            }
-            Ok(UpgradeJournalSnapshotV1 {
-                lifecycle: UpgradeJournalStateV1::KeyProvisioned {
-                    context,
-                    sealed_root_hash,
-                },
-                ..current
-            })
-        }
-        _ => Err(UpgradeError::CopyRequiresCandidatePrepared),
-    }
-}
-
-/// Record a key that the candidate received from the network and sealed locally.
-pub fn record_network_key_provisioned_with_seal_check_v1<E>(
-    node_data_dir: &Path,
-    before_read: impl FnOnce() -> Result<(), E>,
-    allow_additional_seal: impl FnOnce(&[u8]) -> bool,
-) -> Result<UpgradeJournalSnapshotV1, E>
-where
-    E: From<UpgradeError>,
-{
-    let guard = UpgradeJournalGuardV1::acquire(node_data_dir)?;
-    let current = guard.load()?.ok_or(UpgradeError::UpgradeNotPrepared)?;
-    before_read()?;
-    let context = current.lifecycle.context().clone();
-    let bytes = read_private_bounded_file(
-        &context.candidate_tee_dir.join(SEALED_ROOT),
-        MAX_SEALED_ROOT_BYTES,
-    )?;
-    let combined = bytes.starts_with(SGX_COMBINED_SEAL_MAGIC) || allow_additional_seal(&bytes);
-    if !combined {
-        return Err(UpgradeError::InvalidCombinedSgxSeal.into());
-    }
-    let sealed_root_hash = keccak256(bytes);
-    if let UpgradeJournalStateV1::KeyProvisioned {
-        sealed_root_hash: expected,
-        ..
-    } = current.lifecycle
-    {
-        if expected != sealed_root_hash {
-            return Err(UpgradeError::ProvisionedSealChanged.into());
-        }
-        return Ok(current);
-    }
-    guard.store(UpgradeJournalSnapshotV1::new(
-        UpgradeJournalStateV1::KeyProvisioned {
-            context,
-            sealed_root_hash,
-        },
-    ))?;
-    guard
-        .load()?
-        .ok_or_else(|| UpgradeError::CheckpointDisappeared("provisioned journal").into())
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -625,165 +527,4 @@ pub fn record_upgrade_missed_cutoff_v1(
     guard.load()?.ok_or(UpgradeError::CheckpointDisappeared(
         "missed-cutoff checkpoint",
     ))
-}
-
-pub struct PreparedTransitionEvidenceV1 {
-    pub intent: RegistrationIntentV1,
-    pub evidence: AttestationEvidenceV1,
-    pub enclave_signature: [u8; 64],
-    pub collateral_issue_floor: u64,
-    pub collateral_expiration: u64,
-}
-
-pub fn generate_transition_evidence_v1(
-    candidate: &mut ReplacementCandidateEnclaveV1,
-    intent: RegistrationIntentV1,
-    policy: &TeePolicyV1,
-) -> Result<PreparedTransitionEvidenceV1, UpgradeError> {
-    if policy.attestation_mode == AttestationMode::NoAttestationDev {
-        let evidence = if intent.operation == AttestationOperationV1::PrepareEnclaveUpgrade {
-            let signature = candidate
-                .sign_registration_intent_dev_v1(&intent)
-                .map_err(UpgradeError::GenerateDirectDevEvidence)?;
-            AttestationEvidenceV1::NoAttestationDev(
-                outbe_primitives::tee_attestation_v1::NoAttestationDevEvidenceV1 {
-                    intent: intent.clone(),
-                    dev_attestation_public: intent.attestation_ed25519,
-                    dev_signature: signature,
-                    transition_key_ready_proof: None,
-                },
-            )
-        } else {
-            candidate
-                .generate_transition_evidence_dev_v1(&intent)
-                .map_err(UpgradeError::GenerateDirectDevEvidence)?
-        };
-        let AttestationEvidenceV1::NoAttestationDev(dev) = &evidence else {
-            unreachable!();
-        };
-        return Ok(PreparedTransitionEvidenceV1 {
-            intent,
-            enclave_signature: dev.dev_signature,
-            evidence,
-            collateral_issue_floor: 0,
-            collateral_expiration: u64::MAX,
-        });
-    }
-    let generated = candidate
-        .generate_dcap_quote(&intent)
-        .map_err(UpgradeError::GenerateTransitionQuote)?;
-    let components = acquire_dcap_collateral_v1(&generated.quote_body)
-        .map_err(UpgradeError::AcquireTransitionCollateral)?;
-    let evidence = DcapEvidenceV1 {
-        intent: intent.clone(),
-        quote: generated.quote_body,
-        components,
-        transition_key_ready_proof: generated.transition_key_ready_proof,
-    };
-    let window = dcap_collateral_validity_window_v1(&evidence, policy)
-        .map_err(UpgradeError::ValidateTransitionCollateral)?;
-    Ok(PreparedTransitionEvidenceV1 {
-        intent,
-        evidence: AttestationEvidenceV1::Dcap(evidence),
-        enclave_signature: generated.enclave_signature,
-        collateral_issue_floor: window.issue_floor,
-        collateral_expiration: window.expiration_ceiling,
-    })
-}
-
-pub fn transition_intent_v1(
-    candidate: &ReplacementCandidateEnclaveV1,
-    active: &FinalizedRenewalChainViewV1,
-    successor: &TeePolicyV1,
-    binding_id: B256,
-    requested_valid_until: u64,
-) -> Result<RegistrationIntentV1, UpgradeError> {
-    if binding_id.is_zero() || binding_id == active.binding.binding_id {
-        return Err(UpgradeError::InvalidTransitionBindingId);
-    }
-    let manifest = candidate.manifest();
-    let intent = RegistrationIntentV1 {
-        chain_id: successor.chain_id,
-        genesis_hash: successor.genesis_hash,
-        operation: AttestationOperationV1::TransitionEnclaveMeasurement,
-        attestation_mode: successor.attestation_mode,
-        policy_hash: successor
-            .policy_hash()
-            .map_err(UpgradeError::HashStagedSuccessorPolicy)?,
-        node_id: manifest.node_id.clone(),
-        enclave_id: manifest
-            .enclave_id()
-            .map_err(UpgradeError::DeriveCandidateEnclaveId)?,
-        binding_id,
-        binding_version: active
-            .binding
-            .binding_version
-            .checked_add(1)
-            .ok_or(UpgradeError::BindingVersionExhausted)?,
-        registration_version: active
-            .binding
-            .registration_version
-            .checked_add(1)
-            .ok_or(UpgradeError::RegistrationVersionExhausted)?,
-        renewal_nonce: active.binding.renewal_nonce,
-        transition_nonce: active
-            .binding
-            .transition_nonce
-            .checked_add(1)
-            .ok_or(UpgradeError::TransitionNonceExhausted)?,
-        requested_valid_until,
-        recipient_x25519: manifest.recipient_x25519,
-        attestation_ed25519: manifest.attestation_ed25519,
-        noise_responder_x25519: manifest.noise_responder_x25519,
-        node_host_authorization_hash: active.binding.node_host_authorization_hash,
-    };
-    manifest
-        .validate_intent_binding(&intent)
-        .map_err(UpgradeError::CandidateManifestIntentMismatch)?;
-    Ok(intent)
-}
-
-/// Copy exactly `sealed_root.bin` from active A to prepared candidate B.
-/// A byte-identical destination is an idempotent crash retry. Any other
-/// pre-existing destination fails closed.
-pub fn copy_same_platform_sealed_root_v1(context: &UpgradeContextV1) -> Result<B256, UpgradeError> {
-    context.validate()?;
-    validate_directory(&context.active_tee_dir)?;
-    validate_directory(&context.candidate_tee_dir)?;
-    let source = context.active_tee_dir.join(SEALED_ROOT);
-    let destination = context.candidate_tee_dir.join(SEALED_ROOT);
-    let bytes = read_private_bounded_file(&source, MAX_SEALED_ROOT_BYTES)?;
-    if bytes.is_empty() {
-        return Err(UpgradeError::EmptyActiveSealedRoot);
-    }
-    let hash = keccak256(&bytes);
-    if destination.exists() {
-        let existing = read_private_bounded_file(&destination, MAX_SEALED_ROOT_BYTES)?;
-        if existing != bytes {
-            return Err(UpgradeError::ConflictingCandidateSealedRoot);
-        }
-        return Ok(hash);
-    }
-    let mut output = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(FILE_MODE)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(&destination)
-        .map_err(|source| UpgradeError::Io {
-            context: "create candidate sealed root",
-            source,
-        })?;
-    output
-        .write_all(&bytes)
-        .map_err(|source| UpgradeError::Io {
-            context: "write candidate sealed root",
-            source,
-        })?;
-    output.sync_all().map_err(|source| UpgradeError::Io {
-        context: "fsync candidate sealed root",
-        source,
-    })?;
-    sync_directory(&context.candidate_tee_dir)?;
-    Ok(hash)
 }

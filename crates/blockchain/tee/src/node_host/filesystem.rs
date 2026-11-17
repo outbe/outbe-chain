@@ -1,6 +1,7 @@
 use crate::TransportError;
 
 use outbe_primitives::filesystem::entry_exists;
+#[cfg(test)]
 use outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1;
 
 use std::fs;
@@ -18,10 +19,11 @@ use std::path::PathBuf;
 
 pub const NODE_HOST_DIRECTORY_V1: &str = "tee-node-host-v1";
 
-pub const NODE_HOST_NOISE_KEY_V1: &str = "noise-initiator.key";
+pub const NODE_HOST_IDENTITY_KEY_V1: &str = "noise-initiator.key";
 
 pub const NODE_HOST_MANIFEST_V1: &str = "initialization-manifest.bin";
 
+#[cfg(test)]
 const NODE_HOST_PENDING_MANIFEST_V1: &str = "initialization-manifest.pending";
 
 pub const NODE_HOST_REPLACEMENT_CANDIDATE_V1: &str = "replacement-candidate.v1";
@@ -123,6 +125,7 @@ impl NodeHostStateLock {
     }
 }
 
+#[cfg(test)]
 pub(super) fn write_manifest_once(
     path: &Path,
     manifest: &EnclaveInitializationManifestV1,
@@ -255,8 +258,9 @@ pub(super) fn path_exists(path: &Path) -> Result<bool, TransportError> {
 pub(super) struct NodeHostPaths {
     pub(super) root: PathBuf,
     pub(super) state_lock: PathBuf,
-    pub(super) noise_key: PathBuf,
+    pub(super) identity_key: PathBuf,
     pub(super) manifest: PathBuf,
+    #[cfg(test)]
     pub(super) pending_manifest: PathBuf,
     pub(super) replacement_candidate: PathBuf,
     pub(super) replacement_submission: PathBuf,
@@ -283,8 +287,9 @@ impl NodeHostPaths {
         let root = node_data_dir.join(NODE_HOST_DIRECTORY_V1);
         Self {
             state_lock: root.join(NODE_HOST_STATE_LOCK_V1),
-            noise_key: root.join(NODE_HOST_NOISE_KEY_V1),
+            identity_key: root.join(NODE_HOST_IDENTITY_KEY_V1),
             manifest: root.join(NODE_HOST_MANIFEST_V1),
+            #[cfg(test)]
             pending_manifest: root.join(NODE_HOST_PENDING_MANIFEST_V1),
             replacement_candidate: root.join(NODE_HOST_REPLACEMENT_CANDIDATE_V1),
             replacement_submission: root.join(NODE_HOST_REPLACEMENT_SUBMISSION_V1),

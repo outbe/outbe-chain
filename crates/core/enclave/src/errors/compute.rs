@@ -196,12 +196,6 @@ pub enum FidelityEnclaveError {
     OwnerSignatureAccountMismatch,
 }
 
-impl From<FidelityEnclaveError> for crate::errors::TeeError {
-    fn from(err: FidelityEnclaveError) -> Self {
-        Self::Fidelity(err.to_string())
-    }
-}
-
 /// Rejection reasons for encrypted Tribute day operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum TributeDayRejectReason {

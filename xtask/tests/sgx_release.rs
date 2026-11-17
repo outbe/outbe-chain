@@ -461,7 +461,7 @@ fn bundle_spec_rejects_pre_activation_attestation_mode() {
 #[test]
 fn bundle_spec_rejects_sealed_state_schema_drift() {
     let mut spec = repo_spec();
-    spec.sealed_state_schema = u32::from(outbe_tee::SEALED_STATE_SCHEMA_V1) + 1;
+    spec.sealed_state_schema = 3_u32 + 1;
 
     let error = spec
         .validate()

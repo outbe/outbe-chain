@@ -7,7 +7,7 @@ fn persist_noise(h: &Harness) {
         .path()
         .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1);
     std::fs::create_dir(&host).unwrap();
-    let path = host.join(outbe_tee::node_host::NODE_HOST_NOISE_KEY_V1);
+    let path = host.join(outbe_tee::node_host::NODE_HOST_IDENTITY_KEY_V1);
     std::fs::write(&path, [4; 32]).unwrap();
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
 }

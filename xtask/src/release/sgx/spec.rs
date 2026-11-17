@@ -198,7 +198,7 @@ impl BundleSpec {
         if self.install_root != "/opt/outbe/sgx" {
             bail!("SGX install root must remain /opt/outbe/sgx");
         }
-        if self.sealed_state_schema != u32::from(outbe_tee::SEALED_STATE_SCHEMA_V1) {
+        if self.sealed_state_schema != 3_u32 {
             bail!("SGX bundle sealed-state schema does not match the enclave wire format");
         }
         if self.sgx.debug {

@@ -2,19 +2,37 @@
 use crate::{
     in_process::{InProcessError, InProcessTeeContext},
     protocol::{EnclaveRequest, EnclaveResponse, PayloadLane},
-    CallMeta, InstallError, TransportError,
+    CallMeta, TransportError,
 };
 use std::sync::{Arc, RwLock};
+
+mod verification;
+pub use verification::{
+    prepare_no_attestation_dev_onboarding_artifact_v1, verify_dcap_evidence_v1,
+    verify_dcap_registration_and_seal_v1,
+};
 
 /// Domain adapter supplied by the engine owner, preserving typed failures.
 pub type InProcessPayloadHandler =
     fn(&InProcessTeeContext, PayloadLane, &[u8]) -> Result<EnclaveResponse, TransportError>;
+
+/// Install-time failure for the process-global resident runtime.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum InstallError {
+    #[error("resident TEE runtime already initialized")]
+    AlreadyInitialized,
+    #[error("enclave install probe failed: {0}")]
+    Probe(#[from] TransportError),
+}
 
 /// Structured failures at the in-process infrastructure/domain boundary.
 #[derive(Debug, thiserror::Error)]
 pub enum InProcessDispatchError {
     #[error("in-process runtime lock poisoned")]
     LockPoisoned,
+    #[error("resident TEE context is not installed")]
+    ContextNotInstalled,
     #[error("active in-process context changed or is not installed")]
     ContextChanged,
     #[error("resident operation failed: {0}")]
@@ -109,12 +127,23 @@ pub fn try_in_process_request(
     meta: CallMeta,
     request: &EnclaveRequest,
 ) -> Option<Result<EnclaveResponse, TransportError>> {
+    request_with_attestation(meta, request).map(|result| result.map(|(_, response)| response))
+}
+
+/// Bind the response to the exact resident context that dispatched it.
+pub(crate) fn request_with_attestation(
+    meta: CallMeta,
+    request: &EnclaveRequest,
+) -> Option<Result<([u8; 32], EnclaveResponse), TransportError>> {
     let runtime = runtime()?;
     let lane = match request {
         EnclaveRequest::Payload { lane, .. } => *lane,
         _ => PayloadLane::Execution,
     };
-    Some(request_on(&runtime, meta, request, lane))
+    Some(
+        request_on(&runtime, meta, request, lane)
+            .map(|response| (runtime.context.attestation_public(), response)),
+    )
 }
 
 fn request_on(
@@ -126,7 +155,7 @@ fn request_on(
     let _in_flight =
         (lane == PayloadLane::Execution).then(crate::metrics::ExecutionInFlightGuard::new);
     if lane == PayloadLane::Execution {
-        // Direct execution has no session mutex, so its lock-wait sample is exactly zero.
+        // Direct execution has no execution mutex, so its lock-wait sample is exactly zero.
         crate::metrics::record_tee_execution_lock_wait_ms(std::time::Duration::ZERO);
     }
     let started = std::time::Instant::now();
@@ -162,8 +191,8 @@ fn request_on(
     result
 }
 
-/// Reject incorrectly routed frames before invoking even a domain callback.
-pub(crate) fn request_on_lane(
+/// Reject incorrectly routed requests before invoking a domain callback.
+fn request_on_lane(
     meta: CallMeta,
     request: &EnclaveRequest,
     lane: PayloadLane,
@@ -171,17 +200,79 @@ pub(crate) fn request_on_lane(
     let runtime = runtime()?;
     Some(
         if matches!(request, EnclaveRequest::Payload {lane: actual, ..} if *actual == lane)
-            || (lane == PayloadLane::Canary
-                && matches!(
-                    request,
-                    EnclaveRequest::Health | EnclaveRequest::GetPublicKeys
-                ))
+            || (lane == PayloadLane::Canary && matches!(request, EnclaveRequest::GetPublicKeys))
         {
             request_on(&runtime, meta, request, lane)
         } else {
             Err(InProcessDispatchError::LaneDenied { lane }.into())
         },
     )
+}
+
+/// Whether a resident runtime is installed on this execution path.
+pub fn is_enclave_configured() -> bool {
+    in_process_tee_context().is_some()
+}
+
+/// Run an account-query request on its dedicated lane.
+#[cfg(any(test, feature = "test-utils"))]
+pub fn try_account_query(
+    request: &EnclaveRequest,
+) -> Option<Result<EnclaveResponse, TransportError>> {
+    try_account_query_with_meta(CallMeta::session_only(request.label()), request)
+}
+
+/// Run an authorized account query with explicit call metadata.
+pub fn try_account_query_with_meta(
+    meta: CallMeta,
+    request: &EnclaveRequest,
+) -> Option<Result<EnclaveResponse, TransportError>> {
+    request_on_lane(meta, request, PayloadLane::AccountQuery)
+}
+
+/// Run a canary probe with explicit call metadata.
+#[cfg(any(test, feature = "test-utils"))]
+pub fn canary_request_with_meta(
+    meta: CallMeta,
+    request: &EnclaveRequest,
+) -> Result<EnclaveResponse, TransportError> {
+    request_on_lane(meta, request, PayloadLane::Canary)
+        .ok_or(InProcessDispatchError::ContextNotInstalled)?
+}
+
+/// Read the active resident attestation key without waiting for execution.
+#[cfg(any(test, feature = "test-utils"))]
+pub fn canary_attestation_pub() -> Option<[u8; 32]> {
+    Some(in_process_tee_context()?.attestation_public())
+}
+
+/// Read the resident permanent network key; `None` means fresh/keyless.
+pub fn resident_network_encryption_public_key_state_v1(
+) -> Result<Option<alloy_primitives::B256>, TransportError> {
+    let context = in_process_tee_context().ok_or(InProcessDispatchError::ContextNotInstalled)?;
+    if context
+        .offer_key_ready()
+        .map_err(InProcessDispatchError::from)?
+    {
+        Ok(Some(
+            context
+                .network_encryption_public()
+                .map_err(InProcessDispatchError::from)?
+                .into(),
+        ))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Require the permanent network key; a keyless identity is not a recovery path.
+pub fn resident_network_encryption_public_key_v1() -> Result<alloy_primitives::B256, TransportError>
+{
+    resident_network_encryption_public_key_state_v1()?.ok_or_else(|| {
+        TransportError::EnclaveError(
+            "local enclave permanent offer key is not ready; no recovery or fallback exists".into(),
+        )
+    })
 }
 
 #[cfg(any(test, feature = "test-utils"))]

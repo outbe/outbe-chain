@@ -222,7 +222,8 @@ fn context(seed: u8, mode: AttestationMode) -> InProcessTeeContext {
         .manifest()
         .clone();
     manifest.attestation_mode = mode;
-    manifest.node_host_noise_x25519 = outbe_tee::NodeHostNoiseKey::from_private([4; 32]).public();
+    manifest.node_host_noise_x25519 =
+        outbe_tee::node_host::NodeHostIdentityKey::from_private([4; 32]).public();
     struct Hardware;
     impl outbe_tee::in_process::HardwareProofSourceV1 for Hardware {
         fn code_identity(&self) -> outbe_tee::in_process::Result<(B256, B256, u16, u16)> {
@@ -349,12 +350,12 @@ async fn finalized_registration_then_jail_ingests_without_resubmitting_and_rejec
         .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1);
     std::fs::create_dir(&host).unwrap();
     std::fs::write(
-        host.join(outbe_tee::node_host::NODE_HOST_NOISE_KEY_V1),
+        host.join(outbe_tee::node_host::NODE_HOST_IDENTITY_KEY_V1),
         [4; 32],
     )
     .unwrap();
     std::fs::set_permissions(
-        host.join(outbe_tee::node_host::NODE_HOST_NOISE_KEY_V1),
+        host.join(outbe_tee::node_host::NODE_HOST_IDENTITY_KEY_V1),
         std::fs::Permissions::from_mode(0o600),
     )
     .unwrap();

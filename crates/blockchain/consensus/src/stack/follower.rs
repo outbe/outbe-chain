@@ -7,13 +7,8 @@ use finalization::finalization_bytes_for_height;
 
 use super::*;
 
-/// Keyless replay has no enclave socket. Skip the resident probe only when the
-/// process policy is explicitly `ReplayOnly`. A configured socket keeps the
-/// resident-key check.
-pub fn follower_skips_resident_offer_probe(args: &ConsensusArgs) -> bool {
-    if args.tee_enclave_socket.is_some() {
-        return false;
-    }
+/// Skip the resident offer probe only under the explicit replay-only policy.
+pub fn follower_skips_resident_offer_probe() -> bool {
     outbe_tee::witness::witness_policy() == Some(outbe_tee::witness::WitnessPolicy::ReplayOnly)
 }
 
@@ -237,7 +232,7 @@ where
     if network_encryption_public.is_zero() {
         return Err(crate::errors::FollowerStackError::UpstreamMissingOst3OfferKey.into());
     }
-    if !follower_skips_resident_offer_probe(&args) {
+    if !follower_skips_resident_offer_probe() {
         let resident_offer = outbe_tee::resident_network_encryption_public_key_v1()
             .wrap_err("failed to read the mandatory local enclave offer key")?;
         if resident_offer != network_encryption_public {
@@ -450,30 +445,4 @@ impl<N: StackNodeAccess> FollowerProofPersistence<'_, N> {
 /// certificate.
 pub const fn follower_height_has_certified_finalization(height: u64) -> bool {
     height > 0
-}
-
-#[cfg(test)]
-mod resident_probe_tests {
-    use super::*;
-    use clap::Parser;
-
-    #[derive(Parser)]
-    struct ArgsCli {
-        #[command(flatten)]
-        consensus: ConsensusArgs,
-    }
-
-    #[test]
-    fn socket_keeps_the_resident_probe() {
-        let args = ArgsCli::try_parse_from(["test"])
-            .expect("default args")
-            .consensus;
-        assert!(args.tee_enclave_socket.is_none());
-        let replay_only = outbe_tee::witness::witness_policy()
-            == Some(outbe_tee::witness::WitnessPolicy::ReplayOnly);
-        assert_eq!(follower_skips_resident_offer_probe(&args), replay_only);
-        let mut with_socket = args;
-        with_socket.tee_enclave_socket = Some(std::path::PathBuf::from("/tmp/tee.sock"));
-        assert!(!follower_skips_resident_offer_probe(&with_socket));
-    }
 }

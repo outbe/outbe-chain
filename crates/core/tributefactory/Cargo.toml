@@ -27,9 +27,7 @@ outbe-zk-backend.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 hex.workspace = true
-eyre.workspace = true
 thiserror.workspace = true
-tracing.workspace = true
 
 [dev-dependencies]
 outbe-rewards.workspace = true

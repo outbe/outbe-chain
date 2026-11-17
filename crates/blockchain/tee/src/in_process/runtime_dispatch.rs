@@ -105,7 +105,7 @@ impl InProcessTeeContext {
 mod tests {
     use super::*;
     use crate::{
-        client_global::set_in_process_tee_context_for_test,
+        in_process_dispatch::set_in_process_tee_context_for_test,
         protocol::{EnclaveRequest, PayloadLane},
         CallMeta,
     };

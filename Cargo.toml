@@ -74,7 +74,6 @@ members = [
     "bin/outbe-feeder",
     "bin/outbe-hyperlane-validator",
     "bin/outbe-radicle",
-    "bin/outbe-tee-enclave",
     # testing
     "testing/lysis-v1-reference",
     "testing/protocol-benchmarks",
@@ -162,7 +161,6 @@ default-members = [
     "bin/outbe-feeder",
     "bin/outbe-hyperlane-validator",
     "bin/outbe-radicle",
-    "bin/outbe-tee-enclave",
     # zk
     "crates/zk/poseidon",
     "crates/zk/outbe-zk",
@@ -269,7 +267,6 @@ outbe-stablecoinfactory = { path = "crates/core/stablecoinfactory" }
 outbe-core-common = { path = "crates/core/common" }
 # Internal - binaries
 outbe-genesis-cli = { path = "bin/outbe-genesis-cli" }
-outbe-tee-enclave = { path = "bin/outbe-tee-enclave" }
 
 # Alloy - core (alloy-rs/core): stays on 1.x
 alloy-primitives = { version = "=1.6.1", default-features = false }
@@ -404,8 +401,6 @@ metrics = "0.24"
 metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 metrics-process = "2.4.3"
 
-# TEE node <-> enclave transport (Noise-IK over UDS)
-snow = "0.9"
 
 # Config
 toml = "0.8"

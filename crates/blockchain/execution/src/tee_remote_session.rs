@@ -23,10 +23,10 @@ use outbe_primitives::{
 };
 use outbe_tee::{
     admit_remote_session_v1, construct_finalized_replacement_authorization_v1,
-    load_replacement_candidate_submission, AuthorizedEnclaveClient, FinalizedRegistryBindingV1,
-    FinalizedRegistryViewV1, FinalizedReplacementAuthorizationV1, FinalizedReplacementBindingV1,
+    load_replacement_candidate_submission, FinalizedRegistryBindingV1, FinalizedRegistryViewV1,
+    FinalizedReplacementAuthorizationV1, FinalizedReplacementBindingV1,
     RemoteSessionAdmissionError, RemoteSessionAdmissionV1, RemoteSessionExpectationV1,
-    RemoteSessionTicketV1, TransportError,
+    TransportError,
 };
 use reth_provider::{BlockIdReader, HeaderProvider, StateProviderFactory};
 use reth_storage_api::StateProvider;
@@ -201,36 +201,23 @@ pub enum ExternalRegistryAdmissionError {
     Admission(#[from] RemoteSessionAdmissionError),
 }
 
-/// Explicit local transport; direct admission never creates an IPC ticket.
-pub enum LocalRemoteSessionTargetV1<'a> {
-    Sidecar(&'a mut AuthorizedEnclaveClient),
-    InProcess(&'a outbe_tee::in_process::InProcessTeeContext),
-}
-
-/// Finalized authority with the transport distinction preserved for the caller.
-#[derive(Debug)]
-pub enum LocalRemoteSessionAuthorizationV1 {
-    Sidecar(RemoteSessionTicketV1),
-    InProcess(RemoteSessionAdmissionV1),
-}
-
-/// Production node-local route for authorizing one remote session.
+/// Test fixture for the resident finalized-registry admission boundary.
 ///
 /// This deep module owns the complete authority sequence. It:
 /// 1. Resolves the node's current consensus-finalized head.
 /// 2. Reads both exact Registry bindings.
 /// 3. Validates the source witness and lease.
-/// 4. Installs one bounded one-use ticket in the local enclave.
+/// 4. Binds admission to the resident enclave identity.
 ///
-/// Transporting that ticket to the already chosen peer is deliberately outside
-/// this interface and carries no authority.
+/// Transporting the admission to the chosen peer is outside this interface.
+#[cfg(any(test, feature = "test-utils"))]
 pub fn authorize_local_finalized_remote_session_v1<P>(
     provider: &P,
-    local_enclave: LocalRemoteSessionTargetV1<'_>,
+    local_enclave: &outbe_tee::in_process::InProcessTeeContext,
     chain: RegistryChainIdentity,
     request: RemoteSessionRequest<'_>,
     session: &dyn TeeSessionStateReader,
-) -> Result<LocalRemoteSessionAuthorizationV1, LocalRegistryAdmissionError>
+) -> Result<RemoteSessionAdmissionV1, LocalRegistryAdmissionError>
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
@@ -247,6 +234,7 @@ where
 /// node integration tests. The caller cannot supply or retain a finalized
 /// marker: this operation reads the node's current marker itself.
 #[doc(hidden)]
+#[cfg(any(test, feature = "test-utils"))]
 pub fn admit_local_finalized_remote_session_v1<P>(
     provider: &P,
     chain: RegistryChainIdentity,
@@ -284,29 +272,23 @@ pub struct ReplacementAuthorizationRequest<'a> {
     pub node_data_dir: &'a Path,
     pub node_id: &'a NodeIdV1,
 }
+#[cfg(any(test, feature = "test-utils"))]
 struct LocalRemoteSessionOperation<'a, P> {
     provider: &'a P,
     chain: RegistryChainIdentity,
     request: RemoteSessionRequest<'a>,
     session: &'a dyn TeeSessionStateReader,
 }
+#[cfg(any(test, feature = "test-utils"))]
 impl<P> LocalRemoteSessionOperation<'_, P>
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
     fn authorize(
         self,
-        local_enclave: LocalRemoteSessionTargetV1<'_>,
-    ) -> Result<LocalRemoteSessionAuthorizationV1, LocalRegistryAdmissionError> {
-        match local_enclave {
-            LocalRemoteSessionTargetV1::Sidecar(client) => client
-                .authorize_remote_session(&self.admit()?)
-                .map(LocalRemoteSessionAuthorizationV1::Sidecar)
-                .map_err(Into::into),
-            LocalRemoteSessionTargetV1::InProcess(context) => self
-                .admit_for_context(Some(context))
-                .map(LocalRemoteSessionAuthorizationV1::InProcess),
-        }
+        local_enclave: &outbe_tee::in_process::InProcessTeeContext,
+    ) -> Result<RemoteSessionAdmissionV1, LocalRegistryAdmissionError> {
+        self.admit_for_context(Some(local_enclave))
     }
     fn admit(self) -> Result<RemoteSessionAdmissionV1, LocalRegistryAdmissionError> {
         self.admit_for_context(None)

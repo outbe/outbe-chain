@@ -14,9 +14,8 @@ use outbe_execution::tee_remote_session::{
     authorize_local_finalized_remote_session_v1,
     construct_local_finalized_replacement_authorization_v1,
     construct_local_finalized_replacement_authorization_with_view_v1,
-    ExternalRegistryAdmissionError, LocalRegistryAdmissionError, LocalRemoteSessionAuthorizationV1,
-    LocalRemoteSessionTargetV1, RegistryChainIdentity, RemoteSessionRequest,
-    ReplacementAuthorizationRequest, TrustedFinalizedRegistryCheckpointV1,
+    ExternalRegistryAdmissionError, LocalRegistryAdmissionError, RegistryChainIdentity,
+    RemoteSessionRequest, ReplacementAuthorizationRequest, TrustedFinalizedRegistryCheckpointV1,
 };
 use outbe_primitives::{
     header::{OutbeHeader, OutbePrimitives},
@@ -28,19 +27,12 @@ use outbe_primitives::{
     },
 };
 use outbe_tee::{
-    persist_replacement_candidate_submission, promote_replacement_candidate,
-    AuthorizedEnclaveClient, FinalizedRegistryViewV1, NodeHostNoiseKey, RemoteEnclaveClient,
-    RemoteSessionExpectationV1,
-};
-use outbe_tee_enclave::{
-    keys::EnclaveKeys,
-    seal::EnclaveBootConfig,
-    transport::{serve_connection_with, SharedTributeOfferKey},
+    node_host::NodeHostIdentityKey, persist_replacement_candidate_submission,
+    promote_replacement_candidate, FinalizedRegistryViewV1, RemoteSessionExpectationV1,
 };
 use outbe_teeregistry::TeeRegistry;
 use reth_chainspec::{ChainSpec, ChainSpecBuilder};
 use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
-use std::sync::{Arc, OnceLock};
 
 const CHAIN_ID: u64 = 31_337;
 const CONSENSUS_TIMESTAMP: u64 = 1_700_000_000;
@@ -244,191 +236,6 @@ fn current_finalized_registry_admits_role_neutral_nodes_and_rejects_superseded_s
 }
 
 #[test]
-fn production_facade_installs_current_finalized_ticket_in_live_enclave() {
-    let chain_id = outbe_primitives::chain::TESTNET_CHAIN_ID;
-    let root = tempfile::tempdir().unwrap();
-    let socket = root.path().join("facade-enclave.sock");
-    let endpoint = socket.to_str().unwrap().to_owned();
-    let genesis_hash = B256::repeat_byte(0x91);
-    let boot = Arc::new(EnclaveBootConfig::new(
-        chain_id_word(chain_id),
-        root.path().to_path_buf(),
-        0,
-    ));
-    let keys = Arc::new(EnclaveKeys::new([0x92; 32], Some([0x92; 32])).unwrap());
-    let initialization = Arc::new(
-        outbe_tee_enclave::initialization::factory::production_with_synthetic_dcap_for_test(
-            boot.clone(),
-            &keys,
-        )
-        .unwrap(),
-    );
-    let challenge = match initialization.challenge_response(&keys).unwrap() {
-        outbe_tee::protocol::EnclaveResponse::InitializationChallenge { challenge, .. } => {
-            challenge
-        }
-        response => panic!("unexpected initialization response: {response:?}"),
-    };
-    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
-    let server_keys = keys.clone();
-    let server_boot = boot.clone();
-    let server_initialization = initialization.clone();
-    let server = std::thread::spawn(move || {
-        let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
-        let mut connections = Vec::new();
-        for _ in 0..2 {
-            let (stream, _) = listener.accept().unwrap();
-            let keys = server_keys.clone();
-            let boot = server_boot.clone();
-            let initialization = server_initialization.clone();
-            let offer_key = offer_key.clone();
-            connections.push(std::thread::spawn(move || {
-                serve_connection_with(stream, &keys, &offer_key, Some(&boot), &initialization)
-            }));
-        }
-        connections
-            .into_iter()
-            .map(|connection| connection.join().unwrap())
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-    });
-
-    let target_signer = k256::ecdsa::SigningKey::from_bytes((&[0x61; 32]).into()).unwrap();
-    let target_node = validator_node_for_signer(&target_signer, 0x93);
-    let target_owner = NodeHostNoiseKey::create_new(&root.path().join("target-owner.key")).unwrap();
-    let target_manifest = outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1 {
-        chain_id: chain_id_word(chain_id),
-        genesis_hash,
-        attestation_mode: AttestationMode::DcapRequired,
-        node_id: target_node.clone(),
-        initialization_challenge: challenge,
-        node_host_noise_x25519: target_owner.public(),
-        recipient_x25519: keys.tribute_offer_public(),
-        attestation_ed25519: keys.attestation_pub(),
-        noise_responder_x25519: keys.noise_public(),
-    };
-    let target_signature = recoverable_signature_for_hash(
-        &target_signer,
-        target_manifest.authorization_hash().unwrap(),
-    );
-    let mut target_client = AuthorizedEnclaveClient::initialize_endpoint(
-        &endpoint,
-        &target_manifest,
-        &target_signature,
-        &target_owner,
-    )
-    .unwrap();
-
-    let source_signer = k256::ecdsa::SigningKey::from_bytes((&[0x62; 32]).into()).unwrap();
-    let source_node = validator_node_for_signer(&source_signer, 0x94);
-    let source_host = NodeHostNoiseKey::create_new(&root.path().join("source-host.key")).unwrap();
-    let source_witness = NodeHostAuthorizationWitnessV1 {
-        chain_id: chain_id_word(chain_id),
-        genesis_hash,
-        attestation_mode: AttestationMode::DcapRequired,
-        node_id: source_node.clone(),
-        node_host_noise_x25519: source_host.public(),
-    };
-    let source_hash = source_node.node_id_hash().unwrap();
-    let target_hash = target_node.node_id_hash().unwrap();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let mut seed = HashMapStorageProvider::new_with_chain_identity(chain_id, genesis_hash);
-    StorageHandle::enter(&mut seed, |storage| {
-        let registry = TeeRegistry::new(storage);
-        seed_binding(
-            &registry,
-            &source_node,
-            SeedBinding {
-                enclave_id: B256::repeat_byte(0x95),
-                binding_id: B256::repeat_byte(0x96),
-                intent_hash: B256::repeat_byte(0x97),
-                valid_until: now + 600,
-                noise_responder_x25519: [0x98; 32],
-                node_host_authorization_hash: source_witness.authorization_hash().unwrap(),
-            },
-        );
-        seed_binding(
-            &registry,
-            &target_node,
-            SeedBinding {
-                enclave_id: target_manifest.enclave_id().unwrap(),
-                binding_id: B256::repeat_byte(0x99),
-                intent_hash: B256::repeat_byte(0x9A),
-                valid_until: now + 500,
-                noise_responder_x25519: target_manifest.noise_responder_x25519,
-                node_host_authorization_hash: target_manifest
-                    .node_host_authorization_hash()
-                    .unwrap(),
-            },
-        );
-    });
-    let chain_spec = ChainSpecBuilder::mainnet()
-        .build()
-        .map_header(OutbeHeader::new);
-    let provider = MockEthProvider::<OutbePrimitives>::new().with_chain_spec(chain_spec);
-    let account_storage = seed
-        .storage
-        .into_iter()
-        .map(|((address, slot), value)| {
-            assert_eq!(address, outbe_primitives::addresses::TEE_REGISTRY_ADDRESS);
-            (B256::from(slot.to_be_bytes::<32>()), value)
-        })
-        .collect::<Vec<_>>();
-    provider.add_account(
-        outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
-        ExtendedAccount::new(0, U256::ZERO)
-            .with_bytecode(Bytes::from_static(&[0xef]))
-            .extend_storage(account_storage),
-    );
-    let header = OutbeHeader::new(Header {
-        number: 101,
-        timestamp: now.saturating_sub(1),
-        state_root: B256::repeat_byte(0x9B),
-        ..Default::default()
-    });
-    let block_hash = header.hash_slow();
-    provider.add_header(block_hash, header);
-    let finalized = FinalizedMockProvider::new(provider, BlockNumHash::new(101, block_hash));
-
-    let ticket = authorize_local_finalized_remote_session_v1(
-        &finalized,
-        LocalRemoteSessionTargetV1::Sidecar(&mut target_client),
-        RegistryChainIdentity {
-            chain_id,
-            genesis_hash,
-        },
-        RemoteSessionRequest {
-            expected: RemoteSessionExpectationV1 {
-                chain_id: chain_id_word(chain_id),
-                genesis_hash,
-                source_node_id_hash: source_hash,
-                target_node_id_hash: target_hash,
-            },
-            source_witness: &source_witness,
-            target_node: &target_node,
-        },
-        &outbe_runtime::OutbeRuntime::new(),
-    )
-    .unwrap();
-    let LocalRemoteSessionAuthorizationV1::Sidecar(ticket) = ticket else {
-        panic!("sidecar authorization")
-    };
-    assert_eq!(ticket.finalized_block_hash(), block_hash);
-    assert_eq!(ticket.deadline(), now + 500);
-    let mut remote = RemoteEnclaveClient::connect_endpoint(&endpoint, &ticket, &source_host)
-        .expect("current-finalized facade ticket must open the exact Noise IK session");
-    let public_keys = remote.public_keys().unwrap();
-    assert_eq!(public_keys.noise_static_pub, keys.noise_public());
-    assert_eq!(public_keys.attestation_pub, keys.attestation_pub());
-    drop(remote);
-    drop(target_client);
-    server.join().unwrap();
-}
-
-#[test]
 fn current_finalized_registry_constructs_exact_replacement_authorization() {
     use ed25519_dalek::Signer as _;
     use std::os::unix::fs::DirBuilderExt as _;
@@ -439,8 +246,8 @@ fn current_finalized_registry_constructs_exact_replacement_authorization() {
     let node_host_dir = node_data_dir.join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1);
     let mut directory = std::fs::DirBuilder::new();
     directory.mode(0o700).create(&node_host_dir).unwrap();
-    let node_host = NodeHostNoiseKey::create_new(
-        &node_host_dir.join(outbe_tee::node_host::NODE_HOST_NOISE_KEY_V1),
+    let node_host = NodeHostIdentityKey::create_new(
+        &node_host_dir.join(outbe_tee::node_host::NODE_HOST_IDENTITY_KEY_V1),
     )
     .unwrap();
     let node_signer = k256::ecdsa::SigningKey::from_bytes((&[0x71; 32]).into()).unwrap();

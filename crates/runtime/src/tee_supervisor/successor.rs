@@ -238,55 +238,11 @@ impl TeeLifecycleSupervisor {
         if !pending.finalized {
             return Ok(());
         }
-        let head = provider
-            .finalized_block_num_hash()?
-            .ok_or(SuccessorRuntimeError::MissingAdmission)?;
-        let header = provider
-            .sealed_header(head.number)?
-            .ok_or(SuccessorRuntimeError::MissingAdmission)?;
-        if header.hash() != head.hash {
-            return Err(SuccessorRuntimeError::MovingFinality);
-        }
-        let mut identity = owner.lock()?.identity;
-        identity.expected_enclave_id = Some(pending.candidate.manifest().enclave_id()?);
-        let chain = outbe_execution::tee_remote_session::RegistryChainIdentity {
-            chain_id: u64::try_from(alloy_primitives::U256::from_be_bytes(
-                pending.candidate.manifest().chain_id,
-            ))
-            .map_err(|_| SuccessorRuntimeError::InvalidChainId)?,
-            genesis_hash: pending.candidate.manifest().genesis_hash,
-        };
-        let admission = crate::admission::read_local_tee_admission_at_block(
-            protocol.as_ref(),
-            provider,
-            chain,
-            identity,
-            (head, header.header().inner.timestamp),
-        )
-        .map_err(SuccessorRuntimeError::LocalAdmission)?;
-        let key = outbe_consensus::validators::read_network_encryption_public_at_block(
-            protocol.as_ref(),
-            provider,
-            head.hash,
-        )
-        .map_err(SuccessorRuntimeError::LocalAdmission)?;
-        if provider.finalized_block_num_hash()? != Some(head) {
-            return Err(SuccessorRuntimeError::MovingFinality);
-        }
-        owner.promote(
-            pending.candidate.clone(),
-            LocalTeeAdmissionAnchorV1 {
-                finalized_height: head.number,
-                finalized_hash: head.hash,
-            },
-            admission,
-            key,
-            || {
-                self.persist_candidate(pending)
-                    .map(|_| ())
-                    .map_err(Into::into)
-            },
-        )?;
+        promote_finalized_successor(owner, provider, protocol, &pending.candidate, || {
+            self.persist_candidate(pending)
+                .map(|_| ())
+                .map_err(Into::into)
+        })?;
         self.live = pending.candidate.clone();
         self.phase = RenewalUpgradePhaseV1::Promoted {
             candidate_manifest_hash: self.live.manifest().authorization_hash()?,
@@ -296,6 +252,69 @@ impl TeeLifecycleSupervisor {
         Ok(())
     }
 }
+
+// Verify the local finalized checkpoint before making any durable or live change.
+fn promote_finalized_successor<P>(
+    owner: &LiveTeeRuntimeV1,
+    provider: &P,
+    protocol: &crate::OutbeRuntime,
+    candidate: &Arc<InProcessTeeContext>,
+    persist: impl FnOnce() -> eyre::Result<()>,
+) -> Result<(), SuccessorRuntimeError>
+where
+    P: crate::BlockIdReader
+        + crate::HeaderProvider<Header = crate::OutbeHeader>
+        + crate::StateProviderFactory,
+{
+    let head = provider
+        .finalized_block_num_hash()?
+        .ok_or(SuccessorRuntimeError::MissingAdmission)?;
+    let header = provider
+        .sealed_header(head.number)?
+        .ok_or(SuccessorRuntimeError::MissingAdmission)?;
+    if header.hash() != head.hash {
+        return Err(SuccessorRuntimeError::MovingFinality);
+    }
+    let mut identity = owner.lock()?.identity;
+    identity.expected_enclave_id = Some(candidate.manifest().enclave_id()?);
+    let chain = outbe_execution::tee_remote_session::RegistryChainIdentity {
+        chain_id: u64::try_from(alloy_primitives::U256::from_be_bytes(
+            candidate.manifest().chain_id,
+        ))
+        .map_err(|_| SuccessorRuntimeError::InvalidChainId)?,
+        genesis_hash: candidate.manifest().genesis_hash,
+    };
+    let admission = crate::admission::read_local_tee_admission_at_block(
+        protocol,
+        provider,
+        chain,
+        identity,
+        (head, header.header().inner.timestamp),
+    )
+    .map_err(SuccessorRuntimeError::LocalAdmission)?;
+    let key = outbe_consensus::validators::read_network_encryption_public_at_block(
+        protocol, provider, head.hash,
+    )
+    .map_err(SuccessorRuntimeError::LocalAdmission)?;
+    if provider.finalized_block_num_hash()? != Some(head) {
+        return Err(SuccessorRuntimeError::MovingFinality);
+    }
+    owner.promote(
+        candidate.clone(),
+        LocalTeeAdmissionAnchorV1 {
+            finalized_height: head.number,
+            finalized_hash: head.hash,
+        },
+        admission,
+        key,
+        persist,
+    )?;
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "successor_tests.rs"]
+mod tests;
 
 async fn reconcile_attempt(
     port: &rpc::RpcLifecyclePort,

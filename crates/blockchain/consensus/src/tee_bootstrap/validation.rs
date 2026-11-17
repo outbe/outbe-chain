@@ -7,25 +7,6 @@ pub(super) fn evidence_intent(evidence: &AttestationEvidenceV1) -> &Registration
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum BootstrapEvidenceKind {
-    Dcap,
-    NoAttestationDev,
-}
-
-pub(super) fn bootstrap_evidence_kind(
-    policy: AttestationMode,
-    production_session: bool,
-) -> eyre::Result<BootstrapEvidenceKind> {
-    match (policy, production_session) {
-        (AttestationMode::DcapRequired, true) => Ok(BootstrapEvidenceKind::Dcap),
-        (AttestationMode::DcapRequired, false) => {
-            Err(crate::errors::TeeBootstrapError::DcapRequiredCannotUseDevelopmentSession.into())
-        }
-        (AttestationMode::NoAttestationDev, _) => Ok(BootstrapEvidenceKind::NoAttestationDev),
-    }
-}
-
 struct SubmissionValidation<'a> {
     submission: &'a TeeBootstrapParticipantSubmissionV2,
     intent: &'a RegistrationIntentV1,

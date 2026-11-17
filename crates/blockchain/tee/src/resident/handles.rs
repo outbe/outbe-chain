@@ -194,11 +194,6 @@ pub fn verify_modify_mac(
 }
 
 impl OfferKeyHandle {
-    /// Import legacy sidecar material without permitting raw-key export; removed with the sidecar.
-    pub fn from_legacy_secret(secret: Zeroizing<[u8; 32]>) -> Self {
-        Self(StateKeyHandle(secret))
-    }
-
     pub fn public(&self) -> [u8; 32] {
         super::crypto_ops::x25519_public(&self.0 .0)
     }

@@ -1,3 +1,4 @@
+use super::super::identity::load_committed_enclave_manifest_v1;
 use super::*;
 
 #[test]
@@ -213,7 +214,7 @@ fn finalized_exact_candidate_promotes_atomically_and_idempotently() {
     assert!(!fixture.paths.replacement_candidate.exists());
     assert!(!fixture.paths.replacement_submission.exists());
     assert_eq!(
-        NodeHostNoiseKey::load(&fixture.paths.noise_key)
+        NodeHostIdentityKey::load(&fixture.paths.identity_key)
             .unwrap()
             .public(),
         fixture.node_host_public
@@ -224,7 +225,7 @@ fn finalized_exact_candidate_promotes_atomically_and_idempotently() {
     );
 }
 
-fn assert_committed_identity_loaders(
+fn assert_committed_identity_loader(
     fixture: &ReplacementFixture,
     expected: &EnclaveInitializationManifestV1,
 ) {
@@ -232,9 +233,6 @@ fn assert_committed_identity_loaders(
         &load_committed_enclave_manifest_v1(&fixture.node_data_dir).unwrap(),
         expected
     );
-    let (manifest, key) = committed_node_host_session_material(&fixture.node_data_dir).unwrap();
-    assert_eq!(&manifest, expected);
-    assert_eq!(key.public(), fixture.node_host_public);
 }
 
 fn assert_committed_identity_loader_error(fixture: &ReplacementFixture, expected: &str) {
@@ -245,22 +243,15 @@ fn assert_committed_identity_loader_error(fixture: &ReplacementFixture, expected
             .to_string(),
         expected
     );
-    assert_eq!(
-        committed_node_host_session_material(&fixture.node_data_dir)
-            .err()
-            .unwrap()
-            .to_string(),
-        expected
-    );
 }
 
 #[test]
-fn committed_identity_loaders_read_the_active_manifest_and_key() {
+fn committed_identity_loader_reads_the_active_manifest() {
     let fixture = replacement_fixture();
-    assert_committed_identity_loaders(&fixture, &fixture.active);
+    assert_committed_identity_loader(&fixture, &fixture.active);
 
     promote_replacement_candidate(&fixture.node_data_dir, &fixture.authorization).unwrap();
-    assert_committed_identity_loaders(&fixture, &fixture.candidate);
+    assert_committed_identity_loader(&fixture, &fixture.candidate);
 }
 
 #[test]
@@ -269,11 +260,11 @@ fn committed_identity_loader_guards_precede_key_reads_and_recovery() {
 
     let missing_manifest = replacement_fixture();
     std::fs::remove_file(&missing_manifest.paths.manifest).unwrap();
-    std::fs::write(&missing_manifest.paths.noise_key, b"bad key").unwrap();
+    std::fs::write(&missing_manifest.paths.identity_key, b"bad key").unwrap();
     assert_committed_identity_loader_error(&missing_manifest, expected);
 
     let missing_key = replacement_fixture();
-    std::fs::remove_file(&missing_key.paths.noise_key).unwrap();
+    std::fs::remove_file(&missing_key.paths.identity_key).unwrap();
     assert_committed_identity_loader_error(&missing_key, expected);
 
     let pending = replacement_fixture();
@@ -283,12 +274,12 @@ fn committed_identity_loader_guards_precede_key_reads_and_recovery() {
         &pending.paths.root,
     )
     .unwrap();
-    std::fs::write(&pending.paths.noise_key, b"bad key").unwrap();
+    std::fs::write(&pending.paths.identity_key, b"bad key").unwrap();
     assert_committed_identity_loader_error(&pending, expected);
 }
 
 #[test]
-fn committed_identity_loaders_reject_manifest_key_mismatch() {
+fn committed_identity_loader_reject_manifest_key_mismatch() {
     let fixture = replacement_fixture();
     std::fs::remove_file(&fixture.paths.replacement_submission).unwrap();
     std::fs::remove_file(&fixture.paths.replacement_candidate).unwrap();
@@ -406,7 +397,7 @@ fn restart_rejects_a_candidate_refresh_that_changes_enclave_identity() {
     )
     .unwrap();
 
-    let node_host = NodeHostNoiseKey::load(&fixture.paths.noise_key).unwrap();
+    let node_host = NodeHostIdentityKey::load(&fixture.paths.identity_key).unwrap();
     assert!(reconcile_replacement_state(&fixture.paths, &node_host)
         .unwrap_err()
         .to_string()
@@ -435,7 +426,7 @@ fn restart_atomically_recovers_candidate_and_submission_and_reloads_exact_bytes(
         &fixture.paths.root,
     )
     .unwrap();
-    let node_host = NodeHostNoiseKey::load(&fixture.paths.noise_key).unwrap();
+    let node_host = NodeHostIdentityKey::load(&fixture.paths.identity_key).unwrap();
     reconcile_replacement_state(&fixture.paths, &node_host).unwrap();
     assert!(fixture.paths.replacement_candidate.exists());
     assert!(!fixture.paths.replacement_candidate_next.exists());
@@ -467,7 +458,7 @@ fn restart_never_auto_promotes_and_cleans_an_already_committed_candidate() {
         &fixture.paths.root,
     )
     .unwrap();
-    let node_host = NodeHostNoiseKey::load(&fixture.paths.noise_key).unwrap();
+    let node_host = NodeHostIdentityKey::load(&fixture.paths.identity_key).unwrap();
     reconcile_replacement_state(&fixture.paths, &node_host).unwrap();
     assert!(!fixture.paths.replacement_candidate_next.exists());
     write_bytes_once(
@@ -549,7 +540,7 @@ fn restart_recovers_submission_only_residue_after_committed_promotion() {
     std::fs::remove_file(&fixture.paths.replacement_candidate).unwrap();
     File::open(&fixture.paths.root).unwrap().sync_all().unwrap();
 
-    let node_host = NodeHostNoiseKey::load(&fixture.paths.noise_key).unwrap();
+    let node_host = NodeHostIdentityKey::load(&fixture.paths.identity_key).unwrap();
     reconcile_replacement_state(&fixture.paths, &node_host).unwrap();
     assert_eq!(
         read_manifest(&fixture.paths.manifest).unwrap(),

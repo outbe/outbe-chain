@@ -1,11 +1,10 @@
 use super::{
-    ack_envelope, bootstrap_evidence_kind, new_delivery_tracker, BootstrapEvidenceKind,
-    DeliveryTracker, DELIVERY_ACK, DELIVERY_DATA, DELIVERY_ID_LEN,
+    ack_envelope, new_delivery_tracker, DeliveryTracker, DELIVERY_ACK, DELIVERY_DATA,
+    DELIVERY_ID_LEN,
 };
 use alloy_primitives::B256;
 use commonware_cryptography::{bls12381, Signer as _};
 use commonware_p2p::Recipients;
-use outbe_primitives::tee_attestation_v1::AttestationMode;
 
 /// Only transport ordering and time are controlled. Both exchanges and
 /// delivery acknowledgements use the production implementation.
@@ -394,23 +393,6 @@ mod identity_phase_regression {
             assert_eq!(msg_buffered, early_ceremony_msg);
         });
     }
-}
-
-#[test]
-fn bootstrap_evidence_depends_on_policy_not_local_session_security() {
-    assert_eq!(
-        bootstrap_evidence_kind(AttestationMode::DcapRequired, true).unwrap(),
-        BootstrapEvidenceKind::Dcap
-    );
-    assert_eq!(
-        bootstrap_evidence_kind(AttestationMode::NoAttestationDev, true).unwrap(),
-        BootstrapEvidenceKind::NoAttestationDev
-    );
-    assert_eq!(
-        bootstrap_evidence_kind(AttestationMode::NoAttestationDev, false).unwrap(),
-        BootstrapEvidenceKind::NoAttestationDev
-    );
-    assert!(bootstrap_evidence_kind(AttestationMode::DcapRequired, false).is_err());
 }
 
 #[test]

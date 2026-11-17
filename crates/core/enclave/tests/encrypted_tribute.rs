@@ -11,7 +11,6 @@ use outbe_enclave::tribute_encryption::{decrypt_tribute, encrypt_tribute};
 use outbe_system_common::time::WorldwideDay;
 use outbe_tee::resident::OfferKeyHandle;
 use x25519_dalek::{PublicKey, StaticSecret};
-use zeroize::Zeroizing;
 
 struct Fixture {
     tribute_state_key: OfferKeyHandle,
@@ -22,7 +21,7 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
-    let tribute_state_key = OfferKeyHandle::from_legacy_secret(Zeroizing::new([7u8; 32]));
+    let tribute_state_key = OfferKeyHandle::for_test([7u8; 32]);
     let enclave_public = tribute_state_key.public();
     let day = WorldwideDay::new(20250115);
     let owner = Address::repeat_byte(0x33);
@@ -116,7 +115,7 @@ fn ciphertext_and_metadata_cannot_be_substituted_between_tributes() {
 fn wrong_state_and_view_keys_are_rejected() {
     let f = fixture();
     assert!(decrypt_tribute(
-        OfferKeyHandle::from_legacy_secret(Zeroizing::new([19u8; 32])).key_handle(),
+        OfferKeyHandle::for_test([19u8; 32]).key_handle(),
         &f.encrypted
     )
     .is_err());

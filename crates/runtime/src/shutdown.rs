@@ -166,7 +166,6 @@ impl Drop for ConsensusThreadGuard {
 pub(crate) async fn wait_for_launcher_exit(
     shutdown: &outbe_execution::shutdown::NodeShutdown,
     consensus_dead_rx: Option<&mut oneshot::Receiver<()>>,
-    _upgrade_promotion: &tokio::sync::Notify,
     tee_lease_exit_rx: Option<&mut tokio::sync::mpsc::UnboundedReceiver<eyre::Result<String>>>,
 ) -> LauncherExitCause {
     let consensus_dead = async {
@@ -233,7 +232,6 @@ pub(crate) struct LauncherDrainTasks {
     pub(crate) tee_canary_handle: Option<tokio::task::JoinHandle<()>>,
     pub(crate) txpool_maintenance_handle: tokio::task::JoinHandle<()>,
     pub equivocation_slasher_handle: Option<tokio::task::JoinHandle<()>>,
-    pub(crate) upgrade_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 async fn abort_and_record(
@@ -318,9 +316,6 @@ pub(crate) async fn drain_launcher_tasks(
         shutdown,
     )
     .await;
-    if let Some(handle) = tasks.upgrade_handle {
-        abort_and_record(handle, "enclave-upgrade watcher", shutdown).await;
-    }
 }
 
 #[cfg(test)]
@@ -348,7 +343,6 @@ mod tests {
                 tee_canary_handle: None,
                 txpool_maintenance_handle: tokio::spawn(async {}),
                 equivocation_slasher_handle: None,
-                upgrade_handle: None,
             },
         )
         .await;
@@ -376,7 +370,6 @@ mod tests {
                     tee_canary_handle: None,
                     txpool_maintenance_handle: tokio::spawn(async {}),
                     equivocation_slasher_handle: None,
-                    upgrade_handle: None,
                 },
             )
             .await;
@@ -415,7 +408,6 @@ mod tests {
                     tee_canary_handle: None,
                     equivocation_slasher_handle: Some(handle),
                     txpool_maintenance_handle: tokio::spawn(async {}),
-                    upgrade_handle: None,
                 },
             ),
         )

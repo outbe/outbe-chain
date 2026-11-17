@@ -14,12 +14,16 @@ use outbe_tee::{
         EnclaveWitnessTapeV1, TxWitnessV1, WitnessExecutionMode, WitnessExecutionScope,
         WitnessPolicy, WitnessState,
     },
-    EnclaveClient, EnclaveSession, TeeAttestationError, TransportError,
+    TeeAttestationError, TransportError,
+};
+
+use outbe_tee::{
+    in_process::InProcessTeeContext, in_process_dispatch::set_in_process_tee_context_for_test,
 };
 
 use super::{
     authenticate::authenticate_request,
-    canary_domain_request, consensus_domain_call, domain_session_call_on,
+    canary_domain_request, consensus_domain_call, domain_session_call,
     errors::{
         EnclaveClientError, LocalCryptoError, TributeSourceError, FIDELITY_ATTESTATION,
         GRATIS_OP_ATTESTATION, NOD_MINT_REJECTED, PROMIS_OP_ATTESTATION, TRIBUTE_OFFER_ATTESTATION,
@@ -218,7 +222,7 @@ fn record_and_verify_across_two_keys(
             || TransportError::Unavailable("missing".into()),
             authenticate,
         )
-        .expect("verifier replay must succeed without sidecar")
+        .expect("verifier replay must succeed without a resident enclave")
     };
     assert_eq!(replay_key, leader_pub);
     assert_eq!(replay_resp, proposer_resp);
@@ -727,25 +731,6 @@ fn bad_entry_payload(entry: &EnclaveWitnessEntryV1) -> Vec<u8> {
     }
 }
 
-fn spawn_mock_dev_enclave(
-    attestation_pub: [u8; 32],
-    handler: impl Fn(PayloadLane, EnclaveRequest) -> Result<EnclaveResponse, String>
-        + Send
-        + Sync
-        + 'static,
-) -> outbe_tee::test_utils::MockDevEnclaveServer {
-    outbe_tee::test_utils::MockDevEnclaveServer::spawn(attestation_pub, move |wire_req| {
-        let WireRequest::Payload { lane, payload } = wire_req else {
-            return WireResponse::Ack;
-        };
-        let req = EnclaveRequest::decode_wire_canonical(&payload).unwrap();
-        match handler(lane, req) {
-            Ok(resp) => resp.into_wire_response().unwrap(),
-            Err(message) => WireResponse::Error { message },
-        }
-    })
-}
-
 fn sample_cohort_request(timestamp: u64) -> FidelityCohortRequest {
     FidelityCohortRequest {
         chain_id: B256::repeat_byte(0x01),
@@ -760,14 +745,9 @@ fn sample_cohort_request(timestamp: u64) -> FidelityCohortRequest {
     }
 }
 
-#[test]
-fn non_recordable_signed_domain_response_verifies_on_wire_but_never_enters_witness_tape() {
-    let signer = SigningKey::from_bytes(&[0x81; 32]);
-    let pubkey = signer.verifying_key().to_bytes();
-    let req_good = sample_cohort_request(1_700_000_000);
-    let req_swapped = sample_cohort_request(1_700_000_001);
-    let fixed_hash = fidelity_cohort_canonical_hash(&req_good);
-    let mut expected_result = FidelityCohortResult {
+fn fixed_cohort_result(context: &InProcessTeeContext) -> FidelityCohortResult {
+    let fixed_hash = fidelity_cohort_canonical_hash(&sample_cohort_request(1_700_000_000));
+    let mut result = FidelityCohortResult {
         outcome: FidelityOpOutcome {
             new_blob: vec![1, 2, 3],
             qualified_start_initialized: Some(1_700_000_000),
@@ -776,8 +756,34 @@ fn non_recordable_signed_domain_response_verifies_on_wire_but_never_enters_witne
         inputs_canonical_hash: fixed_hash,
         attestation_tag: Vec::new(),
     };
-    let preimage = fidelity_cohort_attestation_preimage(fixed_hash, &expected_result).unwrap();
-    expected_result.attestation_tag = signer.sign(&preimage).to_bytes().to_vec();
+    let preimage = fidelity_cohort_attestation_preimage(fixed_hash, &result).unwrap();
+    result.attestation_tag = context.sign_domain_attestation(&preimage).to_vec();
+    result
+}
+
+fn fixed_cohort_response(
+    context: &InProcessTeeContext,
+    lane: PayloadLane,
+    payload: &[u8],
+) -> Result<WireResponse, TransportError> {
+    assert_eq!(lane, PayloadLane::Execution);
+    assert!(matches!(
+        EnclaveRequest::decode_wire_canonical(payload)?,
+        EnclaveRequest::ApplyFidelityCohortOp { .. }
+    ));
+    EnclaveResponse::FidelityCohortApplied {
+        result: Box::new(fixed_cohort_result(context)),
+    }
+    .into_wire_response()
+}
+
+#[test]
+fn non_recordable_signed_domain_response_verifies_on_resident_lane_but_never_enters_witness_tape() {
+    let context = super::domain_in_process::tests::context(0x81);
+    let pubkey = context.attestation_public();
+    let req_good = sample_cohort_request(1_700_000_000);
+    let req_swapped = sample_cohort_request(1_700_000_001);
+    let expected_result = fixed_cohort_result(&context);
 
     let domain_resp = EnclaveResponse::FidelityCohortApplied {
         result: Box::new(expected_result.clone()),
@@ -795,18 +801,13 @@ fn non_recordable_signed_domain_response_verifies_on_wire_but_never_enters_witne
     // Non-recordable Payload MUST fail conversion into EnclaveWitnessEntryV1!
     assert!(EnclaveWitnessEntryV1::try_from(wire).is_err());
 
-    let mock_resp = domain_resp.clone();
-    let server = spawn_mock_dev_enclave(pubkey, move |lane, _req| {
-        assert_eq!(lane, PayloadLane::Execution);
-        Ok(mock_resp.clone())
-    });
-    let client = EnclaveClient::connect_endpoint(&server.endpoint).unwrap();
-    let mut session = EnclaveSession::development(client, server.endpoint.clone()).unwrap();
+    let _resident =
+        set_in_process_tee_context_for_test(Some((Arc::clone(&context), fixed_cohort_response)));
 
     let good_enclave_req = EnclaveRequest::ApplyFidelityCohortOp {
         request: Box::new(req_good.clone()),
     };
-    let verified = domain_session_call_on(&mut session, &good_enclave_req, |key, resp| {
+    let verified = domain_session_call(&good_enclave_req, |key, resp| {
         let EnclaveResponse::FidelityCohortApplied { result } = resp else {
             return Err(TransportError::UnexpectedResponse);
         };
@@ -817,7 +818,8 @@ fn non_recordable_signed_domain_response_verifies_on_wire_but_never_enters_witne
             &result.attestation_tag,
         )
     })
-    .expect("valid signed FidelityCohortApplied must succeed on session call");
+    .expect("resident enclave installed")
+    .expect("valid signed FidelityCohortApplied must succeed on resident call");
     assert_eq!(
         verified,
         (
@@ -831,7 +833,7 @@ fn non_recordable_signed_domain_response_verifies_on_wire_but_never_enters_witne
     let swapped_enclave_req = EnclaveRequest::ApplyFidelityCohortOp {
         request: Box::new(req_swapped.clone()),
     };
-    let swapped_err = domain_session_call_on(&mut session, &swapped_enclave_req, |key, resp| {
+    let swapped_err = domain_session_call(&swapped_enclave_req, |key, resp| {
         let EnclaveResponse::FidelityCohortApplied { result } = resp else {
             return Err(TransportError::UnexpectedResponse);
         };
@@ -842,7 +844,8 @@ fn non_recordable_signed_domain_response_verifies_on_wire_but_never_enters_witne
             &result.attestation_tag,
         )
     })
-    .expect_err("swapped request must be rejected on tee_session_call_on");
+    .expect("resident enclave installed")
+    .expect_err("swapped request must be rejected on the resident execution lane");
     assert!(matches!(
         swapped_err,
         TransportError::AppAttestation {
@@ -855,7 +858,9 @@ fn non_recordable_signed_domain_response_verifies_on_wire_but_never_enters_witne
     let non_rec_req = EnclaveRequest::ApplyFidelityCohortOp {
         request: Box::new(sample_cohort_request(1_700_000_002)),
     };
-    assert!(domain_session_call_on(&mut session, &non_rec_req, |_, _| Ok(())).is_ok());
+    assert!(domain_session_call(&non_rec_req, |_, _| Ok(()))
+        .unwrap()
+        .is_ok());
     assert!(consensus_domain_call(
         non_rec_req.label(),
         &non_rec_req,
@@ -867,7 +872,7 @@ fn non_recordable_signed_domain_response_verifies_on_wire_but_never_enters_witne
     // Exercise inputs_canonical_hash + verify_tribute_offer_attestation for non-recordable TributeOfferBatch too
     let offer_hash = inputs_canonical_hash(&[]);
     let offer_pre = tribute_offer_attestation_preimage(offer_hash, &[]).unwrap();
-    let offer_sig = signer.sign(&offer_pre).to_bytes();
+    let offer_sig = context.sign_domain_attestation(&offer_pre);
     verify_tribute_offer_attestation(&pubkey, offer_hash, &[], &offer_sig).unwrap();
 }
 

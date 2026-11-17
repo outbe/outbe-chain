@@ -1,7 +1,6 @@
 use crate::*;
 use outbe_consensus::protocol_state::EngineProtocolState;
 use outbe_evm::EvmRuntimeHost;
-use outbe_execution::tee_remote_session::TeeSessionStateReader;
 use outbe_radicle::protocol_state::RadicleProtocolState;
 use outbe_rpc::state_reader::OutbeRpcStateReader;
 use outbe_txpool::TxPoolZeroFeePolicy;
@@ -224,23 +223,16 @@ where
         let tee::TeeRuntimeWorkers {
             tee_lease_guard_handle,
             tee_canary_handle,
-            upgrade_promotion,
-            upgrade_handle,
             finalization_notify,
             tee_lease_armed_rx,
             tee_lease_armed_tx: _tee_lease_armed_tx,
         } = tee::start_runtime_workers(
-            (
-                Arc::clone(&runtime_for_launcher),
-                Arc::clone(&runtime_for_launcher) as Arc<dyn TeeSessionStateReader>,
-                tee_supervisor,
-            ),
+            (Arc::clone(&runtime_for_launcher), tee_supervisor),
             (&node, &args, evm_signer.as_ref()),
             (proof_chain_id, genesis_hash, &node_data_dir),
             (local_tee_identity, tee_admission_anchor, &initial_tee_policy),
             (tee_canary_status.clone(), tee_authority, shutdown_token.clone(), shutdown.clone()),
-        )
-        .await?;
+        )?;
 
         let (radicle_consensus, radicle_observer, radicle_drained) = radicle::start(
             &node,
@@ -310,7 +302,6 @@ where
             let exit_cause = crate::shutdown::wait_for_launcher_exit(
                 &shutdown,
                 Some(&mut consensus_dead_rx),
-                &upgrade_promotion,
                 None,
             ).await;
 
@@ -320,7 +311,6 @@ where
             let _ = crate::shutdown::wait_for_launcher_exit(
                 &shutdown,
                 None,
-                &upgrade_promotion,
                 None,
             ).await;
         }
@@ -334,7 +324,6 @@ where
                 tee_canary_handle,
                 txpool_maintenance_handle,
                 equivocation_slasher_handle,
-                upgrade_handle,
             },
         ).await;
 

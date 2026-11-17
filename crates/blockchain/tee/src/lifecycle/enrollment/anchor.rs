@@ -2,8 +2,10 @@
 use crate::journal_storage::{
     private_file_options, sync_directory, JournalPaths, JournalStorageError,
 };
-use crate::node_host::{NODE_HOST_DIRECTORY_V1, NODE_HOST_NOISE_KEY_V1};
-use crate::{in_process::InProcessTeeContext, FinalizedJoinAdmissionAnchorV1, NodeHostNoiseKey};
+use crate::node_host::{NODE_HOST_DIRECTORY_V1, NODE_HOST_IDENTITY_KEY_V1};
+use crate::{
+    in_process::InProcessTeeContext, node_host::NodeHostIdentityKey, FinalizedJoinAdmissionAnchorV1,
+};
 use alloy_primitives::B256;
 use std::{
     fs::{self, DirBuilder, File},
@@ -156,9 +158,9 @@ fn validate_live(
     a: FinalizedJoinAdmissionAnchorV1,
 ) -> Result<(), LiveJoinAnchorError> {
     let manifest = live.manifest();
-    let key = NodeHostNoiseKey::load(
+    let key = NodeHostIdentityKey::load(
         &dir.join(NODE_HOST_DIRECTORY_V1)
-            .join(NODE_HOST_NOISE_KEY_V1),
+            .join(NODE_HOST_IDENTITY_KEY_V1),
     )
     .map_err(LiveJoinAnchorError::NodeHost)?;
     let chain_host = (a.chain_id, a.genesis_hash, a.node_id_hash, a.enclave_id)

@@ -19,9 +19,6 @@ impl ResidentCanaryRequester {
     fn dispatch(&self, request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
         let context = self.context();
         match request {
-            // Health is sidecar-only. The worker feature-detects this locally,
-            // then uses GetPublicKeys and Canary payloads on subsequent ticks.
-            EnclaveRequest::Health => Err(InProcessDispatchError::UnsupportedRequest.into()),
             EnclaveRequest::GetPublicKeys => {
                 let ready = context
                     .offer_key_ready()
@@ -111,10 +108,11 @@ mod rpc_tests {
     #[tokio::test]
     async fn periodic_canary_publishes_pre_key_and_ready_json_with_context_uptime() {
         let context = crate::tee_canary_probe::test_support::context(8);
-        let _context_guard = outbe_tee::client_global::set_in_process_tee_context_for_test(Some((
-            Arc::clone(&context),
-            outbe_enclave::host::domain_in_process::dispatch_payload,
-        )));
+        let _context_guard =
+            outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some((
+                Arc::clone(&context),
+                outbe_enclave::host::domain_in_process::dispatch_payload,
+            )));
         let channel = TeeEnclaveHealthChannel::default();
         let shutdown = CancellationToken::new();
         let worker = tokio::spawn(TributeCanaryProbe::run_in_process_worker(
@@ -176,13 +174,27 @@ mod metrics_tests {
     use metrics_util::debugging::{DebugValue, DebuggingRecorder};
 
     #[test]
-    fn resident_requests_report_real_metrics_once_without_synthetic_sidecar_gauges() {
+    fn resident_requests_report_real_metrics_once_without_synthetic_gauges() {
         let context = crate::tee_canary_probe::test_support::context(8);
         let requester = ResidentCanaryRequester(Arc::clone(&context));
         let recorder = DebuggingRecorder::new();
         let snapshots = recorder.snapshotter();
         metrics::with_local_recorder(&recorder, || {
-            assert!(requester.request(&EnclaveRequest::Health).is_err());
+            let error = requester
+                .request_with_meta(
+                    CallMeta::session_only("denied_probe"),
+                    &EnclaveRequest::Payload {
+                        lane: PayloadLane::AccountQuery,
+                        payload: Vec::new(),
+                    },
+                )
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                TransportError::InProcess(InProcessDispatchError::LaneDenied {
+                    lane: PayloadLane::Canary
+                })
+            ));
             let response = requester.request(&EnclaveRequest::GetPublicKeys).unwrap();
             assert!(matches!(response, EnclaveResponse::PublicKeys {
                 attestation_pub, noise_static_pub, ..
@@ -206,7 +218,7 @@ mod metrics_tests {
                 "synthetic {absent}"
             );
         }
-        for label in ["health", "get_public_keys", "keys_probe"] {
+        for label in ["denied_probe", "get_public_keys", "keys_probe"] {
             let value = &values
                 .iter()
                 .find(|(key, _, _, _)| {
@@ -232,7 +244,7 @@ mod metrics_tests {
             .0
             .key()
             .labels()
-            .any(|item| item.key() == "request" && item.value() == "health"));
+            .any(|item| item.key() == "request" && item.value() == "denied_probe"));
         assert_eq!(errors[0].3, DebugValue::Counter(1));
     }
 }

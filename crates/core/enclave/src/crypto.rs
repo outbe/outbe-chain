@@ -1,4 +1,4 @@
-//! Pure enclave cryptography shared by the sidecar and domain consumers.
+//! Pure enclave cryptography for domain consumers.
 //!
 //! Server offer operations borrow opaque resident handles. Generic AEAD/HKDF
 //! helpers remain for owner-local interoperability and fixed golden fixtures.
@@ -19,7 +19,7 @@ use crate::errors::{Result, TeeError};
 const OFFER_AEAD_INFO: &[u8] = b"tribute-factory-encryption";
 /// Single-use nonce provider for ring's `BoundKey` API. Replicated locally
 /// (mirrors `outbe_primitives::crypto::OneNonce`) to keep enclave dependencies
-/// minimal for reproducible `MRENCLAVE`.
+/// minimal.
 pub(crate) struct OneNonce([u8; 12]);
 
 impl OneNonce {

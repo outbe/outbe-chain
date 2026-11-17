@@ -88,7 +88,7 @@ pub(super) fn local_lifecycle_endpoint(
     has_signer: bool,
     local: Option<std::net::SocketAddr>,
 ) -> Option<String> {
-    if args.upstream.is_some() || args.tee_enclave_socket.is_some() || !has_signer {
+    if args.upstream.is_some() || !has_signer {
         return None;
     }
     local.map(|addr| format!("http://{addr}"))
@@ -142,7 +142,9 @@ enum NodeHostStartupError {
     InvalidDirectory,
 }
 
-fn load_node_host_key(node_data_dir: &Path) -> eyre::Result<outbe_tee::NodeHostNoiseKey> {
+fn load_node_host_key(
+    node_data_dir: &Path,
+) -> eyre::Result<outbe_tee::node_host::NodeHostIdentityKey> {
     use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
     let directory = node_data_dir.join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1);
     let fresh = match std::fs::DirBuilder::new().mode(0o700).create(&directory) {
@@ -154,44 +156,53 @@ fn load_node_host_key(node_data_dir: &Path) -> eyre::Result<outbe_tee::NodeHostN
     if !metadata.is_dir() || metadata.permissions().mode() & 0o777 != 0o700 {
         return Err(NodeHostStartupError::InvalidDirectory.into());
     }
-    let path = directory.join(outbe_tee::node_host::NODE_HOST_NOISE_KEY_V1);
+    let path = directory.join(outbe_tee::node_host::NODE_HOST_IDENTITY_KEY_V1);
     // A previously initialized directory never regenerates a lost identity.
     Ok(if fresh {
-        outbe_tee::NodeHostNoiseKey::create_new(&path)?
+        outbe_tee::node_host::NodeHostIdentityKey::create_new(&path)?
     } else {
-        outbe_tee::NodeHostNoiseKey::load(&path)?
+        outbe_tee::node_host::NodeHostIdentityKey::load(&path)?
     })
 }
 
-pub(super) fn sidecar_enclave_id(
-    quote: &outbe_tee::protocol::EnclaveResponse,
-) -> eyre::Result<alloy_primitives::B256> {
-    let outbe_tee::protocol::EnclaveResponse::Quote {
-        recipient_x25519_pub,
-        attestation_pub,
-        noise_static_pub,
-        ..
-    } = quote
-    else {
-        return Err(
-            crate::admission_authority::live::LiveTeeError::LegacyIdentityUnavailable.into(),
-        );
-    };
-    let mut preimage = Vec::from(outbe_primitives::tee_attestation_v1::ENCLAVE_ID_DOMAIN_V1);
-    preimage.extend_from_slice(recipient_x25519_pub);
-    preimage.extend_from_slice(attestation_pub);
-    preimage.extend_from_slice(noise_static_pub);
-    Ok(alloy_primitives::keccak256(preimage))
+/// Before block one, only the genesis consensus set may bootstrap authority.
+pub(super) fn founder_lease_gate(
+    protocol: &dyn outbe_consensus::protocol_state::EngineProtocolState,
+    node: &OutbeFullNode,
+    args: &ConsensusArgs,
+    genesis_hash: alloy_primitives::B256,
+) -> eyre::Result<TeeLeaseGuardGateV1> {
+    let signing_key_path = args
+        .signing_key
+        .as_ref()
+        .ok_or(outbe_consensus::errors::StackEpochError::SigningKeyRequired)?;
+    let key_backend = args.key_backend().wrap_err("invalid BLS key backend")?;
+    let local_consensus_key =
+        outbe_consensus::validators::load_signing_public_key(signing_key_path, &key_backend)
+            .wrap_err("failed to load consensus signing public key for TEE lease guard")?;
+    let genesis_validators = outbe_consensus::validators::read_consensus_validators_at_block(
+        protocol,
+        &node.provider,
+        genesis_hash,
+    )
+    .wrap_err("failed to read genesis consensus validator set for TEE lease guard")?;
+    Ok(
+        if genesis_validators
+            .public_keys
+            .contains(&local_consensus_key)
+        {
+            TeeLeaseGuardGateV1::Armed
+        } else {
+            TeeLeaseGuardGateV1::AwaitingAnchor
+        },
+    )
 }
 
 pub(super) fn bind_activation_refresh<P>(
     protocol: &Arc<crate::OutbeRuntime>,
     provider: P,
     config: crate::admission::TeeLeaseGuardConfigV1,
-    (authority, owner): (
-        outbe_tee::TeeAuthorityChannel,
-        Option<Arc<crate::admission_authority::live::LiveTeeRuntimeV1>>,
-    ),
+    owner: Arc<crate::admission_authority::live::LiveTeeRuntimeV1>,
 ) -> eyre::Result<()>
 where
     P: BlockIdReader
@@ -201,38 +212,16 @@ where
         + Sync
         + 'static,
 {
-    if let Some(owner) = &owner {
-        owner.bind_armed(config.armed.clone())?;
-    }
+    owner.bind_armed(config.armed)?;
     let weak_protocol = Arc::downgrade(protocol);
-    let legacy = std::sync::Mutex::new((config.anchors, config.anchors.gate.is_armed()));
     protocol.install_tee_refresh(Arc::new(move || {
         use outbe_consensus::protocol_state::EngineProtocolError;
         let protocol = weak_protocol
             .upgrade()
             .ok_or(EngineProtocolError::NotInstalled)?;
-        let next = if let Some(owner) = &owner {
-            owner.refresh(&provider, protocol.as_ref(), &config.chain)
-        } else {
-            let mut state = legacy.lock().map_err(|_| {
-                EngineProtocolError::TeeRefresh(
-                    crate::admission_authority::live::LiveTeeError::LockPoisoned.into(),
-                )
-            })?;
-            let (anchors, bootstrap) = &mut *state;
-            crate::admission_authority::guard::tick(
-                (&provider, protocol.as_ref()),
-                (&config.chain, config.identity),
-                (anchors, bootstrap),
-                &authority,
-                || outbe_tee::resident_network_encryption_public_key_state_v1().map_err(Into::into),
-            )
-        }
-        .map_err(EngineProtocolError::TeeRefresh)?;
-        let open = next.is_authority_open();
-        if *config.armed.borrow() != open {
-            config.armed.send_replace(open);
-        }
+        owner
+            .refresh(&provider, protocol.as_ref(), &config.chain)
+            .map_err(EngineProtocolError::TeeRefresh)?;
         Ok(())
     }))?;
     Ok(())
@@ -241,52 +230,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::admission::{TeeLeaseGuardAnchorsV1, TeeLeaseGuardConfigV1, TeeLeaseGuardGateV1};
+    use crate::admission::{TeeLeaseGuardConfigV1, TeeLeaseGuardGateV1};
     use crate::admission_authority::{live::*, test_support as support};
     use outbe_consensus::protocol_state::EngineProtocolState as _;
     use outbe_tee::TeeAuthorityState;
-
-    #[test]
-    fn development_quote_identity_matches_the_canonical_registration_identity() {
-        use outbe_primitives::tee_attestation_v1::{AttestationOperationV1, RegistrationIntentV1};
-        use outbe_tee::protocol::EnclaveResponse;
-        let context = support::context(9);
-        let manifest = context.manifest();
-        let intent = RegistrationIntentV1 {
-            chain_id: manifest.chain_id,
-            genesis_hash: manifest.genesis_hash,
-            operation: AttestationOperationV1::RegisterEnclave,
-            attestation_mode: manifest.attestation_mode,
-            policy_hash: alloy_primitives::B256::repeat_byte(1),
-            node_id: manifest.node_id.clone(),
-            enclave_id: manifest.enclave_id().unwrap(),
-            binding_id: alloy_primitives::B256::repeat_byte(2),
-            binding_version: 1,
-            registration_version: 1,
-            renewal_nonce: 0,
-            transition_nonce: 0,
-            requested_valid_until: 1000,
-            recipient_x25519: manifest.recipient_x25519,
-            attestation_ed25519: manifest.attestation_ed25519,
-            noise_responder_x25519: manifest.noise_responder_x25519,
-            node_host_authorization_hash: manifest.node_host_authorization_hash().unwrap(),
-        };
-        let quote = EnclaveResponse::Quote {
-            mrenclave: Default::default(),
-            mrsigner: Default::default(),
-            isv_svn: 0,
-            report_data: Default::default(),
-            recipient_x25519_pub: intent.recipient_x25519,
-            attestation_pub: intent.attestation_ed25519,
-            noise_static_pub: intent.noise_responder_x25519,
-            quote_body: Vec::new(),
-            attestation: "none".to_owned(),
-        };
-        assert_eq!(
-            sidecar_enclave_id(&quote).unwrap(),
-            intent.derived_enclave_id().unwrap()
-        );
-    }
 
     #[test]
     fn node_host_key_is_stable_and_loss_never_regenerates_identity() {
@@ -296,7 +243,7 @@ mod tests {
         let path = root
             .path()
             .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1)
-            .join(outbe_tee::node_host::NODE_HOST_NOISE_KEY_V1);
+            .join(outbe_tee::node_host::NODE_HOST_IDENTITY_KEY_V1);
         std::fs::remove_file(&path).unwrap();
         assert!(load_node_host_key(root.path()).is_err());
         assert!(!path.exists());
@@ -324,15 +271,12 @@ mod tests {
         provider.inner.accounts.lock().clear();
         let authority = outbe_tee::TeeAuthorityChannel::default();
         outbe_tee::install_tee_authority_watch(authority.subscribe()).unwrap();
-        let anchors = TeeLeaseGuardAnchorsV1 {
-            gate: TeeLeaseGuardGateV1::Armed,
-            durable: None,
-        };
+        let gate = TeeLeaseGuardGateV1::Armed;
         let owner = Arc::new(
             LiveTeeRuntimeV1::new(
                 LiveTeeSnapshotV1 {
                     identity,
-                    anchors,
+                    gate,
                     context: context.clone(),
                 },
                 authority.clone(),
@@ -346,12 +290,10 @@ mod tests {
             provider,
             TeeLeaseGuardConfigV1 {
                 chain,
-                identity,
-                anchors,
                 finalization_notify: Arc::new(tokio::sync::Notify::new()),
                 armed,
             },
-            (authority.clone(), Some(owner)),
+            owner,
         )
         .unwrap();
         runtime.refresh_tee_authority().unwrap();
@@ -409,10 +351,7 @@ mod tests {
             LiveTeeSnapshotV1 {
                 identity,
                 context: fresh.clone(),
-                anchors: TeeLeaseGuardAnchorsV1 {
-                    gate: TeeLeaseGuardGateV1::Pending(anchor),
-                    durable: Some(anchor),
-                },
+                gate: TeeLeaseGuardGateV1::Pending(anchor),
             },
             outbe_tee::TeeAuthorityChannel::default(),
         )

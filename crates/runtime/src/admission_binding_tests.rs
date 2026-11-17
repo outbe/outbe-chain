@@ -1,7 +1,7 @@
 use super::admission_provider::*;
 
 #[test]
-fn validator_gate_stays_pending_after_tee_join_until_validator_binding_and_offer_key_exist() {
+fn validator_gate_stays_pending_after_enrollment_until_validator_binding_and_offer_key_exist() {
     use outbe_consensus::validators::LocalTeeRuntimeAdmissionV1;
 
     let valid_until = 1_800_001_000;
@@ -23,17 +23,14 @@ fn validator_gate_stays_pending_after_tee_join_until_validator_binding_and_offer
         finalized_height: 7,
         finalized_hash: hashes_at_join[0].1,
     };
-    let mut anchors = crate::admission::TeeLeaseGuardAnchorsV1 {
-        gate: super::TeeLeaseGuardGateV1::Pending(join_anchor),
-        durable: None,
-    };
+    let mut gate = super::TeeLeaseGuardGateV1::Pending(join_anchor);
 
     let admission_at_join =
         crate::admission::read_gated_finalized_local_tee_admission_with_resident_offer(
             (&crate::OutbeRuntime::new(), &provider_at_join),
             chain,
             identity,
-            &mut anchors,
+            &mut gate,
             || Ok(Some(offer_key)),
         )
         .expect(
@@ -44,14 +41,14 @@ fn validator_gate_stays_pending_after_tee_join_until_validator_binding_and_offer
         Some(LocalTeeRuntimeAdmissionV1::Ready { valid_until })
     );
     assert_eq!(
-        anchors.gate,
+        gate,
         super::TeeLeaseGuardGateV1::Pending(join_anchor),
         "gate must remain Pending until validator binding is finalized"
     );
 
     // Scenario 1b: at H_stake = 10, validator_enclave_binding_v1 is finalized and offer key matches.
     // Historical state at H_join = 7 retains has_validator_binding = false.
-    let (mut provider_at_stake, _, _, hashes_at_stake) = build_tee_admission_mock_provider(
+    let (mut provider_at_stake, _, _, _) = build_tee_admission_mock_provider(
         &[(7, valid_until - 100), (10, valid_until - 50)],
         SeededTeeState {
             valid_until,
@@ -64,17 +61,12 @@ fn validator_gate_stays_pending_after_tee_join_until_validator_binding_and_offer
     provider_at_stake
         .historical_states
         .insert(join_anchor.finalized_hash, provider_at_join.inner.clone());
-    let stake_anchor = super::LocalTeeAdmissionAnchorV1 {
-        finalized_height: 10,
-        finalized_hash: hashes_at_stake[1].1,
-    };
-
     let admission_at_stake =
         crate::admission::read_gated_finalized_local_tee_admission_with_resident_offer(
             (&crate::OutbeRuntime::new(), &provider_at_stake),
             chain,
             identity,
-            &mut anchors,
+            &mut gate,
             || Ok(Some(offer_key)),
         )
         .expect("finalized validator binding + matching offer key must arm the gate");
@@ -82,28 +74,7 @@ fn validator_gate_stays_pending_after_tee_join_until_validator_binding_and_offer
         admission_at_stake,
         Some(LocalTeeRuntimeAdmissionV1::Ready { valid_until })
     );
-    assert!(anchors.gate.is_armed());
-
-    // Scenario 2: restart with older durable anchor (H_join = 7, where validator binding is absent)
-    // and upstream anchor (H_stake = 10, where validator binding is present).
-    let mut dual_anchors = crate::admission::TeeLeaseGuardAnchorsV1 {
-        gate: super::TeeLeaseGuardGateV1::Pending(stake_anchor),
-        durable: Some(join_anchor),
-    };
-    let admission_after_restart =
-        crate::admission::read_gated_finalized_local_tee_admission_with_resident_offer(
-            (&crate::OutbeRuntime::new(), &provider_at_stake),
-            chain,
-            identity,
-            &mut dual_anchors,
-            || Ok(Some(offer_key)),
-        )
-        .expect("durable anchor at H_join must pass NodeHost validation and arm at H_stake");
-    assert_eq!(
-        admission_after_restart,
-        Some(LocalTeeRuntimeAdmissionV1::Ready { valid_until })
-    );
-    assert!(dual_anchors.gate.is_armed());
+    assert!(gate.is_armed());
 }
 
 #[test]
@@ -128,16 +99,13 @@ fn validator_gate_never_arms_on_rejection_or_offer_mismatch() {
         finalized_height: 7,
         finalized_hash: hashes[0].1,
     };
-    let mut anchors = crate::admission::TeeLeaseGuardAnchorsV1 {
-        gate: super::TeeLeaseGuardGateV1::Pending(join_anchor),
-        durable: None,
-    };
+    let mut gate = super::TeeLeaseGuardGateV1::Pending(join_anchor);
     let jailed_verdict =
         crate::admission::read_gated_finalized_local_tee_admission_with_resident_offer(
             (&crate::OutbeRuntime::new(), &jailed_provider),
             chain,
             identity,
-            &mut anchors,
+            &mut gate,
             || Ok(Some(offer_key)),
         )
         .unwrap();
@@ -147,7 +115,7 @@ fn validator_gate_never_arms_on_rejection_or_offer_mismatch() {
             LocalTeeRuntimeRejectionV1::ValidatorJailed
         ))
     );
-    assert!(!anchors.gate.is_armed());
+    assert!(!gate.is_armed());
 
     // Scenario 3b: ValidatorBindingMismatch -> gate stays Pending, armed watch stays false.
     let (mismatch_provider, _, _, mismatch_hashes) = build_tee_admission_mock_provider(
@@ -160,19 +128,16 @@ fn validator_gate_never_arms_on_rejection_or_offer_mismatch() {
             offer_key,
         },
     );
-    let mut mismatch_anchors = crate::admission::TeeLeaseGuardAnchorsV1 {
-        gate: super::TeeLeaseGuardGateV1::Pending(super::LocalTeeAdmissionAnchorV1 {
-            finalized_height: 7,
-            finalized_hash: mismatch_hashes[0].1,
-        }),
-        durable: None,
-    };
+    let mut mismatch_gate = super::TeeLeaseGuardGateV1::Pending(super::LocalTeeAdmissionAnchorV1 {
+        finalized_height: 7,
+        finalized_hash: mismatch_hashes[0].1,
+    });
     assert_eq!(
         crate::admission::read_gated_finalized_local_tee_admission_with_resident_offer(
             (&crate::OutbeRuntime::new(), &mismatch_provider),
             chain,
             identity,
-            &mut mismatch_anchors,
+            &mut mismatch_gate,
             || Ok(Some(offer_key)),
         )
         .unwrap(),
@@ -180,7 +145,7 @@ fn validator_gate_never_arms_on_rejection_or_offer_mismatch() {
             LocalTeeRuntimeRejectionV1::ValidatorBindingMismatch
         ))
     );
-    assert!(!mismatch_anchors.gate.is_armed());
+    assert!(!mismatch_gate.is_armed());
     // Scenario 3c: Offer key mismatch when validator binding is Ready -> fails closed with LocalEnclaveOfferKeyMismatch.
     let (ready_provider, _, _, ready_hashes) = build_tee_admission_mock_provider(
         &[(7, valid_until - 100), (10, valid_until - 50)],
@@ -192,19 +157,16 @@ fn validator_gate_never_arms_on_rejection_or_offer_mismatch() {
             offer_key,
         },
     );
-    let mut offer_anchors = crate::admission::TeeLeaseGuardAnchorsV1 {
-        gate: super::TeeLeaseGuardGateV1::Pending(super::LocalTeeAdmissionAnchorV1 {
-            finalized_height: 7,
-            finalized_hash: ready_hashes[0].1,
-        }),
-        durable: None,
-    };
+    let mut offer_gate = super::TeeLeaseGuardGateV1::Pending(super::LocalTeeAdmissionAnchorV1 {
+        finalized_height: 7,
+        finalized_hash: ready_hashes[0].1,
+    });
     let wrong_offer = alloy_primitives::B256::repeat_byte(0xEE);
     let offer_err = crate::admission::read_gated_finalized_local_tee_admission_with_resident_offer(
         (&crate::OutbeRuntime::new(), &ready_provider),
         chain,
         identity,
-        &mut offer_anchors,
+        &mut offer_gate,
         || Ok(Some(wrong_offer)),
     )
     .expect_err("mismatched resident offer key must fail closed");
@@ -212,7 +174,7 @@ fn validator_gate_never_arms_on_rejection_or_offer_mismatch() {
         offer_err.downcast_ref::<crate::errors::LaunchError>(),
         Some(crate::errors::LaunchError::LocalEnclaveOfferKeyMismatch)
     ));
-    assert!(!offer_anchors.gate.is_armed());
+    assert!(!offer_gate.is_armed());
 
     // Scenario 3d: Anchor at H_join = 7 is Ready, but current FullNode admission at H = 10 is Expired.
     let (expired_now_provider, _, _, expired_hashes) = build_tee_admission_mock_provider(
@@ -225,19 +187,16 @@ fn validator_gate_never_arms_on_rejection_or_offer_mismatch() {
             offer_key,
         },
     );
-    let mut expired_anchors = crate::admission::TeeLeaseGuardAnchorsV1 {
-        gate: super::TeeLeaseGuardGateV1::Pending(super::LocalTeeAdmissionAnchorV1 {
-            finalized_height: 7,
-            finalized_hash: expired_hashes[0].1,
-        }),
-        durable: None,
-    };
+    let mut expired_gate = super::TeeLeaseGuardGateV1::Pending(super::LocalTeeAdmissionAnchorV1 {
+        finalized_height: 7,
+        finalized_hash: expired_hashes[0].1,
+    });
     assert_eq!(
         crate::admission::read_gated_finalized_local_tee_admission_with_resident_offer(
             (&crate::OutbeRuntime::new(), &expired_now_provider),
             chain,
             identity,
-            &mut expired_anchors,
+            &mut expired_gate,
             || Ok(Some(offer_key)),
         )
         .unwrap(),
@@ -245,28 +204,25 @@ fn validator_gate_never_arms_on_rejection_or_offer_mismatch() {
             LocalTeeRuntimeRejectionV1::Expired { valid_until }
         ))
     );
-    assert!(!expired_anchors.gate.is_armed());
+    assert!(!expired_gate.is_armed());
     // Scenario 3e: Provider state read failure -> returns Err and never arms or signals armed=true.
     let mut failing_provider = ready_provider;
     failing_provider.fail_state_read = true;
-    let mut failing_anchors = crate::admission::TeeLeaseGuardAnchorsV1 {
-        gate: super::TeeLeaseGuardGateV1::Pending(super::LocalTeeAdmissionAnchorV1 {
-            finalized_height: 7,
-            finalized_hash: ready_hashes[0].1,
-        }),
-        durable: None,
-    };
+    let mut failing_gate = super::TeeLeaseGuardGateV1::Pending(super::LocalTeeAdmissionAnchorV1 {
+        finalized_height: 7,
+        finalized_hash: ready_hashes[0].1,
+    });
     assert!(
         crate::admission::read_gated_finalized_local_tee_admission_with_resident_offer(
             (&crate::OutbeRuntime::new(), &failing_provider),
             chain,
             identity,
-            &mut failing_anchors,
+            &mut failing_gate,
             || Ok(Some(offer_key)),
         )
         .is_err()
     );
-    assert!(!failing_anchors.gate.is_armed());
+    assert!(!failing_gate.is_armed());
 }
 
 #[tokio::test]
@@ -295,15 +251,12 @@ async fn live_admission_recovers_validator_binding_and_provider_read_failures() 
         let provider = support::SharedProvider(Arc::new(Mutex::new(broken)));
         let channel = TeeAuthorityChannel::default();
         let mut watch = channel.subscribe();
-        let anchors = crate::admission::TeeLeaseGuardAnchorsV1 {
-            gate: super::TeeLeaseGuardGateV1::Armed,
-            durable: None,
-        };
+        let gate = super::TeeLeaseGuardGateV1::Armed;
         let owner = Arc::new(
             LiveTeeRuntimeV1::new(
                 LiveTeeSnapshotV1 {
                     identity,
-                    anchors,
+                    gate,
                     context: context.clone(),
                 },
                 channel.clone(),
@@ -312,7 +265,7 @@ async fn live_admission_recovers_validator_binding_and_provider_read_failures() 
         );
         if !read_failure {
             assert_eq!(crate::admission::read_gated_finalized_local_tee_admission_with_resident_offer(
-                (&crate::OutbeRuntime::new(), &provider), chain, identity, &mut anchors.clone(),
+                (&crate::OutbeRuntime::new(), &provider), chain, identity, &mut gate.clone(),
                 || Ok(Some(alloy_primitives::B256::from(context.network_encryption_public().unwrap())))
             ).unwrap(), Some(outbe_consensus::validators::LocalTeeRuntimeAdmissionV1::Rejected(outbe_consensus::validators::LocalTeeRuntimeRejectionV1::ValidatorBindingMismatch)));
         }
@@ -320,18 +273,13 @@ async fn live_admission_recovers_validator_binding_and_provider_read_failures() 
         let cancel = tokio_util::sync::CancellationToken::new();
         let guard = run_lease_guard(
             provider.clone(),
-            (
-                Arc::new(crate::OutbeRuntime::new()),
-                Arc::new(crate::OutbeRuntime::new()),
-            ),
+            Arc::new(crate::OutbeRuntime::new()),
             crate::admission::TeeLeaseGuardConfigV1 {
                 chain,
-                identity,
-                anchors,
                 finalization_notify: notify.clone(),
                 armed: tokio::sync::watch::channel(true).0,
             },
-            (channel, Some(owner.clone())),
+            owner.clone(),
             cancel.clone(),
         );
         tokio::pin!(guard);

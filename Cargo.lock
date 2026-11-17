@@ -2869,7 +2869,7 @@ dependencies = [
  "commonware-parallel",
  "commonware-runtime-macros",
  "commonware-utils",
- "criterion 0.8.2",
+ "criterion",
  "crossbeam-utils",
  "futures",
  "getrandom 0.2.17",
@@ -3194,32 +3194,6 @@ dependencies = [
 
 [[package]]
 name = "criterion"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2b12d017a929603d80db1831cd3a24082f8137ce19c69e6447f54f5fc8d692f"
-dependencies = [
- "anes",
- "cast",
- "ciborium",
- "clap",
- "criterion-plot 0.5.0",
- "is-terminal",
- "itertools 0.10.5",
- "num-traits",
- "once_cell",
- "oorandom",
- "plotters",
- "rayon",
- "regex",
- "serde",
- "serde_derive",
- "serde_json",
- "tinytemplate",
- "walkdir",
-]
-
-[[package]]
-name = "criterion"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "950046b2aa2492f9a536f5f4f9a3de7b9e2476e575e05bd6c333371add4d98f3"
@@ -3229,7 +3203,7 @@ dependencies = [
  "cast",
  "ciborium",
  "clap",
- "criterion-plot 0.8.2",
+ "criterion-plot",
  "itertools 0.13.0",
  "num-traits",
  "oorandom",
@@ -3241,16 +3215,6 @@ dependencies = [
  "serde_json",
  "tinytemplate",
  "walkdir",
-]
-
-[[package]]
-name = "criterion-plot"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b50826342786a51a89e2da3a28f1c32b06e387201bc2d19791f622c673706b1"
-dependencies = [
- "cast",
- "itertools 0.10.5",
 ]
 
 [[package]]
@@ -6179,17 +6143,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "is-terminal"
-version = "0.4.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
-dependencies = [
- "hermit-abi",
- "libc",
- "windows-sys 0.52.0",
-]
-
-[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7859,14 +7812,12 @@ dependencies = [
  "multibase",
  "outbe-chain-constants",
  "outbe-consensus",
- "outbe-enclave",
  "outbe-genesis-cli",
  "outbe-nodfactory",
  "outbe-primitives",
  "outbe-runtime",
  "outbe-snapshot",
  "outbe-tee",
- "outbe-tee-enclave",
  "outbe-teeregistry",
  "outbe-validatorset",
  "postcard",
@@ -7905,7 +7856,6 @@ dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
- "alloy-rlp",
  "alloy-sol-types",
  "blst",
  "clap",
@@ -7930,10 +7880,8 @@ dependencies = [
  "rand 0.10.2",
  "rand_core 0.10.1",
  "reqwest 0.12.28",
- "rustix",
  "serde",
  "serde_json",
- "snow",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -9071,7 +9019,6 @@ dependencies = [
  "commonware-p2p",
  "commonware-parallel",
  "commonware-runtime",
- "commonware-storage",
  "commonware-utils",
  "ed25519-dalek",
  "eyre",
@@ -9134,7 +9081,6 @@ dependencies = [
  "outbe-staking",
  "outbe-system-common",
  "outbe-tee",
- "outbe-tee-enclave",
  "outbe-teeregistry",
  "outbe-tribute",
  "outbe-tributefactory",
@@ -9145,13 +9091,11 @@ dependencies = [
  "outbe-vote",
  "outbe-zerofee",
  "outbe-zk-backend",
- "postcard",
  "proptest",
  "radicle",
  "radicle-signals",
  "rand 0.10.2",
  "rand_core 0.10.1",
- "rand_core 0.6.4",
  "reth-basic-payload-builder",
  "reth-chain-state",
  "reth-chainspec",
@@ -9383,7 +9327,6 @@ dependencies = [
  "rand 0.10.2",
  "rand 0.8.6",
  "rand_core 0.10.1",
- "rand_core 0.6.4",
  "reth-chainspec",
  "reth-primitives-traits",
  "reth-trie",
@@ -9391,57 +9334,12 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
- "sha2 0.10.9",
- "snow",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "x25519-dalek 2.0.1",
  "zeroize",
  "zstd",
-]
-
-[[package]]
-name = "outbe-tee-enclave"
-version = "0.1.0"
-dependencies = [
- "alloy-consensus",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-trie",
- "commonware-codec",
- "commonware-consensus",
- "commonware-cryptography",
- "commonware-parallel",
- "commonware-runtime",
- "commonware-utils",
- "criterion 0.5.1",
- "ed25519-dalek",
- "hex",
- "k256 0.13.4",
- "outbe-core-common",
- "outbe-enclave",
- "outbe-primitives",
- "outbe-simplex",
- "outbe-system-common",
- "outbe-tee",
- "outbe-tribute",
- "postcard",
- "proptest",
- "rand 0.10.2",
- "rand_core 0.10.1",
- "rand_core 0.6.4",
- "reth-ethereum",
- "reth-primitives-traits",
- "reth-trie",
- "ring",
- "serde_json",
- "snow",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "x25519-dalek 2.0.1",
- "zeroize",
 ]
 
 [[package]]
@@ -9456,7 +9354,6 @@ dependencies = [
  "outbe-primitives",
  "outbe-system-common",
  "outbe-tee",
- "outbe-tee-enclave",
  "outbe-validatorset",
  "proptest",
  "tempfile",
@@ -9505,7 +9402,6 @@ dependencies = [
  "commonware-cryptography",
  "commonware-math",
  "ed25519-dalek",
- "eyre",
  "hex",
  "outbe-agentreward",
  "outbe-chain-constants",
@@ -9529,7 +9425,6 @@ dependencies = [
  "rand_core 0.6.4",
  "serde_json",
  "thiserror 2.0.18",
- "tracing",
  "x25519-dalek 2.0.1",
 ]
 
@@ -15363,22 +15258,6 @@ name = "snap"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b6b67fb9a61334225b5b790716f609cd58395f895b3fe8b328786812a40bc3b"
-
-[[package]]
-name = "snow"
-version = "0.9.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "850948bee068e713b8ab860fe1adc4d109676ab4c3b621fd8147f06b261f2f85"
-dependencies = [
- "aes-gcm",
- "blake2 0.10.6",
- "chacha20poly1305 0.10.1",
- "curve25519-dalek 4.1.3",
- "rand_core 0.6.4",
- "rustc_version 0.4.1",
- "sha2 0.10.9",
- "subtle",
-]
 
 [[package]]
 name = "socket2"

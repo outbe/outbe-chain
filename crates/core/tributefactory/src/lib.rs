@@ -12,7 +12,6 @@ pub mod worldwideday;
 #[doc(hidden)]
 pub mod bench_support;
 
-pub use enclave_offer::init_enclave_client;
 pub use schema::TributeFactoryContract;
 pub use worldwideday::{NewWwdSchedule, WwdProjection};
 

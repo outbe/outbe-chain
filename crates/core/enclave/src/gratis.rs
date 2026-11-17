@@ -496,7 +496,6 @@ mod tests {
     #[test]
     fn pledged_blobs_cross_the_wire_and_bind_the_inputs_hash() {
         use crate::protocol::{EnclaveRequest, EnclaveResponse};
-        use outbe_tee::codec::{decode_request, decode_response, encode_request, encode_response};
         use outbe_tee::protocol::{EnclaveRequest as WireEnclaveRequest, PayloadLane};
         let sk = state_key();
         let mut r = req(GratisOp::ReleasePledged, alice(), U256::from(1u64), 0);
@@ -512,9 +511,7 @@ mod tests {
             request: Box::new(r.clone()),
         };
         let wire_request = request.encode_wire(PayloadLane::Execution).unwrap();
-        let WireEnclaveRequest::Payload { lane, payload } =
-            decode_request(&encode_request(&wire_request).unwrap()).unwrap()
-        else {
+        let WireEnclaveRequest::Payload { lane, payload } = wire_request else {
             panic!("wire request variant changed");
         };
         assert_eq!(lane, PayloadLane::Execution);
@@ -528,9 +525,8 @@ mod tests {
             result: Box::new(result.clone()),
         };
         let wire_response = response.into_wire_response().unwrap();
-        let decoded_wire = decode_response(&encode_response(&wire_response).unwrap()).unwrap();
         let EnclaveResponse::GratisOpApplied { result: decoded } =
-            EnclaveResponse::from_wire_response(&decoded_wire).unwrap()
+            EnclaveResponse::from_wire_response(&wire_response).unwrap()
         else {
             panic!("response variant changed");
         };

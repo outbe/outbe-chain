@@ -1,4 +1,4 @@
-//! Transport-layer errors for the node and enclave channel.
+//! Errors at the resident enclave dispatch and host filesystem boundaries.
 
 use std::fmt;
 use thiserror::Error;
@@ -25,41 +25,20 @@ impl AppErrorDescriptor {
     }
 }
 
-/// Errors returned by the host-side enclave transport and session layer.
+/// Errors returned by resident dispatch, verification, and host I/O.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum TransportError {
     /// Direct resident/domain failure with its structured cause intact.
     #[error("in-process TEE dispatch failed: {0}")]
     InProcess(#[from] crate::in_process_dispatch::InProcessDispatchError),
-    /// Socket read or write failed.
+    /// Host I/O failed.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
-
-    /// Socket operation exceeded the configured timeout.
-    #[error("enclave io timeout during {operation} after {timeout_secs}s")]
-    IoTimeout {
-        /// Name of the timed-out transport phase.
-        operation: &'static str,
-        /// Timeout threshold in seconds.
-        timeout_secs: u64,
-    },
-
-    /// Wire frame length exceeded the protocol ceiling.
-    #[error("frame too large: {0} bytes")]
-    FrameTooLarge(usize),
 
     /// Message serialization or canonical decoding failed.
     #[error("codec error: {0}")]
     Codec(String),
-
-    /// Noise cipher operation failed.
-    #[error("noise error: {0}")]
-    Noise(String),
-
-    /// Noise handshake or session authorization failed.
-    #[error("handshake error: {0}")]
-    Handshake(String),
 
     /// Quote or intent attestation check failed.
     #[error("attestation verification failed: {0}")]
@@ -75,9 +54,21 @@ pub enum TransportError {
         source: TeeAttestationError,
     },
 
-    /// DCAP verification stream or response check failed.
+    /// Resident verification rejected the response or request binding.
     #[error("DCAP verification channel invalid: {0}")]
-    DcapVerification(String),
+    Verification(#[from] super::TeeVerificationError),
+
+    /// A finalized upgrade proof failed its size or record bounds.
+    #[error("enclave returned error: {0}")]
+    UpgradeProof(#[from] super::UpgradeTransferError),
+
+    /// A NodeHost filesystem or record invariant failed.
+    #[error("codec error: {0}")]
+    NodeHostRecord(#[source] super::NodeHostRecordError),
+
+    /// A NodeHost attestation record omitted its key-ready proof.
+    #[error("attestation verification failed: {0}")]
+    NodeHostAttestation(#[source] super::NodeHostRecordError),
 
     /// Attestation preimage JSON did not serialize. The source stays structured.
     #[error("attestation preimage serialization failed: {0}")]
@@ -100,15 +91,7 @@ pub enum TransportError {
         reason: String,
     },
 
-    /// Reconnected enclave identity differed from the pinned identity.
-    #[error("enclave identity mismatch after reconnect: {0}")]
-    IdentityMismatch(String),
-
-    /// Session was permanently revoked after an identity mismatch.
-    #[error("enclave session permanently revoked: {0}")]
-    SessionRevoked(&'static str),
-
-    /// Enclave sidecar was not configured or not ready.
+    /// Resident execution or its context is unavailable.
     #[error("enclave unavailable: {0}")]
     Unavailable(String),
 }
@@ -121,29 +104,9 @@ impl TransportError {
         Self::Codec(error.to_string())
     }
 
-    /// Construct a [`Self::Noise`] error from a displayable value.
-    pub fn noise(error: impl fmt::Display) -> Self {
-        Self::Noise(error.to_string())
-    }
-
-    /// Construct a [`Self::Noise`] error from a debug-formatted value.
-    pub fn noise_debug(error: snow::Error) -> Self {
-        super::TeeClientVerificationError::NoiseParams(error).into()
-    }
-
-    /// Construct a [`Self::Handshake`] error from a displayable value.
-    pub fn handshake(error: impl fmt::Display) -> Self {
-        Self::Handshake(error.to_string())
-    }
-
     /// Construct a [`Self::Attestation`] error from a displayable value.
     pub fn attestation(error: impl fmt::Display) -> Self {
         Self::Attestation(error.to_string())
-    }
-
-    /// Construct a quote-parse [`Self::Attestation`] error.
-    pub fn quote_parse(error: super::QuoteParseError) -> Self {
-        super::TeeClientVerificationError::QuoteParse(error).into()
     }
 
     /// Construct a structured application-layer attestation failure, preserving
@@ -166,11 +129,6 @@ impl TransportError {
         }
     }
 
-    /// Construct a [`Self::DcapVerification`] error from a displayable value.
-    pub fn dcap_verification(error: impl fmt::Display) -> Self {
-        Self::DcapVerification(error.to_string())
-    }
-
     /// Construct a [`Self::EnclaveError`] error from a displayable value.
     pub fn enclave_error(error: impl fmt::Display) -> Self {
         Self::EnclaveError(error.to_string())
@@ -186,42 +144,14 @@ impl TransportError {
         move |_| super::NodeHostRecordError::LengthOverflow { label }.into()
     }
 
-    /// Construct a [`Self::IdentityMismatch`] error from a reason and detail.
-    pub fn identity_mismatch(reason: &'static str, detail: impl fmt::Display) -> Self {
-        super::TeeClientVerificationError::ReconnectIdentityMismatch {
-            reason,
-            detail: detail.to_string(),
-        }
-        .into()
-    }
-
-    /// Return true when the connection is broken or desynchronized.
-    ///
-    /// A bounded reconnect and one retry can recover from these variants:
-    /// - `Io` and `IoTimeout`: socket-level fault.
-    /// - `Noise`: the initiator nonce advanced, so the cipher state is unusable.
-    /// - `FrameTooLarge`: corrupt stream on read.
-    ///
-    /// This method excludes other variants because a fresh connection repeats the same failure.
-    pub fn is_connection_fault(&self) -> bool {
-        matches!(
-            self,
-            Self::Io(_) | Self::IoTimeout { .. } | Self::Noise(_) | Self::FrameTooLarge(_)
-        )
-    }
-
-    /// Return true when the fault lies with this node's enclave, session, or socket.
+    /// Return true when the fault lies with this node's resident context or local infrastructure.
     pub fn is_node_local(&self) -> bool {
         matches!(
             self,
-            Self::InProcess(crate::in_process_dispatch::InProcessDispatchError::Resident(_))
-                | Self::Io(_)
-                | Self::IoTimeout { .. }
-                | Self::Noise(_)
-                | Self::FrameTooLarge(_)
-                | Self::Handshake(_)
-                | Self::SessionRevoked(_)
-                | Self::IdentityMismatch(_)
+            Self::InProcess(
+                crate::InProcessDispatchError::Resident(_)
+                    | crate::InProcessDispatchError::ContextNotInstalled
+            ) | Self::Io(_)
                 | Self::Unavailable(_)
         )
     }
@@ -229,22 +159,22 @@ impl TransportError {
     /// Return the stable label for the `outbe_tee_client_request_errors_total{class}` counter.
     pub fn metric_class(&self) -> &'static str {
         match self {
+            Self::InProcess(crate::InProcessDispatchError::ContextNotInstalled) => "unavailable",
             Self::InProcess(_) => "in_process",
             Self::Io(_) => "io",
-            Self::IoTimeout { .. } => "io_timeout",
-            Self::FrameTooLarge(_) => "frame_too_large",
+
             Self::Codec(_) => "codec",
-            Self::Noise(_) => "noise",
-            Self::Handshake(_) => "handshake",
+
             Self::Attestation(_) => "attestation",
             Self::AppAttestation { descriptor, .. } => descriptor.metric_class,
-            Self::DcapVerification(_) => "dcap_verification",
+            Self::Verification(_) => "dcap_verification",
+            Self::NodeHostRecord(_) => "codec",
+            Self::NodeHostAttestation(_) => "attestation",
             Self::AttestationPreimageSerialization(_) => "attestation_preimage_serialization",
             Self::UnexpectedResponse => "unexpected_response",
-            Self::EnclaveError(_) => "enclave_error",
+            Self::EnclaveError(_) | Self::UpgradeProof(_) => "enclave_error",
             Self::AppRejected { descriptor, .. } => descriptor.metric_class,
-            Self::IdentityMismatch(_) => "identity_mismatch",
-            Self::SessionRevoked(_) => "session_revoked",
+
             Self::Unavailable(_) => "unavailable",
         }
     }

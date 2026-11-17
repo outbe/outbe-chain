@@ -61,7 +61,7 @@ fn in_process_lanes_reject_mutating_account_queries_and_canary_without_state_cha
         )
         .unwrap();
     let before = context.network_encryption_public().unwrap();
-    let _runtime = outbe_tee::client_global::set_in_process_tee_context_for_test(Some((
+    let _runtime = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some((
         Arc::clone(&context),
         dispatch_payload,
     )));
@@ -89,10 +89,10 @@ fn in_process_lanes_reject_mutating_account_queries_and_canary_without_state_cha
         Err(outbe_tee::TransportError::InProcess(_))
     ));
     assert!(matches!(
-        crate::canary_domain_request(&mutation),
+        crate::host::canary_domain_request(&mutation),
         Err(outbe_tee::TransportError::InProcess(_))
     ));
-    let (_, response) = crate::canary_domain_request(&request).unwrap();
+    let (_, response) = crate::host::canary_domain_request(&request).unwrap();
     assert!(
         matches!(response, EnclaveResponse::TributeOfferBatch { results, .. } if results.is_empty())
     );
@@ -114,7 +114,7 @@ fn account_export_dispatch_binds_owner_ledger_and_ephemeral_recipient() {
             .unwrap(),
         )
         .unwrap();
-    let _runtime = outbe_tee::client_global::set_in_process_tee_context_for_test(Some((
+    let _runtime = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some((
         context,
         dispatch_payload,
     )));
@@ -199,10 +199,9 @@ fn blocked_account_query_does_not_serialize_execution() {
     std::thread::scope(|scope| {
         let query_context = Arc::clone(&context);
         let query = scope.spawn(move || {
-            let _runtime = outbe_tee::client_global::set_in_process_tee_context_for_test(Some((
-                query_context,
-                blocking_query,
-            )));
+            let _runtime = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(
+                Some((query_context, blocking_query)),
+            );
             crate::try_domain_account_query(&EnclaveRequest::DeriveAccountKeys {
                 ledger: crate::protocol::Ledger::Gratis,
                 account: alloy_primitives::Address::repeat_byte(2),
@@ -213,10 +212,9 @@ fn blocked_account_query_does_not_serialize_execution() {
         });
         gates.0.wait();
         scope.spawn(|| {
-            let _runtime = outbe_tee::client_global::set_in_process_tee_context_for_test(Some((
-                context,
-                blocking_query,
-            )));
+            let _runtime = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(
+                Some((context, blocking_query)),
+            );
             let response =
                 crate::try_with_domain_enclave(&EnclaveRequest::ProcessTributeOfferBatch {
                     offers: Vec::new(),

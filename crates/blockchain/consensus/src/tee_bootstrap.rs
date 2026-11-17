@@ -24,18 +24,18 @@ use outbe_primitives::signer::OutbeEvmSigner;
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapEvidenceV1,
     EnclaveInitializationManifestV1, NoAttestationDevEvidenceV1, NodeIdV1, RegistrationIntentV1,
-    TeePolicyV1, ValidatorNodeBindingV1, ENCLAVE_ID_DOMAIN_V1, MAX_ATTESTATION_EVIDENCE_BYTES,
+    TeePolicyV1, ValidatorNodeBindingV1, MAX_ATTESTATION_EVIDENCE_BYTES,
 };
 use outbe_primitives::tee_bootstrap_v2::{
     TeeBootstrapAuthorityV2, TeeBootstrapParticipantSubmissionV2, TeeBootstrapV2,
 };
 use outbe_primitives::tee_signatures::recover_signer;
+use outbe_tee::acquire_dcap_collateral_v1;
 use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 use outbe_tee::tee_dkg::{
     run_tee_dkg_ceremony, CeremonyCoordinator, CeremonyError, DkgGossip, DkgWireMessage,
     FoundingCeremonyParameters,
 };
-use outbe_tee::{acquire_dcap_collateral_v1, RuntimeEnclaveClient};
 
 /// Minimal opaque carrier used by the one-time OST3 startup coordinator.
 #[allow(async_fn_in_trait)]
@@ -58,7 +58,6 @@ const OST3_SUBMISSION_FIXED_BYTES: usize =
     1 + 4 + ValidatorNodeBindingV1::CANONICAL_LEN + 65 + 65 + 65 + 64;
 const OST3_SIGNATURE_BYTES: usize = 1 + 32 + 20 + 65;
 const OST3_SCOPE_DOMAIN: &[u8] = b"outbe/tee/bootstrap-v2-gossip/v1";
-const OST3_DEV_NODE_HOST_DOMAIN: &[u8] = b"outbe/tee/dev-node-host/v1";
 const OST3_BINDING_ID_DOMAIN: &[u8] = b"outbe/tee/bootstrap-binding/v1";
 
 mod coordination;
@@ -68,11 +67,8 @@ mod validation;
 
 pub use coordination::{coordinate_tee_bootstrap_v2, TeeBootstrapCoordination};
 use message::Ost3WireMessage;
-pub use submission::{
-    build_in_process_tee_bootstrap_submission_v2, build_local_tee_bootstrap_submission_v2,
-    LocalRegistrationRequest,
-};
-use validation::{bootstrap_evidence_kind, validate_submission, BootstrapEvidenceKind};
+pub use submission::{build_in_process_tee_bootstrap_submission_v2, LocalRegistrationRequest};
+use validation::validate_submission;
 
 mod delivery;
 mod gossip;

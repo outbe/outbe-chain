@@ -13,7 +13,8 @@ pub fn context(
 ) -> outbe_tee::in_process::InProcessTeeContext {
     let template = shared::context(seed, descriptor);
     let mut manifest = template.manifest().clone();
-    manifest.node_host_noise_x25519 = outbe_tee::NodeHostNoiseKey::from_private([4; 32]).public();
+    manifest.node_host_noise_x25519 =
+        outbe_tee::node_host::NodeHostIdentityKey::from_private([4; 32]).public();
     outbe_tee::in_process::InProcessTeeContext::new(
         outbe_tee::resident::ResidentTeeKeys::from_seed([seed; 32]).unwrap(),
         *template.identity(),

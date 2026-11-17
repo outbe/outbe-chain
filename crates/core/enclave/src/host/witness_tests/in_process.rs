@@ -1,10 +1,7 @@
 //! Actual resident engine parity through all three witness execution modes.
 use super::*;
 use crate::host::domain_in_process::{dispatch_payload, tests::context};
-use outbe_tee::{
-    client_global::set_in_process_tee_context_for_test, in_process::InProcessTeeContext,
-    resident::ResidentOfferMaterial,
-};
+use outbe_tee::resident::ResidentOfferMaterial;
 
 fn ready(seed: u8) -> Arc<InProcessTeeContext> {
     let context = context(seed);

@@ -1,9 +1,7 @@
 use crate::errors::LaunchError;
 use crate::*;
 use outbe_consensus::protocol_state::EngineProtocolState;
-use outbe_execution::tee_remote_session::{
-    inspect_local_finalized_successor_status_v1, RegistryChainIdentity,
-};
+use outbe_execution::tee_remote_session::RegistryChainIdentity;
 
 /// Exact finalized checkpoint at which a node may arm its local lease guard
 /// after replaying stale or pre-registration history. This is process-local
@@ -94,157 +92,6 @@ impl TeeLeaseGuardGateV1 {
     }
 }
 
-/// A validator without `--upstream` must not start while its gate is not
-/// armed. With `--upstream`, the engine runs `UpstreamBootstrap` until the
-/// gate arms.
-pub(crate) fn require_validator_tee_recovery_complete_v1(
-    is_validator: bool,
-    has_upstream: bool,
-    gate: TeeLeaseGuardGateV1,
-    node_data_dir: &Path,
-) -> eyre::Result<()> {
-    if !is_validator || has_upstream || gate.is_armed() {
-        return Ok(());
-    }
-    let (height, hash) = gate
-        .pending_anchor()
-        .map_or((0, alloy_primitives::B256::ZERO), |anchor| {
-            (anchor.finalized_height, anchor.finalized_hash)
-        });
-    Err(LaunchError::ValidatorRecoveryCatchUpRequired {
-        height,
-        hash,
-        datadir: node_data_dir.display().to_string(),
-    }
-    .into())
-}
-
-/// TEE admission anchors verified before the lease guard starts.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct TeeLeaseGuardAnchorsV1 {
-    pub(crate) gate: TeeLeaseGuardGateV1,
-    /// Durable join anchor that the guard also checks against the local
-    /// canonical chain when it arms a different (upstream) target anchor.
-    pub(crate) durable: Option<LocalTeeAdmissionAnchorV1>,
-}
-
-/// Fail-closed dual anchor decision for `--validator --upstream`.
-///
-/// The durable join anchor must not be above the upstream anchor, and the
-/// upstream canonical hash at the durable height must equal the durable hash.
-/// The target anchor is the higher of the two.
-pub(crate) fn select_validator_upstream_anchor_v1(
-    durable: Option<LocalTeeAdmissionAnchorV1>,
-    upstream: LocalTeeAdmissionAnchorV1,
-    upstream_hash_at_durable: Option<alloy_primitives::B256>,
-) -> eyre::Result<TeeLeaseGuardAnchorsV1> {
-    let Some(durable) = durable else {
-        return Ok(TeeLeaseGuardAnchorsV1 {
-            gate: TeeLeaseGuardGateV1::Pending(upstream),
-            durable: None,
-        });
-    };
-    if durable.finalized_height > upstream.finalized_height {
-        return Err(LaunchError::TeeJoinAnchorAboveUpstreamAnchor {
-            durable: durable.finalized_height,
-            upstream: upstream.finalized_height,
-        }
-        .into());
-    }
-    let observed = upstream_hash_at_durable.ok_or(LaunchError::TeeAdmissionAnchorHashMismatch {
-        height: durable.finalized_height,
-        expected: durable.finalized_hash,
-        local: alloy_primitives::B256::ZERO,
-    })?;
-    if observed != durable.finalized_hash {
-        return Err(LaunchError::TeeAdmissionAnchorHashMismatch {
-            height: durable.finalized_height,
-            expected: durable.finalized_hash,
-            local: observed,
-        }
-        .into());
-    }
-    let target = if durable.finalized_height == upstream.finalized_height {
-        durable
-    } else {
-        upstream
-    };
-    Ok(TeeLeaseGuardAnchorsV1 {
-        gate: TeeLeaseGuardGateV1::Pending(target),
-        durable: (target != durable).then_some(durable),
-    })
-}
-
-/// Initial validator gate from local facts only (no upstream).
-///
-/// - A durable join anchor at or below the local finalized height is pending
-///   and validates at once.
-/// - Without a durable anchor at height `H >= 1`, a `Ready` local admission at
-///   the latest finalized block and a resident offer key equal to the
-///   on-chain key start the gate armed. This covers founding validators and
-///   nodes without an expected enclave identity.
-/// - A genesis founder at height zero starts armed. The engine still requires
-///   genesis `ValidatorSet` membership at that height.
-///
-/// `None` means that local facts cannot arm the gate. The caller then needs
-/// the upstream path.
-pub(crate) fn local_validator_tee_gate_v1(
-    durable: Option<LocalTeeAdmissionAnchorV1>,
-    local_finalized_height: u64,
-    local_ready_with_offer: bool,
-    local_is_genesis_founder: bool,
-    has_upstream: bool,
-) -> Option<TeeLeaseGuardGateV1> {
-    match durable {
-        Some(anchor) if local_finalized_height >= anchor.finalized_height => {
-            Some(TeeLeaseGuardGateV1::Pending(anchor))
-        }
-        Some(anchor) if !has_upstream => Some(TeeLeaseGuardGateV1::Pending(anchor)),
-        Some(_) => None,
-        None if local_finalized_height >= 1 && local_ready_with_offer => {
-            Some(TeeLeaseGuardGateV1::Armed)
-        }
-        None if local_finalized_height == 0 && local_is_genesis_founder => {
-            Some(TeeLeaseGuardGateV1::Armed)
-        }
-        None if has_upstream => None,
-        None => Some(TeeLeaseGuardGateV1::AwaitingAnchor),
-    }
-}
-
-pub(crate) fn validator_admission_anchor_from_durable_v1(
-    durable: outbe_tee::FinalizedJoinAdmissionAnchorV1,
-    chain_id: u64,
-    genesis_hash: alloy_primitives::B256,
-    identity: outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
-) -> eyre::Result<LocalTeeAdmissionAnchorV1> {
-    use outbe_primitives::tee_attestation_v1::NodeIdV1;
-
-    let node_id_hash = NodeIdV1 {
-        reth_p2p_public: identity.reth_p2p_public,
-    }
-    .node_id_hash()
-    .map_err(|error| LaunchError::DeriveLocalNodeHostIdentity {
-        details: crate::errors::display_error(error),
-    })?;
-    if durable.chain_id != alloy_primitives::U256::from(chain_id).to_be_bytes() {
-        return Err(LaunchError::JoinAdmissionAnchorChainIdMismatch.into());
-    }
-    if durable.genesis_hash != genesis_hash {
-        return Err(LaunchError::JoinAdmissionAnchorGenesisMismatch.into());
-    }
-    if durable.node_id_hash != node_id_hash {
-        return Err(LaunchError::JoinAdmissionAnchorNodeHostMismatch.into());
-    }
-    if identity.expected_enclave_id != Some(durable.enclave_id) {
-        return Err(LaunchError::JoinAdmissionAnchorEnclaveMismatch.into());
-    }
-    Ok(LocalTeeAdmissionAnchorV1 {
-        finalized_height: durable.finalized_height,
-        finalized_hash: durable.finalized_hash,
-    })
-}
-
 fn local_tee_rejection_message(
     rejection: outbe_consensus::validators::LocalTeeRuntimeRejectionV1,
 ) -> String {
@@ -252,10 +99,10 @@ fn local_tee_rejection_message(
 
     match rejection {
         LocalTeeRuntimeRejectionV1::MissingBinding => {
-            "finalized Registry has no binding for the local NodeHost; run tee join".to_owned()
+            "finalized Registry has no binding for the local NodeHost; check autonomous enrollment with outbe-cli tee status".to_owned()
         }
         LocalTeeRuntimeRejectionV1::EnclaveIdentityMismatch => {
-            "finalized Registry binding does not match the committed local enclave; run tee join"
+            "finalized Registry binding does not match the resident enclave; check the lifecycle supervisor with outbe-cli tee status"
                 .to_owned()
         }
         LocalTeeRuntimeRejectionV1::ValidatorBindingMismatch => {
@@ -263,39 +110,15 @@ fn local_tee_rejection_message(
                 .to_owned()
         }
         LocalTeeRuntimeRejectionV1::ValidatorJailed => {
-            "validator is jailed; complete ordinary unjail and then run tee join".to_owned()
+            "validator is jailed; complete ordinary unjail and check admission with outbe-cli tee status".to_owned()
         }
         LocalTeeRuntimeRejectionV1::RetiredEnclave => {
-            "enclave upgrade deadline reached; complete tee upgrade before restarting TEE work"
+            "enclave upgrade deadline reached; check the lifecycle supervisor with outbe-cli tee status"
                 .to_owned()
         }
         LocalTeeRuntimeRejectionV1::Expired { valid_until } => {
-            format!("finalized TEE lease expired at {valid_until}; stop node and run tee join")
+            format!("finalized TEE lease expired at {valid_until}; check autonomous renewal with outbe-cli tee status")
         }
-    }
-}
-
-pub(crate) fn tee_lease_admission_rejection(
-    admission: outbe_consensus::validators::LocalTeeRuntimeAdmissionV1,
-) -> Option<String> {
-    match admission {
-        outbe_consensus::validators::LocalTeeRuntimeAdmissionV1::BootstrapPending
-        | outbe_consensus::validators::LocalTeeRuntimeAdmissionV1::Ready { .. } => None,
-        outbe_consensus::validators::LocalTeeRuntimeAdmissionV1::Rejected(reason) => {
-            Some(local_tee_rejection_message(reason))
-        }
-    }
-}
-
-pub(crate) fn validator_recovery_startup_admission_rejection(
-    admission: outbe_consensus::validators::LocalTeeRuntimeAdmissionV1,
-) -> Option<String> {
-    match admission {
-        outbe_consensus::validators::LocalTeeRuntimeAdmissionV1::BootstrapPending => Some(
-            "finalized TEE admission is bootstrap-pending; refusing validator authority startup"
-                .to_owned(),
-        ),
-        other => tee_lease_admission_rejection(other),
     }
 }
 
@@ -428,61 +251,11 @@ where
     )
 }
 
-pub(crate) fn read_finalized_local_tee_admission<P>(
-    protocol: &dyn EngineProtocolState,
-    provider: &P,
-    chain_id: u64,
-    genesis_hash: alloy_primitives::B256,
-    identity: outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
-) -> eyre::Result<Option<outbe_consensus::validators::LocalTeeRuntimeAdmissionV1>>
-where
-    P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
-{
-    let Some(head) =
-        read_consistent_finalized_head(provider, "read finalized head for TEE lease admission")?
-    else {
-        return Ok(None);
-    };
-    read_local_tee_admission_at_block(
-        protocol,
-        provider,
-        RegistryChainIdentity {
-            chain_id,
-            genesis_hash,
-        },
-        identity,
-        head,
-    )
-    .map(Some)
-}
-
-pub(crate) fn read_gated_finalized_local_tee_admission<P>(
-    protocol: &dyn EngineProtocolState,
-    provider: &P,
-    chain: RegistryChainIdentity,
-    identity: outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
-    anchors: &mut TeeLeaseGuardAnchorsV1,
-) -> eyre::Result<Option<outbe_consensus::validators::LocalTeeRuntimeAdmissionV1>>
-where
-    P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
-{
-    read_gated_finalized_local_tee_admission_with_resident_offer(
-        (protocol, provider),
-        chain,
-        identity,
-        anchors,
-        || {
-            outbe_tee::resident_network_encryption_public_key_state_v1()
-                .wrap_err("read the resident offer key for gated TEE lease admission")
-        },
-    )
-}
-
 pub(crate) fn read_gated_finalized_local_tee_admission_with_resident_offer<P, F>(
     (protocol, provider): (&dyn EngineProtocolState, &P),
     chain: RegistryChainIdentity,
     identity: outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
-    anchors: &mut TeeLeaseGuardAnchorsV1,
+    gate: &mut TeeLeaseGuardGateV1,
     read_resident_offer: F,
 ) -> eyre::Result<Option<outbe_consensus::validators::LocalTeeRuntimeAdmissionV1>>
 where
@@ -491,8 +264,6 @@ where
 {
     use outbe_consensus::validators::LocalTeeRuntimeAdmissionV1;
 
-    let durable = anchors.durable;
-    let gate = &mut anchors.gate;
     let Some(head @ (finalized, _)) = read_consistent_finalized_head(
         provider,
         "read finalized head for gated TEE lease admission",
@@ -513,9 +284,6 @@ where
     };
     let anchor_fullnode_admission =
         validate_local_anchor_at_height(protocol, provider, chain, fullnode_identity, anchor)?;
-    if let Some(durable) = durable.filter(|durable| *durable != anchor) {
-        validate_local_anchor_at_height(protocol, provider, chain, fullnode_identity, durable)?;
-    }
 
     let fullnode_now =
         if finalized.number == anchor.finalized_height && finalized.hash == anchor.finalized_hash {
@@ -601,89 +369,14 @@ where
     }
 }
 
-pub(crate) async fn require_upstream_fullnode_tee_admission(
-    upstream: &str,
-    identity: outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
-) -> eyre::Result<LocalTeeAdmissionAnchorV1> {
-    let rpc = outbe_consensus::follow_transport::UpstreamRpcClient::new(upstream)?;
-    let view = read_finalized_registry_view_v1(
-        &rpc,
-        &NodeBindingSelectorV1::NodeHost(identity.reth_p2p_public),
-    )
-    .await
-    .wrap_err("read upstream finalized FullNode TEE admission")?;
-    let binding = view.binding.ok_or(LaunchError::FullNodeMissingBinding)?;
-    if identity
-        .expected_enclave_id
-        .is_some_and(|expected| expected != binding.enclave_id)
-    {
-        return Err(LaunchError::FullNodeBindingEnclaveMismatch.into());
-    }
-    if binding.valid_until <= view.schedule.finalized_timestamp {
-        return Err(LaunchError::FullNodeTeeLeaseExpired {
-            valid_until: binding.valid_until,
-        }
-        .into());
-    }
-    Ok(LocalTeeAdmissionAnchorV1 {
-        finalized_height: view.view.block_number,
-        finalized_hash: view.view.block_hash,
-    })
-}
-
 #[derive(Clone)]
 pub(crate) struct TeeLeaseGuardConfigV1 {
     pub(crate) chain: RegistryChainIdentity,
-    pub(crate) identity: outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
-    /// Initial gate and the durable join anchor that must also validate when
-    /// the gate arms.
-    pub(crate) anchors: TeeLeaseGuardAnchorsV1,
     /// Signalled by the FinalizationActor and the FinalityObserver on every
     /// local finalization.
     pub(crate) finalization_notify: Arc<tokio::sync::Notify>,
     /// Publishes `true` when the gate becomes `Armed`.
     pub(crate) armed: tokio::sync::watch::Sender<bool>,
-}
-
-/// Ask the enclave to retire remote sessions once the local finalized chain
-/// schedules a successor retirement above `retired_at`.
-pub(super) fn retire_superseded_remote_sessions_v1<P>(
-    provider: &P,
-    chain: RegistryChainIdentity,
-    session: &dyn outbe_execution::tee_remote_session::TeeSessionStateReader,
-    retired_at: &mut u64,
-) -> eyre::Result<()>
-where
-    P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
-{
-    if provider
-        .finalized_block_num_hash()?
-        .is_none_or(|head| head.number == 0)
-    {
-        return Ok(());
-    }
-    let status = inspect_local_finalized_successor_status_v1(provider, chain, session)?;
-    if status.retirement_height <= *retired_at {
-        return Ok(());
-    }
-    if outbe_tee::in_process_tee_context().is_some() {
-        // Direct admission is checked per call; this process has no IPC tickets to retire.
-        *retired_at = status.retirement_height;
-        return Ok(());
-    }
-    let activation_height = status.retirement_height;
-    let response = outbe_tee::try_with_enclave(|session| {
-        session.request(
-            &outbe_tee::protocol::EnclaveRequest::RetireRemoteSessionsV1 { activation_height },
-        )
-    })
-    .ok_or(LaunchError::TeeClientUnavailableDuringRetirement)??;
-    if !matches!(response, outbe_tee::protocol::EnclaveResponse::RemoteSessionsRetiredV1 { activation_height: echoed } if echoed == activation_height)
-    {
-        return Err(LaunchError::EnclaveDidNotAckSessionRetirement.into());
-    }
-    *retired_at = activation_height;
-    Ok(())
 }
 
 /// Retains canonical rejection diagnostics and records typed guard failures.

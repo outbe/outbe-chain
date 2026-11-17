@@ -10,6 +10,15 @@ use commonware_cryptography::{bls12381, Signer as _, Verifier as _};
 use outbe_primitives::tee_attestation_v1::*;
 use std::collections::{BTreeMap, BTreeSet};
 
+/// Quote material returned only after the host has verified the enclave's
+/// exact intent echo and persistent Ed25519 proof of possession.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GeneratedDcapQuoteV1 {
+    pub quote_body: Vec<u8>,
+    pub enclave_signature: [u8; 64],
+    pub transition_key_ready_proof: Option<TransitionKeyReadyProofV1>,
+}
+
 impl InProcessTeeContext {
     fn ceremony_binding(&self, id: B256, round: u64, participants: &[Vec<u8>]) -> Result<B256> {
         let hash = dkg_participant_set_hash_v1(participants)?;
@@ -265,7 +274,10 @@ mod tests {
         let context =
             test_support::context(AttestationMode::NoAttestationDev, ProofSourceV1::NoHardware);
         assert!(matches!(
-            context.founding_request(&EnclaveRequest::Health),
+            context.founding_request(&EnclaveRequest::Payload {
+                lane: crate::protocol::PayloadLane::Execution,
+                payload: Vec::new(),
+            }),
             Err(InProcessError::UnsupportedCeremonyRequest)
         ));
         let participants = vec![context.tee_bls_public_bytes()];

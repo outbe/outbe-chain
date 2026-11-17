@@ -12,10 +12,9 @@ use outbe_enclave::protocol::{
 };
 use outbe_enclave::{gratis, promis};
 use outbe_primitives::tee_signatures::recover_signer;
-use outbe_tee::resident::{AccountKeysHandle, OfferKeyHandle};
+use outbe_tee::resident::{AccountKeysHandle, StateKeyHandle};
 use serde_json::Value;
 use x25519_dalek::{PublicKey, StaticSecret};
-use zeroize::Zeroizing;
 
 const VECTORS: &str = r###"{
   "deriveKeys": {
@@ -269,7 +268,7 @@ fn mcp_opens_the_balances_the_enclave_writes() {
     let all = vectors();
     let v = &all["balances"];
     let view = word(&v["viewKey"]);
-    let view_handle = OfferKeyHandle::from_legacy_secret(Zeroizing::new(view));
+    let view_handle = StateKeyHandle::for_test(view);
     let account: Address = v["account"].as_str().unwrap().parse().unwrap();
     let decimal = |value: &Value| U256::from_str_radix(value.as_str().unwrap(), 10).unwrap();
     let version = |value: &Value| value.as_str().unwrap().parse::<u64>().unwrap();
@@ -277,7 +276,7 @@ fn mcp_opens_the_balances_the_enclave_writes() {
     let promis = &v["promis"];
     let promis_field = promis["field"].as_u64().unwrap() as u8;
     let blob = write_promis_amount(
-        view_handle.key_handle(),
+        &view_handle,
         BalanceTransition {
             account,
             field: promis_field,
@@ -289,7 +288,7 @@ fn mcp_opens_the_balances_the_enclave_writes() {
     .unwrap();
     assert_eq!(blob, bytes(&promis["blob"]));
     assert_eq!(
-        read_promis_amount(view_handle.key_handle(), account, promis_field, &blob)
+        read_promis_amount(&view_handle, account, promis_field, &blob)
             .unwrap()
             .1,
         decimal(&promis["amount"])
@@ -302,7 +301,7 @@ fn mcp_opens_the_balances_the_enclave_writes() {
     for gratis in v["gratis"].as_array().unwrap() {
         let field = gratis["field"].as_u64().unwrap() as u8;
         let blob = write_amount(
-            view_handle.key_handle(),
+            &view_handle,
             BalanceTransition {
                 account,
                 field,
@@ -314,9 +313,7 @@ fn mcp_opens_the_balances_the_enclave_writes() {
         .unwrap();
         assert_eq!(blob, bytes(&gratis["blob"]));
         assert_eq!(
-            read_amount(view_handle.key_handle(), account, field, &blob)
-                .unwrap()
-                .1,
+            read_amount(&view_handle, account, field, &blob).unwrap().1,
             decimal(&gratis["amount"])
         );
         if field == 0 {
@@ -365,7 +362,7 @@ fn mcp_opens_the_nod_amount_the_enclave_encrypts() {
     assert_eq!(terms.nod_id, decimal(&v["nodId"]));
     assert_eq!(view_key, word(&v["viewKey"]));
     let nod = encrypt_nod(
-        OfferKeyHandle::from_legacy_secret(Zeroizing::new(nod_state_key)).key_handle(),
+        &StateKeyHandle::for_test(nod_state_key),
         terms,
         decimal(&v["gratisAmount"]),
     )

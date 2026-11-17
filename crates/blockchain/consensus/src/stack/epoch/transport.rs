@@ -131,9 +131,7 @@ where
     // Pre-register both founding channels for the configured TEE backend before network.start().
     // They carry registration/EVM signatures, encrypted DKG shares and offer-key partials.
     let [mut tee_bootstrap_channel, mut tee_dkg_channel] =
-        register_tee_channels(args.tee_enclave_socket.is_some(), |id, quota| {
-            network.register(id, quota)
-        });
+        register_tee_channels(|id, quota| network.register(id, quota));
 
     let radicle_channel = radicle_endpoint.as_ref().map(|_| {
         let (channel, quota) = radicle_channel_config();
@@ -231,7 +229,7 @@ where
     // Only the startup ceremony (round 0) uses them. The round-0 DKG at startup
     // is the only ceremony that builds the TEE key. A new node gets the
     // permanent offer key through onboarding / key transfer, not through a
-    // later TEE reshare. The value is `None` when neither a resident context nor a sidecar is configured.
+    // later TEE reshare. The value is `None` when neither a resident context is configured.
     let mut tee_dkg_mux = tee_dkg_channel.take().map(|ch| {
         let (muxer, handle) = Muxer::new(ctx.child("tee_dkg_mux"), ch.0, ch.1, MUXER_MAILBOX);
         muxer.start();
@@ -286,12 +284,9 @@ where
     }))
 }
 
-/// Keep founding channel admission identical for the resident and transitional sidecar backends.
-fn register_tee_channels<T>(
-    has_socket: bool,
-    mut register: impl FnMut(u64, Quota) -> T,
-) -> [Option<T>; 2] {
-    let enabled = has_socket || outbe_tee::in_process_tee_context().is_some();
+/// Register founding channels only when a resident context is installed.
+fn register_tee_channels<T>(mut register: impl FnMut(u64, Quota) -> T) -> [Option<T>; 2] {
+    let enabled = outbe_tee::in_process_tee_context().is_some();
     [
         (config::TEE_BOOTSTRAP_CHANNEL, Quota::per_second(NZU32!(64))),
         (config::TEE_DKG_CHANNEL, Quota::per_second(NZU32!(128))),
@@ -300,36 +295,32 @@ fn register_tee_channels<T>(
 }
 
 #[cfg(test)]
-#[path = "../../../../tee/tests/dkg_e2e_in_process/support.rs"]
-mod resident_fixture;
-
-#[cfg(test)]
 mod resident_channel_tests {
     use super::*;
     use outbe_primitives::tee_attestation_v1::*;
 
     #[test]
     fn resident_context_registers_both_founding_channels_without_a_socket() {
-        let _empty = outbe_tee::client_global::set_in_process_tee_context_for_test(None);
+        let _empty = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(None);
         let expected = [
             Some(config::TEE_BOOTSTRAP_CHANNEL),
             Some(config::TEE_DKG_CHANNEL),
         ];
-        assert_eq!(register_tee_channels(false, |id, _| id), [None, None]);
-        assert_eq!(register_tee_channels(true, |id, _| id), expected);
+        assert_eq!(register_tee_channels(|id, _| id), [None, None]);
 
         let binding = NetworkBindingV1 {
             chain_id: alloy_primitives::U256::from(676).to_be_bytes(),
             genesis_hash: B256::repeat_byte(2),
             attestation_mode: AttestationMode::NoAttestationDev,
         };
-        let context = Arc::new(resident_fixture::context(7, binding));
-        let _resident = outbe_tee::client_global::set_in_process_tee_context_for_test(Some((
-            context,
-            |_, _, _| Err(outbe_tee::TransportError::UnexpectedResponse),
-        )));
+        let context = Arc::new(outbe_tee::test_utils::resident_context(7, binding));
+        let _resident = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some(
+            (context, |_, _, _| {
+                Err(outbe_tee::TransportError::UnexpectedResponse)
+            }),
+        ));
         let mut registered = Vec::new();
-        let channels = register_tee_channels(false, |id, _| {
+        let channels = register_tee_channels(|id, _| {
             registered.push(id);
             id
         });
@@ -338,6 +329,5 @@ mod resident_channel_tests {
             registered,
             [config::TEE_BOOTSTRAP_CHANNEL, config::TEE_DKG_CHANNEL]
         );
-        assert_eq!(register_tee_channels(true, |id, _| id), expected);
     }
 }

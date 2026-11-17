@@ -1,4 +1,4 @@
-//! Finalized direct admission must bind the actual RAM identity, never an IPC ticket.
+//! Finalized direct admission must bind the actual resident identity.
 use super::*;
 use outbe_primitives::tee_attestation_v1::TrustedNetworkDescriptorV1;
 use outbe_tee::{
@@ -127,7 +127,7 @@ fn direct_admission_requires_exact_resident_manifest_host_and_noise_at_finality(
         };
         let result = authorize_local_finalized_remote_session_v1(
             &finalized,
-            LocalRemoteSessionTargetV1::InProcess(&context),
+            &context,
             RegistryChainIdentity {
                 chain_id: CHAIN_ID,
                 genesis_hash: network,
@@ -147,9 +147,7 @@ fn direct_admission_requires_exact_resident_manifest_host_and_noise_at_finality(
         if defect.is_some() {
             assert!(result.is_err(), "must reject {defect:?}");
         } else {
-            let LocalRemoteSessionAuthorizationV1::InProcess(admission) = result.unwrap() else {
-                panic!("must not produce an IPC ticket")
-            };
+            let admission = result.unwrap();
             assert_eq!(admission.finalized_view().block_hash, hash);
             assert_eq!(admission.responder_static_x25519(), context.noise_public());
             assert_eq!(

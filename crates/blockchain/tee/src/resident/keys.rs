@@ -117,23 +117,6 @@ impl std::fmt::Debug for ResidentOfferMaterial {
 }
 
 impl ResidentOfferMaterial {
-    /// Import existing sidecar material into opaque RAM handles; removed with the sidecar.
-    pub fn from_legacy_parts(
-        secret: Zeroizing<[u8; 32]>,
-        group_sig: Zeroizing<Vec<u8>>,
-        key_epoch: u64,
-        tribute_offer_epoch: u64,
-    ) -> Self {
-        let public = x25519_public(&secret);
-        Self {
-            secret: OfferKeyHandle::from_legacy_secret(secret),
-            public,
-            group_sig,
-            key_epoch,
-            tribute_offer_epoch,
-        }
-    }
-
     pub(crate) fn from_group_signature(
         group_sig: Zeroizing<Vec<u8>>,
         chain_id: B256,

@@ -81,12 +81,11 @@ pub struct EnclaveHealthInfo {
     pub last_canary_latency_ms: Option<u64>,
     pub consecutive_failures: u64,
     pub last_failure_class: Option<String>,
-    /// Self-reported enclave uptime (from `EnclaveRequest::Health`).
+    /// Resident enclave context uptime.
     pub uptime_s: Option<u64>,
     pub heap_current_bytes: Option<u64>,
     pub heap_peak_bytes: Option<u64>,
-    /// `null` until feature detection ran. `false` means that the enclave binary
-    /// predates the Health probe (canary-decrypt-only mode).
+    /// `null` before the first observation; `false` for resident canary-only telemetry.
     pub health_probe_supported: Option<bool>,
 }
 

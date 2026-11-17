@@ -428,7 +428,6 @@ impl EnclaveResponse {
     pub fn from_wire_response(wire: &WireResponse) -> Result<Self, TransportError> {
         match wire {
             WireResponse::Error { message } => Err(TransportError::EnclaveError(message.clone())),
-            WireResponse::NotReady { message } => Err(TransportError::Unavailable(message.clone())),
             WireResponse::Payload {
                 recordable,
                 payload,

@@ -16,7 +16,7 @@ qualification anchor at slot 1. Source addresses, balances, owner nonces, pendin
 notes, live allocations and cohorts are resolved only inside the enclave.
 
 A request names the two committed journal heads. On a cache miss the host reads
-sequential pages of at most 15 records (within the Noise frame limit). These
+sequential pages of at most 15 records. These
 accesses depend on the global journal cursor, never on a source account. The
 enclave authenticates each record against its domain, network and preceding head.
 A record seals the completed state change and its full request hash. Fidelity
@@ -102,15 +102,8 @@ domains/networks. Real-EVM issuance and settlement tests exercise the credential
 path and verify token, position, private-state and event rollback on failed ERC20
 transfers/approvals and vault deposits.
 
-Run the isolated scaling check with:
-
-```sh
-SOURCE_DATE_EPOCH=0 cargo test --locked -p outbe-tee-enclave --lib \
-  confidential_ledger::tests::journal_scaling -- --ignored --nocapture
-```
-
 A local unoptimized macOS run measured the following (101 warm operations,
-median; excludes transport, SGX transitions and EVM storage gas; other workspace
+median; excludes external I/O and EVM storage gas; other workspace
 checks were running):
 
 | Allocations | Warm return | Cold journal recovery | Ciphertext history |
@@ -120,6 +113,6 @@ checks were running):
 | 10,000 | 117 µs | 3,795,378 µs | 40,960,000 bytes |
 
 A return writes 4096 ciphertext bytes; a burn writes 8192 across both journals,
-plus storage metadata and public effects. These are compute/scaling measurements,
-not production SGX throughput claims. Fidelity evaluation retains its existing
+plus storage metadata and public effects. These are historical compute/scaling measurements,
+not production throughput claims. Fidelity evaluation retains its existing
 cost proportional to the selected owner's cohort history.

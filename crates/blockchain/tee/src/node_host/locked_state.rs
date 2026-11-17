@@ -16,13 +16,13 @@ pub(super) fn lock_node_host_state(
     Ok((paths, state_lock))
 }
 
-/// Require the committed manifest and the persistent Noise key. A missing file
+/// Require the committed manifest and the persistent host key. A missing file
 /// gives `missing_error`. This check does not read either file.
 pub(super) fn require_committed_node_host_state(
     paths: &NodeHostPaths,
     missing_error: &'static str,
 ) -> Result<(), TransportError> {
-    if !path_exists(&paths.manifest)? || !path_exists(&paths.noise_key)? {
+    if !path_exists(&paths.manifest)? || !path_exists(&paths.identity_key)? {
         return Err(TransportError::Codec(missing_error.into()));
     }
     Ok(())

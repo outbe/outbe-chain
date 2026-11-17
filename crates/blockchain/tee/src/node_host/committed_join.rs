@@ -23,7 +23,7 @@ use super::FinalizedJoinAdmissionAnchorV1;
 use super::NodeHostPaths;
 use super::NodeHostStateLock;
 
-use crate::NodeHostNoiseKey;
+use crate::node_host::NodeHostIdentityKey;
 use crate::TransportError;
 use alloy_primitives::Address;
 use alloy_primitives::B256;
@@ -63,7 +63,7 @@ fn committed_submission_state(
 ) -> Result<LockedJoinState, TransportError> {
     locked_join_state(node_data_dir, |paths| {
         require_committed_node_host_state(paths, missing_state_error)?;
-        let node_host = NodeHostNoiseKey::load(&paths.noise_key)?;
+        let node_host = NodeHostIdentityKey::load(&paths.identity_key)?;
         let manifest = read_manifest(&paths.manifest)?;
         if manifest.node_host_noise_x25519 != node_host.public() {
             return Err(TransportError::Codec(
@@ -77,7 +77,7 @@ fn committed_submission_state(
 
 fn finalized_anchor_state(node_data_dir: &Path) -> Result<LockedJoinState, TransportError> {
     locked_join_state(node_data_dir, |paths| {
-        let node_host = NodeHostNoiseKey::load(&paths.noise_key)?;
+        let node_host = NodeHostIdentityKey::load(&paths.identity_key)?;
         reconcile_replacement_state(paths, &node_host)?;
         let manifest = read_manifest(&paths.manifest)?;
         reconcile_committed_join_state(paths, &manifest)?;

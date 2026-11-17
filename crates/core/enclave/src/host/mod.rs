@@ -30,11 +30,10 @@ pub mod verification;
 mod witness_tests;
 
 use outbe_tee::{
-    canary_attestation_pub, canary_request_with_meta,
+    in_process_tee_context,
     protocol::{EnclaveResponse as WireResponse, PayloadLane},
-    tee_consensus_call, tee_session_call, tee_session_call_on, try_account_query_with_meta,
-    try_with_enclave, AuthorizedEnclaveClient, CallMeta, EnclaveClient, EnclaveSession,
-    RuntimeEnclaveClient, TransportError,
+    tee_consensus_call, tee_session_call, try_account_query_with_meta, try_in_process_request,
+    CallMeta, InProcessDispatchError, TransportError,
 };
 
 pub use errors::{
@@ -53,107 +52,31 @@ pub use verification::{
     verify_tribute_offer_attestation,
 };
 
-/// Execute a domain [`protocol::EnclaveRequest`] over an [`EnclaveSession`] on `lane`.
-pub fn request_enclave_session_on_lane(
-    session: &mut EnclaveSession,
-    lane: PayloadLane,
-    request: &protocol::EnclaveRequest,
-) -> Result<protocol::EnclaveResponse, TransportError> {
-    let wire_req = request.encode_wire(lane)?;
-    let wire_resp = session.request_with_meta(request.call_meta(), &wire_req)?;
-    protocol::EnclaveResponse::from_wire_response(&wire_resp)
-}
-
-/// Execute a domain [`protocol::EnclaveRequest`] over an [`EnclaveSession`] on [`PayloadLane::Execution`].
-pub fn request_enclave_session(
-    session: &mut EnclaveSession,
-    request: &protocol::EnclaveRequest,
-) -> Result<protocol::EnclaveResponse, TransportError> {
-    request_enclave_session_on_lane(session, PayloadLane::Execution, request)
-}
-
-/// Execute a domain [`protocol::EnclaveRequest`] over a development [`EnclaveClient`] on `lane`.
-pub fn request_enclave_client_on_lane(
-    client: &mut EnclaveClient,
-    lane: PayloadLane,
-    request: &protocol::EnclaveRequest,
-) -> Result<protocol::EnclaveResponse, TransportError> {
-    let wire_req = request.encode_wire(lane)?;
-    let wire_resp = client.request(&wire_req)?;
-    protocol::EnclaveResponse::from_wire_response(&wire_resp)
-}
-
-/// Execute a domain [`protocol::EnclaveRequest`] over a development [`EnclaveClient`] on [`PayloadLane::Execution`].
-pub fn request_enclave_client(
-    client: &mut EnclaveClient,
-    request: &protocol::EnclaveRequest,
-) -> Result<protocol::EnclaveResponse, TransportError> {
-    request_enclave_client_on_lane(client, PayloadLane::Execution, request)
-}
-
-/// Execute a domain [`protocol::EnclaveRequest`] over an [`AuthorizedEnclaveClient`] on `lane`.
-pub fn request_authorized_enclave_client_on_lane(
-    client: &mut AuthorizedEnclaveClient,
-    lane: PayloadLane,
-    request: &protocol::EnclaveRequest,
-) -> Result<protocol::EnclaveResponse, TransportError> {
-    let wire_req = request.encode_wire(lane)?;
-    let wire_resp = client.request(&wire_req)?;
-    protocol::EnclaveResponse::from_wire_response(&wire_resp)
-}
-
-/// Execute a domain [`protocol::EnclaveRequest`] over an [`AuthorizedEnclaveClient`] on [`PayloadLane::Execution`].
-pub fn request_authorized_enclave_client(
-    client: &mut AuthorizedEnclaveClient,
-    request: &protocol::EnclaveRequest,
-) -> Result<protocol::EnclaveResponse, TransportError> {
-    request_authorized_enclave_client_on_lane(client, PayloadLane::Execution, request)
-}
-
-/// Execute a domain [`protocol::EnclaveRequest`] over a [`RuntimeEnclaveClient`] on [`PayloadLane::Execution`].
-pub fn request_runtime_enclave_client(
-    client: &mut RuntimeEnclaveClient,
-    request: &protocol::EnclaveRequest,
-) -> Result<protocol::EnclaveResponse, TransportError> {
-    let wire_req = request.encode_wire(PayloadLane::Execution)?;
-    let wire_resp = client.request_with_meta(request.call_meta(), &wire_req)?;
-    protocol::EnclaveResponse::from_wire_response(&wire_resp)
-}
-
-/// Run a non-consensus domain request against the process-global execution session.
+/// Run a non-consensus domain request against the resident execution lane.
 ///
-/// Returns `None` only when no enclave session is installed.
+/// Returns `None` only when no resident enclave is installed.
 pub fn try_with_domain_enclave(
     request: &protocol::EnclaveRequest,
 ) -> Option<([u8; 32], Result<protocol::EnclaveResponse, TransportError>)> {
-    if let Some(context) = outbe_tee::in_process_tee_context() {
-        let response = request
-            .encode_wire(PayloadLane::Execution)
-            .and_then(|wire| {
-                outbe_tee::try_in_process_request(request.call_meta(), &wire)
-                    .ok_or(TransportError::UnexpectedResponse)?
-                    .and_then(|response| protocol::EnclaveResponse::from_wire_response(&response))
-            });
-        return Some((context.attestation_public(), response));
-    }
-    try_with_enclave(|session| {
-        (
-            session.attestation_pub(),
-            request_enclave_session(session, request),
-        )
-    })
+    let context = in_process_tee_context()?;
+    let response = request
+        .encode_wire(PayloadLane::Execution)
+        .and_then(|wire| {
+            try_in_process_request(request.call_meta(), &wire)
+                .ok_or(InProcessDispatchError::ContextNotInstalled)?
+                .and_then(|response| protocol::EnclaveResponse::from_wire_response(&response))
+        });
+    Some((context.attestation_public(), response))
 }
 
 /// Run an authorized account-key RPC query (`DeriveAccountKeys`) on the dedicated account-query lane.
 ///
-/// Returns `None` only when no enclave session is installed.
+/// Returns `None` only when no resident enclave is installed.
 pub fn try_domain_account_query(
     request: &protocol::EnclaveRequest,
 ) -> Option<Result<protocol::EnclaveResponse, TransportError>> {
-    if outbe_tee::in_process_tee_context().is_some()
-        && !request.allows_lane(PayloadLane::AccountQuery)
-    {
-        return Some(Err(outbe_tee::InProcessDispatchError::LaneDenied {
+    if in_process_tee_context().is_some() && !request.allows_lane(PayloadLane::AccountQuery) {
+        return Some(Err(InProcessDispatchError::LaneDenied {
             lane: PayloadLane::AccountQuery,
         }
         .into()));
@@ -168,51 +91,28 @@ pub fn try_domain_account_query(
     )
 }
 
-/// Run a read-only canary domain probe (`ProcessTributeOfferBatch` / `ProcessEncryptedTributeOfferBatchV2`)
-/// on the dedicated canary lane, returning `(pinned_attestation_pub, response)`.
-pub fn canary_domain_request(
+/// Exercise the resident canary lane for domain lane-isolation tests.
+#[cfg(test)]
+fn canary_domain_request(
     request: &protocol::EnclaveRequest,
 ) -> Result<([u8; 32], protocol::EnclaveResponse), TransportError> {
-    let key = canary_attestation_pub()
-        .ok_or(outbe_tee::errors::TeeClientVerificationError::EnclaveSessionNotConfigured)?;
-    if outbe_tee::in_process_tee_context().is_some() && !request.allows_lane(PayloadLane::Canary) {
-        return Err(outbe_tee::InProcessDispatchError::LaneDenied {
+    let key =
+        outbe_tee::canary_attestation_pub().ok_or(InProcessDispatchError::ContextNotInstalled)?;
+    if !request.allows_lane(PayloadLane::Canary) {
+        return Err(InProcessDispatchError::LaneDenied {
             lane: PayloadLane::Canary,
         }
         .into());
     }
     let wire_req = request.encode_wire(PayloadLane::Canary)?;
-    let wire_resp = canary_request_with_meta(request.call_meta(), &wire_req)?;
+    let wire_resp = outbe_tee::canary_request_with_meta(request.call_meta(), &wire_req)?;
     let decoded = protocol::EnclaveResponse::from_wire_response(&wire_resp)?;
     Ok((key, decoded))
 }
 
-/// Execute an authenticated non-consensus domain operation on `session`.
+/// Execute an authenticated non-consensus domain operation on the resident execution lane.
 ///
-/// Fails closed if `request.is_recordable()` is `true` so consensus-recorded
-/// operations never bypass the block witness tape.
-pub fn domain_session_call_on(
-    session: &mut EnclaveSession,
-    request: &protocol::EnclaveRequest,
-    authenticate: impl FnOnce(&[u8; 32], &protocol::EnclaveResponse) -> Result<(), TransportError>,
-) -> Result<([u8; 32], protocol::EnclaveResponse), TransportError> {
-    let meta = request.call_meta();
-    let wire_req = request.encode_wire(PayloadLane::Execution)?;
-    let mut decoded_out = None;
-    let (key, _) = tee_session_call_on(session, meta, &wire_req, |verify_key, wire_resp| {
-        let decoded = protocol::EnclaveResponse::from_wire_response(wire_resp)?;
-        authenticate(verify_key, &decoded)?;
-        decoded_out = Some(decoded);
-        Ok(())
-    })?;
-    let decoded = decoded_out.ok_or(TransportError::UnexpectedResponse)?;
-    Ok((key, decoded))
-}
-
-/// Execute an authenticated non-consensus domain operation against the process-global
-/// execution session.
-///
-/// Returns `None` only when no enclave session is installed.
+/// Returns `None` only when no resident enclave is installed.
 pub fn domain_session_call(
     request: &protocol::EnclaveRequest,
     authenticate: impl FnOnce(&[u8; 32], &protocol::EnclaveResponse) -> Result<(), TransportError>,
@@ -263,7 +163,7 @@ fn verify_consensus_domain_response(
 ///   every inner `attestation_tag` inside `Payload.payload`, authenticates against
 ///   `leader_key`, and appends `EnclaveWitnessEntryV1::Payload` to the witness tape.
 /// - On `VerifierReplay`, reconstructs `WireResponse::Payload` from the witness tape
-///   without touching local transport, canonically decodes `protocol::EnclaveResponse`,
+///   without calling the resident enclave, canonically decodes `protocol::EnclaveResponse`,
 ///   and verifies `authenticate(&leader_key, &decoded)`.
 /// - On `VerifierWithEnclave`, verifies both the proposer's witness entry and the
 ///   local enclave's response, enforcing byte-identical tag-free `Payload.payload`
@@ -271,7 +171,7 @@ fn verify_consensus_domain_response(
 pub fn consensus_domain_call(
     label: &'static str,
     request: &protocol::EnclaveRequest,
-    missing_sidecar_err: impl FnOnce() -> TransportError,
+    missing_enclave_err: impl FnOnce() -> TransportError,
     authenticate: impl Fn(&[u8; 32], &protocol::EnclaveResponse) -> Result<(), TransportError>,
 ) -> Result<([u8; 32], protocol::EnclaveResponse), TransportError> {
     let meta = CallMeta {
@@ -290,7 +190,7 @@ pub fn consensus_domain_call(
             meta.label,
             || {
                 let hook_result = tribute_client::try_test_local_enclave_hook(request)
-                    .ok_or_else(missing_sidecar_err)?;
+                    .ok_or_else(missing_enclave_err)?;
                 let (hook_key, domain_resp) = hook_result?;
                 Ok((hook_key, domain_resp.into_wire_response()?))
             },
@@ -299,13 +199,13 @@ pub fn consensus_domain_call(
             },
         )?
     } else {
-        tee_consensus_call(meta, &wire_req, missing_sidecar_err, |verify_key, resp| {
+        tee_consensus_call(meta, &wire_req, missing_enclave_err, |verify_key, resp| {
             verify_consensus_domain_response(verify_key, resp, &authenticate)
         })?
     };
     #[cfg(not(any(test, feature = "test-utils")))]
     let (key, wire_resp) =
-        tee_consensus_call(meta, &wire_req, missing_sidecar_err, |verify_key, resp| {
+        tee_consensus_call(meta, &wire_req, missing_enclave_err, |verify_key, resp| {
             verify_consensus_domain_response(verify_key, resp, &authenticate)
         })?;
     let decoded = protocol::EnclaveResponse::from_wire_response(&wire_resp)?;

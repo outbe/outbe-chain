@@ -1,20 +1,6 @@
-//! Neutral wire-protocol types for the node <-> enclave channel.
-//!
-//! These types are the message contract shared by the host (`outbe-tee`) and
-//! the enclave (`outbe-tee-enclave`). They carry **no secret material** and no
-//! cryptographic logic. They define only the shape of requests and responses.
-//!
-//! Transport: length-prefixed framing over UDS/TCP, wrapped in a Noise-IK
-//! transport (payload layer). Production first exposes only an initialization
-//! challenge. A node-signed manifest installs one persistent `NodeHost`
-//! initiator. The enclave accepts every later command, including quote
-//! generation, only after Noise message 1 authenticates that initiator.
-//! `GetQuote` exists only for the separate development transport.
+//! Typed resident dispatch messages and the public health snapshot schema.
 
 use alloy_primitives::B256;
-
-/// Canonical NoAttestationDev onboarding context used by the typed enclave request.
-pub type NoAttestationDevOnboardingContextV1 = crate::dcap_protocol::DcapOnboardingContextV1;
 
 mod enclave_request;
 mod enclave_response;
@@ -25,7 +11,7 @@ pub use enclave_response::{
     EnclaveRequestCountsV1, EnclaveResponse,
 };
 
-/// Host-enclave connection lane for opaque application-layer [`EnclaveRequest::Payload`] calls.
+/// Resident execution lane for opaque application-layer [`EnclaveRequest::Payload`] calls.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PayloadLane {
     /// Block execution and authenticated NodeHost consensus/RPC read-only calls.
@@ -35,23 +21,6 @@ pub enum PayloadLane {
     /// Off-chain user account key-derivation RPC queries.
     AccountQuery,
 }
-
-/// How a request participates in the block's enclave witness tape.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConsensusWitnessKind {
-    Recorded,
-    StreamFrame,
-    NonConsensus,
-}
-
-/// Hard cap for the deterministic registry onboarding artifact. The current
-/// X25519/nonce/AEAD envelope is substantially smaller. This cap prevents a
-/// malformed enclave response from creating an unbounded consensus log.
-pub const MAX_ONBOARDING_ARTIFACT_BYTES: usize = 512;
-
-/// Minimum canonical framing: the committed 32-byte offer public key plus the
-/// ephemeral public key, nonce and authenticated ciphertext framing.
-pub const MIN_ONBOARDING_ARTIFACT_BYTES: usize = 60;
 
 /// One DKG participant's ceremony-scoped identity. `enc_sig` authenticates:
 /// - the full network binding

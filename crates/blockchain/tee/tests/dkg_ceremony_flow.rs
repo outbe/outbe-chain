@@ -436,8 +436,7 @@ async fn offer_phase_waits_for_every_participant_and_ignores_late_dkg() -> Resul
     Ok(())
 }
 
-#[path = "dkg_e2e_in_process/support.rs"]
-mod resident;
+use outbe_tee::test_utils::resident_context;
 
 #[test]
 fn resident_ceremony_rejects_out_of_order_requests_without_resetting_identity() {
@@ -449,7 +448,7 @@ fn resident_ceremony_rejects_out_of_order_requests_without_resetting_identity() 
         genesis_hash: CHAIN,
         attestation_mode: AttestationMode::NoAttestationDev,
     };
-    let context = resident::context(7, binding);
+    let context = resident_context(7, binding);
     let mut channel = &context;
     let participant_bls = vec![context.tee_bls_public_bytes()];
     let hash = dkg_participant_set_hash_v1(&participant_bls).unwrap();

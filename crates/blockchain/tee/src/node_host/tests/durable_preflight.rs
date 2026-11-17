@@ -63,7 +63,7 @@ fn missing_committed_state_precedes_bad_key_and_does_not_change_checkpoints() {
     let evidence = AttestationEvidenceV1::decode_canonical(source.evidence()).unwrap();
     let durable_bytes = std::fs::read(&fixture.paths.replacement_submission).unwrap();
     std::fs::remove_file(&fixture.paths.manifest).unwrap();
-    std::fs::write(&fixture.paths.noise_key, b"invalid key").unwrap();
+    std::fs::write(&fixture.paths.identity_key, b"invalid key").unwrap();
 
     assert_eq!(
         persist_committed_join_submission(
@@ -200,7 +200,7 @@ fn direct_dev_enclave_signature_mismatch_fails_operation_selection_first() {
 fn promotion_requires_committed_state_before_it_reads_the_key() {
     let fixture = replacement_fixture();
     std::fs::remove_file(&fixture.paths.manifest).unwrap();
-    std::fs::write(&fixture.paths.noise_key, b"invalid key").unwrap();
+    std::fs::write(&fixture.paths.identity_key, b"invalid key").unwrap();
 
     assert_eq!(
         promote_replacement_candidate(&fixture.node_data_dir, &fixture.authorization)

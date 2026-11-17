@@ -14,8 +14,9 @@ use serde_json::Value;
 use crate::{
     signer::OutbeEvmSigner,
     tee_attestation_v1::{
-        AttestationEvidenceV1, AttestationMode, AttestationOperationV1, NoAttestationDevEvidenceV1,
-        NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1, RegistrationIntentV1, ResourceScheduleV1,
+        AttestationEvidenceV1, AttestationMode, AttestationOperationV1, CodecError,
+        EnclaveInitializationManifestV1, NoAttestationDevEvidenceV1, NodeIdV1,
+        PlatformTcbStatusSetV1, QvlTcbStatusV1, RegistrationIntentV1, ResourceScheduleV1,
         TeeMeasurementRuleV1, TeePolicyV1, TransitionKeyReadyProofV1, ValidatorNodeBindingV1,
         INTEL_QE_VENDOR_ID,
     },
@@ -29,6 +30,45 @@ use crate::{
 pub struct DevValidatorV1 {
     pub evm_secret: [u8; 32],
     pub bls_minpk_public: [u8; 48],
+}
+
+/// Operation-specific fields for a test registration intent bound to a manifest.
+pub struct RegistrationIntentFixture {
+    pub operation: AttestationOperationV1,
+    pub policy_hash: B256,
+    pub binding_id: B256,
+    pub binding_version: u64,
+    pub registration_version: u64,
+    pub renewal_nonce: u64,
+    pub transition_nonce: u64,
+    pub requested_valid_until: u64,
+}
+
+impl RegistrationIntentFixture {
+    pub fn for_manifest(
+        self,
+        manifest: &EnclaveInitializationManifestV1,
+    ) -> Result<RegistrationIntentV1, CodecError> {
+        Ok(RegistrationIntentV1 {
+            chain_id: manifest.chain_id,
+            genesis_hash: manifest.genesis_hash,
+            operation: self.operation,
+            attestation_mode: manifest.attestation_mode,
+            policy_hash: self.policy_hash,
+            node_id: manifest.node_id.clone(),
+            enclave_id: manifest.enclave_id()?,
+            binding_id: self.binding_id,
+            binding_version: self.binding_version,
+            registration_version: self.registration_version,
+            renewal_nonce: self.renewal_nonce,
+            transition_nonce: self.transition_nonce,
+            requested_valid_until: self.requested_valid_until,
+            recipient_x25519: manifest.recipient_x25519,
+            attestation_ed25519: manifest.attestation_ed25519,
+            noise_responder_x25519: manifest.noise_responder_x25519,
+            node_host_authorization_hash: manifest.node_host_authorization_hash()?,
+        })
+    }
 }
 
 /// Sign a NodeHost hash with a recoverable secp256k1 test key.

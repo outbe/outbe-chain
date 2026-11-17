@@ -1,6 +1,7 @@
 //! RAM-only TEE ceremonies and genesis-anchored key admission.
 pub mod admission;
 mod ceremony;
+pub use ceremony::GeneratedDcapQuoteV1;
 mod context;
 pub mod dkg;
 mod proof_source;

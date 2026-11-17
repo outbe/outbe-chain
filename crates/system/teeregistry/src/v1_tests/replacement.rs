@@ -188,8 +188,8 @@ fn candidate_generated_quote_intent_reaches_registry_replacement_exactly() {
         .mode(0o700)
         .create(&host_dir)
         .unwrap();
-    let node_host = outbe_tee::NodeHostNoiseKey::create_new(
-        &host_dir.join(outbe_tee::node_host::NODE_HOST_NOISE_KEY_V1),
+    let node_host = outbe_tee::node_host::NodeHostIdentityKey::create_new(
+        &host_dir.join(outbe_tee::node_host::NODE_HOST_IDENTITY_KEY_V1),
     )
     .unwrap();
     let active = resident_enclave(0x76, identity, node_host.public());

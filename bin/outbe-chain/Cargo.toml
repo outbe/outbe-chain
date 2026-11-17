@@ -22,7 +22,6 @@ name = "outbe-chain"
 path = "src/main.rs"
 
 [dependencies]
-outbe-enclave = { workspace = true, features = ["engine"] }
 outbe-chain-constants.workspace = true
 outbe-runtime.workspace = true
 outbe-snapshot.workspace = true
@@ -50,7 +49,6 @@ tar.workspace = true
 reth-primitives-traits.workspace = true
 
 [dev-dependencies]
-outbe-tee-enclave = { workspace = true, features = ["mock"] }
 outbe-genesis-cli.workspace = true
 commonware-p2p.workspace = true
 commonware-runtime.workspace = true

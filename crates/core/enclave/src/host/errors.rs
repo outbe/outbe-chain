@@ -45,11 +45,7 @@ pub enum BalanceClientError {
     #[error("request is not a confidential balance operation")]
     NotConfidentialBalanceOperation,
 
-    /// Enclave sidecar is not configured on this node.
-    #[error("tee_sidecar_unavailable")]
-    SidecarUnavailable,
-
-    /// Enclave sidecar failed with a node-local or enclave-state error.
+    /// The resident enclave failed with a node-local or enclave-state error.
     #[error("tee_sidecar_unavailable: {0}")]
     SidecarRequestUnavailable(#[source] TransportError),
 
@@ -127,8 +123,7 @@ impl BalanceClientError {
 impl From<BalanceClientError> for PrecompileError {
     fn from(error: BalanceClientError) -> Self {
         match error {
-            BalanceClientError::SidecarUnavailable
-            | BalanceClientError::SidecarRequestUnavailable(_)
+            BalanceClientError::SidecarRequestUnavailable(_)
             | BalanceClientError::EnclaveOperationError { .. }
             | BalanceClientError::RequestFailed(_)
             | BalanceClientError::GratisAttestationInvalid(_)

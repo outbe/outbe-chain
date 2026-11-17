@@ -1,6 +1,6 @@
 //! One lifecycle lock serializes finalized admission with resident promotion.
 use super::{admitted_authority_state, BootstrapAdmissionPolicy};
-use crate::admission::{LocalTeeAdmissionAnchorV1, TeeLeaseGuardAnchorsV1};
+use crate::admission::{LocalTeeAdmissionAnchorV1, TeeLeaseGuardGateV1};
 use crate::errors::TeeAuthorityError;
 use alloy_primitives::B256;
 use outbe_consensus::validators::{LocalTeeRuntimeAdmissionV1, LocalTeeRuntimeIdentityV1};
@@ -22,12 +22,8 @@ pub(crate) enum LiveTeeError {
     LocalIdentityUnavailable,
     #[error("finalized TEE policy no longer permits authority")]
     PolicyMismatch,
-    #[error("candidate finalized checkpoint does not match the local chain")]
-    FinalizedViewMismatch,
     #[error("TEE authority rejected")]
     Authority(#[from] TeeAuthorityError),
-    #[error("legacy enclave public identity unavailable")]
-    LegacyIdentityUnavailable,
     #[error("in-process dispatcher replacement failed")]
     Dispatch(#[from] outbe_tee::InProcessDispatchError),
     #[error("resident TEE operation failed")]
@@ -41,7 +37,7 @@ pub(crate) enum LiveTeeError {
 #[derive(Clone)]
 pub(crate) struct LiveTeeSnapshotV1 {
     pub(crate) identity: LocalTeeRuntimeIdentityV1,
-    pub(crate) anchors: TeeLeaseGuardAnchorsV1,
+    pub(crate) gate: TeeLeaseGuardGateV1,
     pub(crate) context: Arc<InProcessTeeContext>,
 }
 
@@ -65,7 +61,7 @@ impl LiveTeeRuntimeV1 {
         {
             return Err(LiveTeeError::CandidateMismatch);
         }
-        let bootstrap_allowed = active.anchors.gate.is_armed()
+        let bootstrap_allowed = active.gate.is_armed()
             && active.identity.validator.is_some()
             && active.context.admission_anchor()?.is_none();
         Ok(Self {
@@ -100,6 +96,7 @@ impl LiveTeeRuntimeV1 {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn staged_candidate(
         &self,
     ) -> Result<Option<Arc<InProcessTeeContext>>, LiveTeeError> {
@@ -148,7 +145,7 @@ impl LiveTeeRuntimeV1 {
         let result = super::guard::tick(
             (provider, protocol),
             (chain, identity),
-            (&mut active.anchors, &mut bootstrap),
+            (&mut active.gate, &mut bootstrap),
             &self.authority,
             || resident,
         );
@@ -183,11 +180,7 @@ impl LiveTeeRuntimeV1 {
         let mut active = self.lock()?;
         let result = (|| {
             let old = &active.context;
-            let previous = active
-                .anchors
-                .gate
-                .pending_anchor()
-                .or(active.anchors.durable);
+            let previous = active.gate.pending_anchor();
             if previous.is_some_and(|old| {
                 anchor.finalized_height < old.finalized_height
                     || (anchor.finalized_height == old.finalized_height
@@ -238,10 +231,7 @@ impl LiveTeeRuntimeV1 {
                         expected_enclave_id: Some(enclave_id),
                         ..active.identity
                     },
-                    anchors: TeeLeaseGuardAnchorsV1 {
-                        gate: crate::admission::TeeLeaseGuardGateV1::Pending(anchor),
-                        durable: None,
-                    },
+                    gate: TeeLeaseGuardGateV1::Pending(anchor),
                     context: candidate,
                 };
                 *staged = None;

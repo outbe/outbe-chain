@@ -19,7 +19,7 @@ async fn private_rpc_revokes_before_work_and_reopens_real_sealed_exports() {
     let context = crate::tee_canary_probe::test_support::context(8);
     crate::tee_canary_probe::test_support::activate(&context);
     let public_key = context.network_encryption_public().unwrap();
-    let _runtime = outbe_tee::client_global::set_in_process_tee_context_for_test(Some((
+    let _runtime = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some((
         Arc::clone(&context),
         |context, lane, payload| {
             assert_eq!(lane, outbe_tee::protocol::PayloadLane::AccountQuery);

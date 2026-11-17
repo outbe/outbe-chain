@@ -2,7 +2,7 @@
 //! Ed25519 attestation verification primitives.
 //!
 //! Higher-layer crates (`outbe-enclave`) construct domain request hashes and
-//! response preimages over these primitives while `outbe-tee` owns transport,
+//! response preimages over these primitives while `outbe-tee` owns dispatch,
 //! witness recording/replay, and Ed25519 verification.
 
 use alloy_primitives::{keccak256, B256};
@@ -17,7 +17,7 @@ pub use crate::witness::consensus_call;
 pub struct CallMeta {
     /// Stable telemetry label (`op` label in metrics and witness traces).
     pub label: &'static str,
-    /// Whether transport may retry once on a broken socket.
+    /// Whether the operation is safe to execute again.
     pub idempotent: bool,
     /// Whether consensus execution records this call on the block witness tape.
     pub recordable: bool,
@@ -89,7 +89,7 @@ pub enum TeeAttestationError {
 pub fn tee_consensus_call(
     meta: CallMeta,
     request: &crate::protocol::EnclaveRequest,
-    missing_sidecar_err: impl FnOnce() -> crate::TransportError,
+    missing_context_err: impl FnOnce() -> crate::TransportError,
     authenticate: impl Fn(
         &[u8; 32],
         &crate::protocol::EnclaveResponse,
@@ -103,52 +103,17 @@ pub fn tee_consensus_call(
     consensus_call(
         meta.label,
         || {
-            if let Some(context) = crate::in_process_tee_context() {
-                let response = crate::try_in_process_request(meta, request)
-                    .ok_or_else(missing_sidecar_err)??;
-                return Ok((context.attestation_public(), response));
-            }
-            let (session_key, wire_result) = crate::try_with_enclave(|session| {
-                (
-                    session.attestation_pub(),
-                    session.request_with_meta(meta, request),
-                )
-            })
-            .ok_or_else(missing_sidecar_err)?;
-            Ok((session_key, wire_result?))
+            crate::in_process_dispatch::request_with_attestation(meta, request)
+                .ok_or_else(missing_context_err)?
         },
         authenticate,
     )
 }
 
-/// Execute a non-consensus session operation on `session` and authenticate the response.
-///
-/// Fails closed if `meta.recordable` is `true` so consensus-recorded calls never
-/// bypass the block witness tape.
-pub fn tee_session_call_on(
-    session: &mut crate::EnclaveSession,
-    meta: CallMeta,
-    request: &crate::protocol::EnclaveRequest,
-    authenticate: impl FnOnce(
-        &[u8; 32],
-        &crate::protocol::EnclaveResponse,
-    ) -> Result<(), crate::TransportError>,
-) -> Result<([u8; 32], crate::protocol::EnclaveResponse), crate::TransportError> {
-    if meta.recordable {
-        return Err(crate::TransportError::Codec(
-            "recordable call routed to non-consensus tee_session_call".into(),
-        ));
-    }
-    let key = session.attestation_pub();
-    let response = session.request_with_meta(meta, request)?;
-    authenticate(&key, &response)?;
-    Ok((key, response))
-}
-
-/// Execute a non-consensus session operation against the process-global execution session
+/// Execute a non-consensus operation against the resident runtime
 /// and authenticate the response before returning it.
 ///
-/// Returns `None` only when no enclave session is installed.
+/// Returns `None` only when no resident runtime is installed.
 pub fn tee_session_call(
     meta: CallMeta,
     request: &crate::protocol::EnclaveRequest,
@@ -162,16 +127,11 @@ pub fn tee_session_call(
             "recordable call routed to non-consensus tee_session_call".into(),
         )));
     }
-    if let Some(context) = crate::in_process_tee_context() {
-        let key = context.attestation_public();
-        return Some((|| {
-            let response = crate::try_in_process_request(meta, request)
-                .ok_or(crate::TransportError::UnexpectedResponse)??;
-            authenticate(&key, &response)?;
-            Ok((key, response))
-        })());
-    }
-    crate::try_with_enclave(|session| tee_session_call_on(session, meta, request, authenticate))
+    let result = crate::in_process_dispatch::request_with_attestation(meta, request)?;
+    Some(result.and_then(|(key, response)| {
+        authenticate(&key, &response)?;
+        Ok((key, response))
+    }))
 }
 
 /// Compute `keccak256(domain || serde_json::to_vec(value))`.
@@ -332,9 +292,9 @@ mod tests {
 
     #[test]
     fn tee_consensus_call_and_session_call_fail_closed_on_mismatched_recordable_flag() {
-        let req = crate::protocol::EnclaveRequest::Health;
+        let req = crate::protocol::EnclaveRequest::GetPublicKeys;
         let err = tee_consensus_call(
-            CallMeta::session_only("health"),
+            CallMeta::session_only("get_public_keys"),
             &req,
             || crate::TransportError::Unavailable("none".into()),
             |_, _| Ok(()),
@@ -343,7 +303,7 @@ mod tests {
         assert!(matches!(err, crate::TransportError::Codec(_)));
 
         let session_err = tee_session_call(CallMeta::recorded("recorded_op"), &req, |_, _| Ok(()))
-            .expect("returns fail-closed error even without installed session")
+            .expect("returns fail-closed error even without installed runtime")
             .unwrap_err();
         assert!(matches!(session_err, crate::TransportError::Codec(_)));
     }

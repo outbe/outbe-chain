@@ -338,27 +338,4 @@ impl From<TributeFactoryError> for PrecompileError {
     }
 }
 
-/// Errors that occur when the host connects to the enclave client.
-#[derive(Debug, Error)]
-pub enum EnclaveInitError {
-    #[error("TEE enclave endpoint is not valid UTF-8")]
-    InvalidEndpointUtf8,
-
-    #[error("TEE enclave connect at {socket} failed: {source}")]
-    ConnectFailed {
-        socket: String,
-        #[source]
-        source: outbe_tee::TransportError,
-    },
-
-    #[error("unexpected enclave handshake response: {0:?}")]
-    UnexpectedHandshakeResponse(outbe_tee::protocol::EnclaveResponse),
-
-    #[error("enclave GetPublicKeys failed: {0}")]
-    GetPublicKeysFailed(#[source] outbe_tee::TransportError),
-
-    #[error(transparent)]
-    InstallFailed(#[from] outbe_tee::InstallError),
-}
-
 pub type TributeFactoryResult<T> = std::result::Result<T, TributeFactoryError>;

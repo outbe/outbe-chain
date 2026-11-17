@@ -8,9 +8,8 @@ use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 use outbe_tee::tee_dkg::{
     run_tee_dkg_ceremony, CeremonyError, DkgGossip, DkgWireMessage, FoundingCeremonyParameters,
 };
+use outbe_tee::test_utils::resident_context;
 use outbe_tee::{tee_dkg::EnclaveChannel as _, CeremonyCoordinator};
-#[path = "dkg_e2e_in_process/support.rs"]
-mod support;
 
 const N: usize = 4;
 
@@ -58,7 +57,7 @@ fn ceremony_driver_completes_over_in_memory_gossip() {
         };
 
         let contexts: Vec<_> = (0..N)
-            .map(|i| std::sync::Arc::new(support::context(i as u8 + 1, network_binding)))
+            .map(|i| std::sync::Arc::new(resident_context(i as u8 + 1, network_binding)))
             .collect();
         let mut clients: Vec<_> = contexts.iter().map(|c| c.as_ref()).collect();
 

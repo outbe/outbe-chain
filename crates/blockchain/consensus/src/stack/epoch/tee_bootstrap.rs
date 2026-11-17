@@ -54,7 +54,7 @@ where
     } = startup;
     // -- 7b. One-time TEE DKG + bootstrap coordination (startup, like the DKG) --
     // On a fresh chain (no executed blocks yet), this validator must run the TEE
-    // enclave sidecar selected by the mandatory block-1 genesis policy:
+    // resident enclave required by the block-1 genesis policy:
     //   1. run the TEE DKG ceremony so the committee's enclaves collaboratively
     //      derive the shared network encryption key. Seam F: a group threshold
     //      signature over a fixed message -> HKDF -> X25519. The key is
@@ -72,8 +72,8 @@ where
     // imported blocks. Missing local enclave or NodeHost identity is a startup
     // error, never a production fallback.
     let context = outbe_tee::in_process_tee_context();
-    if context.is_none() && args.tee_enclave_socket.is_none() {
-        return Err(crate::errors::StackEpochError::MandatoryTeeRequiresEnclaveSocket.into());
+    if context.is_none() {
+        return Err(outbe_tee::InProcessDispatchError::ContextNotInstalled.into());
     }
     let tee_attestation =
         outbe_tee::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
@@ -85,7 +85,6 @@ where
     let tee_policy = tee_activation
         .policy_at(outbe_tee::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)?
         .clone();
-    let tee_session = args.tee_session_mode.resolve(tee_policy.attestation_mode)?;
     {
         if coordinate_genesis_bootstrap {
             let my_validator = proposer_evm_address.ok_or(
@@ -136,7 +135,6 @@ where
                 .timestamp
                 .checked_add(tee_policy.maximum_lease)
                 .ok_or(crate::errors::StackEpochError::Ost3Block1LeaseOverflow)?;
-            let node_data_dir = node.data_dir();
             let (node_host_signing, node_id) = load_ost3_reth_node_host_identity(node)?;
 
             // Step 1 (TEE DKG -> shared offer key) + Step 2 (bootstrap coordination ->
@@ -151,14 +149,12 @@ where
             // Owned `Clock` clone moved into the `'static` startup future so the TEE
             // DKG identity-exchange cadence runs on the consensus runtime clock, not
             // tokio's wall-clock (mockable under the deterministic test runtime).
-            let args_socket = args.tee_enclave_socket.clone();
             let dkg_clock = ctx.child("tee_dkg_clock");
             let bootstrap_clock = ctx.child("tee_bootstrap_clock");
             let payload = ctx
                 .timeout(deadline, async move {
-                    let mut enclave =
-                        StartupEnclave::connect(context, args_socket, tee_session, &node_data_dir)?;
-                    let production_manifest = enclave.manifest(&node_data_dir)?;
+                    let mut enclave = StartupEnclave::connect(context)?;
+                    let production_manifest = enclave.manifest().clone();
                     let (network_encryption_public_key, network_encryption_group_public_key) =
                         crate::tee_bootstrap::run_tee_dkg_at_startup(
                             &mut enclave,
@@ -182,7 +178,7 @@ where
                     );
                     let local_submission = enclave.build_submission(
                         crate::tee_bootstrap::LocalRegistrationRequest {
-                            production_manifest: production_manifest.as_ref(),
+                            production_manifest: Some(&production_manifest),
                             node_id,
                             policy: &tee_policy,
                             requested_valid_until,
@@ -247,13 +243,7 @@ where
         } else if shareless_verifier {
             require_shareless_resident_offer_key()?;
         } else {
-            verify_restarted_validator_holds_chain_offer_key(
-                protocol,
-                proposer_evm_address,
-                node,
-                args.tee_enclave_socket.as_deref(),
-                tee_session,
-            )?;
+            verify_restarted_validator_holds_chain_offer_key(protocol, proposer_evm_address, node)?;
         }
     }
 
@@ -318,8 +308,6 @@ fn verify_restarted_validator_holds_chain_offer_key(
     protocol: &dyn crate::protocol_state::EngineProtocolState,
     proposer_evm_address: Option<EthAddress>,
     node: &impl StackNodeAccess,
-    socket: Option<&std::path::Path>,
-    tee_session: crate::args::ResolvedTeeSession,
 ) -> Result<()> {
     // Startup never recovers or replaces a lost key and never falls back to a
     // pre-V1 delivery protocol.
@@ -333,12 +321,7 @@ fn verify_restarted_validator_holds_chain_offer_key(
             crate::errors::StackEpochError::MandatoryOst3MissingOnChainOfferKeyAfterBlock1.into(),
         );
     }
-    let mut enclave = StartupEnclave::connect(
-        outbe_tee::in_process_tee_context(),
-        socket.map(std::path::Path::to_path_buf),
-        tee_session,
-        &node.data_dir(),
-    )?;
+    let mut enclave = StartupEnclave::connect(outbe_tee::in_process_tee_context())?;
     let enclave_offer = crate::tee_bootstrap::query_enclave_offer_public(&mut enclave)?;
     if enclave_offer != on_chain_offer {
         return Err(crate::errors::StackEpochError::LocalEnclaveDoesNotHoldChainOfferKey.into());

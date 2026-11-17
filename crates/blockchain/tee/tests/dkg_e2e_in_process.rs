@@ -5,11 +5,10 @@ use alloy_primitives::B256;
 
 use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 use outbe_tee::tee_dkg::{Ack, DealerBundle, FinalizedLog};
+use outbe_tee::test_utils::resident_context;
 use outbe_tee::{
     in_process::InProcessTeeContext, tee_dkg::EnclaveChannel as _, CeremonyCoordinator,
 };
-#[path = "dkg_e2e_in_process/support.rs"]
-mod support;
 
 const N: usize = 4;
 
@@ -25,7 +24,7 @@ fn dkg_rejects_a_ceremony_id_from_another_network_binding() {
         genesis_hash: B256::repeat_byte(0x6c),
         ..expected_binding
     };
-    let context = support::context(0x11, foreign_binding);
+    let context = resident_context(0x11, foreign_binding);
     let mut client = &context;
     let participant_bls = match client.request(&EnclaveRequest::GetPublicKeys).unwrap() {
         EnclaveResponse::PublicKeys { tee_bls_pub, .. } => vec![tee_bls_pub],
@@ -66,7 +65,7 @@ fn full_dkg_ceremony_in_process() {
     };
 
     let contexts: Vec<_> = (0..N)
-        .map(|i| support::context(i as u8 + 1, network_binding))
+        .map(|i| resident_context(i as u8 + 1, network_binding))
         .collect();
     let mut clients: Vec<_> = contexts.iter().collect();
 

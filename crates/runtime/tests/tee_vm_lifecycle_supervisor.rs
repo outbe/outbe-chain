@@ -53,7 +53,7 @@ impl Harness {
         std::fs::create_dir(&dir).unwrap();
         let host = dir.join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1);
         std::fs::create_dir(&host).unwrap();
-        let key = host.join(outbe_tee::node_host::NODE_HOST_NOISE_KEY_V1);
+        let key = host.join(outbe_tee::node_host::NODE_HOST_IDENTITY_KEY_V1);
         std::fs::write(&key, [4; 32]).unwrap();
         std::fs::set_permissions(key, std::fs::Permissions::from_mode(0o600)).unwrap();
         let journal = ServiceTxJournalV1::open(&dir).unwrap();

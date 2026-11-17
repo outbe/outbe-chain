@@ -155,9 +155,7 @@ pub fn encrypt_onboarding_artifact_v1(
 ) -> Result<DcapOnboardingArtifactV1> {
     let sender = StaticSecret::from(*sender_offer_secret);
     if PublicKey::from(&sender).to_bytes() != context.network_encryption_public {
-        return Err(TeeError::Dkg(
-            "onboarding context offer public does not match resident key".into(),
-        ));
+        return Err(TeeError::OnboardingFixtureOfferKeyMismatch);
     }
     let shared = sender.diffie_hellman(&PublicKey::from(context.recipient_x25519));
     let (key, nonce) = onboarding_aead_material(context.context_hash(), shared.as_bytes())?;

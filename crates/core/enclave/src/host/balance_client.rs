@@ -52,7 +52,7 @@ pub fn execute_confidential_balance_op(request: EnclaveRequest) -> Result<Enclav
     let (attestation_pub, response) = consensus_domain_call(
         operation.name(),
         &request,
-        || TransportError::Unavailable("tee_sidecar_unavailable".into()),
+        || outbe_tee::InProcessDispatchError::ContextNotInstalled.into(),
         |key, response| {
             validate_response(operation, expected_hash, key, response)
                 .map_err(|error| TransportError::Attestation(error.to_string()))
@@ -194,12 +194,8 @@ mod tests {
     #[test]
     fn an_enclave_refusal_or_outage_is_unavailable_and_a_bad_answer_is_unavailable() {
         for error in [
-            TransportError::Unavailable("enclave is not initialized".into()),
+            outbe_tee::InProcessDispatchError::ContextNotInstalled.into(),
             TransportError::EnclaveError("no resident group key".into()),
-            TransportError::Noise("x".into()),
-            TransportError::Handshake("x".into()),
-            TransportError::SessionRevoked("x"),
-            TransportError::IdentityMismatch("x".into()),
         ] {
             assert!(matches!(
                 request_failure(error),

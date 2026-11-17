@@ -13,7 +13,6 @@ commonware-utils.workspace = true
 commonware-parallel.workspace = true
 commonware-codec.workspace = true
 commonware-consensus.workspace = true
-rand_core.workspace = true
 rand-commonware.workspace = true
 rand-core-commonware.workspace = true
 alloy-consensus.workspace = true
@@ -33,7 +32,6 @@ serde_json = { workspace = true, features = ["raw_value"] }
 metrics.workspace = true
 postcard.workspace = true
 zstd = "=0.13.3"
-snow.workspace = true
 thiserror.workspace = true
 rand.workspace = true
 ed25519-dalek.workspace = true
@@ -42,11 +40,10 @@ x25519-dalek.workspace = true
 zeroize.workspace = true
 rustix.workspace = true
 libc.workspace = true
-
-sha2.workspace = true
+k256 = { workspace = true, optional = true }
 
 [features]
-test-utils = ["outbe-dcap/test-utils"]
+test-utils = ["outbe-dcap/test-utils", "dep:k256"]
 sgx-noattest = ["outbe-dcap/sgx-noattest"]
 e2e-test = ["outbe-dcap/e2e-test", "sgx-noattest"]
 native-dcap = ["outbe-dcap/native-dcap"]

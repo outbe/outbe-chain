@@ -1,6 +1,6 @@
 use super::live::LiveTeeRuntimeV1;
 use super::{admitted_authority_state, BootstrapAdmissionPolicy};
-use crate::admission::{self, TeeLeaseGuardAnchorsV1, TeeLeaseGuardConfigV1};
+use crate::admission::{self, TeeLeaseGuardConfigV1, TeeLeaseGuardGateV1};
 use crate::*;
 use outbe_consensus::{
     protocol_state::EngineProtocolState, validators::LocalTeeRuntimeAdmissionV1,
@@ -10,12 +10,9 @@ use outbe_tee::{TeeAuthorityChannel, TeeAuthorityState};
 /// The explicit publisher keeps unit tests and integration owners off the global port.
 pub(crate) async fn run_lease_guard<P>(
     provider: P,
-    (protocol, session): (
-        Arc<dyn EngineProtocolState>,
-        Arc<dyn outbe_execution::tee_remote_session::TeeSessionStateReader>,
-    ),
-    mut config: TeeLeaseGuardConfigV1,
-    (authority, live): (TeeAuthorityChannel, Option<Arc<LiveTeeRuntimeV1>>),
+    protocol: Arc<dyn EngineProtocolState>,
+    config: TeeLeaseGuardConfigV1,
+    owner: Arc<LiveTeeRuntimeV1>,
     shutdown: tokio_util::sync::CancellationToken,
 ) -> eyre::Result<Option<String>>
 where
@@ -26,10 +23,8 @@ where
         + Sync
         + 'static,
 {
-    let _lifetime = AuthorityPublisherLifetime(authority.clone());
-    let mut retired_at = 0;
+    let _lifetime = AuthorityPublisherLifetime(owner.authority.clone());
     let mut failed_state = None;
-    let mut allow_bootstrap = config.anchors.gate.is_armed() && config.identity.validator.is_some();
     let mut interval = tokio::time::interval(Duration::from_secs(1));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
@@ -39,23 +34,13 @@ where
             _ = config.finalization_notify.notified() => {},
             _ = interval.tick() => {},
         }
-        let result = match &live {
-            Some(owner) => owner.refresh(&provider, protocol.as_ref(), &config.chain),
-            None => legacy_refresh(
-                (&provider, protocol.as_ref()),
-                &mut config,
-                &authority,
-                (session.as_ref(), &mut retired_at),
-                &mut allow_bootstrap,
-            ),
-        };
-        let open = match result {
+        let open = match owner.refresh(&provider, protocol.as_ref(), &config.chain) {
             Ok(state) => {
                 failed_state = None;
                 state.is_authority_open()
             }
             Err(error) => {
-                let next = authority.snapshot();
+                let next = owner.authority.snapshot();
                 if failed_state != Some(next) {
                     tracing::warn!(%error, ?next, "TEE authority suspended; lease guard remains alive");
                 }
@@ -75,7 +60,7 @@ pub(crate) fn tick<P>(
         &outbe_execution::tee_remote_session::RegistryChainIdentity,
         outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
     ),
-    (anchors, allow_bootstrap): (&mut TeeLeaseGuardAnchorsV1, &mut bool),
+    (gate, allow_bootstrap): (&mut TeeLeaseGuardGateV1, &mut bool),
     authority: &TeeAuthorityChannel,
     resident: impl FnOnce() -> eyre::Result<Option<alloy_primitives::B256>>,
 ) -> eyre::Result<TeeAuthorityState>
@@ -86,7 +71,7 @@ where
     let (admitted, canonical, bootstrap) = read_authority_admission(
         (provider, protocol),
         (chain, identity),
-        (anchors, allow_bootstrap),
+        (gate, allow_bootstrap),
         resident,
     )?;
     let state = match admitted {
@@ -102,17 +87,16 @@ where
         None if resident.is_some() => TeeAuthorityState::SuspendedPolicyMismatch,
         None => TeeAuthorityState::UnkeyedAwaitingAdmission,
     };
-    let state = if !anchors.gate.is_armed()
-        && matches!(admitted, Some(LocalTeeRuntimeAdmissionV1::Ready { .. }))
-    {
-        if resident.is_some() {
-            TeeAuthorityState::SuspendedPolicyMismatch
+    let state =
+        if !gate.is_armed() && matches!(admitted, Some(LocalTeeRuntimeAdmissionV1::Ready { .. })) {
+            if resident.is_some() {
+                TeeAuthorityState::SuspendedPolicyMismatch
+            } else {
+                TeeAuthorityState::UnkeyedAwaitingAdmission
+            }
         } else {
-            TeeAuthorityState::UnkeyedAwaitingAdmission
-        }
-    } else {
-        state
-    };
+            state
+        };
     super::publish_state(authority, state);
     if state == TeeAuthorityState::SuspendedPolicyMismatch
         && matches!(
@@ -138,7 +122,7 @@ fn read_authority_admission<P>(
         &outbe_execution::tee_remote_session::RegistryChainIdentity,
         outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
     ),
-    (anchors, allow_bootstrap): (&mut TeeLeaseGuardAnchorsV1, &mut bool),
+    (gate, allow_bootstrap): (&mut TeeLeaseGuardGateV1, &mut bool),
     resident: Option<alloy_primitives::B256>,
 ) -> eyre::Result<AdmissionFacts>
 where
@@ -152,7 +136,7 @@ where
             (protocol, provider),
             *chain,
             identity,
-            anchors,
+            gate,
             || Ok(resident),
         )?;
         let key = outbe_consensus::validators::read_network_encryption_public_at_block(
@@ -168,7 +152,7 @@ where
             (!key.is_zero()).then_some(key),
             BootstrapAdmissionPolicy::RejectBootstrap,
         )
-    } else if *allow_bootstrap && anchors.gate.is_armed() && identity.validator.is_some() {
+    } else if *allow_bootstrap && gate.is_armed() && identity.validator.is_some() {
         let header = provider
             .sealed_header(0)?
             .ok_or(crate::errors::LaunchError::TeeAdmissionHeaderUnavailable)?;
@@ -205,45 +189,6 @@ where
     };
 
     Ok(facts)
-}
-
-fn legacy_refresh<P>(
-    (provider, protocol): (&P, &dyn EngineProtocolState),
-    config: &mut TeeLeaseGuardConfigV1,
-    authority: &TeeAuthorityChannel,
-    (session, retired_at): (
-        &dyn outbe_execution::tee_remote_session::TeeSessionStateReader,
-        &mut u64,
-    ),
-    allow_bootstrap: &mut bool,
-) -> eyre::Result<TeeAuthorityState>
-where
-    P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
-{
-    let resident =
-        outbe_tee::resident_network_encryption_public_key_state_v1().map_err(eyre::Report::new);
-    let has_resident = resident.as_ref().is_ok_and(Option::is_some);
-    let result = (|| {
-        if config.anchors.gate.is_armed() {
-            admission::retire_superseded_remote_sessions_v1(
-                provider,
-                config.chain,
-                session,
-                retired_at,
-            )?;
-        }
-        tick(
-            (provider, protocol),
-            (&config.chain, config.identity),
-            (&mut config.anchors, allow_bootstrap),
-            authority,
-            || resident,
-        )
-    })();
-    if result.is_err() {
-        super::publish_failure(authority, has_resident);
-    }
-    result
 }
 
 struct GenesisStateReader<'a>(&'a reth_provider::StateProviderBox);

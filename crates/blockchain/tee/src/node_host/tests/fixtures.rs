@@ -82,7 +82,7 @@ pub(super) fn replacement_fixture_for_mode(
     std::fs::create_dir(&node_data_dir).unwrap();
     let paths = NodeHostPaths::new(&node_data_dir);
     ensure_private_directory(&paths.root).unwrap();
-    let node_host = NodeHostNoiseKey::create_new(&paths.noise_key).unwrap();
+    let node_host = NodeHostIdentityKey::create_new(&paths.identity_key).unwrap();
     let node_host_public = node_host.public();
     let node_signer = k256::ecdsa::SigningKey::from_bytes((&[0x61; 32]).into()).unwrap();
     let reth_p2p_public = node_signer
