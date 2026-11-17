@@ -25,9 +25,10 @@
     "solady/=dependencies/the-compact-1.0.0/lib/solady/src/",
     "@shared/=../shared/src/",
     "@precompiles/=../precompiles/src/",
+    "@tokens/=../tokens/src/",
   ]
-  # @shared and @precompiles sources live outside this project.
-  allow_paths = ["../shared/src", "../precompiles/src"]
+  # @shared, @precompiles and @tokens sources live outside this project.
+  allow_paths = ["../shared/src", "../precompiles/src", "../tokens/src"]
 
 
 [profile.ci]

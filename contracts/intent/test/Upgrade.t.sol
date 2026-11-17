@@ -53,7 +53,7 @@ contract UpgradeTest is Test {
         SolverEscrow escrow = Proxies.solverEscrow(address(compact), lockTag, 1000, owner);
         escrow.setAuthorizedCaller(operator);
 
-        _upgrade(address(escrow), address(new SolverEscrow(address(compact), lockTag)));
+        _upgrade(address(escrow), address(new SolverEscrow(address(compact), lockTag, address(0))));
 
         assertEq(escrow.owner(), owner, "owner");
         assertEq(escrow.AUTHORIZED_CALLER(), operator, "authorized caller");

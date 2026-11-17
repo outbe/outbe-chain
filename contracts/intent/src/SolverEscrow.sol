@@ -27,19 +27,20 @@ import {ISolverEscrow} from "./interfaces/ISolverEscrow.sol";
 ///   lock:      DestinationSettler -> Escrow.lockCollateral -> transferFrom(solver->escrow)
 ///   unlock:    DestinationSettler -> Escrow.unlockCollateral -> transfer(escrow->solver)
 ///   slash:     DestinationSettler -> Escrow.slashCollateral -> credits slashedPool
+///              (COEN and WCOEN on Outbe Chain go to address 0 instead, see WCOEN)
 ///
 /// Invariant: balanceOf(escrow, id) == sum(live locks on id) + slashedPool[id]
 ///
 /// Setup:
 ///   1. Deploy SolverAllocator(_compact)
 ///   2. lockTag = allocator.buildLockTag(Scope.ChainSpecific, ResetPeriod.ThirtyDays)
-///   3. Deploy SolverEscrow(_compact, lockTag) behind a proxy, initialize(owner, collateralBps)
+///   3. Deploy SolverEscrow(_compact, lockTag, wcoen) behind a proxy, initialize(owner, collateralBps)
 ///   4. allocator.setArbiter(address(escrow))
 ///   5. Deploy Router
 ///   6. escrow.setAuthorizedCaller(address(router))
 ///   7. Each solver: COMPACT.setOperator(address(escrow), true)
 ///
-/// UUPS upgradeable behind an ERC1967 proxy. The Compact and the lock tag are implementation
+/// UUPS upgradeable behind an ERC1967 proxy. The Compact, the lock tag and WCOEN are implementation
 /// immutables, so every upgrade must pass the same values.
 contract SolverEscrow is ISolverEscrow, OwnableUpgradeable, UUPSUpgradeable, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
@@ -47,7 +48,7 @@ contract SolverEscrow is ISolverEscrow, OwnableUpgradeable, UUPSUpgradeable, Ree
     // ============ Constants ============
 
     uint256 public constant BPS_DENOMINATOR = 10_000;
-    uint256 public constant REWARD_BPS = 150; // 1.5%
+    uint256 public constant REWARD_BPS = 200; // 2%
 
     // ============ Immutables ============
 
@@ -55,6 +56,10 @@ contract SolverEscrow is ISolverEscrow, OwnableUpgradeable, UUPSUpgradeable, Ree
     ITheCompact public immutable COMPACT;
     /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
     bytes12 public immutable LOCK_TAG;
+    /// @notice WCOEN on Outbe Chain, address 0 on every other chain. When it is set, slashed
+    ///         native COEN and WCOEN go to address 0 (a burn address), not into slashedPool.
+    /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
+    address public immutable WCOEN;
 
     // ============ State ============
 
@@ -124,10 +129,11 @@ contract SolverEscrow is ISolverEscrow, OwnableUpgradeable, UUPSUpgradeable, Ree
     // ============ Constructor ============
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(address _compact, bytes12 _lockTag) {
+    constructor(address _compact, bytes12 _lockTag, address _wcoen) {
         if (_compact == address(0)) revert ZeroAddress();
         COMPACT = ITheCompact(_compact);
         LOCK_TAG = _lockTag;
+        WCOEN = _wcoen;
         _disableInitializers();
     }
 
@@ -206,15 +212,7 @@ contract SolverEscrow is ISolverEscrow, OwnableUpgradeable, UUPSUpgradeable, Ree
         IERC6909(address(COMPACT)).transferFrom(msg.sender, address(this), id, withdrawAmount);
 
         // Step 2: Release underlying tokens to solver via allocatedTransfer
-        // claimant = uint160(solver) -> zero upper bits -> zero lockTag -> withdrawal of underlying
-        Component[] memory recipients = new Component[](1);
-        recipients[0] = Component({claimant: uint160(msg.sender), amount: withdrawAmount});
-
-        COMPACT.allocatedTransfer(
-            AllocatedTransfer({
-                allocatorData: "", nonce: _s().nextNonce++, expires: type(uint256).max, id: id, recipients: recipients
-            })
-        );
+        _release(id, msg.sender, withdrawAmount);
 
         uint256 solverBalAfter = IERC6909(address(COMPACT)).balanceOf(msg.sender, id);
         if (solverBalAfter != available - withdrawAmount) revert WithdrawalFailed();
@@ -257,20 +255,31 @@ contract SolverEscrow is ISolverEscrow, OwnableUpgradeable, UUPSUpgradeable, Ree
     }
 
     /// @inheritdoc ISolverEscrow
-    /// @dev Accounting only: the escrow already holds the collateral, so this function reclassifies
-    ///      it into slashedPool. It performs no external call.
-    function slashCollateral(bytes32 orderId) external onlyAuthorizedCaller {
+    /// @dev The escrow already holds the collateral. On Outbe Chain, native COEN and WCOEN leave
+    ///      The Compact and go to address 0, where the node burns them into the Promis Limit.
+    ///      Every other token is reclassified into slashedPool with no external call.
+    function slashCollateral(bytes32 orderId) external onlyAuthorizedCaller nonReentrant {
         Lock memory lock = _consumeLock(orderId);
+        uint256 id = _lockId(lock.token);
 
-        _s().slashedPool[_lockId(lock.token)] += lock.amount;
+        if (_isBurned(lock.token)) {
+            // The Compact falls back to an ERC6909 transfer when the withdrawal fails. That
+            // would leave the collateral in The Compact, so the slash reverts instead.
+            uint256 unreleased = IERC6909(address(COMPACT)).balanceOf(address(0), id);
+            _release(id, address(0), lock.amount);
+            if (IERC6909(address(COMPACT)).balanceOf(address(0), id) != unreleased) revert WithdrawalFailed();
+        } else {
+            _s().slashedPool[id] += lock.amount;
+        }
 
         emit CollateralSlashed(orderId, lock.solver, lock.token, lock.amount);
     }
 
     /// @inheritdoc ISolverEscrow
-    /// @dev Distributes REWARD_BPS (1.5%) of orderAmountIn from slashed pool as underlying tokens.
+    /// @dev Distributes REWARD_BPS (2%) of orderAmountIn from slashed pool as underlying tokens.
     ///      Returns 0 if the reward rounds to zero or the slashed balance is insufficient
     ///      (all-or-nothing). An insufficient slashed balance emits RewardSkipped.
+    ///      Tokens that a slash burns have no pool, so they pay nothing and emit no event.
     function distributeReward(address token, uint256 orderAmountIn, address receiver)
         external
         onlyAuthorizedCaller
@@ -281,7 +290,7 @@ contract SolverEscrow is ISolverEscrow, OwnableUpgradeable, UUPSUpgradeable, Ree
         reward = (orderAmountIn * REWARD_BPS) / BPS_DENOMINATOR;
         // A dust order rounds the reward to zero, and The Compact rejects a zero-amount
         // allocatedTransfer. That would revert the whole settle instead of skipping the reward.
-        if (reward == 0) return 0;
+        if (reward == 0 || _isBurned(token)) return 0;
         uint256 id = _lockId(token);
 
         // Only slashed collateral is payable. The escrow's balance also holds live locks.
@@ -292,15 +301,7 @@ contract SolverEscrow is ISolverEscrow, OwnableUpgradeable, UUPSUpgradeable, Ree
         }
         _s().slashedPool[id] -= reward;
 
-        // Release underlying tokens to receiver via allocatedTransfer
-        Component[] memory recipients = new Component[](1);
-        recipients[0] = Component({claimant: uint160(receiver), amount: reward});
-
-        COMPACT.allocatedTransfer(
-            AllocatedTransfer({
-                allocatorData: "", nonce: _s().nextNonce++, expires: type(uint256).max, id: id, recipients: recipients
-            })
-        );
+        _release(id, receiver, reward);
 
         emit RewardDistributed(receiver, token, reward);
     }
@@ -358,6 +359,24 @@ contract SolverEscrow is ISolverEscrow, OwnableUpgradeable, UUPSUpgradeable, Ree
 
         _s().totalLocked[lock.solver][_lockId(lock.token)] -= lock.amount;
         delete _s().locks[orderId];
+    }
+
+    /// @dev Withdraws underlying tokens of the escrow's ERC6909 balance to `to`.
+    ///      claimant = uint160(to) -> zero upper bits -> zero lockTag -> withdrawal of underlying
+    function _release(uint256 id, address to, uint256 amount) private {
+        Component[] memory recipients = new Component[](1);
+        recipients[0] = Component({claimant: uint160(to), amount: amount});
+
+        COMPACT.allocatedTransfer(
+            AllocatedTransfer({
+                allocatorData: "", nonce: _s().nextNonce++, expires: type(uint256).max, id: id, recipients: recipients
+            })
+        );
+    }
+
+    /// @dev True for native COEN and WCOEN on Outbe Chain: a slash sends them to address 0.
+    function _isBurned(address token) private view returns (bool) {
+        return WCOEN != address(0) && (token == address(0) || token == WCOEN);
     }
 
     function _depositNative(address solver) private {

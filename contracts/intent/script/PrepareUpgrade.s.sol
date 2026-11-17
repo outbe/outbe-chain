@@ -38,7 +38,12 @@ contract PrepareUpgrade is UpgradeProposal {
         if (index == 0) return address(new Auction());
         if (index == 1) {
             SolverEscrow escrow = SolverEscrow(proxy);
-            return address(new SolverEscrow(address(escrow.COMPACT()), escrow.LOCK_TAG()));
+            // An implementation older than the WCOEN immutable has no getter: take it from the env.
+            address wcoen = vm.envOr("WCOEN_ADDRESS", address(0));
+            try escrow.WCOEN() returns (address current) {
+                wcoen = current;
+            } catch {}
+            return address(new SolverEscrow(address(escrow.COMPACT()), escrow.LOCK_TAG(), wcoen));
         }
         if (index == 2) return address(new SolverAllocator(address(SolverAllocator(proxy).COMPACT())));
         if (index == 3) return address(new RouterAllocator(address(RouterAllocator(proxy).COMPACT())));
