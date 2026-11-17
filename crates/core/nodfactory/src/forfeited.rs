@@ -74,7 +74,7 @@ impl DeadlineHandler<B256> for NodForfeit<'_, '_> {
         let closed_series = self.collect_closed_series(group)?;
         if !load.is_zero() {
             outbe_promislimit::PromisLimitContract::new(self.storage.clone())
-                .checked_credit(load)?;
+                .add(outbe_promislimit::LimitSource::Nod, load)?;
         }
         self.nod.group_open_load_ct.bytes(&group).clear()?;
         for &(series_id, ..) in &closed_series {

@@ -16,6 +16,7 @@ mod views;
 pub(crate) const T_NOW: u64 = 1_700_000_000;
 pub(crate) const ALICE: Address = address!("0x1111111111111111111111111111111111111111");
 pub(crate) const BOB: Address = address!("0x2222222222222222222222222222222222222222");
+pub(crate) const ISSUER: Address = address!("0x3333333333333333333333333333333333333333");
 pub(crate) const USD: u16 = 840;
 
 /// Construct native contract state at the requested timestamp.
@@ -32,6 +33,7 @@ pub(crate) fn with_storage<R>(f: impl FnOnce(&StorageHandle) -> R) -> R {
 
 pub(crate) fn sample_params(owner: Address) -> GemAddParams {
     GemAddParams {
+        issuer: ISSUER,
         owner,
         promis_load_minor: U256::from(1_000_000u64),
         entry_price_minor: U256::from(500_000u64),

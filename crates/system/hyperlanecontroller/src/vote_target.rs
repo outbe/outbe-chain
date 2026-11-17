@@ -3,18 +3,21 @@
 //! A chain id is also the Hyperlane domain of that chain.
 //!
 //! The vote tally runs where sub-calls are not available. So an approved
-//! proposal only stores the hash of its payload. Permissionless
-//! `applyApproved(proposalId, payload)` runs it later. Its writes to the ICA
-//! router and the ISMs are owner calls through `crosschainbridge`.
+//! proposal only stores the hash of its payload and enters a queue.
+//! `applyApproved(proposalId, payload)` runs it later. The begin-block step of
+//! Vote calls it when the execution delay ends, and anyone else may call it
+//! too. Its writes to the ICA router and the ISMs are owner calls through
+//! `crosschainbridge`.
 
 use alloy_primitives::{aliases::U96, keccak256, Address, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
+use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 use outbe_system_common::vote_target::{
-    decode_proposal_payload, decode_stored_proposal_payload, TargetExecutionOutcome, VoteTarget,
-    VoteTargetContext, VoteTargetError,
+    decode_proposal_payload, decode_stored_proposal_payload, PayloadApprovals,
+    TargetExecutionOutcome, VoteTarget, VoteTargetContext, VoteTargetError,
 };
 use serde::Deserialize;
 
@@ -25,7 +28,9 @@ use crate::runtime::{call, call_local, call_remote};
 use crate::schema::HyperlaneControllerContract;
 use crate::sol_ext::{IInterchainGasPaymaster, IStorageGasOracle};
 
-/// One action, as strict JSON with an `operation` field.
+/// One action, as strict JSON with an `operation` field. Each action also has
+/// `executionDelayBlocks`: the number of blocks between the approval and the
+/// first block where `applyApproved` may run it.
 #[derive(Debug, Deserialize)]
 #[serde(
     tag = "operation",
@@ -44,15 +49,20 @@ enum Action {
         ism: Address,
         hook: Address,
         validator_announce: Address,
+        execution_delay_blocks: u64,
     },
     /// Stops the validator sync to `chain_id`.
-    RemoveHyperlaneChain { chain_id: u32 },
+    RemoveHyperlaneChain {
+        chain_id: u32,
+        execution_delay_blocks: u64,
+    },
     /// Makes this controller the gas oracle of `chain_id` in the Outbe IGP
     /// `igp`, with `gas_overhead` (`igp.setDestinationGasConfigs`).
     SetGasConfig {
         igp: Address,
         chain_id: u32,
         gas_overhead: u64,
+        execution_delay_blocks: u64,
     },
     /// Sets the gas price of Outbe in the `StorageGasOracle` `gas_oracle` on
     /// `chain_id`, at an exchange rate of 1:1 (`setRemoteGasDataConfigs`).
@@ -60,12 +70,41 @@ enum Action {
         chain_id: u32,
         gas_oracle: Address,
         gas_price: U256,
+        execution_delay_blocks: u64,
     },
     /// Sets the markup on the Oracle gas price, in basis points.
-    SetGasMarkup { markup_bps: u32 },
+    SetGasMarkup {
+        markup_bps: u32,
+        execution_delay_blocks: u64,
+    },
 }
 
 impl Action {
+    fn execution_delay_blocks(&self) -> u64 {
+        match self {
+            Self::AddHyperlaneChain {
+                execution_delay_blocks,
+                ..
+            }
+            | Self::RemoveHyperlaneChain {
+                execution_delay_blocks,
+                ..
+            }
+            | Self::SetGasConfig {
+                execution_delay_blocks,
+                ..
+            }
+            | Self::SetOutbeGasData {
+                execution_delay_blocks,
+                ..
+            }
+            | Self::SetGasMarkup {
+                execution_delay_blocks,
+                ..
+            } => *execution_delay_blocks,
+        }
+    }
+
     /// Decodes and checks `payload`. `outbe` is the chain id of this chain.
     fn decode(payload: &[u8], outbe: u64) -> Result<Self> {
         // Decode the original bytes so duplicate fields are rejected.
@@ -79,18 +118,20 @@ impl Action {
                 ism,
                 hook,
                 validator_announce,
+                ..
             } => {
                 remote(chain_id)
                     && ![ica_router, ism, hook, validator_announce]
                         .iter()
                         .any(|a| a.is_zero())
             }
-            Self::RemoveHyperlaneChain { chain_id } => remote(chain_id),
+            Self::RemoveHyperlaneChain { chain_id, .. } => remote(chain_id),
             Self::SetGasConfig { igp, chain_id, .. } => remote(chain_id) && !igp.is_zero(),
             Self::SetOutbeGasData {
                 chain_id,
                 gas_oracle,
                 gas_price,
+                ..
             } => {
                 remote(chain_id)
                     && !gas_oracle.is_zero()
@@ -113,15 +154,17 @@ impl Action {
                 ism,
                 hook,
                 validator_announce,
+                ..
             } => {
                 controller.enroll_ica_router(*chain_id, *ica_router)?;
                 controller.add_domain(*chain_id, *ism, *hook, *validator_announce)
             }
-            Self::RemoveHyperlaneChain { chain_id } => controller.remove_domain(*chain_id),
+            Self::RemoveHyperlaneChain { chain_id, .. } => controller.remove_domain(*chain_id),
             Self::SetGasConfig {
                 igp,
                 chain_id,
                 gas_overhead,
+                ..
             } => {
                 let configs = vec![IInterchainGasPaymaster::GasParam {
                     remoteDomain: *chain_id,
@@ -138,6 +181,7 @@ impl Action {
                 chain_id,
                 gas_oracle,
                 gas_price,
+                ..
             } => {
                 let configs = vec![IStorageGasOracle::RemoteGasDataConfig {
                     remoteDomain: controller.local_domain()?,
@@ -151,13 +195,14 @@ impl Action {
                     vec![call(*gas_oracle, data.abi_encode())],
                 )
             }
-            Self::SetGasMarkup { markup_bps } => controller.gas_markup_bps.write(*markup_bps),
+            Self::SetGasMarkup { markup_bps, .. } => controller.gas_markup_bps.write(*markup_bps),
         }
     }
 }
 
 impl HyperlaneControllerContract<'_> {
-    /// Runs an approved action once, inside one checkpoint.
+    /// Runs an approved action once, inside one checkpoint, after the
+    /// execution delay of its payload.
     pub fn apply_approved(&mut self, proposal_id: U256, payload: &[u8]) -> Result<()> {
         let approved = self.approved_payload.read(&proposal_id)?;
         if approved == B256::ZERO {
@@ -166,21 +211,27 @@ impl HyperlaneControllerContract<'_> {
         if keccak256(payload) != approved {
             return Err(HyperlaneControllerError::ApprovedPayloadMismatch { proposal_id }.into());
         }
+        let action = Action::decode(payload, self.storage.chain_id()?)
+            .map_err(|_| VoteTargetError::stored_payload_invalid("HyperlaneController"))?;
+        let unlock_height = self.unlock_at.read(&proposal_id)?;
+        if self.storage.block_number()? < unlock_height {
+            return Err(HyperlaneControllerError::ApprovedActionLocked {
+                proposal_id,
+                unlock_height,
+            }
+            .into());
+        }
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             // Consume first. The checkpoint restores it if the action fails.
             self.approved_payload.write(&proposal_id, B256::ZERO)?;
-            let deadline = self
-                .approved_at
-                .read(&proposal_id)?
-                .saturating_add(outbe_chain_constants::get_governance_voting_window_blocks());
-            if self.storage.block_number()? > deadline {
+            if self.storage.block_number()?
+                > outbe_chain_constants::approved_action_expiry(unlock_height)
+            {
                 return self.emit(IHyperlaneController::ApprovedActionExpired {
                     proposalId: proposal_id,
                 });
             }
-            let action = Action::decode(payload, self.storage.chain_id()?)
-                .map_err(|_| VoteTargetError::stored_payload_invalid("HyperlaneController"))?;
             action.apply(self)?;
             self.emit(IHyperlaneController::ApprovedActionApplied {
                 proposalId: proposal_id,
@@ -200,7 +251,14 @@ impl VoteTarget for HyperlaneVoteTarget {
 
     fn validate(&self, payload: &[u8], context: VoteTargetContext) -> Result<()> {
         decode_proposal_payload(payload)?;
-        Action::decode(payload, context.chain_id).map(|_| ())
+        let action = Action::decode(payload, context.chain_id)?;
+        // Only a new proposal must meet the minimum execution delay.
+        if action.execution_delay_blocks()
+            < outbe_chain_constants::MIN_GOVERNANCE_EXECUTION_DELAY_BLOCKS
+        {
+            return Err(VoteTargetError::InvalidPayload.into());
+        }
+        Ok(())
     }
 
     fn handle_approved(
@@ -212,15 +270,34 @@ impl VoteTarget for HyperlaneVoteTarget {
     ) -> Result<TargetExecutionOutcome> {
         // Stored-payload corruption is an invariant failure, never proposal Error.
         decode_stored_proposal_payload(payload, "HyperlaneController")?;
-        Action::decode(payload, context.chain_id)
+        let action = Action::decode(payload, context.chain_id)
             .map_err(|_| VoteTargetError::stored_payload_invalid("HyperlaneController"))?;
         let controller = HyperlaneControllerContract::new(ctx.storage.clone());
         controller
             .approved_payload
             .write(&proposal_id, keccak256(payload))?;
-        controller
-            .approved_at
-            .write(&proposal_id, ctx.block.block_number)?;
+        controller.unlock_at.write(
+            &proposal_id,
+            ctx.block
+                .block_number
+                .saturating_add(action.execution_delay_blocks()),
+        )?;
+        controller.queued_approved_actions.push(proposal_id)?;
         Ok(TargetExecutionOutcome::Applied)
     }
+}
+
+/// Vote begin-block step: calls `applyApproved` for each queued action whose
+/// execution delay ended. The sub-call runs in the frame of the controller, so
+/// the controller is the caller of CrosschainBridge.
+pub fn apply_due_approved_actions(storage: &StorageHandle<'_>, block_number: u64) -> Result<()> {
+    let controller = HyperlaneControllerContract::new(storage.clone());
+    PayloadApprovals {
+        target: HYPERLANE_CONTROLLER_ADDRESS,
+        module: "HyperlaneController",
+        queue: &controller.queued_approved_actions,
+        hashes: &controller.approved_payload,
+        unlocks: &controller.unlock_at,
+    }
+    .apply_due(storage, block_number)
 }

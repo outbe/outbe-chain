@@ -275,9 +275,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         assert_eq!(claimed.promisLoadMinor, U256::from(load));
         let issued = logs
             .iter()
-            .find_map(|log| {
-                outbe_gemfactory::precompile::IGemFactory::GemIssued::decode_log(log).ok()
-            })
+            .find_map(|log| IGem::GemIssued::decode_log(log).ok())
             .unwrap()
             .data;
         assert_eq!(issued.gemId, gem_id);

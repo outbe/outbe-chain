@@ -231,13 +231,7 @@ pub fn settle_nod(
         // Publish the transition before external payment calls so callbacks cannot
         // settle the same Nod twice. A failed payment rolls the transition back.
         nod_api::record_settled(storage, item, group)?;
-        settlement::collect(
-            storage,
-            NOD_FACTORY_ADDRESS,
-            payer,
-            asset,
-            quote.payment_minor,
-        )?;
+        settlement::collect(storage, payer, asset, quote.payment_minor)?;
         emit_event(
             storage,
             INodFactory::NodSettled {

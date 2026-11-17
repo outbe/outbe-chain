@@ -342,22 +342,16 @@ fn with_dual_currency_series<R>(iso: u64, f: impl FnOnce(StorageHandle) -> R) ->
     StorageHandle::enter(&mut storage, f)
 }
 
-/// A payment token that accepts `transferFrom` but never credits the factory, so a
-/// settlement that reaches the payment fails there with `SettlementAmountMismatch`.
-pub(super) fn stub_token_that_never_credits(storage: &mut HashMapStorageProvider) {
-    use crate::sol_ext::IERC20;
-    storage.stub_sub_call_at_selector(settlement_asset(), IERC20::balanceOfCall::SELECTOR, word(0));
-    storage.stub_sub_call_at_selector(
-        settlement_asset(),
-        IERC20::transferFromCall::SELECTOR,
-        word(1),
-    );
+/// The router does not run here, so a settlement that reaches the payment stops at the
+/// router's `depositFrom`.
+pub(super) fn stub_unanswered_router(storage: &mut HashMapStorageProvider) {
+    outbe_vaultrouter::test_support::stub_unanswered_deposit_from(storage);
 }
 
 /// The storage behind [`with_dual_currency_series`], for tests that move the clock.
 pub(super) fn dual_currency_series(iso: u64) -> HashMapStorageProvider {
     use crate::sol_ext::{IReferenceCurrency, IERC1155, IERC20};
-    use outbe_vaultrouter::api::IVaultRouter;
+    use outbe_vaultrouter::precompile::IVaultRouter;
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT));
@@ -558,7 +552,7 @@ fn settle_series_7(storage: &mut HashMapStorageProvider, snapshot: U256) -> Stri
 #[test]
 fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     let mut storage = dual_currency_series(EUR_ISO as u64);
-    stub_token_that_never_credits(&mut storage);
+    stub_unanswered_router(&mut storage);
     let quote = |storage: &mut HashMapStorageProvider| {
         StorageHandle::enter(storage, |s| {
             runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap()
@@ -578,10 +572,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     let cutoff = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
         .unwrap()
         .cutoff();
-    let reached_payment = outbe_primitives::error::PrecompileError::from(
-        outbe_vaultrouter::settlement::SettlementError::AmountMismatch,
-    )
-    .to_string();
+    let reached_payment = outbe_vaultrouter::test_support::unanswered_deposit_from().to_string();
 
     storage.set_timestamp(U256::from(cutoff + 3_599));
     assert_eq!(settle_series_7(&mut storage, quoted), reached_payment);
@@ -625,7 +616,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
 #[test]
 fn the_hourly_rollover_at_the_transit_close_grants_no_grace() {
     let mut storage = dual_currency_series(EUR_ISO as u64);
-    stub_token_that_never_credits(&mut storage);
+    stub_unanswered_router(&mut storage);
     let quote = |storage: &mut HashMapStorageProvider| {
         StorageHandle::enter(storage, |s| {
             runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE)
@@ -681,7 +672,7 @@ fn the_hourly_rollover_at_the_transit_close_grants_no_grace() {
 #[test]
 fn a_reference_payment_ignores_the_snapshot_it_names() {
     let mut storage = dual_currency_series(REFERENCE_ISO as u64);
-    stub_token_that_never_credits(&mut storage);
+    stub_unanswered_router(&mut storage);
     StorageHandle::enter(&mut storage, |s| {
         let err = runtime::settle_intex(
             &s,
@@ -697,10 +688,7 @@ fn a_reference_payment_ignores_the_snapshot_it_names() {
         .unwrap_err();
         assert_eq!(
             err.to_string(),
-            outbe_primitives::error::PrecompileError::from(
-                outbe_vaultrouter::settlement::SettlementError::AmountMismatch
-            )
-            .to_string()
+            outbe_vaultrouter::test_support::unanswered_deposit_from().to_string()
         );
     });
 }

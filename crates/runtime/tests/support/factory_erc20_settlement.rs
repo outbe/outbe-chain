@@ -4,13 +4,13 @@
 use std::fmt::Debug;
 
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::sol;
+use alloy_sol_types::{sol, SolEvent};
 use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
 use outbe_oracle::test_support::seed_trailing_vwap_window;
 use outbe_primitives::storage::{StorageHandle, SubCallOutput, SubCallStatus};
 use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_vaultrouter::{
-    api::IVaultRouter::StablesSource,
+    precompile::IVaultRouter::{self, StablecoinSource},
     test_support::{register_source, register_vault},
 };
 use revm::database::{CacheDB, EmptyDB};
@@ -48,7 +48,7 @@ pub struct Quote {
 /// One factory that settles its entities in ERC-20 through the VaultRouter.
 pub trait Rail: Copy + Debug + Sized {
     const FACTORY: Address;
-    const SOURCE: StablesSource;
+    const SOURCE: StablecoinSource;
     /// Addresses besides the token and vault that run the settlement fixture.
     const EXTRA_COUNTERPARTIES: &'static [Address] = &[];
 
@@ -60,7 +60,7 @@ pub trait Rail: Copy + Debug + Sized {
 
     fn quote(self, world: &mut World<Self>) -> Quote;
 
-    fn settle_call(self, id: U256, snapshot_id: U256) -> Bytes;
+    fn settle_call(self, id: U256, snapshot_id: U256, cost: U256) -> Bytes;
 
     fn assert_settled(self, world: &World<Self>);
 
@@ -176,11 +176,12 @@ impl<R: Rail> World<R> {
                 amount: U256::from(FACTORY_FLOAT),
             },
         );
+        // The vault router takes the payment directly from the payer.
         self.ok(
             payer,
             ASSET,
             IFixture::approveCall {
-                spender: R::FACTORY,
+                spender: VAULT_ROUTER_ADDRESS,
                 amount: cost,
             },
         );
@@ -222,12 +223,12 @@ impl<R: Rail> World<R> {
     }
 
     pub fn settle_with(&mut self, snapshot_id: U256) -> SubCallOutput {
-        let calldata = self.rail.settle_call(self.id, snapshot_id);
+        let calldata = self.rail.settle_call(self.id, snapshot_id, self.cost);
         self.call(self.payer, R::FACTORY, calldata, false)
     }
 
     pub fn configure(&mut self, target: Address, mode: u64) {
-        let reentry = self.rail.settle_call(self.id, self.snapshot_id);
+        let reentry = self.rail.settle_call(self.id, self.snapshot_id, self.cost);
         self.ok(
             OWNER,
             target,
@@ -254,8 +255,8 @@ impl<R: Rail> World<R> {
 
     pub fn allowances(&mut self) -> [U256; 3] {
         [
+            (self.payer, VAULT_ROUTER_ADDRESS),
             (self.payer, R::FACTORY),
-            (R::FACTORY, VAULT_ROUTER_ADDRESS),
             (VAULT_ROUTER_ADDRESS, VAULT),
         ]
         .map(|(owner, spender)| self.view(ASSET, IFixture::allowanceCall { owner, spender }))
@@ -308,6 +309,27 @@ pub fn quoted_cost_moves_into_the_reserve_once<R: Rail>(rail: R) {
     world.succeeds(out);
     assert_eq!(world.balances(), world.paid_balances(), "{rail:?}");
     rail.assert_settled(&world);
+    // The payer approved only the vault router, and the factory holds no allowance.
+    assert_eq!(world.allowances()[..2], [U256::ZERO; 2], "{rail:?}");
+    let deposited: Vec<_> = world
+        .evm
+        .logs()
+        .iter()
+        .filter(|log| log.address == VAULT_ROUTER_ADDRESS)
+        .map(|log| log.data.clone())
+        .collect();
+    assert_eq!(
+        deposited,
+        [IVaultRouter::StablecoinDeposited {
+            sourceAddress: R::FACTORY,
+            vault: VAULT,
+            amountMinor: world.cost,
+            shares: world.cost,
+            sourceType: R::SOURCE,
+        }
+        .encode_log_data()],
+        "{rail:?}"
+    );
 
     let balances = world.balances();
     assert!(
@@ -326,13 +348,29 @@ pub fn third_party_pays_and_the_entity_stays_with_the_owner<R: Rail>(rail: R) {
     rail.assert_kept_by_owner(&mut world);
 }
 
-/// False transfer/approve/router transfer, vault revert, malformed bool, success without
+/// The payer approves the vault router. A payer that approved only the factory pays
+/// nothing and the entity stays unsettled.
+pub fn a_payer_that_approved_only_the_factory_fails<R: Rail>(rail: R) {
+    let mut world = World::new(rail, OWNER, true);
+    let cost = world.cost;
+    for (spender, amount) in [(VAULT_ROUTER_ADDRESS, U256::ZERO), (R::FACTORY, cost)] {
+        world.ok(OWNER, ASSET, IFixture::approveCall { spender, amount });
+    }
+    let balances = world.balances();
+    let logs = world.evm.logs().to_vec();
+    assert!(
+        !matches!(world.settle().status, SubCallStatus::Success),
+        "{rail:?}"
+    );
+    assert_eq!(world.balances(), balances, "{rail:?}");
+    assert_eq!(world.evm.logs(), logs, "{rail:?}");
+}
+
+/// False router pull from the payer, vault revert, malformed bool, success without
 /// movement, fee-on-transfer, and missing router authorization.
 pub fn payment_failures_restore_balances_allowances_and_logs<R: Rail>(rail: R) {
     for (target, mode, registered) in [
         (ASSET, 1, true),
-        (ASSET, 2, true),
-        (ASSET, 3, true),
         (VAULT, 4, true),
         (ASSET, 6, true),
         (ASSET, 8, true),

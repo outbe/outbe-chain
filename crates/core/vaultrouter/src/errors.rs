@@ -9,27 +9,27 @@ use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
-use crate::api::IVaultRouter;
+use crate::precompile::IVaultRouter;
 
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum VaultRouterError {
-    #[error("approved vault action not found: {0}")]
-    ApprovedVaultActionNotFound(U256),
-    #[error("approved vault action index inconsistent: {0}")]
-    ApprovedVaultActionIndexInconsistent(U256),
-    #[error("invalid approved vault action")]
-    InvalidApprovedVaultAction,
+    #[error("vault action not found: {0}")]
+    VaultActionNotFound(U256),
+    #[error("vault action index inconsistent: {0}")]
+    VaultActionIndexInconsistent(U256),
+    #[error("invalid vault action")]
+    InvalidVaultAction,
     #[error("ERC20 operation failed or returned malformed data")]
     TokenOperationFailed,
     #[error("zero address")]
     ZeroAddress,
     #[error("unauthorized")]
     Unauthorized,
-    #[error("invalid liquidity source")]
-    InvalidLiquiditySource,
-    #[error("invalid liquidity target")]
-    InvalidLiquidityTarget,
+    #[error("invalid stablecoin source")]
+    InvalidStablecoinSource,
+    #[error("invalid stablecoin target")]
+    InvalidStablecoinTarget,
     #[error("reserve vault not configured")]
     ReserveVaultNotConfigured,
     #[error("reserve vault already added")]
@@ -42,10 +42,10 @@ pub enum VaultRouterError {
     ReserveVaultRemovalPending { vault: Address, proposal_id: U256 },
     #[error("reserve vault owner not renounced: {0}")]
     ReserveVaultOwnerNotRenounced(Address),
-    #[error("liquidity source not found")]
-    LiquiditySourceNotFound,
-    #[error("liquidity target not found")]
-    LiquidityTargetNotFound,
+    #[error("stablecoin source not found")]
+    StablecoinSourceNotFound,
+    #[error("stablecoin target not found")]
+    StablecoinTargetNotFound,
     #[error("insufficient shares for withdraw: available={available}, required={required}")]
     InsufficientSharesForWithdraw { available: U256, required: U256 },
     #[error("token bundle receiver is not a deployed contract")]
@@ -114,22 +114,20 @@ impl From<VaultRouterError> for PrecompileError {
     fn from(err: VaultRouterError) -> Self {
         use IVaultRouter as I;
         match err {
-            VaultRouterError::ApprovedVaultActionNotFound(proposal_id) => {
-                revert_with(I::ApprovedVaultActionNotFound {
+            VaultRouterError::VaultActionNotFound(proposal_id) => {
+                revert_with(I::VaultActionNotFound {
                     proposalId: proposal_id,
                 })
             }
-            VaultRouterError::ApprovedVaultActionIndexInconsistent(proposal_id) => {
-                revert_with(I::ApprovedVaultActionIndexInconsistent {
+            VaultRouterError::VaultActionIndexInconsistent(proposal_id) => {
+                revert_with(I::VaultActionIndexInconsistent {
                     proposalId: proposal_id,
                 })
             }
-            VaultRouterError::InvalidApprovedVaultAction => {
-                revert_with(I::InvalidApprovedVaultAction {})
-            }
+            VaultRouterError::InvalidVaultAction => revert_with(I::InvalidVaultAction {}),
             VaultRouterError::TokenOperationFailed => revert_with(I::TokenOperationFailed {}),
-            VaultRouterError::InvalidLiquiditySource => revert_with(I::InvalidLiquiditySource {}),
-            VaultRouterError::InvalidLiquidityTarget => revert_with(I::InvalidLiquidityTarget {}),
+            VaultRouterError::InvalidStablecoinSource => revert_with(I::InvalidStablecoinSource {}),
+            VaultRouterError::InvalidStablecoinTarget => revert_with(I::InvalidStablecoinTarget {}),
             VaultRouterError::ReserveVaultNotConfigured => {
                 revert_with(I::ReserveVaultNotConfigured {})
             }
@@ -151,8 +149,12 @@ impl From<VaultRouterError> for PrecompileError {
                     currentOwner: current_owner,
                 })
             }
-            VaultRouterError::LiquiditySourceNotFound => revert_with(I::LiquiditySourceNotFound {}),
-            VaultRouterError::LiquidityTargetNotFound => revert_with(I::LiquidityTargetNotFound {}),
+            VaultRouterError::StablecoinSourceNotFound => {
+                revert_with(I::StablecoinSourceNotFound {})
+            }
+            VaultRouterError::StablecoinTargetNotFound => {
+                revert_with(I::StablecoinTargetNotFound {})
+            }
             VaultRouterError::InsufficientSharesForWithdraw {
                 available,
                 required,
@@ -244,10 +246,12 @@ pub enum SettlementError {
     OracleUnavailable,
     #[error("VWAP snapshot {authorized:#x} does not match the required {required:#x}")]
     SnapshotMismatch { authorized: U256, required: U256 },
-    #[error("settlement token call failed")]
-    TokenOperationFailed,
     #[error("settlement token moved an unexpected amount")]
     AmountMismatch,
+    #[error("payer allowance or balance is below the amount cap")]
+    InsufficientFunds,
+    #[error("settlement cost is above the amount cap")]
+    CostAboveCap,
 }
 
 impl From<SettlementError> for PrecompileError {
@@ -274,8 +278,9 @@ impl From<SettlementError> for PrecompileError {
                 authorized,
                 required,
             }),
-            SettlementError::TokenOperationFailed => revert_with(I::TokenOperationFailed {}),
             SettlementError::AmountMismatch => revert_with(I::AmountMismatch {}),
+            SettlementError::InsufficientFunds => revert_with(I::InsufficientFunds {}),
+            SettlementError::CostAboveCap => revert_with(I::CostAboveCap {}),
         }
     }
 }

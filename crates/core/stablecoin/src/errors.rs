@@ -5,7 +5,7 @@ use alloy_sol_types::{SolError, SolValue};
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
-use crate::abi::IStablecoin;
+use crate::precompile::IStablecoin;
 
 /// Represents errors returned by the Stablecoin state runtime.
 #[derive(Debug, Error, PartialEq, Eq)]

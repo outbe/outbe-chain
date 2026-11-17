@@ -14,7 +14,7 @@ use outbe_primitives::{chain::CHAIN_ID, storage::StorageHandle};
 use outbe_slashindicator::{precompile::ISlashIndicator, schema::SlashIndicator};
 use outbe_staking::{contract::Staking, precompile::IStaking};
 use outbe_system_common::addresses::{
-    PROMIS_LIMIT_ADDRESS, SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS, VALIDATOR_SET_ADDRESS,
+    SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS, VALIDATOR_SET_ADDRESS,
 };
 use outbe_validatorset::{
     contract::ValidatorSet,
@@ -222,13 +222,12 @@ fn invalid_evidence_reward_reverts_transaction_and_identical_signed_evidence_can
                 logs.iter().map(|log| log.address).collect::<Vec<_>>(),
                 vec![
                     VALIDATOR_SET_ADDRESS,
-                    PROMIS_LIMIT_ADDRESS,
                     STAKING_ADDRESS,
                     SLASH_INDICATOR_ADDRESS
                 ]
             );
             assert_eq!(
-                logs[2].data,
+                logs[1].data,
                 IStaking::Slashed {
                     validator: ACCUSED,
                     bondedSlashed: U256::from(80_000),
@@ -255,13 +254,19 @@ fn invalid_evidence_reward_reverts_transaction_and_identical_signed_evidence_can
             let limit = outbe_promislimit::PromisLimitContract::new(storage);
             assert_eq!(limit.promis_limit().unwrap(), U256::ZERO);
             assert_eq!(
-                limit.rest_minor().unwrap(),
-                U256::from(if nonce == 0 { 0 } else { 80_000 })
+                limit
+                    .burn_rest(outbe_promislimit::BurnSource::ValidatorStake)
+                    .unwrap(),
+                U256::from(if nonce == 0 { 0 } else { 80_000 - 8_000 })
             );
         });
         assert_eq!(
             db.basic(STAKING_ADDRESS).unwrap().unwrap().balance,
-            U256::from(if nonce == 0 { INITIAL_STAKE } else { 920_000 })
+            U256::from(if nonce == 0 {
+                INITIAL_STAKE
+            } else {
+                920_000 + 80_000 - 8_000
+            })
         );
         // Zero gas price isolates the native reward from transaction fees.
         assert_eq!(

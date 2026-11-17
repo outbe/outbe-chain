@@ -163,7 +163,7 @@ fn expiry_releases_identity_and_pending_cap_and_burns_once() {
         );
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(storage.clone())
-                .rest_minor()
+                .burn_rest(outbe_promislimit::BurnSource::ProposalBond)
                 .unwrap(),
             STABLECOIN_CREATE_BOND % outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR
         );

@@ -101,14 +101,14 @@ pub const ALL_PRECOMPILE_ADDRESSES: [&str; 32] = [
     OUTBE_SYSTEM_TX_ADDRESS,
 ];
 
-pub const VAULT_ROUTER_LIQUIDITY_SOURCES: [(&str, u64); 4] = [
+pub const VAULT_ROUTER_STABLECOIN_SOURCES: [(&str, u64); 4] = [
     (INTEX_FACTORY_ADDRESS, 1),
     (CREDIS_FACTORY_ADDRESS, 2),
     (GEM_FACTORY_ADDRESS, 3),
     (NOD_FACTORY_ADDRESS, 4),
 ];
 
-pub const VAULT_ROUTER_LIQUIDITY_TARGETS: [(&str, u64); 1] = [(CREDIS_FACTORY_ADDRESS, 1)];
+pub const VAULT_ROUTER_STABLECOIN_TARGETS: [(&str, u64); 1] = [(CREDIS_FACTORY_ADDRESS, 1)];
 
 /// Check whether an address string matches one of the protected protocol precompile addresses.
 pub fn is_protected_protocol_address(addr_norm: &str) -> bool {

@@ -522,6 +522,7 @@ impl EvmFactory for OutbeEvmFactory {
             .build_mainnet_with_inspector(NoOpInspector {})
             .with_precompiles(precompiles);
         create_guard::install(&mut evm.instruction);
+        crate::selfdestruct_guard::install(&mut evm.instruction);
 
         let mut evm = outbe_evm(evm, false);
         evm.abort_bridge = abort_bridge;

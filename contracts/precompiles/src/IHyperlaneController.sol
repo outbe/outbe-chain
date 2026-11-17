@@ -45,6 +45,7 @@ interface IHyperlaneController {
     error RemoteRouterMismatch(uint32 domain, bytes32 enrolled);
     error UnknownApprovedAction(uint256 proposalId);
     error ApprovedPayloadMismatch(uint256 proposalId);
+    error ApprovedActionLocked(uint256 proposalId, uint64 unlockHeight);
 
     event Initialized(address indexed icaRouter);
     event DomainAdded(uint32 indexed domain, address indexed ism);
@@ -80,9 +81,11 @@ interface IHyperlaneController {
     function setHyperlaneSigner(address signer) external;
 
     /// Runs a Hyperlane chain action that a governance vote approved. Permissionless: the vote
-    /// decided, and `payload` must be the approved JSON (its keccak256 is stored). An action older
-    /// than the governance voting window is dropped with `ApprovedActionExpired`, so a stale
-    /// approval cannot undo a newer one. A remote action pays the Hyperlane fee from the
+    /// decided, and `payload` must be the approved JSON (its keccak256 is stored). Before the
+    /// approval height plus the `executionDelayBlocks` of the payload, it reverts with
+    /// `ApprovedActionLocked`. An action that waited longer than the governance voting window
+    /// after that delay is dropped with `ApprovedActionExpired`, so a stale approval cannot undo
+    /// a newer one. A remote action pays the Hyperlane fee from the
     /// `CROSSCHAIN_BRIDGE` balance.
     function applyApproved(uint256 proposalId, bytes calldata payload) external;
 

@@ -76,20 +76,13 @@ impl AmountMinor for IDesis::DesisLimitAllocated {
     }
 }
 
-impl AmountMinor for IDesis::DesisLimitReturned {
-    fn amount(&self) -> U256 {
-        self.amountMinor
-    }
-}
-
 fn assert_limit_identity(storage: &mut HashMapStorageProvider, returned_to_promis: U256) {
     let set = amount_of::<IDesis::DesisLimitSet>(storage);
     let allocated = amount_of::<IDesis::DesisLimitAllocated>(storage);
-    let returned = amount_of::<IDesis::DesisLimitReturned>(storage);
+    let returned: U256 = super::desis_limit_returns(storage).into_iter().sum();
     assert_eq!(set.len(), 1);
     assert_eq!(allocated.len(), 1);
-    assert_eq!(returned.len(), 1);
-    assert_eq!(set[0], allocated[0] + returned[0]);
+    assert_eq!(set[0], allocated[0] + returned);
     let pool = StorageHandle::enter(storage, |s| {
         PromisLimitContract::new(s.clone()).promis_limit().unwrap()
     });
@@ -114,9 +107,7 @@ fn assert_cancel_before_limit_events(storage: &HashMapStorageProvider) {
     };
     let canceled = at(IDesis::IntexAuctionCanceled::SIGNATURE_HASH);
     let allocated = at(IDesis::DesisLimitAllocated::SIGNATURE_HASH);
-    let returned = at(IDesis::DesisLimitReturned::SIGNATURE_HASH);
     assert!(canceled < allocated);
-    assert!(allocated + 1 == returned);
 }
 
 fn assert_repeat_tick_is_quiet(storage: &mut HashMapStorageProvider) {
@@ -158,17 +149,14 @@ fn a_partial_clear_balances_and_a_repeat_tick_is_quiet() {
 }
 
 #[test]
-fn a_full_clear_reports_a_zero_return_without_crediting_it() {
+fn a_full_clear_returns_nothing_to_the_promis_limit() {
     let mut storage = world(|s| {
         open_clearing(s, 2);
         relay_bids(s, SRC_CHAIN, 2, 200);
         assert_eq!(clear(s).issued_units, 2);
     });
     assert_limit_identity(&mut storage, U256::ZERO);
-    assert_eq!(
-        amount_of::<IDesis::DesisLimitReturned>(&storage),
-        vec![U256::ZERO]
-    );
+    assert!(super::desis_limit_returns(&storage).is_empty());
     assert_eq!(
         logs(&storage)
             .iter()
@@ -308,11 +296,18 @@ fn an_oversized_brief_cancels_in_order_and_a_second_brief_is_rejected() {
             Some(IDesis::DesisLimitSet::SIGNATURE_HASH),
             Some(IDesis::IntexAuctionCanceled::SIGNATURE_HASH),
             Some(IDesis::DesisLimitAllocated::SIGNATURE_HASH),
-            Some(IDesis::DesisLimitReturned::SIGNATURE_HASH),
         ]
     );
     assert_eq!(cancel_reason(&storage), CANCELED_LIMIT_OVERFLOW);
-    assert_limit_identity(&mut storage, U256::ZERO);
+    assert_eq!(
+        amount_of::<IDesis::DesisLimitSet>(&storage),
+        vec![U256::MAX]
+    );
+    assert_eq!(
+        amount_of::<IDesis::DesisLimitAllocated>(&storage),
+        vec![U256::ZERO]
+    );
+    assert!(super::desis_limit_returns(&storage).is_empty());
     assert_repeat_tick_is_quiet(&mut storage);
 }
 

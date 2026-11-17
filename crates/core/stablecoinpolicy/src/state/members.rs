@@ -6,8 +6,8 @@ use outbe_system_common::stablecoin_fork::{
     STABLECOIN_LIST_PAGE_CAP, STABLECOIN_POLICY_MEMBER_BATCH_CAP,
 };
 
-use crate::abi::IStablecoinPolicyRegistry;
 use crate::errors::PolicyRegistryError;
+use crate::precompile::IStablecoinPolicyRegistry;
 use crate::schema::{PolicyType, StablecoinPolicyRegistryContract};
 
 impl StablecoinPolicyRegistryContract<'_> {

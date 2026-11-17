@@ -12,8 +12,11 @@ pub struct VoteModule;
 impl ProtocolModule for VoteModule {
     const NAME: &'static str = "vote";
 
+    /// Tallies the closed proposals, then applies the approved actions whose
+    /// execution delay ended.
     fn begin_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
-        VoteLifecycle::begin_block_with_handlers(ctx, handlers::registry())
+        VoteLifecycle::begin_block_with_handlers(ctx, handlers::registry())?;
+        handlers::apply_due_approvals(&ctx.storage, ctx.block.block_number)
     }
 }
 

@@ -171,6 +171,7 @@ where
             context.execution.spec_id(),
         );
     crate::create_guard::install(&mut instructions);
+    crate::selfdestruct_guard::install(&mut instructions);
     let host = std::sync::Arc::clone(&context.host);
     let precompiles = crate::precompiles::OutbeSubCallPrecompiles::<DB>::new(
         context.execution,

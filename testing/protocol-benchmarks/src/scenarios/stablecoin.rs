@@ -134,7 +134,7 @@ impl BenchmarkScenario for StablecoinScenario {
                     .map_err(|error| error.to_string())?;
                 Ok::<_, String>(validated)
             }
-            StablecoinPath::Approved => StablecoinFactoryApi::execute_approved(
+            StablecoinPath::Approved => StablecoinFactoryApi::create_stablecoin(
                 storage,
                 PROPOSAL_ID,
                 ISSUER,
@@ -187,7 +187,7 @@ impl BenchmarkScenario for StablecoinScenario {
                     return Err("created Stablecoin identity drifted from admission".to_owned());
                 }
                 observation = observation
-                    .with_latency("chain.stablecoin.execute_approved", latency_ns)
+                    .with_latency("chain.stablecoin.create_stablecoin", latency_ns)
                     .with_postcondition("stablecoin.created", "true")
                     .with_postcondition("stablecoin.identity_matches", "true")
                     .with_postcondition("stablecoin.token", format!("{:#x}", created.token));

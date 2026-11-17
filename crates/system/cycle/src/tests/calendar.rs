@@ -56,6 +56,126 @@ fn process_emission_day_catches_up_one_oldest_day_per_hourly_run_after_a_multi_d
 }
 
 #[test]
+fn the_daily_step_adds_base_fees_and_burn_addresses_after_the_seal_and_before_metadosis() {
+    use alloy_sol_types::SolEvent;
+    use outbe_desis::precompile::IDesis;
+    use outbe_metadosis::precompile::IMetadosis;
+    use outbe_promislimit::{precompile::IPromisLimit, PromisLimitContract, DEAD_ADDRESS};
+    use outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS;
+
+    let minor = outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
+    let mut storage = cycle_storage();
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 32);
+    storage.enter(|handle| {
+        let anchor = genesis_block(handle.clone(), GENESIS_TS + 60);
+        run_cycle_tick(&anchor).unwrap();
+    });
+    let events_before = storage.get_ordered_events().len();
+
+    storage.set_block_number(2);
+    storage.enter(|handle| {
+        PromisLimitContract::new(handle.clone())
+            .count_base_fees(minor * U256::from(5) / U256::from(2))
+            .unwrap();
+        handle
+            .increase_balance(Address::ZERO, minor * U256::from(3) + U256::from(5))
+            .unwrap();
+        handle.increase_balance(DEAD_ADDRESS, minor).unwrap();
+        let fire = dispatch_at(handle.clone(), 2, GENESIS_TS + SECONDS_PER_DAY + 3_600);
+        assert!(is_day_allocated(&fire, 20_240_101));
+        assert_eq!(
+            outbe_rewards::api::get_last_sealed_day(&handle).unwrap(),
+            20_240_101
+        );
+        assert_eq!(
+            PromisLimitContract::new(handle.clone())
+                .base_fee_count()
+                .unwrap(),
+            minor / U256::from(2)
+        );
+        assert_eq!(handle.balance(Address::ZERO).unwrap(), U256::from(5));
+        assert_eq!(handle.balance(DEAD_ADDRESS).unwrap(), U256::ZERO);
+    });
+
+    let events = &storage.get_ordered_events()[events_before..];
+    let position =
+        |found: &dyn Fn(&alloy_primitives::Log) -> bool| events.iter().position(found).unwrap();
+    let added = |code: u8, amount: u64| {
+        move |log: &alloy_primitives::Log| {
+            log.address == PROMIS_LIMIT_ADDRESS
+                && IPromisLimit::PromisLimitAdded::decode_log(log).is_ok_and(|ev| {
+                    ev.data.source == code && ev.data.amountMinor == U256::from(amount)
+                })
+        }
+    };
+    let allocated = position(&|log| {
+        IMetadosis::MetadosisLimitSet::decode_log(log)
+            .is_ok_and(|ev| ev.data.emissionDay == 20_240_101)
+    });
+    let base_fees = position(&added(41, 2));
+    let burn_addresses = position(&added(46, 4));
+    let desis_limit = position(&|log| {
+        IDesis::DesisLimitSet::decode_log(log).is_ok_and(|ev| ev.data.emissionDay == 20_240_101)
+    });
+    assert!(allocated < base_fees && base_fees < burn_addresses && burn_addresses < desis_limit);
+}
+
+#[test]
+fn a_failed_allocation_day_still_adds_base_fees_and_burn_addresses() {
+    use alloy_sol_types::SolEvent;
+    use outbe_promislimit::{precompile::IPromisLimit, PromisLimitContract, DEAD_ADDRESS};
+    use outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS;
+
+    let minor = outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
+    let mut storage = cycle_storage();
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 32);
+    storage.enter(|handle| {
+        let anchor = genesis_block(handle.clone(), GENESIS_TS + 60);
+        run_cycle_tick(&anchor).unwrap();
+    });
+    let events_before = storage.get_ordered_events().len();
+
+    storage.set_block_number(2);
+    storage.enter(|handle| {
+        PromisLimitContract::new(handle.clone())
+            .count_base_fees(minor * U256::from(3) / U256::from(2))
+            .unwrap();
+        handle.increase_balance(Address::ZERO, minor).unwrap();
+        handle.increase_balance(DEAD_ADDRESS, minor).unwrap();
+        let ctx = runtime_context(
+            block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 3_600),
+            handle.clone(),
+        );
+        account_parent(&ctx, 2);
+        let mut ar = outbe_agentreward::AgentRewardContract::new(handle.clone());
+        ar.increment_waa_tribute(20_240_101u32.into(), Address::repeat_byte(0x44))
+            .unwrap();
+        ar.pending_total_minor
+            .write(
+                &(outbe_agentreward::schema::RewardPool::Waa as u8),
+                U256::MAX,
+            )
+            .unwrap();
+        run_due_tasks(&ctx).unwrap();
+        assert_eq!(handle.balance(Address::ZERO).unwrap(), U256::ZERO);
+        assert_eq!(handle.balance(DEAD_ADDRESS).unwrap(), U256::ZERO);
+    });
+
+    let events = &storage.get_ordered_events()[events_before..];
+    assert!(events
+        .iter()
+        .any(|log| crate::ICycle::DayEmissionLimitAllocationFailed::decode_log(log).is_ok()));
+    let adds: Vec<_> = events
+        .iter()
+        .filter(|log| log.address == PROMIS_LIMIT_ADDRESS)
+        .filter_map(|log| IPromisLimit::PromisLimitAdded::decode_log(log).ok())
+        .map(|ev| (ev.data.source, ev.data.amountMinor))
+        .filter(|(source, _)| matches!(source, 41 | 46))
+        .collect();
+    assert_eq!(adds, vec![(41, U256::ONE), (46, U256::from(2))]);
+}
+
+#[test]
 fn catchup_horizon_bounds_backward_scan_to_max_reward_catchup_days() {
     let mut storage = cycle_storage();
     storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 16);
@@ -188,7 +308,7 @@ fn a_failed_allocation_whose_limit_cannot_reach_the_promis_limit_fails_the_block
             .unwrap();
         // Allocation overflows first; the full limit then overflows the Promis Limit in its fallback.
         outbe_promislimit::PromisLimitContract::new(handle.clone())
-            .checked_credit(U256::MAX)
+            .add(outbe_promislimit::LimitSource::Nod, U256::MAX)
             .unwrap();
         let err = run_due_tasks(&ctx).unwrap_err();
         assert!(

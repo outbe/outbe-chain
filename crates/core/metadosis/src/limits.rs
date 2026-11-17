@@ -111,10 +111,17 @@ pub(crate) fn allocate_day_metadosis_limit(
         carry_before,
     )?;
     if !split.promis_limit_credit.is_zero() {
-        PromisLimitContract::new(storage.clone()).checked_credit(split.promis_limit_credit)?;
+        PromisLimitContract::new(storage.clone()).add(
+            outbe_promislimit::LimitSource::MetadosisLimit,
+            split.promis_limit_credit,
+        )?;
     }
     let mut promis = PromisLimitContract::new(storage);
-    if !split.desis_limit_minor.is_zero() && promis.checked_take(split.desis_limit_minor)?.is_none()
+    if !split.desis_limit_minor.is_zero()
+        && !promis.subtract(
+            outbe_promislimit::LimitTarget::DesisLimit,
+            split.desis_limit_minor,
+        )?
     {
         return Err(MetadosisError::DesisLimitUnavailable {
             desis_limit_minor: split.desis_limit_minor,
@@ -122,7 +129,10 @@ pub(crate) fn allocate_day_metadosis_limit(
         }
         .into());
     }
-    promis.checked_credit(input.unused_lysis_minor)?;
+    promis.add(
+        outbe_promislimit::LimitSource::LysisLimit,
+        input.unused_lysis_minor,
+    )?;
     Ok(split)
 }
 
@@ -149,7 +159,10 @@ pub(crate) fn brief_auction(
                 desis_limit_minor,
                 ..
             } => {
-                PromisLimitContract::new(storage.clone()).checked_credit(desis_limit_minor)?;
+                PromisLimitContract::new(storage.clone()).add(
+                    outbe_promislimit::LimitSource::DesisLimit,
+                    desis_limit_minor,
+                )?;
                 Ok(U256::ZERO)
             }
         }
@@ -175,7 +188,10 @@ mod tests {
             let mut provider = HashMapStorageProvider::new(1);
             StorageHandle::enter(&mut provider, |storage| {
                 PromisLimitContract::new(storage.clone())
-                    .checked_credit(U256::from(carry as u64))
+                    .add(
+                        outbe_promislimit::LimitSource::MetadosisLimit,
+                        U256::from(carry as u64),
+                    )
                     .unwrap();
                 let split = allocate_day_metadosis_limit(
                     storage.clone(),
@@ -222,7 +238,7 @@ mod tests {
             let mut provider = HashMapStorageProvider::new(1);
             StorageHandle::enter(&mut provider, |storage| {
                 PromisLimitContract::new(storage)
-                    .checked_credit(carry)
+                    .add(outbe_promislimit::LimitSource::MetadosisLimit, carry)
                     .unwrap();
             });
             let before = provider.storage.clone();

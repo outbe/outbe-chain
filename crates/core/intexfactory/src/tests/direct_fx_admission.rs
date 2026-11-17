@@ -1,7 +1,7 @@
 //! The direct settlement rail converts through the trailing window and refuses
 //! a payment whose target leg that window never priced, before any write.
 
-use super::issuance::{dual_currency_series, stub_token_that_never_credits, COEN_ISO_RATE_SCALE};
+use super::issuance::{dual_currency_series, stub_unanswered_router, COEN_ISO_RATE_SCALE};
 use super::*;
 use outbe_vaultrouter::settlement::SettlementPayment;
 
@@ -11,7 +11,7 @@ use outbe_vaultrouter::settlement::SettlementPayment;
 #[test]
 fn a_direct_settlement_in_a_currency_the_window_never_priced_is_refused_without_writes() {
     let mut storage = dual_currency_series(EUR_ISO as u64);
-    stub_token_that_never_credits(&mut storage);
+    stub_unanswered_router(&mut storage);
     let required = StorageHandle::enter(&mut storage, |s| {
         let oracle = OracleContract::new(s.clone());
         write_day_rate(

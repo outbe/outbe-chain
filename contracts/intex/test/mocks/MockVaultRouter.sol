@@ -8,24 +8,24 @@ import {MockSettlementVault} from "./MockSettlementVault.sol";
 
 /// @notice Minimal test double mirroring `outbe-vault/VaultRouter` for the methods
 ///         `EscrowAdapter` actually calls (`deposit`).
-/// @dev Wraps `MockSettlementVault` per asset. `addVault` / `addLiquiditySource` are open
+/// @dev Wraps `MockSettlementVault` per asset. `addVault` / `addStablecoinSource` are open
 ///      (no role checks) and exist as test helpers only. Production vault registration requires
-///      governance approval followed by `applyApproved`; route changes execute during tally.
+///      governance approval followed by `applyVaultAction`; route changes execute during tally.
 contract MockVaultRouter {
     using SafeERC20 for IERC20;
 
     /// @dev Maps stablecoin address to the registered ERC4626-style vault for that asset.
     mapping(address => MockSettlementVault) public assetVault;
 
-    /// @dev Maps caller address to the registered StablesSource slot
+    /// @dev Maps caller address to the registered StablecoinSource slot
     ///      (`Unknown` = 0 means not registered -> `deposit` reverts).
-    mapping(address => IVaultRouter.StablesSource) public liquiditySourceTypes;
+    mapping(address => IVaultRouter.StablecoinSource) public stablecoinSourceTypes;
 
     /// @dev When true, `deposit` reverts. Tests use this to simulate a vault-side failure during
     ///      finalization (the instruction's split is valid but the payout deposit fails).
     bool public revertOnDeposit;
 
-    error InvalidLiquiditySource();
+    error InvalidStablecoinSource();
     error ReserveVaultNotConfigured();
     error DepositReverted();
 
@@ -45,16 +45,16 @@ contract MockVaultRouter {
     /// @notice Register `source` as a permitted depositor with the given enum slot.
     /// @dev Production route changes require governance. The mock leaves this helper open for
     ///      test setup convenience and does not implement the production interface.
-    function addLiquiditySource(address source, IVaultRouter.StablesSource sourceType) external {
-        liquiditySourceTypes[source] = sourceType;
+    function addStablecoinSource(address source, IVaultRouter.StablecoinSource sourceType) external {
+        stablecoinSourceTypes[source] = sourceType;
     }
 
     /// @notice Mirrors `IVaultRouter.deposit` semantics. It pulls `assets` from `msg.sender` and
     ///         deposits them into the registered vault. The shares accrue on this contract.
     function deposit(address asset, uint256 assets) external returns (uint256 shares) {
         if (revertOnDeposit) revert DepositReverted();
-        if (liquiditySourceTypes[msg.sender] == IVaultRouter.StablesSource.Unknown) {
-            revert InvalidLiquiditySource();
+        if (stablecoinSourceTypes[msg.sender] == IVaultRouter.StablecoinSource.Unknown) {
+            revert InvalidStablecoinSource();
         }
         MockSettlementVault vault = assetVault[asset];
         if (address(vault) == address(0)) revert ReserveVaultNotConfigured();
