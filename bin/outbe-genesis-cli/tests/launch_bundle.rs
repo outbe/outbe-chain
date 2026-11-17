@@ -29,7 +29,7 @@ fn minimal_config(keys_dir: &str) -> Value {
         "validators": ["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"],
         "keys_dir": keys_dir,
         "crs_path": crs_path,
-        "tee": {"mode": "gramine-direct-dev"},
+        "tee": {"mode": "no-attestation-dev"},
     })
 }
 
@@ -68,7 +68,7 @@ fn render_fixture(root: &Path, overrides: Option<Value>) -> (PathBuf, PathBuf) {
     }
     let genesis = output_dir.join("genesis.json");
     let tee_policy = initial_tee_policy_v1(
-        InitialTeeProfileV1::GramineDirectDev,
+        InitialTeeProfileV1::NoAttestationDev,
         424242,
         B256::repeat_byte(0x42),
     )

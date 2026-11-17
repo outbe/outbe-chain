@@ -188,7 +188,7 @@ pub fn deploy_markdown(
     let dev_warning = if mode == "dcap-required" {
         ""
     } else {
-        "\n> **`gramine-direct-dev`**: the enclave runs unattested. Use it for a \
+        "\n> **`no-attestation-dev`**: the enclave runs unattested. Use it for a \
 devnet only. A production network needs `tee.mode: dcap-required`, real \
 SGX hardware, and the exact release measurements.\n"
     };

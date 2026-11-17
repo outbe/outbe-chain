@@ -48,7 +48,7 @@ pub(super) fn native_arguments(root: &Path) -> Vec<OsString> {
         "--output".into(),
         genesis.to_str().unwrap().into(),
         "--mode".into(),
-        "gramine-direct-dev".into(),
+        "no-attestation-dev".into(),
     ])
     .unwrap();
     fs::create_dir(root.join("configuration")).unwrap();

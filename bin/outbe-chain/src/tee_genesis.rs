@@ -40,7 +40,7 @@ enum TeeCommand {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum TeeGenesisMode {
     DcapRequired,
-    GramineDirectDev,
+    NoAttestationDev,
 }
 
 #[derive(Debug, clap::Args)]
@@ -191,7 +191,7 @@ fn generate_genesis(args: &TeeGenesisArgs) -> eyre::Result<()> {
                 )?,
             })
         }
-        TeeGenesisMode::GramineDirectDev => {
+        TeeGenesisMode::NoAttestationDev => {
             crate::errors::require(
                 (
                     args.mrenclave.is_none(),
@@ -202,7 +202,7 @@ fn generate_genesis(args: &TeeGenesisArgs) -> eyre::Result<()> {
                 ) == (true, true, true, true, true),
                 TeeGenesisError::DcapArgsForbiddenInDevMode,
             )?;
-            InitialTeeProfileV1::GramineDirectDev
+            InitialTeeProfileV1::NoAttestationDev
         }
     };
     let policy = initial_tee_policy_v1(profile, chain_id, genesis_hash)?;
@@ -351,7 +351,51 @@ mod tests {
     }
 
     #[test]
-    fn gramine_direct_dev_genesis_is_valid_and_does_not_change_header_hash() {
+    fn no_attestation_dev_cli_mode_has_no_legacy_alias_and_is_network_restricted() {
+        if !crate::test_utils::in_isolated_process(
+            "tee_genesis::tests::no_attestation_dev_cli_mode_has_no_legacy_alias_and_is_network_restricted",
+        ) {
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        for chain_id in [DEVNET_CHAIN_ID, TESTNET_CHAIN_ID, MAINNET_CHAIN_ID] {
+            let input = root.path().join(format!("{chain_id}-base.json"));
+            let output = root.path().join(format!("{chain_id}-output.json"));
+            write_base_genesis(&input, chain_id).unwrap();
+            let parse = |mode| {
+                TeeCli::try_parse_from([
+                    "outbe-chain-tee",
+                    "genesis",
+                    "--input",
+                    input.to_str().unwrap(),
+                    "--output",
+                    output.to_str().unwrap(),
+                    "--mode",
+                    mode,
+                ])
+            };
+            let error = parse("gramine-direct-dev").unwrap_err();
+            assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
+            assert!(!output.exists());
+            let TeeCommand::Genesis(args) = parse("no-attestation-dev").unwrap().command else {
+                panic!("expected genesis command");
+            };
+            let result = generate_genesis(&args);
+            if chain_id == MAINNET_CHAIN_ID {
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("devnet or testnet chain ID"));
+                assert!(!output.exists());
+            } else {
+                result.unwrap();
+                assert_eq!(parse_generated(&output).chain().id(), chain_id);
+            }
+        }
+    }
+
+    #[test]
+    fn no_attestation_dev_genesis_is_valid_and_does_not_change_header_hash() {
         let root = tempfile::tempdir().unwrap();
         let input = root.path().join("base.json");
         let output = root.path().join("dev.json");
@@ -363,7 +407,7 @@ mod tests {
         generate_genesis(&args(
             input,
             output.clone(),
-            TeeGenesisMode::GramineDirectDev,
+            TeeGenesisMode::NoAttestationDev,
         ))
         .unwrap();
 
@@ -435,7 +479,7 @@ mod tests {
         assert!(generate_genesis(&args(
             dev_input,
             dev_output.clone(),
-            TeeGenesisMode::GramineDirectDev,
+            TeeGenesisMode::NoAttestationDev,
         ))
         .unwrap_err()
         .to_string()
@@ -488,7 +532,7 @@ mod tests {
         let input = root.path().join("base.json");
         let output = root.path().join("dev.json");
         write_base_genesis(&input, DEVNET_CHAIN_ID).unwrap();
-        let mut development = args(input, output.clone(), TeeGenesisMode::GramineDirectDev);
+        let mut development = args(input, output.clone(), TeeGenesisMode::NoAttestationDev);
         development.mrenclave = Some("11".repeat(32));
 
         assert!(generate_genesis(&development)
@@ -508,7 +552,7 @@ mod tests {
         assert!(generate_genesis(&args(
             input.clone(),
             input.clone(),
-            TeeGenesisMode::GramineDirectDev,
+            TeeGenesisMode::NoAttestationDev,
         ))
         .unwrap_err()
         .to_string()
@@ -526,7 +570,7 @@ mod tests {
         assert!(generate_genesis(&args(
             input,
             output.clone(),
-            TeeGenesisMode::GramineDirectDev
+            TeeGenesisMode::NoAttestationDev
         ))
         .unwrap_err()
         .to_string()

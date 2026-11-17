@@ -115,7 +115,7 @@ pub(crate) fn stopped_fixture(donor: &Path) -> StoppedFixture {
         ))
         .arg("--output")
         .arg(&genesis_path)
-        .args(["--mode", "gramine-direct-dev"]));
+        .args(["--mode", "no-attestation-dev"]));
     assert!(materialize.status.success(), "{}", transcript(&materialize));
     let chain_spec =
         reth_ethereum::cli::chainspec::chain_value_parser(genesis_path.to_str().unwrap())

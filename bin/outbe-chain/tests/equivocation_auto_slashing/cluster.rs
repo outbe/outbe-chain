@@ -127,7 +127,7 @@ impl Cluster {
             .arg(seeded)
             .arg("--output")
             .arg(&final_genesis)
-            .args(["--mode", "gramine-direct-dev"]));
+            .args(["--mode", "no-attestation-dev"]));
         let peer_args = validators
             .iter()
             .zip(&peers)
