@@ -15,6 +15,7 @@ use outbe_primitives::system_tx::{
     CONSENSUS_LATE_FINALIZE_CREDITS_STEP_INDEX, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
     CONSENSUS_RADICLE_PUBLICATION_STEP_INDEX, CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX,
     CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX, MAX_END_BLOCK_SYSTEM_TXS, MAX_PREFIX_SYSTEM_TXS,
+    SYSTEM_TX_ARTIFACT_GAS_LIMIT,
 };
 use outbe_primitives::system_tx_context::{
     SystemTxBuildContext, SystemTxContext, SystemTxPayloadBuildError,
@@ -78,6 +79,13 @@ impl ProtocolModule for BoundaryOutcomeModule {
     }
 }
 
+/// Four times the measured 256-validator, 64-claim Oracle slash envelope, rounded up.
+pub const ORACLE_SLASH_STEP_GAS_LIMIT: u64 = 701_035_000;
+/// Four times the measured 255-validator, 256-domain nested ISM envelope, rounded up.
+pub const HYPERLANE_STEP_GAS_LIMIT: u64 = 1_362_315_000;
+/// Bounds factory work while retaining headroom for wide first-write batches and nested calls.
+pub const END_BLOCK_FACTORY_STEP_GAS_LIMIT: u64 = 500_000_000;
+
 pub const CONSENSUS_ORDER: &[ProtocolStep] = &[
     consensus_step::<outbe_rewards::finalization::ParentAccountingModule>()
         .with_validators()
@@ -106,8 +114,12 @@ pub const BEGIN_BLOCK_ORDER: &[ProtocolStep] = &[
     begin_step::<outbe_rewards::RewardsModule>(),
     begin_step::<outbe_staking::StakingModule>(),
     begin_step::<outbe_oracle::OracleModule>().with_validators(),
-    begin_step::<outbe_oracle::OracleSlashModule>().soft_fail(),
-    begin_step::<outbe_hyperlanecontroller::HyperlaneModule>().soft_fail(),
+    begin_step::<outbe_oracle::OracleSlashModule>()
+        .soft_fail()
+        .with_gas_limit(ORACLE_SLASH_STEP_GAS_LIMIT),
+    begin_step::<outbe_hyperlanecontroller::HyperlaneModule>()
+        .soft_fail()
+        .with_gas_limit(HYPERLANE_STEP_GAS_LIMIT),
     begin_step::<outbe_cycle::CycleModule>().with_validators(),
 ];
 
@@ -123,15 +135,20 @@ fn process_ready_entitlements(ctx: MutationEntitlementContext<'_>) -> MutationEn
 
 pub const END_BLOCK_ORDER: &[ProtocolStep] = &[
     end_step::<outbe_nodfactory::NodFactoryModule>()
-        .with_mutation_entitlements(process_ready_entitlements),
+        .with_mutation_entitlements(process_ready_entitlements)
+        .with_gas_limit(END_BLOCK_FACTORY_STEP_GAS_LIMIT),
     end_step::<outbe_gemfactory::GemFactoryModule>()
-        .with_mutation_entitlements(process_ready_entitlements),
+        .with_mutation_entitlements(process_ready_entitlements)
+        .with_gas_limit(END_BLOCK_FACTORY_STEP_GAS_LIMIT),
     end_step::<outbe_intexfactory::IntexFactoryModule>()
-        .with_mutation_entitlements(process_ready_entitlements),
+        .with_mutation_entitlements(process_ready_entitlements)
+        .with_gas_limit(END_BLOCK_FACTORY_STEP_GAS_LIMIT),
     end_step::<outbe_credisfactory::CredisFactoryModule>()
-        .with_mutation_entitlements(process_ready_entitlements),
+        .with_mutation_entitlements(process_ready_entitlements)
+        .with_gas_limit(END_BLOCK_FACTORY_STEP_GAS_LIMIT),
     end_step::<outbe_gemfactory::GemCleanupModule>()
-        .with_mutation_entitlements(process_ready_entitlements),
+        .with_mutation_entitlements(process_ready_entitlements)
+        .with_gas_limit(END_BLOCK_FACTORY_STEP_GAS_LIMIT),
 ];
 
 pub const BLOCK_ORDER: BlockOrder = BlockOrder {
@@ -150,6 +167,22 @@ const _: () = {
     assert!(CONSENSUS_ORDER.len() == 6);
     assert!(BEGIN_BLOCK_ORDER.len() <= MAX_PREFIX_SYSTEM_TXS - CONSENSUS_ORDER.len());
     assert!(END_BLOCK_ORDER.len() <= MAX_END_BLOCK_SYSTEM_TXS);
+    let orders = [CONSENSUS_ORDER, BEGIN_BLOCK_ORDER, END_BLOCK_ORDER];
+    let mut stage = 0;
+    while stage < orders.len() {
+        let mut index = 0;
+        while index < orders[stage].len() {
+            let step = &orders[stage][index];
+            assert!(step.gas_limit > 0 && step.gas_limit <= SYSTEM_TX_ARTIFACT_GAS_LIMIT);
+            if step.revert_fails_block {
+                assert!(step.gas_limit == SYSTEM_TX_ARTIFACT_GAS_LIMIT);
+            } else {
+                assert!(step.gas_limit < SYSTEM_TX_ARTIFACT_GAS_LIMIT);
+            }
+            index += 1;
+        }
+        stage += 1;
+    }
 };
 
 fn resolve_system_tx_step(data: &[u8]) -> Option<(&'static ProtocolStep, Bytes)> {

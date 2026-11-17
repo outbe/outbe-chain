@@ -102,8 +102,6 @@ fn run_seed_genesis(
             seed: seed_path,
             validators: Some(validators_path),
             output: out_path.clone(),
-            worldwide_day: None,
-            fresh_metadosis: false,
             contracts_dir: None,
         },
     )
@@ -633,13 +631,13 @@ fn seeded_scurve_matches_a_curve_that_the_oracle_starts() {
     use outbe_system_common::address_pair::AddressPair;
     use outbe_system_common::addresses::ORACLE_ADDRESS;
 
-    // 2024-12-20 00:00 UTC.
-    const START_HOUR: u64 = 1_734_652_800;
+    use outbe_genesis_cli::seed_codec::parse_header_timestamp;
+
     const SEED: &str = r#"{
       "oracle": {
         "pairs": [{ "base": "COEN", "quote": "840", "initial_rate": "1000000" }],
         "scurve_seeds": [
-          { "pair_base": "COEN", "pair_quote": "840", "start_hour": 1734652800, "peak_price": "1000000" }
+          { "pair_base": "COEN", "pair_quote": "840", "peak_price": "1000000" }
         ]
       }
     }"#;
@@ -650,15 +648,18 @@ fn seeded_scurve_matches_a_curve_that_the_oracle_starts() {
     let mut started = HashMapStorageProvider::new(512_215);
 
     let pair = AddressPair::new_coen_to(840);
+    // The seed starts the curve at 00:00 UTC of the first Worldwide Day of the genesis.
+    let genesis_timestamp = parse_header_timestamp(&genesis).unwrap();
+    let start_hour = genesis_timestamp.saturating_sub(12 * 60 * 60) / 86_400 * 86_400;
     StorageHandle::enter(&mut started, |storage| {
         outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
         let mut oracle = OracleContract::new(storage);
         let peak_price = alloy_primitives::U256::from(1_000_000u64);
-        assert!(store_scurve_entry(&mut oracle, pair, START_HOUR, peak_price).unwrap());
+        assert!(store_scurve_entry(&mut oracle, pair, start_hour, peak_price).unwrap());
     });
     // The start hour, a day in the first period, and a day in the second period.
     for days in [0, 1, 163] {
-        let timestamp = START_HOUR + days * 86_400;
+        let timestamp = start_hour + days * 86_400;
         let value = |provider: &mut HashMapStorageProvider| {
             StorageHandle::enter(provider, |storage| {
                 scurve_value(&OracleContract::new(storage), pair, timestamp).unwrap()

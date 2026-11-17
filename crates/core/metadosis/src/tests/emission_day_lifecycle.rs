@@ -430,12 +430,11 @@ fn wwd_without_price_runs_as_empty_day() {
         // The day takes offers by the time. An offer fails because no currency
         // has a 24-hour VWAP.
         assert!(api::is_offering_day(storage.clone(), wwd).unwrap());
-        let offer_err =
-            outbe_tributefactory::worldwideday::genesis::submit_signed_test_offer_for_day(
-                storage.clone(),
-                wwd,
-            )
-            .expect_err("offer_tribute must revert when no currency has a 24-hour VWAP");
+        let offer_err = outbe_tributefactory::test_support::submit_signed_test_offer_for_day(
+            storage.clone(),
+            wwd,
+        )
+        .expect_err("offer_tribute must revert when no currency has a 24-hour VWAP");
         assert_ne!(
             offer_err.to_string(),
             outbe_primitives::error::PrecompileError::from(

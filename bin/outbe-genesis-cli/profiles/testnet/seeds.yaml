@@ -23,21 +23,16 @@ initial_rates:
 scurve_seeds:
   - pair_base: COEN
     pair_quote: "156"
-    start_hour: 1734652800 # 2024-12-20 00:00 UTC
     peak_price: "6680713"
   - pair_base: COEN
     pair_quote: "344"
-    start_hour: 1734652800 # 2024-12-20 00:00 UTC
     peak_price: "7848285"
   - pair_base: COEN
     pair_quote: "392"
-    start_hour: 1734652800 # 2024-12-20 00:00 UTC
     peak_price: "158244989"
   - pair_base: COEN
     pair_quote: "826"
-    start_hour: 1734652800 # 2024-12-20 00:00 UTC
     peak_price: "750156"
   - pair_base: COEN
     pair_quote: "978"
-    start_hour: 1734652800 # 2024-12-20 00:00 UTC
     peak_price: "890869"

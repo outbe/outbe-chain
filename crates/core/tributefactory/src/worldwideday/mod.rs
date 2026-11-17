@@ -2,8 +2,6 @@ pub mod aggregate;
 pub mod api;
 pub mod constants;
 pub mod errors;
-#[cfg(any(test, feature = "test-utils"))]
-pub mod genesis;
 pub mod lifecycle;
 pub(crate) mod queries;
 pub mod schema;

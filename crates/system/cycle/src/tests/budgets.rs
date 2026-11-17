@@ -143,7 +143,9 @@ fn ordinary_reverts_consume_dependencies_but_fatal_errors_stop_the_walk() {
         for id in [0, 2] {
             assert_eq!(cycle.last_executed_block_number.read(&id).unwrap(), 2);
         }
-        let error = dispatch(&ctx, &[spec(1, 100, fatal)]).unwrap_err();
+        let mut isolated_fatal = spec(1, 100, fatal);
+        isolated_fatal.isolates_panic = true;
+        let error = dispatch(&ctx, &[isolated_fatal]).unwrap_err();
         assert!(matches!(error, PrecompileError::Fatal(message) if message == "backend"));
         assert_eq!(cycle.last_executed_at.read(&1).unwrap(), GENESIS_TS + 1);
     });
@@ -346,4 +348,109 @@ fn canonical_body_observers_keep_every_scoped_handler_sample_without_prefix() {
         );
         assert!(body_gas > handler_gas);
     });
+}
+
+fn write_and_emit(ctx: &BlockRuntimeContext) -> Result<()> {
+    ctx.storage.increase_balance(RECIPIENT, U256::ONE)?;
+    ctx.storage
+        .contract::<Cycle>()
+        .emit(ICycle::CycleTaskExecuted {
+            id: 99,
+            scheduledAt: 0,
+            blockTimestamp: 0,
+            blockNumber: 0,
+        })
+}
+
+fn panic_after_write(ctx: &BlockRuntimeContext) -> Result<()> {
+    write_and_emit(ctx)?;
+    panic!("economic panic");
+}
+
+fn halt_after_write(ctx: &BlockRuntimeContext) -> Result<()> {
+    write_and_emit(ctx)?;
+    Err(outbe_primitives::storage::SubCallError::InvalidTarget.into())
+}
+
+fn write_protection_after_write(ctx: &BlockRuntimeContext) -> Result<()> {
+    write_and_emit(ctx)?;
+    Err(PrecompileError::WriteProtection)
+}
+
+#[test]
+fn isolated_economic_task_panic_and_halt_roll_back_slot_and_continue_walk() {
+    let mut storage = storage(&[1, 2, 3, 4, 5]);
+    let mut specs = [
+        spec(1, 100_000, panic_after_write),
+        spec(2, 100_000, halt_after_write),
+        spec(3, 100_000, independent),
+        spec(4, 100_000, independent),
+        spec(5, 100_000, write_protection_after_write),
+    ];
+    for task in &mut specs {
+        task.isolates_panic = true;
+    }
+    specs[3].depends_on = &[TaskId::AdvanceAuctions];
+    storage.enter(|handle| {
+        let ctx = runtime_context(block_ctx(2, GENESIS_TS + 61), handle);
+        dispatch(&ctx, &specs).unwrap();
+        assert_eq!(ctx.storage.balance(RECIPIENT).unwrap(), U256::ZERO);
+        assert_eq!(ctx.storage.balance(INDEPENDENT).unwrap(), U256::ONE);
+        let cycle = ctx.storage.contract::<Cycle>();
+        for id in [1, 2, 3, 4, 5] {
+            assert_eq!(cycle.last_executed_at.read(&id).unwrap(), GENESIS_TS + 60);
+            assert_eq!(cycle.last_executed_block_number.read(&id).unwrap(), 2);
+        }
+    });
+    let logs = storage.get_events(CYCLE_ADDRESS);
+    let failed: Vec<_> = logs
+        .iter()
+        .filter_map(|log| ICycle::CycleTaskFailed::decode_log_data(log).ok())
+        .map(|event| event.id)
+        .collect();
+    assert_eq!(failed, vec![1, 2, 5]);
+    let executed: Vec<_> = logs
+        .iter()
+        .filter_map(|log| ICycle::CycleTaskExecuted::decode_log_data(log).ok())
+        .map(|event| event.id)
+        .collect();
+    assert_eq!(executed, vec![3]);
+}
+
+#[test]
+fn non_isolated_task_panic_and_halt_are_not_swallowed() {
+    for (handler, panics) in [
+        (
+            halt_after_write as fn(&BlockRuntimeContext<'_>) -> Result<()>,
+            false,
+        ),
+        (panic_after_write, true),
+    ] {
+        let mut storage = storage(&[0]);
+        storage.enter(|handle| {
+            let ctx = runtime_context(block_ctx(2, GENESIS_TS + 61), handle);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                dispatch(&ctx, &[spec(0, 100_000, handler)])
+            }));
+            if !panics {
+                assert!(matches!(result.unwrap(), Err(PrecompileError::Halt(_))));
+            } else {
+                assert!(result.is_err());
+            }
+            assert_eq!(ctx.storage.balance(RECIPIENT).unwrap(), U256::ZERO);
+            assert_eq!(
+                ctx.storage
+                    .contract::<Cycle>()
+                    .last_executed_block_number
+                    .read(&0)
+                    .unwrap(),
+                1
+            );
+            ctx.storage
+                .with_trigger_budget(100_000, || independent(&ctx))
+                .unwrap();
+            assert_eq!(ctx.storage.balance(INDEPENDENT).unwrap(), U256::ONE);
+        });
+        assert!(storage.get_events(CYCLE_ADDRESS).is_empty());
+    }
 }

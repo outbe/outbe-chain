@@ -25,8 +25,12 @@ struct ValidatedPair<'a> {
     key_hash: [u8; 40],
 }
 
-/// Seed the Oracle precompile storage layout.
-pub fn seed_oracle(storage: &mut StorageBuilder, config: &Value) -> Result<(), GenesisError> {
+/// Seed the Oracle precompile storage layout. The S-curve seeds start at `scurve_start`.
+pub fn seed_oracle(
+    storage: &mut StorageBuilder,
+    config: &Value,
+    scurve_start: Option<u64>,
+) -> Result<(), GenesisError> {
     let pairs = config
         .get("pairs")
         .and_then(Value::as_array)
@@ -36,7 +40,7 @@ pub fn seed_oracle(storage: &mut StorageBuilder, config: &Value) -> Result<(), G
     let cfg = config.get("config").unwrap_or(&Value::Null);
     seed_oracle_config(storage, cfg, pairs.len())?;
     let pair_ids = seed_oracle_registry(storage, config, &validated_pairs)?;
-    seed_oracle_scurves(storage, config, &pair_ids)?;
+    seed_oracle_scurves(storage, config, &pair_ids, scurve_start)?;
     seed_oracle_currencies(storage, config)?;
     seed_gas_chains(storage, config)
 }
@@ -296,10 +300,18 @@ fn seed_oracle_scurves(
     storage: &mut StorageBuilder,
     config: &Value,
     pair_ids: &BTreeMap<(String, String), u32>,
+    scurve_start: Option<u64>,
 ) -> Result<(), GenesisError> {
-    let Some(scurve_seeds) = config.get("scurve_seeds").and_then(Value::as_array) else {
+    let Some(scurve_seeds) = config
+        .get("scurve_seeds")
+        .and_then(Value::as_array)
+        .filter(|seeds| !seeds.is_empty())
+    else {
         return Ok(());
     };
+    let start_hour = scurve_start
+        .filter(|hour| *hour != 0 && hour.is_multiple_of(3_600))
+        .ok_or_else(|| GenesisError::validation("scurve seeds need the genesis timestamp"))?;
     let mut seeded: BTreeSet<[u8; 40]> = BTreeSet::new();
     for sc in scurve_seeds {
         let base = value_to_string(sc.get("pair_base"))?;
@@ -307,15 +319,6 @@ fn seed_oracle_scurves(
         if !pair_ids.contains_key(&(base.clone(), quote.clone())) {
             return Err(GenesisError::validation(format!(
                 "scurve seed pair is not registered: {base}/{quote}"
-            )));
-        }
-        let start_hour = sc
-            .get("start_hour")
-            .ok_or_else(|| GenesisError::validation("missing scurve start_hour"))
-            .and_then(parse_u64)?;
-        if start_hour == 0 || !start_hour.is_multiple_of(3_600) {
-            return Err(GenesisError::validation(format!(
-                "scurve start_hour must be a whole UTC hour in Unix seconds: {start_hour}"
             )));
         }
         let peak_price = sc

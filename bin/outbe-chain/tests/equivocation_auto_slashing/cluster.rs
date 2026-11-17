@@ -105,8 +105,6 @@ impl Cluster {
                 seed,
                 validators: Some(manifest),
                 output: seeded.clone(),
-                worldwide_day: None,
-                fresh_metadosis: false,
                 contracts_dir: None,
             },
         )

@@ -8,10 +8,9 @@ use outbe_genesis_cli::inputs::{StakeSeedTerms, ValidatorSeedTerms};
 use outbe_genesis_cli::network::{profiles_dir, repo_root};
 use outbe_genesis_cli::seed_alloc::seed_protocol_constants;
 use outbe_genesis_cli::seed_codec::{
-    address_as_u256, address_bytes, asset_address, data_slot, hex32, mapping_key, u32_bytes,
-    StorageBuilder,
+    address_as_u256, address_bytes, asset_address, data_slot, first_worldwide_day, hex32,
+    mapping_key, u32_bytes, StorageBuilder,
 };
-use outbe_genesis_cli::seed_economy::clear_seeded_metadosis_days;
 use outbe_genesis_cli::seed_oracle::seed_oracle;
 use outbe_genesis_cli::seed_validators::{seed_staking, seed_validator_set};
 use serde_json::{json, Value};
@@ -23,7 +22,7 @@ fn oracle_seed_preserves_configured_generic_pair_orientation() {
     let cfg = json!({
         "pairs": [{"base": asset_contract_address, "quote": "840"}]
     });
-    seed_oracle(&mut storage, &cfg).expect("seed_oracle");
+    seed_oracle(&mut storage, &cfg, None).expect("seed_oracle");
 
     let slot_hex = mapping_key(&u32_bytes(1), 43);
     let slot = U256::from_str_radix(slot_hex.strip_prefix("0x").expect("0x"), 16).expect("u256");
@@ -37,9 +36,17 @@ fn oracle_seed_preserves_configured_generic_pair_orientation() {
 }
 
 #[test]
+fn the_first_worldwide_day_is_the_date_twelve_hours_before_genesis() {
+    const NOV_16_2026: u64 = 1_794_787_200;
+    assert_eq!(first_worldwide_day(NOV_16_2026 + 11 * 3600), 20261115);
+    assert_eq!(first_worldwide_day(NOV_16_2026 + 12 * 3600), 20261116);
+    assert_eq!(first_worldwide_day(NOV_16_2026 + 13 * 3600), 20261116);
+}
+
+#[test]
 fn oracle_seed_rejects_iso_to_coen_and_inverse_duplicates() {
     let iso_to_coen = json!({"pairs": [{"base": "840", "quote": "COEN"}]});
-    let err = seed_oracle(&mut StorageBuilder::new(), &iso_to_coen).expect_err("iso_to_coen");
+    let err = seed_oracle(&mut StorageBuilder::new(), &iso_to_coen, None).expect_err("iso_to_coen");
     assert!(err.to_string().contains("COEN base"));
 
     let inverted = json!({
@@ -48,7 +55,7 @@ fn oracle_seed_rejects_iso_to_coen_and_inverse_duplicates() {
             {"base": "0x1111111111111111111111111111111111111111", "quote": "840"}
         ]
     });
-    let err = seed_oracle(&mut StorageBuilder::new(), &inverted).expect_err("inverted");
+    let err = seed_oracle(&mut StorageBuilder::new(), &inverted, None).expect_err("inverted");
     assert!(err.to_string().contains("inverted"));
 }
 
@@ -62,7 +69,7 @@ fn oracle_seed_rejects_pairs_whose_assets_resolve_to_the_same_address() {
     ] {
         let mut storage = StorageBuilder::new();
         let cfg = json!({"pairs": [{"base": base, "quote": quote}]});
-        let err = seed_oracle(&mut storage, &cfg).expect_err("expected same asset error");
+        let err = seed_oracle(&mut storage, &cfg, None).expect_err("expected same asset error");
         assert!(err.to_string().contains("same asset"));
         assert!(storage.entries.is_empty());
     }
@@ -141,7 +148,7 @@ fn checked_in_seed_profiles_split_native_and_protocol_units() {
 #[test]
 fn default_reference_and_policy_registries_use_the_frozen_slots() {
     let mut storage = StorageBuilder::new();
-    seed_oracle(&mut storage, &json!({})).expect("seed_oracle default");
+    seed_oracle(&mut storage, &json!({}), None).expect("seed_oracle default");
 
     assert!(!storage.entries.contains_key(&hex32(55u64)));
     let iso_codes = [156_u64, 344, 392, 826, 840, 978];
@@ -166,7 +173,7 @@ fn default_reference_and_policy_registries_use_the_frozen_slots() {
 #[test]
 fn oracle_seed_writes_the_gas_chains_to_slot_85() {
     let mut storage = StorageBuilder::new();
-    seed_oracle(&mut storage, &json!({ "gas_chains": [97, 11155111] })).expect("seed_oracle");
+    seed_oracle(&mut storage, &json!({ "gas_chains": [97, 11155111] }), None).expect("seed_oracle");
 
     assert_eq!(storage.entries[&hex32(85u64)], hex32(2u64));
     assert_eq!(storage.entries[&hex32(data_slot(85u64))], hex32(97u64));
@@ -179,7 +186,7 @@ fn oracle_seed_writes_the_gas_chains_to_slot_85() {
 #[test]
 fn reference_currency_needs_a_rate_source() {
     let cfg = json!({ "policy_rate_currencies": [156, 344, 392, 826, 840] });
-    let err = seed_oracle(&mut StorageBuilder::new(), &cfg).expect_err("missing rate target");
+    let err = seed_oracle(&mut StorageBuilder::new(), &cfg, None).expect_err("missing rate target");
     assert!(err
         .to_string()
         .contains("no policy rate vote target: [978]"));
@@ -188,7 +195,7 @@ fn reference_currency_needs_a_rate_source() {
 #[test]
 fn genesis_holds_no_policy_rate() {
     let cfg = json!({ "policy_rates": [{"iso_code": 840, "annual_rate_1e6": 38_800}] });
-    let err = seed_oracle(&mut StorageBuilder::new(), &cfg).expect_err("genesis policy rate");
+    let err = seed_oracle(&mut StorageBuilder::new(), &cfg, None).expect_err("genesis policy rate");
     assert!(err.to_string().contains("oracle.policy_rates was removed"));
 }
 
@@ -196,7 +203,7 @@ fn genesis_holds_no_policy_rate() {
 fn rate_source_is_optional_for_another_priced_currency() {
     let cfg = json!({ "policy_rate_currencies": [156, 344, 392, 826, 840, 978, 124] });
     let mut storage = StorageBuilder::new();
-    seed_oracle(&mut storage, &cfg).expect("seed_oracle");
+    seed_oracle(&mut storage, &cfg, None).expect("seed_oracle");
     assert_eq!(storage.entries[&hex32(74u64)], hex32(7u64));
     assert_eq!(storage.entries[&hex32(data_slot(74u64))], hex32(124u64));
 }
@@ -229,21 +236,6 @@ fn optional_seed_profile_is_copied_to_genesis_config_and_rejects_conflicts() {
     let err = seed_protocol_constants(&mut genesis3, &json!({"protocol_constants": []}))
         .expect_err("non-object");
     assert!(err.to_string().contains("JSON object"));
-}
-
-#[test]
-fn fresh_metadosis_clears_seeded_days_as_expected() {
-    let mut seed = json!({
-        "metadosis": {"worldwide_days": [{"wwd": 20260807}], "other": 7},
-        "oracle": {"scurve_seeds": [{"start_hour": 1786060800}]}
-    });
-    clear_seeded_metadosis_days(&mut seed).expect("clear_seeded_metadosis_days");
-    assert_eq!(seed["metadosis"]["worldwide_days"], json!([]));
-    assert_eq!(seed["metadosis"]["other"], json!(7));
-    assert_eq!(
-        seed["oracle"]["scurve_seeds"],
-        json!([{"start_hour": 1786060800}])
-    );
 }
 
 #[test]
