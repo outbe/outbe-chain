@@ -111,6 +111,21 @@ pub trait LifecycleChainPort: Sync {
         selector: &NodeBindingSelectorV1,
     ) -> impl Future<Output = Result<LifecycleRegistryStateV1, LifecyclePortError<Self::Error>>> + Send;
 
+    /// Runtime adapters must override this to preserve the counter after cancellation.
+    fn pending_upgrade_nonce(
+        &self,
+        at: LifecycleCheckpointV1,
+        selector: &NodeBindingSelectorV1,
+    ) -> impl Future<Output = Result<u64, LifecyclePortError<Self::Error>>> + Send {
+        async move {
+            Ok(self
+                .registry_state(at, selector)
+                .await?
+                .candidate
+                .map_or(0, |candidate| candidate.nonce))
+        }
+    }
+
     fn validator_record(
         &self,
         at: LifecycleCheckpointV1,

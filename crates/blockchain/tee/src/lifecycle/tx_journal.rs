@@ -103,6 +103,10 @@ pub enum ServiceTxJournalError {
     TransactionDecode(#[from] alloy_rlp::Error),
     #[error("transaction signature rejected")]
     Signature(#[from] alloy_primitives::SignatureError),
+    #[error("service transaction calldata rejected")]
+    CallDecode(#[from] alloy_sol_types::Error),
+    #[error("service transaction evidence rejected")]
+    EvidenceCodec(#[from] outbe_primitives::tee_attestation_v1::CodecError),
     #[error("journal file or directory is not owner-only regular state")]
     UnsafePath,
     #[error("service transaction journal exceeds size cap")]
@@ -171,6 +175,30 @@ impl ServiceTxRecordV1 {
         Ok(())
     }
 
+    /// Prepare keeps the source binding as its mutation target, but owns a RAM candidate.
+    pub(super) fn process_identity(&self) -> Result<(B256, B256), ServiceTxJournalError> {
+        if self.kind != ServiceTxKindV1::UpgradePrepare {
+            return Ok((
+                self.public_intent.target.enclave_id,
+                self.public_intent.target.recipient_x25519,
+            ));
+        }
+        use alloy_sol_types::SolCall as _;
+        use outbe_primitives::{
+            tee_attestation_v1::{AttestationEvidenceV1, AttestationOperationV1},
+            tee_registry_abi_v1::ITeeRegistryV1,
+        };
+        let mut raw = &self.raw_signed_tx[1..];
+        let tx = TxEip1559::rlp_decode_signed(&mut raw)?;
+        let call = ITeeRegistryV1::prepareEnclaveUpgradeCall::abi_decode(&tx.tx().input)?;
+        let evidence = AttestationEvidenceV1::decode_canonical(&call.evidence)?;
+        let intent = evidence.intent();
+        if intent.operation != AttestationOperationV1::PrepareEnclaveUpgrade {
+            return Err(ServiceTxJournalError::InvalidIntent);
+        }
+        Ok((intent.enclave_id, intent.recipient_x25519.into()))
+    }
+
     fn replaces_lost_identity(&self, old: &Self) -> bool {
         let same_slot = (
             self.sender,
@@ -183,10 +211,10 @@ impl ServiceTxRecordV1 {
             old.finalized_checkpoint.chain_id,
             old.finalized_checkpoint.genesis_hash,
         );
-        let next = &self.public_intent.target;
-        let previous = &old.public_intent.target;
-        let new_identity = (next.enclave_id, next.recipient_x25519)
-            != (previous.enclave_id, previous.recipient_x25519);
+        let new_identity = match (self.process_identity(), old.process_identity()) {
+            (Ok(next), Ok(previous)) => next != previous,
+            _ => false,
+        };
         same_slot && new_identity && self.tx_hash != old.tx_hash
     }
 }

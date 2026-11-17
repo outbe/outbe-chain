@@ -49,7 +49,11 @@ impl InProcessTeeContext {
         &self,
         request: FinalizedOnboardingV1<'_>,
     ) -> Result<VerifiedAdmissionAnchorV1> {
-        if request.intent.operation != AttestationOperationV1::TransitionEnclaveMeasurement {
+        if !matches!(
+            request.intent.operation,
+            AttestationOperationV1::PrepareEnclaveUpgrade
+                | AttestationOperationV1::TransitionEnclaveMeasurement
+        ) {
             return Err(InProcessError::IdentityMismatch);
         }
         self.ingest_proven_material(request, true)
