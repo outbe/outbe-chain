@@ -14,10 +14,13 @@ cargo xtask release build --profile production --output /tmp/outbe-release
 cargo xtask release build --profile development --output /tmp/outbe-release-dev
 ```
 
-`production` builds the DCAP-capable enclave and rejects mock TEE support. `development` builds the
-mock enclave and enables the protocol overrides needed by hardware-free local networks. Both builds
-run inside the pinned project-toolchain container and require a clean Git checkout. The builder
-downloads the canonical CRS prefix and verifies its pinned SHA-256.
+Both profiles run TEE logic inside `outbe-chain`; neither ships an enclave executable or a
+separate enclave service. `production` enables the pinned native DCAP verifier and fails the build
+if the required QVL is unavailable. A host running the production node must provide the
+pinned Intel QVL shared library listed in `release/dcap-native-qvl-v1.json`.
+`development` enables protocol overrides for hardware-free
+local networks. Both builds run inside the pinned project-toolchain container and require a clean
+Git checkout. The builder downloads the canonical CRS prefix and verifies its pinned SHA-256.
 
 The output name includes the profile and full source commit. `software-manifest.json` is the first
 archive entry and records the release identity, target, profile, mode, size, and SHA-256 of every
@@ -25,8 +28,7 @@ file. The build verifies the completed archive before returning it.
 
 ## Contents
 
-- `bin/`: node, operator, feeder, Radicle, Hyperlane validator, and profile-specific enclave
-  binaries;
+- `bin/`: node, operator CLI and installer, key generator, feeder, Radicle, and Hyperlane validator;
 - `tools/outbe-genesis-cli`: the founding-network bundle generator;
 - `.bb-crs/bn254_g1.dat`: the verified CRS required by every node;
 - `systemd/`: canonical joining-validator services rendered by `outbe-operator-systemd`.
@@ -44,4 +46,6 @@ their compact specifications contain only the commands, dependencies, and paths 
 publishing it. Standard version tags build the production profile, create `SHA256SUMS`, sign the
 checksum file with Sigstore, and publish those artifacts to the GitHub release.
 
-Protected testnet and mainnet SGX release workflows remain separate and unchanged.
+Protected testnet and mainnet tags publish separately. Two builders reproduce the ELF archive,
+then the network's protected workflow signs the checksums for the archive and comparison evidence.
+These releases do not publish an enclave image, SGX evidence, or a genesis.

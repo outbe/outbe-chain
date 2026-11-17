@@ -17,8 +17,8 @@ use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
 use super::{
+    canonical_json,
     elf::{self, ReleaseIdentity},
-    sgx::canonical_json,
 };
 
 pub const MANIFEST_NAME: &str = "software-manifest.json";
@@ -33,8 +33,6 @@ const COMMON_BINARIES: &[&str] = &[
     "outbe-radicle",
     "outbe-hyperlane-validator",
 ];
-const PRODUCTION_ENCLAVE: &str = "outbe-tee-enclave";
-const DEVELOPMENT_ENCLAVE: &str = "outbe-tee-enclave-mock";
 const OPERATOR_TOOL: &str = "outbe-genesis-cli";
 const GENESIS_ASSETS: &str = "share/outbe-genesis";
 const CRS_BUNDLE_PATH: &str = ".bb-crs/bn254_g1.dat";
@@ -54,13 +52,6 @@ impl SoftwareProfile {
         match self {
             Self::Production => "production",
             Self::Development => "development",
-        }
-    }
-
-    const fn enclave_binary(self) -> &'static str {
-        match self {
-            Self::Production => PRODUCTION_ENCLAVE,
-            Self::Development => DEVELOPMENT_ENCLAVE,
         }
     }
 }
@@ -163,7 +154,7 @@ pub fn package(options: &PackageOptions<'_>) -> Result<SoftwareManifest> {
         "software bundle already exists: {}",
         options.output.display()
     );
-    let inputs = collect_inputs(options.artifacts, options.systemd_units, options.profile)?;
+    let inputs = collect_inputs(options.artifacts, options.systemd_units)?;
     let files = inputs
         .iter()
         .map(manifest_file)
@@ -330,7 +321,7 @@ fn build_inside_container(options: &BuildOptions<'_>) -> Result<PathBuf> {
         .join("target")
         .join(target)
         .join("release");
-    for binary in expected_binaries(options.profile) {
+    for binary in expected_binaries() {
         let source = built.join(binary);
         let destination = staging_bin.join(binary);
         fs::copy(&source, &destination)
@@ -428,14 +419,12 @@ fn run_cargo_build(repo_root: &Path, profile: SoftwareProfile, target: &str) -> 
         "--target",
         target,
     ]);
-    for (package, binary) in binary_targets(profile) {
+    for (package, binary) in binary_targets() {
         command.args(["--package", package, "--bin", binary]);
     }
     let features = match profile {
-        SoftwareProfile::Production => "outbe-tee-enclave/production-dcap-release",
-        SoftwareProfile::Development => {
-            "outbe-chain/test-protocol-overrides,outbe-tee-enclave/mock"
-        }
+        SoftwareProfile::Production => "outbe-chain/native-dcap",
+        SoftwareProfile::Development => "outbe-chain/test-protocol-overrides",
     };
     command.args(["--features", features]);
     if profile == SoftwareProfile::Production {
@@ -446,8 +435,8 @@ fn run_cargo_build(repo_root: &Path, profile: SoftwareProfile, target: &str) -> 
     Ok(())
 }
 
-fn binary_targets(profile: SoftwareProfile) -> Vec<(&'static str, &'static str)> {
-    let mut targets = vec![
+fn binary_targets() -> [(&'static str, &'static str); 8] {
+    [
         ("outbe-up", "outbe-up"),
         ("outbe-chain", "outbe-chain"),
         ("outbe-cli", "outbe-cli"),
@@ -456,13 +445,11 @@ fn binary_targets(profile: SoftwareProfile) -> Vec<(&'static str, &'static str)>
         ("outbe-radicle-sidecar", "outbe-radicle"),
         ("outbe-hyperlane-validator", "outbe-hyperlane-validator"),
         ("outbe-genesis-cli", OPERATOR_TOOL),
-    ];
-    targets.push(("outbe-tee-enclave", profile.enclave_binary()));
-    targets
+    ]
 }
 
-fn expected_binaries(profile: SoftwareProfile) -> Vec<&'static str> {
-    binary_targets(profile)
+fn expected_binaries() -> Vec<&'static str> {
+    binary_targets()
         .into_iter()
         .map(|(_, binary)| binary)
         .collect()
@@ -524,16 +511,11 @@ fn absolute_path(path: &Path) -> Result<PathBuf> {
     }
 }
 
-fn collect_inputs(
-    artifacts: &Path,
-    systemd_units: &Path,
-    profile: SoftwareProfile,
-) -> Result<Vec<BundleInput>> {
+fn collect_inputs(artifacts: &Path, systemd_units: &Path) -> Result<Vec<BundleInput>> {
     let bin = artifacts.join("bin");
     let mut inputs = COMMON_BINARIES
         .iter()
         .copied()
-        .chain(std::iter::once(profile.enclave_binary()))
         .map(|name| BundleInput {
             archive_path: format!("bin/{name}"),
             source: bin.join(name),
@@ -724,7 +706,7 @@ mod tests {
         }
     }
 
-    fn fixture(root: &Path, profile: SoftwareProfile) -> (PathBuf, PathBuf) {
+    fn fixture(root: &Path) -> (PathBuf, PathBuf) {
         let artifacts = root.join("artifacts");
         let bin = artifacts.join("bin");
         let profiles = artifacts.join(GENESIS_ASSETS).join("profiles");
@@ -734,11 +716,7 @@ mod tests {
         fs::create_dir_all(&profiles).unwrap();
         fs::create_dir_all(crs.parent().unwrap()).unwrap();
         fs::create_dir_all(&units).unwrap();
-        for name in COMMON_BINARIES
-            .iter()
-            .copied()
-            .chain([profile.enclave_binary(), OPERATOR_TOOL])
-        {
+        for name in COMMON_BINARIES.iter().copied().chain([OPERATOR_TOOL]) {
             fs::write(bin.join(name), format!("fixture:{name}\n")).unwrap();
         }
         fs::write(profiles.join("testnet.yaml"), "network: testnet\n").unwrap();
@@ -755,7 +733,7 @@ mod tests {
     fn package_is_deterministic_and_self_verifying() {
         let temp = tempfile::tempdir().unwrap();
         let profile = SoftwareProfile::Production;
-        let (artifacts, units) = fixture(temp.path(), profile);
+        let (artifacts, units) = fixture(temp.path());
         let first = temp.path().join("first.tar.zst");
         let second = temp.path().join("second.tar.zst");
         for output in [&first, &second] {
@@ -779,10 +757,6 @@ mod tests {
         assert!(manifest
             .files
             .iter()
-            .any(|file| file.path == "bin/outbe-tee-enclave"));
-        assert!(manifest
-            .files
-            .iter()
             .any(|file| file.path == "share/outbe-genesis/profiles/testnet.yaml"));
         assert!(manifest
             .files
@@ -792,10 +766,10 @@ mod tests {
     }
 
     #[test]
-    fn development_bundle_contains_only_the_mock_enclave() {
+    fn development_bundle_has_the_same_binary_inventory() {
         let temp = tempfile::tempdir().unwrap();
         let profile = SoftwareProfile::Development;
-        let (artifacts, units) = fixture(temp.path(), profile);
+        let (artifacts, units) = fixture(temp.path());
         let output = temp.path().join("development.tar.zst");
         let manifest = package(&PackageOptions {
             artifacts: &artifacts,
@@ -806,14 +780,25 @@ mod tests {
             identity: &identity(),
         })
         .unwrap();
-        assert!(manifest
+        assert_eq!(verify_archive(&output).unwrap(), manifest);
+        assert_eq!(manifest.profile, SoftwareProfile::Development);
+        let binaries: Vec<_> = manifest
             .files
             .iter()
-            .any(|file| file.path == "bin/outbe-tee-enclave-mock"));
-        assert!(!manifest
-            .files
-            .iter()
-            .any(|file| file.path == "bin/outbe-tee-enclave"));
+            .filter_map(|file| file.path.strip_prefix("bin/"))
+            .collect();
+        assert_eq!(
+            binaries,
+            [
+                "outbe-chain",
+                "outbe-cli",
+                "outbe-feeder",
+                "outbe-hyperlane-validator",
+                "outbe-keygen",
+                "outbe-radicle",
+                "outbe-up",
+            ]
+        );
     }
 
     #[test]

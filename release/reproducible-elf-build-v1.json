@@ -3,15 +3,23 @@
     {
       "classification": "production",
       "features": [],
-      "install_profiles": ["operator-tools", "validator"],
+      "install_profiles": [
+        "operator-tools",
+        "validator"
+      ],
       "name": "outbe-up",
       "package": "outbe-up",
       "role": "installer"
     },
     {
       "classification": "production",
-      "features": [],
-      "install_profiles": ["full-node", "validator"],
+      "features": [
+        "native-dcap"
+      ],
+      "install_profiles": [
+        "full-node",
+        "validator"
+      ],
       "name": "outbe-chain",
       "package": "outbe-chain",
       "role": "node"
@@ -19,7 +27,9 @@
     {
       "classification": "production",
       "features": [],
-      "install_profiles": ["operator-tools"],
+      "install_profiles": [
+        "operator-tools"
+      ],
       "name": "outbe-cli",
       "package": "outbe-cli",
       "role": "operator-cli"
@@ -27,7 +37,9 @@
     {
       "classification": "production",
       "features": [],
-      "install_profiles": ["operator-tools"],
+      "install_profiles": [
+        "operator-tools"
+      ],
       "name": "outbe-keygen",
       "package": "outbe-keygen",
       "role": "key-generation"
@@ -35,7 +47,9 @@
     {
       "classification": "production",
       "features": [],
-      "install_profiles": ["price-oracle"],
+      "install_profiles": [
+        "price-oracle"
+      ],
       "name": "outbe-feeder",
       "package": "outbe-feeder",
       "role": "price-feed"
@@ -43,18 +57,12 @@
     {
       "classification": "production",
       "features": [],
-      "install_profiles": ["validator"],
+      "install_profiles": [
+        "validator"
+      ],
       "name": "outbe-radicle",
       "package": "outbe-radicle-sidecar",
       "role": "operator-sidecar"
-    },
-    {
-      "classification": "production",
-      "features": ["production-dcap-release"],
-      "install_profiles": ["full-node", "validator"],
-      "name": "outbe-tee-enclave",
-      "package": "outbe-tee-enclave",
-      "role": "tee-enclave"
     }
   ],
   "builder": {
@@ -102,14 +110,13 @@
   },
   "inputs": [
     ".cargo/config.toml",
+    "bin/outbe-chain/Cargo.toml",
     "Cargo.lock",
     "Cargo.toml",
     "crates/operator/systemd/Cargo.toml",
     "crates/operator/systemd/src/lib.rs",
-    "crates/operator/systemd/templates/oneshot.unit",
     "crates/operator/systemd/templates/service.unit",
     "crates/operator/systemd/templates/target.unit",
-    "crates/operator/systemd/templates/timer.unit",
     "Dockerfile.project-toolchain",
     "release/apt/ubuntu.sources",
     "release/release-manifest-v1.schema.json",

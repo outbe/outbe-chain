@@ -51,10 +51,7 @@ SOURCE_DATE_EPOCH  = "0"
 
 [tasks.build]
 description = "Build the workspace (debug, cargo auditable)"
-run = [
-  "cargo auditable build",
-  "cargo auditable build -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock",
-]
+run = "cargo auditable build"
 
 [tasks.build-release]
 description = "Build the workspace (release, cargo auditable)"
@@ -76,13 +73,11 @@ run = "cargo fmt --all --check"
 
 [tasks.lint]
 description = "Run clippy on all crates"
-# No --all-features: outbe-dcap/outbe-tee native-dcap uses the pinned Intel
-# SGX/DCAP toolchain (headers + .so) available in the gramine-sgx build.
-# Lint both native-dcap package targets only where that toolchain is present.
+# Lint native DCAP only where the pinned Intel QVL headers and library are installed.
 run = """
 cargo clippy --workspace --all-targets -- -D warnings
 if [ -f /usr/include/sgx_dcap_quoteverify.h ]; then
-  cargo clippy -p outbe-dcap -p outbe-tee --all-targets --features native-dcap -- -D warnings
+  cargo clippy -p outbe-dcap --all-targets --features native-dcap -- -D warnings
 fi
 """
 
@@ -212,48 +207,3 @@ run = "cargo mutants --test-tool nextest -p outbe-consensus -p outbe-fidelity-ma
 [tasks.audit-bench]
 description = "cargo bench (criterion baseline; configure benches per crate)"
 run = "cargo bench --workspace"
-
-# --- SGX / Benchmarks ------------------------------------------------- #
-
-[tasks.release-sgx-prepare]
-description = "Prepare an unsigned deterministic SGX bundle for an explicit production network"
-run = 'cargo xtask release sgx prepare "$@"'
-
-[tasks.release-sgx-compare]
-description = "Compare two independently prepared unsigned SGX bundles"
-run = 'cargo xtask release sgx compare "$@"'
-
-[tasks.release-sgx-sign]
-description = "Sign an unsigned SGX bundle with an explicitly supplied network release key"
-run = 'cargo xtask release sgx sign "$@"'
-
-[tasks.release-sgx-verify]
-description = "Verify a pre-signed network SGX bundle and its SIGSTRUCT"
-run = 'cargo xtask release sgx verify "$@"'
-
-[tasks.release-sgx-archive]
-description = "Archive a verified signed network SGX bundle deterministically"
-run = 'cargo xtask release sgx archive "$@"'
-
-[tasks.release-sgx-image]
-description = "Build an immutable OCI image from a verified signed SGX bundle"
-run = 'cargo xtask release sgx image "$@"'
-
-[tasks.release-sgx-manifest]
-description = "Assemble a network-bound ReleaseManifest from exact SGX release evidence"
-run = 'cargo xtask release sgx manifest "$@"'
-
-[tasks.release-sgx-hardware-e2e]
-description = "Run Rust/Gherkin acceptance against an exact published production SGX image digest"
-run = 'cargo run --locked -p xtask --features release-sgx-e2e --bin outbe-release-sgx-e2e -- "$@"'
-
-# Tribute-offer enclave throughput. Two layers:
-#  1) criterion micro-bench: pure in-enclave CPU cost per offer;
-#  2) e2e test: same path INCLUDING the Noise/UDS transport round-trip.
-[tasks.bench-tribute]
-description = "Tribute-offer enclave throughput (criterion micro-bench + e2e transport)"
-run = """
-cargo bench -p outbe-tee-enclave --bench tribute_offer_throughput
-cargo test -p outbe-tee-enclave --release --test transport \
-  transport_throughput_offers_per_sec -- --ignored --nocapture
-"""

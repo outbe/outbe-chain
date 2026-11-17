@@ -8,6 +8,7 @@ build = "build.rs"
 
 [features]
 default = []
+native-dcap = ["outbe-tee/native-dcap"]
 production-enclave = ["outbe-runtime/production-enclave"]
 snapshot-integration = ["outbe-runtime/snapshot-integration"]
 test-marshal-drop = ["outbe-consensus/test-marshal-drop"]

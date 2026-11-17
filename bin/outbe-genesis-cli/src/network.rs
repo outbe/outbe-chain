@@ -60,7 +60,7 @@ pub const TEE_KEYS: [&str; 6] = [
     "minimum_tcb_evaluation_data_number",
 ];
 
-const STATIC_TOP_LEVEL_KEYS: [&str; 42] = [
+const STATIC_TOP_LEVEL_KEYS: [&str; 38] = [
     "network",
     "validators",
     "keys_dir",
@@ -82,10 +82,6 @@ const STATIC_TOP_LEVEL_KEYS: [&str; 42] = [
     "fresh_metadosis",
     "contracts_dir",
     "enclave_image",
-    "enclave_dir",
-    "enclave_runner",
-    "enclave_sgx",
-    "signed_enclave_dir",
     "crs_path",
     "allow_stale_timestamp",
     "node_binary",

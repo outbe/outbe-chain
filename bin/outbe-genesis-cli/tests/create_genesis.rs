@@ -184,9 +184,18 @@ fn legacy_attestation_mode_is_rejected_without_an_alias() {
 fn config_validation_matrix_and_rejections() {
     validate_config(&minimal_config("./keys")).expect("minimal config");
 
-    let err = validate_config(&merge_obj(minimal_config("./keys"), json!({"bogus": 1})))
-        .expect_err("bogus key");
-    assert!(err.to_string().contains("bogus"));
+    for key in [
+        "bogus",
+        "enclave_dir",
+        "enclave_runner",
+        "enclave_sgx",
+        "signed_enclave_dir",
+    ] {
+        let mut config = minimal_config("./keys");
+        config[key] = json!("unsupported");
+        let error = validate_config(&config).expect_err("unknown config key");
+        assert!(error.to_string().contains(key));
+    }
 
     let err = validate_config(&merge_obj(
         minimal_config("./keys"),
@@ -228,8 +237,7 @@ fn config_validation_matrix_and_rejections() {
                 }),
             );
             if tee_mode == "dcap-required" {
-                cfg["enclave_image"] =
-                    json!(format!("outbe-tee-enclave@sha256:{}", "ab".repeat(32)));
+                cfg["enclave_image"] = json!(format!("outbe-image@sha256:{}", "ab".repeat(32)));
             }
             validate_config(&cfg).expect("canonical attestation matrix");
         }
@@ -241,7 +249,7 @@ fn config_validation_matrix_and_rejections() {
             "network": "mainnet",
             "chain_id": 676,
             "tee": {"mode": "dcap-required"},
-            "enclave_image": format!("outbe-tee-enclave@sha256:{}", "ab".repeat(32)),
+            "enclave_image": format!("outbe-image@sha256:{}", "ab".repeat(32)),
             "price_feed_rest": "https://prices.outbe.net",
         }),
     );
@@ -580,7 +588,7 @@ fn seed_stage_end_to_end_and_reproducibility() {
             "network": "mainnet",
             "chain_id": 676,
             "tee": {"mode": "dcap-required"},
-            "enclave_image": format!("outbe-tee-enclave@sha256:{}", "ab".repeat(32)),
+            "enclave_image": format!("outbe-image@sha256:{}", "ab".repeat(32)),
             "price_feed_rest": "https://prices.outbe.net",
         }),
     );

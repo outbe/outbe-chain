@@ -9,11 +9,8 @@ use eyre::{ensure, eyre, Result};
 use serde_json::{json, Value};
 use sha2::{Digest as _, Sha256};
 
-use super::manifest::{
-    validate_release_manifest_v1, verify_version_text, EXPECTED_ARTIFACTS,
-    PRODUCTION_TEE_FORBIDDEN_MARKERS,
-};
-use crate::release::sgx::canonical_json;
+use super::manifest::{validate_release_manifest_v1, verify_version_text, EXPECTED_ARTIFACTS};
+use crate::release::canonical_json;
 
 pub const EXPECTED_CHECKSUM_PATHS: &[&str] = &[
     "bin/outbe-up",
@@ -22,7 +19,6 @@ pub const EXPECTED_CHECKSUM_PATHS: &[&str] = &[
     "bin/outbe-feeder",
     "bin/outbe-keygen",
     "bin/outbe-radicle",
-    "bin/outbe-tee-enclave",
     "metadata/builder-system-packages.txt",
     "metadata/outbe-chain.version.txt",
     "metadata/release-manifest-v1.schema.json",
@@ -230,17 +226,6 @@ fn verify_elf_content(raw: &[u8], label: &str, name: &str, differences: &mut Vec
             differences.push(format!(
                 "{label}: forbidden absolute build path in {name}: {text}"
             ));
-        }
-    }
-    let markers = if name == "outbe-tee-enclave" {
-        PRODUCTION_TEE_FORBIDDEN_MARKERS
-    } else {
-        &[]
-    };
-    for &marker in markers {
-        if raw.windows(marker.len()).any(|w| w == marker) {
-            let text = std::str::from_utf8(marker).unwrap_or("<marker>");
-            differences.push(format!("{label}: forbidden production TEE marker: {text}"));
         }
     }
 }
@@ -463,7 +448,6 @@ pub fn verify_outputs(
             "exact-output-checksum-matrix",
             "elf-magic",
             "forbidden-absolute-build-paths",
-            "forbidden-production-tee-markers",
             "pinned-verifier-environment",
             "outbe-chain-version-identity",
             "byte-for-byte-two-builder-comparison",

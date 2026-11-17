@@ -35,10 +35,9 @@ fn parse_rust_toolchain_toml(text: &str) -> (String, Vec<String>) {
     (channel, components)
 }
 
-fn check_elf_and_sgx_consumers(root: &Path, pin: &Value, diffs: &mut Vec<String>) -> Vec<String> {
+fn check_elf_consumers(root: &Path, pin: &Value, diffs: &mut Vec<String>) -> Vec<String> {
     let rust_ver = pin["rust"]["version"].as_str().unwrap_or("");
     let gramine_ver = pin["gramine"]["version"].as_str().unwrap_or("");
-    let gramine_sha = pin["gramine"]["source_commit"].as_str().unwrap_or("");
     let pkgs = pin["system_packages"].as_object().expect("validated");
 
     let rt_text = fs::read_to_string(root.join("rust-toolchain.toml")).unwrap_or_default();
@@ -112,23 +111,6 @@ fn check_elf_and_sgx_consumers(root: &Path, pin: &Value, diffs: &mut Vec<String>
         }
     }
 
-    for network in ["testnet", "mainnet"] {
-        let sgx = read_json_obj(&root.join(format!("release/{network}-sgx-bundle-v1.json")))
-            .unwrap_or_default();
-        if sgx.get("project_toolchain").and_then(Value::as_str) != Some(CONTRACT_PATH) {
-            diffs.push(format!("{network} SGX project toolchain contract mismatch"));
-        }
-        if sgx.pointer("/gramine/version").and_then(Value::as_str) != Some(gramine_ver) {
-            diffs.push(format!("{network} SGX Gramine version mismatch"));
-        }
-        if sgx
-            .pointer("/gramine/source_commit")
-            .and_then(Value::as_str)
-            != Some(gramine_sha)
-        {
-            diffs.push(format!("{network} SGX Gramine source commit mismatch"));
-        }
-    }
     base_images
 }
 
@@ -229,7 +211,7 @@ fn check_apt_sources_and_tee(root: &Path, pin: &Value, diffs: &mut Vec<String>) 
 pub fn repository_differences(repo_root: &Path) -> Result<Vec<String>> {
     let pin = load_and_validate_pin(&repo_root.join(CONTRACT_PATH))?;
     let mut diffs = Vec::new();
-    let images = check_elf_and_sgx_consumers(repo_root, &pin, &mut diffs);
+    let images = check_elf_consumers(repo_root, &pin, &mut diffs);
     check_qvl_and_dockerfile(repo_root, &pin, &images, &mut diffs);
     check_apt_sources_and_tee(repo_root, &pin, &mut diffs);
     Ok(diffs)

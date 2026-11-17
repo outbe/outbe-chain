@@ -7,12 +7,12 @@ use std::process::Command;
 use serde_json::{json, Value};
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
+use xtask::release::canonical_json;
 use xtask::release::elf::{
     artifact_build_plan, artifact_check_plan, build_manifest, load_and_validate_build_spec,
     resolve_release_identity, validate_release_manifest_v1, verify_outputs, verify_version_text,
     ReleaseManifestOptions, EXPECTED_ARTIFACTS, EXPECTED_CHECKSUM_PATHS,
 };
-use xtask::release::sgx::canonical_json;
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -139,7 +139,7 @@ fn explicit_elf_commands_run_without_git_metadata() {
         &version_file,
         format!(
             "Commit SHA: {source_commit}\nBuild Timestamp: {timestamp}\n\
-             Build Features: no features enabled\n\
+             Build Features: native_dcap\n\
              Build Profile: release (x86_64-unknown-linux-gnu)\n\
              Commit SHA: {source_commit}\nBuild Timestamp: {timestamp}\n"
         ),
@@ -247,7 +247,10 @@ fn build_spec_validation_and_cargo_plans_enforce_production_matrix() {
     assert_eq!(check_plan.len(), 2);
     assert!(build_plan[1]
         .windows(2)
-        .any(|w| w == ["--features", "production-dcap-release"]));
+        .any(|w| w == ["--features", "native-dcap"]));
+    assert!(build_plan[1]
+        .windows(2)
+        .any(|w| w == ["--bin", "outbe-chain"]));
     for (b, c) in build_plan.iter().zip(check_plan.iter()) {
         assert_eq!(&c[..2], &["cargo", "check"]);
         assert_eq!(&c[2..], &b[2..]);
@@ -268,7 +271,7 @@ fn outbe_chain_version_verification_checks_commit_timestamp_profile_and_features
     let ts = "2026-07-15T03:33:20.000000000Z";
     let valid = format!(
         "Commit SHA: {commit}\nBuild Timestamp: {ts}\n\
-         Build Features: no features enabled\n\
+         Build Features: native_dcap\n\
          Build Profile: release (x86_64-unknown-linux-gnu)\n\
          Commit SHA: {commit}\nBuild Timestamp: {ts}\n"
     );
@@ -302,7 +305,6 @@ fn release_manifest_is_canonical_and_enforces_schema_invariants() {
     fs::write(input_dir.join("Cargo.lock"), b"locked\n").unwrap();
     fs::write(input_dir.join("rust-toolchain.toml"), b"1.96.0\n").unwrap();
     fs::write(artifact_dir.join("outbe-chain"), b"chain-elf").unwrap();
-    fs::write(artifact_dir.join("outbe-tee-enclave"), b"enclave-elf").unwrap();
 
     let spec = json!({
         "spec_version": 1,
@@ -334,15 +336,7 @@ fn release_manifest_is_canonical_and_enforces_schema_invariants() {
                 "package": "outbe-chain",
                 "role": "node",
                 "classification": "production",
-                "features": [],
-                "install_profiles": ["full-node", "validator"],
-            },
-            {
-                "name": "outbe-tee-enclave",
-                "package": "outbe-tee-enclave",
-                "role": "tee-enclave",
-                "classification": "production",
-                "features": ["production-dcap-release"],
+                "features": ["native-dcap"],
                 "install_profiles": ["full-node", "validator"],
             },
         ],
@@ -362,7 +356,7 @@ fn release_manifest_is_canonical_and_enforces_schema_invariants() {
     let encoded = canonical_json(&manifest).unwrap();
     assert_eq!(
         hex::encode(Sha256::digest(&encoded)),
-        "c376695aaa8e6c60b890cb85aac304246455faba8389f8660b26b32814f07c4b"
+        "f8e36048155639bb1acbb0fac4c623ee6762757f5e8a60c0d8b547630fe07c04"
     );
 
     let mut bad_verified = manifest.clone();
@@ -405,7 +399,7 @@ fn verify_outputs_passes_on_identical_builders_and_detects_tampering() {
     let version_text = format!(
         "Outbe 0.1.0 (test)\nVersion: 0.1.0\nCommit SHA: {commit}\n\
          Build Timestamp: 2026-07-14T03:33:20.000000000Z\n\
-         Build Features: no features enabled\n\
+         Build Features: native_dcap\n\
          Build Profile: release (x86_64-unknown-linux-gnu)\n\n\
          Reth Version: test\nCommit SHA: {commit}\n\
          Build Timestamp: 2026-07-14T03:33:20.000000000Z\n\

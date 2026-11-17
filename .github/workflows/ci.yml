@@ -27,7 +27,7 @@ concurrency:
 
 # The `ci` stage of Dockerfile.project-toolchain, published by
 # toolchain-image.yml. It carries the pinned Rust 1.96.0 toolchain with
-# rustfmt/clippy/rust-src, Gramine, the Intel DCAP stack and the mise tool set,
+# rustfmt/clippy/rust-src, the pinned Intel DCAP stack and the mise tool set,
 # so a containerised job is `checkout` plus the command.
 #
 # Pinned by digest, never by tag: a tag moves, and a CI run that cannot say
@@ -217,14 +217,15 @@ jobs:
           chain_tree="$(cargo tree --locked --package outbe-chain -e=features,no-dev)"
           default_tree="$(cargo tree --locked -e=features,no-dev)"
           prod_tree="$(cargo tree --locked --package outbe-chain --features outbe-chain/production-enclave -e=features,no-dev)"
-          for graph in chain_tree default_tree prod_tree; do
+          dcap_tree="$(cargo tree --locked --package outbe-chain --features outbe-chain/native-dcap -e=features,no-dev)"
+          for graph in chain_tree default_tree prod_tree dcap_tree; do
             tree="${!graph}"
             if grep -Eq 'feature "(test-enclave|e2e-test)"|outbe-enclave feature "(dev-keys|test-utils)"|outbe-tee feature "test-utils"|outbe-dcap feature "(sgx-noattest|test-utils)"' <<<"${tree}"; then
               echo "error: test-only enclave feature is enabled in ${graph}" >&2
               exit 1
             fi
           done
-          for graph in chain_tree prod_tree; do
+          for graph in chain_tree prod_tree dcap_tree; do
             if ! grep -Eq 'outbe-enclave feature "engine"' <<<"${!graph}"; then
               echo "error: outbe-enclave engine is missing in ${graph}" >&2
               exit 1
@@ -246,13 +247,11 @@ jobs:
             echo "error: enclave engine or test-only feature is enabled in outbe-cli production dependency graph" >&2
             exit 1
           fi
-          sidecar_enclave_features="$(cargo tree --locked --package outbe-tee-enclave -e=features,no-dev -i outbe-enclave --depth 1)"
-          for forbidden in dev-keys test-utils; do
-            if grep -Eq "outbe-enclave feature \"${forbidden}\"" <<<"${sidecar_enclave_features}"; then
-              echo "error: outbe-enclave feature \"${forbidden}\" is enabled in outbe-tee-enclave production dependency graph" >&2
-              exit 1
-            fi
-          done
+          dcap_features="$(cargo tree --locked --package outbe-chain --features outbe-chain/native-dcap -e=features,no-dev -i outbe-dcap --depth 1)"
+          if ! grep -Eq 'outbe-dcap feature "native-dcap"' <<<"${dcap_features}"; then
+            echo 'error: native-dcap is missing in the release node graph' >&2
+            exit 1
+          fi
           echo "enclave stand-in production boundary: OK"
       - name: Ensure consensus does not depend on EVM
         shell: bash

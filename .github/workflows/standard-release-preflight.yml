@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       profile:
-        description: Software profile to build
+        description: Resident TEE software profile to build
         required: true
         default: production
         type: choice

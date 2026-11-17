@@ -21,7 +21,7 @@ permissions:
   security-events: write
 
 jobs:
-  # Immutable production-network tags remain owned by their protected SGX
+  # Immutable production-network tags remain owned by their protected ELF
   # workflows. Standard tags publish the network-neutral software bundle.
   software-bundle:
     if: "!contains(github.ref_name, '-rc') && !contains(github.ref_name, '-testnet.') && !contains(github.ref_name, '-mainnet.')"
@@ -72,22 +72,14 @@ jobs:
             "${OUTBE_SOFTWARE_DIR}/SHA256SUMS" \
             "${OUTBE_SOFTWARE_DIR}/SHA256SUMS.sigstore.json"
 
-  # Pushing vX.Y.Z-testnet.N starts the protected SGX release. It is dispatched
-  # rather than triggered directly because testnet-release.yml must run with
-  # `refs/heads/main` as its workflow ref: the Sigstore certificate identity it
-  # signs and re-verifies is pinned to that ref in xtask/src/release/sgx/spec.rs and
-  # release/release-manifest-v1.schema.json. The dispatched run checks out the
-  # tag itself and re-verifies the signed tag object before it signs anything.
+  # Protected network workflows run from main and independently validate the signed tag.
   dispatch-testnet-release:
-    name: dispatch protected SGX release
+    name: dispatch protected Testnet ELF release
     if: contains(github.ref_name, '-testnet.')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
       actions: write
-    env:
-      OUTBE_TESTNET_SEEDED_GENESIS_SHA256: ${{ vars.OUTBE_TESTNET_SEEDED_GENESIS_SHA256 }}
-      OUTBE_TESTNET_SEEDED_GENESIS_URL: ${{ vars.OUTBE_TESTNET_SEEDED_GENESIS_URL }}
     steps:
       - uses: actions/checkout@v6
       - name: Dispatch testnet-release.yml for this tag
@@ -100,27 +92,19 @@ jobs:
             echo "not an immutable testnet tag: ${RELEASE_TAG}" >&2
             exit 2
           }
-          test -n "${OUTBE_TESTNET_SEEDED_GENESIS_URL}"
-          [[ "${OUTBE_TESTNET_SEEDED_GENESIS_SHA256}" =~ ^[0-9a-f]{64}$ ]]
           gh workflow run testnet-release.yml \
             --ref main \
-            --field release_tag="${RELEASE_TAG}" \
-            --field seeded_genesis_url="${OUTBE_TESTNET_SEEDED_GENESIS_URL}" \
-            --field seeded_genesis_sha256="${OUTBE_TESTNET_SEEDED_GENESIS_SHA256}"
+            --field release_tag="${RELEASE_TAG}"
 
-  # Mainnet uses the same immutable tag binding, but its exact genesis is an
-  # explicit protected-environment input rather than a tracked placeholder.
+  # Mainnet uses the same immutable tag binding and a protected environment.
   dispatch-mainnet-release:
-    name: dispatch protected Mainnet SGX release
+    name: dispatch protected Mainnet ELF release
     if: contains(github.ref_name, '-mainnet.')
     runs-on: ubuntu-24.04
     environment: mainnet-release
     permissions:
       contents: read
       actions: write
-    env:
-      OUTBE_MAINNET_SEEDED_GENESIS_SHA256: ${{ vars.OUTBE_MAINNET_SEEDED_GENESIS_SHA256 }}
-      OUTBE_MAINNET_SEEDED_GENESIS_URL: ${{ vars.OUTBE_MAINNET_SEEDED_GENESIS_URL }}
     steps:
       - uses: actions/checkout@v6
       - name: Dispatch mainnet-release.yml for this tag
@@ -133,10 +117,6 @@ jobs:
             echo "not an immutable Mainnet tag: ${OUTBE_RELEASE_TAG}" >&2
             exit 2
           }
-          test -n "${OUTBE_MAINNET_SEEDED_GENESIS_URL}"
-          [[ "${OUTBE_MAINNET_SEEDED_GENESIS_SHA256}" =~ ^[0-9a-f]{64}$ ]]
           gh workflow run mainnet-release.yml \
             --ref main \
-            --field release_tag="${OUTBE_RELEASE_TAG}" \
-            --field seeded_genesis_url="${OUTBE_MAINNET_SEEDED_GENESIS_URL}" \
-            --field seeded_genesis_sha256="${OUTBE_MAINNET_SEEDED_GENESIS_SHA256}"
+            --field release_tag="${OUTBE_RELEASE_TAG}"
