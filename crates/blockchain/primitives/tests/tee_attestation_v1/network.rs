@@ -74,12 +74,12 @@ fn trusted_network_descriptor_is_canonical_and_enforces_network_attestation_poli
         descriptor.descriptor_hash().unwrap()
     );
 
-    // Confidential-VM mode is an explicit profile for every product network.
+    // Direct mode is an explicit devnet/testnet profile, never a mainnet fallback.
     direct.network_binding.chain_id =
         alloy_primitives::U256::from(outbe_primitives::chain::MAINNET_CHAIN_ID).to_be_bytes();
     assert_eq!(
-        TrustedNetworkDescriptorV1::decode_canonical(&direct.encode_canonical().unwrap()).unwrap(),
-        direct
+        direct.encode_canonical().unwrap_err(),
+        CodecError::NonCanonical("descriptor attestation mode is forbidden for this network")
     );
 
     let mut unsorted = descriptor;

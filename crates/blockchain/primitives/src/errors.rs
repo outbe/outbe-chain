@@ -93,14 +93,8 @@ pub enum TeeGenesisPolicyError {
         testnet: u64,
         mainnet: u64,
     },
-    #[error(
-        "GramineDirectDev requires devnet, testnet, or mainnet chain ID ({devnet}, {testnet}, or {mainnet})"
-    )]
-    InvalidGramineDirectDevChainId {
-        devnet: u64,
-        testnet: u64,
-        mainnet: u64,
-    },
+    #[error("GramineDirectDev requires devnet or testnet chain ID ({devnet} or {testnet})")]
+    InvalidGramineDirectDevChainId { devnet: u64, testnet: u64 },
     #[error("derive normative resource schedule: {0}")]
     DeriveNormativeResourceSchedule(String),
     #[error("DcapRequired measurements must be non-zero")]

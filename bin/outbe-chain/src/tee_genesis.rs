@@ -439,7 +439,7 @@ mod tests {
         ))
         .unwrap_err()
         .to_string()
-        .contains("devnet, testnet, or mainnet chain ID"));
+        .contains("devnet or testnet chain ID"));
         assert!(!dev_output.exists());
 
         let dcap_input = root.path().join("dcap-base.json");
