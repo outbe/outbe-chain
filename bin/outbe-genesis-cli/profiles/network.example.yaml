@@ -8,8 +8,8 @@
 
 chain_id: 424242
 
-# One host or IP per founding validator, in order. The bootstrap profile fixes the
-# founding committee at four members. Append `:port` to give one validator a
+# One host or IP per founding validator, in order. At least four founders are
+# required. Append `:port` to give one validator a
 # consensus port of its own (`- 10.0.0.3:31555`).
 validators:
   - 10.0.0.1
@@ -32,13 +32,8 @@ keys_dir: ./keys
 # circuit version must also have a compiled binding for that L2 chain id.
 
 tee:
-  mode: gramine-direct-dev            # | dcap-required
-  # dcap-required additionally needs the exact release measurements:
-  # mrenclave: "<32-byte hex>"
-  # mrsigner: "<32-byte hex>"
-  # isv_prod_id: 0
-  # minimum_isv_svn: 0
-  # minimum_tcb_evaluation_data_number: 0
+  # Internal protocol name for the unattested confidential-VM policy.
+  mode: gramine-direct-dev
 
 # --- Everything below is optional ----------------------------------------
 
@@ -47,14 +42,8 @@ tee:
 # remote_base_dir: /opt/outbe
 # remote_keys_dir: /opt/outbe/keys
 
-# Hardware-free dev lane only:
-# enclave_sgx: false
-# Optional absolute path to `outbe-tee-enclave-mock`.
-# enclave_runner: /opt/outbe/outbe-tee-enclave-mock
-# With the default `enclave_sgx: true`, both TEE policies run the signed
-# gramine-sgx bundle. Point these at its checkout on each machine.
-# enclave_dir: /opt/outbe-chain/enclave
-# `enclave_runner` can also override the bundled SGX launcher.
+# Optional absolute path to the confidential-VM signer.
+# enclave_runner: /opt/outbe/outbe-tee-enclave-confidential-vm
 
 # Binaries on the validator machines; default to PATH lookups.
 # node_binary: outbe-chain

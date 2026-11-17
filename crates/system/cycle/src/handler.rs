@@ -412,9 +412,11 @@ fn record_failed_allocation_fallback(ctx: &BlockRuntimeContext, day: u32) -> Res
         if day > outbe_rewards::api::get_last_sealed_day(&ctx.storage)? {
             outbe_rewards::api::seal_votes_and_fees(ctx, day)?;
         }
+        outbe_promislimit::PromisLimitContract::new(ctx.storage.clone()).settle_day_burns()?;
         outbe_agentreward::api::abandon_day_agent_rewards(ctx, day.into())?;
         if !cap.is_zero() {
-            outbe_promislimit::PromisLimitContract::new(ctx.storage.clone()).checked_credit(cap)?;
+            outbe_promislimit::PromisLimitContract::new(ctx.storage.clone())
+                .add(outbe_promislimit::LimitSource::DayEmissionLimit, cap)?;
         }
         outbe_emission::api::record_failed_day_allocation(ctx.storage.clone(), day, cap)?;
         ctx.storage
@@ -498,6 +500,7 @@ fn process_emission_day_steps(ctx: &BlockRuntimeContext) -> Result<Readiness> {
     run_advance_worldwide_days_step(ctx, block_utc_day)?;
 
     if let Some(day) = allocated {
+        outbe_promislimit::PromisLimitContract::new(ctx.storage.clone()).settle_day_burns()?;
         run_metadosis_step(ctx, day)?;
     }
 

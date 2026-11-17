@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {WCOEN} from "../../src/canonical/WCOEN.sol";
+import {DEAD_ADDRESS} from "@shared/BurnAddress.sol";
 
 contract StorageWritingReceiver {
     uint256 public received;
@@ -107,6 +108,43 @@ contract WCOENTest is Test {
         token.withdraw(COEN_UNIT);
     }
 
+    function test_TransferToZero_UnwrapsOnZero() public {
+        address alice = _holding(2 * COEN_UNIT);
+        uint256 zeroNative = address(0).balance;
+
+        vm.expectEmit(address(token));
+        emit WCOEN.Transfer(alice, address(0), 2 * COEN_UNIT);
+        vm.prank(alice);
+        token.transfer(address(0), 2 * COEN_UNIT);
+
+        assertEq(token.balanceOf(alice), 0);
+        assertEq(token.balanceOf(address(0)), 0);
+        assertEq(token.totalSupply(), 0);
+        assertEq(address(token).balance, 0);
+        assertEq(address(0).balance, zeroNative + 2 * COEN_UNIT);
+    }
+
+    function test_TransferFromToDead_UnwrapsOnDeadWithTwoEvents() public {
+        address alice = _holding(2 * COEN_UNIT);
+        address bob = makeAddr("bob");
+        vm.prank(alice);
+        token.approve(bob, 3 * COEN_UNIT);
+        uint256 deadNative = DEAD_ADDRESS.balance;
+
+        vm.expectEmit(address(token));
+        emit WCOEN.Transfer(alice, DEAD_ADDRESS, 2 * COEN_UNIT);
+        vm.expectEmit(address(token));
+        emit WCOEN.Transfer(DEAD_ADDRESS, address(0), 2 * COEN_UNIT);
+        vm.prank(bob);
+        token.transferFrom(alice, DEAD_ADDRESS, 2 * COEN_UNIT);
+
+        assertEq(token.allowance(alice, bob), COEN_UNIT);
+        assertEq(token.balanceOf(DEAD_ADDRESS), 0);
+        assertEq(token.totalSupply(), 0);
+        assertEq(address(token).balance, 0);
+        assertEq(DEAD_ADDRESS.balance, deadNative + 2 * COEN_UNIT);
+    }
+
     function test_IncreaseDecreaseAllowance() public {
         address alice = makeAddr("alice");
         address bob = makeAddr("bob");
@@ -130,5 +168,12 @@ contract WCOENTest is Test {
         vm.expectRevert();
         token.decreaseAllowance(bob, 20);
         vm.stopPrank();
+    }
+
+    function _holding(uint256 amount) internal returns (address alice) {
+        alice = makeAddr("alice");
+        vm.deal(alice, amount);
+        vm.prank(alice);
+        token.deposit{value: amount}();
     }
 }

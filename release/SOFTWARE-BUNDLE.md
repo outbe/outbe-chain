@@ -10,22 +10,20 @@ deployment-specific configuration.
 Run the same command locally and in CI:
 
 ```bash
-cargo xtask release build --profile production --output /tmp/outbe-release
-cargo xtask release build --profile development --output /tmp/outbe-release-dev
+cargo xtask release build --output /tmp/outbe-release
 ```
 
-`production` builds the DCAP-capable enclave and rejects mock TEE support. `development` builds the
-mock enclave and enables the protocol overrides needed by hardware-free local networks. Both builds
-run inside the pinned project-toolchain container and require a clean Git checkout. The builder
-downloads the canonical CRS prefix and verifies its pinned SHA-256.
+The build runs inside the pinned project-toolchain container and requires a clean Git checkout.
+It produces one bundle for confidential-VM deployments and downloads the canonical CRS prefix,
+verifying its pinned SHA-256.
 
-The output name includes the profile and full source commit. `software-manifest.json` is the first
-archive entry and records the release identity, target, profile, mode, size, and SHA-256 of every
-file. The build verifies the completed archive before returning it.
+The output name includes the full source commit. `software-manifest.json` is the first archive
+entry and records the release identity, target, mode, size, and SHA-256 of every file. The build
+verifies the completed archive before returning it.
 
 ## Contents
 
-- `bin/`: node, operator, feeder, Radicle, Hyperlane validator, and profile-specific enclave
+- `bin/`: node, operator, feeder, Radicle, Hyperlane validator, and confidential-VM signer
   binaries;
 - `tools/outbe-genesis-cli`: the founding-network bundle generator;
 - `.bb-crs/bn254_g1.dat`: the verified CRS required by every node;
@@ -40,8 +38,6 @@ their compact specifications contain only the commands, dependencies, and paths 
 
 ## CI
 
-`17. Software bundle — preflight` builds either profile and uploads the verified bundle without
-publishing it. Standard version tags build the production profile, create `SHA256SUMS`, sign the
-checksum file with Sigstore, and publish those artifacts to the GitHub release.
-
-Protected testnet and mainnet SGX release workflows remain separate and unchanged.
+`17. Software bundle — preflight` builds and uploads the verified bundle without publishing it.
+Standard version tags create `SHA256SUMS`, sign the checksum file with Sigstore, and publish those
+artifacts to the GitHub release.

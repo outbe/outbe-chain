@@ -1,12 +1,12 @@
 //! Shared vote-target interface, proposal record/status types, and handler registry.
 
-use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{sol, SolError};
+use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_sol_types::{sol, SolCall, SolError};
 
 use crate::addresses::VOTE_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::storage::dsl::{Map, RecordEntry, StorageRecord};
+use outbe_primitives::storage::dsl::{List, Map, RecordEntry, StorageRecord};
 use outbe_primitives::storage::types::{Mapping, Slot, Storable, StorableType, StorageBytes};
 use outbe_primitives::storage::StorageHandle;
 
@@ -17,6 +17,11 @@ sol! {
     error UnknownTargetModule();
     error DuplicateTargetModule();
     error StoredPayloadInvalid(string module);
+
+    /// `applyApproved` of the Update and HyperlaneController precompiles.
+    interface IApplyApproved {
+        function applyApproved(uint256 proposalId, bytes payload) external;
+    }
 }
 
 /// Shared vote-target and proposal-decoding errors with `IVote`-compatible Solidity custom error encoding.
@@ -414,6 +419,122 @@ pub fn read_proposal_status(
         return Ok(None);
     };
     Ok(Some(record.proposal_status()?))
+}
+
+/// What the Vote begin-block step does with one queued approval of a target
+/// module.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DueApproval {
+    /// The approval is gone: applied, expired, replaced, or applied by another
+    /// caller. It leaves the queue.
+    Done,
+    /// The execution delay has not ended.
+    Wait,
+    /// Call the target with this `applyApproved` calldata.
+    Call(Bytes),
+}
+
+/// Calls `applyApproved` of `target` for each approval in `queue` that is due.
+/// The sub-call runs in the frame of `target`. An approval leaves the queue
+/// when it is done or when the call succeeds. A reverted call stays in the
+/// queue and runs again in the next block. A node-local, fatal or sub-call
+/// failure fails the block.
+pub fn apply_due_approvals(
+    storage: &StorageHandle<'_>,
+    target: Address,
+    queue: &List<'_, U256>,
+    mut due: impl FnMut(U256) -> Result<DueApproval>,
+) -> Result<()> {
+    for proposal_id in queue.read_all()? {
+        let calldata = match due(proposal_id)? {
+            DueApproval::Wait => continue,
+            DueApproval::Done => None,
+            DueApproval::Call(calldata) => Some(calldata),
+        };
+        if let Some(Err(error)) = calldata.map(|data| storage.call(target, U256::ZERO, data)) {
+            if fails_block(&error) {
+                return Err(error);
+            }
+            tracing::warn!(
+                target: "outbe::vote",
+                %target,
+                %proposal_id,
+                %error,
+                "approved action not applied, retry in the next block"
+            );
+            continue;
+        }
+        remove_from_queue(queue, proposal_id)?;
+    }
+    Ok(())
+}
+
+/// The storage of a module that keeps the payload hash and the unlock block of
+/// each approval, and whose `applyApproved(uint256,bytes)` takes the payload.
+pub struct PayloadApprovals<'a, 'storage> {
+    pub target: Address,
+    pub module: &'static str,
+    pub queue: &'a List<'storage, U256>,
+    pub hashes: &'a Map<'storage, U256, B256>,
+    pub unlocks: &'a Map<'storage, U256, u64>,
+}
+
+impl PayloadApprovals<'_, '_> {
+    /// `apply_due_approvals` with the payload that Vote stores for each
+    /// approval.
+    pub fn apply_due(&self, storage: &StorageHandle<'_>, block_number: u64) -> Result<()> {
+        apply_due_approvals(storage, self.target, self.queue, |proposal_id| {
+            if self.hashes.read(&proposal_id)? == B256::ZERO {
+                return Ok(DueApproval::Done);
+            }
+            if block_number < self.unlocks.read(&proposal_id)? {
+                return Ok(DueApproval::Wait);
+            }
+            let payload = approved_proposal_payload(storage.clone(), proposal_id, self.module)?;
+            Ok(DueApproval::Call(
+                IApplyApproved::applyApprovedCall {
+                    proposalId: proposal_id,
+                    payload: payload.into_bytes().into(),
+                }
+                .abi_encode()
+                .into(),
+            ))
+        })
+    }
+}
+
+/// A provider, fatal or sub-call failure is not a revert of the target.
+fn fails_block(error: &PrecompileError) -> bool {
+    error.is_node_local()
+        || matches!(
+            error,
+            PrecompileError::Fatal(_)
+                | PrecompileError::FatalWithCause(_)
+                | PrecompileError::SubCall(_)
+        )
+}
+
+fn remove_from_queue(queue: &List<'_, U256>, proposal_id: U256) -> Result<()> {
+    let ids = queue.read_all()?;
+    let Some(index) = ids.iter().position(|id| *id == proposal_id) else {
+        return Ok(());
+    };
+    if let Some(last) = ids.last().filter(|_| index != ids.len() - 1) {
+        queue.set(index as u32, *last)?;
+    }
+    queue.pop().map(|_| ())
+}
+
+/// Returns the payload of the approved proposal `proposal_id` of `module` from
+/// the Vote storage.
+pub fn approved_proposal_payload(
+    storage: StorageHandle<'_>,
+    proposal_id: U256,
+    module: &str,
+) -> Result<String> {
+    read_vote_proposal(storage, proposal_id)?
+        .map(|proposal| proposal.payload)
+        .ok_or_else(|| VoteTargetError::stored_payload_invalid(module))
 }
 
 /// Static handler table entry type.

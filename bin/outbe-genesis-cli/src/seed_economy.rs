@@ -6,7 +6,8 @@ use serde_json::{Map, Value};
 use crate::error::GenesisError;
 use crate::seed_codec::{
     address_as_u256, address_bytes, alloc_balance_hex, data_slot, first_worldwide_day, parse_u256,
-    StorageBuilder, ORACLE_ADDRESS, VAULT_ROUTER_LIQUIDITY_SOURCES, VAULT_ROUTER_LIQUIDITY_TARGETS,
+    StorageBuilder, ORACLE_ADDRESS, VAULT_ROUTER_STABLECOIN_SOURCES,
+    VAULT_ROUTER_STABLECOIN_TARGETS,
 };
 use crate::seed_oracle::seed_oracle;
 
@@ -51,10 +52,10 @@ pub fn seed_address_set_with_types(
     Ok(())
 }
 
-/// Seed VaultRouter default factory liquidity source/target registries.
+/// Seed VaultRouter default factory stablecoin source/target registries.
 pub fn seed_vault_router(storage: &mut StorageBuilder) -> Result<(), GenesisError> {
-    seed_address_set_with_types(storage, 4, 6, &VAULT_ROUTER_LIQUIDITY_SOURCES)?;
-    seed_address_set_with_types(storage, 7, 9, &VAULT_ROUTER_LIQUIDITY_TARGETS)?;
+    seed_address_set_with_types(storage, 4, 6, &VAULT_ROUTER_STABLECOIN_SOURCES)?;
+    seed_address_set_with_types(storage, 7, 9, &VAULT_ROUTER_STABLECOIN_TARGETS)?;
     Ok(())
 }
 

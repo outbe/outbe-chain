@@ -22,7 +22,8 @@ pub fn epoch_elector_config(
     if snapshot.last_finalized_view == 0 {
         warn!(
             epoch = epoch.get(),
-            "starting epoch without reporter continuity; leader election will use active VRF material until a certificate is finalized"
+            "starting epoch without reporter continuity; leader election will use active VRF \
+             material until a certificate is finalized"
         );
         return Ok(HybridRandom::with_vrf_materials(vrf_materials));
     }
@@ -96,7 +97,8 @@ where
             info!(
             target: "outbe_engine::stack",
                            epoch = %self.state.current_epoch,
-                           "no threshold share for this epoch - running consensus engine in VERIFIER mode"
+                           "no threshold share for this epoch - running consensus engine in \
+                            VERIFIER mode"
                        );
             HybridScheme::<MinSig>::verifier_with_vrf_provider(
                 &config::outbe_app_namespace(),
@@ -155,6 +157,7 @@ where
                 bridge: Some(self.bridge.clone()),
                 witness_sink: std::sync::Arc::new(self.finalized_parent_cert_store.clone()),
                 finalize_verify_mailbox: self.finalize_verify_mailbox.clone(),
+                equivocation_verify_mailbox: self.equivocation_verify_mailbox.clone(),
             },
         );
 
@@ -234,7 +237,8 @@ where
             .set_operating_mode(effective_validator_operating_mode(radicle_signer));
         let engine_handle_task = engine.start(vote, cert, res);
 
-        info!(epoch = %self.state.current_epoch, "simplex engine started - blocks can now be produced");
+        info!(epoch = %self.state.current_epoch,
+            "simplex engine started - blocks can now be produced");
 
         Ok((engine_handle_task, radicle_signer))
     }

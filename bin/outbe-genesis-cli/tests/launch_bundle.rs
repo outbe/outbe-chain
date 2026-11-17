@@ -9,7 +9,6 @@ use alloy_primitives::B256;
 use flate2::read::GzDecoder;
 use outbe_genesis_cli::launch_bundle::{
     feeder_config, feeder_pairs, radicle_script, render, DEFAULT_MAX_VALIDATORS,
-    SIGNED_ENCLAVE_FILES,
 };
 use outbe_genesis_cli::network::profiles_dir;
 use outbe_genesis_cli::stages::build_seed;
@@ -126,7 +125,6 @@ fn render_writes_valid_bash_scripts_and_stable_bootnodes() {
             "run-radicle.sh",
             "run-node.sh",
             "run-feeder.sh",
-            "run-tee-renew.sh",
             "install-systemd.sh",
         ] {
             let script = directory.join(name);
@@ -228,45 +226,9 @@ fn feeder_pairs_and_config_templates() {
 }
 
 #[test]
-fn distribution_archives_and_signed_enclave_staging() {
+fn distribution_archives_are_self_contained() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let signed_dir = tmp.path().join("signed");
-    let signed_sgx = signed_dir.join("rootfs/opt/outbe/sgx");
-    fs::create_dir_all(&signed_sgx).expect("mkdir signed");
-    for &name in SIGNED_ENCLAVE_FILES {
-        let path = signed_sgx.join(name);
-        fs::create_dir_all(path.parent().expect("parent")).expect("mkdir enclave parent");
-        fs::write(path, b"x").expect("write enclave file");
-    }
-    let runtime_file = signed_sgx.join("gramine/runtime/glibc/libc.so.6");
-    fs::create_dir_all(runtime_file.parent().expect("runtime parent")).expect("mkdir runtime");
-    fs::write(&runtime_file, b"runtime").expect("write runtime file");
-    fs::write(signed_sgx.join("enclave-key.pem"), b"PRIVATE").expect("write pem");
-
-    let (_, output_dir) = render_fixture(
-        tmp.path(),
-        Some(json!({"signed_enclave_dir": signed_dir.display().to_string()})),
-    );
-
-    let staged = output_dir.join("sgx");
-    for &name in SIGNED_ENCLAVE_FILES {
-        assert!(staged.join(name).is_file(), "missing staged {name}");
-    }
-    assert_eq!(
-        fs::read(staged.join("gramine/runtime/glibc/libc.so.6")).expect("read runtime"),
-        b"runtime"
-    );
-    assert!(!staged.join("enclave-key.pem").exists());
-
-    let enclave_script =
-        fs::read_to_string(output_dir.join("validator-0/run-enclave.sh")).expect("enclave");
-    assert!(enclave_script.contains("sgx/bin/outbe-tee-enclave-launch"));
-    assert!(enclave_script.contains("--tee-dir /var/lib/outbe/tee"));
-    assert!(!enclave_script.contains("gramine-sgx outbe-tee-enclave"));
-    let preflight =
-        fs::read_to_string(output_dir.join("validator-0/preflight.sh")).expect("preflight");
-    assert!(preflight.contains("sgx/outbe-tee-enclave.manifest.sgx"));
-    assert!(preflight.contains("sgx/outbe-tee-enclave.sig"));
+    let (_, output_dir) = render_fixture(tmp.path(), None);
 
     let dist = output_dir.join("dist");
     assert!(dist.join("SHA256SUMS").is_file());
@@ -311,8 +273,6 @@ fn distribution_archives_and_signed_enclave_staging() {
             );
         }
         assert!(joined.contains(&format!("keys/validator-{index}")));
-        assert!(joined.contains("sgx/bin/outbe-tee-enclave-launch"));
-        assert!(joined.contains("sgx/gramine/runtime/glibc/libc.so.6"));
         assert!(joined.contains(".bb-crs/bn254_g1.dat"));
         for other in 0..4 {
             if other != index {
@@ -332,7 +292,7 @@ fn distribution_archives_and_signed_enclave_staging() {
 }
 
 #[test]
-fn caddy_systemd_units_tee_renewal_and_enclave_modes() {
+fn caddy_systemd_units_and_confidential_vm_runtime() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let (_, output_dir) = render_fixture(tmp.path(), None);
 
@@ -369,23 +329,23 @@ fn caddy_systemd_units_tee_renewal_and_enclave_modes() {
         } else {
             assert!(unit.contains("Wants=network-online.target"));
             assert!(unit.contains("User=root"));
-            assert!(unit.contains("BindReadOnlyPaths=-"));
-            assert!(unit.contains("/sgx:/opt/outbe/sgx"));
+            assert!(!unit.contains("/sgx"));
+            assert!(!unit.contains("aesmd.service"));
             assert!(unit.contains("/tee:/var/lib/outbe/tee"));
         }
     }
 
-    let timer =
-        fs::read_to_string(unit_dir.join("outbe-tee-renew.timer")).expect("read renew timer");
-    assert!(timer.contains("OnCalendar=daily"));
-    assert!(timer.contains("Persistent=true"));
+    assert!(!unit_dir.join("outbe-tee-renew.timer").exists());
+    assert!(!unit_dir.join("outbe-tee-renew.service").exists());
     let install_systemd = fs::read_to_string(output_dir.join("validator-2/install-systemd.sh"))
         .expect("install-systemd");
     assert!(install_systemd.contains("if [ \"$(id -u)\" -eq 0 ]"));
     assert!(install_systemd.contains("as_root systemctl"));
     assert!(!install_systemd.contains("\nsudo "));
-    assert!(install_systemd.contains("enable --now outbe-tee-renew.timer"));
+    assert!(install_systemd.contains("disable --now outbe-tee-renew.timer"));
     assert!(install_systemd.contains("enable --now outbe-validator.target"));
+    assert!(install_systemd.contains("disable --now outbe-validator.target"));
+    assert!(!install_systemd.contains("founding validator services:"));
 
     let install_caddy =
         fs::read_to_string(output_dir.join("validator-2/install-caddy.sh")).expect("install-caddy");
@@ -398,7 +358,7 @@ fn caddy_systemd_units_tee_renewal_and_enclave_modes() {
     assert!(node2.contains("--nat extip:10.0.0.3"));
     assert!(node2.contains("--consensus.storage-dir"));
     assert!(!node2.contains("--consensus.use-local-defaults"));
-    assert!(node2.contains("--tee-session-mode production-node-host"));
+    assert!(!node2.contains("--tee-session-mode"));
 
     let tmp_private = tempfile::tempdir().expect("tmp_private");
     let (_, out_private) = render_fixture(
@@ -418,70 +378,19 @@ fn caddy_systemd_units_tee_renewal_and_enclave_modes() {
     assert!(fs::read_to_string(rpc_dir.join("feeder.toml"))
         .expect("rpc feeder")
         .contains("rpc_endpoint = \"http://10.0.0.3:8545\""));
-    assert!(fs::read_to_string(rpc_dir.join("run-tee-renew.sh"))
-        .expect("rpc renew")
-        .contains("--rpc-url http://10.0.0.3:8545"));
     assert!(fs::read_to_string(rpc_dir.join("Caddyfile"))
         .expect("rpc caddy")
         .contains("reverse_proxy 10.0.0.3:8545"));
 
     let enclave0 = fs::read_to_string(output_dir.join("validator-0").join("run-enclave.sh"))
         .expect("enclave0");
-    assert!(enclave0.contains("outbe-tee-enclave-launch"));
-    assert!(enclave0.contains("/dev/sgx_enclave"));
-    assert!(!enclave0.contains("--dev-network-binding"));
+    assert!(enclave0.contains("outbe-tee-enclave-confidential-vm"));
+    assert!(enclave0.contains("--dev-network-binding"));
+    assert!(enclave0.contains("--dev-reth-p2p-public"));
+    assert!(enclave0.contains("--dkg-seed"));
     assert!(!enclave0.contains("docker run"));
     let preflight =
         fs::read_to_string(output_dir.join("validator-0/preflight.sh")).expect("preflight");
-    assert!(preflight.contains("MISSING manifest or signature"));
-    // Mock enclave mode (`enclave_sgx: false`)
-    let tmp_mock = tempfile::tempdir().expect("tmp_mock");
-    let (_, out_mock) = render_fixture(tmp_mock.path(), Some(json!({"enclave_sgx": false})));
-    let node_mock =
-        fs::read_to_string(out_mock.join("validator-0").join("run-node.sh")).expect("node_mock");
-    assert!(!node_mock.contains("--tee-session-mode"));
-    let install_mock =
-        fs::read_to_string(out_mock.join("validator-0/install-systemd.sh")).expect("install_mock");
-    assert!(!install_mock.contains("enable --now outbe-tee-renew.timer"));
-    let enclave_mock =
-        fs::read_to_string(out_mock.join("validator-0/run-enclave.sh")).expect("enclave_mock");
-    assert!(enclave_mock.contains("outbe-tee-enclave-mock"));
-    assert!(enclave_mock.contains("--dev-network-binding"));
-    assert!(enclave_mock.contains("--dev-reth-p2p-public"));
-    assert!(enclave_mock.contains("--dkg-seed"));
-    let preflight_mock =
-        fs::read_to_string(out_mock.join("validator-0/preflight.sh")).expect("preflight_mock");
-    assert!(preflight_mock.contains("development enclave"));
-    assert!(!preflight_mock.contains("MISSING manifest or signature"));
-
-    // Production DCAP mode
-    let tmp_dcap = tempfile::tempdir().expect("tmp_dcap");
-    let (_, out_dcap) = render_fixture(
-        tmp_dcap.path(),
-        Some(json!({
-            "chain_id": 54322345,
-            "remote_base_dir": "/opt/outbe",
-            "remote_keys_dir": "/opt/outbe/keys",
-            "tee": {
-                "mode": "dcap-required",
-                "mrenclave": "ab".repeat(32),
-                "mrsigner": "cd".repeat(32),
-                "isv_prod_id": 0,
-                "minimum_isv_svn": 3,
-                "minimum_tcb_evaluation_data_number": 17,
-            }
-        })),
-    );
-    let enclave_dcap = fs::read_to_string(out_dcap.join("validator-0").join("run-enclave.sh"))
-        .expect("enclave_dcap");
-    assert!(!enclave_dcap.contains("docker run"));
-    assert!(enclave_dcap.contains("/dev/sgx_enclave"));
-    assert!(enclave_dcap.contains("/dev/sgx_provision"));
-    assert!(enclave_dcap.contains("aesmd.service"));
-    let node_dcap =
-        fs::read_to_string(out_dcap.join("validator-1").join("run-node.sh")).expect("node_dcap");
-    assert!(node_dcap.contains("/opt/outbe/genesis.json"));
-    assert!(node_dcap.contains("/opt/outbe/keys/validator-1"));
-    assert!(node_dcap.contains("--consensus.listen-addr 0.0.0.0:30400"));
-    assert!(node_dcap.contains("--tee-session-mode production-node-host"));
+    assert!(preflight.contains("confidential VM signer"));
+    assert!(!preflight.contains("MISSING manifest or signature"));
 }

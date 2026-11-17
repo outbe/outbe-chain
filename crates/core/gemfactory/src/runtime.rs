@@ -2,19 +2,20 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_core_common::addresses::INTEX_NFT1155_ADDRESS;
 use outbe_core_common::markup::marked_up;
-use outbe_gem::{api as gem_api, CallTerms, GemAddParams, GemParams, GemView};
+use outbe_gem::precompile::IGem::{GemIssued, GemSettled};
+use outbe_gem::{api as gem_api, CallTerms, GemAddParams, GemContract, GemParams, GemView};
 use outbe_intex::{IntexState, SeriesId};
 use outbe_oracle::api::get_utc_day_vwap_for_iso;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_system_common::addresses::GEM_FACTORY_ADDRESS;
+use outbe_system_common::addresses::{AGENT_REWARD_ADDRESS, GEM_FACTORY_ADDRESS};
 use outbe_system_common::stablecoin::iso_4217_alpha;
 use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 
 use outbe_core_common::pow;
 
 use crate::errors::{date_step_error, GemFactoryError};
-use crate::precompile::IGemFactory::{GemIssued, GemPositionCreated, GemSeriesOpened, GemSettled};
+use crate::precompile::IGemFactory::{GemPositionCreated, GemSeriesOpened};
 use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition};
 use crate::sol_ext::IIntexNFT1155;
 use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, SettlementPayment};
@@ -44,6 +45,7 @@ pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<
     // The caller resolves the price: it knows which day the gem belongs to.
     let issued_at = storage.now_secs()?;
     let params = GemAddParams {
+        issuer: AGENT_REWARD_ADDRESS,
         owner,
         promis_load_minor: promis_load,
         entry_price_minor: entry_price,
@@ -144,18 +146,15 @@ pub(crate) fn derived_call_terms(
 /// Announce a new gem with its series, sub-series, currencies and cleartext load payload.
 fn emit_gem_issued(storage: &StorageHandle<'_>, gem_id: U256) -> Result<()> {
     let gem = load_view(storage, gem_id)?;
-    emit_event(
-        storage,
-        GemIssued {
-            gemId: gem_id,
-            owner: gem.item.owner,
-            seriesId: gem.item.series_id.into(),
-            subSeriesId: gem.item.sub_series_id,
-            issuanceCurrency: gem.item.issuance_currency,
-            referenceCurrency: gem.item.reference_currency,
-            payload: gem.item.promis_load_minor.to_be_bytes::<32>().into(),
-        },
-    )
+    GemContract::new(storage.clone()).emit(GemIssued {
+        gemId: gem_id,
+        owner: gem.item.owner,
+        seriesId: gem.item.series_id.into(),
+        subSeriesId: gem.item.sub_series_id,
+        issuanceCurrency: gem.item.issuance_currency,
+        referenceCurrency: gem.item.reference_currency,
+        payload: gem.item.promis_load_minor.to_be_bytes::<32>().into(),
+    })
 }
 
 fn load_view(storage: &StorageHandle<'_>, gem_id: U256) -> Result<GemView> {
@@ -304,6 +303,7 @@ pub fn issue_merchant_gem(
     let gem_id = add_gem(
         storage,
         GemAddParams {
+            issuer: caller,
             owner,
             promis_load_minor: promis_load,
             entry_price_minor: entry_price,
@@ -332,11 +332,12 @@ pub fn issue_merchant_gem(
 
 /// Settles a gem paying its cost from `payer` in `asset` by ERC20 transfer. Anyone
 /// may pay for a gem. It stays with its owner. An issuance-currency payment must
-/// name the VWAP snapshot required at this block.
+/// name the VWAP snapshot required at this block, and the cost must fit the payer's cap.
 pub fn settle_gem(
     storage: &StorageHandle<'_>,
     gem_id: U256,
     payment: SettlementPayment,
+    amount_cap_minor: U256,
 ) -> Result<()> {
     let SettlementPayment {
         payer,
@@ -348,30 +349,23 @@ pub fn settle_gem(
 
     let quote = settlement::quote(storage, asset, currencies(&gem), &settlement_cost(&gem))?;
     quote.require_snapshot(snapshot_id)?;
+    settlement::require_funds(storage, payer, asset, amount_cap_minor)?;
+    quote.require_within_cap(amount_cap_minor)?;
     storage.clone().with_checkpoint(|| {
         // Settle before payment so a token callback cannot settle the gem twice.
         // A failed payment rolls the state back.
         let (item, group) =
             gem_api::load_pair(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
         gem_api::record_settled(storage, item, group)?;
-        settlement::collect(
-            storage,
-            GEM_FACTORY_ADDRESS,
-            payer,
+        settlement::collect(storage, payer, asset, quote.payment_minor)?;
+        GemContract::new(storage.clone()).emit(GemSettled {
+            gemId: gem_id,
+            owner: gem.item.owner,
+            issuanceCurrency: gem.item.issuance_currency,
+            referenceCurrency: gem.item.reference_currency,
             asset,
-            quote.payment_minor,
-        )?;
-        emit_event(
-            storage,
-            GemSettled {
-                gemId: gem_id,
-                owner: gem.item.owner,
-                asset,
-                issuanceCurrency: gem.item.issuance_currency,
-                referenceCurrency: gem.item.reference_currency,
-                amountMinor: quote.payment_minor,
-            },
-        )
+            amountMinor: quote.payment_minor,
+        })
     })
 }
 
@@ -482,6 +476,10 @@ pub fn mine_promis(
     // Anyone may submit. The owner's modify key authorizes the mint.
     if !item.is_settled() {
         return Err(GemFactoryError::GemNotSettled.into());
+    }
+    // Mining deletes the gem, and its issuer could issue the same id again in this block.
+    if item.is_issued_in(storage.block_number()?) {
+        return Err(GemFactoryError::CannotMineInIssueBlock.into());
     }
 
     validate_pow(gem_id, item.owner, nonce)?;

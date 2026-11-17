@@ -32,24 +32,6 @@
   },
   {
     "type": "function",
-    "name": "beginPolicyAdminTransfer",
-    "inputs": [
-      {
-        "name": "policyId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "candidate",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "canMint",
     "inputs": [
       {
@@ -352,6 +334,24 @@
         "name": "accounts",
         "type": "address[]",
         "internalType": "address[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "startPolicyAdminTransfer",
+    "inputs": [
+      {
+        "name": "policyId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "candidate",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],

@@ -445,12 +445,14 @@ fn expired_public_bond_burns_once_and_preserves_forced_surplus() {
         let owner = Address::repeat_byte(0x99);
         let forced_surplus = U256::from(7u64);
         let mut provider = super::test_provider();
-        provider.set_balance(VOTE_ADDRESS, U256::from(123u64) + forced_surplus);
+        provider.set_balance(
+            VOTE_ADDRESS,
+            U256::from(123u64) + forced_surplus + initial_rest,
+        );
         let proposal_id;
-        provider.set_balance(owner, initial_rest);
         provider.enter(|storage| {
             PromisLimitContract::new(storage)
-                .burn_to_promis_limit(owner, initial_rest, BurnSource::Slash)
+                .burn(BurnSource::ProposalBond, initial_rest)
                 .unwrap();
         });
         {
@@ -473,15 +475,24 @@ fn expired_public_bond_burns_once_and_preserves_forced_surplus() {
                 .unwrap();
             assert_eq!(proposal_status(&vote, proposal_id), ProposalStatus::Expired);
             assert_bond_closed(&vote, proposal_id, BondState::Burned);
-            assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), forced_surplus);
+            assert_eq!(
+                storage.balance(VOTE_ADDRESS).unwrap(),
+                forced_surplus + expected_rest
+            );
             assert_eq!(storage.balance(owner).unwrap(), U256::ZERO);
             let limit = PromisLimitContract::new(storage.clone());
             assert_eq!(limit.promis_limit().unwrap(), expected_limit);
-            assert_eq!(limit.rest_minor().unwrap(), expected_rest);
+            assert_eq!(
+                limit.burn_rest(BurnSource::ProposalBond).unwrap(),
+                expected_rest
+            );
 
             vote.begin_block_with(deadline + 2, &PUBLIC_BONDED_REGISTRY)
                 .unwrap();
-            assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), forced_surplus);
+            assert_eq!(
+                storage.balance(VOTE_ADDRESS).unwrap(),
+                forced_surplus + expected_rest
+            );
         }
 
         let burns = provider
@@ -495,13 +506,17 @@ fn expired_public_bond_burns_once_and_preserves_forced_surplus() {
         assert_eq!(burn.owner, owner);
         assert_eq!(burn.amount, U256::from(123u64));
         let logs = provider.get_events(PROMIS_LIMIT_ADDRESS);
-        let burns = logs
+        let adds = logs
             .iter()
-            .filter_map(|log| IPromisLimit::NativeBurnedToPromisLimit::decode_log_data(log).ok())
-            .filter(|event| event.source == BurnSource::ProposalBond as u8)
+            .filter_map(|log| IPromisLimit::PromisLimitAdded::decode_log_data(log).ok())
+            .map(|event| (event.source, event.amountMinor))
             .collect::<Vec<_>>();
-        assert_eq!(burns.len(), 1);
-        assert_eq!(burns[0].burnedUnit, U256::from(123u64));
+        let expected_adds = if expected_limit.is_zero() {
+            vec![]
+        } else {
+            vec![(BurnSource::ProposalBond as u8, expected_limit)]
+        };
+        assert_eq!(adds, expected_adds);
     }
 }
 

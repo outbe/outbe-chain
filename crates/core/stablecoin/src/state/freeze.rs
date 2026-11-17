@@ -1,8 +1,8 @@
 use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 
-use crate::abi::IStablecoin;
 use crate::errors::StablecoinStateError;
+use crate::precompile::IStablecoin;
 use crate::schema::StablecoinContract;
 
 impl StablecoinContract<'_> {

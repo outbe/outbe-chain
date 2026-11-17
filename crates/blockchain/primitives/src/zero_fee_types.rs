@@ -46,6 +46,7 @@ pub struct ZeroFeeHookTag {
     id: u8,
     name: &'static str,
     priority_class: Option<u8>,
+    max_soft_failures_per_block: Option<u32>,
 }
 
 impl ZeroFeeHookTag {
@@ -56,7 +57,21 @@ impl ZeroFeeHookTag {
             id,
             name,
             priority_class,
+            max_soft_failures_per_block: None,
         }
+    }
+
+    /// Set the maximum soft failures this hook may include in one block.
+    #[must_use]
+    pub const fn with_max_soft_failures_per_block(mut self, cap: u32) -> Self {
+        self.max_soft_failures_per_block = Some(cap);
+        self
+    }
+
+    /// Per-block soft-failure limit; `None` leaves the hook uncapped.
+    #[must_use]
+    pub const fn max_soft_failures_per_block(self) -> Option<u32> {
+        self.max_soft_failures_per_block
     }
 
     /// Stable numeric hook identifier within the active registry.
@@ -90,6 +105,12 @@ pub struct ZeroFeeCandidate {
 }
 
 impl ZeroFeeCandidate {
+    /// Per-block soft-failure limit of the matching hook.
+    #[must_use]
+    pub const fn max_soft_failures_per_block(&self) -> Option<u32> {
+        self.hook.max_soft_failures_per_block()
+    }
+
     /// Creates a zero-fee candidate for a matching hook.
     pub const fn new(hook: ZeroFeeHookTag, signer: Address) -> Self {
         Self {
@@ -351,5 +372,32 @@ impl SponsorshipAuthorization {
     /// Counter value predicted by authorization, before transaction inclusion.
     pub const fn next_count(&self) -> u32 {
         self.next_count
+    }
+}
+
+#[cfg(test)]
+mod hook_tag_tests {
+    use super::*;
+
+    #[test]
+    fn soft_failure_cap_is_const_and_defaults_to_unlimited() {
+        const UNLIMITED: ZeroFeeHookTag = ZeroFeeHookTag::new(3, "SlashEquivocation", Some(1));
+        const CAPPED: ZeroFeeHookTag = UNLIMITED.with_max_soft_failures_per_block(4);
+        const CANDIDATE: ZeroFeeCandidate = ZeroFeeCandidate::new(CAPPED, Address::ZERO);
+        const CAP: Option<u32> = CANDIDATE.max_soft_failures_per_block();
+
+        assert_eq!(UNLIMITED.max_soft_failures_per_block(), None);
+        assert_eq!(CAP, Some(4));
+        assert_eq!(CAPPED.id(), UNLIMITED.id());
+        assert_eq!(CAPPED.name(), UNLIMITED.name());
+        assert_eq!(CAPPED.priority_class(), UNLIMITED.priority_class());
+        assert_eq!(
+            ZeroFeeCandidate::new(UNLIMITED, Address::ZERO).max_soft_failures_per_block(),
+            None
+        );
+        fn copied<T: Copy>(value: T) -> T {
+            value
+        }
+        assert_eq!(copied(CANDIDATE), CANDIDATE);
     }
 }

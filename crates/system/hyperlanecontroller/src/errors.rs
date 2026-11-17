@@ -103,6 +103,12 @@ pub enum HyperlaneControllerError {
 
     #[error("payload does not match the approved action of proposal {proposal_id}")]
     ApprovedPayloadMismatch { proposal_id: U256 },
+
+    #[error("approved action of proposal {proposal_id} is locked until block {unlock_height}")]
+    ApprovedActionLocked {
+        proposal_id: U256,
+        unlock_height: u64,
+    },
 }
 
 impl From<HyperlaneControllerError> for PrecompileError {
@@ -264,6 +270,16 @@ impl From<HyperlaneControllerError> for PrecompileError {
                     .abi_encode(),
                 ))
             }
+            HyperlaneControllerError::ApprovedActionLocked {
+                proposal_id,
+                unlock_height,
+            } => PrecompileError::RevertBytes(Bytes::from(
+                IHyperlaneController::ApprovedActionLocked {
+                    proposalId: proposal_id,
+                    unlockHeight: unlock_height,
+                }
+                .abi_encode(),
+            )),
         }
     }
 }

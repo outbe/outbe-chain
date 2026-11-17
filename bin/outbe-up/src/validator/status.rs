@@ -21,7 +21,6 @@ const VALIDATOR_SERVICE: &str = "outbe-validator.service";
 const ENCLAVE_SERVICE: &str = "outbe-enclave.service";
 const RADICLE_SERVICE: &str = "outbe-radicle.service";
 const FEEDER_SERVICE: &str = "outbe-feeder.service";
-const RENEW_TIMER: &str = "outbe-tee-renew.timer";
 const STATUS_POLL_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct StatusSnapshot<'a> {
@@ -261,7 +260,6 @@ fn validator_services_status() -> String {
         ("enclave", ENCLAVE_SERVICE),
         ("radicle", RADICLE_SERVICE),
         ("feeder", FEEDER_SERVICE),
-        ("renew", RENEW_TIMER),
     ]
     .into_iter()
     .map(|(name, unit)| {

@@ -179,7 +179,10 @@ fn slash_large_and_remainder_amounts_match_wide_oracle_and_native_burn() {
                     unbonding - oracle(unbonding)
                 );
             }
-            assert_eq!(storage.balance(STAKING_ADDRESS).unwrap(), amount - expected);
+            assert_eq!(
+                storage.balance(STAKING_ADDRESS).unwrap(),
+                amount - expected + slash_rest(&storage)
+            );
             assert_eq!(
                 ValidatorSet::new(storage)
                     .validator_state(validator)
@@ -1390,10 +1393,10 @@ fn test_slash_balance_invariant() {
         let remaining_unbonding = s.unbonding_amount.read(&0u32).unwrap();
         let staking_balance = storage.balance(STAKING_ADDRESS).unwrap();
 
-        // balance == stake + unbonding (no orphaned tokens)
+        // balance == stake + unbonding + the slash rest below one minor (no orphaned tokens)
         assert_eq!(
             staking_balance,
-            remaining_stake + remaining_unbonding,
+            remaining_stake + remaining_unbonding + slash_rest(&storage),
             "STAKING_ADDRESS balance must equal stake + unbonding after slash"
         );
     });
@@ -2626,4 +2629,10 @@ fn process_unbonding_rolls_back_stake_debit_when_enqueue_fails() {
         assert_eq!(val_set.validator_state(validator).unwrap(), state_before);
     });
     assert_eq!(provider.get_ordered_events(), events_before);
+}
+
+fn slash_rest(storage: &StorageHandle<'_>) -> U256 {
+    outbe_promislimit::PromisLimitContract::new(storage.clone())
+        .burn_rest(outbe_promislimit::BurnSource::ValidatorStake)
+        .unwrap()
 }

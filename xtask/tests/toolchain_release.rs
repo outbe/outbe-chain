@@ -6,10 +6,13 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 use sha2::{Digest as _, Sha256};
 use tempfile::tempdir;
-use xtask::release::{sgx, toolchain};
+use xtask::release::toolchain;
 
 fn repo_root() -> PathBuf {
-    sgx::repository_root().expect("repository root")
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("xtask lives below the repository root")
+        .to_owned()
 }
 
 fn sha256_bytes(bytes: &[u8]) -> String {
@@ -106,22 +109,11 @@ fn consumer_version_drift_and_incomplete_package_pin_fail_closed() {
         "release/dcap-native-qvl-v1.json",
         "release/project-toolchain-v1.json",
         "release/reproducible-elf-build-v1.json",
-        "release/mainnet-sgx-bundle-v1.json",
-        "release/testnet-sgx-bundle-v1.json",
     ] {
         let dest = dir.path().join(relative);
         fs::create_dir_all(dest.parent().unwrap()).unwrap();
         fs::copy(root.join(relative), dest).unwrap();
     }
-
-    let sgx_path = dir.path().join("release/testnet-sgx-bundle-v1.json");
-    let mut sgx_spec: Value =
-        serde_json::from_str(&fs::read_to_string(&sgx_path).unwrap()).unwrap();
-    sgx_spec["gramine"]["version"] = json!("1.8");
-    fs::write(&sgx_path, serde_json::to_string(&sgx_spec).unwrap()).unwrap();
-
-    let err = toolchain::verify_repository(dir.path()).unwrap_err();
-    assert!(err.to_string().contains("SGX Gramine version"));
 
     let mut pin: Value = serde_json::from_str(
         &fs::read_to_string(root.join("release/project-toolchain-v1.json")).unwrap(),

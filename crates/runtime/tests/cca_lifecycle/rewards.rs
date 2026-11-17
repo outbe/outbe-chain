@@ -138,20 +138,27 @@ fn expired_reward_transactions_return_unrelated_and_zero_accounts_to_the_real_pr
                 .unwrap(),
                 amount
             );
-            assert_eq!(returned.logs().len(), 1);
-            let log = &returned.logs()[0];
+            assert_eq!(returned.logs().len(), 2);
+            let added = &returned.logs()[0];
+            assert_eq!(added.address, PROMIS_LIMIT_ADDRESS);
+            let added = IPromisLimit::PromisLimitAdded::decode_log(added)
+                .unwrap()
+                .data;
+            assert_eq!(added.source, 32);
+            assert_eq!(added.amountMinor, amount);
+            let log = &returned.logs()[1];
             assert_eq!(log.address, AGENT_REWARD_ADDRESS);
             assert_eq!(log.data.topics().len(), 3);
             assert_eq!(
                 log.data.topics()[0],
-                IAgentReward::RewardBalanceExpired::SIGNATURE_HASH
+                IAgentReward::AgentRewardExpired::SIGNATURE_HASH
             );
             assert_eq!(log.data.topics()[1], account.into_word());
             assert_eq!(
                 log.data.topics()[2],
                 alloy_primitives::B256::from(U256::from(pool as u8))
             );
-            let event = IAgentReward::RewardBalanceExpired::decode_log(log)
+            let event = IAgentReward::AgentRewardExpired::decode_log(log)
                 .unwrap()
                 .data;
             assert_eq!(event.account, account);

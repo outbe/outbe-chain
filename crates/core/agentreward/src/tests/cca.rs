@@ -301,6 +301,71 @@ fn job_rounding_rest_goes_to_promis_limit_once() {
 }
 
 #[test]
+fn each_pool_job_reports_its_rest_and_only_a_nonzero_rest_reaches_the_promis_limit() {
+    use alloy_sol_types::SolEvent;
+    use outbe_system_common::addresses::{AGENT_REWARD_ADDRESS, PROMIS_LIMIT_ADDRESS};
+    for (amount, rest) in [(10u64, 1u64), (9, 0)] {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        provider.set_timestamp(U256::from(T_NOW));
+        StorageHandle::enter(&mut provider, |storage| {
+            let mut contract = AgentRewardContract::new(storage.clone());
+            voters(&storage, DAY, 3);
+            for n in 1..=3 {
+                contract
+                    .increment_waa_tribute(DAY, numbered_address(n))
+                    .unwrap();
+                contract
+                    .increment_sra_tribute(DAY, numbered_address(n))
+                    .unwrap();
+                originate(&storage, numbered_address(n), DAY, U256::ONE);
+            }
+            let context = ctx(storage.clone(), 0);
+            let amount = U256::from(amount);
+            allocate_fixture(
+                &context,
+                DAY,
+                &[
+                    (PoolKind::Validator, amount),
+                    (PoolKind::Waa, amount),
+                    (PoolKind::Sra, amount),
+                    (PoolKind::Cca, amount),
+                ],
+            )
+            .unwrap();
+            crate::api::process_agent_rewards(&context).unwrap();
+        });
+        let mut returned: Vec<_> = provider
+            .get_events(AGENT_REWARD_ADDRESS)
+            .iter()
+            .filter_map(|log| {
+                crate::precompile::IAgentReward::RewardLimitReturned::decode_log_data(log).ok()
+            })
+            .map(|event| {
+                assert_eq!(event.emissionDay, DAY.value());
+                assert_eq!(event.amountMinor, U256::from(rest));
+                event.pool
+            })
+            .collect();
+        returned.sort_unstable();
+        let added: Vec<_> = provider
+            .get_events(PROMIS_LIMIT_ADDRESS)
+            .iter()
+            .filter_map(|log| {
+                outbe_promislimit::precompile::IPromisLimit::PromisLimitAdded::decode_log_data(log)
+                    .ok()
+            })
+            .map(|event| (event.source, event.amountMinor))
+            .collect();
+        assert_eq!(returned, vec![0, 1, 2, 3]);
+        if rest == 0 {
+            assert!(added.is_empty());
+        } else {
+            assert_eq!(added, vec![(15, U256::ONE); 4]);
+        }
+    }
+}
+
+#[test]
 fn day_records_deleted_after_their_job() {
     with_contract_mut(|storage, contract| {
         voters(&storage, DAY, 300);

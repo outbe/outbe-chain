@@ -8,9 +8,12 @@ use alloy_sol_types::SolError;
 use blst::min_pk::SecretKey;
 use commonware_cryptography::{bls12381, Signer as _};
 use commonware_utils::ordered::Set;
+use outbe_primitives::equivocation_evidence::canonical_equivocation_evidence_hash;
+use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::StorageHandle;
 use outbe_simplex::proof::{finalize_namespace, notarize_namespace, nullify_namespace};
 use outbe_simplex::test_harness::committee_entries;
+use outbe_slashindicator::precompile::ISlashIndicator;
 use outbe_slashindicator::schema::SlashIndicator;
 use outbe_slashindicator::test_signing;
 use outbe_slashindicator::test_signing::nullify_payload as nullify_bytes;
@@ -195,7 +198,7 @@ fn identical_notarize_proposals_rejected() {
             .unwrap_err();
         assert_selector(
             &err,
-            outbe_slashindicator::precompile::ISlashIndicator::ConflictingVotesMustBeDifferentProposals::SELECTOR,
+            ISlashIndicator::ConflictingVotesMustBeDifferentProposals::SELECTOR,
         );
     });
 }
@@ -231,10 +234,7 @@ fn different_signers_rejected() {
         let err = si
             .submit_conflicting_notarize_evidence(SUBMITTER, &b1, &b2)
             .unwrap_err();
-        assert_selector(
-            &err,
-            outbe_slashindicator::precompile::ISlashIndicator::EvidenceSignerMismatch::SELECTOR,
-        );
+        assert_selector(&err, ISlashIndicator::EvidenceSignerMismatch::SELECTOR);
     });
 }
 
@@ -251,9 +251,445 @@ fn non_active_submitter_is_rejected() {
         let err = si
             .submit_conflicting_notarize_evidence(outsider, &b1, &b2)
             .unwrap_err();
+        assert_selector(&err, ISlashIndicator::SubmitterNotActiveValidator::SELECTOR);
+    });
+}
+
+/// Exercise every public equivocation entry point with its actual signed wire format.
+fn submit_pair(
+    si: &mut SlashIndicator<'_>,
+    method: usize,
+    epoch: u64,
+    view: u64,
+) -> (Vec<u8>, Vec<u8>, outbe_primitives::error::Result<()>) {
+    let sk = accused_sk();
+    let (ns1, ns2) = match method {
+        0 | 2 => (b"_NOTARIZE".as_slice(), b"_NOTARIZE".as_slice()),
+        1 => (b"_NOTARIZE".as_slice(), b"_NULLIFY".as_slice()),
+        3 => (b"_FINALIZE".as_slice(), b"_FINALIZE".as_slice()),
+        4 => (b"_NULLIFY".as_slice(), b"_FINALIZE".as_slice()),
+        _ => unreachable!(),
+    };
+    let payload = |ns, digest| {
+        if ns == b"_NULLIFY" {
+            nullify_bytes(epoch, view)
+        } else {
+            proposal_bytes(epoch, view, view - 1, digest)
+        }
+    };
+    let a = evidence_block(&sk, &ns_with(ns1), &payload(ns1, 0x11));
+    let b = evidence_block(&sk, &ns_with(ns2), &payload(ns2, 0x22));
+    let result = submit_raw(si, method, &a, &b);
+    (a, b, result)
+}
+
+fn submit_raw(
+    si: &mut SlashIndicator<'_>,
+    method: usize,
+    a: &[u8],
+    b: &[u8],
+) -> outbe_primitives::error::Result<()> {
+    match method {
+        0 => si.submit_double_proposal_evidence(SUBMITTER, a, b),
+        1 => si.submit_conflicting_vote_evidence(SUBMITTER, a, b),
+        2 => si.submit_conflicting_notarize_evidence(SUBMITTER, a, b),
+        3 => si.submit_conflicting_finalize_evidence(SUBMITTER, a, b),
+        4 => si.submit_nullify_finalize_evidence(SUBMITTER, a, b),
+        _ => unreachable!(),
+    }
+}
+
+fn epoch_key(epoch: u64) -> B256 {
+    alloy_primitives::keccak256(
+        [
+            b"outbe:equivocation-epoch-felony:v1".as_slice(),
+            ACCUSED.as_slice(),
+            &epoch.to_be_bytes(),
+        ]
+        .concat(),
+    )
+}
+
+#[test]
+fn epoch_felony_guard_covers_all_five_entrypoints_and_cross_method_pairs() {
+    for first in 0..5 {
+        for second in 0..5 {
+            with_storage(|storage| {
+                setup(storage.clone(), &accused_sk());
+                let mut si = SlashIndicator::new(storage.clone());
+                let (first_a, first_b, first_result) = submit_pair(&mut si, first, 1, 5);
+                first_result.unwrap();
+                assert_selector(
+                    &submit_raw(&mut si, first, &first_b, &first_a).unwrap_err(),
+                    evidence_already_processed(),
+                );
+                assert_jailed_once(&storage);
+                assert!(si.is_evidence_processed(epoch_key(1)).unwrap());
+                let (a, b, result) = submit_pair(&mut si, second, 1, 6);
+                let expected = ISlashIndicator::ValidatorAlreadyPenalized {
+                    validator: ACCUSED,
+                    epoch: 1,
+                }
+                .abi_encode();
+                assert!(matches!(
+                    result,
+                    Err(PrecompileError::RevertBytes(bytes)) if bytes.as_ref() == expected
+                ));
+                assert!(!si
+                    .is_evidence_processed(canonical_equivocation_evidence_hash(&a, &b))
+                    .unwrap());
+                assert_jailed_once(&storage);
+            });
+        }
+    }
+}
+
+/// The validated boundary seam preserves every other ACTIVE participant.
+fn exclude_accused(vs: &mut ValidatorSet<'_>) {
+    let incoming: Vec<_> = vs
+        .get_active_consensus_set()
+        .unwrap()
+        .into_iter()
+        .filter(|v| {
+            v.validator_address != ACCUSED
+                && v.status == outbe_validatorset::runtime::status::ACTIVE
+        })
+        .map(|v| v.validator_address)
+        .collect();
+    vs.test_activate_validated_boundary_set(&incoming, B256::repeat_byte(0x42), 1)
+        .unwrap();
+}
+
+fn assert_unmarked(si: &SlashIndicator<'_>, a: &[u8], b: &[u8], epoch: u64) {
+    assert!(!si
+        .is_evidence_processed(canonical_equivocation_evidence_hash(a, b))
+        .unwrap());
+    assert!(!si.is_evidence_processed(epoch_key(epoch)).unwrap());
+}
+
+#[test]
+fn voluntary_exit_and_unbonding_remain_slashable_in_every_entrypoint() {
+    for method in 0..5 {
+        for full_unstake in [false, true] {
+            for boundary in [false, true] {
+                with_storage(|storage| {
+                    setup(storage.clone(), &accused_sk());
+                    let mut vs = ValidatorSet::new(storage.clone());
+                    let mut staking = Staking::new(storage.clone());
+                    staking.config_unbonding_period.write(100).unwrap();
+                    if full_unstake {
+                        staking.unstake(ACCUSED, U256::from(1_000_000)).unwrap();
+                    } else {
+                        // A live queued withdrawal and bonded funds must both lose 8%.
+                        staking.unstake(ACCUSED, U256::from(200_000)).unwrap();
+                        vs.deactivate_validator(ACCUSED, ACCUSED).unwrap();
+                    }
+                    assert!(matches!(
+                        vs.validator_lifecycle(ACCUSED).unwrap(),
+                        ValidatorLifecycle::Exiting(_)
+                    ));
+                    if boundary {
+                        exclude_accused(&mut vs);
+                        vs.advance_epoch(1, 2).unwrap();
+                        assert!(matches!(
+                            vs.validator_lifecycle(ACCUSED).unwrap(),
+                            ValidatorLifecycle::Unbonding(_)
+                        ));
+                    }
+                    let mut si = SlashIndicator::new(storage.clone());
+                    submit_pair(&mut si, method, 1, 5).2.unwrap();
+                    assert_eq!(si.get_felony_count(ACCUSED).unwrap(), 1);
+                    let remaining = if full_unstake { 0 } else { 736_000 };
+                    let queued = if full_unstake { 920_000 } else { 184_000 };
+                    assert_eq!(staking.get_stake(ACCUSED).unwrap(), U256::from(remaining));
+                    assert_eq!(
+                        staking.unbonding_amount.read(&0).unwrap(),
+                        U256::from(queued)
+                    );
+                    assert!(si.is_evidence_processed(epoch_key(1)).unwrap());
+                    assert!(matches!(
+                        vs.validator_lifecycle(ACCUSED).unwrap(),
+                        ValidatorLifecycle::Exiting(_) | ValidatorLifecycle::Unbonding(_)
+                    ));
+                });
+            }
+        }
+    }
+}
+
+#[test]
+fn full_unstake_after_first_felony_cannot_consume_a_second_pair() {
+    with_storage(|storage| {
+        setup(storage.clone(), &accused_sk());
+        let mut si = SlashIndicator::new(storage.clone());
+        submit_pair(&mut si, 2, 1, 5).2.unwrap();
+        let mut staking = Staking::new(storage.clone());
+        staking.config_unbonding_period.write(100).unwrap();
+        staking.unstake(ACCUSED, U256::from(920_000)).unwrap();
+        assert!(matches!(
+            test_lifecycle_of(storage.clone(), ACCUSED).unwrap(),
+            ValidatorLifecycle::Exiting(_)
+        ));
+        let (a, b, result) = submit_pair(&mut si, 3, 1, 6);
         assert_selector(
-            &err,
-            outbe_slashindicator::precompile::ISlashIndicator::SubmitterNotActiveValidator::SELECTOR,
+            &result.unwrap_err(),
+            ISlashIndicator::ValidatorAlreadyPenalized::SELECTOR,
+        );
+        assert!(!si
+            .is_evidence_processed(canonical_equivocation_evidence_hash(&a, &b))
+            .unwrap());
+        assert_eq!(si.get_felony_count(ACCUSED).unwrap(), 1);
+        assert_eq!(
+            staking.unbonding_amount.read(&0).unwrap(),
+            U256::from(920_000)
         );
     });
+}
+
+#[test]
+fn rejoining_preserves_old_epoch_guard_but_allows_new_epoch_felony() {
+    with_storage(|storage| {
+        setup(storage.clone(), &accused_sk());
+        let mut si = SlashIndicator::new(storage.clone());
+        submit_pair(&mut si, 2, 1, 5).2.unwrap();
+        let mut vs = ValidatorSet::new(storage.clone());
+        exclude_accused(&mut vs);
+        assert!(matches!(
+            vs.validator_lifecycle(ACCUSED).unwrap(),
+            ValidatorLifecycle::Jail(_)
+        ));
+        vs.advance_epoch(1, 2).unwrap();
+        Staking::new(storage.clone())
+            .unjail_validator(ACCUSED)
+            .unwrap();
+        assert!(matches!(
+            vs.validator_lifecycle(ACCUSED).unwrap(),
+            ValidatorLifecycle::WaitingForReadiness(_)
+        ));
+        vs.confirm_validator_ready(ACCUSED).unwrap();
+        assert!(matches!(
+            vs.validator_lifecycle(ACCUSED).unwrap(),
+            ValidatorLifecycle::Joining(_)
+        ));
+        vs.advance_epoch(2, 3).unwrap();
+        vs.activate_validator_via_boundary_for_test(ACCUSED)
+            .unwrap();
+        assert!(matches!(
+            vs.validator_lifecycle(ACCUSED).unwrap(),
+            ValidatorLifecycle::Active(_)
+        ));
+        // Restore the retained test committee namespaces after the activation fixture.
+        vs.test_seed_committee_ring(OWNER, &committee_snapshot())
+            .unwrap();
+        let (a, b, result) = submit_pair(&mut si, 3, 1, 6);
+        assert_selector(
+            &result.unwrap_err(),
+            ISlashIndicator::ValidatorAlreadyPenalized::SELECTOR,
+        );
+        assert!(!si
+            .is_evidence_processed(canonical_equivocation_evidence_hash(&a, &b))
+            .unwrap());
+        assert_eq!(si.get_felony_count(ACCUSED).unwrap(), 1);
+        submit_pair(&mut si, 3, 3, 7).2.unwrap();
+        assert_eq!(si.get_felony_count(ACCUSED).unwrap(), 2);
+        assert_eq!(
+            Staking::new(storage.clone()).get_stake(ACCUSED).unwrap(),
+            U256::from(846_400)
+        );
+        assert!(si.is_evidence_processed(epoch_key(3)).unwrap());
+    });
+}
+
+#[test]
+fn pending_statuses_reject_before_missing_committee_and_preserve_evidence() {
+    for joining in [false, true] {
+        for method in 0..5 {
+            with_storage(|storage| {
+                setup(storage.clone(), &accused_sk());
+                let mut vs = ValidatorSet::new(storage.clone());
+                vs.jail_validator(ACCUSED).unwrap();
+                exclude_accused(&mut vs);
+                Staking::new(storage.clone())
+                    .unjail_validator(ACCUSED)
+                    .unwrap();
+                if joining {
+                    vs.confirm_validator_ready(ACCUSED).unwrap();
+                }
+                let status = vs
+                    .validator_lifecycle(ACCUSED)
+                    .unwrap()
+                    .stored_status()
+                    .unwrap();
+                let mut si = SlashIndicator::new(storage.clone());
+                for epoch in [1, 99] {
+                    let (a, b, result) = submit_pair(&mut si, method, epoch, 5);
+                    let expected = ISlashIndicator::ValidatorNotSlashable {
+                        validator: ACCUSED,
+                        status,
+                    }
+                    .abi_encode();
+                    assert!(matches!(
+                        result,
+                        Err(PrecompileError::RevertBytes(bytes)) if bytes.as_ref() == expected
+                    ));
+                    assert_unmarked(&si, &a, &b, epoch);
+                    assert_eq!(si.get_felony_count(ACCUSED).unwrap(), 0);
+                    assert_eq!(
+                        Staking::new(storage.clone()).get_stake(ACCUSED).unwrap(),
+                        U256::from(1_000_000)
+                    );
+                }
+                vs.activate_validator_via_boundary_for_test(ACCUSED)
+                    .unwrap();
+                vs.test_seed_committee_ring(OWNER, &committee_snapshot())
+                    .unwrap();
+                submit_pair(&mut si, method, 1, 5).2.unwrap();
+                assert_jailed_once(&storage);
+            });
+        }
+    }
+}
+
+#[test]
+fn inactive_status_rejects_without_markers_then_same_evidence_survives_reactivation() {
+    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+    for method in 0..5 {
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.set_block_number(1);
+        provider.enter(|storage| {
+            setup(storage.clone(), &accused_sk());
+            storage.set_block_timestamp(U256::from(1)).unwrap();
+            let mut staking = Staking::new(storage.clone());
+            staking.config_unbonding_period.write(100).unwrap();
+            staking.unstake(ACCUSED, U256::from(1_000_000)).unwrap();
+            let mut vs = ValidatorSet::new(storage.clone());
+            exclude_accused(&mut vs);
+            storage.set_block_timestamp(U256::from(101)).unwrap();
+            staking.claim_unbonded(ACCUSED).unwrap();
+            assert!(matches!(
+                vs.validator_lifecycle(ACCUSED).unwrap(),
+                ValidatorLifecycle::Inactive(_)
+            ));
+            let status = vs
+                .validator_lifecycle(ACCUSED)
+                .unwrap()
+                .stored_status()
+                .unwrap();
+            let mut si = SlashIndicator::new(storage.clone());
+            for epoch in [1, 99] {
+                let (a, b, result) = submit_pair(&mut si, method, epoch, 5);
+                let expected = ISlashIndicator::ValidatorNotSlashable {
+                    validator: ACCUSED,
+                    status,
+                }
+                .abi_encode();
+                assert!(matches!(
+                    result,
+                    Err(PrecompileError::RevertBytes(bytes)) if bytes.as_ref() == expected
+                ));
+                assert_unmarked(&si, &a, &b, epoch);
+            }
+        });
+        provider.set_block_number(100);
+        provider.enter(|storage| {
+            let mut vs = ValidatorSet::new(storage.clone());
+            let mut epoch = vs.epoch_snapshot().unwrap();
+            epoch.number = U256::from(3);
+            epoch.start_block = 100;
+            vs.test_set_epoch_snapshot(epoch).unwrap();
+            // Re-register the same identity through the canonical registration facade.
+            vs.test_register_active_validator(
+                ACCUSED,
+                &accused_sk().sk_to_pk().to_bytes(),
+                U256::from(1_000_000),
+            )
+            .unwrap();
+            let staking = Staking::new(storage.clone());
+            staking.total_staked.write(U256::from(1_000_000)).unwrap();
+            staking
+                .storage
+                .increase_balance(STAKING_ADDRESS, U256::from(1_000_000))
+                .unwrap();
+            vs.test_seed_committee_ring(OWNER, &committee_snapshot())
+                .unwrap();
+            let mut si = SlashIndicator::new(storage.clone());
+            submit_pair(&mut si, method, 1, 5).2.unwrap();
+            assert_jailed_once(&storage);
+        });
+    }
+}
+
+#[test]
+fn failed_felony_rolls_back_both_markers_and_penalty_effects() {
+    for method in 0..5 {
+        with_storage(|storage| {
+            setup(storage.clone(), &accused_sk());
+            // A provider-side burn failure occurs after both marker writes and jail: the rest
+            // of code 44 makes the 80_000 slash cross a minor that the empty escrow lacks.
+            storage
+                .decrease_balance(STAKING_ADDRESS, U256::from(1_000_000))
+                .unwrap();
+            outbe_promislimit::PromisLimitContract::new(storage.clone())
+                .burn(
+                    outbe_promislimit::BurnSource::ValidatorStake,
+                    outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR - U256::from(50_000),
+                )
+                .unwrap();
+            let mut si = SlashIndicator::new(storage.clone());
+            let (a, b, result) = submit_pair(&mut si, method, 1, 5);
+            assert!(result.is_err());
+            assert_unmarked(&si, &a, &b, 1);
+            assert_eq!(si.get_felony_count(ACCUSED).unwrap(), 0);
+            assert_eq!(
+                Staking::new(storage.clone()).get_stake(ACCUSED).unwrap(),
+                U256::from(1_000_000)
+            );
+            assert!(matches!(
+                test_lifecycle_of(storage.clone(), ACCUSED).unwrap(),
+                ValidatorLifecycle::Active(_)
+            ));
+        });
+    }
+}
+
+#[test]
+fn first_equivocation_felony_remains_slashable_after_non_equivocation_jail() {
+    for method in 0..5 {
+        for retained in [true, false] {
+            with_storage(|storage| {
+                setup(storage.clone(), &accused_sk());
+                let mut vs = ValidatorSet::new(storage.clone());
+                assert!(vs.jail_validator_for_tee_expiry(ACCUSED).unwrap());
+                if retained {
+                    assert!(matches!(
+                        vs.validator_lifecycle(ACCUSED).unwrap(),
+                        ValidatorLifecycle::JailRetained(_)
+                    ));
+                } else {
+                    exclude_accused(&mut vs);
+                    assert!(matches!(
+                        vs.validator_lifecycle(ACCUSED).unwrap(),
+                        ValidatorLifecycle::Jail(_)
+                    ));
+                }
+                let before = vs.validator_lifecycle(ACCUSED).unwrap();
+                let mut si = SlashIndicator::new(storage.clone());
+                assert_eq!(si.get_felony_count(ACCUSED).unwrap(), 0);
+                assert!(!si.is_evidence_processed(epoch_key(1)).unwrap());
+                let (a, b, result) = submit_pair(&mut si, method, 1, 5);
+                result.unwrap();
+                assert_eq!(si.get_felony_count(ACCUSED).unwrap(), 1);
+                assert_eq!(
+                    Staking::new(storage.clone()).get_stake(ACCUSED).unwrap(),
+                    U256::from(920_000)
+                );
+                assert!(si.is_evidence_processed(epoch_key(1)).unwrap());
+                assert!(si
+                    .is_evidence_processed(canonical_equivocation_evidence_hash(&a, &b))
+                    .unwrap());
+                let after = vs.validator_lifecycle(ACCUSED).unwrap();
+                assert_eq!(before.stored_status(), after.stored_status());
+            });
+        }
+    }
 }

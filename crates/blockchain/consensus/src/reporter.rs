@@ -16,13 +16,13 @@
 //!    A closed mailbox is logged + counted but does not panic. The supervisor
 //!    handles actor exit through `FinalizationActor::run`'s `Result`.
 
-use crate::metrics::EquivocationKind;
+use crate::{equivocation_verify::RawEquivocationEvidence, metrics::EquivocationKind};
 use alloy_primitives::{Address, Bytes, B256};
 use commonware_codec::Encode;
 use commonware_consensus::{
-    simplex::types::{Activity, Attributable as _, Finalize, Notarization, Proposal},
-    types::{Epoch, View},
-    Epochable as _, Reporter, Viewable,
+    simplex::types::{Activity, Attributable, Finalize, Notarization, Proposal},
+    types::Epoch,
+    Epochable, Reporter, Viewable,
 };
 use commonware_cryptography::{
     bls12381::primitives::variant::MinSig, certificate::Scheme as _, Hasher, Sha256,
@@ -61,7 +61,7 @@ pub use reporter_view_state::{ReporterContinuity, ReporterContinuityState, SelfP
 ///    certificate handoff and FCU/status side effects
 /// 2. Build finalized-parent certificate facts for Phase 1 system-tx input
 /// 3. Record skipped-view counts
-/// 4. Buffer byzantine evidence until a dedicated evidence transport exists
+/// 4. Forward conflicting votes to the bounded evidence verification pipeline
 #[derive(Clone)]
 pub struct OutbeReporter {
     /// Shared finalized continuity across epoch restarts.
@@ -71,12 +71,8 @@ pub struct OutbeReporter {
     /// FinalizationActor mailbox for sending finalization notifications.
     /// `unbounded_send` keeps this edge non-blocking from the voter task.
     finalization_mailbox: FinalizationMailbox,
-    /// Bridge retained for the status / cache surface and for follow-up
-    /// metrics emission.
-    #[allow(dead_code)]
-    bridge: Option<ConsensusExecutionBridge>,
     /// Verifier scheme for validating carried finalize votes before inclusion.
-    verifier_scheme: HybridScheme<MinSig>,
+    verifier_scheme: Arc<HybridScheme<MinSig>>,
     /// Current consensus epoch.
     epoch: Epoch,
     /// Mutable per-view tracking (finalization cursor + byzantine-evidence
@@ -87,6 +83,7 @@ pub struct OutbeReporter {
     /// inline on the Simplex voter task. The actor verifies the votes and admits
     /// the verified votes to `late_sig_store`.
     finalize_verify_mailbox: FinalizeVerifyMailbox,
+    equivocation_verify_mailbox: crate::EquivocationVerifyMailbox,
     /// Narrow, write-only capability onto the certified-parent proof store. The
     /// reporter records the `local_certification_witness` mark for each observed
     /// `Activity::Certification`. Structurally, the reporter cannot durably
@@ -109,6 +106,7 @@ pub struct ReporterDependencies {
     pub bridge: Option<ConsensusExecutionBridge>,
     pub witness_sink: Arc<dyn CertificationWitnessSink>,
     pub finalize_verify_mailbox: FinalizeVerifyMailbox,
+    pub equivocation_verify_mailbox: crate::EquivocationVerifyMailbox,
 }
 
 /// Type alias for our Simplex activity type - uses HybridScheme<MinSig>.
@@ -128,19 +126,20 @@ impl OutbeReporter {
         } = committee;
         let ReporterDependencies {
             finalization_mailbox,
-            bridge,
+            bridge: _,
             witness_sink,
             finalize_verify_mailbox,
+            equivocation_verify_mailbox,
         } = dependencies;
         let persisted = continuity.snapshot();
         Self {
             continuity,
             validator_addresses,
             finalization_mailbox,
-            bridge,
-            verifier_scheme,
+            verifier_scheme: Arc::new(verifier_scheme),
             epoch,
             finalize_verify_mailbox,
+            equivocation_verify_mailbox,
             view_state: ReporterViewState {
                 last_finalized_view: persisted.last_finalized_view,
                 last_certificate: persisted.last_certificate,
@@ -201,30 +200,15 @@ impl Reporter for OutbeReporter {
                 commonware_actor::Feedback::Ok
             }
             Activity::ConflictingNotarize(evidence) => {
-                self.handle_byzantine_evidence(
-                    EquivocationKind::ConflictingNotarize,
-                    evidence.signer(),
-                    evidence.epoch(),
-                    evidence.view(),
-                );
+                self.handle_byzantine_evidence(EquivocationKind::ConflictingNotarize, &evidence);
                 commonware_actor::Feedback::Ok
             }
             Activity::ConflictingFinalize(evidence) => {
-                self.handle_byzantine_evidence(
-                    EquivocationKind::ConflictingFinalize,
-                    evidence.signer(),
-                    evidence.epoch(),
-                    evidence.view(),
-                );
+                self.handle_byzantine_evidence(EquivocationKind::ConflictingFinalize, &evidence);
                 commonware_actor::Feedback::Ok
             }
             Activity::NullifyFinalize(evidence) => {
-                self.handle_byzantine_evidence(
-                    EquivocationKind::NullifyFinalize,
-                    evidence.signer(),
-                    evidence.epoch(),
-                    evidence.view(),
-                );
+                self.handle_byzantine_evidence(EquivocationKind::NullifyFinalize, &evidence);
                 commonware_actor::Feedback::Ok
             }
             _ => {
@@ -285,25 +269,19 @@ impl OutbeReporter {
         }
     }
 
-    /// Handle byzantine consensus equivocation evidence
-    /// (`ConflictingNotarize` / `ConflictingFinalize` / `NullifyFinalize`).
-    ///
-    /// Emits a structured signal for an external slashing watcher and records a
-    /// metric. The conflicting signed votes themselves are NOT accessible from
-    /// the commonware evidence type (its inner votes are private). Thus the node
-    /// signals the attributable facts (signer pubkey + epoch + view + class).
-    /// The watcher observes the gossiped votes. It packs the two
-    /// `EvidenceBlock`s and submits them to the SlashIndicator
-    /// `submitConflicting{Notarize,Finalize}Evidence` / `submitNullifyFinalizeEvidence`
-    /// precompiles. The node does NOT auto-slash (no in-node tx injection), so
-    /// the log must not claim it does.
+    /// Records same-signer conflicts forwarded to the bounded verification pipeline.
     fn handle_byzantine_evidence(
         &mut self,
         kind: EquivocationKind,
-        signer: commonware_utils::Participant,
-        epoch: Epoch,
-        view: View,
+        evidence: &(impl Attributable + Epochable + Viewable + Encode),
     ) {
+        self.equivocation_verify_mailbox
+            .enqueue(RawEquivocationEvidence::new(
+                kind,
+                evidence,
+                Arc::clone(&self.verifier_scheme),
+            ));
+        let (signer, epoch, view) = (evidence.signer(), evidence.epoch(), evidence.view());
         let evidence_type = kind.label();
         let signer_idx = signer.get() as usize;
         if let Some(&addr) = self.validator_addresses.get(signer_idx) {
@@ -321,7 +299,7 @@ impl OutbeReporter {
                 signer_pubkey,
                 epoch = epoch.get(),
                 view = view.get(),
-                "BYZANTINE: consensus equivocation detected - slashable; external watcher should submit the two conflicting votes"
+                "BYZANTINE: conflicting vote forwarded to equivocation verify queue"
             );
             self.view_state.buffer_byzantine(addr);
             crate::metrics::record_byzantine_evidence(kind);
@@ -422,22 +400,17 @@ impl OutbeReporter {
             crate::metrics::record_views_skipped(skipped);
         }
 
-        // 4. Drain the per-finalization buffer of locally-attributed byzantine
-        // signers. This is operator observability ONLY, not a transport stage.
-        // The external watcher carries on-chain slashing. It observes the raw
-        // gossiped votes that the node cannot reach (commonware hides the inner
-        // votes). It submits the two conflicting `EvidenceBlock`s to the
-        // SlashIndicator `submitConflicting{Notarize,Finalize}` /
-        // `submitNullifyFinalize` precompile. The precompile re-verifies both
-        // signatures on-chain (reproducible from chain state). This drain does
-        // NOT put evidence on-chain.
+        // 4. Drain locally attributed signers for operator observability only.
+        // Conflicting votes were separately forwarded to the verifier queue;
+        // draining these attribution facts does not submit evidence on-chain.
         let attributed_byzantine = self.view_state.drain_byzantine_sorted();
 
         if !attributed_byzantine.is_empty() {
             warn!(
                 target: "outbe::slashing::equivocation",
                 count = attributed_byzantine.len(),
-                "byzantine equivocation attributed this finalization; on-chain slashing requires the external watcher to submit the two conflicting votes to the SlashIndicator precompile"
+                "BYZANTINE: conflicts attributed this finalization were forwarded to \
+                 equivocation verify queue"
             );
         }
 
@@ -507,7 +480,7 @@ impl OutbeReporter {
         // emission, so this is defence in depth. But explicit
         // re-verification before write is required.
         let mut rng = bls_batch_verification_rng();
-        if !notarization.verify(&mut rng, &self.verifier_scheme, &Sequential) {
+        if !notarization.verify(&mut rng, self.verifier_scheme.as_ref(), &Sequential) {
             crate::metrics::record_certification_dropped(
                 crate::metrics::CertificationDropReason::VerifyFailed,
             );
@@ -537,7 +510,7 @@ impl OutbeReporter {
         // panic) rather than write a record whose committee_set_hash would
         // diverge from the writer's.
         let prelude = match crate::finalization::committee_prelude::build_committee_prelude(
-            &self.verifier_scheme,
+            self.verifier_scheme.as_ref(),
             &self.validator_addresses,
             notarization.proposal.round.epoch().get(),
         ) {
@@ -809,6 +782,8 @@ mod tests {
                 bridge: None,
                 witness_sink: std::sync::Arc::new(FinalizedParentCertStore::new()),
                 finalize_verify_mailbox: verify_mailbox,
+                equivocation_verify_mailbox:
+                    crate::EquivocationVerifyActor::new(Default::default()).1,
             },
         );
 
@@ -876,6 +851,8 @@ mod tests {
                 bridge: None,
                 witness_sink: std::sync::Arc::new(FinalizedParentCertStore::new()),
                 finalize_verify_mailbox: FinalizeVerifyMailbox::disconnected(),
+                equivocation_verify_mailbox:
+                    crate::EquivocationVerifyActor::new(Default::default()).1,
             },
         );
 

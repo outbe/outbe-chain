@@ -37,14 +37,14 @@ impl StablecoinFactoryApi {
         StablecoinFactoryContract::new(storage).reserve(reservation)
     }
 
-    pub fn execute_approved(
+    pub fn create_stablecoin(
         storage: StorageHandle<'_>,
         proposal_id: U256,
         proposer: Address,
         raw_payload: &[u8],
         creation_protocol_version: u64,
     ) -> Result<ValidatedStablecoinCreate> {
-        StablecoinFactoryContract::new(storage).execute_approved(
+        StablecoinFactoryContract::new(storage).create_stablecoin(
             proposal_id,
             proposer,
             raw_payload,

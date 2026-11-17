@@ -63,14 +63,14 @@ impl GemContract<'_> {
                 sub_series_id: self.group_sub_series_sub_id.read(&gss_key)?,
                 issuance_currency: self.group_sub_series_issuance_currency.read(&gss_key)?,
                 reference_currency: self.group_sub_series_reference_currency.read(&gss_key)?,
-                unpaid_count: self.group_sub_series_unpaid_count.read(&gss_key)?,
-                unpaid_load: self.group_sub_series_unpaid_load.read(&gss_key)?,
+                unsettled_count: self.group_sub_series_unsettled_count.read(&gss_key)?,
+                unsettled_load_minor: self.group_sub_series_unsettled_load_minor.read(&gss_key)?,
             });
         }
         Ok(out)
     }
 
-    pub(crate) fn add_sub_series_unpaid(&mut self, item: &GemItemState) -> Result<bool> {
+    pub(crate) fn add_sub_series_unsettled(&mut self, item: &GemItemState) -> Result<bool> {
         let sub_key = Self::sub_series_id_key(item.series_id, item.sub_series_id);
         let opened_new_sub_series = !self.sub_series_opened.read(&sub_key)?;
         if opened_new_sub_series {
@@ -93,43 +93,47 @@ impl GemContract<'_> {
                 .write(&gss_key, item.reference_currency)?;
         }
         let count = self
-            .group_sub_series_unpaid_count
+            .group_sub_series_unsettled_count
             .read(&gss_key)?
             .checked_add(1)
             .ok_or(GemFatalError::GroupMemberIndexOverflow {
                 group: item.group_key,
             })?;
-        self.group_sub_series_unpaid_count.write(&gss_key, count)?;
+        self.group_sub_series_unsettled_count
+            .write(&gss_key, count)?;
         let load = self
-            .group_sub_series_unpaid_load
+            .group_sub_series_unsettled_load_minor
             .read(&gss_key)?
             .checked_add(item.promis_load_minor)
-            .ok_or(GemFatalError::UnpaidLoadOverflow {
+            .ok_or(GemFatalError::UnsettledLoadOverflow {
                 group: item.group_key,
             })?;
-        self.group_sub_series_unpaid_load.write(&gss_key, load)?;
+        self.group_sub_series_unsettled_load_minor
+            .write(&gss_key, load)?;
         Ok(opened_new_sub_series)
     }
 
-    pub(crate) fn take_sub_series_unpaid(&mut self, item: &GemItemState) -> Result<()> {
+    pub(crate) fn take_sub_series_unsettled(&mut self, item: &GemItemState) -> Result<()> {
         let gss_key =
             Self::group_sub_series_key(item.group_key, item.series_id, item.sub_series_id);
         let count = self
-            .group_sub_series_unpaid_count
+            .group_sub_series_unsettled_count
             .read(&gss_key)?
             .checked_sub(1)
             .ok_or(GemError::EmptyGroup {
                 group: item.group_key,
             })?;
-        self.group_sub_series_unpaid_count.write(&gss_key, count)?;
+        self.group_sub_series_unsettled_count
+            .write(&gss_key, count)?;
         let load = self
-            .group_sub_series_unpaid_load
+            .group_sub_series_unsettled_load_minor
             .read(&gss_key)?
             .checked_sub(item.promis_load_minor)
-            .ok_or(GemFatalError::UnpaidLoadUnderflow {
+            .ok_or(GemFatalError::UnsettledLoadUnderflow {
                 group: item.group_key,
             })?;
-        self.group_sub_series_unpaid_load.write(&gss_key, load)
+        self.group_sub_series_unsettled_load_minor
+            .write(&gss_key, load)
     }
 
     /// The sub-series of `call_price_minor` in `series_id`, numbering a new price on first use.
@@ -163,7 +167,7 @@ impl GemContract<'_> {
         keccak256(buf)
     }
 
-    /// Appends `gem_id` and increments the group's unpaid count.
+    /// Appends `gem_id` and increments the group's unsettled count.
     pub(crate) fn insert_group_member(&mut self, group: B256, gem_id: U256) -> Result<()> {
         let index = self.group_gem_count.read(&group)?;
         let next = index
@@ -176,8 +180,8 @@ impl GemContract<'_> {
         Ok(())
     }
 
-    /// Swap-removes `gem_id` and returns the remaining unpaid count. The group's
-    /// terms stay: paid members may still need them.
+    /// Swap-removes `gem_id` and returns the remaining unsettled count. The group's
+    /// terms stay: settled members may still need them.
     pub(crate) fn remove_group_member(&mut self, group: B256, gem_id: U256) -> Result<u32> {
         let index = self.group_gem_index.read(&gem_id)?;
         let last = self
@@ -255,7 +259,7 @@ impl GemContract<'_> {
         })
     }
 
-    /// Records every unpaid member called at once: the group leaves the trie for the
+    /// Records every unsettled member called at once: the group leaves the trie for the
     /// forfeit queue, where it waits on `deadline` as one entry.
     pub fn record_group_called(&mut self, group: B256, now: u64, deadline: u64) -> Result<()> {
         self.remove_call_bin(group)?;
@@ -275,15 +279,15 @@ impl GemContract<'_> {
         self.group_call_threshold_seconds.clear(&group)?;
         self.group_call_notice_period_seconds.clear(&group)?;
         self.group_called_at.clear(&group)?;
-        self.group_unpaid_load.clear(&group)?;
+        self.group_unsettled_load_minor.clear(&group)?;
         for gss_key in self.group_sub_series_keys.list(&group).read_all()? {
             self.group_sub_series_present.clear(&gss_key)?;
             self.group_sub_series_series_id.clear(&gss_key)?;
             self.group_sub_series_sub_id.clear(&gss_key)?;
             self.group_sub_series_issuance_currency.clear(&gss_key)?;
             self.group_sub_series_reference_currency.clear(&gss_key)?;
-            self.group_sub_series_unpaid_count.clear(&gss_key)?;
-            self.group_sub_series_unpaid_load.clear(&gss_key)?;
+            self.group_sub_series_unsettled_count.clear(&gss_key)?;
+            self.group_sub_series_unsettled_load_minor.clear(&gss_key)?;
         }
         self.group_sub_series_keys.list(&group).clear()?;
         deadline_queue::remove(&CleanupQueue(self), group)?;
@@ -302,24 +306,24 @@ impl GemContract<'_> {
         self.groups.delete(group)
     }
 
-    // --- Unpaid load ----------------------------------------------------------------
+    // --- Unsettled load ----------------------------------------------------------------
 
-    pub(crate) fn add_unpaid_load(&mut self, group: B256, load: U256) -> Result<()> {
+    pub(crate) fn add_unsettled_load(&mut self, group: B256, load: U256) -> Result<()> {
         let total = self
-            .group_unpaid_load
+            .group_unsettled_load_minor
             .read(&group)?
             .checked_add(load)
-            .ok_or(GemFatalError::UnpaidLoadOverflow { group })?;
-        self.group_unpaid_load.write(&group, total)
+            .ok_or(GemFatalError::UnsettledLoadOverflow { group })?;
+        self.group_unsettled_load_minor.write(&group, total)
     }
 
-    pub(crate) fn take_unpaid_load(&mut self, group: B256, load: U256) -> Result<()> {
+    pub(crate) fn take_unsettled_load(&mut self, group: B256, load: U256) -> Result<()> {
         let total = self
-            .group_unpaid_load
+            .group_unsettled_load_minor
             .read(&group)?
             .checked_sub(load)
-            .ok_or(GemFatalError::UnpaidLoadUnderflow { group })?;
-        self.group_unpaid_load.write(&group, total)
+            .ok_or(GemFatalError::UnsettledLoadUnderflow { group })?;
+        self.group_unsettled_load_minor.write(&group, total)
     }
 
     // --- Forfeit queue -------------------------------------------------------------
@@ -333,7 +337,7 @@ impl GemContract<'_> {
     }
 
     /// Moves a forfeited group from the forfeit queue to the cleanup, which deletes its
-    /// unpaid gems. Done with the group's credit, so a retry never credits it twice.
+    /// unsettled gems. Done with the group's credit, so a retry never credits it twice.
     pub fn hand_to_cleanup(&mut self, group: B256) -> Result<()> {
         let deadline = self.called_deadline.read(&group)?;
         deadline_queue::remove(&ForfeitQueue(self), group)?;
@@ -404,7 +408,7 @@ outbe_core_common::impl_deadline_queue!(ForfeitQueue<B256> {
     cursor: forfeit_cursor,
 });
 
-/// Forfeited groups whose unpaid gems wait to be deleted.
+/// Forfeited groups whose unsettled gems wait to be deleted.
 pub struct CleanupQueue<'a, 'storage>(pub &'a GemContract<'storage>);
 
 outbe_core_common::impl_deadline_queue!(CleanupQueue<B256> {

@@ -38,6 +38,13 @@ pub struct ExtractedBundle {
     pub archive_sha256: String,
 }
 
+#[derive(Clone, Debug)]
+pub struct BundleInput {
+    pub path: String,
+    pub source: PathBuf,
+    pub mode: u32,
+}
+
 impl OperatorManifest {
     pub fn read(path: &Path) -> Result<Self> {
         let bytes = fs::read(path)
@@ -207,6 +214,83 @@ pub fn digest_file(path: &Path) -> Result<String> {
     Ok(hex::encode(digest.finalize()))
 }
 
+pub fn create_archive(output: &Path, mut inputs: Vec<BundleInput>) -> Result<OperatorManifest> {
+    ensure!(
+        !output.exists(),
+        "operator bundle already exists: {}",
+        output.display()
+    );
+    inputs.sort_by(|left, right| left.path.cmp(&right.path));
+    let files = inputs
+        .iter()
+        .map(|input| {
+            let source = fs::symlink_metadata(&input.source).wrap_err_with(|| {
+                format!("missing operator bundle input: {}", input.source.display())
+            })?;
+            ensure!(
+                source.is_file() && !source.file_type().is_symlink(),
+                "operator bundle input is not a regular file: {}",
+                input.source.display()
+            );
+            Ok(ManifestFile {
+                path: input.path.clone(),
+                size: source.len(),
+                sha256: digest_file(&input.source)?,
+                mode: input.mode,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let manifest = OperatorManifest {
+        version: MANIFEST_VERSION,
+        files,
+    };
+    manifest.validate()?;
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)?;
+    let mut encoder = zstd::Encoder::new(file, 19)?;
+    encoder.include_checksum(true)?;
+    let mut archive = tar::Builder::new(encoder);
+    append_archive_bytes(
+        &mut archive,
+        MANIFEST_NAME,
+        &serde_json::to_vec_pretty(&manifest)?,
+        0o644,
+    )?;
+    for input in inputs {
+        append_archive_bytes(
+            &mut archive,
+            &input.path,
+            &fs::read(&input.source)?,
+            input.mode,
+        )?;
+    }
+    archive.into_inner()?.finish()?;
+    Ok(manifest)
+}
+
+fn append_archive_bytes(
+    archive: &mut tar::Builder<zstd::Encoder<'_, File>>,
+    path: &str,
+    bytes: &[u8],
+    mode: u32,
+) -> Result<()> {
+    let mut header = tar::Header::new_gnu();
+    header.set_entry_type(tar::EntryType::Regular);
+    header.set_uid(0);
+    header.set_gid(0);
+    header.set_mtime(0);
+    header.set_mode(mode);
+    header.set_size(bytes.len() as u64);
+    header.set_cksum();
+    archive.append_data(&mut header, path, bytes)?;
+    Ok(())
+}
+
 fn copy_digest(reader: &mut impl Read, writer: &mut impl Write) -> Result<String> {
     let mut digest = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
@@ -276,5 +360,29 @@ mod tests {
             }],
         };
         assert!(manifest.validate().is_err());
+    }
+
+    #[test]
+    fn created_archive_verifies_and_extracts() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        fs::write(&source, b"payload").unwrap();
+        let archive = root.path().join("bundle.tar.zst");
+        create_archive(
+            &archive,
+            vec![BundleInput {
+                path: "bin/tool".into(),
+                source,
+                mode: 0o755,
+            }],
+        )
+        .unwrap();
+        let parent = root.path().join("extract");
+        fs::create_dir(&parent).unwrap();
+        let extracted = verify_and_extract(&archive, &parent).unwrap();
+        assert_eq!(
+            fs::read(extracted.directory.path().join("bin/tool")).unwrap(),
+            b"payload"
+        );
     }
 }

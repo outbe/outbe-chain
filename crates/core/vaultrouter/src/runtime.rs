@@ -15,28 +15,28 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_system_common::stablecoin::validate_currency_code;
 
-use crate::api::IVaultRouter;
 use crate::errors::VaultRouterError;
+use crate::precompile::IVaultRouter;
 use crate::schema::VaultRouterContract;
 
-mod approved;
 mod calls;
-mod liquidity;
 mod rebalance;
 mod reservations;
+mod stablecoin;
+mod vault_action;
 
-pub(crate) use approved::{apply_approved, approved_vault_action};
 use calls::{
     asset_iso_code, erc20_approve, erc20_balance_of, erc20_transfer, erc20_transfer_from,
     vault_asset, vault_deposit, vault_owner, vault_preview_withdraw, vault_withdraw,
 };
-pub(crate) use liquidity::{
-    add_liquidity_source, add_liquidity_target, registered_liquidity_source,
-    registered_liquidity_target, remove_liquidity_source, remove_liquidity_target,
-};
 pub(crate) use rebalance::{preview_rebalance, rebalance};
 pub use reservations::reservation_of;
 pub(crate) use reservations::{release_reservation, reserve_stables, return_reservation};
+pub(crate) use stablecoin::{
+    add_stablecoin_source, add_stablecoin_target, registered_stablecoin_source,
+    registered_stablecoin_target, remove_stablecoin_source, remove_stablecoin_target,
+};
+pub(crate) use vault_action::{apply_vault_action, get_vault_action};
 
 /// This precompile's own address (`address(this)` in the Solidity original).
 const SELF: Address = VAULT_ROUTER_ADDRESS;
@@ -165,7 +165,7 @@ pub(crate) fn remove_vault(storage: StorageHandle<'_>, vault: Address) -> Result
 }
 
 // ---------------------------------------------------------------------------
-// liquidity flow
+// stablecoin flow
 // ---------------------------------------------------------------------------
 
 /// `deposit`: pulls `amount` of `asset` from the caller and deposits it
@@ -175,26 +175,62 @@ pub(crate) fn deposit(
     caller: Address,
     asset: Address,
     amount: U256,
-    source: IVaultRouter::StablesSource,
+    source: IVaultRouter::StablecoinSource,
 ) -> Result<U256> {
-    if matches!(source, IVaultRouter::StablesSource::Unknown) {
-        return Err(VaultRouterError::InvalidLiquiditySource.into());
-    }
-
+    require_source(source)?;
     let vault = first_vault(&storage, asset)?;
-
     erc20_transfer_from(&storage, asset, caller, SELF, amount)?;
-    let shares = vault_deposit(&storage, vault, amount, SELF)?;
+    deposit_received(&storage, caller, vault, amount, source)
+}
 
-    let mut contract = VaultRouterContract::new(storage.clone());
-    contract.emit(IVaultRouter::LiquidityDeposited {
-        source: caller,
-        vault,
+/// `depositFrom`: pulls `amount` of `asset` directly from `payer` and deposits it into
+/// the asset's vault for the source `caller`. The router must receive exactly `amount`,
+/// so a token that moves less cannot spend the router's custody. Returns the minted shares.
+pub(crate) fn deposit_from(
+    storage: StorageHandle<'_>,
+    caller: Address,
+    call: IVaultRouter::depositFromCall,
+    source: IVaultRouter::StablecoinSource,
+) -> Result<U256> {
+    let IVaultRouter::depositFromCall {
+        payer,
+        asset,
         assetsMinor: amount,
+    } = call;
+    require_source(source)?;
+    let vault = first_vault(&storage, asset)?;
+    let before = erc20_balance_of(&storage, asset, SELF)?;
+    erc20_transfer_from(&storage, asset, payer, SELF, amount)?;
+    if erc20_balance_of(&storage, asset, SELF)?.checked_sub(before) != Some(amount) {
+        return Err(crate::errors::SettlementError::AmountMismatch.into());
+    }
+    deposit_received(&storage, caller, vault, amount, source)
+}
+
+fn require_source(source: IVaultRouter::StablecoinSource) -> Result<()> {
+    if matches!(source, IVaultRouter::StablecoinSource::Unknown) {
+        return Err(VaultRouterError::InvalidStablecoinSource.into());
+    }
+    Ok(())
+}
+
+/// Deposits `amount` that the router holds into `vault` and emits `StablecoinDeposited`
+/// with `source_address` as the source.
+fn deposit_received(
+    storage: &StorageHandle<'_>,
+    source_address: Address,
+    vault: Address,
+    amount: U256,
+    source: IVaultRouter::StablecoinSource,
+) -> Result<U256> {
+    let shares = vault_deposit(storage, vault, amount, SELF)?;
+    VaultRouterContract::new(storage.clone()).emit(IVaultRouter::StablecoinDeposited {
+        sourceAddress: source_address,
+        vault,
+        amountMinor: amount,
         shares,
         sourceType: source,
     })?;
-
     Ok(shares)
 }
 
@@ -203,7 +239,7 @@ pub(crate) fn withdraw(
     storage: StorageHandle<'_>,
     caller: Address,
     call: IVaultRouter::withdrawCall,
-    target: IVaultRouter::StablesTarget,
+    target: IVaultRouter::StablecoinTarget,
 ) -> Result<U256> {
     let IVaultRouter::withdrawCall {
         asset,
@@ -213,8 +249,8 @@ pub(crate) fn withdraw(
     if receiver.is_zero() {
         return Err(VaultRouterError::ZeroAddress.into());
     }
-    if matches!(target, IVaultRouter::StablesTarget::Unknown) {
-        return Err(VaultRouterError::InvalidLiquidityTarget.into());
+    if matches!(target, IVaultRouter::StablecoinTarget::Unknown) {
+        return Err(VaultRouterError::InvalidStablecoinTarget.into());
     }
 
     let vault = first_vault(&storage, asset)?;
@@ -234,11 +270,11 @@ pub(crate) fn withdraw(
     erc20_transfer(&storage, asset, receiver, amount)?;
 
     let mut contract = VaultRouterContract::new(storage.clone());
-    contract.emit(IVaultRouter::LiquidityWithdrawn {
-        target: caller,
+    contract.emit(IVaultRouter::StablecoinWithdrawn {
+        targetAddress: caller,
         receiver,
         vault,
-        assetsMinor: amount,
+        amountMinor: amount,
         burnedShares: burned_shares,
         targetType: target,
     })?;
@@ -255,9 +291,9 @@ pub fn shares_balance(storage: &StorageHandle<'_>, vault: Address) -> Result<U25
     erc20_balance_of(storage, vault, SELF)
 }
 
-/// `hasLiquidity`: whether `asset`'s vault could currently fund `amount`. An asset
+/// `hasStablecoin`: whether `asset`'s vault could currently fund `amount`. An asset
 /// with no vault answers `false` rather than reverting.
-pub fn has_liquidity(storage: &StorageHandle<'_>, asset: Address, amount: U256) -> Result<bool> {
+pub fn has_stablecoin(storage: &StorageHandle<'_>, asset: Address, amount: U256) -> Result<bool> {
     let contract = VaultRouterContract::new(storage.clone());
     let Some(vault) = contract.first_vault(asset)? else {
         return Ok(false);

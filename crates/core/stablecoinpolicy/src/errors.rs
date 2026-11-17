@@ -5,7 +5,7 @@ use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
-use crate::abi::IStablecoinPolicyRegistry;
+use crate::precompile::IStablecoinPolicyRegistry;
 
 /// Represents errors returned by the StablecoinPolicyRegistry runtime.
 #[derive(Debug, Error, PartialEq, Eq)]

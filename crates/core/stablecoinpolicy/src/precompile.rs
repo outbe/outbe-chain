@@ -3,9 +3,13 @@ use alloy_sol_types::SolInterface;
 use outbe_primitives::dispatch::{dispatch_call, mutate, mutate_void, view};
 use outbe_primitives::error::Result;
 
-pub use crate::abi::IStablecoinPolicyRegistry;
 use crate::errors::{AbiDecodeError, PolicyRegistryError};
 use crate::schema::StablecoinPolicyRegistryContract;
+
+alloy_sol_types::sol!(
+    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+    "../../../contracts/precompiles/src/IStablecoinPolicyRegistry.sol"
+);
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
@@ -54,9 +58,9 @@ pub fn dispatch(
                 removeMembers(call) => mutate_void(&storage, call, caller, |actor, call| {
                     registry.remove_members(call.policyId, actor, &call.accounts)
                 }),
-                beginPolicyAdminTransfer(call) => {
+                startPolicyAdminTransfer(call) => {
                     mutate_void(&storage, call, caller, |actor, call| {
-                        registry.begin_policy_admin_transfer(call.policyId, actor, call.candidate)
+                        registry.start_policy_admin_transfer(call.policyId, actor, call.candidate)
                     })
                 }
                 cancelPolicyAdminTransfer(call) => {

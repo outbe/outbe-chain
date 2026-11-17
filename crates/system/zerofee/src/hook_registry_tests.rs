@@ -70,7 +70,7 @@ fn waive_fee(
 ) -> Result<Option<ZeroFeeAuthorization>, ZeroFeePolicyError> {
     crate::registry()
         .classify(tx)?
-        .map(|candidate| crate::registry().authorize_fee_waiver(storage, candidate))
+        .map(|candidate| crate::registry().authorize_fee_waiver(storage, tx, candidate))
         .transpose()
 }
 
@@ -88,7 +88,8 @@ fn hook_cases() -> Vec<HookCase> {
             min_max_fee_per_gas: crate::oracle::MIN_ZERO_FEE_ORACLE_MAX_FEE_PER_GAS,
             max_calldata_bytes: crate::oracle::MAX_ZERO_FEE_ORACLE_CALLDATA_BYTES,
             max_gas_limit: crate::oracle::MAX_ZERO_FEE_ORACLE_GAS_LIMIT,
-            malformed_reason: "zero-fee oracle vote calldata is malformed: submitVote(ExchangeRateTuple[],GasTuple[]) decode failed",
+            malformed_reason: "zero-fee oracle vote calldata is malformed: \
+                submitVote(ExchangeRateTuple[],GasTuple[]) decode failed",
             delegate_role: ValidatorDelegateRole::Oracle,
         },
         HookCase {
@@ -99,7 +100,8 @@ fn hook_cases() -> Vec<HookCase> {
             min_max_fee_per_gas: crate::hyperlane::MIN_ZERO_FEE_CHECKPOINT_MAX_FEE_PER_GAS,
             max_calldata_bytes: crate::hyperlane::MAX_ZERO_FEE_CHECKPOINT_CALLDATA_BYTES,
             max_gas_limit: crate::hyperlane::MAX_ZERO_FEE_CHECKPOINT_GAS_LIMIT,
-            malformed_reason: "zero-fee oracle vote calldata is malformed: submitCheckpoint(uint32,bytes32,uint32,bytes32,bytes) decode failed",
+            malformed_reason: "zero-fee oracle vote calldata is malformed: \
+                submitCheckpoint(uint32,bytes32,uint32,bytes32,bytes) decode failed",
             delegate_role: ValidatorDelegateRole::Hyperlane,
         },
     ]
@@ -298,4 +300,403 @@ fn oracle_vote_waiver_ends_when_the_validator_has_voted() {
             "zero-fee oracle vote already exists for validator"
         );
     });
+}
+
+mod equivocation {
+    use super::*;
+    use alloy_primitives::{keccak256, Bytes};
+    use outbe_primitives::equivocation_evidence::{
+        canonical_equivocation_evidence_hash, EquivocationEvidenceKind,
+    };
+    use outbe_primitives::error::PrecompileError;
+    use outbe_slashindicator::{precompile::ISlashIndicator, schema::SlashIndicator};
+    use outbe_system_common::addresses::SLASH_INDICATOR_ADDRESS;
+    use outbe_validatorset::contract::ValidatorSet;
+
+    const GAS: u64 = 1_500_000;
+    const LIMIT: usize = 16_384;
+
+    // Wire admission is stateless: signatures are intentionally invalid here.
+    fn block(epoch: u8, digest: u8) -> Vec<u8> {
+        [vec![1; 144], vec![epoch, 5, 4], vec![digest; 32]].concat()
+    }
+
+    fn calldata(selector: usize, first: &[u8], second: &[u8]) -> Vec<u8> {
+        let block1 = Bytes::copy_from_slice(first);
+        let block2 = Bytes::copy_from_slice(second);
+        match selector {
+            0 => ISlashIndicator::submitConflictingNotarizeEvidenceCall { block1, block2 }
+                .abi_encode(),
+            1 => ISlashIndicator::submitConflictingFinalizeEvidenceCall { block1, block2 }
+                .abi_encode(),
+            _ => ISlashIndicator::submitNullifyFinalizeEvidenceCall {
+                nullifyBlock: block1,
+                finalizeBlock: block2,
+            }
+            .abi_encode(),
+        }
+    }
+
+    fn tx(input: &[u8]) -> ZeroFeeTransaction<'_> {
+        ZeroFeeTransaction {
+            signer: SIGNER,
+            call: TransactionCallFields {
+                to: Some(SLASH_INDICATOR_ADDRESS),
+                value: U256::ZERO,
+                input,
+                gas_limit: GAS,
+                max_fee_per_gas: alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE.into(),
+                max_priority_fee_per_gas: Some(0),
+            },
+        }
+    }
+
+    #[test]
+    fn slash_selectors_preserve_submitter_and_hook_limits() {
+        for selector in 0..3 {
+            let input = calldata(selector, &block(1, 1), &block(1, 2));
+            let accepted = tx(&input);
+            let candidate = crate::registry().classify(&accepted).unwrap().unwrap();
+            assert_eq!(candidate.signer, SIGNER);
+            assert_eq!(candidate.hook.name(), "SlashEquivocation");
+            assert_eq!(candidate.max_soft_failures_per_block(), Some(4));
+            assert_eq!(candidate.hook.priority_class(), Some(1));
+            let mut other = accepted;
+            other.call.to = Some(Address::ZERO);
+            assert_eq!(crate::registry().classify(&other), Ok(None));
+            other.call.to = None;
+            assert_eq!(crate::registry().classify(&other), Ok(None));
+        }
+    }
+
+    #[test]
+    fn slash_rejects_value_gas_size_and_noncanonical_abi() {
+        for selector in 0..3 {
+            let input = calldata(selector, &block(1, 1), &block(1, 2));
+            let mut funded = tx(&input);
+            funded.call.value = U256::from(1);
+            assert_eq!(
+                crate::registry().classify(&funded),
+                Err(ZeroFeePolicyError::NonZeroValue)
+            );
+            let mut greedy = tx(&input);
+            greedy.call.gas_limit += 1;
+            assert_eq!(
+                crate::registry().classify(&greedy),
+                Err(ZeroFeePolicyError::GasLimitTooHigh {
+                    gas_limit: GAS + 1,
+                    limit: GAS,
+                })
+            );
+            let mut oversized = input[..4].to_vec();
+            oversized.resize(LIMIT + 1, 0);
+            assert_eq!(
+                crate::registry().classify(&tx(&oversized)),
+                Err(ZeroFeePolicyError::CalldataTooLarge {
+                    size: LIMIT + 1,
+                    limit: LIMIT
+                })
+            );
+            let mut trailing = input.clone();
+            trailing.push(0);
+            // A valid ABI value with a noncanonical gap between head and tails.
+            let mut gapped = input.clone();
+            for offset in [4 + 31, 4 + 63] {
+                gapped[offset] += 32;
+            }
+            gapped.splice(68..68, [0; 32]);
+            for malformed in [&input[..4], &trailing, &gapped] {
+                assert!(matches!(
+                    crate::registry().classify(&tx(malformed)),
+                    Err(ZeroFeePolicyError::MalformedCalldata(_))
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn slash_wire_rejects_different_keys_and_epochs() {
+        for selector in 0..3 {
+            let first = block(1, 1);
+            let mut other_key = block(1, 2);
+            other_key[0] = 2;
+            for second in [other_key, block(2, 2)] {
+                let input = calldata(selector, &first, &second);
+                assert!(matches!(
+                    crate::registry().classify(&tx(&input)),
+                    Err(ZeroFeePolicyError::MalformedCalldata(_))
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn slash_acl_replay_epoch_and_lifecycle_fail_before_committee_reads() {
+        let first = block(99, 1);
+        let second = block(99, 2);
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.enter(|storage| {
+            let input = calldata(0, &first, &second);
+            let transaction = tx(&input);
+            assert_eq!(
+                waive_fee(storage.clone(), &transaction).unwrap_err().code(),
+                107
+            );
+            let owner = Address::repeat_byte(0x99);
+            let mut vs = ValidatorSet::new(storage.clone());
+            vs.test_configure_registry(owner).unwrap();
+            vs.test_seed_authoritative_min_stake(U256::from(1)).unwrap();
+            vs.test_register_active_validator(SIGNER, &[2; 48], U256::from(1))
+                .unwrap();
+            vs.test_register_active_validator(VALIDATOR, &[1; 48], U256::from(100))
+                .unwrap();
+            let si = SlashIndicator::new(storage.clone());
+            let hash = canonical_equivocation_evidence_hash(&first, &second);
+            si.evidence_processed.write(&hash, true).unwrap();
+            assert_eq!(
+                waive_fee(storage.clone(), &transaction).unwrap_err(),
+                ZeroFeePolicyError::HookConflict("equivocation evidence already processed")
+            );
+            si.evidence_processed.write(&hash, false).unwrap();
+            let key = keccak256(
+                [
+                    b"outbe:equivocation-epoch-felony:v1".as_slice(),
+                    VALIDATOR.as_slice(),
+                    &99u64.to_be_bytes(),
+                ]
+                .concat(),
+            );
+            si.evidence_processed.write(&key, true).unwrap();
+            let distinct = calldata(1, &first, &block(99, 3));
+            assert_eq!(
+                waive_fee(storage.clone(), &tx(&distinct)).unwrap_err(),
+                ZeroFeePolicyError::HookConflict(
+                    "validator already penalized for equivocation epoch"
+                )
+            );
+            assert!(!si.is_evidence_processed(hash).unwrap());
+            si.evidence_processed.write(&key, false).unwrap();
+            // A registered, never-activated accused must be rejected before snapshots/BLS.
+            let inactive = Address::repeat_byte(0x66);
+            vs.test_register_validator_without_pop(inactive, &[3; 48])
+                .unwrap();
+            let mut a = first.clone();
+            let mut b = second.clone();
+            a[..48].fill(3);
+            b[..48].fill(3);
+            let input = calldata(2, &a, &b);
+            assert!(matches!(
+                outbe_slashindicator::preflight_equivocation_evidence(
+                    storage.clone(),
+                    SIGNER,
+                    EquivocationEvidenceKind::NullifyFinalize,
+                    &a,
+                    &b,
+                ),
+                Err(outbe_slashindicator::EquivocationPreflightError::Rejected(
+                    outbe_slashindicator::errors::SlashIndicatorError::ValidatorNotSlashable { .. }
+                ))
+            ));
+            assert_eq!(
+                waive_fee(storage.clone(), &tx(&input)).unwrap_err(),
+                ZeroFeePolicyError::HookConflict("equivocation evidence rejected")
+            );
+            assert!(!si
+                .is_evidence_processed(canonical_equivocation_evidence_hash(&a, &b))
+                .unwrap());
+            assert_eq!(si.get_felony_count(VALIDATOR).unwrap(), 0);
+        });
+    }
+
+    #[test]
+    fn slash_registry_reports_provider_failure_as_109() {
+        let input = calldata(0, &block(1, 1), &block(1, 2));
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.enable_production_storage_gas_metering();
+        provider.set_gas_limit(0);
+        provider.enter(|storage| {
+            let error = waive_fee(storage, &tx(&input)).unwrap_err();
+            assert_eq!(error.code(), 109);
+            assert!(matches!(error, ZeroFeePolicyError::Storage(_)));
+        });
+    }
+
+    #[test]
+    fn slash_provider_mapping_preserves_error_sources_and_code_109() {
+        use std::error::Error;
+        for error in [
+            PrecompileError::Storage("storage sentinel".into()),
+            PrecompileError::Fatal("fatal sentinel".into()),
+            PrecompileError::FatalWithCause(Box::new(std::io::Error::other("typed sentinel"))),
+        ] {
+            let error = crate::equivocation::map_preflight_error(
+                outbe_slashindicator::EquivocationPreflightError::Precompile(error),
+            );
+            assert_eq!(error.code(), 109);
+            assert!(error.source().is_some());
+            let ZeroFeePolicyError::Storage(source) = error else {
+                panic!("expected retained storage cause");
+            };
+            assert!(source.source().is_some());
+            let source = source.0.as_ref();
+            match source {
+                PrecompileError::Storage(message) => assert_eq!(message, "storage sentinel"),
+                PrecompileError::Fatal(message) => assert_eq!(message, "fatal sentinel"),
+                PrecompileError::FatalWithCause(cause) => assert!(cause.is::<std::io::Error>()),
+                other => panic!("lost provider cause: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn slash_valid_bls_authorizes_submitter_without_writes_or_cached_grants() {
+        use outbe_validatorset::state::{CommitteeEntry, CommitteeSnapshot};
+        // Frozen signer-side vectors: test_signing keypair(77), committee seeds 1..=4,
+        // epoch 1/view 5, proposal parent 4 and digest 1/2, Simplex POP namespaces.
+        let accused_key = alloy_primitives::hex!(
+            "991267617a6538502ac9ef5837e1f857cd64bf7f9aa19afa3080473925d5d4017d36e20e"
+            "9121da910ffdb501b8908de3"
+        );
+        let mut keys = [
+            alloy_primitives::hex!(
+                "b82eaa7fbc7f9cf9d60826e5155ca8ccc46e13d87f64f7bcdcaa2972c370766b87635334"
+                "bfc49b8fba7fb784e763d44e"
+            ),
+            alloy_primitives::hex!(
+                "b806a3638975b2c33ccdda9cc55231e1328a0d1f70a3dde804e473e22ec21d5703ee3426"
+                "4c702b971cd0f9d5892434e8"
+            ),
+            alloy_primitives::hex!(
+                "83c50f2fa828c5e132a2ac00792ef9c892372976ff26400711b7061bdb045f0751559b4a"
+                "04cfd7399555a2aed5b54f3f"
+            ),
+            alloy_primitives::hex!(
+                "95498b0f2d5fc3c804c2d64ddf3c50959fb229649841f904f85c4329de6d2a1d201e25c3"
+                "63eafe5b7cfc334a50d29ed9"
+            ),
+        ];
+        keys.sort();
+        let snapshot = CommitteeSnapshot {
+            committee: keys
+                .into_iter()
+                .enumerate()
+                .map(|(i, consensus_pubkey)| CommitteeEntry {
+                    address: Address::with_last_byte((i + 1) as u8),
+                    consensus_pubkey,
+                })
+                .collect(),
+            vrf_material_version: 1,
+            vrf_group_public_key_bytes: vec![0x11; 96],
+            vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
+        };
+        let pairs = [
+            (
+                0,
+                alloy_primitives::hex!(
+                    "991267617a6538502ac9ef5837e1f857cd64bf7f9aa19afa3080473925d5d4017d36e20e"
+                    "9121da910ffdb501b8908de38df753f7fd4f1cc72b6dc20ceb2a157e60e1aa0c65f6a896"
+                    "976e342d84e0a0c7655ce8de928c8c3bce9dfc3889ecfb8e186226f0d936d422b05e2168"
+                    "6263db30fbf3c0fc50206cc553b9c60965bf308d7ec2f9f9fbfb27367d313c05fecc5960"
+                    "0105040101010101010101010101010101010101010101010101010101010101010101"
+                )
+                .to_vec(),
+                alloy_primitives::hex!(
+                    "991267617a6538502ac9ef5837e1f857cd64bf7f9aa19afa3080473925d5d4017d36e20e"
+                    "9121da910ffdb501b8908de3abe4a4bda1e9c0daf1774d972e9b2ff9c79be70b51ec54ae"
+                    "0aae200b4c87b5ad7064526a8a95cd20251c7051a6a1ece319dfd2ee0c1bd54ab771ebc5"
+                    "89dde1722ecca132dc7eb077d60e1ee07223a9f5ab93cc7bf7511e2ff13921e19d8f95d5"
+                    "0105040202020202020202020202020202020202020202020202020202020202020202"
+                )
+                .to_vec(),
+            ),
+            (
+                1,
+                alloy_primitives::hex!(
+                    "991267617a6538502ac9ef5837e1f857cd64bf7f9aa19afa3080473925d5d4017d36e20e"
+                    "9121da910ffdb501b8908de398aef65eae98ee87238b9ea9675f43f454b3e20f13dc4093"
+                    "bcc9f51dbe4cc997cbd9c3a56bde0681196c97a50a87dabd0edb2671d13cea0d8ab1f6ef"
+                    "31921453e78d5533e8eeea77f132e20a3176349f110089f39ef3fd4539875297a479cae6"
+                    "0105040101010101010101010101010101010101010101010101010101010101010101"
+                )
+                .to_vec(),
+                alloy_primitives::hex!(
+                    "991267617a6538502ac9ef5837e1f857cd64bf7f9aa19afa3080473925d5d4017d36e20e"
+                    "9121da910ffdb501b8908de388a7c1578093f7b419b9cb43a7da4de775c337b1bf1b5f76"
+                    "88451147aba8f1fbcb0110a1e2fdecef3fc1428b8d6ab1660f4157de2da941e43b1c5ab9"
+                    "0aaba08731e459c63422ab18cd728fe9642d8ab686301e838c456dc2fe985ad9d3bd1229"
+                    "0105040202020202020202020202020202020202020202020202020202020202020202"
+                )
+                .to_vec(),
+            ),
+            (
+                2,
+                alloy_primitives::hex!(
+                    "991267617a6538502ac9ef5837e1f857cd64bf7f9aa19afa3080473925d5d4017d36e20e"
+                    "9121da910ffdb501b8908de3b03b52265f9c18cb5aab055c2a0f3a626285dcade52090f7"
+                    "671e59146c0040e50aba46752229a010389063369966766508fc0553888a2237c7508aad"
+                    "21dcae965b3a12e0bb0d9ca657f071cc256dd8699b9acbfb8a92dda7177a71ca71c21eaa"
+                    "0105"
+                )
+                .to_vec(),
+                alloy_primitives::hex!(
+                    "991267617a6538502ac9ef5837e1f857cd64bf7f9aa19afa3080473925d5d4017d36e20e"
+                    "9121da910ffdb501b8908de388a7c1578093f7b419b9cb43a7da4de775c337b1bf1b5f76"
+                    "88451147aba8f1fbcb0110a1e2fdecef3fc1428b8d6ab1660f4157de2da941e43b1c5ab9"
+                    "0aaba08731e459c63422ab18cd728fe9642d8ab686301e838c456dc2fe985ad9d3bd1229"
+                    "0105040202020202020202020202020202020202020202020202020202020202020202"
+                )
+                .to_vec(),
+            ),
+        ];
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.enter(|storage| {
+            let owner = Address::repeat_byte(0x99);
+            let mut vs = ValidatorSet::new(storage.clone());
+            vs.test_configure_registry(owner).unwrap();
+            vs.test_seed_authoritative_min_stake(U256::from(1)).unwrap();
+            vs.test_register_active_validator(SIGNER, &[2; 48], U256::from(1))
+                .unwrap();
+            vs.test_register_active_validator(VALIDATOR, &accused_key, U256::from(100))
+                .unwrap();
+            for member in &snapshot.committee {
+                vs.test_register_active_validator(
+                    member.address,
+                    &member.consensus_pubkey,
+                    U256::from(1),
+                )
+                .unwrap();
+            }
+            vs.test_seed_committee_ring(owner, &snapshot).unwrap();
+            let si = SlashIndicator::new(storage.clone());
+            for (selector, first, second) in pairs {
+                let input = calldata(selector, &first, &second);
+                let transaction = tx(&input);
+                let candidate = crate::registry().classify(&transaction).unwrap().unwrap();
+                let hash = canonical_equivocation_evidence_hash(&first, &second);
+                assert_eq!(
+                    waive_fee(storage.clone(), &transaction),
+                    Ok(Some(ZeroFeeAuthorization {
+                        hook: candidate.hook,
+                        subject: SIGNER,
+                    }))
+                );
+                assert!(!si.is_evidence_processed(hash).unwrap());
+                assert_eq!(si.get_felony_count(VALIDATOR).unwrap(), 0);
+                // Fresh state, not an earlier successful authorization, determines the result.
+                si.evidence_processed.write(&hash, true).unwrap();
+                assert_eq!(
+                    waive_fee(storage.clone(), &transaction).unwrap_err().code(),
+                    108
+                );
+                si.evidence_processed.write(&hash, false).unwrap();
+                let mut bad_signature = first.clone();
+                bad_signature[48..144].fill(0);
+                let input = calldata(selector, &bad_signature, &second);
+                assert_eq!(
+                    waive_fee(storage.clone(), &tx(&input)).unwrap_err().code(),
+                    108
+                );
+            }
+        });
+    }
 }

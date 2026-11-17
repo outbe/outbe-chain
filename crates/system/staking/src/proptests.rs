@@ -420,17 +420,20 @@ proptest! {
                     .fold(U256::ZERO, |acc, x| acc + x);
                 prop_assert_eq!(sum_stakes, s.get_total_staked().unwrap());
 
-                // Invariant 2: Escrow balance equals `total_staked + sum(unbonding_amount)`.
+                // Invariant 2: Escrow balance equals `total_staked + sum(unbonding_amount)`
+                // plus the slash rest below one minor.
+                let pl = PromisLimitContract::new(storage.clone());
+                let rest = pl
+                    .burn_rest(outbe_promislimit::BurnSource::ValidatorStake)
+                    .unwrap();
                 let unbonding_total = active_unbonding_sum(s);
                 prop_assert_eq!(
                     storage.balance(STAKING_ADDRESS).unwrap(),
-                    sum_stakes + unbonding_total
+                    sum_stakes + unbonding_total + rest
                 );
 
-                // Invariant 3: PromisLimit * 10^12 + rest_minor == cumulative_slashed.
-                let pl = PromisLimitContract::new(storage.clone());
-                let accounted_burn = pl.promis_limit().unwrap() * UNITS_PER_PROTOCOL_MINOR
-                    + pl.rest_minor().unwrap();
+                // Invariant 3: PromisLimit * 10^12 + the slash rest == cumulative_slashed.
+                let accounted_burn = pl.promis_limit().unwrap() * UNITS_PER_PROTOCOL_MINOR + rest;
                 prop_assert_eq!(accounted_burn, cumulative_slashed);
 
                 // Invariant 4: Stored unbonding length matches physical linked list and <= 64.

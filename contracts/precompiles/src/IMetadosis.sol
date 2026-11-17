@@ -25,7 +25,6 @@ interface IMetadosis {
         uint256 lysisLimitMinor,
         uint256 unusedLysisLimitMinor,
         uint256 lysisAllocationMinor,
-        uint256 promisLimitReturnedMinor,
         string status,
         uint64 blockNumber
     );

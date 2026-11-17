@@ -26,8 +26,8 @@ use alloy_sol_types::{sol, SolCall, SolError, SolEvent};
 use outbe_evm::test_support::{seed_storage, EvmWorld};
 use outbe_primitives::storage::{SubCallOutput, SubCallStatus};
 use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
-use outbe_vaultrouter::api::IVaultRouter;
-use outbe_vaultrouter::schema::ApprovedVaultAction;
+use outbe_vaultrouter::precompile::IVaultRouter;
+use outbe_vaultrouter::schema::VaultActionData;
 use outbe_vaultrouter::VaultRouterContract;
 use revm::{
     database::{CacheDB, EmptyDB},
@@ -139,7 +139,7 @@ fn rebalance(world: &mut EvmWorld) -> SubCallOutput {
 }
 
 #[test]
-fn rebalance_moves_liquidity_between_two_vaults_through_real_frames() {
+fn rebalance_moves_stablecoins_between_two_vaults_through_real_frames() {
     let result = rebalance(&mut EvmWorld::new(
         seeded_db(true, true, false),
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
@@ -177,7 +177,7 @@ fn rebalance_reverts_when_the_destination_vault_is_not_registered() {
     ));
     assert!(
         !matches!(result.status, SubCallStatus::Success),
-        "an unregistered destination vault must not accept liquidity, got {:?}",
+        "an unregistered destination vault must not accept stablecoins, got {:?}",
         result.status
     );
 }
@@ -250,7 +250,7 @@ fn stateful_vault() -> AccountInfo {
     code_account(&code)
 }
 
-/// approve writes the allowance, emits a log, and calls applyApproved(1) again.
+/// approve writes the allowance, emits a log, and calls applyVaultAction(1) again.
 /// It requires the re-entry to fail, then optionally reverts based on slot 2.
 fn approval_token() -> AccountInfo {
     let mut code = Vec::new();
@@ -272,7 +272,7 @@ fn approval_token() -> AccountInfo {
     // SSTORE(0, amount); LOG0(0, 32).
     code.extend_from_slice(&[0x60, 0x24, 0x35, 0x60, 0, 0x55, 0x60, 0x20, 0x60, 0, 0xa0]);
     let mut selector = [0u8; 32];
-    selector[..4].copy_from_slice(&IVaultRouter::applyApprovedCall::SELECTOR);
+    selector[..4].copy_from_slice(&IVaultRouter::applyVaultActionCall::SELECTOR);
     code.push(0x7f);
     code.extend_from_slice(&selector);
     code.extend_from_slice(&[0x60, 0, 0x52, 0x60, 1, 0x60, 4, 0x52]);
@@ -291,7 +291,7 @@ fn approval_token() -> AccountInfo {
     code_account(&code)
 }
 
-fn approved_db(fail: bool, kind: u8) -> CacheDB<EmptyDB> {
+fn vault_action_db(fail: bool, kind: u8) -> CacheDB<EmptyDB> {
     let mut db = CacheDB::new(EmptyDB::default());
     db.insert_account_info(ASSET, approval_token());
     db.insert_account_info(VAULT_FROM, approval_vault());
@@ -300,12 +300,12 @@ fn approved_db(fail: bool, kind: u8) -> CacheDB<EmptyDB> {
     seed_storage(&mut db, 1, CCA, |storage| {
         let router = VaultRouterContract::new(storage.clone());
         router
-            .approved_vault_actions
-            .create(&ApprovedVaultAction {
+            .vault_actions
+            .create(&VaultActionData {
                 id: U256::ONE,
                 vault: VAULT_FROM,
                 kind,
-                approved_at: 0,
+                created_at: 0,
             })
             .unwrap();
         router
@@ -329,15 +329,15 @@ fn approved_db(fail: bool, kind: u8) -> CacheDB<EmptyDB> {
     db
 }
 
-fn approved_world(fail: bool, kind: u8) -> EvmWorld {
+fn vault_action_world(fail: bool, kind: u8) -> EvmWorld {
     EvmWorld::new(
-        approved_db(fail, kind),
+        vault_action_db(fail, kind),
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
     )
 }
 
 fn pending_removal_world() -> EvmWorld {
-    let mut db = approved_db(false, 2);
+    let mut db = vault_action_db(false, 2);
     db.insert_account_info(VAULT_FROM, stateful_vault());
     db.insert_account_info(VAULT_TO, stateful_vault());
     db.insert_account_storage(VAULT_FROM, U256::ZERO, U256::from(AMOUNT))
@@ -364,11 +364,11 @@ fn pending_removal_world() -> EvmWorld {
     EvmWorld::new(db, std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
 }
 
-fn apply_approved(world: &mut EvmWorld, is_static: bool) -> SubCallOutput {
+fn apply_vault_action(world: &mut EvmWorld, is_static: bool) -> SubCallOutput {
     world.call(
         CCA,
         VAULT_ROUTER_ADDRESS,
-        IVaultRouter::applyApprovedCall {
+        IVaultRouter::applyVaultActionCall {
             proposalId: U256::ONE,
         }
         .abi_encode()
@@ -377,11 +377,23 @@ fn apply_approved(world: &mut EvmWorld, is_static: bool) -> SubCallOutput {
     )
 }
 
+/// The router logs of `world`, in order. A successful apply has exactly two.
+fn router_logs(world: &EvmWorld) -> Vec<alloy_primitives::LogData> {
+    let logs: Vec<_> = world
+        .logs()
+        .iter()
+        .filter(|log| log.address == VAULT_ROUTER_ADDRESS)
+        .map(|log| log.data.clone())
+        .collect();
+    assert_eq!(logs.len(), 2);
+    logs
+}
+
 #[test]
-fn approved_add_rolls_back_real_child_writes_logs_and_retries_with_reentry_denied() {
-    let mut world = approved_world(true, 1);
+fn vault_action_add_rolls_back_real_child_writes_logs_and_retries_with_reentry_denied() {
+    let mut world = vault_action_world(true, 1);
     assert!(!matches!(
-        apply_approved(&mut world, false).status,
+        apply_vault_action(&mut world, false).status,
         SubCallStatus::Success
     ));
     assert_eq!(
@@ -416,7 +428,7 @@ fn approved_add_rolls_back_real_child_writes_logs_and_retries_with_reentry_denie
         ApprovalToken::setFailureCall { fail: U256::ZERO },
     );
     assert!(matches!(
-        apply_approved(&mut world, false).status,
+        apply_vault_action(&mut world, false).status,
         SubCallStatus::Success
     ));
     assert_eq!(
@@ -431,24 +443,22 @@ fn approved_add_rolls_back_real_child_writes_logs_and_retries_with_reentry_denie
         ),
         U256::ONE
     );
-    assert_eq!(world.logs().len(), 2); // Token log and VaultAdded, no re-entry effects.
-    let added = world
-        .logs()
-        .iter()
-        .find(|log| log.address == VAULT_ROUTER_ADDRESS)
-        .unwrap();
-    IVaultRouter::VaultAdded::decode_log_data(&added.data).unwrap();
+    // Token log, VaultActionApplied and VaultAdded. No re-entry effects.
+    assert_eq!(world.logs().len(), 3);
+    let router_logs = router_logs(&world);
+    IVaultRouter::VaultActionApplied::decode_log_data(&router_logs[0]).unwrap();
+    IVaultRouter::VaultAdded::decode_log_data(&router_logs[1]).unwrap();
     assert!(!matches!(
-        apply_approved(&mut world, false).status,
+        apply_vault_action(&mut world, false).status,
         SubCallStatus::Success
     ));
 }
 
 #[test]
-fn approved_remove_rolls_back_then_clears_real_allowance_and_indexes() {
-    let mut world = approved_world(true, 2);
+fn vault_action_remove_rolls_back_then_clears_real_allowance_and_indexes() {
+    let mut world = vault_action_world(true, 2);
     assert!(!matches!(
-        apply_approved(&mut world, false).status,
+        apply_vault_action(&mut world, false).status,
         SubCallStatus::Success
     ));
     assert_eq!(
@@ -474,7 +484,7 @@ fn approved_remove_rolls_back_then_clears_real_allowance_and_indexes() {
         ApprovalToken::setFailureCall { fail: U256::ZERO },
     );
     assert!(matches!(
-        apply_approved(&mut world, false).status,
+        apply_vault_action(&mut world, false).status,
         SubCallStatus::Success
     ));
     assert_eq!(
@@ -493,35 +503,32 @@ fn approved_remove_rolls_back_then_clears_real_allowance_and_indexes() {
         ),
         U256::ZERO
     );
-    assert_eq!(world.logs().len(), 2);
-    let removed = world
-        .logs()
-        .iter()
-        .find(|log| log.address == VAULT_ROUTER_ADDRESS)
-        .unwrap();
-    IVaultRouter::VaultRemoved::decode_log_data(&removed.data).unwrap();
+    assert_eq!(world.logs().len(), 3);
+    let router_logs = router_logs(&world);
+    IVaultRouter::VaultActionApplied::decode_log_data(&router_logs[0]).unwrap();
+    IVaultRouter::VaultRemoved::decode_log_data(&router_logs[1]).unwrap();
     assert!(!matches!(
-        apply_approved(&mut world, false).status,
+        apply_vault_action(&mut world, false).status,
         SubCallStatus::Success
     ));
 }
 
 #[test]
-fn approved_apply_rejects_static_frame_without_consuming_action() {
-    let mut world = approved_world(false, 1);
+fn vault_action_apply_rejects_static_frame_without_consuming_action() {
+    let mut world = vault_action_world(false, 1);
     assert!(!matches!(
-        apply_approved(&mut world, true).status,
+        apply_vault_action(&mut world, true).status,
         SubCallStatus::Success
     ));
     assert!(world.logs().is_empty());
     assert!(matches!(
-        apply_approved(&mut world, false).status,
+        apply_vault_action(&mut world, false).status,
         SubCallStatus::Success
     ));
 }
 
 #[test]
-fn approved_remove_retries_after_active_cca_drains_real_vault_shares() {
+fn vault_action_remove_retries_after_active_cca_drains_real_vault_shares() {
     let mut world = pending_removal_world();
     let shares = |world: &mut EvmWorld, vault| {
         world.view(
@@ -532,7 +539,7 @@ fn approved_remove_retries_after_active_cca_drains_real_vault_shares() {
     };
     assert_eq!(shares(&mut world, VAULT_FROM), U256::from(AMOUNT));
     assert_eq!(shares(&mut world, VAULT_TO), U256::ZERO);
-    let result = apply_approved(&mut world, false);
+    let result = apply_vault_action(&mut world, false);
     assert!(matches!(result.status, SubCallStatus::Revert(_)));
     let error = IVaultRouter::ReserveVaultHasShares::abi_decode(&result.returndata).unwrap();
     assert_eq!(error.vault, VAULT_FROM);
@@ -540,7 +547,7 @@ fn approved_remove_retries_after_active_cca_drains_real_vault_shares() {
     let pending = world.view(
         CCA,
         VAULT_ROUTER_ADDRESS,
-        IVaultRouter::approvedVaultActionCall {
+        IVaultRouter::getVaultActionCall {
             proposalId: U256::ONE,
         },
     );
@@ -549,7 +556,7 @@ fn approved_remove_retries_after_active_cca_drains_real_vault_shares() {
         IVaultRouter::VaultAction::RemoveVault
     ));
     assert_eq!(pending.vault, VAULT_FROM);
-    assert_eq!(pending.approvedAt, 0);
+    assert_eq!(pending.createdAt, 0);
     assert_eq!(
         world.view(CCA, ASSET, ApprovalToken::allowanceCall {}),
         U256::MAX
@@ -584,19 +591,19 @@ fn approved_remove_retries_after_active_cca_drains_real_vault_shares() {
     assert_eq!(shares(&mut world, VAULT_FROM), U256::ZERO);
     assert_eq!(shares(&mut world, VAULT_TO), U256::from(AMOUNT));
     assert_eq!(world.logs().len(), 1);
-    let event = IVaultRouter::LiquidityRebalanced::decode_log_data(&world.logs()[0].data).unwrap();
+    let event = IVaultRouter::StablecoinRebalanced::decode_log_data(&world.logs()[0].data).unwrap();
     assert_eq!(event.cca, CCA);
     assert_eq!(event.burnedShares, U256::from(AMOUNT));
     assert_eq!(event.mintedShares, U256::from(AMOUNT));
 
     assert!(matches!(
-        apply_approved(&mut world, false).status,
+        apply_vault_action(&mut world, false).status,
         SubCallStatus::Success
     ));
     let pending = world.view(
         CCA,
         VAULT_ROUTER_ADDRESS,
-        IVaultRouter::approvedVaultActionCall {
+        IVaultRouter::getVaultActionCall {
             proposalId: U256::ONE,
         },
     );
@@ -613,7 +620,10 @@ fn approved_remove_retries_after_active_cca_drains_real_vault_shares() {
         ),
         U256::ONE
     );
-    assert_eq!(world.logs().len(), 3); // Rebalance, allowance revocation, removal.
+    // Rebalance, VaultActionApplied, allowance revocation, removal.
+    assert_eq!(world.logs().len(), 4);
+    let applied = IVaultRouter::VaultActionApplied::decode_log_data(&world.logs()[1].data).unwrap();
+    assert_eq!((applied.proposalId, applied.vault), (U256::ONE, VAULT_FROM));
     assert_eq!(
         world.view(
             CCA,
@@ -625,10 +635,10 @@ fn approved_remove_retries_after_active_cca_drains_real_vault_shares() {
         ),
         VAULT_TO
     );
-    let removed = IVaultRouter::VaultRemoved::decode_log_data(&world.logs()[2].data).unwrap();
+    let removed = IVaultRouter::VaultRemoved::decode_log_data(&world.logs()[3].data).unwrap();
     assert_eq!(removed.vault, VAULT_FROM);
     assert!(!matches!(
-        apply_approved(&mut world, false).status,
+        apply_vault_action(&mut world, false).status,
         SubCallStatus::Success
     ));
 }

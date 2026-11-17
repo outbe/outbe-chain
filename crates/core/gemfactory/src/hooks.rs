@@ -3,7 +3,7 @@
 use outbe_primitives::block::{BlockRuntimeContext, ProtocolModule};
 use outbe_primitives::error::Result;
 
-/// Deletes the unpaid gems of the forfeited groups.
+/// Deletes the unsettled gems of the forfeited groups.
 pub use crate::cleanup::cleanup;
 
 /// Deletes the positions of the expired hours.

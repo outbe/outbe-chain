@@ -80,6 +80,7 @@ outbe-vote.workspace = true
 outbe-zerofee.workspace = true
 outbe-zk-backend.workspace = true
 
+alloy-consensus.workspace = true
 alloy-eips.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
@@ -122,7 +123,6 @@ metrics-process.workspace = true
 serde_yaml_ng.workspace = true
 outbe-enclave = { workspace = true, features = ["engine", "test-utils"] }
 outbe-runtime = { path = ".", features = ["test-hooks"] }
-alloy-consensus.workspace = true
 alloy-trie.workspace = true
 alloy-genesis.workspace = true
 alloy-provider.workspace = true

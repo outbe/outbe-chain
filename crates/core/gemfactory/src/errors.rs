@@ -56,6 +56,9 @@ pub enum GemFactoryError {
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
 
+    #[error("gem cannot be mined in its issue block")]
+    CannotMineInIssueBlock,
+
     #[error("{currency} is not an ISO 4217 currency code")]
     InvalidCurrency { currency: u16 },
 
@@ -127,6 +130,7 @@ impl From<GemFactoryError> for PrecompileError {
             GemFactoryError::InsufficientCapacity => revert_with(I::InsufficientCapacity {}),
             GemFactoryError::PositionExpired => revert_with(I::PositionExpired {}),
             GemFactoryError::InsufficientProofOfWork => revert_with(I::InsufficientProofOfWork {}),
+            GemFactoryError::CannotMineInIssueBlock => revert_with(I::CannotMineInIssueBlock {}),
             GemFactoryError::InvalidCurrency { currency } => {
                 revert_with(I::InvalidCurrency { currency })
             }

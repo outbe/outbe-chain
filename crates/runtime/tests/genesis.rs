@@ -212,13 +212,11 @@ fn seed_genesis_writes_committee_snapshot_slots_31_to_40_matching_rust_schema() 
 /// runtime preservation, and genesis seeding so an uncovered precompile fails
 /// loudly instead of losing its storage.
 ///
-/// This test skips the stateless verifier: they own no EVM storage to
-/// preserve, matching the `MARKER_EXEMPT` rationale in the executor's
-/// `marker_list_covers_stateful_precompiles` unit test.
+/// The marker also makes each precompile a system address for SELFDESTRUCT, so
+/// the check covers the stateless verifier too.
 #[test]
 fn every_stateful_precompile_preserved_by_marker_or_genesis() {
     use outbe_runtime::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES;
-    use outbe_system_common::addresses::ZKPROOF_VERIFY_ADDRESS;
 
     let (_tmp, genesis, _raw) = run_seed_genesis(
         FIXTURE_GENESIS,
@@ -226,15 +224,8 @@ fn every_stateful_precompile_preserved_by_marker_or_genesis() {
         FIXTURE_VALIDATORS_4_PUBLIC_ONLY,
     );
 
-    // These routes own no storage, so neither runtime markers nor genesis code
-    // need to cover them.
-    let storage_free = [ZKPROOF_VERIFY_ADDRESS];
-
     let mut checked = 0usize;
     for addr in outbe_runtime::precompiles::outbe_exact_precompile_addresses() {
-        if storage_free.contains(addr) {
-            continue;
-        }
         checked += 1;
 
         let in_marker = OUTBE_RUNTIME_MARKER_ADDRESSES.contains(addr);

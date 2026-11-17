@@ -1,4 +1,4 @@
-//! Cleanup sweep: deletes the unpaid gems of the forfeited groups. It moves no value:
+//! Cleanup sweep: deletes the unsettled gems of the forfeited groups. It moves no value:
 //! the expiry already returned their load.
 
 use alloy_primitives::{B256, U256};
@@ -12,7 +12,7 @@ use outbe_primitives::{
 
 use crate::errors::GemFactoryError;
 
-/// Deletes the unpaid gems of the forfeited groups. Returns the gems deleted.
+/// Deletes the unsettled gems of the forfeited groups. Returns the gems deleted.
 pub fn cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = GemContract::new(ctx.storage.clone());
     let mut cleanup = GemCleanup::new(ctx);
@@ -41,7 +41,7 @@ impl<'a, 's> GemCleanup<'a, 's> {
     }
 }
 
-/// A forfeited group's members are its unpaid gems.
+/// A forfeited group's members are its unsettled gems.
 impl DeadlineHandler<B256> for GemCleanup<'_, '_> {
     type Member = U256;
 

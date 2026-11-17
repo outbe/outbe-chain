@@ -16,9 +16,14 @@ interface IStablecoin {
     event TransferWithMemo(address indexed from, address indexed to, uint256 amount, bytes32 indexed memo);
     event Frozen(address indexed account, uint256 amount);
     event ForcedTransfer(address indexed from, address indexed to, uint256 amount);
+    /// @notice Also emitted for each of the six first roles at creation, with the issuer as
+    ///         `account` and the stablecoin factory as `actor`, and for ADMIN when a candidate
+    ///         accepts an admin transfer. So the role events give the full role table.
     event RoleGranted(bytes32 indexed role, address indexed account, address indexed actor);
+    /// @notice Also emitted for ADMIN of the old admin when a candidate accepts an admin
+    ///         transfer, with the candidate as `actor`.
     event RoleRevoked(bytes32 indexed role, address indexed account, address indexed actor);
-    event SupplyCapChanged(uint256 previousCap, uint256 newCap, address indexed actor);
+    event SupplyCapChanged(uint256 previousCapMinor, uint256 newCapMinor, address indexed actor);
     event PolicyChanged(uint256 previousPolicyId, uint256 newPolicyId, address indexed actor);
     event Paused(address account);
     event Unpaused(address account);
@@ -135,15 +140,15 @@ interface IStablecoin {
     /// two-step transfer.
     function revokeRole(bytes32 role, address account) external;
 
-    function setSupplyCap(uint256 newCap) external;
+    function changeSupplyCap(uint256 newCap) external;
 
-    function setPolicyId(uint256 newPolicyId) external;
+    function changePolicy(uint256 newPolicyId) external;
 
     function pause() external;
 
     function unpause() external;
 
-    function beginAdminTransfer(address candidate) external;
+    function startAdminTransfer(address candidate) external;
 
     function cancelAdminTransfer() external;
 

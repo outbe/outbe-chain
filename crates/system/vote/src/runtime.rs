@@ -476,11 +476,7 @@ impl Vote<'_> {
             }
             ProposalStatus::Expired => {
                 outbe_promislimit::PromisLimitContract::new(self.storage.clone())
-                    .burn_to_promis_limit(
-                        VOTE_ADDRESS,
-                        bond.amount,
-                        outbe_promislimit::BurnSource::ProposalBond,
-                    )?;
+                    .burn(outbe_promislimit::BurnSource::ProposalBond, bond.amount)?;
                 self.set_bond_state(proposal_id, BondState::Burned)?;
                 self.notify_proposal_bond_burned(proposal_id, owner, bond.amount)
             }

@@ -1,7 +1,7 @@
 use std::string::String;
 
 use alloy_primitives::{b256, keccak256, Address, B256, U256};
-use alloy_sol_types::SolValue;
+use alloy_sol_types::{SolEvent, SolValue};
 use outbe_primitives::error::Result;
 use outbe_stablecoinpolicy::api::{
     can_receive as policy_can_receive, can_send as policy_can_send, policy_exists,
@@ -14,6 +14,7 @@ use outbe_system_common::stablecoin_fork::STABLECOIN_V1_SCHEMA_VERSION;
 
 use crate::api::{FactoryTokenInitialization, TokenIdentity};
 use crate::errors::StablecoinStateError;
+use crate::precompile::IStablecoin;
 use crate::schema::{allowance_key, role_key, StablecoinContract, ADMIN_ROLE, OPERATIONAL_ROLES};
 
 const ROOT_SLOT_COUNT: u64 = 19;
@@ -61,10 +62,15 @@ impl StablecoinContract<'_> {
             self.supply_cap.write(payload.supply_cap)?;
             self.policy_id.write(payload.policy_id)?;
             self.admin.write(payload.issuer)?;
-            self.roles
-                .write(&role_key(ADMIN_ROLE, payload.issuer), true)?;
-            for role in OPERATIONAL_ROLES {
+            // The role events of the six first roles give the full role table.
+            for role in std::iter::once(ADMIN_ROLE).chain(OPERATIONAL_ROLES) {
                 self.roles.write(&role_key(role, payload.issuer), true)?;
+                let granted = IStablecoin::RoleGranted {
+                    role,
+                    account: payload.issuer,
+                    actor: STABLECOIN_FACTORY_ADDRESS,
+                };
+                storage.emit_event(self.address, granted.encode_log_data())?;
             }
             // The schema marker is the final write: schema 1 always denotes a
             // completely initialized zero-supply ledger.

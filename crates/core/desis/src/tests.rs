@@ -816,7 +816,6 @@ fn brief_auction_oversized_limit_returns_typed_rejection() {
             U256::MAX,
             U256::from(crate::constants::CANCELED_LIMIT_OVERFLOW),
             U256::ZERO,
-            U256::MAX,
         ]
     );
 }
@@ -872,7 +871,6 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
             supply,
             U256::from(crate::constants::CANCELED_LIMIT_OVERFLOW),
             U256::ZERO,
-            supply,
         ]
     );
 }
@@ -2049,7 +2047,12 @@ fn clearing_transitions_to_cleared() {
 fn start_day(
     desis_limit_minor: u128,
     has_limit: bool,
-) -> (AuctionStage, U256, Vec<alloy_primitives::LogData>) {
+) -> (
+    AuctionStage,
+    U256,
+    Vec<alloy_primitives::LogData>,
+    Vec<U256>,
+) {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
     storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
@@ -2068,7 +2071,7 @@ fn start_day(
     let events = storage
         .get_events(outbe_system_common::addresses::DESIS_ADDRESS)
         .clone();
-    (stage, unallocated, events)
+    (stage, unallocated, events, desis_limit_returns(&storage))
 }
 
 fn below_one_unit(
@@ -2130,19 +2133,13 @@ fn the_load_steps_on_a_day_the_new_load_cancels() {
 #[test]
 #[cfg(not(feature = "e2e-test"))]
 fn a_limit_short_of_one_unit_is_cancelled_at_start() {
-    let (stage, unallocated, events) = start_day(LOAD_MINOR - 1, true);
+    let (stage, unallocated, events, returns) = start_day(LOAD_MINOR - 1, true);
 
     assert_eq!(stage, AuctionStage::Cancelled);
     assert_eq!(unallocated, U256::from(LOAD_MINOR - 1));
     let event = below_one_unit(&events).expect("IntexAuctionCanceled below one unit");
     assert_eq!(event.reason, crate::constants::CANCELED_BELOW_ONE_UNIT);
-    assert_eq!(
-        limit_amounts(
-            &events,
-            crate::precompile::IDesis::DesisLimitReturned::SIGNATURE_HASH
-        ),
-        vec![U256::from(LOAD_MINOR - 1)]
-    );
+    assert_eq!(returns, vec![U256::from(LOAD_MINOR - 1)]);
 }
 
 fn allocation_records(
@@ -2161,21 +2158,32 @@ fn is_desis_limit_set(log: &alloy_primitives::LogData) -> bool {
     crate::precompile::IDesis::DesisLimitSet::decode_log_data(log).is_ok()
 }
 
-/// `DesisLimitSet.amount`, cancel reason, `DesisLimitAllocated.amount`, `DesisLimitReturned.amount`.
+/// `DesisLimitSet.amount`, cancel reason, `DesisLimitAllocated.amount`.
 fn overflow_limit_events(logs: &[alloy_primitives::LogData]) -> Vec<U256> {
     use crate::precompile::IDesis;
     use alloy_sol_types::SolEvent;
-    assert_eq!(logs.len(), 4);
+    assert_eq!(logs.len(), 3);
     let set = IDesis::DesisLimitSet::decode_log_data(&logs[0]).unwrap();
     let canceled = IDesis::IntexAuctionCanceled::decode_log_data(&logs[1]).unwrap();
     let allocated = IDesis::DesisLimitAllocated::decode_log_data(&logs[2]).unwrap();
-    let returned = IDesis::DesisLimitReturned::decode_log_data(&logs[3]).unwrap();
     vec![
         set.amountMinor,
         U256::from(canceled.reason),
         allocated.amountMinor,
-        returned.amountMinor,
     ]
+}
+
+/// Amounts that Desis adds back to the Promis Limit with code 14.
+pub(crate) fn desis_limit_returns(storage: &HashMapStorageProvider) -> Vec<U256> {
+    use alloy_sol_types::SolEvent;
+    use outbe_promislimit::precompile::IPromisLimit::PromisLimitAdded;
+    storage
+        .get_events(outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS)
+        .iter()
+        .filter_map(|log| PromisLimitAdded::decode_log_data(log).ok())
+        .filter(|added| added.source == outbe_promislimit::LimitSource::DesisLimit as u8)
+        .map(|added| added.amountMinor)
+        .collect()
 }
 
 fn limit_amounts(
@@ -2191,12 +2199,8 @@ fn limit_amounts(
                 crate::precompile::IDesis::DesisLimitSet::decode_log_data(log)
                     .unwrap()
                     .amountMinor
-            } else if signature == crate::precompile::IDesis::DesisLimitAllocated::SIGNATURE_HASH {
-                crate::precompile::IDesis::DesisLimitAllocated::decode_log_data(log)
-                    .unwrap()
-                    .amountMinor
             } else {
-                crate::precompile::IDesis::DesisLimitReturned::decode_log_data(log)
+                crate::precompile::IDesis::DesisLimitAllocated::decode_log_data(log)
                     .unwrap()
                     .amountMinor
             }
@@ -2207,20 +2211,14 @@ fn limit_amounts(
 #[test]
 #[cfg(not(feature = "e2e-test"))]
 fn a_day_cancelled_at_start_records_a_zero_desis_allocation() {
-    let (stage, _, events) = start_day(LOAD_MINOR - 1, true);
+    let (stage, _, events, returns) = start_day(LOAD_MINOR - 1, true);
 
     assert_eq!(stage, AuctionStage::Cancelled);
     let records = allocation_records(&events);
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].emissionDay, EMISSION_DAY.value());
     assert_eq!(records[0].amountMinor, U256::ZERO);
-    assert_eq!(
-        limit_amounts(
-            &events,
-            crate::precompile::IDesis::DesisLimitReturned::SIGNATURE_HASH
-        ),
-        vec![U256::from(LOAD_MINOR - 1)]
-    );
+    assert_eq!(returns, vec![U256::from(LOAD_MINOR - 1)]);
 }
 
 #[test]
@@ -2243,28 +2241,19 @@ fn a_failed_day_records_a_zero_desis_allocation() {
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].amountMinor, U256::ZERO);
     assert_eq!(
-        limit_amounts(
-            events,
-            crate::precompile::IDesis::DesisLimitReturned::SIGNATURE_HASH
-        ),
+        desis_limit_returns(&storage),
         vec![U256::from(10 * LOAD_MINOR)]
     );
 }
 
 #[test]
 fn a_zero_limit_briefed_with_a_limit_is_cancelled_below_one_unit() {
-    let (stage, _, events) = start_day(0, true);
+    let (stage, _, events, returns) = start_day(0, true);
 
     assert_eq!(stage, AuctionStage::Cancelled);
     let event = below_one_unit(&events).expect("IntexAuctionCanceled below one unit");
     assert_eq!(event.reason, crate::constants::CANCELED_BELOW_ONE_UNIT);
-    assert_eq!(
-        limit_amounts(
-            &events,
-            crate::precompile::IDesis::DesisLimitReturned::SIGNATURE_HASH
-        ),
-        vec![U256::ZERO]
-    );
+    assert!(returns.is_empty());
 }
 
 /// The `dayState` of every AUCTION_STAGE_START message the provider sent.
@@ -2628,11 +2617,11 @@ fn clearing_reports_the_desis_allocation_and_the_unused_limit() {
     let allocation = &records[0];
     assert_eq!(allocation.emissionDay, EMISSION_DAY.value());
     assert_eq!(allocation.amountMinor, U256::from(LOAD_MINOR));
-    let unused = logs
-        .iter()
-        .find_map(|log| IDesis::DesisLimitReturned::decode_log_data(log).ok())
-        .expect("the clearing returns its unused Desis Limit");
-    assert_eq!(unused.amountMinor, U256::from(2 * LOAD_MINOR));
+    assert_eq!(
+        desis_limit_returns(&storage),
+        vec![U256::from(2 * LOAD_MINOR)],
+        "the clearing returns its unused Desis Limit"
+    );
     assert_eq!(
         limit_amounts(logs, IDesis::DesisLimitSet::SIGNATURE_HASH),
         vec![U256::from(3 * LOAD_MINOR)]

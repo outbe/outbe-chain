@@ -84,6 +84,25 @@ interface IGem {
     /// @notice ERC-4906: emitted over the whole id range when a group is called, since
     ///         gem ids carry no order a narrower range could follow.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
+    /// @notice A new gem was issued (agent reward or merchant flow).
+    event GemIssued(
+        uint256 indexed gemId,
+        address indexed owner,
+        bytes14 indexed seriesId,
+        uint16 subSeriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        bytes payload
+    );
+    /// @notice A gem's Cost Amount was settled into the Reserve: `amountMinor` of `asset`.
+    event GemSettled(
+        uint256 indexed gemId,
+        address indexed owner,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        address asset,
+        uint256 amountMinor
+    );
     /// @notice The daily Call scan force-called every gem in the sub-series.
     event GemSeriesCalled(
         bytes14 indexed seriesId,
@@ -93,7 +112,7 @@ interface IGem {
         uint64 calledAt,
         uint64 settlementDeadline
     );
-    /// @notice The sub-series notice period lapsed: its `forfeitedCount` unpaid gems are forfeited and
+    /// @notice The sub-series notice period lapsed: its `forfeitedCount` unsettled gems are forfeited and
     ///         their `forfeitedAmountMinor` returned at once. The cleanup deletes them after.
     event GemSeriesClosed(
         bytes14 indexed seriesId,

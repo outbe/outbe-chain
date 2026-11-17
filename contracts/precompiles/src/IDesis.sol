@@ -71,7 +71,6 @@ interface IDesis {
     // --- Events ---
     event DesisLimitSet(uint32 indexed emissionDay, uint256 amountMinor);
     event DesisLimitAllocated(uint32 indexed emissionDay, uint256 amountMinor);
-    event DesisLimitReturned(uint32 indexed emissionDay, uint256 amountMinor);
     event IntexPromisLoadSet(
         uint32 indexed emissionDay,
         uint128 loadMinor,
