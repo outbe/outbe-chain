@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use alloy_primitives::U256;
 use serde_json::Value;
-use time::{format_description::well_known::Rfc3339, Date, Month, OffsetDateTime};
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 use crate::error::GenesisError;
 use crate::keccak::keccak256;
@@ -405,20 +405,6 @@ pub fn parse_u64(val: &Value) -> Result<u64, GenesisError> {
 pub fn parse_u32(val: &Value) -> Result<u32, GenesisError> {
     let v = parse_i128(val)?;
     u32::try_from(v).map_err(|_| GenesisError::validation(format!("cannot parse as u32: {val}")))
-}
-
-/// Convert a `YYYYMMDD` worldwide day into its UTC midnight unix timestamp.
-pub fn wwd_to_day_timestamp(wwd: u32) -> Result<u64, GenesisError> {
-    let year = (wwd / 10_000) as i32;
-    let month_num = ((wwd / 100) % 100) as u8;
-    let day = (wwd % 100) as u8;
-    let month = Month::try_from(month_num)
-        .map_err(|_| GenesisError::validation(format!("invalid month in worldwide day: {wwd}")))?;
-    let date = Date::from_calendar_date(year, month, day)
-        .map_err(|_| GenesisError::validation(format!("invalid calendar date: {wwd}")))?;
-    let ts = date.midnight().assume_utc().unix_timestamp();
-    u64::try_from(ts)
-        .map_err(|_| GenesisError::validation(format!("pre-epoch worldwide day: {wwd}")))
 }
 
 /// Parse `config.genesisTime` (ISO 8601 UTC) as a unix timestamp.
