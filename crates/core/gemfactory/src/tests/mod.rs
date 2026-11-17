@@ -1,7 +1,7 @@
 use alloy_primitives::{address, Address, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_enclave::promis::{
-    decrypt_balance, derive_modify_key, derive_view_key, modify_mac, ModifyOperation,
+    decrypt_balance, derive_account_keys, derive_view_key, modify_mac, ModifyOperation,
 };
 use outbe_enclave::protocol::PromisOp;
 use outbe_gem::{api as gem_api, GemContract, GemItemState, GemState, GemView};
@@ -49,7 +49,7 @@ fn no_auth() -> ModifyAuth {
 /// the in-process Promis enclave to be installed (chain id 1 matches the harness).
 fn promis_auth(account: Address, amount: U256, nonce: u64) -> ModifyAuth {
     let sk = outbe_promis::enclave_client::test_enclave::state_key();
-    let mk = derive_modify_key(&sk, account).unwrap();
+    let mk = derive_account_keys(&sk, account).unwrap();
     ModifyAuth {
         mac: modify_mac(
             &mk,
