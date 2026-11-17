@@ -299,3 +299,46 @@ fn transfer_rejects_wrong_chunk_offset_commit_kind_and_terminal_mode() {
         assert_eq!(calls, fault_at + 1);
     }
 }
+
+#[path = "dkg_e2e_in_process/support.rs"]
+mod resident;
+
+#[test]
+fn resident_upgrade_export_checks_proof_and_keeps_donor_material() {
+    use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
+    use outbe_tee::{
+        resident::ResidentOfferMaterial, upgrade_transfer::export_from_network_source,
+    };
+    let binding = NetworkBindingV1 {
+        chain_id: context().chain_id,
+        genesis_hash: context().genesis_hash,
+        attestation_mode: AttestationMode::NoAttestationDev,
+    };
+    let donor = std::sync::Arc::new(resident::context(7, binding));
+    donor
+        .activate_for_test(
+            ResidentOfferMaterial::for_test(vec![5; 96], B256::from(binding.chain_id), 20, 21)
+                .unwrap(),
+        )
+        .unwrap();
+    let public = donor.network_encryption_public().unwrap();
+    let mut recipient = context();
+    recipient.network_encryption_public = public;
+    let _runtime = outbe_tee::client_global::set_in_process_tee_context_for_test(Some((
+        std::sync::Arc::clone(&donor),
+        |_, _, _| Err(TransportError::UnexpectedResponse),
+    )));
+    // Even an installed resident donor must not turn malformed finalized proof into an export.
+    assert!(export_from_network_source(recipient, &proof(), false).is_err());
+    assert_eq!(donor.network_encryption_public().unwrap(), public);
+    let exported = export_from_network_source(recipient, &proof(), true).unwrap();
+    assert_eq!(
+        exported,
+        export_from_network_source(recipient, &proof(), true).unwrap()
+    );
+    let artifact =
+        outbe_tee::dcap_protocol::DcapOnboardingArtifactV1::decode_canonical(&exported).unwrap();
+    assert_eq!(artifact.context, recipient);
+    assert!(!artifact.ciphertext.is_empty());
+    assert_eq!(donor.network_encryption_public().unwrap(), public);
+}
