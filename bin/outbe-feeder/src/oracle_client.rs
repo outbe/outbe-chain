@@ -229,14 +229,28 @@ impl OracleClient {
             .await?;
         Ok(targets.bases.into_iter().zip(targets.quotes).collect())
     }
-    /// The currencies that are policy rate vote targets at `head`.
-    pub async fn rate_targets(&self, head: &Head) -> Result<Vec<u16>> {
-        self.call(
-            head,
-            ORACLE_ADDRESS,
-            IOracle::getPolicyRateCurrenciesCall {},
-        )
-        .await
+    /// Keeps the rate votes of the currencies that are policy rate vote
+    /// targets at `head`. The chain rejects the whole vote if one rate names
+    /// another currency. With no rate votes, it makes no call.
+    pub async fn only_rate_targets(
+        &self,
+        head: &Head,
+        rates: Vec<crate::rates::RateVote>,
+    ) -> Result<Vec<crate::rates::RateVote>> {
+        if rates.is_empty() {
+            return Ok(rates);
+        }
+        let targets = self
+            .call(
+                head,
+                ORACLE_ADDRESS,
+                IOracle::getPolicyRateCurrenciesCall {},
+            )
+            .await?;
+        Ok(rates
+            .into_iter()
+            .filter(|(currency, _, _)| targets.contains(currency))
+            .collect())
     }
     pub async fn price_observation(
         &self,

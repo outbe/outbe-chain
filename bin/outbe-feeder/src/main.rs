@@ -455,25 +455,6 @@ impl FeederTickContext<'_> {
         }
     }
 
-    /// Policy rates of the `rate_providers` currencies, within 15 seconds.
-    /// A timeout gives no rates, and the pair prices still go.
-    async fn rate_votes(&mut self) -> Vec<rates::RateVote> {
-        if self.config.rate_providers.is_empty() {
-            return Vec::new();
-        }
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| elapsed.as_secs());
-        let collect = self.rates.votes(&self.config.rate_providers, now);
-        match tokio::time::timeout(std::time::Duration::from_secs(15), collect).await {
-            Ok(rates) => rates,
-            Err(_) => {
-                warn!("policy rates took longer than 15 seconds; no rates in this vote");
-                Vec::new()
-            }
-        }
-    }
-
     async fn prepare_pending_vote(&mut self, period: u64, replace_pending: bool) -> Result<bool> {
         use oracle_client::{PreflightResult, VoteSigningContext};
         let aggregated = tokio::time::timeout(
@@ -487,7 +468,7 @@ impl FeederTickContext<'_> {
         // Gas prices come before the period check below, so a slow RPC cannot
         // carry the vote into the next period.
         let gas = self.gas_votes(period, &aggregated).await;
-        let rates = self.rate_votes().await;
+        let rates = self.rates.collect(&self.config.rate_providers).await;
         let fresh = self.client.head().await?;
         if fresh.period(self.config.oracle.vote_period) != period {
             self.health
@@ -511,17 +492,7 @@ impl FeederTickContext<'_> {
         if aggregated.is_empty() {
             return Err(FeederError::NoPriceDataAvailable.into());
         }
-        // The chain rejects the whole vote if one rate names a currency that
-        // is no rate vote target.
-        let rates = if rates.is_empty() {
-            rates
-        } else {
-            let rate_targets = self.client.rate_targets(&fresh).await?;
-            rates
-                .into_iter()
-                .filter(|(currency, _, _)| rate_targets.contains(currency))
-                .collect()
-        };
+        let rates = self.client.only_rate_targets(&fresh, rates).await?;
         let calldata = vote_builder::encode_vote(&aggregated, &gas, &rates);
         if let Ok(decoded) = vote_builder::decode_vote_log(&calldata) {
             info!(vote=%decoded,"vote calldata");

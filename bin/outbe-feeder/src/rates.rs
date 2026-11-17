@@ -21,6 +21,8 @@ use tracing::warn;
 
 /// The feeder asks a source again after this time.
 const REFRESH_SECS: u64 = 10 * 60;
+/// Time limit of all rate reads of one vote.
+const COLLECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// Time limit of one read of a source.
 const READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// The Bank of England and the Bank of Japan need a start date. The feeder
@@ -82,6 +84,24 @@ pub struct RateCache {
 }
 
 impl RateCache {
+    /// The rate votes of this vote, within [`COLLECT_TIMEOUT`]. A timeout
+    /// gives no rates, and the pair prices still go.
+    pub async fn collect(&mut self, providers: &[RateProviderConfig]) -> Vec<RateVote> {
+        if providers.is_empty() {
+            return Vec::new();
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_secs());
+        match tokio::time::timeout(COLLECT_TIMEOUT, self.votes(providers, now)).await {
+            Ok(rates) => rates,
+            Err(_) => {
+                warn!("policy rates took longer than 15 seconds; no rates in this vote");
+                Vec::new()
+            }
+        }
+    }
+
     /// The rate votes of this vote. `now` is the Unix time.
     ///
     /// A source that fails keeps its last value. A currency with no value
