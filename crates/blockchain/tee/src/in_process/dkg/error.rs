@@ -1,5 +1,6 @@
 //! Secret-bearing library errors are deliberately reduced to safe operation codes.
 #[derive(Debug, thiserror::Error)]
+/// Closed rejection reasons without secret-bearing cryptographic error dumps.
 pub enum DkgError {
     #[error("DKG operation rejected: {operation:?}")]
     Operation { operation: DkgOperation },
@@ -21,6 +22,7 @@ pub enum DkgError {
     TrailingBytes,
 }
 #[derive(Debug, thiserror::Error)]
+/// Illegal lifecycle transitions for resident dealer/player state.
 pub enum DkgSeamOrderError {
     #[error("dealer not started or already finalized")]
     DealerUnavailable,
@@ -35,6 +37,7 @@ pub enum DkgSeamOrderError {
 }
 
 #[derive(Clone, Copy, Debug)]
+/// Safe operation identifiers for secret-bearing library rejections.
 pub enum DkgOperation {
     DecodeOfferPartial,
     VerifyOfferPartial,

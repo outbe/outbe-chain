@@ -26,6 +26,7 @@ pub(super) struct ActiveMaterial {
     pub material: Arc<ResidentOfferMaterial>,
     pub anchor: Option<VerifiedAdmissionAnchorV1>,
 }
+/// Thread-safe RAM owner for one bound identity, ceremony store and admitted network key.
 pub struct InProcessTeeContext {
     pub(super) keys: ResidentTeeKeys,
     pub(super) active: RwLock<Option<ActiveMaterial>>,
@@ -78,38 +79,49 @@ impl InProcessTeeContext {
             proof_source,
         })
     }
+    /// Return the immutable NodeHost identity bound at construction.
     pub fn identity(&self) -> &NodeHostIdentityV1 {
         &self.identity
     }
+    /// Return the exact local initialization manifest, not an admission-sender assertion.
     pub fn manifest(&self) -> &EnclaveInitializationManifestV1 {
         &self.manifest
     }
+    /// Construct the stable NodeHost authorization witness from the bound manifest.
     pub fn authorization_witness(&self) -> Result<NodeHostAuthorizationWitnessV1> {
         Ok(NodeHostAuthorizationWitnessV1::from_manifest(
             &self.manifest,
         )?)
     }
+    /// Return elapsed process uptime using a monotonic clock.
     pub fn uptime_s(&self) -> u64 {
         self.started.elapsed().as_secs()
     }
+    /// Return the public Noise responder key.
     pub fn noise_public(&self) -> [u8; 32] {
         self.keys.noise_public()
     }
+    /// Return the public onboarding-artifact recipient key.
     pub fn recipient_public(&self) -> [u8; 32] {
         self.keys.tribute_offer_public()
     }
+    /// Return the Ed25519 public key authenticating domain attestations.
     pub fn attestation_public(&self) -> [u8; 32] {
         self.keys.attestation_pub()
     }
+    /// Return the public key used to seal this participant's DKG shares.
     pub fn dkg_enc_public(&self) -> [u8; 32] {
         self.keys.dkg_enc_public()
     }
+    /// Return the canonical public BLS ceremony identity.
     pub fn tee_bls_public_bytes(&self) -> Vec<u8> {
         self.keys.tee_bls_public_bytes()
     }
+    /// Sign a caller-prepared domain-separated preimage without exposing the signing key.
     pub fn sign_domain_attestation(&self, preimage: &[u8]) -> [u8; 64] {
         self.keys.sign_domain_attestation(preimage)
     }
+    /// Report whether resident offer material has been activated.
     pub fn offer_key_ready(&self) -> Result<bool> {
         Ok(self
             .active
@@ -117,15 +129,19 @@ impl InProcessTeeContext {
             .map_err(|_| InProcessError::LockPoisoned)?
             .is_some())
     }
+    /// Return the active network offer public key, or NotReady.
     pub fn network_encryption_public(&self) -> Result<[u8; 32]> {
         Ok(self.material()?.public())
     }
+    /// Return the admitted key epoch, or NotReady.
     pub fn key_epoch(&self) -> Result<u64> {
         Ok(self.material()?.key_epoch())
     }
+    /// Return the admitted network encryption epoch, or NotReady.
     pub fn network_encryption_epoch(&self) -> Result<u64> {
         Ok(self.material()?.tribute_offer_epoch())
     }
+    /// Return the verified admission anchor; founding DKG has no admission anchor.
     pub fn admission_anchor(&self) -> Result<Option<VerifiedAdmissionAnchorV1>> {
         Ok(self
             .active
@@ -171,6 +187,7 @@ impl InProcessTeeContext {
         });
         Ok(())
     }
+    /// Derive an opaque state key using the domain adapter's label and epoch.
     pub fn state_key_handle(&self, label: &[u8], epoch: u64) -> Result<StateKeyHandle> {
         Ok(self.material()?.derive_state_key_handle(
             label,
@@ -178,6 +195,7 @@ impl InProcessTeeContext {
             epoch,
         )?)
     }
+    /// Derive opaque account view/modify keys from a domain-bound state key.
     pub fn account_keys_handle(
         &self,
         state_label: &[u8],
@@ -193,12 +211,14 @@ impl InProcessTeeContext {
             modify_label,
         )?)
     }
+    /// Borrow the opaque offer handle while keeping its resident owner alive.
     pub fn with_offer_key_handle<T>(
         &self,
         operation: impl FnOnce(&OfferKeyHandle) -> T,
     ) -> Result<T> {
         Ok(operation(self.material()?.offer_key_handle()))
     }
+    /// Bind a fresh ceremony to this identity and an exact participant encryption map.
     pub fn open_dkg_session(
         &self,
         id: CeremonyKey,
@@ -227,6 +247,7 @@ impl InProcessTeeContext {
                 recipient_enc_keys,
             )
     }
+    /// Run one ceremony seam under the session lock; callbacks must not re-enter this context.
     pub fn with_dkg_session<T>(
         &self,
         id: &CeremonyKey,
@@ -239,6 +260,7 @@ impl InProcessTeeContext {
                 .get_mut(id)?,
         )
     }
+    /// Drop an abandoned ceremony and zeroize its owned secret state.
     pub fn abort_dkg_session(&self, id: &CeremonyKey) -> Result<()> {
         self.sessions
             .lock()
@@ -246,6 +268,7 @@ impl InProcessTeeContext {
             .remove(id);
         Ok(())
     }
+    /// Verify/recover sealed offer partials, activate in RAM and drop the ceremony atomically.
     pub fn complete_founding_dkg(
         &self,
         id: &CeremonyKey,
@@ -265,5 +288,51 @@ impl InProcessTeeContext {
         self.activate(material, None)?;
         sessions.remove(id);
         Ok(public)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::in_process::test_support;
+    use outbe_primitives::tee_attestation_v1::AttestationMode;
+    #[test]
+    fn in_process_activation_rejection_preserves_active_material_and_anchor() {
+        let context =
+            test_support::context(AttestationMode::NoAttestationDev, ProofSourceV1::NoHardware);
+        let anchor = VerifiedAdmissionAnchorV1 {
+            block_number: 10,
+            block_hash: B256::repeat_byte(1),
+            state_root: B256::repeat_byte(2),
+            consensus_timestamp: 1000,
+        };
+        let original = test_support::material(&context, 5);
+        let public = original.public();
+        context.activate(original, Some(anchor)).unwrap();
+        for (byte, candidate) in [
+            (6, Some(anchor)),
+            (5, None),
+            (
+                5,
+                Some(VerifiedAdmissionAnchorV1 {
+                    block_number: 9,
+                    ..anchor
+                }),
+            ),
+            (
+                5,
+                Some(VerifiedAdmissionAnchorV1 {
+                    block_hash: B256::repeat_byte(3),
+                    ..anchor
+                }),
+            ),
+        ] {
+            assert!(matches!(
+                context.activate(test_support::material(&context, byte), candidate),
+                Err(InProcessError::ActivationConflict)
+            ));
+            assert_eq!(context.network_encryption_public().unwrap(), public);
+            assert_eq!(context.admission_anchor().unwrap(), Some(anchor));
+        }
     }
 }

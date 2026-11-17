@@ -7,6 +7,7 @@ pub use context::InProcessTeeContext;
 pub use proof_source::{HardwareProofSourceV1, ProofSourceV1};
 
 #[derive(Debug, thiserror::Error)]
+/// Typed in-process rejection; secret-bearing library errors never enter its formatting.
 pub enum InProcessError {
     #[error("resident cryptography rejected operation")]
     Crypto(#[from] crate::resident::TeeCryptoError),
@@ -35,4 +36,8 @@ pub enum InProcessError {
     #[error("resident key already active or admission anchor regressed")]
     ActivationConflict,
 }
+/// Result of a resident operation, preserving typed rejection causes.
 pub type Result<T> = std::result::Result<T, InProcessError>;
+
+#[cfg(test)]
+mod test_support;

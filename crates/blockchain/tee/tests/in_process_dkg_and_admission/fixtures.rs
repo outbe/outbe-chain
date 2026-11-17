@@ -110,6 +110,20 @@ pub fn run_dkg(contexts: &[InProcessTeeContext]) -> [u8; 32] {
             (key, c.dkg_enc_public())
         })
         .collect::<BTreeMap<_, _>>();
+    let mut missing = recipient_keys.clone();
+    missing.pop_first();
+    assert!(matches!(
+        contexts[0].open_dkg_session(id, 0, &participants, missing),
+        Err(outbe_tee::in_process::InProcessError::IdentityMismatch)
+    ));
+    let mut wrong_local = recipient_keys.clone();
+    let local =
+        bls12381::PublicKey::read(&mut contexts[0].tee_bls_public_bytes().as_slice()).unwrap();
+    wrong_local.insert(local, contexts[1].dkg_enc_public());
+    assert!(matches!(
+        contexts[0].open_dkg_session(id, 0, &participants, wrong_local),
+        Err(outbe_tee::in_process::InProcessError::IdentityMismatch)
+    ));
     for context in contexts {
         context
             .open_dkg_session(id, 0, &participants, recipient_keys.clone())
@@ -143,6 +157,15 @@ pub fn run_dkg(contexts: &[InProcessTeeContext]) -> [u8; 32] {
                 .unwrap(),
         );
     }
+    assert!(matches!(
+        contexts[0].with_dkg_session(&id, |s| s.player_finalize_encoded(&logs[..3])),
+        Err(outbe_tee::in_process::InProcessError::Dkg(
+            outbe_tee::in_process::dkg::DkgError::IncompleteDealerSet {
+                actual: 3,
+                expected: 4
+            }
+        ))
+    ));
     let mut output = None;
     for context in contexts {
         let (public, _) = context
@@ -174,6 +197,7 @@ pub fn run_dkg(contexts: &[InProcessTeeContext]) -> [u8; 32] {
                     .to_wire_bytes()
             })
             .collect::<Vec<_>>();
+        verify_bad_partial_rejected(context, &id, &sealed, &recipient_keys);
         let public = context.complete_founding_dkg(&id, &sealed, 0).unwrap();
         if let Some(previous) = offer_public {
             assert_eq!(public, previous);
@@ -328,4 +352,64 @@ impl AdmissionFixture {
             expected_network_encryption_epoch: context.network_encryption_epoch,
         }
     }
+}
+
+fn verify_bad_partial_rejected(
+    context: &InProcessTeeContext,
+    id: &[u8; 32],
+    sealed: &[Vec<u8>],
+    recipients: &BTreeMap<bls12381::PublicKey, [u8; 32]>,
+) {
+    use commonware_codec::{EncodeSize as _, Write as _};
+    use commonware_cryptography::bls12381::primitives::{ops::threshold, variant::MinSig};
+    use outbe_tee::in_process::{
+        dkg::{DkgError, DkgOperation, TEE_OFFER_MESSAGE, TEE_OFFER_NAMESPACE},
+        InProcessError,
+    };
+    let counterfeit = outbe_simplex::bls::bootstrap_dkg_for_participants(
+        commonware_utils::ordered::Set::from_iter_dedup(recipients.keys().cloned()),
+    )
+    .unwrap();
+    let partial = threshold::sign_message::<MinSig>(
+        &counterfeit.shares[0],
+        TEE_OFFER_NAMESPACE,
+        TEE_OFFER_MESSAGE,
+    );
+    let mut plaintext = zeroize::Zeroizing::new(Vec::with_capacity(partial.encode_size()));
+    partial.write(&mut *plaintext);
+    let recipient = context.dkg_enc_public();
+    let blob = outbe_tee::tee_encrypt::tee_encrypt(
+        &recipient,
+        &recipient,
+        b"outbe/tee/dkg-share/v1",
+        &plaintext,
+    )
+    .unwrap();
+    let mut forged = sealed.to_vec();
+    forged[0] = blob.to_wire_bytes();
+    assert!(matches!(
+        context.complete_founding_dkg(id, &forged, 0),
+        Err(InProcessError::Dkg(DkgError::Operation {
+            operation: DkgOperation::VerifyOfferPartial
+        }))
+    ));
+    assert!(!context.offer_key_ready().unwrap());
+}
+
+pub fn wrong_committee_certificate(proof: &FinalizedAdmissionWitnessV1) -> Vec<u8> {
+    use alloy_consensus::BlockHeader as _;
+    use alloy_rlp::Decodable as _;
+    let header =
+        outbe_primitives::OutbeHeader::decode(&mut proof.admission.descendants[0].as_slice())
+            .unwrap();
+    super::finality::FinalityCommitteeFixture::new(70)
+        .certify_child_block(super::finality::CertifiedChildBlockInput {
+            epoch: Epoch::new(1),
+            height: header.number(),
+            timestamp: header.timestamp(),
+            state_root: header.state_root(),
+            extra_data: header.extra_data().to_vec(),
+            parent_hash: header.parent_hash(),
+        })
+        .finalization
 }

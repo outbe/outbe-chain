@@ -4,8 +4,12 @@ pub use verifier::{FinalizedAdmissionVerifierV1, VerifiedAdmissionAnchorV1};
 mod onboarding;
 mod upgrade;
 pub mod verifier;
-pub use onboarding::{DcapRegistrationSealV1, FinalizedOnboardingV1, PreparedOnboardingArtifactV2};
+pub use onboarding::{
+    DcapOnboardingResultV1, DcapRegistrationSealV1, FinalizedOnboardingV1,
+    PreparedOnboardingArtifactV2,
+};
 #[derive(Debug, thiserror::Error)]
+/// Public finality and Registry proof rejection reasons with safe typed causes.
 pub enum AdmissionError {
     #[error("finalized admission rejected: AdmissionEnvelopeOrOrder")]
     AdmissionEnvelopeOrOrder,
@@ -23,8 +27,6 @@ pub enum AdmissionError {
     ConsensusChainBinding(#[source] outbe_primitives::proof::constants::ConsensusChainIdError),
     #[error("finalized admission rejected: ConsensusChainIdOverflow")]
     ConsensusChainIdOverflow,
-    #[error("finalized admission rejected: DescendantHeader")]
-    DescendantHeader(#[source] alloy_rlp::Error),
     #[error("finalized admission rejected: Epoch0NotRegistered")]
     Epoch0NotRegistered,
     #[error("finalized admission rejected: Epoch0Anchor")]

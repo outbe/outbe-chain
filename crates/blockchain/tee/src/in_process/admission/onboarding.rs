@@ -10,6 +10,7 @@ use outbe_primitives::tee_attestation_v1::{
     AttestationMode, NodeHostAuthorizationWitnessV1, RegistrationIntentV1,
 };
 
+/// Exact recipient intent, authorization and genesis-rooted proof inputs for resident import.
 pub struct FinalizedOnboardingV1<'a> {
     pub artifact: &'a [u8],
     pub intent: &'a RegistrationIntentV1,
@@ -22,11 +23,13 @@ pub struct FinalizedOnboardingV1<'a> {
     pub expected_network_encryption_epoch: u64,
 }
 #[derive(Debug)]
+/// Canonical development donor artifact and its domain-separated attestation.
 pub struct PreparedOnboardingArtifactV2 {
     pub request_hash: B256,
     pub onboarding_artifact: Vec<u8>,
     pub attestation_tag: [u8; 64],
 }
+/// Purpose-bound native verifier inputs and exact expected onboarding context.
 pub struct DcapRegistrationSealV1<'a> {
     pub evidence: &'a [u8],
     pub policy: &'a [u8],
@@ -35,7 +38,20 @@ pub struct DcapRegistrationSealV1<'a> {
     pub enclave_signature: &'a [u8; 64],
     pub context: DcapOnboardingContextV1,
 }
+/// Canonical DCAP witness fields, including authenticated rejection outcomes.
+#[derive(Debug)]
+pub struct DcapOnboardingResultV1 {
+    /// Commitment produced by dcap_onboarding_request_hash for the exact request.
+    pub request_hash: B256,
+    /// Canonically encoded DcapVerificationOutcomeV1, accepted or rejected.
+    pub outcome: Vec<u8>,
+    /// Canonical encrypted artifact on acceptance; empty on rejection.
+    pub onboarding_artifact: Vec<u8>,
+    /// Ed25519 signature over dcap_onboarding_attestation_preimage.
+    pub attestation_tag: [u8; 64],
+}
 impl InProcessTeeContext {
+    /// Verify recipient binding, BLS finality and Registry MPT openings before RAM activation.
     pub fn ingest_finalized_onboarding_v1(
         &self,
         request: FinalizedOnboardingV1<'_>,
@@ -104,6 +120,7 @@ impl InProcessTeeContext {
         }
         Ok(())
     }
+    /// Seal resident material for an exact development context and sign the frozen V2 domain.
     pub fn prepare_no_attestation_dev_onboarding_artifact_v2(
         &self,
         context: DcapOnboardingContextV1,
@@ -126,11 +143,12 @@ impl InProcessTeeContext {
             attestation_tag: self.sign_domain_attestation(&preimage),
         })
     }
-    /// Native DCAP verifies quotes/collateral; a build without it fails closed.
+    /// Return the canonical signed DCAP outcome and optional encrypted onboarding artifact.
+    /// Native quote verification is required; absence never falls back to development evidence.
     pub fn verify_dcap_registration_and_seal_v1(
         &self,
         request: DcapRegistrationSealV1<'_>,
-    ) -> Result<DcapOnboardingArtifactV1> {
+    ) -> Result<DcapOnboardingResultV1> {
         self.proof_source
             .ensure_available(AttestationMode::DcapRequired)?;
         self.verify_dcap_and_seal(request)
@@ -139,54 +157,123 @@ impl InProcessTeeContext {
     fn verify_dcap_and_seal(
         &self,
         _request: DcapRegistrationSealV1<'_>,
-    ) -> Result<DcapOnboardingArtifactV1> {
+    ) -> Result<DcapOnboardingResultV1> {
         Err(InProcessError::HardwareProofUnavailable)
     }
     #[cfg(feature = "native-dcap")]
     fn verify_dcap_and_seal(
         &self,
         request: DcapRegistrationSealV1<'_>,
-    ) -> Result<DcapOnboardingArtifactV1> {
-        use super::super::ProofSourceV1;
-        use crate::dcap_protocol::DcapVerificationOutcomeV1;
-        if self.manifest.attestation_mode != AttestationMode::DcapRequired {
-            return Err(InProcessError::IdentityMismatch);
-        }
-        let evidence = outbe_dcap::verifier::validate_onboarding_registration(
-            request.evidence,
-            request.node_signature,
-            request.enclave_signature,
-        )
-        .map_err(InProcessError::Dcap)?;
-        let verdict = match outbe_dcap::verifier::verify_complete_request(
+    ) -> Result<DcapOnboardingResultV1> {
+        let outcome = outbe_dcap::verifier::verify_complete_request(
             request.evidence,
             request.policy,
             request.block_timestamp,
-        ) {
-            DcapVerificationOutcomeV1::Accepted(verdict) => verdict,
-            DcapVerificationOutcomeV1::Rejected(code) => return Err(InProcessError::Dcap(code)),
+        );
+        self.finish_dcap_onboarding(request, outcome)
+    }
+    #[cfg(any(test, feature = "native-dcap"))]
+    fn finish_dcap_onboarding(
+        &self,
+        request: DcapRegistrationSealV1<'_>,
+        mut outcome: crate::dcap_protocol::DcapVerificationOutcomeV1,
+    ) -> Result<DcapOnboardingResultV1> {
+        use crate::dcap_protocol::{
+            dcap_onboarding_attestation_preimage, dcap_onboarding_request_hash,
+            RegistrationVerificationRequest,
         };
+        let request_hash = dcap_onboarding_request_hash(RegistrationVerificationRequest {
+            evidence: request.evidence,
+            policy: request.policy,
+            block_timestamp: request.block_timestamp,
+            node_signature: request.node_signature,
+            enclave_signature: request.enclave_signature,
+            expected_network_encryption_public: request.context.network_encryption_public,
+            key_epoch: request.context.key_epoch,
+            network_encryption_epoch: request.context.network_encryption_epoch,
+        })
+        .map_err(InProcessError::Dcap)?;
+        let artifact = self.dcap_onboarding_artifact(&request, &mut outcome)?;
+        let outcome = outcome.encode_canonical().map_err(InProcessError::Dcap)?;
+        let onboarding_artifact = artifact
+            .map(|artifact| artifact.encode_canonical())
+            .transpose()
+            .map_err(InProcessError::Dcap)?
+            .unwrap_or_default();
+        let preimage =
+            dcap_onboarding_attestation_preimage(request_hash, &outcome, &onboarding_artifact)
+                .map_err(InProcessError::Dcap)?;
+        Ok(DcapOnboardingResultV1 {
+            request_hash,
+            outcome,
+            onboarding_artifact,
+            attestation_tag: self.sign_domain_attestation(&preimage),
+        })
+    }
+    #[cfg(any(test, feature = "native-dcap"))]
+    fn dcap_onboarding_artifact(
+        &self,
+        request: &DcapRegistrationSealV1<'_>,
+        outcome: &mut crate::dcap_protocol::DcapVerificationOutcomeV1,
+    ) -> Result<Option<DcapOnboardingArtifactV1>> {
+        use crate::dcap_protocol::DcapVerificationOutcomeV1;
+        let DcapVerificationOutcomeV1::Accepted(verdict) = outcome else {
+            return Ok(None);
+        };
+        let evidence = match outbe_dcap::verifier::validate_onboarding_registration(
+            request.evidence,
+            request.node_signature,
+            request.enclave_signature,
+        ) {
+            Ok(evidence) => evidence,
+            Err(code) => {
+                *outcome = DcapVerificationOutcomeV1::Rejected(code);
+                return Ok(None);
+            }
+        };
+        if let Some(code) = self.dcap_context_rejection(request, &evidence.intent, verdict)? {
+            *outcome = DcapVerificationOutcomeV1::Rejected(code);
+            return Ok(None);
+        }
+        Ok(Some(encrypt_onboarding_artifact_v1(
+            self.material()?.as_ref(),
+            request.context,
+        )?))
+    }
+    #[cfg(any(test, feature = "native-dcap"))]
+    fn dcap_context_rejection(
+        &self,
+        request: &DcapRegistrationSealV1<'_>,
+        intent: &RegistrationIntentV1,
+        verdict: &crate::dcap_protocol::DcapVerdictV1,
+    ) -> Result<Option<crate::dcap_protocol::DcapRejectCodeV1>> {
+        use super::super::ProofSourceV1;
+        use crate::dcap_protocol::DcapRejectCodeV1;
         let ProofSourceV1::Hardware(source) = &self.proof_source else {
             return Err(InProcessError::HardwareProofUnavailable);
         };
-        if source.code_identity()?
-            != (
+        let measurement_matches = source.code_identity()?
+            == (
                 verdict.mrenclave,
                 verdict.mrsigner,
                 verdict.isv_prod_id,
                 verdict.isv_svn,
-            )
-            || !intent_matches_context(&evidence.intent, &request.context)?
-        {
-            return Err(InProcessError::IdentityMismatch);
+            );
+        if self.manifest.attestation_mode != AttestationMode::DcapRequired || !measurement_matches {
+            return Ok(Some(DcapRejectCodeV1::MeasurementRejected));
         }
-        self.validate_source(&request.context)?;
-        Ok(encrypt_onboarding_artifact_v1(
-            self.material()?.as_ref(),
-            request.context,
-        )?)
+        let source_matches = match self.validate_source(&request.context) {
+            Ok(()) => true,
+            Err(InProcessError::IdentityMismatch) => false,
+            Err(error) => return Err(error),
+        };
+        if !intent_matches_context(intent, &request.context)? || !source_matches {
+            return Ok(Some(DcapRejectCodeV1::OnboardingContextMismatch));
+        }
+        Ok(None)
     }
 }
+
 pub(super) fn decode_artifact(bytes: &[u8]) -> Result<DcapOnboardingArtifactV1> {
     DcapOnboardingArtifactV1::decode_canonical(bytes).map_err(InProcessError::Dcap)
 }
@@ -223,3 +310,6 @@ impl FinalizedOnboardingV1<'_> {
         )
     }
 }
+
+#[cfg(test)]
+mod tests;

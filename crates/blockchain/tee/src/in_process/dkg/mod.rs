@@ -1,7 +1,12 @@
+//! Resident DKG seams A–F: deal, ingest, acknowledge, finalize dealer/player,
+//! then recover the fixed offer root. The actor relays only public commitments,
+//! acknowledgements, logs and ciphertext. Shares, partial signatures and the
+//! reconstructed root stay in zeroizing resident ownership, never in host output.
 mod dealer;
 mod error;
 mod finalize;
 mod player;
+mod secret_partial;
 mod share_cipher;
 mod store;
 pub use error::{DkgError, DkgOperation, DkgSeamOrderError};
@@ -37,30 +42,45 @@ use crate::resident::crypto_ops::x25519_public;
 use InProcessError as TeeError;
 
 type Variant = MinSig;
+/// Public BLS identity of a ceremony participant.
 pub type PubKey = bls12381::PublicKey;
+/// Internal signing-key type used by the resident ceremony.
 pub type PrivKey = bls12381::PrivateKey;
 
+/// Public ceremony transcript domain and participant sets.
 pub type CeremonyInfo = Info<Variant, PubKey>;
+/// Public dealer commitment broadcast to every participant.
 pub type CeremonyPubMsg = DealerPubMsg<Variant>;
+/// Public acknowledgement of a verified encrypted dealing.
 pub type CeremonyAck = PlayerAck<PubKey>;
+/// Dealer-signed public dealing log.
 pub type CeremonySignedLog = SignedDealerLog<Variant, PrivKey>;
+/// Verified public dealer log used during player finalization.
 pub type CeremonyLog = DealerLog<Variant, PubKey>;
+/// Public group polynomial and participant binding.
 pub type CeremonyOutput = Output<Variant, PubKey>;
+/// Internal threshold share; its scalar zeroizes on drop.
 pub type CeremonyShare = Share;
 
+/// Opaque ceremony identifier supplied by the protocol actor.
 pub type CeremonyKey = [u8; 32];
 
+/// Encoded public commitment plus per-recipient encrypted shares.
 pub type EncodedDealing = (Vec<u8>, Vec<(Vec<u8>, Vec<u8>)>);
 
+/// Ceremony namespace, separated from consensus DKG.
 pub const TEE_DKG_NAMESPACE: &[u8] = b"outbe-tee-dkg";
 
+/// Threshold offer-signature namespace, separate from ceremony messages.
 pub const TEE_OFFER_NAMESPACE: &[u8] = b"outbe-tee-offer";
+/// Frozen offer-root signing message; never includes caller-selected data.
 pub const TEE_OFFER_MESSAGE: &[u8] = b"outbe/tee/offer/v1";
 
 fn dkg_err(context: DkgOperation, _error: impl Sized) -> TeeError {
     DkgError::Operation { operation: context }.into()
 }
 
+/// One ceremony's resident dealer/player state; secret shares never leave through its public seams.
 pub struct DkgSession {
     info: CeremonyInfo,
     signing_key: PrivKey,
@@ -73,6 +93,7 @@ pub struct DkgSession {
 }
 
 impl DkgSession {
+    /// Open resident player state with crate-owned signing/encryption secrets.
     pub(crate) fn new(
         info: CeremonyInfo,
         signing_key: PrivKey,
@@ -93,15 +114,18 @@ impl DkgSession {
         })
     }
 
+    /// Return this session's public BLS participant identity.
     pub fn participant_pubkey(&self) -> PubKey {
         self.signing_key.public_key()
     }
 
+    /// Return this session's public share-encryption key.
     pub fn enc_public(&self) -> [u8; 32] {
         x25519_public(&self.enc_secret)
     }
 }
 
+/// Verify a public signed dealer log against the exact ceremony transcript.
 pub fn verify_dealer_log(
     info: &CeremonyInfo,
     signed: CeremonySignedLog,
@@ -114,6 +138,7 @@ fn decode_pubkey(bytes: &[u8]) -> Result<PubKey> {
     PubKey::read(&mut reader).map_err(|e| dkg_err(DkgOperation::DecodeBlsPubkey, e))
 }
 
+/// Build one canonical founding transcript from the participant BLS public keys.
 pub fn build_ceremony_info(
     round: u64,
     participant_bls: &[Vec<u8>],
@@ -148,6 +173,7 @@ impl DkgSession {
         NonZeroU32::new(n).ok_or_else(|| DkgError::EmptyParticipantSet.into())
     }
 
+    /// Seam A wire adapter: encode public commitment and sealed shares.
     pub fn start_dealer_encoded(&mut self) -> Result<EncodedDealing> {
         let (pub_msg, sealed) = self.start_dealer(None)?;
         let shares = sealed
@@ -157,6 +183,7 @@ impl DkgSession {
         Ok((pub_msg.encode().to_vec(), shares))
     }
 
+    /// Seam B wire adapter: open and verify a sealed share, returning an encoded public ack.
     pub fn player_ingest_encoded(
         &mut self,
         dealer_bls: &[u8],
@@ -173,6 +200,7 @@ impl DkgSession {
         Ok(ack.map(|a| a.encode().to_vec()))
     }
 
+    /// Seam C wire adapter: decode and count a public acknowledgement.
     pub fn dealer_receive_ack_encoded(&mut self, player_bls: &[u8], ack: &[u8]) -> Result<()> {
         let player = decode_pubkey(player_bls)?;
         let mut reader: &[u8] = ack;
@@ -181,10 +209,12 @@ impl DkgSession {
         self.dealer_receive_ack(player, ack)
     }
 
+    /// Seam D wire adapter: encode the signed public dealer log.
     pub fn dealer_finalize_encoded(&mut self) -> Result<Vec<u8>> {
         Ok(self.dealer_finalize()?.encode().to_vec())
     }
 
+    /// Seam E wire adapter: require all founding dealers and return only public output and share commitment.
     pub fn player_finalize_encoded(&mut self, signed_logs: &[Vec<u8>]) -> Result<(Vec<u8>, B256)> {
         let max = self.max_players()?;
         let mut logs = Vec::with_capacity(signed_logs.len());
@@ -228,8 +258,10 @@ impl std::fmt::Debug for DkgSession {
 }
 
 // Write directly into zeroizing ownership, without an intermediate immutable Bytes copy.
-fn encode_secret(value: &impl commonware_codec::Write) -> Zeroizing<Vec<u8>> {
-    let mut encoded = Zeroizing::new(Vec::new());
+fn encode_secret(
+    value: &(impl commonware_codec::Write + commonware_codec::EncodeSize),
+) -> Zeroizing<Vec<u8>> {
+    let mut encoded = Zeroizing::new(Vec::with_capacity(value.encode_size()));
     value.write(&mut *encoded);
     encoded
 }

@@ -1,6 +1,7 @@
 use super::*;
 
 impl DkgSession {
+    /// Seam B: decrypt and verify one dealing inside the resident session; return a public ack.
     pub fn player_ingest(
         &mut self,
         dealer: PubKey,
@@ -21,6 +22,7 @@ impl DkgSession {
             .flatten())
     }
 
+    /// Seam C: count a verified player acknowledgement at the resident dealer.
     pub fn dealer_receive_ack(&mut self, player: PubKey, ack: CeremonyAck) -> Result<()> {
         let dealer = self
             .dealer
@@ -31,6 +33,7 @@ impl DkgSession {
             .map_err(|e| dkg_err(DkgOperation::DealerReceiveAck, e))
     }
 
+    /// Seam D: consume the dealer and publish its signed dealing log.
     pub fn dealer_finalize(&mut self) -> Result<CeremonySignedLog> {
         let dealer = self
             .dealer
@@ -39,6 +42,7 @@ impl DkgSession {
         Ok(dealer.finalize::<N3f1>())
     }
 
+    /// Seam E: recover and retain the threshold share without exposing it through the public API.
     pub(crate) fn player_finalize(
         &mut self,
         logs: Vec<(PubKey, CeremonyLog)>,
@@ -53,6 +57,7 @@ impl DkgSession {
         }
         let (output, share) = player
             .finalize::<N3f1, Batch>(
+                // OS cryptographic randomness batches share verification, never a consensus seed.
                 &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
                 finalize_logs,
                 &Sequential,

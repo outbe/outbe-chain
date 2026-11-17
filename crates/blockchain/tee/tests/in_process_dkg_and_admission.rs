@@ -1,6 +1,6 @@
 //! RAM-only DKG and genesis-anchored admission contracts.
 use outbe_primitives::tee_attestation_v1::AttestationMode;
-use outbe_tee::in_process::{InProcessError, ProofSourceV1};
+use outbe_tee::in_process::{admission::AdmissionError, InProcessError, ProofSourceV1};
 
 #[test]
 fn dcap_without_hardware_fails_before_participation() {
@@ -96,20 +96,46 @@ fn four_party_dkg_finalized_onboarding_and_upgrade_are_ram_only() {
     let mut bad_storage = fixture.proof.clone();
     bad_storage.registry_storage[0].nodes[0][0] ^= 1;
     let mut bad_bls = fixture.proof.clone();
-    let last = bad_bls.admission.finalization.len() - 1;
-    bad_bls.admission.finalization[last] ^= 1;
+    bad_bls.admission.finalization = fixtures::wrong_committee_certificate(&fixture.proof);
     let mut bad_ancestry = fixture.proof.clone();
     bad_ancestry.admission.descendants.clear();
-    for forged in [bad_mpt, bad_storage, bad_bls, bad_ancestry] {
+    for (case, forged) in [bad_mpt, bad_storage, bad_bls, bad_ancestry]
+        .into_iter()
+        .enumerate()
+    {
         let bytes = forged.encode_canonical().unwrap();
-        assert!(recipient
-            .ingest_finalized_onboarding_v1(fixture.request(
-                (&artifact.onboarding_artifact, &bytes),
-                &registration,
-                &authorization,
-                &onboarding
-            ))
-            .is_err());
+        {
+            let error = recipient
+                .ingest_finalized_onboarding_v1(fixture.request(
+                    (&artifact.onboarding_artifact, &bytes),
+                    &registration,
+                    &authorization,
+                    &onboarding,
+                ))
+                .unwrap_err();
+            assert!(
+                match case {
+                    0 => matches!(
+                        &error,
+                        InProcessError::Admission(AdmissionError::RegistryAccountProof(_))
+                    ),
+                    1 => matches!(
+                        &error,
+                        InProcessError::Admission(AdmissionError::RegistryStorageProof(_))
+                    ),
+                    2 => matches!(
+                        &error,
+                        InProcessError::Admission(AdmissionError::AdmissionFinalization(_))
+                    ),
+                    3 => matches!(
+                        &error,
+                        InProcessError::Admission(AdmissionError::FinalizationPayloadMismatch)
+                    ),
+                    _ => unreachable!(),
+                },
+                "{error:?}"
+            );
+        }
         assert!(!recipient.offer_key_ready().unwrap());
         assert_eq!(recipient.admission_anchor().unwrap(), None);
     }
@@ -121,49 +147,94 @@ fn four_party_dkg_finalized_onboarding_and_upgrade_are_ram_only() {
         &onboarding,
     );
     request.committee_transitions = &[];
-    assert!(recipient.ingest_finalized_onboarding_v1(request).is_err());
+    {
+        let error = recipient
+            .ingest_finalized_onboarding_v1(request)
+            .unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                InProcessError::Admission(AdmissionError::AdmissionSkipsCommittee)
+            ),
+            "{error:?}"
+        );
+    }
 
     let mut wrong_host = authorization.clone();
     wrong_host.node_host_noise_x25519[0] ^= 1;
-    assert!(recipient
-        .ingest_finalized_onboarding_v1(fixture.request(
-            (&artifact.onboarding_artifact, &witness),
-            &registration,
-            &wrong_host,
-            &onboarding
-        ))
-        .is_err());
+    {
+        let error = recipient
+            .ingest_finalized_onboarding_v1(fixture.request(
+                (&artifact.onboarding_artifact, &witness),
+                &registration,
+                &wrong_host,
+                &onboarding,
+            ))
+            .unwrap_err();
+        assert!(
+            matches!(&error, InProcessError::IdentityMismatch),
+            "{error:?}"
+        );
+    }
     let mut wrong_intent = registration.clone();
     wrong_intent.registration_version += 1;
-    assert!(recipient
-        .ingest_finalized_onboarding_v1(fixture.request(
-            (&artifact.onboarding_artifact, &witness),
-            &wrong_intent,
-            &authorization,
-            &onboarding
-        ))
-        .is_err());
+    {
+        let error = recipient
+            .ingest_finalized_onboarding_v1(fixture.request(
+                (&artifact.onboarding_artifact, &witness),
+                &wrong_intent,
+                &authorization,
+                &onboarding,
+            ))
+            .unwrap_err();
+        assert!(
+            matches!(&error, InProcessError::IdentityMismatch),
+            "{error:?}"
+        );
+    }
     let wrong_enclave = context(6, &descriptor);
-    assert!(wrong_enclave
-        .ingest_finalized_onboarding_v1(fixture.request(
-            (&artifact.onboarding_artifact, &witness),
-            &registration,
-            &authorization,
-            &onboarding
-        ))
-        .is_err());
+    {
+        let error = wrong_enclave
+            .ingest_finalized_onboarding_v1(fixture.request(
+                (&artifact.onboarding_artifact, &witness),
+                &registration,
+                &authorization,
+                &onboarding,
+            ))
+            .unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                InProcessError::Codec(
+                    outbe_primitives::tee_attestation_v1::CodecError::NonCanonical(_)
+                )
+            ),
+            "{error:?}"
+        );
+    }
     assert!(!wrong_enclave.offer_key_ready().unwrap());
     let mut corrupted =
         DcapOnboardingArtifactV1::decode_canonical(&artifact.onboarding_artifact).unwrap();
     corrupted.ciphertext[0] ^= 1;
-    assert!(recipient
-        .ingest_finalized_onboarding_v1(fixture.request(
-            (&corrupted.encode_canonical().unwrap(), &witness),
-            &registration,
-            &authorization,
-            &onboarding
-        ))
-        .is_err());
+    {
+        let error = recipient
+            .ingest_finalized_onboarding_v1(fixture.request(
+                (&corrupted.encode_canonical().unwrap(), &witness),
+                &registration,
+                &authorization,
+                &onboarding,
+            ))
+            .unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                InProcessError::Crypto(outbe_tee::resident::TeeCryptoError::Primitive(
+                    outbe_tee::errors::TeeCryptoError::DecryptionFailed
+                ))
+            ),
+            "{error:?}"
+        );
+    }
     let anchor = recipient
         .ingest_finalized_onboarding_v1(fixture.request(
             (&artifact.onboarding_artifact, &witness),
@@ -208,14 +279,23 @@ fn four_party_dkg_finalized_onboarding_and_upgrade_are_ram_only() {
     }
     .encode_canonical()
     .unwrap();
-    assert!(founders[0]
-        .export_upgrade_key_v1(upgrade_fixture.request(
-            (&template, &witness),
-            &transition,
-            &candidate_auth,
-            &upgrade
-        ))
-        .is_err());
+    {
+        let error = founders[0]
+            .export_upgrade_key_v1(upgrade_fixture.request(
+                (&template, &witness),
+                &transition,
+                &candidate_auth,
+                &upgrade,
+            ))
+            .unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                InProcessError::Admission(AdmissionError::AdmissionFinalization(_))
+            ),
+            "{error:?}"
+        );
+    }
     let sealed = founders[0]
         .export_upgrade_key_v1(upgrade_fixture.request(
             (&template, &upgrade_witness),

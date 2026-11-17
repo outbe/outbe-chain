@@ -28,6 +28,7 @@ use reth_trie::{AccountProof, StorageProof};
 use super::{AdmissionError as FinalizedAdmissionError, Result as EnclaveResult};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Header identity and consensus time authenticated by BLS finality and Registry openings.
 pub struct VerifiedAdmissionAnchorV1 {
     pub block_number: u64,
     pub block_hash: B256,
@@ -35,6 +36,7 @@ pub struct VerifiedAdmissionAnchorV1 {
     pub consensus_timestamp: u64,
 }
 
+/// Streaming committee verifier rooted in the trusted genesis participant set.
 pub struct FinalizedAdmissionVerifierV1 {
     chain: CommitteeChain,
     previous_height: u64,
@@ -43,6 +45,7 @@ pub struct FinalizedAdmissionVerifierV1 {
 }
 
 impl FinalizedAdmissionVerifierV1 {
+    /// Bind the verifier to trusted genesis keys and its canonical epoch-zero outcome.
     pub fn new(
         descriptor: &TrustedNetworkDescriptorV1,
         context: &DcapOnboardingContextV1,
@@ -87,11 +90,13 @@ impl FinalizedAdmissionVerifierV1 {
         })
     }
 
+    /// Require upgrade-authorization Registry slots instead of ordinary onboarding slots.
     pub fn for_upgrade(mut self) -> Self {
         self.upgrade = true;
         self
     }
 
+    /// Authenticate one immediate successor committee before advancing the trusted chain.
     pub fn advance_committee(&mut self, encoded: &[u8]) -> EnclaveResult<()> {
         let transition = CertifiedHeaderV1::decode_canonical(encoded)
             .map_err(FinalizedAdmissionError::TransitionCodec)?;
@@ -133,6 +138,7 @@ impl FinalizedAdmissionVerifierV1 {
         Ok(())
     }
 
+    /// Verify the exact finalized header ancestry and required Registry MPT claims.
     pub fn verify_admission(&self, encoded: &[u8]) -> EnclaveResult<VerifiedAdmissionAnchorV1> {
         let proof = FinalizedAdmissionWitnessV1::decode_canonical(encoded)
             .map_err(FinalizedAdmissionError::AdmissionWitnessCodec)?;

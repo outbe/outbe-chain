@@ -1,16 +1,22 @@
+use super::secret_partial::SecretPartial;
 use super::*;
+use commonware_cryptography::Secret;
 
 impl DkgSession {
+    /// Seam F: threshold-sign the fixed offer message and seal each partial to every participant.
     pub fn tribute_offer_partials_sealed(&self) -> Result<Vec<(PubKey, EncryptedShare)>> {
         let share = self
             .recovered_share
             .as_ref()
             .ok_or(DkgSeamOrderError::ShareUnavailable)?;
-        let partial =
-            threshold::sign_message::<Variant>(share, TEE_OFFER_NAMESPACE, TEE_OFFER_MESSAGE);
+        let partial = SecretPartial::new(threshold::sign_message::<Variant>(
+            share,
+            TEE_OFFER_NAMESPACE,
+            TEE_OFFER_MESSAGE,
+        ));
         // The plaintext partial exists only in this enclave. This code seals it to
         // each recipient (including self) so the host only ever relays ciphertext.
-        let partial_bytes = encode_secret(&partial);
+        let partial_bytes = encode_secret(&*partial);
         self.recipient_enc_keys
             .iter()
             .map(|(recipient, public)| {
@@ -32,13 +38,15 @@ impl DkgSession {
             .group_output
             .as_ref()
             .ok_or(DkgSeamOrderError::OutputUnavailable)?;
-        let mut partials: Vec<PartialSignature<Variant>> = Vec::with_capacity(sealed_for_me.len());
+        let mut partials: Vec<SecretPartial> = Vec::with_capacity(sealed_for_me.len());
         for blob_bytes in sealed_for_me {
             let blob = share_cipher::decode(blob_bytes)?;
             let plaintext = decrypt_share(&self.enc_secret, &blob)?;
             let mut reader: &[u8] = plaintext.as_ref();
-            let partial = PartialSignature::<Variant>::read(&mut reader)
-                .map_err(|e| dkg_err(DkgOperation::DecodeOfferPartial, e))?;
+            let partial = SecretPartial::new(
+                PartialSignature::<Variant>::read(&mut reader)
+                    .map_err(|e| dkg_err(DkgOperation::DecodeOfferPartial, e))?,
+            );
             if !reader.is_empty() {
                 return Err(DkgError::TrailingBytes.into());
             }
@@ -51,13 +59,18 @@ impl DkgSession {
             .map_err(|error| dkg_err(DkgOperation::VerifyOfferPartial, error))?;
             partials.push(partial);
         }
-        let group_sig =
-            threshold::recover::<Variant, _>(output.public(), partials.iter(), &Sequential)
-                .map_err(|e| dkg_err(DkgOperation::RecoverOfferGroupSignature, e))?;
+        let group_sig = Secret::new(
+            threshold::recover::<Variant, _>(
+                output.public(),
+                partials.iter().map(|partial| &**partial),
+                &Sequential,
+            )
+            .map_err(|e| dkg_err(DkgOperation::RecoverOfferGroupSignature, e))?,
+        );
         // `sigma` (the encoded group signature) is retained resident by the caller
         // so the exact permanent key can be delivered through
         // the deterministic one-time registry onboarding artifact.
-        let sigma = encode_secret(&group_sig);
+        let sigma = group_sig.expose(encode_secret);
         Ok(
             crate::resident::ResidentOfferMaterial::from_group_signature(
                 sigma,
@@ -68,6 +81,7 @@ impl DkgSession {
         )
     }
 
+    /// Return the group public verification key after player finalization.
     pub fn group_public_key_bytes(&self) -> Result<Vec<u8>> {
         let output = self
             .group_output

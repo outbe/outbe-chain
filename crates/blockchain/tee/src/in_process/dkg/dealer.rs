@@ -1,6 +1,7 @@
 use super::*;
 
 impl DkgSession {
+    /// Seam A: create a secret polynomial and return only commitments and sealed player shares.
     pub fn start_dealer(
         &mut self,
         previous_share: Option<CeremonyShare>,
@@ -9,6 +10,7 @@ impl DkgSession {
             return Err(DkgSeamOrderError::StartDealerCalledTwice.into());
         }
         let (dealer, pub_msg, priv_msgs) = Dealer::<Variant, PrivKey>::start::<N3f1>(
+            // OS cryptographic entropy creates secret dealer polynomials, never a consensus seed.
             rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
             self.info.clone(),
             self.signing_key.clone(),

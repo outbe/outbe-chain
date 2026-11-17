@@ -1,6 +1,6 @@
-//! Real cryptographic fixtures for consumers of the public finality wire.
-//!
-//! This module is compiled only for tests or the explicit `test-utils` feature.
+//! Local finality fixtures for outbe-tee, adapted from simplex test utilities.
+//! S2W1-T10 forbids Cargo.toml edits, so simplex's feature-gated fixture cannot be
+//! enabled here; this copy uses its public signing/bootstrap APIs instead.
 
 use alloy_consensus::Block;
 use alloy_primitives::{Bytes, B256};

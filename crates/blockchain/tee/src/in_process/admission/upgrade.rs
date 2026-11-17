@@ -10,6 +10,7 @@ use outbe_primitives::tee_attestation_v1::{
 };
 
 impl InProcessTeeContext {
+    /// Seal resident material only after verifying finalized upgrade authorization from genesis.
     pub fn export_upgrade_key_v1(
         &self,
         request: FinalizedOnboardingV1<'_>,
@@ -43,6 +44,7 @@ impl InProcessTeeContext {
             context,
         )?)
     }
+    /// Verify a candidate transition and finalized upgrade proof before resident import.
     pub fn ingest_upgrade_key_v1(
         &self,
         request: FinalizedOnboardingV1<'_>,
@@ -52,6 +54,7 @@ impl InProcessTeeContext {
         }
         self.ingest_proven_material(request, true)
     }
+    /// Sign key readiness for this candidate manifest and exact measurement-transition intent.
     pub fn transition_key_ready_proof_v1(
         &self,
         intent: &RegistrationIntentV1,
