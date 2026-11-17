@@ -85,13 +85,6 @@ impl LiveTeeRuntimeV1 {
         Ok(())
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "The onboarding supervisor stages verified RAM candidates before promotion."
-        )
-    )]
     pub(crate) fn stage_candidate(
         &self,
         candidate: Arc<InProcessTeeContext>,

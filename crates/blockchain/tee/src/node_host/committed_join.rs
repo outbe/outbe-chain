@@ -475,7 +475,8 @@ fn has_incomplete_committed_checkpoint(paths: &NodeHostPaths) -> Result<bool, Tr
 impl FinalizedJoinAdmissionAnchorV1 {
     /// A disk checkpoint is not key possession. Validate it against this live process.
     /// The caller must still verify resident material before opening authority.
-    pub fn validate_live_manifest_v1(
+    #[cfg(test)]
+    pub(crate) fn validate_live_manifest_v1(
         &self,
         live: &EnclaveInitializationManifestV1,
     ) -> crate::in_process::Result<()> {

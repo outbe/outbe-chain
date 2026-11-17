@@ -22,6 +22,35 @@ pub async fn prepare_successor_v1<P: LifecycleChainPort, S: LifecycleSignerV1>(
     lease: SuccessorLeaseV1,
 ) -> SuccessorResult<(SuccessorAttemptV1, SuccessorStep), P, S> {
     let (source_context, candidate) = contexts;
+    prepare_successor_inner_v1(
+        port,
+        signer,
+        (Some(source_context), candidate),
+        journal,
+        lease,
+    )
+    .await
+}
+
+/// Prepare strict late recovery without the former resident context or its secrets.
+pub async fn prepare_cold_successor_v1<P: LifecycleChainPort, S: LifecycleSignerV1>(
+    port: &P,
+    signer: &S,
+    candidate: &InProcessTeeContext,
+    journal: &mut ServiceTxJournalV1,
+    lease: SuccessorLeaseV1,
+) -> SuccessorResult<(SuccessorAttemptV1, SuccessorStep), P, S> {
+    prepare_successor_inner_v1(port, signer, (None, candidate), journal, lease).await
+}
+
+async fn prepare_successor_inner_v1<P: LifecycleChainPort, S: LifecycleSignerV1>(
+    port: &P,
+    signer: &S,
+    contexts: (Option<&InProcessTeeContext>, &InProcessTeeContext),
+    journal: &mut ServiceTxJournalV1,
+    lease: SuccessorLeaseV1,
+) -> SuccessorResult<(SuccessorAttemptV1, SuccessorStep), P, S> {
+    let (source_context, candidate) = contexts;
     let SuccessorLeaseV1 {
         binding_id,
         valid_until,
@@ -40,8 +69,10 @@ pub async fn prepare_successor_v1<P: LifecycleChainPort, S: LifecycleSignerV1>(
         .binding
         .as_ref()
         .ok_or(SuccessorError::CandidateMismatch)?;
-    validate_view::<P::Error, S::Error>(&view, at, source_context)?;
-    validate_source::<P, S>(source_context, source)?;
+    if let Some(source_context) = source_context {
+        validate_view::<P::Error, S::Error>(&view, at, source_context)?;
+        validate_source::<P, S>(source_context, source)?;
+    }
     let policy = successor_policy::<P, S>(&view)?;
     validate_candidate::<P, S>(candidate, source, binding_id)?;
     let policy_hash = policy.policy_hash().map_err(RenewalError::from)?;
@@ -49,6 +80,24 @@ pub async fn prepare_successor_v1<P: LifecycleChainPort, S: LifecycleSignerV1>(
         && view
             .active_upgrade
             .is_some_and(|u| u.successor_policy_hash == policy_hash);
+    if source_context.is_none() {
+        let strict = view.active_upgrade.is_some_and(|upgrade| {
+            at.height >= upgrade.activation_height
+                && upgrade.predecessor_policy_hash == source.policy_hash
+                && policy.predecessor_policy_hash == source.policy_hash
+                && source.policy_hash != policy_hash
+        });
+        if !strict_late || !strict {
+            return Err(SuccessorError::PolicyMismatch);
+        }
+        if journal
+            .load()
+            .map_err(RenewalError::from)?
+            .is_some_and(|record| record.sender != signer.address())
+        {
+            return Err(SuccessorError::PendingOperation);
+        }
+    }
     if at.timestamp >= source.valid_until && !strict_late {
         return Err(SuccessorError::SourceLeaseExpiredNeedsRejoin);
     }
@@ -108,7 +157,7 @@ pub async fn prepare_successor_v1<P: LifecycleChainPort, S: LifecycleSignerV1>(
             | ServiceTxKindV1::Renew
             | ServiceTxKindV1::UpgradeTransition
             | ServiceTxKindV1::UpgradeCancel,
-        ) => source_context,
+        ) => source_context.unwrap_or(candidate),
     };
     let nonce = fresh_nonce::<P, S>(
         port,

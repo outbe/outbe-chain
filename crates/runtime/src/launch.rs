@@ -125,9 +125,9 @@ where
             .data_dir()
             .to_path_buf();
         install_selected_reth_identity(builder.config_mut(), &args)?;
-        let (evm_signer, local_tee_identity, tee_admission_anchor) =
+        let (evm_signer, local_tee_identity, tee_admission_anchor, tee_supervisor) =
             tee::prepare(
-                builder.config(), &args, node_data_dir.clone(), &initial_tee_policy,
+                builder.config(), &args, node_data_dir.clone(), &initial_tee_policy, &shutdown_token,
             ).await?;
 
         validate_adr005_node_mode(args.is_validator, args.upstream.is_some())?;
@@ -233,6 +233,7 @@ where
             (
                 Arc::clone(&runtime_for_launcher),
                 Arc::clone(&runtime_for_launcher) as Arc<dyn TeeSessionStateReader>,
+                tee_supervisor,
             ),
             (&node, &args),
             (proof_chain_id, genesis_hash, &node_data_dir),

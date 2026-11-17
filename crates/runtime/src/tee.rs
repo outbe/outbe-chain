@@ -9,10 +9,12 @@ pub(crate) async fn prepare(
     args: &ConsensusArgs,
     node_data_dir: PathBuf,
     initial_tee_policy: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
+    cancellation: &tokio_util::sync::CancellationToken,
 ) -> eyre::Result<(
     Option<Arc<OutbeEvmSigner>>,
     outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
     Option<crate::admission::LocalTeeAdmissionAnchorV1>,
+    Option<crate::tee_supervisor::TeeLifecycleSupervisor>,
 )> {
     let evm_key = args.effective_validator_evm_key()?;
     if args.is_validator && evm_key.is_none() {
@@ -59,18 +61,27 @@ pub(crate) async fn prepare(
                 validator: validator_evm_address,
             },
             None,
+            None,
         ));
     }
     if args.tee_enclave_socket.is_none() {
         install_enclave_backed_policy()?;
         let identity = in_process::initialize(config, &node_data_dir, initial_tee_policy)?;
+        let (anchor, supervisor) = in_process::prepare_supervisor(
+            (config, args),
+            (&node_data_dir, initial_tee_policy),
+            evm_signer.as_ref(),
+            cancellation,
+        )
+        .await?;
         return Ok((
             evm_signer,
             outbe_consensus::validators::LocalTeeRuntimeIdentityV1 {
                 validator: validator_evm_address,
                 ..identity
             },
-            None,
+            anchor,
+            supervisor,
         ));
     }
     // Every network declares exactly one attestation policy in genesis. The
@@ -193,7 +204,7 @@ pub(crate) async fn prepare(
         Some(admission_anchor)
     };
 
-    Ok((evm_signer, local_tee_identity, tee_admission_anchor))
+    Ok((evm_signer, local_tee_identity, tee_admission_anchor, None))
 }
 
 pub(crate) struct TeeRuntimeWorkers {
@@ -283,9 +294,10 @@ fn keyless_runtime_workers() -> TeeRuntimeWorkers {
 }
 
 pub(crate) async fn start_runtime_workers(
-    (protocol, session): (
+    (protocol, session, supervisor): (
         Arc<crate::OutbeRuntime>,
         Arc<dyn outbe_execution::tee_remote_session::TeeSessionStateReader>,
+        Option<crate::tee_supervisor::TeeLifecycleSupervisor>,
     ),
     (node, args): (&OutbeFullNode, &ConsensusArgs),
     (proof_chain_id, genesis_hash, node_data_dir): (u64, alloy_primitives::B256, &Path),
@@ -319,7 +331,10 @@ pub(crate) async fn start_runtime_workers(
                 .is_some_and(|head| head.number > 0))
     {
         crate::admission::TeeLeaseGuardAnchorsV1 {
-            gate: TeeLeaseGuardGateV1::AwaitingAnchor,
+            gate: tee_admission_anchor.map_or(
+                TeeLeaseGuardGateV1::AwaitingAnchor,
+                TeeLeaseGuardGateV1::Pending,
+            ),
             durable: None,
         }
     } else {
@@ -381,11 +396,32 @@ pub(crate) async fn start_runtime_workers(
         (authority, owner.clone()),
         shutdown_token.clone(),
     );
-    let tee_lease_guard_handle = tokio::spawn(shutdown.track_task("TEE lease guard", async move {
-        if let Err(error) = lease_check.await {
-            tracing::error!(%error, "TEE lease guard failed closed");
-        }
-    }));
+    let supervisor_owner = owner.clone();
+    let supervisor_provider = node.provider.clone();
+    let supervisor_protocol = protocol.clone();
+    let supervisor_shutdown = shutdown_token.clone();
+    let supervisor_finalized = finalization_notify.clone();
+    let tee_lease_guard_handle = tokio::spawn(shutdown.track_task(
+        "TEE lease guard and lifecycle",
+        async move {
+            let lifecycle = async move {
+                if let (Some(supervisor), Some(owner)) = (supervisor, supervisor_owner) {
+                    supervisor
+                        .run(
+                            owner,
+                            (supervisor_provider, supervisor_protocol),
+                            supervisor_shutdown,
+                            supervisor_finalized,
+                        )
+                        .await;
+                }
+            };
+            let (guard, ()) = tokio::join!(lease_check, lifecycle);
+            if let Err(error) = guard {
+                tracing::error!(%error, "TEE lease guard failed closed");
+            }
+        },
+    ));
 
     // Periodic enclave canary (signal only): known-plaintext decrypt +
     // Health telemetry through the process-global session. `0` disables.
@@ -420,8 +456,9 @@ pub(crate) async fn start_runtime_workers(
     });
 
     let upgrade_promotion = Arc::new(tokio::sync::Notify::new());
-    let upgrade_handle = if initial_tee_policy.attestation_mode
-        == outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired
+    let upgrade_handle = if owner.is_none()
+        && initial_tee_policy.attestation_mode
+            == outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired
     {
         let provider = node.provider.clone();
         let promoted = upgrade_promotion.clone();

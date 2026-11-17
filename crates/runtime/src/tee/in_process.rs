@@ -23,6 +23,11 @@ pub(super) fn initialize(
     let (_, reth_p2p_public) =
         load_reth_p2p_node_host_signer(&config.network, config.datadir().p2p_secret())?;
     let node_host = load_node_host_key(node_data_dir)?;
+    let identity = outbe_tee::NodeHostIdentityV1 {
+        network_binding: policy.network_binding(),
+        reth_p2p_public,
+    };
+    let authorization = identity.authorization_witness_v1(&node_host)?;
     let keys = ResidentTeeKeys::generate()?;
     let manifest = EnclaveInitializationManifestV1 {
         chain_id: policy.chain_id,
@@ -30,17 +35,14 @@ pub(super) fn initialize(
         attestation_mode: policy.attestation_mode,
         node_id: NodeIdV1 { reth_p2p_public },
         initialization_challenge: alloy_primitives::B256::random().0,
-        node_host_noise_x25519: node_host.public(),
+        node_host_noise_x25519: authorization.node_host_noise_x25519,
         recipient_x25519: keys.tribute_offer_public(),
         attestation_ed25519: keys.attestation_pub(),
         noise_responder_x25519: keys.noise_public(),
     };
     let context = Arc::new(InProcessTeeContext::new(
         keys,
-        outbe_tee::NodeHostIdentityV1 {
-            network_binding: policy.network_binding(),
-            reth_p2p_public,
-        },
+        identity,
         manifest,
         TrustedNetworkDescriptorV1 {
             network_binding: policy.network_binding(),
@@ -58,6 +60,56 @@ pub(super) fn initialize(
         expected_enclave_id,
         validator: None,
     })
+}
+
+pub(super) async fn prepare_supervisor(
+    (config, args): (&LaunchConfig, &ConsensusArgs),
+    (node_data_dir, policy): (&Path, &outbe_primitives::tee_attestation_v1::TeePolicyV1),
+    signer: Option<&Arc<OutbeEvmSigner>>,
+    cancellation: &tokio_util::sync::CancellationToken,
+) -> Result<
+    (
+        Option<crate::admission::LocalTeeAdmissionAnchorV1>,
+        Option<crate::tee_supervisor::TeeLifecycleSupervisor>,
+    ),
+    AutonomousStartupError,
+> {
+    let (Some(upstream), Some(signer)) = (args.upstream.as_deref(), signer) else {
+        return Ok((None, None));
+    };
+    let (node_signing, _) =
+        load_reth_p2p_node_host_signer(&config.network, config.datadir().p2p_secret())
+            .map_err(AutonomousStartupError::Identity)?;
+    let binding =
+        outbe_tee::tee_attestation_activation::DcapSeededChainSpecBindingV1::from_chain_spec(
+            &config.chain,
+        )?;
+    let descriptor = TrustedNetworkDescriptorV1 {
+        network_binding: policy.network_binding(),
+        genesis_consensus_keys: binding.genesis_consensus_keys,
+    };
+    let live = outbe_tee::in_process_tee_context().ok_or(AutonomousStartupError::MissingContext)?;
+    let mut supervisor = crate::tee_supervisor::TeeLifecycleSupervisor::new(
+        upstream,
+        (signer.clone(), node_signing),
+        (live, node_data_dir.to_path_buf(), descriptor),
+    )?;
+    let anchor = supervisor.prepare(cancellation).await?;
+    Ok((anchor, Some(supervisor)))
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(super) enum AutonomousStartupError {
+    #[error("NodeHost signer loading failed")]
+    Identity(#[source] eyre::Report),
+    #[error(transparent)]
+    Activation(#[from] outbe_tee::errors::TeeAttestationActivationError),
+    #[error("resident context unavailable after initialization")]
+    MissingContext,
+    #[error(transparent)]
+    Supervisor(#[from] crate::tee_supervisor::RuntimeSupervisorError),
+    #[error(transparent)]
+    Prepare(#[from] crate::tee_supervisor::PrepareSupervisorError),
 }
 
 #[derive(Debug, thiserror::Error)]

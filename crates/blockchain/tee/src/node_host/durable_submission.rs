@@ -152,7 +152,8 @@ pub(super) fn candidate_promotion_intent<'a>(
 
 impl super::CommittedJoinSubmissionV1 {
     /// Inspect old public material only after chain reconciliation; never reuse a lost recipient.
-    pub fn intent_for_live_manifest_v1(
+    #[cfg(test)]
+    pub(crate) fn intent_for_live_manifest_v1(
         &self,
         live: &EnclaveInitializationManifestV1,
     ) -> crate::in_process::Result<RegistrationIntentV1> {

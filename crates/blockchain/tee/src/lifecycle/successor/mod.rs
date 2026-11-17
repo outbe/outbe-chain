@@ -60,3 +60,6 @@ pub struct SuccessorLeaseV1 {
     pub binding_id: alloy_primitives::B256,
     pub valid_until: u64,
 }
+
+#[cfg(test)]
+mod cold_tests;
