@@ -1,7 +1,4 @@
-use super::{
-    rpc::Rpc,
-    services::{self, Radicle},
-};
+use super::{rpc::Rpc, services::Radicle};
 use alloy_primitives::Address;
 use commonware_cryptography::{bls12381, Signer as _};
 use outbe_consensus::bls::{self, KeyBackend};
@@ -161,7 +158,6 @@ impl Cluster {
             let validator = root.join(format!("validator-{index}"));
             let socket = validator.join("rad.sock");
             radicle.push(Radicle::start(&socket, [index as u8 + 1; 32]));
-            let enclave = services::enclave(&final_genesis, &validator, index);
             let rpc = port();
             let metric = port();
             let log = fs::File::create(validator.join("node.log")).unwrap();
@@ -189,7 +185,7 @@ impl Cluster {
                     &peer_args,
                     "--consensus.use-local-defaults",
                 ])
-                .args(["--tee-enclave-socket", &enclave, "--radicle.control-socket"])
+                .arg("--radicle.control-socket")
                 .arg(&socket)
                 .args([
                     "--radicle.status-address",

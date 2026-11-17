@@ -291,3 +291,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod negative;

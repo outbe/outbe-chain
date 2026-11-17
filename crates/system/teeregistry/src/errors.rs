@@ -1693,12 +1693,6 @@ pub(crate) fn is_fatal_containing(error: &PrecompileError, needle: &str) -> bool
     matches!(error, PrecompileError::Revert(message) if message.contains(needle))
 }
 
-/// Formats a displayable error into a string for test callbacks.
-#[cfg(all(test, feature = "tee-attestation-v1"))]
-pub(crate) fn format_test_error(error: impl std::fmt::Display) -> String {
-    error.to_string()
-}
-
 #[cfg(test)]
 mod abi_tests {
     use super::*;
