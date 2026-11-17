@@ -56,6 +56,7 @@ pub async fn run(artifacts: &Path, ssh_key: Option<&Path>) -> Result<()> {
     let ssh = SshOptions::new(ssh_key)?;
     let temporary = tempfile::tempdir()?;
     let software = temporary.path().join("software");
+    fs::create_dir(&software)?;
     verify_and_extract(&build.root.join("software-bundle.tar.zst"), &software)?;
     ensure!(
         software.join("bin/outbe-up").is_file(),
