@@ -4,6 +4,7 @@ use alloy_primitives::U256;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_system_common::address_pair::AddressPair;
 use outbe_system_common::math::reference_price::is_coen_iso_market;
+use outbe_system_common::reference_currency::REFERENCE_CURRENCY_LETTERS;
 use outbe_system_common::units::{SCALE_1E18, SCALE_1E18_U128, SCALE_1E6_U128, SCALE_1E6_U256};
 
 /// Genesis policy rate of each reference currency, as `(iso_code, annual_rate_1e6)`
@@ -58,32 +59,27 @@ pub const MAX_UTC_DAY_VWAP_BACKFILL_DAYS: u32 = 366;
 pub const DAY_TYPE_ISO: u16 = 840;
 
 /// The reference currencies as ISO 4217 numeric codes: CNY, HKD, JPY, GBP, USD,
-/// EUR. A new reference currency is a code change.
-pub const REFERENCE_CURRENCIES: [u16; 6] = [156, 344, 392, 826, 840, 978];
+/// EUR. The list with the series letters is `REFERENCE_CURRENCY_LETTERS`; a new
+/// reference currency is a code change there.
+pub const REFERENCE_CURRENCIES: [u16; REFERENCE_CURRENCY_LETTERS.len()] = {
+    let mut codes = [0; REFERENCE_CURRENCY_LETTERS.len()];
+    let mut i = 0;
+    while i < codes.len() {
+        codes[i] = REFERENCE_CURRENCY_LETTERS[i].0;
+        i += 1;
+    }
+    codes
+};
 
-// The list is sorted and unique, contains the day-type currency, and every code
-// has an ISO 4217 letter code. An Intex series id holds only the first letter of
-// that code, so the first letters must also be distinct.
+// The list contains the day-type currency, and every code has an ISO 4217
+// letter code. `REFERENCE_CURRENCY_LETTERS` checks the order and the letters.
 const _: () = {
     let mut has_day_type = false;
     let mut i = 0;
     while i < REFERENCE_CURRENCIES.len() {
         let code = REFERENCE_CURRENCIES[i];
-        assert!(i == 0 || REFERENCE_CURRENCIES[i - 1] < code);
         has_day_type |= code == DAY_TYPE_ISO;
-        let Some(alpha) = outbe_system_common::stablecoin::iso_4217_alpha(code) else {
-            panic!("reference currency without an ISO 4217 letter code");
-        };
-        let mut j = 0;
-        while j < i {
-            let Some(other) =
-                outbe_system_common::stablecoin::iso_4217_alpha(REFERENCE_CURRENCIES[j])
-            else {
-                panic!("reference currency without an ISO 4217 letter code");
-            };
-            assert!(other[0] != alpha[0]);
-            j += 1;
-        }
+        assert!(outbe_system_common::stablecoin::iso_4217_alpha(code).is_some());
         i += 1;
     }
     assert!(has_day_type);
