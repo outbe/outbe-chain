@@ -16,6 +16,7 @@ use outbe_primitives::{
 #[derive(Clone, Copy, Debug)]
 pub struct ProtocolStep {
     pub name: &'static str,
+    pub gas_limit: u64,
     pub revert_fails_block: bool,
     pub include_validator_snapshot: bool,
     pub needs_cycle_active_utc_day: bool,
@@ -41,6 +42,7 @@ pub const fn consensus_step<M: ProtocolModule>() -> ProtocolStep {
 pub const fn begin_step<M: ProtocolModule>() -> ProtocolStep {
     ProtocolStep {
         name: M::NAME,
+        gas_limit: outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT,
         revert_fails_block: true,
         include_validator_snapshot: false,
         needs_cycle_active_utc_day: M::NEEDS_CYCLE_ACTIVE_UTC_DAY,
@@ -55,6 +57,7 @@ pub const fn begin_step<M: ProtocolModule>() -> ProtocolStep {
 pub const fn end_step<M: ProtocolModule>() -> ProtocolStep {
     ProtocolStep {
         name: M::NAME,
+        gas_limit: outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT,
         revert_fails_block: false,
         include_validator_snapshot: false,
         needs_cycle_active_utc_day: M::NEEDS_CYCLE_ACTIVE_UTC_DAY,
@@ -67,6 +70,13 @@ pub const fn end_step<M: ProtocolModule>() -> ProtocolStep {
 }
 
 impl ProtocolStep {
+    #[must_use]
+    pub const fn with_gas_limit(mut self, gas_limit: u64) -> Self {
+        assert!(gas_limit > 0, "ProtocolStep gas_limit must be nonzero");
+        self.gas_limit = gas_limit;
+        self
+    }
+
     #[must_use]
     pub const fn with_mutation_entitlements(
         mut self,
@@ -133,6 +143,27 @@ mod tests {
     struct NopModule;
     impl ProtocolModule for NopModule {
         const NAME: &'static str = "nop";
+    }
+
+    #[test]
+    fn protocol_step_gas_limits_default_and_override() {
+        for step in [
+            consensus_step::<NopModule>(),
+            begin_step::<NopModule>(),
+            end_step::<NopModule>(),
+        ] {
+            assert_eq!(
+                step.gas_limit,
+                outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT
+            );
+            assert_eq!(step.with_gas_limit(123_456).gas_limit, 123_456);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "ProtocolStep gas_limit must be nonzero")]
+    fn protocol_step_rejects_zero_gas_limit() {
+        let _ = end_step::<NopModule>().with_gas_limit(0);
     }
 
     fn test_step_entitlements(ctx: MutationEntitlementContext<'_>) -> MutationEntitlements {
