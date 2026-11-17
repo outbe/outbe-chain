@@ -95,19 +95,25 @@ fn in_process_dcap_outcomes_and_artifact_are_canonically_signed() {
         }
         // The seam substitutes only the hardware verifier verdict; production admission,
         // artifact construction, canonical encodings and signing are the same functions.
-        let result = context
-            .finish_dcap_onboarding(
-                DcapRegistrationSealV1 {
-                    evidence: &evidence,
-                    policy: &[1],
-                    block_timestamp: 1000,
-                    node_signature: &node_signature,
-                    enclave_signature: &enclave_signature,
-                    context: recipient_context,
-                },
-                outcome,
-            )
-            .unwrap();
+        let request = || DcapRegistrationSealV1 {
+            evidence: &evidence,
+            policy: &[1],
+            block_timestamp: 1000,
+            node_signature: &node_signature,
+            enclave_signature: &enclave_signature,
+            context: recipient_context,
+        };
+        if rejection == Some(DcapRejectCodeV1::MeasurementRejected) {
+            let unready = test_support::context(
+                AttestationMode::DcapRequired,
+                ProofSourceV1::Hardware(Arc::new(Hardware)),
+            );
+            assert!(matches!(
+                unready.finish_dcap_onboarding(request(), outcome.clone()),
+                Err(InProcessError::NotReady)
+            ));
+        }
+        let result = context.finish_dcap_onboarding(request(), outcome).unwrap();
         let decoded = DcapVerificationOutcomeV1::decode_canonical(&result.outcome).unwrap();
         match rejection {
             Some(code) => {

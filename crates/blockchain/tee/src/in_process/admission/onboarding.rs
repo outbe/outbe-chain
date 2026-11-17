@@ -252,6 +252,7 @@ impl InProcessTeeContext {
         let ProofSourceV1::Hardware(source) = &self.proof_source else {
             return Err(InProcessError::HardwareProofUnavailable);
         };
+        self.material()?;
         let measurement_matches = source.code_identity()?
             == (
                 verdict.mrenclave,

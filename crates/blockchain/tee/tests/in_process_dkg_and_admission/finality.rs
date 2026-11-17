@@ -1,6 +1,6 @@
 //! Local finality fixtures for outbe-tee, adapted from simplex test utilities.
-//! S2W1-T10 forbids Cargo.toml edits, so simplex's feature-gated fixture cannot be
-//! enabled here; this copy uses its public signing/bootstrap APIs instead.
+//! Simplex's fixture is feature-gated and that feature is not enabled by this
+//! package; this copy uses its public signing/bootstrap APIs instead.
 
 use alloy_consensus::Block;
 use alloy_primitives::{Bytes, B256};
