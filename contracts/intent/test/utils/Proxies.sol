@@ -27,9 +27,16 @@ library Proxies {
         internal
         returns (SolverEscrow)
     {
+        return solverEscrow(compact, lockTag, address(0), collateralBps, owner);
+    }
+
+    function solverEscrow(address compact, bytes12 lockTag, address wcoen, uint256 collateralBps, address owner)
+        internal
+        returns (SolverEscrow)
+    {
         return SolverEscrow(
             proxy(
-                address(new SolverEscrow(compact, lockTag)),
+                address(new SolverEscrow(compact, lockTag, wcoen)),
                 abi.encodeCall(SolverEscrow.initialize, (owner, collateralBps))
             )
         );

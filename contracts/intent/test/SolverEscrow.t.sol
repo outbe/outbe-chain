@@ -13,6 +13,7 @@ import {SolverEscrow} from "../src/SolverEscrow.sol";
 
 import {MockTheCompact} from "./mocks/MockTheCompact.sol";
 import {Proxies} from "./utils/Proxies.sol";
+import {WCOEN} from "@tokens/canonical/WCOEN.sol";
 
 contract SolverEscrowTest is Test {
     ERC20 internal token;
@@ -347,6 +348,130 @@ contract SolverEscrowTest is Test {
         assertEq(compact.balanceOf(address(escrow), id), lockAmount, "escrow received slashed ERC6909");
     }
 
+    /// @dev Without a WCOEN address (every chain but Outbe), native collateral follows the rule
+    ///      of the other tokens: the slash credits the slashed pool.
+    function test_slashCollateral_native_withoutWcoen_creditsPool() public {
+        bytes32 orderId = keccak256("order1");
+        uint256 id = escrow.lockId(address(0));
+
+        vm.prank(solver);
+        escrow.deposit{value: 500}(address(0), 0);
+
+        vm.startPrank(authorizedCaller);
+        escrow.lockCollateral(orderId, solver, address(0), 100);
+        escrow.slashCollateral(orderId);
+        vm.stopPrank();
+
+        assertEq(escrow.slashedPool(id), 100, "slashed pool credited");
+        assertEq(address(0).balance, 0, "nothing sent to address 0");
+    }
+
+    // ============ slashCollateral on Outbe Chain (WCOEN set) ============
+
+    /// @dev An escrow of Outbe Chain: it knows WCOEN. The arbiter of an allocator is set once, so
+    ///      the escrow gets its own allocator.
+    function _outbeEscrow(address wcoen) internal returns (SolverEscrow outbe) {
+        SolverAllocator outbeAllocator = Proxies.solverAllocator(address(compact), address(this));
+        bytes12 tag = outbeAllocator.buildLockTag(Scope.ChainSpecific, ResetPeriod.TenMinutes);
+        outbe = Proxies.solverEscrow(address(compact), tag, wcoen, COLLATERAL_BPS, address(this));
+        outbe.setAuthorizedCaller(authorizedCaller);
+        outbeAllocator.setArbiter(address(outbe));
+        vm.prank(solver);
+        compact.setOperator(address(outbe), true);
+    }
+
+    function test_slashCollateral_nativeCoen_goesToAddressZero() public {
+        SolverEscrow outbe = _outbeEscrow(address(new WCOEN()));
+        bytes32 orderId = keccak256("order1");
+        uint256 id = outbe.lockId(address(0));
+
+        vm.prank(solver);
+        outbe.deposit{value: 5000}(address(0), 0);
+
+        vm.startPrank(authorizedCaller);
+        outbe.lockCollateral(orderId, solver, address(0), 1000);
+        vm.expectEmit(true, true, false, true);
+        emit CollateralSlashed(orderId, solver, address(0), 1000);
+        outbe.slashCollateral(orderId);
+
+        assertEq(address(0).balance, 1000, "slashed COEN sits on address 0");
+        assertEq(outbe.slashedPool(id), 0, "slashed pool stays empty");
+        assertEq(compact.balanceOf(address(outbe), id), 0, "escrow holds no slashed ERC6909");
+        assertEq(outbe.totalLocked(solver, id), 0, "lock consumed");
+
+        // An order with the input token COEN earns no reward and reports no skip.
+        vm.recordLogs();
+        assertEq(outbe.distributeReward(address(0), 10_000, makeAddr("receiver")), 0, "no COEN reward");
+        assertEq(vm.getRecordedLogs().length, 0, "no RewardSkipped");
+        vm.stopPrank();
+    }
+
+    function test_slashCollateral_wcoen_burnsToAddressZero() public {
+        WCOEN wcoen = new WCOEN();
+        SolverEscrow outbe = _outbeEscrow(address(wcoen));
+        bytes32 orderId = keccak256("order1");
+        uint256 id = outbe.lockId(address(wcoen));
+
+        vm.startPrank(solver);
+        wcoen.deposit{value: 5000}();
+        wcoen.approve(address(outbe), 5000);
+        outbe.deposit(address(wcoen), 5000);
+        vm.stopPrank();
+
+        vm.startPrank(authorizedCaller);
+        outbe.lockCollateral(orderId, solver, address(wcoen), 1000);
+        outbe.slashCollateral(orderId);
+
+        assertEq(wcoen.totalSupply(), 4000, "WCOEN burned");
+        assertEq(wcoen.balanceOf(address(0)), 0, "no WCOEN left on address 0");
+        assertEq(address(0).balance, 1000, "its native COEN sits on address 0");
+        assertEq(outbe.slashedPool(id), 0, "slashed pool stays empty");
+
+        vm.recordLogs();
+        assertEq(outbe.distributeReward(address(wcoen), 10_000, makeAddr("receiver")), 0, "no WCOEN reward");
+        assertEq(vm.getRecordedLogs().length, 0, "no RewardSkipped");
+        vm.stopPrank();
+    }
+
+    /// @dev Other tokens keep the pool on Outbe Chain too.
+    function test_slashCollateral_otherTokenOnOutbe_creditsPool() public {
+        SolverEscrow outbe = _outbeEscrow(address(new WCOEN()));
+        bytes32 orderId = keccak256("order1");
+
+        vm.startPrank(solver);
+        token.approve(address(outbe), 500);
+        outbe.deposit(address(token), 500);
+        vm.stopPrank();
+
+        vm.startPrank(authorizedCaller);
+        outbe.lockCollateral(orderId, solver, address(token), 100);
+        outbe.slashCollateral(orderId);
+        vm.stopPrank();
+
+        assertEq(outbe.slashedPool(outbe.lockId(address(token))), 100, "slashed pool credited");
+    }
+
+    /// @dev A failed transfer to address 0 reverts the whole slash, so the lock stays. The OZ
+    ///      token stands in for a WCOEN that rejects address 0.
+    function test_slashCollateral_burnTransferFails_reverts() public {
+        SolverEscrow outbe = _outbeEscrow(address(token));
+        bytes32 orderId = keccak256("order1");
+
+        vm.startPrank(solver);
+        token.approve(address(outbe), 500);
+        outbe.deposit(address(token), 500);
+        vm.stopPrank();
+
+        vm.startPrank(authorizedCaller);
+        outbe.lockCollateral(orderId, solver, address(token), 100);
+        vm.expectRevert();
+        outbe.slashCollateral(orderId);
+        vm.stopPrank();
+
+        (,, uint256 amount) = outbe.locks(orderId);
+        assertEq(amount, 100, "lock survives the failed slash");
+    }
+
     // ============ withdraw with locked funds ============
 
     function test_withdraw_lockedFunds_partialAvailable() public {
@@ -488,7 +613,7 @@ contract SolverEscrowTest is Test {
 
         address receiver = makeAddr("receiver");
         uint256 orderAmountIn = 10_000;
-        uint256 expectedReward = (orderAmountIn * 150) / 10_000; // 1.5% = 150
+        uint256 expectedReward = (orderAmountIn * 200) / 10_000; // 2% = 200
 
         // Fund compact so allocatedTransfer can pay out underlying
         deal(address(token), address(compact), 10_000);
@@ -507,8 +632,8 @@ contract SolverEscrowTest is Test {
     }
 
     function test_distributeReward_exactSlashedBalance() public {
-        // Slash exactly 150 tokens -> 1.5% of 10_000 = 150 -> exact match
-        _slashSolver(5000, 150);
+        // Slash exactly 200 tokens -> 2% of 10_000 = 200 -> exact match
+        _slashSolver(5000, 200);
         deal(address(token), address(compact), 10_000);
 
         address receiver = makeAddr("receiver");
@@ -517,13 +642,13 @@ contract SolverEscrowTest is Test {
         vm.prank(authorizedCaller);
         uint256 reward = escrow.distributeReward(address(token), 10_000, receiver);
 
-        assertEq(reward, 150, "exact match reward");
+        assertEq(reward, 200, "exact match reward");
         assertEq(compact.balanceOf(address(escrow), id), 0, "escrow fully drained");
-        assertEq(token.balanceOf(receiver), 150, "receiver got reward");
+        assertEq(token.balanceOf(receiver), 200, "receiver got reward");
     }
 
     function test_distributeReward_zeroRewardSkipsCompact() public {
-        // 66 * 150 / 10_000 = 0: a dust order rounds the reward to zero. The Compact rejects a
+        // 49 * 200 / 10_000 = 0: a dust order rounds the reward to zero. The Compact rejects a
         // zero-amount allocatedTransfer, which used to revert the whole settle on mainnet.
         _slashSolver(5000, 1000);
         deal(address(token), address(compact), 10_000);
@@ -540,11 +665,20 @@ contract SolverEscrowTest is Test {
             0
         );
         vm.prank(authorizedCaller);
-        uint256 reward = escrow.distributeReward(address(token), 66, receiver);
+        uint256 reward = escrow.distributeReward(address(token), 49, receiver);
 
         assertEq(reward, 0, "dust order earns no reward");
         assertEq(escrow.slashedPool(id), poolBefore, "slashed pool untouched");
         assertEq(token.balanceOf(receiver), 0, "nothing paid out");
+    }
+
+    function test_distributeReward_smallestRewardedOrder() public {
+        // 50 * 200 / 10_000 = 1.
+        _slashSolver(5000, 1000);
+        deal(address(token), address(compact), 10_000);
+
+        vm.prank(authorizedCaller);
+        assertEq(escrow.distributeReward(address(token), 50, makeAddr("receiver")), 1);
     }
 
     // ============ custody ============
@@ -616,13 +750,13 @@ contract SolverEscrowTest is Test {
         uint256 id = escrow.lockId(address(token));
         bytes32 liveOrder = keccak256("liveOrder");
 
-        // 150 slashed (exactly the reward for a 10_000 order) + 1000 still locked for a live order.
-        _slashSolver(5000, 150);
+        // 200 slashed (exactly the reward for a 10_000 order) + 1000 still locked for a live order.
+        _slashSolver(5000, 200);
 
         vm.prank(authorizedCaller);
         escrow.lockCollateral(liveOrder, solver, address(token), 1000);
 
-        assertEq(compact.balanceOf(address(escrow), id), 1150, "escrow holds slashed + live lock");
+        assertEq(compact.balanceOf(address(escrow), id), 1200, "escrow holds slashed + live lock");
 
         deal(address(token), address(compact), 10_000);
         address receiver = makeAddr("receiver");
@@ -630,13 +764,13 @@ contract SolverEscrowTest is Test {
         vm.prank(authorizedCaller);
         uint256 reward = escrow.distributeReward(address(token), 10_000, receiver);
 
-        assertEq(reward, 150, "reward paid from the slashed pool");
+        assertEq(reward, 200, "reward paid from the slashed pool");
         assertEq(escrow.slashedPool(id), 0, "slashed pool drained");
 
         // The live lock survived and can still be returned in full.
         vm.prank(authorizedCaller);
         escrow.unlockCollateral(liveOrder);
-        assertEq(compact.balanceOf(solver, id), 5000 - 150, "solver got the live lock back untouched");
+        assertEq(compact.balanceOf(solver, id), 5000 - 200, "solver got the live lock back untouched");
         assertEq(compact.balanceOf(address(escrow), id), 0, "escrow drained");
     }
 
@@ -645,7 +779,7 @@ contract SolverEscrowTest is Test {
     function test_distributeReward_insufficientPool_paysNothing() public {
         uint256 id = escrow.lockId(address(token));
 
-        _slashSolver(5000, 100);
+        _slashSolver(5000, 150);
 
         vm.prank(authorizedCaller);
         escrow.lockCollateral(keccak256("liveOrder"), solver, address(token), 1000);
@@ -653,13 +787,13 @@ contract SolverEscrowTest is Test {
         deal(address(token), address(compact), 10_000);
 
         vm.expectEmit(true, false, false, true);
-        emit ISolverEscrow.RewardSkipped(address(token), 150, 100);
+        emit ISolverEscrow.RewardSkipped(address(token), 200, 150);
         vm.prank(authorizedCaller);
         uint256 reward = escrow.distributeReward(address(token), 10_000, makeAddr("receiver"));
 
-        assertEq(reward, 0, "reward of 150 exceeds the 100 slashed pool");
-        assertEq(escrow.slashedPool(id), 100, "slashed pool untouched");
-        assertEq(compact.balanceOf(address(escrow), id), 1100, "escrow balance untouched");
+        assertEq(reward, 0, "reward of 200 exceeds the 150 slashed pool");
+        assertEq(escrow.slashedPool(id), 150, "slashed pool untouched");
+        assertEq(compact.balanceOf(address(escrow), id), 1150, "escrow balance untouched");
     }
 
     /// @dev Forced withdrawal is allocator-independent, but it can only burn the solver's own free
@@ -707,7 +841,7 @@ contract SolverEscrowTest is Test {
 
     function test_constructor_zeroCompact_reverts() public {
         vm.expectRevert(ISolverEscrow.ZeroAddress.selector);
-        new SolverEscrow(address(0), lockTag);
+        new SolverEscrow(address(0), lockTag, address(0));
     }
 
     function test_initialize_invalidBps_reverts() public {
