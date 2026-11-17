@@ -36,14 +36,14 @@ pub(crate) enum SupervisorError<E: std::error::Error + 'static, S: std::error::E
     FeeOverflow,
 }
 
-/// Versioned continuation of the OST3 domain: the same resident enclave must
+/// A distinct lifecycle domain: the same resident enclave must
 /// acquire a distinct binding when an expired lease increments its counters.
 pub(crate) fn binding_id(
     live: &InProcessTeeContext,
     view: &LifecycleRegistryStateV1,
 ) -> Result<B256, outbe_primitives::tee_attestation_v1::CodecError> {
     let manifest = live.manifest();
-    let mut bytes = Vec::from(b"outbe/tee/bootstrap-binding/v1".as_slice());
+    let mut bytes = Vec::from(b"outbe/tee/lifecycle-binding/v1".as_slice());
     bytes.extend_from_slice(manifest.node_id.node_id_hash()?.as_slice());
     bytes.extend_from_slice(manifest.enclave_id()?.as_slice());
     bytes.extend_from_slice(view.policy.policy_hash()?.as_slice());

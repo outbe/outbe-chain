@@ -1,6 +1,7 @@
 //! Autonomous service transactions for one continuous resident VM lifetime.
 mod driver;
 mod engine;
+mod retry;
 mod rpc;
 mod signer;
 mod successor;
@@ -139,6 +140,9 @@ impl TeeLifecycleSupervisor {
 
 impl driver::LifecycleTask for TeeLifecycleSupervisor {
     type Error = RuntimeSupervisorError;
+    fn is_retryable(error: &Self::Error) -> bool {
+        error.is_retryable()
+    }
     async fn tick(&mut self) -> Result<engine::Step, Self::Error> {
         self.observe_tick().await
     }
@@ -183,6 +187,9 @@ where
         + 'static,
 {
     type Error = RuntimeSupervisorError;
+    fn is_retryable(error: &Self::Error) -> bool {
+        error.is_retryable()
+    }
     async fn tick(&mut self) -> Result<engine::Step, Self::Error> {
         let step = self.supervisor.observe_tick().await?;
         self.supervisor
@@ -215,5 +222,17 @@ impl From<engine::SupervisorError<rpc::RpcLifecycleError, signer::SigningError>>
 {
     fn from(source: engine::SupervisorError<rpc::RpcLifecycleError, signer::SigningError>) -> Self {
         Self::Observation(Box::new(source))
+    }
+}
+
+impl RuntimeSupervisorError {
+    fn is_retryable(&self) -> bool {
+        match self {
+            Self::Rpc(_) => true,
+            Self::Observation(error) => retry::observation(error),
+            Self::Renewal(error) => retry::renewal(error),
+            Self::Successor(error) => error.is_retryable(),
+            Self::Journal(_) | Self::InvalidChainId => false,
+        }
     }
 }

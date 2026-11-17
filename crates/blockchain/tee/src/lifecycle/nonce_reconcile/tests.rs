@@ -297,6 +297,79 @@ async fn pending_then_finalized_registration_ingests_even_when_jailed() {
 }
 
 #[tokio::test]
+async fn terminal_journals_reconcile_registry_without_reading_receipts() {
+    for (state, has_binding, lost_identity, expected) in [
+        (
+            ServiceTxStateV1::Completed,
+            false,
+            false,
+            ServiceTxReconciliationV1::Completed,
+        ),
+        (
+            ServiceTxStateV1::Completed,
+            true,
+            false,
+            ServiceTxReconciliationV1::IngestOnboarding,
+        ),
+        (
+            ServiceTxStateV1::Completed,
+            true,
+            true,
+            ServiceTxReconciliationV1::DiscardLostIdentity {
+                mutation_finalized: true,
+            },
+        ),
+        (
+            ServiceTxStateV1::DiscardedLostIdentity,
+            false,
+            true,
+            ServiceTxReconciliationV1::DiscardLostIdentity {
+                mutation_finalized: false,
+            },
+        ),
+        (
+            ServiceTxStateV1::RebuildRequired,
+            false,
+            false,
+            ServiceTxReconciliationV1::RebuildAndResign { nonce: 7 },
+        ),
+        (
+            ServiceTxStateV1::RebuildRequired,
+            false,
+            true,
+            ServiceTxReconciliationV1::DiscardLostIdentity {
+                mutation_finalized: false,
+            },
+        ),
+    ] {
+        let (_root, mut journal, live, record, mut chain) = fixture();
+        journal.begin(record.clone()).unwrap();
+        journal.finish(record.tx_hash, state, chain.at).unwrap();
+        if has_binding {
+            chain.binding = Some(applied(&record));
+        }
+        chain.nonces = [5, 6, 7];
+        chain.fail_receipt = true;
+        let fresh = context(10);
+        let live = if lost_identity { &fresh } else { &live };
+        assert_eq!(
+            reconcile_service_tx_v1(&chain, &mut journal, live)
+                .await
+                .unwrap(),
+            expected
+        );
+        assert_eq!(chain.receipt_reads.load(Ordering::SeqCst), 0);
+        assert_eq!(chain.reads.load(Ordering::SeqCst), 1);
+        let expected_state = if state == ServiceTxStateV1::RebuildRequired && lost_identity {
+            ServiceTxStateV1::DiscardedLostIdentity
+        } else {
+            state
+        };
+        assert_eq!(journal.load().unwrap().unwrap().state, expected_state);
+    }
+}
+
+#[tokio::test]
 async fn external_nonce_waits_for_finality_then_rebuilds_without_replacing_live_context() {
     let (_root, mut journal, live, record, mut chain) = fixture();
     journal.begin(record.clone()).unwrap();

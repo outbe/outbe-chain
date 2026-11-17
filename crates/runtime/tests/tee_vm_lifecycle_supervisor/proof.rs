@@ -1,5 +1,5 @@
 //! Reuse the existing cryptographic fixture, advancing its exact lease checkpoint.
-use super::{finality, shared};
+use super::*;
 use alloy_primitives::{B256, U256};
 use commonware_consensus::types::Epoch;
 use outbe_primitives::{
@@ -101,5 +101,105 @@ fn compact(signed: finality::CertifiedBlockFixture) -> CertifiedHeaderV1 {
         finalization: signed.finalization,
         header: alloy_consensus::private::alloy_rlp::encode(decoded.block.header()),
         descendants: Vec::new(),
+    }
+}
+
+/// Fault injection remains at the chain boundary, not in the production scheduler.
+pub(super) struct ObservedChain {
+    inner: FixtureChain,
+    pub checkpoint_failure: bool,
+    pub proof_failure: bool,
+    pub receipt_calls: std::sync::atomic::AtomicUsize,
+}
+impl ObservedChain {
+    pub fn new(inner: FixtureChain) -> Self {
+        Self {
+            inner,
+            checkpoint_failure: false,
+            proof_failure: false,
+            receipt_calls: Default::default(),
+        }
+    }
+}
+impl std::ops::Deref for ObservedChain {
+    type Target = FixtureChain;
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+impl std::ops::DerefMut for ObservedChain {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+impl LifecycleChainPort for ObservedChain {
+    type Error = std::io::Error;
+    async fn finalized_checkpoint(&self) -> chain::PortResult<LifecycleCheckpointV1> {
+        if self.checkpoint_failure {
+            return Err(LifecyclePortError::Source(std::io::Error::from(
+                std::io::ErrorKind::TimedOut,
+            )));
+        }
+        self.inner.finalized_checkpoint().await
+    }
+    async fn registry_state(
+        &self,
+        at: LifecycleCheckpointV1,
+        selector: &outbe_tee::registry_view::NodeBindingSelectorV1,
+    ) -> chain::PortResult<LifecycleRegistryStateV1> {
+        self.inner.registry_state(at, selector).await
+    }
+    async fn validator_record(
+        &self,
+        at: LifecycleCheckpointV1,
+        account: Address,
+    ) -> chain::PortResult<Option<outbe_primitives::validator_dto::ValidatorRecord>> {
+        self.inner.validator_record(at, account).await
+    }
+    async fn balance(
+        &self,
+        at: LifecycleCheckpointV1,
+        account: Address,
+    ) -> chain::PortResult<U256> {
+        self.inner.balance(at, account).await
+    }
+    async fn account_nonce(
+        &self,
+        account: Address,
+        tag: LifecycleNonceTagV1,
+    ) -> chain::PortResult<u64> {
+        self.inner.account_nonce(account, tag).await
+    }
+    async fn send_raw_transaction(&self, raw: &[u8]) -> chain::PortResult<B256> {
+        self.inner.send_raw_transaction(raw).await
+    }
+    async fn finalized_receipt(
+        &self,
+        at: LifecycleCheckpointV1,
+        hash: B256,
+    ) -> chain::PortResult<Option<LifecycleReceiptV1>> {
+        self.receipt_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.finalized_receipt(at, hash).await
+    }
+    async fn onboarding_proof(
+        &self,
+        at: LifecycleCheckpointV1,
+        hash: B256,
+    ) -> chain::PortResult<LifecycleOnboardingProofV1> {
+        if self.proof_failure {
+            return Err(LifecyclePortError::Source(std::io::Error::from(
+                std::io::ErrorKind::ConnectionReset,
+            )));
+        }
+        self.inner.onboarding_proof(at, hash).await
+    }
+    async fn upgrade_key(
+        &self,
+        at: LifecycleCheckpointV1,
+        context: &outbe_tee::dcap_protocol::DcapOnboardingContextV1,
+        proof: &outbe_tee::upgrade_transfer::UpgradeKeyProofV1,
+    ) -> chain::PortResult<LifecycleOnboardingProofV1> {
+        self.inner.upgrade_key(at, context, proof).await
     }
 }

@@ -12,6 +12,7 @@ pub(crate) struct PreparedAnchor {
 
 pub(crate) trait LifecycleTask: Send {
     type Error: std::error::Error + Send + Sync + 'static;
+    fn is_retryable(error: &Self::Error) -> bool;
     fn tick(&mut self) -> impl Future<Output = Result<Step, Self::Error>> + Send;
     fn prepared(&mut self, step: &Step) -> Result<Option<PreparedAnchor>, Self::Error> {
         Ok(match step {
@@ -53,7 +54,16 @@ pub(crate) async fn prepare<T: LifecycleTask>(
         let step = tokio::select! {
             biased;
             _ = cancellation.cancelled() => return Err(PrepareError::Cancelled),
-            result = task.tick() => result.map_err(PrepareError::Observation)?,
+            result = task.tick() => result,
+        };
+        let step = match step {
+            Ok(step) => step,
+            Err(error) if T::is_retryable(&error) => {
+                tracing::warn!(%error, "TEE pre-sync lifecycle observation failed; retrying");
+                wait(cancellation, finalized).await;
+                continue;
+            }
+            Err(error) => return Err(PrepareError::Observation(error)),
         };
         if matches!(step, Step::AwaitingNetwork) {
             return Ok(None);

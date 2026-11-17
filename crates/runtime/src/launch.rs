@@ -235,7 +235,7 @@ where
                 Arc::clone(&runtime_for_launcher) as Arc<dyn TeeSessionStateReader>,
                 tee_supervisor,
             ),
-            (&node, &args),
+            (&node, &args, evm_signer.as_ref()),
             (proof_chain_id, genesis_hash, &node_data_dir),
             (local_tee_identity, tee_admission_anchor, &initial_tee_policy),
             (tee_canary_status.clone(), tee_authority, shutdown_token.clone(), shutdown.clone()),

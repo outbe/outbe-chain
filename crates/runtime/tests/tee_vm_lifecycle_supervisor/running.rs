@@ -6,6 +6,8 @@ use tokio_util::sync::CancellationToken;
 enum Event {
     Observation(engine::Step),
     Prepared,
+    Failed,
+    Fatal,
 }
 struct Task {
     state: Arc<Mutex<Harness>>,
@@ -14,6 +16,9 @@ struct Task {
 }
 impl driver::LifecycleTask for Task {
     type Error = engine::SupervisorError<std::io::Error, std::convert::Infallible>;
+    fn is_retryable(error: &Self::Error) -> bool {
+        retry::observation(error)
+    }
     async fn tick(&mut self) -> Result<engine::Step, Self::Error> {
         let mut state = self.state.lock().await;
         let Harness {
@@ -32,7 +37,14 @@ impl driver::LifecycleTask for Task {
                 phase: RenewalUpgradePhaseV1::Idle,
             },
         )
-        .await?;
+        .await;
+        let step = match step {
+            Ok(step) => step,
+            Err(error) => {
+                self.events.send(Event::Failed).unwrap();
+                return Err(error);
+            }
+        };
         self.authority.observe(&state);
         self.events.send(Event::Observation(step.clone())).unwrap();
         Ok(step)
@@ -70,6 +82,9 @@ impl Running {
                     driver::run(task, stop, finalized).await;
                 }
                 Err(driver::PrepareError::Cancelled) => {}
+                Err(driver::PrepareError::Observation(_)) => {
+                    sender.send(Event::Fatal).unwrap();
+                }
                 other => panic!("pre-sync failed: {other:?}"),
             }
         });
@@ -445,4 +460,166 @@ async fn finalized_renewal_keeps_resident_admission_and_schedules_the_next_renew
         h.journal.load().unwrap().unwrap().kind,
         ServiceTxKindV1::Renew
     );
+}
+
+#[tokio::test]
+async fn presync_retries_port_failures_without_replacing_resident_or_register() {
+    let mut h = Harness::new();
+    let live = h.live.clone();
+    h.chain.checkpoint_failure = true;
+    let mut r = Running::new(h, true);
+    assert!(matches!(r.events.recv().await, Some(Event::Failed)));
+    {
+        let state = r.state.lock().await;
+        assert_eq!(state.sent(), 0);
+        assert!(state.journal.load().unwrap().is_none());
+        assert!(Arc::ptr_eq(&live, &state.live));
+    }
+    r.change(|h| h.chain.checkpoint_failure = false).await;
+    r.until(|s| {
+        matches!(
+            s,
+            engine::Step::Enrollment(EnrollmentOutcome::Submitted { .. })
+        )
+    })
+    .await;
+    let record = r.state.lock().await.journal.load().unwrap().unwrap();
+    r.change(|h| {
+        h.finalize();
+        h.chain.proof_failure = true;
+    })
+    .await;
+    assert!(matches!(r.events.recv().await, Some(Event::Failed)));
+    {
+        let state = r.state.lock().await;
+        assert_eq!(state.sent(), 1);
+        assert!(Arc::ptr_eq(&live, &state.live));
+        assert!(!live.offer_key_ready().unwrap());
+        assert_eq!(
+            state.journal.load().unwrap().unwrap().raw_signed_tx,
+            record.raw_signed_tx
+        );
+    }
+    r.change(|h| h.chain.proof_failure = false).await;
+    r.until(|s| {
+        matches!(
+            s,
+            engine::Step::Enrollment(EnrollmentOutcome::Admitted { .. })
+        )
+    })
+    .await;
+    while !matches!(r.events.recv().await.unwrap(), Event::Prepared) {}
+    {
+        let state = r.state.lock().await;
+        assert!(Arc::ptr_eq(&live, &state.live));
+        assert!(live.offer_key_ready().unwrap());
+        assert!(live.admission_anchor().unwrap().is_some());
+        assert_eq!(state.sent(), 1);
+        assert_eq!(
+            state.journal.load().unwrap().unwrap().state,
+            ServiceTxStateV1::Completed
+        );
+    }
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn completed_register_steady_state_never_queries_a_receipt() {
+    let mut h = Harness::new();
+    h.admit().await;
+    h.chain
+        .receipt_calls
+        .store(0, std::sync::atomic::Ordering::SeqCst);
+    assert!(matches!(
+        h.step().await,
+        engine::Step::Renewal(RenewalStep::NotDue { .. })
+    ));
+    assert_eq!(
+        h.chain
+            .receipt_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+    assert_eq!(h.sent(), 1);
+}
+
+#[tokio::test]
+async fn cancellation_interrupts_retry_wait_and_fatal_journal_stops_presync() {
+    let mut h = Harness::new();
+    h.chain.checkpoint_failure = true;
+    let mut r = Running::new(h, true);
+    assert!(matches!(r.events.recv().await, Some(Event::Failed)));
+    r.stop().await;
+
+    let h = Harness::new();
+    std::fs::write(
+        h.dir.join("tee-service-tx-v1/journal.json"),
+        b"invalid journal",
+    )
+    .unwrap();
+    let mut r = Running::new(h, true);
+    assert!(matches!(r.events.recv().await, Some(Event::Failed)));
+    assert!(matches!(r.events.recv().await, Some(Event::Fatal)));
+    assert_eq!(r.state.lock().await.sent(), 0);
+    r.handle.await.unwrap();
+}
+
+#[tokio::test]
+async fn registration_binding_id_uses_lifecycle_domain_and_versioned_identity() {
+    let h = Harness::new();
+    let view = h
+        .chain
+        .registry_state(
+            h.chain.at,
+            &outbe_tee::registry_view::NodeBindingSelectorV1::Validator(Signer::address()),
+        )
+        .await
+        .unwrap();
+    let mut identity = Vec::new();
+    identity.extend_from_slice(h.live.manifest().node_id.node_id_hash().unwrap().as_slice());
+    identity.extend_from_slice(h.live.manifest().enclave_id().unwrap().as_slice());
+    identity.extend_from_slice(view.policy.policy_hash().unwrap().as_slice());
+    identity.extend_from_slice(&1_u64.to_be_bytes());
+    identity.extend_from_slice(&0_u64.to_be_bytes());
+    let expected = alloy_primitives::keccak256(
+        [b"outbe/tee/lifecycle-binding/v1".as_slice(), &identity].concat(),
+    );
+    let previous = alloy_primitives::keccak256(
+        [b"outbe/tee/bootstrap-binding/v1".as_slice(), &identity].concat(),
+    );
+    let actual = engine::binding_id(&h.live, &view).unwrap();
+    assert_eq!(actual, expected);
+    assert_ne!(actual, previous);
+}
+
+#[test]
+fn retry_classification_preserves_fatal_enrollment_and_identity_errors() {
+    type Error = engine::SupervisorError<std::io::Error, std::convert::Infallible>;
+    let transient: [Error; 4] = [
+        LifecyclePortError::Source(std::io::Error::from(std::io::ErrorKind::TimedOut)).into(),
+        EnrollmentError::Port(LifecyclePortError::Source(std::io::Error::from(
+            std::io::ErrorKind::ConnectionReset,
+        )))
+        .into(),
+        EnrollmentError::Reconcile(ReconcileError::CheckpointMismatch).into(),
+        RenewalError::Reconcile(ReconcileError::CheckpointMismatch).into(),
+    ];
+    for error in transient {
+        assert!(retry::observation(&error), "{error:?}");
+    }
+    let fatal: [Error; 7] = [
+        EnrollmentError::LiveRejoinForbiddenInMode {
+            mode: AttestationMode::DcapRequired,
+        }
+        .into(),
+        EnrollmentError::CompetingLiveBinding.into(),
+        EnrollmentError::InvalidConfiguration.into(),
+        EnrollmentError::IdentityMismatch.into(),
+        EnrollmentError::WrongServiceTransaction.into(),
+        RenewalError::BindingMismatch.into(),
+        RenewalError::Reconcile(ReconcileError::FinalizedMutationConflict).into(),
+    ];
+    for error in fatal {
+        assert!(!retry::observation(&error), "{error:?}");
+    }
 }

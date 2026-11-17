@@ -128,7 +128,7 @@ async fn pinned_balance_and_nonce_reject_wrong_checkpoint_before_state_read() {
     handle.stop().unwrap();
 }
 #[tokio::test]
-async fn receipt_requires_canonical_finalized_ancestry_and_matching_transaction() {
+async fn receipt_requires_canonical_block_and_matching_transaction() {
     let tx = B256::repeat_byte(5);
     for (receipt_hash, tx_hash, status, valid) in [
         (checkpoint().genesis_hash, tx, "0x1", true),
@@ -155,6 +155,71 @@ async fn receipt_requires_canonical_finalized_ancestry_and_matching_transaction(
         handle.stop().unwrap();
     }
 }
+#[tokio::test]
+async fn old_finalized_receipt_uses_a_bounded_number_of_rpc_calls() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let at = LifecycleCheckpointV1 {
+        height: 500_000,
+        ..checkpoint()
+    };
+    let tx = B256::repeat_byte(5);
+    let receipt_hash = B256::repeat_byte(10);
+    let server = ServerBuilder::default().build("127.0.0.1:0").await.unwrap();
+    let address = server.local_addr().unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut module = RpcModule::new(calls.clone());
+    module
+        .register_method("eth_chainId", |_, calls, _| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            "0x7"
+        })
+        .unwrap();
+    module
+        .register_method("eth_getBlockByNumber", move |params, calls, _| {
+            let args: Vec<Value> = params.parse()?;
+            let count = calls.fetch_add(1, Ordering::SeqCst) + 1;
+            if count > 10 {
+                return Err(ErrorObjectOwned::owned(
+                    -32000,
+                    "RPC request budget exceeded",
+                    None::<()>,
+                ));
+            }
+            let mut value = block(at);
+            value["parentHash"] = json!(receipt_hash);
+            if args[0] == "0x0" {
+                value["number"] = json!("0x0");
+                value["hash"] = json!(at.genesis_hash);
+            } else if args[0] != "finalized" {
+                value["number"] = args[0].clone();
+                if args[0] != format!("0x{:x}", at.height) {
+                    value["hash"] = json!(receipt_hash);
+                }
+            }
+            Ok(value)
+        })
+        .unwrap();
+    module.register_method("eth_getTransactionReceipt", move |_, calls, _| {
+        calls.fetch_add(1, Ordering::SeqCst);
+        json!({"transactionHash":tx,"blockHash":receipt_hash,"blockNumber":"0xa","status":"0x1"})
+    }).unwrap();
+    let handle = server.start(module);
+    let port =
+        RpcLifecyclePort::new(&format!("http://{address}"), at.chain_id, at.genesis_hash).unwrap();
+    let result = port.finalized_receipt(at, tx).await;
+    handle.stop().unwrap();
+    assert_eq!(
+        result.unwrap(),
+        Some(LifecycleReceiptV1 {
+            tx_hash: tx,
+            block_height: 10,
+            block_hash: receipt_hash,
+            success: true,
+        })
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 10);
+}
+
 #[tokio::test]
 async fn send_preserves_typed_rpc_error_without_prose_classification() {
     let server = ServerBuilder::default().build("127.0.0.1:0").await.unwrap();

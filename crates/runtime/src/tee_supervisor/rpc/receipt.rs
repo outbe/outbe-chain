@@ -20,7 +20,6 @@ impl RpcLifecyclePort {
             return Ok(None);
         }
         let receipt = self.confirmed_receipt(&receipt, tx_hash, height).await?;
-        self.canonical_receipt_ancestry(at, receipt).await?;
         self.check(at).await?;
         Ok(Some(receipt))
     }
@@ -35,23 +34,6 @@ impl RpcLifecyclePort {
         }
         Ok(block)
     }
-    async fn canonical_receipt_ancestry(
-        &self,
-        at: LifecycleCheckpointV1,
-        receipt: LifecycleReceiptV1,
-    ) -> Result<(), RpcLifecycleError> {
-        // Walk parent links to the caller's checkpoint, not a fresh finalized tag.
-        let mut child_hash = at.hash;
-        for height in (receipt.block_height + 1..=at.height).rev() {
-            let child = self.canonical_block(height, child_hash).await?;
-            child_hash = hash(&child, "parentHash")?;
-        }
-        if child_hash != receipt.block_hash {
-            return Err(RpcLifecycleError::CheckpointMismatch);
-        }
-        Ok(())
-    }
-
     async fn confirmed_receipt(
         &self,
         receipt: &Value,

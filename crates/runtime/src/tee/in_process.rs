@@ -77,25 +77,49 @@ pub(super) async fn prepare_supervisor(
     let (Some(upstream), Some(signer)) = (args.upstream.as_deref(), signer) else {
         return Ok((None, None));
     };
+    let mut supervisor =
+        new_supervisor(config, node_data_dir, policy, signer, upstream).map_err(|error| *error)?;
+    let anchor = supervisor.prepare(cancellation).await?;
+    Ok((anchor, Some(supervisor)))
+}
+
+pub(super) fn local_lifecycle_endpoint(
+    args: &ConsensusArgs,
+    has_signer: bool,
+    local: Option<std::net::SocketAddr>,
+) -> Option<String> {
+    if args.upstream.is_some() || args.tee_enclave_socket.is_some() || !has_signer {
+        return None;
+    }
+    local.map(|addr| format!("http://{addr}"))
+}
+
+pub(super) fn new_supervisor(
+    config: &LaunchConfig,
+    node_data_dir: &Path,
+    policy: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
+    signer: &Arc<OutbeEvmSigner>,
+    endpoint: &str,
+) -> Result<crate::tee_supervisor::TeeLifecycleSupervisor, Box<AutonomousStartupError>> {
     let (node_signing, _) =
         load_reth_p2p_node_host_signer(&config.network, config.datadir().p2p_secret())
             .map_err(AutonomousStartupError::Identity)?;
     let binding =
         outbe_tee::tee_attestation_activation::DcapSeededChainSpecBindingV1::from_chain_spec(
             &config.chain,
-        )?;
+        )
+        .map_err(AutonomousStartupError::Activation)?;
     let descriptor = TrustedNetworkDescriptorV1 {
         network_binding: policy.network_binding(),
         genesis_consensus_keys: binding.genesis_consensus_keys,
     };
     let live = outbe_tee::in_process_tee_context().ok_or(AutonomousStartupError::MissingContext)?;
-    let mut supervisor = crate::tee_supervisor::TeeLifecycleSupervisor::new(
-        upstream,
+    Ok(crate::tee_supervisor::TeeLifecycleSupervisor::new(
+        endpoint,
         (signer.clone(), node_signing),
         (live, node_data_dir.to_path_buf(), descriptor),
-    )?;
-    let anchor = supervisor.prepare(cancellation).await?;
-    Ok((anchor, Some(supervisor)))
+    )
+    .map_err(AutonomousStartupError::Supervisor)?)
 }
 
 #[derive(Debug, thiserror::Error)]

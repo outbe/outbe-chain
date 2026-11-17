@@ -27,12 +27,15 @@ mod driver;
 mod engine;
 #[path = "tee_vm_lifecycle_supervisor/proof.rs"]
 mod proof;
+#[path = "../src/tee_supervisor/retry.rs"]
+mod retry;
 #[path = "tee_vm_lifecycle_supervisor/running.rs"]
 mod running;
 #[allow(dead_code)]
 #[path = "../../blockchain/tee/tests/in_process_dkg_and_admission/fixtures.rs"]
 mod shared;
-use chain::{Chain, Signer};
+use chain::{Chain as FixtureChain, Signer};
+use proof::ObservedChain as Chain;
 
 struct Harness {
     dir: PathBuf,
@@ -68,7 +71,7 @@ impl Harness {
                 .unwrap();
         policy.maximum_lease = 7200;
         policy.minimum_lease = 3600;
-        let chain = Chain {
+        let chain = Chain::new(FixtureChain {
             at,
             binding: None,
             policy,
@@ -82,7 +85,7 @@ impl Harness {
             public: B256::repeat_byte(9),
             fail_nonce: false,
             journal_dir: dir.clone(),
-        };
+        });
         Self {
             dir,
             live,

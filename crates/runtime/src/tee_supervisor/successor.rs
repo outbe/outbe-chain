@@ -383,3 +383,13 @@ pub(crate) enum SuccessorRuntimeError {
     #[error("local finalized checkpoint changed during promotion")]
     MovingFinality,
 }
+
+impl SuccessorRuntimeError {
+    pub(super) fn is_retryable(&self) -> bool {
+        match self {
+            Self::Port(_) | Self::Rpc(_) | Self::Provider(_) | Self::MovingFinality => true,
+            Self::Successor(SuccessorError::Lifecycle(error)) => retry::renewal(error),
+            _ => false,
+        }
+    }
+}

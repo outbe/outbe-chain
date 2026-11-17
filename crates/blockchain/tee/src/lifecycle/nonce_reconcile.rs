@@ -50,8 +50,12 @@ pub async fn reconcile_service_tx_v1<P: LifecycleChainPort>(
     let at = port.finalized_checkpoint().await?;
     validate_checkpoint(&record, at, live)?;
     let selector = NodeBindingSelectorV1::Validator(record.sender);
-    // Receipt and canonical Registry state are both consulted before any decision.
-    let receipt = port.finalized_receipt(at, record.tx_hash).await?;
+    // Terminal journals already resolved the transaction; keep checking canonical Registry state.
+    let receipt = if record.state == ServiceTxStateV1::Pending {
+        port.finalized_receipt(at, record.tx_hash).await?
+    } else {
+        None
+    };
     let view = port.registry_state(at, &selector).await?;
     validate_view(&view, at, live)?;
     validate_receipt(receipt, &record, at)?;

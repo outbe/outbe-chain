@@ -299,7 +299,7 @@ pub(crate) async fn start_runtime_workers(
         Arc<dyn outbe_execution::tee_remote_session::TeeSessionStateReader>,
         Option<crate::tee_supervisor::TeeLifecycleSupervisor>,
     ),
-    (node, args): (&OutbeFullNode, &ConsensusArgs),
+    (node, args, evm_signer): (&OutbeFullNode, &ConsensusArgs, Option<&Arc<OutbeEvmSigner>>),
     (proof_chain_id, genesis_hash, node_data_dir): (u64, alloy_primitives::B256, &Path),
     (local_tee_identity, tee_admission_anchor, initial_tee_policy): (
         outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
@@ -322,6 +322,27 @@ pub(crate) async fn start_runtime_workers(
         genesis_hash,
     };
     let context = outbe_tee::in_process_tee_context();
+    // Founding validators acquire their key at block one, after local RPC starts.
+    let supervisor = if supervisor.is_none() && context.is_some() {
+        in_process::local_lifecycle_endpoint(
+            args,
+            evm_signer.is_some(),
+            node.rpc_server_handles.rpc.http_local_addr(),
+        )
+        .zip(evm_signer)
+        .map(|(endpoint, signer)| {
+            in_process::new_supervisor(
+                &node.config,
+                node_data_dir,
+                initial_tee_policy,
+                signer,
+                &endpoint,
+            )
+        })
+        .transpose()?
+    } else {
+        supervisor
+    };
     let anchors = if context.is_some()
         && (args.upstream.is_some()
             || !args.is_validator
@@ -553,6 +574,36 @@ mod tests {
         let err =
             enclave_backed_policy_ok(Some(WitnessPolicy::ReplayOnly)).expect_err("replay policy");
         assert!(err.to_string().contains("EnclaveBacked"));
+    }
+
+    #[test]
+    fn founding_lifecycle_uses_local_http_only_for_resident_keyed_launch() {
+        let local = "127.0.0.1:8545".parse().unwrap();
+        let mut args = parsed_args(&[]);
+        args.is_validator = true;
+        assert_eq!(
+            in_process::local_lifecycle_endpoint(&args, true, Some(local)),
+            Some("http://127.0.0.1:8545".into())
+        );
+        assert_eq!(
+            in_process::local_lifecycle_endpoint(&args, true, None),
+            None
+        );
+        assert_eq!(
+            in_process::local_lifecycle_endpoint(&args, false, Some(local)),
+            None
+        );
+        args.upstream = Some("http://upstream:8545".into());
+        assert_eq!(
+            in_process::local_lifecycle_endpoint(&args, true, Some(local)),
+            None
+        );
+        args.upstream = None;
+        args.tee_enclave_socket = Some("/tmp/tee.sock".into());
+        assert_eq!(
+            in_process::local_lifecycle_endpoint(&args, true, Some(local)),
+            None
+        );
     }
 
     #[test]
