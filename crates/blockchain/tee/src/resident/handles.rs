@@ -31,18 +31,38 @@ impl std::fmt::Debug for AccountKeysHandle {
 
 impl StateKeyHandle {
     /// HKDF with this key as salt, for hierarchical ledger derivation.
-    pub fn derive_subkey(&self, context: &[u8], info: &[u8]) -> Result<Self> {
-        Ok(Self(derive(self.0.as_ref(), context, info)?))
+    pub fn derive_subkey(&self, account: Address, info: &[u8]) -> Result<Self> {
+        Ok(Self(derive(self.0.as_ref(), account.as_slice(), info)?))
     }
     /// HKDF with this key as IKM, for digest-bound NOD/Tribute record keys.
     pub fn derive_with_salt(&self, salt: &[u8], info: &[u8]) -> Result<Self> {
         Ok(Self(derive(salt, self.0.as_ref(), info)?))
     }
-    pub fn compute_mac(&self, label: &[u8], message: &[u8]) -> [u8; 32] {
-        mac(&self.0, label, message)
+    /// Domain outputs cannot overlap the fixed-length HKDF extraction inputs.
+    pub fn compute_domain_mac(&self, domain_tag: &[u8], words: &[[u8; 32]]) -> Result<[u8; 32]> {
+        if !domain_tag.starts_with(b"outbe/")
+            || domain_tag.len() < 29
+            || !domain_tag.iter().all(u8::is_ascii_graphic)
+        {
+            return Err(TeeCryptoError::InvalidContext);
+        }
+        if words.is_empty()
+            || domain_tag
+                .len()
+                .saturating_add(words.len().saturating_mul(32))
+                < 62
+        {
+            return Err(TeeCryptoError::InvalidContext);
+        }
+        let mut buf = Zeroizing::new(domain_tag.to_vec());
+        for word in words {
+            buf.extend_from_slice(word);
+        }
+        Ok(mac(&self.0, b"", &buf))
     }
-    pub fn verify_mac(&self, label: &[u8], message: &[u8], tag: &[u8; 32]) -> bool {
-        verify_mac(&self.0, label, message, tag)
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn compute_test_mac(&self, label: &[u8], message: &[u8]) -> [u8; 32] {
+        mac(&self.0, label, message)
     }
     /// AEAD with a caller-provided public nonce; caller owns nonce uniqueness.
     #[cfg(any(test, feature = "test-utils"))]
@@ -121,7 +141,7 @@ pub fn derive_account_keys_handle(
     modify_label: &[u8],
 ) -> Result<AccountKeysHandle> {
     Ok(AccountKeysHandle {
-        view: state.derive_subkey(account.as_slice(), view_label)?,
+        view: state.derive_subkey(account, view_label)?,
         modify: derive(state.0.as_ref(), account.as_slice(), modify_label)?,
         account,
     })
@@ -158,8 +178,11 @@ pub fn compute_modify_mac(
     handle: &AccountKeysHandle,
     modify_tag: &[u8],
     message: &[u8],
-) -> [u8; 32] {
-    mac(&handle.modify, modify_tag, message)
+) -> Result<[u8; 32]> {
+    if !modify_tag.starts_with(b"outbe/") {
+        return Err(TeeCryptoError::InvalidContext);
+    }
+    Ok(mac(&handle.modify, modify_tag, message))
 }
 pub fn verify_modify_mac(
     handle: &AccountKeysHandle,
@@ -167,7 +190,7 @@ pub fn verify_modify_mac(
     message: &[u8],
     tag: &[u8; 32],
 ) -> bool {
-    verify_mac(&handle.modify, modify_tag, message, tag)
+    modify_tag.starts_with(b"outbe/") && verify_mac(&handle.modify, modify_tag, message, tag)
 }
 
 impl OfferKeyHandle {
@@ -179,8 +202,32 @@ impl OfferKeyHandle {
     pub fn public(&self) -> [u8; 32] {
         super::crypto_ops::x25519_public(&self.0 .0)
     }
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn key_handle(&self) -> &StateKeyHandle {
         &self.0
+    }
+    pub fn slot_encrypt(
+        &self,
+        nonce_info: &[u8],
+        account: Address,
+        field: u8,
+        previous_version: u64,
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>> {
+        self.0
+            .slot_encrypt(nonce_info, account, field, previous_version, plaintext)
+    }
+    pub fn slot_decrypt(
+        &self,
+        nonce_info: &[u8],
+        account: Address,
+        field: u8,
+        blob: &[u8],
+    ) -> Result<(u64, Zeroizing<Vec<u8>>)> {
+        self.0.slot_decrypt(nonce_info, account, field, blob)
+    }
+    pub fn compute_domain_mac(&self, domain_tag: &[u8], words: &[[u8; 32]]) -> Result<[u8; 32]> {
+        self.0.compute_domain_mac(domain_tag, words)
     }
     pub fn ecdhe_decrypt(
         &self,

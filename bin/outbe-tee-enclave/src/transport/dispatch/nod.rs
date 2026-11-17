@@ -168,7 +168,7 @@ pub(super) fn issue_from_tribute(
         let inputs = response_auth::hash(b"outbe/nod/issue-from-tribute-inputs/v1", request)
             .map_err(|_| TransportDispatchError::InvalidNodTributeEncryptInputs)?;
         let outcome = crate::nod_encryption::issue_nod_from_tribute(
-            key.resident_material().offer_key_handle().key_handle(),
+            key.resident_material().offer_key_handle(),
             &tribute_key,
             &nod_key,
             request,

@@ -274,11 +274,11 @@ mod tests {
             derive_gratis_state_key(&crate::dev::offer_material(KAT_GROUP_SIG, CHAIN), CHAIN, 0)
                 .unwrap();
         assert_eq!(
-            sk.compute_mac(b"kat", b"state"),
+            sk.compute_test_mac(b"kat", b"state"),
             StateKeyHandle::for_test(alloy_primitives::hex!(
                 "ee0bcead11e31dbafbf16c5b7fb2aa659045c38a7259db9002aa66bc9d9b08b3"
             ))
-            .compute_mac(b"kat", b"state")
+            .compute_test_mac(b"kat", b"state")
         );
         let vk = derive_view_key(&sk, alice()).unwrap();
         let blob = crate::gratis_cipher::write_amount(

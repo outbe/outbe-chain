@@ -16,7 +16,7 @@ use outbe_core_common::{
     },
     tribute_encryption::EncryptedTributeV2,
 };
-use outbe_tee::resident::{ResidentOfferMaterial, StateKeyHandle};
+use outbe_tee::resident::{OfferKeyHandle, ResidentOfferMaterial, StateKeyHandle};
 use zeroize::Zeroizing;
 
 const AMOUNT: SlotCipherDomain = SlotCipherDomain {
@@ -83,7 +83,7 @@ pub fn encrypt_nod(
     amount: U256,
 ) -> Result<EncryptedNodV1> {
     let mut nod = EncryptedNodV1 {
-        encryption_binding: binding(nod_state_key, &terms, amount),
+        encryption_binding: binding(nod_state_key, &terms, amount)?,
         terms,
         encrypted_gratis_amount: Vec::new(),
     };
@@ -109,19 +109,17 @@ pub fn decrypt_nod(nod_state_key: &StateKeyHandle, nod: &EncryptedNodV1) -> Resu
         .try_into()
         .map_err(|_| TeeError::DecryptFailed)?;
     let amount = U256::from_be_bytes(*amount);
-    if binding(nod_state_key, &nod.terms, amount) != nod.encryption_binding {
+    if binding(nod_state_key, &nod.terms, amount)? != nod.encryption_binding {
         return Err(TeeError::DecryptFailed);
     }
     Ok(amount)
 }
 
-fn binding(nod_state_key: &StateKeyHandle, terms: &NodTermsV1, amount: U256) -> B256 {
-    let mut input = b"outbe/nod/issuance-binding/v2".to_vec();
-    input.extend_from_slice(terms.digest().as_slice());
-    input.extend_from_slice(&amount.to_be_bytes::<32>());
-    let input = Zeroizing::new(input);
-    let tag = nod_state_key.compute_mac(b"", &input);
-    B256::from_slice(tag.as_ref())
+fn binding(nod_state_key: &StateKeyHandle, terms: &NodTermsV1, amount: U256) -> Result<B256> {
+    Ok(B256::from(nod_state_key.compute_domain_mac(
+        b"outbe/nod/issuance-binding/v2",
+        &[*terms.digest(), amount.to_be_bytes::<32>()],
+    )?))
 }
 
 fn amount_key(nod_state_key: &StateKeyHandle, nod: &EncryptedNodV1) -> Result<StateKeyHandle> {
@@ -130,7 +128,7 @@ fn amount_key(nod_state_key: &StateKeyHandle, nod: &EncryptedNodV1) -> Result<St
 }
 
 pub fn issue_nod_from_tribute(
-    network_secret: &StateKeyHandle,
+    network_secret: &OfferKeyHandle,
     tribute_state_key: &StateKeyHandle,
     nod_state_key: &StateKeyHandle,
     request: &IssueNodFromTributeRequestV1,
@@ -194,10 +192,10 @@ pub fn seal_group_load(
     (previous_version, inputs_hash): (u64, B256),
     amount: U256,
 ) -> Result<EncryptedNodGroupLoadV1> {
-    let mut operation_context = b"outbe/nod/group-load-operation/v1".to_vec();
-    operation_context.extend_from_slice(scope.as_slice());
-    operation_context.extend_from_slice(inputs_hash.as_slice());
-    let tag = nod_state_key.compute_mac(b"", &operation_context);
+    let tag = nod_state_key.compute_domain_mac(
+        b"outbe/nod/group-load-operation/v1",
+        &[*scope, *inputs_hash],
+    )?;
     let mut record = EncryptedNodGroupLoadV1 {
         chain_id,
         scope,

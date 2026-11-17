@@ -16,6 +16,13 @@ impl StateKeyHandle {
         (previous_version, binding_payload): (u64, &[u8]),
         plaintext: &[u8],
     ) -> Result<Vec<u8>> {
+        if domain.scope.len() > 1
+            || !binding_tag.starts_with(b"outbe/")
+            || binding_tag.len() < 34
+            || !binding_tag.iter().all(u8::is_ascii_graphic)
+        {
+            return Err(TeeCryptoError::InvalidContext);
+        }
         let version = previous_version
             .checked_add(1)
             .ok_or(TeeCryptoError::InvalidEnvelope)?;
@@ -41,6 +48,9 @@ impl StateKeyHandle {
         domain: V2EnvelopeDomain<'_>,
         blob: &[u8],
     ) -> Result<(u64, Zeroizing<Vec<u8>>)> {
+        if domain.scope.len() > 1 {
+            return Err(TeeCryptoError::InvalidContext);
+        }
         if blob.is_empty() {
             return Ok((0, Zeroizing::new(Vec::new())));
         }

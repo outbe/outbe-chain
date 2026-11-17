@@ -107,7 +107,7 @@ fn confidential_ledger_domain_vectors() {
     }
 }
 
-// S2-T09 (outbe-chain-tfl.10): production outbe-tee derivation must reproduce
+// Production outbe-tee derivation must reproduce
 // these five HKDF-SHA256 outputs for salt/seed 00..1f, empty IKM, label=info.
 // Production key outputs are additionally pinned in the enclave library integration suite.
 #[test]
@@ -171,7 +171,7 @@ mod signed_clients;
 fn assert_key_vector(handle: &StateKeyHandle, expected: &str) {
     let expected = StateKeyHandle::for_test(hex::decode(expected).unwrap().try_into().unwrap());
     assert_eq!(
-        handle.compute_mac(b"golden", b"key parity"),
-        expected.compute_mac(b"golden", b"key parity")
+        handle.compute_test_mac(b"golden", b"key parity"),
+        expected.compute_test_mac(b"golden", b"key parity")
     );
 }

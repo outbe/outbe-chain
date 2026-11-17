@@ -191,7 +191,7 @@ impl AccountKeyDerivation {
         state_key: &StateKeyHandle,
         account: Address,
     ) -> Result<StateKeyHandle> {
-        Ok(state_key.derive_subkey(account.as_slice(), self.view_info)?)
+        Ok(state_key.derive_subkey(account, self.view_info)?)
     }
 
     pub fn derive_account_keys(
@@ -274,6 +274,7 @@ impl ModifyDomain {
 
     pub fn modify_mac(&self, keys: &AccountKeysHandle, request: &ModifyAuthorization) -> [u8; 32] {
         resident::compute_modify_mac(keys, self.modify_tag, &self.modify_payload(request))
+            .expect("fixed protocol modify domain")
     }
 
     pub fn verify_modify_auth(

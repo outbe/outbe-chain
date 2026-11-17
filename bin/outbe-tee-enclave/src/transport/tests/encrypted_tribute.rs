@@ -152,8 +152,7 @@ fn day_request() -> outbe_enclave::tribute_day::TributeDayOpRequestV2 {
 fn private_day_commands_require_ready_local_authority_and_installed_network_key() {
     let enclave = Enclave::new(0x51);
     let record = crate::tribute_day::apply_day_operation(
-        outbe_tee::resident::OfferKeyHandle::from_legacy_secret(Zeroizing::new([7; 32]))
-            .key_handle(),
+        &outbe_tee::resident::OfferKeyHandle::from_legacy_secret(Zeroizing::new([7; 32])),
         outbe_tee::resident::OfferKeyHandle::from_legacy_secret(Zeroizing::new([8; 32]))
             .key_handle(),
         &day_request(),

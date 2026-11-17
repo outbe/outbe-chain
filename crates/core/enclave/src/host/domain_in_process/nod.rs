@@ -100,12 +100,7 @@ pub(super) fn issue_from_tribute(
     let inputs_canonical_hash =
         response_auth::hash(b"outbe/nod/issue-from-tribute-inputs/v1", request)?;
     let outcome = context.with_offer_key_handle(|offer| {
-        crate::nod_encryption::issue_nod_from_tribute(
-            offer.key_handle(),
-            &tribute,
-            &nod_key,
-            request,
-        )
+        crate::nod_encryption::issue_nod_from_tribute(offer, &tribute, &nod_key, request)
     })??;
     let attestation_tag = sign(
         context,

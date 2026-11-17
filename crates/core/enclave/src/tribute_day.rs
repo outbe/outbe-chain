@@ -1,6 +1,6 @@
 //! Stateless encrypted day arithmetic. Each write binds the exact predecessor.
 
-use outbe_tee::resident::StateKeyHandle;
+use outbe_tee::resident::{OfferKeyHandle, StateKeyHandle};
 use std::collections::BTreeMap;
 
 use alloy_primitives::{B256, U256};
@@ -28,24 +28,34 @@ const DAY_FRACTIONS: SlotCipherDomain = SlotCipherDomain {
     nonce_info: b"outbe/tribute/day-fractions/nonce/v1",
 };
 
-fn sign_operation_hash(secret: &StateKeyHandle, domain: &[u8], inputs_hash: B256) -> B256 {
-    let mut operation_context = domain.to_vec();
-    operation_context.extend_from_slice(inputs_hash.as_slice());
-    let tag = secret.compute_mac(b"", &operation_context);
-    B256::from_slice(tag.as_ref())
+fn sign_operation_hash(secret: &OfferKeyHandle, domain: &[u8], inputs_hash: B256) -> Result<B256> {
+    Ok(B256::from(
+        secret.compute_domain_mac(domain, &[*inputs_hash])?,
+    ))
 }
 
 pub fn read_day_amount(
-    network_secret: &StateKeyHandle,
+    network_secret: &OfferKeyHandle,
     record: &EncryptedTributeDayAmountV2,
 ) -> Result<U256> {
-    DAY_AMOUNT
-        .slot(network_secret, record.crypto_slot(), 0)
-        .read_u256(record.version(), &record.encrypted_amount)
+    if record.version().is_none() {
+        return Err(TeeError::DecryptFailed);
+    }
+    let (_, bytes) = network_secret.slot_decrypt(
+        DAY_AMOUNT.nonce_info,
+        record.crypto_slot(),
+        0,
+        &record.encrypted_amount,
+    )?;
+    let amount: &[u8; 32] = bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| TeeError::DecryptFailed)?;
+    Ok(U256::from_be_bytes(*amount))
 }
 
 pub fn apply_day_operation(
-    network_secret: &StateKeyHandle,
+    network_secret: &OfferKeyHandle,
     tribute_state_key: &StateKeyHandle,
     request: &TributeDayOpRequestV2,
 ) -> Result<EncryptedTributeDayAmountV2> {
@@ -74,12 +84,17 @@ pub fn apply_day_operation(
             network_secret,
             b"outbe/tribute/day-operation/v2",
             inputs_hash,
-        ),
+        )?,
         encrypted_amount: Vec::new(),
     };
-    record.encrypted_amount = DAY_AMOUNT
-        .slot(network_secret, record.crypto_slot(), 0)
-        .write_u256(previous_version, next)?;
+    let plaintext = Zeroizing::new(next.to_be_bytes::<32>());
+    record.encrypted_amount = network_secret.slot_encrypt(
+        DAY_AMOUNT.nonce_info,
+        record.crypto_slot(),
+        0,
+        previous_version,
+        plaintext.as_ref(),
+    )?;
     Ok(record)
 }
 
@@ -116,7 +131,7 @@ fn apply_amount(
 }
 
 pub fn seal_day_fractions(
-    network_secret: &StateKeyHandle,
+    network_secret: &OfferKeyHandle,
     (chain_id, worldwide_day, emission_day, completed_at): (u64, WorldwideDay, EmissionDate, u64),
     inputs_hash: B256,
     fractions: &BTreeMap<u16, u64>,
@@ -130,28 +145,34 @@ pub fn seal_day_fractions(
             network_secret,
             b"outbe/tribute/day-fractions-operation/v1",
             inputs_hash,
-        ),
+        )?,
         encrypted_fractions: Vec::new(),
     };
     let plaintext =
         Zeroizing::new(postcard::to_allocvec(fractions).map_err(|_| TeeError::EncryptFailed)?);
-    record.encrypted_fractions = DAY_FRACTIONS
-        .slot(network_secret, record.crypto_slot(), 0)
-        .write_blob(0, plaintext.as_ref())?;
+    record.encrypted_fractions = network_secret.slot_encrypt(
+        DAY_FRACTIONS.nonce_info,
+        record.crypto_slot(),
+        0,
+        0,
+        plaintext.as_ref(),
+    )?;
     Ok(record)
 }
 
 pub fn read_day_fractions(
-    network_secret: &StateKeyHandle,
+    network_secret: &OfferKeyHandle,
     record: &EncryptedTributeDayFractionsV1,
 ) -> Result<BTreeMap<u16, u64>> {
     if record.version() != Some(1) {
         return Err(TributeDayRejectReason::InvalidDayFractionsRecord.into());
     }
-    let (_, bytes) = DAY_FRACTIONS
-        .slot(network_secret, record.crypto_slot(), 0)
-        .read_blob(&record.encrypted_fractions)?;
-    let bytes = Zeroizing::new(bytes);
+    let (_, bytes) = network_secret.slot_decrypt(
+        DAY_FRACTIONS.nonce_info,
+        record.crypto_slot(),
+        0,
+        &record.encrypted_fractions,
+    )?;
     postcard::from_bytes(bytes.as_slice()).map_err(|_| TeeError::DecryptFailed)
 }
 
@@ -193,7 +214,7 @@ struct PricedTributes<'a> {
 }
 
 fn collect_priced_tributes<'a>(
-    network_secret: &StateKeyHandle,
+    network_secret: &OfferKeyHandle,
     tribute_state_key: &StateKeyHandle,
     request: &'a LysisFractionsRequestV1,
 ) -> Result<PricedTributes<'a>> {
@@ -322,7 +343,7 @@ fn seal_series_loads(
 }
 
 pub fn execute_lysis_fractions(
-    network_secret: &StateKeyHandle,
+    network_secret: &OfferKeyHandle,
     tribute_state_key: &StateKeyHandle,
     nod_state_key: &StateKeyHandle,
     request: &LysisFractionsRequestV1,

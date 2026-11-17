@@ -140,14 +140,14 @@ fn fidelity_known_answer_vectors() {
     // To regenerate: `cargo test -p outbe-enclave fidelity_known_answer -- --nocapture`
     // with the asserts commented out, then paste.
     assert_eq!(
-        sk.compute_mac(b"kat", b"state"),
+        sk.compute_test_mac(b"kat", b"state"),
         StateKeyHandle::for_test(
             hex::decode("445d55ec5e634dcf92522bc31a29b3e6f83696ab70796158b42c06f6dac47b62")
                 .unwrap()
                 .try_into()
                 .unwrap()
         )
-        .compute_mac(b"kat", b"state")
+        .compute_test_mac(b"kat", b"state")
     );
     assert_eq!(
         blob_hex,

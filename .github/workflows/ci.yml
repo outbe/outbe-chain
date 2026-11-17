@@ -219,7 +219,7 @@ jobs:
           prod_tree="$(cargo tree --locked --package outbe-chain --features outbe-chain/production-enclave -e=features,no-dev)"
           for graph in chain_tree default_tree prod_tree; do
             tree="${!graph}"
-            if grep -Eq 'feature "test-enclave"|outbe-enclave feature "(dev-keys|test-utils)"|outbe-tee feature "test-utils"|outbe-dcap feature "sgx-noattest"' <<<"${tree}"; then
+            if grep -Eq 'feature "(test-enclave|e2e-test)"|outbe-enclave feature "(dev-keys|test-utils)"|outbe-tee feature "test-utils"|outbe-dcap feature "(sgx-noattest|test-utils)"' <<<"${tree}"; then
               echo "error: test-only enclave feature is enabled in ${graph}" >&2
               exit 1
             fi
@@ -242,7 +242,7 @@ jobs:
             fi
           done
           cli_tree="$(cargo tree --locked --package outbe-cli -e=features,no-dev)"
-          if grep -Eq 'feature "test-enclave"|outbe-enclave feature "(engine|dev-keys|test-utils)"|outbe-tee feature "test-utils"|outbe-dcap feature "sgx-noattest"' <<<"${cli_tree}"; then
+          if grep -Eq 'feature "(test-enclave|e2e-test)"|outbe-enclave feature "(engine|dev-keys|test-utils)"|outbe-tee feature "test-utils"|outbe-dcap feature "(sgx-noattest|test-utils)"' <<<"${cli_tree}"; then
             echo "error: enclave engine or test-only feature is enabled in outbe-cli production dependency graph" >&2
             exit 1
           fi

@@ -81,7 +81,7 @@ pub(super) fn day_apply(
     request: &tribute_day::TributeDayOpRequestV2,
 ) -> Result<EnclaveResponse> {
     context.with_offer_key_handle(|offer| -> Result<EnclaveResponse> {
-        let secret = offer.key_handle();
+        let secret = offer;
         require_chain(context, request.chain_id)?;
         let tribute = state(context, crate::tribute_encryption::derive_tribute_state_key)?;
         let record = tribute_day::apply_day_operation(secret, &tribute, request)?;
@@ -103,7 +103,7 @@ pub(super) fn day_read(
     record: &outbe_core_common::tribute_day_encryption::EncryptedTributeDayAmountV2,
 ) -> Result<EnclaveResponse> {
     context.with_offer_key_handle(|offer| -> Result<EnclaveResponse> {
-        let secret = offer.key_handle();
+        let secret = offer;
         require_chain(context, record.chain_id)?;
         let amount = tribute_day::read_day_amount(secret, record)?;
         let inputs_canonical_hash = tribute_day::day_read_inputs_hash(record)?;
@@ -124,7 +124,7 @@ pub(super) fn lysis(
     request: &tribute_day::LysisFractionsRequestV1,
 ) -> Result<EnclaveResponse> {
     context.with_offer_key_handle(|offer| -> Result<EnclaveResponse> {
-        let secret = offer.key_handle();
+        let secret = offer;
         require_chain(context, request.chain_id)?;
         let tribute = state(context, crate::tribute_encryption::derive_tribute_state_key)?;
         let nod = state(context, crate::nod_encryption::derive_nod_state_key)?;
@@ -147,7 +147,7 @@ pub(super) fn day_fractions_read(
     record: &outbe_core_common::tribute_day_encryption::EncryptedTributeDayFractionsV1,
 ) -> Result<EnclaveResponse> {
     context.with_offer_key_handle(|offer| -> Result<EnclaveResponse> {
-        let secret = offer.key_handle();
+        let secret = offer;
         require_chain(context, record.chain_id)?;
         let fractions = tribute_day::read_day_fractions(secret, record)?;
         let inputs_canonical_hash = tribute_day::day_fractions_read_inputs_hash(record)?;

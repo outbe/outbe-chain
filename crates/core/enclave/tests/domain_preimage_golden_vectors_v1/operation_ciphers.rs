@@ -2,7 +2,7 @@
 use super::fixtures::*;
 use alloy_primitives::{hex, B256, U256};
 use outbe_enclave::{confidential, nod_encryption, tribute_day};
-use outbe_tee::resident::StateKeyHandle;
+use outbe_tee::resident::{OfferKeyHandle, StateKeyHandle};
 
 #[test]
 fn day_and_fractions_operation_cipher_vectors() {
@@ -10,7 +10,7 @@ fn day_and_fractions_operation_cipher_vectors() {
         r#"{"chain_id":1,"worldwide_day":20261116,"previous":null,"public_state_hash":"0x4444444444444444444444444444444444444444444444444444444444444444","operation":{"AdjustTransient":{"nominal_amount_minor":"0x11","add":true}}}"#,
     );
     let record = tribute_day::apply_day_operation(
-        &StateKeyHandle::for_test([0x11; 32]),
+        &OfferKeyHandle::for_test([0x11; 32]),
         &StateKeyHandle::for_test([0x22; 32]),
         &request,
     )
@@ -21,12 +21,12 @@ fn day_and_fractions_operation_cipher_vectors() {
     );
     assert_eq!(hex::encode(&record.encrypted_amount), "00000000000000017e0a0ac94bae297284f94dacf4d1f90e2b93d7ff95146ffdf4624daa091a2510291cf7b9fda1e9ce07a5421067a1291a");
     assert_eq!(
-        tribute_day::read_day_amount(&StateKeyHandle::for_test([0x11; 32]), &record).unwrap(),
+        tribute_day::read_day_amount(&OfferKeyHandle::for_test([0x11; 32]), &record).unwrap(),
         U256::from(17)
     );
     let fractions = std::collections::BTreeMap::from([(3, 17), (7, 19)]);
     let record = tribute_day::seal_day_fractions(
-        &StateKeyHandle::for_test([0x11; 32]),
+        &OfferKeyHandle::for_test([0x11; 32]),
         (1, 20261116.into(), 20261115.into(), 123),
         B256::repeat_byte(0x33),
         &fractions,
@@ -41,7 +41,7 @@ fn day_and_fractions_operation_cipher_vectors() {
         "0000000000000001ec968e84b69d4f893ff8e439f2fa5e3a9cf5d96b0e"
     );
     assert_eq!(
-        tribute_day::read_day_fractions(&StateKeyHandle::for_test([0x11; 32]), &record).unwrap(),
+        tribute_day::read_day_fractions(&OfferKeyHandle::for_test([0x11; 32]), &record).unwrap(),
         fractions
     );
 }

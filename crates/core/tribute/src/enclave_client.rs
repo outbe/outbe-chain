@@ -15,8 +15,8 @@ pub(crate) fn apply_day_operation(
     request: TributeDayOpRequestV2,
 ) -> Result<EncryptedTributeDayAmountV2, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
-    if let Some(result) = test_enclave::with_key(|key| {
-        outbe_enclave::tribute_day::apply_day_operation(key, key, &request)
+    if let Some(result) = test_enclave::with_keys(|key, state| {
+        outbe_enclave::tribute_day::apply_day_operation(key, state, &request)
     }) {
         return result.map_err(crate::errors::enclave_transport_error);
     }
@@ -27,8 +27,8 @@ pub(crate) fn execute_lysis_fractions(
     request: LysisFractionsRequestV1,
 ) -> Result<LysisFractionsResultV1, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
-    if let Some(result) = test_enclave::with_key(|key| {
-        outbe_enclave::tribute_day::execute_lysis_fractions(key, key, key, &request)
+    if let Some(result) = test_enclave::with_keys(|key, state| {
+        outbe_enclave::tribute_day::execute_lysis_fractions(key, state, state, &request)
     }) {
         return result.map_err(crate::errors::enclave_transport_error);
     }
@@ -41,9 +41,9 @@ pub(crate) fn read_day_fractions(
     record: &outbe_core_common::tribute_day_encryption::EncryptedTributeDayFractionsV1,
 ) -> Result<std::collections::BTreeMap<u16, u64>, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
-    if let Some(result) =
-        test_enclave::with_key(|key| outbe_enclave::tribute_day::read_day_fractions(key, record))
-    {
+    if let Some(result) = test_enclave::with_keys(|key, _| {
+        outbe_enclave::tribute_day::read_day_fractions(key, record)
+    }) {
         return result.map_err(crate::errors::enclave_transport_error);
     }
     outbe_enclave::tribute_day_client::read_day_fractions(record).map_err(TransportError::from)
@@ -53,8 +53,8 @@ pub(crate) fn issue_nod_from_tribute(
     request: IssueNodFromTributeRequestV1,
 ) -> Result<IssueNodFromTributeOutcomeV1, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
-    if let Some(result) = test_enclave::with_key(|key| {
-        outbe_enclave::nod_encryption::issue_nod_from_tribute(key, key, key, &request)
+    if let Some(result) = test_enclave::with_keys(|key, state| {
+        outbe_enclave::nod_encryption::issue_nod_from_tribute(key, state, state, &request)
     }) {
         return result.map_err(crate::errors::enclave_transport_error);
     }
@@ -66,7 +66,7 @@ pub(crate) fn read_day_amount(
 ) -> Result<U256, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
     if let Some(result) =
-        test_enclave::with_key(|key| outbe_enclave::tribute_day::read_day_amount(key, record))
+        test_enclave::with_keys(|key, _| outbe_enclave::tribute_day::read_day_amount(key, record))
     {
         return result.map_err(crate::errors::enclave_transport_error);
     }
@@ -77,8 +77,8 @@ pub(crate) fn read_amounts(
     record: &EncryptedTributeV2,
 ) -> Result<TributeAmountsV2, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
-    if let Some(result) = test_enclave::with_key(|key| {
-        outbe_enclave::tribute_encryption::decrypt_tribute(key, record)
+    if let Some(result) = test_enclave::with_keys(|_, state| {
+        outbe_enclave::tribute_encryption::decrypt_tribute(state, record)
     }) {
         return result.map_err(crate::errors::enclave_transport_error);
     }
@@ -99,6 +99,9 @@ pub mod test_enclave {
     use std::cell::Cell;
     thread_local! { static INSTALLED: Cell<bool> = const { Cell::new(false) }; }
     /// Opaque fixture capability; construction requires `outbe-tee/test-utils`.
+    fn offer_key() -> outbe_tee::resident::OfferKeyHandle {
+        outbe_tee::resident::OfferKeyHandle::for_test([0x5a; 32])
+    }
     pub fn state_key() -> outbe_tee::resident::StateKeyHandle {
         outbe_tee::resident::StateKeyHandle::for_test([0x5a; 32])
     }
@@ -200,9 +203,9 @@ pub mod test_enclave {
         .map_err(crate::errors::body_read_corruption)
     }
 
-    pub(super) fn with_key<T>(
-        f: impl FnOnce(&outbe_tee::resident::StateKeyHandle) -> T,
+    pub(super) fn with_keys<T>(
+        f: impl FnOnce(&outbe_tee::resident::OfferKeyHandle, &outbe_tee::resident::StateKeyHandle) -> T,
     ) -> Option<T> {
-        INSTALLED.get().then(|| f(&state_key()))
+        INSTALLED.get().then(|| f(&offer_key(), &state_key()))
     }
 }

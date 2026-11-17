@@ -100,12 +100,22 @@ fn handles_preserve_state_account_slot_mac_and_context_derivation() {
     assert!(slot_encrypt(&keys, b"nonce", (Address::ZERO, 7), 4, b"x").is_err());
     let expected = ring::hmac::sign(
         &ring::hmac::Key::new(ring::hmac::HMAC_SHA256, raw_modify.as_ref()),
-        b"tagmessage",
+        b"outbe/test/modifymessage",
     );
-    let tag = compute_modify_mac(&keys, b"tag", b"message");
+    let tag = compute_modify_mac(&keys, b"outbe/test/modify", b"message").unwrap();
     assert_eq!(tag.as_slice(), expected.as_ref());
-    assert!(verify_modify_mac(&keys, b"tag", b"message", &tag));
-    assert!(!verify_modify_mac(&keys, b"tag", b"changed", &tag));
+    assert!(verify_modify_mac(
+        &keys,
+        b"outbe/test/modify",
+        b"message",
+        &tag
+    ));
+    assert!(!verify_modify_mac(
+        &keys,
+        b"outbe/test/modify",
+        b"changed",
+        &tag
+    ));
     let subkey = keys
         .view_key_handle()
         .derive_with_salt(b"digest", b"record")
@@ -139,8 +149,14 @@ fn v2_owner_local_fixed_vector_and_transition_binding() {
     assert_eq!(version, 0x0102030405060708);
     assert_eq!(plaintext.as_slice(), b"cohort-v2-golden");
     let seal = |payload| {
-        key.encrypt_v2_envelope(account, domain, b"binding", (0, payload), b"state")
-            .unwrap()
+        key.encrypt_v2_envelope(
+            account,
+            domain,
+            b"outbe/fidelity/cohort-transition-binding/v2",
+            (0, payload),
+            b"state",
+        )
+        .unwrap()
     };
     let first = seal(b"first predecessor");
     assert_eq!(first, seal(b"first predecessor"));
@@ -156,7 +172,13 @@ fn v2_owner_local_fixed_vector_and_transition_binding() {
         .decrypt_v2_envelope(Address::ZERO, domain, &first)
         .is_err());
     assert!(key
-        .encrypt_v2_envelope(account, domain, b"binding", (u64::MAX, b""), b"")
+        .encrypt_v2_envelope(
+            account,
+            domain,
+            b"outbe/fidelity/cohort-transition-binding/v2",
+            (u64::MAX, b""),
+            b""
+        )
         .is_err());
 }
 
@@ -273,11 +295,11 @@ fn deterministic_onboarding_is_exact_and_rejects_nonce_recipient_or_context_chan
     let a = imported
         .derive_state_key_handle(b"ledger/", B256::ZERO, 0)
         .unwrap()
-        .compute_mac(b"", b"check");
+        .compute_test_mac(b"", b"check");
     let b = group
         .derive_state_key_handle(b"ledger/", B256::ZERO, 0)
         .unwrap()
-        .compute_mac(b"", b"check");
+        .compute_test_mac(b"", b"check");
     assert_eq!(a, b);
     let mut tampered = artifact.clone();
     tampered.nonce[0] ^= 1;
@@ -386,4 +408,169 @@ fn offer_and_dkg_low_order_peers_preserve_legacy_ecdhe_behavior() {
             .as_slice(),
         b"legacy share"
     );
+}
+
+#[test]
+fn envelope_binding_rejects_prk_length_domains() {
+    use crate::tee_decrypt::V2EnvelopeDomain;
+    let state = StateKeyHandle::for_test([0x51; 32]);
+    for tag in [
+        b"".as_slice(),
+        b"binding",
+        b"outbe/short",
+        b"outbe/012345678901234567890123456",
+        b"other/fidelity/cohort-transition-binding/v2",
+        b"outbe/fidelity/cohort-transition-binding/ v2",
+    ] {
+        assert!(matches!(
+            state.encrypt_v2_envelope(
+                Address::ZERO,
+                V2EnvelopeDomain {
+                    marker: b"FIC2",
+                    scope: b"",
+                    key_info: b"key",
+                    nonce_info: b"nonce",
+                },
+                tag,
+                (0, b""),
+                b"payload",
+            ),
+            Err(TeeCryptoError::InvalidContext)
+        ));
+    }
+    let minimum = b"outbe/0123456789012345678901234567";
+    assert_eq!(minimum.len(), 34);
+    let blob = state
+        .encrypt_v2_envelope(
+            Address::ZERO,
+            V2EnvelopeDomain {
+                marker: b"FIC2",
+                scope: b"",
+                key_info: b"key",
+                nonce_info: b"nonce",
+            },
+            minimum,
+            (0, b""),
+            b"payload",
+        )
+        .unwrap();
+    let mut context = Address::ZERO.as_slice().to_vec();
+    context.extend_from_slice(&1u64.to_be_bytes());
+    assert_eq!(minimum.len() + context.len(), 62);
+    assert_eq!(
+        &blob[12..44],
+        crypto_ops::mac(&[0x51; 32], minimum, &context)
+    );
+}
+
+#[test]
+fn domain_mac_rejects_hkdf_extract_inputs_and_malformed_tags() {
+    let state = StateKeyHandle::for_test([0x51; 32]);
+    let offer = OfferKeyHandle::for_test([0x51; 32]);
+    let word = [0x42; 32];
+    for (tag, words) in [
+        (b"".as_slice(), [word].as_slice()),
+        (b"outbe/short", [word].as_slice()),
+        (b"outbe/0123456789012345678901", [word; 2].as_slice()),
+        (b"other/012345678901234567890123", [word].as_slice()),
+        (b"outbe/01234567890123456789012 ", [word].as_slice()),
+        // A valid 29-byte domain plus one word is 61 bytes: still a V2 extraction input.
+        (b"outbe/01234567890123456789012", [word].as_slice()),
+        (
+            b"outbe/012345678901234567890123456789012345678901234567890123456789",
+            [].as_slice(),
+        ),
+    ] {
+        assert!(matches!(
+            state.compute_domain_mac(tag, words),
+            Err(TeeCryptoError::InvalidContext)
+        ));
+        assert!(matches!(
+            offer.compute_domain_mac(tag, words),
+            Err(TeeCryptoError::InvalidContext)
+        ));
+    }
+    let domain = b"outbe/012345678901234567890123";
+    assert_eq!(domain.len() + word.len(), 62);
+    let expected = crypto_ops::mac(&[0x51; 32], domain, &word);
+    assert_eq!(state.compute_domain_mac(domain, &[word]).unwrap(), expected);
+    assert_eq!(offer.compute_domain_mac(domain, &[word]).unwrap(), expected);
+    let keys = derive_account_keys_handle(&state, Address::ZERO, b"view", b"modify").unwrap();
+    for tag in [b"".as_slice(), b"other/tag"] {
+        assert!(matches!(
+            compute_modify_mac(&keys, tag, &word),
+            Err(TeeCryptoError::InvalidContext)
+        ));
+        let otherwise_valid = crypto_ops::mac(&keys.modify, tag, &word);
+        assert!(!verify_modify_mac(&keys, tag, &word, &otherwise_valid));
+    }
+}
+
+#[test]
+fn envelope_scope_cannot_extend_hkdf_extract_input_lengths() {
+    use crate::tee_decrypt::V2EnvelopeDomain;
+    let state = StateKeyHandle::for_test([0x51; 32]);
+    let domain = V2EnvelopeDomain {
+        marker: b"FID2",
+        scope: &[0, 1],
+        key_info: b"key",
+        nonce_info: b"nonce",
+    };
+    assert!(matches!(
+        state.encrypt_v2_envelope(
+            Address::ZERO,
+            domain,
+            b"outbe/fidelity/cohort-transition-binding/v2",
+            (0, b""),
+            b"payload"
+        ),
+        Err(TeeCryptoError::InvalidContext)
+    ));
+    assert!(matches!(
+        state.decrypt_v2_envelope(Address::ZERO, domain, b""),
+        Err(TeeCryptoError::InvalidContext)
+    ));
+}
+
+#[test]
+fn resident_offer_identity_is_deterministic_and_material_is_chain_bound() {
+    let a = ResidentTeeKeys::from_seed([0x43; 32]).unwrap();
+    let b = ResidentTeeKeys::from_seed([0x43; 32]).unwrap();
+    assert_eq!(a.tribute_offer_public(), b.tribute_offer_public());
+    assert_eq!(a.tribute_offer_secret, b.tribute_offer_secret);
+    let make = |chain| {
+        ResidentOfferMaterial::for_test(b"same group signature".to_vec(), chain, 3, 4).unwrap()
+    };
+    let first = make(B256::repeat_byte(1));
+    let same = make(B256::repeat_byte(1));
+    let other = make(B256::repeat_byte(2));
+    assert_eq!(
+        first.offer_key_handle().public(),
+        same.offer_key_handle().public()
+    );
+    assert_ne!(
+        first.offer_key_handle().public(),
+        other.offer_key_handle().public()
+    );
+    let seal = |material: &ResidentOfferMaterial| {
+        material
+            .offer_key_handle()
+            .slot_encrypt(b"nonce", Address::ZERO, 0, 0, b"secret")
+            .unwrap()
+    };
+    let cipher = seal(&first);
+    assert_eq!(cipher, seal(&same));
+    assert_ne!(cipher, seal(&other));
+    assert_eq!(
+        same.offer_key_handle()
+            .slot_decrypt(b"nonce", Address::ZERO, 0, &cipher)
+            .unwrap()
+            .1
+            .as_slice(),
+        b"secret"
+    );
+    assert!(other
+        .offer_key_handle()
+        .slot_decrypt(b"nonce", Address::ZERO, 0, &cipher)
+        .is_err());
 }
