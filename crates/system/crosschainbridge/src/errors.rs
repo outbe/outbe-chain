@@ -23,9 +23,6 @@ pub enum CrosschainBridgeError {
     #[error("domain must be non-zero")]
     InvalidDomain,
 
-    #[error("local domain {domain} cannot be targeted remotely")]
-    LocalDomainNotAllowed { domain: u32 },
-
     #[error("remote call list must be non-empty")]
     EmptyCalls,
 
@@ -53,9 +50,6 @@ impl From<CrosschainBridgeError> for PrecompileError {
             }
             CrosschainBridgeError::InvalidDomain => {
                 ICrosschainBridge::InvalidDomain {}.abi_encode()
-            }
-            CrosschainBridgeError::LocalDomainNotAllowed { domain } => {
-                ICrosschainBridge::LocalDomainNotAllowed { domain }.abi_encode()
             }
             CrosschainBridgeError::EmptyCalls => ICrosschainBridge::EmptyCalls {}.abi_encode(),
             CrosschainBridgeError::ZeroFund => ICrosschainBridge::ZeroFund {}.abi_encode(),

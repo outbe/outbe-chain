@@ -209,17 +209,6 @@
   },
   {
     "type": "error",
-    "name": "LocalDomainNotAllowed",
-    "inputs": [
-      {
-        "name": "domain",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "NotInitialized",
     "inputs": []
   },

@@ -134,16 +134,13 @@ impl<'a> CrosschainBridgeContract<'a> {
         })
     }
 
-    /// Requires an initialized Hyperlane registry and a remote `domain`.
+    /// Requires an initialized Hyperlane registry and a non-zero `domain`.
     fn require_remote(&self, domain: u32) -> Result<()> {
         if !self.hyperlane().is_initialized()? {
             return Err(CrosschainBridgeError::NotInitialized.into());
         }
         if domain == 0 {
             return Err(CrosschainBridgeError::InvalidDomain.into());
-        }
-        if u64::from(domain) == self.storage.chain_id()? {
-            return Err(CrosschainBridgeError::LocalDomainNotAllowed { domain }.into());
         }
         Ok(())
     }
