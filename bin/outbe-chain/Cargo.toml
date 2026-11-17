@@ -22,6 +22,7 @@ name = "outbe-chain"
 path = "src/main.rs"
 
 [dependencies]
+outbe-enclave = { workspace = true, features = ["engine"] }
 outbe-chain-constants.workspace = true
 outbe-runtime.workspace = true
 outbe-snapshot.workspace = true

@@ -119,7 +119,7 @@ impl InProcessTeeContext {
     }
     /// Sign a caller-prepared domain-separated preimage without exposing the signing key.
     pub fn sign_domain_attestation(&self, preimage: &[u8]) -> [u8; 64] {
-        self.keys.sign_domain_attestation(preimage)
+        self.keys.sign_attestation(preimage)
     }
     /// Report whether resident offer material has been activated.
     pub fn offer_key_ready(&self) -> Result<bool> {

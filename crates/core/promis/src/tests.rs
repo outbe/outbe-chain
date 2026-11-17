@@ -210,10 +210,6 @@ fn precompile_balance_of_returns_ciphertext() {
         let sk = test_enclave::state_key();
         let vk = derive_view_key(&sk, alice()).unwrap();
         assert_eq!(decrypt_balance(&vk, alice(), &blob).unwrap(), amount);
-        assert_eq!(
-            outbe_enclave::promis_decrypt::decrypt_promis_balance(&vk, alice(), &blob).unwrap(),
-            amount
-        );
 
         // opNonceOf reflects the advanced replay counter.
         let call = IPromis::opNonceOfCall { account: alice() };
@@ -398,17 +394,13 @@ fn event_amount_differs_from_balance_and_opens_to_the_delta() {
     assert_eq!(first_mint[0].encryptedAmountMinor.len(), 92);
     assert_eq!(&first_mint[0].encryptedAmountMinor[8..12], b"PRO2");
     assert_eq!(second_mint.len(), 1);
-    let delta = outbe_enclave::promis_decrypt::decrypt_promis_balance(
-        &vk,
-        alice(),
-        &second_mint[0].encryptedAmountMinor,
-    )
-    .unwrap();
+    let delta =
+        outbe_enclave::promis::decrypt_balance(&vk, alice(), &second_mint[0].encryptedAmountMinor)
+            .unwrap();
     assert_eq!(delta, second_amount);
     assert_ne!(delta, first_amount + second_amount);
     assert_eq!(
-        outbe_enclave::promis_decrypt::decrypt_promis_balance(&vk, alice(), &second_balance)
-            .unwrap(),
+        outbe_enclave::promis::decrypt_balance(&vk, alice(), &second_balance).unwrap(),
         first_amount + second_amount
     );
 }

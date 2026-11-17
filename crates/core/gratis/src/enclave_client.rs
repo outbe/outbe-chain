@@ -57,22 +57,28 @@ pub mod test_enclave {
     use std::cell::RefCell;
 
     thread_local! {
-        static STATE_KEY: RefCell<Option<[u8; 32]>> = const { RefCell::new(None) };
+        static STATE_KEY: RefCell<Option<outbe_tee::resident::StateKeyHandle>> = const { RefCell::new(None) };
     }
 
     /// Fixed dev group signature + chain/epoch, so the derived state key (and thus
     /// every account's view/modify key) is deterministic across a test process.
     const DEV_EPOCH: u64 = 0;
 
-    /// Install the in-process enclave for the current thread.
-    pub fn install() {
-        let key = outbe_enclave::gratis::derive_gratis_state_key(
-            outbe_enclave::dev::GRATIS_GROUP_SIG,
+    fn fixture_key() -> outbe_tee::resident::StateKeyHandle {
+        outbe_enclave::gratis::derive_gratis_state_key(
+            &outbe_enclave::dev::offer_material(
+                outbe_enclave::dev::GRATIS_GROUP_SIG,
+                outbe_enclave::dev::GRATIS_CHAIN,
+            ),
             outbe_enclave::dev::GRATIS_CHAIN,
             DEV_EPOCH,
         )
-        .expect("derive dev gratis state key");
-        STATE_KEY.with(|k| *k.borrow_mut() = Some(*key));
+        .expect("derive dev gratis state key")
+    }
+
+    /// Install the in-process enclave for the current thread.
+    pub fn install() {
+        STATE_KEY.with(|k| *k.borrow_mut() = Some(fixture_key()));
     }
 
     /// Remove the in-process enclave for the current thread.
@@ -80,12 +86,14 @@ pub mod test_enclave {
         STATE_KEY.with(|k| *k.borrow_mut() = None);
     }
 
-    /// The dev state key, so tests can derive view/modify keys to build auth and
+    /// An opaque dev state handle, so tests can derive view/modify keys to build auth and
     /// decrypt balances exactly as a client would.
-    pub fn state_key() -> [u8; 32] {
-        STATE_KEY
-            .with(|k| *k.borrow())
-            .expect("test enclave not installed")
+    pub fn state_key() -> outbe_tee::resident::StateKeyHandle {
+        assert!(
+            STATE_KEY.with(|k| k.borrow().is_some()),
+            "test enclave not installed"
+        );
+        fixture_key()
     }
 
     /// Builds an authorization with the installed fixture key and operation nonce.
@@ -93,7 +101,7 @@ pub mod test_enclave {
         operation: outbe_enclave::gratis::ModifyOperation,
     ) -> outbe_enclave::protocol::ModifyAuth {
         let key =
-            outbe_enclave::gratis::derive_modify_key(&state_key(), operation.account).unwrap();
+            outbe_enclave::gratis::derive_account_keys(&state_key(), operation.account).unwrap();
         outbe_enclave::protocol::ModifyAuth {
             mac: outbe_enclave::gratis::modify_mac(&key, &operation),
             op_nonce: operation.op_nonce,
@@ -104,23 +112,31 @@ pub mod test_enclave {
         request: &outbe_enclave::nod_mine::MineEncryptedNodRequestV1,
     ) -> Option<Result<outbe_enclave::nod_mine::MineEncryptedNodResultV1>> {
         STATE_KEY.with(|key| {
-            key.borrow().map(|state_key| {
+            key.borrow().as_ref().map(|state_key| {
                 let fidelity_key = outbe_enclave::fidelity::derive_fidelity_state_key(
-                    outbe_enclave::dev::FIDELITY_GROUP_SIG,
+                    &outbe_enclave::dev::offer_material(
+                        outbe_enclave::dev::FIDELITY_GROUP_SIG,
+                        outbe_enclave::dev::fidelity_chain(),
+                    ),
                     outbe_enclave::dev::fidelity_chain(),
                     DEV_EPOCH,
                 )
                 .map_err(map_test_enclave_error)?;
-                outbe_enclave::nod_mine::apply(&[0x5a; 32], &state_key, &fidelity_key, request)
-                    .map_err(map_test_enclave_error)
+                outbe_enclave::nod_mine::apply(
+                    &outbe_tee::resident::StateKeyHandle::for_test([0x5a; 32]),
+                    state_key,
+                    &fidelity_key,
+                    request,
+                )
+                .map_err(map_test_enclave_error)
             })
         })
     }
 
     pub(crate) fn try_apply(req: &GratisOpRequest) -> Option<GratisOpResult> {
         STATE_KEY.with(|k| {
-            k.borrow().map(|key| {
-                let mut result = outbe_enclave::gratis::apply_op(&key, req);
+            k.borrow().as_ref().map(|key| {
+                let mut result = outbe_enclave::gratis::apply_op(key, req);
                 // Mirror the real transport's combined op. On success, apply the
                 // co-located fidelity cohort section under the INDEPENDENT
                 // fidelity key. That key is the shared dev fidelity identity, so a
@@ -129,7 +145,10 @@ pub mod test_enclave {
                     (&result.status, &req.fidelity)
                 {
                     let fidelity_key = outbe_enclave::fidelity::derive_fidelity_state_key(
-                        outbe_enclave::dev::FIDELITY_GROUP_SIG,
+                        &outbe_enclave::dev::offer_material(
+                            outbe_enclave::dev::FIDELITY_GROUP_SIG,
+                            outbe_enclave::dev::fidelity_chain(),
+                        ),
                         outbe_enclave::dev::fidelity_chain(),
                         DEV_EPOCH,
                     )

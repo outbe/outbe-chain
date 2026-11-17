@@ -81,7 +81,7 @@ fn operation<Op>(op: Op) -> ModifyOperation<Op> {
 }
 
 fn gratis_auth() -> ModifyAuth {
-    let key = outbe_enclave::gratis::derive_modify_key(&gratis_enclave::state_key(), ACCOUNT)
+    let key = outbe_enclave::gratis::derive_account_keys(&gratis_enclave::state_key(), ACCOUNT)
         .expect("benchmark Gratis key derives");
     ModifyAuth {
         mac: outbe_enclave::gratis::modify_mac(&key, &operation(GratisOp::Mint)),
@@ -90,7 +90,7 @@ fn gratis_auth() -> ModifyAuth {
 }
 
 fn promis_auth() -> ModifyAuth {
-    let key = outbe_enclave::promis::derive_modify_key(&promis_enclave::state_key(), ACCOUNT)
+    let key = outbe_enclave::promis::derive_account_keys(&promis_enclave::state_key(), ACCOUNT)
         .expect("benchmark Promis key derives");
     ModifyAuth {
         mac: outbe_enclave::promis::modify_mac(&key, &operation(PromisOp::Mint)),

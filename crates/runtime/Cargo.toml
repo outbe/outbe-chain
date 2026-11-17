@@ -67,7 +67,7 @@ outbe-stablecoinfactory.workspace = true
 outbe-stablecoinpolicy.workspace = true
 outbe-staking.workspace = true
 outbe-system-common.workspace = true
-outbe-enclave.workspace = true
+outbe-enclave = { workspace = true, features = ["engine"] }
 outbe-tee.workspace = true
 outbe-teeregistry = { workspace = true, features = ["tee-attestation-v1"] }
 outbe-tribute.workspace = true

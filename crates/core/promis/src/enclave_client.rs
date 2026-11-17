@@ -115,7 +115,7 @@ pub mod test_enclave {
     use std::cell::RefCell;
 
     thread_local! {
-        static STATE_KEY: RefCell<Option<[u8; 32]>> = const { RefCell::new(None) };
+        static STATE_KEY: RefCell<Option<outbe_tee::resident::StateKeyHandle>> = const { RefCell::new(None) };
     }
 
     /// Fixed dev group signature + chain/epoch, so the derived state key (and thus
@@ -124,12 +124,18 @@ pub mod test_enclave {
     const DEV_CHAIN: B256 = B256::repeat_byte(0xC1);
     const DEV_EPOCH: u64 = 0;
 
+    fn fixture_key() -> outbe_tee::resident::StateKeyHandle {
+        outbe_enclave::promis::derive_promis_state_key(
+            &outbe_enclave::dev::offer_material(DEV_GROUP_SIG, DEV_CHAIN),
+            DEV_CHAIN,
+            DEV_EPOCH,
+        )
+        .expect("derive dev promis state key")
+    }
+
     /// Install the in-process enclave for the current thread.
     pub fn install() {
-        let key =
-            outbe_enclave::promis::derive_promis_state_key(DEV_GROUP_SIG, DEV_CHAIN, DEV_EPOCH)
-                .expect("derive dev promis state key");
-        STATE_KEY.with(|k| *k.borrow_mut() = Some(*key));
+        STATE_KEY.with(|k| *k.borrow_mut() = Some(fixture_key()));
     }
 
     /// Remove the in-process enclave for the current thread.
@@ -144,8 +150,8 @@ pub mod test_enclave {
         amount: alloy_primitives::U256,
         nonce: u64,
     ) -> outbe_enclave::protocol::ModifyAuth {
-        use outbe_enclave::promis::{derive_modify_key, modify_mac, ModifyOperation};
-        let mk = derive_modify_key(&state_key(), account).unwrap();
+        use outbe_enclave::promis::{derive_account_keys, modify_mac, ModifyOperation};
+        let mk = derive_account_keys(&state_key(), account).unwrap();
         outbe_enclave::protocol::ModifyAuth {
             mac: modify_mac(
                 &mk,
@@ -177,18 +183,21 @@ pub mod test_enclave {
         .to_vec()
     }
 
-    /// The dev state key, so tests can derive view/modify keys to build auth and
+    /// An opaque dev state handle, so tests can derive view/modify keys to build auth and
     /// decrypt balances exactly as a client would.
-    pub fn state_key() -> [u8; 32] {
-        STATE_KEY
-            .with(|k| *k.borrow())
-            .expect("test enclave not installed")
+    pub fn state_key() -> outbe_tee::resident::StateKeyHandle {
+        assert!(
+            STATE_KEY.with(|k| k.borrow().is_some()),
+            "test enclave not installed"
+        );
+        fixture_key()
     }
 
     pub(crate) fn try_apply(req: &PromisOpRequest) -> Option<PromisOpResult> {
         STATE_KEY.with(|k| {
             k.borrow()
-                .map(|key| outbe_enclave::promis::apply_op(&key, req))
+                .as_ref()
+                .map(|key| outbe_enclave::promis::apply_op(key, req))
         })
     }
 
@@ -196,22 +205,28 @@ pub mod test_enclave {
         req: &MineGratisFromPromisRequestV1,
     ) -> Option<MineGratisFromPromisResultV1> {
         STATE_KEY.with(|k| {
-            k.borrow().map(|promis_state_key| {
+            k.borrow().as_ref().map(|promis_state_key| {
                 let gratis_state_key = outbe_enclave::gratis::derive_gratis_state_key(
-                    outbe_enclave::dev::GRATIS_GROUP_SIG,
+                    &outbe_enclave::dev::offer_material(
+                        outbe_enclave::dev::GRATIS_GROUP_SIG,
+                        outbe_enclave::dev::GRATIS_CHAIN,
+                    ),
                     outbe_enclave::dev::GRATIS_CHAIN,
                     DEV_EPOCH,
                 )
                 .expect("derive dev gratis state key");
                 let fidelity_state_key = outbe_enclave::fidelity::derive_fidelity_state_key(
-                    outbe_enclave::dev::FIDELITY_GROUP_SIG,
+                    &outbe_enclave::dev::offer_material(
+                        outbe_enclave::dev::FIDELITY_GROUP_SIG,
+                        outbe_enclave::dev::fidelity_chain(),
+                    ),
                     outbe_enclave::dev::fidelity_chain(),
                     DEV_EPOCH,
                 )
                 .expect("derive dev fidelity state key");
                 let keys = outbe_enclave::promis::MineGratisKeys {
-                    offer_secret: &outbe_enclave::dev::OFFER_SECRET_KEY,
-                    promis_state_key: &promis_state_key,
+                    offer_secret: &outbe_enclave::dev::offer_key(),
+                    promis_state_key,
                     gratis_state_key: &gratis_state_key,
                     fidelity_state_key: &fidelity_state_key,
                 };

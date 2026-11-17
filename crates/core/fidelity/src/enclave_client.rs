@@ -403,7 +403,7 @@ pub mod test_enclave {
     use std::cell::RefCell;
 
     thread_local! {
-        static STATE_KEY: RefCell<Option<[u8; 32]>> = const { RefCell::new(None) };
+        static STATE_KEY: RefCell<Option<outbe_tee::resident::StateKeyHandle>> = const { RefCell::new(None) };
     }
 
     const DEV_EPOCH: u64 = 0;
@@ -426,15 +426,21 @@ pub mod test_enclave {
         outbe_enclave::dev::fidelity_chain()
     }
 
-    /// Install the in-process enclave for the current thread.
-    pub fn install() {
-        let key = outbe_enclave::fidelity::derive_fidelity_state_key(
-            outbe_enclave::dev::FIDELITY_GROUP_SIG,
+    fn fixture_key() -> outbe_tee::resident::StateKeyHandle {
+        outbe_enclave::fidelity::derive_fidelity_state_key(
+            &outbe_enclave::dev::offer_material(
+                outbe_enclave::dev::FIDELITY_GROUP_SIG,
+                outbe_enclave::dev::fidelity_chain(),
+            ),
             dev_chain(),
             DEV_EPOCH,
         )
-        .expect("derive dev fidelity state key");
-        STATE_KEY.with(|k| *k.borrow_mut() = Some(*key));
+        .expect("derive dev fidelity state key")
+    }
+
+    /// Install the in-process enclave for the current thread.
+    pub fn install() {
+        STATE_KEY.with(|k| *k.borrow_mut() = Some(fixture_key()));
     }
 
     /// Remove the in-process enclave for the current thread.
@@ -442,17 +448,19 @@ pub mod test_enclave {
         STATE_KEY.with(|k| *k.borrow_mut() = None);
     }
 
-    /// The dev state key, so tests can derive view keys to decrypt cohorts.
-    pub fn state_key() -> [u8; 32] {
-        STATE_KEY
-            .with(|k| *k.borrow())
-            .expect("test enclave not installed")
+    /// An opaque dev state handle, so tests can derive view keys to decrypt cohorts.
+    pub fn state_key() -> outbe_tee::resident::StateKeyHandle {
+        assert!(
+            STATE_KEY.with(|k| k.borrow().is_some()),
+            "test enclave not installed"
+        );
+        fixture_key()
     }
 
     pub(super) fn try_cohort(req: &FidelityCohortRequest) -> Option<Result<FidelityCohortResult>> {
         STATE_KEY.with(|k| {
-            k.borrow().map(|key| {
-                outbe_enclave::fidelity::apply_cohort_op(&key, req).map_err(|e| {
+            k.borrow().as_ref().map(|key| {
+                outbe_enclave::fidelity::apply_cohort_op(key, req).map_err(|e| {
                     FidelityFatalError::enclave_op_error("ApplyFidelityCohortOp", e).into()
                 })
             })
@@ -463,8 +471,8 @@ pub mod test_enclave {
         req: &FidelitySnapshotRequest,
     ) -> Option<Result<Vec<FidelityLeagueEntry>>> {
         STATE_KEY.with(|k| {
-            k.borrow().map(|key| {
-                outbe_enclave::fidelity::snapshot_leagues(&key, req).map_err(|e| {
+            k.borrow().as_ref().map(|key| {
+                outbe_enclave::fidelity::snapshot_leagues(key, req).map_err(|e| {
                     FidelityFatalError::enclave_op_error("SnapshotFidelityLeagues", e).into()
                 })
             })
@@ -473,8 +481,8 @@ pub mod test_enclave {
 
     pub(super) fn try_query(req: &FidelityQueryRequest) -> Option<Result<FidelityQueryResult>> {
         STATE_KEY.with(|k| {
-            k.borrow().map(|key| {
-                outbe_enclave::fidelity::query_index(&key, dev_chain(), req)
+            k.borrow().as_ref().map(|key| {
+                outbe_enclave::fidelity::query_index(key, dev_chain(), req)
                     .map_err(|e| FidelityError::enclave_query_error(e).into())
             })
         })

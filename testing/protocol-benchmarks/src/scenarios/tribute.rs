@@ -464,7 +464,7 @@ fn measure_enclave_decrypt_ms(fixture: &Fixture) -> f64 {
     for _ in 0..INNER_ITERATIONS {
         black_box(
             ecdhe_tribute_offer_decrypt(
-                &OFFER_PRIVATE_KEY,
+                &outbe_tee::resident::OfferKeyHandle::for_test(OFFER_PRIVATE_KEY),
                 &OFFER_HKDF_SALT,
                 black_box(&ephemeral_pubkey),
                 black_box(&fixture.nonce),
@@ -523,7 +523,9 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
 
     let input = bench_input(fixture);
     let key = TributeOfferKeyMaterial {
-        tribute_offer_private_key: &OFFER_PRIVATE_KEY,
+        tribute_offer_private_key: &outbe_tee::resident::OfferKeyHandle::for_test(
+            OFFER_PRIVATE_KEY,
+        ),
         salt: &OFFER_HKDF_SALT,
     };
     let mut enclave_ns = 0_u64;

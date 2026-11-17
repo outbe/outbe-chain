@@ -91,7 +91,12 @@ impl ResidentTeeKeys {
     pub fn tee_bls_public_bytes(&self) -> Vec<u8> {
         self.tee_bls_key.public_key().encode().to_vec()
     }
+    /// Compatibility probe for deterministic test identities, not a production signing API.
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn sign_domain_attestation(&self, preimage: &[u8]) -> [u8; 64] {
+        self.sign_attestation(preimage)
+    }
+    pub(crate) fn sign_attestation(&self, preimage: &[u8]) -> [u8; 64] {
         use ed25519_dalek::Signer as _;
         self.attestation_signing.sign(preimage).to_bytes()
     }

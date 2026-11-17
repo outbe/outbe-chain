@@ -31,7 +31,7 @@ test-utils = ["outbe-primitives/test-utils"]
 # Enabled by the node binary in release builds. Asserts, at compile time, that
 # the attestation-skipping in-process stand-in is not in this build.
 production-enclave = []
-test-enclave = ["outbe-enclave/engine"]
+test-enclave = ["outbe-tee/test-utils", "outbe-enclave/engine"]
 # Shortens the DEV call notice to a real e2e wait. Never enabled in a release build.
 e2e-test = []
 

@@ -215,26 +215,21 @@ jobs:
         run: |
           set -euo pipefail
           chain_tree="$(cargo tree --locked --package outbe-chain -e=features,no-dev)"
-          if grep -Eq 'feature "test-enclave"' <<<"${chain_tree}"; then
-            echo "error: test-enclave feature is enabled in outbe-chain production dependency graph" >&2
-            exit 1
-          fi
           default_tree="$(cargo tree --locked -e=features,no-dev)"
-          if grep -Eq 'feature "test-enclave"' <<<"${default_tree}"; then
-            echo "error: test-enclave feature is enabled in default workspace production dependency graph" >&2
-            exit 1
-          fi
-          for forbidden in dev-keys test-utils; do
-            if grep -Eq "outbe-enclave feature \"${forbidden}\"" <<<"${default_tree}"; then
-              echo "error: outbe-enclave feature \"${forbidden}\" is enabled in default workspace production dependency graph" >&2
+          prod_tree="$(cargo tree --locked --package outbe-chain --features outbe-chain/production-enclave -e=features,no-dev)"
+          for graph in chain_tree default_tree prod_tree; do
+            tree="${!graph}"
+            if grep -Eq 'feature "test-enclave"|outbe-enclave feature "(dev-keys|test-utils)"|outbe-tee feature "test-utils"|outbe-dcap feature "sgx-noattest"' <<<"${tree}"; then
+              echo "error: test-only enclave feature is enabled in ${graph}" >&2
               exit 1
             fi
           done
-          prod_tree="$(cargo tree --locked --package outbe-chain --features outbe-chain/production-enclave -e=features,no-dev)"
-          if grep -Eq 'feature "test-enclave"' <<<"${prod_tree}"; then
-            echo "error: test-enclave feature is enabled when outbe-chain/production-enclave is set" >&2
-            exit 1
-          fi
+          for graph in chain_tree prod_tree; do
+            if ! grep -Eq 'outbe-enclave feature "engine"' <<<"${!graph}"; then
+              echo "error: outbe-enclave engine is missing in ${graph}" >&2
+              exit 1
+            fi
+          done
           for crate in outbe-fidelity outbe-gratis outbe-promis outbe-tribute outbe-nod; do
             crate_features="$(cargo tree --locked --package outbe-chain --features outbe-chain/production-enclave -e=features,no-dev -i "${crate}" --depth 1)"
             if ! grep -Eq "${crate} feature \"production-enclave\"" <<<"${crate_features}"; then
@@ -246,22 +241,11 @@ jobs:
               exit 1
             fi
           done
-          for pkg in outbe-chain outbe-cli; do
-            enclave_features="$(cargo tree --locked --package "${pkg}" -e=features,no-dev -i outbe-enclave --depth 1)"
-            for forbidden in engine dev-keys test-utils; do
-              if grep -Eq "outbe-enclave feature \"${forbidden}\"" <<<"${enclave_features}"; then
-                echo "error: outbe-enclave feature \"${forbidden}\" is enabled in ${pkg} production dependency graph" >&2
-                exit 1
-              fi
-            done
-          done
-          prod_enclave_features="$(cargo tree --locked --package outbe-chain --features outbe-chain/production-enclave -e=features,no-dev -i outbe-enclave --depth 1)"
-          for forbidden in engine dev-keys test-utils; do
-            if grep -Eq "outbe-enclave feature \"${forbidden}\"" <<<"${prod_enclave_features}"; then
-              echo "error: outbe-enclave feature \"${forbidden}\" is enabled under outbe-chain/production-enclave" >&2
-              exit 1
-            fi
-          done
+          cli_tree="$(cargo tree --locked --package outbe-cli -e=features,no-dev)"
+          if grep -Eq 'feature "test-enclave"|outbe-enclave feature "(engine|dev-keys|test-utils)"|outbe-tee feature "test-utils"|outbe-dcap feature "sgx-noattest"' <<<"${cli_tree}"; then
+            echo "error: enclave engine or test-only feature is enabled in outbe-cli production dependency graph" >&2
+            exit 1
+          fi
           sidecar_enclave_features="$(cargo tree --locked --package outbe-tee-enclave -e=features,no-dev -i outbe-enclave --depth 1)"
           for forbidden in dev-keys test-utils; do
             if grep -Eq "outbe-enclave feature \"${forbidden}\"" <<<"${sidecar_enclave_features}"; then

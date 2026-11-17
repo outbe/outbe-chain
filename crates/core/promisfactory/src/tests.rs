@@ -198,7 +198,7 @@ fn with_gratis_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
 /// keyed independently from promis).
 fn gratis_auth(op: GratisOp, account: Address, amount: U256, nonce: u64) -> ModifyAuth {
     let sk = outbe_gratis::enclave_client::test_enclave::state_key();
-    let mk = outbe_enclave::gratis::derive_modify_key(&sk, account).unwrap();
+    let mk = outbe_enclave::gratis::derive_account_keys(&sk, account).unwrap();
     ModifyAuth {
         mac: outbe_enclave::gratis::modify_mac(
             &mk,

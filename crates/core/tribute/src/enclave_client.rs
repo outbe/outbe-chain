@@ -98,7 +98,10 @@ pub(crate) fn read_amounts(
 pub mod test_enclave {
     use std::cell::Cell;
     thread_local! { static INSTALLED: Cell<bool> = const { Cell::new(false) }; }
-    pub const NETWORK_SECRET: [u8; 32] = [0x5a; 32];
+    /// Opaque fixture capability; construction requires `outbe-tee/test-utils`.
+    pub fn state_key() -> outbe_tee::resident::StateKeyHandle {
+        outbe_tee::resident::StateKeyHandle::for_test([0x5a; 32])
+    }
     pub struct Guard {
         previous: bool,
         _nod_guard: Option<outbe_nod::test_support::Guard>,
@@ -178,7 +181,7 @@ pub mod test_enclave {
     {
         use outbe_core_common::tribute_encryption::{TributeAmountsV2, TributeContextV2};
         outbe_enclave::tribute_encryption::encrypt_tribute(
-            &NETWORK_SECRET,
+            &state_key(),
             TributeContextV2 {
                 chain_id,
                 tribute_id: tribute.tribute_id,
@@ -197,7 +200,9 @@ pub mod test_enclave {
         .map_err(crate::errors::body_read_corruption)
     }
 
-    pub(super) fn with_key<T>(f: impl FnOnce(&[u8; 32]) -> T) -> Option<T> {
-        INSTALLED.get().then(|| f(&NETWORK_SECRET))
+    pub(super) fn with_key<T>(
+        f: impl FnOnce(&outbe_tee::resident::StateKeyHandle) -> T,
+    ) -> Option<T> {
+        INSTALLED.get().then(|| f(&state_key()))
     }
 }

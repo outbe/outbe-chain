@@ -506,7 +506,7 @@ fn assert_real_zk_offer_with_key_source(
     let (cipher, nonce, ephemeral) =
         outbe_enclave::offer_encrypt::encrypt_tribute_offer(&offer_public_key, &payload).unwrap();
     let key = TributeOfferKeyMaterial {
-        tribute_offer_private_key: &PRIVATE_KEY,
+        tribute_offer_private_key: &outbe_tee::resident::OfferKeyHandle::for_test(PRIVATE_KEY),
         salt: &outbe_enclave::OFFER_HKDF_SALT,
     };
     let mut rng =

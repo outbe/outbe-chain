@@ -45,9 +45,11 @@ impl StateKeyHandle {
         verify_mac(&self.0, label, message, tag)
     }
     /// AEAD with a caller-provided public nonce; caller owns nonce uniqueness.
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn aead_encrypt(&self, nonce: &[u8; 12], plaintext: &[u8]) -> Result<Vec<u8>> {
         seal(&self.0, nonce, plaintext)
     }
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn aead_decrypt(&self, nonce: &[u8; 12], ciphertext: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
         open(&self.0, nonce, ciphertext)
     }
@@ -106,6 +108,7 @@ impl AccountKeysHandle {
     pub fn account(&self) -> Address {
         self.account
     }
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn view_key_handle(&self) -> &StateKeyHandle {
         &self.view
     }
@@ -123,6 +126,7 @@ pub fn derive_account_keys_handle(
         account,
     })
 }
+#[cfg(any(test, feature = "test-utils"))]
 pub fn slot_encrypt(
     handle: &AccountKeysHandle,
     nonce_info: &[u8],
@@ -137,6 +141,7 @@ pub fn slot_encrypt(
         .view
         .slot_encrypt(nonce_info, account, field, previous_version, plaintext)
 }
+#[cfg(any(test, feature = "test-utils"))]
 pub fn slot_decrypt(
     handle: &AccountKeysHandle,
     nonce_info: &[u8],

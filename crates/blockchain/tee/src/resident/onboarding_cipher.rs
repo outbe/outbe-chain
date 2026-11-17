@@ -20,7 +20,7 @@ pub(crate) fn derive_tribute_offer_secret_from_group_sig(
 }
 
 /// There is no caller-selected plaintext: only the resident group signature is sealed.
-pub fn encrypt_onboarding_artifact_v1(
+pub(crate) fn encrypt_onboarding_artifact_v1(
     material: &ResidentOfferMaterial,
     context: DcapOnboardingContextV1,
 ) -> Result<DcapOnboardingArtifactV1> {
@@ -46,7 +46,7 @@ pub fn encrypt_onboarding_artifact_v1(
 }
 
 /// Decrypt and activate in RAM. The decrypted root never leaves `outbe-tee`.
-pub fn decrypt_onboarding_artifact_v1(
+pub(crate) fn decrypt_onboarding_artifact_v1(
     keys: &ResidentTeeKeys,
     artifact: &DcapOnboardingArtifactV1,
 ) -> Result<ResidentOfferMaterial> {

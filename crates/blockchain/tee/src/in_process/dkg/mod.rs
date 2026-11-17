@@ -74,7 +74,7 @@ pub const TEE_DKG_NAMESPACE: &[u8] = b"outbe-tee-dkg";
 /// Threshold offer-signature namespace, separate from ceremony messages.
 pub const TEE_OFFER_NAMESPACE: &[u8] = b"outbe-tee-offer";
 /// Frozen offer-root signing message; never includes caller-selected data.
-pub const TEE_OFFER_MESSAGE: &[u8] = b"outbe/tee/offer/v1";
+pub const TEE_OFFER_MESSAGE: &[u8] = crate::resident::TEE_OFFER_MESSAGE;
 
 fn dkg_err(context: DkgOperation, _error: impl Sized) -> TeeError {
     DkgError::Operation { operation: context }.into()

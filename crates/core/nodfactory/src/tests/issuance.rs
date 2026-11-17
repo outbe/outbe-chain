@@ -484,11 +484,11 @@ fn lysis_series_of_one_day_and_reference_share_one_call_group() {
             item.encrypted.encrypted_gratis_amount.as_slice()
         );
         let view_key = outbe_enclave::nod_encryption::derive_view_key(
-            &outbe_nod::test_support::NETWORK_SECRET,
+            &outbe_nod::test_support::state_key(),
             item.owner,
         )
         .expect("owner view key");
-        outbe_enclave::nod_decrypt::decrypt_nod_for_owner(&view_key, &item.encrypted)
+        outbe_nod::test_support::decrypt_for_owner(&view_key, &item.encrypted)
             .expect("open nod load")
     });
     assert_eq!(opened_load, U256::from(15));

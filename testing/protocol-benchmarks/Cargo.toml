@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+outbe-tee = { workspace = true, features = ["test-utils"] }
 outbe-system-common.workspace = true
 outbe-core-common.workspace = true
 outbe-ccaregistry.workspace = true

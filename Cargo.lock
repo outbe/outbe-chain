@@ -7859,6 +7859,7 @@ dependencies = [
  "multibase",
  "outbe-chain-constants",
  "outbe-consensus",
+ "outbe-enclave",
  "outbe-genesis-cli",
  "outbe-nodfactory",
  "outbe-primitives",
@@ -8494,6 +8495,7 @@ dependencies = [
  "outbe-macros",
  "outbe-primitives",
  "outbe-system-common",
+ "outbe-tee",
  "outbe-vaultrouter",
  "thiserror 2.0.18",
 ]
@@ -8907,6 +8909,7 @@ dependencies = [
  "outbe-stablecoin",
  "outbe-stablecoinfactory",
  "outbe-system-common",
+ "outbe-tee",
  "outbe-tribute",
  "outbe-tributefactory",
  "outbe-vaultrouter",

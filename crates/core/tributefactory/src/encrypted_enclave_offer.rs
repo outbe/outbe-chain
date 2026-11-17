@@ -170,7 +170,7 @@ mod tests {
             };
             let digest = outbe_core_common::wwd_entity_id::derive_poseidon_digest(owner, day);
             let body = outbe_enclave::tribute_encryption::encrypt_tribute(
-                &[7; 32],
+                &outbe_tee::resident::StateKeyHandle::for_test([7; 32]),
                 TributeContextV2 {
                     chain_id: 1,
                     tribute_id: outbe_core_common::wwd_entity_id::WwdEntityId::from_day_and_digest(
