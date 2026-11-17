@@ -1,7 +1,6 @@
 //! Direct-pledge issuance plus atomic repayment/forfeiture tests.
 use crate::{runtime, tests::*};
-use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::SolCall;
+use alloy_primitives::{Address, U256};
 use outbe_credis::{CredisContract, CredisState};
 use outbe_enclave::protocol::GratisOp;
 use outbe_gratisfactory::runtime::{cancel_pledge, pledge_of};
@@ -273,38 +272,12 @@ fn repayments_return_collateral_to_the_source_and_interest_only_returns_nothing(
     teardown();
 }
 
+/// The router takes the repayment directly from the caller. A payment that the router
+/// refuses rolls back the Credis and the pledged collateral.
 #[test]
-fn false_token_return_rolls_back_credis_and_pledged_collateral() {
+fn a_payment_the_router_refuses_rolls_back_credis_and_pledged_collateral() {
     let mut provider = env();
-    provider.stub_sub_call_at_selector(
-        settlement_asset(),
-        crate::sol_ext::IERC20::transferFromCall::SELECTOR,
-        Bytes::from(vec![0; 32]),
-    );
-    StorageHandle::enter(&mut provider, |storage| {
-        bootstrap(&storage, pledge_cost());
-        let id = open(&storage, 1);
-        let credis = CredisContract::new(storage.clone());
-        let record = credis.get_credis(id).unwrap();
-        let pledged = outbe_gratis::api::pledged_ct(storage.clone(), alice()).unwrap();
-        let liquid = outbe_gratis::api::balance_ct(storage.clone(), alice()).unwrap();
-        assert!(runtime::settle_credis(storage.clone(), bob(), id, pledge_stables()).is_err());
-        assert_eq!(credis.get_credis(id).unwrap(), record);
-        assert_eq!(
-            outbe_gratis::api::pledged_ct(storage.clone(), alice()).unwrap(),
-            pledged
-        );
-        assert_eq!(
-            outbe_gratis::api::balance_ct(storage, alice()).unwrap(),
-            liquid
-        );
-    });
-    teardown();
-}
-
-#[test]
-fn a_token_that_moves_less_than_owed_rolls_back_credis_and_pledged_collateral() {
-    let mut provider = env();
+    outbe_vaultrouter::test_support::stub_unanswered_deposit_from(&mut provider);
     let (id, record, pledged, liquid) = StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost());
         let id = open(&storage, 1);
@@ -313,19 +286,11 @@ fn a_token_that_moves_less_than_owed_rolls_back_credis_and_pledged_collateral() 
         let liquid = outbe_gratis::api::balance_ct(storage, alice()).unwrap();
         (id, record, pledged, liquid)
     });
-    provider.stub_sub_call_sequence_at_selector(
-        settlement_asset(),
-        crate::sol_ext::IERC20::balanceOfCall::SELECTOR,
-        [U256::ZERO, U256::ONE].map(|balance| Bytes::from(balance.to_be_bytes::<32>().to_vec())),
-    );
     StorageHandle::enter(&mut provider, |storage| {
         let err = runtime::settle_credis(storage.clone(), bob(), id, pledge_stables()).unwrap_err();
         assert_eq!(
             err.to_string(),
-            outbe_primitives::error::PrecompileError::from(
-                outbe_vaultrouter::settlement::SettlementError::AmountMismatch
-            )
-            .to_string()
+            outbe_vaultrouter::test_support::unanswered_deposit_from().to_string()
         );
         assert_eq!(
             CredisContract::new(storage.clone()).get_credis(id).unwrap(),
@@ -340,6 +305,8 @@ fn a_token_that_moves_less_than_owed_rolls_back_credis_and_pledged_collateral() 
             liquid
         );
     });
+    let pull = outbe_vaultrouter::test_support::last_deposit_from(&provider).unwrap();
+    assert_eq!((pull.payer, pull.asset), (bob(), settlement_asset()));
     teardown();
 }
 

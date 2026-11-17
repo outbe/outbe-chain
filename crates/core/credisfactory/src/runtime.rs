@@ -179,7 +179,6 @@ pub fn settle_credis(
         }
         outbe_vaultrouter::settlement::collect(
             &storage,
-            CREDIS_FACTORY_ADDRESS,
             caller,
             repayment.asset,
             repayment.amount_minor,

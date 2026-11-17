@@ -8,7 +8,7 @@ use outbe_gem::{precompile::IGem, GemAddParams};
 use outbe_gemfactory::precompile::IGemFactory;
 use outbe_primitives::storage::{StorageHandle, SubCallStatus};
 use outbe_system_common::addresses::{GEM_ADDRESS, GEM_FACTORY_ADDRESS};
-use outbe_vaultrouter::api::IVaultRouter::StablesSource;
+use outbe_vaultrouter::precompile::IVaultRouter::StablecoinSource;
 use settlement::{Quote, Rail, World, ASSET, OWNER, TIMESTAMP};
 
 /// `called_at` stamps the Gem's group as called at that time.
@@ -21,7 +21,7 @@ const GEM: Gem = Gem { called_at: None };
 
 impl Rail for Gem {
     const FACTORY: Address = GEM_FACTORY_ADDRESS;
-    const SOURCE: StablesSource = StablesSource::GemCostAmount;
+    const SOURCE: StablecoinSource = StablecoinSource::GemCostAmount;
 
     fn seed(self, storage: &StorageHandle<'_>, issuance_currency: u16) -> (U256, u64) {
         let profile = outbe_gem::config::read(storage).unwrap();
@@ -139,6 +139,11 @@ fn a_third_party_pays_and_the_units_stay_with_the_owner() {
 #[test]
 fn payment_failures_restore_balances_allowances_and_logs() {
     settlement::payment_failures_restore_balances_allowances_and_logs(GEM);
+}
+
+#[test]
+fn a_payer_that_approved_only_the_factory_fails() {
+    settlement::a_payer_that_approved_only_the_factory_fails(GEM);
 }
 
 #[test]

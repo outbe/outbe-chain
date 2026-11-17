@@ -354,13 +354,7 @@ pub fn settle_gem(
         let (item, group) =
             gem_api::load_pair(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
         gem_api::record_settled(storage, item, group)?;
-        settlement::collect(
-            storage,
-            GEM_FACTORY_ADDRESS,
-            payer,
-            asset,
-            quote.payment_minor,
-        )?;
+        settlement::collect(storage, payer, asset, quote.payment_minor)?;
         emit_event(
             storage,
             GemSettled {

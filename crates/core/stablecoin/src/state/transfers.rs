@@ -4,9 +4,9 @@ use k256::ecdsa::{RecoveryId, Signature as EcdsaSignature, VerifyingKey};
 use outbe_primitives::error::{PrecompileError, Result};
 
 use super::PERMIT_TYPEHASH;
-use crate::abi::IStablecoin;
 use crate::api::PermitSignature;
 use crate::errors::StablecoinStateError;
+use crate::precompile::IStablecoin;
 use crate::schema::{allowance_key, StablecoinContract};
 
 impl StablecoinContract<'_> {

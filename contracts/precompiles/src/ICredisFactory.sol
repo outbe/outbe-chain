@@ -72,6 +72,7 @@ interface ICredisFactory {
     /// msg.value exactly matches reserved Gratis collateral in native COEN units.
     function issueCredis(uint256 reservationId) external payable returns (uint256 credisId, uint256 principalMinor);
     /// Any payer may repay. Freed collateral is released to the source's liquid Gratis.
+    /// The payer approves the VaultRouter for the repayment first.
     function settleCredis(uint256 credisId, uint256 amountCapMinor)
         external
         returns (uint256 principalSettledMinor, uint256 interestSettledMinor);

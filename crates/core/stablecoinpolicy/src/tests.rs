@@ -471,10 +471,10 @@ fn admin_transfer_is_two_step_and_stale_nominees_cannot_accept() {
         let replacement = Address::repeat_byte(0x33);
 
         registry
-            .begin_policy_admin_transfer(policy_id, admin(), first_candidate)
+            .start_policy_admin_transfer(policy_id, admin(), first_candidate)
             .unwrap();
         registry
-            .begin_policy_admin_transfer(policy_id, admin(), replacement)
+            .start_policy_admin_transfer(policy_id, admin(), replacement)
             .unwrap();
         assert_eq!(
             registry.pending_policy_admin(policy_id).unwrap(),
@@ -510,7 +510,7 @@ fn admin_transfer_cancel_clears_candidate() {
             .create_policy(other(), PolicyType::Blacklist as u8, admin())
             .unwrap();
         registry
-            .begin_policy_admin_transfer(policy_id, admin(), other())
+            .start_policy_admin_transfer(policy_id, admin(), other())
             .unwrap();
         registry
             .cancel_policy_admin_transfer(policy_id, admin())
@@ -704,7 +704,7 @@ fn precompile_dispatch_covers_every_selector_and_emits_typed_events() {
     invoke(
         &mut provider,
         current_admin,
-        I::beginPolicyAdminTransferCall {
+        I::startPolicyAdminTransferCall {
             policyId: whitelist,
             candidate,
         },
@@ -741,7 +741,7 @@ fn precompile_dispatch_covers_every_selector_and_emits_typed_events() {
     invoke(
         &mut provider,
         current_admin,
-        I::beginPolicyAdminTransferCall {
+        I::startPolicyAdminTransferCall {
             policyId: whitelist,
             candidate,
         },

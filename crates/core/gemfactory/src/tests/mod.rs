@@ -22,7 +22,7 @@ use crate::runtime;
 use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition};
 use crate::sol_ext::{IReferenceCurrency, IERC20};
 use alloy_sol_types::SolCall;
-use outbe_vaultrouter::api::IVaultRouter;
+use outbe_vaultrouter::precompile::IVaultRouter;
 
 const T_NOW: u64 = 1_700_000_000;
 const ALICE: Address = address!("0x1111111111111111111111111111111111111111");
@@ -85,11 +85,6 @@ fn stub_settlement_asset(
         word(iso_code),
     );
     storage.stub_sub_call_at_selector(asset, IERC20::decimalsCall::SELECTOR, word(decimals));
-    // The deposit path pulls and approves before handing over to the router.
-    storage.stub_sub_call_at_selector(asset, IERC20::transferFromCall::SELECTOR, word(1));
-    storage.stub_sub_call_at_selector(asset, IERC20::approveCall::SELECTOR, word(1));
-    // A fixed stub cannot vary between the two reads, so the delta is zero here.
-    storage.stub_sub_call_at_selector(asset, IERC20::balanceOfCall::SELECTOR, word(0));
 }
 
 fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
@@ -110,12 +105,8 @@ fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
         IVaultRouter::assetVaultsCountCall::SELECTOR,
         word(1),
     );
-    // `deposit` reports minted shares.
-    storage.stub_sub_call_at_selector(
-        outbe_system_common::addresses::VAULT_ROUTER_ADDRESS,
-        IVaultRouter::depositCall::SELECTOR,
-        word(1),
-    );
+    // The router does not run here. A payment stops at its `depositFrom`.
+    outbe_vaultrouter::test_support::stub_unanswered_deposit_from(&mut storage);
     StorageHandle::enter(&mut storage, |handle| {
         // These cases assert the PROD gem terms. An unset profile would resolve
         // by chain id, and the test chain is not mainnet.
@@ -194,8 +185,8 @@ fn issue_at_live_rate(
     )
 }
 
-/// Pays `gem_id` by ERC20 at `asset`'s quote and returns what it quoted. The
-/// stubbed token moves no balance, so an admitted payment stops at the delta check.
+/// Pays `gem_id` by ERC20 at `asset`'s quote and returns what it quoted. The router
+/// does not run, so an admitted payment stops at its `depositFrom` and rolls back.
 fn admitted_at_quote(storage: &StorageHandle<'_>, gem_id: U256, asset: Address) -> (u16, U256) {
     let (currency, amount, snapshot) = runtime::quote_settlement(storage, gem_id, asset).unwrap();
     let res = runtime::settle_gem(
@@ -209,10 +200,7 @@ fn admitted_at_quote(storage: &StorageHandle<'_>, gem_id: U256, asset: Address) 
     );
     assert_eq!(
         res.unwrap_err().to_string(),
-        outbe_primitives::error::PrecompileError::from(
-            outbe_vaultrouter::settlement::SettlementError::AmountMismatch
-        )
-        .to_string()
+        outbe_vaultrouter::test_support::unanswered_deposit_from().to_string()
     );
     let now = storage.now_secs().unwrap();
     assert_eq!(
@@ -243,7 +231,7 @@ fn register_currency(storage: &StorageHandle<'_>, iso: u16, rate: U256) {
 }
 
 // The paid `settle_gem` path (Reserve vault deposit) is not exercisable in the
-// storage-only harness: the stubbed token moves no balance. Mine coverage
+// storage-only harness: the router does not run. Mine coverage
 // records Settled through `gem_api::settle_gem`, which does not deposit. Localnet covers the paid settle.
 
 /// Records Settled. The body stays until it is mined.

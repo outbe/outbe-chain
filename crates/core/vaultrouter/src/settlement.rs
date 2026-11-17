@@ -1,7 +1,7 @@
 //! Settlement pricing that Nod, Gem and Intex share, and the payment Credis collects too.
 //! The asset must have a vault and carry one of the right's two currencies. The cost is
-//! floored once into the asset's minor units. The payment lands in the reserve vault
-//! through the router.
+//! floored once into the asset's minor units. The vault router takes the payment directly
+//! from the payer into the reserve vault.
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
@@ -15,7 +15,7 @@ pub use outbe_core_common::settlement::{SettlementCost, SettlementPayment};
 
 pub use crate::errors::SettlementError;
 
-use crate::api::IVaultRouter;
+use crate::precompile::IVaultRouter;
 use crate::sol_ext::{IReferenceCurrency, IERC20};
 
 /// The two currencies of a right: what its values are stated in, and what gates it.
@@ -86,11 +86,12 @@ pub fn quote(
     })
 }
 
-/// Pulls exactly `amount` of `asset` from `payer` into `factory` and deposits it into the
-/// reserve vault through the router, leaving the factory's own balance untouched.
+/// Asks the vault router to take exactly `amount` of `asset` directly from `payer` and to
+/// deposit it into the reserve vault. The calling factory must be a registered stablecoin
+/// source, and `payer` must approve the vault router. A factory names only its own caller
+/// as `payer`. A zero `amount` moves nothing and emits nothing.
 pub fn collect(
     storage: &StorageHandle<'_>,
-    factory: Address,
     payer: Address,
     asset: Address,
     amount: U256,
@@ -98,32 +99,7 @@ pub fn collect(
     if amount.is_zero() {
         return Ok(());
     }
-    let before = balance_of(storage, asset, factory)?;
-    token_call(
-        storage,
-        asset,
-        IERC20::transferFromCall {
-            from: payer,
-            to: factory,
-            amount,
-        },
-    )?;
-    if balance_of(storage, asset, factory)?.checked_sub(before) != Some(amount) {
-        return Err(SettlementError::AmountMismatch.into());
-    }
-    token_call(
-        storage,
-        asset,
-        IERC20::approveCall {
-            spender: VAULT_ROUTER_ADDRESS,
-            amount,
-        },
-    )?;
-    crate::api::deposit(storage, asset, amount)?;
-    if balance_of(storage, asset, factory)? != before {
-        return Err(SettlementError::AmountMismatch.into());
-    }
-    Ok(())
+    crate::api::deposit_from(storage, payer, asset, amount).map(|_| ())
 }
 
 /// Which of the right's currencies `asset` is denominated in. Registration is checked
@@ -163,18 +139,4 @@ fn decimals(storage: &StorageHandle<'_>, asset: Address) -> Result<u8> {
     let ret = storage.staticcall(asset, IERC20::decimalsCall {}.abi_encode().into())?;
     IERC20::decimalsCall::abi_decode_returns(&ret)
         .map_err(|_| SettlementError::AssetDecimals.into())
-}
-
-fn token_call(storage: &StorageHandle<'_>, asset: Address, call: impl SolCall) -> Result<()> {
-    let ret = storage.call(asset, U256::ZERO, call.abi_encode().into())?;
-    if !ret.is_empty() && ret.as_ref() != U256::ONE.to_be_bytes::<32>() {
-        return Err(SettlementError::TokenOperationFailed.into());
-    }
-    Ok(())
-}
-
-fn balance_of(storage: &StorageHandle<'_>, asset: Address, account: Address) -> Result<U256> {
-    let ret = storage.staticcall(asset, IERC20::balanceOfCall { account }.abi_encode().into())?;
-    IERC20::balanceOfCall::abi_decode_returns(&ret)
-        .map_err(|_| SettlementError::TokenOperationFailed.into())
 }

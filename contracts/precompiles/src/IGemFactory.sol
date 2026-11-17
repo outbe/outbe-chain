@@ -49,7 +49,7 @@ interface IGemFactory {
 
     /// @notice Settle a gem paying its cost in `asset`. Any caller may pay. The
     ///         gem stays with its owner.
-    /// @dev Approve GemFactory for the `quoteSettlement` amount before calling.
+    /// @dev Approve the VaultRouter for the `quoteSettlement` amount before calling.
     ///      Payment is deposited into the Reserve through VaultRouter.
     /// @param asset Settlement asset the gem accepts.
     /// @param snapshotId The trailing VWAP snapshot `quoteSettlement` returned. An

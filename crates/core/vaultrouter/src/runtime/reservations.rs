@@ -7,9 +7,9 @@ use outbe_primitives::storage::StorageHandle;
 
 use super::calls::{erc20_transfer, vault_deposit, vault_withdraw};
 use super::{ensure_shares_cover, first_vault, SELF};
-use crate::api::IVaultRouter;
 use crate::constants::RESERVATION_TTL_SECS;
 use crate::errors::VaultRouterError;
+use crate::precompile::IVaultRouter;
 use crate::schema::{LiquidityReservation, VaultRouterContract};
 
 /// `reserveStables`: redeem `amount` of `asset` from its origin vault into this
@@ -43,11 +43,9 @@ pub(crate) fn reserve_stables(
         let contract = VaultRouterContract::new(storage.clone());
         let proposal_id = contract.pending_vault_proposals.read(&vault)?;
         if !proposal_id.is_zero() {
-            let action = crate::state::approved_vault_action(&storage, proposal_id)?;
+            let action = crate::state::vault_action(&storage, proposal_id)?;
             if action.vault != vault {
-                return Err(
-                    VaultRouterError::ApprovedVaultActionIndexInconsistent(proposal_id).into(),
-                );
+                return Err(VaultRouterError::VaultActionIndexInconsistent(proposal_id).into());
             }
             // Expired removals still block admission until explicit cleanup or supersession.
             if action.kind == crate::state::REMOVE_VAULT {
@@ -100,12 +98,12 @@ pub(crate) fn release_reservation(
     id: U256,
     receiver: Address,
     amount: U256,
-    target: IVaultRouter::StablesTarget,
+    target: IVaultRouter::StablecoinTarget,
 ) -> Result<U256> {
     let error = if receiver.is_zero() {
         VaultRouterError::ZeroAddress
-    } else if matches!(target, IVaultRouter::StablesTarget::Unknown) {
-        VaultRouterError::InvalidLiquidityTarget
+    } else if matches!(target, IVaultRouter::StablecoinTarget::Unknown) {
+        VaultRouterError::InvalidStablecoinTarget
     } else if amount.is_zero() {
         VaultRouterError::InvalidReservationAmount
     } else {

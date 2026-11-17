@@ -1,23 +1,28 @@
-//! Public Solidity ABI of the vaultrouter precompile, plus thin typed helpers
-//! that hide the EVM sub-call to `VAULT_ROUTER_ADDRESS`.
+//! Thin typed helpers that hide the EVM sub-call to `VAULT_ROUTER_ADDRESS`.
 
 use alloy_primitives::{Address, U256};
-use alloy_sol_types::{sol, SolCall};
+use alloy_sol_types::SolCall;
 
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
 
 use crate::errors::VaultRouterError;
+use crate::precompile::IVaultRouter;
 
-sol!("../../../contracts/precompiles/src/IVaultRouter.sol");
-
-/// `deposit`: deposit `amount` of `asset` into its reserve vault via an
-/// EVM sub-call to the vault router. Returns the minted shares.
-pub fn deposit(storage: &StorageHandle<'_>, asset: Address, amount: U256) -> Result<U256> {
+/// `depositFrom`: take `amount` of `asset` directly from `payer` into its reserve vault
+/// via an EVM sub-call to the vault router. The calling module must be a registered
+/// stablecoin source. Returns the minted shares.
+pub fn deposit_from(
+    storage: &StorageHandle<'_>,
+    payer: Address,
+    asset: Address,
+    amount: U256,
+) -> Result<U256> {
     call_router(
         storage,
-        IVaultRouter::depositCall {
+        IVaultRouter::depositFromCall {
+            payer,
             asset,
             assetsMinor: amount,
         },
