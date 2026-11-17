@@ -134,3 +134,47 @@ pub(super) fn seed_offering_day(storage: StorageHandle<'_>) {
         ))
         .unwrap();
 }
+
+#[test]
+fn worldwide_day_reads_have_no_get_prefix() {
+    use outbe_tribute::precompile::{dispatch as tribute_dispatch, ITribute};
+    let old_call = |signature: &str, args: &[u8]| {
+        let mut data = alloy_primitives::keccak256(signature)[..4].to_vec();
+        data.extend_from_slice(args);
+        data
+    };
+    with_storage(|storage| {
+        seed_offering_day(storage.clone());
+        let active: Vec<u32> =
+            query_tribute_factory(storage.clone(), ITributeFactory::activeWorldwideDaysCall {});
+        assert!(active.is_empty());
+        let totals = tribute_dispatch(
+            storage.clone(),
+            &ITribute::dayTotalsCall {
+                emissionDay: 20261014,
+            }
+            .abi_encode(),
+            Address::ZERO,
+            U256::ZERO,
+        )
+        .unwrap();
+        let totals = ITribute::dayTotalsCall::abi_decode_returns(&totals).unwrap();
+        assert_eq!(totals.tributeCount, 0);
+
+        let day = U256::from(20261014u32).to_be_bytes::<32>();
+        assert!(tribute_dispatch(
+            storage.clone(),
+            &old_call("getDayTotals(uint32)", &day),
+            Address::ZERO,
+            U256::ZERO,
+        )
+        .is_err());
+        assert!(tribute_factory_dispatch(
+            storage,
+            &old_call("getActiveWorldwideDays()", &[]),
+            Address::ZERO,
+            U256::ZERO,
+        )
+        .is_err());
+    });
+}
