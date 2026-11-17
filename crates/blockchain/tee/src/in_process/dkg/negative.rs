@@ -244,3 +244,64 @@ fn seam_f_before_finalize_is_typed_error() {
         Err(TeeError::Seam(_))
     ));
 }
+
+/// Public gossip ciphertexts cannot supply a quorum of plaintext offer partials.
+#[test]
+fn tribute_offer_key_not_recoverable_by_host_from_sealed_partials() {
+    let sessions = drive_ceremony_to_shares(4);
+    let chain_id = B256::repeat_byte(0xc1);
+    let epoch = 7;
+    let sealed: Vec<_> = sessions
+        .iter()
+        .map(|s| s.tribute_offer_partials_sealed().unwrap())
+        .collect();
+    let materials: Vec<_> = sessions
+        .iter()
+        .map(|session| {
+            let recipient = session.participant_pubkey();
+            let addressed: Vec<_> = sealed
+                .iter()
+                .flat_map(|signer| {
+                    signer
+                        .iter()
+                        .filter(|(pk, _)| *pk == recipient)
+                        .map(|(_, blob)| blob.to_wire_bytes())
+                })
+                .collect();
+            session
+                .recover_tribute_offer_material(&addressed, chain_id, epoch)
+                .unwrap()
+        })
+        .collect();
+    let public = materials[0].public();
+    assert_ne!(public, [0; 32]);
+    let nonce = [7; 12];
+    let plaintext = b"resident offer-key agreement";
+    let state = materials[0]
+        .derive_state_key_handle(b"outbe/state/v1/", chain_id, epoch)
+        .unwrap();
+    let ciphertext = state.aead_encrypt(&nonce, plaintext).unwrap();
+    for material in &materials {
+        assert_eq!(material.public(), public);
+        // Opaque-handle interoperability preserves the old secret-equality check without exporting it.
+        let state = material
+            .derive_state_key_handle(b"outbe/state/v1/", chain_id, epoch)
+            .unwrap();
+        assert_eq!(
+            state.aead_decrypt(&nonce, &ciphertext).unwrap().as_slice(),
+            plaintext
+        );
+    }
+    let decodable = sealed
+        .iter()
+        .flatten()
+        .filter(|(_, blob)| {
+            let bytes = blob.to_wire_bytes();
+            PartialSignature::<Variant>::read(&mut bytes.as_slice()).is_ok()
+        })
+        .count();
+    assert!(
+        decodable < 3,
+        "host cannot assemble a quorum of plaintext partials from ciphertext; decoded {decodable}"
+    );
+}

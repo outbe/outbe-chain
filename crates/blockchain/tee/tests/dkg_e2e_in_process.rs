@@ -48,7 +48,12 @@ fn dkg_rejects_a_ceremony_id_from_another_network_binding() {
             participant_bls,
         })
         .unwrap_err();
-    assert!(matches!(error, outbe_tee::TransportError::InProcess(_)));
+    assert!(matches!(
+        error,
+        outbe_tee::TransportError::InProcess(outbe_tee::InProcessDispatchError::Resident(
+            outbe_tee::in_process::InProcessError::IdentityMismatch
+        ))
+    ));
 }
 
 #[test]

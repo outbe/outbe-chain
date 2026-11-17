@@ -3,6 +3,9 @@
 //! NOD issuance outputs were regenerated with enclave encryption for Keccak256 NOD IDs.
 
 use alloy_primitives::{Address, B256, U256};
+use outbe_enclave::dev::crypto_fixtures::{
+    decrypt_share, encrypt_share_deterministic, EncryptedShare,
+};
 use outbe_enclave::protocol::{
     derive_account_keys_message, eip191_hash, fidelity_query_auth_message, GratisOp, Ledger,
     PromisOp,
@@ -10,7 +13,6 @@ use outbe_enclave::protocol::{
 use outbe_enclave::{gratis, promis};
 use outbe_primitives::tee_signatures::recover_signer;
 use outbe_tee::resident::{AccountKeysHandle, OfferKeyHandle};
-use outbe_tee::tee_encrypt::TeeSealedEnvelope as EncryptedShare;
 use serde_json::Value;
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
@@ -380,49 +382,6 @@ fn mcp_opens_the_nod_amount_the_enclave_encrypts() {
         decrypt_nod_for_owner(&view_key, &nod).unwrap(),
         decimal(&v["gratisAmount"])
     );
-}
-
-// Historical sealed-key vectors use the frozen DKG envelope, not the randomized account export.
-fn encrypt_share_deterministic(
-    sender: &[u8; 32],
-    recipient: &[u8; 32],
-    plaintext: &[u8],
-) -> Result<EncryptedShare, outbe_tee::errors::TeeCryptoError> {
-    use outbe_tee::tee_encrypt::{hkdf_sha256, tee_encrypt_with, TeeEncryptMaterial};
-    let secret = StaticSecret::from(*sender);
-    let shared = secret.diffie_hellman(&PublicKey::from(*recipient));
-    let derived = hkdf_sha256(
-        recipient,
-        shared.as_bytes(),
-        b"outbe/tee/registry-seal-nonce/v1",
-    )?;
-    let nonce = derived[..12].try_into().unwrap();
-    Ok(EncryptedShare {
-        ephemeral_pub: PublicKey::from(&secret).to_bytes(),
-        nonce,
-        ciphertext: tee_encrypt_with(
-            recipient,
-            TeeEncryptMaterial {
-                ephemeral_secret: *sender,
-                nonce,
-                hkdf_salt: recipient,
-                domain_info: b"outbe/tee/dkg-share/v1",
-            },
-            plaintext,
-        )?,
-    })
-}
-
-fn decrypt_share(
-    recipient: &[u8; 32],
-    blob: &EncryptedShare,
-) -> outbe_enclave::errors::Result<Vec<u8>> {
-    let secret = StaticSecret::from(*recipient);
-    let public = PublicKey::from(&secret).to_bytes();
-    let shared = secret.diffie_hellman(&PublicKey::from(blob.ephemeral_pub));
-    let key =
-        outbe_enclave::crypto::hkdf_sha256(&public, shared.as_bytes(), b"outbe/tee/dkg-share/v1")?;
-    outbe_enclave::crypto::chacha20poly1305_decrypt(&key, &blob.nonce, &blob.ciphertext)
 }
 
 #[path = "encrypted_tribute/resident.rs"]
