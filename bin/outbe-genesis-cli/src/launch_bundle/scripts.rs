@@ -90,10 +90,10 @@ exec {q_runner} \\\n\
     }
 
     let binding = direct_dev_binding.ok_or_else(|| {
-        GenesisError::validation("gramine-direct-dev requires a genesis network binding")
+        GenesisError::validation("no-attestation-dev requires a genesis network binding")
     })?;
     let node_id = direct_dev_node_id.ok_or_else(|| {
-        GenesisError::validation("gramine-direct-dev requires a Reth P2P node identity")
+        GenesisError::validation("no-attestation-dev requires a Reth P2P node identity")
     })?;
     let enclave_runner = config
         .get("enclave_runner")

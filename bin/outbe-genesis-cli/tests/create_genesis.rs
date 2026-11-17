@@ -44,7 +44,7 @@ fn minimal_config(keys_dir: &str) -> Value {
         "chain_id": 424242,
         "validators": ["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"],
         "keys_dir": keys_dir,
-        "tee": {"mode": "gramine-direct-dev"},
+        "tee": {"mode": "no-attestation-dev"},
     })
 }
 
@@ -158,6 +158,29 @@ fn yaml_parser_scalars_lists_and_nesting() {
 }
 
 #[test]
+fn legacy_attestation_mode_is_rejected_without_an_alias() {
+    for (network, chain_id) in [
+        ("devnet", 424242_u64),
+        ("testnet", 54322345),
+        ("mainnet", 676),
+    ] {
+        let cfg = merge_obj(
+            minimal_config("./keys"),
+            json!({
+                "network": network,
+                "chain_id": chain_id,
+                "tee": {"mode": "gramine-direct-dev"},
+            }),
+        );
+        let error = validate_config(&cfg).expect_err("legacy attestation mode must be rejected");
+        assert!(
+            error.to_string().contains("tee.mode")
+                || error.to_string().contains("Mainnet requires")
+        );
+    }
+}
+
+#[test]
 fn config_validation_matrix_and_rejections() {
     validate_config(&minimal_config("./keys")).expect("minimal config");
 
@@ -195,7 +218,7 @@ fn config_validation_matrix_and_rejections() {
     assert!(err.to_string().contains("tee.mode"));
 
     for (network, chain_id) in [("devnet", 424242_u64), ("testnet", 54322345_u64)] {
-        for tee_mode in ["dcap-required", "gramine-direct-dev"] {
+        for tee_mode in ["dcap-required", "no-attestation-dev"] {
             let mut cfg = merge_obj(
                 minimal_config("./keys"),
                 json!({
@@ -228,7 +251,7 @@ fn config_validation_matrix_and_rejections() {
         ("mainnet".to_owned(), 676, "outbe-mainnet-1".to_owned())
     );
 
-    mainnet["tee"] = json!({"mode": "gramine-direct-dev"});
+    mainnet["tee"] = json!({"mode": "no-attestation-dev"});
     let err = validate_config(&mainnet).expect_err("mainnet rejects direct dev");
     assert!(err.to_string().contains("Mainnet requires"));
 

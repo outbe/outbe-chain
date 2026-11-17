@@ -75,7 +75,7 @@ pub fn run_tee_stage(
         }
     } else if dcap_options.values().any(Option::is_some) {
         return Err(GenesisError::validation(
-            "tee.mode gramine-direct-dev forbids DCAP measurement values",
+            "tee.mode no-attestation-dev forbids DCAP measurement values",
         ));
     }
 

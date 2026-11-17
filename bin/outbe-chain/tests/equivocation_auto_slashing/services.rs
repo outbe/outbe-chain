@@ -23,7 +23,7 @@ pub fn enclave(genesis: &Path, validator: &Path, index: usize) -> String {
     let binding = NetworkBindingV1 {
         chain_id: U256::from(seeded.chain_id).to_be_bytes(),
         genesis_hash: seeded.genesis_hash,
-        attestation_mode: AttestationMode::GramineDirectDev,
+        attestation_mode: AttestationMode::NoAttestationDev,
     };
     let seed = U256::from(index + 1).to_be_bytes();
     let keys = outbe_tee_enclave::keys::EnclaveKeys::new([0x07; 32], Some(seed)).unwrap();

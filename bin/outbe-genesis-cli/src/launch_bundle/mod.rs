@@ -169,7 +169,7 @@ fn direct_dev_network_binding(
         .get("tee")
         .and_then(|tee| tee.get("mode"))
         .and_then(Value::as_str);
-    if mode != Some("gramine-direct-dev") {
+    if mode != Some("no-attestation-dev") {
         return Ok(None);
     }
 
@@ -200,9 +200,9 @@ fn direct_dev_network_binding(
     let policy = schedule.active_policy(1).map_err(|error| {
         GenesisError::validation(format!("invalid genesis TEE policy: {error}"))
     })?;
-    if policy.attestation_mode != AttestationMode::GramineDirectDev {
+    if policy.attestation_mode != AttestationMode::NoAttestationDev {
         return Err(GenesisError::validation(
-            "gramine-direct-dev requires a GramineDirectDev genesis TEE policy",
+            "no-attestation-dev requires a NoAttestationDev genesis TEE policy",
         ));
     }
     let binding = NetworkBindingV1 {

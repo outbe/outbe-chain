@@ -32,7 +32,7 @@ keys_dir: ./keys
 # circuit version must also have a compiled binding for that L2 chain id.
 
 tee:
-  mode: gramine-direct-dev            # | dcap-required
+  mode: no-attestation-dev            # | dcap-required
   # dcap-required additionally needs the exact release measurements:
   # mrenclave: "<32-byte hex>"
   # mrsigner: "<32-byte hex>"

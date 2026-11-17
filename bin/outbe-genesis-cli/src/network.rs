@@ -293,17 +293,17 @@ fn validate_tee_mode(
     chain_id: u64,
 ) -> Result<(), GenesisError> {
     match mode {
-        "gramine-direct-dev" => {
+        "no-attestation-dev" => {
             if chain_id != DEVNET_CHAIN_ID && chain_id != TESTNET_CHAIN_ID {
                 return Err(GenesisError::validation(format!(
-                    "tee.mode gramine-direct-dev requires the devnet or testnet chain id ({DEVNET_CHAIN_ID} or {TESTNET_CHAIN_ID}), not {chain_id}"
+                    "tee.mode no-attestation-dev requires the devnet or testnet chain id ({DEVNET_CHAIN_ID} or {TESTNET_CHAIN_ID}), not {chain_id}"
                 )));
             }
             Ok(())
         }
         "dcap-required" => validate_dcap_mode(obj, chain_id),
         _ => Err(GenesisError::validation(
-            "tee.mode must be gramine-direct-dev or dcap-required",
+            "tee.mode must be no-attestation-dev or dcap-required",
         )),
     }
 }

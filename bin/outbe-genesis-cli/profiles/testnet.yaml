@@ -30,10 +30,10 @@ validators:
 # in this yaml.
 keys_dir: ./keys
 
-# Devnet and Testnet explicitly select either `gramine-direct-dev` or
+# Devnet and Testnet explicitly select either `no-attestation-dev` or
 # `dcap-required`. Mainnet accepts only `dcap-required`; there is no fallback.
 tee:
-  mode: gramine-direct-dev
+  mode: no-attestation-dev
   # mrenclave: "<32-byte hex>"
   # mrsigner: "<32-byte hex>"
   # isv_prod_id: 0

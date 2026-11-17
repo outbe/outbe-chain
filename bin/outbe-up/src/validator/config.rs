@@ -231,7 +231,7 @@ impl OperatorConfig {
             ensure!(
                 outbe_primitives::tee_genesis_v1::is_attestation_mode_allowed_for_chain_id(
                     self.network.chain_id,
-                    AttestationMode::GramineDirectDev,
+                    AttestationMode::NoAttestationDev,
                 ),
                 "tee.runtime=mock is forbidden for network.chain_id={}",
                 self.network.chain_id
@@ -277,8 +277,8 @@ fn development_network_binding(root: &Path, chain_id: u64) -> Result<String> {
         .active_policy(1)
         .wrap_err("genesis TEE policy has no active policy at height 1")?;
     ensure!(
-        policy.attestation_mode == AttestationMode::GramineDirectDev,
-        "tee.runtime=mock requires a GramineDirectDev genesis TEE policy"
+        policy.attestation_mode == AttestationMode::NoAttestationDev,
+        "tee.runtime=mock requires a NoAttestationDev genesis TEE policy"
     );
     Ok(hex::encode(
         NetworkBindingV1 {
@@ -458,7 +458,7 @@ feeder:
             &hex::decode(encoded.trim_start_matches("0x")).unwrap(),
         )
         .unwrap();
-        schedule.entries[0].policy.attestation_mode = AttestationMode::GramineDirectDev;
+        schedule.entries[0].policy.attestation_mode = AttestationMode::NoAttestationDev;
         *genesis
             .pointer_mut("/config/teeAttestationV1/policySchedule")
             .unwrap() = serde_json::Value::String(format!(
