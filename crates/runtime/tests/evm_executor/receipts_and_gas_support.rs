@@ -681,7 +681,7 @@ fn assert_deferred_state(
             assert_eq!(cycle.last_executed_at.read(&id).unwrap(), scheduled);
             assert_eq!(cycle.last_executed_block_number.read(&id).unwrap(), block);
         }
-        let first_result = router_abi::IOriginRouter::sendAuctionResultCall {
+        let first_result = router_abi::IOriginRouter::sendIntexAuctionResultCall {
             dstChainId: 1,
             emissionDay: 20240101,
             wonQuantity: 0,

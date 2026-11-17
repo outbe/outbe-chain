@@ -838,12 +838,12 @@ fn invalid_day_and_anchor_overflow_are_errors_without_business_events() {
 /// The reason of every AUCTION_CANCEL the provider sent.
 #[cfg(not(feature = "e2e-test"))]
 fn sent_cancels(storage: &HashMapStorageProvider) -> Vec<u8> {
-    use crate::sol_ext::IOriginRouter::sendAuctionCancelCall;
+    use crate::sol_ext::IOriginRouter::sendIntexAuctionCancelCall;
     storage
         .sub_call_inputs()
         .iter()
         .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
-        .filter_map(|input| sendAuctionCancelCall::abi_decode(&input.calldata).ok())
+        .filter_map(|input| sendIntexAuctionCancelCall::abi_decode(&input.calldata).ok())
         .map(|call| call.reason)
         .collect()
 }
@@ -851,12 +851,12 @@ fn sent_cancels(storage: &HashMapStorageProvider) -> Vec<u8> {
 /// Whether the provider sent a COLLECTING_BIDS round.
 #[cfg(not(feature = "e2e-test"))]
 fn sent_clearing_start(storage: &HashMapStorageProvider) -> bool {
-    use crate::sol_ext::IOriginRouter::sendAuctionStageCollectingBidsCall;
+    use crate::sol_ext::IOriginRouter::sendIntexAuctionClearingStartCall;
     storage
         .sub_call_inputs()
         .iter()
         .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
-        .any(|input| sendAuctionStageCollectingBidsCall::abi_decode(&input.calldata).is_ok())
+        .any(|input| sendIntexAuctionClearingStartCall::abi_decode(&input.calldata).is_ok())
 }
 
 #[cfg(not(feature = "e2e-test"))]
@@ -2316,12 +2316,12 @@ fn a_zero_limit_briefed_with_a_limit_is_cancelled_below_one_unit() {
 
 /// The emission day of every AUCTION_STAGE_START message the provider sent.
 fn sent_starts(storage: &HashMapStorageProvider) -> Vec<u32> {
-    use crate::sol_ext::IOriginRouter::sendAuctionStageStartCall;
+    use crate::sol_ext::IOriginRouter::sendIntexAuctionStartCall;
     storage
         .sub_call_inputs()
         .iter()
         .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
-        .filter_map(|input| sendAuctionStageStartCall::abi_decode(&input.calldata).ok())
+        .filter_map(|input| sendIntexAuctionStartCall::abi_decode(&input.calldata).ok())
         .map(|call| call.params.emissionDay)
         .collect()
 }

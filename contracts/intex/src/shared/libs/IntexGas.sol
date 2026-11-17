@@ -9,55 +9,55 @@ pragma solidity 0.8.30;
 ///      the limit rather than the spend. `GasBudget.t.sol` pins them and must run with `--isolate`.
 library IntexGas {
     /// @dev 383k at six rows. The head/row split is by shape.
-    uint256 internal constant AUCTION_STAGE_START_BASE = 365_000;
-    uint256 internal constant AUCTION_STAGE_START_PER_PRICE = 35_000;
+    uint256 internal constant INTEX_AUCTION_START_BASE = 365_000;
+    uint256 internal constant INTEX_AUCTION_START_PER_PRICE = 35_000;
 
     /// @dev Floor for a COLLECTING_BIDS round, and what the router clamps a smaller ask up to. Driven
     ///      through the whole inbound path, it spends 1.56M and still places a chunk
     ///      (`ClearingRelayMailboxGas.t.sol`).
-    uint256 internal constant AUCTION_STAGE_COLLECTING_BIDS = 2_300_000;
+    uint256 internal constant INTEX_AUCTION_CLEARING_START = 2_300_000;
 
     /// @dev Ceiling for a COLLECTING_BIDS round, under the tightest per-transaction cap our targets
     ///      enforce (Ethereum's EIP-7825 is 16 777 216). A heavier day takes several rounds
     ///      instead.
-    uint256 internal constant AUCTION_STAGE_COLLECTING_BIDS_MAX = 14_000_000;
+    uint256 internal constant INTEX_AUCTION_CLEARING_START_MAX = 14_000_000;
 
     /// @dev 147k.
-    uint256 internal constant AUCTION_RESULT = 225_000;
+    uint256 internal constant INTEX_AUCTION_RESULT = 225_000;
     /// @dev 85k: the cancel and the close of the day in the escrow.
-    uint256 internal constant AUCTION_CANCEL = 225_000;
+    uint256 internal constant INTEX_AUCTION_CANCEL = 225_000;
 
     /// @dev Cut from slotting, the dearer path: 114k at one series and 322k at eight.
-    uint256 internal constant MARK_CALLED_BASE = 130_000;
-    uint256 internal constant MARK_CALLED_PER_SERIES = 45_000;
+    uint256 internal constant INTEX_SERIES_CALL_NOTICE_BASE = 130_000;
+    uint256 internal constant INTEX_SERIES_CALL_NOTICE_PER_SERIES = 45_000;
 
     /// @notice Per-series ceiling: uncapped, a runaway series takes 63/64 of the message's gas and starves
     ///         the slot write. Kept under the `markCalled` marginal so a runaway still fits its own budget.
-    uint256 internal constant MARK_APPLY_CAP = 60_000;
+    uint256 internal constant CALL_NOTICE_APPLY_CAP = 60_000;
 
     /// @dev What a round must have left to send one more BIDS_BATCH: a full 64-bid chunk measures ~714k
     ///      against the canonical mailbox - ~157k the send, ~8.7k a bid.
-    uint256 internal constant RELAY_CHUNK_GAS = 800_000;
+    uint256 internal constant SEND_PAGE_GAS = 800_000;
 
     /// @dev Held back on top of the last chunk for the completeness marker, ~157k measured. Without
     ///      it, a round that just affords its final chunk reverts whole and reports nothing.
-    uint256 internal constant RELAY_MARKER_GAS = 250_000;
+    uint256 internal constant SEND_TOTALS_GAS = 250_000;
 
     /// @dev Held back from the relay so an unfinished day can still be reported home. The 63/64
     ///      rule leaves the outer frame far too little to send a message of its own.
-    uint256 internal constant RELAY_REPORT_GAS = 400_000;
+    uint256 internal constant SEND_PAUSE_GAS = 400_000;
 
     /// @dev WCOEN unwrap plus IntexFactory distribute registration.
     uint256 internal constant PROCEEDS_COMPOSE = 300_000;
 
     /// @dev 88k.
-    uint256 internal constant BIDS_DONE = 135_000;
+    uint256 internal constant BIDS_TOTALS = 135_000;
 
     /// @dev The remainder report a stopped relay sends home. Dearer than the other inbound bids
     ///      messages because its handler answers with an outbound CLEARING. 136k of it is the
     ///      handler's own work against the stand. The rest is what a real dispatch costs over the
     ///      mock's.
-    uint256 internal constant BIDS_REMAINING = 400_000;
+    uint256 internal constant BIDS_PAUSE = 400_000;
 
     /// @dev The one budget no test can measure. The receiver forwards into the Desis precompile.
     ///      Derived from its tariff (read 100, write 2,900, six per bid), 17.6k on the
@@ -84,36 +84,36 @@ library IntexGas {
     ///      On Outbe itself the route hands the WCOEN to the origin router in the same call, so it
     ///      also runs the unwrap and the distribute: 76k measured plus `PROCEEDS_COMPOSE`. That
     ///      route is the dearer one, and the routing part covers it.
-    uint256 internal constant REFUND_BASE = 207_000;
-    uint256 internal constant REFUND_SETTLE_BASE = 110_000;
-    uint256 internal constant REFUND_PER_ITEM = 9_250;
-    uint256 internal constant REFUND_PROCEEDS_ROUTE = 400_000;
+    uint256 internal constant RETURN_BASE = 207_000;
+    uint256 internal constant RETURN_SETTLE_BASE = 110_000;
+    uint256 internal constant RETURN_PER_ITEM = 9_250;
+    uint256 internal constant RETURN_PROCEEDS_ROUTE = 400_000;
 
     /// @dev Cut from the failure path: 2.06M for a fully rejected batch against 664k for one that all lands.
     uint256 internal constant NFT_MINT_BASE = 225_000;
     uint256 internal constant NFT_MINT_PER_ITEM = 178_000;
 
-    function bidsBatch(uint256 itemCount) internal pure returns (uint256) {
+    function bidsPage(uint256 itemCount) internal pure returns (uint256) {
         return BIDS_BASE + itemCount * BIDS_PER_ITEM;
     }
 
-    function startAuction(uint256 priceCount) internal pure returns (uint256) {
-        return AUCTION_STAGE_START_BASE + priceCount * AUCTION_STAGE_START_PER_PRICE;
+    function intexAuctionStart(uint256 priceCount) internal pure returns (uint256) {
+        return INTEX_AUCTION_START_BASE + priceCount * INTEX_AUCTION_START_PER_PRICE;
     }
 
     function issuance(uint256 seriesCount) internal pure returns (uint256) {
         return ISSUANCE_BASE + seriesCount * ISSUANCE_PER_SERIES;
     }
 
-    function markCalled(uint256 seriesCount) internal pure returns (uint256) {
-        return MARK_CALLED_BASE + seriesCount * MARK_CALLED_PER_SERIES;
+    function intexSeriesCallNotice(uint256 seriesCount) internal pure returns (uint256) {
+        return INTEX_SERIES_CALL_NOTICE_BASE + seriesCount * INTEX_SERIES_CALL_NOTICE_PER_SERIES;
     }
 
-    /// @param winnerCount Winners the chunk carries. Zero for the chunk that only closes a day.
+    /// @param winnersCount Winners the chunk carries. Zero for the chunk that only closes a day.
     /// @param routesProceeds Whether this chunk sends its proceeds home.
-    function refund(uint256 winnerCount, bool routesProceeds) internal pure returns (uint256) {
-        return REFUND_BASE + (winnerCount == 0 ? 0 : REFUND_SETTLE_BASE + winnerCount * REFUND_PER_ITEM)
-            + (routesProceeds ? REFUND_PROCEEDS_ROUTE : 0);
+    function assetReturn(uint256 winnersCount, bool routesProceeds) internal pure returns (uint256) {
+        return RETURN_BASE + (winnersCount == 0 ? 0 : RETURN_SETTLE_BASE + winnersCount * RETURN_PER_ITEM)
+            + (routesProceeds ? RETURN_PROCEEDS_ROUTE : 0);
     }
 
     function nftMint(uint256 itemCount) internal pure returns (uint256) {

@@ -65,13 +65,13 @@ contract PayNativeAccountingTest is CrossChainTest {
         nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
 
         // Register remote messengers so `_send` has a destination and inbound delivery authenticates.
-        bnbRouter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));
-        outbeRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
-        nftBridge.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridge)));
+        bnbRouter.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));
+        outbeRouter.registerRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
+        nftBridge.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridge)));
 
         // Wire TM with a stub auction and the batch adapter.
         StubAuction stubAuction = new StubAuction();
-        bnbRouter.wire(address(stubAuction), address(intex), admin);
+        bnbRouter.setDependencies(address(stubAuction), address(intex), admin);
 
         // `crosschainBurn` is `RELAYER_ROLE`-gated, so the adapter needs it on the token.
         intex.grantRole(intex.RELAYER_ROLE(), address(nftBridge));
@@ -165,7 +165,7 @@ contract PayNativeAccountingTest is CrossChainTest {
 
     function test_Entry_RefundFailsRevertsRefundFailed() public {
         // `_send` refunds excess to msg.sender via `.call{value: refund}("")`. A caller whose
-        // receive() reverts trips the RefundFailed guard. Without it, a refactor that swallowed
+        // receive() reverts trips the ReturnFailed guard. Without it, a refactor that swallowed
         // the .call return would silently seed the relay float with the entry caller's excess.
         NftRefundRejector rejector = new NftRefundRejector(address(nftBridge));
         intex.issueIntex(address(rejector), 1, SERIES_ID);
@@ -176,7 +176,7 @@ contract PayNativeAccountingTest is CrossChainTest {
         uint256 buffer = 0.3 ether;
         vm.deal(address(rejector), fee + buffer);
 
-        vm.expectRevert(ERC7786MessengerBase.RefundFailed.selector);
+        vm.expectRevert(ERC7786MessengerBase.ReturnFailed.selector);
         rejector.callSend{value: fee + buffer}(params);
     }
 
@@ -191,9 +191,9 @@ contract PayNativeAccountingTest is CrossChainTest {
 
         _deliverClearing();
 
-        (uint16 nextBatch, uint16 totalBatches, bool done) = bnbRouter.bidsRelay(SERIES_ID_DAY);
-        assertEq(nextBatch, 0, "the float-starved round sent nothing");
-        assertEq(totalBatches, 0, "and rolled back the span it had frozen");
+        (uint16 nextPage, uint16 totalPages, bool done) = bnbRouter.getIntexAuctionBidsSendState(SERIES_ID_DAY);
+        assertEq(nextPage, 0, "the float-starved round sent nothing");
+        assertEq(totalPages, 0, "and rolled back the span it had frozen");
         assertFalse(done, "so the day is still open");
     }
 
@@ -206,7 +206,7 @@ contract PayNativeAccountingTest is CrossChainTest {
         _deliverClearing();
 
         // One bid relays as a data batch plus the completeness marker, so the float pays two fees.
-        (,, bool done) = bnbRouter.bidsRelay(SERIES_ID_DAY);
+        (,, bool done) = bnbRouter.getIntexAuctionBidsSendState(SERIES_ID_DAY);
         assertTrue(done, "the day relayed whole");
         assertEq(floatBefore - address(bnbRouter).balance, 2 * BRIDGE_FEE, "every batch drew its fee from the float");
     }
@@ -216,7 +216,7 @@ contract PayNativeAccountingTest is CrossChainTest {
             OUTBE_CHAIN_ID,
             address(outbeRouter),
             address(bnbRouter),
-            BridgeMsgCodec.encodeAuctionStageCollectingBids(SERIES_ID_DAY)
+            BridgeMsgCodec.encodeIntexAuctionClearingStart(SERIES_ID_DAY)
         );
     }
 }
@@ -276,7 +276,7 @@ contract StubAuction {
 }
 
 /// @dev Holds a bridgeable token (accepts the ERC-1155 mint), but its `receive()` reverts.
-///      Tests use it to pin `_send`'s RefundFailed guard on the entry path via the NFT bridge.
+///      Tests use it to pin `_send`'s ReturnFailed guard on the entry path via the NFT bridge.
 contract NftRefundRejector {
     IntexNFT1155Bridge private immutable bridge;
 

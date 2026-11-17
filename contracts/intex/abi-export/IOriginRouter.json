@@ -14,80 +14,7 @@
   },
   {
     "type": "function",
-    "name": "distributeParkedProceeds",
-    "inputs": [
-      {
-        "name": "idx",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "isTarget",
-    "inputs": [
-      {
-        "name": "chainId",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "parkedMessage",
-    "inputs": [
-      {
-        "name": "idx",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct IOriginRouter.ParkedMessage",
-        "components": [
-          {
-            "name": "dstChainId",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "gasLimit",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "sent",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "payload",
-            "type": "bytes",
-            "internalType": "bytes"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "parkedMessageCount",
+    "name": "failedIntexAuctionProceedsReceiveCount",
     "inputs": [],
     "outputs": [
       {
@@ -100,7 +27,20 @@
   },
   {
     "type": "function",
-    "name": "parkedProceeds",
+    "name": "failedMessageSendCount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getFailedIntexAuctionProceedsReceive",
     "inputs": [
       {
         "name": "idx",
@@ -112,7 +52,7 @@
       {
         "name": "",
         "type": "tuple",
-        "internalType": "struct IOriginRouter.ParkedProceeds",
+        "internalType": "struct IOriginRouter.FailedIntexAuctionProceedsReceive",
         "components": [
           {
             "name": "emissionDay",
@@ -141,13 +81,60 @@
   },
   {
     "type": "function",
-    "name": "parkedProceedsCount",
-    "inputs": [],
+    "name": "getFailedMessageSend",
+    "inputs": [
+      {
+        "name": "idx",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "outputs": [
       {
         "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
+        "type": "tuple",
+        "internalType": "struct IOriginRouter.FailedMessageSend",
+        "components": [
+          {
+            "name": "dstChainId",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "gasLimit",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "sent",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "payload",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isTarget",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -162,9 +149,32 @@
         "internalType": "uint32"
       },
       {
+        "name": "pageIndex",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
         "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "registerRemoteMessenger",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "interop",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [],
@@ -185,7 +195,7 @@
   },
   {
     "type": "function",
-    "name": "resendParkedMessage",
+    "name": "retryIntexAuctionProceedsReceive",
     "inputs": [
       {
         "name": "idx",
@@ -198,7 +208,20 @@
   },
   {
     "type": "function",
-    "name": "sendAuctionCancel",
+    "name": "retryMessageSend",
+    "inputs": [
+      {
+        "name": "idx",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "sendIntexAuctionCancel",
     "inputs": [
       {
         "name": "emissionDay",
@@ -216,7 +239,30 @@
   },
   {
     "type": "function",
-    "name": "sendAuctionResult",
+    "name": "sendIntexAuctionClearingStart",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "gasLimit",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "sendIntexAuctionResult",
     "inputs": [
       {
         "name": "dstChainId",
@@ -265,35 +311,12 @@
   },
   {
     "type": "function",
-    "name": "sendAuctionStageCollectingBids",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "dstChainId",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "gasLimit",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "sendAuctionStageStart",
+    "name": "sendIntexAuctionStart",
     "inputs": [
       {
         "name": "params",
         "type": "tuple",
-        "internalType": "struct IOriginRouter.AuctionStageStartParams",
+        "internalType": "struct IOriginRouter.IntexAuctionStartParams",
         "components": [
           {
             "name": "emissionDay",
@@ -380,7 +403,7 @@
   },
   {
     "type": "function",
-    "name": "sendIssuanceInstructions",
+    "name": "sendIntexAuctionWinners",
     "inputs": [
       {
         "name": "dstChainId",
@@ -393,19 +416,78 @@
         "internalType": "uint32"
       },
       {
-        "name": "chunkIndex",
+        "name": "pageIndex",
         "type": "uint16",
         "internalType": "uint16"
       },
       {
-        "name": "totalChunks",
+        "name": "totalPages",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "clearingRate",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "basis",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "winners",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "partialIndex",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "partialWon",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "sendId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "sendIntexSeries",
+    "inputs": [
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "pageIndex",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "totalPages",
         "type": "uint16",
         "internalType": "uint16"
       },
       {
         "name": "series",
         "type": "tuple[]",
-        "internalType": "struct IOriginRouter.IssuanceInstructionsParams[]",
+        "internalType": "struct IOriginRouter.IntexSeriesParams[]",
         "components": [
           {
             "name": "seriesId",
@@ -486,7 +568,7 @@
   },
   {
     "type": "function",
-    "name": "sendMarkCalled",
+    "name": "sendIntexSeriesCallNotice",
     "inputs": [
       {
         "name": "emissionDay",
@@ -509,62 +591,21 @@
   },
   {
     "type": "function",
-    "name": "sendRefundInstructions",
+    "name": "setDependencies",
     "inputs": [
       {
-        "name": "dstChainId",
-        "type": "uint32",
-        "internalType": "uint32"
+        "name": "desis",
+        "type": "address",
+        "internalType": "address"
       },
       {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "chunkIndex",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "totalChunks",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "clearingRate",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "basis",
-        "type": "uint128",
-        "internalType": "uint128"
-      },
-      {
-        "name": "winners",
-        "type": "address[]",
-        "internalType": "address[]"
-      },
-      {
-        "name": "partialIndex",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "partialWon",
-        "type": "uint16",
-        "internalType": "uint16"
+        "name": "intexFactory",
+        "type": "address",
+        "internalType": "address"
       }
     ],
-    "outputs": [
-      {
-        "name": "sendId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "payable"
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -579,24 +620,6 @@
         "name": "_wcoen",
         "type": "address",
         "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setRemoteMessenger",
-    "inputs": [
-      {
-        "name": "chainId",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "interop",
-        "type": "bytes",
-        "internalType": "bytes"
       }
     ],
     "outputs": [],
@@ -661,204 +684,6 @@
     "stateMutability": "view"
   },
   {
-    "type": "function",
-    "name": "wire",
-    "inputs": [
-      {
-        "name": "desis",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "intexFactory",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "event",
-    "name": "AuctionStageSent",
-    "inputs": [
-      {
-        "name": "sendId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "stageType",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BidsBatchReceived",
-    "inputs": [
-      {
-        "name": "srcChainId",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "bidsCount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BidsDoneReceived",
-    "inputs": [
-      {
-        "name": "srcChainId",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "totalBatches",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "totalBids",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BidsRelayRoundSent",
-    "inputs": [
-      {
-        "name": "sendId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "dstChainId",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "nextBatch",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "totalBatches",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "DependenciesWired",
-    "inputs": [
-      {
-        "name": "desisOld",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "desisNew",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "intexFactoryOld",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "intexFactoryNew",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "InboundMessageIgnored",
-    "inputs": [
-      {
-        "name": "srcChainId",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "msgType",
-        "type": "uint8",
-        "indexed": true,
-        "internalType": "uint8"
-      },
-      {
-        "name": "key",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "reason",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      }
-    ],
-    "anonymous": false
-  },
-  {
     "type": "event",
     "name": "IntexAuctionCancelSent",
     "inputs": [
@@ -879,6 +704,74 @@
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IntexAuctionClearingStartSent",
+    "inputs": [
+      {
+        "name": "sendId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IntexAuctionProceedsReceiveFailed",
+    "inputs": [
+      {
+        "name": "idx",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "srcChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "pageIndex",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "amountMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "errorData",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
       }
     ],
     "anonymous": false
@@ -913,6 +806,74 @@
       },
       {
         "name": "wonBidsCount",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IntexAuctionStartSent",
+    "inputs": [
+      {
+        "name": "sendId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IntexAuctionWinnersSent",
+    "inputs": [
+      {
+        "name": "sendId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "pageIndex",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "totalPages",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "winnersCount",
         "type": "uint32",
         "indexed": false,
         "internalType": "uint32"
@@ -966,7 +927,32 @@
   },
   {
     "type": "event",
-    "name": "MessageParked",
+    "name": "MessageIgnored",
+    "inputs": [
+      {
+        "name": "receiveId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "srcChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "reason",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MessageSendFailed",
     "inputs": [
       {
         "name": "idx",
@@ -985,107 +971,44 @@
         "type": "uint8",
         "indexed": false,
         "internalType": "uint8"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ParkedMessageResent",
-    "inputs": [
-      {
-        "name": "idx",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
       },
       {
-        "name": "dstChainId",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "sendId",
+        "name": "key",
         "type": "bytes32",
         "indexed": false,
         "internalType": "bytes32"
+      },
+      {
+        "name": "errorData",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "ParkedProceedsDistributed",
+    "name": "OriginRouterDependenciesSet",
     "inputs": [
       {
-        "name": "idx",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
+        "name": "desis",
+        "type": "address",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "address"
+      },
+      {
+        "name": "intexFactory",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "ProceedsDistributed",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ProceedsParked",
-    "inputs": [
-      {
-        "name": "idx",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ProceedsRouteSet",
+    "name": "OriginRouterProceedsRouteSet",
     "inputs": [
       {
         "name": "tokenBridge",
@@ -1098,31 +1021,6 @@
         "type": "address",
         "indexed": false,
         "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "RefundInstructionsSent",
-    "inputs": [
-      {
-        "name": "sendId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "instructionsCount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -1171,7 +1069,7 @@
   },
   {
     "type": "error",
-    "name": "NoParkedMessage",
+    "name": "NoFailedIntexAuctionProceedsReceive",
     "inputs": [
       {
         "name": "idx",
@@ -1182,7 +1080,7 @@
   },
   {
     "type": "error",
-    "name": "NoParkedProceeds",
+    "name": "NoFailedMessageSend",
     "inputs": [
       {
         "name": "idx",

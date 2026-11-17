@@ -382,7 +382,7 @@ fn send_intex_auction_start(
     storage.call(
         ORIGIN_ROUTER_ADDRESS,
         U256::ZERO,
-        IOriginRouter::sendAuctionStageStartCall {
+        IOriginRouter::sendIntexAuctionStartCall {
             params: stage_params,
         }
         .abi_encode()
@@ -400,7 +400,7 @@ fn send_auction_cancel(
     storage.call(
         ORIGIN_ROUTER_ADDRESS,
         U256::ZERO,
-        IOriginRouter::sendAuctionCancelCall {
+        IOriginRouter::sendIntexAuctionCancelCall {
             emissionDay: emission_day.into(),
             reason,
         }
@@ -413,7 +413,7 @@ fn send_auction_cancel(
 /// The AUCTION_STAGE_START payload. Every condition comes from the stored day config.
 pub(crate) fn intex_auction_start_params(
     start: IntexAuctionStart<'_>,
-) -> Result<IOriginRouter::AuctionStageStartParams> {
+) -> Result<IOriginRouter::IntexAuctionStartParams> {
     let IntexAuctionStart {
         emission_day,
         config,
@@ -429,7 +429,7 @@ pub(crate) fn intex_auction_start_params(
             callPriceMinor: outbe_intexfactory::to_wire_price(row.call_price_minor)?,
         });
     }
-    Ok(IOriginRouter::AuctionStageStartParams {
+    Ok(IOriginRouter::IntexAuctionStartParams {
         emissionDay: emission_day.into(),
         commitEnd: commit_end,
         revealEnd: reveal_end,

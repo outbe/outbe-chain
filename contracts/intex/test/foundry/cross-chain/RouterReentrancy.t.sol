@@ -118,8 +118,8 @@ contract RouterReentrancyTest is CrossChainTest {
         bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         outbeRouter = DeployProxy.originRouter(address(bridge), admin);
 
-        bnbRouter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));
-        outbeRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
+        bnbRouter.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));
+        outbeRouter.registerRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
     }
 
     function test_TM_receiveMessage_runsUnderNonReentrant() public {
@@ -127,9 +127,9 @@ contract RouterReentrancyTest is CrossChainTest {
             new ReentrancyProbeAuction(address(bridge), OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter));
         // intex / escrow / nftBridge don't fire on STAGE_START, but `wire` rejects address(0). Reuse the
         // probe so all four wires are non-zero.
-        bnbRouter.wire(address(probeAuction), address(probeAuction), address(probeAuction));
+        bnbRouter.setDependencies(address(probeAuction), address(probeAuction), address(probeAuction));
 
-        bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
+        bytes memory packet = BridgeMsgCodec.encodeIntexAuctionStart(
             42, 100, 200, 300, 1e6, 5e6, ReferenceCurrencyPriceLib.one(840, 7e6, 4e6), 5, 6, 7, 3, 9e6
         );
 
@@ -142,17 +142,17 @@ contract RouterReentrancyTest is CrossChainTest {
     function test_OM_receiveMessage_runsUnderNonReentrant() public {
         ReentrancyProbeDesis probeDesis =
             new ReentrancyProbeDesis(address(bridge), BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter));
-        outbeRouter.wire(address(probeDesis), makeAddr("factory"));
+        outbeRouter.setDependencies(address(probeDesis), makeAddr("factory"));
 
         // Freeze day 42's snapshot with BNB so its bids pass the inbound membership check.
         outbeRouter.addTarget(BNB_CHAIN_ID);
-        IOriginRouter.AuctionStageStartParams memory p;
+        IOriginRouter.IntexAuctionStartParams memory p;
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         p.emissionDay = 42;
         vm.prank(address(probeDesis));
-        outbeRouter.sendAuctionStageStart(p);
+        outbeRouter.sendIntexAuctionStart(p);
 
-        bytes memory packet = BridgeMsgCodec.encodeBidsBatch(42, BNB_CHAIN_ID, 0, 1, new address[](0), new uint256[](0));
+        bytes memory packet = BridgeMsgCodec.encodeBidsPage(42, BNB_CHAIN_ID, 0, 1, new address[](0), new uint256[](0));
 
         _deliver(BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter), packet);
 

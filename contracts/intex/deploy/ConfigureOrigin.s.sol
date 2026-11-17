@@ -55,7 +55,7 @@ contract ConfigureOrigin is BaseScript {
         OriginRouter router = OriginRouter(payable(o.router));
         if (router.desis() != o.desis || router.intexFactory() != o.intexFactory) {
             requireDeployerAdmin(o.router, deployer);
-            router.wire(o.desis, o.intexFactory);
+            router.setDependencies(o.desis, o.intexFactory);
             console.log("OriginRouter wired");
         }
         grantRoleIfMissing(o.router, router.DESIS_ROLE(), o.system, deployer);

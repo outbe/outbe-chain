@@ -60,29 +60,27 @@ contract TargetRouterRefundAckTest is CrossChainTest {
         _setUpBridge();
         target = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
         escrow = new ClosableEscrowAdapter(IERC20(address(new MockWCOEN())));
-        target.wire(makeAddr("auction"), makeAddr("intex"), address(escrow));
-        target.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
+        target.setDependencies(makeAddr("auction"), makeAddr("intex"), address(escrow));
+        target.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
     }
 
-    function _deliverChunk(uint16 chunkIndex, uint16 totalChunks) internal {
+    function _deliverChunk(uint16 pageIndex, uint16 totalPages) internal {
         address[] memory winners = new address[](1);
         winners[0] = makeAddr("bidder");
         bytes memory packet =
-            BridgeMsgCodec.encodeRefundInstructions(DAY, chunkIndex, totalChunks, 600_000, 1e6, winners, 0, 0);
+            BridgeMsgCodec.encodeIntexAuctionWinners(DAY, pageIndex, totalPages, 600_000, 1e6, winners, 0, 0);
         _deliver(OUTBE_CHAIN_ID, originSender, address(target), packet);
     }
 
-    function _expectIgnored(uint16 chunkIndex, uint8 reason) internal {
-        vm.expectEmit(true, true, true, true, address(target));
-        emit ITargetRouter.InboundMessageIgnored(
-            OUTBE_CHAIN_ID, BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS, bytes32((uint256(DAY) << 16) | chunkIndex), reason
-        );
+    function _expectIgnored(uint16 pageIndex, uint8 reason) internal {
+        vm.expectEmit(false, true, false, true, address(target));
+        emit ITargetRouter.MessageIgnored(bytes32(0), OUTBE_CHAIN_ID, reason);
     }
 
     function test_AChunkForAFailedDayIsObsolete() public {
         TargetRouter failedTarget = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
-        failedTarget.wire(address(new FailedDayAuction()), makeAddr("intex"), address(escrow));
-        failedTarget.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
+        failedTarget.setDependencies(address(new FailedDayAuction()), makeAddr("intex"), address(escrow));
+        failedTarget.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
         target = failedTarget;
 
         _expectIgnored(0, InboundReason.OBSOLETE);
@@ -102,12 +100,12 @@ contract TargetRouterRefundAckTest is CrossChainTest {
         _expectIgnored(0, InboundReason.CONFLICT);
         _deliverChunk(0, 1);
         assertEq(escrow.finalizations(), 1, "the conflicting chunk never reaches the escrow");
-        (uint16 seen, uint16 total) = target.refundChunks(DAY);
+        (uint16 seen, uint16 total) = target.getIntexAuctionReturnState(DAY);
         assertEq(seen, 1, "not counted");
         assertEq(total, 2, "the first chunk's total stands");
 
         _deliverChunk(0, 2);
-        (seen,) = target.refundChunks(DAY);
+        (seen,) = target.getIntexAuctionReturnState(DAY);
         assertEq(seen, 2, "day completed by the corrected chunk");
     }
 

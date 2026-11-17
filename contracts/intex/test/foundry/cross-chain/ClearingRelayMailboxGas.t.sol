@@ -205,7 +205,7 @@ contract StoredBidStub {
 
 /// @notice What one bids relay costs on a target chain, per bid count. Run with `--isolate`.
 /// @dev The round budgets are cut from the fixed part, the step 64 -> 65 (one chunk) and the step
-///      1 -> 64 (per bid). `_measure` drives `relayBidsToOutbe` as the router itself, so only the
+///      1 -> 64 (per bid). `_measure` drives `sendIntexAuctionBidsToOutbe` as the router itself, so only the
 ///      relay is in the reading: ~157k a send and ~8.7k a bid. The inbound clearing handler uses
 ///      the same entry. On top of that, the budgets carry ~40k a send for the hub's frame and nonce
 ///      write. The fixed part reads 490k-565k depending on the fork block, because what the
@@ -230,16 +230,16 @@ abstract contract RelayGasBase is Test {
         stub.setVisible(bids);
         vm.prank(address(router));
         uint256 before = gasleft();
-        router.relayBidsToOutbe(EMISSION_DAY);
+        router.sendIntexAuctionBidsToOutbe(EMISSION_DAY);
         spent = before - gasleft();
     }
 
     function _wireRouter(address bridge) internal {
         router = DeployProxy.targetRouter(bridge, admin, DST_CHAIN_ID);
-        router.setRemoteMessenger(DST_CHAIN_ID, _interop(DST_CHAIN_ID, originPeer));
+        router.registerRemoteMessenger(DST_CHAIN_ID, _interop(DST_CHAIN_ID, originPeer));
         stub = new StoredBidStub();
         stub.seed(SEEDED_BIDS);
-        router.wire(address(stub), makeAddr("intex"), makeAddr("escrow"));
+        router.setDependencies(address(stub), makeAddr("intex"), makeAddr("escrow"));
         vm.deal(address(router), 100 ether);
     }
 
@@ -295,7 +295,7 @@ contract ClearingRelayRealMailboxTest is RelayGasBase {
         _wireRouter(address(gateway));
     }
 
-    /// @notice `AUCTION_STAGE_COLLECTING_BIDS` is the budget that a chain with no history gets, so it has
+    /// @notice `INTEX_AUCTION_CLEARING_START` is the budget that a chain with no history gets, so it has
     ///         to be worth sending. The round must place at least one chunk and report the rest.
     ///         Otherwise the day stalls waiting for a hand.
     /// @dev The test drives the inbound path that a real delivery takes: peer check, hub dedup,
@@ -318,11 +318,11 @@ contract ClearingRelayRealMailboxTest is RelayGasBase {
                 uint256(1),
                 _interop(DST_CHAIN_ID, originPeer),
                 recipient,
-                BridgeMsgCodec.encodeAuctionStageCollectingBids(EMISSION_DAY)
+                BridgeMsgCodec.encodeIntexAuctionClearingStart(EMISSION_DAY)
             )
         );
 
-        uint256 cap = ((IntexGas.AUCTION_STAGE_COLLECTING_BIDS * 63) / 64 * 63) / 64;
+        uint256 cap = ((IntexGas.INTEX_AUCTION_CLEARING_START * 63) / 64 * 63) / 64;
         vm.recordLogs();
         uint256 before = gasleft();
         (bool delivered,) = address(gateway).call{gas: cap}(
@@ -332,12 +332,12 @@ contract ClearingRelayRealMailboxTest is RelayGasBase {
         emit log_named_uint("floor_spent", before - gasleft());
         assertTrue(delivered, "the floor could not even carry the delivery");
 
-        (uint16 nextBatch, uint16 totalBatches, bool done) = router.bidsRelay(EMISSION_DAY);
-        emit log_named_uint("floor_chunks_placed", nextBatch);
-        assertEq(totalBatches, 4, "256 bids span four chunks");
+        (uint16 nextPage, uint16 totalPages, bool done) = router.getIntexAuctionBidsSendState(EMISSION_DAY);
+        emit log_named_uint("floor_chunks_placed", nextPage);
+        assertEq(totalPages, 4, "256 bids span four chunks");
         assertFalse(done, "the floor is not meant to finish a 256-bid day");
-        assertGe(nextBatch, 1, "the floor placed no chunk at all");
-        assertTrue(_sawTopic(ITargetRouter.BidsRemainingSent.selector), "the remainder was not reported");
+        assertGe(nextPage, 1, "the floor placed no chunk at all");
+        assertTrue(_sawTopic(ITargetRouter.IntexAuctionBidsPauseSent.selector), "the remainder was not reported");
     }
 
     function _sawTopic(bytes32 topic) private returns (bool) {

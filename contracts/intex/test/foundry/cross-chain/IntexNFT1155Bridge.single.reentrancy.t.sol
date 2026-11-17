@@ -95,8 +95,8 @@ contract IntexNFT1155BridgeSingleReentrancyTest is CrossChainTest {
         tokenA.grantRole(tokenA.RELAYER_ROLE(), address(adapterA));
         tokenB.grantRole(tokenB.RELAYER_ROLE(), address(adapterB));
 
-        adapterA.setRemoteMessenger(bChainId, _interop(bChainId, address(adapterB)));
-        adapterB.setRemoteMessenger(aChainId, _interop(aChainId, address(adapterA)));
+        adapterA.registerRemoteMessenger(bChainId, _interop(bChainId, address(adapterB)));
+        adapterB.registerRemoteMessenger(aChainId, _interop(aChainId, address(adapterA)));
 
         tokenA.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
         tokenB.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));

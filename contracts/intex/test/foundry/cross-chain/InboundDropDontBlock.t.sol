@@ -79,26 +79,26 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
         bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         outbeRouter = DeployProxy.originRouter(address(bridge), admin);
 
-        bnbRouter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));
-        outbeRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
+        bnbRouter.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));
+        outbeRouter.registerRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
 
         // TM drives the local Intex on markCalled.
-        bnbRouter.wire(address(auction), address(intex), admin);
+        bnbRouter.setDependencies(address(auction), address(intex), admin);
         auction.grantRole(auction.RELAYER_ROLE(), address(bnbRouter));
         intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
 
-        outbeRouter.wire(address(desis), intexFactory);
+        outbeRouter.setDependencies(address(desis), intexFactory);
         outbeRouter.addTarget(BNB_CHAIN_ID);
     }
 
     /// @dev Freeze `day`'s target snapshot (as the DESIS_ROLE owner) so its bids pass the inbound
     ///      snapshot-membership check. The mock bridge records the broadcast without delivering it.
     function _freezeSnapshot(uint32 day) internal {
-        IOriginRouter.AuctionStageStartParams memory p;
+        IOriginRouter.IntexAuctionStartParams memory p;
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         p.emissionDay = day;
         vm.prank(address(desis));
-        outbeRouter.sendAuctionStageStart(p);
+        outbeRouter.sendIntexAuctionStart(p);
     }
 
     function _deliverToTM(bytes memory packet) internal {
@@ -117,18 +117,24 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
     ///         rejecting. A batch carries several series, and one missing series must not reject
     ///         the message.
     function test_TM_PrematureMarkCalled_Parks() public {
-        bytes memory packet =
-            BridgeMsgCodec.encodeMarkCalled(SERIES_ID_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID));
+        bytes memory packet = BridgeMsgCodec.encodeIntexSeriesCallNotice(
+            SERIES_ID_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID)
+        );
         _deliverToTM(packet);
 
-        assertEq(bnbRouter.parkedMark(SERIES_ID), uint32(block.timestamp), "the mark waits for its series");
+        assertEq(
+            bnbRouter.failedIntexSeriesCallNoticeApply(SERIES_ID),
+            uint32(block.timestamp),
+            "the mark waits for its series"
+        );
     }
 
     /// @notice Once the prerequisite (the series) lands, applying the slotted mark flips the series to
     ///         Called. The out-of-order arrival resolves without a redelivery.
     function test_TM_ParkedMarkCalledFlushesAfterSeriesLands() public {
-        bytes memory packet =
-            BridgeMsgCodec.encodeMarkCalled(SERIES_ID_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID));
+        bytes memory packet = BridgeMsgCodec.encodeIntexSeriesCallNotice(
+            SERIES_ID_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID)
+        );
 
         // Premature: no series yet -> slotted.
         _deliverToTM(packet);
@@ -136,7 +142,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
         // Prerequisite lands (the ISSUANCE that would have created the series).
         intex.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
 
-        bnbRouter.applyParkedMark(SERIES_ID);
+        bnbRouter.retryIntexSeriesCallNoticeApply(SERIES_ID);
 
         IIntexNFT1155.SeriesData memory data = intex.readData(SERIES_ID);
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Called), "series flipped to Called on flush");
@@ -151,7 +157,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
     ///         to keep a lane moving.
     function test_OM_PrematureBidsBatch_RevertsThenRedeliverSucceeds() public {
         _freezeSnapshot(42); // BNB is in the day's snapshot. The revert below is Desis-not-ready, not membership
-        bytes memory bids = BridgeMsgCodec.encodeBidsBatch(42, BNB_CHAIN_ID, 0, 1, new address[](0), new uint256[](0));
+        bytes memory bids = BridgeMsgCodec.encodeBidsPage(42, BNB_CHAIN_ID, 0, 1, new address[](0), new uint256[](0));
 
         // Premature: Desis not ready -> revert propagates out of the bridge.
         vm.expectRevert(GatedDesis.NotReady.selector);
@@ -160,9 +166,8 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
         // Prerequisite lands.
         desis.enable();
 
-        // Redelivery of the identical batch now lands (BidsBatchReceived).
-        vm.expectEmit(true, true, false, true, address(outbeRouter));
-        emit IOriginRouter.BidsBatchReceived(BNB_CHAIN_ID, 42, 0);
+        // Redelivery of the identical page now reaches Desis.
+        vm.expectCall(address(desis), abi.encodeWithSelector(IDesis.collectIntexAuctionBids.selector));
         _deliverToOM(bids);
     }
 }

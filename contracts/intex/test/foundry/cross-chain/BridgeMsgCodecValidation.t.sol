@@ -25,16 +25,16 @@ contract BridgeMsgCodecValidationTest is Test {
     // --- fixed-width decoders reject over-long payloads ---
 
     function test_AuctionStageStart_OverLong_Reverts() public {
-        bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
+        bytes memory packet = BridgeMsgCodec.encodeIntexAuctionStart(
             1, 100, 200, 300, 1e6, 1e6, ReferenceCurrencyPriceLib.one(840, 2e6, 4e6), 5, 6, 7, 1, 9e6
         );
         bytes memory tooLong = abi.encodePacked(packet, hex"00");
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
-                BridgeMsgCodec.MSG_AUCTION_STAGE_START,
+                BridgeMsgCodec.MSG_INTEX_AUCTION_START,
                 tooLong.length,
-                BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_START
+                BridgeMsgCodec.MIN_LEN_INTEX_AUCTION_START
             )
         );
         BridgeMsgCodec.decodeAuctionParams(tooLong);
@@ -47,16 +47,16 @@ contract BridgeMsgCodecValidationTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
-                BridgeMsgCodec.MSG_AUCTION_STAGE_START,
+                BridgeMsgCodec.MSG_INTEX_AUCTION_START,
                 0,
-                BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_START
+                BridgeMsgCodec.MIN_LEN_INTEX_AUCTION_START
             )
         );
         BridgeMsgCodec.decodeAuctionParams(empty);
     }
 
     function test_AuctionStageStart_Truncated_RevertsTyped() public {
-        bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
+        bytes memory packet = BridgeMsgCodec.encodeIntexAuctionStart(
             1, 100, 200, 300, 1e6, 1e6, ReferenceCurrencyPriceLib.one(840, 2e6, 4e6), 5, 6, 7, 1, 9e6
         );
         bytes memory truncated = new bytes(packet.length - 1);
@@ -66,9 +66,9 @@ contract BridgeMsgCodecValidationTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
-                BridgeMsgCodec.MSG_AUCTION_STAGE_START,
+                BridgeMsgCodec.MSG_INTEX_AUCTION_START,
                 truncated.length,
-                BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_START
+                BridgeMsgCodec.MIN_LEN_INTEX_AUCTION_START
             )
         );
         BridgeMsgCodec.decodeAuctionParams(truncated);
@@ -77,13 +77,13 @@ contract BridgeMsgCodecValidationTest is Test {
     // --- remaining fixed-width decoders reject over-long payloads ---
 
     function test_AuctionStageCollectingBids_OverLong_Reverts() public {
-        bytes memory tooLong = abi.encodePacked(BridgeMsgCodec.encodeAuctionStageCollectingBids(1), hex"00");
+        bytes memory tooLong = abi.encodePacked(BridgeMsgCodec.encodeIntexAuctionClearingStart(1), hex"00");
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
-                BridgeMsgCodec.MSG_AUCTION_STAGE_COLLECTING_BIDS,
+                BridgeMsgCodec.MSG_INTEX_AUCTION_CLEARING_START,
                 tooLong.length,
-                BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_COLLECTING_BIDS
+                BridgeMsgCodec.MIN_LEN_INTEX_AUCTION_CLEARING_START
             )
         );
         this.exposedDecodeAuctionStageCollectingBids(tooLong);
@@ -91,13 +91,13 @@ contract BridgeMsgCodecValidationTest is Test {
 
     function test_AuctionResult_OverLong_Reverts() public {
         bytes memory tooLong =
-            abi.encodePacked(BridgeMsgCodec.encodeAuctionResult(1, AuctionResultLib.day(7, 5e6, 3)), hex"00");
+            abi.encodePacked(BridgeMsgCodec.encodeIntexAuctionResult(1, AuctionResultLib.day(7, 5e6, 3)), hex"00");
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
-                BridgeMsgCodec.MSG_AUCTION_RESULT,
+                BridgeMsgCodec.MSG_INTEX_AUCTION_RESULT,
                 tooLong.length,
-                BridgeMsgCodec.MIN_LEN_AUCTION_RESULT
+                BridgeMsgCodec.MIN_LEN_INTEX_AUCTION_RESULT
             )
         );
         this.exposedDecodeAuctionResult(tooLong);
@@ -105,16 +105,16 @@ contract BridgeMsgCodecValidationTest is Test {
 
     function test_MarkCalled_EmptyBatch_Reverts() public {
         bytes14[] memory empty = new bytes14[](0);
-        vm.expectRevert(BridgeMsgCodec.EmptyMarkBatch.selector);
+        vm.expectRevert(BridgeMsgCodec.EmptyCallNoticePage.selector);
         this.exposedEncodeMarkCalled(20260212, empty);
     }
 
     function test_MarkCalled_OverSizedBatch_Reverts() public {
-        uint256 tooMany = BridgeMsgCodec.MAX_SERIES_PER_MARK + 1;
+        uint256 tooMany = BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE + 1;
         bytes14[] memory batch = MarkBatchLib.sized("20260212-TRY-U", tooMany);
         vm.expectRevert(
             abi.encodeWithSelector(
-                BridgeMsgCodec.MarkBatchTooLarge.selector, tooMany, BridgeMsgCodec.MAX_SERIES_PER_MARK
+                BridgeMsgCodec.CallNoticePageTooLarge.selector, tooMany, BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE
             )
         );
         this.exposedEncodeMarkCalled(20260212, batch);
@@ -125,9 +125,9 @@ contract BridgeMsgCodecValidationTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
-                BridgeMsgCodec.MSG_MARK_CALLED,
+                BridgeMsgCodec.MSG_INTEX_SERIES_CALL_NOTICE,
                 tooShort.length,
-                BridgeMsgCodec.MIN_LEN_MARK_CALLED
+                BridgeMsgCodec.MIN_LEN_INTEX_SERIES_CALL_NOTICE
             )
         );
         this.exposedDecodeMarkCalled(tooShort);
@@ -137,22 +137,22 @@ contract BridgeMsgCodecValidationTest is Test {
 
     function test_FixedWidth_RoundTrips_StillPass() public view {
         (uint32 s,,) = BridgeMsgCodec.decodeAuctionParams(
-            BridgeMsgCodec.encodeAuctionStageStart(
+            BridgeMsgCodec.encodeIntexAuctionStart(
                 42, 1, 2, 3, 1e6, 1, ReferenceCurrencyPriceLib.one(840, 2, 4e6), 5, 6, 7, 1, 9e6
             )
         );
         assertEq(s, 42, "stageStart");
         assertEq(
-            this.exposedDecodeAuctionStageCollectingBids(BridgeMsgCodec.encodeAuctionStageCollectingBids(7)),
+            this.exposedDecodeAuctionStageCollectingBids(BridgeMsgCodec.encodeIntexAuctionClearingStart(7)),
             7,
             "clearing"
         );
         (uint32 rs,) =
-            this.exposedDecodeAuctionResult(BridgeMsgCodec.encodeAuctionResult(9, AuctionResultLib.day(1, 1, 1)));
+            this.exposedDecodeAuctionResult(BridgeMsgCodec.encodeIntexAuctionResult(9, AuctionResultLib.day(1, 1, 1)));
         assertEq(rs, 9, "result");
         assertEq(
             this.exposedDecodeMarkCalled(
-                BridgeMsgCodec.encodeMarkCalled(20260212, CALLED_AT, MarkBatchLib.one("20260212-TRY-U"))
+                BridgeMsgCodec.encodeIntexSeriesCallNotice(20260212, CALLED_AT, MarkBatchLib.one("20260212-TRY-U"))
             ),
             bytes14("20260212-TRY-U"),
             "markCalled"
@@ -163,8 +163,8 @@ contract BridgeMsgCodecValidationTest is Test {
 
     function test_EncodeBidsBatch_AtCap_Encodes() public pure {
         uint16 n = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN; // 64
-        bytes memory encoded = BridgeMsgCodec.encodeBidsBatch(1, 30101, 0, 1, new address[](n), new uint256[](n));
-        assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_BIDS_BATCH);
+        bytes memory encoded = BridgeMsgCodec.encodeBidsPage(1, 30101, 0, 1, new address[](n), new uint256[](n));
+        assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_BIDS_PAGE);
     }
 
     function test_EncodeBidsBatch_OverCap_Reverts() public {
@@ -191,7 +191,7 @@ contract BridgeMsgCodecValidationTest is Test {
         uint16 n = BridgeMsgCodec.MAX_SERIES_PER_ISSUANCE + 1;
         vm.expectRevert(
             abi.encodeWithSelector(
-                BridgeMsgCodec.IssuanceSeriesBatchTooLarge.selector,
+                BridgeMsgCodec.IntexSeriesPageTooLarge.selector,
                 uint256(n),
                 uint256(BridgeMsgCodec.MAX_SERIES_PER_ISSUANCE)
             )
@@ -199,7 +199,7 @@ contract BridgeMsgCodecValidationTest is Test {
         this.exposedEncodeIssuance(n);
     }
 
-    /// @dev decodeRefundInstructions enforces a symmetric inbound cap. Thus a peer compromise or a
+    /// @dev decodeIntexAuctionWinners enforces a symmetric inbound cap. Thus a peer compromise or a
     ///      future encoder change cannot deliver an oversized REFUND that exhausts the receiver's
     ///      gas in the per-winner loop. The test builds the payload by hand to bypass the
     ///      now-capping encoder.
@@ -207,12 +207,14 @@ contract BridgeMsgCodecValidationTest is Test {
         uint256 n = uint256(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN) + 1;
         bytes memory overCap = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
-            BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS,
+            BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS,
             abi.encode(uint32(1), uint16(0), uint16(1), uint64(1), uint128(1), new address[](n), uint16(0), uint16(0))
         );
         vm.expectRevert(
             abi.encodeWithSelector(
-                BridgeMsgCodec.RefundBatchTooLarge.selector, n, uint256(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN)
+                BridgeMsgCodec.IntexAuctionWinnersPageTooLarge.selector,
+                n,
+                uint256(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN)
             )
         );
         this.exposedDecodeRefundInstructions(overCap);
@@ -281,7 +283,7 @@ contract BridgeMsgCodecValidationTest is Test {
     // --- External wrappers ---
 
     function exposedDecodeAuctionStageCollectingBids(bytes calldata p) external pure returns (uint32) {
-        return BridgeMsgCodec.decodeAuctionStageCollectingBids(p);
+        return BridgeMsgCodec.decodeIntexAuctionClearingStart(p);
     }
 
     function exposedDecodeAuctionResult(bytes calldata p)
@@ -289,40 +291,40 @@ contract BridgeMsgCodecValidationTest is Test {
         pure
         returns (uint32, BridgeMsgCodec.IntexAuctionChainResult memory)
     {
-        return BridgeMsgCodec.decodeAuctionResult(p);
+        return BridgeMsgCodec.decodeIntexAuctionResult(p);
     }
 
     function exposedEncodeMarkCalled(uint32 day, bytes14[] calldata ids) external pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeMarkCalled(day, CALLED_AT, ids);
+        return BridgeMsgCodec.encodeIntexSeriesCallNotice(day, CALLED_AT, ids);
     }
 
     /// @dev The arrival set a receiver keeps for a day is one word wide, so a claimed count past
-    ///      `MAX_CHUNKS` has no slot to land in. Refunds bound this on both sides of the wire; issuance
+    ///      `MAX_PAGES` has no slot to land in. Refunds bound this on both sides of the wire; issuance
     ///      has to bound it the same way.
     function test_Issuance_TotalChunksBeyondTheCeiling_Reverts() public {
-        uint16 tooMany = BridgeMsgCodec.MAX_CHUNKS + 1;
+        uint16 tooMany = BridgeMsgCodec.MAX_PAGES + 1;
 
-        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.InvalidIssuanceChunk.selector, uint16(0), tooMany));
+        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.InvalidIntexSeriesPage.selector, uint16(0), tooMany));
         this.exposedEncodeIssuanceChunk(0, tooMany);
     }
 
     /// @dev A peer that hand-rolls the body bypasses the encoder, so the decoder must reject it too.
     function test_Issuance_TotalChunksBeyondTheCeiling_RejectedOnDecode() public {
-        uint16 tooMany = BridgeMsgCodec.MAX_CHUNKS + 1;
-        BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
+        uint16 tooMany = BridgeMsgCodec.MAX_PAGES + 1;
+        BridgeMsgCodec.IntexSeriesPayload memory payload;
         payload.seriesId = "20260212-TRY-U";
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
-            BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
+            BridgeMsgCodec.MSG_INTEX_SERIES,
             abi.encode(uint32(0), uint16(0), tooMany, IssuanceBatchLib.one(payload))
         );
 
-        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.InvalidIssuanceChunk.selector, uint16(0), tooMany));
+        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.InvalidIntexSeriesPage.selector, uint16(0), tooMany));
         this.exposedDecodeIssuance(packet);
     }
 
     function exposedDecodeMarkCalled(bytes calldata p) external pure returns (bytes14) {
-        (,, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkCalled(p);
+        (,, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeIntexSeriesCallNotice(p);
         return seriesIds[0];
     }
 
@@ -331,32 +333,32 @@ contract BridgeMsgCodecValidationTest is Test {
         pure
         returns (uint32, uint16, uint16, uint64, uint128, address[] memory, uint16, uint16)
     {
-        return BridgeMsgCodec.decodeRefundInstructions(p);
+        return BridgeMsgCodec.decodeIntexAuctionWinners(p);
     }
 
     function exposedEncodeBidsBatch(uint16 n) external pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeBidsBatch(1, 30101, 0, 1, new address[](n), new uint256[](n));
+        return BridgeMsgCodec.encodeBidsPage(1, 30101, 0, 1, new address[](n), new uint256[](n));
     }
 
     function exposedEncodeRefund(uint16 n) external pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeRefundInstructions(1, 0, 1, 1, 1, new address[](n), 0, 0);
+        return BridgeMsgCodec.encodeIntexAuctionWinners(1, 0, 1, 1, 1, new address[](n), 0, 0);
     }
 
-    function exposedEncodeIssuanceChunk(uint16 chunkIndex, uint16 totalChunks) external pure returns (bytes memory) {
-        BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
+    function exposedEncodeIssuanceChunk(uint16 pageIndex, uint16 totalPages) external pure returns (bytes memory) {
+        BridgeMsgCodec.IntexSeriesPayload memory payload;
         payload.seriesId = "20260212-TRY-U";
-        return BridgeMsgCodec.encodeIssuanceInstructions(0, chunkIndex, totalChunks, IssuanceBatchLib.one(payload));
+        return BridgeMsgCodec.encodeIntexSeries(0, pageIndex, totalPages, IssuanceBatchLib.one(payload));
     }
 
     function exposedDecodeIssuance(bytes calldata p) external pure {
-        BridgeMsgCodec.decodeIssuanceInstructions(p);
+        BridgeMsgCodec.decodeIntexSeries(p);
     }
 
     function exposedEncodeIssuance(uint16 n) external pure returns (bytes memory) {
-        BridgeMsgCodec.IssuanceInstructionsPayload[] memory series = new BridgeMsgCodec.IssuanceInstructionsPayload[](n);
+        BridgeMsgCodec.IntexSeriesPayload[] memory series = new BridgeMsgCodec.IntexSeriesPayload[](n);
         for (uint256 i = 0; i < n; i++) {
             series[i].seriesId = "20260212-TRY-U";
         }
-        return BridgeMsgCodec.encodeIssuanceInstructions(0, 0, 1, series);
+        return BridgeMsgCodec.encodeIntexSeries(0, 0, 1, series);
     }
 }

@@ -33,8 +33,8 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         // The origin-as-target shape: a mark is a pure state flip here as anywhere.
         router = DeployProxy.targetRouter(address(bridge), address(this), uint32(block.chainid));
 
-        router.setRemoteMessenger(uint32(block.chainid), _interop(uint32(block.chainid), originSender));
-        router.wire(makeAddr("auction"), address(intex), makeAddr("escrow"));
+        router.registerRemoteMessenger(uint32(block.chainid), _interop(uint32(block.chainid), originSender));
+        router.setDependencies(makeAddr("auction"), address(intex), makeAddr("escrow"));
         intex.grantRole(intex.RELAYER_ROLE(), address(router));
         series = CreateSeriesLib.seriesId(DAY);
     }
@@ -46,14 +46,13 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
     }
 
     function _called() internal view returns (bytes memory) {
-        return
-            BridgeMsgCodec.encodeMarkCalled(
-                DAY, uint32(block.timestamp), MarkBatchLib.one(CreateSeriesLib.seriesId(DAY))
-            );
+        return BridgeMsgCodec.encodeIntexSeriesCallNotice(
+            DAY, uint32(block.timestamp), MarkBatchLib.one(CreateSeriesLib.seriesId(DAY))
+        );
     }
 
     function _issuance() internal returns (bytes memory) {
-        BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
+        BridgeMsgCodec.IntexSeriesPayload memory payload;
         payload.seriesId = CreateSeriesLib.seriesId(DAY);
         payload.emissionDay = DAY;
         payload.issuedAt = uint32(block.timestamp);
@@ -61,7 +60,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         payload.promisLoadMinor = 1;
         payload.issuanceCurrency = 840;
         payload.referenceCurrency = 840;
-        return BridgeMsgCodec.encodeIssuanceInstructions(DAY, 0, 1, IssuanceBatchLib.one(payload));
+        return BridgeMsgCodec.encodeIntexSeries(DAY, 0, 1, IssuanceBatchLib.one(payload));
     }
 
     function _state() internal view returns (IIntexNFT1155.IntexState) {
@@ -69,15 +68,13 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
     }
 
     function _expectIgnored(uint8 msgType, uint8 reason) internal {
-        vm.expectEmit(true, true, true, true, address(router));
-        emit ITargetRouter.InboundMessageIgnored(uint32(block.chainid), msgType, series, reason);
+        vm.expectEmit(false, true, false, true, address(router));
+        emit ITargetRouter.MessageIgnored(bytes32(0), uint32(block.chainid), reason);
     }
 
     function _expectZeroCallTimeIgnored() internal {
-        vm.expectEmit(true, true, true, true, address(router));
-        emit ITargetRouter.InboundMessageIgnored(
-            uint32(block.chainid), BridgeMsgCodec.MSG_MARK_CALLED, bytes32(uint256(DAY)), InboundReason.INVALID
-        );
+        vm.expectEmit(false, true, false, true, address(router));
+        emit ITargetRouter.MessageIgnored(bytes32(0), uint32(block.chainid), InboundReason.INVALID);
     }
 
     // --- unknown series: slot, then apply on creation ---
@@ -86,7 +83,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         vm.expectEmit(true, true, true, true, address(router));
         emit ITargetRouter.MarkParked(series);
         _deliver(_called());
-        assertEq(router.parkedMark(series), uint32(block.timestamp), "slotted with its call time");
+        assertEq(router.failedIntexSeriesCallNoticeApply(series), uint32(block.timestamp), "slotted with its call time");
     }
 
     /// @dev A mark moves no balances, so a waiting Called lands with the issuance that creates the series
@@ -98,7 +95,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         emit ITargetRouter.ParkedMarkApplied(series);
         _deliver(_issuance());
         assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Called), "applied with the issuance");
-        assertEq(router.parkedMark(series), 0, "nothing waits any more");
+        assertEq(router.failedIntexSeriesCallNoticeApply(series), 0, "nothing waits any more");
     }
 
     /// @dev A series that lands after its deadline is still created, so the chain holds its terms.
@@ -118,10 +115,10 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         // The bridge redelivers the mark: it applies directly now, so nothing may keep waiting.
         _deliver(_called());
         assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Called), "applied on redelivery");
-        assertEq(router.parkedMark(series), 0, "the settled slot is cleared");
+        assertEq(router.failedIntexSeriesCallNoticeApply(series), 0, "the settled slot is cleared");
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoParkedMark.selector, series));
-        router.applyParkedMark(series);
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoFailedIntexSeriesCallNoticeApply.selector, series));
+        router.retryIntexSeriesCallNoticeApply(series);
     }
 
     function test_ApplyParkedMarkIsThePermissionlessValve() public {
@@ -129,37 +126,37 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         intex.createSeries(CreateSeriesLib.params(DAY, 10, 0)); // the series appears by another path
 
         vm.prank(makeAddr("anyone"));
-        router.applyParkedMark(series);
+        router.retryIntexSeriesCallNoticeApply(series);
         assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Called), "applied");
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoParkedMark.selector, series));
-        router.applyParkedMark(series);
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoFailedIntexSeriesCallNoticeApply.selector, series));
+        router.retryIntexSeriesCallNoticeApply(series);
     }
 
     function test_ApplyParkedMarkRevertsAndKeepsTheSlotWhileTheSeriesIsMissing() public {
         _deliver(_called());
         vm.expectRevert();
-        router.applyParkedMark(series);
-        assertEq(router.parkedMark(series), uint32(block.timestamp), "slot kept");
+        router.retryIntexSeriesCallNoticeApply(series);
+        assertEq(router.failedIntexSeriesCallNoticeApply(series), uint32(block.timestamp), "slot kept");
     }
 
     // --- a zero call time ---
 
     function test_AZeroCallTimeForAnUnknownSeriesIsInvalidAndNotSlotted() public {
         _expectZeroCallTimeIgnored();
-        _deliver(BridgeMsgCodec.encodeMarkCalled(DAY, 0, MarkBatchLib.one(series)));
-        assertEq(router.parkedMark(series), 0, "nothing waits");
+        _deliver(BridgeMsgCodec.encodeIntexSeriesCallNotice(DAY, 0, MarkBatchLib.one(series)));
+        assertEq(router.failedIntexSeriesCallNoticeApply(series), 0, "nothing waits");
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoParkedMark.selector, series));
-        router.applyParkedMark(series);
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoFailedIntexSeriesCallNoticeApply.selector, series));
+        router.retryIntexSeriesCallNoticeApply(series);
     }
 
     function test_AZeroCallTimeForAnExistingSeriesIsInvalidAndLeavesItIssued() public {
         intex.createSeries(CreateSeriesLib.params(DAY, 10, 0));
         _expectZeroCallTimeIgnored();
-        _deliver(BridgeMsgCodec.encodeMarkCalled(DAY, 0, MarkBatchLib.one(series)));
+        _deliver(BridgeMsgCodec.encodeIntexSeriesCallNotice(DAY, 0, MarkBatchLib.one(series)));
         assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Issued), "the series stays Issued");
-        assertEq(router.parkedMark(series), 0, "nothing waits");
+        assertEq(router.failedIntexSeriesCallNoticeApply(series), 0, "nothing waits");
     }
 
     // --- already there ---
@@ -167,7 +164,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
     function test_ARepeatedCalledIsADuplicate() public {
         intex.createSeries(CreateSeriesLib.params(DAY, 10, 0));
         _deliver(_called());
-        _expectIgnored(BridgeMsgCodec.MSG_MARK_CALLED, InboundReason.DUPLICATE);
+        _expectIgnored(BridgeMsgCodec.MSG_INTEX_SERIES_CALL_NOTICE, InboundReason.DUPLICATE);
         _deliver(_called());
     }
 }

@@ -16,7 +16,7 @@ use crate::constants::{INTEX_NFT1155_ADDRESS, MAX_SERIES_PER_MESSAGE, ORIGIN_ROU
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
 use crate::sol_ext::{IIntexNFT1155, IOriginRouter, IERC1155};
-use IOriginRouter::IssuanceInstructionsParams;
+use IOriginRouter::IntexSeriesParams;
 
 /// Emit an IntexFactory event from `INTEX_FACTORY_ADDRESS`.
 pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {
@@ -70,7 +70,7 @@ pub fn issue_intex(
         .iter()
         .map(|&chain_id| IssuanceLeg {
             chain_id,
-            payload: IOriginRouter::IssuanceInstructionsParams {
+            payload: IOriginRouter::IntexSeriesParams {
                 seriesId: params.series_id.into(),
                 emissionDay: params.emission_day.into(),
                 issuedAt: issued_at,
@@ -112,14 +112,12 @@ pub fn issue_intex(
 #[derive(Clone)]
 pub struct IssuanceLeg {
     pub chain_id: u32,
-    pub payload: IOriginRouter::IssuanceInstructionsParams,
+    pub payload: IOriginRouter::IntexSeriesParams,
 }
 
 /// Pack a day's legs into per-chain messages of up to `MAX_SERIES_PER_MESSAGE` series each.
-pub fn pack_issuance_messages(
-    legs: Vec<IssuanceLeg>,
-) -> Vec<(u32, Vec<IssuanceInstructionsParams>)> {
-    let mut per_chain: Vec<(u32, Vec<IssuanceInstructionsParams>)> = Vec::new();
+pub fn pack_issuance_messages(legs: Vec<IssuanceLeg>) -> Vec<(u32, Vec<IntexSeriesParams>)> {
+    let mut per_chain: Vec<(u32, Vec<IntexSeriesParams>)> = Vec::new();
     for leg in legs {
         // Legs arrive series by series, so this chain's open message is not the last one
         // built. Matching on the tail alone would batch nothing.
@@ -149,11 +147,11 @@ pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<IssuanceLeg>) -> Res
             storage.call(
                 ORIGIN_ROUTER_ADDRESS,
                 U256::ZERO,
-                IOriginRouter::sendIssuanceInstructionsCall {
+                IOriginRouter::sendIntexSeriesCall {
                     dstChainId: chain_id,
                     emissionDay: emission_day,
-                    chunkIndex: chunk_index as u16,
-                    totalChunks: total_chunks,
+                    pageIndex: chunk_index as u16,
+                    totalPages: total_chunks,
                     series,
                 }
                 .abi_encode()
@@ -166,13 +164,13 @@ pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<IssuanceLeg>) -> Res
 
 /// One (chain, emission day) run of issuance messages, in send order: what the chunk header
 /// numbers.
-pub(crate) type IssuanceRun = ((u32, u32), Vec<Vec<IssuanceInstructionsParams>>);
+pub(crate) type IssuanceRun = ((u32, u32), Vec<Vec<IntexSeriesParams>>);
 
 /// Group packed messages into the runs the chunk header numbers: one per (chain, day), the pair
 /// the receiver counts chunks against. Callers pass one day's legs (clearing does). This is also
 /// what keeps `pack_issuance_messages` from batching two days into one message.
 pub(crate) fn chunk_issuance_messages(
-    packed: Vec<(u32, Vec<IssuanceInstructionsParams>)>,
+    packed: Vec<(u32, Vec<IntexSeriesParams>)>,
 ) -> Vec<IssuanceRun> {
     let mut runs: Vec<IssuanceRun> = Vec::new();
     for (chain_id, message) in packed {

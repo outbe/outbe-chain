@@ -269,9 +269,11 @@ contract RefundDayGasTest is RefundGasBase {
         _setUpEscrow();
 
         router = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        router.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
+        router.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
         // A real auction: each chunk asks it whether the day failed, and that read is part of the cost.
-        router.wire(address(DeployProxy.intexAuction(admin, address(router))), makeAddr("intex"), address(escrow));
+        router.setDependencies(
+            address(DeployProxy.intexAuction(admin, address(router))), makeAddr("intex"), address(escrow)
+        );
         router.setProceedsRoute(
             address(new LocalWcoenTokenBridge(token, new LocalWcoenGateway())), makeAddr("originRouter")
         );
@@ -283,11 +285,11 @@ contract RefundDayGasTest is RefundGasBase {
         _elapseCompactResetPeriod();
     }
 
-    function _deliverChunk(uint16 winnerCount, uint16 chunkIndex, uint16 totalChunks) internal returns (uint256 spent) {
+    function _deliverChunk(uint16 winnerCount, uint16 pageIndex, uint16 totalPages) internal returns (uint256 spent) {
         uint16 partialIndex = winnerCount == 0 ? 0 : winnerCount - 1;
         uint16 partialWon = winnerCount == 0 ? 0 : QUANTITY / 2;
-        bytes memory packet = BridgeMsgCodec.encodeRefundInstructions(
-            DAY, chunkIndex, totalChunks, CLEARING_RATE, BASIS, _winners(winnerCount), partialIndex, partialWon
+        bytes memory packet = BridgeMsgCodec.encodeIntexAuctionWinners(
+            DAY, pageIndex, totalPages, CLEARING_RATE, BASIS, _winners(winnerCount), partialIndex, partialWon
         );
         uint256 before = gasleft();
         _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
@@ -314,7 +316,9 @@ contract RefundDayGasTest is RefundGasBase {
         assertFalse(finalized, "an unfinished day stays open");
         assertEq(token.balanceOf(address(router)), 0, "the chunk's proceeds left with it");
         assertLt(
-            spent, IntexGas.refund(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN, true), "an open-day chunk must fit its quote"
+            spent,
+            IntexGas.assetReturn(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN, true),
+            "an open-day chunk must fit its quote"
         );
     }
 
@@ -322,13 +326,15 @@ contract RefundDayGasTest is RefundGasBase {
         uint256 spent = _deliverClosingChunk(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN);
         emit log_named_uint("day_chunk_64w", spent);
         assertLt(
-            spent, IntexGas.refund(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN, true), "the widest chunk must fit its quote"
+            spent,
+            IntexGas.assetReturn(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN, true),
+            "the widest chunk must fit its quote"
         );
     }
 
     function test_AChainWithoutWinners() public {
         uint256 spent = _deliverClosingChunk(0);
         emit log_named_uint("day_chunk_empty", spent);
-        assertLt(spent, IntexGas.refund(0, false), "a chunk with no winners must fit its quote");
+        assertLt(spent, IntexGas.assetReturn(0, false), "a chunk with no winners must fit its quote");
     }
 }

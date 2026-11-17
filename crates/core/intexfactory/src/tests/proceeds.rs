@@ -215,7 +215,7 @@ fn distribute_receives_the_call_value() {
 
     use crate::precompile::{dispatch, IIntexFactory};
 
-    let data = IIntexFactory::distributeCall {
+    let data = IIntexFactory::burnIntexAuctionProceedsCall {
         emissionDay: 7u32,
         srcChainId: 10u32,
     }

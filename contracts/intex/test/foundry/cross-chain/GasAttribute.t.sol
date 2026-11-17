@@ -26,14 +26,14 @@ contract GasAttributeTest is CrossChainTest {
         _setUpBridge();
         outbe = DeployProxy.originRouter(address(bridge), admin);
         bnb = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        outbe.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnb)));
-        bnb.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbe)));
+        outbe.registerRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnb)));
+        bnb.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbe)));
         outbe.addTarget(BNB_CHAIN_ID);
         vm.deal(address(outbe), 10 ether);
 
         desis = address(new MockDesis());
-        outbe.wire(desis, makeAddr("factory"));
-        bnb.wire(admin, makeAddr("intex"), makeAddr("escrow"));
+        outbe.setDependencies(desis, makeAddr("factory"));
+        bnb.setDependencies(admin, makeAddr("intex"), makeAddr("escrow"));
     }
 
     /// @dev The last recorded send carries exactly one executionGasLimit attribute equal to `expectedGas`.
@@ -44,33 +44,33 @@ contract GasAttributeTest is CrossChainTest {
     }
 
     function test_fixedMessage_carriesTypeGas() public {
-        IOriginRouter.AuctionStageStartParams memory p;
+        IOriginRouter.IntexAuctionStartParams memory p;
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         p.emissionDay = 42;
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         vm.prank(desis);
-        outbe.sendAuctionStageStart(p);
-        _assertLastGas(IntexGas.startAuction(1));
+        outbe.sendIntexAuctionStart(p);
+        _assertLastGas(IntexGas.intexAuctionStart(1));
     }
 
     function test_variableMessage_gasScalesWithItemCount() public {
         // Freeze day 42's snapshot so the addressed refund send passes membership.
-        IOriginRouter.AuctionStageStartParams memory sp;
+        IOriginRouter.IntexAuctionStartParams memory sp;
         sp.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         sp.emissionDay = 42;
         vm.prank(desis);
-        outbe.sendAuctionStageStart(sp);
+        outbe.sendIntexAuctionStart(sp);
 
         _assertRefundGas(1);
         _assertRefundGas(5);
         // Sizing is strictly increasing in the item count.
-        assertGt(IntexGas.refund(5, true), IntexGas.refund(1, true), "gas must grow with item count");
+        assertGt(IntexGas.assetReturn(5, true), IntexGas.assetReturn(1, true), "gas must grow with item count");
     }
 
     function _assertRefundGas(uint256 n) internal {
         vm.prank(desis);
-        outbe.sendRefundInstructions(BNB_CHAIN_ID, 42, 0, 1, 1, 1, new address[](n), 0, 0);
+        outbe.sendIntexAuctionWinners(BNB_CHAIN_ID, 42, 0, 1, 1, 1, new address[](n), 0, 0);
         // The chain's only chunk carries its winners, so it is the one that routes the day's proceeds.
-        _assertLastGas(IntexGas.refund(n, n != 0));
+        _assertLastGas(IntexGas.assetReturn(n, n != 0));
     }
 }

@@ -245,7 +245,7 @@ fn clear_inner(
         storage.call(
             ORIGIN_ROUTER_ADDRESS,
             U256::ZERO,
-            IOriginRouter::sendAuctionResultCall {
+            IOriginRouter::sendIntexAuctionResultCall {
                 dstChainId: chain_id,
                 emissionDay: emission_day.into(),
                 wonQuantity: won_quantity,
@@ -270,11 +270,11 @@ fn clear_inner(
             storage.call(
                 ORIGIN_ROUTER_ADDRESS,
                 U256::ZERO,
-                IOriginRouter::sendRefundInstructionsCall {
+                IOriginRouter::sendIntexAuctionWinnersCall {
                     dstChainId: chain_id,
                     emissionDay: emission_day.into(),
-                    chunkIndex: chunk_index as u16,
-                    totalChunks: total_chunks,
+                    pageIndex: chunk_index as u16,
+                    totalPages: total_chunks,
                     clearingRate: u64::from(result.clearing_rate),
                     basis: config.escrow_basis_minor(),
                     winners: chunk.winners,

@@ -16,7 +16,7 @@ contract MockDesis {
     }
 
     /// @dev Accepts every BIDS_BATCH delivery and discards it. Tests that exercise the inbound
-    ///      OM dispatch path rely on this no-op so `_handleBidsBatch` can complete without
+    ///      OM dispatch path rely on this no-op so `_handleBidsPage` can complete without
     ///      pulling in the full Desis dependency graph.
     function collectIntexAuctionBids(
         bytes32, /* receiveId */
@@ -29,7 +29,7 @@ contract MockDesis {
     )
         external {}
 
-    /// @dev Accepts every BIDS_DONE completeness marker and discards it, as `collectIntexAuctionBids`
+    /// @dev Accepts every BIDS_TOTALS completeness marker and discards it, as `collectIntexAuctionBids`
     ///      does.
     function completeIntexAuctionBids(
         bytes32, /* receiveId */

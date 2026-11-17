@@ -2,7 +2,7 @@
 //!
 //! Routing only: decode -> runtime -> encode. The settle calls / `minePromis` name the
 //! owner they act for, so `caller = msg.sender` only binds the payment.
-//! None accept value, except `distribute`, which burns auction proceeds.
+//! None accept value, except `burnIntexAuctionProceeds`, which burns auction proceeds.
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolInterface};
@@ -21,7 +21,7 @@ use crate::runtime;
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
 /// without flipping the route fails the build.
-pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[IIntexFactory::distributeCall::SELECTOR];
+pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[IIntexFactory::burnIntexAuctionProceedsCall::SELECTOR];
 
 #[allow(clippy::too_many_arguments)]
 mod abi {
@@ -103,7 +103,7 @@ pub fn dispatch(
                 }),
                 // The only payable selector: burns auction proceeds (msg.value)
                 // into the Promis limit pool.
-                distribute(c) => mutate_void_payable(
+                burnIntexAuctionProceeds(c) => mutate_void_payable(
                     &storage,
                     c,
                     PayableCallContext {

@@ -126,26 +126,26 @@ contract OwnChainRelayRoundTest is Test {
 
         origin = DeployProxy.originRouter(address(bridge), admin);
         desis = address(new MockDesis());
-        origin.wire(desis, makeAddr("factory"));
+        origin.setDependencies(desis, makeAddr("factory"));
 
         target = DeployProxy.targetRouter(address(bridge), admin, self);
         stub = new BidsStub();
-        target.wire(address(stub), makeAddr("intex"), makeAddr("escrow"));
+        target.setDependencies(address(stub), makeAddr("intex"), makeAddr("escrow"));
 
-        origin.setRemoteMessenger(self, InteroperableAddress.formatEvmV1(self, address(target)));
+        origin.registerRemoteMessenger(self, InteroperableAddress.formatEvmV1(self, address(target)));
         origin.addTarget(self);
-        target.setRemoteMessenger(self, InteroperableAddress.formatEvmV1(self, address(origin)));
+        target.registerRemoteMessenger(self, InteroperableAddress.formatEvmV1(self, address(origin)));
 
         vm.deal(address(origin), 100 ether);
         vm.deal(address(target), 100 ether);
 
-        IOriginRouter.AuctionStageStartParams memory p;
+        IOriginRouter.IntexAuctionStartParams memory p;
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         p.emissionDay = DAY;
         vm.prank(desis);
-        origin.sendAuctionStageStart(p);
+        origin.sendIntexAuctionStart(p);
         _relayAll();
-        assertEq(origin.parkedMessageCount(), 0, "the start leg must land");
+        assertEq(origin.failedMessageSendCount(), 0, "the start leg must land");
     }
 
     /// @dev A day too heavy for one round: the router sends the next round as any other leg, and
@@ -156,15 +156,15 @@ contract OwnChainRelayRoundTest is Test {
         vm.expectCall(desis, abi.encodeWithSelector(IDesis.completeIntexAuctionBids.selector), 1);
 
         vm.prank(desis);
-        origin.sendAuctionStageCollectingBids(DAY, self, IntexGas.AUCTION_STAGE_COLLECTING_BIDS);
+        origin.sendIntexAuctionClearingStart(DAY, self, IntexGas.INTEX_AUCTION_CLEARING_START);
         uint256 rounds = _relayAll();
 
-        (uint16 nextBatch, uint16 totalBatches, bool done) = target.bidsRelay(DAY);
-        assertEq(totalBatches, 24, "1,536 bids span 24 chunks");
+        (uint16 nextPage, uint16 totalPages, bool done) = target.getIntexAuctionBidsSendState(DAY);
+        assertEq(totalPages, 24, "1,536 bids span 24 chunks");
         assertGt(rounds, 1, "one round cannot carry the day");
         assertTrue(done, "the rounds carried the day");
-        assertEq(nextBatch, totalBatches, "every chunk left");
-        assertEq(origin.parkedMessageCount(), 0, "no round parks");
+        assertEq(nextPage, totalPages, "every chunk left");
+        assertEq(origin.failedMessageSendCount(), 0, "no round parks");
     }
 
     /// @dev Every page of a 130-bid day on Outbe reaches Desis, with no push from outside.
@@ -174,10 +174,10 @@ contract OwnChainRelayRoundTest is Test {
         vm.expectCall(desis, abi.encodeWithSelector(IDesis.completeIntexAuctionBids.selector), 1);
 
         vm.prank(desis);
-        origin.sendAuctionStageCollectingBids(DAY, self, IntexGas.AUCTION_STAGE_COLLECTING_BIDS);
+        origin.sendIntexAuctionClearingStart(DAY, self, IntexGas.INTEX_AUCTION_CLEARING_START);
         _relayAll();
 
-        assertEq(origin.parkedMessageCount(), 0, "no round parks");
+        assertEq(origin.failedMessageSendCount(), 0, "no round parks");
     }
 
     /// @dev Delivers every announced message, each in a call of its own, until none is left.
@@ -190,7 +190,7 @@ contract OwnChainRelayRoundTest is Test {
                 if (logs[i].emitter != address(bridge) || logs[i].topics[0] != RelayedBridge.Sent.selector) continue;
                 (bytes memory sender, bytes memory recipient, bytes memory payload, uint256 gasLimit) =
                     abi.decode(logs[i].data, (bytes, bytes, bytes, uint256));
-                if (uint8(payload[1]) == BridgeMsgCodec.MSG_AUCTION_STAGE_COLLECTING_BIDS) ++rounds;
+                if (uint8(payload[1]) == BridgeMsgCodec.MSG_INTEX_AUCTION_CLEARING_START) ++rounds;
                 bridge.deliver(sender, recipient, payload, gasLimit);
                 ++delivered;
             }

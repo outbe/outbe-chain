@@ -75,11 +75,11 @@ contract ConfigureTarget is BaseScript {
 
         TargetRouter router = TargetRouter(payable(t.router));
         if (
-            address(router.auction()) != t.auction || address(router.intex()) != t.nft
-                || address(router.escrowAdapter()) != t.escrow
+            address(router.intexAuction()) != t.auction || address(router.intexContract()) != t.nft
+                || address(router.escrow()) != t.escrow
         ) {
             requireDeployerAdmin(t.router, deployer);
-            router.wire(t.auction, t.nft, t.escrow);
+            router.setDependencies(t.auction, t.nft, t.escrow);
             console.log("TargetRouter wired");
         }
 

@@ -239,7 +239,7 @@ fn coen_iso_wire_price_preserves_the_six_decimal_integer() {
 }
 
 fn leg(chain_id: u32, day: u32, series: u32) -> runtime::IssuanceLeg {
-    let payload = crate::sol_ext::IOriginRouter::IssuanceInstructionsParams {
+    let payload = crate::sol_ext::IOriginRouter::IntexSeriesParams {
         seriesId: sid(series).into(),
         emissionDay: day,
         issuedAt: ISSUED_AT,
@@ -258,10 +258,7 @@ fn leg(chain_id: u32, day: u32, series: u32) -> runtime::IssuanceLeg {
 }
 
 fn shape(
-    messages: &[(
-        u32,
-        Vec<crate::sol_ext::IOriginRouter::IssuanceInstructionsParams>,
-    )],
+    messages: &[(u32, Vec<crate::sol_ext::IOriginRouter::IntexSeriesParams>)],
 ) -> Vec<(u32, usize)> {
     messages
         .iter()

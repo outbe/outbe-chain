@@ -72,7 +72,7 @@ contract IntexNFT1155BridgeUupsTest is CrossChainTest {
     function test_Upgrade_PreservesRemoteMessengerAndImmutables() public {
         bytes memory peer = _interop(B_CHAIN_ID, address(0xBEEF));
         vm.prank(admin);
-        adapter.setRemoteMessenger(B_CHAIN_ID, peer);
+        adapter.registerRemoteMessenger(B_CHAIN_ID, peer);
 
         IntexNFT1155Bridge newImpl = new IntexNFT1155Bridge(tokenA, address(bridge));
         vm.prank(admin);

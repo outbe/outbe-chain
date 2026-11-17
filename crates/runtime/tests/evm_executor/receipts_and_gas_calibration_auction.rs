@@ -384,7 +384,7 @@ fn calibration_four_due_auctions_at_midnight() {
         })
         .count();
     assert_eq!(created, 1, "START goes out in the run of the brief");
-    let collecting = router_abi::IOriginRouter::sendAuctionStageCollectingBidsCall::SELECTOR;
+    let collecting = router_abi::IOriginRouter::sendIntexAuctionClearingStartCall::SELECTOR;
     assert_eq!(
         logs.iter()
             .filter(

@@ -149,9 +149,9 @@ contract ConfigureTargetTest is ConfigureTest {
         assertEq(address(escrow.compact()), t.compact);
         assertEq(address(escrow.intexAuctionAsset()), t.wcoen);
         TargetRouter router = TargetRouter(payable(t.router));
-        assertEq(address(router.auction()), t.auction);
-        assertEq(address(router.intex()), t.nft);
-        assertEq(address(router.escrowAdapter()), t.escrow);
+        assertEq(address(router.intexAuction()), t.auction);
+        assertEq(address(router.intexContract()), t.nft);
+        assertEq(address(router.escrow()), t.escrow);
         assertTrue(IntexAuction(t.auction).hasRole(IntexAuction(t.auction).RELAYER_ROLE(), t.router));
         assertTrue(escrow.hasRole(escrow.RELAYER_ROLE(), t.router));
         IntexNFT1155 nft = IntexNFT1155(t.nft);

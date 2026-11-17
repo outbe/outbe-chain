@@ -425,7 +425,7 @@ fn arm_clearing(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u6
             storage.call(
                 ORIGIN_ROUTER_ADDRESS,
                 U256::ZERO,
-                IOriginRouter::sendAuctionStageCollectingBidsCall {
+                IOriginRouter::sendIntexAuctionClearingStartCall {
                     emissionDay: emission_day.into(),
                     dstChainId: chain_id,
                     gasLimit: U256::from(gas),

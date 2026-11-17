@@ -1,9 +1,7 @@
 //! One `advance_auctions` run moves every scheduled day that has a due step (OIP-00377).
 use super::*;
 use crate::constants::{ADVANCE_DAY_BASE_GAS, MAX_TARGET_CHAINS};
-use crate::sol_ext::IOriginRouter::{
-    sendAuctionStageCollectingBidsCall, sendAuctionStageStartCall,
-};
+use crate::sol_ext::IOriginRouter::{sendIntexAuctionClearingStartCall, sendIntexAuctionStartCall};
 
 /// At `NOW`, the commit window of this day ends.
 const COMMITTING: EmissionDate = EmissionDate::new(20231112);
@@ -117,14 +115,14 @@ fn advance_auctions_moves_each_due_auction() {
     let starts: Vec<_> = sent
         .iter()
         .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
-        .filter_map(|input| sendAuctionStageStartCall::abi_decode(&input.calldata).ok())
+        .filter_map(|input| sendIntexAuctionStartCall::abi_decode(&input.calldata).ok())
         .map(|call| call.params.emissionDay)
         .collect();
     assert_eq!(starts, vec![EMISSION_DAY.value()]);
     let collecting: Vec<_> = sent
         .iter()
         .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
-        .filter_map(|input| sendAuctionStageCollectingBidsCall::abi_decode(&input.calldata).ok())
+        .filter_map(|input| sendIntexAuctionClearingStartCall::abi_decode(&input.calldata).ok())
         .map(|call| (call.emissionDay, call.dstChainId))
         .collect();
     assert_eq!(collecting, vec![(REVEALING.value(), SRC_CHAIN)]);
@@ -186,7 +184,7 @@ fn the_own_chain_asks_for_the_same_round_gas_as_another_chain() {
     let asks: Vec<_> = provider.sub_call_inputs()[calls_before..]
         .iter()
         .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
-        .filter_map(|input| sendAuctionStageCollectingBidsCall::abi_decode(&input.calldata).ok())
+        .filter_map(|input| sendIntexAuctionClearingStartCall::abi_decode(&input.calldata).ok())
         .map(|call| (call.dstChainId, call.gasLimit))
         .collect();
     assert_eq!(asks.len(), 2);
