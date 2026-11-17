@@ -34,7 +34,7 @@ fn schedule_started(
         .pending_desis_limit_minor
         .write(&day, U256::from(10 * LOAD_MINOR))
         .unwrap();
-    contract.brief_has_limit.write(&day, 1).unwrap();
+    contract.has_desis_limit.write(&day, 1).unwrap();
     contract.desis_limit_set.write(&day, 1).unwrap();
     contract.push_sched_active(day).unwrap();
 }

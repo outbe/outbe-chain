@@ -20,12 +20,12 @@ use crate::schema::DesisContract;
 /// Stable consensus reason why Desis returns a brief's limit.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
-pub enum AuctionBriefRejectionReason {
+pub enum DesisLimitRejectionReason {
     DesisLimitExceedsAuctionDomain = 1,
     AuctionClosed = 2,
 }
 
-impl AuctionBriefRejectionReason {
+impl DesisLimitRejectionReason {
     #[must_use]
     pub const fn code(self) -> u8 {
         self as u8
@@ -34,10 +34,10 @@ impl AuctionBriefRejectionReason {
 
 /// Semantic result of one auction-brief formation attempt.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AuctionBriefReceipt {
+pub enum DesisLimitReceipt {
     Accepted,
     ReturnedToPromisLimit {
-        reason: AuctionBriefRejectionReason,
+        reason: DesisLimitRejectionReason,
         desis_limit_minor: U256,
         max_accepted: U256,
     },
@@ -45,7 +45,7 @@ pub enum AuctionBriefReceipt {
 
 /// One day's auction brief: its limit in raw PROMIS and whether the day has a limit to sell.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct AuctionBrief {
+pub struct DesisLimit {
     pub emission_day: EmissionDate,
     pub desis_limit_minor: U256,
     pub has_limit: bool,
@@ -69,11 +69,8 @@ pub fn cancel_auction(storage: StorageHandle<'_>, emission_day: EmissionDate) ->
 /// committed returns.
 /// Invalid state, timestamp overflow, storage/index/event faults and corruption propagate as
 /// `Err`.
-pub fn brief_auction(
-    storage: StorageHandle<'_>,
-    brief: AuctionBrief,
-) -> Result<AuctionBriefReceipt> {
-    let AuctionBrief {
+pub fn set_desis_limit(storage: StorageHandle<'_>, brief: DesisLimit) -> Result<DesisLimitReceipt> {
+    let DesisLimit {
         emission_day,
         desis_limit_minor,
         ..
@@ -82,9 +79,9 @@ pub fn brief_auction(
         if !emission_day.is_valid() {
             return Err(crate::errors::DesisError::InvalidEmissionDay(emission_day).into());
         }
-        if !runtime::takes_brief(&storage, emission_day)? {
+        if !runtime::takes_desis_limit(&storage, emission_day)? {
             return Ok(returned(
-                AuctionBriefRejectionReason::AuctionClosed,
+                DesisLimitRejectionReason::AuctionClosed,
                 desis_limit_minor,
                 U256::ZERO,
             ));
@@ -98,22 +95,22 @@ pub fn brief_auction(
             runtime::record_desis_limit(&storage, brief, 0)?;
             runtime::request_cancel(&storage, emission_day, CANCELED_LIMIT_OVERFLOW)?;
             return Ok(returned(
-                AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
+                DesisLimitRejectionReason::DesisLimitExceedsAuctionDomain,
                 desis_limit_minor,
                 U256::from(u128::MAX),
             ));
         };
         runtime::record_desis_limit(&storage, brief, desis_limit_u128)?;
-        Ok(AuctionBriefReceipt::Accepted)
+        Ok(DesisLimitReceipt::Accepted)
     })
 }
 
 fn returned(
-    reason: AuctionBriefRejectionReason,
+    reason: DesisLimitRejectionReason,
     desis_limit_minor: U256,
     max_accepted: U256,
-) -> AuctionBriefReceipt {
-    AuctionBriefReceipt::ReturnedToPromisLimit {
+) -> DesisLimitReceipt {
+    DesisLimitReceipt::ReturnedToPromisLimit {
         reason,
         desis_limit_minor,
         max_accepted,

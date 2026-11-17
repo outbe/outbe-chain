@@ -83,14 +83,16 @@ contract ReentrancyProbeDesis {
         return interfaceId == type(IDesis).interfaceId || interfaceId == type(IERC165).interfaceId;
     }
 
-    function processBidsBatch(uint32, uint32, uint16, uint16, address[] calldata, uint256[] calldata) external {
+    function collectIntexAuctionBids(bytes32, uint32, uint32, uint16, uint16, address[] calldata, uint256[] calldata)
+        external
+    {
         observed = true;
         guardHeld = reentryGuarded(bridge, srcChainId, peer, router);
     }
 
-    /// @dev OriginRouter reads stage post-processBidsBatch to decide on auto-clear.
+    /// @dev OriginRouter reads stage post-collectIntexAuctionBids to decide on auto-clear.
     ///      Return `None` so the auto-clear branch is skipped in this probe-only test.
-    function getAuctionStage(uint32) external pure returns (IDesis.AuctionStage) {
+    function auctionStage(uint32) external pure returns (IDesis.AuctionStage) {
         return IDesis.AuctionStage.None;
     }
 }

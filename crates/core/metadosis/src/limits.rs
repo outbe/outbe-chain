@@ -145,17 +145,17 @@ pub(crate) fn brief_auction(
 ) -> Result<U256> {
     let is_active = !split.desis_limit_minor.is_zero();
     storage.with_checkpoint(|| {
-        let receipt = outbe_desis::api::brief_auction(
+        let receipt = outbe_desis::api::set_desis_limit(
             storage.clone(),
-            outbe_desis::api::AuctionBrief {
+            outbe_desis::api::DesisLimit {
                 emission_day: emission_day.into(),
                 desis_limit_minor: split.desis_limit_minor,
                 has_limit: is_active,
             },
         )?;
         match receipt {
-            outbe_desis::api::AuctionBriefReceipt::Accepted => Ok(split.desis_limit_minor),
-            outbe_desis::api::AuctionBriefReceipt::ReturnedToPromisLimit {
+            outbe_desis::api::DesisLimitReceipt::Accepted => Ok(split.desis_limit_minor),
+            outbe_desis::api::DesisLimitReceipt::ReturnedToPromisLimit {
                 desis_limit_minor,
                 ..
             } => {
@@ -219,7 +219,7 @@ mod tests {
                     U256::from(auction as u64)
                 );
                 assert_eq!(
-                    desis.brief_has_limit.read(&day).unwrap(),
+                    desis.has_desis_limit.read(&day).unwrap(),
                     u8::from(auction != 0)
                 );
                 assert_eq!(

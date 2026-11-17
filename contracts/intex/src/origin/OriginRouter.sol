@@ -417,22 +417,14 @@ contract OriginRouter is
     /// @dev Decodes an authenticated inbound message and dispatches by msgType. BIDS_BATCH and
     ///      BIDS_DONE are inbound here. A premature message reverts, and the transport redelivers
     ///      it once its prerequisite has landed.
-    function _dispatch(
-        uint32 srcChainId,
-        bytes32,
-        /*receiveId*/
-        bytes calldata payload
-    )
-        internal
-        override
-    {
+    function _dispatch(uint32 srcChainId, bytes32 receiveId, bytes calldata payload) internal override {
         uint8 msgType = BridgeMsgCodec.readHeader(payload);
         BridgeMsgCodec.assertMinLength(payload, msgType);
 
         if (msgType == BridgeMsgCodec.MSG_BIDS_BATCH) {
-            _handleBidsBatch(srcChainId, payload);
+            _handleBidsBatch(srcChainId, receiveId, payload);
         } else if (msgType == BridgeMsgCodec.MSG_BIDS_DONE) {
-            _handleBidsDone(srcChainId, payload);
+            _handleBidsDone(srcChainId, receiveId, payload);
         } else if (msgType == BridgeMsgCodec.MSG_BIDS_REMAINING) {
             _handleBidsRemaining(srcChainId, payload);
         } else {
@@ -443,7 +435,7 @@ contract OriginRouter is
     /// @dev Decode a BIDS_BATCH and forward it to Desis. The body `srcChainId` is cross-checked
     ///      against the authenticated source. Clearing does not fire here. The Desis begin-block
     ///      gate owns that.
-    function _handleBidsBatch(uint32 srcChainId, bytes calldata payload) internal {
+    function _handleBidsBatch(uint32 srcChainId, bytes32 receiveId, bytes calldata payload) internal {
         (
             uint32 emissionDay,
             uint32 bodySrcChainId,
@@ -456,20 +448,22 @@ contract OriginRouter is
         if (!_acceptBids(srcChainId, bodySrcChainId, emissionDay, BridgeMsgCodec.MSG_BIDS_BATCH)) return;
 
         IDesis(_os().desis)
-            .processBidsBatch(emissionDay, srcChainId, batchIndex, totalBatches, bidderAddresses, packedBids);
+            .collectIntexAuctionBids(
+                receiveId, emissionDay, srcChainId, batchIndex, totalBatches, bidderAddresses, packedBids
+            );
 
         emit BidsBatchReceived(srcChainId, emissionDay, bidderAddresses.length);
     }
 
     /// @dev Decode a BIDS_DONE marker and forward it to Desis. The body `srcChainId` is
     ///      cross-checked as in BIDS_BATCH.
-    function _handleBidsDone(uint32 srcChainId, bytes calldata payload) internal {
+    function _handleBidsDone(uint32 srcChainId, bytes32 receiveId, bytes calldata payload) internal {
         (uint32 emissionDay, uint32 bodySrcChainId, uint16 totalBatches, uint32 totalBids) =
             BridgeMsgCodec.decodeBidsDone(payload);
 
         if (!_acceptBids(srcChainId, bodySrcChainId, emissionDay, BridgeMsgCodec.MSG_BIDS_DONE)) return;
 
-        IDesis(_os().desis).processBidsDone(emissionDay, srcChainId, totalBatches, totalBids);
+        IDesis(_os().desis).completeIntexAuctionBids(receiveId, emissionDay, srcChainId, totalBatches, totalBids);
 
         emit BidsDoneReceived(srcChainId, emissionDay, totalBatches, totalBids);
     }
@@ -485,7 +479,7 @@ contract OriginRouter is
 
         // A day whose intake has closed (cleared on the fan-in timeout, or cancelled) would have
         // every chunk of the next round ignored on arrival. So the round is not worth paying for.
-        IDesis.AuctionStage stage = IDesis(_os().desis).getAuctionStage(emissionDay);
+        IDesis.AuctionStage stage = IDesis(_os().desis).auctionStage(emissionDay);
         if (stage != IDesis.AuctionStage.RevealingBids && stage != IDesis.AuctionStage.CollectingBids) {
             emit InboundMessageIgnored(
                 srcChainId,

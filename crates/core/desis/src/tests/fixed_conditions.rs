@@ -16,7 +16,7 @@ fn read_config(s: &StorageHandle) -> AuctionConfig {
 
 /// The AUCTION_STAGE_START payload the stored day config gives.
 fn announced(config: &AuctionConfig) -> crate::sol_ext::IOriginRouter::AuctionStageStartParams {
-    runtime::stage_start_params(runtime::StageStart {
+    runtime::intex_auction_start_params(runtime::IntexAuctionStart {
         emission_day: EMISSION_DAY,
         config,
         commit_end: 1,
@@ -70,10 +70,7 @@ fn the_start_fixes_the_call_terms_of_each_currency_from_the_profile() {
             ]
         );
         assert_eq!(config.call_trigger, trigger_of(IntexParams::PROD));
-        assert_eq!(
-            config.commit_bond_minor,
-            IntexParams::PROD.commit_bond_minor
-        );
+        assert_eq!(config.bid_bond_minor, IntexParams::PROD.bid_bond_minor);
     });
 }
 
@@ -90,9 +87,9 @@ fn the_start_message_carries_only_the_stored_day_config() {
         let message = announced(&config);
         assert_eq!(message.emissionDay, EMISSION_DAY.value());
         assert_eq!(message.promisLoadMinor, config.promis_load_minor);
-        assert_eq!(message.minIntexBidRate, config.min_intex_bid_rate);
-        assert_eq!(message.minIntexBidQuantity, config.min_intex_bid_quantity);
-        assert_eq!(message.commitBondMinor, config.commit_bond_minor);
+        assert_eq!(message.minIntexBidRate, config.min_bid_rate);
+        assert_eq!(message.minIntexBidQuantity, config.min_bid_quantity);
+        assert_eq!(message.commitBondMinor, config.bid_bond_minor);
         assert_eq!(message.callWindow, config.call_trigger.call_window_seconds);
         assert_eq!(
             message.callThreshold,
@@ -121,7 +118,7 @@ fn an_unpriced_day_still_fixes_the_call_trigger() {
             s.contract::<DesisContract>()
                 .read_stage(EMISSION_DAY)
                 .unwrap(),
-            AuctionStage::Cancelled
+            AuctionStage::Canceled
         );
 
         let config = read_config(&s);
@@ -254,9 +251,9 @@ fn the_day_config_round_trips_with_its_call_prices() {
                 call_notice_period_seconds: 5,
                 transit_margin_seconds: 0,
             },
-            min_intex_bid_rate: 3,
-            min_intex_bid_quantity: 2,
-            commit_bond_minor: 9,
+            min_bid_rate: 3,
+            min_bid_quantity: 2,
+            bid_bond_minor: 9,
             reference_prices: vec![
                 ReferenceCurrencyPrice {
                     iso_code: REFERENCE_ISO,

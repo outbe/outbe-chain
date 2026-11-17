@@ -1,6 +1,6 @@
 //! Desis runtime: auction lifecycle and clearing algorithm.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
@@ -15,17 +15,18 @@ use outbe_intexfactory::SeriesId;
 use crate::constants::{
     ADVANCE_DAY_BASE_GAS, ADVANCE_FAIL_GAS, ADVANCE_REVEAL_END_GAS, ADVANCE_START_GAS,
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, CANCELED_BELOW_ONE_UNIT, CANCELED_LATE_START,
-    CANCELED_NO_LIMIT, CANCELED_UNPRICED, CLEARING_BID_GAS, CLEARING_CHUNK_GAS, CLEARING_FIXED_GAS,
-    CLEARING_HISTORY_DAYS, CLEARING_MIN_BIDS, COMMIT_WINDOW_SECONDS, IGNORED_CONFLICT,
-    IGNORED_NOT_FOUND, IGNORED_OBSOLETE, INTEX_ISSUANCE_WINDOW_SECONDS, MAX_BID_BATCHES,
-    MAX_PAYLOAD_ARRAY_LEN, MAX_REFUND_CHUNKS, MAX_TARGET_CHAINS, MIN_COMMIT_WINDOW_SECONDS,
-    ORIGIN_ROUTER_ADDRESS, PROMIS_LOAD_OVERRIDE, RESULT_DELIVERY_MARGIN_SECONDS,
-    REVEAL_WINDOW_SECONDS,
+    CANCELED_NO_LIMIT, CANCELED_UNPRICED, CLEARING_BID_GAS, CLEARING_FIXED_GAS,
+    CLEARING_HISTORY_DAYS, CLEARING_MIN_BIDS, CLEARING_PAGE_GAS, COMMIT_WINDOW_SECONDS,
+    IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, INTEX_ISSUANCE_WINDOW_SECONDS,
+    MAX_BID_PAGES, MAX_INTEX_AUCTION_WINNERS_PAGES, MAX_PAYLOAD_ARRAY_LEN, MAX_TARGET_CHAINS,
+    MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, PROMIS_LOAD_OVERRIDE,
+    RESULT_DELIVERY_MARGIN_SECONDS, REVEAL_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
 use crate::schema::{
-    AuctionConfig, AuctionStage, BidData, ClearingResult, DesisContract, ReferenceCurrencyPrice,
+    AuctionConfig, AuctionStage, ClearingResult, DesisContract, IntexAuctionBidData,
+    ReferenceCurrencyPrice,
 };
 use crate::sol_ext::IOriginRouter;
 
@@ -59,7 +60,7 @@ fn auction_anchor(emission_day: EmissionDate) -> Result<u32> {
         .next()
         .and_then(EmissionDate::start_timestamp)
         .map_err(crate::errors::date_step_error)?;
-    u32::try_from(anchor).map_err(|_| DesisError::BriefAnchorExceedsU32.into())
+    u32::try_from(anchor).map_err(|_| DesisError::DesisLimitAnchorExceedsU32.into())
 }
 
 /// Whether the day has no result yet: scheduled, or started and not past its reveal stage.
@@ -72,7 +73,10 @@ fn is_open(contract: &DesisContract<'_>, emission_day: EmissionDate) -> Result<b
 }
 
 /// Whether the day can still take its brief: open, not briefed and not being cancelled.
-pub(crate) fn takes_brief(storage: &StorageHandle<'_>, emission_day: EmissionDate) -> Result<bool> {
+pub(crate) fn takes_desis_limit(
+    storage: &StorageHandle<'_>,
+    emission_day: EmissionDate,
+) -> Result<bool> {
     let contract = storage.contract::<DesisContract>();
     Ok(is_open(&contract, emission_day)?
         && contract.desis_limit_set.read(&emission_day)? == 0
@@ -82,10 +86,10 @@ pub(crate) fn takes_brief(storage: &StorageHandle<'_>, emission_day: EmissionDat
 /// `desis_limit_minor` is the brief's limit, already narrowed to the auction domain.
 pub(crate) fn record_desis_limit(
     storage: &StorageHandle<'_>,
-    brief: crate::api::AuctionBrief,
+    brief: crate::api::DesisLimit,
     desis_limit_minor: u128,
 ) -> Result<()> {
-    let crate::api::AuctionBrief {
+    let crate::api::DesisLimit {
         emission_day,
         has_limit,
         ..
@@ -95,7 +99,7 @@ pub(crate) fn record_desis_limit(
         .pending_desis_limit_minor
         .write(&emission_day, U256::from(desis_limit_minor))?;
     contract
-        .brief_has_limit
+        .has_desis_limit
         .write(&emission_day, u8::from(has_limit))?;
     contract.desis_limit_set.write(&emission_day, 1)
 }
@@ -122,7 +126,7 @@ pub(crate) fn brief_cancel_reason(
     if contract.desis_limit_set.read(&emission_day)? == 0 {
         return Ok(None);
     }
-    if contract.brief_has_limit.read(&emission_day)? == 0 {
+    if contract.has_desis_limit.read(&emission_day)? == 0 {
         return Ok(Some(CANCELED_NO_LIMIT));
     }
     let limit = contract.pending_desis_limit_minor.read(&emission_day)?;
@@ -237,7 +241,7 @@ fn capture_reference(
 /// Every priced currency is checked. A currency without a valid capture takes
 /// one and sits the day out. The launch rung comes from the Intex profile the
 /// first time the ladder has no stored position.
-pub(crate) fn step_promis_load(
+pub(crate) fn set_intex_promis_load(
     contract: &mut DesisContract<'_>,
     emission_day: EmissionDate,
     reference_prices: &[ReferenceCurrencyPrice],
@@ -250,12 +254,12 @@ pub(crate) fn step_promis_load(
     } else {
         0
     };
-    step_promis_load_with_launch(contract, emission_day, reference_prices, launch_exponent)
+    set_intex_promis_load_with_launch(contract, emission_day, reference_prices, launch_exponent)
 }
 
-/// Same ladder as [`step_promis_load`], with the launch rung supplied by the caller.
+/// Same ladder as [`set_intex_promis_load`], with the launch rung supplied by the caller.
 /// A stored position ignores `launch_exponent`.
-pub(crate) fn step_promis_load_with_launch(
+pub(crate) fn set_intex_promis_load_with_launch(
     contract: &mut DesisContract<'_>,
     emission_day: EmissionDate,
     reference_prices: &[ReferenceCurrencyPrice],
@@ -275,10 +279,10 @@ pub(crate) fn step_promis_load_with_launch(
         contract.promis_load_exponent.write(current)?;
         contract.emit(IDesis::IntexPromisLoadSet {
             emissionDay: emission_day.into(),
-            loadMinor: promis_load_minor(current),
+            unitPromisLoadMinor: U256::from(promis_load_minor(current)),
             referenceCurrency: 0,
-            rateMinor: U256::ZERO,
-            referenceMinor: U256::ZERO,
+            entryPriceMinor: U256::ZERO,
+            baseEntryPriceMinor: U256::ZERO,
         })?;
     }
     let mut moves = Vec::with_capacity(reference_prices.len());
@@ -300,10 +304,10 @@ pub(crate) fn step_promis_load_with_launch(
     };
     contract.emit(IDesis::IntexPromisLoadSet {
         emissionDay: emission_day.into(),
-        loadMinor: promis_load_minor(exponent),
+        unitPromisLoadMinor: U256::from(promis_load_minor(exponent)),
         referenceCurrency: trigger.iso_code,
-        rateMinor: trigger.rate,
-        referenceMinor: trigger.reference,
+        entryPriceMinor: trigger.rate,
+        baseEntryPriceMinor: trigger.reference,
     })?;
     contract.promis_load_exponent.write(exponent)?;
     for row in reference_prices {
@@ -336,13 +340,13 @@ fn fold_profile(
             let scaled = prev_issued
                 .checked_mul(prev_load)
                 .and_then(|v| v.checked_mul(u128::from(BID_QUANTITY_FLOOR_BPS)))
-                .ok_or(DesisError::MinBidQuantityScalingOverflow)?;
+                .ok_or(DesisError::MinIntexAuctionBidQuantityScalingOverflow)?;
             let derived = scaled / (10_000 * today_load);
             derived.min(u128::from(u16::MAX)) as u16
         }
     };
-    config.min_intex_bid_quantity = min_bid_qty;
-    config.commit_bond_minor = outbe_intex::config::read(storage)?.commit_bond_minor;
+    config.min_bid_quantity = min_bid_qty;
+    config.bid_bond_minor = outbe_intex::config::read(storage)?.bid_bond_minor;
     Ok(())
 }
 
@@ -360,7 +364,7 @@ fn fix_call_terms(storage: &StorageHandle<'_>, config: &mut AuctionConfig) -> Re
 
 /// What one AUCTION_STAGE_START message announces.
 #[derive(Clone, Copy)]
-pub(crate) struct StageStart<'a> {
+pub(crate) struct IntexAuctionStart<'a> {
     pub(crate) emission_day: EmissionDate,
     pub(crate) config: &'a AuctionConfig,
     pub(crate) commit_end: u32,
@@ -369,8 +373,11 @@ pub(crate) struct StageStart<'a> {
 }
 
 /// Broadcast AUCTION_STAGE_START with the given schedule.
-fn send_stage_start(storage: &StorageHandle<'_>, start: StageStart<'_>) -> Result<()> {
-    let stage_params = stage_start_params(start)?;
+fn send_intex_auction_start(
+    storage: &StorageHandle<'_>,
+    start: IntexAuctionStart<'_>,
+) -> Result<()> {
+    let stage_params = intex_auction_start_params(start)?;
     // Relay-float-funded: value 0, so the router self-quotes and pays the bridge fee from its float.
     storage.call(
         ORIGIN_ROUTER_ADDRESS,
@@ -404,10 +411,10 @@ fn send_auction_cancel(
 }
 
 /// The AUCTION_STAGE_START payload. Every condition comes from the stored day config.
-pub(crate) fn stage_start_params(
-    start: StageStart<'_>,
+pub(crate) fn intex_auction_start_params(
+    start: IntexAuctionStart<'_>,
 ) -> Result<IOriginRouter::AuctionStageStartParams> {
-    let StageStart {
+    let IntexAuctionStart {
         emission_day,
         config,
         commit_end,
@@ -428,31 +435,32 @@ pub(crate) fn stage_start_params(
         revealEnd: reveal_end,
         issuanceEnd: issuance_end,
         promisLoadMinor: config.promis_load_minor,
-        minIntexBidRate: config.min_intex_bid_rate,
+        minIntexBidRate: config.min_bid_rate,
         prices,
         callNoticePeriod: config.call_trigger.call_notice_period_seconds,
         callWindow: config.call_trigger.call_window_seconds,
         callThreshold: config.call_trigger.call_threshold_seconds,
-        minIntexBidQuantity: config.min_intex_bid_quantity,
-        commitBondMinor: config.commit_bond_minor,
+        minIntexBidQuantity: config.min_bid_quantity,
+        commitBondMinor: config.bid_bond_minor,
     })
 }
 
 mod algorithm;
+mod bids;
 mod clearing;
-mod intake;
 mod schedule;
 
 #[cfg(test)]
 pub(crate) use algorithm::rate_lock;
+pub use bids::{collect_intex_auction_bids, complete_intex_auction_bids, Inbound};
 pub use clearing::complete_auctions;
 #[cfg(all(test, not(feature = "e2e-test")))]
 pub(crate) use clearing::force_clear;
 #[cfg(test)]
 pub(crate) use clearing::{
-    clearing_round_gas, issuance_groups, refund_chunk_count, refund_chunks, RefundChunk,
+    clearing_run_gas, intex_auction_winners_page_count, intex_auction_winners_pages,
+    issuance_groups, IntexAuctionWinnersPage,
 };
-pub use intake::{process_bids_batch, process_bids_done, Inbound};
 pub use schedule::advance_auctions;
 #[cfg(test)]
 pub(crate) use schedule::schedule_tick;

@@ -59,12 +59,12 @@ pub const RESULT_DELIVERY_MARGIN_SECONDS: u64 = 600;
 
 /// Mirrors `EscrowTimes.UNFINALIZED_REFUND_DELAY`: the other chains read a day without a result
 /// as failed once this much has passed since its commit end.
-pub const TARGET_UNFINALIZED_REFUND_DELAY_SECONDS: u64 = 48 * 3600;
+pub const TARGET_UNFINALIZED_RETURN_DELAY_SECONDS: u64 = 48 * 3600;
 
 // A result sent at the last clearing time must still find the day awaiting it on the other chains.
 const _: () = assert!(
     REVEAL_WINDOW_SECONDS + INTEX_ISSUANCE_WINDOW_SECONDS
-        <= TARGET_UNFINALIZED_REFUND_DELAY_SECONDS
+        <= TARGET_UNFINALIZED_RETURN_DELAY_SECONDS
 );
 
 /// An auction that would start with less commit window than this is cancelled.
@@ -88,14 +88,14 @@ pub const CANCELED_LIMIT_OVERFLOW: u8 = 5;
 pub const MAX_PAYLOAD_ARRAY_LEN: usize = 64;
 
 /// Chunks one chain-day's refunds may span; mirrors the codec's `MAX_CHUNKS`.
-pub const MAX_REFUND_CHUNKS: usize = 256;
+pub const MAX_INTEX_AUCTION_WINNERS_PAGES: usize = 256;
 
 /// Batches one chain-day may send: the arrival bitmap is one 256-bit word.
-pub const MAX_BID_BATCHES: u16 = 256;
+pub const MAX_BID_PAGES: u16 = 256;
 
 // Everything the intake admits from one chain must still fit its refund fan-out: a bid batch
 // and a refund chunk share one array cap, so the batch count bounds the chunk count.
-const _: () = assert!(MAX_BID_BATCHES as usize <= MAX_REFUND_CHUNKS);
+const _: () = assert!(MAX_BID_PAGES as usize <= MAX_INTEX_AUCTION_WINNERS_PAGES);
 
 /// `IDesis.BidsIgnored` reason codes; mirrors the routers' `InboundReason` library.
 pub const IGNORED_OBSOLETE: u8 = 2;
@@ -105,7 +105,7 @@ pub const IGNORED_NOT_FOUND: u8 = 4;
 /// What a COLLECTING_BIDS round costs on a target chain - fixed part, one chunk, one bid - measured in
 /// `contracts/intex/test/foundry/cross-chain/ClearingRelayMailboxGas.t.sol`.
 pub const CLEARING_FIXED_GAS: u64 = 564_000;
-pub const CLEARING_CHUNK_GAS: u64 = 197_000;
+pub const CLEARING_PAGE_GAS: u64 = 197_000;
 pub const CLEARING_BID_GAS: u64 = 10_000;
 
 /// Days of a chain's own history a round is sized from, and the floor it is never sized below.

@@ -1,4 +1,4 @@
-use super::clearing::{clearing_round_gas, fetch_targets};
+use super::clearing::{clearing_run_gas, fetch_targets};
 use super::*;
 use outbe_primitives::error::PrecompileError;
 use sweep::Sweep;
@@ -90,7 +90,7 @@ fn due_work_gas(contract: &DesisContract<'_>, emission_day: EmissionDate, now: u
     }
     loop {
         match stage {
-            AuctionStage::Completed | AuctionStage::Cancelled | AuctionStage::Failed => {
+            AuctionStage::Completed | AuctionStage::Canceled | AuctionStage::Failed => {
                 return Ok(gas)
             }
             _ if windows.unfinished_past_deadline(stage, now) => return Ok(gas + ADVANCE_FAIL_GAS),
@@ -121,7 +121,7 @@ fn advance_day(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u64
             return cancel_auction(storage, &mut contract, emission_day, stage, reason);
         }
         match stage {
-            AuctionStage::Completed | AuctionStage::Cancelled | AuctionStage::Failed => {
+            AuctionStage::Completed | AuctionStage::Canceled | AuctionStage::Failed => {
                 return contract.remove_sched_active(emission_day);
             }
             _ if windows.unfinished_past_deadline(stage, now) => {
@@ -205,13 +205,13 @@ fn cancel_auction(
     if stage != AuctionStage::None {
         send_auction_cancel(storage, emission_day, reason)?;
     }
-    contract.emit(IDesis::IntexAuctionCanceled {
+    contract.emit(IDesis::DesisCanceled {
         emissionDay: emission_day.into(),
         reason,
     })?;
-    refund_unused_desis_limit(storage, contract, emission_day)?;
+    return_unused_desis_limit(storage, contract, emission_day)?;
     contract.cancel_reason.write(&emission_day, 0)?;
-    contract.write_stage(emission_day, AuctionStage::Cancelled)?;
+    contract.write_stage(emission_day, AuctionStage::Canceled)?;
     contract.remove_sched_active(emission_day)
 }
 
@@ -224,16 +224,17 @@ fn fail_auction(
     emission_day: EmissionDate,
     stage: AuctionStage,
 ) -> Result<()> {
-    contract.emit(IDesis::IntexAuctionFailed {
+    contract.emit(IDesis::DesisFailed {
         emissionDay: emission_day.into(),
-        stage: stage as u8,
+        stage: IDesis::AuctionStage::try_from(stage as u8)
+            .map_err(|_| DesisError::InvalidStageTransition)?,
     })?;
     contract.remove_gate_active(emission_day)?;
     contract.clearing_initiated.write(&emission_day, 0u8)?;
     contract.pending_desis_limit_units.write(&emission_day, 0)?;
     contract.clearing_deadline.clear(&emission_day)?;
     contract.day_bid_count.write(&emission_day, 0)?;
-    refund_unused_desis_limit(storage, contract, emission_day)?;
+    return_unused_desis_limit(storage, contract, emission_day)?;
     contract.write_stage(emission_day, AuctionStage::Failed)?;
     contract.queue_intake_cleanup(emission_day)?;
     contract.remove_sched_active(emission_day)
@@ -323,12 +324,12 @@ fn start_auction(
         call_price_minor: U256::ZERO,
     })
     .collect();
-    let promis_load_minor = step_promis_load(contract, emission_day, &rows)?;
+    let promis_load_minor = set_intex_promis_load(contract, emission_day, &rows)?;
     let mut config = AuctionConfig::from_reference_prices(rows, promis_load_minor);
     fold_profile(storage, contract, &mut config)?;
     fix_call_terms(storage, &mut config)?;
     contract.write_auction_config(emission_day, &config)?;
-    let start = StageStart {
+    let start = IntexAuctionStart {
         emission_day,
         config: &config,
         commit_end: ts32(commit_end)?,
@@ -352,24 +353,24 @@ fn start_auction(
         cancel_auction(storage, contract, emission_day, AuctionStage::None, reason)?;
         return Ok(StartOutcome::Retired);
     }
-    send_stage_start(storage, start)?;
+    send_intex_auction_start(storage, start)?;
     contract.write_stage(emission_day, AuctionStage::CommittingBids)?;
-    contract.emit(IDesis::IntexAuctionCreated {
+    contract.emit(IDesis::DesisStarted {
         emissionDay: emission_day.into(),
         commitEnd: commit_end,
         revealEnd: reveal_end,
         issuanceEnd: issuance_end,
-        promisLoadMinor: config.promis_load_minor,
-        minBidRate: config.min_intex_bid_rate,
-        minUnits: u32::from(config.min_intex_bid_quantity),
-        bidBondMinor: config.commit_bond_minor,
+        unitPromisLoadMinor: U256::from(config.promis_load_minor),
+        minBidRate: config.min_bid_rate,
+        minBidQuantity: u32::from(config.min_bid_quantity),
+        bidBondMinor: U256::from(config.bid_bond_minor),
     })?;
     Ok(StartOutcome::Started)
 }
 
 /// Return a retiring day's unused Desis Limit to PromisLimit and record a zero
 /// allocation. A zero remainder is not credited.
-fn refund_unused_desis_limit(
+fn return_unused_desis_limit(
     storage: &StorageHandle<'_>,
     contract: &mut DesisContract<'_>,
     emission_day: EmissionDate,
@@ -420,7 +421,7 @@ fn arm_clearing(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u6
     }
     for chain_id in targets {
         let sent = storage.with_checkpoint(|| {
-            let gas = clearing_round_gas(storage, emission_day, chain_id)?;
+            let gas = clearing_run_gas(storage, emission_day, chain_id)?;
             storage.call(
                 ORIGIN_ROUTER_ADDRESS,
                 U256::ZERO,
@@ -434,14 +435,20 @@ fn arm_clearing(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u6
             )?;
             Ok(())
         });
-        if let Err(error) = sent {
-            tracing::warn!(
-                target: "outbe::desis",
-                %emission_day,
-                chain_id,
-                error = ?error,
-                "collecting-bids round: chain skipped"
-            );
+        match sent {
+            Ok(()) => {}
+            Err(error) if error.is_node_local() => return Err(error),
+            Err(error) => {
+                let error_data = match error {
+                    PrecompileError::RevertBytes(bytes) => bytes,
+                    _ => Bytes::new(),
+                };
+                contract.emit(IDesis::IntexAuctionClearingStartSendFailed {
+                    emissionDay: emission_day.into(),
+                    dstChainId: chain_id,
+                    errorData: error_data,
+                })?;
+            }
         }
     }
     Ok(())

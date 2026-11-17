@@ -6,8 +6,9 @@ use super::*;
 fn calibration_populated_auction_handlers() {
     let (_, samples, logs, _) = populated_auction(16);
     assert_eq!(samples.len(), 7);
-    assert!(logs.iter().any(|log| log.data.topics().first()
-        == Some(&keccak256("IntexAuctionCompletedEmpty(uint32,uint64)"))));
+    assert!(logs
+        .iter()
+        .any(|log| log.data.topics().first() == Some(&keccak256("DesisCompleted(uint32,uint64)"))));
     // The Cycle does not push parked router work. Any address pushes it.
     assert!(!logs.iter().any(
         |log| outbe_cycle::ICycle::CycleTaskExecuted::decode_log(log)
@@ -67,7 +68,7 @@ fn populated_auction(chain_count: u32) -> Calibration {
             auction.config_min_bid_rate.write(&day, 2_000_000).unwrap();
             for chain in 1..=chain_count {
                 let key = outbe_desis::DesisContract::chain_key(day, chain);
-                auction.chain_done.write(&key, 1).unwrap();
+                auction.bids_completed.write(&key, 1).unwrap();
                 auction.chain_bid_count.write(&key, 2).unwrap();
                 for index in 0..2 {
                     let key = outbe_desis::DesisContract::bid_key(day, chain, index);
@@ -87,9 +88,9 @@ fn populated_auction(chain_count: u32) -> Calibration {
             auction.day_bid_count.write(&day, chain_count * 2).unwrap();
             outbe_desis::api::schedule_auction(storage.clone(), EmissionDate::new(20240102))
                 .unwrap();
-            outbe_desis::api::brief_auction(
+            outbe_desis::api::set_desis_limit(
                 storage.clone(),
-                outbe_desis::api::AuctionBrief {
+                outbe_desis::api::DesisLimit {
                     emission_day: EmissionDate::new(20240102),
                     desis_limit_minor: U256::ZERO,
                     has_limit: false,
@@ -142,9 +143,9 @@ fn calibration_live_auction_start() {
                 .unwrap();
             outbe_desis::api::schedule_auction(storage.clone(), EmissionDate::new(20240101))
                 .unwrap();
-            outbe_desis::api::brief_auction(
+            outbe_desis::api::set_desis_limit(
                 storage.clone(),
-                outbe_desis::api::AuctionBrief {
+                outbe_desis::api::DesisLimit {
                     emission_day: EmissionDate::new(20240101),
                     desis_limit_minor: U256::from(10_000_000_000_000u64),
                     has_limit: true,
@@ -175,7 +176,7 @@ fn calibration_live_auction_start() {
     assert!(logs.iter().any(
         |log| log.address == outbe_system_common::addresses::DESIS_ADDRESS
             && log.data.topics().first()
-                == Some(&outbe_desis::precompile::IDesis::IntexAuctionCreated::SIGNATURE_HASH)
+                == Some(&outbe_desis::precompile::IDesis::DesisStarted::SIGNATURE_HASH)
     ));
 }
 
@@ -246,7 +247,7 @@ impl DueStep {
             .pending_desis_limit_minor
             .write(&day, U256::from(10_000_000_000_000u64))
             .unwrap();
-        auction.brief_has_limit.write(&day, 1).unwrap();
+        auction.has_desis_limit.write(&day, 1).unwrap();
         auction.desis_limit_set.write(&day, 1).unwrap();
         let count = auction.sched_active_count.read().unwrap();
         auction.sched_active_at.write(&count, day.value()).unwrap();
@@ -287,9 +288,9 @@ fn due_auctions(steps: &[DueStep]) -> (u64, Vec<Log>) {
             for step in steps {
                 if matches!(step, DueStep::Start) {
                     outbe_desis::api::schedule_auction(storage.clone(), step.day()).unwrap();
-                    outbe_desis::api::brief_auction(
+                    outbe_desis::api::set_desis_limit(
                         storage.clone(),
-                        outbe_desis::api::AuctionBrief {
+                        outbe_desis::api::DesisLimit {
                             emission_day: step.day(),
                             desis_limit_minor: U256::from(10_000_000_000_000u64),
                             has_limit: true,
@@ -378,7 +379,7 @@ fn calibration_four_due_auctions_at_midnight() {
     let created = logs
         .iter()
         .filter(|log| {
-            outbe_desis::precompile::IDesis::IntexAuctionCreated::decode_log(log)
+            outbe_desis::precompile::IDesis::DesisStarted::decode_log(log)
                 .is_ok_and(|event| event.data.emissionDay == DueStep::Start.day().value())
         })
         .count();
@@ -486,8 +487,8 @@ fn accepted_1088_bid_auction_completes_before_incremental_cycle_cleanup() {
         .iter()
         .any(|log| outbe_cycle::ICycle::CycleTaskOverBudget::decode_log(log).is_ok()));
     assert!(logs.iter().any(|log| {
-        outbe_desis::precompile::IDesis::IntexAuctionCompleted::decode_log(log)
-            .is_ok_and(|event| event.data.units == 3 && event.data.totalDemand == 1088)
+        outbe_desis::precompile::IDesis::DesisCompleted::decode_log(log)
+            .is_ok_and(|event| event.data.quantity == 3 && event.data.totalDemand == 1088)
     }));
     assert_eq!(
         logs.iter()
@@ -561,10 +562,7 @@ fn accepted_bid_deadlines_retire_with_reverting_router_within_advance_budget() {
         );
         assert_eq!(
             logs.iter()
-                .filter(
-                    |log| outbe_desis::precompile::IDesis::IntexAuctionFailed::decode_log(log)
-                        .is_ok()
-                )
+                .filter(|log| outbe_desis::precompile::IDesis::DesisFailed::decode_log(log).is_ok())
                 .count(),
             1
         );

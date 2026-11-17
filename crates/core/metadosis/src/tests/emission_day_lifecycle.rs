@@ -202,7 +202,7 @@ fn schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_due_after_
             desis.auction_stage.read(&briefed).unwrap(),
             outbe_desis::schema::AuctionStage::None as u8
         );
-        assert_eq!(desis.brief_has_limit.read(&briefed).unwrap(), 0);
+        assert_eq!(desis.has_desis_limit.read(&briefed).unwrap(), 0);
     });
 }
 

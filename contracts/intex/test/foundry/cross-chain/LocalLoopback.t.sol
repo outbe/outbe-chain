@@ -45,7 +45,7 @@ contract RecordingDesis {
         return interfaceId == type(IDesis).interfaceId || interfaceId == type(IERC165).interfaceId;
     }
 
-    function processBidsBatch(
+    function collectIntexAuctionBids(
         uint32 emissionDay,
         uint32 srcChainId,
         uint16, /* batchIndex */
@@ -64,7 +64,7 @@ contract RecordingDesis {
         }
     }
 
-    function processBidsDone(uint32, uint32 srcChainId, uint16 totalBatches, uint32 totalBids) external {
+    function completeIntexAuctionBids(uint32, uint32 srcChainId, uint16 totalBatches, uint32 totalBids) external {
         doneSrcChainId = srcChainId;
         doneTotalBatches = totalBatches;
         doneTotalBids = totalBids;

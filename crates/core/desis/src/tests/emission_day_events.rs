@@ -92,8 +92,8 @@ fn assert_limit_identity(storage: &mut HashMapStorageProvider, returned_to_promi
 fn cancel_reason(storage: &HashMapStorageProvider) -> u8 {
     logs(storage)
         .iter()
-        .find_map(|log| IDesis::IntexAuctionCanceled::decode_log_data(log).ok())
-        .expect("IntexAuctionCanceled")
+        .find_map(|log| IDesis::DesisCanceled::decode_log_data(log).ok())
+        .expect("DesisCanceled")
         .reason
 }
 
@@ -105,7 +105,7 @@ fn assert_cancel_before_limit_events(storage: &HashMapStorageProvider) {
             .position(|log| log.topics().first() == Some(&signature))
             .expect("event")
     };
-    let canceled = at(IDesis::IntexAuctionCanceled::SIGNATURE_HASH);
+    let canceled = at(IDesis::DesisCanceled::SIGNATURE_HASH);
     let allocated = at(IDesis::DesisLimitAllocated::SIGNATURE_HASH);
     assert!(canceled < allocated);
 }
@@ -160,16 +160,14 @@ fn a_full_clear_returns_nothing_to_the_promis_limit() {
     assert_eq!(
         logs(&storage)
             .iter()
-            .filter(
-                |log| log.topics().first() == Some(&IDesis::IntexAuctionCompleted::SIGNATURE_HASH)
-            )
+            .filter(|log| log.topics().first() == Some(&IDesis::DesisCompleted::SIGNATURE_HASH))
             .count(),
         1
     );
     let bids_completed = logs(&storage)
         .iter()
-        .find_map(|log| IDesis::BidsCompleted::decode_log_data(log).ok())
-        .expect("BidsCompleted");
+        .find_map(|log| IDesis::IntexAuctionBidsCompleted::decode_log_data(log).ok())
+        .expect("IntexAuctionBidsCompleted");
     assert_eq!(bids_completed.emissionDay, EMISSION_DAY.value());
     assert_eq!(bids_completed.srcChainId, SRC_CHAIN);
 }
@@ -178,10 +176,11 @@ fn a_full_clear_returns_nothing_to_the_promis_limit() {
 fn an_empty_clear_returns_the_whole_limit() {
     let mut storage = world(|s| {
         open_clearing(s, 3);
-        runtime::process_bids_batch(
+        runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
+                receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
             },
@@ -199,7 +198,7 @@ fn an_empty_clear_returns_the_whole_limit() {
         vec![U256::ZERO]
     );
     assert!(logs(&storage).iter().any(|log| {
-        IDesis::IntexAuctionCompletedEmpty::decode_log_data(log)
+        IDesis::DesisCompleted::decode_log_data(log)
             .map(|event| event.totalDemand == 0)
             .unwrap_or(false)
     }));
@@ -259,26 +258,26 @@ fn an_oversized_brief_cancels_in_order_and_a_second_brief_is_returned() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |s| {
         crate::api::schedule_auction(s.clone(), EMISSION_DAY).unwrap();
-        let oversized = crate::api::AuctionBrief {
+        let oversized = crate::api::DesisLimit {
             emission_day: EMISSION_DAY,
             desis_limit_minor: U256::MAX,
             has_limit: true,
         };
         assert!(matches!(
-            crate::api::brief_auction(s.clone(), oversized).unwrap(),
-            crate::api::AuctionBriefReceipt::ReturnedToPromisLimit { .. }
+            crate::api::set_desis_limit(s.clone(), oversized).unwrap(),
+            crate::api::DesisLimitReceipt::ReturnedToPromisLimit { .. }
         ));
         runtime::schedule_tick(&s, NOW).unwrap();
         assert_eq!(
             s.contract::<DesisContract>()
                 .read_stage(EMISSION_DAY)
                 .unwrap(),
-            AuctionStage::Cancelled
+            AuctionStage::Canceled
         );
         assert!(matches!(
-            crate::api::brief_auction(s.clone(), oversized).unwrap(),
-            crate::api::AuctionBriefReceipt::ReturnedToPromisLimit {
-                reason: crate::api::AuctionBriefRejectionReason::AuctionClosed,
+            crate::api::set_desis_limit(s.clone(), oversized).unwrap(),
+            crate::api::DesisLimitReceipt::ReturnedToPromisLimit {
+                reason: crate::api::DesisLimitRejectionReason::AuctionClosed,
                 ..
             }
         ));
@@ -291,7 +290,7 @@ fn an_oversized_brief_cancels_in_order_and_a_second_brief_is_returned() {
         names,
         vec![
             Some(IDesis::DesisLimitSet::SIGNATURE_HASH),
-            Some(IDesis::IntexAuctionCanceled::SIGNATURE_HASH),
+            Some(IDesis::DesisCanceled::SIGNATURE_HASH),
             Some(IDesis::DesisLimitAllocated::SIGNATURE_HASH),
         ]
     );
@@ -324,8 +323,8 @@ fn a_failed_auction_reports_the_stage_before_the_zero_allocation() {
     let events = logs(&storage);
     let failed = events
         .iter()
-        .position(|log| log.topics().first() == Some(&IDesis::IntexAuctionFailed::SIGNATURE_HASH))
-        .expect("IntexAuctionFailed");
+        .position(|log| log.topics().first() == Some(&IDesis::DesisFailed::SIGNATURE_HASH))
+        .expect("DesisFailed");
     let allocated = events
         .iter()
         .position(|log| log.topics().first() == Some(&IDesis::DesisLimitAllocated::SIGNATURE_HASH))
@@ -333,10 +332,10 @@ fn a_failed_auction_reports_the_stage_before_the_zero_allocation() {
     assert!(failed < allocated);
     let stage = events
         .iter()
-        .find_map(|log| IDesis::IntexAuctionFailed::decode_log_data(log).ok())
+        .find_map(|log| IDesis::DesisFailed::decode_log_data(log).ok())
         .unwrap()
         .stage;
-    assert_eq!(stage, AuctionStage::CommittingBids as u8);
+    assert_eq!(stage as u8, AuctionStage::CommittingBids as u8);
     assert_limit_identity(&mut storage, U256::from(10 * LOAD_MINOR));
     assert_eq!(
         amount_of::<IDesis::DesisLimitAllocated>(&storage),
@@ -358,8 +357,8 @@ fn a_live_start_announces_the_windows_and_the_folded_profile() {
     });
     let created = logs(&storage)
         .iter()
-        .find_map(|log| IDesis::IntexAuctionCreated::decode_log_data(log).ok())
-        .expect("IntexAuctionCreated");
+        .find_map(|log| IDesis::DesisStarted::decode_log_data(log).ok())
+        .expect("DesisStarted");
     assert_eq!(created.emissionDay, EMISSION_DAY.value());
     assert_eq!(created.commitEnd, ANCHOR + COMMIT_WINDOW_SECONDS);
     assert_eq!(created.revealEnd, created.commitEnd + REVEAL_WINDOW_SECONDS);
@@ -367,8 +366,11 @@ fn a_live_start_announces_the_windows_and_the_folded_profile() {
         created.issuanceEnd,
         created.revealEnd + INTEX_ISSUANCE_WINDOW_SECONDS
     );
-    assert_eq!(created.promisLoadMinor, config.promis_load_minor);
-    assert_eq!(created.minBidRate, config.min_intex_bid_rate);
-    assert_eq!(created.minUnits, u32::from(config.min_intex_bid_quantity));
-    assert_eq!(created.bidBondMinor, config.commit_bond_minor);
+    assert_eq!(
+        created.unitPromisLoadMinor,
+        U256::from(config.promis_load_minor)
+    );
+    assert_eq!(created.minBidRate, config.min_bid_rate);
+    assert_eq!(created.minBidQuantity, u32::from(config.min_bid_quantity));
+    assert_eq!(created.bidBondMinor, U256::from(config.bid_bond_minor));
 }

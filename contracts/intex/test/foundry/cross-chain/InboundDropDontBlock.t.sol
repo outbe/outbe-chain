@@ -18,7 +18,7 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
-/// @notice Desis stub that reverts `NotReady` on `processBidsBatch` until `enable()` is called. It
+/// @notice Desis stub that reverts `NotReady` on `collectIntexAuctionBids` until `enable()` is called. It
 ///         stands in for an inbound prerequisite that has not yet landed. It advertises `IDesis`
 ///         via ERC-165 so `OriginRouter.wire` accepts it.
 contract GatedDesis {
@@ -34,11 +34,14 @@ contract GatedDesis {
         return interfaceId == type(IDesis).interfaceId || interfaceId == type(IERC165).interfaceId;
     }
 
-    function processBidsBatch(uint32, uint32, uint16, uint16, address[] calldata, uint256[] calldata) external view {
+    function collectIntexAuctionBids(bytes32, uint32, uint32, uint16, uint16, address[] calldata, uint256[] calldata)
+        external
+        view
+    {
         if (!ready) revert NotReady();
     }
 
-    function getAuctionStage(uint32) external pure returns (IDesis.AuctionStage) {
+    function auctionStage(uint32) external pure returns (IDesis.AuctionStage) {
         return IDesis.AuctionStage.None;
     }
 }

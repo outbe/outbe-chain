@@ -667,15 +667,16 @@ contract DesisSink {
         return interfaceId == type(IDesis).interfaceId || interfaceId == type(IERC165).interfaceId;
     }
 
-    function processBidsBatch(uint32, uint32, uint16, uint16, address[] calldata, uint256[] calldata) external {}
+    function collectIntexAuctionBids(bytes32, uint32, uint32, uint16, uint16, address[] calldata, uint256[] calldata)
+        external {}
 
-    function processBidsDone(uint32, uint32, uint16, uint32) external {}
+    function completeIntexAuctionBids(bytes32, uint32, uint32, uint16, uint32) external {}
 
-    function getAuctionStage(uint32) external pure returns (uint8) {
+    function auctionStage(uint32) external pure returns (uint8) {
         return 0;
     }
 
-    function getBidsCount(uint32) external pure returns (uint256) {
+    function intexAuctionBidsCount(uint32) external pure returns (uint256) {
         return 0;
     }
 }

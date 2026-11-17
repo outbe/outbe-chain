@@ -103,7 +103,7 @@ pub fn handle_cycle_tick_with_tasks(
     #[cfg(not(feature = "test-utils"))]
     let _ = handler_gas;
     crate::handler::process_agent_rewards(ctx)?;
-    outbe_desis::process_cleanup(ctx.storage.clone())?;
+    outbe_desis::run_cleanup(ctx.storage.clone())?;
     #[cfg(feature = "test-utils")]
     record_cycle_gas_sample(ctx, observation_before, handler_gas)?;
     Ok(())
