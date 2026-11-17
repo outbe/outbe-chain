@@ -13,7 +13,7 @@ use super::manifest::{
     validate_release_manifest_v1, verify_version_text, EXPECTED_ARTIFACTS,
     PRODUCTION_TEE_FORBIDDEN_MARKERS,
 };
-use crate::release::sgx::canonical_json;
+use crate::release::canonical_json;
 
 pub const EXPECTED_CHECKSUM_PATHS: &[&str] = &[
     "bin/outbe-up",

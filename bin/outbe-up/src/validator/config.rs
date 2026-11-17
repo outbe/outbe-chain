@@ -22,7 +22,6 @@ pub const CONFIG_VERSION: u32 = 1;
 pub struct OperatorConfig {
     pub version: u32,
     pub network: NetworkConfig,
-    pub tee: TeeConfig,
     pub feeder: FeederConfig,
 }
 
@@ -31,77 +30,13 @@ pub struct OperatorConfig {
 pub struct NetworkConfig {
     pub chain_id: u64,
     pub certified_rpc: String,
-    pub external_ip: Ipv4Addr,
+    pub advertise_ip: Ipv4Addr,
     #[serde(default = "default_rpc_bind_ip")]
     pub rpc_bind_ip: Ipv4Addr,
     pub bootnodes: Vec<String>,
     pub consensus_peers: Vec<String>,
     #[serde(default)]
     pub use_local_defaults: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TeeConfig {
-    pub runtime: EnclaveRuntime,
-    pub lease_duration_seconds: LeaseDuration,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum LeaseDuration {
-    Seconds(u64),
-    Mode(LeaseDurationMode),
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum LeaseDurationMode {
-    Auto,
-}
-
-impl LeaseDuration {
-    pub fn resolve(self, minimum: u64, maximum: u64) -> Result<u64> {
-        ensure!(
-            minimum <= maximum,
-            "finalized TEE policy has an invalid lease range {minimum}..={maximum} seconds"
-        );
-        match self {
-            Self::Mode(LeaseDurationMode::Auto) => Ok(maximum),
-            Self::Seconds(seconds) => {
-                ensure!(
-                    (minimum..=maximum).contains(&seconds),
-                    "tee.lease_duration_seconds={seconds} is outside the finalized TEE policy range {minimum}..={maximum} seconds"
-                );
-                Ok(seconds)
-            }
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum EnclaveRuntime {
-    BundledSgx,
-    SystemGramine,
-    Mock,
-}
-
-impl EnclaveRuntime {
-    pub const fn as_env(self) -> &'static str {
-        match self {
-            Self::BundledSgx => "bundled-sgx",
-            Self::SystemGramine => "system-gramine",
-            Self::Mock => "mock",
-        }
-    }
-
-    pub const fn session_mode(self) -> &'static str {
-        match self {
-            Self::Mock => "development",
-            Self::BundledSgx | Self::SystemGramine => "production-node-host",
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -141,13 +76,8 @@ impl OperatorConfig {
         } else {
             ""
         };
-        let development_binding = match self.tee.runtime {
-            EnclaveRuntime::Mock => {
-                write_development_secrets(root)?;
-                development_network_binding(root, self.network.chain_id)?
-            }
-            EnclaveRuntime::BundledSgx | EnclaveRuntime::SystemGramine => String::new(),
-        };
+        write_development_secrets(root)?;
+        let development_binding = development_network_binding(root, self.network.chain_id)?;
         let env = format!(
             concat!(
                 "OUTBE_EXTERNAL_IP=\"{}\"\n",
@@ -157,20 +87,18 @@ impl OperatorConfig {
                 "OUTBE_BOOTNODES=\"{}\"\n",
                 "OUTBE_CONSENSUS_PEERS=\"{}\"\n",
                 "OUTBE_CONSENSUS_EXTRA_ARGS=\"{}\"\n",
-                "OUTBE_ENCLAVE_RUNTIME=\"{}\"\n",
                 "OUTBE_TEE_SESSION_MODE=\"{}\"\n",
                 "OUTBE_DEV_NETWORK_BINDING=\"{}\"\n",
                 "OUTBE_CHAIN_ID=\"{}\"\n"
             ),
-            self.network.external_ip,
+            self.network.advertise_ip,
             self.network.rpc_bind_ip,
             self.network.certified_rpc,
             validator,
             self.network.bootnodes.join(","),
             self.network.consensus_peers.join(","),
             extra,
-            self.tee.runtime.as_env(),
-            self.tee.runtime.session_mode(),
+            "development",
             development_binding,
             self.network.chain_id,
         );
@@ -224,19 +152,14 @@ impl OperatorConfig {
         {
             bail!("network.consensus_peers contains an invalid peer");
         }
-        if let LeaseDuration::Seconds(seconds) = self.tee.lease_duration_seconds {
-            ensure!(seconds > 0, "tee.lease_duration_seconds must be positive");
-        }
-        if matches!(self.tee.runtime, EnclaveRuntime::Mock) {
-            ensure!(
-                outbe_primitives::tee_genesis_v1::is_attestation_mode_allowed_for_chain_id(
-                    self.network.chain_id,
-                    AttestationMode::GramineDirectDev,
-                ),
-                "tee.runtime=mock is forbidden for network.chain_id={}",
-                self.network.chain_id
-            );
-        }
+        ensure!(
+            outbe_primitives::tee_genesis_v1::is_attestation_mode_allowed_for_chain_id(
+                self.network.chain_id,
+                AttestationMode::GramineDirectDev,
+            ),
+            "unattested confidential-vm runtime is forbidden for network.chain_id={}",
+            self.network.chain_id
+        );
         ensure!(
             !self.feeder.public_toml.trim().is_empty(),
             "feeder.public_toml is empty"
@@ -278,7 +201,7 @@ fn development_network_binding(root: &Path, chain_id: u64) -> Result<String> {
         .wrap_err("genesis TEE policy has no active policy at height 1")?;
     ensure!(
         policy.attestation_mode == AttestationMode::GramineDirectDev,
-        "tee.runtime=mock requires a GramineDirectDev genesis TEE policy"
+        "confidential-vm runtime requires a GramineDirectDev genesis TEE policy"
     );
     Ok(hex::encode(
         NetworkBindingV1 {
@@ -343,13 +266,10 @@ version: 1
 network:
   chain_id: 424242
   certified_rpc: https://rpc.example
-  external_ip: 192.0.2.10
+  advertise_ip: 192.0.2.10
   bootnodes: ["enode://abc@192.0.2.1:30303"]
   consensus_peers: ["{}@192.0.2.1:30400"]
   use_local_defaults: true
-tee:
-  runtime: bundled-sgx
-  lease_duration_seconds: auto
 feeder:
   public_toml: |
     [oracle]
@@ -360,59 +280,10 @@ feeder:
         .unwrap();
         config.validate().unwrap();
         assert_eq!(config.network.rpc_bind_ip, Ipv4Addr::LOCALHOST);
-        assert!(matches!(
-            config.tee.lease_duration_seconds,
-            LeaseDuration::Mode(LeaseDurationMode::Auto)
-        ));
     }
 
     #[test]
-    fn resolves_lease_duration_against_policy() {
-        assert_eq!(
-            LeaseDuration::Mode(LeaseDurationMode::Auto)
-                .resolve(3_600, 1_209_600)
-                .unwrap(),
-            1_209_600
-        );
-        assert_eq!(
-            LeaseDuration::Seconds(86_400)
-                .resolve(3_600, 1_209_600)
-                .unwrap(),
-            86_400
-        );
-        assert!(LeaseDuration::Seconds(2_592_000)
-            .resolve(3_600, 1_209_600)
-            .unwrap_err()
-            .to_string()
-            .contains("outside the finalized TEE policy range"));
-    }
-
-    #[test]
-    fn accepts_existing_numeric_lease_config() {
-        let config: TeeConfig =
-            serde_yaml_ng::from_str("runtime: bundled-sgx\nlease_duration_seconds: 86400\n")
-                .unwrap();
-        assert!(matches!(
-            config.lease_duration_seconds,
-            LeaseDuration::Seconds(86_400)
-        ));
-    }
-
-    #[test]
-    fn runtime_selects_the_expected_session_mode() {
-        assert_eq!(EnclaveRuntime::Mock.session_mode(), "development");
-        assert_eq!(
-            EnclaveRuntime::BundledSgx.session_mode(),
-            "production-node-host"
-        );
-        assert_eq!(
-            EnclaveRuntime::SystemGramine.session_mode(),
-            "production-node-host"
-        );
-    }
-
-    #[test]
-    fn mock_runtime_is_limited_to_development_networks() {
+    fn unattested_runtime_accepts_devnet_and_testnet_only() {
         let config = |chain_id| {
             serde_yaml_ng::from_str::<OperatorConfig>(&format!(
                 r#"
@@ -420,12 +291,9 @@ version: 1
 network:
   chain_id: {chain_id}
   certified_rpc: https://rpc.example
-  external_ip: 192.0.2.10
+  advertise_ip: 192.0.2.10
   bootnodes: ["enode://abc@192.0.2.1:30303"]
   consensus_peers: ["{}@192.0.2.1:30400"]
-tee:
-  runtime: mock
-  lease_duration_seconds: auto
 feeder:
   public_toml: |
     [oracle]
@@ -436,12 +304,15 @@ feeder:
             .unwrap()
         };
 
+        config(424242).validate().unwrap();
         config(54322345).validate().unwrap();
-        assert!(config(676)
-            .validate()
-            .unwrap_err()
-            .to_string()
-            .contains("forbidden"));
+        for chain_id in [676, 123] {
+            assert!(config(chain_id)
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("forbidden"));
+        }
     }
 
     #[test]

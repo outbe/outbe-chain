@@ -1,5 +1,4 @@
 use std::io::ErrorKind;
-use std::path::Path;
 use std::sync::Mutex;
 use std::thread;
 use std::time::Instant;
@@ -532,31 +531,4 @@ fn admit_public_keys(admit: impl Fn() -> Result<EnclaveResponse, TransportError>
         thread::sleep(SLOT_RETRY);
     }
     panic!("live slot did not recover within 2s: {last}");
-}
-
-#[test]
-fn max_live_connections_fits_within_release_sgx_max_threads() {
-    for bundle in ["testnet-sgx-bundle-v1.json", "mainnet-sgx-bundle-v1.json"] {
-        let max_threads = release_sgx_max_threads(bundle);
-        assert!(
-            MAX_LIVE_CONNECTIONS + 1 < max_threads,
-            "{bundle}: MAX_LIVE_CONNECTIONS ({MAX_LIVE_CONNECTIONS}) + 1 must be < sgx.max_threads ({max_threads})"
-        );
-    }
-}
-
-fn release_sgx_max_threads(name: &str) -> usize {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../release")
-        .join(name);
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
-    let value: serde_json::Value =
-        serde_json::from_str(&text).unwrap_or_else(|err| panic!("parse {}: {err}", path.display()));
-    let max_threads = value
-        .get("sgx")
-        .and_then(|sgx| sgx.get("max_threads"))
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or_else(|| panic!("{name} is missing sgx.max_threads"));
-    usize::try_from(max_threads).expect("max_threads fits usize")
 }
