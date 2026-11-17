@@ -83,6 +83,15 @@ pub(crate) fn provider(
     );
     let enclave = context.manifest().enclave_id().unwrap();
     identity.expected_enclave_id = Some(enclave);
+    bind_context(&provider, context);
+    (provider, chain, identity)
+}
+
+pub(crate) fn bind_context(
+    provider: &provider::FinalizedMockProvider,
+    context: &InProcessTeeContext,
+) {
+    let enclave = context.manifest().enclave_id().unwrap();
     let mut storage = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(676);
     outbe_primitives::storage::StorageHandle::enter(&mut storage, |storage| {
         let registry = outbe_teeregistry::TeeRegistry::new(storage);
@@ -101,7 +110,6 @@ pub(crate) fn provider(
         accounts.insert(address, account);
     }
     drop(accounts);
-    (provider, chain, identity)
 }
 
 #[derive(Clone)]
@@ -272,5 +280,14 @@ impl reth_provider::StateProviderFactory for SharedProvider {
         &self,
     ) -> reth_provider::ProviderResult<Option<reth_provider::StateProviderBox>> {
         self.0.lock().unwrap().maybe_pending()
+    }
+}
+
+pub(crate) async fn wait_for_state(
+    watch: &mut outbe_tee::TeeAuthorityWatch,
+    expected: outbe_tee::TeeAuthorityState,
+) {
+    while watch.snapshot() != expected {
+        watch.changed().await.unwrap();
     }
 }

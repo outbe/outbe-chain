@@ -74,7 +74,16 @@ async fn restart_after_installed_candidate_only_reconciles_the_promoted_checkpoi
         io.fail = fail;
         assert_worker(
             io,
-            &[Action::Inspect, Action::Manifest, Action::Promoted],
+            &if fail.is_none() {
+                vec![
+                    Action::Inspect,
+                    Action::Manifest,
+                    Action::Promoted,
+                    Action::Inspect,
+                ]
+            } else {
+                vec![Action::Inspect, Action::Manifest, Action::Promoted]
+            },
             false,
         )
         .await;
@@ -94,6 +103,7 @@ async fn finalized_recovery_promotes_and_records_without_requesting_restart() {
             Action::Authorize,
             Action::Promote,
             Action::Promoted,
+            Action::Inspect,
         ],
         false,
     )
@@ -138,6 +148,7 @@ async fn submitted_finalized_binding_wins_over_a_crossed_activation_cutoff() {
             Action::Finalize(105, B256::repeat_byte(13)),
             Action::Promote,
             Action::Promoted,
+            Action::Inspect,
         ],
         false,
     )
@@ -510,7 +521,7 @@ async fn live_upgrade_and_lease_guard_share_identity_anchor_and_context_without_
             shutdown.clone(),
         );
         tokio::pin!(guard);
-        tokio::select! { result = &mut guard => panic!("guard stopped: {result:?}"), result = watch.changed() => result.unwrap() }
+        tokio::select! { result = &mut guard => panic!("guard stopped: {result:?}"), () = support::wait_for_state(&mut watch, TeeAuthorityState::Armed { enclave_id: old.manifest().enclave_id().unwrap(), valid_until: 1_800_001_000 }) => {} }
         assert!(watch.snapshot().is_authority_open());
         let (successor, _, _) =
             support::provider(&candidate, 105, 1_800_000_000, 1_800_001_000, false);
@@ -530,6 +541,10 @@ async fn live_upgrade_and_lease_guard_share_identity_anchor_and_context_without_
             consensus_timestamp: 1_800_000_000,
         };
         *shared.0.lock().unwrap() = successor;
+        notify.notify_one();
+        tokio::select! { result = &mut guard => panic!("guard died before promotion: {result:?}"), () = support::wait_for_state(&mut watch, TeeAuthorityState::SuspendedPolicyMismatch) => {} }
+        assert!(guard.as_mut().now_or_never().is_none());
+
         let io = ports::LiveUpgradeIo {
             inner: LivePromotionFixture {
                 manifest: old.manifest().clone(),
@@ -546,7 +561,11 @@ async fn live_upgrade_and_lease_guard_share_identity_anchor_and_context_without_
         let promoted = tokio::sync::Notify::new();
         assert_eq!(
             promotion::reconcile_submitted(&io, &promoted),
-            Some(CycleOutcome::Stop)
+            Some(if fail {
+                CycleOutcome::Stop
+            } else {
+                CycleOutcome::Wait
+            })
         );
         assert!(
             promoted.notified().now_or_never().is_none(),
@@ -582,9 +601,13 @@ async fn live_upgrade_and_lease_guard_share_identity_anchor_and_context_without_
                 *io.inner.actions.borrow(),
                 ["finalized", "durable", "promoted"]
             );
-            watch.changed().await.unwrap();
+            let armed = TeeAuthorityState::Armed {
+                enclave_id: candidate.manifest().enclave_id().unwrap(),
+                valid_until: 1_800_001_000,
+            };
+            support::wait_for_state(&mut watch, armed).await;
             notify.notify_one();
-            tokio::select! { result = &mut guard => panic!("guard stopped after promotion: {result:?}"), result = watch.changed() => result.unwrap() }
+            assert!(guard.as_mut().now_or_never().is_none());
             assert_eq!(
                 watch.snapshot(),
                 TeeAuthorityState::Armed {
@@ -593,10 +616,45 @@ async fn live_upgrade_and_lease_guard_share_identity_anchor_and_context_without_
                 }
             );
             assert!(owner.lock().unwrap().anchors.gate.is_armed());
+            *shared.0.lock().unwrap() =
+                support::provider(&candidate, 106, 1_800_000_000, 1_800_001_000, true).0;
+            notify.notify_one();
+            tokio::select! { result = &mut guard => panic!("guard died after promotion: {result:?}"), () = support::wait_for_state(&mut watch, TeeAuthorityState::SuspendedJailed) => {} }
+            assert!(guard.as_mut().now_or_never().is_none());
         }
         assert!(old.offer_key_ready().unwrap());
         assert!(candidate.offer_key_ready().unwrap());
         shutdown.cancel();
         assert_eq!(guard.await.unwrap(), None);
     }
+}
+
+#[tokio::test]
+async fn successful_promotion_keeps_polling_without_promoting_the_active_candidate_again() {
+    let io = RecordingIo::new().unwrap();
+    io.checkpoint(finalized(context()));
+    io.checkpoint(UpgradeJournalStateV1::Promoted {
+        context: context(),
+        security: security(),
+        submission: submission(),
+        finalized_height: 105,
+        finalized_hash: B256::repeat_byte(13),
+    });
+    io.journal.borrow_mut().push_back(Ok(None));
+    *io.authorization.borrow_mut() = Some(Ok(finalized_view(105)));
+    assert_worker(
+        io,
+        &[
+            Action::Inspect,
+            Action::Manifest,
+            Action::Authorize,
+            Action::Promote,
+            Action::Promoted,
+            Action::Inspect,
+            Action::Inspect,
+            Action::Inspect,
+        ],
+        false,
+    )
+    .await;
 }

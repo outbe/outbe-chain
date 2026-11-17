@@ -67,9 +67,17 @@ pub(crate) fn admitted_authority_state(
     })
 }
 
+/// Notify authority consumers only when the verdict actually changes.
+pub(crate) fn publish_state(channel: &outbe_tee::TeeAuthorityChannel, next: TeeAuthorityState) {
+    if channel.snapshot() != next {
+        channel.publish(next);
+    }
+}
+
 /// Failure never erases a previously verified execution key.
 fn publish_failure(channel: &outbe_tee::TeeAuthorityChannel, has_resident: bool) {
-    channel.publish(
+    publish_state(
+        channel,
         if has_resident || channel.snapshot().has_verified_resident_key() {
             TeeAuthorityState::SuspendedPolicyMismatch
         } else {

@@ -28,6 +28,7 @@ where
 {
     let _lifetime = AuthorityPublisherLifetime(authority.clone());
     let mut retired_at = 0;
+    let mut failed_state = None;
     let mut allow_bootstrap = config.anchors.gate.is_armed() && config.identity.validator.is_some();
     let mut interval = tokio::time::interval(Duration::from_secs(1));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -44,25 +45,27 @@ where
                 (&provider, protocol.as_ref()),
                 &mut config,
                 &authority,
+                (session.as_ref(), &mut retired_at),
                 &mut allow_bootstrap,
             ),
         };
-        match result {
+        let open = match result {
             Ok(state) => {
-                config.armed.send_replace(state.is_authority_open());
+                failed_state = None;
+                state.is_authority_open()
             }
             Err(error) => {
-                config.armed.send_replace(false);
-                return Err(error);
+                super::publish_failure(&authority, false);
+                let next = authority.snapshot();
+                if failed_state != Some(next) {
+                    tracing::warn!(%error, ?next, "TEE authority suspended; lease guard remains alive");
+                }
+                failed_state = Some(next);
+                false
             }
-        }
-        if config.anchors.gate.is_armed() && live.is_none() {
-            admission::retire_superseded_remote_sessions_v1(
-                &provider,
-                config.chain,
-                session.as_ref(),
-                &mut retired_at,
-            )?;
+        };
+        if *config.armed.borrow() != open {
+            config.armed.send_replace(open);
         }
     }
 }
@@ -111,7 +114,7 @@ where
     } else {
         state
     };
-    authority.publish(state);
+    super::publish_state(authority, state);
     if state == TeeAuthorityState::SuspendedPolicyMismatch
         && matches!(
             admitted,
@@ -209,6 +212,10 @@ fn legacy_refresh<P>(
     (provider, protocol): (&P, &dyn EngineProtocolState),
     config: &mut TeeLeaseGuardConfigV1,
     authority: &TeeAuthorityChannel,
+    (session, retired_at): (
+        &dyn outbe_execution::tee_remote_session::TeeSessionStateReader,
+        &mut u64,
+    ),
     allow_bootstrap: &mut bool,
 ) -> eyre::Result<TeeAuthorityState>
 where
@@ -217,13 +224,23 @@ where
     let resident =
         outbe_tee::resident_network_encryption_public_key_state_v1().map_err(eyre::Report::new);
     let has_resident = resident.as_ref().is_ok_and(Option::is_some);
-    let result = tick(
-        (provider, protocol),
-        (&config.chain, config.identity),
-        (&mut config.anchors, allow_bootstrap),
-        authority,
-        || resident,
-    );
+    let result = (|| {
+        if config.anchors.gate.is_armed() {
+            admission::retire_superseded_remote_sessions_v1(
+                provider,
+                config.chain,
+                session,
+                retired_at,
+            )?;
+        }
+        tick(
+            (provider, protocol),
+            (&config.chain, config.identity),
+            (&mut config.anchors, allow_bootstrap),
+            authority,
+            || resident,
+        )
+    })();
     if result.is_err() {
         super::publish_failure(authority, has_resident);
     }

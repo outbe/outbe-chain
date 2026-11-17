@@ -188,7 +188,7 @@ pub(crate) async fn wait_for_launcher_exit(
             let reason = tee_lease_exit_reason(None, shutdown);
             tracing::error!(%reason, "TEE authority publisher lost; execution remains alive");
         }
-        std::future::pending::<()>().await;
+        std::future::pending::<std::convert::Infallible>().await
     };
     tokio::select! {
         () = shutdown.engine_exited() => {
@@ -199,7 +199,7 @@ pub(crate) async fn wait_for_launcher_exit(
             info!("consensus node exited");
             LauncherExitCause::ConsensusExited
         }
-        () = tee_lease_exit => unreachable!("authority monitoring never exits execution"),
+        res = tee_lease_exit => match res {},
         signal = tokio::signal::ctrl_c() => {
             if let Err(error) = signal {
                 shutdown.record_failure(

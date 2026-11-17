@@ -268,3 +268,86 @@ fn validator_gate_never_arms_on_rejection_or_offer_mismatch() {
     );
     assert!(!failing_anchors.gate.is_armed());
 }
+
+#[tokio::test]
+async fn live_admission_recovers_validator_binding_and_provider_read_failures() {
+    use crate::admission_authority::{guard::run_lease_guard, live::*, test_support as support};
+    use futures::FutureExt as _;
+    use outbe_tee::{TeeAuthorityChannel, TeeAuthorityState};
+    use std::sync::{Arc, Mutex};
+    for read_failure in [false, true] {
+        let context = support::context(9);
+        let (mut broken, chain, mut identity, _) = build_tee_admission_mock_provider(
+            &[(7, 1_800_000_000)],
+            SeededTeeState {
+                valid_until: 1_800_001_000,
+                has_validator_binding: true,
+                validator_binding_mismatch: !read_failure,
+                validator_jailed: false,
+                offer_key: alloy_primitives::B256::from(
+                    context.network_encryption_public().unwrap(),
+                ),
+            },
+        );
+        support::bind_context(&broken, &context);
+        identity.expected_enclave_id = Some(context.manifest().enclave_id().unwrap());
+        broken.fail_state_read = read_failure;
+        let provider = support::SharedProvider(Arc::new(Mutex::new(broken)));
+        let channel = TeeAuthorityChannel::default();
+        let mut watch = channel.subscribe();
+        let anchors = crate::admission::TeeLeaseGuardAnchorsV1 {
+            gate: super::TeeLeaseGuardGateV1::Armed,
+            durable: None,
+        };
+        let owner = Arc::new(
+            LiveTeeRuntimeV1::new(
+                LiveTeeSnapshotV1 {
+                    identity,
+                    anchors,
+                    context: context.clone(),
+                },
+                channel.clone(),
+            )
+            .unwrap(),
+        );
+        if !read_failure {
+            assert_eq!(crate::admission::read_gated_finalized_local_tee_admission_with_resident_offer(
+                (&crate::OutbeRuntime::new(), &provider), chain, identity, &mut anchors.clone(),
+                || Ok(Some(alloy_primitives::B256::from(context.network_encryption_public().unwrap())))
+            ).unwrap(), Some(outbe_consensus::validators::LocalTeeRuntimeAdmissionV1::Rejected(outbe_consensus::validators::LocalTeeRuntimeRejectionV1::ValidatorBindingMismatch)));
+        }
+        let notify = Arc::new(tokio::sync::Notify::new());
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let guard = run_lease_guard(
+            provider.clone(),
+            (
+                Arc::new(crate::OutbeRuntime::new()),
+                Arc::new(crate::OutbeRuntime::new()),
+            ),
+            crate::admission::TeeLeaseGuardConfigV1 {
+                chain,
+                identity,
+                anchors,
+                finalization_notify: notify.clone(),
+                armed: tokio::sync::watch::channel(true).0,
+            },
+            (channel, Some(owner.clone())),
+            cancel.clone(),
+        );
+        tokio::pin!(guard);
+        tokio::select! { result = &mut guard => panic!("guard terminated on recoverable failure: {result:?}"), () = support::wait_for_state(&mut watch, TeeAuthorityState::SuspendedPolicyMismatch) => {} }
+        assert!(guard.as_mut().now_or_never().is_none());
+        assert!(watch.snapshot().has_verified_resident_key());
+        *provider.0.lock().unwrap() =
+            support::provider(&context, 8, 1_800_000_000, 1_800_001_000, false).0;
+        notify.notify_one();
+        let armed = TeeAuthorityState::Armed {
+            enclave_id: context.manifest().enclave_id().unwrap(),
+            valid_until: 1_800_001_000,
+        };
+        tokio::select! { result = &mut guard => panic!("guard did not recover: {result:?}"), () = support::wait_for_state(&mut watch, armed) => {} }
+        assert!(Arc::ptr_eq(&owner.lock().unwrap().context, &context));
+        cancel.cancel();
+        assert_eq!(guard.await.unwrap(), None);
+    }
+}

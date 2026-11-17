@@ -78,8 +78,7 @@ impl LiveTeeRuntimeV1 {
 
     pub(crate) fn lock(&self) -> Result<MutexGuard<'_, LiveTeeSnapshotV1>, LiveTeeError> {
         self.active.lock().map_err(|_| {
-            self.authority
-                .publish(TeeAuthorityState::SuspendedPolicyMismatch);
+            super::publish_state(&self.authority, TeeAuthorityState::SuspendedPolicyMismatch);
             LiveTeeError::LockPoisoned
         })
     }
@@ -195,12 +194,11 @@ impl LiveTeeRuntimeV1 {
                 context: candidate,
             };
             self.bootstrap_allowed.store(false, Ordering::Relaxed);
-            self.authority.publish(state);
+            super::publish_state(&self.authority, state);
             Ok(())
         })();
         if result.is_err() {
-            self.authority
-                .publish(TeeAuthorityState::SuspendedPolicyMismatch);
+            super::publish_state(&self.authority, TeeAuthorityState::SuspendedPolicyMismatch);
         }
         result
     }

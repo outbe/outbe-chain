@@ -548,7 +548,7 @@ async fn live_admission_reopens_after_jail_and_expiry_without_stopping_or_losing
         notify.notify_one();
         tokio::select! {
             result = &mut guard => panic!("guard exited during reversible admission: {result:?}"),
-            result = watch.changed() => result.unwrap(),
+            () = support::wait_for_state(&mut watch, expected) => {},
         }
         assert_eq!(watch.snapshot(), expected);
         assert!(watch.snapshot().has_verified_resident_key());
@@ -600,9 +600,16 @@ async fn live_admission_invariant_failure_closes_authority_with_typed_error_and_
         )
         .unwrap(),
     );
-    let (armed, armed_rx) = tokio::sync::watch::channel(true);
-    let error = run_lease_guard(
-        provider,
+    let (armed, mut armed_rx) = tokio::sync::watch::channel(true);
+    let shared = support::SharedProvider(Arc::new(Mutex::new(provider)));
+    let error = owner
+        .refresh(&shared, &crate::OutbeRuntime::new(), &chain)
+        .unwrap_err();
+    let notify = Arc::new(tokio::sync::Notify::new());
+    let shutdown = tokio_util::sync::CancellationToken::new();
+    let mut watch = channel.subscribe();
+    let guard = run_lease_guard(
+        shared.clone(),
         (
             Arc::new(crate::OutbeRuntime::new()),
             Arc::new(crate::OutbeRuntime::new()),
@@ -611,14 +618,18 @@ async fn live_admission_invariant_failure_closes_authority_with_typed_error_and_
             chain,
             identity,
             anchors,
-            finalization_notify: Arc::new(tokio::sync::Notify::new()),
+            finalization_notify: notify.clone(),
             armed,
         },
         (channel.clone(), Some(owner.clone())),
-        tokio_util::sync::CancellationToken::new(),
-    )
-    .await
-    .unwrap_err();
+        shutdown.clone(),
+    );
+    tokio::pin!(guard);
+    use futures::FutureExt as _;
+    assert!(
+        guard.as_mut().now_or_never().is_none(),
+        "an offer mismatch must suspend, not terminate, the guard"
+    );
     assert!(matches!(
         error.downcast_ref::<crate::errors::TeeAuthorityError>(),
         Some(crate::errors::TeeAuthorityError::ResidentOfferKeyMismatch { .. })
@@ -627,9 +638,20 @@ async fn live_admission_invariant_failure_closes_authority_with_typed_error_and_
         channel.snapshot(),
         TeeAuthorityState::SuspendedPolicyMismatch
     );
+    tokio::select! { result = &mut guard => panic!("guard stopped on invariant failure: {result:?}"), result = armed_rx.changed() => result.unwrap() }
     assert!(!*armed_rx.borrow());
     assert!(Arc::ptr_eq(&owner.lock().unwrap().context, &context));
     assert!(context.offer_key_ready().unwrap());
+    *shared.0.lock().unwrap() =
+        support::provider(&context, 8, 1_800_000_000, 1_800_001_000, false).0;
+    notify.notify_one();
+    let expected = TeeAuthorityState::Armed {
+        enclave_id: context.manifest().enclave_id().unwrap(),
+        valid_until: 1_800_001_000,
+    };
+    tokio::select! { result = &mut guard => panic!("guard stopped: {result:?}"), () = support::wait_for_state(&mut watch, expected) => {} }
+    shutdown.cancel();
+    assert_eq!(guard.await.unwrap(), None);
 }
 
 #[tokio::test]
@@ -672,7 +694,13 @@ async fn live_founder_publishes_bootstrap_then_finalized_authority_on_the_same_g
     );
     assert!(watch.snapshot().is_authority_open());
     assert!(!watch.snapshot().has_finalized_lease());
-    watch.changed().await.unwrap();
+    support::wait_for_state(
+        &mut watch,
+        TeeAuthorityState::ArmedBootstrap {
+            enclave_id: context.manifest().enclave_id().unwrap(),
+        },
+    )
+    .await;
     let notify = Arc::new(tokio::sync::Notify::new());
     let shutdown = tokio_util::sync::CancellationToken::new();
     let guard = run_lease_guard(
@@ -712,9 +740,59 @@ async fn live_founder_publishes_bootstrap_then_finalized_authority_on_the_same_g
                 support::provider(&context, height, 1_700_000_001, 1_800_001_000, false).0;
         }
         notify.notify_one();
-        tokio::select! { result = &mut guard => panic!("founder guard stopped: {result:?}"), result = watch.changed() => result.unwrap() }
+        tokio::select! { result = &mut guard => panic!("founder guard stopped: {result:?}"), () = support::wait_for_state(&mut watch, expected) => {} }
         assert_eq!(watch.snapshot(), expected);
     }
     shutdown.cancel();
     assert_eq!(guard.await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn live_refresh_does_not_notify_an_unchanged_authority_state() {
+    use crate::admission_authority::{live::*, test_support as support};
+    use futures::FutureExt as _;
+    let context = support::context(9);
+    let (mut provider, chain, identity) =
+        support::provider(&context, 7, 1_800_000_000, 1_800_001_000, false);
+    let channel = outbe_tee::TeeAuthorityChannel::default();
+    let mut watch = channel.subscribe();
+    let owner = LiveTeeRuntimeV1::new(
+        LiveTeeSnapshotV1 {
+            identity,
+            anchors: crate::admission::TeeLeaseGuardAnchorsV1 {
+                gate: super::TeeLeaseGuardGateV1::Armed,
+                durable: None,
+            },
+            context,
+        },
+        channel,
+    )
+    .unwrap();
+    owner
+        .refresh(&provider, &crate::OutbeRuntime::new(), &chain)
+        .unwrap();
+    assert!(watch.changed().now_or_never().unwrap().is_ok());
+    owner
+        .refresh(&provider, &crate::OutbeRuntime::new(), &chain)
+        .unwrap();
+    assert!(
+        watch.changed().now_or_never().is_none(),
+        "an unchanged finalized authority must not notify subscribers"
+    );
+    provider.fail_state_read = true;
+    assert!(owner
+        .refresh(&provider, &crate::OutbeRuntime::new(), &chain)
+        .is_err());
+    assert!(watch.changed().now_or_never().unwrap().is_ok());
+    assert_eq!(
+        watch.snapshot(),
+        outbe_tee::TeeAuthorityState::SuspendedPolicyMismatch
+    );
+    assert!(owner
+        .refresh(&provider, &crate::OutbeRuntime::new(), &chain)
+        .is_err());
+    assert!(
+        watch.changed().now_or_never().is_none(),
+        "repeated failure must not notify subscribers"
+    );
 }

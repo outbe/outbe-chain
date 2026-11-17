@@ -22,7 +22,7 @@ pub(crate) fn recover_finalized(
             return CycleOutcome::Stop;
         }
         info!(finalized_height, %finalized_hash, "reconciled already-promoted enclave candidate");
-        return CycleOutcome::Stop;
+        return CycleOutcome::Wait;
     }
     match io.replacement_authorization(&committed.node_id) {
         Ok(authorized) => {
@@ -35,7 +35,7 @@ pub(crate) fn recover_finalized(
                 return CycleOutcome::Stop;
             }
             info!(finalized_height, %finalized_hash, "finalized enclave candidate promotion completed without execution restart");
-            CycleOutcome::Stop
+            CycleOutcome::Wait
         }
         Err(error) => {
             tracing::error!(error = %error, "reconstruct finalized candidate promotion authority failed");
@@ -96,7 +96,7 @@ pub(crate) fn reconcile_submitted(
                 finalized_hash = %authorized.view.block_hash,
                 "finalized enclave candidate promotion completed without execution restart"
             );
-            Some(CycleOutcome::Stop)
+            Some(CycleOutcome::Wait)
         }
         Err(
             outbe_execution::tee_remote_session::LocalRegistryAdmissionError::ReplacementBindingMissing,

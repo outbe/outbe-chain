@@ -221,9 +221,10 @@ where
             Ok(())
         })();
         if result.is_err() {
-            self.owner
-                .authority
-                .publish(outbe_tee::TeeAuthorityState::SuspendedPolicyMismatch);
+            crate::admission_authority::publish_state(
+                &self.owner.authority,
+                outbe_tee::TeeAuthorityState::SuspendedPolicyMismatch,
+            );
         }
         result
     }
