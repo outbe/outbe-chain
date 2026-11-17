@@ -17,15 +17,15 @@ use std::sync::Mutex;
 
 fn cancun_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
     use outbe_primitives::tee_test_utils::{
-        gramine_direct_policy_v1, tee_attestation_v1_extra_field,
+        no_attestation_dev_policy_v1, tee_attestation_v1_extra_field,
     };
 
     let mut spec = ChainSpecBuilder::from(&*MAINNET).cancun_activated().build();
     spec.chain = CHAIN_ID.into();
     spec.genesis.config.chain_id = CHAIN_ID;
     spec.genesis.timestamp = 1;
-    let policy = gramine_direct_policy_v1(spec.chain().id(), spec.genesis_hash())
-        .expect("test GramineDirectDev policy is canonical");
+    let policy = no_attestation_dev_policy_v1(spec.chain().id(), spec.genesis_hash())
+        .expect("test NoAttestationDev policy is canonical");
     spec.genesis.config.extra_fields.insert(
         "teeAttestationV1".to_owned(),
         tee_attestation_v1_extra_field(&policy).expect("test TEE activation manifest is canonical"),

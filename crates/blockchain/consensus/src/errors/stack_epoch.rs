@@ -504,9 +504,9 @@ pub enum StackEpochError {
         reason: String,
     },
 
-    /// Indicates that reconnecting to the GramineDirectDev enclave failed.
-    #[error("GramineDirectDev enclave reconnect failed: {reason}")]
-    GramineDirectDevReconnectFailed {
+    /// Indicates that reconnecting to the NoAttestationDev enclave failed.
+    #[error("NoAttestationDev enclave reconnect failed: {reason}")]
+    NoAttestationDevReconnectFailed {
         /// Error description.
         reason: String,
     },
@@ -683,9 +683,9 @@ impl StackEpochError {
         }
     }
 
-    /// Creates an error when reconnecting to the GramineDirectDev enclave fails.
-    pub fn gramine_direct_dev_reconnect_failed(error: impl std::fmt::Display) -> Self {
-        Self::GramineDirectDevReconnectFailed {
+    /// Creates an error when reconnecting to the NoAttestationDev enclave fails.
+    pub fn no_attestation_dev_reconnect_failed(error: impl std::fmt::Display) -> Self {
+        Self::NoAttestationDevReconnectFailed {
             reason: error.to_string(),
         }
     }

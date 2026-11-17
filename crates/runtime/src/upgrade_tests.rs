@@ -328,7 +328,7 @@ async fn staged_policy_failures_stop_before_submitted_authorization() {
         initial_tee_policy_v1, InitialTeeProfileV1, GRAMINE_DIRECT_DEV_CHAIN_ID,
     };
     let mut policy = initial_tee_policy_v1(
-        InitialTeeProfileV1::GramineDirectDev,
+        InitialTeeProfileV1::NoAttestationDev,
         GRAMINE_DIRECT_DEV_CHAIN_ID,
         B256::repeat_byte(1),
     )

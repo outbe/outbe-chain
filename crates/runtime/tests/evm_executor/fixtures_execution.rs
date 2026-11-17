@@ -180,10 +180,12 @@ pub(super) fn sample_tee_bootstrap_payload_for(
     requested_valid_until: u64,
     validators: &[outbe_primitives::tee_test_utils::DevValidatorV1],
 ) -> outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2 {
-    use outbe_primitives::tee_test_utils::{gramine_direct_bootstrap_v2, gramine_direct_policy_v1};
+    use outbe_primitives::tee_test_utils::{
+        gramine_direct_bootstrap_v2, no_attestation_dev_policy_v1,
+    };
 
-    let policy = gramine_direct_policy_v1(CHAIN_ID, MAINNET.genesis_hash())
-        .expect("test GramineDirectDev policy is canonical");
+    let policy = no_attestation_dev_policy_v1(CHAIN_ID, MAINNET.genesis_hash())
+        .expect("test NoAttestationDev policy is canonical");
     gramine_direct_bootstrap_v2(
         policy,
         committee_snapshot_hash,
@@ -191,7 +193,7 @@ pub(super) fn sample_tee_bootstrap_payload_for(
         requested_valid_until,
         validators,
     )
-    .expect("test GramineDirectDev OST3 payload is canonical")
+    .expect("test NoAttestationDev OST3 payload is canonical")
 }
 
 pub(super) fn test_regular_tx() -> reth_ethereum::TransactionSigned {

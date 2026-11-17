@@ -23,7 +23,7 @@ use outbe_primitives::{
     },
     system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT,
     tee_test_utils::{
-        gramine_direct_bootstrap_v2, gramine_direct_policy_v1, tee_attestation_v1_extra_field,
+        gramine_direct_bootstrap_v2, no_attestation_dev_policy_v1, tee_attestation_v1_extra_field,
         DevValidatorV1,
     },
     OutbeHeader, OutbePayloadAttributes,
@@ -208,7 +208,7 @@ async fn rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
     let proposer = signer.address();
 
     // Block 1 now mandates the canonical OST3 TEE-bootstrap system tx. The genesis
-    // config must carry the GramineDirectDev `teeAttestationV1` activation manifest
+    // config must carry the NoAttestationDev `teeAttestationV1` activation manifest
     // (the ChainSpec authority the executor checks the payload's policy against).
     // The proposer must inject the bootstrap payload via the consensus bridge.
     // Adding the config field does not change the genesis block hash, so the policy
@@ -250,12 +250,12 @@ async fn rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
         }
     }
     let genesis_hash = chain_spec_with_genesis(genesis.clone()).genesis_hash();
-    let tee_policy = gramine_direct_policy_v1(DEVNET_CHAIN_ID, genesis_hash)
-        .expect("GramineDirectDev devnet TEE policy is canonical");
+    let tee_policy = no_attestation_dev_policy_v1(DEVNET_CHAIN_ID, genesis_hash)
+        .expect("NoAttestationDev devnet TEE policy is canonical");
     genesis.config.extra_fields.insert(
         "teeAttestationV1".to_owned(),
         tee_attestation_v1_extra_field(&tee_policy)
-            .expect("GramineDirectDev TEE activation manifest is canonical"),
+            .expect("NoAttestationDev TEE activation manifest is canonical"),
     );
     let chain_spec = chain_spec_with_genesis(genesis);
 
@@ -274,7 +274,7 @@ async fn rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
                 bls_minpk_public: genesis_validator_pubkey(),
             }],
         )
-        .expect("GramineDirectDev OST3 bootstrap payload is canonical"),
+        .expect("NoAttestationDev OST3 bootstrap payload is canonical"),
     );
     let runtime = Runtime::test();
 

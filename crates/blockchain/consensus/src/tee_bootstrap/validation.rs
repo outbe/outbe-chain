@@ -10,7 +10,7 @@ pub(super) fn evidence_intent(evidence: &AttestationEvidenceV1) -> &Registration
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum BootstrapEvidenceKind {
     Dcap,
-    GramineDirectDev,
+    NoAttestationDev,
 }
 
 pub(super) fn bootstrap_evidence_kind(
@@ -22,7 +22,7 @@ pub(super) fn bootstrap_evidence_kind(
         (AttestationMode::DcapRequired, false) => {
             Err(crate::errors::TeeBootstrapError::DcapRequiredCannotUseDevelopmentSession.into())
         }
-        (AttestationMode::GramineDirectDev, _) => Ok(BootstrapEvidenceKind::GramineDirectDev),
+        (AttestationMode::NoAttestationDev, _) => Ok(BootstrapEvidenceKind::NoAttestationDev),
     }
 }
 
@@ -190,7 +190,7 @@ mod validation_regression {
             validator_signature: signer.sign_hash(&binding.binding_hash().unwrap()).unwrap(),
             node_binding_signature: node_signature(binding.binding_hash().unwrap()),
             validator_binding: binding,
-            evidence: AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+            evidence: AttestationEvidenceV1::NoAttestationDev(NoAttestationDevEvidenceV1 {
                 dev_attestation_public: intent.attestation_ed25519,
                 dev_signature: enclave_signature,
                 intent,
@@ -271,7 +271,7 @@ mod validation_regression {
                 validate_submission(&submission, &policy, &committee)
                     .unwrap_err()
                     .to_string(),
-                "OST3 GramineDirectDev evidence does not match the outer enclave proof"
+                "OST3 NoAttestationDev evidence does not match the outer enclave proof"
             );
         }
     }

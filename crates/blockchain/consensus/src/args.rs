@@ -8,7 +8,7 @@ use outbe_primitives::tee_attestation_v1::AttestationMode;
 ///
 /// This is deliberately independent from [`AttestationMode`]: a development
 /// network may run a production NodeHost-authorized enclave inside real SGX
-/// while publishing only `GramineDirectDev` evidence.
+/// while publishing only `NoAttestationDev` evidence.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
 pub enum TeeSessionMode {
     /// Preserve the historical policy defaults: DCAP uses NodeHost. The
@@ -35,7 +35,7 @@ impl TeeSessionMode {
         match (self, policy) {
             (Self::PolicyDefault, AttestationMode::DcapRequired)
             | (Self::ProductionNodeHost, _) => Ok(ResolvedTeeSession::ProductionNodeHost),
-            (Self::PolicyDefault | Self::Development, AttestationMode::GramineDirectDev) => {
+            (Self::PolicyDefault | Self::Development, AttestationMode::NoAttestationDev) => {
                 Ok(ResolvedTeeSession::Development)
             }
             (Self::Development, AttestationMode::DcapRequired) => {
@@ -183,7 +183,7 @@ pub struct ConsensusArgs {
     /// Path or `host:port` endpoint for the `outbe-tee-enclave` sidecar.
     /// Every `teeAttestationV1` ChainSpec requires it. The local session selection
     /// is independent from the genesis-fixed attestation policy.
-    /// `DcapRequired` always needs NodeHost. `GramineDirectDev` can use
+    /// `DcapRequired` always needs NodeHost. `NoAttestationDev` can use
     /// either the development transport or an explicitly selected production
     /// NodeHost session. Missing or rejected transport stops startup and never
     /// selects an in-process stub or another attestation mode.
@@ -192,7 +192,7 @@ pub struct ConsensusArgs {
 
     /// Local node-to-enclave authorization protocol. This never changes the
     /// genesis-fixed attestation policy and never provides a fallback. Use
-    /// `production-node-host` with a GramineDirectDev chain to run the
+    /// `production-node-host` with a NoAttestationDev chain to run the
     /// production enclave under real SGX with remote attestation disabled.
     #[arg(
         long = "tee-session-mode",
@@ -545,19 +545,19 @@ mod tests {
         );
         assert_eq!(
             TeeSessionMode::PolicyDefault
-                .resolve(AttestationMode::GramineDirectDev)
+                .resolve(AttestationMode::NoAttestationDev)
                 .unwrap(),
             ResolvedTeeSession::Development
         );
         assert_eq!(
             TeeSessionMode::ProductionNodeHost
-                .resolve(AttestationMode::GramineDirectDev)
+                .resolve(AttestationMode::NoAttestationDev)
                 .unwrap(),
             ResolvedTeeSession::ProductionNodeHost
         );
         assert_eq!(
             TeeSessionMode::Development
-                .resolve(AttestationMode::GramineDirectDev)
+                .resolve(AttestationMode::NoAttestationDev)
                 .unwrap(),
             ResolvedTeeSession::Development
         );

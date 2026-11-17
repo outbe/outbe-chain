@@ -403,12 +403,12 @@ fn bootstrap_evidence_depends_on_policy_not_local_session_security() {
         BootstrapEvidenceKind::Dcap
     );
     assert_eq!(
-        bootstrap_evidence_kind(AttestationMode::GramineDirectDev, true).unwrap(),
-        BootstrapEvidenceKind::GramineDirectDev
+        bootstrap_evidence_kind(AttestationMode::NoAttestationDev, true).unwrap(),
+        BootstrapEvidenceKind::NoAttestationDev
     );
     assert_eq!(
-        bootstrap_evidence_kind(AttestationMode::GramineDirectDev, false).unwrap(),
-        BootstrapEvidenceKind::GramineDirectDev
+        bootstrap_evidence_kind(AttestationMode::NoAttestationDev, false).unwrap(),
+        BootstrapEvidenceKind::NoAttestationDev
     );
     assert!(bootstrap_evidence_kind(AttestationMode::DcapRequired, false).is_err());
 }

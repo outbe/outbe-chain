@@ -59,7 +59,7 @@ pub(crate) async fn prepare(
     }
     // Every network declares exactly one attestation policy in genesis. The
     // local session protocol is an independent, explicit operator choice:
-    // GramineDirectDev may use either the development transport or a real
+    // NoAttestationDev may use either the development transport or a real
     // SGX, production NodeHost session. There is no connection fallback.
     // A validator with no socket still fails here. A socket, validator or
     // TEE fullnode, keeps the checks below.

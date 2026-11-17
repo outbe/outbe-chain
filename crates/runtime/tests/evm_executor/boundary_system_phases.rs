@@ -659,7 +659,9 @@ fn enclave_upgrade_deadline_uses_configured_slash_and_credits_promis_limit_once(
 
 #[test]
 fn update_activates_enclave_upgrade_and_enclave_upgrade_deadline_enforces_it_in_same_begin_block() {
-    use outbe_primitives::{block::ProtocolModule as _, tee_test_utils::gramine_direct_policy_v1};
+    use outbe_primitives::{
+        block::ProtocolModule as _, tee_test_utils::no_attestation_dev_policy_v1,
+    };
     use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 
     let validator = Address::repeat_byte(0x76);
@@ -684,7 +686,7 @@ fn update_activates_enclave_upgrade_and_enclave_upgrade_deadline_enforces_it_in_
             .write(10)
             .unwrap();
 
-        let initial_policy = gramine_direct_policy_v1(CHAIN_ID, genesis_hash).unwrap();
+        let initial_policy = no_attestation_dev_policy_v1(CHAIN_ID, genesis_hash).unwrap();
         let initial_policy_hash = initial_policy.policy_hash().unwrap();
         let mut registry = outbe_teeregistry::TeeRegistry::new(storage.clone());
         registry.install_initial_policy_v1(&initial_policy).unwrap();
