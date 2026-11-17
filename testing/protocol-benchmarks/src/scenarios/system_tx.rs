@@ -255,12 +255,12 @@ fn sample_boundary() -> DkgBoundaryArtifact {
 
 fn sample_tee_bootstrap() -> Result<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2, String> {
     use outbe_primitives::tee_test_utils::{
-        gramine_direct_bootstrap_v2, gramine_direct_policy_v1, DevValidatorV1,
+        gramine_direct_bootstrap_v2, no_attestation_dev_policy_v1, DevValidatorV1,
     };
 
     let mut consensus_public = [0_u8; 48];
     consensus_public[0] = 1;
-    let policy = gramine_direct_policy_v1(CHAIN_ID, B256::repeat_byte(0x11))
+    let policy = no_attestation_dev_policy_v1(CHAIN_ID, B256::repeat_byte(0x11))
         .map_err(|error| error.to_string())?;
     gramine_direct_bootstrap_v2(
         policy,

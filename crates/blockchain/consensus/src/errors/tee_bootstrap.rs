@@ -149,8 +149,8 @@ pub enum TeeBootstrapError {
     /// Indicates that the committed NodeHost authorization is invalid.
     #[error("invalid committed NodeHost authorization: {0}")]
     InvalidCommittedNodeHostAuthorization(String),
-    /// Indicates that the GramineDirectDev session lacks its enclave identity quote.
-    #[error("GramineDirectDev session did not retain its enclave identity quote")]
+    /// Indicates that the NoAttestationDev session lacks its enclave identity quote.
+    #[error("NoAttestationDev session did not retain its enclave identity quote")]
     DevSessionMissingIdentityQuote,
     /// Indicates that the validator NodeHost binding is invalid.
     #[error("invalid validator NodeHost binding: {0}")]
@@ -179,8 +179,8 @@ pub enum TeeBootstrapError {
     /// Indicates that an OST3 submission does not prove a canonical committee registration.
     #[error("OST3 submission does not prove one canonical committee registration")]
     SubmissionNotCanonicalCommitteeRegistration,
-    /// Indicates that the GramineDirectDev evidence does not match the outer enclave proof.
-    #[error("OST3 GramineDirectDev evidence does not match the outer enclave proof")]
+    /// Indicates that the NoAttestationDev evidence does not match the outer enclave proof.
+    #[error("OST3 NoAttestationDev evidence does not match the outer enclave proof")]
     DevEvidenceMismatchOuterProof,
     /// Indicates that signing a prehash with the NodeHost secp256k1 key failed.
     #[error("{0}")]

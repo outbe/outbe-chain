@@ -179,7 +179,7 @@ where
                         crate::args::ResolvedTeeSession::Development => {
                             let development = outbe_tee::EnclaveClient::connect_endpoint(&endpoint)
                                 .map_err(
-                                    crate::errors::StackEpochError::gramine_direct_dev_reconnect_failed,
+                                    crate::errors::StackEpochError::no_attestation_dev_reconnect_failed,
                                 )?;
                             (
                                 outbe_tee::RuntimeEnclaveClient::Development(Box::new(development)),
@@ -377,7 +377,7 @@ fn verify_restarted_validator_holds_chain_offer_key(
         crate::args::ResolvedTeeSession::Development => {
             outbe_tee::RuntimeEnclaveClient::Development(Box::new(
                 outbe_tee::EnclaveClient::connect_endpoint(endpoint)
-                    .map_err(crate::errors::StackEpochError::gramine_direct_dev_reconnect_failed)?,
+                    .map_err(crate::errors::StackEpochError::no_attestation_dev_reconnect_failed)?,
             ))
         }
     };

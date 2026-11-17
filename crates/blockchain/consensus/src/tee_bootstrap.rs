@@ -23,7 +23,7 @@ use commonware_runtime::Clock;
 use outbe_primitives::signer::OutbeEvmSigner;
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapEvidenceV1,
-    EnclaveInitializationManifestV1, GramineDirectEvidenceV1, NodeIdV1, RegistrationIntentV1,
+    EnclaveInitializationManifestV1, NoAttestationDevEvidenceV1, NodeIdV1, RegistrationIntentV1,
     TeePolicyV1, ValidatorNodeBindingV1, ENCLAVE_ID_DOMAIN_V1, MAX_ATTESTATION_EVIDENCE_BYTES,
 };
 use outbe_primitives::tee_bootstrap_v2::{

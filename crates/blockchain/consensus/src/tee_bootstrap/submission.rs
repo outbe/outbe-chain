@@ -3,7 +3,7 @@ use super::*;
 /// Build this validator's complete block-1 OST3 submission. Production quote
 /// generation is available only through the NodeHost-authorized enclave.
 /// Collateral acquisition is host-only startup work. The separate development
-/// mode signs an explicit GramineDirectDev intent and never creates a DCAP
+/// mode signs an explicit NoAttestationDev intent and never creates a DCAP
 /// verdict or hardware-attestation claim.
 pub fn build_local_tee_bootstrap_submission_v2(
     client: &mut RuntimeEnclaveClient,
@@ -67,10 +67,10 @@ impl LocalRegistrationRequest<'_> {
     ) -> eyre::Result<LocalEnclaveIdentity> {
         match (self.policy.attestation_mode, client) {
             (
-                AttestationMode::DcapRequired | AttestationMode::GramineDirectDev,
+                AttestationMode::DcapRequired | AttestationMode::NoAttestationDev,
                 RuntimeEnclaveClient::Production(_),
             ) => production_identity(self.production_manifest, &self.node_id, self.policy),
-            (AttestationMode::GramineDirectDev, RuntimeEnclaveClient::Development(dev)) => {
+            (AttestationMode::NoAttestationDev, RuntimeEnclaveClient::Development(dev)) => {
                 development_identity(dev.quote(), &self.node_id, self.policy)
             }
             (AttestationMode::DcapRequired, RuntimeEnclaveClient::Development(_)) => Err(
@@ -270,10 +270,10 @@ fn create_evidence(
                 crate::errors::TeeBootstrapError::DcapRequiredCannotUseDevelopmentSession.into(),
             );
         }
-        (BootstrapEvidenceKind::GramineDirectDev, client) => {
+        (BootstrapEvidenceKind::NoAttestationDev, client) => {
             let enclave_signature = sign_dev_intent(client, &intent)?;
             (
-                AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+                AttestationEvidenceV1::NoAttestationDev(NoAttestationDevEvidenceV1 {
                     transition_key_ready_proof: None,
                     intent,
                     dev_attestation_public: attestation_ed25519,
