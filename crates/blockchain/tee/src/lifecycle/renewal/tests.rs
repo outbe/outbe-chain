@@ -6,14 +6,14 @@ fn schedule_preserves_half_lease_window_and_exclusive_expiry() {
     for (now, expected) in [
         (
             99,
-            RenewalStep::NotDue {
+            Some(RenewalStep::NotDue {
                 opens_at_timestamp: 100,
-            },
+            }),
         ),
-        (100, RenewalStep::Due),
-        (199, RenewalStep::Due),
-        (200, RenewalStep::LeaseAlreadyExpiredNeedsRejoin),
-        (201, RenewalStep::LeaseAlreadyExpiredNeedsRejoin),
+        (100, None),
+        (199, None),
+        (200, Some(RenewalStep::LeaseAlreadyExpiredNeedsRejoin)),
+        (201, Some(RenewalStep::LeaseAlreadyExpiredNeedsRejoin)),
     ] {
         assert_eq!(renewal_schedule_v1(now, 200, 200).unwrap(), expected);
     }
@@ -380,4 +380,101 @@ async fn expired_pending_renew_waits_without_replay_then_releases_same_identity_
     .unwrap();
     journal.begin(rejoin.clone()).unwrap();
     assert_eq!(journal.load().unwrap(), Some(rejoin));
+}
+
+// A completed onboarding journal remains the last record until the next service begin.
+#[tokio::test]
+async fn finalized_onboarding_allows_renewal_only_after_the_resident_key_is_imported() {
+    for (kind, ready) in [
+        (ServiceTxKindV1::Register, true),
+        (ServiceTxKindV1::UpgradeTransition, true),
+        (ServiceTxKindV1::Register, false),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let live = context(9);
+        let signer = Signer::default();
+        if ready {
+            import_test_key(&live);
+        }
+        let mut chain = Chain::new(view(&live), root.path());
+        let mut journal = ServiceTxJournalV1::open(root.path()).unwrap();
+        finalized_onboarding(&mut chain, &live, &signer, &mut journal, kind);
+        let result = renew_once_v1(
+            &chain,
+            &signer,
+            &live,
+            &mut journal,
+            RenewalUpgradePhaseV1::Idle,
+        )
+        .await;
+        if ready {
+            assert!(
+                matches!(
+                    result,
+                    Ok(RenewalStep::Submitted {
+                        replayed: false,
+                        ..
+                    })
+                ),
+                "{kind:?}: {result:?}"
+            );
+            assert_eq!(
+                journal.load().unwrap().unwrap().kind,
+                ServiceTxKindV1::Renew
+            );
+            assert_eq!(journal.load().unwrap().unwrap().nonce, 4);
+            assert_eq!(chain.sent.lock().unwrap().len(), 1);
+        } else {
+            assert!(matches!(result, Err(RenewalError::PendingOtherOperation)));
+            assert!(chain.sent.lock().unwrap().is_empty());
+            assert_eq!(journal.load().unwrap().unwrap().kind, kind);
+        }
+    }
+}
+
+#[tokio::test]
+async fn pending_renewal_abi_error_retains_its_typed_source() {
+    use super::prepare::{signed_record, ServiceCallV1};
+    use std::error::Error as _;
+    let root = tempfile::tempdir().unwrap();
+    let live = context(9);
+    let signer = Signer::default();
+    let mut chain = Chain::new(view(&live), root.path());
+    let mut journal = ServiceTxJournalV1::open(root.path()).unwrap();
+    finalized_onboarding(
+        &mut chain,
+        &live,
+        &signer,
+        &mut journal,
+        ServiceTxKindV1::Register,
+    );
+    let mut intent = journal.load().unwrap().unwrap().public_intent;
+    intent.target.renewal_nonce += 1;
+    let record = signed_record::<Chain, Signer>(
+        &signer,
+        chain.view.checkpoint,
+        4,
+        ServiceCallV1 {
+            gas_limit: 1_000_000,
+            calldata: vec![0],
+            kind: ServiceTxKindV1::Renew,
+            intent,
+        },
+    )
+    .unwrap();
+    journal.begin(record).unwrap();
+    let error = renew_once_v1(
+        &chain,
+        &signer,
+        &live,
+        &mut journal,
+        RenewalUpgradePhaseV1::Idle,
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(&error, RenewalError::PendingCalldata(_)));
+    assert!(error
+        .source()
+        .is_some_and(|cause| cause.is::<alloy_sol_types::Error>()));
+    assert!(chain.sent.lock().unwrap().is_empty());
 }

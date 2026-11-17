@@ -13,13 +13,15 @@ pub struct SuccessorAttemptV1 {
 }
 
 /// Build from one finalized snapshot; the counter is read even when no candidate exists.
+/// Pass (current resident source, fresh candidate): prior source onboarding must be ingested.
 pub async fn prepare_successor_v1<P: LifecycleChainPort, S: LifecycleSignerV1>(
     port: &P,
     signer: &S,
-    candidate: &InProcessTeeContext,
+    contexts: (&InProcessTeeContext, &InProcessTeeContext),
     journal: &mut ServiceTxJournalV1,
     lease: SuccessorLeaseV1,
 ) -> SuccessorResult<(SuccessorAttemptV1, SuccessorStep), P, S> {
+    let (source_context, candidate) = contexts;
     let SuccessorLeaseV1 {
         binding_id,
         valid_until,
@@ -38,6 +40,8 @@ pub async fn prepare_successor_v1<P: LifecycleChainPort, S: LifecycleSignerV1>(
         .binding
         .as_ref()
         .ok_or(SuccessorError::CandidateMismatch)?;
+    validate_view::<P::Error, S::Error>(&view, at, source_context)?;
+    validate_source::<P, S>(source_context, source)?;
     let policy = successor_policy::<P, S>(&view)?;
     validate_candidate::<P, S>(candidate, source, binding_id)?;
     let policy_hash = policy.policy_hash().map_err(RenewalError::from)?;
@@ -96,11 +100,21 @@ pub async fn prepare_successor_v1<P: LifecycleChainPort, S: LifecycleSignerV1>(
         target_hash: intent.upgrade_target_hash().map_err(RenewalError::from)?,
         nonce: intent.transition_nonce,
     };
+    let recovery_context = match journal.load().map_err(RenewalError::from)?.map(|r| r.kind) {
+        Some(ServiceTxKindV1::UpgradePrepare) => candidate,
+        None
+        | Some(
+            ServiceTxKindV1::Register
+            | ServiceTxKindV1::Renew
+            | ServiceTxKindV1::UpgradeTransition
+            | ServiceTxKindV1::UpgradeCancel,
+        ) => source_context,
+    };
     let nonce = fresh_nonce::<P, S>(
         port,
         signer,
         journal,
-        candidate,
+        recovery_context,
         ServiceTxKindV1::UpgradePrepare,
     )
     .await?;
@@ -288,8 +302,16 @@ pub(crate) async fn fresh_nonce<P: LifecycleChainPort, S: LifecycleSignerV1>(
         .map_err(RenewalError::from)?
     {
         ServiceTxReconciliationV1::WaitForFinality { .. }
-        | ServiceTxReconciliationV1::ReplayExact
-        | ServiceTxReconciliationV1::IngestOnboarding => Err(SuccessorError::PendingOperation),
+        | ServiceTxReconciliationV1::ReplayExact => Err(SuccessorError::PendingOperation),
+        ServiceTxReconciliationV1::IngestOnboarding => {
+            if !live.offer_key_ready().map_err(RenewalError::from)? {
+                return Err(SuccessorError::PendingOperation);
+            }
+            port.account_nonce(signer.address(), LifecycleNonceTagV1::Pending)
+                .await
+                .map_err(RenewalError::from)
+                .map_err(Into::into)
+        }
         ServiceTxReconciliationV1::ReplaceLostIdentity { nonce } => {
             if previous.is_some_and(|r| r.kind != expected_kind) {
                 Err(SuccessorError::PendingOperation)
@@ -298,7 +320,9 @@ pub(crate) async fn fresh_nonce<P: LifecycleChainPort, S: LifecycleSignerV1>(
             }
         }
         ServiceTxReconciliationV1::RebuildAndResign { nonce } => Ok(nonce),
-        _ => port
+        ServiceTxReconciliationV1::Empty
+        | ServiceTxReconciliationV1::Completed
+        | ServiceTxReconciliationV1::DiscardLostIdentity { .. } => port
             .account_nonce(signer.address(), LifecycleNonceTagV1::Pending)
             .await
             .map_err(RenewalError::from)
@@ -311,14 +335,51 @@ pub(crate) async fn send<P: LifecycleChainPort, S: LifecycleSignerV1>(
     record: &ServiceTxRecordV1,
     replayed: bool,
 ) -> SuccessorResult<SuccessorStep, P, S> {
-    Ok(match broadcast::<P, S>(port, record, replayed).await? {
+    match broadcast::<P, S>(port, record, replayed).await? {
         crate::lifecycle::renewal::RenewalStep::Submitted {
             transaction_hash,
             replayed,
-        } => SuccessorStep::Submitted {
+        } => Ok(SuccessorStep::Submitted {
             transaction_hash,
             replayed,
-        },
-        _ => SuccessorStep::AwaitingFinality,
-    })
+        }),
+        crate::lifecycle::renewal::RenewalStep::AwaitingFinality => {
+            Ok(SuccessorStep::AwaitingFinality)
+        }
+        crate::lifecycle::renewal::RenewalStep::NotDue { .. }
+        | crate::lifecycle::renewal::RenewalStep::LeaseAlreadyExpiredNeedsRejoin
+        | crate::lifecycle::renewal::RenewalStep::BlockedByActiveUpgrade => {
+            Err(SuccessorError::PendingOperation)
+        }
+    }
+}
+
+fn validate_source<P: LifecycleChainPort, S: LifecycleSignerV1>(
+    live: &InProcessTeeContext,
+    binding: &RenewalBindingV1,
+) -> SuccessorResult<(), P, S> {
+    let m = live.manifest();
+    let identity = (
+        m.enclave_id().map_err(RenewalError::from)?,
+        m.node_id.node_id_hash().map_err(RenewalError::from)?,
+        m.node_host_authorization_hash()
+            .map_err(RenewalError::from)?,
+    ) == (
+        binding.enclave_id,
+        binding.node_id_hash,
+        binding.node_host_authorization_hash,
+    );
+    let keys = (
+        B256::from(m.recipient_x25519),
+        B256::from(m.attestation_ed25519),
+        B256::from(m.noise_responder_x25519),
+    ) == (
+        binding.recipient_x25519,
+        binding.attestation_ed25519,
+        binding.noise_responder_x25519,
+    );
+    if !identity || !keys {
+        return Err(SuccessorError::CandidateMismatch);
+    }
+    Ok(())
 }

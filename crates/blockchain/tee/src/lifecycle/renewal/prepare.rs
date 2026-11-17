@@ -57,6 +57,8 @@ pub enum RenewalError<E: std::error::Error + 'static, S: std::error::Error + 'st
     SubmittedHashMismatch,
     #[error("pending transaction is no longer safe to replay")]
     StalePending,
+    #[error("pending renewal calldata ABI rejected")]
+    PendingCalldata(#[source] alloy_sol_types::Error),
 }
 
 pub(crate) type StepResult<T, P, S> =
@@ -96,7 +98,12 @@ pub async fn renew_once_v1<P: LifecycleChainPort, S: LifecycleSignerV1>(
             live.manifest().authorization_hash()? == candidate_manifest_hash
                 && binding.policy_hash == successor_policy_hash
         }
-        _ => false,
+        RenewalUpgradePhaseV1::KeyProvisioned
+        | RenewalUpgradePhaseV1::CandidateKeyReady
+        | RenewalUpgradePhaseV1::SubmissionPrepared
+        | RenewalUpgradePhaseV1::Submitted
+        | RenewalUpgradePhaseV1::Finalized
+        | RenewalUpgradePhaseV1::TerminalMissedCutoff => false,
     };
     let retired = view.active_upgrade.is_some_and(|u| {
         at.height >= u.activation_height && u.successor_policy_hash != binding.policy_hash
@@ -394,7 +401,7 @@ fn validate_pending<E: std::error::Error + 'static, S: std::error::Error + 'stat
     use alloy_consensus::transaction::RlpEcdsaDecodableTx as _;
     let signed = TxEip1559::rlp_decode_signed(&mut bytes).map_err(ServiceTxJournalError::from)?;
     let call = ITeeRegistryV1::renewEnclaveCall::abi_decode(&signed.tx().input)
-        .map_err(|_| RenewalError::StalePending)?;
+        .map_err(RenewalError::PendingCalldata)?;
     let evidence = AttestationEvidenceV1::decode_canonical(&call.evidence)?;
     if evidence.intent().operation != AttestationOperationV1::RenewEnclave
         || view.checkpoint.timestamp >= evidence.intent().requested_valid_until
@@ -443,8 +450,6 @@ async fn renewal_action<P: LifecycleChainPort, S: LifecycleSignerV1>(
     view: &LifecycleRegistryStateV1,
 ) -> StepResult<RenewalAction, P, S> {
     let pending = journal.load()?;
-    let at = view.checkpoint;
-    let binding = view.binding.as_ref().ok_or(RenewalError::BindingMismatch)?;
     let reconciliation = reconcile_service_tx_v1(port, journal, live).await?;
     match reconciliation {
         ServiceTxReconciliationV1::WaitForFinality { .. } => {
@@ -457,19 +462,35 @@ async fn renewal_action<P: LifecycleChainPort, S: LifecycleSignerV1>(
         }
         ServiceTxReconciliationV1::ReplaceLostIdentity { nonce }
         | ServiceTxReconciliationV1::RebuildAndResign { nonce } => Ok(RenewalAction::Build(nonce)),
-        ServiceTxReconciliationV1::IngestOnboarding => Err(RenewalError::PendingOtherOperation),
-        _ => {
-            let due =
-                renewal_schedule_v1(at.timestamp, binding.valid_until, view.policy.maximum_lease)?;
-            if due != RenewalStep::Due {
-                return Ok(RenewalAction::Stop(due));
+        ServiceTxReconciliationV1::IngestOnboarding => {
+            if !live.offer_key_ready()? {
+                return Err(RenewalError::PendingOtherOperation);
             }
-            Ok(RenewalAction::Build(
-                port.account_nonce(signer.address(), LifecycleNonceTagV1::Pending)
-                    .await?,
-            ))
+            scheduled_action::<P, S>(port, signer, view).await
+        }
+        ServiceTxReconciliationV1::Empty
+        | ServiceTxReconciliationV1::Completed
+        | ServiceTxReconciliationV1::DiscardLostIdentity { .. } => {
+            scheduled_action::<P, S>(port, signer, view).await
         }
     }
+}
+
+async fn scheduled_action<P: LifecycleChainPort, S: LifecycleSignerV1>(
+    port: &P,
+    signer: &S,
+    view: &LifecycleRegistryStateV1,
+) -> StepResult<RenewalAction, P, S> {
+    let at = view.checkpoint;
+    let binding = view.binding.as_ref().ok_or(RenewalError::BindingMismatch)?;
+    let due = renewal_schedule_v1(at.timestamp, binding.valid_until, view.policy.maximum_lease)?;
+    if let Some(step) = due {
+        return Ok(RenewalAction::Stop(step));
+    }
+    Ok(RenewalAction::Build(
+        port.account_nonce(signer.address(), LifecycleNonceTagV1::Pending)
+            .await?,
+    ))
 }
 
 fn verify_node_signature<E: std::error::Error + 'static, S: std::error::Error + 'static>(

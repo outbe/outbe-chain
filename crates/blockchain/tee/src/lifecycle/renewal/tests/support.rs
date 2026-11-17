@@ -234,3 +234,116 @@ impl LifecycleChainPort for Chain {
             .ok_or_else(|| LifecyclePortError::Source(std::io::Error::other("unused")))
     }
 }
+
+/// A canonical signed onboarding transaction whose binding is finalized in the port fixture.
+pub(crate) fn finalized_onboarding(
+    chain: &mut Chain,
+    live: &InProcessTeeContext,
+    signer: &Signer,
+    journal: &mut ServiceTxJournalV1,
+    kind: ServiceTxKindV1,
+) {
+    use super::super::prepare::{evidence_v1, signed_record, target_v1, ServiceCallV1};
+    use alloy_sol_types::SolCall as _;
+    use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1;
+    let m = live.manifest();
+    let b = chain.view.binding.as_ref().unwrap();
+    let intent = RegistrationIntentV1 {
+        chain_id: m.chain_id,
+        genesis_hash: m.genesis_hash,
+        operation: if kind == ServiceTxKindV1::Register {
+            AttestationOperationV1::RegisterEnclave
+        } else {
+            AttestationOperationV1::TransitionEnclaveMeasurement
+        },
+        attestation_mode: m.attestation_mode,
+        policy_hash: b.policy_hash,
+        node_id: m.node_id.clone(),
+        enclave_id: b.enclave_id,
+        binding_id: b.binding_id,
+        binding_version: b.binding_version,
+        registration_version: b.registration_version,
+        renewal_nonce: b.renewal_nonce,
+        transition_nonce: if kind == ServiceTxKindV1::Register {
+            b.transition_nonce
+        } else {
+            1
+        },
+        requested_valid_until: b.valid_until,
+        recipient_x25519: m.recipient_x25519,
+        attestation_ed25519: m.attestation_ed25519,
+        noise_responder_x25519: m.noise_responder_x25519,
+        node_host_authorization_hash: b.node_host_authorization_hash,
+    };
+    let (evidence, enclave) = evidence_v1::<std::io::Error, k256::ecdsa::Error>(
+        live,
+        &intent,
+        &chain.view.policy,
+        chain.view.checkpoint.timestamp,
+    )
+    .unwrap();
+    let evidence_hash = AttestationEvidenceV1::decode_canonical(&evidence)
+        .unwrap()
+        .evidence_hash()
+        .unwrap();
+    let node = signer
+        .sign_node_hash(intent.intent_hash().unwrap())
+        .unwrap();
+    let calldata = if kind == ServiceTxKindV1::Register {
+        ITeeRegistryV1::registerEnclaveCall {
+            evidence: evidence.into(),
+            nodeSignature: node.to_vec().into(),
+            enclaveSignature: enclave.to_vec().into(),
+            validatorNodeBinding: Default::default(),
+            validatorSignature: Default::default(),
+            nodeBindingSignature: Default::default(),
+        }
+        .abi_encode()
+    } else {
+        ITeeRegistryV1::transitionEnclaveMeasurementCall {
+            evidence: evidence.into(),
+            nodeSignature: node.to_vec().into(),
+            enclaveSignature: enclave.to_vec().into(),
+        }
+        .abi_encode()
+    };
+    let record = signed_record::<Chain, Signer>(
+        signer,
+        chain.view.checkpoint,
+        3,
+        ServiceCallV1 {
+            gas_limit: 1_000_000,
+            calldata,
+            kind,
+            intent: ServiceTxIntentV1 {
+                target: target_v1(&intent).unwrap(),
+                candidate: None,
+            },
+        },
+    )
+    .unwrap();
+    chain.binding().intent_hash = intent.intent_hash().unwrap();
+    chain.binding().evidence_hash = evidence_hash;
+    chain.binding().transition_nonce = intent.transition_nonce;
+    journal.begin(record.clone()).unwrap();
+    journal
+        .finish(
+            record.tx_hash,
+            ServiceTxStateV1::Completed,
+            chain.view.checkpoint,
+        )
+        .unwrap();
+}
+
+pub(crate) fn import_test_key(live: &InProcessTeeContext) {
+    live.activate_for_test(
+        crate::resident::ResidentOfferMaterial::for_test(
+            vec![42; 96],
+            B256::from(live.manifest().chain_id),
+            0,
+            0,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+}

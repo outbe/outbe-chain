@@ -16,8 +16,6 @@ pub enum RenewalStep {
         transaction_hash: alloy_primitives::B256,
         replayed: bool,
     },
-    Finalized,
-    Due,
 }
 
 #[cfg(test)]

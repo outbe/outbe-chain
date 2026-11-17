@@ -47,7 +47,7 @@ async fn prepare_candidate_key_import_verifies_real_genesis_bls_mpt_before_key_r
     let (attempt, outcome) = prepare_successor_v1(
         &chain,
         &signer,
-        &candidate,
+        (&source, &candidate),
         &mut journal,
         SuccessorLeaseV1 {
             binding_id: B256::repeat_byte(44),
@@ -162,7 +162,7 @@ async fn unbroadcast_lost_candidate_replaces_same_nonce_without_changing_source(
     prepare_successor_v1(
         &chain,
         &signer,
-        &old,
+        (&source, &old),
         &mut journal,
         SuccessorLeaseV1 {
             binding_id: B256::repeat_byte(44),
@@ -183,7 +183,7 @@ async fn unbroadcast_lost_candidate_replaces_same_nonce_without_changing_source(
     prepare_successor_v1(
         &chain,
         &signer,
-        &live,
+        (&source, &live),
         &mut journal,
         SuccessorLeaseV1 {
             binding_id: B256::repeat_byte(45),
@@ -225,7 +225,7 @@ async fn lost_or_rebound_candidate_is_cancelled_with_exact_context_and_durable_i
     let (attempt, _) = prepare_successor_v1(
         &chain,
         &signer,
-        &candidate,
+        (&source, &candidate),
         &mut journal,
         SuccessorLeaseV1 {
             binding_id: B256::repeat_byte(44),
@@ -314,7 +314,7 @@ async fn strict_upgrade_allows_late_recovery_but_expired_pre_activation_source_n
         valid_until: 14400,
     };
     assert!(matches!(
-        prepare_successor_v1(&chain, &signer, &candidate, &mut journal, lease).await,
+        prepare_successor_v1(&chain, &signer, (&source, &candidate), &mut journal, lease).await,
         Err(SuccessorError::SourceLeaseExpiredNeedsRejoin)
     ));
     assert!(journal.load().unwrap().is_none());
@@ -341,9 +341,10 @@ async fn strict_upgrade_allows_late_recovery_but_expired_pre_activation_source_n
         successor_policy_hash: hash,
         predecessor_policy_hash: chain.view.policy.policy_hash().unwrap(),
     });
-    let (attempt, _) = prepare_successor_v1(&chain, &signer, &candidate, &mut journal, lease)
-        .await
-        .unwrap();
+    let (attempt, _) =
+        prepare_successor_v1(&chain, &signer, (&source, &candidate), &mut journal, lease)
+            .await
+            .unwrap();
     chain.view.candidate = journal.load().unwrap().unwrap().public_intent.candidate;
     candidate
         .activate_for_test(
@@ -385,4 +386,82 @@ fn transition_collateral_clamp_preserves_the_minimum_lease_boundary() {
         );
     }
     assert!(transition::clamped_deadline::<Chain, Signer>(u64::MAX, &policy, u64::MAX).is_err());
+}
+
+#[tokio::test]
+async fn finalized_onboarding_requires_source_readiness_before_successor_prepare() {
+    for (kind, ready) in [
+        (ServiceTxKindV1::Register, true),
+        (ServiceTxKindV1::Register, false),
+        (ServiceTxKindV1::UpgradeTransition, true),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let source = support::context(8);
+        let candidate = support::context(9);
+        let signer = Signer::default();
+        if ready {
+            support::import_test_key(&source);
+        }
+        let mut chain = Chain::new(successor_view(&source), root.path());
+        let mut journal = ServiceTxJournalV1::open(root.path()).unwrap();
+        support::finalized_onboarding(&mut chain, &source, &signer, &mut journal, kind);
+        let before = std::fs::read(&chain.journal_path).unwrap();
+        assert!(matches!(
+            prepare_successor_v1(
+                &chain,
+                &signer,
+                (&candidate, &candidate),
+                &mut journal,
+                SuccessorLeaseV1 {
+                    binding_id: B256::repeat_byte(44),
+                    valid_until: 10000
+                }
+            )
+            .await,
+            Err(SuccessorError::CandidateMismatch)
+        ));
+        assert_eq!(std::fs::read(&chain.journal_path).unwrap(), before);
+        let result = prepare_successor_v1(
+            &chain,
+            &signer,
+            (&source, &candidate),
+            &mut journal,
+            SuccessorLeaseV1 {
+                binding_id: B256::repeat_byte(44),
+                valid_until: 10000,
+            },
+        )
+        .await;
+        if ready {
+            assert!(
+                matches!(
+                    result,
+                    Ok((
+                        _,
+                        SuccessorStep::Submitted {
+                            replayed: false,
+                            ..
+                        }
+                    ))
+                ),
+                "{kind:?}: {result:?}"
+            );
+            assert_eq!(
+                journal.load().unwrap().unwrap().kind,
+                ServiceTxKindV1::UpgradePrepare
+            );
+            assert_eq!(chain.sent.lock().unwrap().len(), 1);
+            assert!(!candidate.offer_key_ready().unwrap());
+        } else {
+            assert!(
+                matches!(result, Err(SuccessorError::PendingOperation)),
+                "{result:?}"
+            );
+            assert!(chain.sent.lock().unwrap().is_empty());
+            assert_eq!(
+                journal.load().unwrap().unwrap().state,
+                ServiceTxStateV1::Completed
+            );
+        }
+    }
 }

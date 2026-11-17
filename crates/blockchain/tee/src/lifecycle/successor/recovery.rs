@@ -79,11 +79,15 @@ pub async fn reconcile_successor_v1<P: LifecycleChainPort, S: LifecycleSignerV1>
                 None => SuccessorStep::LateRecoveryRequired,
             })
         }
-        _ => Ok(if record.kind == ServiceTxKindV1::UpgradePrepare {
-            SuccessorStep::Prepared
-        } else {
-            SuccessorStep::Finalized
-        }),
+        ServiceTxReconciliationV1::Empty
+        | ServiceTxReconciliationV1::Completed
+        | ServiceTxReconciliationV1::IngestOnboarding => {
+            Ok(if record.kind == ServiceTxKindV1::UpgradePrepare {
+                SuccessorStep::Prepared
+            } else {
+                SuccessorStep::Finalized
+            })
+        }
     }
 }
 
