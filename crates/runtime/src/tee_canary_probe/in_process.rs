@@ -11,8 +11,8 @@ use tokio_util::sync::CancellationToken;
 
 struct ResidentCanaryRequester(Arc<InProcessTeeContext>);
 
-impl EnclaveRequester for ResidentCanaryRequester {
-    fn request(&self, request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
+impl ResidentCanaryRequester {
+    fn dispatch(&self, request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
         match request {
             // Health is sidecar-only. The worker feature-detects this locally,
             // then uses GetPublicKeys and Canary payloads on subsequent ticks.
@@ -23,10 +23,6 @@ impl EnclaveRequester for ResidentCanaryRequester {
                     .offer_key_ready()
                     .map_err(InProcessDispatchError::from)?;
                 metrics::gauge!("outbe_tee_enclave_uptime_seconds").set(context.uptime_s() as f64);
-                // These series remain available, but no sidecar heap/request probe exists.
-                metrics::gauge!("outbe_tee_enclave_heap_bytes", "kind" => "current").set(0.0);
-                metrics::gauge!("outbe_tee_enclave_heap_bytes", "kind" => "peak").set(0.0);
-                metrics::gauge!("outbe_tee_enclave_errored_requests").set(0.0);
                 let recipient_x25519_pub = if ready {
                     context
                         .network_encryption_public()
@@ -34,12 +30,11 @@ impl EnclaveRequester for ResidentCanaryRequester {
                 } else {
                     context.recipient_public()
                 };
-                let manifest = context.manifest();
                 Ok(EnclaveResponse::PublicKeys {
                     offer_key_ready: ready,
                     recipient_x25519_pub,
-                    attestation_pub: manifest.attestation_ed25519,
-                    noise_static_pub: manifest.noise_responder_x25519,
+                    attestation_pub: context.attestation_public(),
+                    noise_static_pub: context.noise_public(),
                     tee_bls_pub: context.tee_bls_public_bytes(),
                     dkg_enc_pub: context.dkg_enc_public(),
                     dkg_enc_sig: Vec::new(),
@@ -59,6 +54,12 @@ impl EnclaveRequester for ResidentCanaryRequester {
             .into()),
         }
     }
+}
+
+impl EnclaveRequester for ResidentCanaryRequester {
+    fn request(&self, request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
+        self.request_with_meta(CallMeta::session_only(request.label()), request)
+    }
 
     fn request_with_meta(
         &self,
@@ -66,7 +67,7 @@ impl EnclaveRequester for ResidentCanaryRequester {
         request: &EnclaveRequest,
     ) -> Result<EnclaveResponse, TransportError> {
         let started = Instant::now();
-        let result = self.request(request);
+        let result = self.dispatch(request);
         outbe_tee::metrics::record_request_duration(meta.label, started.elapsed());
         if let Err(error) = &result {
             outbe_tee::metrics::record_request_error(meta.label, error.metric_class());
@@ -162,5 +163,72 @@ mod rpc_tests {
         }
         shutdown.cancel();
         worker.await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod metrics_tests {
+    use super::*;
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+    #[test]
+    fn resident_requests_report_real_metrics_once_without_synthetic_sidecar_gauges() {
+        let context = crate::tee_canary_probe::test_support::context(8);
+        let requester = ResidentCanaryRequester(Arc::clone(&context));
+        let recorder = DebuggingRecorder::new();
+        let snapshots = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            assert!(requester.request(&EnclaveRequest::Health).is_err());
+            let response = requester.request(&EnclaveRequest::GetPublicKeys).unwrap();
+            assert!(matches!(response, EnclaveResponse::PublicKeys {
+                attestation_pub, noise_static_pub, ..
+            } if attestation_pub == context.attestation_public() && noise_static_pub == context.noise_public()));
+            requester
+                .request_with_meta(
+                    CallMeta::session_only("keys_probe"),
+                    &EnclaveRequest::GetPublicKeys,
+                )
+                .unwrap();
+        });
+        let values = snapshots.snapshot().into_vec();
+        for absent in [
+            "outbe_tee_enclave_heap_bytes",
+            "outbe_tee_enclave_errored_requests",
+        ] {
+            assert!(
+                !values
+                    .iter()
+                    .any(|(key, _, _, _)| key.key().name() == absent),
+                "synthetic {absent}"
+            );
+        }
+        for label in ["health", "get_public_keys", "keys_probe"] {
+            let value = &values
+                .iter()
+                .find(|(key, _, _, _)| {
+                    key.key().name() == "outbe_tee_client_request_duration_ms"
+                        && key
+                            .key()
+                            .labels()
+                            .any(|item| item.key() == "request" && item.value() == label)
+                })
+                .unwrap_or_else(|| panic!("missing duration for {label}"))
+                .3;
+            assert!(
+                matches!(value, DebugValue::Histogram(samples) if samples.len() == 1),
+                "{label}: {value:?}"
+            );
+        }
+        let errors = values
+            .iter()
+            .filter(|(key, _, _, _)| key.key().name() == "outbe_tee_client_request_errors_total")
+            .collect::<Vec<_>>();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0]
+            .0
+            .key()
+            .labels()
+            .any(|item| item.key() == "request" && item.value() == "health"));
+        assert_eq!(errors[0].3, DebugValue::Counter(1));
     }
 }
