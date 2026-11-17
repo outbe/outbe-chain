@@ -251,7 +251,7 @@ impl TeeRegistry<'_> {
         &self,
         evidence: &AttestationEvidenceV1,
     ) -> Result<()> {
-        if evidence.mode() == AttestationMode::GramineDirectDev
+        if evidence.mode() == AttestationMode::NoAttestationDev
             && self.enclave_upgrade_v1()?.proposal_id.is_zero()
         {
             return Err(TeeRegistryError::DirectDevTransitionRequiresUpgrade.into());
@@ -409,7 +409,7 @@ impl TeeRegistry<'_> {
     }
     fn verify_dev_claims_v1(
         &self,
-        dev: &outbe_primitives::tee_attestation_v1::GramineDirectEvidenceV1,
+        dev: &outbe_primitives::tee_attestation_v1::NoAttestationDevEvidenceV1,
         decoded: &AttestationEvidenceV1,
         policy: &TeePolicyV1,
         expected_operation: AttestationOperationV1,
@@ -423,7 +423,7 @@ impl TeeRegistry<'_> {
         }
         let evidence_hash = decoded
             .evidence_hash()
-            .map_err(|error| revert_codec("GramineDirectDev evidence is not canonical", error))?;
+            .map_err(|error| revert_codec("NoAttestationDev evidence is not canonical", error))?;
         let height = self
             .measurement_admission_height_v1(policy, expected_operation.is_measurement_upgrade())?;
         let claims = direct_dev_claims(policy, height, evidence_hash)?;
@@ -446,7 +446,7 @@ impl TeeRegistry<'_> {
             || registration == V1RegistrationOutcome::Idempotent
         {
             onboarding_artifact
-        } else if policy.attestation_mode == AttestationMode::GramineDirectDev {
+        } else if policy.attestation_mode == AttestationMode::NoAttestationDev {
             if expected_operation != AttestationOperationV1::RegisterEnclave {
                 return Err(TeeRegistryError::OnboardingArtifactNonRegistration.into());
             }
@@ -460,10 +460,10 @@ impl TeeRegistry<'_> {
                 chain_id: intent.chain_id,
                 genesis_hash: intent.genesis_hash,
                 intent_hash: intent.intent_hash().map_err(|error| {
-                    revert_codec("GramineDirectDev registration intent is invalid", error)
+                    revert_codec("NoAttestationDev registration intent is invalid", error)
                 })?,
                 node_id_hash: intent.node_id.node_id_hash().map_err(|error| {
-                    revert_codec("GramineDirectDev node identity is invalid", error)
+                    revert_codec("NoAttestationDev node identity is invalid", error)
                 })?,
                 enclave_id: intent.enclave_id,
                 binding_id: intent.binding_id,
@@ -476,7 +476,7 @@ impl TeeRegistry<'_> {
             let _enclave_context =
                 outbe_tee::call_context::ContextScope::from_storage(&self.storage)?;
             Some(
-                outbe_tee::prepare_gramine_direct_dev_onboarding_artifact_v1(context)
+                outbe_tee::prepare_no_attestation_dev_onboarding_artifact_v1(context)
                     .map_err(TeeRegistryError::direct_dev_onboarding_artifact_failed)?,
             )
         } else {

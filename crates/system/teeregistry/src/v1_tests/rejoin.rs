@@ -398,3 +398,276 @@ fn expired_binding_rejects_replace_and_transition_without_state_change() {
         });
     });
 }
+
+fn live_rejoin_validator(mode: AttestationMode) -> LifecycleValidator {
+    let mut policy = fixed_lease_policy(B256::repeat_byte(0x60));
+    policy.attestation_mode = mode;
+    LifecycleValidator::new(policy, 0x61, 0x62, EnclaveBindingSeeds::new(0x63, 0x64))
+}
+
+#[test]
+fn active_rejoin_delivers_offer_and_revokes_previous_identity() {
+    let validator = live_rejoin_validator(AttestationMode::NoAttestationDev);
+    let enclave = ed25519_dalek::SigningKey::from_bytes(&[0x65; 32]);
+    let rejoin = new_enclave_rejoin_intent(
+        &validator.initial,
+        &enclave,
+        EnclaveBindingSeeds::new(0x66, 0x67),
+        NOW + 3_600,
+    );
+    let signed = validator.signed_initial();
+    let mut provider = validator.run_with_binding(
+        signed.with_verdict(up_to_date_verdict_until(NOW + 20_000)),
+        |_, registry| {
+            registry
+                .tribute_offer_public_key
+                .write(B256::from(OFFER_PUBLIC))
+                .unwrap();
+        },
+    );
+    let call = validator.register_call(&rejoin, &enclave, &[0xD1; 4_096]);
+    let artifact = DcapOnboardingArtifactV1 {
+        context: DcapOnboardingContextV1 {
+            chain_id: rejoin.chain_id,
+            genesis_hash: rejoin.genesis_hash,
+            intent_hash: rejoin.intent_hash().unwrap(),
+            node_id_hash: rejoin.node_id.node_id_hash().unwrap(),
+            enclave_id: rejoin.enclave_id,
+            binding_id: rejoin.binding_id,
+            policy_hash: rejoin.policy_hash,
+            recipient_x25519: rejoin.recipient_x25519,
+            network_encryption_public: OFFER_PUBLIC,
+            key_epoch: 0,
+            network_encryption_epoch: 0,
+        },
+        nonce: [1; 12],
+        ciphertext: vec![2; 112],
+    }
+    .encode_canonical()
+    .unwrap();
+    for expected in [
+        V1RegistrationOutcome::Created,
+        V1RegistrationOutcome::Idempotent,
+    ] {
+        StorageHandle::enter(&mut provider, |storage| {
+            assert_eq!(
+                dispatch_register_with_onboarding_after_verifier_for_test(
+                    PostVerifierCall::new(
+                        storage.clone(),
+                        validator.node_signer.address(),
+                        &call,
+                        &rejoin
+                    ),
+                    PostVerifierDcapCapabilityV1::new(up_to_date_verdict_until(NOW + 20_000)),
+                    |recipient| {
+                        assert_eq!(expected, V1RegistrationOutcome::Created);
+                        assert_eq!(recipient, rejoin.recipient_x25519);
+                        Ok(Some(artifact.clone()))
+                    },
+                )
+                .unwrap(),
+                expected
+            );
+            let registry = TeeRegistry::new(storage);
+            let stored = validator.stored_binding(&registry);
+            assert_eq!(stored.enclave_id, rejoin.enclave_id);
+            assert_next_binding_versions(&stored, &rejoin, &validator.initial);
+            assert_eq!(stored.renewal_nonce, validator.initial.renewal_nonce);
+            assert_eq!(stored.transition_nonce, validator.initial.transition_nonce);
+            assert_eq!(stored.valid_until, rejoin.requested_valid_until);
+            assert!(registry
+                .v1_revoked_enclave
+                .read(&validator.initial.enclave_id)
+                .unwrap());
+            assert!(!registry
+                .v1_revoked_enclave
+                .read(&rejoin.enclave_id)
+                .unwrap());
+            let node_hash = rejoin.node_id.node_id_hash().unwrap();
+            assert_reverse_owner(&registry, &validator.initial, node_hash);
+            assert_reverse_owner(&registry, &rejoin, node_hash);
+        });
+    }
+    let events: Vec<_> = provider
+        .get_ordered_events()
+        .iter()
+        .filter(|event| {
+            event.topics().first() == Some(&OfferKeySealedForRegistryV1::SIGNATURE_HASH)
+        })
+        .collect();
+    assert_eq!(events.len(), 1);
+    let event = OfferKeySealedForRegistryV1::decode_log(events[0]).unwrap();
+    assert_eq!(event.nodeIdHash, rejoin.node_id.node_id_hash().unwrap());
+    assert_eq!(event.sealedOfferKey.as_ref(), artifact.as_slice());
+}
+
+#[test]
+fn active_rejoin_jailed_validator_cannot_replace_live_binding() {
+    let validator = live_rejoin_validator(AttestationMode::NoAttestationDev);
+    let enclave = ed25519_dalek::SigningKey::from_bytes(&[0x65; 32]);
+    let rejoin = new_enclave_rejoin_intent(
+        &validator.initial,
+        &enclave,
+        EnclaveBindingSeeds::new(0x66, 0x67),
+        NOW + 3_600,
+    );
+    let attempt = ExpiredRejoin::new(&validator, &rejoin, &enclave);
+    validator.run_as_validator_with_binding(
+        attempt
+            .binding
+            .signed_initial
+            .with_verdict(attempt.binding.accepted.clone()),
+        |storage, mut registry| {
+            let mut validators = ValidatorSet::new(storage);
+            let minimum = U256::from(1_000u64);
+            validators
+                .test_seed_authoritative_min_stake(minimum)
+                .unwrap();
+            validators
+                .test_seed_authoritative_bonded(validator.node_signer.address(), minimum)
+                .unwrap();
+            validators
+                .activate_validator_via_boundary_for_test(validator.node_signer.address())
+                .unwrap();
+            validators
+                .jail_validator(validator.node_signer.address())
+                .unwrap();
+            validator.assert_binding_unchanged_by(&mut registry, |registry| {
+                assert_revert_bytes(
+                    attempt.submit(registry),
+                    &ITeeRegistryV1::JailedValidatorCannotRejoin {}.abi_encode(),
+                );
+                assert!(!registry
+                    .v1_revoked_enclave
+                    .read(&validator.initial.enclave_id)
+                    .unwrap());
+            });
+        },
+    );
+}
+
+#[test]
+fn live_rejoin_stays_forbidden_in_dcap_required_mode() {
+    let validator = live_rejoin_validator(AttestationMode::DcapRequired);
+    let enclave = ed25519_dalek::SigningKey::from_bytes(&[0x65; 32]);
+    let rejoin = new_enclave_rejoin_intent(
+        &validator.initial,
+        &enclave,
+        EnclaveBindingSeeds::new(0x66, 0x67),
+        NOW + 3_600,
+    );
+    let attempt = ExpiredRejoin::new(&validator, &rejoin, &enclave);
+    validator.run_with_binding(
+        attempt
+            .binding
+            .signed_initial
+            .with_verdict(attempt.binding.accepted.clone()),
+        |_, mut registry| {
+            validator.assert_binding_unchanged_by(&mut registry, |registry| {
+                assert_revert_bytes(
+                    attempt.submit(registry),
+                    &ITeeRegistryV1::LiveBindingMustRenew {}.abi_encode(),
+                );
+                assert!(!registry
+                    .v1_revoked_enclave
+                    .read(&validator.initial.enclave_id)
+                    .unwrap());
+            });
+        },
+    );
+}
+
+#[test]
+fn active_rejoin_rejects_stale_ids_authorization_versions_and_other_nodehost() {
+    let validator = live_rejoin_validator(AttestationMode::NoAttestationDev);
+    let enclave = ed25519_dalek::SigningKey::from_bytes(&[0x65; 32]);
+    let fresh = new_enclave_rejoin_intent(
+        &validator.initial,
+        &enclave,
+        EnclaveBindingSeeds::new(0x66, 0x67),
+        NOW + 3_600,
+    );
+    let old_enclave = next_binding_intent(
+        &validator.initial,
+        AttestationOperationV1::RegisterEnclave,
+        0x68,
+        NOW + 3_600,
+    );
+    let mut old_binding = fresh.clone();
+    old_binding.binding_id = validator.initial.binding_id;
+    let mut authorization = fresh.clone();
+    authorization.node_host_authorization_hash = B256::repeat_byte(0x70);
+    let mut binding_version = fresh.clone();
+    binding_version.binding_version = validator.initial.binding_version;
+    let mut registration_version = fresh.clone();
+    registration_version.registration_version = validator.initial.registration_version;
+    let mut renewal_nonce = fresh.clone();
+    renewal_nonce.renewal_nonce += 1;
+    let mut transition_nonce = fresh.clone();
+    transition_nonce.transition_nonce += 1;
+    let mut other_node = fresh;
+    other_node.node_id = NodeIdV1 {
+        reth_p2p_public: reth_p2p_public_for_evm_signer(
+            &OutbeEvmSigner::from_secret_bytes([0x71; 32]).unwrap(),
+        ),
+    };
+    for (intent, signer, error) in [
+        (
+            old_enclave,
+            &validator.enclave_signer,
+            ITeeRegistryV1::LiveBindingMustRenew {}.abi_encode(),
+        ),
+        (
+            old_binding,
+            &enclave,
+            ITeeRegistryV1::LiveBindingMustRenew {}.abi_encode(),
+        ),
+        (
+            authorization,
+            &enclave,
+            ITeeRegistryV1::ExpiredRejoinChangesAuthorization {}.abi_encode(),
+        ),
+        (
+            binding_version,
+            &enclave,
+            ITeeRegistryV1::ExpiredRejoinVersionMismatch {}.abi_encode(),
+        ),
+        (
+            registration_version,
+            &enclave,
+            ITeeRegistryV1::ExpiredRejoinVersionMismatch {}.abi_encode(),
+        ),
+        (
+            renewal_nonce,
+            &enclave,
+            ITeeRegistryV1::ExpiredRejoinVersionMismatch {}.abi_encode(),
+        ),
+        (
+            transition_nonce,
+            &enclave,
+            ITeeRegistryV1::ExpiredRejoinVersionMismatch {}.abi_encode(),
+        ),
+        (
+            other_node,
+            &enclave,
+            ITeeRegistryV1::RegistrationCallerAlreadyAssociated {}.abi_encode(),
+        ),
+    ] {
+        let attempt = ExpiredRejoin::new(&validator, &intent, signer);
+        validator.run_with_binding(
+            attempt
+                .binding
+                .signed_initial
+                .with_verdict(attempt.binding.accepted.clone()),
+            |_, mut registry| {
+                validator.assert_binding_unchanged_by(&mut registry, |registry| {
+                    assert_revert_bytes(attempt.submit(registry), &error);
+                    assert!(!registry
+                        .v1_revoked_enclave
+                        .read(&validator.initial.enclave_id)
+                        .unwrap());
+                });
+            },
+        );
+    }
+}

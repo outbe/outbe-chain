@@ -88,7 +88,7 @@ struct VerifiedClaimsMutationV1<'a> {
 #[cfg(feature = "tee-attestation-v1")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct RegistrationCallerContextV1 {
-    expired_rejoin: bool,
+    rejoin: bool,
 }
 
 #[cfg(feature = "tee-attestation-v1")]
