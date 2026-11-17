@@ -5,7 +5,10 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::task::JoinSet;
 
-use crate::{support::progress::WatchDisplay, validator::rpc::ConsensusStatus};
+use crate::{
+    support::progress::{Progress, WatchDisplay},
+    validator::rpc::ConsensusStatus,
+};
 
 use super::remote::{NetworkBuild, SshOptions};
 
@@ -30,18 +33,26 @@ struct RpcResponse {
 }
 
 pub async fn show(artifacts: &Path, ssh_key: Option<&Path>, watch: bool) -> Result<()> {
+    let mut progress = Progress::new();
+    progress.stage("querying founding validator status");
     let build = NetworkBuild::load(artifacts)?;
     let ssh = SshOptions::new(ssh_key)?;
+    let statuses = query_all(&build, &ssh).await?;
     if !watch {
-        println!("{}", render(&build, &query_all(&build, &ssh).await?));
+        progress.done(&format!("queried {} founding validators", statuses.len()));
+        println!("\n{}", render(&build, &statuses));
         return Ok(());
     }
 
+    progress.done(&format!(
+        "connected to {} founding validators",
+        statuses.len()
+    ));
     let display = WatchDisplay::new();
+    display.render(&render(&build, &statuses));
     let interrupt = tokio::signal::ctrl_c();
     tokio::pin!(interrupt);
     loop {
-        display.render(&render(&build, &query_all(&build, &ssh).await?));
         tokio::select! {
             result = &mut interrupt => {
                 result.wrap_err("failed to listen for Ctrl-C")?;
@@ -49,6 +60,7 @@ pub async fn show(artifacts: &Path, ssh_key: Option<&Path>, watch: bool) -> Resu
             }
             () = tokio::time::sleep(Duration::from_secs(5)) => {}
         }
+        display.render(&render(&build, &query_all(&build, &ssh).await?));
     }
 }
 
@@ -82,6 +94,7 @@ pub(super) fn healthy(status: &FounderStatus, chain_id: u64, peers: usize) -> bo
         status.validator.as_str(),
         status.enclave.as_str(),
         status.radicle.as_str(),
+        status.feeder.as_str(),
     ]
     .into_iter()
     .all(|state| state == "active");
@@ -269,6 +282,9 @@ mod tests {
         };
         assert!(healthy(&status, 42, 3));
         status.finalized = Some(0);
+        assert!(!healthy(&status, 42, 3));
+        status.finalized = Some(1);
+        status.feeder = "activating".into();
         assert!(!healthy(&status, 42, 3));
     }
 }

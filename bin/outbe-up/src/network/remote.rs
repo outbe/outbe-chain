@@ -121,6 +121,23 @@ impl SshOptions {
         Ok(())
     }
 
+    pub(super) fn run_quiet(&self, founder: &Founder, command: &str) -> Result<()> {
+        let mut process = Command::new("ssh");
+        self.ssh_args(&mut process, founder);
+        let output = process.arg(command).output().wrap_err("run ssh")?;
+        if !output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let details = [stdout.trim(), stderr.trim()]
+                .into_iter()
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+            bail!("SSH command failed on {}:\n{}", founder.name, details);
+        }
+        Ok(())
+    }
+
     pub(super) fn copy_to(
         &self,
         founder: &Founder,

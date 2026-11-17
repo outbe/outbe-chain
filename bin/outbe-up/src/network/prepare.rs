@@ -6,6 +6,8 @@ use outbe_software_bundle::verify_and_extract;
 use tokio::task::JoinSet;
 use walkdir::WalkDir;
 
+use crate::support::progress::Progress;
+
 use super::remote::{NetworkBuild, SshOptions};
 
 const INSTALLER: &str = r#"#!/bin/sh
@@ -52,6 +54,8 @@ as_root "$base/validator-${index}/install-systemd.sh" --prepare-only
 "#;
 
 pub async fn run(artifacts: &Path, ssh_key: Option<&Path>) -> Result<()> {
+    let mut progress = Progress::new();
+    progress.stage("verifying network artifacts and software bundle");
     let build = NetworkBuild::load(artifacts)?;
     let ssh = SshOptions::new(ssh_key)?;
     let temporary = tempfile::tempdir()?;
@@ -67,6 +71,10 @@ pub async fn run(artifacts: &Path, ssh_key: Option<&Path>) -> Result<()> {
     fs::set_permissions(&installer, fs::Permissions::from_mode(0o700))?;
     let genesis_sha = build.manifest.genesis.final_sha256.clone();
 
+    progress.stage(&format!(
+        "preparing {} founding validators",
+        build.config.founders.len()
+    ));
     let mut tasks = JoinSet::new();
     for (index, founder) in build.config.founders.into_iter().enumerate() {
         let ssh = ssh.clone();
@@ -96,15 +104,14 @@ pub async fn run(artifacts: &Path, ssh_key: Option<&Path>) -> Result<()> {
     while let Some(result) = tasks.join_next().await {
         result.wrap_err("founder prepare task panicked")??;
         completed += 1;
-        println!(
-            "OK  prepared founder {completed}/{}",
+        progress.update(&format!(
+            "preparing founding validators ({completed}/{} complete)",
             build.manifest.founders.len()
-        );
+        ));
     }
-    println!(
-        "OK  prepared {} founding validators; no services started",
-        completed
-    );
+    progress.done(&format!(
+        "prepared {completed} founding validators; services remain disabled and stopped"
+    ));
     Ok(())
 }
 
@@ -169,7 +176,7 @@ mktemp -d /tmp/outbe-network.XXXXXX",
             &remote,
             false,
         )?;
-        input.ssh.run(
+        input.ssh.run_quiet(
             input.founder,
             &format!(
                 "cd {remote_quoted} && sh install-founder.sh {} {} {}",

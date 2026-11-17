@@ -12,6 +12,8 @@ use alloy_primitives::{Address, U256};
 use eyre::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::support::progress::Progress;
+
 pub const CONFIG_VERSION: u32 = 1;
 pub const MIN_FOUNDERS: usize = 4;
 pub const EXAMPLE: &str = include_str!("../../templates/network/network.example.yaml");
@@ -224,6 +226,8 @@ impl NetworkConfig {
 }
 
 pub fn init(path: &Path) -> Result<()> {
+    let mut progress = Progress::new();
+    progress.stage("writing network configuration example");
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -233,7 +237,10 @@ pub fn init(path: &Path) -> Result<()> {
     file.sync_all()?;
     fs::set_permissions(path, fs::Permissions::from_mode(0o644))?;
     NetworkConfig::read(path)?;
-    println!("network config: {}", path.display());
+    progress.done(&format!(
+        "wrote network configuration to {}",
+        path.display()
+    ));
     Ok(())
 }
 

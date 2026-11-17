@@ -14,15 +14,21 @@ use super::{
 };
 
 pub async fn run(artifacts: &Path, ssh_key: Option<&Path>, timeout: Duration) -> Result<()> {
+    let mut progress = Progress::new();
+    progress.stage("verifying network artifacts and SSH targets");
     let build = NetworkBuild::load(artifacts)?;
     let ssh = SshOptions::new(ssh_key)?;
+    progress.stage(&format!(
+        "starting {} founding validators",
+        build.config.founders.len()
+    ));
     let mut tasks = JoinSet::new();
     for founder in build.config.founders.clone() {
         let ssh = ssh.clone();
         tasks.spawn_blocking(move || {
-            ssh.run(
+            ssh.run_quiet(
                 &founder,
-                "if [ \"$(id -u)\" -eq 0 ]; then systemctl start outbe-validator.target; else sudo -n systemctl start outbe-validator.target; fi",
+                "if [ \"$(id -u)\" -eq 0 ]; then systemctl enable --now outbe-validator.target; else sudo -n systemctl enable --now outbe-validator.target; fi",
             )
             .wrap_err_with(|| format!("start {}", founder.name))
         });
@@ -33,8 +39,7 @@ pub async fn run(artifacts: &Path, ssh_key: Option<&Path>, timeout: Duration) ->
 
     let required_peers = build.config.founders.len().saturating_sub(1);
     let deadline = Instant::now() + timeout;
-    let mut progress = Progress::new();
-    progress.stage("starting founding validators");
+    progress.stage("waiting for finalized consensus and healthy services");
     loop {
         let statuses = query_all(&build, &ssh).await?;
         if statuses
@@ -49,10 +54,17 @@ pub async fn run(artifacts: &Path, ssh_key: Option<&Path>, timeout: Duration) ->
             println!("\n{}", render(&build, &statuses));
             return Ok(());
         }
-        if let Some(failed) = statuses
-            .iter()
-            .find(|status| status.target == "failed" || status.validator == "failed")
-        {
+        if let Some(failed) = statuses.iter().find(|status| {
+            [
+                &status.target,
+                &status.validator,
+                &status.enclave,
+                &status.radicle,
+                &status.feeder,
+            ]
+            .into_iter()
+            .any(|service| service == "failed")
+        }) {
             let founder = build
                 .config
                 .founders
@@ -62,7 +74,7 @@ pub async fn run(artifacts: &Path, ssh_key: Option<&Path>, timeout: Duration) ->
             let logs = ssh
                 .capture(
                     founder,
-                    "journalctl --no-pager -n 30 -u outbe-enclave.service -u outbe-radicle.service -u outbe-validator.service",
+                    "journalctl --no-pager -n 30 -u outbe-enclave.service -u outbe-radicle.service -u outbe-feeder.service -u outbe-validator.service",
                 )
                 .unwrap_or_else(|error| format!("could not read journal: {error}"));
             bail!("{} failed during network start:\n{logs}", failed.name);

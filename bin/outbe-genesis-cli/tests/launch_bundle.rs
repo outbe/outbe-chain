@@ -344,6 +344,8 @@ fn caddy_systemd_units_and_confidential_vm_runtime() {
     assert!(!install_systemd.contains("\nsudo "));
     assert!(install_systemd.contains("disable --now outbe-tee-renew.timer"));
     assert!(install_systemd.contains("enable --now outbe-validator.target"));
+    assert!(install_systemd.contains("disable --now outbe-validator.target"));
+    assert!(!install_systemd.contains("founding validator services:"));
 
     let install_caddy =
         fs::read_to_string(output_dir.join("validator-2/install-caddy.sh")).expect("install-caddy");

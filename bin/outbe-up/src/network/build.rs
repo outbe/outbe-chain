@@ -11,8 +11,12 @@ use serde_json::{json, Map, Value};
 use walkdir::WalkDir;
 
 use crate::{
-    support::process,
+    support::{process, progress::Progress},
     validator::bundle::{self, BundleInput},
+    validator::config::{
+        FeederConfig as OperatorFeederConfig, NetworkConfig as OperatorNetworkConfig,
+        OperatorConfig, CONFIG_VERSION as OPERATOR_CONFIG_VERSION,
+    },
 };
 
 use super::config::NetworkConfig;
@@ -89,6 +93,8 @@ pub fn run(
     output: &Path,
     existing_keys: Option<&Path>,
 ) -> Result<()> {
+    let mut progress = Progress::new();
+    progress.stage("validating network configuration and software bundle");
     ensure!(
         std::env::consts::OS == "linux" && std::env::consts::ARCH == "x86_64",
         "network build currently executes the bundled Linux binaries and must run on Linux x86_64"
@@ -108,6 +114,7 @@ pub fn run(
     let software = verify_and_extract(software_bundle, software_root.path())?;
     ensure_supported_software(&software)?;
 
+    progress.stage("generating founding validator identities and genesis");
     let staging = tempfile::Builder::new()
         .prefix(".outbe-network-")
         .tempdir_in(parent)?;
@@ -153,6 +160,7 @@ pub fn run(
     launch_bundle::render(&genesis_config, &validators, &final_genesis, &keys)
         .map_err(eyre::Report::msg)?;
 
+    progress.stage("assembling founder and joining artifacts");
     let founders = founder_artifacts(staging.path(), &config, &validators)?;
     let joining = build_joining_artifacts(&BuildArtifacts {
         root: staging.path(),
@@ -190,8 +198,14 @@ pub fn run(
         format!("{}\n", serde_json::to_string_pretty(&manifest)?),
     )?;
     fs::rename(staging.keep(), output)?;
-    println!("network artifacts: {}", output.display());
-    println!("state: ready; run `outbe-up network prepare`");
+    progress.done(&format!(
+        "built ready network artifacts at {}",
+        output.display()
+    ));
+    println!(
+        "Next: outbe-up network prepare --artifacts {}",
+        output.display()
+    );
     Ok(())
 }
 
@@ -401,21 +415,7 @@ pub(super) fn build_joining_artifacts(artifacts: &BuildArtifacts<'_>) -> Result<
             ))
         })
         .collect::<Result<Vec<_>>>()?;
-    let operator = json!({
-        "version": 1,
-        "network": {
-            "chain_id": artifacts.config.chain_id,
-            "certified_rpc": artifacts.config.certified_rpc,
-            "advertise_ip": "192.0.2.10",
-            "rpc_bind_ip": "127.0.0.1",
-            "bootnodes": bootnodes,
-            "consensus_peers": peers,
-            "use_local_defaults": artifacts.config.topology.use_local_defaults,
-        },
-        "feeder": {
-            "public_toml": "[oracle]\nsources = \"local\"\nvote_period = 60\npoll_interval_secs = 2\n",
-        },
-    });
+    let operator = joining_operator_config(artifacts.config, bootnodes, peers);
     let config_path = joining.join("operator-config.example.yaml");
     fs::write(&config_path, serde_yaml_ng::to_string(&operator)?)?;
     Ok(JoiningArtifact {
@@ -423,6 +423,29 @@ pub(super) fn build_joining_artifacts(artifacts: &BuildArtifacts<'_>) -> Result<
         bundle_sha256: sha256_file(&bundle_path)?,
         config_example: "joining/operator-config.example.yaml".into(),
     })
+}
+
+fn joining_operator_config(
+    config: &NetworkConfig,
+    bootnodes: Vec<String>,
+    consensus_peers: Vec<String>,
+) -> OperatorConfig {
+    OperatorConfig {
+        version: OPERATOR_CONFIG_VERSION,
+        network: OperatorNetworkConfig {
+            chain_id: config.chain_id,
+            certified_rpc: config.certified_rpc.clone(),
+            advertise_ip: Ipv4Addr::new(192, 0, 2, 10),
+            rpc_bind_ip: Ipv4Addr::LOCALHOST,
+            bootnodes,
+            consensus_peers,
+            use_local_defaults: config.topology.use_local_defaults,
+        },
+        feeder: OperatorFeederConfig {
+            public_toml:
+                "[oracle]\nsources = \"local\"\nvote_period = 60\npoll_interval_secs = 2\n".into(),
+        },
+    }
 }
 
 fn joining_bundle_files(artifacts: &BuildArtifacts<'_>) -> Result<Vec<BundleInput>> {
@@ -530,5 +553,21 @@ mod tests {
         assert_eq!(actual, format!("{hash:#x}"));
         assert_eq!(binding.genesis_hash, hash);
         assert_eq!(binding.chain_id, U256::from(424_242).to_be_bytes::<32>());
+    }
+
+    #[test]
+    fn joining_config_serializes_numeric_fields_as_yaml_numbers() {
+        let config: NetworkConfig = serde_yaml_ng::from_str(super::super::config::EXAMPLE).unwrap();
+        let operator = joining_operator_config(
+            &config,
+            vec!["enode://bootnode".into()],
+            vec!["public-key@127.0.0.1:30400".into()],
+        );
+        let yaml = serde_yaml_ng::to_string(&operator).unwrap();
+        assert!(yaml.contains("version: 1"));
+        assert!(yaml.contains(&format!("chain_id: {}", config.chain_id)));
+        assert!(!yaml.contains("$serde_json"));
+        let decoded: OperatorConfig = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(decoded.network.chain_id, config.chain_id);
     }
 }

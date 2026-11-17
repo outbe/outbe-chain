@@ -119,7 +119,7 @@ pub fn write_systemd_units(
     let install = format!(
         "\n{root_helper}\n\n\
 # Install this machine's single founding validator. `--prepare-only` installs\n\
-# and enables the units without starting the network.\n\
+# the units without enabling or starting the network.\n\
 START=true\n\
 case \"${{1:-}}\" in\n\
   \"\") ;;\n\
@@ -138,15 +138,11 @@ as_root install -m 0644 \"$UNIT_DIR\"/outbe-* /etc/systemd/system/\n\
 as_root systemctl daemon-reload\n\
 \n\
 if \"$START\"; then\n\
-  as_root systemctl enable --now outbe-validator.target\n\
+  as_root systemctl enable --now outbe-validator.target >/dev/null\n\
 else\n\
-  as_root systemctl enable outbe-validator.target\n\
+  as_root systemctl disable --now outbe-validator.target >/dev/null 2>&1 || true\n\
 fi\n\
-echo\n\
-echo \"founding validator services:\"\n\
-systemctl list-units 'outbe-*' --no-pager --no-legend | sed 's/^/  /'\n\
-echo\n\
-echo \"follow the node with: journalctl -u outbe-validator -f\"\n",
+",
         root_helper = ROOT_HELPER,
     );
     write_script(&output_dir.join("install-systemd.sh"), &install)
