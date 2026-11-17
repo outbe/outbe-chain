@@ -153,12 +153,20 @@ where
             target: "outbe::precompile",
             address = ?inputs.bytecode_address,
             caller = ?inputs.caller,
+            block_number,
             entry_depth,
             depth_after,
             "precompile dispatch panicked"
         );
         DispatchOutcome::panicked(&runtime, entry_depth, depth_after)
     });
+    // A domain-local catch must not hide a leaked native frame on its success path.
+    let depth_after = ctx.journal().depth();
+    let outcome = if depth_after != entry_depth {
+        DispatchOutcome::panicked(&runtime, entry_depth, depth_after)
+    } else {
+        outcome
+    };
     Ok(Some(translate_outcome(
         outcome,
         &runtime,

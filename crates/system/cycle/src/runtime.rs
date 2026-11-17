@@ -240,7 +240,7 @@ fn run_due_task(
             Ok(result) => result,
             Err(_) => {
                 tracing::error!(target: "outbe::cycle", task_id = spec.id,
-                label = spec.label, "cycle task panicked");
+                label = spec.label, block_number = ctx.block.block_number, "cycle task panicked");
                 Err(PrecompileError::revert("cycle task panicked"))
             }
         }
