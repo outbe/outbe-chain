@@ -109,7 +109,7 @@ pub(super) async fn ingest_onboarding_offer_key(
                 .await
                 .wrap_err("enclave purpose-bound onboarding ingest failed")
         }
-        AttestationMode::GramineDirectDev => {
+        AttestationMode::NoAttestationDev => {
             ingest_gramine_direct_dev_artifact(enclave, artifact, &ctx)
         }
     }
@@ -133,7 +133,7 @@ fn ingest_gramine_direct_dev_artifact(
             network_encryption_public,
         } if network_encryption_public == ctx.expected_offer_pub => Ok(network_encryption_public),
         other => Err(
-            TeeJoinCompletionError::UnexpectedGramineDirectDevResponse(format!("{other:?}")).into(),
+            TeeJoinCompletionError::UnexpectedNoAttestationDevResponse(format!("{other:?}")).into(),
         ),
     }
 }
@@ -194,7 +194,7 @@ pub(super) async fn finalize_and_reopen_join(
         drop(enclave);
         println!(
             "[OK] development offer key installed in enclave (offer_public 0x{}). \
-             You can now start the separate GramineDirectDev node.",
+             You can now start the separate NoAttestationDev node.",
             hex::encode(ctx.tribute_offer_public)
         );
     }

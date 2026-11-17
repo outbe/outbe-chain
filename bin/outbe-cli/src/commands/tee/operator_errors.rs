@@ -140,9 +140,9 @@ pub(super) enum OnboardingError {
 /// Errors from the manual TEE renewal reducer.
 #[derive(Debug, Error)]
 pub(super) enum RenewalError {
-    /// The renewal enclave does not sign `GramineDirectDev` intents.
+    /// The renewal enclave does not sign `NoAttestationDev` intents.
     #[cfg_attr(not(test), allow(dead_code))]
-    #[error("renewal enclave does not support GramineDirectDev intent signing")]
+    #[error("renewal enclave does not support NoAttestationDev intent signing")]
     DirectDevSigningUnsupported,
 
     /// The hasher rejected the manifest node identity.
@@ -247,8 +247,8 @@ pub(super) enum RenewalError {
     #[error("hash canonical renewal DCAP evidence: {0:?}")]
     HashDcapRenewalEvidence(DcapRejectCodeV1),
 
-    /// The verifier rejected the `GramineDirectDev` enclave signature.
-    #[error("GramineDirectDev enclave signature does not bind renewal intent")]
+    /// The verifier rejected the `NoAttestationDev` enclave signature.
+    #[error("NoAttestationDev enclave signature does not bind renewal intent")]
     DirectDevSignatureMismatch,
 
     /// The hasher rejected the renewal evidence.
@@ -386,8 +386,8 @@ pub(super) enum RenewalJournalError {
     #[error("hash renewal journal DCAP evidence: {0:?}")]
     HashDcapEvidence(DcapRejectCodeV1),
 
-    /// The journaled `GramineDirectDev` evidence failed signature checks.
-    #[error("renewal journal contains invalid GramineDirectDev evidence")]
+    /// The journaled `NoAttestationDev` evidence failed signature checks.
+    #[error("renewal journal contains invalid NoAttestationDev evidence")]
     InvalidDirectDevEvidence,
 
     /// The hasher rejected the journaled evidence.
@@ -418,8 +418,8 @@ pub(super) enum RenewalJournalError {
     #[error("renewal journal lease exceeds collateral ceiling")]
     LeaseExceedsCollateralCeiling,
 
-    /// `GramineDirectDev` mode requires sentinel collateral values.
-    #[error("renewal journal has non-canonical GramineDirectDev collateral fields")]
+    /// `NoAttestationDev` mode requires sentinel collateral values.
+    #[error("renewal journal has non-canonical NoAttestationDev collateral fields")]
     NonCanonicalDirectDevCollateral,
 
     /// The submitted hash list disagrees with the relay variants.

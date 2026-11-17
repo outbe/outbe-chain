@@ -87,7 +87,7 @@ fn software_seal_checkpoint_is_explicitly_feature_and_network_gated() {
     let local_chain = U256::from(outbe_primitives::chain::DEVNET_CHAIN_ID).to_be_bytes::<32>();
     for bytes in [
         b"LE2E1".to_vec(),
-        bytes_for([1; 32], AttestationMode::GramineDirectDev),
+        bytes_for([1; 32], AttestationMode::NoAttestationDev),
         bytes_for(local_chain, AttestationMode::DcapRequired),
     ] {
         fs::write(&seal, bytes).unwrap();
@@ -96,7 +96,7 @@ fn software_seal_checkpoint_is_explicitly_feature_and_network_gated() {
     }
     fs::write(
         &seal,
-        bytes_for(local_chain, AttestationMode::GramineDirectDev),
+        bytes_for(local_chain, AttestationMode::NoAttestationDev),
     )
     .unwrap();
     assert_eq!(
@@ -237,8 +237,8 @@ fn prepared_transition(root: &Path) -> PreparedTransition {
     use ed25519_dalek::Signer as _;
     use outbe_primitives::tee_attestation_v1::{
         AttestationEvidenceV1, AttestationMode, AttestationOperationV1,
-        EnclaveInitializationManifestV1, GramineDirectEvidenceV1, NodeIdV1, RegistrationIntentV1,
-        TransitionKeyReadyProofV1,
+        EnclaveInitializationManifestV1, NoAttestationDevEvidenceV1, NodeIdV1,
+        RegistrationIntentV1, TransitionKeyReadyProofV1,
     };
     use outbe_primitives::tee_genesis_v1::{initial_tee_policy_v1, InitialTeeProfileV1};
     use outbe_primitives::tee_test_utils::sign_node_host_hash_for_test;
@@ -252,7 +252,7 @@ fn prepared_transition(root: &Path) -> PreparedTransition {
     let chain_id = U256::from(outbe_primitives::chain::DEVNET_CHAIN_ID).to_be_bytes();
     let genesis_hash = B256::repeat_byte(0x14);
     let policy = initial_tee_policy_v1(
-        InitialTeeProfileV1::GramineDirectDev,
+        InitialTeeProfileV1::NoAttestationDev,
         outbe_primitives::chain::DEVNET_CHAIN_ID,
         genesis_hash,
     )
@@ -276,7 +276,7 @@ fn prepared_transition(root: &Path) -> PreparedTransition {
     let active = EnclaveInitializationManifestV1 {
         chain_id,
         genesis_hash,
-        attestation_mode: AttestationMode::GramineDirectDev,
+        attestation_mode: AttestationMode::NoAttestationDev,
         node_id: node_id.clone(),
         initialization_challenge: [0x41; 32],
         node_host_noise_x25519: noise.public(),
@@ -304,7 +304,7 @@ fn prepared_transition(root: &Path) -> PreparedTransition {
         chain_id,
         genesis_hash,
         operation: AttestationOperationV1::TransitionEnclaveMeasurement,
-        attestation_mode: AttestationMode::GramineDirectDev,
+        attestation_mode: AttestationMode::NoAttestationDev,
         policy_hash: policy.policy_hash().unwrap(),
         node_id,
         enclave_id: candidate.enclave_id().unwrap(),
@@ -334,7 +334,7 @@ fn prepared_transition(root: &Path) -> PreparedTransition {
         .to_bytes();
     let enclave_signature = enclave_signer.sign(intent_hash.as_slice()).to_bytes();
     let node_signature = sign_node_host_hash_for_test(&node_signer, intent_hash);
-    let evidence = AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+    let evidence = AttestationEvidenceV1::NoAttestationDev(NoAttestationDevEvidenceV1 {
         intent: intent.clone(),
         dev_attestation_public: candidate.attestation_ed25519,
         dev_signature: enclave_signature,

@@ -29,7 +29,7 @@ use outbe_primitives::{
     addresses::TEE_REGISTRY_ADDRESS,
     tee_attestation_v1::{
         AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapEvidenceV1,
-        EnclaveInitializationManifestV1, GramineDirectEvidenceV1, RegistrationIntentV1,
+        EnclaveInitializationManifestV1, NoAttestationDevEvidenceV1, RegistrationIntentV1,
         RegistryMutatorV1, TeeRegistryGasScheduleV1,
     },
     tee_registry_abi_v1::ITeeRegistryV1,

@@ -258,7 +258,7 @@ pub(in super::super) mod tests {
         addresses::TEE_REGISTRY_ADDRESS,
         tee_attestation_v1::{
             AttestationMode, AttestationOperationV1, DcapCollateralComponentV1, DcapCollateralKind,
-            DcapEvidenceV1, GramineDirectEvidenceV1, NodeIdV1,
+            DcapEvidenceV1, NoAttestationDevEvidenceV1, NodeIdV1,
         },
     };
 
@@ -425,13 +425,13 @@ pub(in super::super) mod tests {
         let signer = ed25519_dalek::SigningKey::from_bytes(&[0x31; 32]);
         let node_signer = SigningKey::from_bytes((&[1; 32]).into()).unwrap();
         let mut intent = RegistrationIntentV1::decode_canonical(&attempt.intent).unwrap();
-        intent.attestation_mode = AttestationMode::GramineDirectDev;
+        intent.attestation_mode = AttestationMode::NoAttestationDev;
         intent.attestation_ed25519 = signer.verifying_key().to_bytes();
         intent.enclave_id = intent.derived_enclave_id().unwrap();
         let intent_hash = intent.intent_hash().unwrap();
         let node_signature = sign_node_intent(&node_signer, intent_hash);
         let signature = signer.sign(intent_hash.as_slice()).to_bytes();
-        let evidence_value = AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+        let evidence_value = AttestationEvidenceV1::NoAttestationDev(NoAttestationDevEvidenceV1 {
             transition_key_ready_proof: None,
             intent: intent.clone(),
             dev_attestation_public: intent.attestation_ed25519,

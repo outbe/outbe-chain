@@ -79,8 +79,8 @@ pub(crate) enum TeeJoinCompletionError {
     #[error("encode finalized artifact: {0:#06x}")]
     EncodeFinalizedArtifact(u16),
     /// The enclave returned an unexpected response during development onboarding.
-    #[error("GramineDirectDev onboarding returned an unexpected response: {0}")]
-    UnexpectedGramineDirectDevResponse(String),
+    #[error("NoAttestationDev onboarding returned an unexpected response: {0}")]
+    UnexpectedNoAttestationDevResponse(String),
     /// Constructing the finalized replacement authorization failed.
     #[error("authorize finalized candidate promotion: {0}")]
     AuthorizeCandidatePromotion(outbe_tee::TransportError),
@@ -146,9 +146,9 @@ pub(crate) enum TeeJoinEnclaveError {
         socket: String,
         source: outbe_tee::TransportError,
     },
-    /// The caller connected a hardware-attested enclave under `GramineDirectDev` policy.
-    #[error("GramineDirectDev policy requires the separate non-SGX development transport")]
-    GramineDirectDevHardwareAttested,
+    /// The caller connected a hardware-attested enclave under `NoAttestationDev` policy.
+    #[error("NoAttestationDev policy requires the separate non-SGX development transport")]
+    NoAttestationDevHardwareAttested,
     /// The development enclave returned an unexpected quote response.
     #[error("expected development Quote, got {0}")]
     UnexpectedDevelopmentQuote(String),
@@ -235,6 +235,12 @@ pub(crate) enum TeeJoinError {
     /// The existing finalized enclave lease has not expired yet.
     #[error("finalized enclave lease is live; use `outbe-cli tee renew`")]
     FinalizedLeaseLive,
+    /// A jailed validator cannot register another enclave for its association.
+    #[error("JAILED validator cannot rejoin; complete normal unjail first")]
+    JailedValidatorCannotRejoin,
+    /// Decoding finalized ValidatorSet membership or status failed.
+    #[error("decode finalized ValidatorSet status: {0}")]
+    DecodeValidatorStatus(#[source] alloy_sol_types::Error),
     /// Incrementing the binding version counter overflowed.
     #[error("binding version exhausted")]
     BindingVersionExhausted,

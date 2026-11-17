@@ -97,7 +97,7 @@ fn generate_transition_evidence(context: RequestContext<'_>, intent: Vec<u8>) ->
         }
         let decoded = RegistrationIntentV1::decode_canonical(&intent)
             .map_err(TransportDispatchError::detail)?;
-        if decoded.attestation_mode != AttestationMode::GramineDirectDev
+        if decoded.attestation_mode != AttestationMode::NoAttestationDev
             || decoded.operation != AttestationOperationV1::TransitionEnclaveMeasurement
         {
             return Err(TransportDispatchError::ExpectedDirectDevMeasurementTransition.into());
@@ -114,8 +114,8 @@ fn generate_transition_evidence(context: RequestContext<'_>, intent: Vec<u8>) ->
             .public();
         let (intent_hash, proof) =
             signed_transition_proof(keys, &decoded, &manifest, resident_offer_public)?;
-        outbe_primitives::tee_attestation_v1::AttestationEvidenceV1::GramineDirectDev(
-            outbe_primitives::tee_attestation_v1::GramineDirectEvidenceV1 {
+        outbe_primitives::tee_attestation_v1::AttestationEvidenceV1::NoAttestationDev(
+            outbe_primitives::tee_attestation_v1::NoAttestationDevEvidenceV1 {
                 intent: decoded,
                 dev_attestation_public: keys.attestation_pub(),
                 dev_signature: keys.sign_attestation(intent_hash.as_slice()),
@@ -147,21 +147,21 @@ fn sign_registration_intent(context: RequestContext<'_>, intent: Vec<u8>) -> Enc
     };
     if !initialization.gramine_direct_dev_evidence_allowed() {
         return EnclaveResponse::Error {
-            message: "GramineDirectDev evidence requires development mode or production SGX without remote attestation"
+            message: "NoAttestationDev evidence requires development mode or production SGX without remote attestation"
                 .to_string(),
         };
     }
     let result = (|| -> EnclaveResult<Vec<u8>> {
         let decoded = RegistrationIntentV1::decode_canonical(&intent)
             .map_err(TransportDispatchError::detail)?;
-        if decoded.attestation_mode != AttestationMode::GramineDirectDev
+        if decoded.attestation_mode != AttestationMode::NoAttestationDev
             || decoded.attestation_ed25519 != keys.attestation_pub()
             || decoded
                 .derived_enclave_id()
                 .map_err(TransportDispatchError::detail)?
                 != decoded.enclave_id
         {
-            return Err(TransportDispatchError::GramineDirectDevIntentIdentityMismatch.into());
+            return Err(TransportDispatchError::NoAttestationDevIntentIdentityMismatch.into());
         }
         let intent_hash = decoded
             .intent_hash()

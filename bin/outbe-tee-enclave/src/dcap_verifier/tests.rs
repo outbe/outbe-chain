@@ -108,7 +108,7 @@ fn gramine_direct_dev_onboarding_is_bound_to_testnet_genesis_policy() {
 
     let genesis_hash = B256::repeat_byte(0xA1);
     let policy = initial_tee_policy_v1(
-        InitialTeeProfileV1::GramineDirectDev,
+        InitialTeeProfileV1::NoAttestationDev,
         TESTNET_CHAIN_ID,
         genesis_hash,
     )
@@ -125,7 +125,7 @@ fn gramine_direct_dev_onboarding_is_bound_to_testnet_genesis_policy() {
     let source_manifest = EnclaveInitializationManifestV1 {
         chain_id: U256::from(TESTNET_CHAIN_ID).to_be_bytes(),
         genesis_hash,
-        attestation_mode: AttestationMode::GramineDirectDev,
+        attestation_mode: AttestationMode::NoAttestationDev,
         node_id: NodeIdV1 {
             reth_p2p_public: source_node_public,
         },
@@ -147,7 +147,7 @@ fn gramine_direct_dev_onboarding_is_bound_to_testnet_genesis_policy() {
     let target_manifest = EnclaveInitializationManifestV1 {
         chain_id: U256::from(TESTNET_CHAIN_ID).to_be_bytes(),
         genesis_hash,
-        attestation_mode: AttestationMode::GramineDirectDev,
+        attestation_mode: AttestationMode::NoAttestationDev,
         node_id: NodeIdV1 {
             reth_p2p_public: target_node_public,
         },
@@ -161,7 +161,7 @@ fn gramine_direct_dev_onboarding_is_bound_to_testnet_genesis_policy() {
         chain_id: target_manifest.chain_id,
         genesis_hash,
         operation: AttestationOperationV1::RegisterEnclave,
-        attestation_mode: AttestationMode::GramineDirectDev,
+        attestation_mode: AttestationMode::NoAttestationDev,
         policy_hash,
         node_id: target_manifest.node_id.clone(),
         enclave_id: target_manifest.enclave_id().unwrap(),
@@ -208,7 +208,7 @@ fn gramine_direct_dev_onboarding_is_bound_to_testnet_genesis_policy() {
         ..
     } = response
     else {
-        panic!("testnet GramineDirectDev onboarding was rejected: {response:?}");
+        panic!("testnet NoAttestationDev onboarding was rejected: {response:?}");
     };
     assert_eq!(actual_hash, request_hash);
     let artifact = DcapOnboardingArtifactV1::decode_canonical(&onboarding_artifact).unwrap();

@@ -49,7 +49,7 @@ fn committed_identity(node_data_dir: &Path, noise_public: [u8; 32]) -> [u8; 32] 
     let manifest = EnclaveInitializationManifestV1 {
         chain_id: U256::from(54_322_345_u64).to_be_bytes(),
         genesis_hash: B256::repeat_byte(0x32),
-        attestation_mode: AttestationMode::GramineDirectDev,
+        attestation_mode: AttestationMode::NoAttestationDev,
         node_id: NodeIdV1 {
             reth_p2p_public: node_signer
                 .verifying_key()

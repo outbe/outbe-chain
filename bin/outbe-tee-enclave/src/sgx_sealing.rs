@@ -232,7 +232,7 @@ pub fn hardware_probe(action: &str, path: &std::path::Path) -> EnclaveResult<()>
     let binding = NetworkBindingV1 {
         chain_id: U256::from(70860602_u64).to_be_bytes(),
         genesis_hash: B256::repeat_byte(0x71),
-        attestation_mode: AttestationMode::GramineDirectDev,
+        attestation_mode: AttestationMode::NoAttestationDev,
     };
     let report = std::fs::read("/dev/attestation/report").map_err(SgxSealingError::other)?;
     if report.len() != 432 {

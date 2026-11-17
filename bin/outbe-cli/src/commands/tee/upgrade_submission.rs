@@ -137,7 +137,7 @@ fn is_local_e2e_combined_seal(bytes: &[u8]) -> bool {
             .is_some_and(|v| {
                 v.chain_id
                     == U256::from(outbe_primitives::chain::DEVNET_CHAIN_ID).to_be_bytes::<32>()
-                    && v.attestation_mode == AttestationMode::GramineDirectDev
+                    && v.attestation_mode == AttestationMode::NoAttestationDev
             })
 }
 

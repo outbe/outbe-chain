@@ -26,7 +26,7 @@ impl RenewalEnclaveV1 for DirectOnlyEnclave {
         _intent: &RegistrationIntentV1,
     ) -> Result<GeneratedDcapQuoteV1> {
         self.dcap_calls += 1;
-        Err(RenewalError::TestFault("DCAP must not be invoked for GramineDirectDev renewal").into())
+        Err(RenewalError::TestFault("DCAP must not be invoked for NoAttestationDev renewal").into())
     }
 
     fn sign_registration_intent_dev_v1(
@@ -212,7 +212,7 @@ fn replay_transport_errors_are_classified_narrowly() {
 async fn direct_dev_prepare_builds_the_shared_calldata_and_relay_transaction() {
     let genesis_hash = B256::repeat_byte(0x51);
     let policy = initial_tee_policy_v1(
-        InitialTeeProfileV1::GramineDirectDev,
+        InitialTeeProfileV1::NoAttestationDev,
         DEVNET_CHAIN_ID,
         genesis_hash,
     )
@@ -320,7 +320,7 @@ async fn direct_dev_prepare_builds_the_shared_calldata_and_relay_transaction() {
         attempt.evidence_hash
     );
     let AttestationEvidenceV1::NoAttestationDev(direct) = decoded_evidence else {
-        panic!("expected GramineDirectDev evidence");
+        panic!("expected NoAttestationDev evidence");
     };
     assert_eq!(direct.intent, decoded_intent);
     assert_eq!(
@@ -360,7 +360,7 @@ async fn direct_dev_prepare_builds_the_shared_calldata_and_relay_transaction() {
             attempt.calldata.len(),
             attempt.evidence.len(),
             view.policy.measurement_rules.len(),
-            AttestationMode::GramineDirectDev,
+            AttestationMode::NoAttestationDev,
         )
         .unwrap();
     assert_eq!(raw_variant.gas_limit, normative_gas);

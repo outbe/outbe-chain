@@ -14,7 +14,7 @@ use alloy_sol_types::SolCall;
 use eyre::{Result, WrapErr};
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapEvidenceV1,
-    GramineDirectEvidenceV1, NodeIdV1, RegistrationIntentV1, RegistryMutatorV1, TeePolicyV1,
+    NoAttestationDevEvidenceV1, NodeIdV1, RegistrationIntentV1, RegistryMutatorV1, TeePolicyV1,
     TeeRegistryGasScheduleV1,
 };
 use outbe_tee::protocol::EnclaveRequest;
@@ -39,7 +39,7 @@ pub(super) use policy::{
 };
 
 #[cfg(test)]
-pub(super) use policy::JoinCompletionPlan;
+pub(super) use policy::{test_renewal_binding, JoinCompletionPlan};
 
 mod enclave;
 pub(super) use enclave::JoinEnclave;
@@ -150,6 +150,7 @@ pub(super) async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> R
         ensure_joinable_binding(
             finalized.binding.as_ref(),
             finalized.schedule.finalized_timestamp,
+            policy.attestation_mode,
         )?;
     }
 
@@ -488,10 +489,10 @@ fn generate_fresh_evidence(
                 signature,
             ))
         }
-        AttestationMode::GramineDirectDev => {
+        AttestationMode::NoAttestationDev => {
             let signature = enclave.sign_registration_intent_dev_v1(intent)?;
             Ok((
-                AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+                AttestationEvidenceV1::NoAttestationDev(NoAttestationDevEvidenceV1 {
                     transition_key_ready_proof: None,
                     intent: intent.clone(),
                     dev_attestation_public: attestation_ed25519,
