@@ -35,6 +35,7 @@ where
         self.restore_pending(recovered_pending_boundary, recovery_anchor_height)
             .await?;
         self.publish_repository_material();
+        let mut authority = self.protocol.tee_authority_watch();
         let mut latest_consensus_tip = *self.consensus_tip_rx.borrow();
         let mut pending_provider_ready_height: Option<u64> = None;
         let mut watchdog_unhealthy_since: Option<SystemTime> = None;
@@ -63,7 +64,7 @@ where
             // genesis-bootstrap iteration where no prior DKG completion ran.
             let current_subchannels = self.acquire_epoch_subchannels().await?;
 
-            let (mut engine_handle_task, radicle_signer) =
+            let (mut engine_handle_task, mut radicle_signer) =
                 self.start_engine(&ctx, current_subchannels).await?;
             // -- g. Engine event loop ----------------------------------------
             // Monitors engine, component exits, and block-height-driven reshare triggers.
@@ -72,6 +73,7 @@ where
             let mut stack_shutdown = ctx.stopped();
 
             loop {
+            let active_validator = self.local_validator_active()?;
             let reshare_active = self.rotation.reshare_in_progress;
             let wait_for_execution_finalized_height = async {
                 if reshare_active {
@@ -91,9 +93,11 @@ where
                     return Ok(EpochLoopOutcome::StackExit);
                 },
 
-                desired_signer = wait_for_radicle_role_change(
+                desired_signer = super::signer::wait_for_authority_role_change(
                     &mut self.radicle_updates,
+                    &mut authority,
                     radicle_signer,
+                    active_validator,
                     self.state.signing_share.is_some(),
                 ) => {
                     let desired_signer = desired_signer?;
@@ -101,9 +105,10 @@ where
                         epoch = %self.state.current_epoch,
                         previous_signer = radicle_signer,
                         desired_signer,
-                        "canonical Radicle voting gate changed; replacing same-epoch Simplex role"
+                        "local TEE or canonical voting gate changed; preserving same-epoch Simplex identity"
                     );
-                    return Ok(EpochLoopOutcome::ReplaceSigner);
+                    radicle_signer = desired_signer;
+                    self.bridge.set_operating_mode(super::simplex::effective_validator_operating_mode(radicle_signer));
                 },
 
                 // Engine exit -> clean shutdown.
@@ -142,6 +147,10 @@ where
                     match consensus_tip_changed {
                         Ok(()) => {
                             latest_consensus_tip = *self.consensus_tip_rx.borrow_and_update();
+                            radicle_signer = super::signer::authority_signer_enabled(
+                                authority.as_ref(), self.local_validator_active()?, self.state.signing_share.is_some(), self.radicle_status.snapshot().voting_gate,
+                            )?;
+                            self.bridge.set_operating_mode(super::simplex::effective_validator_operating_mode(radicle_signer));
                             if let Some(current_height) = pending_provider_ready_height {
                                 let _ = self.execution_finalized_height_tx.send(current_height);
                             }

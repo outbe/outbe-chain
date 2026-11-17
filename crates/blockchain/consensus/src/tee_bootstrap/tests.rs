@@ -604,3 +604,5 @@ fn bootstrap_pending_gauges_follow_delivery_lifecycle() {
         assert_pending(0.0, 0.0);
     });
 }
+
+mod founding;

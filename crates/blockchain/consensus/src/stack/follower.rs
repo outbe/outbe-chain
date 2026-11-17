@@ -67,7 +67,8 @@ impl ValidatorBootstrap {
                 tee_lease_armed: false,
             }));
         }
-        let tee_lease_armed = *self.tee_lease_armed_rx.borrow();
+        let tee_lease_armed = *self.tee_lease_armed_rx.borrow()
+            && self.protocol.tee_authority_state().is_authority_open();
         if !tee_lease_armed {
             return Ok(false);
         }

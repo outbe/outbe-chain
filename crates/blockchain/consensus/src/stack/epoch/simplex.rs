@@ -2,6 +2,7 @@
 use super::super::*;
 use super::runtime::*;
 use super::transport::EpochSubchannels;
+mod proposal;
 
 /// Build the leader-elector config for an epoch start.
 ///
@@ -72,11 +73,14 @@ where
         } = channels;
         crate::hybrid::election::require_nonempty_committee(self.state.participants.len())?;
         // -- b. Build HybridScheme for this epoch ------------------------
-        let radicle_signer = radicle_signer_enabled(
-            self.radicle_status.snapshot().voting_gate,
+        let radicle_signer = super::signer::authority_signer_enabled(
+            self.protocol.tee_authority_watch().as_ref(),
+            self.local_validator_active()?,
             self.state.signing_share.is_some(),
+            self.radicle_status.snapshot().voting_gate,
         )?;
-        let scheme = if radicle_signer {
+        let has_share = self.state.signing_share.is_some();
+        let scheme = if has_share {
             HybridScheme::<MinSig>::signer_with_vrf_provider(
                 &config::outbe_app_namespace(),
                 self.state.participants.clone(),
@@ -113,6 +117,28 @@ where
                 }
             })?
         };
+
+        let authority = self.protocol.tee_authority_watch();
+        let radicle = self.radicle_status.clone();
+        let protocol = self.protocol.clone();
+        let provider = self.node.provider().clone();
+        let local_key = self.signing_key.public_key();
+        let permission: proposal::Permission = std::sync::Arc::new(move || {
+            has_share
+                && authority
+                    .as_ref()
+                    .is_some_and(|watch| watch.snapshot().is_authority_open())
+                && matches!(
+                    radicle.snapshot().voting_gate,
+                    RadicleVotingGate::SignerAllowed
+                )
+                && validators::read_validators_at_latest(protocol.as_ref(), &provider)
+                    .is_ok_and(|active| active.public_keys.contains(&local_key))
+        });
+
+        let signing_permission = permission.clone();
+        let scheme = scheme.with_signing_gate(move || signing_permission());
+        let application = proposal::ProposalGate::new(self.application.clone(), permission);
 
         // -- c. Create reporter for this epoch ---------------------------
         let recovered_boundary_for_epoch = self
@@ -206,8 +232,8 @@ where
             scheme,
             elector: elector_config,
             blocker: self.oracle.clone(),
-            automaton: self.application.clone(),
-            relay: self.application.clone(),
+            automaton: application.clone(),
+            relay: application,
             forward: simplex::ForwardPolicy::Disabled,
             reporter: combined_reporter,
             strategy: commonware_parallel::Sequential,

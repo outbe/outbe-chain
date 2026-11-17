@@ -1,6 +1,8 @@
 //! Establish the mandatory permanent offer key before consensus actors start.
 use super::super::*;
 use super::transport::Subchannel;
+mod session;
+use session::StartupEnclave;
 
 pub(super) struct TeeStartup<'a, E: Clock, N: StackNodeAccess> {
     pub(super) args: &'a ConsensusArgs,
@@ -69,10 +71,10 @@ where
     // offers impossible). Local liveness only: this is not a consensus rule on
     // imported blocks. Missing local enclave or NodeHost identity is a startup
     // error, never a production fallback.
-    let socket = args
-        .tee_enclave_socket
-        .clone()
-        .ok_or(crate::errors::StackEpochError::MandatoryTeeRequiresEnclaveSocket)?;
+    let context = outbe_tee::in_process_tee_context();
+    if context.is_none() && args.tee_enclave_socket.is_none() {
+        return Err(crate::errors::StackEpochError::MandatoryTeeRequiresEnclaveSocket.into());
+    }
     let tee_attestation =
         outbe_tee::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
             node.chain_spec().as_ref(),
@@ -135,10 +137,6 @@ where
                 .checked_add(tee_policy.maximum_lease)
                 .ok_or(crate::errors::StackEpochError::Ost3Block1LeaseOverflow)?;
             let node_data_dir = node.data_dir();
-            let endpoint = socket
-                .to_str()
-                .ok_or(crate::errors::StackEpochError::TeeEnclaveEndpointInvalidUtf8)?
-                .to_owned();
             let (node_host_signing, node_id) = load_ost3_reth_node_host_identity(node)?;
 
             // Step 1 (TEE DKG -> shared offer key) + Step 2 (bootstrap coordination ->
@@ -153,40 +151,14 @@ where
             // Owned `Clock` clone moved into the `'static` startup future so the TEE
             // DKG identity-exchange cadence runs on the consensus runtime clock, not
             // tokio's wall-clock (mockable under the deterministic test runtime).
+            let args_socket = args.tee_enclave_socket.clone();
             let dkg_clock = ctx.child("tee_dkg_clock");
             let bootstrap_clock = ctx.child("tee_bootstrap_clock");
             let payload = ctx
                 .timeout(deadline, async move {
-                    let (mut enclave, production_manifest) = match tee_session {
-                        crate::args::ResolvedTeeSession::ProductionNodeHost => {
-                            let production = outbe_tee::connect_committed_node_host_enclave(
-                                &endpoint,
-                                &node_data_dir,
-                            )
-                            .map_err(
-                                crate::errors::StackEpochError::production_node_host_reconnect_failed,
-                            )?;
-                            let manifest =
-                                outbe_tee::load_committed_enclave_manifest_v1(&node_data_dir)
-                                    .map_err(
-                                        crate::errors::StackEpochError::committed_node_host_manifest_load_failed,
-                                    )?;
-                            (
-                                outbe_tee::RuntimeEnclaveClient::Production(production),
-                                Some(manifest),
-                            )
-                        }
-                        crate::args::ResolvedTeeSession::Development => {
-                            let development = outbe_tee::EnclaveClient::connect_endpoint(&endpoint)
-                                .map_err(
-                                    crate::errors::StackEpochError::no_attestation_dev_reconnect_failed,
-                                )?;
-                            (
-                                outbe_tee::RuntimeEnclaveClient::Development(Box::new(development)),
-                                None,
-                            )
-                        }
-                    };
+                    let mut enclave =
+                        StartupEnclave::connect(context, args_socket, tee_session, &node_data_dir)?;
+                    let production_manifest = enclave.manifest(&node_data_dir)?;
                     let (network_encryption_public_key, network_encryption_group_public_key) =
                         crate::tee_bootstrap::run_tee_dkg_at_startup(
                             &mut enclave,
@@ -208,30 +180,28 @@ where
                         network_encryption_public_key = %B256::from(network_encryption_public_key),
                         "TEE DKG complete - shared network encryption key derived"
                     );
-                    let local_submission =
-                        crate::tee_bootstrap::build_local_tee_bootstrap_submission_v2(
-                            &mut enclave,
-                            crate::tee_bootstrap::LocalRegistrationRequest {
-                                production_manifest: production_manifest.as_ref(),
-                                node_id,
-                                policy: &tee_policy,
-                                requested_valid_until,
-                            },
-                            &evm_signer,
-                            |hash| {
-                                use k256::ecdsa::signature::hazmat::PrehashSigner as _;
-                                let (signature, recovery): (
-                                    k256::ecdsa::Signature,
-                                    k256::ecdsa::RecoveryId,
-                                ) = node_host_signing
-                                    .sign_prehash(hash.as_slice())
-                                    .map_err(crate::errors::TeeBootstrapError::node_host_sign_prehash)?;
-                                let mut bytes = [0_u8; 65];
-                                bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
-                                bytes[64] = recovery.to_byte();
-                                Ok(bytes)
-                            },
-                        )?;
+                    let local_submission = enclave.build_submission(
+                        crate::tee_bootstrap::LocalRegistrationRequest {
+                            production_manifest: production_manifest.as_ref(),
+                            node_id,
+                            policy: &tee_policy,
+                            requested_valid_until,
+                        },
+                        &evm_signer,
+                        |hash| {
+                            use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+                            let (signature, recovery): (
+                                k256::ecdsa::Signature,
+                                k256::ecdsa::RecoveryId,
+                            ) = node_host_signing.sign_prehash(hash.as_slice()).map_err(
+                                crate::errors::TeeBootstrapError::node_host_sign_prehash,
+                            )?;
+                            let mut bytes = [0_u8; 65];
+                            bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
+                            bytes[64] = recovery.to_byte();
+                            Ok(bytes)
+                        },
+                    )?;
                     let authority = outbe_primitives::tee_bootstrap_v2::TeeBootstrapAuthorityV2 {
                         policy: tee_policy,
                         committee_snapshot_hash,
@@ -280,7 +250,7 @@ where
                 protocol,
                 proposer_evm_address,
                 node,
-                &socket,
+                args.tee_enclave_socket.as_deref(),
                 tee_session,
             )?;
         }
@@ -347,7 +317,7 @@ fn verify_restarted_validator_holds_chain_offer_key(
     protocol: &dyn crate::protocol_state::EngineProtocolState,
     proposer_evm_address: Option<EthAddress>,
     node: &impl StackNodeAccess,
-    socket: &std::path::Path,
+    socket: Option<&std::path::Path>,
     tee_session: crate::args::ResolvedTeeSession,
 ) -> Result<()> {
     // Startup never recovers or replaces a lost key and never falls back to a
@@ -362,25 +332,12 @@ fn verify_restarted_validator_holds_chain_offer_key(
             crate::errors::StackEpochError::MandatoryOst3MissingOnChainOfferKeyAfterBlock1.into(),
         );
     }
-    let node_data_dir = node.data_dir();
-    let endpoint = socket
-        .to_str()
-        .ok_or(crate::errors::StackEpochError::TeeEnclaveEndpointInvalidUtf8)?;
-    let mut enclave = match tee_session {
-        crate::args::ResolvedTeeSession::ProductionNodeHost => {
-            outbe_tee::RuntimeEnclaveClient::Production(
-                outbe_tee::connect_committed_node_host_enclave(endpoint, &node_data_dir).map_err(
-                    crate::errors::StackEpochError::production_node_host_reconnect_failed,
-                )?,
-            )
-        }
-        crate::args::ResolvedTeeSession::Development => {
-            outbe_tee::RuntimeEnclaveClient::Development(Box::new(
-                outbe_tee::EnclaveClient::connect_endpoint(endpoint)
-                    .map_err(crate::errors::StackEpochError::no_attestation_dev_reconnect_failed)?,
-            ))
-        }
-    };
+    let mut enclave = StartupEnclave::connect(
+        outbe_tee::in_process_tee_context(),
+        socket.map(std::path::Path::to_path_buf),
+        tee_session,
+        &node.data_dir(),
+    )?;
     let enclave_offer = crate::tee_bootstrap::query_enclave_offer_public(&mut enclave)?;
     if enclave_offer != on_chain_offer {
         return Err(crate::errors::StackEpochError::LocalEnclaveDoesNotHoldChainOfferKey.into());
