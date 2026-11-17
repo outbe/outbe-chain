@@ -276,3 +276,141 @@ fn authorize_current_signer(
     );
     Ok(Some(address))
 }
+
+/// TEE admission narrows the ordinary validator role; it never creates one.
+pub(super) fn authority_signer_enabled(
+    authority: Option<&outbe_tee::TeeAuthorityWatch>,
+    accountable_validator: bool,
+    has_share: bool,
+    gate: RadicleVotingGate,
+) -> Result<bool> {
+    let ordinary = radicle_signer_enabled(gate, has_share)?;
+    Ok(ordinary
+        && accountable_validator
+        && authority.is_some_and(|watch| watch.snapshot().is_authority_open()))
+}
+
+impl<E, N: StackNodeAccess> super::runtime::EpochSupervisor<E, N>
+where
+    E: Clock,
+{
+    pub(super) fn local_validator_accountable(&self) -> bool {
+        local_validator_accountable(
+            self.protocol.as_ref(),
+            self.node.provider(),
+            &self.signing_key.public_key(),
+        )
+    }
+}
+
+pub(super) fn local_validator_accountable(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    provider: &(impl reth_ethereum::storage::StateProviderFactory + ?Sized),
+    local_key: &bls12381::PublicKey,
+) -> bool {
+    match validators::read_accountable_validators_at_latest(protocol, provider) {
+        Ok(members) => members.public_keys.contains(local_key),
+        Err(error) => {
+            warn!(%error, "validator eligibility read failed; keeping local voting closed");
+            false
+        }
+    }
+}
+
+pub(super) async fn wait_for_authority_role_change(
+    updates: &mut tokio::sync::watch::Receiver<outbe_radicle::integration::RadicleStatusSnapshot>,
+    authority: &mut Option<outbe_tee::TeeAuthorityWatch>,
+    current_signer: bool,
+    accountable_validator: bool,
+    has_share: bool,
+) -> Result<bool> {
+    let mut authority_closed = false;
+    let mut radicle_closed = false;
+    loop {
+        let desired = authority_signer_enabled(
+            authority.as_ref(),
+            accountable_validator,
+            has_share,
+            updates.borrow().voting_gate,
+        )?;
+        if desired != current_signer {
+            return Ok(desired);
+        }
+        let authority_update = async {
+            if authority_closed {
+                std::future::pending::<()>().await;
+            }
+            match authority {
+                Some(watch) => watch.changed().await,
+                None => std::future::pending().await,
+            }
+        };
+        let radicle_update = async {
+            if radicle_closed {
+                std::future::pending::<()>().await;
+            }
+            updates.changed().await
+        };
+        tokio::select! {
+            result = authority_update => { authority_closed = result.is_err(); },
+            result = radicle_update => { radicle_closed = result.is_err(); },
+        }
+    }
+}
+
+#[cfg(test)]
+mod authority_tests {
+    use super::*;
+    use outbe_tee::{TeeAuthorityChannel, TeeAuthorityState as State};
+
+    #[tokio::test]
+    async fn live_authority_watch_demotes_and_reopens_without_terminating() {
+        use futures::FutureExt as _;
+        let channel = TeeAuthorityChannel::new(State::ArmedBootstrap {
+            enclave_id: B256::repeat_byte(1),
+        });
+        let mut authority = Some(channel.subscribe());
+        let (radicle, mut updates) = tokio::sync::watch::channel(
+            outbe_radicle::integration::RadicleStatusSnapshot::default(),
+        );
+        let mut snapshot = updates.borrow().clone();
+        snapshot.voting_gate = RadicleVotingGate::SignerAllowed;
+        radicle.send_replace(snapshot);
+        channel.publish(State::SuspendedJailed);
+        assert!(
+            !wait_for_authority_role_change(&mut updates, &mut authority, true, true, true)
+                .await
+                .unwrap()
+        );
+        channel.publish(State::Armed {
+            enclave_id: B256::repeat_byte(1),
+            valid_until: 100,
+        });
+        assert!(
+            wait_for_authority_role_change(&mut updates, &mut authority, false, true, true)
+                .await
+                .unwrap()
+        );
+        // Reopening admission alone cannot restore a jailed validator's ordinary role.
+        assert!(
+            wait_for_authority_role_change(&mut updates, &mut authority, false, false, true)
+                .now_or_never()
+                .is_none()
+        );
+        assert!(
+            wait_for_authority_role_change(&mut updates, &mut authority, false, true, false)
+                .now_or_never()
+                .is_none()
+        );
+        let waiting =
+            wait_for_authority_role_change(&mut updates, &mut authority, true, true, true);
+        tokio::pin!(waiting);
+        assert!(waiting.as_mut().now_or_never().is_none());
+        drop(channel);
+        assert!(!waiting
+            .as_mut()
+            .now_or_never()
+            .expect("publisher shutdown must wake the live role monitor")
+            .unwrap());
+    }
+}

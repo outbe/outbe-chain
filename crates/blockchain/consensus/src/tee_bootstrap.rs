@@ -68,7 +68,10 @@ mod validation;
 
 pub use coordination::{coordinate_tee_bootstrap_v2, TeeBootstrapCoordination};
 use message::Ost3WireMessage;
-pub use submission::{build_local_tee_bootstrap_submission_v2, LocalRegistrationRequest};
+pub use submission::{
+    build_in_process_tee_bootstrap_submission_v2, build_local_tee_bootstrap_submission_v2,
+    LocalRegistrationRequest,
+};
 use validation::{bootstrap_evidence_kind, validate_submission, BootstrapEvidenceKind};
 
 mod delivery;

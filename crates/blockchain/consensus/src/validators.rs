@@ -266,6 +266,7 @@ pub fn read_admitted_non_consensus_from_state(
 enum ValidatorSetKind {
     ActiveValidators,
     ConsensusParticipants,
+    AccountableParticipants,
     /// DKG reshare target / `next_players`: ACTIVE plus readiness-confirmed
     /// `Joining`. Those PENDING joiners must be in the target so the ceremony
     /// grants them a share and they are promoted PENDING->ACTIVE.
@@ -294,7 +295,7 @@ fn read_validator_set_from_state(
         ValidatorSetKind::ActiveValidators => {
             crate::protocol_state::EngineValidatorQuery::ActiveValidators
         }
-        ValidatorSetKind::ConsensusParticipants => {
+        ValidatorSetKind::ConsensusParticipants | ValidatorSetKind::AccountableParticipants => {
             crate::protocol_state::EngineValidatorQuery::ConsensusParticipants
         }
         ValidatorSetKind::ReshareTarget => {
@@ -313,7 +314,7 @@ fn read_validator_set_from_state(
             ValidatorSetKind::ActiveValidators => {
                 ValidatorsError::ReadActiveValidators(format!("{error}"))
             }
-            ValidatorSetKind::ConsensusParticipants => {
+            ValidatorSetKind::ConsensusParticipants | ValidatorSetKind::AccountableParticipants => {
                 ValidatorsError::ReadActiveConsensusSet(format!("{error}"))
             }
             ValidatorSetKind::ReshareTarget => {
@@ -333,6 +334,11 @@ fn read_validator_set_from_state(
 
     for row in &records {
         let record = &row.record;
+        if matches!(kind, ValidatorSetKind::AccountableParticipants)
+            && !validator_status_can_vote(record.status)
+        {
+            continue;
+        }
         // Read full 48-byte BLS MinPk pubkey (stored across two slots by ValidatorSet).
         let pk =
             bls12381::PublicKey::read(&mut record.consensus_pubkey.as_slice()).map_err(|e| {
@@ -510,6 +516,27 @@ pub fn read_consensus_validators_at_latest(
         .latest()
         .map_err(|e| ValidatorsError::GetLatestState(format!("{e}")))?;
     read_consensus_validators_from_state(protocol, &state)
+}
+
+pub(crate) const VALIDATOR_STATUS_PENDING: u8 = 1;
+pub(crate) const VALIDATOR_STATUS_ACTIVE: u8 = 2;
+pub(crate) const VALIDATOR_STATUS_EXITING: u8 = 3;
+
+/// Stable ValidatorSet ABI statuses ACTIVE (2) and EXITING (3) retain voting authority.
+pub(crate) fn validator_status_can_vote(status: u8) -> bool {
+    match status {
+        VALIDATOR_STATUS_PENDING => false,
+        status => matches!(status, VALIDATOR_STATUS_ACTIVE | VALIDATOR_STATUS_EXITING),
+    }
+}
+
+/// Read accountable ACTIVE/EXITING members, excluding jail-retained and pending identities.
+pub(crate) fn read_accountable_validators_at_latest(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
+    provider: &(impl StateProviderFactory + ?Sized),
+) -> Result<ValidatorSet> {
+    let state = provider.latest()?;
+    read_validator_set_from_state(protocol, &state, ValidatorSetKind::AccountableParticipants)
 }
 
 /// Read the exact canonical committee snapshot committed for `epoch` from one

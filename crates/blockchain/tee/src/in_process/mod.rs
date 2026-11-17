@@ -1,5 +1,6 @@
 //! RAM-only TEE ceremonies and genesis-anchored key admission.
 pub mod admission;
+mod ceremony;
 mod context;
 pub mod dkg;
 mod proof_source;
@@ -16,6 +17,12 @@ pub enum InProcessError {
     Dkg(#[from] dkg::DkgError),
     #[error("DKG seam order rejected operation")]
     Seam(#[from] dkg::DkgSeamOrderError),
+    #[error("ceremony public data codec rejected input")]
+    CeremonyCodec(#[from] commonware_codec::Error),
+    #[error("hardware quote parsing rejected input")]
+    Quote(#[from] outbe_dcap::errors::QuoteParseError),
+    #[error("request is not supported by the founding ceremony channel")]
+    UnsupportedCeremonyRequest,
     #[error("hardware attestation source unavailable")]
     HardwareProofUnavailable,
     #[error("resident state lock poisoned")]
