@@ -15,6 +15,8 @@ ignore = [
     # The latest wasmtimer release still requires pin-utils. Revisit when
     # Alloy's wasmtimer dependency removes it; no maintained upgrade exists.
     { id = "RUSTSEC-2026-0441", reason = "pin-utils is a transitive dependency via Alloy -> wasmtimer 0.4.3; the advisory reports unmaintained status, not a vulnerability" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono is a transitive dependency via reth and Heartwood; the advisory reports unmaintained status, not a vulnerability" },
+    { id = "RUSTSEC-2026-0542", reason = "humantime is a transitive dependency via reth; the advisory reports unmaintained status, not a vulnerability" },
     # rsa Marvin timing sidechannel: no patched release exists upstream. Pulled
     # via ssh-key -> radicle-crypto (Heartwood keystore); Outbe identities are
     # Ed25519, the rsa code path is never exercised for key material.

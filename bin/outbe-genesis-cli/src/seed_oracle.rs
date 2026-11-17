@@ -8,8 +8,8 @@ use serde_json::Value;
 use crate::error::GenesisError;
 use crate::seed_codec::{
     address_as_u256, address_bytes, address_pair, asset_address, data_slot, is_iso_asset_address,
-    nested_mapping_key, parse_u256, parse_u32, parse_u64, u32_bytes, u64_bytes,
-    wwd_to_day_timestamp, StorageBuilder, SECONDS_PER_DAY,
+    nested_mapping_key, parse_u256, parse_u32, parse_u64, u32_bytes, u64_bytes, StorageBuilder,
+    SECONDS_PER_DAY,
 };
 
 /// The reference currencies. The Oracle code defines them as
@@ -36,8 +36,12 @@ struct ValidatedPair<'a> {
     key_hash: [u8; 40],
 }
 
-/// Seed the Oracle precompile storage layout.
-pub fn seed_oracle(storage: &mut StorageBuilder, config: &Value) -> Result<(), GenesisError> {
+/// Seed the Oracle precompile storage layout. The S-curve seeds start at `scurve_start`.
+pub fn seed_oracle(
+    storage: &mut StorageBuilder,
+    config: &Value,
+    scurve_start: Option<u32>,
+) -> Result<(), GenesisError> {
     let pairs = config
         .get("pairs")
         .and_then(Value::as_array)
@@ -47,7 +51,7 @@ pub fn seed_oracle(storage: &mut StorageBuilder, config: &Value) -> Result<(), G
     let cfg = config.get("config").unwrap_or(&Value::Null);
     seed_oracle_config(storage, cfg, pairs.len())?;
     let pair_ids = seed_oracle_registry(storage, config, &validated_pairs)?;
-    seed_oracle_scurves(storage, config, &pair_ids)?;
+    seed_oracle_scurves(storage, config, &pair_ids, scurve_start)?;
     seed_oracle_currencies(storage, config)?;
     seed_gas_chains(storage, config)
 }
@@ -310,10 +314,17 @@ fn seed_oracle_scurves(
     storage: &mut StorageBuilder,
     config: &Value,
     pair_ids: &BTreeMap<(String, String), u32>,
+    scurve_start: Option<u32>,
 ) -> Result<(), GenesisError> {
-    let Some(scurve_seeds) = config.get("scurve_seeds").and_then(Value::as_array) else {
+    let Some(scurve_seeds) = config
+        .get("scurve_seeds")
+        .and_then(Value::as_array)
+        .filter(|seeds| !seeds.is_empty())
+    else {
         return Ok(());
     };
+    let peak_day = scurve_start
+        .ok_or_else(|| GenesisError::validation("scurve seeds need the genesis timestamp"))?;
     let mut curves: BTreeMap<[u8; 40], u64> = BTreeMap::new();
     for sc in scurve_seeds {
         let base = value_to_string(sc.get("pair_base"))?;
@@ -323,11 +334,6 @@ fn seed_oracle_scurves(
                 "scurve seed pair is not registered: {base}/{quote}"
             )));
         }
-        let peak_day = sc
-            .get("peak_day")
-            .ok_or_else(|| GenesisError::validation("missing scurve peak_day"))
-            .and_then(parse_u32)?;
-        wwd_to_day_timestamp(peak_day)?;
         let peak_price = sc
             .get("peak_price")
             .ok_or_else(|| GenesisError::validation("missing scurve peak_price"))

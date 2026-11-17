@@ -1,10 +1,14 @@
-use alloy_primitives::{B256, U256};
+use std::collections::BTreeMap;
+
+use alloy_primitives::{Address, B256, U256};
 use outbe_slashindicator::constants::{
     DEFAULT_EVIDENCE_REWARD_PERCENT, DEFAULT_SLASH_AMOUNT_PERCENT, EVIDENCE_REWARD_PERCENT_SLOT,
     SLASH_AMOUNT_PERCENT_SLOT,
 };
 use outbe_slashindicator::runtime::admit_percent_word;
-use outbe_system_common::addresses::SLASH_INDICATOR_ADDRESS;
+use outbe_system_common::addresses::{
+    EMISSION_ADDRESS, SLASH_INDICATOR_ADDRESS, TRIBUTE_ADDRESS, TRIBUTE_FACTORY_ADDRESS,
+};
 
 use super::*;
 use crate::errors::LaunchError;
@@ -20,6 +24,7 @@ pub(crate) fn validate_startup_authority_and_pruning(
 ) -> eyre::Result<StartupChainAuthority> {
     // Validator and follower both enter this function before `launch()`.
     validate_slash_indicator_genesis(config)?;
+    validate_no_genesis_day_state(config)?;
     let tee_attestation_v1 =
         outbe_tee::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
             config.chain.as_ref(),
@@ -109,6 +114,30 @@ fn admit_genesis_percent(
     admit_percent_word(word, default_percent, field)
         .map(|_| ())
         .map_err(|cause| LaunchError::InvalidSlashIndicatorGenesisPercent { cause })
+}
+
+/// The stores that the chain writes when it makes a Worldwide Day.
+const DAY_STATE_ADDRESSES: [Address; 3] =
+    [TRIBUTE_FACTORY_ADDRESS, TRIBUTE_ADDRESS, EMISSION_ADDRESS];
+
+fn validate_no_genesis_day_state(config: &LaunchConfig) -> std::result::Result<(), LaunchError> {
+    let alloc = &config.chain.genesis.alloc;
+    match genesis_day_state_owner(|address| {
+        alloc
+            .get(address)
+            .and_then(|account| account.storage.as_ref())
+    }) {
+        Some(address) => Err(LaunchError::GenesisHoldsDayState { address }),
+        None => Ok(()),
+    }
+}
+
+fn genesis_day_state_owner<'a>(
+    storage_of: impl Fn(&Address) -> Option<&'a BTreeMap<B256, B256>>,
+) -> Option<Address> {
+    DAY_STATE_ADDRESSES.into_iter().find(|address| {
+        storage_of(address).is_some_and(|words| words.values().any(|word| !word.is_zero()))
+    })
 }
 
 fn genesis_percent_word(config: &LaunchConfig, slot: u64) -> Option<B256> {
@@ -220,5 +249,25 @@ mod tests {
             storage.get(&percent_slot_key(EVIDENCE_REWARD_PERCENT_SLOT)),
             None
         );
+    }
+
+    #[test]
+    fn a_genesis_with_day_state_fails_the_launch_check() {
+        let mut alloc = BTreeMap::new();
+        alloc.insert(
+            SLASH_INDICATOR_ADDRESS,
+            BTreeMap::from([(word(1), word(100))]),
+        );
+        alloc.insert(TRIBUTE_ADDRESS, BTreeMap::from([(word(1), word(0))]));
+        assert_eq!(genesis_day_state_owner(|address| alloc.get(address)), None);
+
+        for address in DAY_STATE_ADDRESSES {
+            let mut alloc = alloc.clone();
+            alloc.insert(address, BTreeMap::from([(word(1), word(1))]));
+            assert_eq!(
+                genesis_day_state_owner(|address| alloc.get(address)),
+                Some(address)
+            );
+        }
     }
 }

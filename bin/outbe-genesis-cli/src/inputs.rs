@@ -8,10 +8,6 @@ use serde_json::Value;
 pub struct SeedOptions {
     /// Directory containing external contract `.code.hex` and `.state.json` files.
     pub contracts_dir: Option<String>,
-    /// Optional override for the active worldwide day (`YYYYMMDD`).
-    pub worldwide_day: Option<u32>,
-    /// When true, clears pre-seeded `metadosis.worldwide_days` so block 1 creates the first day.
-    pub fresh_metadosis: bool,
 }
 
 /// Inputs to the genesis seeding stage.

@@ -100,8 +100,6 @@ fn seed_single_validator_genesis(signer: &OutbeEvmSigner) -> eyre::Result<Genesi
             seed: seed_path,
             validators: Some(validators_path),
             output: output_path.clone(),
-            worldwide_day: None,
-            fresh_metadosis: false,
             contracts_dir: None,
         },
     )
