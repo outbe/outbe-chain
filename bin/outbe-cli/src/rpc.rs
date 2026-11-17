@@ -12,16 +12,6 @@ use crate::errors::RpcError;
 
 /// Abstraction over JSON-RPC transport for testability.
 pub trait Rpc {
-    fn upgrade_key_v1(
-        &self,
-        context: &[u8],
-        proof: &outbe_tee::upgrade_transfer::UpgradeKeyProofV1,
-        legacy_direct_dev: bool,
-    ) -> impl std::future::Future<Output = Result<Vec<u8>>> + Send {
-        let _ = (context, proof, legacy_direct_dev);
-        async { Err(RpcError::UpgradeKeyUnsupported.into()) }
-    }
-
     fn eth_call(
         &self,
         to: Address,
@@ -56,10 +46,6 @@ pub trait Rpc {
         &self,
         raw_tx: &[u8],
     ) -> impl std::future::Future<Output = Result<String>> + Send;
-    fn eth_get_transaction_receipt(
-        &self,
-        transaction_hash: &str,
-    ) -> impl std::future::Future<Output = Result<Option<Value>>> + Send;
     fn eth_get_balance(
         &self,
         address: Address,
@@ -79,32 +65,6 @@ pub trait Rpc {
     fn eth_get_latest_block(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
     fn eth_get_finalized_block(&self) -> impl std::future::Future<Output = Result<Value>> + Send {
         async { Err(RpcError::FinalizedBlockUnsupported.into()) }
-    }
-    fn outbe_get_finalization(
-        &self,
-        height: u64,
-    ) -> impl std::future::Future<Output = Result<Value>> + Send {
-        async move {
-            let _ = height;
-            Err(RpcError::OutbeFinalizationUnsupported.into())
-        }
-    }
-    fn outbe_get_finality_proof(
-        &self,
-        height: u64,
-    ) -> impl std::future::Future<Output = Result<Value>> + Send {
-        self.outbe_get_finalization(height)
-    }
-    fn eth_get_proof(
-        &self,
-        address: Address,
-        storage_slots: &[String],
-        block: u64,
-    ) -> impl std::future::Future<Output = Result<Value>> + Send {
-        async move {
-            let _ = (address, storage_slots, block);
-            Err(RpcError::EthGetProofUnsupported.into())
-        }
     }
     fn outbe_get_vrf_seed(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
     fn outbe_get_emission_info(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
@@ -331,14 +291,6 @@ impl Rpc for RpcClient {
             .ok_or_else(|| RpcError::ExpectedTxHashString.into())
     }
 
-    async fn eth_get_transaction_receipt(&self, transaction_hash: &str) -> Result<Option<Value>> {
-        self.call_rpc_optional(
-            "eth_getTransactionReceipt",
-            serde_json::json!([transaction_hash]),
-        )
-        .await
-    }
-
     async fn eth_get_balance(&self, address: Address) -> Result<U256> {
         let result = self
             .call_rpc(
@@ -364,26 +316,6 @@ impl Rpc for RpcClient {
     async fn outbe_get_epoch_info(&self) -> Result<Value> {
         self.call_rpc("outbe_getEpochInfo", serde_json::json!([]))
             .await
-    }
-
-    async fn upgrade_key_v1(
-        &self,
-        context: &[u8],
-        proof: &outbe_tee::upgrade_transfer::UpgradeKeyProofV1,
-        legacy_direct_dev: bool,
-    ) -> Result<Vec<u8>> {
-        let result = self
-            .call_rpc(
-                "outbe_upgradeKeyV1",
-                serde_json::json!([
-                    alloy_primitives::Bytes::copy_from_slice(context),
-                    proof,
-                    legacy_direct_dev
-                ]),
-            )
-            .await?;
-        let bytes: alloy_primitives::Bytes = serde_json::from_value(result)?;
-        Ok(bytes.to_vec())
     }
 
     async fn outbe_tee_renewal_schedule_v1(&self) -> Result<TeeRenewalScheduleV1> {
@@ -412,44 +344,6 @@ impl Rpc for RpcClient {
         self.call_rpc(
             "eth_getBlockByNumber",
             serde_json::json!(["finalized", false]),
-        )
-        .await
-    }
-
-    async fn outbe_get_finalization(&self, height: u64) -> Result<Value> {
-        self.call_rpc("outbe_getFinalization", serde_json::json!([height]))
-            .await
-    }
-
-    async fn outbe_get_finality_proof(&self, height: u64) -> Result<Value> {
-        match self
-            .call_rpc("rudis_getFinalityProof", serde_json::json!([height]))
-            .await
-        {
-            Ok(proof) => Ok(proof),
-            Err(error)
-                if error.to_string().contains("-32601")
-                    || error.to_string().contains("Method not found") =>
-            {
-                self.outbe_get_finalization(height).await
-            }
-            Err(error) => Err(error),
-        }
-    }
-
-    async fn eth_get_proof(
-        &self,
-        address: Address,
-        storage_slots: &[String],
-        block: u64,
-    ) -> Result<Value> {
-        self.call_rpc(
-            "eth_getProof",
-            serde_json::json!([
-                format!("{address:?}"),
-                storage_slots,
-                format!("0x{block:x}")
-            ]),
         )
         .await
     }
@@ -597,7 +491,6 @@ pub mod mock {
         pub tx_count: Result<u64>,
         pub estimate_gas: Result<u64>,
         pub send_raw_tx: Result<String>,
-        pub transaction_receipt: Result<Option<Value>>,
         pub eth_call_map: Option<EthCallMap>,
         /// Argument-sensitive responses take precedence over selector defaults.
         pub eth_call_overrides: std::collections::HashMap<(Address, Vec<u8>), Vec<u8>>,
@@ -605,7 +498,7 @@ pub mod mock {
         pub epoch_info: Result<Value>,
         pub latest_block: Result<Value>,
         pub finalized_block: Result<Value>,
-        pub proof_fn: Option<Box<dyn Fn(u64) -> Result<Value> + Send + Sync>>,
+        pub tee_renewal_schedule: Result<TeeRenewalScheduleV1>,
         pub block_by_number: Result<Value>,
         pub vrf_seed: Result<Value>,
         pub emission_info: Result<Value>,
@@ -624,14 +517,13 @@ pub mod mock {
                 tx_count: Err(RpcError::NotMocked.into()),
                 estimate_gas: Err(RpcError::NotMocked.into()),
                 send_raw_tx: Err(RpcError::NotMocked.into()),
-                transaction_receipt: Err(RpcError::NotMocked.into()),
                 eth_call_map: None,
                 eth_call_overrides: std::collections::HashMap::new(),
                 consensus_status: Err(RpcError::NotMocked.into()),
                 epoch_info: Err(RpcError::NotMocked.into()),
                 latest_block: Err(RpcError::NotMocked.into()),
                 finalized_block: Err(RpcError::NotMocked.into()),
-                proof_fn: None,
+                tee_renewal_schedule: Err(RpcError::TeeRenewalScheduleUnsupported.into()),
                 block_by_number: Err(RpcError::NotMocked.into()),
                 vrf_seed: Err(RpcError::NotMocked.into()),
                 emission_info: Err(RpcError::NotMocked.into()),
@@ -649,6 +541,10 @@ pub mod mock {
     }
 
     impl Rpc for MockRpc {
+        async fn outbe_tee_renewal_schedule_v1(&self) -> Result<TeeRenewalScheduleV1> {
+            clone_result(&self.tee_renewal_schedule)
+        }
+
         async fn eth_call_at(&self, to: Address, data: &[u8], _block_tag: &str) -> Result<Vec<u8>> {
             self.eth_call(to, data).await
         }
@@ -685,12 +581,6 @@ pub mod mock {
         async fn eth_send_raw_transaction(&self, _raw_tx: &[u8]) -> Result<String> {
             clone_result(&self.send_raw_tx)
         }
-        async fn eth_get_transaction_receipt(
-            &self,
-            _transaction_hash: &str,
-        ) -> Result<Option<Value>> {
-            clone_result(&self.transaction_receipt)
-        }
         async fn eth_get_balance(&self, _address: Address) -> Result<U256> {
             clone_result(&self.balance)
         }
@@ -711,9 +601,6 @@ pub mod mock {
         }
         async fn eth_get_finalized_block(&self) -> Result<Value> {
             clone_result(&self.finalized_block)
-        }
-        async fn eth_get_proof(&self, _: Address, _: &[String], block: u64) -> Result<Value> {
-            self.proof_fn.as_ref().ok_or(RpcError::ProofNotMocked)?(block)
         }
         async fn outbe_get_vrf_seed(&self) -> Result<Value> {
             clone_result(&self.vrf_seed)
@@ -794,16 +681,6 @@ pub mod mock {
                 raw_tx: raw_tx.to_vec(),
             })?
             .into_text("eth_sendRawTransaction")
-        }
-
-        async fn eth_get_transaction_receipt(
-            &self,
-            transaction_hash: &str,
-        ) -> Result<Option<Value>> {
-            self.next_response(RecordedRpcCall::EthGetTransactionReceipt {
-                transaction_hash: transaction_hash.to_string(),
-            })?
-            .into_optional_value("eth_getTransactionReceipt")
         }
 
         async fn eth_get_balance(&self, address: Address) -> Result<U256> {
