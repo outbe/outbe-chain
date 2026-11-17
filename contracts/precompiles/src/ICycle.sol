@@ -33,6 +33,10 @@ interface ICycle {
     /// `scheduledAt` is the slot that a successful attempt would have recorded.
     event CycleTaskDeferred(uint32 indexed id, uint64 scheduledAt, uint64 blockNumber, uint8 reason);
 
+    /// Emitted when a Cycle tail worker fails. Carries no error text.
+    /// `workerId`: 1 = AgentRewards, 2 = DesisCleanup.
+    event CycleWorkerFailed(uint8 indexed workerId, uint64 blockNumber);
+
     /// Emitted when daily emission limit allocation reverts and the emission limit
     /// goes to the Promis Limit once.
     event DayEmissionLimitAllocationFailed(uint32 indexed emissionDay, uint256 emissionLimitMinor, uint8 reason);
