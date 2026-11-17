@@ -315,20 +315,6 @@ interface IOracle {
     ///      COEN/ISO uses 6 decimals. A generic pair uses 18 decimals.
     function getUtcDayVwap(address base, address quote, uint32 utcDay) external view returns (uint256 vwap);
 
-    /// @notice Returns VWAPs for all active vote-target pairs over an explicit range.
-    /// @dev `startTime` and `endTime` are Unix seconds.
-    ///      A WorldwideDay key is a separate yyyymmdd value at UTC+14.
-    ///      Reverts when the range is wider than the `lookbackDuration` parameter.
-    function getWorldwideDayVwap(uint64 startTime, uint64 endTime)
-        external
-        view
-        returns (
-            address[] memory bases,
-            address[] memory quotes,
-            uint256[] memory vwaps,
-            uint64[] memory lookbackSeconds
-        );
-
     /// @notice Returns the S-curve of one pair.
     /// @return startHour The whole UTC hour the curve starts at, in Unix seconds.
     ///         Zero when the pair has no curve.

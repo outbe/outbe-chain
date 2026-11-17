@@ -124,13 +124,6 @@ pub enum OracleCmd {
         #[arg(value_parser = parse_asset)]
         quote: Address,
     },
-    /// Show WorldwideDay-style VWAPs over an explicit time range
-    WorldwideDayVwap {
-        /// Start timestamp (seconds)
-        start_time: u64,
-        /// End timestamp (seconds)
-        end_time: u64,
-    },
     /// Show oracle parameters
     Params,
     /// Show registered pairs and vote targets
@@ -263,10 +256,6 @@ impl OracleCmd {
             } => lookback_average(client, true, base, quote, seconds).await,
             Self::Twaps { seconds } => twaps(client, seconds).await,
             Self::DayVwap { base, quote } => day_vwap(client, base, quote).await,
-            Self::WorldwideDayVwap {
-                start_time,
-                end_time,
-            } => worldwide_day_vwap(client, start_time, end_time).await,
             Self::Params => params(client).await,
             Self::Pairs => pairs(client).await,
             Self::IsVoteTarget { base, quote } => is_vote_target(client, base, quote).await,
@@ -474,31 +463,6 @@ async fn day_vwap(client: &(impl Rpc + Sync), base: Address, quote: Address) -> 
     println!(
         "Day VWAP {base}/{quote}: {}",
         format_oracle_market_quantity(base, quote, ret)
-    );
-    Ok(())
-}
-
-async fn worldwide_day_vwap(
-    client: &(impl Rpc + Sync),
-    start_time: u64,
-    end_time: u64,
-) -> Result<()> {
-    let ret = call_oracle(
-        client,
-        IOracle::getWorldwideDayVwapCall {
-            startTime: start_time,
-            endTime: end_time,
-        },
-    )
-    .await?;
-
-    println!("WorldwideDay VWAP window: {start_time}..{end_time}");
-    print_lookback_table(
-        "VWAP",
-        &ret.bases,
-        &ret.quotes,
-        &ret.vwaps,
-        &ret.lookbackSeconds,
     );
     Ok(())
 }
@@ -939,9 +903,6 @@ mod tests {
         assert!(cli.is_ok());
 
         let cli = TestCli::try_parse_from(["test", "day-vwap", "COEN", "840"]);
-        assert!(cli.is_ok());
-
-        let cli = TestCli::try_parse_from(["test", "worldwide-day-vwap", "100", "200"]);
         assert!(cli.is_ok());
 
         let cli = TestCli::try_parse_from(["test", "pairs"]);

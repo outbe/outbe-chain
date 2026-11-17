@@ -497,19 +497,6 @@ fn precompile_dispatch_round_trips_the_whole_query_surface() {
         assert_eq!(decoded.lookbackSeconds, vec![2_500, 2_500]);
         assert_eq!(decoded.twaps.len(), 2);
 
-        let wwd = IOracle::getWorldwideDayVwapCall {
-            startTime: 1_000,
-            endTime: 3_000,
-        }
-        .abi_encode();
-        let decoded = IOracle::getWorldwideDayVwapCall::abi_decode_returns(
-            &crate::precompile::dispatch(storage.clone(), &wwd, Address::ZERO, U256::ZERO).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(decoded.bases, vec![COEN, usd()]);
-        assert_eq!(decoded.quotes, vec![usd(), ETH]);
-        assert_eq!(decoded.lookbackSeconds, vec![2_000, 2_000]);
-
         let scurve = IOracle::getScurveCall {
             base: COEN,
             quote: usd(),

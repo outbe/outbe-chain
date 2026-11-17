@@ -99,7 +99,6 @@ pub fn dispatch(
             getDayVwap(c) => day_vwap(oracle, c),
             vwap24hSnapshotId(_) => vwap_24h_snapshot(oracle),
             vwap24h(c) => vwap_24h(oracle, c),
-            getWorldwideDayVwap(c) => worldwide_day_vwap(oracle, c),
             getScurve(c) => scurve(oracle, c),
             getAllScurveData(_) => all_scurve_data(oracle),
             getReferenceCurrencies(_) => reference_currencies(),
@@ -490,22 +489,6 @@ fn vwap_24h(oracle: &OracleContract, c: IOracle::vwap24hCall) -> Result<Bytes> {
         oracle
             .vwap_24h(pair, snapshot)?
             .ok_or_else(|| OracleError::NoVwapData.into())
-    })
-}
-
-fn worldwide_day_vwap(
-    oracle: &OracleContract,
-    c: IOracle::getWorldwideDayVwapCall,
-) -> Result<Bytes> {
-    view(c, |c| {
-        let (pairs, vwaps, lookbacks) = oracle.calculate_vwaps(c.startTime, c.endTime)?;
-        let (bases, quotes) = split_pairs(&pairs);
-        Ok(IOracle::getWorldwideDayVwapReturn {
-            bases,
-            quotes,
-            vwaps,
-            lookbackSeconds: lookbacks,
-        })
     })
 }
 

@@ -906,45 +906,6 @@
   },
   {
     "type": "function",
-    "name": "getWorldwideDayVwap",
-    "inputs": [
-      {
-        "name": "startTime",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "endTime",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "bases",
-        "type": "address[]",
-        "internalType": "address[]"
-      },
-      {
-        "name": "quotes",
-        "type": "address[]",
-        "internalType": "address[]"
-      },
-      {
-        "name": "vwaps",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
-      },
-      {
-        "name": "lookbackSeconds",
-        "type": "uint64[]",
-        "internalType": "uint64[]"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "isVoteTarget",
     "inputs": [
       {
