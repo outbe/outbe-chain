@@ -64,6 +64,7 @@ fn record_stages_and_replay_never_calls_transport() {
             if payload.as_slice() == U256::from(7).to_be_bytes::<32>()
     ));
     assert_eq!(replay.lock().unwrap().prefix_cursor, 1);
+    assert_eq!(replay.lock().unwrap().first_witness_fault, None);
 }
 
 #[test]
@@ -286,4 +287,65 @@ fn unsigned_system_body_and_local_transport_outage_are_sticky() {
         s.lock().unwrap().first_witness_fault,
         Some(BlockWitnessFault::LocalUnavailable)
     );
+}
+
+#[test]
+fn proposer_record_transport_panic_latches_local_unavailable_without_staging() {
+    let s = state(WitnessExecutionMode::ProposerRecord);
+    let _scope = WitnessExecutionScope::enter(s.clone());
+    assert!(matches!(
+        consensus_call(
+            "ReadPayloadAmount",
+            || panic!("enclave socket panicked"),
+            authenticate
+        ),
+        Err(TransportError::Unavailable(message)) if message == "local enclave transport panicked"
+    ));
+    {
+        let state = s.lock().unwrap();
+        assert_eq!(
+            state.first_witness_fault,
+            Some(BlockWitnessFault::LocalUnavailable)
+        );
+        assert!(state.staged.is_empty());
+    }
+    let transport_called = std::cell::Cell::new(false);
+    assert!(matches!(
+        consensus_call(
+            "ReadPayloadAmount",
+            || {
+                transport_called.set(true);
+                Ok(([1; 32], response(7)))
+            },
+            authenticate
+        ),
+        Err(TransportError::Unavailable(message)) if message == "block witness fault: LocalUnavailable"
+    ));
+    assert!(!transport_called.get());
+    assert!(s.lock().unwrap().staged.is_empty());
+}
+
+#[test]
+fn verifier_with_enclave_transport_panic_latches_local_unavailable_without_consuming_entry() {
+    let s = state(WitnessExecutionMode::VerifierWithEnclave);
+    s.lock()
+        .unwrap()
+        .tape
+        .prefix
+        .push(EnclaveWitnessEntryV1::try_from(response(7)).unwrap());
+    let _scope = WitnessExecutionScope::enter(s.clone());
+    assert!(matches!(
+        consensus_call(
+            "ReadPayloadAmount",
+            || panic!("local enclave crashed"),
+            authenticate
+        ),
+        Err(TransportError::Unavailable(message)) if message == "local enclave transport panicked"
+    ));
+    let state = s.lock().unwrap();
+    assert_eq!(
+        state.first_witness_fault,
+        Some(BlockWitnessFault::LocalUnavailable)
+    );
+    assert_eq!(state.prefix_cursor, 0);
 }
