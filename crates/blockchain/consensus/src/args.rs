@@ -735,58 +735,53 @@ mod tests {
     }
 
     #[test]
-    fn test_validator_evm_key_explicit_wins() {
-        let mut args = default_args();
-        args.is_validator = true;
-        args.signing_key = Some(PathBuf::from("/tmp/validator-1/signing-key.hex"));
-        args.validator_evm_key = Some(PathBuf::from("/secure/evm.hex"));
-        assert_eq!(
-            args.effective_validator_evm_key().unwrap(),
-            Some(PathBuf::from("/secure/evm.hex"))
-        );
-    }
-
-    #[test]
-    fn test_keyed_full_node_preserves_explicit_evm_key() {
-        let mut args = default_args();
-        args.validator_evm_key = Some(PathBuf::from("/secure/evm.hex"));
-        assert!(args.validate().is_ok());
-        assert_eq!(
-            args.effective_validator_evm_key().unwrap(),
-            Some(PathBuf::from("/secure/evm.hex"))
-        );
-        assert!(!args.is_validator);
-    }
-
-    #[test]
-    fn keyless_follower_never_infers_evm_key_or_requires_sidecar() {
-        let mut args = default_args();
-        args.upstream = Some("http://upstream:8545".to_owned());
-        args.signing_key = Some(PathBuf::from("/validator/signing-key.hex"));
-        assert!(args.validate().is_ok());
-        assert_eq!(args.effective_validator_evm_key().unwrap(), None);
-        assert_eq!(args.tee_enclave_socket, None);
-        assert!(!args.is_validator);
-        let validator = validator_args();
-        assert!(validator.validate().is_ok());
-        assert_eq!(validator.tee_enclave_socket, None);
-    }
-
-    #[test]
-    fn test_cli_parses_validator_evm_key() {
-        let cli = TestConsensusCli::try_parse_from([
-            "test",
+    fn cli_role_key_and_optional_socket_contract() {
+        let validator = [
             "--validator",
             "--consensus.signing-key",
-            "/tmp/signing-key.hex",
-            "--validator.evm-key",
-            "/tmp/evm-key.hex",
-        ])
-        .unwrap();
-        assert_eq!(
-            cli.consensus.validator_evm_key,
-            Some(PathBuf::from("/tmp/evm-key.hex"))
-        );
+            "/validator/signing-key.hex",
+            "--radicle.control-socket",
+            "/radicle/control.sock",
+            "--radicle.status-address",
+            "127.0.0.1:9000",
+        ];
+        for (flags, is_validator, expected) in [
+            (validator.to_vec(), true, Some("/validator/evm-key.hex")),
+            (
+                [
+                    validator.as_slice(),
+                    &["--validator.evm-key", "/explicit/evm.hex"],
+                ]
+                .concat(),
+                true,
+                Some("/explicit/evm.hex"),
+            ),
+            (
+                vec![
+                    "--validator.evm-key",
+                    "/explicit/evm.hex",
+                    "--upstream",
+                    "http://upstream:8545",
+                ],
+                false,
+                Some("/explicit/evm.hex"),
+            ),
+            (vec!["--upstream", "http://upstream:8545"], false, None),
+        ] {
+            let args = TestConsensusCli::try_parse_from([vec!["test"], flags].concat())
+                .unwrap()
+                .consensus;
+            assert!(args.validate().is_ok());
+            assert_eq!(args.is_validator, is_validator);
+            assert_eq!(
+                args.effective_validator_evm_key().unwrap(),
+                expected.map(PathBuf::from)
+            );
+            assert_eq!(args.tee_enclave_socket, None);
+        }
+        let mut keyless = default_args();
+        keyless.signing_key = Some(PathBuf::from("/ignored/signing-key.hex"));
+        assert_eq!(keyless.effective_validator_evm_key().unwrap(), None);
     }
 
     #[test]

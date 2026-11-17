@@ -9,7 +9,14 @@
 //! callers switch to the in-process context.
 
 pub mod authority;
-pub use authority::{TeeAuthorityChannel, TeeAuthorityState, TeeAuthorityWatch};
+#[cfg(any(test, feature = "test-utils"))]
+pub use authority::{
+    clear_tee_authority_watch_for_test, tee_authority_test_guard, TeeAuthorityTestGuard,
+};
+pub use authority::{
+    current_tee_authority_state, install_tee_authority_watch, tee_authority_watch,
+    TeeAuthorityChannel, TeeAuthorityInstallError, TeeAuthorityState, TeeAuthorityWatch,
+};
 
 pub mod in_process;
 pub mod in_process_dispatch;

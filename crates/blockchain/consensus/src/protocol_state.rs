@@ -4,8 +4,6 @@
 //! and TEE admission facts. Callers pass the installed state. A missing
 //! installation fails closed, including the binary-compatibility check.
 
-use std::sync::OnceLock;
-
 use alloy_primitives::{Address, B256};
 use outbe_primitives::committee_snapshot::CommitteeSnapshot;
 use outbe_primitives::error::{PrecompileError, Result as PrecompileResult};
@@ -75,32 +73,21 @@ pub enum EngineProtocolError {
     /// No engine protocol state is installed.
     #[error("engine protocol state is not installed")]
     NotInstalled,
-    /// A process-local authority publisher is already bound.
-    #[error("TEE authority watch is already installed")]
-    TeeAuthorityAlreadyInstalled,
+    /// Binding the shared infrastructure authority port failed.
+    #[error("install TEE authority watch: {0}")]
+    TeeAuthority(#[from] outbe_tee::TeeAuthorityInstallError),
 }
 
-static TEE_AUTHORITY_WATCH: OnceLock<TeeAuthorityWatch> = OnceLock::new();
-
-/// Binds the process admission publisher once; subsequent snapshots stay live.
-/// Install before starting consensus and private RPC services.
+/// Delegates installation to the authority port shared with RPC and runtime.
 pub fn install_tee_authority_watch(watch: TeeAuthorityWatch) -> Result<(), EngineProtocolError> {
-    install_authority_watch(&TEE_AUTHORITY_WATCH, watch)
-}
-
-fn install_authority_watch(
-    slot: &OnceLock<TeeAuthorityWatch>,
-    watch: TeeAuthorityWatch,
-) -> Result<(), EngineProtocolError> {
-    slot.set(watch)
-        .map_err(|_| EngineProtocolError::TeeAuthorityAlreadyInstalled)
+    outbe_tee::install_tee_authority_watch(watch).map_err(EngineProtocolError::from)
 }
 
 /// Object-safe chain reads used by the engine.
 pub trait EngineProtocolState: Send + Sync + 'static {
     /// Process-local authority updates, absent until runtime installs the publisher.
     fn tee_authority_watch(&self) -> Option<TeeAuthorityWatch> {
-        TEE_AUTHORITY_WATCH.get().cloned()
+        outbe_tee::tee_authority_watch()
     }
 
     /// Missing installation fails closed without requiring existing implementors to change.
@@ -184,29 +171,18 @@ pub trait EngineProtocolState: Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use outbe_tee::TeeAuthorityChannel;
 
     #[test]
-    fn authority_port_is_single_install_and_retains_live_snapshots() {
-        let slot = OnceLock::new();
-        assert!(slot.get().is_none());
-        let channel = TeeAuthorityChannel::default();
-        install_authority_watch(&slot, channel.subscribe()).unwrap();
-        let watch = slot.get().unwrap().clone();
+    fn authority_install_failure_preserves_its_infrastructure_source() {
+        use std::error::Error;
+        let error =
+            EngineProtocolError::from(outbe_tee::TeeAuthorityInstallError::AlreadyInstalled);
         assert_eq!(
-            watch.snapshot(),
-            TeeAuthorityState::UnkeyedAwaitingAdmission
+            error
+                .source()
+                .unwrap()
+                .downcast_ref::<outbe_tee::TeeAuthorityInstallError>(),
+            Some(&outbe_tee::TeeAuthorityInstallError::AlreadyInstalled),
         );
-        let state = TeeAuthorityState::Armed {
-            enclave_id: B256::repeat_byte(1),
-            valid_until: 42,
-        };
-        channel.publish(state);
-        assert_eq!(watch.snapshot(), state);
-        assert!(matches!(
-            install_authority_watch(&slot, TeeAuthorityChannel::default().subscribe()),
-            Err(EngineProtocolError::TeeAuthorityAlreadyInstalled)
-        ));
-        assert_eq!(slot.get().unwrap().snapshot(), state);
     }
 }

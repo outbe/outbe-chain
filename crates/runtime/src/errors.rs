@@ -255,6 +255,9 @@ pub(crate) fn display_error<E: std::fmt::Display>(error: E) -> String {
 /// Admission failures retained as typed causes for the runtime authority lifecycle.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum TeeAuthorityError {
+    /// Finalized admission cannot authorize a key absent from canonical chain state.
+    #[error("canonical finalized offer key is unavailable")]
+    CanonicalOfferKeyUnavailable,
     /// The resident key is not the finalized chain's canonical offer key.
     #[error("resident offer key {resident} differs from finalized chain key {canonical}")]
     ResidentOfferKeyMismatch { resident: B256, canonical: B256 },
