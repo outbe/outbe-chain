@@ -42,8 +42,10 @@ pub(super) async fn advance<P: LifecycleChainPort, S: EnrollmentSignerV1>(
             check_predecessor(view, &intent)?;
         }
     }
-    match reconciliation {
-        ServiceTxReconciliationV1::WaitForFinality { .. } => Ok(EnrollmentOutcome::WaitForFinality),
+    let reconciled_nonce = match reconciliation {
+        ServiceTxReconciliationV1::WaitForFinality { .. } => {
+            return Ok(EnrollmentOutcome::WaitForFinality)
+        }
         ServiceTxReconciliationV1::ReplayExact => {
             let record = journal
                 .load()?
@@ -51,27 +53,59 @@ pub(super) async fn advance<P: LifecycleChainPort, S: EnrollmentSignerV1>(
             if view.balance < record_budget(&record)? {
                 return Ok(EnrollmentOutcome::WaitForGasBalance);
             }
-            broadcast(port, journal, live, record).await
+            return broadcast(port, journal, live, record).await;
         }
-        ServiceTxReconciliationV1::IngestOnboarding => Err(EnrollmentError::IdentityMismatch),
-        other => {
-            let nonce = match other {
-                ServiceTxReconciliationV1::ReplaceLostIdentity { nonce }
-                | ServiceTxReconciliationV1::RebuildAndResign { nonce } => nonce,
-                _ => {
-                    port.account_nonce(config.sender, LifecycleNonceTagV1::Pending)
-                        .await?
-                }
-            };
-            let intent = build_intent::<P::Error, S::Error>(live, config, view)?;
-            let record = prepare(signer, &context, intent, nonce)?;
-            if view.balance < record_budget(&record)? {
-                return Ok(EnrollmentOutcome::WaitForGasBalance);
+        ServiceTxReconciliationV1::ReplaceLostIdentity { nonce }
+        | ServiceTxReconciliationV1::RebuildAndResign { nonce } => Some(nonce),
+        ServiceTxReconciliationV1::Empty
+        | ServiceTxReconciliationV1::Completed
+        | ServiceTxReconciliationV1::DiscardLostIdentity { .. } => None,
+        ServiceTxReconciliationV1::IngestOnboarding => {
+            let enclave_id = live.manifest().enclave_id()?;
+            let own_expired = view.registry.binding.as_ref().is_some_and(|b| {
+                b.enclave_id == enclave_id && view.registry.checkpoint.timestamp >= b.valid_until
+            });
+            if !own_expired {
+                return Err(EnrollmentError::IdentityMismatch);
             }
-            journal.begin(record.clone())?;
-            broadcast(port, journal, live, record).await
+            None
         }
+    };
+    submit_fresh(port, signer, journal, context, reconciled_nonce).await
+}
+
+async fn submit_fresh<P: LifecycleChainPort, S: EnrollmentSignerV1>(
+    port: &P,
+    signer: &S,
+    journal: &mut ServiceTxJournalV1,
+    context: SubmissionContext<'_>,
+    reconciled_nonce: Option<u64>,
+) -> Result<EnrollmentOutcome, EnrollmentError<P::Error, S::Error>> {
+    let SubmissionContext { live, config, view } = context;
+    let intent = build_intent::<P::Error, S::Error>(live, config, view)?;
+    // Zero-length evidence/calldata bounds only the unavoidable fixed protocol charges.
+    let min_gas = TeeRegistryGasScheduleV1::normative().maximum_transaction_gas(
+        RegistryMutatorV1::RegisterEnclave,
+        0,
+        0,
+        view.registry.policy.measurement_rules.len(),
+        intent.attestation_mode,
+    )?;
+    if view.balance < U256::from(min_gas) * U256::from(config.max_fee_per_gas) {
+        return Ok(EnrollmentOutcome::WaitForGasBalance);
     }
+    let nonce = if let Some(nonce) = reconciled_nonce {
+        nonce
+    } else {
+        port.account_nonce(config.sender, LifecycleNonceTagV1::Pending)
+            .await?
+    };
+    let record = prepare(signer, &context, intent, nonce)?;
+    if view.balance < record_budget(&record)? {
+        return Ok(EnrollmentOutcome::WaitForGasBalance);
+    }
+    journal.begin(record.clone())?;
+    broadcast(port, journal, live, record).await
 }
 
 fn record_budget<E: std::error::Error + 'static, S: std::error::Error + 'static>(

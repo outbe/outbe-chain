@@ -90,12 +90,19 @@ pub(super) async fn observe<P: LifecycleChainPort, S: std::error::Error + 'stati
 pub(super) fn wait_or_reject<E: std::error::Error + 'static, S: std::error::Error + 'static>(
     view: &EnrollmentPreflightV1,
 ) -> Result<Option<EnrollmentOutcome>, EnrollmentError<E, S>> {
+    // The port carries strict-retirement records only, including scheduled ones.
     if view.jailed {
-        return Ok(Some(if view.registry.active_upgrade.is_some() {
-            EnrollmentOutcome::RequiresStrictUpgradeLateRecovery
-        } else {
-            EnrollmentOutcome::WaitForUnjail
-        }));
+        return Ok(Some(
+            if view
+                .registry
+                .active_upgrade
+                .is_some_and(|u| view.registry.checkpoint.height >= u.activation_height)
+            {
+                EnrollmentOutcome::RequiresStrictUpgradeLateRecovery
+            } else {
+                EnrollmentOutcome::WaitForUnjail
+            },
+        ));
     }
     classify::<E, S>(&view.registry)?;
     Ok(None)
@@ -123,7 +130,9 @@ pub(super) fn registered_intent<E: std::error::Error + 'static, S: std::error::E
     let Some(b) = view.registry.binding.as_ref() else {
         return Ok(None);
     };
-    if b.enclave_id != live.manifest().enclave_id()? {
+    if b.enclave_id != live.manifest().enclave_id()?
+        || view.registry.checkpoint.timestamp >= b.valid_until
+    {
         return Ok(None);
     }
     let intent = intent_from_binding(live, b, view.registry.policy.attestation_mode);

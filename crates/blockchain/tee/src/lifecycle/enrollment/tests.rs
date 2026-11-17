@@ -10,6 +10,7 @@ mod finality;
 #[allow(dead_code)]
 #[path = "../../../tests/in_process_dkg_and_admission/fixtures.rs"]
 mod fixtures;
+mod recovery;
 use chain::{Chain, Signer};
 
 struct Harness {
@@ -45,6 +46,7 @@ impl Harness {
             .unwrap(),
             jailed: false,
             strict: false,
+            upgrade_height: 0,
             balance: U256::MAX,
             nonces: [0; 3],
             sent: Default::default(),

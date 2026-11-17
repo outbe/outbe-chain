@@ -11,6 +11,7 @@ pub struct Chain {
     pub policy: TeePolicyV1,
     pub jailed: bool,
     pub strict: bool,
+    pub upgrade_height: u64,
     pub balance: U256,
     pub nonces: [u64; 3],
     pub sent: Mutex<Vec<Vec<u8>>>,
@@ -45,7 +46,12 @@ impl LifecycleChainPort for Chain {
                 dkg_prepare_window_blocks: 10,
                 minimum_block_time_millis: 1000,
             },
-            active_upgrade: self.strict.then_some(Default::default()),
+            active_upgrade: self.strict.then_some(
+                outbe_primitives::enclave_upgrade::EnclaveUpgradeV1 {
+                    activation_height: self.upgrade_height,
+                    ..Default::default()
+                },
+            ),
             successor_policy: None,
             candidate: None,
             network_encryption_public_key: self.public,
