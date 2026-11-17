@@ -50,14 +50,7 @@ pub(crate) enum CanaryBatchValidationError {
     #[error("no pinned attestation key")]
     NoPinnedAttestationKey,
     #[error("canary attestation tag invalid: {0}")]
-    InvalidAttestationTag(String),
-}
-
-impl CanaryBatchValidationError {
-    #[must_use]
-    fn invalid_attestation_tag(error: impl core::fmt::Display) -> Self {
-        Self::InvalidAttestationTag(error.to_string())
-    }
+    InvalidAttestationTag(#[source] outbe_tee::TransportError),
 }
 
 struct CanaryBatch<'a> {
@@ -199,7 +192,7 @@ fn validate_batch_proof(
         results,
         attestation_tag,
     )
-    .map_err(CanaryBatchValidationError::invalid_attestation_tag)?;
+    .map_err(CanaryBatchValidationError::InvalidAttestationTag)?;
     Ok(())
 }
 
@@ -435,3 +428,7 @@ mod tests {
         }
     }
 }
+
+mod in_process;
+#[cfg(test)]
+pub(crate) mod test_support;
