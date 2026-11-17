@@ -202,14 +202,22 @@ pub(crate) fn enclave_health_info(
         last_canary_latency_ms: snapshot.last_canary_latency_ms,
         consecutive_failures: snapshot.consecutive_failures,
         last_failure_class: snapshot.last_failure.clone(),
-        uptime_s: snapshot.enclave.as_ref().map(|status| status.uptime_s),
+        uptime_s: if snapshot.health_probe_supported == Some(false) {
+            outbe_tee::in_process_tee_context()
+                .map(|context| context.uptime_s())
+                .or_else(|| snapshot.enclave.as_ref().map(|status| status.uptime_s))
+        } else {
+            snapshot.enclave.as_ref().map(|status| status.uptime_s)
+        },
         heap_current_bytes: snapshot
             .enclave
             .as_ref()
+            .filter(|_| snapshot.health_probe_supported != Some(false))
             .map(|status| status.heap.current_bytes),
         heap_peak_bytes: snapshot
             .enclave
             .as_ref()
+            .filter(|_| snapshot.health_probe_supported != Some(false))
             .map(|status| status.heap.peak_bytes),
         health_probe_supported: snapshot.health_probe_supported,
     }

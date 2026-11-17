@@ -1,5 +1,8 @@
 //! Stage 2 production emitters and their explicit Prometheus wire contract.
 
+#[path = "../../src/tee_canary_probe/test_support.rs"]
+mod resident_fixture;
+
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -674,10 +677,8 @@ mod canary {
     use tokio_util::sync::CancellationToken;
 
     pub(super) async fn emit_ticks() {
-        for (fail, expected) in [
-            (false, TeeEnclaveHealthState::Ready),
-            (true, TeeEnclaveHealthState::Degraded),
-        ] {
+        emit_resident_ticks().await;
+        for (fail, expected) in [(true, TeeEnclaveHealthState::Degraded)] {
             let status = TeeEnclaveHealthChannel::default();
             let shutdown = CancellationToken::new();
             let period = Duration::from_secs(60);
@@ -701,6 +702,49 @@ mod canary {
             worker.await.expect("canary worker stopped");
             observed.expect("canary published expected tick");
         }
+    }
+
+    async fn emit_resident_ticks() {
+        let context = resident_fixture::context(8);
+        let status = TeeEnclaveHealthChannel::default();
+        let shutdown = CancellationToken::new();
+        let period = Duration::from_millis(5);
+        let worker = tokio::spawn(TributeCanaryProbe::run_in_process_worker(
+            Arc::clone(&context),
+            TeeCanaryConfig {
+                interval: period,
+                failure_threshold: 1,
+            },
+            status.clone(),
+            shutdown.clone(),
+        ));
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while status.snapshot().health_probe_supported != Some(false) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("pre-key resident tick");
+        let before_key = status.snapshot();
+        assert_eq!(before_key.state, TeeEnclaveHealthState::Starting);
+        assert!(!before_key.offer_key_ready);
+        assert_eq!(before_key.consecutive_failures, 0);
+        assert!(before_key.last_failure.is_none());
+        resident_fixture::activate(&context);
+        let observed = observe_tick(
+            &status,
+            TeeEnclaveHealthState::Ready,
+            Duration::from_secs(10),
+        )
+        .await;
+        shutdown.cancel();
+        worker.await.expect("resident worker stopped");
+        observed.expect("real resident decrypt tick");
+        let ready = status.snapshot();
+        assert!(ready.offer_key_ready);
+        assert_eq!(ready.health_probe_supported, Some(false));
+        assert!(ready.enclave.is_none());
+        assert!(ready.last_canary_latency_ms.is_some());
     }
 
     async fn observe_tick(
