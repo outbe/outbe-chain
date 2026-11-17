@@ -4,7 +4,7 @@ use outbe_primitives::{
 };
 use outbe_system_common::time::{previous_date_key, timestamp_to_date_key, TimeError};
 
-use crate::constants::MAX_UTC_DAY_VWAP_BACKFILL_DAYS;
+use crate::constants::{MAX_UTC_DAY_VWAP_BACKFILL_DAYS, VWAP_HOUR_SECONDS};
 use crate::schema::OracleContract;
 use crate::tally;
 
@@ -90,8 +90,8 @@ fn run_begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
 
     let vote_period = oracle.config_vote_period.read()?;
 
-    if block_number > 0 {
-        oracle.record_hour_block(timestamp, block_number)?;
+    if block_number > 0 && oracle.record_hour_block(timestamp, block_number)? {
+        oracle.emit_vwap_24h_set(timestamp - timestamp % VWAP_HOUR_SECONDS)?;
     }
 
     // Tally at end of vote period (skip block 0)

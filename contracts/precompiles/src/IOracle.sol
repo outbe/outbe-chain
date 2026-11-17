@@ -77,10 +77,12 @@ interface IOracle {
     event ValidatorForcedExit(address indexed validator);
     /// @dev `peakDay` is the WorldwideDay the curve starts at, as a yyyymmdd date key.
     event ScurvePeakDetected(address indexed base, address indexed quote, uint256 peakPrice, uint64 peakDay);
-    /// @notice Emitted once per pair when a closed UTC calendar day's VWAP is
-    /// finalized into state. `utcDay` is a yyyymmdd UTC date key (e.g. 20260625).
-    /// @dev Uses all three indexable topics. No further field can be indexed.
-    event VwapCalculated(uint32 indexed utcDay, address indexed base, address indexed quote, uint256 vwap);
+    /// @notice Emitted once per pair in the first block of each UTC hour, with the
+    ///         24-hour VWAP of the window that ends at that hour. `windowEnd` is in
+    ///         Unix seconds. A pair with no 24-hour VWAP in that window has no event.
+    /// @dev The VWAP of UTC day D is the event with `windowEnd` 00:00 of day D+1.
+    ///      Uses all three indexable topics. No further field can be indexed.
+    event Vwap24hSet(uint64 indexed windowEnd, address indexed base, address indexed quote, uint256 vwap);
     /// @notice Emitted when the VWAP snapshot of a WorldwideDay is stored. `worldwideDay` is a
     ///         yyyymmdd key at UTC+14. `pairCount` is the number of pairs with a stored VWAP.
     event WorldwideDayVwapSet(uint32 indexed worldwideDay, uint64 startTime, uint64 endTime, uint32 pairCount);

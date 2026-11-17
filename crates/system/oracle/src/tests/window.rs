@@ -417,3 +417,45 @@ fn a_finalized_window_value_is_immutable_after_its_cutoff() {
         assert_eq!(oracle.vwap_24h(usd, snapshot).unwrap(), first);
     });
 }
+
+#[test]
+fn vwap_24h_set_tells_the_price_of_the_hour() {
+    use alloy_sol_types::SolEvent;
+    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+    use outbe_primitives::storage::StorageHandle;
+
+    use crate::precompile::IOracle;
+
+    let day = ATOMIC_DAY_START;
+    let hour = 3_600;
+    let usd = AddressPair::new_coen_to(840);
+    let eur = AddressPair::new_coen_to(978);
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_block_number(1);
+    provider.set_timestamp(U256::from(day + 24 * hour));
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        oracle.register_pair(usd).unwrap();
+        oracle.register_pair(eur).unwrap();
+        note_hours(&mut oracle, day, day + 25 * hour);
+        // USD has a price in each hour. EUR has no price, so it has no event.
+        for k in 0..24 {
+            oracle
+                .write_snapshot(day + k * hour + 60, &[(usd, coen_iso(2), coen_iso(1))])
+                .unwrap();
+        }
+        oracle.emit_vwap_24h_set(day + 24 * hour).unwrap();
+    });
+
+    let events: Vec<_> = provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| IOracle::Vwap24hSet::decode_log(log).ok())
+        .map(|event| event.data)
+        .collect();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].windowEnd, day + 24 * hour);
+    assert_eq!(events[0].base, usd.address1());
+    assert_eq!(events[0].quote, usd.address2());
+    assert_eq!(events[0].vwap, coen_iso(2));
+}

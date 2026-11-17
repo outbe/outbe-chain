@@ -129,8 +129,8 @@ impl OracleContract<'_> {
     /// data for the day is skipped, so catch-up blocks after a halt cannot set
     /// a day price. If no pair passes, nothing is written. The day then stays
     /// empty, and the `utc_day_vwap_last_finalized` watermark tells it apart
-    /// from an unfinalized one. Emits one `VwapCalculated` event per written pair in registration
-    /// order. The method overwrites unconditionally. The caller gates
+    /// from an unfinalized one. It emits no event: the value of the day is the
+    /// `Vwap24hSet` of 00:00 of the next day. The method overwrites unconditionally. The caller gates
     /// re-finalization via that same watermark.
     pub fn finalize_utc_day_vwap(&mut self, utc_day: u32) -> Result<()> {
         let storage = self.storage.clone();
@@ -153,16 +153,6 @@ impl OracleContract<'_> {
         // recomputes over the same immutable window, so no stale entry survives.
         for (pair, vwap) in day_vwaps {
             self.record_utc_day_vwap(utc_day, self.pair_index_of(pair)?, vwap)?;
-            let event = IOracle::VwapCalculated {
-                utcDay: utc_day,
-                base: pair.address1(),
-                quote: pair.address2(),
-                vwap,
-            };
-            let event_result = self
-                .storage
-                .emit_event(ORACLE_ADDRESS, event.encode_log_data());
-            event_result?;
         }
 
         Ok(())

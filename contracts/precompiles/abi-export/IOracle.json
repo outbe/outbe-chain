@@ -1383,13 +1383,13 @@
   },
   {
     "type": "event",
-    "name": "VwapCalculated",
+    "name": "Vwap24hSet",
     "inputs": [
       {
-        "name": "utcDay",
-        "type": "uint32",
+        "name": "windowEnd",
+        "type": "uint64",
         "indexed": true,
-        "internalType": "uint32"
+        "internalType": "uint64"
       },
       {
         "name": "base",

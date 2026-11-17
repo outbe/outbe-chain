@@ -1,13 +1,17 @@
 //! The 24-hour VWAP of a closed snapshot window, judged by round coverage.
 
 use alloy_primitives::U256;
+use alloy_sol_types::SolEvent;
+use outbe_chain_constants::VWAP_24H_WINDOW_SECONDS;
 use outbe_primitives::error::Result;
 use outbe_system_common::address_pair::AddressPair;
+use outbe_system_common::addresses::ORACLE_ADDRESS;
 
 use super::VwapAccumulator;
 use crate::constants::VWAP_HOUR_SECONDS;
 use crate::coverage::{hour_spans, CoverageTally};
 use crate::errors::OracleError;
+use crate::precompile::IOracle;
 use crate::schema::OracleContract;
 use crate::state::hourly_vwap_cell;
 use crate::window::VwapSnapshotId;
@@ -38,6 +42,28 @@ impl OracleContract<'_> {
             snapshot.cutoff(),
             outbe_chain_constants::get_day_vwap_min_coverage(),
         )
+    }
+
+    /// Emits `Vwap24hSet` for each vote target that has a 24-hour VWAP in the
+    /// window that ends at the whole hour `window_end`.
+    pub(crate) fn emit_vwap_24h_set(&mut self, window_end: u64) -> Result<()> {
+        let Some(start) = window_end.checked_sub(VWAP_24H_WINDOW_SECONDS) else {
+            return Ok(());
+        };
+        let share = outbe_chain_constants::get_day_vwap_min_coverage();
+        let vwaps = self
+            .vote_target_values(|pair| self.judged_window_vwap(pair, start, window_end, share))?;
+        for (pair, vwap) in vwaps {
+            let event = IOracle::Vwap24hSet {
+                windowEnd: window_end,
+                base: pair.address1(),
+                quote: pair.address2(),
+                vwap,
+            };
+            self.storage
+                .emit_event(ORACLE_ADDRESS, event.encode_log_data())?;
+        }
+        Ok(())
     }
 
     /// VWAP over the closed window `[start, cutoff)`, judged by round coverage
