@@ -1,0 +1,45 @@
+[tasks.install]
+description = "Install dependencies using soldeer"
+run = "forge soldeer install"
+
+[tasks.build]
+description = "Build Safe deployment contracts"
+run = "forge build"
+
+[tasks.test]
+description = "Test Solidity contracts using forge"
+run = "forge test"
+
+[tasks.fmt]
+description = "Format Solidity code"
+run = "forge fmt"
+
+[tasks.lint]
+description = "Lint Solidity code"
+run = "forge lint"
+
+[tasks.clean]
+description = "Clean up forge artifacts"
+run = "forge clean"
+
+[tasks.clean-all]
+description = "Clean all build artifacts, and caches"
+depends = ["clean"]
+run = '''
+forge soldeer clean
+rm -rf ./out ./build ./cache
+'''
+
+[tasks.deploy]
+description = "Deploy the Safe infrastructure on Outbe"
+run = '''
+set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
+forge script script/DeploySafeInfrastructure.s.sol:DeploySafeInfrastructure --rpc-url "$NETWORK" --broadcast --slow -vvv --skip-simulation
+'''
+
+[tasks.create-wallet]
+description = "Create a Safe wallet with SAFE_OWNERS and SAFE_THRESHOLD"
+run = '''
+set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
+forge script script/CreateSafe.s.sol:CreateSafe --rpc-url "$NETWORK" --broadcast --slow -vvv --skip-simulation
+'''
