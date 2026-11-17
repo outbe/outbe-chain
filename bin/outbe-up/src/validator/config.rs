@@ -283,7 +283,7 @@ feeder:
     }
 
     #[test]
-    fn unattested_runtime_accepts_product_networks_only() {
+    fn unattested_runtime_accepts_devnet_and_testnet_only() {
         let config = |chain_id| {
             serde_yaml_ng::from_str::<OperatorConfig>(&format!(
                 r#"
@@ -304,13 +304,15 @@ feeder:
             .unwrap()
         };
 
+        config(424242).validate().unwrap();
         config(54322345).validate().unwrap();
-        config(676).validate().unwrap();
-        assert!(config(123)
-            .validate()
-            .unwrap_err()
-            .to_string()
-            .contains("forbidden"));
+        for chain_id in [676, 123] {
+            assert!(config(chain_id)
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("forbidden"));
+        }
     }
 
     #[test]
