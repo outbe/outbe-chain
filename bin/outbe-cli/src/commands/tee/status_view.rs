@@ -52,7 +52,7 @@ pub(super) async fn read_renewal_status_v1(
     let blocks_until_freeze = view.schedule.blocks_until_freeze();
     let collateral_valid_until = match view.policy.attestation_mode {
         AttestationMode::DcapRequired => Some(view.binding.collateral_valid_until),
-        AttestationMode::GramineDirectDev => None,
+        AttestationMode::NoAttestationDev => None,
     };
     let safe_for_next_freeze = lease_is_safe_for_next_freeze(
         view.binding.valid_until,

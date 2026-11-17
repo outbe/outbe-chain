@@ -474,8 +474,8 @@ pub enum RunError {
     /// Decoding the canonical `NetworkBindingV1` bytes failed.
     #[error("decode canonical NetworkBindingV1: {0}")]
     DecodeCanonicalNetworkBinding(String),
-    /// The development network binding does not use GramineDirectDev mode.
-    #[error("development network binding must use GramineDirectDev mode")]
+    /// The development network binding does not use NoAttestationDev mode.
+    #[error("development network binding must use NoAttestationDev mode")]
     DevNetworkBindingRequiresDirectDev,
     /// The development network binding chain ID disagrees with `--chain-id`.
     #[error("development network binding chain id does not match --chain-id")]

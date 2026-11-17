@@ -84,16 +84,16 @@ pub enum DcapVerifyError {
     #[error("onboarding source is not initialized")]
     OnboardingSourceNotInitialized,
     /// The DirectDev onboarding context does not match the source network binding.
-    #[error("GramineDirectDev onboarding source network binding mismatch")]
+    #[error("NoAttestationDev onboarding source network binding mismatch")]
     DirectDevSourceNetworkMismatch,
     /// The onboarding source enclave does not have a ready offer key.
     #[error("onboarding source offer key is not ready")]
     OnboardingSourceOfferKeyNotReady,
     /// The DirectDev onboarding context does not match the source offer key.
-    #[error("GramineDirectDev onboarding offer-key context mismatch")]
+    #[error("NoAttestationDev onboarding offer-key context mismatch")]
     DirectDevOfferKeyContextMismatch,
     /// Encrypting the DirectDev onboarding artifact failed.
-    #[error("purpose-bound GramineDirectDev onboarding artifact encryption failed")]
+    #[error("purpose-bound NoAttestationDev onboarding artifact encryption failed")]
     DirectDevArtifactEncryptionFailed,
     /// Computing the accepted onboarding intent hash failed.
     #[error("accepted onboarding intent hash is unavailable")]

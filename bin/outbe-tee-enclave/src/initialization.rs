@@ -282,10 +282,10 @@ impl InitializationState {
                 | EnclaveRequest::PrepareNoAttestationDevOnboardingArtifactV2 { .. }
                 | EnclaveRequest::IngestNoAttestationDevOnboardingArtifactV1 { .. }
         ) && (!self.gramine_direct_dev_evidence_allowed
-            || manifest.attestation_mode != AttestationMode::GramineDirectDev)
+            || manifest.attestation_mode != AttestationMode::NoAttestationDev)
         {
             return Err(CommandDenial::Forbidden(
-                "GramineDirectDev onboarding is forbidden by the initialized network",
+                "NoAttestationDev onboarding is forbidden by the initialized network",
             ));
         }
         command_allowed_for_environment(
@@ -456,7 +456,7 @@ impl InitializationState {
                 AttestationMode::DcapRequired
             ) | (
                 crate::gramine::AttestationType::SgxNoAttest,
-                AttestationMode::GramineDirectDev
+                AttestationMode::NoAttestationDev
             )
         );
         if !runtime_matches {
@@ -794,7 +794,7 @@ mod tests {
         .unwrap();
         let mut direct_mainnet = dcap_manifest.clone();
         direct_mainnet.chain_id = mainnet_chain;
-        direct_mainnet.attestation_mode = AttestationMode::GramineDirectDev;
+        direct_mainnet.attestation_mode = AttestationMode::NoAttestationDev;
         let signature = resign_manifest(&direct_mainnet);
         assert!(mainnet
             .prepare(
@@ -866,7 +866,7 @@ mod tests {
         )
         .unwrap();
         let (mut manifest, _) = signed_manifest(&keys, challenge);
-        manifest.attestation_mode = AttestationMode::GramineDirectDev;
+        manifest.attestation_mode = AttestationMode::NoAttestationDev;
         let signature = resign_manifest(&manifest);
 
         let pending = state
@@ -1201,7 +1201,7 @@ mod tests {
             );
 
             let mut development_intent = intent;
-            development_intent.attestation_mode = AttestationMode::GramineDirectDev;
+            development_intent.attestation_mode = AttestationMode::NoAttestationDev;
             assert!(state
                 .quote_report_data(&development_intent.encode_canonical().unwrap())
                 .unwrap_err()

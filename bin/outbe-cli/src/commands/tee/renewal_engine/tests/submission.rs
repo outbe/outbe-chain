@@ -26,7 +26,7 @@ async fn already_known_without_exact_receipt_preserves_the_pending_attempt() {
     for starts_submitted in [false, true] {
         let node_data_dir = tempfile::tempdir().unwrap();
         let (mut rpc, relay, config, attempt) =
-            replay_fixture(node_data_dir.path(), AttestationMode::GramineDirectDev);
+            replay_fixture(node_data_dir.path(), AttestationMode::NoAttestationDev);
         let expected_hash = attempt.relay_variants[0].transaction_hash;
         let expected_raw = attempt.relay_variants[0].raw_transaction.clone();
         let lifecycle = if starts_submitted {
@@ -113,7 +113,7 @@ async fn already_known_without_exact_receipt_preserves_the_pending_attempt() {
 async fn already_known_with_failed_receipt_keeps_the_prepared_journal() {
     let node_data_dir = tempfile::tempdir().unwrap();
     let (mut rpc, relay, config, attempt) =
-        replay_fixture(node_data_dir.path(), AttestationMode::GramineDirectDev);
+        replay_fixture(node_data_dir.path(), AttestationMode::NoAttestationDev);
     let expected_hash = attempt.relay_variants[0].transaction_hash;
     rpc.send_error = Some("already known");
     *rpc.receipt.lock().unwrap() = Some(serde_json::json!({
@@ -140,7 +140,7 @@ async fn already_known_with_failed_receipt_keeps_the_prepared_journal() {
 async fn already_known_with_exact_success_receipt_submits() {
     let node_data_dir = tempfile::tempdir().unwrap();
     let (mut rpc, relay, config, attempt) =
-        replay_fixture(node_data_dir.path(), AttestationMode::GramineDirectDev);
+        replay_fixture(node_data_dir.path(), AttestationMode::NoAttestationDev);
     let expected_hash = attempt.relay_variants[0].transaction_hash;
     rpc.send_error = Some("already known");
     *rpc.receipt.lock().unwrap() = Some(serde_json::json!({

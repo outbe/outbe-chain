@@ -152,7 +152,7 @@ pub(super) fn generate_renewal_evidence(
 ) -> Result<GeneratedRenewalEvidenceV1> {
     match policy.attestation_mode {
         AttestationMode::DcapRequired => generate_dcap_renewal(enclave, intent, policy, window),
-        AttestationMode::GramineDirectDev => generate_direct_renewal(enclave, intent),
+        AttestationMode::NoAttestationDev => generate_direct_renewal(enclave, intent),
     }
 }
 
@@ -197,11 +197,11 @@ pub(super) fn generate_direct_renewal(
 ) -> Result<GeneratedRenewalEvidenceV1> {
     let enclave_signature = enclave
         .sign_registration_intent_dev_v1(intent)
-        .wrap_err("sign renewal intent inside GramineDirectDev enclave")?;
+        .wrap_err("sign renewal intent inside NoAttestationDev enclave")?;
     if !intent.verify_enclave_signature(&enclave_signature) {
         return Err(RenewalError::DirectDevSignatureMismatch.into());
     }
-    let value = AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+    let value = AttestationEvidenceV1::NoAttestationDev(NoAttestationDevEvidenceV1 {
         transition_key_ready_proof: None,
         intent: intent.clone(),
         dev_attestation_public: intent.attestation_ed25519,

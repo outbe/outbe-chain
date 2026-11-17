@@ -33,7 +33,7 @@ fn dkg_rejects_a_ceremony_id_from_another_network_binding() {
         chain_id: alloy_primitives::U256::from(outbe_primitives::chain::TESTNET_CHAIN_ID)
             .to_be_bytes(),
         genesis_hash: B256::repeat_byte(0x5b),
-        attestation_mode: outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev,
+        attestation_mode: outbe_primitives::tee_attestation_v1::AttestationMode::NoAttestationDev,
     };
     let foreign_binding = outbe_primitives::tee_attestation_v1::NetworkBindingV1 {
         genesis_hash: B256::repeat_byte(0x6c),
@@ -128,22 +128,7 @@ fn full_dkg_ceremony_over_real_noise_transport() {
         participant_set_hash,
     )
     .unwrap();
-    let identities = clients
-        .iter_mut()
-        .map(|client| {
-            match client
-                .request(&EnclaveRequest::DkgParticipantAnnounceV1 {
-                    ceremony_id,
-                    round: 0,
-                    participant_bls: participant_bls.clone(),
-                })
-                .unwrap()
-            {
-                EnclaveResponse::DkgParticipantAnnounceV1 { participant } => participant,
-                other => panic!("unexpected DKG announcement: {other:?}"),
-            }
-        })
-        .collect::<Vec<_>>();
+    let identities = collect_participant_announcements(&mut clients, ceremony_id, &participant_bls);
 
     let index_of: BTreeMap<Vec<u8>, usize> = identities
         .iter()
@@ -225,4 +210,25 @@ fn full_dkg_ceremony_over_real_noise_transport() {
     for s in servers {
         s.join().unwrap();
     }
+}
+
+fn collect_participant_announcements(
+    clients: &mut [EnclaveClient],
+    ceremony_id: B256,
+    participant_bls: &[Vec<u8>],
+) -> Vec<outbe_tee::protocol::ParticipantAnnounce> {
+    let announcement = EnclaveRequest::DkgParticipantAnnounceV1 {
+        ceremony_id,
+        round: 0,
+        participant_bls: participant_bls.to_vec(),
+    };
+    let mut identities = Vec::with_capacity(clients.len());
+    for client in clients {
+        let response = client.request(&announcement).unwrap();
+        let EnclaveResponse::DkgParticipantAnnounceV1 { participant } = response else {
+            panic!("unexpected DKG announcement: {response:?}");
+        };
+        identities.push(participant);
+    }
+    identities
 }

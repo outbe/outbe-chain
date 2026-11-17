@@ -1,3 +1,4 @@
+use super::super::join::test_renewal_binding;
 use super::*;
 
 #[test]
@@ -8,11 +9,11 @@ fn join_transport_uses_node_host_for_sgx_without_dcap() {
     );
     assert!(select_join_transport(AttestationMode::DcapRequired, false).is_err());
     assert_eq!(
-        select_join_transport(AttestationMode::GramineDirectDev, true).unwrap(),
+        select_join_transport(AttestationMode::NoAttestationDev, true).unwrap(),
         JoinTransport::AuthorizedNodeHost
     );
     assert_eq!(
-        select_join_transport(AttestationMode::GramineDirectDev, false).unwrap(),
+        select_join_transport(AttestationMode::NoAttestationDev, false).unwrap(),
         JoinTransport::Development
     );
 }
@@ -243,39 +244,25 @@ fn expired_rejoin_uses_exact_next_binding_and_registration_versions() {
 }
 
 #[test]
-fn tee_join_rejects_a_live_binding_but_accepts_the_deadline_as_expired() {
-    let mut binding = test_renewal_binding();
-    binding.valid_until = 200;
-    assert!(ensure_joinable_binding(Some(&binding), 199).is_err());
-    assert!(ensure_joinable_binding(Some(&binding), 200).is_ok());
-    assert!(ensure_joinable_binding(Some(&binding), 201).is_ok());
-    assert!(ensure_joinable_binding(None, 199).is_ok());
-}
-
-fn test_renewal_binding() -> outbe_tee::registry_view::RenewalBindingV1 {
-    outbe_tee::registry_view::RenewalBindingV1 {
-        node_id_hash: B256::repeat_byte(1),
-        enclave_id: B256::repeat_byte(2),
-        binding_id: B256::repeat_byte(3),
-        intent_hash: B256::repeat_byte(4),
-        evidence_hash: B256::repeat_byte(5),
-        policy_hash: B256::repeat_byte(6),
-        binding_version: 1,
-        registration_version: 0,
-        renewal_nonce: 0,
-        transition_nonce: 0,
-        lease_started_at: 100,
-        valid_until: 200,
-        collateral_valid_until: 300,
-        recipient_x25519: B256::repeat_byte(7),
-        attestation_ed25519: B256::repeat_byte(8),
-        noise_responder_x25519: B256::repeat_byte(9),
-        mrenclave: B256::repeat_byte(10),
-        mrsigner: B256::repeat_byte(11),
-        isv_prod_id: 1,
-        isv_svn: 1,
-        platform_tcb_status: 0,
-        verdict_hash: B256::repeat_byte(12),
-        node_host_authorization_hash: B256::repeat_byte(13),
+fn tee_join_allows_live_rejoin_only_without_attestation() {
+    let binding = test_renewal_binding();
+    for mode in [
+        AttestationMode::NoAttestationDev,
+        AttestationMode::DcapRequired,
+    ] {
+        let live = ensure_joinable_binding(Some(&binding), 199, mode);
+        if mode == AttestationMode::NoAttestationDev {
+            live.unwrap();
+        } else {
+            assert!(matches!(
+                live.unwrap_err()
+                    .downcast_ref::<crate::errors::TeeJoinError>(),
+                Some(crate::errors::TeeJoinError::FinalizedLeaseLive)
+            ));
+        }
+        for timestamp in [200, 201] {
+            ensure_joinable_binding(Some(&binding), timestamp, mode).unwrap();
+        }
+        ensure_joinable_binding(None, 199, mode).unwrap();
     }
 }

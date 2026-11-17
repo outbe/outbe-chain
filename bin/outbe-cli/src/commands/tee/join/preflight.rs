@@ -68,6 +68,50 @@ pub(super) async fn verify_finalized_node_ownership(
         if signer_view.binding.as_ref() != Some(node_binding) {
             return Err(TeeJoinError::SignerDoesNotOwnAssociation.into());
         }
+        ensure_validator_not_jailed(client, signer_address, finalized.view.block_number).await?;
+    }
+    Ok(())
+}
+
+async fn ensure_validator_not_jailed(
+    client: &(impl Rpc + Sync),
+    signer_address: Address,
+    finalized_height: u64,
+) -> Result<()> {
+    use crate::abi::{IValidatorSet, VALIDATOR_SET_ADDR};
+    use alloy_sol_types::SolCall;
+
+    let tag = format!("0x{finalized_height:x}");
+    let registered = client
+        .eth_call_at(
+            VALIDATOR_SET_ADDR,
+            &IValidatorSet::isValidatorCall {
+                addr: signer_address,
+            }
+            .abi_encode(),
+            &tag,
+        )
+        .await?;
+    if !IValidatorSet::isValidatorCall::abi_decode_returns(&registered)
+        .map_err(TeeJoinError::DecodeValidatorStatus)?
+    {
+        return Ok(());
+    }
+    let encoded = client
+        .eth_call_at(
+            VALIDATOR_SET_ADDR,
+            &IValidatorSet::validatorByAddressCall {
+                addr: signer_address,
+            }
+            .abi_encode(),
+            &tag,
+        )
+        .await?;
+    let validator = IValidatorSet::validatorByAddressCall::abi_decode_returns(&encoded)
+        .map_err(TeeJoinError::DecodeValidatorStatus)?;
+    // ValidatorSet exposes JAILED as status 6 in its public ABI.
+    if validator.status == 6 {
+        return Err(TeeJoinError::JailedValidatorCannotRejoin.into());
     }
     Ok(())
 }
@@ -158,7 +202,11 @@ pub(super) fn evaluate_replay_and_lease(input: ReplayCheckInput<'_>) -> Result<P
         if try_complete_exact_replay(&input, binding)? {
             return Ok(PreflightOutcome::CompletedReplay);
         }
-        ensure_joinable_binding(Some(binding), input.finalized.schedule.finalized_timestamp)?;
+        ensure_joinable_binding(
+            Some(binding),
+            input.finalized.schedule.finalized_timestamp,
+            input.policy.attestation_mode,
+        )?;
     }
     let lease = input
         .valid_until
@@ -213,5 +261,82 @@ fn try_complete_exact_replay(
             Ok(true)
         }
         other => Err(TeeJoinError::ReplayEnclaveNotReady(format!("{other:?}")).into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::abi::{IValidatorSet, VALIDATOR_SET_ADDR};
+    use alloy_sol_types::{SolCall, SolValue};
+    use outbe_rpc::test_support::{
+        ExpectedRpcCall, RecordedRpcCall, RecordedRpcResponse, RecordingRpc,
+    };
+
+    #[tokio::test]
+    async fn join_policy_rejects_jailed_rejoin_at_the_exact_finalized_height() {
+        let caller = Address::repeat_byte(0x41);
+        for status in [1, 2, 3, 4, 5, 6] {
+            let rpc = RecordingRpc::new([
+                ExpectedRpcCall::ok(
+                    RecordedRpcCall::EthCallAt {
+                        to: VALIDATOR_SET_ADDR,
+                        data: IValidatorSet::isValidatorCall { addr: caller }.abi_encode(),
+                        block_tag: "0x7".into(),
+                    },
+                    RecordedRpcResponse::Bytes(true.abi_encode()),
+                ),
+                ExpectedRpcCall::ok(
+                    RecordedRpcCall::EthCallAt {
+                        to: VALIDATOR_SET_ADDR,
+                        data: IValidatorSet::validatorByAddressCall { addr: caller }.abi_encode(),
+                        block_tag: "0x7".into(),
+                    },
+                    RecordedRpcResponse::Bytes(
+                        IValidatorSet::validatorByAddressCall::abi_encode_returns(
+                            &IValidatorSet::validatorByAddressReturn {
+                                validatorAddress: caller,
+                                consensusPubkey: Default::default(),
+                                stake: U256::ZERO,
+                                status,
+                                slashCount: 0,
+                                missedBlocks: 0,
+                                missedVotes: 0,
+                                blocksProposed: 0,
+                                joinedAtHeight: 0,
+                                deactivatedAtHeight: 0,
+                                unbondingEnd: 0,
+                                hasBLSShare: false,
+                            },
+                        ),
+                    ),
+                ),
+            ]);
+            let result = ensure_validator_not_jailed(&rpc, caller, 7).await;
+            if status == 6 {
+                assert!(matches!(
+                    result.unwrap_err().downcast_ref::<TeeJoinError>(),
+                    Some(TeeJoinError::JailedValidatorCannotRejoin)
+                ));
+            } else {
+                result.unwrap();
+            }
+            rpc.assert_done();
+        }
+    }
+
+    #[tokio::test]
+    async fn join_policy_allows_an_associated_node_before_staking() {
+        let caller = Address::repeat_byte(0x41);
+        let rpc = RecordingRpc::new([ExpectedRpcCall::ok(
+            RecordedRpcCall::EthCallAt {
+                to: VALIDATOR_SET_ADDR,
+                data: IValidatorSet::isValidatorCall { addr: caller }.abi_encode(),
+                block_tag: "0x7".into(),
+            },
+            RecordedRpcResponse::Bytes(false.abi_encode()),
+        )]);
+        ensure_validator_not_jailed(&rpc, caller, 7).await.unwrap();
+        rpc.assert_done();
     }
 }

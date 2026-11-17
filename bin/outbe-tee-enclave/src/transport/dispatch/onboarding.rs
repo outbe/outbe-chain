@@ -124,15 +124,15 @@ pub(in crate::transport) fn complete_gramine_direct_dev_onboarding_ingest_respon
 ) -> EnclaveResponse {
     let result = (|| -> EnclaveResult<[u8; 32]> {
         let initialization =
-            initialization.ok_or(TransportDispatchError::GramineDirectDevRequiresProdInit)?;
+            initialization.ok_or(TransportDispatchError::NoAttestationDevRequiresProdInit)?;
         let manifest = initialization
             .manifest()?
-            .ok_or(TransportDispatchError::GramineDirectDevRequiresManifest)?;
-        if manifest.attestation_mode != AttestationMode::GramineDirectDev {
-            return Err(TransportDispatchError::GramineDirectDevForbiddenByNetwork.into());
+            .ok_or(TransportDispatchError::NoAttestationDevRequiresManifest)?;
+        if manifest.attestation_mode != AttestationMode::NoAttestationDev {
+            return Err(TransportDispatchError::NoAttestationDevForbiddenByNetwork.into());
         }
         let derived = derive_onboarding_offer_key_v1(keys, &manifest, &expected)?;
-        let boot = boot.ok_or(TransportDispatchError::GramineDirectDevRequiresDurableStorage)?;
+        let boot = boot.ok_or(TransportDispatchError::NoAttestationDevRequiresDurableStorage)?;
         let public = derived.public();
         persist_then_activate_offer_key(boot, manifest.network_binding(), offer_key, derived)?;
         Ok(public)

@@ -379,7 +379,7 @@ fn resolve_development_network_binding(
         .map_err(RunError::decode_dev_network_binding_hex)?;
     let binding = NetworkBindingV1::decode_canonical(&bytes)
         .map_err(RunError::decode_canonical_network_binding)?;
-    if binding.attestation_mode != AttestationMode::GramineDirectDev {
+    if binding.attestation_mode != AttestationMode::NoAttestationDev {
         return Err(RunError::DevNetworkBindingRequiresDirectDev.into());
     }
     if B256::from(binding.chain_id) != chain_id {
@@ -651,7 +651,7 @@ mod tests {
 
     #[test]
     fn mock_network_binding_is_required_and_must_be_canonical() {
-        let chain_id = B256::from(development_binding(AttestationMode::GramineDirectDev).chain_id);
+        let chain_id = B256::from(development_binding(AttestationMode::NoAttestationDev).chain_id);
         let missing = resolve_development_network_binding(&[], true, chain_id).unwrap_err();
         assert!(missing.contains("requires --dev-network-binding"));
 
@@ -670,7 +670,7 @@ mod tests {
 
     #[test]
     fn mock_network_binding_rejects_production_mode_and_another_chain() {
-        let direct = development_binding(AttestationMode::GramineDirectDev);
+        let direct = development_binding(AttestationMode::NoAttestationDev);
         let production = development_binding(AttestationMode::DcapRequired);
         let mode_error = resolve_development_network_binding(
             &development_args(production),
@@ -678,7 +678,7 @@ mod tests {
             B256::from(production.chain_id),
         )
         .unwrap_err();
-        assert!(mode_error.contains("GramineDirectDev"));
+        assert!(mode_error.contains("NoAttestationDev"));
 
         let chain_error = resolve_development_network_binding(
             &development_args(direct),
@@ -713,7 +713,7 @@ mod tests {
 
     #[test]
     fn mock_network_binding_accepts_the_matching_development_binding() {
-        let binding = development_binding(AttestationMode::GramineDirectDev);
+        let binding = development_binding(AttestationMode::NoAttestationDev);
         assert_eq!(
             resolve_development_network_binding(
                 &development_args(binding),
@@ -727,7 +727,7 @@ mod tests {
 
     #[test]
     fn production_binary_rejects_the_development_only_flag() {
-        let binding = development_binding(AttestationMode::GramineDirectDev);
+        let binding = development_binding(AttestationMode::NoAttestationDev);
         let error = resolve_development_network_binding(
             &development_args(binding),
             false,

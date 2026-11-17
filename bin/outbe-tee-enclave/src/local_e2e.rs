@@ -79,7 +79,7 @@ mod tests {
         let binding = NetworkBindingV1 {
             chain_id: U256::from(DEVNET_CHAIN_ID).to_be_bytes::<32>(),
             genesis_hash: alloy_primitives::B256::ZERO,
-            attestation_mode: AttestationMode::GramineDirectDev,
+            attestation_mode: AttestationMode::NoAttestationDev,
         };
         assert!(validate_binding(binding).is_ok());
         assert!(validate_binding(NetworkBindingV1 {
@@ -99,7 +99,7 @@ mod tests {
 }
 fn validate_binding(binding: NetworkBindingV1) -> EnclaveResult<()> {
     if binding.chain_id != U256::from(DEVNET_CHAIN_ID).to_be_bytes::<32>()
-        || binding.attestation_mode != AttestationMode::GramineDirectDev
+        || binding.attestation_mode != AttestationMode::NoAttestationDev
     {
         return Err(SgxSealingError::LocalE2eDirectDevOnly.into());
     }

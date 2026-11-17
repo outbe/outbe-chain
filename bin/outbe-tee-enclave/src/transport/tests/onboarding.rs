@@ -134,7 +134,7 @@ fn sgx_no_attest_production_session_signs_only_gramine_direct_dev_evidence() {
         &keys,
         [0x42; 32],
         [0x43; 32],
-        AttestationMode::GramineDirectDev,
+        AttestationMode::NoAttestationDev,
     );
     let pending = initialization
         .prepare(
@@ -145,7 +145,7 @@ fn sgx_no_attest_production_session_signs_only_gramine_direct_dev_evidence() {
         .unwrap();
     initialization.commit(pending, &keys).unwrap();
     let intent = RegistrationIntentV1 {
-        attestation_mode: AttestationMode::GramineDirectDev,
+        attestation_mode: AttestationMode::NoAttestationDev,
         policy_hash: B256::repeat_byte(0x44),
         binding_id: B256::repeat_byte(0x45),
         ..crate::initialization::test_support::registration_intent_for_manifest(&manifest)
@@ -183,7 +183,7 @@ fn sgx_no_attest_production_session_signs_only_gramine_direct_dev_evidence() {
 #[test]
 fn authenticated_noise_rpc_replays_real_processor_acceptance_through_enclave_qvl() {
     use outbe_primitives::tee_attestation_v1::{
-        AttestationEvidenceV1, AttestationMode, GramineDirectEvidenceV1,
+        AttestationEvidenceV1, AttestationMode, NoAttestationDevEvidenceV1,
     };
     use outbe_tee::{
         dcap_protocol::{DcapPlatformTcbStatusV1, DcapRejectCodeV1, DcapVerificationOutcomeV1},
@@ -253,8 +253,8 @@ fn authenticated_noise_rpc_replays_real_processor_acceptance_through_enclave_qvl
         unreachable!("fixture must be DCAP evidence")
     };
     let mut unattested_intent = dcap.intent;
-    unattested_intent.attestation_mode = AttestationMode::GramineDirectDev;
-    let unattested = AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+    unattested_intent.attestation_mode = AttestationMode::NoAttestationDev;
+    let unattested = AttestationEvidenceV1::NoAttestationDev(NoAttestationDevEvidenceV1 {
         intent: unattested_intent,
         dev_attestation_public: [0x91; 32],
         dev_signature: [0x92; 64],
@@ -280,7 +280,7 @@ fn gramine_direct_dev_onboarding_is_mode_gated_and_persists_before_activation() 
         &source_keys,
         [0x21; 32],
         [0x22; 32],
-        AttestationMode::GramineDirectDev,
+        AttestationMode::NoAttestationDev,
     );
     let group_signature = vec![0x24; 96];
     let (offer_secret, offer_public) = crate::crypto::derive_tribute_offer_secret_from_group_sig(
@@ -311,7 +311,7 @@ fn gramine_direct_dev_onboarding_is_mode_gated_and_persists_before_activation() 
         &target_keys,
         [0x26; 32],
         [0x27; 32],
-        AttestationMode::GramineDirectDev,
+        AttestationMode::NoAttestationDev,
     );
     let pending = target_initialization
         .prepare(
@@ -382,7 +382,7 @@ fn gramine_direct_dev_onboarding_is_mode_gated_and_persists_before_activation() 
     assert_eq!(
         dcap_initialization.authorize_command(&request, false, SessionAuthorityV1::LocalNodeHost,),
         Err(crate::initialization::CommandDenial::Forbidden(
-            "GramineDirectDev onboarding is forbidden by the initialized network"
+            "NoAttestationDev onboarding is forbidden by the initialized network"
         ))
     );
 

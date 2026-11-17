@@ -27,6 +27,7 @@ use args::{RenewArgs, StatusArgs, UpgradePrepareArgs, UpgradeProvisionArgs, Upgr
 pub enum TeeCmd {
     /// Register this node's enclave on-chain and install the offer key it is sealed.
     /// Run BEFORE `outbe-chain node` when joining a running TEE-bootstrapped chain.
+    /// A live lease can be replaced only in NoAttestationDev mode; jailed validators cannot rejoin.
     Join {
         /// Enclave sidecar endpoint: a UDS path or a `host:port` (Gramine) address.
         #[arg(long)]

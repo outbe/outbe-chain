@@ -260,7 +260,7 @@ fn connect_development_join_enclave(
         }
     })?;
     if development.is_hardware_attested() {
-        return Err(TeeJoinEnclaveError::GramineDirectDevHardwareAttested.into());
+        return Err(TeeJoinEnclaveError::NoAttestationDevHardwareAttested.into());
     }
     let (recipient, attestation, noise) = match development.quote() {
         EnclaveResponse::Quote {

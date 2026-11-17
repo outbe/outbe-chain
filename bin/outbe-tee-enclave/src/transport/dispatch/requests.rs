@@ -137,7 +137,7 @@ pub(in crate::transport) fn dispatch_with_label(
         | EnclaveRequest::PrepareNoAttestationDevOnboardingArtifactV2 { .. } => (
             EnclaveResponse::Error {
                 message:
-                    "GramineDirectDev artifact creation requires an authenticated production session"
+                    "NoAttestationDev artifact creation requires an authenticated production session"
                         .to_string(),
             },
             None,

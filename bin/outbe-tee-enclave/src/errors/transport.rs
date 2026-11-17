@@ -156,17 +156,17 @@ pub enum TransportDispatchError {
     #[error("artifact encoding: {0}")]
     ArtifactEncoding(String),
     /// DirectDev onboarding ingest requires production initialization.
-    #[error("GramineDirectDev onboarding requires production initialization")]
-    GramineDirectDevRequiresProdInit,
+    #[error("NoAttestationDev onboarding requires production initialization")]
+    NoAttestationDevRequiresProdInit,
     /// DirectDev onboarding ingest requires an initialization manifest.
-    #[error("GramineDirectDev onboarding requires an initialization manifest")]
-    GramineDirectDevRequiresManifest,
+    #[error("NoAttestationDev onboarding requires an initialization manifest")]
+    NoAttestationDevRequiresManifest,
     /// DirectDev onboarding is forbidden by the initialized network.
-    #[error("GramineDirectDev onboarding is forbidden by the initialized network")]
-    GramineDirectDevForbiddenByNetwork,
+    #[error("NoAttestationDev onboarding is forbidden by the initialized network")]
+    NoAttestationDevForbiddenByNetwork,
     /// DirectDev onboarding requires durable sealed storage.
-    #[error("GramineDirectDev onboarding requires durable production sealed storage")]
-    GramineDirectDevRequiresDurableStorage,
+    #[error("NoAttestationDev onboarding requires durable production sealed storage")]
+    NoAttestationDevRequiresDurableStorage,
     /// Decoding the registration intent failed.
     #[error("registration intent is not canonical: {0}")]
     RegistrationIntentNotCanonical(String),
@@ -189,8 +189,8 @@ pub enum TransportDispatchError {
     #[error("transition requires the permanent offer key")]
     TransitionRequiresPermanentOfferKey,
     /// The DirectDev registration intent does not bind this enclave identity.
-    #[error("GramineDirectDev intent does not bind this enclave identity")]
-    GramineDirectDevIntentIdentityMismatch,
+    #[error("NoAttestationDev intent does not bind this enclave identity")]
+    NoAttestationDevIntentIdentityMismatch,
     /// Remote session admission requires an initialized enclave.
     #[error("remote admission requires initialization")]
     RemoteAdmissionRequiresInitialization,

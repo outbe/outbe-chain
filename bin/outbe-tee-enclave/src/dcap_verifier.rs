@@ -351,13 +351,13 @@ pub(crate) fn complete_gramine_direct_dev_onboarding_response(
         Ok(context) => context,
         Err(_) => {
             return EnclaveResponse::Error {
-                message: "GramineDirectDev onboarding context is not canonical".into(),
+                message: "NoAttestationDev onboarding context is not canonical".into(),
             }
         }
     };
     if request_hash != context.context_hash() {
         return EnclaveResponse::Error {
-            message: "GramineDirectDev onboarding context hash mismatch".into(),
+            message: "NoAttestationDev onboarding context hash mismatch".into(),
         };
     }
     let artifact = match build_gramine_direct_dev_onboarding_artifact(
@@ -376,7 +376,7 @@ pub(crate) fn complete_gramine_direct_dev_onboarding_response(
         Ok(artifact) => artifact,
         Err(_) => {
             return EnclaveResponse::Error {
-                message: "enclave produced a non-canonical GramineDirectDev onboarding artifact"
+                message: "enclave produced a non-canonical NoAttestationDev onboarding artifact"
                     .to_string(),
             };
         }
@@ -410,7 +410,7 @@ pub(crate) fn complete_gramine_direct_dev_onboarding_response_v2(
         Ok(artifact) => artifact,
         Err(_) => {
             return EnclaveResponse::Error {
-                message: "enclave produced a non-canonical GramineDirectDev onboarding artifact"
+                message: "enclave produced a non-canonical NoAttestationDev onboarding artifact"
                     .to_string(),
             };
         }
@@ -442,7 +442,7 @@ fn build_gramine_direct_dev_onboarding_artifact(
     use outbe_primitives::tee_attestation_v1::AttestationMode;
 
     let source_manifest = source_manifest.ok_or(DcapVerifyError::OnboardingSourceNotInitialized)?;
-    if source_manifest.attestation_mode != AttestationMode::GramineDirectDev
+    if source_manifest.attestation_mode != AttestationMode::NoAttestationDev
         || source_manifest.chain_id != context.chain_id
         || source_manifest.genesis_hash != context.genesis_hash
     {

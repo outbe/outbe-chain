@@ -153,19 +153,22 @@ pub(in super::super) fn select_join_transport(
     has_node_data_dir: bool,
 ) -> Result<JoinTransport> {
     match (attestation_mode, has_node_data_dir) {
-        (AttestationMode::DcapRequired, true) | (AttestationMode::GramineDirectDev, true) => {
+        (AttestationMode::DcapRequired, true) | (AttestationMode::NoAttestationDev, true) => {
             Ok(JoinTransport::AuthorizedNodeHost)
         }
         (AttestationMode::DcapRequired, false) => Err(TeeJoinError::DcapRequiresNodeDataDir.into()),
-        (AttestationMode::GramineDirectDev, false) => Ok(JoinTransport::Development),
+        (AttestationMode::NoAttestationDev, false) => Ok(JoinTransport::Development),
     }
 }
 
 pub(in super::super) fn ensure_joinable_binding(
     binding: Option<&RenewalBindingV1>,
     finalized_timestamp: u64,
+    attestation_mode: AttestationMode,
 ) -> Result<()> {
-    if binding.is_some_and(|binding| finalized_timestamp < binding.valid_until) {
+    if attestation_mode != AttestationMode::NoAttestationDev
+        && binding.is_some_and(|binding| finalized_timestamp < binding.valid_until)
+    {
         return Err(TeeJoinError::FinalizedLeaseLive.into());
     }
     Ok(())
@@ -274,4 +277,33 @@ pub(in super::super) fn committed_manifest_matches_binding(
         binding.node_host_authorization_hash,
     );
     Ok(manifest_tuple == binding_tuple)
+}
+
+#[cfg(test)]
+pub(in super::super) fn test_renewal_binding() -> outbe_tee::registry_view::RenewalBindingV1 {
+    outbe_tee::registry_view::RenewalBindingV1 {
+        node_id_hash: B256::repeat_byte(1),
+        enclave_id: B256::repeat_byte(2),
+        binding_id: B256::repeat_byte(3),
+        intent_hash: B256::repeat_byte(4),
+        evidence_hash: B256::repeat_byte(5),
+        policy_hash: B256::repeat_byte(6),
+        binding_version: 1,
+        registration_version: 0,
+        renewal_nonce: 0,
+        transition_nonce: 0,
+        lease_started_at: 100,
+        valid_until: 200,
+        collateral_valid_until: 300,
+        recipient_x25519: B256::repeat_byte(7),
+        attestation_ed25519: B256::repeat_byte(8),
+        noise_responder_x25519: B256::repeat_byte(9),
+        mrenclave: B256::repeat_byte(10),
+        mrsigner: B256::repeat_byte(11),
+        isv_prod_id: 1,
+        isv_svn: 1,
+        platform_tcb_status: 0,
+        verdict_hash: B256::repeat_byte(12),
+        node_host_authorization_hash: B256::repeat_byte(13),
+    }
 }

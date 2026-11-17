@@ -173,7 +173,7 @@ fn replay_policy(mode: AttestationMode) -> TeePolicyV1 {
                 minimum_tcb_evaluation_data_number: 1,
             })
         }
-        AttestationMode::GramineDirectDev => InitialTeeProfileV1::GramineDirectDev,
+        AttestationMode::NoAttestationDev => InitialTeeProfileV1::NoAttestationDev,
     };
     initial_tee_policy_v1(profile, DEVNET_CHAIN_ID, genesis_hash).unwrap()
 }
@@ -230,7 +230,7 @@ fn replay_source(
                 .unwrap()
                 + 1_000
         }
-        AttestationMode::GramineDirectDev => u64::MAX,
+        AttestationMode::NoAttestationDev => u64::MAX,
     };
     RenewalBindingV1 {
         node_id_hash: node_id.node_id_hash().unwrap(),
@@ -311,8 +311,8 @@ fn replay_evidence(
                 .collect(),
             transition_key_ready_proof: None,
         }),
-        AttestationMode::GramineDirectDev => {
-            AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+        AttestationMode::NoAttestationDev => {
+            AttestationEvidenceV1::NoAttestationDev(NoAttestationDevEvidenceV1 {
                 transition_key_ready_proof: None,
                 intent: intent.clone(),
                 dev_attestation_public: intent.attestation_ed25519,
@@ -323,7 +323,7 @@ fn replay_evidence(
     let evidence = evidence_value.encode_canonical().unwrap();
     let evidence_hash = match mode {
         AttestationMode::DcapRequired => dcap_evidence_hash_v1(&evidence).unwrap(),
-        AttestationMode::GramineDirectDev => evidence_value.evidence_hash().unwrap(),
+        AttestationMode::NoAttestationDev => evidence_value.evidence_hash().unwrap(),
     };
     (evidence, evidence_hash)
 }
@@ -394,7 +394,7 @@ fn replay_attempt(identity: &ReplayIdentity) -> (RelaySignerV1, PreparedRenewalV
         collateral_valid_until: source_collateral_valid_until,
         collateral_margin: match mode {
             AttestationMode::DcapRequired => policy.collateral_margin,
-            AttestationMode::GramineDirectDev => 0,
+            AttestationMode::NoAttestationDev => 0,
         },
         relay: relay.address(),
         relay_variants: vec![raw],
@@ -454,7 +454,7 @@ pub(super) fn replay_fixture(
 async fn promoted_upgrade_allows_successor_renewal_and_exact_restart_replay() {
     for mode in [
         AttestationMode::DcapRequired,
-        AttestationMode::GramineDirectDev,
+        AttestationMode::NoAttestationDev,
     ] {
         let dir = tempfile::tempdir().unwrap();
         let (mut rpc, relay, config, attempt) = replay_fixture(dir.path(), mode);
@@ -519,7 +519,7 @@ async fn promoted_successor_supersedes_only_finished_predecessor_renewals() {
 async fn assert_predecessor_supersession_case(case: u8) {
     let dir = tempfile::tempdir().unwrap();
     let (mut rpc, relay, mut config, attempt) =
-        replay_fixture(dir.path(), AttestationMode::GramineDirectDev);
+        replay_fixture(dir.path(), AttestationMode::NoAttestationDev);
     let mut previous = rpc.binding.clone();
     previous.intent_hash = attempt.intent_hash;
     previous.evidence_hash = attempt.evidence_hash;
@@ -596,7 +596,7 @@ async fn finalized_upgrade_and_wrong_promoted_identity_still_block_renewal() {
     for case in 0..3 {
         let dir = tempfile::tempdir().unwrap();
         let (mut rpc, relay, mut config, attempt) =
-            replay_fixture(dir.path(), AttestationMode::GramineDirectDev);
+            replay_fixture(dir.path(), AttestationMode::NoAttestationDev);
         store_upgrade_checkpoint(&config, &attempt, case != 0);
         if case == 1 {
             config.manifest.initialization_challenge[0] ^= 1;
@@ -678,7 +678,7 @@ fn store_upgrade_checkpoint(
 async fn prepared_and_submitted_restarts_replay_exact_transaction_in_both_modes() {
     for mode in [
         AttestationMode::DcapRequired,
-        AttestationMode::GramineDirectDev,
+        AttestationMode::NoAttestationDev,
     ] {
         for starts_submitted in [false, true] {
             let node_data_dir = tempfile::tempdir().unwrap();
@@ -738,7 +738,7 @@ async fn prepared_and_submitted_restarts_replay_exact_transaction_in_both_modes(
 async fn submitted_exact_transaction_observed_before_finality_is_not_rebroadcast() {
     let node_data_dir = tempfile::tempdir().unwrap();
     let (rpc, relay, config, attempt) =
-        replay_fixture(node_data_dir.path(), AttestationMode::GramineDirectDev);
+        replay_fixture(node_data_dir.path(), AttestationMode::NoAttestationDev);
     let expected_hash = attempt.relay_variants[0].transaction_hash;
     *rpc.receipt.lock().unwrap() = Some(serde_json::json!({
         "transactionHash": format!("{expected_hash:#x}"),
@@ -783,7 +783,7 @@ async fn submitted_exact_transaction_observed_before_finality_is_not_rebroadcast
 async fn nonce_too_low_without_exact_receipt_fails_closed() {
     let node_data_dir = tempfile::tempdir().unwrap();
     let (mut rpc, relay, config, attempt) =
-        replay_fixture(node_data_dir.path(), AttestationMode::GramineDirectDev);
+        replay_fixture(node_data_dir.path(), AttestationMode::NoAttestationDev);
     let expected_hash = attempt.relay_variants[0].transaction_hash;
     rpc.send_error = Some("nonce too low: next nonce 1, tx nonce 0");
     RenewalJournalGuard::acquire(node_data_dir.path())
@@ -820,7 +820,7 @@ async fn nonce_too_low_without_exact_receipt_fails_closed() {
 async fn nonce_too_low_race_accepts_only_the_exact_success_receipt() {
     let node_data_dir = tempfile::tempdir().unwrap();
     let (mut rpc, relay, config, attempt) =
-        replay_fixture(node_data_dir.path(), AttestationMode::GramineDirectDev);
+        replay_fixture(node_data_dir.path(), AttestationMode::NoAttestationDev);
     let expected_raw = attempt.relay_variants[0].raw_transaction.clone();
     let expected_hash = attempt.relay_variants[0].transaction_hash;
     rpc.send_error = Some("nonce too low: next nonce 1, tx nonce 0");
@@ -864,7 +864,7 @@ async fn nonce_too_low_race_accepts_only_the_exact_success_receipt() {
 async fn exact_receipt_requires_canonical_hash_and_success_status() {
     let node_data_dir = tempfile::tempdir().unwrap();
     let (rpc, _relay, _config, attempt) =
-        replay_fixture(node_data_dir.path(), AttestationMode::GramineDirectDev);
+        replay_fixture(node_data_dir.path(), AttestationMode::NoAttestationDev);
     let raw = &attempt.relay_variants[0];
     let expected_hash = raw.transaction_hash;
 

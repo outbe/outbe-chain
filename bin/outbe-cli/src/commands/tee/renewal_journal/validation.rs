@@ -133,7 +133,7 @@ impl PreparedRenewalV1 {
             }
             AttestationEvidenceV1::NoAttestationDev(value) => {
                 let direct_binding_matches = intent.attestation_mode
-                    == AttestationMode::GramineDirectDev
+                    == AttestationMode::NoAttestationDev
                     && value.dev_attestation_public == value.intent.attestation_ed25519
                     && value.dev_signature.as_slice() == self.enclave_signature.as_slice();
                 if !direct_binding_matches

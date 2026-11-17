@@ -80,18 +80,62 @@ pub(in super::super) async fn await_finalized_join_target(
     let started = tokio::time::Instant::now();
     loop {
         let view = read_finalized_registry_view_v1(&CliFinalityRpc(client), selector).await?;
-        match view.binding.as_ref() {
-            Some(binding) if finalized_binding_matches_intent(binding, intent)? => return Ok(view),
-            Some(binding) if view.schedule.finalized_timestamp < binding.valid_until => {
-                return Err(TeeJoinError::CompetingLiveBinding.into());
-            }
-            _ => {}
+        if finalized_join_target_ready(
+            view.binding.as_ref(),
+            view.schedule.finalized_timestamp,
+            intent,
+        )? {
+            return Ok(view);
         }
         if started.elapsed() >= timeout {
             return Err(TeeJoinError::FinalizedJoinTimeout(timeout.as_secs()).into());
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
+}
+
+fn finalized_join_target_ready(
+    binding: Option<&outbe_tee::registry_view::RenewalBindingV1>,
+    finalized_timestamp: u64,
+    intent: &RegistrationIntentV1,
+) -> Result<bool> {
+    let Some(binding) = binding else {
+        return Ok(false);
+    };
+    if finalized_binding_matches_intent(binding, intent)? {
+        return Ok(true);
+    }
+    if finalized_timestamp >= binding.valid_until {
+        return Ok(false);
+    }
+    if binding.binding_version >= intent.binding_version {
+        return Err(TeeJoinError::CompetingLiveBinding.into());
+    }
+    let source = (
+        intent.attestation_mode,
+        intent.operation,
+        binding.node_id_hash,
+        super::registration_counters(Some(binding))?,
+    );
+    let expected = (
+        outbe_primitives::tee_attestation_v1::AttestationMode::NoAttestationDev,
+        outbe_primitives::tee_attestation_v1::AttestationOperationV1::RegisterEnclave,
+        intent
+            .node_id
+            .node_id_hash()
+            .map_err(TeeJoinError::HashRegistrationNodeIdentity)?,
+        (
+            intent.binding_version,
+            intent.registration_version,
+            intent.renewal_nonce,
+            intent.transition_nonce,
+        ),
+    );
+    // Only the exact source counters may remain live while this registration finalizes.
+    if source != expected {
+        return Err(TeeJoinError::CompetingLiveBinding.into());
+    }
+    Ok(false)
 }
 
 pub(super) struct JoinRelayContext<'a> {
@@ -289,4 +333,95 @@ fn cleanup_completed_committed_join(
         "[ok] finalized tee join cleanup recovered without another transaction or onboarding ingest"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::policy::test_renewal_binding;
+    use super::*;
+    use outbe_primitives::tee_attestation_v1::{AttestationMode, AttestationOperationV1, NodeIdV1};
+
+    fn fixture() -> (
+        outbe_tee::registry_view::RenewalBindingV1,
+        RegistrationIntentV1,
+    ) {
+        let public = k256::ecdsa::SigningKey::from_bytes((&[1; 32]).into())
+            .unwrap()
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .try_into()
+            .unwrap();
+        let node_id = NodeIdV1 {
+            reth_p2p_public: public,
+        };
+        let mut binding = test_renewal_binding();
+        binding.node_id_hash = node_id.node_id_hash().unwrap();
+        let intent = RegistrationIntentV1 {
+            chain_id: [1; 32],
+            genesis_hash: B256::repeat_byte(20),
+            operation: AttestationOperationV1::RegisterEnclave,
+            attestation_mode: AttestationMode::NoAttestationDev,
+            policy_hash: binding.policy_hash,
+            node_id,
+            enclave_id: B256::repeat_byte(21),
+            binding_id: B256::repeat_byte(22),
+            binding_version: 2,
+            registration_version: 1,
+            renewal_nonce: 0,
+            transition_nonce: 0,
+            requested_valid_until: 300,
+            recipient_x25519: [7; 32],
+            attestation_ed25519: [8; 32],
+            noise_responder_x25519: [9; 32],
+            node_host_authorization_hash: B256::repeat_byte(13),
+        };
+        (binding, intent)
+    }
+
+    #[test]
+    fn relay_waits_for_own_live_predecessor_but_rejects_competitors() {
+        let (binding, intent) = fixture();
+        assert!(!finalized_join_target_ready(Some(&binding), 199, &intent).unwrap());
+        assert!(!finalized_join_target_ready(Some(&binding), 200, &intent).unwrap());
+        assert!(!finalized_join_target_ready(None, 199, &intent).unwrap());
+        for version in [intent.binding_version, intent.binding_version + 1] {
+            let mut competitor = binding.clone();
+            competitor.binding_version = version;
+            let error = finalized_join_target_ready(Some(&competitor), 199, &intent).unwrap_err();
+            assert!(matches!(
+                error.downcast_ref::<TeeJoinError>(),
+                Some(TeeJoinError::CompetingLiveBinding)
+            ));
+        }
+        let mut foreign = binding.clone();
+        foreign.node_id_hash = B256::repeat_byte(31);
+        assert!(finalized_join_target_ready(Some(&foreign), 199, &intent).is_err());
+        for field in [0, 1, 2] {
+            let mut changed = binding.clone();
+            match field {
+                0 => changed.registration_version += 1,
+                1 => changed.renewal_nonce += 1,
+                _ => changed.transition_nonce += 1,
+            }
+            assert!(finalized_join_target_ready(Some(&changed), 199, &intent).is_err());
+        }
+        let mut dcap = intent;
+        dcap.attestation_mode = AttestationMode::DcapRequired;
+        assert!(finalized_join_target_ready(Some(&binding), 199, &dcap).is_err());
+    }
+
+    #[test]
+    fn relay_accepts_only_the_exact_finalized_target() {
+        let (mut binding, intent) = fixture();
+        binding.enclave_id = intent.enclave_id;
+        binding.binding_id = intent.binding_id;
+        binding.intent_hash = intent.intent_hash().unwrap();
+        binding.binding_version = 2;
+        binding.registration_version = 1;
+        binding.valid_until = 300;
+        assert!(finalized_join_target_ready(Some(&binding), 199, &intent).unwrap());
+        binding.intent_hash = B256::repeat_byte(32);
+        assert!(finalized_join_target_ready(Some(&binding), 199, &intent).is_err());
+    }
 }
