@@ -37,12 +37,12 @@ enum ValidatorCommand {
         #[arg(long)]
         config: PathBuf,
     },
-    /// Restore an optional snapshot, start a keyless full node, and reach tip.
+    /// Restore an optional snapshot, start the resident validator, and reach tip.
     Sync {
         #[arg(long)]
         snapshot: Option<PathBuf>,
     },
-    /// Join the TEE registry and promote the synchronized node to a validator.
+    /// Stake and confirm readiness without restarting the synchronized node.
     Promote,
     /// Show the current lifecycle state.
     Status {
@@ -60,10 +60,8 @@ struct InternalArgs {
 
 #[derive(Debug, Subcommand)]
 enum InternalCommand {
-    Enclave,
     Feeder,
     WaitRpc(WaitArgs),
-    WaitEnclave(WaitArgs),
     WaitValidatorDependencies(WaitArgs),
 }
 
@@ -91,12 +89,8 @@ impl Cli {
                 ValidatorCommand::Status { watch } => validator::status::show(watch).await,
             },
             Command::Internal(args) => match args.command {
-                InternalCommand::Enclave => validator::service::enclave(),
                 InternalCommand::Feeder => validator::service::feeder(),
                 InternalCommand::WaitRpc(args) => validator::service::wait_rpc(args.timeout).await,
-                InternalCommand::WaitEnclave(args) => {
-                    validator::service::wait_enclave(args.timeout).await
-                }
                 InternalCommand::WaitValidatorDependencies(args) => {
                     validator::service::wait_validator_dependencies(args.timeout).await
                 }

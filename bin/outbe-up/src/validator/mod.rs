@@ -22,8 +22,6 @@ pub mod wait;
 pub const FULL_NODE: &str = "outbe-full-node.service";
 pub const VALIDATOR_TARGET: &str = "outbe-validator.target";
 pub const VALIDATOR_SERVICE: &str = "outbe-validator.service";
-pub const ENCLAVE_SERVICE: &str = "outbe-enclave.service";
-pub const RENEW_TIMER: &str = "outbe-tee-renew.timer";
 
 pub(crate) fn validator_address(path: &Path) -> Result<Address> {
     let encoded = Zeroizing::new(

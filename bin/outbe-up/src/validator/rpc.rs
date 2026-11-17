@@ -11,15 +11,9 @@ use serde_json::{json, Value};
 
 const STAKING: Address = address!("000000000000000000000000000000000000EE02");
 const VALIDATOR_SET: Address = address!("000000000000000000000000000000000000EE00");
-const TEE_REGISTRY: Address = address!("000000000000000000000000000000000000EE0A");
-
-const TEE_POLICY_V1_MINIMUM_LEASE_OFFSET: usize = 180;
-const TEE_POLICY_V1_MAXIMUM_LEASE_OFFSET: usize = 188;
-const TEE_POLICY_V1_LEASE_PREFIX_LEN: usize = 196;
 
 sol!("../../contracts/precompiles/src/IStaking.sol");
 sol!("../../contracts/precompiles/src/IValidatorSet.sol");
-sol!("../../contracts/precompiles/src/ITeeRegistryV1.sol");
 
 pub struct RpcClient {
     url: String,
@@ -31,13 +25,6 @@ pub struct RpcClient {
 pub struct Block {
     pub number: u64,
     pub hash: String,
-    pub timestamp: u64,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct TeeLeasePolicy {
-    pub minimum: u64,
-    pub maximum: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -60,6 +47,36 @@ pub struct ConsensusStatus {
     pub is_validator: bool,
     #[serde(default)]
     pub mode: String,
+    #[serde(default)]
+    pub enclave: EnclaveHealth,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnclaveHealth {
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
+    pub ready: bool,
+    #[serde(default)]
+    pub offer_key_ready: bool,
+}
+
+impl EnclaveHealth {
+    fn resident_ready(&self) -> bool {
+        self.state == "ready" && self.ready && self.offer_key_ready
+    }
+}
+
+impl ConsensusStatus {
+    pub fn resident_ready(&self) -> bool {
+        self.is_validator
+            && matches!(
+                self.mode.as_str(),
+                "upstreamBootstrap" | "verifier" | "signer"
+            )
+            && self.enclave.resident_ready()
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -148,20 +165,6 @@ impl RpcClient {
         Ok(IStaking::getMinStakeCall::abi_decode_returns(&result)?)
     }
 
-    pub async fn finalized_tee_lease_policy(&self) -> Result<(Block, TeeLeasePolicy)> {
-        let block = self.finalized_block().await?;
-        let call = ITeeRegistryV1::activePolicyV1Call {};
-        let result = self
-            .eth_call_at(
-                TEE_REGISTRY,
-                &call.abi_encode(),
-                &format!("0x{:x}", block.number),
-            )
-            .await?;
-        let canonical = ITeeRegistryV1::activePolicyV1Call::abi_decode_returns(&result)?;
-        Ok((block, decode_tee_lease_policy_v1(&canonical)?))
-    }
-
     pub async fn validator(&self, address: Address) -> Result<ValidatorRecord> {
         let call = IValidatorSet::isValidatorCall { addr: address };
         let result = self.eth_call(VALIDATOR_SET, &call.abi_encode()).await?;
@@ -210,7 +213,6 @@ impl RpcClient {
                 .and_then(Value::as_str)
                 .ok_or_else(|| eyre::eyre!("block response has no hash"))?
                 .to_owned(),
-            timestamp: parse_hex_u64(value.get("timestamp").unwrap_or(&Value::Null))?,
         })
     }
 
@@ -275,29 +277,6 @@ impl RpcClient {
     }
 }
 
-fn decode_tee_lease_policy_v1(bytes: &[u8]) -> Result<TeeLeasePolicy> {
-    ensure!(
-        bytes.len() >= TEE_POLICY_V1_LEASE_PREFIX_LEN,
-        "finalized TEE policy is truncated before its lease range"
-    );
-    ensure!(bytes[0] == 1, "unsupported finalized TEE policy version");
-    let minimum = u64::from_be_bytes(
-        bytes[TEE_POLICY_V1_MINIMUM_LEASE_OFFSET..TEE_POLICY_V1_MAXIMUM_LEASE_OFFSET]
-            .try_into()
-            .expect("fixed-size TEE policy field"),
-    );
-    let maximum = u64::from_be_bytes(
-        bytes[TEE_POLICY_V1_MAXIMUM_LEASE_OFFSET..TEE_POLICY_V1_LEASE_PREFIX_LEN]
-            .try_into()
-            .expect("fixed-size TEE policy field"),
-    );
-    ensure!(
-        minimum <= maximum,
-        "finalized TEE policy has an invalid lease range {minimum}..={maximum} seconds"
-    );
-    Ok(TeeLeasePolicy { minimum, maximum })
-}
-
 fn parse_hex_u64(value: &Value) -> Result<u64> {
     let value = value
         .as_str()
@@ -311,5 +290,28 @@ fn parse_hex_u256(value: &Value) -> Result<U256> {
         .as_str()
         .ok_or_else(|| eyre::eyre!("expected a hex quantity"))?;
     U256::from_str_radix(value.strip_prefix("0x").unwrap_or(value), 16)
-        .map_err(|error| eyre::eyre!("invalid U256 quantity: {error}"))
+        .wrap_err("invalid U256 quantity")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resident_readiness_requires_live_key_and_validator_mode() {
+        let status: ConsensusStatus = serde_json::from_value(json!({
+            "isValidator": true, "mode": "upstreamBootstrap",
+            "enclave": {"state": "ready", "ready": true, "offerKeyReady": true}
+        }))
+        .unwrap();
+        assert!(status.resident_ready());
+        let mut status = status;
+        status.enclave.offer_key_ready = false;
+        assert!(!status.resident_ready());
+        status.enclave.offer_key_ready = true;
+        status.is_validator = false;
+        assert!(!status.resident_ready());
+        let absent: ConsensusStatus = serde_json::from_value(json!({"isValidator": true})).unwrap();
+        assert!(!absent.resident_ready());
+    }
 }

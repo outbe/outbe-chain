@@ -1,24 +1,19 @@
-use std::{path::Path, time::Duration};
+use std::path::Path;
 
 use eyre::{ensure, Result};
-use rand::RngCore;
 
 use crate::{
     support::{process, progress::Progress},
     validator::{
-        config::EnclaveRuntime,
         journal::Journal,
         path_text,
         rpc::RpcClient,
         validator_address,
         wait::{wait_for_rpc_chain, wait_for_sync, wait_for_verifier, wait_transaction_finalized},
-        ENCLAVE_SERVICE, FULL_NODE, RENEW_TIMER, VALIDATOR_SERVICE, VALIDATOR_TARGET,
+        VALIDATOR_SERVICE,
     },
 };
 
-const TEE_JOIN_ATTEMPTS: usize = 3;
-const TEE_JOIN_RETRY_DELAY: Duration = Duration::from_millis(100);
-const FINALIZED_VIEW_MISMATCH: &str = "finalized schedule and eth finalized block disagree";
 const ORACLE_DELEGATE_ROLE: u8 = 1;
 
 pub async fn run() -> Result<()> {
@@ -31,13 +26,14 @@ pub async fn run() -> Result<()> {
     let validator = validator_address(&keys.join("evm-key.hex"))?;
     let feeder = validator_address(&keys.join("feeder-key.hex"))?;
 
-    progress.stage("checking synchronized full node and validator state");
+    progress.stage("checking synchronized resident validator and validator state");
     ensure!(
-        process::systemctl_is_active(FULL_NODE) || process::systemctl_is_active(VALIDATOR_SERVICE),
+        process::systemctl_is_active(VALIDATOR_SERVICE),
         "run `outbe-up validator sync` before promotion"
     );
     wait_for_rpc_chain(&local, journal.config.network.chain_id, &mut progress).await?;
     wait_for_sync(&local, &remote, &mut progress).await?;
+    crate::validator::wait::wait_for_resident(&local, &mut progress).await?;
     let minimum = remote.min_stake().await?;
     let mut record = remote.validator(validator).await?;
     if !record.registered {
@@ -53,19 +49,6 @@ pub async fn run() -> Result<()> {
             balance >= minimum,
             "validator {validator:#x} needs at least {minimum} base units; balance is {balance}"
         );
-    }
-
-    if journal.tee_join_complete {
-        progress.stage("resuming completed TEE admission");
-    } else {
-        progress.stage("starting enclave and completing TEE admission");
-    }
-    process::systemctl(&["start", ENCLAVE_SERVICE])?;
-    if !journal.tee_join_complete {
-        ensure_join_identity(&mut journal, &remote).await?;
-        run_tee_join(&journal).await?;
-        journal.tee_join_complete = true;
-        journal.save()?;
     }
 
     if !record.registered {
@@ -98,11 +81,6 @@ pub async fn run() -> Result<()> {
 
     ensure_feeder_delegate(&mut journal, &remote, validator, feeder, &mut progress).await?;
 
-    progress.stage("switching the same data directory to validator mode");
-    process::systemctl(&["disable", "--now", FULL_NODE])?;
-    process::systemctl(&["enable", "--now", VALIDATOR_TARGET])?;
-    process::systemctl(&["enable", "--now", RENEW_TIMER])?;
-    wait_for_rpc_chain(&local, journal.config.network.chain_id, &mut progress).await?;
     wait_for_verifier(&local, &remote, &mut progress).await?;
 
     record = remote.validator(validator).await?;
@@ -159,69 +137,6 @@ async fn ensure_feeder_delegate(
     Ok(())
 }
 
-async fn ensure_join_identity(journal: &mut Journal, remote: &RpcClient) -> Result<()> {
-    if journal.binding_id.is_none() {
-        let mut binding = [0_u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut binding);
-        if binding.iter().all(|byte| *byte == 0) {
-            binding[31] = 1;
-        }
-        journal.binding_id = Some(hex::encode(binding));
-    }
-    if journal.valid_until.is_none() {
-        let (finalized, policy) = remote.finalized_tee_lease_policy().await?;
-        let duration = journal
-            .config
-            .tee
-            .lease_duration_seconds
-            .resolve(policy.minimum, policy.maximum)?;
-        journal.valid_until = Some(
-            finalized
-                .timestamp
-                .checked_add(duration)
-                .ok_or_else(|| eyre::eyre!("TEE lease deadline overflow"))?,
-        );
-    }
-    journal.save()
-}
-
-async fn run_tee_join(journal: &Journal) -> Result<()> {
-    let valid_until = journal
-        .valid_until
-        .expect("valid_until was saved")
-        .to_string();
-    let mut args = vec!["tee", "join", "--enclave-socket", "127.0.0.1:17000"];
-    if !matches!(journal.config.tee.runtime, EnclaveRuntime::Mock) {
-        args.extend(["--node-data-dir", "/opt/outbe-chain/validator-0/data"]);
-    }
-    args.extend([
-        "--reth-p2p-secret-key",
-        "/opt/outbe-chain/keys/reth-p2p-secret.hex",
-        "--genesis",
-        "/opt/outbe-chain/genesis.json",
-        "--binding-id",
-        journal.binding_id.as_deref().expect("binding id was saved"),
-        "--valid-until",
-        &valid_until,
-        "--timeout-secs",
-        "600",
-    ]);
-    for attempt in 1..=TEE_JOIN_ATTEMPTS {
-        match run_outbe_cli(&args) {
-            Ok(_) => return Ok(()),
-            Err(error) if attempt < TEE_JOIN_ATTEMPTS && is_finalized_view_mismatch(&error) => {
-                tokio::time::sleep(TEE_JOIN_RETRY_DELAY).await;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-    unreachable!("TEE join attempts are non-zero")
-}
-
-fn is_finalized_view_mismatch(error: &eyre::Report) -> bool {
-    error.to_string().contains(FINALIZED_VIEW_MISMATCH)
-}
-
 fn run_outbe_cli(args: &[&str]) -> Result<String> {
     let journal = Journal::load()?;
     let binary = Path::new(process::ROOT).join("outbe-cli");
@@ -262,15 +177,5 @@ mod tests {
             transaction_hash(&format!("Transaction sent: {hash}\n")).unwrap(),
             hash
         );
-    }
-
-    #[test]
-    fn retries_only_the_finalized_view_race() {
-        assert!(is_finalized_view_mismatch(&eyre::eyre!(
-            FINALIZED_VIEW_MISMATCH
-        )));
-        assert!(!is_finalized_view_mismatch(&eyre::eyre!(
-            "TEE admission failed"
-        )));
     }
 }

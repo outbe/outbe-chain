@@ -2,10 +2,10 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     os::unix::fs::{MetadataExt, PermissionsExt},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
-use eyre::{bail, ensure, Context, Result};
+use eyre::{ensure, Context, Result};
 use walkdir::WalkDir;
 
 use crate::{
@@ -21,9 +21,6 @@ const ENV_KEYS: &[&str] = &[
     "OUTBE_BOOTNODES",
     "OUTBE_CONSENSUS_PEERS",
     "OUTBE_CONSENSUS_EXTRA_ARGS",
-    "OUTBE_ENCLAVE_RUNTIME",
-    "OUTBE_TEE_SESSION_MODE",
-    "OUTBE_DEV_NETWORK_BINDING",
     "OUTBE_CHAIN_ID",
 ];
 
@@ -36,12 +33,8 @@ pub fn run() -> Result<()> {
     validate_local_config(&feeder)?;
     let environment = read_environment(&env_path)?;
     validate_environment(&environment)?;
-    validate_runtime(root, &environment)?;
-    validate_bundle(root, &environment)?;
+    validate_bundle(root)?;
 
-    if environment["OUTBE_ENCLAVE_RUNTIME"] == "system-gramine" {
-        install_system_gramine_paths(root)?;
-    }
     install_binary(&root.join("outbe-up"), Path::new("/usr/local/bin/outbe-up"))?;
     validate_genesis(root, &environment["OUTBE_CHAIN_ID"])?;
     ensure_outbe_account()?;
@@ -106,12 +99,11 @@ fn read_environment(path: &Path) -> Result<BTreeMap<String, String>> {
             "duplicate validator.env key: {name}"
         );
     }
-    for name in ENV_KEYS.iter().copied().filter(|name| {
-        !matches!(
-            *name,
-            "OUTBE_CONSENSUS_EXTRA_ARGS" | "OUTBE_DEV_NETWORK_BINDING"
-        )
-    }) {
+    for name in ENV_KEYS
+        .iter()
+        .copied()
+        .filter(|name| !matches!(*name, "OUTBE_CONSENSUS_EXTRA_ARGS"))
+    {
         ensure!(
             values.get(name).is_some_and(|value| !value.is_empty()),
             "missing {name} in validator.env"
@@ -165,67 +157,10 @@ fn validate_environment(values: &BTreeMap<String, String>) -> Result<()> {
         !peers.is_empty() && peers.iter().all(|peer| valid_peer(peer)),
         "OUTBE_CONSENSUS_PEERS is invalid"
     );
-    if values["OUTBE_ENCLAVE_RUNTIME"] == "mock" {
-        ensure!(
-            values["OUTBE_DEV_NETWORK_BINDING"].len() == 132
-                && values["OUTBE_DEV_NETWORK_BINDING"]
-                    .bytes()
-                    .all(|byte| byte.is_ascii_hexdigit()),
-            "OUTBE_DEV_NETWORK_BINDING must be a canonical 66-byte hex value"
-        );
-    }
-    let expected_session = match values["OUTBE_ENCLAVE_RUNTIME"].as_str() {
-        "mock" => "development",
-        "system-gramine" | "bundled-sgx" => "production-node-host",
-        _ => {
-            return Err(eyre::eyre!(
-                "OUTBE_ENCLAVE_RUNTIME must be system-gramine, bundled-sgx, or mock"
-            ));
-        }
-    };
-    ensure!(
-        values["OUTBE_TEE_SESSION_MODE"] == expected_session,
-        "OUTBE_TEE_SESSION_MODE does not match OUTBE_ENCLAVE_RUNTIME"
-    );
     Ok(())
 }
 
-fn validate_runtime(root: &Path, environment: &BTreeMap<String, String>) -> Result<()> {
-    match environment["OUTBE_ENCLAVE_RUNTIME"].as_str() {
-        "system-gramine" => {
-            ensure!(
-                command_in_path("gramine-sgx"),
-                "gramine-sgx is not installed"
-            );
-            required_file(&root.join("outbe-tee-enclave.manifest.sgx"))?;
-            required_file(&root.join("outbe-tee-enclave.sig"))?;
-        }
-        "bundled-sgx" => {
-            required_executable(&root.join("sgx/bin/outbe-tee-enclave-launch"))?;
-            for relative in [
-                "bin/outbe-tee-enclave",
-                "gramine/loader",
-                "gramine/libpal.so",
-                "network-descriptor-v1.bin",
-                "outbe-tee-enclave.manifest.sgx",
-                "outbe-tee-enclave.sig",
-            ] {
-                required_file(&root.join("sgx").join(relative))?;
-            }
-        }
-        "mock" => {
-            required_executable(&root.join("outbe-tee-enclave-mock"))?;
-            canonical_key(&root.join("tee/dev-dkg-seed.hex"))?;
-            canonical_key(&root.join("tee/dev-offer-secret.hex"))?;
-        }
-        _ => {
-            bail!("OUTBE_ENCLAVE_RUNTIME must be system-gramine, bundled-sgx, or mock");
-        }
-    }
-    Ok(())
-}
-
-fn validate_bundle(root: &Path, environment: &BTreeMap<String, String>) -> Result<()> {
+fn validate_bundle(root: &Path) -> Result<()> {
     required_file(&root.join("genesis.json"))?;
     required_file(&root.join(".bb-crs/bn254_g1.dat"))?;
     for name in [
@@ -237,10 +172,6 @@ fn validate_bundle(root: &Path, environment: &BTreeMap<String, String>) -> Resul
         "outbe-radicle",
     ] {
         required_executable(&root.join(name))?;
-    }
-    match environment["OUTBE_ENCLAVE_RUNTIME"].as_str() {
-        "mock" => required_executable(&root.join("outbe-tee-enclave-mock"))?,
-        _ => required_executable(&root.join("outbe-tee-enclave"))?,
     }
     Ok(())
 }
@@ -290,8 +221,7 @@ fn numeric_id(flag: &str) -> Result<u32> {
 fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
     let keys = root.join("keys");
     let validator = root.join("validator-0");
-    let tee = root.join("tee");
-    for path in [&keys, &validator, &tee] {
+    for path in [&keys, &validator] {
         if let Ok(metadata) = fs::symlink_metadata(path) {
             ensure!(
                 !metadata.file_type().is_symlink(),
@@ -316,7 +246,6 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
     ] {
         create_owned_dir(&root.join(relative), 0o750, uid, gid)?;
     }
-    create_owned_dir(&tee, 0o700, 0, 0)?;
     let secrets = [
         "signing-key.hex",
         "evm-key.hex",
@@ -365,37 +294,6 @@ fn install_units() -> Result<()> {
         process::chown(&path, 0, 0)?;
     }
     Ok(())
-}
-
-fn install_system_gramine_paths(root: &Path) -> Result<()> {
-    let manifest = fs::read_to_string(root.join("outbe-tee-enclave.manifest.sgx"))?;
-    let enclave = unique_manifest_path(&manifest, "/bin/outbe-tee-enclave")?;
-    let descriptor = unique_manifest_path(&manifest, "/sgx/network-descriptor-v1.bin")?;
-    install_binary(&root.join("outbe-tee-enclave"), &enclave)?;
-    install_file(&root.join("network-descriptor-v1.bin"), &descriptor, 0o644)?;
-    Ok(())
-}
-
-fn unique_manifest_path(manifest: &str, suffix: &str) -> Result<PathBuf> {
-    let prefix = "/opt/outbe-chain/releases/";
-    let mut matches = BTreeSet::new();
-    for (start, _) in manifest.match_indices(prefix) {
-        let tail = &manifest[start..];
-        let end = tail
-            .find(|character: char| {
-                !(character.is_ascii_alphanumeric() || "/._-".contains(character))
-            })
-            .unwrap_or(tail.len());
-        let value = &tail[..end];
-        if value.ends_with(suffix) {
-            matches.insert(PathBuf::from(value));
-        }
-    }
-    ensure!(
-        matches.len() == 1,
-        "signed Gramine manifest must reference one {suffix} path"
-    );
-    Ok(matches.into_iter().next().expect("one manifest path"))
 }
 
 fn install_binary(source: &Path, destination: &Path) -> Result<()> {
@@ -479,15 +377,6 @@ fn valid_peer(value: &str) -> bool {
         && port.parse::<u16>().is_ok_and(|port| port > 0)
 }
 
-fn command_in_path(name: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|path| {
-        std::env::split_paths(&path).any(|directory| {
-            fs::metadata(directory.join(name))
-                .is_ok_and(|metadata| metadata.is_file() && metadata.mode() & 0o111 != 0)
-        })
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -503,14 +392,12 @@ mod tests {
             "outbe-keygen",
             "outbe-feeder",
             "outbe-radicle",
-            "outbe-tee-enclave-mock",
         ] {
             let path = root.path().join(name);
             fs::write(&path, b"binary").unwrap();
             fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
         }
-        let environment = BTreeMap::from([("OUTBE_ENCLAVE_RUNTIME".to_owned(), "mock".to_owned())]);
-        assert!(validate_bundle(root.path(), &environment)
+        assert!(validate_bundle(root.path())
             .unwrap_err()
             .to_string()
             .contains(".bb-crs/bn254_g1.dat"));
@@ -518,6 +405,6 @@ mod tests {
         let crs = root.path().join(".bb-crs/bn254_g1.dat");
         fs::create_dir_all(crs.parent().unwrap()).unwrap();
         fs::write(crs, b"CRS").unwrap();
-        validate_bundle(root.path(), &environment).unwrap();
+        validate_bundle(root.path()).unwrap();
     }
 }
