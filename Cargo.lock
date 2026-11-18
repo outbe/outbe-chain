@@ -8265,6 +8265,7 @@ dependencies = [
  "outbe-gratis",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-promislimit",
  "outbe-system-common",
  "outbe-vaultrouter",
  "thiserror 2.0.18",
