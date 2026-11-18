@@ -103,6 +103,14 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
         _deliver(_liveStart(commitEnd));
     }
 
+    function test_ARepeatedStartOfACanceledDayIsADuplicate() public {
+        uint32 commitEnd = _openLiveDay();
+        auction.cancelAuction(DAY, 1);
+        _expectIgnored(BridgeMsgCodec.MSG_INTEX_AUCTION_START, InboundReason.DUPLICATE);
+        _deliver(_liveStart(commitEnd));
+        assertEq(uint8(auction.auctionStage(DAY)), uint8(IIntexAuction.AuctionStage.Canceled), "still canceled");
+    }
+
     function test_AStartWithOtherTermsIsAConflict() public {
         uint32 commitEnd = _openLiveDay();
         _expectIgnored(BridgeMsgCodec.MSG_INTEX_AUCTION_START, InboundReason.CONFLICT);

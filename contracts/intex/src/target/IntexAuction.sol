@@ -191,9 +191,9 @@ contract IntexAuction is
     ) external override onlyRole(RELAYER_ROLE) {
         IntexAuctionStorage storage $ = _s();
         IIntexAuction.AuctionData storage a = $.auctions[emissionDay];
-        if (a.dayState == IIntexAuction.DayState.Canceled) revert AuctionCanceled();
         // `commitEnd == 0` is the canonical existence sentinel for an auction entry.
         if (a.schedule.commitEnd != 0) revert AuctionAlreadyExists();
+        if (a.dayState == IIntexAuction.DayState.Canceled) revert AuctionCanceled();
 
         // Schedule timestamps must be strictly increasing, and the commit stage must end in the future.
         if (
