@@ -1,6 +1,6 @@
 use super::clearing::{clearing_run_gas, fetch_targets};
 use super::*;
-use outbe_primitives::error::PrecompileError;
+use outbe_primitives::error::{PassFailure, PrecompileError};
 use sweep::Sweep;
 
 mod sweep;
@@ -473,7 +473,7 @@ fn arm_clearing(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u6
         });
         match sent {
             Ok(()) => {}
-            Err(error) if error.is_node_local() => return Err(error),
+            Err(error) if error.pass_failure() != PassFailure::Skip => return Err(error),
             Err(error) => {
                 let error_data = match error {
                     PrecompileError::RevertBytes(bytes) => bytes,
