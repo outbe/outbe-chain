@@ -3,7 +3,7 @@
 use outbe_emission::schema::metadosis_state;
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result},
+    error::{PassFailure, Result},
 };
 use outbe_promislimit::PromisLimitContract;
 use outbe_system_common::time::WorldwideDay;
@@ -94,7 +94,7 @@ fn cancel_auction_of(metadosis: &MetadosisContract<'_>, day: u32) -> Result<()> 
         .clone()
         .with_checkpoint(|| outbe_desis::api::cancel_auction(storage.clone(), day.into()))
     {
-        Err(err @ (PrecompileError::Revert(_) | PrecompileError::RevertBytes(_))) => {
+        Err(err) if err.record_pass_failure() == PassFailure::Skip => {
             tracing::warn!(target: "outbe::metadosis", day, error = ?err, "auction cancel skipped");
             Ok(())
         }
