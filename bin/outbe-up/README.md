@@ -67,3 +67,7 @@ yet, so the deployment currently trusts the operator and confidential-computing 
 The editable configuration example lives at `templates/validator/operator-config.example.yaml`.
 Systemd policy comes from the shared `outbe-operator-systemd` crate used by both joining and
 founding flows; network-specific values remain in the generated `/opt/outbe-chain/validator.env`.
+All persistent validator data, keys, lifecycle state, Hyperlane state, and canonical systemd unit
+files live under `/opt/outbe-chain`, so one persistent mount covers the complete installation.
+`/etc/systemd/system` contains only links to those units, `/run` remains ephemeral, and
+`/var/lib/outbe/tee` is only the enclave service's runtime bind alias for the TEE data under `/opt`.

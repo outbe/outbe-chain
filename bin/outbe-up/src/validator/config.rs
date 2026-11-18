@@ -269,7 +269,7 @@ impl HyperlaneConfig {
                 bind_address: "127.0.0.1:9003",
             },
             storage: StorageSection {
-                db_path: "/var/lib/outbe-hyperlane-validator/db",
+                db_path: "/opt/outbe-chain/state/hyperlane/db",
             },
             server: ServerSection {
                 bind_address: "0.0.0.0:9000",

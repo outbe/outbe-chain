@@ -127,14 +127,24 @@ case \"${{1:-}}\" in\n\
   *) echo \"usage: $0 [--prepare-only]\" >&2; exit 2 ;;\n\
 esac\n\
 UNIT_DIR=\"$(cd -- \"$(dirname -- \"${{BASH_SOURCE[0]}}\")/systemd\" && pwd)\"\n\
+SYSTEMD_DIR={base}/systemd\n\
+STATE_DIR={base}/state\n\
 \n\
 getent group outbe >/dev/null || as_root groupadd --system outbe\n\
 id -u outbe >/dev/null 2>&1 || as_root useradd --system --gid outbe \\\n  --home-dir {base} --shell /usr/sbin/nologin outbe\n\
 as_root install -d -m 0700 {base}/validator-{index}/tee /var/lib/outbe/tee\n\
 as_root chown -R outbe:outbe {base}\n\
+as_root install -d -m 0750 -o root -g outbe \"$STATE_DIR\"\n\
+as_root install -d -m 0700 -o outbe -g outbe \"$STATE_DIR/feeder\"\n\
+as_root install -d -m 0700 -o outbe -g outbe \"$STATE_DIR/hyperlane\"\n\
+as_root install -d -m 0755 -o root -g root \"$SYSTEMD_DIR\"\n\
 as_root systemctl disable --now outbe-tee-renew.timer >/dev/null 2>&1 || true\n\
 as_root rm -f /etc/systemd/system/outbe-tee-renew.timer /etc/systemd/system/outbe-tee-renew.service\n\
-as_root install -m 0644 \"$UNIT_DIR\"/outbe-* /etc/systemd/system/\n\
+for unit in \"$UNIT_DIR\"/outbe-*; do\n\
+  name=\"${{unit##*/}}\"\n\
+  as_root install -m 0644 -o root -g root \"$unit\" \"$SYSTEMD_DIR/$name\"\n\
+  as_root ln -sfn \"$SYSTEMD_DIR/$name\" \"/etc/systemd/system/$name\"\n\
+done\n\
 as_root systemctl daemon-reload\n\
 \n\
 if \"$START\"; then\n\

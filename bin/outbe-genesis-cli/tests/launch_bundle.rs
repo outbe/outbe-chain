@@ -372,6 +372,12 @@ fn caddy_systemd_units_and_confidential_vm_runtime() {
     assert!(install_systemd.contains("disable --now outbe-tee-renew.timer"));
     assert!(install_systemd.contains("enable --now outbe-validator.target"));
     assert!(install_systemd.contains("disable --now outbe-validator.target"));
+    assert!(install_systemd.contains(&format!("SYSTEMD_DIR={}/systemd", output_dir.display())));
+    assert!(install_systemd.contains(&format!("STATE_DIR={}/state", output_dir.display())));
+    assert!(install_systemd.contains("$STATE_DIR/feeder"));
+    assert!(install_systemd.contains("$STATE_DIR/hyperlane"));
+    assert!(install_systemd.contains("ln -sfn \"$SYSTEMD_DIR/$name\""));
+    assert!(!install_systemd.contains("install -m 0644 \"$UNIT_DIR\"/outbe-* /etc/systemd/system/"));
     assert!(!install_systemd.contains("founding validator services:"));
 
     let install_caddy =

@@ -9,7 +9,10 @@ use eyre::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    support::{process, progress::Progress},
+    support::{
+        process::{self, HYPERLANE_STATE_ROOT},
+        progress::Progress,
+    },
     validator::{path_text, rpc::RpcClient, validator_address, wait::wait_transaction_finalized},
 };
 
@@ -153,7 +156,7 @@ pub async fn run_service() -> Result<()> {
         progress.stage("registering the Hyperlane checkpoint signer");
         let state_path = std::env::var_os("STATE_DIRECTORY")
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/var/lib/outbe-hyperlane-validator"))
+            .unwrap_or_else(|| PathBuf::from(HYPERLANE_STATE_ROOT))
             .join("setup.json");
         let mut state: SetupState = if state_path.is_file() {
             serde_json::from_slice(&fs::read(&state_path)?)?
@@ -182,7 +185,6 @@ pub async fn run_service() -> Result<()> {
 }
 
 pub async fn setup_founder() -> Result<()> {
-    let root = Path::new(process::ROOT);
     let rpc_bind = required_env("OUTBE_RPC_BIND_IP")?;
     let rpc_url = format!("http://{rpc_bind}:8545");
     let validator_key = required_path("OUTBE_VALIDATOR_KEY_PATH")?;
@@ -190,7 +192,7 @@ pub async fn setup_founder() -> Result<()> {
     let funding = required_env("OUTBE_HYPERLANE_FUNDING_WEI")?
         .parse::<U256>()
         .wrap_err("OUTBE_HYPERLANE_FUNDING_WEI must be an integer")?;
-    let state_path = root.join("hyperlane-setup.json");
+    let state_path = Path::new(HYPERLANE_STATE_ROOT).join("setup.json");
     let state = if state_path.is_file() {
         serde_json::from_slice(&fs::read(&state_path)?)?
     } else {

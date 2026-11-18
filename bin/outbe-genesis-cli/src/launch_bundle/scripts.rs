@@ -456,7 +456,7 @@ pub fn hyperlane_public_config(config: &Value, index: usize) -> Result<String, G
             "bind_address": "127.0.0.1:9003",
         },
         "storage": {
-            "db_path": "/var/lib/outbe-hyperlane-validator/db",
+            "db_path": "/opt/outbe-chain/state/hyperlane/db",
         },
         "server": {
             "bind_address": "0.0.0.0:9000",

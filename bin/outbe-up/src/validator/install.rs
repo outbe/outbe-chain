@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    os::unix::fs::{MetadataExt, PermissionsExt},
+    os::unix::fs::{symlink, MetadataExt, PermissionsExt},
     path::Path,
 };
 
@@ -52,7 +52,7 @@ pub fn run() -> Result<()> {
     fs::set_permissions(&env_path, fs::Permissions::from_mode(0o640))?;
     fs::set_permissions(&feeder, fs::Permissions::from_mode(0o640))?;
     fs::set_permissions(&hyperlane, fs::Permissions::from_mode(0o640))?;
-    install_units()?;
+    install_units(root)?;
     process::systemctl(&["daemon-reload"])?;
     Ok(())
 }
@@ -248,7 +248,19 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
     let keys = root.join("keys");
     let validator = root.join("validator-0");
     let tee = root.join("tee");
-    for path in [&keys, &validator, &tee] {
+    let state = root.join("state");
+    let operator_state = state.join("operator");
+    let feeder_state = state.join("feeder");
+    let hyperlane_state = state.join("hyperlane");
+    for path in [
+        &keys,
+        &validator,
+        &tee,
+        &state,
+        &operator_state,
+        &feeder_state,
+        &hyperlane_state,
+    ] {
         if let Ok(metadata) = fs::symlink_metadata(path) {
             ensure!(
                 !metadata.file_type().is_symlink(),
@@ -274,6 +286,10 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
         create_owned_dir(&root.join(relative), 0o750, uid, gid)?;
     }
     create_owned_dir(&tee, 0o700, 0, 0)?;
+    create_owned_dir(&state, 0o750, 0, gid)?;
+    create_owned_dir(&operator_state, 0o700, 0, 0)?;
+    create_owned_dir(&feeder_state, 0o700, uid, gid)?;
+    create_owned_dir(&hyperlane_state, 0o700, uid, gid)?;
     let secrets = [
         "signing-key.hex",
         "evm-key.hex",
@@ -317,18 +333,38 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
     Ok(())
 }
 
-fn install_units() -> Result<()> {
+fn install_units(root: &Path) -> Result<()> {
     let _ = process::command_succeeds("systemctl", &["disable", "--now", "outbe-tee-renew.timer"]);
     for name in ["outbe-tee-renew.timer", "outbe-tee-renew.service"] {
         let path = Path::new("/etc/systemd/system").join(name);
-        if path.exists() {
+        if fs::symlink_metadata(&path).is_ok() {
             fs::remove_file(path)?;
         }
     }
+    let unit_dir = root.join("systemd");
+    if let Ok(metadata) = fs::symlink_metadata(&unit_dir) {
+        ensure!(
+            metadata.is_dir() && !metadata.file_type().is_symlink(),
+            "refusing invalid systemd directory: {}",
+            unit_dir.display()
+        );
+    }
+    create_owned_dir(&unit_dir, 0o755, 0, 0)?;
     for (name, content) in assets::systemd_units()? {
-        let path = Path::new("/etc/systemd/system").join(name);
-        process::write_file(&path, content.as_bytes(), 0o644)?;
-        process::chown(&path, 0, 0)?;
+        let canonical = unit_dir.join(&name);
+        process::write_file(&canonical, content.as_bytes(), 0o644)?;
+        process::chown(&canonical, 0, 0)?;
+
+        let systemd_link = Path::new("/etc/systemd/system").join(name);
+        if let Ok(metadata) = fs::symlink_metadata(&systemd_link) {
+            ensure!(
+                !metadata.is_dir(),
+                "refusing systemd unit directory: {}",
+                systemd_link.display()
+            );
+            fs::remove_file(&systemd_link)?;
+        }
+        symlink(&canonical, &systemd_link)?;
     }
     Ok(())
 }

@@ -109,12 +109,11 @@ pub fn joining_units(outbe_up: &str) -> Vec<UnitFile> {
                 "EnvironmentFile=/opt/outbe-chain/validator.env",
                 "RuntimeDirectory=outbe-feeder",
                 "RuntimeDirectoryMode=0700",
-                "StateDirectory=outbe-feeder",
-                "StateDirectoryMode=0700",
+                "Environment=STATE_DIRECTORY=/opt/outbe-chain/state/feeder",
                 &command("ExecStartPre=@@OUTBE_UP@@ internal wait-rpc"),
                 &command("ExecStart=@@OUTBE_UP@@ internal feeder"),
             ]),
-            sandbox_directives: Vec::new(),
+            sandbox_directives: lines(&["ReadWritePaths=/opt/outbe-chain/state/feeder"]),
             limit_nofile: 65_535,
             wanted_by: "outbe-validator.target",
         }),
@@ -131,13 +130,12 @@ pub fn joining_units(outbe_up: &str) -> Vec<UnitFile> {
                 "EnvironmentFile=/opt/outbe-chain/validator.env",
                 "RuntimeDirectory=outbe-hyperlane-validator",
                 "RuntimeDirectoryMode=0700",
-                "StateDirectory=outbe-hyperlane-validator",
-                "StateDirectoryMode=0700",
+                "Environment=STATE_DIRECTORY=/opt/outbe-chain/state/hyperlane",
                 "Environment=OUTBE_HYPERLANE_WAIT_FOR_ACTIVE=1",
                 &command("ExecStartPre=@@OUTBE_UP@@ internal wait-rpc"),
                 &command("ExecStart=@@OUTBE_UP@@ internal hyperlane"),
             ]),
-            sandbox_directives: Vec::new(),
+            sandbox_directives: lines(&["ReadWritePaths=/opt/outbe-chain/state/hyperlane"]),
             limit_nofile: 65_535,
             wanted_by: "outbe-validator.target",
         }),
@@ -197,19 +195,27 @@ pub fn founding_units(config: FoundingConfig<'_>) -> Vec<UnitFile> {
             ]),
             limit_nofile: 1_048_576,
         })),
-        render_service(&founding_service(&FoundingService {
+        render_service(&ServiceSpec {
             name: "outbe-feeder.service",
             description: "Outbe validator price feeder",
-            script: "run-feeder.sh",
-            validator_dir: &validator_dir,
-            base_dir: config.base_dir,
+            account: Account::Outbe,
             unit_directives: lines(&[
                 "After=network-online.target outbe-validator.service",
                 "Wants=network-online.target outbe-validator.service",
                 "PartOf=outbe-validator.target",
             ]),
+            service_directives: lines(&[
+                &format!("WorkingDirectory={validator_dir}"),
+                &format!(
+                    "Environment=STATE_DIRECTORY={}/state/feeder",
+                    config.base_dir
+                ),
+                &format!("ExecStart={validator_dir}/run-feeder.sh"),
+            ]),
+            sandbox_directives: lines(&[&format!("ReadWritePaths={}", config.base_dir)]),
             limit_nofile: 65_535,
-        })),
+            wanted_by: "outbe-validator.target",
+        }),
         render_service(&ServiceSpec {
             name: "outbe-hyperlane-validator.service",
             description: "Outbe Hyperlane validator",
@@ -223,8 +229,10 @@ pub fn founding_units(config: FoundingConfig<'_>) -> Vec<UnitFile> {
                 &format!("WorkingDirectory={validator_dir}"),
                 "RuntimeDirectory=outbe-hyperlane-validator",
                 "RuntimeDirectoryMode=0700",
-                "StateDirectory=outbe-hyperlane-validator",
-                "StateDirectoryMode=0700",
+                &format!(
+                    "Environment=STATE_DIRECTORY={}/state/hyperlane",
+                    config.base_dir
+                ),
                 &format!("ExecStart={validator_dir}/run-hyperlane.sh"),
             ]),
             sandbox_directives: lines(&[&format!("ReadWritePaths={}", config.base_dir)]),
@@ -496,6 +504,17 @@ mod tests {
         let founding_hyperlane = unit(&founding, "outbe-hyperlane-validator.service");
         assert!(joining_hyperlane.contains("OUTBE_HYPERLANE_WAIT_FOR_ACTIVE=1"));
         assert!(!founding_hyperlane.contains("OUTBE_HYPERLANE_WAIT_FOR_ACTIVE"));
+        for hyperlane in [joining_hyperlane, founding_hyperlane] {
+            assert!(hyperlane.contains("/opt/outbe-chain/state/hyperlane"));
+            assert!(!hyperlane.contains("StateDirectory="));
+        }
+        for feeder in [
+            unit(&joining, "outbe-feeder.service"),
+            unit(&founding, "outbe-feeder.service"),
+        ] {
+            assert!(feeder.contains("/opt/outbe-chain/state/feeder"));
+            assert!(!feeder.contains("StateDirectory="));
+        }
     }
 
     fn unit<'a>(units: &'a [UnitFile], name: &str) -> &'a str {

@@ -9,7 +9,8 @@ use std::{
 use eyre::{bail, ensure, Context, Result};
 
 pub const ROOT: &str = "/opt/outbe-chain";
-pub const STATE_ROOT: &str = "/var/lib/outbe/operator";
+pub const STATE_ROOT: &str = "/opt/outbe-chain/state/operator";
+pub const HYPERLANE_STATE_ROOT: &str = "/opt/outbe-chain/state/hyperlane";
 const LOCK_PATH: &str = "/run/lock/outbe-validator.lock";
 
 pub struct LifecycleLock {

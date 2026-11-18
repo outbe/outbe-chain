@@ -37,6 +37,9 @@ joining-validator operator config.
 Founding-validator launch bundles are generated later from this exact software set plus one fresh
 genesis and network configuration. Joining and founding units use the same templates and policy;
 their compact specifications contain only the commands, dependencies, and paths that must differ.
+Installers keep every persistent artifact under `/opt/outbe-chain`, including service state and the
+canonical unit files. They link those units into `/etc/systemd/system`; runtime-only configuration
+continues to use `/run`.
 
 ## CI
 
