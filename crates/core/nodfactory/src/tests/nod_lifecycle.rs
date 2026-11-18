@@ -77,7 +77,7 @@ fn seed_production_nod_genesis(storage: &StorageHandle<'_>) {
     // These tests exercise the production call terms.
     NodContract::new(storage.clone())
         .config_profile
-        .write(outbe_nod::config::PROFILE_PROD)
+        .write(outbe_nod::config::PROFILE_MAINNET)
         .unwrap();
 }
 
@@ -461,7 +461,7 @@ fn an_unset_profile_seals_the_dev_terms_off_mainnet() {
         nod.config_profile
             .write(outbe_nod::config::PROFILE_AUTO)
             .unwrap();
-        let dev = outbe_nod::config::NodParams::DEV;
+        let dev = outbe_nod::config::NodParams::TESTNET;
         let mut item = nod_item(Address::repeat_byte(0x11), ISO);
         item.group_key = outbe_nod::identity::group_key(
             item.issued_at,

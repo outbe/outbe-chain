@@ -150,7 +150,7 @@ fn fixture_provider(chains: &[u32]) -> HashMapStorageProvider {
         // chain id, and the test chain is not mainnet.
         outbe_intex::IntexContract::new(handle.clone())
             .config_profile
-            .write(outbe_intex::config::PROFILE_PROD)
+            .write(outbe_intex::config::PROFILE_MAINNET)
             .unwrap();
         // A day is priced when its auction starts, so every day a start can land on
         // needs a price here. A day briefed later reads a later one.

@@ -4,7 +4,7 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use outbe_gem::{
-    api, config::PROFILE_PROD, CallTerms, GemAddParams, GemContract, GemParams, GemState,
+    api, config::PROFILE_MAINNET, CallTerms, GemAddParams, GemContract, GemParams, GemState,
 };
 use outbe_gemfactory::{called, hooks};
 use outbe_oracle::schema::OracleContract;
@@ -26,7 +26,7 @@ const GEMS: u8 = 5;
 
 /// The PROD call terms a group opened at `entry` seals.
 fn prod_terms(entry: U256) -> CallTerms {
-    let prod = GemParams::PROD;
+    let prod = GemParams::MAINNET;
     CallTerms {
         call_price_minor: outbe_core_common::markup::marked_up(entry, prod.call_rate).unwrap(),
         reference_currency: 840,
@@ -51,7 +51,7 @@ fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
     let rights = StorageHandle::enter(&mut p, |s| {
         GemContract::new(s.clone())
             .config_profile
-            .write(PROFILE_PROD)
+            .write(PROFILE_MAINNET)
             .unwrap();
         let rights = (0..GEMS)
             .map(|i| {

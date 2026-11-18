@@ -30,7 +30,7 @@ fn a_settled_gem_mines_after_the_settlement_deadline_while_its_unsettled_twin_is
     outbe_promis::enclave_client::test_enclave::install();
     let load = U256::from(10u64) * six_decimal_unit();
     let (mut provider, settled, unsettled) = called_group(load);
-    let deadline = T_NOW + u64::from(GemParams::PROD.call_notice_period_seconds);
+    let deadline = T_NOW + u64::from(GemParams::MAINNET.call_notice_period_seconds);
     provider.set_timestamp(U256::from(deadline + 1));
 
     StorageHandle::enter(&mut provider, |handle| {

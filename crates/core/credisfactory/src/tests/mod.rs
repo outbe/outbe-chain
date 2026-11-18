@@ -658,7 +658,7 @@ pub fn env() -> HashMapStorageProvider {
         // These tests exercise the production call terms.
         CredisContract::new(handle.clone())
             .config_profile
-            .write(outbe_credis::config::PROFILE_PROD)
+            .write(outbe_credis::config::PROFILE_MAINNET)
             .unwrap();
         handle
             .increase_balance(

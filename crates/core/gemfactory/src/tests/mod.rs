@@ -16,7 +16,7 @@ use outbe_vaultrouter::settlement::SettlementPayment;
 
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 
-const POSITION_VALIDITY_SECONDS: u64 = outbe_gem::GemParams::PROD.position_validity;
+const POSITION_VALIDITY_SECONDS: u64 = outbe_gem::GemParams::MAINNET.position_validity;
 use crate::positions_expired;
 use crate::runtime;
 use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition};
@@ -120,7 +120,7 @@ fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
         // by chain id, and the test chain is not mainnet.
         outbe_gem::schema::GemContract::new(handle.clone())
             .config_profile
-            .write(outbe_gem::config::PROFILE_PROD)
+            .write(outbe_gem::config::PROFILE_MAINNET)
             .unwrap();
         // Registry membership is independent of whether a price exists: 840 is a
         // reference currency in every fixture, priced or not.

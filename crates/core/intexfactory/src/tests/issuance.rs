@@ -98,7 +98,7 @@ fn call_terms_mark_up_the_entry_with_the_live_profile() {
         assert_eq!(terms.call_trigger, prod_trigger());
 
         select_dev_profile(&s);
-        let dev = outbe_intex::config::IntexParams::DEV;
+        let dev = outbe_intex::config::IntexParams::TESTNET;
         let terms = crate::api::call_terms(&s).unwrap();
         assert_eq!(
             terms.call_price(U256::from(ENTRY_PRICE)).unwrap(),
@@ -119,7 +119,7 @@ fn call_terms_mark_up_the_entry_with_the_live_profile() {
 fn select_dev_profile(s: &StorageHandle<'_>) {
     outbe_intex::IntexContract::new(s.clone())
         .config_profile
-        .write(outbe_intex::config::PROFILE_DEV)
+        .write(outbe_intex::config::PROFILE_TESTNET)
         .unwrap();
 }
 

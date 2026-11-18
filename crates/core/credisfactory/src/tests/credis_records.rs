@@ -76,7 +76,7 @@ fn credis_provider() -> HashMapStorageProvider {
         // These tests exercise the production call terms.
         CredisContract::new(storage.clone())
             .config_profile
-            .write(outbe_credis::config::PROFILE_PROD)
+            .write(outbe_credis::config::PROFILE_MAINNET)
             .unwrap();
         storage
             .increase_balance(
@@ -101,7 +101,7 @@ fn prod_provider() -> HashMapStorageProvider {
     StorageHandle::enter(&mut provider, |storage| {
         CredisContract::new(storage)
             .config_profile
-            .write(outbe_credis::config::PROFILE_PROD)
+            .write(outbe_credis::config::PROFILE_MAINNET)
             .unwrap();
     });
     provider
@@ -2563,20 +2563,15 @@ fn issuance_off_mainnet_seals_the_dev_terms() {
             .unwrap();
         let id = open_pos(&mut credis);
         let record = credis.get_credis(id).unwrap();
-        let notice = if cfg!(feature = "e2e-test") {
-            600
-        } else {
-            3 * DAY
-        };
         assert_eq!(
             (
                 u64::from(record.call_window_seconds),
                 u64::from(record.call_threshold_seconds),
                 u64::from(record.call_notice_period_seconds)
             ),
-            (3 * DAY, 2 * DAY, notice)
+            (3 * DAY, 2 * DAY, 3 * DAY)
         );
-        // The DEV call rate is 2, so the anchor 1.00 gives the call price 1.02.
+        // The TESTNET call rate is 2, so the anchor 1.00 gives the call price 1.02.
         assert_eq!(record.call_rate, 2);
         assert_eq!(
             record.call_price_minor,

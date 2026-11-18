@@ -163,7 +163,7 @@ pub fn sample_item(owner: Address, emission_day: u32) -> NodItemState {
 /// The group NodFactory puts a Nod in under the production call rate the fixtures seal.
 pub fn group_key(issued_at: u64, entry_price_minor: U256, reference_currency: u16) -> B256 {
     group_key_at(
-        &crate::config::NodParams::PROD,
+        &crate::config::NodParams::MAINNET,
         issued_at,
         entry_price_minor,
         reference_currency,

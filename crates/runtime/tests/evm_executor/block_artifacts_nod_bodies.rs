@@ -173,7 +173,7 @@ fn independent_evm_states_produce_identical_full_block_state_receipts_and_balanc
     let entry_price_minor = U256::from(450_000_000u64);
     let issued_at = issued_at_on_protocol_floor(1);
     let group_key = outbe_nod::test_support::group_key_at(
-        &outbe_nod::config::NodParams::DEV,
+        &outbe_nod::config::NodParams::TESTNET,
         issued_at,
         entry_price_minor,
         840,
@@ -252,7 +252,7 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
     let nod_id = outbe_nod::test_support::nod_id_of(nod_owner, day.value(), 840, 978);
     let issued_at = issued_at_on_protocol_floor(15);
     let group_key = outbe_nod::test_support::group_key_at(
-        &outbe_nod::config::NodParams::DEV,
+        &outbe_nod::config::NodParams::TESTNET,
         issued_at,
         U256::from(16),
         978,

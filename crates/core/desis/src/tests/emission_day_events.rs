@@ -34,7 +34,7 @@ fn world(f: impl FnOnce(&StorageHandle)) -> HashMapStorageProvider {
     StorageHandle::enter(&mut storage, |s| {
         outbe_intex::IntexContract::new(s.clone())
             .config_profile
-            .write(outbe_intex::config::PROFILE_PROD)
+            .write(outbe_intex::config::PROFILE_MAINNET)
             .unwrap();
         for day in 0..5 {
             super::seed_rate(&s, NOW + day * SECONDS_PER_DAY, ENTRY_PRICE);

@@ -41,7 +41,7 @@ fn expiry_waits_until_the_deadline_day_has_closed() {
 #[test]
 fn the_daily_pass_leaves_a_gem_in_its_issue_block() {
     with_storage(|storage| {
-        set_profile(storage, outbe_gem::config::PROFILE_PROD);
+        set_profile(storage, outbe_gem::config::PROFILE_MAINNET);
         let gem_id = add(storage, sample_params(ALICE));
         begin_block_at(storage, T_NOW);
         assert_eq!(gem_state(storage, gem_id), GemState::Issued as u8);
@@ -402,22 +402,22 @@ fn a_storage_fault_in_a_forfeit_fails_the_block() {
 #[test]
 fn config_dev_profile_terms_a_new_group() {
     with_storage(|storage| {
-        set_profile(storage, outbe_gem::config::PROFILE_DEV);
+        set_profile(storage, outbe_gem::config::PROFILE_TESTNET);
         let gem_id = add(storage, sample_params(ALICE));
         let terms = view(storage, gem_id).terms;
         assert_eq!(
             terms.call_window_seconds,
-            GemParams::DEV.call_window_seconds
+            GemParams::TESTNET.call_window_seconds
         );
         assert_eq!(
             terms.call_threshold_seconds,
-            GemParams::DEV.call_threshold_seconds
+            GemParams::TESTNET.call_threshold_seconds
         );
         assert_eq!(
             terms.call_notice_period_seconds,
-            GemParams::DEV.call_notice_period_seconds
+            GemParams::TESTNET.call_notice_period_seconds
         );
-        assert!(terms.call_window_seconds < GemParams::PROD.call_window_seconds);
+        assert!(terms.call_window_seconds < GemParams::MAINNET.call_window_seconds);
     });
 }
 
