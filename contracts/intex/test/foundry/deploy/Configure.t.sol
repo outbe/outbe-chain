@@ -74,6 +74,17 @@ contract ConfigureOriginTest is ConfigureTest {
         assertTrue(nft.hasRole(nft.BURNER_ROLE(), o.gemFactory));
     }
 
+    function test_Configure_GrantsNoRouterOrBridgeRoleOnOutbe() public {
+        script.configure(deployer, o);
+
+        IntexNFT1155 nft = IntexNFT1155(o.nft);
+        address[3] memory precompiles = [o.system, o.desis, o.intexFactory];
+        for (uint256 i = 0; i < precompiles.length; i++) {
+            assertFalse(nft.hasRole(nft.ROUTER_ROLE(), precompiles[i]));
+            assertFalse(nft.hasRole(nft.BRIDGE_ROLE(), precompiles[i]));
+        }
+    }
+
     function test_Configure_SecondRunWritesNothing() public {
         script.configure(deployer, o);
 
@@ -154,6 +165,14 @@ contract ConfigureTargetTest is ConfigureTest {
         IntexNFT1155 nft = IntexNFT1155(t.nft);
         assertTrue(nft.hasRole(nft.ROUTER_ROLE(), t.router));
         assertTrue(nft.hasRole(nft.BRIDGE_ROLE(), t.nftBridge));
+    }
+
+    function test_Configure_GivesEachTokenHolderOnlyItsRole() public {
+        script.configure(deployer, t);
+
+        IntexNFT1155 nft = IntexNFT1155(t.nft);
+        assertFalse(nft.hasRole(nft.BRIDGE_ROLE(), t.router));
+        assertFalse(nft.hasRole(nft.ROUTER_ROLE(), t.nftBridge));
     }
 
     function test_Configure_SecondRunWritesNothing() public {

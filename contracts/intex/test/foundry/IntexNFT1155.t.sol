@@ -306,6 +306,40 @@ contract IntexNFT1155Test is Test {
         vm.stopPrank();
     }
 
+    function test_RouterRole_CannotBurnOrMint() public {
+        address router = address(0x7001);
+        bytes32 routerRole = nft.ROUTER_ROLE();
+        vm.prank(admin);
+        nft.grantRole(routerRole, router);
+        _createSeries(SERIES_ID_1_DAY, 0);
+        vm.prank(bridger);
+        nft.issueIntex(user, 10, SERIES_ID_1);
+        bytes32 role = nft.BRIDGE_ROLE();
+
+        vm.startPrank(router);
+        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", router, role));
+        nft.crosschainBurn(user, user, TOKEN_ID_1, 1);
+        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", router, role));
+        nft.crosschainMint(user, TOKEN_ID_1, 1);
+        vm.stopPrank();
+    }
+
+    function test_BridgeRole_CannotOpenOrCallASeries() public {
+        address bridge = address(0x7002);
+        bytes32 bridgeRole = nft.BRIDGE_ROLE();
+        vm.prank(admin);
+        nft.grantRole(bridgeRole, bridge);
+        _createSeries(SERIES_ID_1_DAY, 0);
+        bytes32 role = nft.ROUTER_ROLE();
+
+        vm.startPrank(bridge);
+        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", bridge, role));
+        nft.createSeries(CreateSeriesLib.params(SERIES_ID_2_DAY, ISSUED_UNITS, 0));
+        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", bridge, role));
+        nft.markCalled(SERIES_ID_1, uint64(block.timestamp));
+        vm.stopPrank();
+    }
+
     /// @dev A Called series still changes holder across the bridge until its cutoff.
     function test_CrosschainBurn_InCalled_CarriesToAnotherHolder() public {
         address plainRelayer = address(0x9999);
