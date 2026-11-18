@@ -198,6 +198,17 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
         assertEq(auction.getAuctionInfo(DAY).result.issuedUnits, 0, "the first RESULT stands");
     }
 
+    function test_AResultWithOtherDemandIsAConflict() public {
+        uint32 commitEnd = _openLiveDay();
+        vm.warp(commitEnd + 1 days + 1);
+        _deliver(BridgeMsgCodec.encodeIntexAuctionResult(DAY, AuctionResultLib.day(0, 0, 0)));
+
+        BridgeMsgCodec.IntexAuctionChainResult memory other = AuctionResultLib.day(0, 0, 0);
+        other.totalDemand = 7;
+        _expectIgnored(BridgeMsgCodec.MSG_INTEX_AUCTION_RESULT, InboundReason.CONFLICT);
+        _deliver(BridgeMsgCodec.encodeIntexAuctionResult(DAY, other));
+    }
+
     function test_AResultFailingAPermanentBoundIsInvalid() public {
         uint32 commitEnd = _openLiveDay();
         vm.warp(commitEnd + 1 days + 1);

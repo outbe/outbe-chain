@@ -62,6 +62,8 @@ struct TargetRouterStorage {
     mapping(uint256 idx => FailedIntexAuctionProceedsSend) failedIntexAuctionProceedsSend;
     /// @dev Next index to assign in `parkedProceeds`. It is also the count ever enqueued.
     uint256 nextFailedIntexAuctionProceedsSendIdx;
+    /// @dev Hash of the result the day took, so a redelivered result tells a duplicate from a conflict.
+    mapping(uint32 emissionDay => bytes32) intexAuctionResultHash;
 }
 
 /// @notice A proceeds route parked because its outbound send reverted (e.g. relay float too low).

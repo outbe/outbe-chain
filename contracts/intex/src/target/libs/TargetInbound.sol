@@ -154,8 +154,9 @@ library TargetInbound {
             BridgeMsgCodec.decodeIntexAuctionResult(message);
 
         try $.intexAuction
-            .completeAuction(emissionDay, r.wonQuantity, r.wonBidsCount, r.quantity, r.clearingRate, r.totalDemand) {}
-        catch (bytes memory reason) {
+            .completeAuction(emissionDay, r.wonQuantity, r.wonBidsCount, r.quantity, r.clearingRate, r.totalDemand) {
+            $.intexAuctionResultHash[emissionDay] = keccak256(abi.encode(r));
+        } catch (bytes memory reason) {
             bytes4 selector = _selectorOf(reason);
             uint8 why;
             if (selector == IIntexAuction.StageRequired.selector) {
@@ -237,9 +238,7 @@ library TargetInbound {
         uint32 emissionDay,
         BridgeMsgCodec.IntexAuctionChainResult memory result
     ) private view returns (bool) {
-        IIntexAuction.IntexAuctionResult memory r = $.intexAuction.getAuctionInfo(emissionDay).result;
-        return r.issuedUnits == result.quantity && r.clearingRate == result.clearingRate
-            && r.wonBidsCount == result.wonBidsCount;
+        return $.intexAuctionResultHash[emissionDay] == keccak256(abi.encode(result));
     }
 
     /// @dev Whether this chain reads the day as failed. A day it never opened is not.
