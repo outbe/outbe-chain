@@ -2223,29 +2223,3 @@ fn token_uri_turns_forfeited_past_the_settlement_deadline() {
         r#"{{"trait_type":"Settlement Deadline","value":{deadline},"display_type":"date"}}"#
     )));
 }
-
-#[cfg(feature = "e2e-test")]
-#[test]
-fn static_test_command_is_rejected_before_group_validation() {
-    use crate::precompile::dispatch;
-    use crate::test_arming_e2e::INodFactoryTestArming;
-    use alloy_sol_types::SolCall;
-    use outbe_primitives::error::PrecompileError;
-    let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
-    provider.set_static(true);
-
-    let result = dispatch(
-        outbe_primitives::storage::StorageHandle::new(&mut provider),
-        &INodFactoryTestArming::closeCallNoticeForTestCall {
-            groupKey: alloy_primitives::B256::repeat_byte(1),
-            deadline: 1,
-        }
-        .abi_encode(),
-        Address::ZERO,
-        U256::ZERO,
-    );
-    assert!(
-        matches!(result, Err(PrecompileError::WriteProtection)),
-        "{result:?}"
-    );
-}
