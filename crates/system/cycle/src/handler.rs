@@ -239,10 +239,7 @@ fn allocate_emission_limit_inner(ctx: &BlockRuntimeContext, prev_day: u32) -> Re
         )
         .map(|_| ()),
     )?;
-    wrap(
-        "schedule_auction",
-        outbe_desis::api::schedule_auction(ctx.storage.clone(), prev_day.into()),
-    )?;
+    wrap("schedule_auction", schedule_auction_of(ctx, prev_day))?;
 
     let g4 = gas(ctx);
     tracing::debug!(target: "outbe::cycle::gas", step_gas = gas_sample_delta(g4, g3), cumulative = g4, total = gas_sample_delta(g4, g0), "after day allocation record");
@@ -261,6 +258,21 @@ fn allocate_emission_limit_inner(ctx: &BlockRuntimeContext, prev_day: u32) -> Re
     );
 
     Ok(())
+}
+
+/// A Desis revert leaves the day unscheduled and keeps the allocation: its brief then goes back
+/// to the Promis Limit.
+fn schedule_auction_of(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<()> {
+    match ctx
+        .storage
+        .with_checkpoint(|| outbe_desis::api::schedule_auction(ctx.storage.clone(), prev_day.into()))
+    {
+        Err(err) if is_recoverable_step_error(&err) => {
+            tracing::warn!(target: "outbe::cycle", prev_day, error = ?err, "auction schedule skipped");
+            Ok(())
+        }
+        result => result,
+    }
 }
 
 /// Returns whether `prev_day` is already allocated (`state == PROCESSING || state == COMPLETED`).
