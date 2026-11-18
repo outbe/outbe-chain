@@ -290,7 +290,6 @@ library TargetInbound {
         (uint32 emissionDay, uint16 pageIndex, uint16 totalPages, BridgeMsgCodec.IntexSeriesPayload[] memory series) =
             BridgeMsgCodec.decodeIntexSeries(message);
 
-        bytes32 chunkKey = bytes32((uint256(emissionDay) << 16) | pageIndex);
         // forge-lint: disable-next-line(incorrect-shift) -- the bit of chunk `pageIndex`
         uint256 bit = 1 << pageIndex;
         if ($.intexSeriesPagesApplied[emissionDay] & bit != 0) {
@@ -428,7 +427,6 @@ library TargetInbound {
             uint16 partialWon
         ) = BridgeMsgCodec.decodeIntexAuctionWinners(message);
 
-        bytes32 chunkKey = bytes32((uint256(emissionDay) << 16) | pageIndex);
         // forge-lint: disable-next-line(incorrect-shift) -- the bit of chunk `pageIndex`
         uint256 bit = 1 << pageIndex;
         if ($.intexAuctionWinnersPagesApplied[emissionDay] & bit != 0) {
@@ -476,8 +474,7 @@ library TargetInbound {
         bytes32 receiveId,
         bytes calldata message
     ) external {
-        (uint32 emissionDay, uint64 calledAt, bytes14[] memory seriesIds) =
-            BridgeMsgCodec.decodeIntexSeriesCallNotice(message);
+        (, uint64 calledAt, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeIntexSeriesCallNotice(message);
         if (calledAt == 0) {
             _ignoreMessage(receiveId, srcChainId, InboundReason.INVALID);
             return;
