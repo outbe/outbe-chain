@@ -1,67 +1,95 @@
-//! Host-side enclave client for the confidential Fidelity cohort path.
+//! Host caller for confidential Fidelity.
 //!
-//! Every RCFI/league value and every cohort mutation routes through the enclave:
-//! [`crate::runtime`] reads the current cohort ciphertext from committed storage,
-//! hands it to the enclave, and stores the returned ciphertext verbatim. This module
-//! mirrors [`outbe_gratis`]'s `enclave_client`. It has the same determinism
-//! (canonical-hash recheck), attestation (verify-then-discard), and
-//! `tee_sidecar_unavailable` failure mode.
+//! Cohort ops are session-only (non-recordable, tag 0). League snapshots and
+//! index queries are witness-recorded. The in-process stand-in short-circuits
+//! before either call when a test installs a state key.
+
+use std::fmt::Write as _;
 
 use alloy_primitives::{Address, B256};
-use outbe_enclave::{
-    protocol::{
-        fidelity_cohort_canonical_hash, fidelity_query_canonical_hash,
-        fidelity_snapshot_canonical_hash, EnclaveRequest, EnclaveResponse, FidelityCohortRequest,
-        FidelityCohortResult, FidelityLeagueEntry, FidelityQueryRequest, FidelityQueryResult,
-        FidelitySnapshotRequest,
-    },
-    FIDELITY_ATTESTATION,
+use outbe_core_common::confidential_tee::{
+    attestation, consensus_witness_call, derive_resident_state_key, session_witness_call,
+    DualWitnessAnswer, FIDELITY,
 };
-use outbe_primitives::error::{PrecompileError, Result};
-use outbe_tee::{
-    tee_call::{verify_signed_rejection, SignedRejectionRef},
-    TeeAttestationError, TransportError,
+use outbe_primitives::error::Result;
+use outbe_tee::in_process::InProcessTeeContext;
+use outbe_tee::{CallMeta, TransportError};
+
+use crate::attest::{
+    verify_fidelity_cohort_attestation, verify_fidelity_query_attestation,
+    verify_fidelity_snapshot_attestation,
 };
+use crate::engine;
+use crate::errors::{display_string, EngineError, FidelityError, FidelityFatalError, OpText};
+use crate::protocol::{
+    fidelity_cohort_attestation_preimage, fidelity_cohort_canonical_hash,
+    fidelity_query_attestation_preimage, fidelity_query_canonical_hash,
+    fidelity_snapshot_attestation_preimage, fidelity_snapshot_canonical_hash,
+    FidelityCohortRequest, FidelityCohortResult, FidelityLeagueEntry, FidelityQueryRequest,
+    FidelityQueryResult, FidelitySnapshotRequest,
+};
+use crate::witness::{FidelityLeagueSnapshot, FidelityQueryRejection};
 
-use crate::errors::FidelityFatalError;
+const COHORT_OP: &str = "ApplyFidelityCohortOp";
+const SNAPSHOT_OP: &str = "SnapshotFidelityLeagues";
+const QUERY_OP: &str = "QueryFidelityIndex";
+const QUERY_REJECTED_DOMAIN: &[u8] = b"outbe/fidelity/query-rejected/v1";
+const STATE_EPOCH: u64 = 0;
 
-/// Apply a standalone Fidelity cohort op inside the enclave and validate the
-/// response (determinism recheck + attestation verify-then-discard).
-pub(crate) fn apply_cohort_op(req: FidelityCohortRequest) -> Result<FidelityCohortResult> {
+/// Apply a standalone cohort op. Session-only: the response is not on the witness tape.
+pub fn apply_cohort_op(req: FidelityCohortRequest) -> Result<FidelityCohortResult> {
     #[cfg(any(test, feature = "test-enclave"))]
     if let Some(result) = test_enclave::try_cohort(&req) {
         return result;
     }
-
-    let expected_hash = fidelity_cohort_canonical_hash(&req);
-    call_enclave(
-        expected_hash,
-        EnclaveRequest::ApplyFidelityCohortOp {
-            request: Box::new(req),
-        },
-    )
+    let expected = fidelity_cohort_canonical_hash(&req);
+    let result = session_witness_call(CallMeta::session_only(COHORT_OP), move |context| {
+        execute_cohort(context, expected, &req)
+    })
+    .ok_or(FidelityFatalError::SidecarUnavailable { context: COHORT_OP })?
+    .map_err(|error| map_consensus_error(COHORT_OP, error))?;
+    finish_cohort(expected, result)
 }
 
-/// Batch-snapshot per-owner leagues inside the enclave.
-pub(crate) fn snapshot_leagues(req: FidelitySnapshotRequest) -> Result<Vec<FidelityLeagueEntry>> {
+/// Batch-snapshot per-owner leagues. Recorded under tag 4.
+pub fn snapshot_leagues(req: FidelitySnapshotRequest) -> Result<Vec<FidelityLeagueEntry>> {
     let owners: Vec<Address> = req.entries.iter().map(|entry| entry.owner).collect();
     #[cfg(any(test, feature = "test-enclave"))]
     if let Some(leagues) = test_enclave::try_snapshot(&req) {
         return require_requested_owners(&owners, leagues?);
     }
-
-    let expected_hash = fidelity_snapshot_canonical_hash(&req);
-    let snapshot: LeagueSnapshot = call_consensus_enclave(
-        expected_hash,
-        EnclaveRequest::SnapshotFidelityLeagues {
-            request: Box::new(req),
-        },
-    )?;
+    let expected = fidelity_snapshot_canonical_hash(&req);
+    let snapshot = consensus_witness_call(
+        CallMeta::recorded(SNAPSHOT_OP),
+        move |context| execute_snapshot(context, expected, &req),
+        move |key, snapshot| authenticate_snapshot(expected, key, snapshot),
+    )
+    .map_err(|error| map_consensus_error(SNAPSHOT_OP, error))?;
+    let snapshot = finish_snapshot(expected, snapshot)?;
     require_requested_owners(&owners, snapshot.leagues)
 }
 
+/// Owner-authorized index query. Recorded under tag 5 or tag 15.
+pub fn query_index(req: FidelityQueryRequest) -> Result<FidelityQueryResult> {
+    #[cfg(any(test, feature = "test-enclave"))]
+    if let Some(result) = test_enclave::try_query(&req) {
+        return result;
+    }
+    let expected = fidelity_query_canonical_hash(&req);
+    let answer = consensus_witness_call(
+        CallMeta::recorded(QUERY_OP),
+        move |context| execute_query(context, expected, &req),
+        move |key, answer| authenticate_query(expected, key, answer),
+    )
+    .map_err(|error| map_consensus_error(QUERY_OP, error))?;
+    match answer {
+        DualWitnessAnswer::Applied(result) => finish_query(expected, result),
+        DualWitnessAnswer::Rejected(rejection) => finish_rejection(expected, rejection),
+    }
+}
+
 /// Rejects a snapshot that is not one league per requested owner, in request order.
-pub(crate) fn require_requested_owners(
+pub fn require_requested_owners(
     owners: &[Address],
     leagues: Vec<FidelityLeagueEntry>,
 ) -> Result<Vec<FidelityLeagueEntry>> {
@@ -76,151 +104,238 @@ pub(crate) fn require_requested_owners(
     Ok(leagues)
 }
 
-/// Owner-authorized RCFI/league query inside the enclave (eth_call path).
-pub(crate) fn query_index(req: FidelityQueryRequest) -> Result<FidelityQueryResult> {
-    #[cfg(any(test, feature = "test-enclave"))]
-    if let Some(result) = test_enclave::try_query(&req) {
-        return result;
-    }
-
-    let expected_hash = fidelity_query_canonical_hash(&req);
-    call_query_enclave(
-        expected_hash,
-        EnclaveRequest::QueryFidelityIndex {
-            request: Box::new(req),
-        },
-    )
+fn execute_cohort(
+    context: &InProcessTeeContext,
+    expected: B256,
+    req: &FidelityCohortRequest,
+) -> std::result::Result<FidelityCohortResult, TransportError> {
+    let key = resident_key(context)?;
+    let mut result = engine::apply_cohort_op(&key, req).map_err(TransportError::enclave_error)?;
+    let preimage = fidelity_cohort_attestation_preimage(result.inputs_canonical_hash, &result)?;
+    result.attestation_tag = context.sign_domain_attestation(&preimage).to_vec();
+    // Same snapshot that signed. A later global swap must not re-bind the key.
+    authenticate_cohort(expected, &context.attestation_public(), &result)?;
+    Ok(result)
 }
 
-fn call_enclave<T: AttestedAnswer>(expected_hash: B256, request: EnclaveRequest) -> Result<T> {
-    let (attestation_pub, response) = outbe_enclave::domain_session_call(&request, |key, resp| {
-        authenticate_answer::<T>(expected_hash, key, resp)
+fn execute_snapshot(
+    context: &InProcessTeeContext,
+    expected: B256,
+    req: &FidelitySnapshotRequest,
+) -> std::result::Result<FidelityLeagueSnapshot, TransportError> {
+    let key = resident_key(context)?;
+    let leagues = engine::snapshot_leagues(&key, req).map_err(TransportError::enclave_error)?;
+    let inputs_canonical_hash = fidelity_snapshot_canonical_hash(req);
+    let preimage = fidelity_snapshot_attestation_preimage(inputs_canonical_hash, &leagues)?;
+    let snapshot = FidelityLeagueSnapshot {
+        leagues,
+        inputs_canonical_hash,
+        attestation_tag: context.sign_domain_attestation(&preimage).to_vec(),
+    };
+    authenticate_snapshot(expected, &context.attestation_public(), &snapshot)?;
+    Ok(snapshot)
+}
+
+fn execute_query(
+    context: &InProcessTeeContext,
+    expected: B256,
+    req: &FidelityQueryRequest,
+) -> std::result::Result<
+    DualWitnessAnswer<FidelityQueryResult, FidelityQueryRejection>,
+    TransportError,
+> {
+    let chain = B256::from(context.manifest().chain_id);
+    let key = resident_key(context)?;
+    let answer = match engine::query_index(&key, chain, req) {
+        Ok(mut result) => {
+            let preimage =
+                fidelity_query_attestation_preimage(result.inputs_canonical_hash, &result)?;
+            result.attestation_tag = context.sign_domain_attestation(&preimage).to_vec();
+            DualWitnessAnswer::Applied(result)
+        }
+        Err(error) => DualWitnessAnswer::Rejected(sign_rejection(context, req, &error)?),
+    };
+    authenticate_query(expected, &context.attestation_public(), &answer)?;
+    Ok(answer)
+}
+
+fn sign_rejection(
+    context: &InProcessTeeContext,
+    req: &FidelityQueryRequest,
+    error: &EngineError,
+) -> std::result::Result<FidelityQueryRejection, TransportError> {
+    // The reason is signed consensus output. The engine error is not returned.
+    let reason = display_string(error);
+    let inputs_canonical_hash = fidelity_query_canonical_hash(req);
+    let preimage = attestation(QUERY_REJECTED_DOMAIN, inputs_canonical_hash, &reason)?;
+    Ok(FidelityQueryRejection {
+        inputs_canonical_hash,
+        reason,
+        attestation_tag: context.sign_domain_attestation(&preimage).to_vec(),
     })
-    .ok_or(FidelityFatalError::SidecarUnavailable {
-        context: T::OPERATION,
-    })?
-    .map_err(|error| map_consensus_error(T::OPERATION, error))?;
-    validate_answer(expected_hash, &attestation_pub, response)
 }
 
-fn call_consensus_enclave<T: AttestedAnswer>(
-    expected_hash: B256,
-    request: EnclaveRequest,
-) -> Result<T> {
-    let (attestation_pub, response) = outbe_enclave::consensus_domain_call(
-        T::OPERATION,
-        &request,
-        || TransportError::Unavailable("enclave session unavailable".into()),
-        |key, response| authenticate_answer::<T>(expected_hash, key, response),
-    )
-    .map_err(|error| map_consensus_error(T::OPERATION, error))?;
-    validate_answer(expected_hash, &attestation_pub, response)
+fn resident_key(
+    context: &InProcessTeeContext,
+) -> std::result::Result<outbe_tee::resident::StateKeyHandle, TransportError> {
+    derive_resident_state_key(context, &FIDELITY, STATE_EPOCH)
 }
 
-fn authenticate_answer<T: AttestedAnswer>(
-    expected_hash: B256,
-    attestation_pub: &[u8; 32],
-    response: &EnclaveResponse,
-) -> core::result::Result<(), TransportError> {
-    let answer =
-        T::from_response(response.clone()).map_err(|_| TransportError::UnexpectedResponse)?;
-    if answer.inputs_canonical_hash() != expected_hash {
+fn authenticate_cohort(
+    expected: B256,
+    key: &[u8; 32],
+    result: &FidelityCohortResult,
+) -> std::result::Result<(), TransportError> {
+    if result.inputs_canonical_hash != expected {
         return Err(TransportError::UnexpectedResponse);
     }
-    answer.verify_attestation(attestation_pub)
+    verify_fidelity_cohort_attestation(
+        key,
+        result.inputs_canonical_hash,
+        result,
+        &result.attestation_tag,
+    )
 }
 
-fn call_query_enclave(expected_hash: B256, request: EnclaveRequest) -> Result<FidelityQueryResult> {
-    let (attestation_pub, response) = outbe_enclave::consensus_domain_call(
-        "QueryFidelityIndex",
-        &request,
-        || TransportError::Unavailable("enclave session unavailable".into()),
-        |key, response| match response {
-            EnclaveResponse::FidelityIndexQueried { result } => {
-                if result.inputs_canonical_hash != expected_hash {
-                    return Err(TransportError::UnexpectedResponse);
-                }
-                outbe_enclave::verify_fidelity_query_attestation(
-                    key,
-                    result.inputs_canonical_hash,
-                    result,
-                    &result.attestation_tag,
-                )
-            }
-            EnclaveResponse::FidelityQueryRejected {
-                reason,
-                inputs_canonical_hash,
-                attestation_tag,
-            } => verify_query_rejection(
-                key,
-                expected_hash,
-                *inputs_canonical_hash,
-                reason,
-                attestation_tag,
-            ),
-            _ => Err(TransportError::UnexpectedResponse),
-        },
+fn authenticate_snapshot(
+    expected: B256,
+    key: &[u8; 32],
+    snapshot: &FidelityLeagueSnapshot,
+) -> std::result::Result<(), TransportError> {
+    if snapshot.inputs_canonical_hash != expected {
+        return Err(TransportError::UnexpectedResponse);
+    }
+    verify_fidelity_snapshot_attestation(
+        key,
+        snapshot.inputs_canonical_hash,
+        &snapshot.leagues,
+        &snapshot.attestation_tag,
     )
-    .map_err(|error| map_consensus_error("QueryFidelityIndex", error))?;
+}
 
-    match response {
-        EnclaveResponse::FidelityIndexQueried { .. } => {
-            validate_answer(expected_hash, &attestation_pub, response)
-        }
-        EnclaveResponse::FidelityQueryRejected {
-            reason,
-            inputs_canonical_hash,
-            attestation_tag,
-        } => {
-            verify_query_rejection(
-                &attestation_pub,
-                expected_hash,
-                inputs_canonical_hash,
-                &reason,
-                &attestation_tag,
+fn authenticate_query(
+    expected: B256,
+    key: &[u8; 32],
+    answer: &DualWitnessAnswer<FidelityQueryResult, FidelityQueryRejection>,
+) -> std::result::Result<(), TransportError> {
+    match answer {
+        DualWitnessAnswer::Applied(result) => {
+            if result.inputs_canonical_hash != expected {
+                return Err(TransportError::UnexpectedResponse);
+            }
+            verify_fidelity_query_attestation(
+                key,
+                result.inputs_canonical_hash,
+                result,
+                &result.attestation_tag,
             )
-            .map_err(FidelityFatalError::attestation_invalid)?;
-            Err(crate::errors::FidelityError::QueryFailed { reason }.into())
         }
-        other => Err(failed_response("QueryFidelityIndex", other)),
+        DualWitnessAnswer::Rejected(rejection) => authenticate_rejection(expected, key, rejection),
     }
 }
 
-fn verify_query_rejection(
+fn authenticate_rejection(
+    expected: B256,
     key: &[u8; 32],
-    expected_hash: B256,
-    inputs_hash: B256,
-    reason: &str,
-    tag: &[u8],
-) -> core::result::Result<(), TransportError> {
-    verify_signed_rejection(
+    rejection: &FidelityQueryRejection,
+) -> std::result::Result<(), TransportError> {
+    outbe_tee::tee_call::verify_signed_rejection(
         key,
-        SignedRejectionRef {
-            domain: b"outbe/fidelity/query-rejected/v1",
-            expected_inputs_hash: expected_hash,
-            actual_inputs_hash: inputs_hash,
-            reason,
-            tag,
+        outbe_tee::tee_call::SignedRejectionRef {
+            domain: QUERY_REJECTED_DOMAIN,
+            expected_inputs_hash: expected,
+            actual_inputs_hash: rejection.inputs_canonical_hash,
+            reason: &rejection.reason,
+            tag: &rejection.attestation_tag,
         },
     )
     .map_err(|cause| match cause {
-        TeeAttestationError::InputsHashMismatch { .. } => TransportError::UnexpectedResponse,
-        other => TransportError::app_attestation(FIDELITY_ATTESTATION, other),
+        outbe_tee::TeeAttestationError::InputsHashMismatch { .. } => {
+            TransportError::UnexpectedResponse
+        }
+        other => TransportError::app_attestation(crate::attest::FIDELITY_ATTESTATION, other),
     })
 }
 
-pub(crate) fn map_consensus_error(
-    operation: &'static str,
-    error: TransportError,
-) -> FidelityFatalError {
+fn finish_cohort(expected: B256, result: FidelityCohortResult) -> Result<FidelityCohortResult> {
+    if result.inputs_canonical_hash != expected {
+        return Err(FidelityFatalError::EnclaveNondeterminism.into());
+    }
+    Ok(result)
+}
+
+fn finish_snapshot(
+    expected: B256,
+    snapshot: FidelityLeagueSnapshot,
+) -> Result<FidelityLeagueSnapshot> {
+    if snapshot.inputs_canonical_hash != expected {
+        return Err(FidelityFatalError::EnclaveNondeterminism.into());
+    }
+    Ok(snapshot)
+}
+
+fn finish_query(expected: B256, result: FidelityQueryResult) -> Result<FidelityQueryResult> {
+    if result.inputs_canonical_hash != expected {
+        return Err(FidelityFatalError::EnclaveNondeterminism.into());
+    }
+    Ok(result)
+}
+
+fn finish_rejection(
+    expected: B256,
+    rejection: FidelityQueryRejection,
+) -> Result<FidelityQueryResult> {
+    if rejection.inputs_canonical_hash != expected {
+        return Err(FidelityFatalError::EnclaveNondeterminism.into());
+    }
+    Err(FidelityError::QueryFailed {
+        reason: rejection.reason,
+    }
+    .into())
+}
+
+/// Map a witness or session transport error onto the historical fatal sentences.
+pub fn map_consensus_error(operation: &'static str, error: TransportError) -> FidelityFatalError {
     match error {
-        TransportError::EnclaveError(message) => FidelityFatalError::EnclaveOpError {
+        TransportError::EnclaveError(_) | TransportError::EnclaveCause { .. } => {
+            FidelityFatalError::EnclaveOpError {
+                context: operation,
+                message: OpText(error),
+            }
+        }
+        TransportError::AppAttestation { .. } => {
+            FidelityFatalError::AttestationInvalid { source: error }
+        }
+        other => FidelityFatalError::SidecarRequestFailed {
             context: operation,
-            message,
+            source: other,
         },
-        other => FidelityFatalError::sidecar_request_failed(operation, other),
     }
 }
+
+/// A typed answer for the wrong operation. There is no response enum to match.
+pub fn unexpected_answer(operation: &'static str) -> FidelityFatalError {
+    let mut detail = String::new();
+    let _ = write!(
+        &mut detail,
+        "unexpected response from enclave for {operation}"
+    );
+    FidelityFatalError::SidecarRequestFailed {
+        context: operation,
+        source: TransportError::codec(UnexpectedAnswer(detail)),
+    }
+}
+
+#[derive(Debug)]
+struct UnexpectedAnswer(String);
+
+impl std::fmt::Display for UnexpectedAnswer {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for UnexpectedAnswer {}
 
 #[cfg(test)]
 mod consensus_tests {
@@ -232,174 +347,317 @@ mod consensus_tests {
         let signer = SigningKey::from_bytes(&[0x71; 32]);
         let expected = B256::repeat_byte(0x42);
         let reason = "query is not available";
-        let preimage = outbe_enclave::response_auth::attestation(
-            b"outbe/fidelity/query-rejected/v1",
-            expected,
-            reason,
-        )
-        .unwrap();
+        let preimage = attestation(QUERY_REJECTED_DOMAIN, expected, reason).unwrap();
         let tag = signer.sign(&preimage).to_bytes();
-
-        assert!(verify_query_rejection(
-            signer.verifying_key().as_bytes(),
-            expected,
-            expected,
-            reason,
-            &tag,
-        )
-        .is_ok());
-        assert!(verify_query_rejection(
-            signer.verifying_key().as_bytes(),
-            B256::ZERO,
-            expected,
-            reason,
-            &tag,
-        )
-        .is_err());
-        assert!(verify_query_rejection(
-            signer.verifying_key().as_bytes(),
-            expected,
-            expected,
-            "different reason",
-            &tag,
-        )
-        .is_err());
+        let key = signer.verifying_key().to_bytes();
+        let rejection = |hash: B256, text: &str| FidelityQueryRejection {
+            inputs_canonical_hash: hash,
+            reason: text.to_owned(),
+            attestation_tag: tag.to_vec(),
+        };
+        assert!(authenticate_rejection(expected, &key, &rejection(expected, reason)).is_ok());
+        assert!(authenticate_rejection(B256::ZERO, &key, &rejection(expected, reason)).is_err());
+        assert!(
+            authenticate_rejection(expected, &key, &rejection(expected, "different reason"))
+                .is_err()
+        );
     }
-}
 
-/// Checks the answer variant, then the canonical input hash, then the attestation tag.
-pub(crate) fn validate_answer<T: AttestedAnswer>(
-    expected_hash: B256,
-    attestation_pub: &[u8; 32],
-    response: EnclaveResponse,
-) -> Result<T> {
-    let answer = T::from_response(response)?;
-    if answer.inputs_canonical_hash() != expected_hash {
-        return Err(FidelityFatalError::EnclaveNondeterminism.into());
+    const HASH: B256 = B256::repeat_byte(7);
+
+    fn signing_key() -> SigningKey {
+        SigningKey::from_bytes(&[9; 32])
     }
-    answer
-        .verify_attestation(attestation_pub)
-        .map_err(FidelityFatalError::attestation_invalid)?;
-    Ok(answer)
-}
 
-fn failed_response(_operation: &'static str, response: EnclaveResponse) -> PrecompileError {
-    FidelityFatalError::UnexpectedEnclaveResponse(Box::new(response)).into()
-}
+    fn sign_cohort(flip: bool) -> FidelityCohortResult {
+        let mut result = FidelityCohortResult {
+            outcome: crate::protocol::FidelityOpOutcome {
+                new_blob: vec![1, 2, 3],
+                qualified_start_initialized: Some(5),
+                league: 3,
+            },
+            inputs_canonical_hash: HASH,
+            attestation_tag: Vec::new(),
+        };
+        let preimage = fidelity_cohort_attestation_preimage(HASH, &result).expect("preimage");
+        result.attestation_tag = signing_key().sign(&preimage).to_bytes().to_vec();
+        result.attestation_tag[0] ^= u8::from(flip);
+        result
+    }
 
-/// A Fidelity enclave answer that carries its canonical input hash and attestation tag.
-pub(crate) trait AttestedAnswer: Sized {
-    const OPERATION: &'static str;
+    fn sign_query(flip: bool) -> FidelityQueryResult {
+        let mut result = FidelityQueryResult {
+            rcfi: alloy_primitives::U256::from(11),
+            efficiency: alloy_primitives::U256::from(12),
+            league: 4,
+            inputs_canonical_hash: HASH,
+            attestation_tag: Vec::new(),
+        };
+        let preimage = fidelity_query_attestation_preimage(HASH, &result).expect("preimage");
+        result.attestation_tag = signing_key().sign(&preimage).to_bytes().to_vec();
+        result.attestation_tag[0] ^= u8::from(flip);
+        result
+    }
 
-    fn from_response(response: EnclaveResponse) -> Result<Self>;
-
-    fn inputs_canonical_hash(&self) -> B256;
-
-    fn verify_attestation(
-        &self,
-        attestation_pub: &[u8; 32],
-    ) -> core::result::Result<(), TransportError>;
-}
-
-macro_rules! boxed_answer {
-    ($answer:ty, $variant:ident, $operation:literal, $verify:path) => {
-        impl AttestedAnswer for $answer {
-            const OPERATION: &'static str = $operation;
-
-            fn from_response(response: EnclaveResponse) -> Result<Self> {
-                match response {
-                    EnclaveResponse::$variant { result } => Ok(*result),
-                    other => Err(failed_response($operation, other)),
-                }
-            }
-
-            fn inputs_canonical_hash(&self) -> B256 {
-                self.inputs_canonical_hash
-            }
-
-            fn verify_attestation(
-                &self,
-                attestation_pub: &[u8; 32],
-            ) -> core::result::Result<(), TransportError> {
-                $verify(
-                    attestation_pub,
-                    self.inputs_canonical_hash,
-                    self,
-                    &self.attestation_tag,
-                )
-            }
+    fn sign_snapshot(flip: bool) -> FidelityLeagueSnapshot {
+        let leagues = vec![crate::protocol::FidelityLeagueEntry {
+            owner: alloy_primitives::Address::repeat_byte(1),
+            league: 2,
+            rcfi: alloy_primitives::U256::ZERO,
+        }];
+        let preimage = fidelity_snapshot_attestation_preimage(HASH, &leagues).expect("preimage");
+        let mut attestation_tag = signing_key().sign(&preimage).to_bytes().to_vec();
+        attestation_tag[0] ^= u8::from(flip);
+        FidelityLeagueSnapshot {
+            leagues,
+            inputs_canonical_hash: HASH,
+            attestation_tag,
         }
+    }
+
+    fn attestation_sentence(error: TransportError) -> String {
+        match outbe_primitives::error::PrecompileError::from(map_consensus_error(COHORT_OP, error))
+        {
+            outbe_primitives::error::PrecompileError::EnclaveUnavailable(message) => message,
+            other => panic!("expected EnclaveUnavailable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn authenticate_checks_the_hash_before_the_signature() {
+        let key = signing_key().verifying_key().to_bytes();
+        let other = B256::repeat_byte(8);
+        assert!(authenticate_cohort(HASH, &key, &sign_cohort(false)).is_ok());
+        assert!(matches!(
+            authenticate_cohort(other, &key, &sign_cohort(false)),
+            Err(TransportError::UnexpectedResponse)
+        ));
+        assert!(matches!(
+            authenticate_cohort(other, &key, &sign_cohort(true)),
+            Err(TransportError::UnexpectedResponse)
+        ));
+        let flipped = authenticate_cohort(HASH, &key, &sign_cohort(true)).unwrap_err();
+        assert!(attestation_sentence(flipped).starts_with("tee_fidelity_attestation_invalid: "));
+
+        assert!(authenticate_snapshot(HASH, &key, &sign_snapshot(false)).is_ok());
+        assert!(matches!(
+            authenticate_snapshot(other, &key, &sign_snapshot(true)),
+            Err(TransportError::UnexpectedResponse)
+        ));
+        assert!(matches!(
+            authenticate_snapshot(HASH, &key, &sign_snapshot(true)),
+            Err(TransportError::AppAttestation { .. })
+        ));
+
+        let applied = DualWitnessAnswer::Applied(sign_query(false));
+        assert!(authenticate_query(HASH, &key, &applied).is_ok());
+        let flipped_query = DualWitnessAnswer::Applied(sign_query(true));
+        assert!(matches!(
+            authenticate_query(other, &key, &flipped_query),
+            Err(TransportError::UnexpectedResponse)
+        ));
+        assert!(matches!(
+            authenticate_query(HASH, &key, &flipped_query),
+            Err(TransportError::AppAttestation { .. })
+        ));
+    }
+}
+
+#[cfg(test)]
+mod executing_context {
+    use super::*;
+    use crate::protocol::{FidelityCohortOp, FidelityOpSection, FidelitySnapshotEntry};
+    use alloy_primitives::{Address, U256};
+    use outbe_primitives::error::PrecompileError;
+    use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
+    use outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test;
+    use outbe_tee::protocol::{EnclaveResponse, PayloadLane};
+    use outbe_tee::resident::ResidentOfferMaterial;
+    use outbe_tee::witness::{
+        EnclaveWitnessTapeV1, WitnessExecutionMode, WitnessExecutionScope, WitnessState,
     };
-}
+    use std::sync::{Arc, Mutex};
 
-boxed_answer!(
-    FidelityCohortResult,
-    FidelityCohortApplied,
-    "ApplyFidelityCohortOp",
-    outbe_enclave::verify_fidelity_cohort_attestation
-);
-boxed_answer!(
-    FidelityQueryResult,
-    FidelityIndexQueried,
-    "QueryFidelityIndex",
-    outbe_enclave::verify_fidelity_query_attestation
-);
-
-#[derive(Debug)]
-pub(crate) struct LeagueSnapshot {
-    pub(crate) leagues: Vec<FidelityLeagueEntry>,
-    inputs_canonical_hash: B256,
-    attestation_tag: Vec<u8>,
-}
-
-impl AttestedAnswer for LeagueSnapshot {
-    const OPERATION: &'static str = "SnapshotFidelityLeagues";
-
-    fn from_response(response: EnclaveResponse) -> Result<Self> {
-        match response {
-            EnclaveResponse::FidelityLeaguesSnapshotted {
-                leagues,
-                inputs_canonical_hash,
-                attestation_tag,
-            } => Ok(Self {
-                leagues,
-                inputs_canonical_hash,
-                attestation_tag,
-            }),
-            other => Err(failed_response(Self::OPERATION, other)),
+    fn binding() -> NetworkBindingV1 {
+        NetworkBindingV1 {
+            chain_id: U256::from(676).to_be_bytes(),
+            genesis_hash: B256::repeat_byte(2),
+            attestation_mode: AttestationMode::NoAttestationDev,
         }
     }
 
-    fn inputs_canonical_hash(&self) -> B256 {
-        self.inputs_canonical_hash
+    fn chain() -> B256 {
+        B256::from(binding().chain_id)
     }
 
-    fn verify_attestation(
-        &self,
-        attestation_pub: &[u8; 32],
-    ) -> core::result::Result<(), TransportError> {
-        outbe_enclave::verify_fidelity_snapshot_attestation(
-            attestation_pub,
-            self.inputs_canonical_hash,
-            &self.leagues,
-            &self.attestation_tag,
+    fn context(seed: u8) -> Arc<InProcessTeeContext> {
+        let context = Arc::new(outbe_tee::test_utils::resident_context(seed, binding()));
+        let material = ResidentOfferMaterial::for_test(
+            b"fidelity-witness-group-signature-v1!!!!".to_vec(),
+            chain(),
+            0,
+            0,
         )
+        .expect("offer material");
+        context.activate_for_test(material).expect("activate offer");
+        context
+    }
+
+    fn reject(
+        _: &InProcessTeeContext,
+        _: PayloadLane,
+        _: &[u8],
+    ) -> std::result::Result<EnclaveResponse, TransportError> {
+        Err(TransportError::UnexpectedResponse)
+    }
+
+    fn cohort_req() -> FidelityCohortRequest {
+        FidelityCohortRequest {
+            chain_id: chain(),
+            account: Address::repeat_byte(0x11),
+            amount: U256::ZERO,
+            section: FidelityOpSection {
+                op: FidelityCohortOp::Probe,
+                timestamp: 1_000_000,
+                first_qualified_start: 0,
+                current_blob: Vec::new(),
+            },
+        }
+    }
+
+    fn snapshot_req() -> FidelitySnapshotRequest {
+        FidelitySnapshotRequest {
+            timestamp: 1_000_000,
+            first_qualified_start: 0,
+            entries: vec![FidelitySnapshotEntry {
+                owner: Address::repeat_byte(0x11),
+                cohort_blob: Vec::new(),
+            }],
+        }
+    }
+
+    fn query_req() -> FidelityQueryRequest {
+        FidelityQueryRequest {
+            chain_id: chain(),
+            account: Address::repeat_byte(0x11),
+            cohort_blob: Vec::new(),
+            query_timestamp: 1_000_000,
+            block_timestamp: 1_500_000,
+            first_qualified_start: 0,
+            expiry: 2_000_000,
+            owner_sig: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn rpc_direct_execute_rejects_a_foreign_hash_and_a_corrupt_tag() {
+        let ctx = context(4);
+        let _guard = set_in_process_tee_context_for_test(Some((Arc::clone(&ctx), reject)));
+        let state = Arc::new(Mutex::new(WitnessState::new(
+            WitnessExecutionMode::RpcDirect,
+            Some(ctx.attestation_public()),
+            EnclaveWitnessTapeV1::default(),
+        )));
+        let _scope = WitnessExecutionScope::enter(state);
+        let key = ctx.attestation_public();
+
+        let cohort = cohort_req();
+        let cohort_hash = fidelity_cohort_canonical_hash(&cohort);
+        assert!(matches!(
+            execute_cohort(&ctx, B256::ZERO, &cohort),
+            Err(TransportError::UnexpectedResponse)
+        ));
+        let signed = execute_cohort(&ctx, cohort_hash, &cohort).unwrap();
+        let mut corrupt = signed.clone();
+        corrupt.attestation_tag[0] ^= 0xff;
+        assert!(matches!(
+            authenticate_cohort(cohort_hash, &key, &corrupt),
+            Err(TransportError::AppAttestation { .. })
+        ));
+
+        let snapshot = snapshot_req();
+        let snapshot_hash = fidelity_snapshot_canonical_hash(&snapshot);
+        assert!(matches!(
+            execute_snapshot(&ctx, B256::ZERO, &snapshot),
+            Err(TransportError::UnexpectedResponse)
+        ));
+        let signed = execute_snapshot(&ctx, snapshot_hash, &snapshot).unwrap();
+        let mut corrupt = signed.clone();
+        corrupt.attestation_tag[0] ^= 0xff;
+        assert!(matches!(
+            authenticate_snapshot(snapshot_hash, &key, &corrupt),
+            Err(TransportError::AppAttestation { .. })
+        ));
+
+        let query = query_req();
+        let query_hash = fidelity_query_canonical_hash(&query);
+        assert!(matches!(
+            execute_query(&ctx, B256::ZERO, &query),
+            Err(TransportError::UnexpectedResponse)
+        ));
+        let DualWitnessAnswer::Rejected(rejection) =
+            execute_query(&ctx, query_hash, &query).unwrap()
+        else {
+            panic!("empty owner signature is a signed rejection");
+        };
+        let mut corrupt = rejection.clone();
+        corrupt.attestation_tag[0] ^= 0xff;
+        assert!(matches!(
+            authenticate_rejection(query_hash, &key, &corrupt),
+            Err(TransportError::AppAttestation { .. })
+        ));
+        corrupt.inputs_canonical_hash = B256::ZERO;
+        assert!(matches!(
+            authenticate_rejection(query_hash, &key, &corrupt),
+            Err(TransportError::UnexpectedResponse)
+        ));
+    }
+
+    #[test]
+    fn finish_keeps_the_signature_after_the_global_context_is_replaced() {
+        let first = context(4);
+        let second = context(9);
+        assert_ne!(first.attestation_public(), second.attestation_public());
+        let _guard = set_in_process_tee_context_for_test(Some((Arc::clone(&first), reject)));
+
+        let cohort = cohort_req();
+        let cohort_hash = fidelity_cohort_canonical_hash(&cohort);
+        let cohort_result = execute_cohort(&first, cohort_hash, &cohort).unwrap();
+        let snapshot = snapshot_req();
+        let snapshot_hash = fidelity_snapshot_canonical_hash(&snapshot);
+        let snapshot_result = execute_snapshot(&first, snapshot_hash, &snapshot).unwrap();
+        let query = query_req();
+        let query_hash = fidelity_query_canonical_hash(&query);
+        let DualWitnessAnswer::Rejected(rejection) =
+            execute_query(&first, query_hash, &query).unwrap()
+        else {
+            panic!("empty owner signature is a signed rejection");
+        };
+
+        let _successor = set_in_process_tee_context_for_test(Some((second.clone(), reject)));
+        assert_eq!(
+            outbe_tee::in_process_tee_context()
+                .expect("successor")
+                .attestation_public(),
+            second.attestation_public()
+        );
+        assert!(
+            authenticate_cohort(cohort_hash, &second.attestation_public(), &cohort_result).is_err()
+        );
+        assert!(finish_cohort(cohort_hash, cohort_result).is_ok());
+        assert!(finish_snapshot(snapshot_hash, snapshot_result).is_ok());
+        assert!(matches!(
+            finish_rejection(query_hash, rejection).unwrap_err(),
+            PrecompileError::RevertBytes(_)
+        ));
     }
 }
 
-/// In-process enclave stand-in for tests (this crate's tests and any downstream
-/// crate that enables the `test-enclave` feature). Runs the **real**
-/// `outbe_enclave::fidelity` engine against a fixed dev state key, so tests
-/// exercise the full confidential path without an SGX sidecar. This path does not
-/// check attestation (only the mock-enclave e2e verifies it). The crate root
-/// rejects `all(feature = "test-enclave", feature = "production-enclave")` at
-/// compile time and CI's `no-test-deps` gate rejects `test-enclave` in the
-/// production dependency graph, so this stand-in cannot reach a production build.
+/// In-process stand-in. Runs the real engine against the shared dev state key
+/// and does not check attestation. Production builds exclude this module.
 #[cfg(any(test, feature = "test-enclave"))]
 pub mod test_enclave {
     use super::*;
-    use crate::errors::FidelityError;
-    use alloy_primitives::B256;
     use std::cell::RefCell;
 
     thread_local! {
@@ -407,62 +665,51 @@ pub mod test_enclave {
     }
 
     const DEV_EPOCH: u64 = 0;
+    const GROUP_SIG: &[u8] = b"outbe-dev-fidelity-group-signature-fixed-seed";
 
-    /// Chain id the in-process enclave binds. Query auth is chain-scoped, so the
-    /// resident chain must equal what the runtime derives from
-    /// `storage.chain_id()`. Tests that exercise the query path build their
-    /// storage with this id and sign over [`dev_chain`]. Cohort/snapshot ops do
-    /// not verify chain id, so downstream crates may use any storage chain id.
-    ///
-    /// The group sig + chain are the SHARED dev fidelity identity
-    /// ([`outbe_enclave::dev`]). The gratis stand-in derives the same
-    /// fidelity key when it applies a folded cohort section. Thus a folded mint
-    /// and a standalone snapshot agree.
-    pub const DEV_CHAIN_ID: u64 = outbe_enclave::dev::FIDELITY_CHAIN_ID;
+    /// Chain id the stand-in binds. Query auth is chain-scoped.
+    pub const DEV_CHAIN_ID: u64 = outbe_primitives::chain::DEVNET_CHAIN_ID;
 
-    /// The resident chain id as a `B256`, matching the runtime's
-    /// `B256::from(U256::from(storage.chain_id()))` encoding.
+    /// Resident chain id in the same encoding as `B256::from(U256::from(chain_id))`.
     pub fn dev_chain() -> B256 {
-        outbe_enclave::dev::fidelity_chain()
+        B256::from(alloy_primitives::U256::from(DEV_CHAIN_ID))
     }
 
     fn fixture_key() -> outbe_tee::resident::StateKeyHandle {
-        outbe_enclave::fidelity::derive_fidelity_state_key(
-            &outbe_enclave::dev::offer_material(
-                outbe_enclave::dev::FIDELITY_GROUP_SIG,
-                outbe_enclave::dev::fidelity_chain(),
-            ),
+        let material = outbe_tee::resident::ResidentOfferMaterial::for_test(
+            GROUP_SIG.to_vec(),
             dev_chain(),
             DEV_EPOCH,
+            0,
         )
-        .expect("derive dev fidelity state key")
+        .expect("dev fidelity offer material");
+        engine::derive_fidelity_state_key(&material, dev_chain(), DEV_EPOCH)
+            .expect("derive dev fidelity state key")
     }
 
-    /// Install the in-process enclave for the current thread.
+    /// Install the stand-in for this thread.
     pub fn install() {
-        STATE_KEY.with(|k| *k.borrow_mut() = Some(fixture_key()));
+        STATE_KEY.with(|key| *key.borrow_mut() = Some(fixture_key()));
     }
 
-    /// Remove the in-process enclave for the current thread.
+    /// Remove the stand-in for this thread.
     pub fn uninstall() {
-        STATE_KEY.with(|k| *k.borrow_mut() = None);
+        STATE_KEY.with(|key| *key.borrow_mut() = None);
     }
 
-    /// An opaque dev state handle, so tests can derive view keys to decrypt cohorts.
+    /// Dev state handle, so a test can derive a view key and open a cohort blob.
     pub fn state_key() -> outbe_tee::resident::StateKeyHandle {
         assert!(
-            STATE_KEY.with(|k| k.borrow().is_some()),
+            STATE_KEY.with(|key| key.borrow().is_some()),
             "test enclave not installed"
         );
         fixture_key()
     }
 
     pub(super) fn try_cohort(req: &FidelityCohortRequest) -> Option<Result<FidelityCohortResult>> {
-        STATE_KEY.with(|k| {
-            k.borrow().as_ref().map(|key| {
-                outbe_enclave::fidelity::apply_cohort_op(key, req).map_err(|e| {
-                    FidelityFatalError::enclave_op_error("ApplyFidelityCohortOp", e).into()
-                })
+        with_key(|key| {
+            engine::apply_cohort_op(key, req).map_err(|error| {
+                map_consensus_error(COHORT_OP, TransportError::enclave_error(error)).into()
             })
         })
     }
@@ -470,21 +717,23 @@ pub mod test_enclave {
     pub(super) fn try_snapshot(
         req: &FidelitySnapshotRequest,
     ) -> Option<Result<Vec<FidelityLeagueEntry>>> {
-        STATE_KEY.with(|k| {
-            k.borrow().as_ref().map(|key| {
-                outbe_enclave::fidelity::snapshot_leagues(key, req).map_err(|e| {
-                    FidelityFatalError::enclave_op_error("SnapshotFidelityLeagues", e).into()
-                })
+        with_key(|key| {
+            engine::snapshot_leagues(key, req).map_err(|error| {
+                map_consensus_error(SNAPSHOT_OP, TransportError::enclave_error(error)).into()
             })
         })
     }
 
     pub(super) fn try_query(req: &FidelityQueryRequest) -> Option<Result<FidelityQueryResult>> {
-        STATE_KEY.with(|k| {
-            k.borrow().as_ref().map(|key| {
-                outbe_enclave::fidelity::query_index(key, dev_chain(), req)
-                    .map_err(|e| FidelityError::enclave_query_error(e).into())
-            })
+        with_key(|key| {
+            engine::query_index(key, dev_chain(), req)
+                .map_err(|source| FidelityError::EnclaveQueryError { source }.into())
         })
+    }
+
+    fn with_key<T>(
+        body: impl FnOnce(&outbe_tee::resident::StateKeyHandle) -> Result<T>,
+    ) -> Option<Result<T>> {
+        STATE_KEY.with(|slot| slot.borrow().as_ref().map(body))
     }
 }
