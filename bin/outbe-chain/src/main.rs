@@ -3,6 +3,12 @@
 //! Custom reth node with Outbe stateful precompiles and Commonware Simplex consensus.
 //! Node launch lives in `outbe-runtime`. This binary owns the CLI intercepts.
 
+#[cfg(all(feature = "e2e-test", feature = "production-enclave"))]
+compile_error!(
+    "outbe-chain: `e2e-test` turns off SGX attestation and points Intex at the e2e \
+     contract addresses, so it cannot build with `production-enclave`."
+);
+
 mod cli;
 pub(crate) mod errors;
 

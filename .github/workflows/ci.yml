@@ -210,6 +210,17 @@ jobs:
           cache-on-failure: true
       - name: Ensure no arbitrary dep in production build
         run: cargo tree --package outbe-chain -e=features,no-dev | grep -Eq "arbitrary" && exit 1 || exit 0
+      - name: Ensure no e2e-test feature in release builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          for features in "" "outbe-chain/production-enclave" "outbe-chain/test-protocol-overrides"; do
+            tree="$(cargo tree --locked --package outbe-chain --no-default-features --features "${features}" -e no-dev --prefix none --format '{p} {f}')"
+            if grep -Eq '(^|[ ,])e2e-test(,|$)' <<<"${tree}"; then
+              echo "error: e2e-test feature is enabled in outbe-chain with features [${features}]" >&2
+              exit 1
+            fi
+          done
       - name: Ensure no test-enclave stand-in in production build
         shell: bash
         run: |
