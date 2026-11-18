@@ -30,21 +30,19 @@ use super::{
         fidelity_cohort_attestation_preimage, fidelity_cohort_canonical_hash,
         fidelity_query_attestation_preimage, fidelity_query_canonical_hash,
         gratis_op_attestation_preimage, gratis_op_canonical_hash, inputs_canonical_hash,
-        mine_gratis_from_promis_attestation_preimage, mine_gratis_from_promis_canonical_hash,
         promis_op_attestation_preimage, promis_op_canonical_hash,
         tribute_offer_attestation_preimage, EnclaveRequest, EnclaveResponse, FidelityCohortOp,
         FidelityCohortRequest, FidelityCohortResult, FidelityOpOutcome, FidelityOpSection,
         FidelityQueryRequest, FidelityQueryResult, FidelitySnapshotRequest, GratisOp,
-        GratisOpRequest, GratisOpResult, GratisOpStatus, Ledger, MineGratisFromPromisRequestV1,
-        MineGratisFromPromisResultV1, MineGratisFromPromisStatusV1, ModifyAuth, PromisOp,
+        GratisOpRequest, GratisOpResult, GratisOpStatus, Ledger, ModifyAuth, PromisOp,
         PromisOpRequest, PromisOpResult, PromisOpStatus,
     },
     tribute_client::set_test_local_enclave_hook,
     try_domain_account_query,
     verification::{
         verify_fidelity_cohort_attestation, verify_fidelity_query_attestation,
-        verify_gratis_op_attestation, verify_mine_gratis_from_promis_attestation,
-        verify_promis_op_attestation, verify_tribute_offer_attestation,
+        verify_gratis_op_attestation, verify_promis_op_attestation,
+        verify_tribute_offer_attestation,
     },
 };
 
@@ -319,60 +317,7 @@ fn nested_tag_consensus_structs_record_and_verify_across_distinct_enclave_keys()
         },
     );
 
-    // 3. MineGratisFromPromisResultV1
-    let mine_gp_req = MineGratisFromPromisRequestV1 {
-        chain_id: B256::repeat_byte(0x03),
-        account: Address::repeat_byte(0x33),
-        encrypted_promis_amount: vec![0xaa; 92],
-        current_promis_balance: vec![1],
-        promis_modify_auth: sample_modify_auth(),
-        current_gratis_balance: vec![2],
-        gratis_modify_auth: sample_modify_auth(),
-        fidelity: sample_fidelity_section(),
-    };
-    let mine_gp_hash = mine_gratis_from_promis_canonical_hash(&mine_gp_req);
-    record_and_verify_across_two_keys(
-        EnclaveRequest::MineGratisFromPromisV1 {
-            request: Box::new(mine_gp_req),
-        },
-        move |sk| {
-            let mut result = MineGratisFromPromisResultV1 {
-                status: MineGratisFromPromisStatusV1::Applied,
-                new_promis_balance: vec![10],
-                encrypted_promis_event_amount: vec![11],
-                next_promis_op_nonce: 4,
-                new_gratis_balance: vec![12],
-                encrypted_gratis_event_amount: vec![13],
-                next_gratis_op_nonce: 4,
-                fidelity: Some(FidelityOpOutcome {
-                    new_blob: vec![14],
-                    qualified_start_initialized: None,
-                    league: 2,
-                }),
-                inputs_canonical_hash: mine_gp_hash,
-                attestation_tag: Vec::new(),
-            };
-            let preimage =
-                mine_gratis_from_promis_attestation_preimage(mine_gp_hash, &result).unwrap();
-            result.attestation_tag = sk.sign(&preimage).to_bytes().to_vec();
-            EnclaveResponse::GratisMinedFromPromisV1 {
-                result: Box::new(result),
-            }
-        },
-        |key, resp| {
-            let EnclaveResponse::GratisMinedFromPromisV1 { result } = resp else {
-                return Err(TransportError::UnexpectedResponse);
-            };
-            verify_mine_gratis_from_promis_attestation(
-                key,
-                result.inputs_canonical_hash,
-                result,
-                &result.attestation_tag,
-            )
-        },
-    );
-
-    // 4. FidelityQueryResult
+    // 3. FidelityQueryResult
     let fq_req = FidelityQueryRequest {
         chain_id: B256::repeat_byte(0x04),
         account: Address::repeat_byte(0x44),
@@ -415,7 +360,7 @@ fn nested_tag_consensus_structs_record_and_verify_across_distinct_enclave_keys()
         },
     );
 
-    // 5. MineEncryptedNodResultV1
+    // 4. MineEncryptedNodResultV1
     let nod_req = MineEncryptedNodRequestV1 {
         nod: EncryptedNodV1 {
             terms: NodTermsV1 {

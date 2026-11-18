@@ -5,8 +5,7 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-pub use crate::runtime::MineGratisInput;
-pub use outbe_enclave::protocol::{FidelityOpSection, MineGratisFromPromisResultV1, ModifyAuth};
+pub use outbe_enclave::protocol::ModifyAuth;
 
 use crate::runtime;
 use crate::schema::Promis;
@@ -68,13 +67,4 @@ pub fn burn(
     auth: ModifyAuth,
 ) -> Result<()> {
     runtime::burn(storage, caller, amount, auth)
-}
-
-/// Execute the combined Promis->Gratis conversion in the enclave, persist the
-/// Promis burn state + `PromisBurned` event, and return the enclave result.
-pub fn execute_mine_gratis(
-    storage: &StorageHandle<'_>,
-    input: MineGratisInput,
-) -> Result<MineGratisFromPromisResultV1> {
-    runtime::execute_mine_gratis(storage, input)
 }

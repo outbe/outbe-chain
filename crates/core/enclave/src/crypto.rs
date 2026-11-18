@@ -21,7 +21,7 @@ use ring::{
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::{Zeroize, Zeroizing};
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::B256;
 use outbe_tee::dcap_protocol::{DcapOnboardingArtifactV1, DcapOnboardingContextV1};
 
 use crate::errors::{Result, TeeError};
@@ -158,37 +158,6 @@ pub fn ecdhe_tribute_offer_decrypt(
         nonce,
         ciphertext,
     )
-}
-
-/// Decrypt a 92-byte `ephemeral_pub(32) || nonce(12) || ciphertext(48)` amount
-/// envelope sealed via [`crate::offer_encrypt::encrypt_tee_amount`].
-///
-/// The key uses [`crate::offer_encrypt::promis_mine_key_info`] and
-/// ChaCha20Poly1305 with empty AAD.
-pub fn decrypt_tee_amount(
-    tribute_offer_private_key: &[u8; 32],
-    encrypted_amount: &[u8],
-    chain_id: B256,
-    account: Address,
-) -> Result<alloy_primitives::U256> {
-    if encrypted_amount.len() != crate::offer_encrypt::ENCRYPTED_TEE_AMOUNT_LEN {
-        return Err(TeeError::DecryptFailed);
-    }
-    let mut eph_pub = [0u8; 32];
-    eph_pub.copy_from_slice(&encrypted_amount[..32]);
-    let info = crate::offer_encrypt::promis_mine_key_info(chain_id, account);
-    let plaintext = Zeroizing::new(ecdhe_offer_decrypt(
-        tribute_offer_private_key,
-        (&crate::OFFER_HKDF_SALT, &info),
-        &eph_pub,
-        &encrypted_amount[32..44],
-        &encrypted_amount[44..],
-    )?);
-    let bytes: [u8; 32] = plaintext
-        .as_slice()
-        .try_into()
-        .map_err(|_| TeeError::DecryptFailed)?;
-    Ok(alloy_primitives::U256::from_be_bytes(bytes))
 }
 
 fn ecdhe_offer_decrypt(
@@ -733,31 +702,5 @@ mod tests {
         // Wrong nonce and wrong key both fail.
         assert!(chacha20poly1305_decrypt(&key, &[0u8; 12], &ct).is_err());
         assert!(chacha20poly1305_decrypt(&[0u8; 32], &nonce, &ct).is_err());
-    }
-
-    #[test]
-    fn decrypt_tee_amount_round_trips_only_for_the_bound_account() {
-        let offer_sk = [7u8; 32];
-        let offer_pub = x25519_public(&offer_sk);
-        let chain = B256::repeat_byte(0x11);
-        let alice = Address::repeat_byte(0x22);
-        let eve = Address::repeat_byte(0x33);
-        let amount = alloy_primitives::U256::from(1000u64);
-        let encrypted = crate::offer_encrypt::encrypt_tee_amount_with(
-            &offer_pub,
-            (chain, alice),
-            amount,
-            [9u8; 32],
-            [1u8; 12],
-        )
-        .expect("encrypt");
-        assert_eq!(
-            decrypt_tee_amount(&offer_sk, &encrypted, chain, alice).unwrap(),
-            amount
-        );
-        assert!(matches!(
-            decrypt_tee_amount(&offer_sk, &encrypted, chain, eve),
-            Err(TeeError::DecryptFailed)
-        ));
     }
 }
