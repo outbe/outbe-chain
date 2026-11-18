@@ -340,3 +340,35 @@ fn a_canceled_started_day_queues_its_bid_intake_cleanup() {
         );
     });
 }
+
+#[test]
+fn a_brief_above_the_auction_domain_is_returned_once_and_cancels_the_day() {
+    let mut provider = fixture_provider(&[SRC_CHAIN]);
+    StorageHandle::enter(&mut provider, |s| {
+        schedule_committing(&s);
+        let contract = s.contract::<DesisContract>();
+        contract.desis_limit_set.write(&COMMITTING, 0).unwrap();
+        contract.has_desis_limit.write(&COMMITTING, 0).unwrap();
+        contract
+            .pending_desis_limit_minor
+            .write(&COMMITTING, U256::ZERO)
+            .unwrap();
+        let limit_before = promis_limit(&s);
+        let receipt = crate::api::set_desis_limit(
+            s.clone(),
+            crate::api::DesisLimit {
+                emission_day: COMMITTING,
+                desis_limit_minor: U256::from(u128::MAX) + U256::ONE,
+                has_limit: true,
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            receipt,
+            DesisLimitReceipt::ReturnedToPromisLimit { .. }
+        ));
+        runtime::schedule_tick(&s, NOW).unwrap();
+        assert_eq!(stage(&s, COMMITTING), AuctionStage::Canceled);
+        assert_eq!(promis_limit(&s), limit_before);
+    });
+}
