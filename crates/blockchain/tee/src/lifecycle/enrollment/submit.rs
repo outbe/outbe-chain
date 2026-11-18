@@ -221,36 +221,27 @@ fn prepare<E: std::error::Error + 'static, S: EnrollmentSignerV1>(
         validator: config.sender.into(),
         node_id_hash: intent.node_id.node_id_hash()?,
     };
-    let (validator_node_binding, validator_signature, node_binding_signature) =
-        if view.registry.binding.is_none() {
-            let binding_hash = binding.binding_hash()?;
-            let operator = signer
-                .sign_operator_hash(binding_hash)
-                .map_err(EnrollmentError::Signer)?
-                .as_bytes();
-            let node = signer
-                .sign_node_hash(binding_hash)
-                .map_err(EnrollmentError::Signer)?;
-            if !binding.verify_validator_signature(&operator)
-                || !binding.verify_node_signature(&node)
-            {
-                return Err(EnrollmentError::InvalidSignature);
-            }
-            (
-                binding.encode_canonical()?,
-                operator.to_vec(),
-                node.to_vec(),
-            )
-        } else {
-            (Vec::new(), Vec::new(), Vec::new())
-        };
+    // Rejoin re-proves the same association; the registry checks that it is idempotent.
+    let binding_hash = binding.binding_hash()?;
+    let validator_signature = signer
+        .sign_operator_hash(binding_hash)
+        .map_err(EnrollmentError::Signer)?
+        .as_bytes();
+    let node_binding_signature = signer
+        .sign_node_hash(binding_hash)
+        .map_err(EnrollmentError::Signer)?;
+    if !binding.verify_validator_signature(&validator_signature)
+        || !binding.verify_node_signature(&node_binding_signature)
+    {
+        return Err(EnrollmentError::InvalidSignature);
+    }
     let call = ITeeRegistryV1::registerEnclaveCall {
         evidence: evidence.clone().into(),
         nodeSignature: node_signature.to_vec().into(),
         enclaveSignature: enclave_signature.to_vec().into(),
-        validatorNodeBinding: validator_node_binding.into(),
-        validatorSignature: validator_signature.into(),
-        nodeBindingSignature: node_binding_signature.into(),
+        validatorNodeBinding: binding.encode_canonical()?.into(),
+        validatorSignature: validator_signature.to_vec().into(),
+        nodeBindingSignature: node_binding_signature.to_vec().into(),
     }
     .abi_encode();
     let gas_limit = TeeRegistryGasScheduleV1::normative().maximum_transaction_gas(

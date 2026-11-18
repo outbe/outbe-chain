@@ -27,6 +27,7 @@ impl Radicle {
             while !running.load(Ordering::Relaxed) {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
+                        stream.set_nonblocking(false).unwrap();
                         stream
                             .set_read_timeout(Some(Duration::from_secs(1)))
                             .unwrap();
@@ -41,6 +42,7 @@ impl Radicle {
                         let response = match command["command"].as_str().unwrap() {
                             "nodeId" => serde_json::json!(encoded),
                             "config" => serde_json::json!({"externalAddresses":["127.0.0.1:8776"]}),
+                            "sessions" => serde_json::json!([]),
                             _ => serde_json::json!({"success":true}),
                         };
                         let _ = writeln!(stream, "{response}");

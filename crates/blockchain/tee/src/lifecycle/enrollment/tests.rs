@@ -1,6 +1,7 @@
 use crate::lifecycle::test_finality as finality;
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::tee_attestation_v1::*;
+use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1;
 use outbe_tee::in_process::InProcessTeeContext;
 use outbe_tee::lifecycle::{enrollment::*, *};
 
@@ -82,17 +83,16 @@ impl Harness {
         )
         .await
     }
-    fn pending_intent(&self) -> RegistrationIntentV1 {
+    fn pending_call(&self) -> ITeeRegistryV1::registerEnclaveCall {
         use alloy_consensus::transaction::RlpEcdsaDecodableTx;
         use alloy_sol_types::SolCall;
         let record = self.journal.load().unwrap().unwrap();
         let tx =
             alloy_consensus::TxEip1559::rlp_decode_signed(&mut &record.raw_signed_tx[1..]).unwrap();
-        let call =
-            outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1::registerEnclaveCall::abi_decode(
-                &tx.tx().input,
-            )
-            .unwrap();
+        ITeeRegistryV1::registerEnclaveCall::abi_decode(&tx.tx().input).unwrap()
+    }
+    fn pending_intent(&self) -> RegistrationIntentV1 {
+        let call = self.pending_call();
         match AttestationEvidenceV1::decode_canonical(&call.evidence).unwrap() {
             AttestationEvidenceV1::NoAttestationDev(v) => v.intent,
             AttestationEvidenceV1::Dcap(v) => v.intent,
@@ -162,6 +162,19 @@ async fn active_and_expired_rejoin_preserve_counters_and_old_binding_is_not_comp
             EnrollmentOutcome::Submitted { .. }
         ));
         let intent = h.pending_intent();
+        let call = h.pending_call();
+        let association = ValidatorNodeBindingV1::decode_canonical(&call.validatorNodeBinding)
+            .expect("rejoin registerEnclave must carry the unchanged NodeHost association");
+        assert_eq!(association.validator, h.config.sender.into_array());
+        assert_eq!(
+            association.node_id_hash,
+            intent.node_id.node_id_hash().unwrap()
+        );
+        assert!(association
+            .verify_validator_signature(&call.validatorSignature[..].try_into().unwrap()));
+        assert!(
+            association.verify_node_signature(&call.nodeBindingSignature[..].try_into().unwrap())
+        );
         assert_eq!(
             (intent.binding_version, intent.registration_version),
             (5, 4)
