@@ -310,16 +310,21 @@ fn proposer_record_transport_panic_latches_local_unavailable_without_staging() {
         assert!(state.staged.is_empty());
     }
     let transport_called = std::cell::Cell::new(false);
+    let latched = consensus_call(
+        "ReadPayloadAmount",
+        || {
+            transport_called.set(true);
+            Ok(([1; 32], response(7)))
+        },
+        authenticate,
+    )
+    .unwrap_err();
+    assert!(latched.is_node_local());
+    assert_eq!(latched.metric_class(), "unavailable");
     assert!(matches!(
-        consensus_call(
-            "ReadPayloadAmount",
-            || {
-                transport_called.set(true);
-                Ok(([1; 32], response(7)))
-            },
-            authenticate
-        ),
-        Err(TransportError::Unavailable(message)) if message == "block witness fault: LocalUnavailable"
+        std::error::Error::source(&latched)
+            .and_then(|cause| cause.downcast_ref::<crate::errors::WitnessAvailabilityError>()),
+        Some(crate::errors::WitnessAvailabilityError::LocalUnavailable)
     ));
     assert!(!transport_called.get());
     assert!(s.lock().unwrap().staged.is_empty());
@@ -348,4 +353,39 @@ fn verifier_with_enclave_transport_panic_latches_local_unavailable_without_consu
         Some(BlockWitnessFault::LocalUnavailable)
     );
     assert_eq!(state.prefix_cursor, 0);
+}
+
+#[test]
+fn repeat_after_candidate_rejection_keeps_legacy_enclave_error_and_typed_cause() {
+    let legacy = state(WitnessExecutionMode::ProposerRecord);
+    legacy.lock().unwrap().candidate_rejection = Some(CandidateRejection::UnsignedEnclaveError);
+    let _scope = WitnessExecutionScope::enter(legacy);
+    let legacy_error = consensus_call(
+        "ReadPayloadAmount",
+        || panic!("rejected candidate retried transport"),
+        authenticate,
+    )
+    .unwrap_err();
+    assert!(matches!(legacy_error, TransportError::EnclaveError(_)));
+    assert_eq!(
+        legacy_error.to_string(),
+        "enclave returned error: witness candidate already rejected"
+    );
+    drop(_scope);
+
+    let typed = state(WitnessExecutionMode::ProposerRecord);
+    typed.lock().unwrap().candidate_rejection = Some(CandidateRejection::UnsignedEnclaveError);
+    let _scope = WitnessExecutionScope::enter(typed);
+    let typed_error = crate::tee_consensus_typed_call(
+        crate::CallMeta::recorded("candidate_reject"),
+        |_: &crate::in_process::InProcessTeeContext| -> Result<(), TransportError> {
+            panic!("rejected candidate retried transport")
+        },
+        |_: &()| panic!("rejected candidate encoded"),
+        |_, _| panic!("rejected candidate decoded"),
+    )
+    .unwrap_err();
+    assert!(matches!(typed_error, TransportError::EnclaveCause { .. }));
+    assert!(std::error::Error::source(&typed_error)
+        .is_some_and(|cause| { cause.is::<crate::errors::WitnessCandidateRejected>() }));
 }

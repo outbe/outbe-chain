@@ -31,7 +31,6 @@ use fixtures::{
     DirectorySync, ReplacementFixture,
 };
 
-mod committed_join;
 mod durable_preflight;
 
 mod replacement;

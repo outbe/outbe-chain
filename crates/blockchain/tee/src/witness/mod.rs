@@ -2,6 +2,7 @@
 mod codec;
 mod state;
 mod tape;
+mod typed_record;
 
 pub use crate::call_context::WitnessExecutionScope;
 pub use codec::{

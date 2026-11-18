@@ -48,7 +48,7 @@ pub mod test_utils;
 pub mod upgrade_journal;
 pub mod upgrade_transfer;
 pub mod witness;
-pub use witness::consensus_call;
+pub use witness::{consensus_call, TypedWitnessPayload, TypedWitnessPayloadRef};
 
 pub use canary::{TeeEnclaveHealthChannel, TeeEnclaveHealthSnapshot, TeeEnclaveHealthState};
 pub use dcap_protocol::RegistrationVerificationRequest;
@@ -72,14 +72,10 @@ pub use in_process_dispatch::{
     InstallError,
 };
 pub use node_host::{
-    clear_committed_join_checkpoint, construct_finalized_replacement_authorization_v1,
-    load_committed_join_relay, load_committed_join_submission,
-    load_finalized_join_admission_anchor, load_replacement_candidate_relay,
-    load_replacement_candidate_submission, persist_committed_join_relay,
-    persist_committed_join_submission, persist_finalized_join_admission_anchor,
-    persist_replacement_candidate_relay, persist_replacement_candidate_submission,
-    promote_replacement_candidate, CommittedJoinRelayV1, CommittedJoinSubmissionV1,
-    FinalizedJoinAdmissionAnchorV1, FinalizedReplacementAuthorizationV1,
+    construct_finalized_replacement_authorization_v1, load_replacement_candidate_relay,
+    load_replacement_candidate_submission, persist_replacement_candidate_relay,
+    persist_replacement_candidate_submission, promote_replacement_candidate, CommittedJoinRelayV1,
+    CommittedJoinSubmissionV1, FinalizedJoinAdmissionAnchorV1, FinalizedReplacementAuthorizationV1,
     FinalizedReplacementBindingV1, NodeHostIdentityV1, ReplacementCandidateRelayV1,
     ReplacementCandidateSubmissionV1,
 };
@@ -89,7 +85,7 @@ pub use remote_session::{
     RemoteSessionExpectationV1, RpcTrustedRemoteSessionV1,
 };
 pub use tee_call::{
-    tee_consensus_call, tee_session_call, verify_signed_rejection, CallMeta, SignedRejectionRef,
-    TeeAttestationError,
+    tee_consensus_call, tee_consensus_typed_call, tee_session_call, tee_session_typed_call,
+    verify_signed_rejection, CallMeta, SignedRejectionRef, TeeAttestationError,
 };
 pub use tee_dkg::{CeremonyCoordinator, CeremonyOutcome, EnclaveChannel};

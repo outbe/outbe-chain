@@ -5,7 +5,7 @@ use crate::TransportError;
 impl FinalizedReplacementAuthorizationV1 {}
 
 fn codec_error(error: outbe_primitives::tee_attestation_v1::CodecError) -> TransportError {
-    TransportError::Codec(error.to_string())
+    TransportError::codec(error)
 }
 
 #[cfg(test)]
@@ -33,9 +33,6 @@ mod journal_records;
 mod locked_state;
 
 mod join_records;
-use join_records::{
-    read_committed_join_relay, read_committed_join_submission, read_finalized_join_admission_anchor,
-};
 pub use join_records::{
     CommittedJoinRelayV1, CommittedJoinSubmissionV1, FinalizedJoinAdmissionAnchorV1,
 };
@@ -56,16 +53,10 @@ pub use identity::NodeHostIdentityV1;
 use identity::{read_manifest, MAX_INITIALIZATION_MANIFEST_BYTES};
 pub use identity_key::NodeHostIdentityKey;
 
+#[cfg(test)]
 mod committed_join;
-pub use committed_join::{
-    clear_committed_join_checkpoint, load_committed_join_relay, load_committed_join_submission,
-    load_finalized_join_admission_anchor, persist_committed_join_relay,
-    persist_committed_join_submission, persist_finalized_join_admission_anchor,
-};
-use committed_join::{
-    validate_anchor_replacement, validate_durable_committed_join_submission,
-    validate_finalized_join_admission_anchor,
-};
+#[cfg(test)]
+use committed_join::validate_durable_committed_join_submission;
 
 mod replacement;
 mod replacement_binding;
@@ -78,7 +69,4 @@ pub use replacement::{
 use replacement::{validate_durable_replacement_submission, validate_replacement_candidate_state};
 
 mod recovery;
-use recovery::{
-    reconcile_committed_join_state, reconcile_finalized_join_admission_anchor,
-    reconcile_replacement_state, replacement_authorization,
-};
+use recovery::{reconcile_replacement_state, replacement_authorization};

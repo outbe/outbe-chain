@@ -15,6 +15,7 @@ use outbe_primitives::tee_attestation_v1::{
 
 #[derive(Clone, Copy)]
 pub(super) enum DurableSubmissionKind {
+    #[cfg(test)]
     CommittedJoin,
     Replacement,
 }
@@ -33,6 +34,7 @@ pub(super) fn verify_durable_submission(
     let evidence =
         AttestationEvidenceV1::decode_canonical(submission.evidence).map_err(codec_error)?;
     let intent = match submission.kind {
+        #[cfg(test)]
         DurableSubmissionKind::CommittedJoin => {
             committed_join_intent(evidence, submission.enclave_signature)?
         }
@@ -45,6 +47,7 @@ pub(super) fn verify_durable_submission(
         .clone(),
     };
     let possession_error = match submission.kind {
+        #[cfg(test)]
         DurableSubmissionKind::CommittedJoin => {
             "committed join submission proof of possession is invalid"
         }
@@ -93,6 +96,7 @@ pub(super) fn verify_bound_possession(
     Ok(())
 }
 
+#[cfg(test)]
 fn committed_join_intent(
     evidence: AttestationEvidenceV1,
     enclave_signature: &[u8; 64],

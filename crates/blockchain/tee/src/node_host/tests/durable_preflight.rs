@@ -66,24 +66,6 @@ fn missing_committed_state_precedes_bad_key_and_does_not_change_checkpoints() {
     std::fs::write(&fixture.paths.identity_key, b"invalid key").unwrap();
 
     assert_eq!(
-        persist_committed_join_submission(
-            &fixture.node_data_dir,
-            Address::repeat_byte(0x42),
-            &evidence,
-            source.node_signature(),
-            source.enclave_signature(),
-        )
-        .unwrap_err()
-        .to_string(),
-        "codec error: committed join submission requires committed NodeHost state"
-    );
-    assert_eq!(
-        load_committed_join_submission(&fixture.node_data_dir)
-            .unwrap_err()
-            .to_string(),
-        "codec error: committed join submission reload requires committed NodeHost state"
-    );
-    assert_eq!(
         persist_replacement_candidate_submission(
             &fixture.node_data_dir,
             &evidence,

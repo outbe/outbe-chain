@@ -223,6 +223,15 @@ impl InProcessTeeContext {
     pub fn activate_for_test(&self, material: ResidentOfferMaterial) -> Result<()> {
         self.activate(material, None)
     }
+    /// Activate deterministic material and a verified admission anchor in tests.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn activate_for_test_with_anchor(
+        &self,
+        material: ResidentOfferMaterial,
+        anchor: crate::in_process::admission::VerifiedAdmissionAnchorV1,
+    ) -> Result<()> {
+        self.activate(material, Some(anchor))
+    }
     /// Borrow the opaque offer handle while keeping its resident owner alive.
     pub fn with_offer_key_handle<T>(
         &self,

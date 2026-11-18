@@ -9,6 +9,9 @@ mod transport;
 mod verification;
 
 pub use call_context::{CallContextError, CallContextProviderError};
+pub(crate) use call_context::{
+    TypedCallRouteError, WitnessAvailabilityError, WitnessCandidateRejected,
+};
 pub use outbe_dcap::errors::HostCollateralError;
 pub use outbe_dcap::errors::QuoteParseError;
 pub use outbe_dcap::errors::{DcapFixtureError, NativeQvlError};
@@ -16,7 +19,7 @@ pub use protocol::{
     FinalizedAdmissionMalformedReason, TeeDkgMalformedWireReason, TeeDkgUnexpectedResponseReason,
     UpgradeTransferError,
 };
-pub use tee_attestation_activation::TeeAttestationActivationError;
+pub use tee_attestation_activation::{ActivationCause, TeeAttestationActivationError};
 pub use tee_crypto::TeeCryptoError;
 pub use transport::{AppErrorDescriptor, TransportError};
 pub use verification::{NodeHostRecordError, TeeVerificationError};

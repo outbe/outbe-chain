@@ -1,5 +1,11 @@
+use super::typed_record::{proposer_record_typed, verifier_typed};
 use super::{EnclaveWitnessEntryV1, EnclaveWitnessTapeV1};
-use crate::{call_context::current_witness_state, protocol::EnclaveResponse, TransportError};
+use crate::{
+    call_context::current_witness_state,
+    errors::{WitnessAvailabilityError, WitnessCandidateRejected},
+    protocol::EnclaveResponse,
+    TransportError,
+};
 use std::{
     cell::Cell,
     sync::{Arc, Mutex, OnceLock},
@@ -104,7 +110,7 @@ impl WitnessState {
             }
         }
     }
-    fn consume_entry(&mut self) {
+    pub(super) fn consume_entry(&mut self) {
         if self.tx_index.is_some() {
             self.replay_cursor += 1;
         } else {
@@ -112,15 +118,20 @@ impl WitnessState {
         }
     }
 }
-fn fault_error(fault: BlockWitnessFault) -> TransportError {
-    TransportError::Unavailable(format!("block witness fault: {fault:?}"))
+pub(super) fn fault_error(fault: BlockWitnessFault) -> TransportError {
+    let cause = match fault {
+        BlockWitnessFault::TapeInvalid => WitnessAvailabilityError::TapeInvalid,
+        BlockWitnessFault::SemanticMismatch => WitnessAvailabilityError::SemanticMismatch,
+        BlockWitnessFault::LocalUnavailable => WitnessAvailabilityError::LocalUnavailable,
+    };
+    TransportError::unavailable(cause)
 }
-fn locked(
+pub(super) fn locked(
     state: &Arc<Mutex<WitnessState>>,
 ) -> Result<std::sync::MutexGuard<'_, WitnessState>, TransportError> {
     state
         .lock()
-        .map_err(|_| TransportError::Unavailable("witness state lock poisoned".into()))
+        .map_err(|_| TransportError::unavailable(WitnessAvailabilityError::LockPoisoned))
 }
 fn unsigned_failure(state: &Arc<Mutex<WitnessState>>) -> Result<(), TransportError> {
     let mut state = locked(state)?;
@@ -175,10 +186,10 @@ fn local_answer(
     }
 }
 
-struct VerifierCallContext {
-    with_enclave: bool,
-    leader_key: [u8; 32],
-    entry: EnclaveWitnessEntryV1,
+pub(super) struct VerifierCallContext {
+    pub(super) with_enclave: bool,
+    pub(super) leader_key: [u8; 32],
+    pub(super) entry: EnclaveWitnessEntryV1,
 }
 
 enum PreparedCall {
@@ -187,17 +198,26 @@ enum PreparedCall {
     Verifier(Box<VerifierCallContext>),
 }
 
+/// Legacy repeat. Callers of `consensus_call` still match [`TransportError::EnclaveError`].
+fn legacy_candidate_rejection() -> TransportError {
+    TransportError::EnclaveError("witness candidate already rejected".into())
+}
+
+/// Typed repeat. [`WitnessCandidateRejected`] stays available through [`std::error::Error::source`].
+fn typed_candidate_rejection() -> TransportError {
+    TransportError::enclave_error(WitnessCandidateRejected)
+}
+
 fn prepare_consensus_call(
     handle: &Arc<Mutex<WitnessState>>,
+    rejection: fn() -> TransportError,
 ) -> Result<PreparedCall, TransportError> {
     let mut state = locked(handle)?;
     if let Some(fault) = state.first_witness_fault {
         return Err(fault_error(fault));
     }
     if state.candidate_rejection.is_some() {
-        return Err(TransportError::EnclaveError(
-            "witness candidate already rejected".into(),
-        ));
+        return Err(rejection());
     }
     if state.mode == WitnessExecutionMode::RpcDirect {
         return Ok(PreparedCall::RpcDirect);
@@ -284,6 +304,85 @@ fn verify_local_enclave_match(
     Ok(())
 }
 
+fn note_typed_transport_error(
+    handle: &Arc<Mutex<WitnessState>>,
+    error: &TransportError,
+) -> Result<(), TransportError> {
+    if matches!(
+        error,
+        TransportError::EnclaveError(_)
+            | TransportError::EnclaveCause { .. }
+            | TransportError::InProcess(
+                crate::InProcessDispatchError::Domain(_)
+                    | crate::InProcessDispatchError::LaneDenied { .. }
+            )
+    ) {
+        unsigned_failure(handle)
+    } else {
+        locked(handle)?.latch(BlockWitnessFault::LocalUnavailable);
+        Ok(())
+    }
+}
+
+pub(super) fn typed_execute<T>(
+    handle: &Arc<Mutex<WitnessState>>,
+    transport: impl FnOnce() -> Result<([u8; 32], T), TransportError>,
+) -> Result<([u8; 32], T), TransportError> {
+    let outcome = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(transport)) {
+        Ok(outcome) => outcome,
+        Err(_panic_payload) => {
+            locked(handle)?.latch(BlockWitnessFault::LocalUnavailable);
+            return Err(TransportError::unavailable(
+                WitnessAvailabilityError::TransportPanicked,
+            ));
+        }
+    };
+    match outcome {
+        Ok(answer) => Ok(answer),
+        Err(error) => {
+            note_typed_transport_error(handle, &error)?;
+            Err(error)
+        }
+    }
+}
+
+pub use super::typed_record::{TypedWitnessPayload, TypedWitnessPayloadRef};
+
+/// Typed consensus operation. Live execution calls `transport` in memory.
+/// Witness bytes are produced only while recording or comparing a live answer.
+/// `VerifierReplay` decodes the recorded [`EnclaveWitnessEntryV1::Payload`] and
+/// does not call `transport`.
+pub fn consensus_typed_call<T>(
+    transport: impl FnOnce() -> Result<([u8; 32], T), TransportError>,
+    encode: impl FnOnce(&T) -> Result<TypedWitnessPayload, TransportError>,
+    decode_and_auth: impl Fn(&[u8; 32], TypedWitnessPayloadRef<'_>) -> Result<T, TransportError>,
+) -> Result<T, TransportError> {
+    let Some(handle) = current_witness_state() else {
+        if witness_policy().is_some() {
+            return Err(TransportError::unavailable(
+                WitnessAvailabilityError::MissingWitnessScope,
+            ));
+        }
+        return Ok(transport()?.1);
+    };
+    match prepare_consensus_call(&handle, typed_candidate_rejection)? {
+        PreparedCall::RpcDirect => {
+            if witness_policy() == Some(WitnessPolicy::ReplayOnly) {
+                return Err(TransportError::unavailable(
+                    WitnessAvailabilityError::PrivateExecutionUnavailable,
+                ));
+            }
+            Ok(transport()?.1)
+        }
+        PreparedCall::Proposer { leader_key } => {
+            proposer_record_typed(&handle, leader_key, transport, encode, &decode_and_auth)
+        }
+        PreparedCall::Verifier(ctx) => {
+            verifier_typed(&handle, *ctx, transport, encode, &decode_and_auth)
+        }
+    }
+}
+
 /// One logical, authenticated operation. Replay never evaluates transport.
 /// The paired key permits existing downstream validators to reuse their preimages.
 pub fn consensus_call(
@@ -300,7 +399,7 @@ pub fn consensus_call(
         // Standalone CLI and existing in-process test clients have no block policy.
         return transport();
     };
-    match prepare_consensus_call(&handle)? {
+    match prepare_consensus_call(&handle, legacy_candidate_rejection)? {
         PreparedCall::RpcDirect => {
             if witness_policy() == Some(WitnessPolicy::ReplayOnly) {
                 return Err(TransportError::Unavailable(

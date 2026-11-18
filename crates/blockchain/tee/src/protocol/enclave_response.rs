@@ -42,9 +42,24 @@ pub struct EnclaveRequestClassCountsV1 {
 pub fn eip191_hash(message: &[u8]) -> B256 {
     let mut buf = Vec::with_capacity(message.len() + 40);
     buf.extend_from_slice(b"\x19Ethereum Signed Message:\n");
-    buf.extend_from_slice(message.len().to_string().as_bytes());
+    push_decimal(&mut buf, message.len());
     buf.extend_from_slice(message);
     alloy_primitives::keccak256(buf)
+}
+
+/// Append `value` as ASCII decimal. Same bytes as `usize::to_string`.
+fn push_decimal(buf: &mut Vec<u8>, mut value: usize) {
+    let mut digits = [0u8; 20];
+    let mut index = digits.len();
+    loop {
+        index -= 1;
+        digits[index] = b'0' + u8::try_from(value % 10).unwrap_or(0);
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    buf.extend_from_slice(&digits[index..]);
 }
 
 /// Resident infrastructure responses, plus the

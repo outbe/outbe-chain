@@ -247,3 +247,210 @@ fn decode(mut bytes: &[u8]) -> Result<FinalizedJoinAdmissionAnchorV1, LiveJoinAn
     }
     Ok(a)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        load_live_join_admission_anchor_v1, persist_live_join_admission_anchor_v1,
+        LiveJoinAnchorError, Store, NODE_HOST_DIRECTORY_V1, NODE_HOST_IDENTITY_KEY_V1,
+    };
+    use crate::in_process::admission::VerifiedAdmissionAnchorV1;
+    use crate::in_process::{InProcessTeeContext, ProofSourceV1};
+    use crate::node_host::NodeHostIdentityKey;
+    use crate::resident::{ResidentOfferMaterial, ResidentTeeKeys};
+    use crate::FinalizedJoinAdmissionAnchorV1;
+    use crate::NodeHostIdentityV1;
+    use alloy_primitives::B256;
+    use outbe_primitives::tee_attestation_v1::{
+        AttestationMode, EnclaveInitializationManifestV1, NetworkBindingV1, NodeIdV1,
+        TrustedNetworkDescriptorV1,
+    };
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::path::Path;
+
+    fn resident() -> InProcessTeeContext {
+        let keys = ResidentTeeKeys::from_seed([7; 32]).unwrap();
+        let node_key = k256::ecdsa::SigningKey::from_slice(&[7; 32]).unwrap();
+        let reth_p2p_public = node_key
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .try_into()
+            .unwrap();
+        let binding = NetworkBindingV1 {
+            chain_id: alloy_primitives::U256::from(676).to_be_bytes(),
+            genesis_hash: B256::repeat_byte(2),
+            attestation_mode: AttestationMode::NoAttestationDev,
+        };
+        let manifest = EnclaveInitializationManifestV1 {
+            chain_id: binding.chain_id,
+            genesis_hash: binding.genesis_hash,
+            attestation_mode: binding.attestation_mode,
+            node_id: NodeIdV1 { reth_p2p_public },
+            initialization_challenge: [3; 32],
+            node_host_noise_x25519: NodeHostIdentityKey::from_private([4; 32]).public(),
+            recipient_x25519: keys.tribute_offer_public(),
+            attestation_ed25519: keys.attestation_pub(),
+            noise_responder_x25519: keys.noise_public(),
+        };
+        InProcessTeeContext::new(
+            keys,
+            NodeHostIdentityV1 {
+                network_binding: binding,
+                reth_p2p_public,
+            },
+            manifest,
+            TrustedNetworkDescriptorV1 {
+                network_binding: binding,
+                genesis_consensus_keys: Vec::new(),
+            },
+            ProofSourceV1::NoHardware,
+        )
+        .unwrap()
+    }
+
+    fn write_host_key(dir: &Path) {
+        let host = dir.join(NODE_HOST_DIRECTORY_V1);
+        std::fs::create_dir_all(&host).unwrap();
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(host.join(NODE_HOST_IDENTITY_KEY_V1))
+            .unwrap();
+        file.write_all(&[4; 32]).unwrap();
+    }
+
+    fn anchor(
+        live: &InProcessTeeContext,
+        height: u64,
+        mark: u8,
+        timestamp: u64,
+    ) -> FinalizedJoinAdmissionAnchorV1 {
+        let manifest = live.manifest();
+        FinalizedJoinAdmissionAnchorV1 {
+            chain_id: manifest.chain_id,
+            genesis_hash: manifest.genesis_hash,
+            node_id_hash: manifest.node_id.node_id_hash().unwrap(),
+            enclave_id: manifest.enclave_id().unwrap(),
+            intent_hash: B256::repeat_byte(9),
+            finalized_height: height,
+            finalized_hash: B256::repeat_byte(mark),
+            finalized_state_root: B256::repeat_byte(mark.wrapping_add(1)),
+            finalized_consensus_timestamp: timestamp,
+        }
+    }
+
+    fn verified(anchor: FinalizedJoinAdmissionAnchorV1) -> VerifiedAdmissionAnchorV1 {
+        VerifiedAdmissionAnchorV1 {
+            block_number: anchor.finalized_height,
+            block_hash: anchor.finalized_hash,
+            state_root: anchor.finalized_state_root,
+            consensus_timestamp: anchor.finalized_consensus_timestamp,
+        }
+    }
+
+    fn material(live: &InProcessTeeContext) -> ResidentOfferMaterial {
+        ResidentOfferMaterial::for_test(vec![5; 96], B256::from(live.manifest().chain_id), 0, 0)
+            .unwrap()
+    }
+
+    fn plant(dir: &Path, anchor: FinalizedJoinAdmissionAnchorV1) {
+        let store = Store::open(dir).unwrap();
+        store.write(anchor).unwrap();
+    }
+
+    #[test]
+    fn same_node_host_anchor_rewrite_is_idempotent_and_strictly_monotonic() {
+        let live = resident();
+        let current = anchor(&live, 10, 0x11, 1_000);
+        let conflict = anchor(&live, 10, 0x22, 1_000);
+        let later = anchor(&live, 11, 0x33, 1_001);
+        let rollback_disk = anchor(&live, 12, 0x44, 2_000);
+
+        let conflict_dir = tempfile::tempdir().unwrap();
+        write_host_key(conflict_dir.path());
+        plant(conflict_dir.path(), current);
+        live.activate_for_test_with_anchor(material(&live), verified(conflict))
+            .unwrap();
+        assert!(matches!(
+            persist_live_join_admission_anchor_v1(conflict_dir.path(), &live, conflict),
+            Err(LiveJoinAnchorError::ConflictingAnchor)
+        ));
+
+        let dir = tempfile::tempdir().unwrap();
+        write_host_key(dir.path());
+        assert_eq!(
+            persist_live_join_admission_anchor_v1(dir.path(), &live, conflict).unwrap(),
+            conflict
+        );
+        assert_eq!(
+            persist_live_join_admission_anchor_v1(dir.path(), &live, conflict).unwrap(),
+            conflict
+        );
+
+        live.activate_for_test_with_anchor(material(&live), verified(later))
+            .unwrap();
+        assert_eq!(
+            persist_live_join_admission_anchor_v1(dir.path(), &live, later).unwrap(),
+            later
+        );
+        assert_eq!(
+            load_live_join_admission_anchor_v1(dir.path(), &live).unwrap(),
+            Some(later)
+        );
+
+        let rollback_dir = tempfile::tempdir().unwrap();
+        write_host_key(rollback_dir.path());
+        plant(rollback_dir.path(), rollback_disk);
+        assert!(matches!(
+            persist_live_join_admission_anchor_v1(rollback_dir.path(), &live, later),
+            Err(LiveJoinAnchorError::ConflictingAnchor)
+        ));
+    }
+
+    #[test]
+    fn corrupt_registration_anchor_is_rejected_and_retained() {
+        let dir = tempfile::tempdir().unwrap();
+        drop(Store::open(dir.path()).unwrap());
+        let path = dir.path().join("tee-live-join-admission-v1/anchor.bin");
+        let corrupt = [0xff, 0x00];
+        crate::journal_storage::private_file_options(true)
+            .open(&path)
+            .unwrap()
+            .write_all(&corrupt)
+            .unwrap();
+        assert!(matches!(
+            load_live_join_admission_anchor_v1(dir.path(), &resident()),
+            Err(LiveJoinAnchorError::InvalidRecord)
+        ));
+        assert!(path.exists());
+        assert_eq!(std::fs::read(path).unwrap(), corrupt);
+    }
+
+    #[test]
+    fn restart_discards_anchor_scratch_and_keeps_the_committed_anchor() {
+        let live = resident();
+        let dir = tempfile::tempdir().unwrap();
+        write_host_key(dir.path());
+        let saved = anchor(&live, 10, 0x11, 1_000);
+        plant(dir.path(), saved);
+        let scratch = dir.path().join("tee-live-join-admission-v1/journal.next");
+        crate::journal_storage::private_file_options(true)
+            .create_new(true)
+            .open(&scratch)
+            .unwrap()
+            .write_all(b"torn")
+            .unwrap();
+        assert_eq!(
+            load_live_join_admission_anchor_v1(dir.path(), &live).unwrap(),
+            Some(saved)
+        );
+        assert!(!scratch.exists());
+        assert!(dir
+            .path()
+            .join("tee-live-join-admission-v1/anchor.bin")
+            .exists());
+    }
+}

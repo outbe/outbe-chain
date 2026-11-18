@@ -37,6 +37,8 @@ pub enum InProcessDispatchError {
     ContextChanged,
     #[error("resident operation failed: {0}")]
     Resident(#[from] InProcessError),
+    #[error("local enclave permanent offer key is not ready; no recovery or fallback exists")]
+    OfferKeyNotReady(#[source] InProcessError),
     #[error("request is not permitted on lane {lane:?}")]
     LaneDenied { lane: PayloadLane },
     #[error("unsupported in-process infrastructure request")]
@@ -130,37 +132,32 @@ pub fn try_in_process_request(
     request_with_attestation(meta, request).map(|result| result.map(|(_, response)| response))
 }
 
+pub(crate) fn resident_request_lane(request: &EnclaveRequest) -> PayloadLane {
+    match request {
+        EnclaveRequest::Payload { lane, .. } => *lane,
+        _ => PayloadLane::Execution,
+    }
+}
+
 /// Bind the response to the exact resident context that dispatched it.
 pub(crate) fn request_with_attestation(
     meta: CallMeta,
     request: &EnclaveRequest,
 ) -> Option<Result<([u8; 32], EnclaveResponse), TransportError>> {
     let runtime = runtime()?;
-    let lane = match request {
-        EnclaveRequest::Payload { lane, .. } => *lane,
-        _ => PayloadLane::Execution,
-    };
+    let lane = resident_request_lane(request);
     Some(
         request_on(&runtime, meta, request, lane)
             .map(|response| (runtime.context.attestation_public(), response)),
     )
 }
 
-fn request_on(
+fn execute_request(
     runtime: &Runtime,
-    meta: CallMeta,
     request: &EnclaveRequest,
-    lane: PayloadLane,
 ) -> Result<EnclaveResponse, TransportError> {
-    let _in_flight =
-        (lane == PayloadLane::Execution).then(crate::metrics::ExecutionInFlightGuard::new);
-    if lane == PayloadLane::Execution {
-        // Direct execution has no execution mutex, so its lock-wait sample is exactly zero.
-        crate::metrics::record_tee_execution_lock_wait_ms(std::time::Duration::ZERO);
-    }
-    let started = std::time::Instant::now();
     let context = &runtime.context;
-    let result = match request {
+    match request {
         EnclaveRequest::Payload { lane, payload } => (runtime.payload)(context, *lane, payload),
         EnclaveRequest::GetPublicKeys => (|| {
             let ready = context
@@ -183,7 +180,53 @@ fn request_on(
             })
         })(),
         _ => Err(InProcessDispatchError::UnsupportedRequest.into()),
-    };
+    }
+}
+
+/// Dispatch `request` on one captured runtime. A later global swap is ignored.
+fn dispatch_resident_request(
+    runtime: &Runtime,
+    request: &EnclaveRequest,
+) -> Result<([u8; 32], EnclaveResponse), TransportError> {
+    let response = execute_request(runtime, request)?;
+    Ok((runtime.context.attestation_public(), response))
+}
+
+/// One session snapshot: lane metrics, duration, and the response share `runtime`.
+pub(crate) fn dispatch_session_snapshot(
+    meta: CallMeta,
+    request: &EnclaveRequest,
+) -> Option<Result<([u8; 32], EnclaveResponse), TransportError>> {
+    let runtime = runtime()?;
+    let lane = resident_request_lane(request);
+    let _in_flight =
+        (lane == PayloadLane::Execution).then(crate::metrics::ExecutionInFlightGuard::new);
+    if lane == PayloadLane::Execution {
+        crate::metrics::record_tee_execution_lock_wait_ms(std::time::Duration::ZERO);
+    }
+    let started = std::time::Instant::now();
+    let result = dispatch_resident_request(&runtime, request);
+    crate::metrics::record_request_duration(meta.label, started.elapsed());
+    if let Err(error) = &result {
+        crate::metrics::record_request_error(meta.label, error.metric_class());
+    }
+    Some(result)
+}
+
+fn request_on(
+    runtime: &Runtime,
+    meta: CallMeta,
+    request: &EnclaveRequest,
+    lane: PayloadLane,
+) -> Result<EnclaveResponse, TransportError> {
+    let _in_flight =
+        (lane == PayloadLane::Execution).then(crate::metrics::ExecutionInFlightGuard::new);
+    if lane == PayloadLane::Execution {
+        // Direct execution has no execution mutex, so its lock-wait sample is exactly zero.
+        crate::metrics::record_tee_execution_lock_wait_ms(std::time::Duration::ZERO);
+    }
+    let started = std::time::Instant::now();
+    let result = execute_request(runtime, request);
     crate::metrics::record_request_duration(meta.label, started.elapsed());
     if let Err(error) = &result {
         crate::metrics::record_request_error(meta.label, error.metric_class());
@@ -268,11 +311,26 @@ pub fn resident_network_encryption_public_key_state_v1(
 /// Require the permanent network key; a keyless identity is not a recovery path.
 pub fn resident_network_encryption_public_key_v1() -> Result<alloy_primitives::B256, TransportError>
 {
-    resident_network_encryption_public_key_state_v1()?.ok_or_else(|| {
-        TransportError::EnclaveError(
-            "local enclave permanent offer key is not ready; no recovery or fallback exists".into(),
-        )
-    })
+    resident_network_encryption_public_key_state_v1()?
+        .ok_or_else(|| InProcessDispatchError::OfferKeyNotReady(InProcessError::NotReady).into())
+}
+
+/// Run one non-consensus typed closure against the installed resident context.
+///
+/// Returns `None` only when no resident context is installed. Neither argument
+/// nor result bytes are serialized.
+pub(crate) fn try_session_typed<T>(
+    meta: CallMeta,
+    execute: impl FnOnce(&InProcessTeeContext) -> Result<T, TransportError>,
+) -> Option<Result<T, TransportError>> {
+    let context = in_process_tee_context()?;
+    let started = std::time::Instant::now();
+    let result = execute(&context);
+    crate::metrics::record_request_duration(meta.label, started.elapsed());
+    if let Err(error) = &result {
+        crate::metrics::record_request_error(meta.label, error.metric_class());
+    }
+    Some(result)
 }
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -300,5 +358,121 @@ pub fn set_in_process_tee_context_for_test(
     InProcessTestGuard {
         previous,
         _not_send: std::marker::PhantomData,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::{EnclaveResponse, PayloadLane};
+    use crate::test_utils::resident_context;
+    use alloy_primitives::{B256, U256};
+    use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
+    use std::error::Error;
+    use std::sync::Arc;
+
+    fn unused_payload(
+        _: &InProcessTeeContext,
+        _: PayloadLane,
+        _: &[u8],
+    ) -> Result<EnclaveResponse, TransportError> {
+        Err(TransportError::UnexpectedResponse)
+    }
+
+    #[test]
+    fn unonboarded_offer_key_is_typed_and_node_local() {
+        let binding = NetworkBindingV1 {
+            chain_id: U256::from(676).to_be_bytes(),
+            genesis_hash: B256::repeat_byte(2),
+            attestation_mode: AttestationMode::NoAttestationDev,
+        };
+        let context = Arc::new(resident_context(7, binding));
+        let _guard = set_in_process_tee_context_for_test(Some((context, unused_payload)));
+        let error = resident_network_encryption_public_key_v1().unwrap_err();
+        assert!(error.is_node_local());
+        let TransportError::InProcess(InProcessDispatchError::OfferKeyNotReady(source)) = &error
+        else {
+            panic!("{error}");
+        };
+        assert!(matches!(source, InProcessError::NotReady));
+        let cause = Error::source(&error)
+            .and_then(Error::source)
+            .and_then(|inner| inner.downcast_ref::<InProcessError>());
+        assert!(matches!(cause, Some(InProcessError::NotReady)));
+    }
+
+    thread_local! {
+        static SEEN_KEY: std::cell::Cell<Option<[u8; 32]>> = const { std::cell::Cell::new(None) };
+        static NEXT_CONTEXT: std::cell::RefCell<Option<Arc<InProcessTeeContext>>> =
+            const { std::cell::RefCell::new(None) };
+        static HELD_GUARD: std::cell::RefCell<Option<InProcessTestGuard>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    fn swapping_payload(
+        context: &InProcessTeeContext,
+        _: PayloadLane,
+        _: &[u8],
+    ) -> Result<EnclaveResponse, TransportError> {
+        SEEN_KEY.with(|seen| seen.set(Some(context.attestation_public())));
+        let next = NEXT_CONTEXT
+            .with(|slot| slot.borrow_mut().take())
+            .expect("successor context");
+        let guard = set_in_process_tee_context_for_test(Some((next, unused_payload)));
+        HELD_GUARD.with(|slot| *slot.borrow_mut() = Some(guard));
+        Ok(EnclaveResponse::Error {
+            message: "first".into(),
+        })
+    }
+
+    /// Drops the successor guard before the outer install guard restores the thread.
+    struct ReleaseSnapshotSwap;
+    impl Drop for ReleaseSnapshotSwap {
+        fn drop(&mut self) {
+            HELD_GUARD.with(|slot| drop(slot.borrow_mut().take()));
+            NEXT_CONTEXT.with(|slot| drop(slot.borrow_mut().take()));
+            SEEN_KEY.with(|slot| slot.set(None));
+        }
+    }
+
+    #[test]
+    fn tee_session_call_uses_one_runtime_snapshot_across_a_global_swap() {
+        let binding = NetworkBindingV1 {
+            chain_id: U256::from(676).to_be_bytes(),
+            genesis_hash: B256::repeat_byte(2),
+            attestation_mode: AttestationMode::NoAttestationDev,
+        };
+        let first = Arc::new(resident_context(4, binding));
+        let second = Arc::new(resident_context(9, binding));
+        assert_ne!(first.attestation_public(), second.attestation_public());
+        NEXT_CONTEXT.with(|slot| *slot.borrow_mut() = Some(Arc::clone(&second)));
+        let _outer =
+            set_in_process_tee_context_for_test(Some((Arc::clone(&first), swapping_payload)));
+        let _release = ReleaseSnapshotSwap;
+        let (key, response) = crate::tee_call::tee_session_call(
+            CallMeta::session_only("snapshot"),
+            &EnclaveRequest::Payload {
+                lane: PayloadLane::Execution,
+                payload: vec![1],
+            },
+            |_, _| Ok(()),
+        )
+        .expect("runtime installed")
+        .expect("session call");
+        let seen = SEEN_KEY.with(|slot| slot.get()).expect("payload ran");
+        assert_eq!(key, seen);
+        assert_eq!(key, first.attestation_public());
+        assert_eq!(
+            response,
+            EnclaveResponse::Error {
+                message: "first".into(),
+            }
+        );
+        assert_eq!(
+            in_process_tee_context()
+                .expect("successor installed")
+                .attestation_public(),
+            second.attestation_public()
+        );
     }
 }
