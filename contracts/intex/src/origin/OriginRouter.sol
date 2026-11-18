@@ -254,7 +254,7 @@ contract OriginRouter is
                 dstChainId,
                 uint16(_bodyWord(payload, 1)),
                 uint16(_bodyWord(payload, 2)),
-                // forge-lint: disable-next-line(unsafe-typecast) -- the codec caps a page at MAX_PAYLOAD_ARRAY_LEN
+                // forge-lint: disable-next-line(unsafe-typecast) aderyn-ignore-next-line(unsafe-casting) -- the codec caps a page at MAX_PAYLOAD_ARRAY_LEN
                 uint32(winnersCount)
             );
         }
