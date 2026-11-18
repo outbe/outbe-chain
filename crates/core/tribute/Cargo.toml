@@ -17,12 +17,20 @@ outbe-nod.workspace = true
 outbe-nodfactory.workspace = true
 outbe-primitives.workspace = true
 outbe-tee.workspace = true
+outbe-zk.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-sol-types.workspace = true
+ark-bn254.workspace = true
+ark-ff.workspace = true
+ed25519-dalek.workspace = true
+hex.workspace = true
+postcard.workspace = true
+ring.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-postcard.workspace = true
 thiserror.workspace = true
+x25519-dalek.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 outbe-oracle.workspace = true
@@ -35,15 +43,46 @@ alloy-primitives = { workspace = true, features = ["rand"] }
 proptest.workspace = true
 revm.workspace = true
 tempfile.workspace = true
+# Cross-domain golden vectors (domain_preimage_golden_vectors_v1) move here in bmk.9.
+k256.workspace = true
+outbe-gratis = { workspace = true, features = ["test-enclave"] }
+outbe-promis = { workspace = true, features = ["test-enclave"] }
 
 [features]
 default = []
+# Native engine marker. Protocol deps are direct so bmk.9 does not edit this file.
+engine = []
+# Deterministic development keys. Never in a release build.
+dev-keys = ["outbe-core-common/dev-keys"]
 bench-utils = []
 # Enabled by the node binary in release builds. Asserts, at compile time, that
 # the attestation-skipping in-process stand-in is not in this build.
 production-enclave = []
-test-enclave = ["outbe-tee/test-utils", "outbe-enclave/engine", "outbe-nod/test-enclave"]
+# `outbe-enclave/engine` stays until bmk.10 deletes the enclave crate.
+test-enclave = [
+    "outbe-tee/test-utils",
+    "outbe-core-common/dev-keys",
+    "outbe-fidelity/test-enclave",
+    "outbe-nod/test-enclave",
+    "outbe-enclave/engine",
+]
 test-utils = ["outbe-primitives/test-utils"]
+
+# Wired in S2 domain dispersal (bmk.5..bmk.9), cleaned in bmk.10
+[package.metadata.cargo-machete]
+ignored = [
+    "ark-bn254",
+    "ark-ff",
+    "ed25519-dalek",
+    "hex",
+    "k256",
+    "outbe-gratis",
+    "outbe-promis",
+    "outbe-zk",
+    "ring",
+    "x25519-dalek",
+    "zeroize",
+]
 
 [lints]
 workspace = true

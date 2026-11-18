@@ -8,13 +8,22 @@ publish.workspace = true
 [dependencies]
 outbe-core-common.workspace = true
 outbe-enclave.workspace = true
+outbe-fidelity.workspace = true
+outbe-gratis.workspace = true
 outbe-macros.workspace = true
 outbe-primitives.workspace = true
 outbe-system-common.workspace = true
 outbe-tee.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
+ed25519-dalek.workspace = true
+hex.workspace = true
+postcard.workspace = true
+ring.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 outbe-tee = { workspace = true, features = ["test-utils"] }
@@ -25,13 +34,39 @@ outbe-enclave = { workspace = true, features = ["engine", "dev-keys"] }
 
 [features]
 default = []
+# Native engine marker. Protocol deps are direct so bmk.7 does not edit this file.
+engine = []
+# Deterministic development keys. Never in a release build.
+dev-keys = ["outbe-core-common/dev-keys"]
 test-utils = ["outbe-primitives/test-utils"]
 # Enabled by the node binary in release builds. Asserts, at compile time, that
 # the attestation-skipping in-process stand-in is not in this build.
 production-enclave = []
 # Exposes the in-process enclave stand-in so other crates' tests can drive the
 # confidential Promis path.
-test-enclave = ["outbe-tee/test-utils", "outbe-enclave/engine", "outbe-enclave/dev-keys"]
+# `outbe-enclave/*` stays until bmk.10 deletes the enclave crate.
+test-enclave = [
+    "outbe-tee/test-utils",
+    "outbe-core-common/dev-keys",
+    "outbe-fidelity/test-enclave",
+    "outbe-gratis/test-enclave",
+    "outbe-enclave/engine",
+    "outbe-enclave/dev-keys",
+]
+
+# Wired in S2 domain dispersal (bmk.5..bmk.9), cleaned in bmk.10
+[package.metadata.cargo-machete]
+ignored = [
+    "ed25519-dalek",
+    "hex",
+    "outbe-fidelity",
+    "outbe-gratis",
+    "postcard",
+    "ring",
+    "serde",
+    "serde_json",
+    "zeroize",
+]
 
 [lints]
 workspace = true
