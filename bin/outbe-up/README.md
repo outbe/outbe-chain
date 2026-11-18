@@ -25,13 +25,19 @@ outbe-up network status --artifacts network-build [--ssh-key ~/.ssh/operator] [-
 founding archives, and a joining-validator bundle/config from the same software and genesis.
 `prepare` verifies and installs every host over SSH without starting it. `start` starts all
 founders and waits for RPC, execution peers, consensus signer state, threshold shares, and a
-finalized block. Repeating `prepare` or `start` for the same artifacts is safe.
+finalized block. It then delegates and funds each dedicated Hyperlane signer, registers it with the
+controller, and waits for every Hyperlane validator to become healthy. Repeating `prepare` or
+`start` for the same artifacts is safe.
 
 `network.yaml` keeps SSH endpoints separate from node advertise/RPC addresses, supports four or
 more founders, prefunded accounts and explicit genesis overrides. `genesis.base` may reference a
 custom pre-TEE genesis JSON; `build` verifies its chain ID, copies it into the immutable artifacts,
 then applies the fresh founder set and network policy. Private consensus topologies must opt into
 `topology.use_local_defaults`; it is never inferred from the network name.
+
+Each founder needs a public checkpoint URL in `hyperlane_public_url`; TCP port `9000` must be
+reachable by Hyperlane relayers. The private health endpoint stays on `127.0.0.1:9003`. Shared
+origin-chain RPC and reorg settings live in the top-level `hyperlane` section.
 
 ## Joining validator
 
@@ -49,8 +55,10 @@ embedded in that exact binary version.
 then creates host-local identities and installs services without starting them. `sync` optionally
 restores a verified snapshot and synchronizes a keyless full node. `promote` performs network
 admission, bonds the network minimum stake, switches the same data directory to validator mode,
-and submits validator readiness. DKG activation continues in the background and is visible through
-`status`.
+delegates and funds its dedicated Hyperlane signer, and submits validator readiness. DKG activation
+continues in the background; once the validator becomes active, its service registers the signer
+and starts the Hyperlane daemon automatically. Both consensus and Hyperlane health are visible
+through `status`.
 
 The bundle carries `outbe-tee-enclave-confidential-vm`, an unattested signer service intended to
 run inside an operator-provided Intel TDX or AMD SEV-SNP VM. Hardware attestation is not implemented

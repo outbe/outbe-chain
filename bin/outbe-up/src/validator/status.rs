@@ -21,6 +21,7 @@ const VALIDATOR_SERVICE: &str = "outbe-validator.service";
 const ENCLAVE_SERVICE: &str = "outbe-enclave.service";
 const RADICLE_SERVICE: &str = "outbe-radicle.service";
 const FEEDER_SERVICE: &str = "outbe-feeder.service";
+const HYPERLANE_SERVICE: &str = "outbe-hyperlane-validator.service";
 const STATUS_POLL_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct StatusSnapshot<'a> {
@@ -33,6 +34,7 @@ struct StatusSnapshot<'a> {
     remote_epoch: Option<&'a EpochInfo>,
     sync_eta_seconds: Option<u64>,
     dkg_eta_seconds: Option<u64>,
+    hyperlane: Option<&'a serde_json::Value>,
 }
 
 pub async fn show(watch: bool) -> Result<()> {
@@ -102,7 +104,16 @@ async fn status_line(
     sync_eta: Option<&mut CatchupEta>,
     dkg_eta: Option<&mut CatchupEta>,
 ) -> String {
-    let (remote_block, local_block, execution_peers, consensus, record, local_epoch, remote_epoch) = tokio::join!(
+    let (
+        remote_block,
+        local_block,
+        execution_peers,
+        consensus,
+        record,
+        local_epoch,
+        remote_epoch,
+        hyperlane,
+    ) = tokio::join!(
         remote.finalized_block(),
         local.finalized_block(),
         local.peer_count(),
@@ -110,6 +121,7 @@ async fn status_line(
         remote.validator(validator),
         local.epoch_info(),
         remote.epoch_info(),
+        hyperlane_status(),
     );
     let remote_block = remote_block.ok();
     let local_block = local_block.ok();
@@ -145,6 +157,7 @@ async fn status_line(
         remote_epoch: remote_epoch.as_ref().ok(),
         sync_eta_seconds,
         dkg_eta_seconds,
+        hyperlane: hyperlane.as_ref().ok(),
     })
 }
 
@@ -176,11 +189,12 @@ fn format_status(snapshot: StatusSnapshot<'_>) -> String {
                 snapshot.dkg_eta_seconds,
             );
             let services = validator_services_status();
+            let hyperlane = hyperlane_status_line(snapshot.hyperlane);
             let bls = snapshot
                 .validator
                 .map_or("?", |record| yes_no(record.has_bls_share));
             format!(
-                "Mode        validator ({lifecycle})\nChain       {chain}\n{consensus}\nOn-chain    BLS share {bls}\nServices    {services}"
+                "Mode        validator ({lifecycle})\nChain       {chain}\n{consensus}\nOn-chain    BLS share {bls}\nHyperlane   {hyperlane}\nServices    {services}"
             )
         }
         (false, false) => {
@@ -260,6 +274,7 @@ fn validator_services_status() -> String {
         ("enclave", ENCLAVE_SERVICE),
         ("radicle", RADICLE_SERVICE),
         ("feeder", FEEDER_SERVICE),
+        ("hyperlane", HYPERLANE_SERVICE),
     ]
     .into_iter()
     .map(|(name, unit)| {
@@ -272,6 +287,36 @@ fn validator_services_status() -> String {
     })
     .collect::<Vec<_>>()
     .join(" | ")
+}
+
+async fn hyperlane_status() -> Result<serde_json::Value> {
+    Ok(reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()?
+        .get("http://127.0.0.1:9003/status")
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?)
+}
+
+fn hyperlane_status_line(status: Option<&serde_json::Value>) -> String {
+    let Some(status) = status else {
+        return "unavailable".to_owned();
+    };
+    let healthy = status
+        .get("healthy")
+        .and_then(serde_json::Value::as_bool)
+        .map_or(
+            "unknown",
+            |healthy| if healthy { "healthy" } else { "unhealthy" },
+        );
+    let controller = status
+        .get("controller")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown");
+    format!("{healthy} | controller {controller}")
 }
 
 fn validator_lifecycle(record: &ValidatorRecord) -> String {

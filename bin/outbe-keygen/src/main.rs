@@ -39,6 +39,7 @@ use zeroize::Zeroizing;
 
 const RETH_P2P_SECRET_FILENAME: &str = "reth-p2p-secret.hex";
 const FEEDER_SECRET_FILENAME: &str = "feeder-key.hex";
+const HYPERLANE_SECRET_FILENAME: &str = "hyperlane-key.hex";
 
 /// Key storage backend for BLS key files.
 #[derive(Debug, Clone, ValueEnum)]
@@ -450,6 +451,8 @@ struct ValidatorBundle {
     validator_address: Address,
     feeder_key_path: PathBuf,
     feeder_address: Address,
+    hyperlane_key_path: PathBuf,
+    hyperlane_address: Address,
     reth_p2p_key_path: PathBuf,
     radicle: RadicleIdentity,
     registration_signature: [u8; 96],
@@ -502,6 +505,7 @@ fn generate_validator_bundle(
     let bls_key_path = output_dir.join("signing-key.hex");
     let evm_key_path = output_dir.join("evm-key.hex");
     let feeder_key_path = output_dir.join(FEEDER_SECRET_FILENAME);
+    let hyperlane_key_path = output_dir.join(HYPERLANE_SECRET_FILENAME);
     let reth_p2p_key_path = output_dir.join(RETH_P2P_SECRET_FILENAME);
     let radicle_home = output_dir.join("radicle");
     let radicle_key_path = radicle_home.join("keys").join("radicle");
@@ -509,6 +513,7 @@ fn generate_validator_bundle(
         &bls_key_path,
         &evm_key_path,
         &feeder_key_path,
+        &hyperlane_key_path,
         &reth_p2p_key_path,
         &radicle_key_path,
     ]
@@ -548,9 +553,24 @@ fn generate_validator_bundle(
         .wrap_err_with(|| format!("failed to write feeder key: {}", feeder_key_path.display()))?;
     let feeder_address = evm_address(&feeder_signing_key)?;
 
-    // 4. Stable Reth transport identity. Reth parses the file verbatim, so the
+    // 4. Dedicated Hyperlane checkpoint signer and transaction sender.
+    let hyperlane_signing_key = generate_distinct_evm_key(&[&evm_signing_key, &feeder_signing_key]);
+    let hyperlane_key_hex = Zeroizing::new(hex::encode(hyperlane_signing_key.to_bytes()));
+    write_secret_hex_file(&hyperlane_key_path, &hyperlane_key_hex).wrap_err_with(|| {
+        format!(
+            "failed to write Hyperlane key: {}",
+            hyperlane_key_path.display()
+        )
+    })?;
+    let hyperlane_address = evm_address(&hyperlane_signing_key)?;
+
+    // 5. Stable Reth transport identity. Reth parses the file verbatim, so the
     // canonical source artifact has no prefix or trailing line feed.
-    let reth_p2p_key = generate_distinct_evm_key(&[&evm_signing_key, &feeder_signing_key]);
+    let reth_p2p_key = generate_distinct_evm_key(&[
+        &evm_signing_key,
+        &feeder_signing_key,
+        &hyperlane_signing_key,
+    ]);
     let reth_p2p_key_hex = Zeroizing::new(hex::encode(reth_p2p_key.to_bytes()));
     write_secret_hex_file(&reth_p2p_key_path, &reth_p2p_key_hex).wrap_err_with(|| {
         format!(
@@ -559,10 +579,10 @@ fn generate_validator_bundle(
         )
     })?;
 
-    // 5. Radicle Ed25519 identity. The registration binds it atomically.
+    // 6. Radicle Ed25519 identity. The registration binds it atomically.
     let radicle = generate_radicle_identity(&radicle_home)?;
 
-    // 6. Registration signature for the ValidatorSet precompile.
+    // 7. Registration signature for the ValidatorSet precompile.
     let sk_bytes = bls_key.encode();
     let blst_sk =
         blst::min_pk::SecretKey::from_bytes(&sk_bytes).map_err(KeygenError::BlstSecretKey)?;
@@ -580,6 +600,8 @@ fn generate_validator_bundle(
         validator_address,
         feeder_key_path,
         feeder_address,
+        hyperlane_key_path,
+        hyperlane_address,
         reth_p2p_key_path,
         radicle,
         registration_signature,
@@ -604,6 +626,10 @@ fn cmd_validator(output_dir: PathBuf, chain_id: u64, backend: &KeyBackend) -> Re
     println!("Oracle feeder signer (secp256k1):");
     println!("  private key:  {}", bundle.feeder_key_path.display());
     println!("  address:      {}", bundle.feeder_address);
+    println!();
+    println!("Hyperlane signer (secp256k1):");
+    println!("  private key:  {}", bundle.hyperlane_key_path.display());
+    println!("  address:      {}", bundle.hyperlane_address);
     println!();
     println!("Reth P2P identity (secp256k1):");
     println!("  private key:  {}", bundle.reth_p2p_key_path.display());

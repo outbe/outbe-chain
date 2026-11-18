@@ -156,6 +156,10 @@ pub fn preflight_script(
 ) -> Result<String, GenesisError> {
     let tee_port = port_of(config, "tee_enclave_port")?;
     let rpc_port = port_of(config, "rpc_port")?;
+    let hyperlane_binary = config
+        .get("hyperlane_binary")
+        .and_then(Value::as_str)
+        .unwrap_or("outbe-hyperlane-validator");
     let runner = config
         .get("enclave_runner")
         .and_then(Value::as_str)
@@ -184,13 +188,19 @@ else\n\
   note \"CRS\" \"MISSING .bb-crs/bn254_g1.dat\"; fail=1\n\
 fi\n\
 {enclave_check}\n\
+if [ ! -x {hyperlane_binary} ]; then\n\
+  note \"Hyperlane validator\" \"MISSING {hyperlane_binary}\"; fail=1\n\
+fi\n\
+for required in keys/validator-{index}/hyperlane-key.hex validator-{index}/hyperlane-public.toml; do\n\
+  [ -r \"$required\" ] || {{ note \"Hyperlane artifact\" \"MISSING $required\"; fail=1; }}\n\
+done\n\
 \n\
 # State from an earlier genesis belongs to a different chain; the node refuses to start on it.\n\
 for stale in validator-{index}/data validator-{index}/consensus tee; do\n\
   [ -e \"$stale\" ] && {{ note \"leftover state\" \"$stale - remove before a new genesis\"; fail=1; }}\n\
 done\n\
 \n\
-for port in {tee_port} {rpc_port}; do\n\
+for port in {tee_port} {rpc_port} 9000 9003; do\n\
   ss -ltn 2>/dev/null | grep -q \":$port \" && {{ note \"port $port\" \"already in use\"; fail=1; }}\n\
 done\n\
 \n\
@@ -201,6 +211,7 @@ fi\n\
 \n\
 if [ \"$fail\" = 0 ]; then echo; echo \"  preflight OK\"; else echo; echo \"  preflight FAILED\"; fi\n\
 exit \"$fail\"\n",
-        quote(base_dir)
+        quote(base_dir),
+        hyperlane_binary = quote(hyperlane_binary),
     ))
 }

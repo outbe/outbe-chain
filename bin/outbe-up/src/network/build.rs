@@ -71,6 +71,7 @@ pub(super) struct FounderArtifact {
     pub(super) ssh_host: String,
     pub(super) advertise_ip: Ipv4Addr,
     pub(super) validator_address: String,
+    pub(super) hyperlane_address: String,
     pub(super) consensus_public_key: String,
     pub(super) archive: String,
     pub(super) archive_sha256: String,
@@ -172,6 +173,10 @@ pub fn run(
 
     progress.stage("assembling founder and joining artifacts");
     let founders = founder_artifacts(staging.path(), &config, &validators)?;
+    println!("\nHyperlane signers:");
+    for founder in &founders {
+        println!("  {:<20} {}", founder.name, founder.hyperlane_address);
+    }
     let joining = build_joining_artifacts(&BuildArtifacts {
         root: staging.path(),
         software_root: software_root.path(),
@@ -366,6 +371,28 @@ pub(super) fn genesis_cli_config(
         ("node_binary", json!("/opt/outbe-chain/outbe-chain")),
         ("radicle_binary", json!("/opt/outbe-chain/outbe-radicle")),
         ("feeder_binary", json!("/opt/outbe-chain/outbe-feeder")),
+        (
+            "hyperlane_binary",
+            json!("/opt/outbe-chain/outbe-hyperlane-validator"),
+        ),
+        (
+            "hyperlane_poll_interval_secs",
+            json!(config.hyperlane.poll_interval_secs),
+        ),
+        ("hyperlane_gasless", json!(config.hyperlane.gasless)),
+        (
+            "hyperlane_signer_funding_wei",
+            json!(config.hyperlane.signer_funding_wei),
+        ),
+        (
+            "hyperlane_public_urls",
+            json!(config
+                .founders
+                .iter()
+                .map(|founder| &founder.hyperlane_public_url)
+                .collect::<Vec<_>>()),
+        ),
+        ("hyperlane_origins", json!(config.hyperlane.origins)),
         ("crs_path", json!(software.join(".bb-crs/bn254_g1.dat"))),
         (
             "consensus_use_local_defaults",
@@ -454,6 +481,8 @@ pub(super) fn founder_artifacts(
                 ssh_host: founder.ssh.host.clone(),
                 advertise_ip: founder.advertise_ip,
                 validator_address: required_validator_field(validator, "address")?.to_owned(),
+                hyperlane_address: required_validator_field(validator, "hyperlane_address")?
+                    .to_owned(),
                 consensus_public_key: required_validator_field(validator, "public_key")?.to_owned(),
                 archive: relative,
                 archive_sha256: sha256_file(&archive)?,
@@ -514,6 +543,9 @@ fn joining_operator_config(
             public_toml:
                 "[oracle]\nsources = \"local\"\nvote_period = 60\npoll_interval_secs = 2\n".into(),
         },
+        hyperlane: config
+            .hyperlane
+            .for_public_url("http://192.0.2.10:9000".into()),
     }
 }
 

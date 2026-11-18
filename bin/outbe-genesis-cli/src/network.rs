@@ -51,7 +51,7 @@ pub const SEED_SECTIONS: [&str; 14] = [
 
 pub const TEE_KEYS: [&str; 1] = ["mode"];
 
-const STATIC_TOP_LEVEL_KEYS: [&str; 38] = [
+const STATIC_TOP_LEVEL_KEYS: [&str; 44] = [
     "network",
     "validators",
     "keys_dir",
@@ -79,6 +79,12 @@ const STATIC_TOP_LEVEL_KEYS: [&str; 38] = [
     "radicle_binary",
     "radicle_external_inbound_reserve",
     "feeder_binary",
+    "hyperlane_binary",
+    "hyperlane_poll_interval_secs",
+    "hyperlane_gasless",
+    "hyperlane_signer_funding_wei",
+    "hyperlane_public_urls",
+    "hyperlane_origins",
     "remote_base_dir",
     "remote_keys_dir",
     "price_provider",

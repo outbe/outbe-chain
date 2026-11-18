@@ -31,8 +31,10 @@ pub fn run() -> Result<()> {
     let root = Path::new(process::ROOT);
     let env_path = root.join("validator.env");
     let feeder = root.join("feeder-public.toml");
+    let hyperlane = root.join("hyperlane-public.toml");
     validate_local_config(&env_path)?;
     validate_local_config(&feeder)?;
+    validate_local_config(&hyperlane)?;
     let environment = read_environment(&env_path)?;
     validate_environment(&environment)?;
     validate_runtime(root)?;
@@ -46,8 +48,10 @@ pub fn run() -> Result<()> {
 
     process::chown(&env_path, 0, gid)?;
     process::chown(&feeder, 0, gid)?;
+    process::chown(&hyperlane, 0, gid)?;
     fs::set_permissions(&env_path, fs::Permissions::from_mode(0o640))?;
     fs::set_permissions(&feeder, fs::Permissions::from_mode(0o640))?;
+    fs::set_permissions(&hyperlane, fs::Permissions::from_mode(0o640))?;
     install_units()?;
     process::systemctl(&["daemon-reload"])?;
     Ok(())
@@ -189,6 +193,7 @@ fn validate_bundle(root: &Path) -> Result<()> {
         "outbe-cli",
         "outbe-keygen",
         "outbe-feeder",
+        "outbe-hyperlane-validator",
         "outbe-radicle",
     ] {
         required_executable(&root.join(name))?;
@@ -273,6 +278,7 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
         "signing-key.hex",
         "evm-key.hex",
         "feeder-key.hex",
+        "hyperlane-key.hex",
         "reth-p2p-secret.hex",
         "radicle/keys/radicle",
     ];
@@ -302,6 +308,7 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
     }
     canonical_key(&keys.join("evm-key.hex"))?;
     canonical_key(&keys.join("feeder-key.hex"))?;
+    canonical_key(&keys.join("hyperlane-key.hex"))?;
     canonical_key(&keys.join("reth-p2p-secret.hex"))?;
     process::capture(
         root.join("outbe-keygen"),
@@ -421,6 +428,7 @@ mod tests {
             "outbe-cli",
             "outbe-keygen",
             "outbe-feeder",
+            "outbe-hyperlane-validator",
             "outbe-radicle",
             "outbe-tee-enclave-confidential-vm",
         ] {

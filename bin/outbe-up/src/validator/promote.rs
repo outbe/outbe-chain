@@ -6,6 +6,7 @@ use rand::RngCore;
 use crate::{
     support::{process, progress::Progress},
     validator::{
+        hyperlane::{self, SetupRequest, SetupState},
         journal::Journal,
         path_text,
         rpc::RpcClient,
@@ -96,6 +97,38 @@ pub async fn run() -> Result<()> {
     }
 
     ensure_feeder_delegate(&mut journal, &remote, validator, feeder, &mut progress).await?;
+    let rpc_url = journal.config.network.certified_rpc.clone();
+    let funding = journal
+        .config
+        .hyperlane
+        .signer_funding_wei
+        .parse::<alloy_primitives::U256>()?;
+    let setup = SetupState {
+        delegate_transaction: journal.hyperlane_delegate_transaction.clone(),
+        funding_transaction: journal.hyperlane_funding_transaction.clone(),
+        signer_transaction: journal.hyperlane_signer_transaction.clone(),
+    };
+    let setup = hyperlane::ensure_setup(
+        SetupRequest {
+            rpc_url: &rpc_url,
+            validator_key: &keys.join("evm-key.hex"),
+            hyperlane_key: &keys.join("hyperlane-key.hex"),
+            funding,
+        },
+        setup,
+        &mut progress,
+        |state| {
+            journal.hyperlane_delegate_transaction = state.delegate_transaction.clone();
+            journal.hyperlane_funding_transaction = state.funding_transaction.clone();
+            journal.hyperlane_signer_transaction = state.signer_transaction.clone();
+            journal.save()
+        },
+    )
+    .await?;
+    journal.hyperlane_delegate_transaction = setup.delegate_transaction;
+    journal.hyperlane_funding_transaction = setup.funding_transaction;
+    journal.hyperlane_signer_transaction = setup.signer_transaction;
+    journal.save()?;
 
     progress.stage("switching the same data directory to validator mode");
     process::systemctl(&["disable", "--now", FULL_NODE])?;

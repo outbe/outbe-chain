@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 const STAKING: Address = address!("000000000000000000000000000000000000EE02");
 const VALIDATOR_SET: Address = address!("000000000000000000000000000000000000EE00");
 const TEE_REGISTRY: Address = address!("000000000000000000000000000000000000EE0A");
+const HYPERLANE_CONTROLLER: Address = address!("000000000000000000000000000000000000EE14");
 
 const TEE_POLICY_V1_MINIMUM_LEASE_OFFSET: usize = 180;
 const TEE_POLICY_V1_MAXIMUM_LEASE_OFFSET: usize = 188;
@@ -20,6 +21,7 @@ const TEE_POLICY_V1_LEASE_PREFIX_LEN: usize = 196;
 sol!("../../contracts/precompiles/src/IStaking.sol");
 sol!("../../contracts/precompiles/src/IValidatorSet.sol");
 sol!("../../contracts/precompiles/src/ITeeRegistryV1.sol");
+sol!("../../contracts/precompiles/src/IHyperlaneController.sol");
 
 pub struct RpcClient {
     url: String,
@@ -183,6 +185,14 @@ impl RpcClient {
         let call = IValidatorSet::getDelegateCall { validator, role };
         let result = self.eth_call(VALIDATOR_SET, &call.abi_encode()).await?;
         Ok(IValidatorSet::getDelegateCall::abi_decode_returns(&result)?)
+    }
+
+    pub async fn hyperlane_signer(&self, validator: Address) -> Result<Address> {
+        let call = IHyperlaneController::hyperlaneSignerCall { validator };
+        let result = self
+            .eth_call(HYPERLANE_CONTROLLER, &call.abi_encode())
+            .await?;
+        Ok(IHyperlaneController::hyperlaneSignerCall::abi_decode_returns(&result)?)
     }
 
     pub async fn transaction_block(&self, hash: &str) -> Result<Option<u64>> {

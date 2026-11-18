@@ -118,6 +118,29 @@ pub fn joining_units(outbe_up: &str) -> Vec<UnitFile> {
             limit_nofile: 65_535,
             wanted_by: "outbe-validator.target",
         }),
+        render_service(&ServiceSpec {
+            name: "outbe-hyperlane-validator.service",
+            description: "Outbe Hyperlane validator",
+            account: Account::Outbe,
+            unit_directives: lines(&[
+                "After=outbe-validator.service",
+                "Wants=outbe-validator.service",
+                "PartOf=outbe-validator.target",
+            ]),
+            service_directives: lines(&[
+                "EnvironmentFile=/opt/outbe-chain/validator.env",
+                "RuntimeDirectory=outbe-hyperlane-validator",
+                "RuntimeDirectoryMode=0700",
+                "StateDirectory=outbe-hyperlane-validator",
+                "StateDirectoryMode=0700",
+                "Environment=OUTBE_HYPERLANE_WAIT_FOR_ACTIVE=1",
+                &command("ExecStartPre=@@OUTBE_UP@@ internal wait-rpc"),
+                &command("ExecStart=@@OUTBE_UP@@ internal hyperlane"),
+            ]),
+            sandbox_directives: Vec::new(),
+            limit_nofile: 65_535,
+            wanted_by: "outbe-validator.target",
+        }),
         render_target("Outbe validator stack"),
     ];
     units.sort_by(|left, right| left.name.cmp(&right.name));
@@ -187,6 +210,27 @@ pub fn founding_units(config: FoundingConfig<'_>) -> Vec<UnitFile> {
             ]),
             limit_nofile: 65_535,
         })),
+        render_service(&ServiceSpec {
+            name: "outbe-hyperlane-validator.service",
+            description: "Outbe Hyperlane validator",
+            account: Account::Outbe,
+            unit_directives: lines(&[
+                "After=network-online.target outbe-validator.service",
+                "Wants=network-online.target outbe-validator.service",
+                "PartOf=outbe-validator.target",
+            ]),
+            service_directives: lines(&[
+                &format!("WorkingDirectory={validator_dir}"),
+                "RuntimeDirectory=outbe-hyperlane-validator",
+                "RuntimeDirectoryMode=0700",
+                "StateDirectory=outbe-hyperlane-validator",
+                "StateDirectoryMode=0700",
+                &format!("ExecStart={validator_dir}/run-hyperlane.sh"),
+            ]),
+            sandbox_directives: lines(&[&format!("ReadWritePaths={}", config.base_dir)]),
+            limit_nofile: 65_535,
+            wanted_by: "outbe-validator.target",
+        }),
         render_target("Outbe validator stack"),
     ];
     units.sort_by(|left, right| left.name.cmp(&right.name));
@@ -341,8 +385,10 @@ fn render_target(description: &str) -> UnitFile {
                     "Wants=outbe-radicle.service",
                     "Wants=outbe-validator.service",
                     "Wants=outbe-feeder.service",
+                    "Wants=outbe-hyperlane-validator.service",
                     "After=outbe-enclave.service outbe-radicle.service",
                     "After=outbe-validator.service outbe-feeder.service",
+                    "After=outbe-hyperlane-validator.service",
                 ])),
             ),
         ],
@@ -409,6 +455,7 @@ mod tests {
             "outbe-radicle.service",
             "outbe-validator.service",
             "outbe-feeder.service",
+            "outbe-hyperlane-validator.service",
         ] {
             let joining = unit(&joining, name);
             let founding = unit(&founding, name);
@@ -444,6 +491,11 @@ mod tests {
         assert!(validator.contains("radicle.control-socket"));
         assert!(unit(&founding, "outbe-validator.service")
             .contains("/opt/outbe-chain/validator-2/run-node.sh"));
+
+        let joining_hyperlane = unit(&joining, "outbe-hyperlane-validator.service");
+        let founding_hyperlane = unit(&founding, "outbe-hyperlane-validator.service");
+        assert!(joining_hyperlane.contains("OUTBE_HYPERLANE_WAIT_FOR_ACTIVE=1"));
+        assert!(!founding_hyperlane.contains("OUTBE_HYPERLANE_WAIT_FOR_ACTIVE"));
     }
 
     fn unit<'a>(units: &'a [UnitFile], name: &str) -> &'a str {

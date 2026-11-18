@@ -8,6 +8,7 @@ use zeroize::Zeroizing;
 pub mod assets;
 pub mod bundle;
 pub mod config;
+pub mod hyperlane;
 pub mod install;
 pub mod journal;
 pub mod prepare;

@@ -29,6 +29,21 @@ fn minimal_config(keys_dir: &str) -> Value {
         "keys_dir": keys_dir,
         "crs_path": crs_path,
         "tee": {"mode": "gramine-direct-dev"},
+        "hyperlane_binary": "/opt/outbe-chain/outbe-hyperlane-validator",
+        "hyperlane_signer_funding_wei": "1000000000000000000",
+        "hyperlane_public_urls": [
+            "http://10.0.0.1:9000",
+            "http://10.0.0.2:9000",
+            "http://10.0.0.3:9000",
+            "http://10.0.0.4:9000"
+        ],
+        "hyperlane_origins": [{
+            "domain": 424242,
+            "rpc_urls": ["http://10.0.0.1:8545"],
+            "rpc_consensus": "single",
+            "reorg_period": 0,
+            "interval_secs": 15
+        }],
     })
 }
 
@@ -45,6 +60,7 @@ fn fake_validators() -> Vec<Value> {
         .map(|index| {
             json!({
                 "address": format!("0x{}", (index + 1).to_string().repeat(40)),
+                "hyperlane_address": format!("0x{}", (index + 5).to_string().repeat(40)),
                 "public_key": format!("{:02x}", index + 1).repeat(48),
                 "radicle_node_id": format!("0x{}", format!("{:02x}", index + 9).repeat(32)),
                 "p2p_address": format!("10.0.0.{}:30400", index + 1),
@@ -64,6 +80,11 @@ fn render_fixture(root: &Path, overrides: Option<Value>) -> (PathBuf, PathBuf) {
         fs::write(dir.join("evm-key.hex"), format!("{:064x}\n", index + 1)).expect("write evm key");
         fs::write(dir.join("feeder-key.hex"), format!("{:064x}\n", index + 11))
             .expect("write feeder key");
+        fs::write(
+            dir.join("hyperlane-key.hex"),
+            format!("{:064x}\n", index + 21),
+        )
+        .expect("write Hyperlane key");
     }
     let genesis = output_dir.join("genesis.json");
     let tee_policy = initial_tee_policy_v1(
@@ -125,6 +146,8 @@ fn render_writes_valid_bash_scripts_and_stable_bootnodes() {
             "run-radicle.sh",
             "run-node.sh",
             "run-feeder.sh",
+            "run-hyperlane.sh",
+            "configure-hyperlane.sh",
             "install-systemd.sh",
         ] {
             let script = directory.join(name);
@@ -139,6 +162,10 @@ fn render_writes_valid_bash_scripts_and_stable_bootnodes() {
             assert!(status.success(), "bash -n failed for {name}");
         }
         assert!(directory.join("feeder.toml").is_file());
+        let hyperlane =
+            fs::read_to_string(directory.join("hyperlane-public.toml")).expect("Hyperlane config");
+        assert!(hyperlane.contains("bind_address = \"0.0.0.0:9000\""));
+        assert!(!hyperlane.contains("private_key"));
         let feeder = fs::read_to_string(directory.join("feeder.toml")).expect("feeder config");
         assert!(feeder.contains(&format!("private_key = \"0x{:064x}\"", index + 11)));
         assert!(!feeder.contains(&format!("private_key = \"0x{:064x}\"", index + 1)));

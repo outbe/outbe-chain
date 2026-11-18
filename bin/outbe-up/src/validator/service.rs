@@ -102,6 +102,61 @@ pub fn feeder() -> Result<()> {
     Err(command.exec()).wrap_err("failed to exec outbe-feeder")
 }
 
+pub fn hyperlane() -> Result<()> {
+    let chain_id = required_env("OUTBE_CHAIN_ID")?;
+    ensure!(
+        chain_id.parse::<u64>().is_ok_and(|value| value > 0),
+        "OUTBE_CHAIN_ID must be a positive decimal integer"
+    );
+    let validator = required_env("OUTBE_VALIDATOR_ADDRESS")?;
+    ensure!(valid_address(&validator), "invalid OUTBE_VALIDATOR_ADDRESS");
+    let rpc = local_rpc_url()?;
+    let root = Path::new(process::ROOT);
+    let key_path = env::var_os("OUTBE_HYPERLANE_KEY_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("keys/hyperlane-key.hex"));
+    let key = fs::read_to_string(&key_path)
+        .wrap_err_with(|| format!("cannot read Hyperlane key: {}", key_path.display()))?;
+    ensure!(valid_key(&key), "Hyperlane key is not canonical");
+    let public_path = env::var_os("OUTBE_HYPERLANE_CONFIG_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("hyperlane-public.toml"));
+    let public = fs::read_to_string(&public_path).wrap_err_with(|| {
+        format!(
+            "cannot read public Hyperlane configuration: {}",
+            public_path.display()
+        )
+    })?;
+
+    let runtime = env::var_os("RUNTIME_DIRECTORY")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/run/outbe-hyperlane-validator"));
+    fs::create_dir_all(&runtime)?;
+    let config = runtime.join("hyperlane-validator.toml");
+    let mut content = format!(
+        concat!(
+            "[chain]\n",
+            "rpc_endpoint = {rpc}\n",
+            "chain_id = {chain_id}\n\n",
+            "[account]\n",
+            "private_key = {private_key}\n",
+            "validator_address = {validator}\n\n",
+        ),
+        rpc = serde_json::to_string(&rpc)?,
+        chain_id = chain_id,
+        private_key = serde_json::to_string(&format!("0x{}", key.trim()))?,
+        validator = serde_json::to_string(&validator)?,
+    );
+    content.push_str(&public);
+    if !content.ends_with('\n') {
+        content.push('\n');
+    }
+    process::write_file(&config, content.as_bytes(), 0o600)?;
+    let mut command = Command::new(root.join("outbe-hyperlane-validator"));
+    command.args(["--config", &config.to_string_lossy()]);
+    Err(command.exec()).wrap_err("failed to exec outbe-hyperlane-validator")
+}
+
 pub async fn wait_enclave(timeout: u64) -> Result<()> {
     wait_for("TEE enclave", timeout, None, || async {
         tokio::net::TcpStream::connect(ENCLAVE_ADDRESS)

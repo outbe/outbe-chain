@@ -168,7 +168,13 @@ pub fn deploy_markdown(
             .get("address")
             .and_then(Value::as_str)
             .unwrap_or("");
-        rows.push(format!("| validator-{index} | `{p2p}` | `{addr}` |"));
+        let hyperlane = validator
+            .get("hyperlane_address")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        rows.push(format!(
+            "| validator-{index} | `{p2p}` | `{addr}` | `{hyperlane}` |"
+        ));
     }
     let rows_joined = rows.join("\n");
     let founder_count = validators.len();
@@ -211,8 +217,8 @@ is read-only: run it first and compare the genesis digest it prints across all f
 \n\
 Chain id `{chain_id}`, {founder_count} founding validators, {runtime_summary}.\n\
 {runtime_warning}\n\
-| Machine | Consensus p2p | Validator address |\n\
-|---|---|---|\n\
+| Machine | Consensus p2p | Validator address | Hyperlane signer |\n\
+|---|---|---|---|\n\
 {rows_joined}\n\
 \n\
 Everything below was generated from your `network.yaml`. Ports are identical on\n\
@@ -246,19 +252,21 @@ Between all founding machines:\n\
 | `{reth_p2p_port}` | reth p2p (TCP + UDP) |\n\
 | `{reth_discv5_port}` | reth discv5 (UDP) |\n\
 | `{radicle_port}` | Radicle replication |\n\
+| `9000` | Hyperlane checkpoints (public) |\n\
 \n\
 RPC uses its explicit loopback/private bind `{rpc_bind}:{rpc_port}`. Everything\n\
 else stays on loopback and must not be exposed: authrpc `{authrpc_port}`,\n\
 metrics `{metrics_port}`, Radicle status\n\
 `{radicle_status_port}`, the enclave socket\n\
-`{tee_enclave_port}` and the feeder health endpoint\n\
-`{feeder_health_port}`.\n\
+`{tee_enclave_port}`, the feeder health endpoint `{feeder_health_port}` and the\n\
+Hyperlane health endpoint `9003`.\n\
 \n\
 ## 3. Prerequisites on every machine\n\
 \n\
 - Python 3.11+ - reads the shared storage TOML at launch\n\
-- the `outbe-chain`, `outbe-radicle` and `outbe-feeder` binaries on `PATH`\n\
-  (or set `node_binary`, `radicle_binary` and `feeder_binary` in the yaml to\n\
+- the `outbe-chain`, `outbe-radicle`, `outbe-feeder` and\n\
+  `outbe-hyperlane-validator` binaries on `PATH`\n\
+  (or set the corresponding binary fields in the yaml to\n\
   absolute paths and regenerate)\n\
 {runtime_prerequisites}\n\
 \n\
@@ -308,6 +316,7 @@ number and `validator list` shows {founder_count} active validators.\n\
 | TEE signer | {runtime_process} |\n\
 | Radicle | `outbe-radicle` | validator startup requires its control socket |\n\
 | Price feeder | `outbe-feeder` | submits oracle votes |\n\
+| Hyperlane validator | `outbe-hyperlane-validator` | signs and serves checkpoints |\n\
 \n\
 ## Storage configuration\n\
 \n\

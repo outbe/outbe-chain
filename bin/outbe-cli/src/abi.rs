@@ -17,10 +17,13 @@ pub const STAKING_ADDR: Address = address!("0x0000000000000000000000000000000000
 pub const TRIBUTE_ADDR: Address = address!("0x0000000000000000000000000000000000001101");
 pub const TRIBUTE_FACTORY_ADDR: Address = address!("0x0000000000000000000000000000000000001100");
 pub const TEE_REGISTRY_ADDR: Address = address!("0x000000000000000000000000000000000000EE0A");
+pub const HYPERLANE_CONTROLLER_ADDR: Address =
+    address!("0x000000000000000000000000000000000000EE14");
 
 sol!("../../contracts/precompiles/src/IValidatorSet.sol");
 sol!("../../contracts/precompiles/src/ISlashIndicator.sol");
 sol!("../../contracts/precompiles/src/IStaking.sol");
+sol!("../../contracts/precompiles/src/IHyperlaneController.sol");
 // Alloy 1.6 generates event constructors with the Solidity argument lists.
 #[allow(clippy::too_many_arguments)]
 mod tribute_abi {
