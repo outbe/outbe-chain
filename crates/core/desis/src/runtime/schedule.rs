@@ -84,7 +84,7 @@ fn day_windows(
 fn due_work_gas(contract: &DesisContract<'_>, emission_day: EmissionDate, now: u64) -> Result<u64> {
     let mut stage = contract.read_stage(emission_day)?;
     let (anchor, windows) = day_windows(contract, emission_day, stage, now)?;
-    if pending_cancel(contract, emission_day, stage)?.is_some() {
+    if due_cancel(contract, emission_day, stage, windows, now)?.is_some() {
         return Ok(ADVANCE_DAY_BASE_GAS + ADVANCE_START_GAS);
     }
     let mut gas = ADVANCE_DAY_BASE_GAS;
@@ -116,7 +116,7 @@ fn step_gas(stage: AuctionStage, anchor: u64, windows: Windows, now: u64) -> u64
 
 /// Walk one day's schedule: start at the anchor, move to `RevealingBids` at commit end, collect
 /// the bids at reveal end, and end a day that found no result by its last clearing time. A
-/// cancel that a brief or Metadosis asked for comes first.
+/// cancel that a brief or Metadosis asked for comes first, until that last clearing time.
 fn advance_day(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u64) -> Result<()> {
     while advance_step(storage, emission_day, now)? {}
     Ok(())
@@ -127,7 +127,7 @@ fn advance_step(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u6
     let mut contract = storage.contract::<DesisContract>();
     let stage = contract.read_stage(emission_day)?;
     let (anchor, windows) = day_windows(&contract, emission_day, stage, now)?;
-    if let Some(reason) = pending_cancel(&contract, emission_day, stage)? {
+    if let Some(reason) = due_cancel(&contract, emission_day, stage, windows, now)? {
         cancel_auction(storage, &mut contract, emission_day, stage, reason)?;
         return Ok(false);
     }
@@ -187,6 +187,21 @@ fn end_reveal(
     } else {
         arm_clearing(storage, emission_day, now)
     }
+}
+
+/// The cancel due now. Past its last clearing time a started day fails instead, so a cancel that
+/// cannot be sent does not hold the day.
+fn due_cancel(
+    contract: &DesisContract<'_>,
+    emission_day: EmissionDate,
+    stage: AuctionStage,
+    windows: Windows,
+    now: u64,
+) -> Result<Option<u8>> {
+    if stage != AuctionStage::None && windows.unfinished_past_deadline(stage, now) {
+        return Ok(None);
+    }
+    pending_cancel(contract, emission_day, stage)
 }
 
 /// The cancel a day with no result waits for: one that was asked for, or one its brief gives a
