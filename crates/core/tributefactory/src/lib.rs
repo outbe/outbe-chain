@@ -8,6 +8,9 @@ pub mod schema;
 pub mod state;
 pub mod worldwideday;
 
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_support;
+
 #[cfg(feature = "bench-utils")]
 #[doc(hidden)]
 pub mod bench_support;

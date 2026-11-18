@@ -102,30 +102,6 @@ pub enum WwdStorageCorruptionError {
 
     #[error("created WWD record disappeared")]
     CreatedWwdRecordDisappeared,
-
-    #[error("fresh-devnet genesis WWD is not a valid calendar day")]
-    GenesisWwdNotValidCalendarDay,
-
-    #[error("fresh-devnet genesis WWD phase order is invalid")]
-    GenesisWwdPhaseOrderInvalid,
-
-    #[error("fresh-devnet genesis builder cannot run after the pre-launch boundary")]
-    GenesisBuilderCannotRunAfterPreLaunchBoundary,
-
-    #[error("fresh-devnet genesis WWD already exists")]
-    GenesisWwdAlreadyExists,
-
-    #[error("fresh-devnet offering WWD is missing")]
-    GenesisOfferingWwdMissing,
-
-    #[error("fresh-devnet WWD phases end after the requested offering deadline")]
-    GenesisWwdPhasesEndAfterOfferingDeadline,
-
-    #[error("fresh-devnet genesis contains an unexpected active WWD")]
-    GenesisContainsUnexpectedActiveWwd,
-
-    #[error("fresh-devnet active WWD record is missing")]
-    GenesisActiveWwdRecordMissing,
 }
 
 impl From<WwdStorageCorruptionError> for PrecompileError {

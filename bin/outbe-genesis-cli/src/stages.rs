@@ -14,7 +14,7 @@ use crate::network::{
     base_profile_path, deep_merge, default_contracts_dir, profiles_dir, DEFAULT_PREFUND_COEN_UNITS,
     MAINNET_CHAIN_ID, SEED_SECTIONS,
 };
-use crate::seed_codec::{parse_u256, parse_u64, timestamp_to_utc_date_key};
+use crate::seed_codec::parse_u256;
 use crate::seed_genesis::apply_seed;
 use crate::yaml::load_yaml;
 
@@ -209,22 +209,15 @@ pub fn run_seed_stage(
     inputs: &SeedInputs,
     config: &Value,
 ) -> Result<PathBuf, GenesisError> {
-    let worldwide_day = resolve_worldwide_day(config, &inputs.base_genesis)?;
     let contracts_dir = config
         .get("contracts_dir")
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| default_contracts_dir().display().to_string());
-    let fresh_metadosis = config
-        .get("fresh_metadosis")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
 
     let mut seeded = inputs.base_genesis.clone();
     let options = SeedOptions {
         contracts_dir: Some(contracts_dir),
-        worldwide_day,
-        fresh_metadosis,
     };
     apply_seed(
         &mut seeded,
@@ -245,40 +238,6 @@ pub fn run_seed_stage(
     Ok(seeded_path)
 }
 
-fn resolve_worldwide_day(
-    config: &Value,
-    base_genesis: &Value,
-) -> Result<Option<u32>, GenesisError> {
-    if let Some(raw_day) = config.as_object().and_then(|obj| obj.get("worldwide_day")) {
-        if raw_day.is_null() {
-            return Ok(None);
-        }
-        let day = parse_u64(raw_day)?;
-        return u32::try_from(day)
-            .map(Some)
-            .map_err(|_| GenesisError::validation("worldwide_day out of u32 range"));
-    }
-    if config
-        .get("fresh_metadosis")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        return Ok(None);
-    }
-    let Some(ts_str) = base_genesis.get("timestamp").and_then(Value::as_str) else {
-        return Err(GenesisError::validation(
-            "base_genesis missing hex timestamp",
-        ));
-    };
-    let clean = ts_str
-        .strip_prefix("0x")
-        .or_else(|| ts_str.strip_prefix("0X"))
-        .unwrap_or(ts_str);
-    let timestamp = u64::from_str_radix(clean, 16)
-        .map_err(|_| GenesisError::validation(format!("invalid timestamp: {ts_str}")))?;
-    Ok(Some(timestamp_to_utc_date_key(timestamp)))
-}
-
 /// Seed one genesis from an explicit profile without running the TEE stage.
 pub fn seed_genesis_from_config(
     inputs: &SeedInputs,
@@ -290,17 +249,6 @@ pub fn seed_genesis_from_config(
             "contracts_dir".to_owned(),
             Value::String(contracts_dir.clone()),
         );
-    }
-    match options.worldwide_day {
-        Some(day) => {
-            settings.insert("worldwide_day".to_owned(), Value::from(u64::from(day)));
-        }
-        None => {
-            settings.insert("worldwide_day".to_owned(), Value::Null);
-        }
-    }
-    if options.fresh_metadosis {
-        settings.insert("fresh_metadosis".to_owned(), Value::Bool(true));
     }
 
     let temp_dir = tempfile::Builder::new()
