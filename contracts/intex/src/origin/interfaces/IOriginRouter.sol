@@ -198,6 +198,8 @@ interface IOriginRouter {
     error OnlySelf();
     /// @notice No live parked send at `idx`.
     error NoFailedMessageSend(uint256 idx);
+    /// @notice The kept START belongs to a day whose cancel was sent.
+    error IntexAuctionDayCanceled(uint32 emissionDay);
     /// @notice Empty array provided.
     error EmptyArray();
 

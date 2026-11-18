@@ -77,6 +77,8 @@ contract OriginRouter is
         ///      chain's recent bid counts. Later rounds of the same day reuse it, so a remainder
         ///      report needs no sizing.
         mapping(uint32 emissionDay => mapping(uint32 chainId => uint64 gasLimit)) clearingGas;
+        /// @dev Days whose cancel was sent, so a kept START of the day is never retried.
+        mapping(uint32 emissionDay => bool) intexAuctionCanceled;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.OriginRouter")) - 1)) & ~bytes32(uint256(0xff))
@@ -226,9 +228,13 @@ contract OriginRouter is
     function retryMessageSend(uint256 idx) external nonReentrant {
         FailedMessageSend storage p = _os().failedMessageSends[idx];
         if (p.payload.length == 0 || p.sent) revert NoFailedMessageSend(idx);
-        p.sent = true; // CEI. A revert in `_send` rolls this back and keeps the entry retryable.
         // aderyn-ignore-next-line(storage-array-memory-edit) -- the payload is only read
         bytes memory payload = p.payload;
+        if (uint8(payload[1]) == BridgeMsgCodec.MSG_INTEX_AUCTION_START) {
+            uint32 emissionDay = _dayOf(payload);
+            if (_os().intexAuctionCanceled[emissionDay]) revert IntexAuctionDayCanceled(emissionDay);
+        }
+        p.sent = true; // CEI. A revert in `_send` rolls this back and keeps the entry retryable.
         bytes32 sendId = _send(p.dstChainId, payload, p.gasLimit);
         _emitSent(sendId, p.dstChainId, payload);
     }
@@ -357,6 +363,7 @@ contract OriginRouter is
     function sendIntexAuctionCancel(uint32 emissionDay, uint8 reason) external payable onlyRole(DESIS_ROLE) {
         uint32[] memory snapshot = _os().seriesTargets[emissionDay];
         if (snapshot.length == 0) revert NoTargets();
+        _os().intexAuctionCanceled[emissionDay] = true;
         bytes memory payload = BridgeMsgCodec.encodeIntexAuctionCancel(emissionDay, reason);
         for (uint256 i = 0; i < snapshot.length; ++i) {
             _sendOrKeepFailed(snapshot[i], payload, IntexGas.INTEX_AUCTION_CANCEL);

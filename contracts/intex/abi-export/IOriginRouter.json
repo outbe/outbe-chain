@@ -1058,6 +1058,17 @@
   },
   {
     "type": "error",
+    "name": "IntexAuctionDayCanceled",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidDesisInterface",
     "inputs": [
       {

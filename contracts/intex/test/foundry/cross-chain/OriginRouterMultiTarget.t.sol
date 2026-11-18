@@ -107,6 +107,20 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         origin.sendIntexAuctionCancel(DAY, 1);
     }
 
+    function test_a_kept_start_of_a_canceled_day_is_not_retried() public {
+        origin.registerRemoteMessenger(TARGET_B, ""); // B's START and cancel are kept
+        _fireStart(DAY);
+        vm.prank(desis);
+        origin.sendIntexAuctionCancel(DAY, 1);
+        origin.registerRemoteMessenger(TARGET_B, _interop(TARGET_B, peerB));
+
+        vm.expectRevert(abi.encodeWithSelector(IOriginRouter.IntexAuctionDayCanceled.selector, DAY));
+        origin.retryMessageSend(0);
+        origin.retryMessageSend(1);
+        assertFalse(origin.getFailedMessageSend(0).sent, "the START stays kept");
+        assertTrue(origin.getFailedMessageSend(1).sent, "the cancel leaves");
+    }
+
     // --- Registry ---
     function test_registry_views() public view {
         assertTrue(origin.isTarget(TARGET_A));
