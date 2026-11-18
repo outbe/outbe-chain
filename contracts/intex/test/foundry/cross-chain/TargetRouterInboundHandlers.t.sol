@@ -316,6 +316,29 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         assertEq(uint8(auction.auctionStage(EMISSION_DAY)), uint8(IIntexAuction.AuctionStage.Completed));
     }
 
+    function test_cancel_while_awaiting_the_result_makes_the_result_and_winners_obsolete() public {
+        _seedAuction();
+        vm.warp(block.timestamp + 1 days);
+        _lock();
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(address(bnbRouter));
+        auction.startAuctionClearing(EMISSION_DAY);
+        _cancel();
+        (uint128 amount, uint32 claimableAt) = escrow.returnableAmount(EMISSION_DAY, bidder);
+        assertGt(amount, 0, "the lock is owed");
+        assertEq(claimableAt, 0, "at once");
+
+        vm.expectEmit(false, true, false, true, address(bnbRouter));
+        emit ITargetRouter.MessageIgnored(bytes32(0), OUTBE_CHAIN_ID, 2);
+        _deliver(BridgeMsgCodec.encodeIntexAuctionResult(EMISSION_DAY, AuctionResultLib.day(0, 0, 0)));
+        address[] memory winners = new address[](1);
+        winners[0] = bidder;
+        vm.expectEmit(false, true, false, true, address(bnbRouter));
+        emit ITargetRouter.MessageIgnored(bytes32(0), OUTBE_CHAIN_ID, 2);
+        _deliver(BridgeMsgCodec.encodeIntexAuctionWinners(EMISSION_DAY, 0, 1, 500_000, 1e6, winners, 0, 0));
+        assertEq(uint8(auction.auctionStage(EMISSION_DAY)), uint8(IIntexAuction.AuctionStage.Canceled));
+    }
+
     function test_cancel_before_the_start_makes_the_start_a_conflict() public {
         _cancel();
         assertEq(uint8(auction.auctionStage(EMISSION_DAY)), uint8(IIntexAuction.AuctionStage.Canceled));
