@@ -263,10 +263,9 @@ fn allocate_emission_limit_inner(ctx: &BlockRuntimeContext, prev_day: u32) -> Re
 /// A Desis revert leaves the day unscheduled and keeps the allocation: its brief then goes back
 /// to the Promis Limit.
 fn schedule_auction_of(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<()> {
-    match ctx
-        .storage
-        .with_checkpoint(|| outbe_desis::api::schedule_auction(ctx.storage.clone(), prev_day.into()))
-    {
+    match ctx.storage.with_checkpoint(|| {
+        outbe_desis::api::schedule_auction(ctx.storage.clone(), prev_day.into())
+    }) {
         Err(err) if is_recoverable_step_error(&err) => {
             tracing::warn!(target: "outbe::cycle", prev_day, error = ?err, "auction schedule skipped");
             Ok(())
