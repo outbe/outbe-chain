@@ -84,7 +84,7 @@ fn day_windows(
 fn due_work_gas(contract: &DesisContract<'_>, emission_day: EmissionDate, now: u64) -> Result<u64> {
     let mut stage = contract.read_stage(emission_day)?;
     let (anchor, windows) = day_windows(contract, emission_day, stage, now)?;
-    if contract.cancel_reason.read(&emission_day)? != 0 {
+    if pending_cancel(contract, emission_day, stage)?.is_some() {
         return Ok(ADVANCE_DAY_BASE_GAS + ADVANCE_START_GAS);
     }
     let mut gas = ADVANCE_DAY_BASE_GAS;
