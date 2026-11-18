@@ -57,7 +57,8 @@ contract IntexNFT1155SupplyInvariantTest is StdInvariant, Test {
         bidders.push(address(0xB3));
 
         handler = new NFT1155SupplyHandler(intex, SERIES_ID, bidders);
-        // Handler drives crosschainBurn directly; it is BRIDGE_ROLE-gated.
+        // Handler drives issueIntex and crosschainBurn directly, gated by AUCTION_ROLE and BRIDGE_ROLE.
+        intex.grantRole(intex.AUCTION_ROLE(), address(handler));
         intex.grantRole(intex.BRIDGE_ROLE(), address(handler));
 
         bytes4[] memory selectors = new bytes4[](2);
