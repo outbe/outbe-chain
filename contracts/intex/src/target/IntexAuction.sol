@@ -66,6 +66,8 @@ contract IntexAuction is
         mapping(uint32 emissionDay => bool) cleared;
         /// @dev Intex collection winners' units are issued on.
         IIntexNFT1155 intexContract;
+        /// @dev Set by the first clearing start of the day.
+        mapping(uint32 emissionDay => bool) clearingStarted;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.IntexAuction")) - 1)) & ~bytes32(uint256(0xff))
@@ -244,8 +246,10 @@ contract IntexAuction is
         IIntexAuction.AuctionData storage a = _s().auctions[emissionDay];
         if (a.schedule.commitEnd == 0) revert AuctionNotFound();
         IIntexAuction.AuctionStage currentStage = _getAuctionStage(emissionDay);
-        bool alreadyAwaiting = currentStage == IIntexAuction.AuctionStage.AwaitingResult;
-        if (!alreadyAwaiting && currentStage != IIntexAuction.AuctionStage.RevealingBids) {
+        if (
+            currentStage != IIntexAuction.AuctionStage.AwaitingResult
+                && currentStage != IIntexAuction.AuctionStage.RevealingBids
+        ) {
             revert StageRequired(IIntexAuction.AuctionStage.RevealingBids, currentStage);
         }
 
@@ -254,7 +258,10 @@ contract IntexAuction is
         if (nowTs < a.schedule.revealEnd) {
             a.schedule.revealEnd = nowTs;
         }
-        if (!alreadyAwaiting) emit IntexAuctionClearingStarted(emissionDay);
+        if (!_s().clearingStarted[emissionDay]) {
+            _s().clearingStarted[emissionDay] = true;
+            emit IntexAuctionClearingStarted(emissionDay);
+        }
     }
 
     /// @inheritdoc IIntexAuction

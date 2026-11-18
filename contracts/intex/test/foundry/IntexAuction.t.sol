@@ -912,6 +912,23 @@ contract AuctionTest is Test {
         }
     }
 
+    function test_clearing_start_after_the_reveal_end_emits_its_event_once() public {
+        uint32 emissionDay = 20250131;
+        _start(emissionDay, 10, 1);
+        vm.warp(auction.getAuctionInfo(emissionDay).schedule.revealEnd + 1);
+        assertEq(uint8(auction.auctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.AwaitingResult));
+
+        vm.expectEmit(true, true, true, true, address(auction));
+        emit IIntexAuction.IntexAuctionClearingStarted(emissionDay);
+        vm.prank(bridger);
+        auction.startAuctionClearing(emissionDay);
+
+        vm.recordLogs();
+        vm.prank(bridger);
+        auction.startAuctionClearing(emissionDay);
+        assertEq(vm.getRecordedLogs().length, 0, "a repeated clearing start emits nothing");
+    }
+
     function test_ViewFunctions_NotFound() public {
         uint32 nonExistentSeries = 99999999; // non-existent series
 
