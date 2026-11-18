@@ -11,9 +11,8 @@ use super::{
     protocol::{
         fidelity_cohort_attestation_preimage, fidelity_query_attestation_preimage,
         fidelity_snapshot_attestation_preimage, gratis_op_attestation_preimage,
-        mine_gratis_from_promis_attestation_preimage, promis_op_attestation_preimage,
-        tribute_offer_attestation_preimage, FidelityCohortResult, FidelityLeagueEntry,
-        FidelityQueryResult, GratisOpResult, MineGratisFromPromisResultV1, PromisOpResult,
+        promis_op_attestation_preimage, tribute_offer_attestation_preimage, FidelityCohortResult,
+        FidelityLeagueEntry, FidelityQueryResult, GratisOpResult, PromisOpResult,
         TributeOfferResult,
     },
 };
@@ -61,18 +60,6 @@ pub fn verify_promis_op_attestation(
 ) -> Result<(), TransportError> {
     verify_domain_attestation(attestation_pub, tag, PROMIS_OP_ATTESTATION, || {
         promis_op_attestation_preimage(inputs_canonical_hash, result)
-    })
-}
-
-/// Verify a paired `MineGratisFromPromisV1` attestation tag.
-pub fn verify_mine_gratis_from_promis_attestation(
-    attestation_pub: &[u8; 32],
-    inputs_canonical_hash: B256,
-    result: &MineGratisFromPromisResultV1,
-    tag: &[u8],
-) -> Result<(), TransportError> {
-    verify_domain_attestation(attestation_pub, tag, PROMIS_OP_ATTESTATION, || {
-        mine_gratis_from_promis_attestation_preimage(inputs_canonical_hash, result)
     })
 }
 

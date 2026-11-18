@@ -6,7 +6,7 @@ use outbe_tee::{
 
 use super::{
     EncryptedTributeOffer, FidelityCohortRequest, FidelityQueryRequest, FidelitySnapshotRequest,
-    GratisOpRequest, Ledger, MineGratisFromPromisRequestV1, PromisOpRequest,
+    GratisOpRequest, Ledger, PromisOpRequest,
 };
 
 /// Domain requests carried inside [`outbe_tee::protocol::EnclaveRequest::Payload`].
@@ -79,9 +79,6 @@ pub enum EnclaveRequest {
         context: outbe_core_common::nod_encryption::NodQuoteContextV1,
         payment_minor: U256,
     },
-    MineGratisFromPromisV1 {
-        request: Box<MineGratisFromPromisRequestV1>,
-    },
 }
 
 impl EnclaveRequest {
@@ -111,7 +108,6 @@ impl EnclaveRequest {
             Self::ApplyNodGroupLoadOpV1 { .. } => "apply_nod_group_load_op_v1",
             Self::ReadNodGroupLoadV1 { .. } => "read_nod_group_load_v1",
             Self::EncryptNodQuoteV1 { .. } => "encrypt_nod_quote_v1",
-            Self::MineGratisFromPromisV1 { .. } => "mine_gratis_from_promis_v1",
         }
     }
 
@@ -239,12 +235,6 @@ impl core::fmt::Debug for EnclaveRequest {
                 .field("owner", &context.owner)
                 .field("asset", &context.asset)
                 .field("payment_minor", &"<redacted>")
-                .finish(),
-            Self::MineGratisFromPromisV1 { request } => f
-                .debug_struct("MineGratisFromPromisV1")
-                .field("chain_id", &request.chain_id)
-                .field("account", &request.account)
-                .field("encrypted_promis_amount", &"<redacted>")
                 .finish(),
             other => f
                 .debug_struct("EnclaveRequest")

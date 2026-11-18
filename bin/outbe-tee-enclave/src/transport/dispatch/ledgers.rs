@@ -11,9 +11,6 @@ pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> Doma
         EnclaveRequest::SnapshotFidelityLeagues { request } => snapshot_fidelity(context, request),
         EnclaveRequest::QueryFidelityIndex { request } => query_fidelity(context, request),
         EnclaveRequest::ApplyPromisOp { request } => apply_promis(context, request),
-        EnclaveRequest::MineGratisFromPromisV1 { request } => {
-            mine_gratis_from_promis(context, request)
-        }
         EnclaveRequest::DeriveAccountKeys {
             ledger,
             account,
@@ -215,50 +212,6 @@ fn apply_promis(
     };
     result.attestation_tag = keys.sign_attestation(&preimage).to_vec();
     Ok(EnclaveResponse::PromisOpApplied {
-        result: Box::new(result),
-    })
-}
-
-fn mine_gratis_from_promis(
-    context: RequestContext<'_>,
-    request: Box<outbe_enclave::protocol::MineGratisFromPromisRequestV1>,
-) -> DomainDispatchResult {
-    let RequestContext {
-        keys,
-        offer_key,
-        chain_id,
-        ..
-    } = context;
-    let Some(derived) = offer_key.get() else {
-        return Err(domain_error(
-            "MineGratisFromPromisV1: no resident group key (DKG not complete)",
-        ));
-    };
-    let promis_state_key = crate::promis::derive_promis_state_key(derived.group_sig(), chain_id, 0)
-        .map_err(domain_error)?;
-    let gratis_state_key = crate::gratis::derive_gratis_state_key(derived.group_sig(), chain_id, 0)
-        .map_err(domain_error)?;
-    let fidelity_state_key =
-        crate::fidelity::derive_fidelity_state_key(derived.group_sig(), chain_id, 0)
-            .map_err(domain_error)?;
-    let mut result = crate::promis::apply_mine_gratis(
-        crate::promis::MineGratisKeys {
-            offer_secret: derived.secret(),
-            promis_state_key: &promis_state_key,
-            gratis_state_key: &gratis_state_key,
-            fidelity_state_key: &fidelity_state_key,
-        },
-        &request,
-    );
-    let preimage = match outbe_enclave::protocol::mine_gratis_from_promis_attestation_preimage(
-        result.inputs_canonical_hash,
-        &result,
-    ) {
-        Ok(preimage) => preimage,
-        Err(error) => return into_domain_response(Err(crate::errors::TeeError::from(error))),
-    };
-    result.attestation_tag = keys.sign_attestation(&preimage).to_vec();
-    Ok(EnclaveResponse::GratisMinedFromPromisV1 {
         result: Box::new(result),
     })
 }
