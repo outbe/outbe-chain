@@ -6,6 +6,7 @@ import {TypeCasts} from "../src/libs/TypeCasts.sol";
 import {BaseTest} from "./BaseTest.sol";
 import {OriginSettler} from "../src/router/origin/OriginSettler.sol";
 import {IOriginSettler} from "../src/interfaces/IOriginSettler.sol";
+import {IDestinationSettler} from "../src/interfaces/IDestinationSettler.sol";
 import {OrderData, OrderEncoder} from "../src/libs/OrderEncoder.sol";
 import {OnchainCrossChainOrder, ResolvedCrossChainOrder} from "../src/interfaces/OrderTypes.sol";
 import {ITheCompact} from "the-compact/src/interfaces/ITheCompact.sol";
@@ -253,6 +254,8 @@ contract OriginSettlerTest is BaseTest {
         deal(address(inputToken), address(mockCompact), 1_000_000, true);
         mockCompact.__setBalance(address(originSettler), uint160(address(inputToken)), amount);
 
+        vm.warp(orderData.fillDeadline + 1);
+
         uint256[] memory balancesBefore = _balances(inputToken);
 
         vm.expectEmit(false, false, false, true);
@@ -280,6 +283,8 @@ contract OriginSettlerTest is BaseTest {
         deal(address(mockCompact), 1_000_000);
         mockCompact.__setBalance(address(originSettler), 0, amount);
 
+        vm.warp(orderData.fillDeadline + 1);
+
         uint256[] memory balancesBefore = _balances();
 
         vm.expectEmit(false, false, false, true);
@@ -294,6 +299,31 @@ contract OriginSettlerTest is BaseTest {
             balancesAfter[balanceId[address(originSettler)]], balancesBefore[balanceId[address(originSettler)]] - amount
         );
         assertEq(balancesAfter[balanceId[kakaroto]], balancesBefore[balanceId[kakaroto]] + amount);
+    }
+
+    /// @dev The origin chain refunds only after the fill deadline. Before it, the call reverts so that
+    ///      the transport can deliver the message again. The order stays OPENED and no token moves.
+    function test_handleRefundOrder_RevertWhen_FillNotExpired() public {
+        OrderData memory orderData = _prepareOrderData();
+        bytes32 orderId = bytes32("order1");
+
+        originSettler.setOrderOpened(orderId, orderData);
+
+        deal(address(inputToken), address(mockCompact), 1_000_000, true);
+        mockCompact.__setBalance(address(originSettler), uint160(address(inputToken)), amount);
+
+        vm.warp(orderData.fillDeadline);
+
+        uint256[] memory balancesBefore = _balances(inputToken);
+
+        vm.expectRevert(IDestinationSettler.OrderFillNotExpired.selector);
+        originSettler.handleRefundOrder(destination, counterpart.addressToBytes32(), orderId);
+
+        uint256[] memory balancesAfter = _balances(inputToken);
+
+        assertEq(originSettler.orderStatus(orderId), originSettler.OPENED());
+        assertEq(balancesAfter[balanceId[address(originSettler)]], balancesBefore[balanceId[address(originSettler)]]);
+        assertEq(balancesAfter[balanceId[kakaroto]], balancesBefore[balanceId[kakaroto]]);
     }
 
     function test_handleRefundOrder_not_OPENED() public {

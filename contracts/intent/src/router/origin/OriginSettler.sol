@@ -13,6 +13,7 @@ import {
 import {AllocatedTransfer} from "the-compact/src/types/Claims.sol";
 import {Component} from "the-compact/src/types/Components.sol";
 import {ISolverEscrow} from "../../interfaces/ISolverEscrow.sol";
+import {IDestinationSettler} from "../../interfaces/IDestinationSettler.sol";
 
 /// @title OriginSettler
 /// @notice Origin chain settlement contract for cross-chain swaps
@@ -61,6 +62,8 @@ abstract contract OriginSettler is OriginSettlerBase {
     /**
      * @dev Refunds an individual order. The inheriting contract should call this when it receives a
      * refunding instruction from a remote chain.
+     * The refund waits for the fill deadline of the order on this chain. Before that time, the call
+     * reverts and does not skip the message, so the transport can deliver it again later.
      * @param _messageOrigin The domain from which the message originates.
      * @param _messageSender The address of the sender on the origin domain.
      * @param _orderId The ID of the order to refund.
@@ -72,6 +75,8 @@ abstract contract OriginSettler is OriginSettlerBase {
             emit RefundSkipped(_orderId);
             return;
         }
+
+        if (block.timestamp <= orderData.fillDeadline) revert IDestinationSettler.OrderFillNotExpired();
 
         _statuses().orderStatus[_orderId] = REFUNDED;
 

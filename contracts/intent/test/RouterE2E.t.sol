@@ -11,6 +11,8 @@ import {Auction} from "../src/Auction.sol";
 import {SolverAllocator} from "../src/allocators/SolverAllocator.sol";
 import {SolverEscrow} from "../src/SolverEscrow.sol";
 import {OnchainCrossChainOrder} from "../src/interfaces/OrderTypes.sol";
+import {IDestinationSettler} from "../src/interfaces/IDestinationSettler.sol";
+import {IOriginSettler} from "../src/interfaces/IOriginSettler.sol";
 import {OrderData, OrderEncoder} from "../src/libs/OrderEncoder.sol";
 import {RouterMessage} from "../src/libs/RouterMessage.sol";
 import {TypeCasts} from "../src/libs/TypeCasts.sol";
@@ -264,6 +266,123 @@ contract RouterE2E is BaseTest {
             "origin lock released"
         );
         assertEq(afterRefund[balanceId[kakaroto]], beforeRefund[balanceId[kakaroto]] + amount, "user refunded");
+    }
+
+    function _single(OnchainCrossChainOrder memory order)
+        internal
+        pure
+        returns (OnchainCrossChainOrder[] memory orders)
+    {
+        orders = new OnchainCrossChainOrder[](1);
+        orders[0] = order;
+    }
+
+    /// @dev The order ID binds only the order data. Thus an outer `fillDeadline` of 0 must not let a
+    ///      caller refund a live order or slash the solver of a claimed order.
+    function test_refund_uses_the_deadline_of_the_order_data() public {
+        (bytes32 orderId, OnchainCrossChainOrder memory order) = _openOrder();
+        uint32 realDeadline = order.fillDeadline;
+        order.fillDeadline = 0;
+        address attacker = makeAddr("attacker");
+
+        // An order that is not processed.
+        vm.prank(attacker);
+        vm.expectRevert(IDestinationSettler.OrderFillNotExpired.selector);
+        destinationRouter.refund(_single(order));
+        assertEq(destinationRouter.destinationOrderStatus(orderId), destinationRouter.UNKNOWN(), "not refunded");
+
+        // A CLAIMED order. Its collateral stays locked.
+        _doFullAuction(vegeta, orderId, amount, order.orderData);
+        destinationRouter.claimOrder(orderId, order.orderData);
+        (,, uint256 lockedBefore) = destEscrow.locks(orderId);
+        assertGt(lockedBefore, 0, "collateral locked");
+
+        vm.warp(realDeadline);
+        vm.prank(attacker);
+        vm.expectRevert(IDestinationSettler.OrderFillNotExpired.selector);
+        destinationRouter.refund(_single(order));
+
+        (,, uint256 lockedAfter) = destEscrow.locks(orderId);
+        assertEq(lockedAfter, lockedBefore, "collateral not slashed");
+        assertEq(destinationRouter.destinationOrderStatus(orderId), destinationRouter.CLAIMED(), "still claimed");
+        assertEq(originRouter.orderStatus(orderId), originRouter.OPENED(), "still open on origin");
+
+        // After the real deadline, the refund slashes the solver and refunds the user.
+        vm.warp(realDeadline + 1);
+        destinationRouter.refund(_single(order));
+        (,, uint256 lockedFinal) = destEscrow.locks(orderId);
+        assertEq(lockedFinal, 0, "collateral slashed after the deadline");
+        assertEq(destinationRouter.destinationOrderStatus(orderId), destinationRouter.REFUNDED(), "refunded");
+        assertEq(originRouter.orderStatus(orderId), originRouter.REFUNDED(), "refunded on origin");
+    }
+
+    /// @dev A refunded order must not be claimed or filled. Else the user gets the input and the output.
+    function test_refunded_order_cannot_be_claimed_or_filled() public {
+        (bytes32 orderId, OnchainCrossChainOrder memory order) = _openOrder();
+        _doFullAuction(vegeta, orderId, amount, order.orderData);
+
+        vm.warp(order.fillDeadline + 1);
+        destinationRouter.refund(_single(order));
+        assertEq(destinationRouter.destinationOrderStatus(orderId), destinationRouter.REFUNDED(), "refunded");
+
+        vm.expectRevert(IDestinationSettler.InvalidOrderStatus.selector);
+        destinationRouter.claimOrder(orderId, order.orderData);
+
+        vm.startPrank(vegeta);
+        outputToken.approve(address(destinationRouter), amount);
+        vm.expectRevert(IDestinationSettler.InvalidOrderStatus.selector);
+        destinationRouter.fill(orderId, order.orderData, abi.encode(TypeCasts.addressToBytes32(vegeta)));
+        vm.stopPrank();
+    }
+
+    /// @dev A second refund of the same order must revert, so it cannot slash or dispatch twice.
+    function test_refund_of_a_refunded_order_reverts() public {
+        (bytes32 orderId, OnchainCrossChainOrder memory order) = _openOrder();
+
+        vm.warp(order.fillDeadline + 1);
+        destinationRouter.refund(_single(order));
+        assertEq(destinationRouter.destinationOrderStatus(orderId), destinationRouter.REFUNDED(), "refunded");
+
+        vm.expectRevert(IDestinationSettler.InvalidOrderStatus.selector);
+        destinationRouter.refund(_single(order));
+    }
+
+    /// @dev The origin chain refunds only after its own fill deadline. Before it, the delivery reverts
+    ///      and does not skip the message, so the transport can deliver it again.
+    function test_origin_refund_waits_for_the_fill_deadline() public {
+        (bytes32 orderId, OnchainCrossChainOrder memory order) = _openOrder();
+
+        bytes32[] memory orderIds = new bytes32[](1);
+        orderIds[0] = orderId;
+        bytes memory payload = RouterMessage.encodeRefund(orderIds);
+        bytes memory sender = _interop(destination, address(destinationRouter));
+
+        uint256[] memory beforeRefund = _balances(inputToken);
+
+        vm.warp(order.fillDeadline);
+        vm.prank(address(originBridge));
+        vm.expectRevert(IDestinationSettler.OrderFillNotExpired.selector);
+        originRouter.receiveMessage(bytes32(0), sender, payload);
+        assertEq(originRouter.orderStatus(orderId), originRouter.OPENED(), "still open on origin");
+
+        vm.warp(order.fillDeadline + 1);
+        vm.prank(address(originBridge));
+        originRouter.receiveMessage(bytes32(0), sender, payload);
+        assertEq(originRouter.orderStatus(orderId), originRouter.REFUNDED(), "refunded on origin");
+
+        // A second delivery of the same message is skipped and pays nothing.
+        vm.prank(address(originBridge));
+        vm.expectEmit(true, false, false, false, address(originRouter));
+        emit IOriginSettler.RefundSkipped(orderId);
+        originRouter.receiveMessage(bytes32(0), sender, payload);
+
+        uint256[] memory afterRefund = _balances(inputToken);
+        assertEq(afterRefund[balanceId[kakaroto]], beforeRefund[balanceId[kakaroto]] + amount, "user refunded once");
+        assertEq(
+            afterRefund[balanceId[address(originRouter)]],
+            beforeRefund[balanceId[address(originRouter)]] - amount,
+            "origin lock released once"
+        );
     }
 
     /// @dev An oversized inbound batch must be rejected up front so it cannot make delivery

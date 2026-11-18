@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import {OnchainCrossChainOrder} from "../../interfaces/OrderTypes.sol";
 import {IDestinationSettler} from "../../interfaces/IDestinationSettler.sol";
+import {OrderEncoder} from "../../libs/OrderEncoder.sol";
 import {OrderStatusStorage} from "../common/OrderStatusStorage.sol";
 import {RouterAccessors} from "../common/RouterAccessors.sol";
 
@@ -93,7 +94,9 @@ abstract contract DestinationSettlerBase is OrderStatusStorage, RouterAccessors,
 
     /**
      * @notice Refunds a batch of expired orders
-     * @dev Returns funds to users for orders that were not filled before deadline
+     * @dev Returns funds to users for orders that were not filled before deadline. The deadline
+     *      comes from the order data, because the order ID binds the order data and not the outer
+     *      `fillDeadline`. Each refunded order becomes REFUNDED, so nobody can claim, fill or refund it again.
      * @param _orders An array of OnchainCrossChainOrders to refund
      */
     function refund(OnchainCrossChainOrder[] calldata _orders) external payable {
@@ -105,9 +108,11 @@ abstract contract DestinationSettlerBase is OrderStatusStorage, RouterAccessors,
 
             bytes32 status = _statuses().destinationOrderStatus[orderId];
             if (!_isNotProcessed(status) && status != CLAIMED) revert InvalidOrderStatus();
-            if (block.timestamp <= _orders[i].fillDeadline) {
+            if (block.timestamp <= OrderEncoder.decode(_orders[i].orderData).fillDeadline) {
                 revert OrderFillNotExpired();
             }
+
+            _statuses().destinationOrderStatus[orderId] = REFUNDED;
 
             if (status == CLAIMED) {
                 _onSlashed(orderId);

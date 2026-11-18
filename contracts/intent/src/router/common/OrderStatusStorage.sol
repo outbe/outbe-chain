@@ -14,6 +14,7 @@ abstract contract OrderStatusStorage {
     // - Origin statuses -
     bytes32 public constant OPENED = "OPENED";
     bytes32 public constant SETTLED = "SETTLED";
+    /// @dev Also the destination status of a refunded order.
     bytes32 public constant REFUNDED = "REFUNDED";
 
     // - Destination statuses -
@@ -33,7 +34,8 @@ abstract contract OrderStatusStorage {
     struct OrderStatusStorageLayout {
         /// @notice Tracks the origin-side lifecycle of each order (UNKNOWN -> OPENED -> SETTLED/REFUNDED)
         mapping(bytes32 orderId => bytes32 status) orderStatus;
-        /// @notice Tracks the destination-side lifecycle of each order (UNKNOWN -> CLAIMED -> FILLED).
+        /// @notice Tracks the destination-side lifecycle of each order (UNKNOWN -> CLAIMED -> FILLED,
+        ///         or UNKNOWN/CLAIMED -> REFUNDED).
         ///         It is split from `orderStatus`. Thus a same-chain order (originDomain ==
         ///         destinationDomain) on a single router instance does not collapse both lifecycles into
         ///         one slot.
