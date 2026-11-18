@@ -77,9 +77,9 @@ pub(super) fn compute_clearing(
     for (i, (chain_id, bid)) in bids.iter().enumerate() {
         all_bidders.push(bid.bidder_address);
         bidder_chains.push(*chain_id);
-        let (paid, refunded) = paid_and_returned(bid, won_by_index[i], escrow_basis, clearing_rate);
+        let (paid, returned) = paid_and_returned(bid, won_by_index[i], escrow_basis, clearing_rate);
         paid_amounts.push(paid);
-        returned_amounts.push(refunded);
+        returned_amounts.push(returned);
     }
 
     ClearingResult {
@@ -112,8 +112,8 @@ fn paid_and_returned(
     if won > 0 {
         // Uniform clearing: winners pay at the clearing rate. Refund the rest.
         let paid = rate_lock(u64::from(won), escrow_basis, clearing_rate);
-        let refunded = locked.saturating_sub(paid);
-        (paid, refunded)
+        let returned = locked.saturating_sub(paid);
+        (paid, returned)
     } else {
         (0, locked)
     }
