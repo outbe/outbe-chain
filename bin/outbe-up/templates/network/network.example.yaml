@@ -40,27 +40,21 @@ founders:
     hyperlane_public_url: "http://192.0.2.13:9000"
 
 hyperlane:
-  poll_interval_secs: 30
   gasless: true
-  signer_funding_wei: "1000000000000000000"
   origins:
     - domain: 54322345
-      rpc_urls: ["https://rpc.testnet.outbe.net"]
-      rpc_consensus: majority
+      rpc_urls:
+        - "https://rpc.testnet.outbe.net"
       reorg_period: 0
-      interval_secs: 15
     - domain: 97
       rpc_urls:
         - "https://data-seed-prebsc-1-s1.bnbchain.org:8545"
         - "https://data-seed-prebsc-1-s2.bnbchain.org:8545"
-      rpc_consensus: majority
       reorg_period: 9
-      interval_secs: 15
     - domain: 11155111
-      rpc_urls: ["https://ethereum-sepolia-rpc.publicnode.com"]
-      rpc_consensus: single
+      rpc_urls:
+        - "https://ethereum-sepolia-rpc.publicnode.com"
       reorg_period: 2
-      interval_secs: 15
 
 topology:
   # Enable only when consensus peers use private/RFC1918 addresses.

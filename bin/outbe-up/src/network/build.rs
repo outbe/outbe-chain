@@ -669,8 +669,20 @@ mod tests {
         assert!(yaml.contains("version: 1"));
         assert!(yaml.contains(&format!("chain_id: {}", config.chain_id)));
         assert!(!yaml.contains("$serde_json"));
+        assert!(!yaml.contains("poll_interval_secs:"));
+        assert!(!yaml.contains("signer_funding_wei:"));
+        assert!(!yaml.contains("rpc_consensus:"));
+        assert!(!yaml.contains("interval_secs:"));
+        assert!(!yaml.contains("rpc_urls: ["));
         let decoded: OperatorConfig = serde_yaml_ng::from_str(&yaml).unwrap();
         assert_eq!(decoded.network.chain_id, config.chain_id);
+        assert_eq!(decoded.hyperlane.poll_interval_secs, 30);
+        assert_eq!(decoded.hyperlane.signer_funding_wei, "1000000000000000000");
+        assert!(decoded
+            .hyperlane
+            .origins
+            .iter()
+            .all(|origin| origin.interval_secs == 15));
     }
 
     #[test]

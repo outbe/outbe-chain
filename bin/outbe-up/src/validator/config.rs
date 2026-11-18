@@ -52,11 +52,17 @@ pub struct FeederConfig {
 #[serde(deny_unknown_fields)]
 pub struct HyperlaneConfig {
     pub public_url: String,
-    #[serde(default = "default_hyperlane_poll_interval")]
+    #[serde(
+        default = "default_hyperlane_poll_interval",
+        skip_serializing_if = "is_default_hyperlane_poll_interval"
+    )]
     pub poll_interval_secs: u64,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub gasless: bool,
-    #[serde(default = "default_hyperlane_funding_wei")]
+    #[serde(
+        default = "default_hyperlane_funding_wei",
+        skip_serializing_if = "is_default_hyperlane_funding_wei"
+    )]
     pub signer_funding_wei: String,
     pub origins: Vec<HyperlaneOrigin>,
 }
@@ -66,10 +72,13 @@ pub struct HyperlaneConfig {
 pub struct HyperlaneOrigin {
     pub domain: u32,
     pub rpc_urls: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default_rpc_consensus")]
     pub rpc_consensus: RpcConsensus,
     pub reorg_period: ReorgPeriod,
-    #[serde(default = "default_origin_interval")]
+    #[serde(
+        default = "default_origin_interval",
+        skip_serializing_if = "is_default_origin_interval"
+    )]
     pub interval_secs: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ws_url: Option<String>,
@@ -355,6 +364,26 @@ const fn default_origin_interval() -> u64 {
 
 fn default_hyperlane_funding_wei() -> String {
     "1000000000000000000".to_owned()
+}
+
+fn is_default_hyperlane_poll_interval(value: &u64) -> bool {
+    *value == default_hyperlane_poll_interval()
+}
+
+fn is_default_hyperlane_funding_wei(value: &String) -> bool {
+    value == &default_hyperlane_funding_wei()
+}
+
+fn is_default_origin_interval(value: &u64) -> bool {
+    *value == default_origin_interval()
+}
+
+fn is_default_rpc_consensus(value: &RpcConsensus) -> bool {
+    matches!(value, RpcConsensus::Majority)
+}
+
+const fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 fn development_network_binding(root: &Path, chain_id: u64) -> Result<String> {
