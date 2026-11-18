@@ -20,7 +20,8 @@ import {IERC7786TokenReceiver} from "./interfaces/IERC7786TokenReceiver.sol";
 /// @title ERC7786TokenBridge
 /// @notice ERC-7786 fungible token bridge supporting lock/unlock, ERC-7802 burn/mint, and
 ///         issuer-gated mint/burn sides. Composed transfers (`sendAndCall`) additionally invoke an
-///         ERC-1363-style receiver hook on the destination after the tokens are credited.
+///         ERC-1363-style receiver hook on the destination after the tokens are credited. If the
+///         hook fails, the bridge credits no tokens and anyone can send them back to the source chain.
 /// @dev The initializer sets the peer bridge on each remote domain. No function changes or removes
 ///      a peer. The owner is governance: the CrosschainBridge precompile on Outbe, and its
 ///      Interchain Account on other chains. The owner adds a peer for a new domain and authorizes
@@ -52,10 +53,24 @@ contract ERC7786TokenBridge is OwnableUpgradeable, UUPSUpgradeable, ReentrancyGu
     /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
     uint8 public immutable tokenDecimals;
 
+    /// @notice A composed delivery whose receiver hook failed. The bridge credited no tokens.
+    struct FailedDelivery {
+        /// @notice The domain of the source chain.
+        uint32 sourceDomain;
+        /// @notice The sender on the source chain. Zero means no record.
+        address sender;
+        /// @notice The receiver on this chain whose hook failed.
+        address receiver;
+        /// @notice The amount that the bridge did not credit.
+        uint256 amount;
+    }
+
     /// @custom:storage-location erc7201:outbe.tokens.ERC7786TokenBridge
     struct ERC7786TokenBridgeStorage {
         /// @notice The peer bridge on each remote domain. Zero means the domain is not connected.
         mapping(uint32 domain => address bridge) remoteBridges;
+        /// @notice The failed composed deliveries that the bridge did not send back yet.
+        mapping(bytes32 receiveId => FailedDelivery) failedDeliveries;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.tokens.ERC7786TokenBridge")) - 1)) & ~bytes32(uint256(0xff))
@@ -67,6 +82,19 @@ contract ERC7786TokenBridge is OwnableUpgradeable, UUPSUpgradeable, ReentrancyGu
     );
     event CrosschainTransferReceived(
         bytes32 indexed receiveId, uint32 indexed sourceDomain, bytes from, address indexed to, uint256 amount
+    );
+    /// @notice The receiver hook failed. The bridge credited no tokens and stored a record.
+    event CrosschainDeliveryFailed(
+        bytes32 indexed receiveId,
+        uint32 indexed sourceDomain,
+        bytes from,
+        address indexed to,
+        uint256 amount,
+        bytes extraData
+    );
+    /// @notice The bridge sent `amount` back to `to`, the sender on `sourceDomain`.
+    event CrosschainDeliveryReclaimed(
+        bytes32 indexed receiveId, bytes32 indexed sendId, uint32 indexed sourceDomain, address to, uint256 amount
     );
 
     error InvalidToken();
@@ -82,6 +110,8 @@ contract ERC7786TokenBridge is OwnableUpgradeable, UUPSUpgradeable, ReentrancyGu
     error UnauthorizedToken(address caller);
     error UnauthorizedRemoteBridge(bytes sender);
     error DecimalsMismatch(uint8 sourceDecimals, uint8 localDecimals);
+    error NoFailedDelivery(bytes32 receiveId);
+    error NotSelf();
 
     /// @dev `executionGasLimit(uint256)` ERC-7786 attribute understood by the bridge hub's gateways.
     bytes4 private constant GAS_LIMIT_ATTR = bytes4(keccak256("executionGasLimit(uint256)"));
@@ -118,6 +148,11 @@ contract ERC7786TokenBridge is OwnableUpgradeable, UUPSUpgradeable, ReentrancyGu
         return _s().remoteBridges[domain];
     }
 
+    /// @notice The failed composed delivery for `receiveId`. A zero `sender` means no record.
+    function failedDeliveries(bytes32 receiveId) external view returns (FailedDelivery memory) {
+        return _s().failedDeliveries[receiveId];
+    }
+
     /// @notice Connects a new domain. A peer that is already set cannot change.
     function addPeer(uint32 domain, address peerBridge) external onlyOwner {
         _addPeer(domain, peerBridge);
@@ -150,9 +185,10 @@ contract ERC7786TokenBridge is OwnableUpgradeable, UUPSUpgradeable, ReentrancyGu
     }
 
     /// @notice Composed transfer: deliver `amount` to `to` and invoke its receiver hook with `extraData`.
-    /// @dev A hook revert rolls back the whole delivery, and the hub keeps the message for a retry.
-    ///      The bridge has no refund to the source chain. A `to` whose hook always reverts holds the
-    ///      tokens in transit forever, so `to` must not revert permanently.
+    /// @dev The destination credits the tokens and calls the hook as one atomic step. If the hook
+    ///      reverts, returns a wrong value, or `to` has no code, the destination credits no tokens.
+    ///      It stores a record, and anyone can call `reclaimToSource` there to send `amount` back
+    ///      to the sender on this chain as a plain transfer. The bridge does not retry the hook.
     /// @param gasLimit Destination execution gas (0 = gateway default), carried as the
     ///        `executionGasLimit` ERC-7786 attribute to cover the hook.
     function sendAndCall(
@@ -206,17 +242,56 @@ contract ERC7786TokenBridge is OwnableUpgradeable, UUPSUpgradeable, ReentrancyGu
             abi.decode(payload, (bytes, address, uint256, uint8, bytes));
         if (sourceDecimals != tokenDecimals) revert DecimalsMismatch(sourceDecimals, tokenDecimals);
         _requireRecipient(to);
-        _onReceive(to, amount);
 
-        if (extraData.length > 0) {
-            // Composed transfer: tokens are credited before the receiver hook runs; a hook
-            // revert rolls back the whole delivery, which the transport then redelivers.
-            bytes4 magic = IERC7786TokenReceiver(to).onCrosschainTokensReceived(sourceDomain, from, amount, extraData);
-            if (magic != IERC7786TokenReceiver.onCrosschainTokensReceived.selector) revert InvalidTokenReceiver(to);
+        if (extraData.length == 0) {
+            _onReceive(to, amount);
+        } else {
+            // Composed transfer. The credit and the hook run in one self-call, so a hook failure
+            // rolls back the credit too. The bridge then stores a record, and the delivery
+            // succeeds, so the hub does not deliver the message again.
+            try this.receiveAndCall(to, sourceDomain, from, amount, extraData) {}
+            catch {
+                (, address sender) = from.parseEvmV1();
+                _s().failedDeliveries[receiveId] = FailedDelivery(sourceDomain, sender, to, amount);
+                emit CrosschainDeliveryFailed(receiveId, sourceDomain, from, to, amount, extraData);
+                return IERC7786Recipient.receiveMessage.selector;
+            }
         }
 
         emit CrosschainTransferReceived(receiveId, sourceDomain, from, to, amount);
         return IERC7786Recipient.receiveMessage.selector;
+    }
+
+    /// @notice The atomic step of a composed delivery: credits `amount` to `to` and calls its
+    ///         receiver hook. Only the bridge can call it, from `receiveMessage`.
+    /// @dev No `nonReentrant`: `receiveMessage` holds the lock when it calls this function.
+    function receiveAndCall(
+        address to,
+        uint32 sourceDomain,
+        bytes calldata from,
+        uint256 amount,
+        bytes calldata extraData
+    ) external {
+        if (msg.sender != address(this)) revert NotSelf();
+        _onReceive(to, amount);
+        bytes4 magic = IERC7786TokenReceiver(to).onCrosschainTokensReceived(sourceDomain, from, amount, extraData);
+        if (magic != IERC7786TokenReceiver.onCrosschainTokensReceived.selector) revert InvalidTokenReceiver(to);
+    }
+
+    /// @notice Sends the amount of a failed composed delivery back to its sender on the source
+    ///         chain, as a plain transfer. Anyone can call it. The caller pays the message fee.
+    /// @dev The `from` of the return payload is the receiver whose hook failed. The bridge deletes
+    ///      the record before it sends, so one delivery cannot pay on both chains.
+    function reclaimToSource(bytes32 receiveId) external payable nonReentrant returns (bytes32 sendId) {
+        ERC7786TokenBridgeStorage storage $ = _s();
+        FailedDelivery memory failed = $.failedDeliveries[receiveId];
+        if (failed.sender == address(0)) revert NoFailedDelivery(receiveId);
+        delete $.failedDeliveries[receiveId];
+
+        bytes memory payload = _encodePayload(failed.receiver, failed.sender, failed.amount, "");
+        sendId = bridge.sendMessage{value: msg.value}(_remoteBridge(failed.sourceDomain), payload, new bytes[](0));
+
+        emit CrosschainDeliveryReclaimed(receiveId, sendId, failed.sourceDomain, failed.sender, failed.amount);
     }
 
     function _addPeer(uint32 domain, address peerBridge) internal {
