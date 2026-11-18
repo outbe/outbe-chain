@@ -23,7 +23,7 @@ use crate::{
     runtime,
     sol_ext::{IReferenceCurrency, IERC20},
 };
-use outbe_vaultrouter::api::IVaultRouter;
+use outbe_vaultrouter::precompile::IVaultRouter;
 use outbe_vaultrouter::settlement::SettlementError;
 
 fn dummy_auth() -> ModifyAuth {
@@ -133,11 +133,8 @@ impl World {
                 &U256::ONE,
             )),
         );
-        provider.stub_sub_call_at_selector(
-            outbe_system_common::addresses::VAULT_ROUTER_ADDRESS,
-            IVaultRouter::depositCall::SELECTOR,
-            Bytes::from(IVaultRouter::depositCall::abi_encode_returns(&U256::ONE)),
-        );
+        // The router does not run here. A payment stops at its `depositFrom`.
+        outbe_vaultrouter::test_support::stub_unanswered_deposit_from(&mut provider);
         StorageHandle::enter(&mut provider, |storage| {
             seed_production_nod_genesis(&storage);
         });
@@ -366,8 +363,8 @@ fn quote_settlement_decrypted(
     Ok((settlement_currency, payment_minor, snapshot_id))
 }
 
-/// Pays `asset` by ERC20 against a fixed balance stub: a payment that clears the
-/// snapshot check stops at the balance delta instead.
+/// Pays `asset` by ERC20. The router does not run, so a payment that clears the
+/// snapshot check stops at the router's `depositFrom` instead.
 fn settle_erc20(
     world: &mut World,
     nod_id: U256,
@@ -375,24 +372,6 @@ fn settle_erc20(
     asset: Address,
     snapshot: U256,
 ) -> Result<(), PrecompileError> {
-    for (selector, ret) in [
-        (
-            IERC20::transferFromCall::SELECTOR,
-            IERC20::transferFromCall::abi_encode_returns(&true),
-        ),
-        (
-            IERC20::approveCall::SELECTOR,
-            IERC20::approveCall::abi_encode_returns(&true),
-        ),
-        (
-            IERC20::balanceOfCall::SELECTOR,
-            IERC20::balanceOfCall::abi_encode_returns(&U256::ZERO),
-        ),
-    ] {
-        world
-            .provider
-            .stub_sub_call_at_selector(asset, selector, Bytes::from(ret));
-    }
     world.enter(|storage| {
         api::settle_nod(
             &storage,

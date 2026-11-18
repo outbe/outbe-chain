@@ -184,7 +184,9 @@ impl SlashIndicator<'_> {
         &mut self,
         validator: Address,
         slashed_label: &'static str,
-    ) -> Result<(u64, u64, U256)> {
+        payee: Address,
+        payee_percent: u64,
+    ) -> Result<(u64, u64, U256, U256)> {
         let slash_percent = self.slash_amount_percent()?;
         self.storage.now_secs()?;
         let mut vs = ValidatorSet::new(self.storage.clone());
@@ -194,11 +196,12 @@ impl SlashIndicator<'_> {
         self.felony_count.write(&validator, fc)?;
 
         let mut staking = Staking::new(self.storage.clone());
-        let slashed_amount = staking.slash_stake(validator, slash_percent)?;
+        let (slashed_amount, paid) =
+            staking.slash_stake_paying(validator, slash_percent, payee, payee_percent)?;
 
         crate::metrics::record_felony_count(validator, fc);
         crate::metrics::record_validator_slashed(validator, slashed_label);
-        Ok((fc, slash_percent, slashed_amount))
+        Ok((fc, slash_percent, slashed_amount, paid))
     }
 
     /// Applies an evidence felony.
@@ -211,8 +214,12 @@ impl SlashIndicator<'_> {
     ) -> Result<()> {
         let reward_pct = self.evidence_reward_percent()?;
         let block_number = self.storage.block_number().unwrap_or(0);
-        let (fc, slash_percent, slashed_amount) =
-            self.jail_count_and_slash(validator, "evidence_felony")?;
+        let (fc, slash_percent, slashed_amount, reward) = self.jail_count_and_slash(
+            validator,
+            "evidence_felony",
+            evidence_submitter,
+            reward_pct,
+        )?;
 
         journal_record(JournalRecord::EvidenceFelony {
             wall_clock: iso8601_now(),
@@ -236,15 +243,6 @@ impl SlashIndicator<'_> {
             "evidence-based felony applied - validator force-exited, \
              stake slashed, submitter rewarded",
         );
-
-        // Mint floor(slashed amount * reward percent / 100) to the submitter.
-        // The default reward percent is 0.
-        // slash_stake burns the slashed amount from the staking escrow.
-        // The method reduces native supply by the slashed amount minus the reward.
-        let reward = floor_percent(slashed_amount, reward_pct);
-        if !reward.is_zero() {
-            self.storage.increase_balance(evidence_submitter, reward)?;
-        }
 
         self.emit(ISlashIndicator::EvidenceFelonyApplied {
             validator,
@@ -368,15 +366,6 @@ fn admitted_percent_typed(
 ///
 /// `amount / 100 * percent` fits in `U256` because `percent <= 100`. The
 /// remainder term is at most `99 * 100`.
-pub(crate) fn floor_percent(amount: U256, percent: u64) -> U256 {
-    debug_assert!(percent <= 100, "floor_percent requires an admitted percent");
-    let hundred = U256::from(100u64);
-    let percent = U256::from(percent);
-    let quotient = amount / hundred;
-    let remainder = amount % hundred;
-    quotient * percent + (remainder * percent) / hundred
-}
-
 /// Computes a canonical evidence hash that is order-independent.
 ///
 /// Normalizes the order of two evidence payloads before hashing so that

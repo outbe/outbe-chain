@@ -2,17 +2,6 @@
 
 use super::*;
 
-/// One settled Gem of `load` Promis owned by Alice, priced at 2 COEN/USD.
-fn settled_gem(load: U256) -> (HashMapStorageProvider, U256) {
-    let mut provider = test_storage(Some(U256::from(2u64) * six_decimal_unit()));
-    let gem_id = StorageHandle::enter(&mut provider, |storage| {
-        let gem_id = issue_at_live_rate(&storage, ALICE, load, 840, 840).unwrap();
-        force_settled(&storage, gem_id);
-        gem_id
-    });
-    (provider, gem_id)
-}
-
 fn promis_balance(storage: &StorageHandle<'_>, account: Address) -> U256 {
     let sk = outbe_promis::enclave_client::test_enclave::state_key();
     let vk = derive_view_key(&sk, account).unwrap();

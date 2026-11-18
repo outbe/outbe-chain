@@ -1,4 +1,4 @@
-//! VaultRouter precompile (`VAULT_ROUTER_ADDRESS`) aka Reserve liquidity router.
+//! VaultRouter precompile (`VAULT_ROUTER_ADDRESS`) aka Reserve stablecoin router.
 //!
 //! Registers ERC-4626 vaults per asset and moves funds in and out.
 

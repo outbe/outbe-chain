@@ -116,7 +116,8 @@ pub(crate) fn fail_metadosis(
         let (record, limit_minor) =
             outbe_emission::api::record_metadosis_failed(metadosis.storage.clone(), day)?;
         if !limit_minor.is_zero() {
-            PromisLimitContract::new(metadosis.storage.clone()).checked_credit(limit_minor)?;
+            PromisLimitContract::new(metadosis.storage.clone())
+                .add(outbe_promislimit::LimitSource::MetadosisLimit, limit_minor)?;
         }
         if !outbe_agentreward::distribution::has_pending_accruals_for_day(
             &metadosis.storage,

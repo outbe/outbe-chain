@@ -1,0 +1,56 @@
+# Minimal four-founder test network. Add more `founders` entries for a larger founding committee.
+# This workflow uses in-process TEE without attestation and is limited to devnet and testnet.
+version: 1
+name: local-testnet
+network: testnet
+chain_id: 54322345
+certified_rpc: "http://10.0.0.10:8545"
+founders:
+  - name: validator-0
+    ssh:
+      host: 192.0.2.10
+      user: ubuntu
+      port: 22
+    advertise_ip: 10.0.0.10
+    rpc_bind_ip: 10.0.0.10
+  - name: validator-1
+    ssh:
+      host: 192.0.2.11
+      user: ubuntu
+      port: 22
+    advertise_ip: 10.0.0.11
+    rpc_bind_ip: 10.0.0.11
+  - name: validator-2
+    ssh:
+      host: 192.0.2.12
+      user: ubuntu
+      port: 22
+    advertise_ip: 10.0.0.12
+    rpc_bind_ip: 10.0.0.12
+  - name: validator-3
+    ssh:
+      host: 192.0.2.13
+      user: ubuntu
+      port: 22
+    advertise_ip: 10.0.0.13
+    rpc_bind_ip: 10.0.0.13
+
+topology:
+  # Enable only when consensus peers use private/RFC1918 addresses.
+  use_local_defaults: true
+
+genesis:
+  # Optional pre-TEE genesis JSON. Paths are resolved relative to this file.
+  # When set, remove the timestamp, epoch length, and DKG window settings below.
+  # base: ./custom-genesis.json
+  # Omit timestamp for a fresh launch time. Set it to reproduce one exact genesis.
+  # timestamp: 1793795928
+  epoch_length_blocks: 1200
+  dkg_prepare_window_blocks: 300
+  dkg_activation_grace_blocks: 300
+  prefunded_accounts:
+    "0x1111111111111111111111111111111111111111": "1000000000000000000000"
+  # Additional keys accepted by outbe-genesis-cli, for example oracle or
+  # protocol overrides. Network identity, hosts, keys, and runtime fields are
+  # managed by outbe-up and cannot be overridden here.
+  overrides: {}

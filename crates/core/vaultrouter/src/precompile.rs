@@ -1,16 +1,17 @@
 //! ABI dispatch for the vaultrouter precompile at `VAULT_ROUTER_ADDRESS`.
 
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::SolInterface;
+use alloy_sol_types::{sol, SolInterface};
 
 use outbe_primitives::dispatch::{dispatch_call, mutate, mutate_void, view};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::types::StorageSet;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::api::IVaultRouter;
 use crate::runtime;
 use crate::schema::VaultRouterContract;
+
+sol!("../../../contracts/precompiles/src/IVaultRouter.sol");
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
@@ -63,58 +64,60 @@ pub fn dispatch(
                 runtime::reference_currency_assets(&storage, c.isoCode, c.offset, c.limit)
             }),
 
-            // --- liquidity source / target enumeration ---
-            liquiditySourcesCount(c) => view(c, |_c| {
+            // --- stablecoin source / target enumeration ---
+            stablecoinSourcesCount(c) => view(c, |_c| {
                 let contract = VaultRouterContract::new(storage.clone());
-                Ok(U256::from(contract.liquidity_sources.len()?))
+                Ok(U256::from(contract.stablecoin_sources.len()?))
             }),
-            liquiditySourceAt(c) => view(c, |c| {
+            stablecoinSourceAt(c) => view(c, |c| {
                 let contract = VaultRouterContract::new(storage.clone());
-                let addr = set_at(&contract.liquidity_sources, c.index)?;
-                let type_u8 = contract.liquidity_source_types.read(&addr)?;
-                Ok(IVaultRouter::liquiditySourceAtReturn {
+                let addr = set_at(&contract.stablecoin_sources, c.index)?;
+                let type_u8 = contract.stablecoin_source_types.read(&addr)?;
+                Ok(IVaultRouter::stablecoinSourceAtReturn {
                     sourceAddress: addr,
-                    sourceType: IVaultRouter::StablesSource::try_from(type_u8)
-                        .unwrap_or(IVaultRouter::StablesSource::Unknown),
+                    sourceType: IVaultRouter::StablecoinSource::try_from(type_u8)
+                        .unwrap_or(IVaultRouter::StablecoinSource::Unknown),
                 })
             }),
-            liquidityTargetsCount(c) => view(c, |_c| {
+            stablecoinTargetsCount(c) => view(c, |_c| {
                 let contract = VaultRouterContract::new(storage.clone());
-                Ok(U256::from(contract.liquidity_targets.len()?))
+                Ok(U256::from(contract.stablecoin_targets.len()?))
             }),
-            liquidityTargetAt(c) => view(c, |c| {
+            stablecoinTargetAt(c) => view(c, |c| {
                 let contract = VaultRouterContract::new(storage.clone());
-                let addr = set_at(&contract.liquidity_targets, c.index)?;
-                let type_u8 = contract.liquidity_target_types.read(&addr)?;
-                Ok(IVaultRouter::liquidityTargetAtReturn {
+                let addr = set_at(&contract.stablecoin_targets, c.index)?;
+                let type_u8 = contract.stablecoin_target_types.read(&addr)?;
+                Ok(IVaultRouter::stablecoinTargetAtReturn {
                     targetAddress: addr,
-                    targetType: IVaultRouter::StablesTarget::try_from(type_u8)
-                        .unwrap_or(IVaultRouter::StablesTarget::Unknown),
+                    targetType: IVaultRouter::StablecoinTarget::try_from(type_u8)
+                        .unwrap_or(IVaultRouter::StablecoinTarget::Unknown),
                 })
             }),
 
-            // --- permissionless application of governance approvals ---
-            approvedVaultAction(c) => view(c, |c| {
-                runtime::approved_vault_action(&storage, c.proposalId)
-            }),
-            applyApproved(c) => mutate_void(&storage, c, caller, |_sender, c| {
-                runtime::apply_approved(storage.clone(), c.proposalId)
+            // --- permissionless application of vault actions ---
+            getVaultAction(c) => view(c, |c| runtime::get_vault_action(&storage, c.proposalId)),
+            applyVaultAction(c) => mutate_void(&storage, c, caller, |_sender, c| {
+                runtime::apply_vault_action(storage.clone(), c.proposalId)
             }),
 
-            // --- liquidity flow (source/target-gated against the registry) ---
+            // --- stablecoin flow (source/target-gated against the registry) ---
             deposit(c) => mutate(&storage, c, caller, |sender, c| {
-                let source = runtime::registered_liquidity_source(&storage, sender)?;
+                let source = runtime::registered_stablecoin_source(&storage, sender)?;
                 runtime::deposit(storage.clone(), sender, c.asset, c.assetsMinor, source)
             }),
+            depositFrom(c) => mutate(&storage, c, caller, |sender, c| {
+                let source = runtime::registered_stablecoin_source(&storage, sender)?;
+                runtime::deposit_from(storage.clone(), sender, c, source)
+            }),
             withdraw(c) => mutate(&storage, c, caller, |sender, c| {
-                let target = runtime::registered_liquidity_target(&storage, sender)?;
+                let target = runtime::registered_stablecoin_target(&storage, sender)?;
                 runtime::withdraw(storage.clone(), sender, c, target)
             }),
 
             // --- views over external state ---
             sharesBalance(c) => view(c, |c| runtime::shares_balance(&storage, c.vault)),
-            hasLiquidity(c) => view(c, |c| {
-                runtime::has_liquidity(&storage, c.asset, c.amountMinor)
+            hasStablecoin(c) => view(c, |c| {
+                runtime::has_stablecoin(&storage, c.asset, c.amountMinor)
             }),
             reservationOf(c) => view(c, |c| {
                 let record = runtime::reservation_of(&storage, c.id)?;
@@ -129,7 +132,7 @@ pub fn dispatch(
                 if sender != outbe_system_common::addresses::CREDIS_FACTORY_ADDRESS {
                     return Err(crate::errors::VaultRouterError::Unauthorized.into());
                 }
-                let target = runtime::registered_liquidity_target(&storage, sender)?;
+                let target = runtime::registered_stablecoin_target(&storage, sender)?;
                 runtime::release_reservation(
                     storage.clone(),
                     c.id,

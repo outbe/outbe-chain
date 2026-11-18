@@ -9,6 +9,8 @@ use outbe_system_common::addresses::STAKING_ADDRESS;
 /// Same funded base the felony path burns by the admitted 8% (`1_000_000 * 8 / 100`).
 const FUNDED_STAKE: u64 = 1_000_000;
 const STAKE_AFTER_EIGHT_PERCENT: u64 = 920_000;
+/// The 8% slash is below one minor, so it stays in the escrow as the rest of code 44.
+const EIGHT_PERCENT_REST: u64 = 80_000;
 
 fn fund_staking_escrow(storage: StorageHandle<'_>, validators: &[Address], escrow: u64) {
     let staking = outbe_staking::contract::Staking::new(storage.clone());
@@ -95,25 +97,35 @@ fn tee_lease_sweep_skips_bootstrap_then_jails_at_exact_deadline_once() {
         assert_eq!(jailed.slash_count, 1);
         let limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
         assert_eq!(limit.promis_limit().unwrap(), U256::ZERO);
-        assert_eq!(limit.rest_minor().unwrap(), U256::from(80_000u64));
+        assert_eq!(
+            limit
+                .burn_rest(outbe_promislimit::BurnSource::ValidatorStake)
+                .unwrap(),
+            U256::from(80_000u64)
+        );
         assert_eq!(
             staking.get_total_staked().unwrap(),
             U256::from(STAKE_AFTER_EIGHT_PERCENT)
         );
         assert_eq!(
             storage.balance(STAKING_ADDRESS).unwrap(),
-            U256::from(STAKE_AFTER_EIGHT_PERCENT)
+            U256::from(STAKE_AFTER_EIGHT_PERCENT + EIGHT_PERCENT_REST)
         );
         assert_eq!(enforce_tee_lease_deadlines(&ctx).unwrap(), 0);
         assert_eq!(vs.get_validator(VALIDATOR).unwrap().unwrap(), jailed);
-        assert_eq!(limit.rest_minor().unwrap(), U256::from(80_000u64));
+        assert_eq!(
+            limit
+                .burn_rest(outbe_promislimit::BurnSource::ValidatorStake)
+                .unwrap(),
+            U256::from(80_000u64)
+        );
         assert_eq!(
             staking.get_stake(VALIDATOR).unwrap(),
             U256::from(STAKE_AFTER_EIGHT_PERCENT)
         );
         assert_eq!(
             storage.balance(STAKING_ADDRESS).unwrap(),
-            U256::from(STAKE_AFTER_EIGHT_PERCENT)
+            U256::from(STAKE_AFTER_EIGHT_PERCENT + EIGHT_PERCENT_REST)
         );
     });
 }
@@ -137,7 +149,7 @@ fn tee_lease_sweep_treats_missing_post_bootstrap_binding_as_overdue() {
         );
         assert_eq!(
             storage.balance(STAKING_ADDRESS).unwrap(),
-            U256::from(STAKE_AFTER_EIGHT_PERCENT)
+            U256::from(STAKE_AFTER_EIGHT_PERCENT + EIGHT_PERCENT_REST)
         );
     });
 }
@@ -180,8 +192,14 @@ fn tee_lease_sweep_later_failure_rolls_back_whole_sweep() {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.register_validator(OWNER, later, &[8u8; 48]).unwrap();
         vs.mark_pending(later).unwrap();
-        // One 8% burn is 80_000. The second overdue validator cannot be paid.
+        // One 8% burn is 80_000. With the rest of code 44 one minor minus 100_000, the second
+        // burn crosses a minor that the escrow does not hold.
+        let rest = outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR - U256::from(100_000u64);
         fund_staking_escrow(storage.clone(), &[VALIDATOR, later], 80_000);
+        storage.increase_balance(STAKING_ADDRESS, rest).unwrap();
+        outbe_promislimit::PromisLimitContract::new(storage.clone())
+            .burn(outbe_promislimit::BurnSource::ValidatorStake, rest)
+            .unwrap();
         vs.confirm_validator_ready(later).unwrap();
         vs.activate_validator_via_boundary_for_test(later).unwrap();
     });
@@ -211,6 +229,9 @@ fn tee_lease_sweep_later_failure_rolls_back_whole_sweep() {
         assert_eq!(
             storage.balance(STAKING_ADDRESS).unwrap(),
             U256::from(80_000u64)
+                + outbe_promislimit::PromisLimitContract::new(storage.clone())
+                    .burn_rest(outbe_promislimit::BurnSource::ValidatorStake)
+                    .unwrap()
         );
     });
 }

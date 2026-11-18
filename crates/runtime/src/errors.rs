@@ -1,6 +1,6 @@
 //! Typed error definitions for node launch, admission, and shutdown.
 
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use outbe_slashindicator::errors::PercentAdmissionError;
 
 /// Represents errors during node launch, TEE admission, and shutdown.
@@ -142,6 +142,12 @@ pub(crate) enum LaunchError {
     InvalidSlashIndicatorGenesisPercent {
         /// Shared admission failure. The same rule backs the runtime getters.
         cause: PercentAdmissionError,
+    },
+    /// Genesis holds storage of a store that only the chain writes when it makes a Worldwide Day.
+    #[error("genesis holds storage of {address}: only the chain makes Worldwide Days")]
+    GenesisHoldsDayState {
+        /// Address of the store.
+        address: Address,
     },
 }
 

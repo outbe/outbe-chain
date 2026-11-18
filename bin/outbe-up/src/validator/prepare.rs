@@ -9,7 +9,7 @@ use crate::{
         bundle::{self, OperatorManifest},
         config::OperatorConfig,
         install,
-        journal::Journal,
+        journal::{self, Journal},
         path_text,
         rpc::RpcClient,
         validator_address,
@@ -33,7 +33,7 @@ pub async fn run(bundle_path: &Path, config_path: &Path) -> Result<()> {
     );
     let minimum_stake = remote.min_stake().await?;
     let root = Path::new(process::ROOT);
-    if root.exists() {
+    if root.exists() && journal::path().is_file() {
         let mut journal = Journal::load()?;
         ensure!(
             journal.bundle_sha256 == extracted.archive_sha256
@@ -56,6 +56,7 @@ pub async fn run(bundle_path: &Path, config_path: &Path) -> Result<()> {
         );
         return Ok(());
     }
+    remove_empty_unprepared_root(root)?;
 
     progress.stage("generating host-local validator identities");
     let staging = extracted.directory.path();
@@ -94,6 +95,18 @@ pub async fn run(bundle_path: &Path, config_path: &Path) -> Result<()> {
         &journal.config.network.certified_rpc,
     );
     Ok(())
+}
+
+fn remove_empty_unprepared_root(root: &Path) -> Result<()> {
+    if !root.exists() {
+        return Ok(());
+    }
+    ensure!(
+        root.is_dir() && fs::read_dir(root)?.next().is_none(),
+        "{} exists without a lifecycle journal and is not an empty directory",
+        root.display()
+    );
+    fs::remove_dir(root).wrap_err_with(|| format!("failed to remove empty {}", root.display()))
 }
 
 fn verify_bootstrap_binary(root: &Path) -> Result<()> {
@@ -143,4 +156,27 @@ fn print_summary(validator: Address, minimum_stake: U256, certified_rpc: &str) {
     println!("  --rpc-url \"$CERTIFIED_RPC\" \\");
     println!("  --private-key \"$FUNDER_PRIVATE_KEY\"");
     println!("unset FUNDER_PRIVATE_KEY");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_an_existing_empty_install_directory() {
+        let parent = tempfile::tempdir().unwrap();
+        let root = parent.path().join("outbe-chain");
+        fs::create_dir(&root).unwrap();
+        remove_empty_unprepared_root(&root).unwrap();
+        assert!(!root.exists());
+    }
+
+    #[test]
+    fn rejects_an_unjournaled_nonempty_install_directory() {
+        let parent = tempfile::tempdir().unwrap();
+        let root = parent.path().join("outbe-chain");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("unexpected"), b"data").unwrap();
+        assert!(remove_empty_unprepared_root(&root).is_err());
+    }
 }

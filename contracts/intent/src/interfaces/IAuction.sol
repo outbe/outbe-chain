@@ -9,7 +9,8 @@ interface IAuction {
         uint128 outputAmount;
     }
 
-    /// @notice Auction window of one order, fixed when the auction starts
+    /// @notice Auction window of one order, fixed when the auction starts. startedAt is a block
+    ///         number, and the periods are in blocks
     struct Window {
         uint64 startedAt;
         uint64 commitPeriod;
@@ -83,11 +84,11 @@ interface IAuction {
     // ============ Admin Functions ============
 
     /// @notice Update commit period (owner only)
-    /// @param newPeriod New commit period in seconds
+    /// @param newPeriod New commit period in blocks
     function setCommitPeriod(uint256 newPeriod) external;
 
     /// @notice Update reveal period (owner only)
-    /// @param newPeriod New reveal period in seconds
+    /// @param newPeriod New reveal period in blocks
     function setRevealPeriod(uint256 newPeriod) external;
 
     /// @notice Update max quotes per order (owner only)
@@ -112,22 +113,22 @@ interface IAuction {
     /// @notice Get the number of revealed quotes for an order
     function getQuoteCount(bytes32 orderId) external view returns (uint256);
 
-    /// @notice Get the commit deadline timestamp (0 if no commits yet)
+    /// @notice Get the first block after the commit phase (0 if no commits yet)
     function getCommitDeadline(bytes32 orderId) external view returns (uint256);
 
-    /// @notice Get the reveal deadline timestamp (0 if no commits yet)
+    /// @notice Get the first block after the reveal phase (0 if no commits yet)
     function getRevealDeadline(bytes32 orderId) external view returns (uint256);
 
     /// @notice Check if a solver has committed for an order
     function hasSolverCommitted(bytes32 orderId, address solver) external view returns (bool);
 
-    /// @notice Get the auction start timestamp for an order
+    /// @notice Get the block number at which the auction of an order started
     function auctionStartedAt(bytes32 orderId) external view returns (uint256);
 
-    /// @notice Get the commit period in seconds
+    /// @notice Get the commit period in blocks
     function commitPeriod() external view returns (uint256);
 
-    /// @notice Get the reveal period in seconds
+    /// @notice Get the reveal period in blocks
     function revealPeriod() external view returns (uint256);
 
     /// @notice Get the maximum number of quotes per order

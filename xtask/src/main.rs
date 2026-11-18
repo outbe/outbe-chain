@@ -103,7 +103,7 @@ enum ReleaseCommand {
 #[derive(Debug, Args)]
 struct SoftwareBuildArgs {
     /// Safe production binaries, or an explicitly unsafe local-development build.
-    #[arg(long, value_enum)]
+    #[arg(long, value_enum, default_value = "production")]
     profile: software::SoftwareProfile,
     /// Directory that receives the versioned `.tar.zst` bundle.
     #[arg(long)]

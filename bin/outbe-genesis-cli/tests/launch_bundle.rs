@@ -8,7 +8,8 @@ use std::process::Command;
 use alloy_primitives::B256;
 use flate2::read::GzDecoder;
 use outbe_genesis_cli::launch_bundle::{
-    feeder_config, feeder_pairs, radicle_script, render, DEFAULT_MAX_VALIDATORS,
+    feeder_config, feeder_pairs, radicle_script, render, write_systemd_units,
+    DEFAULT_MAX_VALIDATORS,
 };
 use outbe_genesis_cli::network::profiles_dir;
 use outbe_genesis_cli::stages::build_seed;
@@ -378,7 +379,6 @@ fn caddy_systemd_units_and_resident_tee() {
     assert!(install_systemd.contains("as_root systemctl"));
     assert!(!install_systemd.contains("\nsudo "));
     assert!(!install_systemd.contains("outbe-tee-renew"));
-    assert!(install_systemd.contains("enable --now outbe-validator.target"));
 
     let install_caddy =
         fs::read_to_string(output_dir.join("validator-2/install-caddy.sh")).expect("install-caddy");
@@ -440,4 +440,48 @@ fn caddy_systemd_units_and_resident_tee() {
     assert!(node_dcap.contains("--consensus.listen-addr 0.0.0.0:30400"));
     assert!(!node_dcap.contains("--tee-session-mode"));
     assert!(!out_dcap.join("validator-0/run-enclave.sh").exists());
+}
+
+#[test]
+fn founding_installer_prepares_without_starting_services() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    write_systemd_units(root, "/opt/outbe", 0).expect("generate systemd installer");
+    let stub = root.join("stub.bash");
+    fs::write(
+        &stub,
+        r#"dirname() { printf '%s\n' "${2%/*}"; }
+getent() { return 0; }
+id() { printf '0\n'; }
+chown() { return 0; }
+install() { return 0; }
+systemctl() { printf '%s\n' "$*" >> "$SYSTEMCTL_LOG"; }
+"#,
+    )
+    .expect("write shell command stubs");
+    let log = root.join("systemctl.log");
+    for (args, expected) in [
+        (
+            &["--prepare-only"][..],
+            "disable --now outbe-validator.target",
+        ),
+        (&[][..], "enable --now outbe-validator.target"),
+    ] {
+        fs::write(&log, "").expect("clear systemctl log");
+        let output = Command::new("/bin/bash")
+            .arg(root.join("install-systemd.sh"))
+            .args(args)
+            .env_clear()
+            .env("PATH", root)
+            .env("BASH_ENV", &stub)
+            .env("SYSTEMCTL_LOG", &log)
+            .output()
+            .expect("run generated installer");
+        assert!(output.status.success(), "{output:?}");
+        let calls = fs::read_to_string(&log).expect("systemctl log");
+        assert_eq!(
+            calls.lines().collect::<Vec<_>>(),
+            ["daemon-reload", expected]
+        );
+    }
 }

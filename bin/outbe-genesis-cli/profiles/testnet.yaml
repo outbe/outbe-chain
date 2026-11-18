@@ -12,8 +12,8 @@
 
 chain_id: 424242
 
-# One host or IP per founding validator, in order. The bootstrap profile fixes the founding
-# committee at four members. Append `:port` to give one validator a consensus
+# One host or IP per founding validator, in order. At least four founders are
+# required. Append `:port` to give one validator a consensus
 # port of its own (`- 10.0.0.3:31555`).
 validators:
   - 10.0.0.1
@@ -97,8 +97,6 @@ feeder_seeds: testnet/seeds.yaml
 # dkg_activation_grace_blocks: 30
 # prefund_coen_units: "100000000000000000000000000" # 100000000 COEN per validator
 # min_stake: "10000000000000000000000000"           # 10000000 COEN minimum stake
-# worldwide_day: 20260824             # default: derived from the timestamp
-# fresh_metadosis: true               # do not seed an already-OFFERING day
 # contracts_dir: contracts/predeploys
 
 # Protocol timings, copied verbatim into config.outbeProtocol.
@@ -160,29 +158,12 @@ oracle:
   scurve_seeds:
     - pair_base: COEN
       pair_quote: "840"
-      peak_day: 20241220
       peak_price: "1000000"
-
-# No genesis worldwide day. The runtime creates the first one itself at block 1
-# (`init_genesis_day` in crates/core/metadosis/src/runtime.rs), and the live
-# testnet genesis carries no metadosis storage at all.
-#
-# A seeded day is worse than useless here. The seeder writes only the day's
-# `metadosis_limit_minor`, never the formation record that
-# `apply_missed_offering` requires, so the moment such a day reaches
-# MissedOffering the whole ProtocolCycle dies with
-# `MissedOffering requires an immutable formed day limit` and the chain stops
-# producing blocks. The one that used to live here avoided that only by
-# declaring `offering_end: 4000000000` - a window open until 2096 - which hid
-# the gap instead of closing it.
 
 # Native-token balances seeded on top of the validator prefund.
 balance:
   "0x4FE927aB711793954B3a29969Ecd4A60D6D265d0": "1000000000000000000000"
   "0x265846D63407cB61354B6AFd317A509DF4dcc327": "1000000000000000000000"
-
-# Pre-seeded tributes; normally empty.
-tributes: []
 
 # Pre-deployed external contracts. Paths resolve against
 # `contracts_dir` (default contracts/predeploys).

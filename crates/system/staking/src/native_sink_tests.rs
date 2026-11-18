@@ -1,9 +1,9 @@
-//! Slashed stake is a native burn from the staking escrow that credits the
-//! Promis Limit and stores any sub-protocol-minor remainder in `rest_minor`.
+//! Slashed stake burns from the staking escrow in whole minors of the Promis Limit; the part
+//! below one minor stays in the escrow as the rest of code 44.
 
 use alloy_primitives::{address, Address, U256};
 use outbe_primitives::storage::StorageHandle;
-use outbe_promislimit::PromisLimitContract;
+use outbe_promislimit::{BurnSource, PromisLimitContract};
 use outbe_system_common::addresses::{
     METADOSIS_ADDRESS, PROMIS_LIMIT_ADDRESS, REWARDS_ADDRESS, STAKING_ADDRESS,
 };
@@ -31,7 +31,7 @@ fn with_staked_validator<R>(f: impl FnOnce(StorageHandle<'_>, &mut Staking<'_>) 
 }
 
 #[test]
-fn slashing_burns_escrow_and_credits_sub_unit_remainder_to_promis_limit_rest() {
+fn a_sub_minor_slash_stays_in_the_escrow_as_the_rest_of_its_code() {
     with_staked_validator(|storage, staking| {
         let balances = |storage: &StorageHandle<'_>| {
             [
@@ -48,29 +48,18 @@ fn slashing_burns_escrow_and_credits_sub_unit_remainder_to_promis_limit_rest() {
         let before = balances(&storage);
         let promis_limit = PromisLimitContract::new(storage.clone());
         let promis_limit_before = promis_limit.promis_limit().unwrap();
-        let rest_before = promis_limit.rest_minor().unwrap();
+        let rest_before = promis_limit.burn_rest(BurnSource::ValidatorStake).unwrap();
 
         let slashed = staking.slash_stake(VALIDATOR, 20).unwrap();
         assert_eq!(slashed, U256::from(2_000u64));
 
-        let after = balances(&storage);
         assert_eq!(
-            after[0],
-            before[0] - slashed,
-            "the slashed amount leaves the staking escrow"
-        );
-        assert_eq!(
-            &after[1..],
-            &before[1..],
-            "no account receives the slashed stake"
-        );
-        assert_eq!(
-            after.iter().sum::<U256>(),
-            before.iter().sum::<U256>() - slashed,
-            "the slashed stake is removed from native supply"
+            balances(&storage),
+            before,
+            "a slash below one minor moves no COEN"
         );
         let promis_limit_after = promis_limit.promis_limit().unwrap();
-        let rest_after = promis_limit.rest_minor().unwrap();
+        let rest_after = promis_limit.burn_rest(BurnSource::ValidatorStake).unwrap();
         assert_eq!(promis_limit_after, promis_limit_before);
         assert_eq!(rest_after, rest_before + slashed);
         assert_eq!(staking.get_stake(VALIDATOR).unwrap(), U256::from(8_000u64));
@@ -94,7 +83,7 @@ fn two_one_point_five_protocol_minor_slashes_credit_one_then_two_minors() {
         assert_eq!(first_slash, one_and_half);
         assert_eq!(promis_limit.promis_limit().unwrap(), U256::ONE);
         assert_eq!(
-            promis_limit.rest_minor().unwrap(),
+            promis_limit.burn_rest(BurnSource::ValidatorStake).unwrap(),
             UNITS_PER_PROTOCOL_MINOR / U256::from(2u64)
         );
         assert_eq!(storage.balance(PROMIS_LIMIT_ADDRESS).unwrap(), U256::ZERO);
@@ -105,6 +94,9 @@ fn two_one_point_five_protocol_minor_slashes_credit_one_then_two_minors() {
         let second_slash = staking.slash_stake(VALIDATOR, 10).unwrap();
         assert_eq!(second_slash, one_and_half);
         assert_eq!(promis_limit.promis_limit().unwrap(), U256::from(3u64));
-        assert_eq!(promis_limit.rest_minor().unwrap(), U256::ZERO);
+        assert_eq!(
+            promis_limit.burn_rest(BurnSource::ValidatorStake).unwrap(),
+            U256::ZERO
+        );
     });
 }

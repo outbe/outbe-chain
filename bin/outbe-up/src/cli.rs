@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 use eyre::Result;
 
-use crate::validator;
+use crate::{network, validator};
 
 #[derive(Debug, Parser)]
 #[command(name = "outbe-up", about = "Outbe node operator CLI")]
@@ -14,10 +14,65 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Build and operate a new founding-validator network.
+    Network(NetworkArgs),
     /// Prepare, synchronize, promote, and inspect a validator host.
     Validator(ValidatorArgs),
     #[command(hide = true)]
     Internal(InternalArgs),
+}
+
+#[derive(Debug, Args)]
+struct NetworkArgs {
+    #[command(subcommand)]
+    command: NetworkCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum NetworkCommand {
+    /// Write a documented network configuration template.
+    #[command(visible_alias = "init")]
+    ConfigExample {
+        #[arg(long, default_value = "network.yaml")]
+        output: PathBuf,
+    },
+    /// Build genesis and host-specific artifacts from one immutable software bundle.
+    Build {
+        #[arg(long)]
+        software_bundle: PathBuf,
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        /// Reuse an existing validator-N key tree instead of generating new identities.
+        #[arg(long)]
+        keys_dir: Option<PathBuf>,
+    },
+    /// Verify and install every founding host without starting services.
+    Prepare {
+        #[arg(long)]
+        artifacts: PathBuf,
+        #[arg(long)]
+        ssh_key: Option<PathBuf>,
+    },
+    /// Start every founder and wait for finalized consensus.
+    Start {
+        #[arg(long)]
+        artifacts: PathBuf,
+        #[arg(long)]
+        ssh_key: Option<PathBuf>,
+        #[arg(long, default_value_t = 600)]
+        timeout: u64,
+    },
+    /// Show the coordinated state of every founding validator.
+    Status {
+        #[arg(long)]
+        artifacts: PathBuf,
+        #[arg(long)]
+        ssh_key: Option<PathBuf>,
+        #[arg(long)]
+        watch: bool,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -28,8 +83,11 @@ struct ValidatorArgs {
 
 #[derive(Debug, Subcommand)]
 enum ValidatorCommand {
-    /// Print an operator configuration template.
-    ConfigExample,
+    /// Print a documented operator configuration template, or write it to --output.
+    ConfigExample {
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
     /// Verify and install an operator bundle without starting services.
     Prepare {
         #[arg(long)]
@@ -74,11 +132,43 @@ struct WaitArgs {
 impl Cli {
     pub async fn run(self) -> Result<()> {
         match self.command {
-            Command::Validator(args) => match args.command {
-                ValidatorCommand::ConfigExample => {
-                    print!("{}", validator::assets::OPERATOR_CONFIG_EXAMPLE);
-                    Ok(())
+            Command::Network(args) => match args.command {
+                NetworkCommand::ConfigExample { output } => network::config::init(&output),
+                NetworkCommand::Build {
+                    software_bundle,
+                    config,
+                    output,
+                    keys_dir,
+                } => network::build::run(&software_bundle, &config, &output, keys_dir.as_deref()),
+                NetworkCommand::Prepare { artifacts, ssh_key } => {
+                    network::prepare::run(&artifacts, ssh_key.as_deref()).await
                 }
+                NetworkCommand::Start {
+                    artifacts,
+                    ssh_key,
+                    timeout,
+                } => {
+                    network::start::run(
+                        &artifacts,
+                        ssh_key.as_deref(),
+                        std::time::Duration::from_secs(timeout),
+                    )
+                    .await
+                }
+                NetworkCommand::Status {
+                    artifacts,
+                    ssh_key,
+                    watch,
+                } => network::status::show(&artifacts, ssh_key.as_deref(), watch).await,
+            },
+            Command::Validator(args) => match args.command {
+                ValidatorCommand::ConfigExample { output } => match output {
+                    Some(path) => validator::assets::write_config_example(&path),
+                    None => {
+                        print!("{}", validator::assets::OPERATOR_CONFIG_EXAMPLE);
+                        Ok(())
+                    }
+                },
                 ValidatorCommand::Prepare { bundle, config } => {
                     validator::prepare::run(&bundle, &config).await
                 }
@@ -106,6 +196,56 @@ mod tests {
 
     #[test]
     fn lifecycle_commands_parse() {
+        for command in ["config-example", "init"] {
+            let parsed = Cli::try_parse_from(["outbe-up", "network", command]).unwrap();
+            assert!(matches!(
+                parsed.command,
+                Command::Network(NetworkArgs {
+                    command: NetworkCommand::ConfigExample { output }
+                }) if output.as_os_str() == "network.yaml"
+            ));
+        }
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "network",
+            "build",
+            "--software-bundle",
+            "software.tar.zst",
+            "--config",
+            "network.yaml",
+            "--output",
+            "network-build",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "network",
+            "start",
+            "--artifacts",
+            "network-final",
+            "--timeout",
+            "900",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "network",
+            "status",
+            "--artifacts",
+            "network-final",
+            "--watch",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "network",
+            "prepare",
+            "--artifacts",
+            "network-final",
+            "--ssh-key",
+            "operator-key",
+        ])
+        .is_ok());
         assert!(Cli::try_parse_from([
             "outbe-up",
             "validator",
@@ -126,6 +266,29 @@ mod tests {
         .is_ok());
         assert!(Cli::try_parse_from(["outbe-up", "validator", "promote"]).is_ok());
         assert!(Cli::try_parse_from(["outbe-up", "validator", "status", "--watch"]).is_ok());
+    }
+
+    #[test]
+    fn validator_config_example_output_is_optional() {
+        for args in [
+            vec!["outbe-up", "validator", "config-example"],
+            vec![
+                "outbe-up",
+                "validator",
+                "config-example",
+                "--output",
+                "operator-config.yaml",
+            ],
+        ] {
+            let expected = args.get(4).map(PathBuf::from);
+            let parsed = Cli::try_parse_from(args).unwrap();
+            assert!(matches!(
+                parsed.command,
+                Command::Validator(ValidatorArgs {
+                    command: ValidatorCommand::ConfigExample { output }
+                }) if output == expected
+            ));
+        }
     }
 
     #[test]

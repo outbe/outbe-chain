@@ -33,6 +33,10 @@ contract PrepareUpgradeHarness is PrepareUpgrade {
     function _sourceCommit() internal view override returns (string memory) {
         return commit;
     }
+
+    function _executionDelayBlocks() internal pure override returns (uint256) {
+        return 50;
+    }
 }
 
 contract PrepareUpgradeTest is Test {
@@ -95,6 +99,7 @@ contract PrepareUpgradeTest is Test {
 
         string memory payload = script.proposal();
         assertEq(vm.parseJsonString(payload, ".operation"), "upgradeContracts");
+        assertEq(vm.parseJsonUint(payload, ".executionDelayBlocks"), 50);
         assertTrue(vm.keyExistsJson(payload, ".upgrades[1]"), "two upgrades");
         assertFalse(vm.keyExistsJson(payload, ".upgrades[2]"), "only the deployed proxies");
         assertEq(vm.parseJsonAddress(payload, ".upgrades[0].proxy"), address(hub));

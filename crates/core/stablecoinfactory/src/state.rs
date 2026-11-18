@@ -14,9 +14,9 @@ use outbe_system_common::{
 use revm::state::Bytecode;
 
 use crate::{
-    abi::IStablecoinFactory,
     api::{FactoryReservation, ValidatedStablecoinCreate},
     errors::StablecoinFactoryError,
+    precompile::IStablecoinFactory,
     schema::{ReservationRecord, StablecoinFactoryContract, FACTORY_SCHEMA_VERSION},
 };
 
@@ -170,7 +170,7 @@ impl StablecoinFactoryContract<'_> {
         })
     }
 
-    pub(crate) fn execute_approved(
+    pub(crate) fn create_stablecoin(
         &mut self,
         proposal_id: U256,
         proposer: Address,
@@ -204,9 +204,9 @@ impl StablecoinFactoryContract<'_> {
                     proposalId: proposal_id,
                     name: validated.payload.name.clone(),
                     ticker: validated.payload.ticker.clone(),
-                    iso4217: validated.payload.iso4217,
+                    isoCode: validated.payload.iso4217,
                     decimals: validated.payload.decimals,
-                    supplyCap: validated.payload.supply_cap,
+                    supplyCapMinor: validated.payload.supply_cap,
                     policyId: validated.payload.policy_id,
                 }
                 .encode_log_data(),

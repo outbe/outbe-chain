@@ -120,7 +120,7 @@ pub fn node_script(
     let rpc_bind = rpc_bind_ip(config, host)?;
 
     Ok(format!(
-        "\n# Validator node: execution and consensus with native enclave Lysis.\n\
+        "\n# Validator node: execution, consensus, and resident TEE.\n\
 KEYS={q_val_keys}\n\
 DATA={q_data}\n\
 mkdir -p \"$DATA\" {q_logs}\n\

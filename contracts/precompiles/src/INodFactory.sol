@@ -56,7 +56,7 @@ interface INodFactory {
 
     /// @notice Pay an uncalled Nod, or a called one at or before its settlement
     /// deadline, in ERC20 base units of `asset`. Any caller may pay. The Nod stays
-    /// with its owner. Approve NodFactory for the `quoteSettlement` amount first.
+    /// with its owner. Approve the VaultRouter for the `quoteSettlement` amount first.
     /// The asset must have a reserve vault and report the Nod's reference or
     /// issuance ISO 4217 code. Issuance-currency payment converts the
     /// reference-currency entry cost at the COEN cross rate of the trailing VWAP

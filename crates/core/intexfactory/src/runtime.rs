@@ -280,13 +280,7 @@ pub fn settle_intex(
             u32::try_from(units).map_err(|_| IntexFactoryError::SettledUnitsExceedU32)?;
         outbe_intex::api::record_settled_units(storage, series_id, owner, settled_units)?;
 
-        settlement::collect(
-            storage,
-            INTEX_FACTORY_ADDRESS,
-            payer,
-            asset,
-            quote.payment_minor,
-        )?;
+        settlement::collect(storage, payer, asset, quote.payment_minor)?;
 
         emit_event(
             storage,

@@ -204,13 +204,7 @@ fn full_sale_returns_only_the_dust_once() {
     ledger_selling(&mut p, 3, true);
     clear(&mut p);
     ledger_selling(&mut p, 3, true);
-    let unused = p
-        .get_events(DESIS_ADDRESS)
-        .iter()
-        .filter_map(|e| IDesis::DesisLimitReturned::decode_log_data(e).ok())
-        .map(|e| e.amountMinor)
-        .collect::<Vec<_>>();
-    assert_eq!(unused, vec![U256::from(7u64)]);
+    assert_eq!(super::desis_limit_returns(&p), vec![U256::from(7u64)]);
     let cleared = p
         .get_events(DESIS_ADDRESS)
         .iter()

@@ -182,7 +182,7 @@
         "internalType": "string"
       },
       {
-        "name": "iso4217",
+        "name": "isoCode",
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
@@ -194,7 +194,7 @@
         "internalType": "uint8"
       },
       {
-        "name": "supplyCap",
+        "name": "supplyCapMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

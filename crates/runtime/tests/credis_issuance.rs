@@ -24,7 +24,7 @@ use outbe_system_common::addresses::{
 };
 use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 use outbe_vaultrouter::{
-    api::IVaultRouter,
+    precompile::IVaultRouter,
     test_support::{register_source, register_target},
     LiquidityReservation, VaultRouterContract,
 };
@@ -142,12 +142,12 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
     register_source(
         &storage,
         CREDIS_FACTORY_ADDRESS,
-        IVaultRouter::StablesSource::CredisCostAmount,
+        IVaultRouter::StablecoinSource::CredisCostAmount,
     )?;
     register_target(
         &storage,
         CREDIS_FACTORY_ADDRESS,
-        IVaultRouter::StablesTarget::Credis,
+        IVaultRouter::StablecoinTarget::Credis,
     )?;
     // Reserve before pledging. The code below funds the held assets through real ERC20 calls.
     let closed_day = previous_date_key(timestamp_to_date_key(NOW)).expect("date step");
@@ -563,7 +563,7 @@ fn settle_successful_issuance(
         ASSET,
         U256::ZERO,
         IFixture::approveCall {
-            spender: CREDIS_FACTORY_ADDRESS,
+            spender: VAULT_ROUTER_ADDRESS,
             amount: U256::MAX
         }
     );
@@ -578,7 +578,7 @@ fn settle_successful_issuance(
         before,
         pledged,
     };
-    for mode in [1, 2, 3, 9, 10] {
+    for mode in [1, 2, 3, 9] {
         assert_payment_rollback(evm, mode, &payment)?;
     }
     let paid = call!(

@@ -58,7 +58,20 @@ fn calibrated_canonical_envelope_fits_artifact_limit() {
         .iter()
         .try_fold(0u64, |sum, spec| sum.checked_add(spec.work_budget_gas()))
         .unwrap();
-    assert!(handlers < outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT);
+    let envelope = handlers
+        .checked_add(outbe_cycle::tasks::AGENT_REWARDS_WORKER_BUDGET_GAS)
+        .and_then(|sum| sum.checked_add(outbe_cycle::tasks::DESIS_CLEANUP_WORKER_BUDGET_GAS))
+        .unwrap();
+    let artifact_limit = outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT;
+    assert!(handlers < artifact_limit);
+    assert!(envelope < artifact_limit / 2);
+    for limit in [
+        outbe_runtime::ORACLE_SLASH_STEP_GAS_LIMIT,
+        outbe_runtime::HYPERLANE_STEP_GAS_LIMIT,
+        outbe_runtime::END_BLOCK_FACTORY_STEP_GAS_LIMIT,
+    ] {
+        assert!(limit < artifact_limit);
+    }
 }
 
 #[test]
@@ -206,7 +219,9 @@ fn calibration_boundary_with_nested_ism_calls() {
     assert_eq!(
         logs.iter()
             .filter(|log| log.data.topics().first()
-                == Some(&keccak256("RemoteCallDispatched(uint32,bytes32,uint256)")))
+                == Some(&keccak256(
+                    "RemoteCallDispatched(uint32,bytes32,uint256,uint256)"
+                )))
             .count(),
         255
     );

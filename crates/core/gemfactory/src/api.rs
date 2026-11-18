@@ -31,8 +31,9 @@ pub fn settle_gem(
     storage: &StorageHandle<'_>,
     gem_id: U256,
     payment: SettlementPayment,
+    amount_cap_minor: U256,
 ) -> Result<()> {
-    runtime::settle_gem(storage, gem_id, payment)
+    runtime::settle_gem(storage, gem_id, payment, amount_cap_minor)
 }
 
 pub fn mine_promis(

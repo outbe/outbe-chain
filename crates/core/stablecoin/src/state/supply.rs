@@ -2,8 +2,8 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_stablecoinpolicy::api::can_mint as policy_can_mint;
 
-use crate::abi::IStablecoin;
 use crate::errors::StablecoinStateError;
+use crate::precompile::IStablecoin;
 use crate::schema::{allowance_key, StablecoinContract, ISSUER_ROLE};
 
 impl StablecoinContract<'_> {

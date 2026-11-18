@@ -66,7 +66,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     };
     let (_, amount, quoted) = quote(&mut world);
     let snapshot = outbe_oracle::api::VwapSnapshotId::from_u256(quoted).unwrap();
-    let mismatch = PrecompileError::from(SettlementError::AmountMismatch).to_string();
+    let mismatch = outbe_vaultrouter::test_support::unanswered_deposit_from().to_string();
 
     world.set_timestamp(snapshot.cutoff() + 3_599);
     let same_hour = settle_erc20(
@@ -205,15 +205,13 @@ fn issuance_erc20_admission_uses_the_quoted_converted_cost() {
     world.register_settlement_asset(SETTLEMENT_ASSET_EUR, 978);
     world.publish_coen_rate(840, U256::from(2 * SCALE_1E6_U64));
     world.publish_coen_rate(978, U256::from(SCALE_1E6_U64));
+    // The router reports minted shares for the payment.
     world.provider.stub_sub_call_at_selector(
-        SETTLEMENT_ASSET_EUR,
-        IERC20::transferFromCall::SELECTOR,
-        Bytes::from(IERC20::transferFromCall::abi_encode_returns(&true)),
-    );
-    world.provider.stub_sub_call_at_selector(
-        SETTLEMENT_ASSET_EUR,
-        IERC20::approveCall::SELECTOR,
-        Bytes::from(IERC20::approveCall::abi_encode_returns(&true)),
+        outbe_system_common::addresses::VAULT_ROUTER_ADDRESS,
+        IVaultRouter::depositFromCall::SELECTOR,
+        Bytes::from(IVaultRouter::depositFromCall::abi_encode_returns(
+            &U256::ONE,
+        )),
     );
 
     let quoted = world
@@ -222,14 +220,6 @@ fn issuance_erc20_admission_uses_the_quoted_converted_cost() {
     assert_eq!(quoted.0, 978);
     assert_eq!(quoted.1, U256::from(cost_of(&input) / 2));
 
-    // The factory's balance as settlement reads it: before the transfer, after
-    // it, and after the vault deposit. The token moves exactly the quote.
-    world.provider.stub_sub_call_sequence_at_selector(
-        SETTLEMENT_ASSET_EUR,
-        IERC20::balanceOfCall::SELECTOR,
-        [U256::ZERO, quoted.1, U256::ZERO]
-            .map(|balance| Bytes::from(IERC20::balanceOfCall::abi_encode_returns(&balance))),
-    );
     world
         .enter(|storage| {
             api::settle_nod(
@@ -247,6 +237,12 @@ fn issuance_erc20_admission_uses_the_quoted_converted_cost() {
     let paid = paid_event(&world);
     assert_eq!(paid.asset, SETTLEMENT_ASSET_EUR);
     assert_eq!(paid.amountMinor, quoted.1);
+    // The router takes the converted cost directly from the payer.
+    let pull = outbe_vaultrouter::test_support::last_deposit_from(&world.provider).unwrap();
+    assert_eq!(
+        (pull.payer, pull.asset, pull.assetsMinor),
+        (input.owner, SETTLEMENT_ASSET_EUR, quoted.1)
+    );
 }
 
 #[test]
@@ -315,12 +311,12 @@ fn issuance_rail_rejects_a_leg_the_window_never_priced() {
             .unwrap()
             .2
     });
-    // Priced now, the payment clears conversion and stops at the balance stub.
+    // Priced now, the payment clears conversion and stops at the router.
     let error =
         settle_erc20(&mut world, nod_id, input.owner, SETTLEMENT_ASSET_EUR, live).unwrap_err();
     assert_eq!(
         error.to_string(),
-        PrecompileError::from(SettlementError::AmountMismatch).to_string()
+        outbe_vaultrouter::test_support::unanswered_deposit_from().to_string()
     );
 }
 

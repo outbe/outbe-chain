@@ -5,7 +5,7 @@
 //! a target. `enable_sub_call_stub()` makes every other sub-call succeed with empty
 //! returndata. This matches the convention in `outbe_credisfactory::tests`.
 
-use alloy_primitives::{address, Address, Bytes, U256};
+use alloy_primitives::{address, hex, keccak256, Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolError, SolEvent};
 
 use outbe_oracle::api::AddressPair;
@@ -15,16 +15,16 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{Bytecode, StorageHandle};
 use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
 
-use crate::api::IVaultRouter;
 use crate::errors::VaultRouterError;
 use crate::precompile::dispatch;
+use crate::precompile::IVaultRouter;
 use crate::runtime;
 use crate::schema::{LiquidityReservation, VaultRouterContract};
 use crate::sol_ext::IReferenceCurrency;
 use crate::sol_ext::{IVaultV2, IERC20};
 
 const CHAIN_ID: u64 = 1;
-mod approved;
+mod vault_action;
 const USD_ISO_CODE: u16 = 840;
 
 fn owner() -> Address {
@@ -118,21 +118,23 @@ fn assert_revert<E: SolError>(err: &PrecompileError) {
 fn retired_selectors_reject_former_owner_and_zero_caller() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
-        for signature in [
-            "owner()",
-            "addVault(address)",
-            "removeVault(address)",
-            "addLiquiditySource(address,uint8)",
-            "removeLiquiditySource(address)",
-            "addLiquidityTarget(address,uint8)",
-            "removeLiquidityTarget(address)",
-        ] {
-            let mut calldata = alloy_primitives::keccak256(signature)[..4].to_vec();
+        let owner_selectors = ["owner()", "addVault(address)", "removeVault(address)"]
+            .map(|signature| <[u8; 4]>::try_from(&keccak256(signature)[..4]).unwrap());
+        // The retired owner-only setters of the sources and the targets, with their old
+        // names: add (address,uint8) and remove (address), sources first.
+        let registry_selectors = [
+            hex!("6b973687"),
+            hex!("376d84ed"),
+            hex!("1c126a6c"),
+            hex!("67a13890"),
+        ];
+        for selector in owner_selectors.into_iter().chain(registry_selectors) {
+            let mut calldata = selector.to_vec();
             calldata.extend_from_slice(&[0u8; 64]);
             for caller in [owner(), Address::ZERO] {
                 assert!(
                     dispatch(storage.clone(), &calldata, caller, U256::ZERO).is_err(),
-                    "{signature}"
+                    "{selector:?}"
                 );
             }
         }
@@ -146,25 +148,25 @@ fn retired_selectors_reject_former_owner_and_zero_caller() {
     });
 }
 
-// --- liquidity sources / targets --------------------------------------------
+// --- stablecoin sources / targets --------------------------------------------
 
 #[test]
-fn liquidity_registries_validate_entries_and_log_each_change() {
+fn stablecoin_registries_validate_entries_and_log_each_change() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let rejects = [
-            runtime::add_liquidity_source(storage.clone(), Address::ZERO, 1),
-            runtime::add_liquidity_source(storage.clone(), source_account(), 0),
-            runtime::add_liquidity_target(storage.clone(), target_account(), 0),
-            runtime::remove_liquidity_source(storage.clone(), source_account()),
-            runtime::remove_liquidity_target(storage.clone(), target_account()),
+            runtime::add_stablecoin_source(storage.clone(), Address::ZERO, 1),
+            runtime::add_stablecoin_source(storage.clone(), source_account(), 0),
+            runtime::add_stablecoin_target(storage.clone(), target_account(), 0),
+            runtime::remove_stablecoin_source(storage.clone(), source_account()),
+            runtime::remove_stablecoin_target(storage.clone(), target_account()),
         ];
         let expected = [
             VaultRouterError::ZeroAddress,
-            VaultRouterError::InvalidLiquiditySource,
-            VaultRouterError::InvalidLiquidityTarget,
-            VaultRouterError::LiquiditySourceNotFound,
-            VaultRouterError::LiquidityTargetNotFound,
+            VaultRouterError::InvalidStablecoinSource,
+            VaultRouterError::InvalidStablecoinTarget,
+            VaultRouterError::StablecoinSourceNotFound,
+            VaultRouterError::StablecoinTargetNotFound,
         ];
         for (result, error) in rejects.into_iter().zip(expected) {
             assert_eq!(
@@ -172,37 +174,37 @@ fn liquidity_registries_validate_entries_and_log_each_change() {
                 PrecompileError::from(error).to_string()
             );
         }
-        runtime::add_liquidity_source(storage.clone(), source_account(), 1).unwrap();
-        runtime::add_liquidity_target(storage.clone(), target_account(), 1).unwrap();
-        runtime::remove_liquidity_source(storage.clone(), source_account()).unwrap();
-        runtime::remove_liquidity_target(storage.clone(), target_account()).unwrap();
+        runtime::add_stablecoin_source(storage.clone(), source_account(), 1).unwrap();
+        runtime::add_stablecoin_target(storage.clone(), target_account(), 1).unwrap();
+        runtime::remove_stablecoin_source(storage.clone(), source_account()).unwrap();
+        runtime::remove_stablecoin_target(storage.clone(), target_account()).unwrap();
         assert!(matches!(
-            runtime::registered_liquidity_source(&storage, source_account()).unwrap(),
-            IVaultRouter::StablesSource::Unknown
+            runtime::registered_stablecoin_source(&storage, source_account()).unwrap(),
+            IVaultRouter::StablecoinSource::Unknown
         ));
         assert!(matches!(
-            runtime::registered_liquidity_target(&storage, target_account()).unwrap(),
-            IVaultRouter::StablesTarget::Unknown
+            runtime::registered_stablecoin_target(&storage, target_account()).unwrap(),
+            IVaultRouter::StablecoinTarget::Unknown
         ));
     });
     let events = storage.get_events(VAULT_ROUTER_ADDRESS);
     assert_eq!(events.len(), 4);
-    let added = IVaultRouter::LiquiditySourceAdded::decode_log_data(&events[0]).unwrap();
+    let added = IVaultRouter::StablecoinSourceAdded::decode_log_data(&events[0]).unwrap();
     assert_eq!(
         (added.sourceAddress, added.sourceType as u8),
         (source_account(), 1)
     );
-    let added = IVaultRouter::LiquidityTargetAdded::decode_log_data(&events[1]).unwrap();
+    let added = IVaultRouter::StablecoinTargetAdded::decode_log_data(&events[1]).unwrap();
     assert_eq!(
         (added.targetAddress, added.targetType as u8),
         (target_account(), 1)
     );
-    let removed = IVaultRouter::LiquiditySourceRemoved::decode_log_data(&events[2]).unwrap();
+    let removed = IVaultRouter::StablecoinSourceRemoved::decode_log_data(&events[2]).unwrap();
     assert_eq!(
         (removed.sourceAddress, removed.sourceType as u8),
         (source_account(), 1)
     );
-    let removed = IVaultRouter::LiquidityTargetRemoved::decode_log_data(&events[3]).unwrap();
+    let removed = IVaultRouter::StablecoinTargetRemoved::decode_log_data(&events[3]).unwrap();
     assert_eq!(
         (removed.targetAddress, removed.targetType as u8),
         (target_account(), 1)
@@ -210,40 +212,40 @@ fn liquidity_registries_validate_entries_and_log_each_change() {
 }
 
 #[test]
-fn add_remove_liquidity_source_enumerates_and_round_trips_type() {
+fn add_remove_stablecoin_source_enumerates_and_round_trips_type() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         // IntexCostAmount == 1.
-        runtime::add_liquidity_source(storage.clone(), source_account(), 1).unwrap();
+        runtime::add_stablecoin_source(storage.clone(), source_account(), 1).unwrap();
 
         let out = dispatch(
             storage.clone(),
-            &IVaultRouter::liquiditySourcesCountCall {}.abi_encode(),
+            &IVaultRouter::stablecoinSourcesCountCall {}.abi_encode(),
             stranger(),
             U256::ZERO,
         )
         .unwrap();
         assert_eq!(
-            IVaultRouter::liquiditySourcesCountCall::abi_decode_returns(&out).unwrap(),
+            IVaultRouter::stablecoinSourcesCountCall::abi_decode_returns(&out).unwrap(),
             U256::from(1)
         );
 
         let out = dispatch(
             storage.clone(),
-            &IVaultRouter::liquiditySourceAtCall { index: U256::ZERO }.abi_encode(),
+            &IVaultRouter::stablecoinSourceAtCall { index: U256::ZERO }.abi_encode(),
             stranger(),
             U256::ZERO,
         )
         .unwrap();
-        let got = IVaultRouter::liquiditySourceAtCall::abi_decode_returns(&out).unwrap();
+        let got = IVaultRouter::stablecoinSourceAtCall::abi_decode_returns(&out).unwrap();
         assert_eq!(got.sourceAddress, source_account());
         assert_eq!(got.sourceType as u8, 1);
 
         // Removal clears it.
-        runtime::remove_liquidity_source(storage.clone(), source_account()).unwrap();
+        runtime::remove_stablecoin_source(storage.clone(), source_account()).unwrap();
         assert_eq!(
             VaultRouterContract::new(storage.clone())
-                .liquidity_sources
+                .stablecoin_sources
                 .len()
                 .unwrap(),
             0
@@ -252,38 +254,38 @@ fn add_remove_liquidity_source_enumerates_and_round_trips_type() {
 }
 
 #[test]
-fn add_liquidity_source_rejects_unknown_type_and_remove_rejects_missing() {
+fn add_stablecoin_source_rejects_unknown_type_and_remove_rejects_missing() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
-        let err = runtime::add_liquidity_source(storage.clone(), source_account(), 0).unwrap_err();
-        assert_revert::<IVaultRouter::InvalidLiquiditySource>(&err);
+        let err = runtime::add_stablecoin_source(storage.clone(), source_account(), 0).unwrap_err();
+        assert_revert::<IVaultRouter::InvalidStablecoinSource>(&err);
 
-        let err = runtime::remove_liquidity_source(storage.clone(), source_account()).unwrap_err();
-        assert_revert::<IVaultRouter::LiquiditySourceNotFound>(&err);
+        let err = runtime::remove_stablecoin_source(storage.clone(), source_account()).unwrap_err();
+        assert_revert::<IVaultRouter::StablecoinSourceNotFound>(&err);
     });
 }
 
 #[test]
-fn add_remove_liquidity_target_enumerates() {
+fn add_remove_stablecoin_target_enumerates() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         // Credis == 1.
-        runtime::add_liquidity_target(storage.clone(), target_account(), 1).unwrap();
+        runtime::add_stablecoin_target(storage.clone(), target_account(), 1).unwrap();
         let out = dispatch(
             storage.clone(),
-            &IVaultRouter::liquidityTargetAtCall { index: U256::ZERO }.abi_encode(),
+            &IVaultRouter::stablecoinTargetAtCall { index: U256::ZERO }.abi_encode(),
             stranger(),
             U256::ZERO,
         )
         .unwrap();
-        let got = IVaultRouter::liquidityTargetAtCall::abi_decode_returns(&out).unwrap();
+        let got = IVaultRouter::stablecoinTargetAtCall::abi_decode_returns(&out).unwrap();
         assert_eq!(got.targetAddress, target_account());
         assert_eq!(got.targetType as u8, 1);
 
-        runtime::remove_liquidity_target(storage.clone(), target_account()).unwrap();
+        runtime::remove_stablecoin_target(storage.clone(), target_account()).unwrap();
         assert_eq!(
             VaultRouterContract::new(storage.clone())
-                .liquidity_targets
+                .stablecoin_targets
                 .len()
                 .unwrap(),
             0
@@ -495,7 +497,7 @@ fn remove_vault_rejects_a_false_approve() {
     });
 }
 
-// --- liquidity flow ----------------------------------------------------------
+// --- stablecoin flow ---------------------------------------------------------
 
 #[test]
 fn deposit_happy_path_and_rejects_unknown_source() {
@@ -511,10 +513,10 @@ fn deposit_happy_path_and_rejects_unknown_source() {
             source_account(),
             asset(),
             U256::from(10),
-            IVaultRouter::StablesSource::Unknown,
+            IVaultRouter::StablecoinSource::Unknown,
         )
         .unwrap_err();
-        assert_revert::<IVaultRouter::InvalidLiquiditySource>(&err);
+        assert_revert::<IVaultRouter::InvalidStablecoinSource>(&err);
 
         // Register a vault for the asset. Seed the set directly so that the
         // vault.asset() stub does not collide with vault.deposit(). Then deposit
@@ -528,7 +530,7 @@ fn deposit_happy_path_and_rejects_unknown_source() {
             source_account(),
             asset(),
             U256::from(10),
-            IVaultRouter::StablesSource::IntexCostAmount,
+            IVaultRouter::StablecoinSource::IntexCostAmount,
         )
         .unwrap();
         assert_eq!(got, shares);
@@ -545,7 +547,7 @@ fn deposit_reverts_when_no_vault_configured() {
             source_account(),
             asset(),
             U256::from(10),
-            IVaultRouter::StablesSource::IntexCostAmount,
+            IVaultRouter::StablecoinSource::IntexCostAmount,
         )
         .unwrap_err();
         assert_revert::<IVaultRouter::ReserveVaultNotConfigured>(&err);
@@ -570,7 +572,7 @@ fn withdraw_happy_path_and_rejects_unknown_target() {
                 amountMinor: U256::from(10),
                 receiver: Address::ZERO,
             },
-            IVaultRouter::StablesTarget::Credis,
+            IVaultRouter::StablecoinTarget::Credis,
         )
         .unwrap_err();
         assert_revert::<IVaultRouter::ZeroAddress>(&err);
@@ -584,10 +586,10 @@ fn withdraw_happy_path_and_rejects_unknown_target() {
                 amountMinor: U256::from(10),
                 receiver: receiver(),
             },
-            IVaultRouter::StablesTarget::Unknown,
+            IVaultRouter::StablecoinTarget::Unknown,
         )
         .unwrap_err();
-        assert_revert::<IVaultRouter::InvalidLiquidityTarget>(&err);
+        assert_revert::<IVaultRouter::InvalidStablecoinTarget>(&err);
 
         // Register a vault, then withdraw declaring a valid target.
         VaultRouterContract::new(storage.clone())
@@ -608,7 +610,7 @@ fn withdraw_happy_path_and_rejects_unknown_target() {
                 amountMinor: U256::from(10),
                 receiver: receiver(),
             },
-            IVaultRouter::StablesTarget::Credis,
+            IVaultRouter::StablecoinTarget::Credis,
         )
         .unwrap();
         assert_eq!(burned, x);
@@ -636,7 +638,7 @@ fn withdraw_transfers_to_an_undeployed_receiver() {
                 amountMinor: U256::from(10),
                 receiver: receiver(),
             },
-            IVaultRouter::StablesTarget::Credis,
+            IVaultRouter::StablecoinTarget::Credis,
         )
         .unwrap();
         assert_eq!(burned, x);
@@ -664,7 +666,7 @@ fn deposit_rejects_a_false_transfer_from() {
             source_account(),
             asset(),
             U256::from(10),
-            IVaultRouter::StablesSource::IntexCostAmount,
+            IVaultRouter::StablecoinSource::IntexCostAmount,
         )
         .unwrap_err();
         assert_revert::<IVaultRouter::TokenOperationFailed>(&err);
@@ -691,11 +693,223 @@ fn withdraw_rejects_a_false_transfer() {
                 amountMinor: U256::from(10),
                 receiver: receiver(),
             },
-            IVaultRouter::StablesTarget::Credis,
+            IVaultRouter::StablecoinTarget::Credis,
         )
         .unwrap_err();
         assert_revert::<IVaultRouter::TokenOperationFailed>(&err);
     });
+}
+
+// --- direct settlement pull ---------------------------------------------------
+
+fn payer() -> Address {
+    address!("0x0000000000000000000000000000000000000333")
+}
+
+fn deposit_from_call(amount: u64) -> Vec<u8> {
+    IVaultRouter::depositFromCall {
+        payer: payer(),
+        asset: asset(),
+        assetsMinor: U256::from(amount),
+    }
+    .abi_encode()
+}
+
+/// A provider with a vault for `asset()`. The router's asset balance reads `before`, then
+/// `after`.
+fn deposit_from_world(before: u64, after: u64) -> HashMapStorageProvider {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at(vault(), word(U256::from(10u64)));
+    storage.stub_sub_call_sequence_at_selector(
+        asset(),
+        IERC20::balanceOfCall::SELECTOR,
+        [word(U256::from(before)), word(U256::from(after))],
+    );
+    storage.enable_sub_call_stub();
+    StorageHandle::enter(&mut storage, |storage| {
+        register_vault(&storage, asset(), vault());
+    });
+    storage
+}
+
+#[test]
+fn settlement_asset_goes_from_the_payer_to_the_vault_router() {
+    let mut storage = deposit_from_world(5, 15);
+    StorageHandle::enter(&mut storage, |storage| {
+        runtime::add_stablecoin_source(storage.clone(), source_account(), 4).unwrap();
+    });
+    storage.clear_events(VAULT_ROUTER_ADDRESS);
+    let calls_before = storage.sub_call_inputs().len();
+    StorageHandle::enter(&mut storage, |storage| {
+        let out = dispatch(
+            storage,
+            &deposit_from_call(10),
+            source_account(),
+            U256::ZERO,
+        )
+        .unwrap();
+        assert_eq!(
+            IVaultRouter::depositFromCall::abi_decode_returns(&out).unwrap(),
+            U256::from(10u64)
+        );
+    });
+    let calls = &storage.sub_call_inputs()[calls_before..];
+    let to_asset: Vec<_> = calls
+        .iter()
+        .filter(|call| call.target == asset())
+        .map(|call| call.calldata.clone())
+        .collect();
+    // One pull from the payer to the router, framed by the router's balance reads. No
+    // approval and no transfer through the source.
+    assert_eq!(
+        to_asset,
+        [
+            IERC20::balanceOfCall {
+                account: VAULT_ROUTER_ADDRESS
+            }
+            .abi_encode(),
+            IERC20::transferFromCall {
+                from: payer(),
+                to: VAULT_ROUTER_ADDRESS,
+                amount: U256::from(10u64),
+            }
+            .abi_encode(),
+            IERC20::balanceOfCall {
+                account: VAULT_ROUTER_ADDRESS
+            }
+            .abi_encode(),
+        ]
+        .map(Bytes::from)
+    );
+    assert_eq!(
+        storage.get_events(VAULT_ROUTER_ADDRESS),
+        &vec![IVaultRouter::StablecoinDeposited {
+            sourceAddress: source_account(),
+            vault: vault(),
+            amountMinor: U256::from(10u64),
+            shares: U256::from(10u64),
+            sourceType: IVaultRouter::StablecoinSource::NodCostAmount,
+        }
+        .encode_log_data()]
+    );
+}
+
+#[test]
+fn only_a_registered_source_takes_an_asset_from_a_payer() {
+    let mut storage = deposit_from_world(5, 15);
+    let calls_before = storage.sub_call_inputs().len();
+    StorageHandle::enter(&mut storage, |storage| {
+        for caller in [stranger(), payer(), target_account()] {
+            let err =
+                dispatch(storage.clone(), &deposit_from_call(10), caller, U256::ZERO).unwrap_err();
+            assert_revert::<IVaultRouter::InvalidStablecoinSource>(&err);
+        }
+    });
+    assert_eq!(storage.sub_call_inputs().len(), calls_before);
+    assert!(storage.get_events(VAULT_ROUTER_ADDRESS).is_empty());
+}
+
+#[test]
+fn deposit_from_rejects_a_token_that_moves_another_amount() {
+    for (before, after) in [(5, 5), (5, 14), (5, 16)] {
+        let mut storage = deposit_from_world(before, after);
+        StorageHandle::enter(&mut storage, |storage| {
+            runtime::add_stablecoin_source(storage.clone(), source_account(), 4).unwrap();
+        });
+        storage.clear_events(VAULT_ROUTER_ADDRESS);
+        StorageHandle::enter(&mut storage, |storage| {
+            let err = dispatch(
+                storage,
+                &deposit_from_call(10),
+                source_account(),
+                U256::ZERO,
+            )
+            .unwrap_err();
+            assert_revert::<IVaultRouter::AmountMismatch>(&err);
+        });
+        assert!(storage.get_events(VAULT_ROUTER_ADDRESS).is_empty());
+        assert!(!storage
+            .sub_call_inputs()
+            .iter()
+            .any(|call| call.target == vault()));
+    }
+}
+
+#[test]
+fn deposit_from_rejects_a_false_transfer_from() {
+    let mut storage = deposit_from_world(5, 15);
+    storage.stub_sub_call_at_selector(
+        asset(),
+        IERC20::transferFromCall::SELECTOR,
+        word(U256::ZERO),
+    );
+    StorageHandle::enter(&mut storage, |storage| {
+        runtime::add_stablecoin_source(storage.clone(), source_account(), 4).unwrap();
+    });
+    storage.clear_events(VAULT_ROUTER_ADDRESS);
+    StorageHandle::enter(&mut storage, |storage| {
+        let err = dispatch(
+            storage,
+            &deposit_from_call(10),
+            source_account(),
+            U256::ZERO,
+        )
+        .unwrap_err();
+        assert_revert::<IVaultRouter::TokenOperationFailed>(&err);
+    });
+    assert!(storage.get_events(VAULT_ROUTER_ADDRESS).is_empty());
+}
+
+#[test]
+fn vault_router_events_use_the_noun_stablecoin() {
+    for (hash, signature) in [
+        (
+            IVaultRouter::StablecoinSourceAdded::SIGNATURE_HASH,
+            "StablecoinSourceAdded(address,uint8)",
+        ),
+        (
+            IVaultRouter::StablecoinSourceRemoved::SIGNATURE_HASH,
+            "StablecoinSourceRemoved(address,uint8)",
+        ),
+        (
+            IVaultRouter::StablecoinTargetAdded::SIGNATURE_HASH,
+            "StablecoinTargetAdded(address,uint8)",
+        ),
+        (
+            IVaultRouter::StablecoinTargetRemoved::SIGNATURE_HASH,
+            "StablecoinTargetRemoved(address,uint8)",
+        ),
+        (
+            IVaultRouter::StablecoinDeposited::SIGNATURE_HASH,
+            "StablecoinDeposited(address,address,uint256,uint256,uint8)",
+        ),
+        (
+            IVaultRouter::StablecoinWithdrawn::SIGNATURE_HASH,
+            "StablecoinWithdrawn(address,address,address,uint256,uint256,uint8)",
+        ),
+        (
+            IVaultRouter::StablecoinRebalanced::SIGNATURE_HASH,
+            "StablecoinRebalanced(address,address,address,uint256,uint256,uint256,uint256)",
+        ),
+        (
+            IVaultRouter::VaultActionCreated::SIGNATURE_HASH,
+            "VaultActionCreated(uint256,address,uint8)",
+        ),
+        (
+            IVaultRouter::VaultActionApplied::SIGNATURE_HASH,
+            "VaultActionApplied(uint256,address)",
+        ),
+        (
+            IVaultRouter::VaultActionExpired::SIGNATURE_HASH,
+            "VaultActionExpired(uint256,address)",
+        ),
+        (
+            IVaultRouter::VaultActionCanceled::SIGNATURE_HASH,
+            "VaultActionCanceled(uint256,address,uint256)",
+        ),
+    ] {
+        assert_eq!(hash, keccak256(signature), "{signature}");
+    }
 }
 
 // --- ABI-path registry gating ------------------------------------------------
@@ -720,11 +934,11 @@ fn abi_deposit_gates_msg_sender_against_registry() {
 
         // Unregistered caller resolves to Unknown -> rejected.
         let err = dispatch(storage.clone(), &calldata, source_account(), U256::ZERO).unwrap_err();
-        assert_revert::<IVaultRouter::InvalidLiquiditySource>(&err);
+        assert_revert::<IVaultRouter::InvalidStablecoinSource>(&err);
 
         // Register the caller as a source, then the same ABI call succeeds and
         // the precompile resolves the discriminant from the registry.
-        runtime::add_liquidity_source(storage.clone(), source_account(), 1).unwrap();
+        runtime::add_stablecoin_source(storage.clone(), source_account(), 1).unwrap();
         let out = dispatch(storage.clone(), &calldata, source_account(), U256::ZERO).unwrap();
         assert_eq!(
             IVaultRouter::depositCall::abi_decode_returns(&out).unwrap(),
@@ -757,10 +971,10 @@ fn abi_withdraw_gates_msg_sender_against_registry() {
 
         // Unregistered caller resolves to Unknown -> rejected.
         let err = dispatch(storage.clone(), &calldata, target_account(), U256::ZERO).unwrap_err();
-        assert_revert::<IVaultRouter::InvalidLiquidityTarget>(&err);
+        assert_revert::<IVaultRouter::InvalidStablecoinTarget>(&err);
 
         // Register the caller as a target, then the ABI call succeeds.
-        runtime::add_liquidity_target(storage.clone(), target_account(), 1).unwrap();
+        runtime::add_stablecoin_target(storage.clone(), target_account(), 1).unwrap();
         let out = dispatch(storage.clone(), &calldata, target_account(), U256::ZERO).unwrap();
         assert_eq!(
             IVaultRouter::withdrawCall::abi_decode_returns(&out).unwrap(),
@@ -1695,12 +1909,12 @@ fn rebalance_selectors_reject_native_value() {
     });
 }
 
-/// The happy path emits exactly one `LiquidityRebalanced` carrying both legs:
+/// The happy path emits exactly one `StablecoinRebalanced` carrying both legs:
 /// what left `vault_from` and what the caller supplied into `vault_to`. The
 /// rollback tests below assert the absence of this event, so its presence and
 /// contents need pinning too, or "no event" would pass vacuously.
 #[test]
-fn rebalance_emits_liquidity_rebalanced_with_both_legs() {
+fn rebalance_emits_stablecoin_rebalanced_with_both_legs() {
     const RATE_TIMESTAMP: u64 = 1_700_000_000;
     const USD_PAIR_ID: u32 = 1;
     const EUR_PAIR_ID: u32 = 2;
@@ -1791,13 +2005,13 @@ fn rebalance_emits_liquidity_rebalanced_with_both_legs() {
 
     let events = storage.get_events(VAULT_ROUTER_ADDRESS);
     assert_eq!(events.len(), 1, "exactly one rebalance event");
-    let decoded = IVaultRouter::LiquidityRebalanced::decode_log_data(&events[0]).unwrap();
+    let decoded = IVaultRouter::StablecoinRebalanced::decode_log_data(&events[0]).unwrap();
     assert_eq!(decoded.cca, cca());
     assert_eq!(decoded.vaultFrom, vault_from());
     assert_eq!(decoded.vaultTo, vault_to());
-    assert_eq!(decoded.assetsWithdrawnMinor, amount);
+    assert_eq!(decoded.withdrawnAmountMinor, amount);
     assert_eq!(decoded.burnedShares, burned);
-    assert_eq!(decoded.assetsDepositedMinor, U256::from(20u64));
+    assert_eq!(decoded.depositedAmountMinor, U256::from(20u64));
     assert_eq!(decoded.mintedShares, minted);
 }
 
@@ -2155,7 +2369,7 @@ fn a_reservation_holds_then_releases_once() {
             id,
             receiver(),
             U256::from(10),
-            IVaultRouter::StablesTarget::Credis,
+            IVaultRouter::StablecoinTarget::Credis,
         )
         .unwrap();
         assert_eq!(delivered, U256::from(10));
@@ -2169,7 +2383,7 @@ fn a_reservation_holds_then_releases_once() {
             id,
             receiver(),
             U256::from(10),
-            IVaultRouter::StablesTarget::Credis,
+            IVaultRouter::StablecoinTarget::Credis,
         )
         .unwrap_err();
         assert_revert::<IVaultRouter::ReservationNotFound>(&err);
@@ -2197,7 +2411,7 @@ fn release_rejects_a_different_receiver_and_returns_excess_to_the_origin_vault()
             id,
             stranger(),
             U256::from(10),
-            IVaultRouter::StablesTarget::Credis,
+            IVaultRouter::StablecoinTarget::Credis,
         )
         .unwrap_err();
         assert_revert::<IVaultRouter::CredisOwnerMismatch>(&err);
@@ -2212,7 +2426,7 @@ fn release_rejects_a_different_receiver_and_returns_excess_to_the_origin_vault()
             id,
             receiver(),
             U256::from(10),
-            IVaultRouter::StablesTarget::Credis,
+            IVaultRouter::StablecoinTarget::Credis,
         )
         .unwrap();
         assert_eq!(delivered, U256::from(10));
@@ -2315,7 +2529,7 @@ fn release_rejects_an_expired_reservation() {
             id,
             receiver(),
             U256::from(10),
-            IVaultRouter::StablesTarget::Credis,
+            IVaultRouter::StablecoinTarget::Credis,
         )
         .unwrap_err();
         assert_revert::<IVaultRouter::ReservationExpired>(&err);
@@ -2349,12 +2563,12 @@ fn reservations_are_gated_like_a_withdrawal() {
         let err = dispatch(storage.clone(), &release_call, stranger(), U256::ZERO).unwrap_err();
         assert_revert::<IVaultRouter::Unauthorized>(&err);
 
-        runtime::add_liquidity_target(storage.clone(), target_account(), 1).unwrap();
+        runtime::add_stablecoin_target(storage.clone(), target_account(), 1).unwrap();
         let err =
             dispatch(storage.clone(), &release_call, target_account(), U256::ZERO).unwrap_err();
         assert_revert::<IVaultRouter::Unauthorized>(&err);
         let factory = outbe_system_common::addresses::CREDIS_FACTORY_ADDRESS;
-        runtime::add_liquidity_target(storage.clone(), factory, 1).unwrap();
+        runtime::add_stablecoin_target(storage.clone(), factory, 1).unwrap();
         let out = dispatch(storage.clone(), &release_call, factory, U256::ZERO).unwrap();
         assert_eq!(
             IVaultRouter::releaseReservationCall::abi_decode_returns(&out).unwrap(),
@@ -2394,16 +2608,16 @@ fn a_reservation_cannot_exceed_the_vaults_shares() {
         )
         .unwrap_err();
         assert_revert::<IVaultRouter::InsufficientSharesForWithdraw>(&err);
-        assert!(!runtime::has_liquidity(&storage, asset(), U256::from(10)).unwrap());
+        assert!(!runtime::has_stablecoin(&storage, asset(), U256::from(10)).unwrap());
     });
 }
 
 #[test]
-fn has_liquidity_is_false_for_an_asset_without_a_vault() {
+fn has_stablecoin_is_false_for_an_asset_without_a_vault() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.enable_sub_call_stub();
     StorageHandle::enter(&mut storage, |storage| {
-        assert!(!runtime::has_liquidity(&storage, asset(), U256::from(1)).unwrap());
+        assert!(!runtime::has_stablecoin(&storage, asset(), U256::from(1)).unwrap());
     });
 }
 

@@ -1,6 +1,8 @@
 //! The EIP-1559 base fee and EIP-4844 blob fee are native burns. The sender pays base (+ blob)
-//! plus tip. The rewards escrow receives only the tip, and end-of-block settlement routes the
-//! burned fee total to `PromisLimitContract` without touching `PROMIS_LIMIT_ADDRESS` native balance.
+//! plus tip. The rewards escrow receives only the tip, and end-of-block settlement adds the burned
+//! fee total to the base fee count of `PromisLimitContract` without touching any native balance.
+
+mod cycle_burn;
 
 use super::receipts_and_gas_support::*;
 use super::*;
@@ -11,7 +13,6 @@ use outbe_evm::errors::BurnedFeeSettlementError;
 use outbe_primitives::{error::PrecompileError, storage::direct::DirectStorageProvider};
 use outbe_promislimit::PromisLimitContract;
 use outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS;
-use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 use revm::context_interface::block::BlobExcessGasAndPrice;
 use std::sync::Mutex;
 
@@ -148,13 +149,13 @@ fn base_fee_is_burned_tip_reaches_rewards_and_promis_limit_receives_burned_fee()
         let promis = PromisLimitContract::new(storage.clone());
         assert_eq!(
             promis.promis_limit().unwrap(),
-            burned / UNITS_PER_PROTOCOL_MINOR,
-            "burned base fee whole protocol minors must credit Promis Limit"
+            U256::ZERO,
+            "the block end adds nothing; the daily step adds code 41"
         );
         assert_eq!(
-            promis.rest_minor().unwrap(),
-            burned % UNITS_PER_PROTOCOL_MINOR,
-            "burned base fee sub-minor remainder must persist in rest_minor"
+            promis.base_fee_count().unwrap(),
+            burned,
+            "the block end counts its burned base fee"
         );
         assert_eq!(storage.balance(PROMIS_LIMIT_ADDRESS).unwrap(), U256::ZERO);
         Ok::<_, PrecompileError>(())
@@ -167,7 +168,7 @@ fn base_and_blob_fee_go_to_promis_limit() {
     scenario_a_paid_reverted_and_declined_txs_settle_burned_base_fees();
     scenario_b_eip4844_blob_tx_settles_base_and_blob_fees();
     scenario_c_protocol_fee_waiver_burns_zero_under_nonzero_basefee();
-    scenario_d_promis_limit_overflow_fails_the_block_with_typed_error();
+    scenario_d_base_fee_count_overflow_fails_the_block_with_typed_error();
     scenario_e_proposer_state_hook_pre_freeze_idempotence_and_validator_parity();
 }
 
@@ -279,13 +280,7 @@ fn scenario_a_paid_reverted_and_declined_txs_settle_burned_base_fees() {
     let initial_balance = U256::from(100_000_000_000_000_000u64);
     let mut seed_storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut seed_storage, |storage| {
-        use outbe_primitives::addresses::SYSTEM_ADDRESS;
-        use outbe_promislimit::BurnSource;
-        PromisLimitContract::new(storage).burn_to_promis_limit(
-            SYSTEM_ADDRESS,
-            old_rest,
-            BurnSource::BaseFee,
-        )
+        PromisLimitContract::new(storage).count_base_fees(old_rest)
     })
     .unwrap();
     let mut db = cache_db_from_storage(seed_storage);
@@ -415,12 +410,6 @@ fn scenario_a_paid_reverted_and_declined_txs_settle_burned_base_fees() {
     let formula_burned = U256::from(base_fee) * U256::from(gas_1 + gas_2 + gas_3);
     assert_eq!(total_burned, formula_burned);
 
-    let total_with_old_rest = total_burned + old_rest;
-    let expected_limit = total_with_old_rest / UNITS_PER_PROTOCOL_MINOR;
-    let expected_rest = total_with_old_rest % UNITS_PER_PROTOCOL_MINOR;
-    assert!(expected_limit > U256::ZERO);
-    assert!(expected_rest > U256::ZERO);
-
     let read_ctx = BlockContext {
         block_gas_limit: 0,
         user_gas_used: 0,
@@ -435,14 +424,11 @@ fn scenario_a_paid_reverted_and_declined_txs_settle_burned_base_fees() {
     let mut provider = DirectStorageProvider::new(&mut state, read_ctx);
     StorageHandle::enter(&mut provider, |storage| {
         let promis = PromisLimitContract::new(storage.clone());
-        let actual_limit = promis.promis_limit().unwrap();
-        let actual_rest = promis.rest_minor().unwrap();
-        assert_eq!(actual_limit, expected_limit);
-        assert_eq!(actual_rest, expected_rest);
+        assert_eq!(promis.promis_limit().unwrap(), U256::ZERO);
         assert_eq!(
-            actual_limit * UNITS_PER_PROTOCOL_MINOR + actual_rest,
+            promis.base_fee_count().unwrap(),
             total_burned + old_rest,
-            "§1.8 control identity must hold across cumulative burns + old_rest"
+            "the count holds every burned fee of the block on top of the earlier count"
         );
         assert_eq!(storage.balance(PROMIS_LIMIT_ADDRESS).unwrap(), U256::ZERO);
 
@@ -576,14 +562,8 @@ fn scenario_b_eip4844_blob_tx_settles_base_and_blob_fees() {
     let mut provider = DirectStorageProvider::new(&mut state, read_ctx);
     StorageHandle::enter(&mut provider, |storage| {
         let promis = PromisLimitContract::new(storage.clone());
-        assert_eq!(
-            promis.promis_limit().unwrap(),
-            independent_burned_oracle / UNITS_PER_PROTOCOL_MINOR
-        );
-        assert_eq!(
-            promis.rest_minor().unwrap(),
-            independent_burned_oracle % UNITS_PER_PROTOCOL_MINOR
-        );
+        assert_eq!(promis.promis_limit().unwrap(), U256::ZERO);
+        assert_eq!(promis.base_fee_count().unwrap(), independent_burned_oracle);
         assert_eq!(storage.balance(PROMIS_LIMIT_ADDRESS).unwrap(), U256::ZERO);
         Ok::<_, PrecompileError>(())
     })
@@ -678,14 +658,14 @@ fn scenario_c_protocol_fee_waiver_burns_zero_under_nonzero_basefee() {
     StorageHandle::enter(&mut provider, |storage| {
         let promis = PromisLimitContract::new(storage.clone());
         assert_eq!(promis.promis_limit().unwrap(), U256::ZERO);
-        assert_eq!(promis.rest_minor().unwrap(), U256::ZERO);
+        assert_eq!(promis.base_fee_count().unwrap(), U256::ZERO);
         assert_eq!(storage.balance(PROMIS_LIMIT_ADDRESS).unwrap(), U256::ZERO);
         Ok::<_, PrecompileError>(())
     })
     .unwrap();
 }
 
-fn scenario_d_promis_limit_overflow_fails_the_block_with_typed_error() {
+fn scenario_d_base_fee_count_overflow_fails_the_block_with_typed_error() {
     let chain_spec = cancun_chain_spec();
     let receipt_builder = reth_ethereum::evm::RethReceiptBuilder::default();
     let config = OutbeEvmConfig::new(
@@ -710,7 +690,7 @@ fn scenario_d_promis_limit_overflow_fails_the_block_with_typed_error() {
 
     let mut seed_storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut seed_storage, |storage| {
-        PromisLimitContract::new(storage).checked_credit(U256::MAX)
+        PromisLimitContract::new(storage).count_base_fees(U256::MAX)
     })
     .unwrap();
 
@@ -792,12 +772,11 @@ fn scenario_e_proposer_state_hook_pre_freeze_idempotence_and_validator_parity() 
         chain_spec.clone(),
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
     );
-    // 21_000 * 100_000_001 = 2_100_000_021_000 = 2 * 10^12 + 100_000_021_000.
-    // With old_rest = 500_000_000_000, total = 2_600_000_021_000 = 2 * 10^12 + 600_000_021_000.
+    // 21_000 * 100_000_001 = 2_100_000_021_000; with old_rest = 500_000_000_000 the count is
+    // 2_600_000_021_000.
     let base_fee: u64 = 100_000_001;
     let old_rest = U256::from(500_000_000_000u64);
-    let expected_limit = U256::from(2u64);
-    let expected_rest = U256::from(600_000_021_000u64);
+    let expected_count = U256::from(2_600_000_021_000u64);
     let tip: u128 = 5_000_000_000;
     let (sender, tx) = sign_tx_with_key(
         TxEip1559 {
@@ -817,13 +796,7 @@ fn scenario_e_proposer_state_hook_pre_freeze_idempotence_and_validator_parity() 
     let make_state = || {
         let mut seed_storage = HashMapStorageProvider::new(CHAIN_ID);
         StorageHandle::enter(&mut seed_storage, |storage| {
-            use outbe_primitives::addresses::SYSTEM_ADDRESS;
-            use outbe_promislimit::BurnSource;
-            PromisLimitContract::new(storage).burn_to_promis_limit(
-                SYSTEM_ADDRESS,
-                old_rest,
-                BurnSource::BaseFee,
-            )
+            PromisLimitContract::new(storage).count_base_fees(old_rest)
         })
         .unwrap();
         let mut db = cache_db_from_storage(seed_storage);
@@ -897,14 +870,9 @@ fn scenario_e_proposer_state_hook_pre_freeze_idempotence_and_validator_parity() 
 
         let captured = hook_promis_storage_updates.lock().unwrap().clone();
         assert_eq!(
-            captured.len(),
-            2,
-            "OnStateHook must observe both value and rest_minor slot writes before hook detach"
-        );
-        assert!(
-            captured.contains(&(U256::ZERO, expected_limit))
-                && captured.contains(&(U256::from(1u64), expected_rest)),
-            "OnStateHook must record exact promis_limit and rest_minor slots: {captured:?}"
+            captured,
+            vec![(U256::from(2u64), expected_count)],
+            "OnStateHook must observe the base fee count slot write before hook detach"
         );
 
         let (_evm, result) = proposer_executor
@@ -950,8 +918,8 @@ fn scenario_e_proposer_state_hook_pre_freeze_idempotence_and_validator_parity() 
         let mut provider = DirectStorageProvider::new(state, read_ctx);
         StorageHandle::enter(&mut provider, |storage| {
             let promis = PromisLimitContract::new(storage);
-            assert_eq!(promis.promis_limit().unwrap(), expected_limit);
-            assert_eq!(promis.rest_minor().unwrap(), expected_rest);
+            assert_eq!(promis.promis_limit().unwrap(), U256::ZERO);
+            assert_eq!(promis.base_fee_count().unwrap(), expected_count);
             Ok::<_, PrecompileError>(())
         })
         .unwrap();

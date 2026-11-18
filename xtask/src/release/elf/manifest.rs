@@ -566,16 +566,11 @@ fn validate_provenance_schema(prov: &Map<String, Value>) -> Result<String> {
             issuer == "https://token.actions.githubusercontent.com" && is_lower_hex_n(sha, 40),
             "invalid github-actions provenance issuer or workflow sha"
         );
-        let valid_pair = matches!(
-            (wf, cid),
-            (
-                ".github/workflows/mainnet-release.yml",
-                "https://github.com/outbe/outbe-chain/.github/workflows/mainnet-release.yml@refs/heads/main"
-            ) | (
-                ".github/workflows/testnet-release.yml",
-                "https://github.com/outbe/outbe-chain/.github/workflows/testnet-release.yml@refs/heads/main"
-            )
-        );
+        let valid_pair = (wf, cid)
+            == (
+                ".github/workflows/release.yml",
+                "https://github.com/outbe/outbe-chain/.github/workflows/release.yml@refs/heads/main",
+            );
         ensure!(valid_pair, "invalid workflow/certificate_identity pair");
     }
     Ok(mode.to_owned())

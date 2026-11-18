@@ -55,7 +55,7 @@ pub async fn run() -> Result<()> {
         progress.stage("bonding the network minimum stake");
         let validator_arg = format!("{validator:#x}");
         let amount = minimum.to_string();
-        let symmetric = format!("{}:30400", journal.config.network.external_ip);
+        let symmetric = format!("{}:30400", journal.config.network.advertise_ip);
         let output = run_outbe_cli(&[
             "staking",
             "stake",

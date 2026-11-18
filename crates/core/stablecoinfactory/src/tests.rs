@@ -1,11 +1,13 @@
-use alloy_primitives::{address, b256, keccak256, Address, B256, U256};
+use alloy_primitives::{address, b256, keccak256, Address, Log, B256, U256};
 use alloy_sol_types::{SolCall, SolError, SolEvent};
 use outbe_primitives::{
     block::BlockContext,
     error::PrecompileError,
     storage::{direct::DirectStorageProvider, hashmap::HashMapStorageProvider, StorageHandle},
 };
-use outbe_stablecoin::StablecoinContract;
+use outbe_stablecoin::precompile::IStablecoin;
+use outbe_stablecoin::schema::OPERATIONAL_ROLES;
+use outbe_stablecoin::{StablecoinContract, ADMIN_ROLE};
 use outbe_system_common::stablecoin::{
     encode_canonical_stablecoin_create, StablecoinCreatePayload, MAX_NAME_LEN, MAX_TICKER_LEN,
 };
@@ -20,9 +22,9 @@ use revm::{
 };
 
 use crate::{
-    abi::IStablecoinFactory as I,
     api::{FactoryReservation, StablecoinFactoryApi},
     precompile::dispatch,
+    precompile::IStablecoinFactory as I,
     schema::StablecoinFactoryContract,
 };
 
@@ -209,7 +211,7 @@ fn approved_execution_initializes_marker_registry_and_one_canonical_event() {
         .unwrap();
 
         let created =
-            StablecoinFactoryApi::execute_approved(storage.clone(), proposal_id, issuer, &raw, 0)
+            StablecoinFactoryApi::create_stablecoin(storage.clone(), proposal_id, issuer, &raw, 0)
                 .unwrap();
         assert_eq!(created, validated);
 
@@ -264,12 +266,35 @@ fn approved_execution_initializes_marker_registry_and_one_canonical_event() {
             proposalId: proposal_id,
             name: created.payload.name,
             ticker: created.payload.ticker,
-            iso4217: created.payload.iso4217,
+            isoCode: created.payload.iso4217,
             decimals: created.payload.decimals,
-            supplyCap: created.payload.supply_cap,
+            supplyCapMinor: created.payload.supply_cap,
             policyId: created.payload.policy_id,
         }
         .encode_log_data()]
+    );
+    // The token emits RoleGranted for its six first roles before StablecoinCreated.
+    let ordered = provider.get_ordered_events();
+    let (roles, created_log) = ordered[ordered.len() - 7..].split_at(6);
+    let first_roles: Vec<_> = std::iter::once(ADMIN_ROLE)
+        .chain(OPERATIONAL_ROLES)
+        .map(|role| Log {
+            address: created.token,
+            data: IStablecoin::RoleGranted {
+                role,
+                account: issuer,
+                actor: STABLECOIN_FACTORY_ADDRESS,
+            }
+            .encode_log_data(),
+        })
+        .collect();
+    assert_eq!(roles, &first_roles[..]);
+    assert_eq!(created_log[0].address, STABLECOIN_FACTORY_ADDRESS);
+    assert_eq!(
+        I::StablecoinCreated::SIGNATURE_HASH,
+        keccak256(
+            "StablecoinCreated(bytes32,address,address,uint256,string,string,uint16,uint8,uint256,uint256)"
+        )
     );
 }
 
@@ -304,7 +329,7 @@ fn maximum_accepted_metadata_and_supply_cap_create_a_token() {
             },
         )
         .unwrap();
-        StablecoinFactoryApi::execute_approved(storage, proposal_id, issuer, &raw, 0).unwrap()
+        StablecoinFactoryApi::create_stablecoin(storage, proposal_id, issuer, &raw, 0).unwrap()
     });
 
     assert_eq!(created.payload, payload);
@@ -329,7 +354,7 @@ fn execution_revalidation_rejects_payload_or_account_mismatch_and_keeps_reservat
         let item = reservation(&factory, 7, issuer, "EXUSD");
         factory.reserve(&item).unwrap();
         assert!(matches!(
-            factory.execute_approved(proposal_id, issuer, &changed_raw, 0),
+            factory.create_stablecoin(proposal_id, issuer, &changed_raw, 0),
             Err(PrecompileError::Revert(_))
         ));
         assert_eq!(
@@ -350,7 +375,7 @@ fn execution_revalidation_rejects_payload_or_account_mismatch_and_keeps_reservat
             )
             .unwrap();
         assert!(matches!(
-            factory.execute_approved(proposal_id, issuer, &raw, 0),
+            factory.create_stablecoin(proposal_id, issuer, &raw, 0),
             Err(PrecompileError::Revert(_))
         ));
         assert_eq!(
@@ -398,7 +423,7 @@ fn every_initializer_failure_rolls_back_token_marker_registry_and_event() {
         let validated = reserve_create(&mut provider, issuer, proposal_id, &raw);
         provider.clear_mutation_failure();
         StorageHandle::enter(&mut provider, |storage| {
-            StablecoinFactoryApi::execute_approved(
+            StablecoinFactoryApi::create_stablecoin(
                 storage,
                 proposal_id,
                 issuer,
@@ -420,7 +445,7 @@ fn every_initializer_failure_rolls_back_token_marker_registry_and_event() {
         provider.fail_after_mutation_at(operation);
         StorageHandle::enter(&mut provider, |storage| {
             assert!(matches!(
-                StablecoinFactoryApi::execute_approved(
+                StablecoinFactoryApi::create_stablecoin(
                     storage,
                     proposal_id,
                     issuer,
@@ -499,7 +524,7 @@ fn approved_execution_flushes_marker_storage_and_preserves_forced_balance() {
             },
         )
         .unwrap();
-        StablecoinFactoryApi::execute_approved(storage, proposal_id, issuer, &raw, 0).unwrap();
+        StablecoinFactoryApi::create_stablecoin(storage, proposal_id, issuer, &raw, 0).unwrap();
     });
 
     provider.flush().unwrap();
@@ -519,8 +544,10 @@ fn approved_execution_flushes_marker_storage_and_preserves_forced_balance() {
     assert!(!token_change.storage.is_empty());
     assert!(changes.contains_key(&STABLECOIN_FACTORY_ADDRESS));
     let events = provider.take_events();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].address, STABLECOIN_FACTORY_ADDRESS);
+    assert_eq!(events.len(), 7);
+    assert!(events[..6].iter().all(|event| event.address == token
+        && event.topics()[0] == IStablecoin::RoleGranted::SIGNATURE_HASH));
+    assert_eq!(events[6].address, STABLECOIN_FACTORY_ADDRESS);
     drop(provider);
 
     let persisted = db.basic(token).unwrap().expect("persisted token account");

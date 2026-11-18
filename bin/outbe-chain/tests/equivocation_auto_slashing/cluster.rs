@@ -1,7 +1,3 @@
-#[allow(
-    dead_code,
-    reason = "Shared helpers also serve the TEE lifecycle integration target."
-)]
 #[path = "../common/tee_cluster/mod.rs"]
 mod tee_cluster;
 

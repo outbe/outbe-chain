@@ -25,6 +25,10 @@ contract PrepareUpgradeHarness is PrepareUpgrade {
     function _sourceCommit() internal view override returns (string memory) {
         return commit;
     }
+
+    function _executionDelayBlocks() internal pure override returns (uint256) {
+        return 50;
+    }
 }
 
 contract PrepareUpgradeTest is Test {
@@ -59,7 +63,7 @@ contract PrepareUpgradeTest is Test {
         escrow = SolverEscrow(
             _deploy(
                 IntentCreate3.SOLVER_ESCROW,
-                address(new SolverEscrow(compact, LOCK_TAG)),
+                address(new SolverEscrow(compact, LOCK_TAG, address(0))),
                 abi.encodeCall(SolverEscrow.initialize, (deployer, 1000))
             )
         );

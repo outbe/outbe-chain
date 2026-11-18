@@ -102,8 +102,6 @@ fn run_seed_genesis(
             seed: seed_path,
             validators: Some(validators_path),
             output: out_path.clone(),
-            worldwide_day: None,
-            fresh_metadosis: false,
             contracts_dir: None,
         },
     )
@@ -214,13 +212,11 @@ fn seed_genesis_writes_committee_snapshot_slots_31_to_40_matching_rust_schema() 
 /// runtime preservation, and genesis seeding so an uncovered precompile fails
 /// loudly instead of losing its storage.
 ///
-/// This test skips the stateless verifier: they own no EVM storage to
-/// preserve, matching the `MARKER_EXEMPT` rationale in the executor's
-/// `marker_list_covers_stateful_precompiles` unit test.
+/// The marker also makes each precompile a system address for SELFDESTRUCT, so
+/// the check covers the stateless verifier too.
 #[test]
 fn every_stateful_precompile_preserved_by_marker_or_genesis() {
     use outbe_runtime::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES;
-    use outbe_system_common::addresses::ZKPROOF_VERIFY_ADDRESS;
 
     let (_tmp, genesis, _raw) = run_seed_genesis(
         FIXTURE_GENESIS,
@@ -228,15 +224,8 @@ fn every_stateful_precompile_preserved_by_marker_or_genesis() {
         FIXTURE_VALIDATORS_4_PUBLIC_ONLY,
     );
 
-    // These routes own no storage, so neither runtime markers nor genesis code
-    // need to cover them.
-    let storage_free = [ZKPROOF_VERIFY_ADDRESS];
-
     let mut checked = 0usize;
     for addr in outbe_runtime::precompiles::outbe_exact_precompile_addresses() {
-        if storage_free.contains(addr) {
-            continue;
-        }
         checked += 1;
 
         let in_marker = OUTBE_RUNTIME_MARKER_ADDRESSES.contains(addr);
@@ -643,11 +632,13 @@ fn seeded_scurve_matches_a_curve_that_the_oracle_starts() {
     use outbe_system_common::addresses::ORACLE_ADDRESS;
     use outbe_system_common::time::WorldwideDay;
 
+    use outbe_genesis_cli::seed_codec::{first_worldwide_day, parse_header_timestamp};
+
     const SEED: &str = r#"{
       "oracle": {
         "pairs": [{ "base": "COEN", "quote": "840", "initial_rate": "1000000" }],
         "scurve_seeds": [
-          { "pair_base": "COEN", "pair_quote": "840", "peak_day": 20241220, "peak_price": "1000000" }
+          { "pair_base": "COEN", "pair_quote": "840", "peak_price": "1000000" }
         ]
       }
     }"#;
@@ -658,16 +649,17 @@ fn seeded_scurve_matches_a_curve_that_the_oracle_starts() {
     let mut started = HashMapStorageProvider::new(512_215);
 
     let pair = AddressPair::new_coen_to(840);
-    let peak = WorldwideDay::new(20241220);
+    let genesis_timestamp = parse_header_timestamp(&genesis).unwrap();
+    let peak = WorldwideDay::new(first_worldwide_day(genesis_timestamp));
     StorageHandle::enter(&mut started, |storage| {
         outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
         let mut oracle = OracleContract::new(storage);
         let peak_price = alloy_primitives::U256::from(1_000_000u64);
         assert!(store_scurve_entry(&mut oracle, pair, peak, peak_price).unwrap());
     });
-    // The peak WWD, a day in the first period, and a day in the second period.
-    for wwd in [20241220, 20241221, 20250601] {
-        let wwd = WorldwideDay::new(wwd);
+    // The first WWD of the genesis, a day in the first period, and a day in the second period.
+    for days in [0, 1, 200] {
+        let wwd = WorldwideDay::new(first_worldwide_day(genesis_timestamp + days * 86_400));
         let value = |provider: &mut HashMapStorageProvider| {
             StorageHandle::enter(provider, |storage| {
                 scurve_value(&OracleContract::new(storage), pair, wwd).unwrap()

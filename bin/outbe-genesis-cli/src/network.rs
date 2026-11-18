@@ -27,21 +27,19 @@ pub const DEFAULT_DKG_PREPARE_WINDOW_BLOCKS: u64 = 30;
 pub const DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS: u64 = 30;
 pub const DEFAULT_CONSENSUS_P2P_PORT: u16 = 30400;
 pub const DEFAULT_PREFUND_COEN_UNITS: u128 = 100_000_000 * 1_000_000_000_000_000_000;
-pub const FOUNDER_COUNT: usize = 4;
+pub const MIN_FOUNDER_COUNT: usize = 4;
 pub const MAX_GENESIS_AGE_SECONDS: i64 = 6 * 60 * 60;
 
 const PACKAGED_ASSETS: &str = "share/outbe-genesis";
 
-pub const SEED_SECTIONS: [&str; 16] = [
+pub const SEED_SECTIONS: [&str; 14] = [
     "protocol_constants",
     "balance",
     "staking",
     "rewards",
     "validator_set",
     "code_registry",
-    "metadosis",
     "oracle",
-    "tributes",
     "intex_profile",
     "gem_profile",
     "nod_profile",
@@ -60,7 +58,7 @@ pub const TEE_KEYS: [&str; 6] = [
     "minimum_tcb_evaluation_data_number",
 ];
 
-const STATIC_TOP_LEVEL_KEYS: [&str; 38] = [
+const STATIC_TOP_LEVEL_KEYS: [&str; 37] = [
     "network",
     "validators",
     "keys_dir",
@@ -78,10 +76,9 @@ const STATIC_TOP_LEVEL_KEYS: [&str; 38] = [
     "dkg_activation_grace_blocks",
     "prefund_coen_units",
     "min_stake",
-    "worldwide_day",
-    "fresh_metadosis",
     "contracts_dir",
-    "enclave_image",
+    "base_profile",
+    "base_genesis",
     "crs_path",
     "allow_stale_timestamp",
     "node_binary",
@@ -233,10 +230,10 @@ fn validate_founders(obj: &Map<String, Value>) -> Result<(), GenesisError> {
     let hosts = obj
         .get("validators")
         .and_then(Value::as_array)
-        .filter(|h| h.len() == FOUNDER_COUNT)
+        .filter(|hosts| hosts.len() >= MIN_FOUNDER_COUNT)
         .ok_or_else(|| {
             GenesisError::validation(format!(
-                "`validators` must list exactly {FOUNDER_COUNT} hosts (the bootstrap network profile uses four founders)"
+                "`validators` must list at least {MIN_FOUNDER_COUNT} founding hosts"
             ))
         })?;
     if let Some((index, _)) = hosts
@@ -275,66 +272,17 @@ fn validate_tee(config: &Value, obj: &Map<String, Value>) -> Result<(), GenesisE
             unknown_tee.join(", ")
         )));
     }
-    let (network, chain_id, _) = network_identity(config)?;
+    let (network, _, _) = network_identity(config)?;
     let mode = tee.get("mode").and_then(Value::as_str).unwrap_or("");
     if network == "mainnet" {
         validate_mainnet(obj, mode)?;
     }
-    validate_tee_mode(obj, mode, chain_id)
-}
-
-fn validate_tee_mode(
-    obj: &Map<String, Value>,
-    mode: &str,
-    chain_id: u64,
-) -> Result<(), GenesisError> {
     match mode {
-        "no-attestation-dev" => {
-            if chain_id != DEVNET_CHAIN_ID && chain_id != TESTNET_CHAIN_ID {
-                return Err(GenesisError::validation(format!(
-                    "tee.mode no-attestation-dev requires the devnet or testnet chain id ({DEVNET_CHAIN_ID} or {TESTNET_CHAIN_ID}), not {chain_id}"
-                )));
-            }
-            Ok(())
-        }
-        "dcap-required" => validate_dcap_mode(obj, chain_id),
+        "no-attestation-dev" | "dcap-required" => Ok(()),
         _ => Err(GenesisError::validation(
             "tee.mode must be no-attestation-dev or dcap-required",
         )),
     }
-}
-
-fn validate_dcap_mode(obj: &Map<String, Value>, chain_id: u64) -> Result<(), GenesisError> {
-    if !matches!(
-        chain_id,
-        DEVNET_CHAIN_ID | TESTNET_CHAIN_ID | MAINNET_CHAIN_ID
-    ) {
-        return Err(GenesisError::validation(format!(
-            "tee.mode dcap-required requires a canonical Outbe chain id, not {chain_id}"
-        )));
-    }
-    let image = obj
-        .get("enclave_image")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    if !is_pinned_sha256_image(image) {
-        return Err(GenesisError::validation(
-            "tee.mode dcap-required needs `enclave_image` pinned to an immutable digest (name@sha256:<64 lowercase hex>), not a mutable tag",
-        ));
-    }
-    Ok(())
-}
-
-fn is_pinned_sha256_image(image: &str) -> bool {
-    let Some((name, digest)) = image.split_once("@sha256:") else {
-        return false;
-    };
-    !name.is_empty()
-        && !name.chars().any(char::is_whitespace)
-        && digest.len() == 64
-        && digest
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 fn validate_mainnet(obj: &Map<String, Value>, mode: &str) -> Result<(), GenesisError> {

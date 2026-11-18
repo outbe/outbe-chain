@@ -66,7 +66,6 @@ fn record_completion(
         lysisLimitMinor: totals.lysis_limit_minor,
         unusedLysisLimitMinor: totals.unused_minor,
         lysisAllocationMinor: totals.used_minor,
-        promisLimitReturnedMinor: totals.unused_minor,
         status: "COMPLETED".into(),
         blockNumber: ctx.block.block_number,
     })

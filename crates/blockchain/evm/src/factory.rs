@@ -114,10 +114,10 @@ impl Drop for DetachedTraceCleanupGuard {
 ///
 /// Upstream `EthEvm::transact_system_call` delegates to revm's EIP system-call
 /// helper, which uses the upstream system-call gas budget. Outbe begin-zone
-/// system transactions are protocol transactions with their own 10B-gas execution
-/// lane, so calls into
-/// `OUTBE_SYSTEM_TX_ADDRESS` build the system-call `TxEnv` locally with
-/// `SYSTEM_TX_ARTIFACT_GAS_LIMIT`. Other system calls keep upstream semantics.
+/// system transactions use their runtime protocol step's gas budget, defaulting
+/// to `SYSTEM_TX_ARTIFACT_GAS_LIMIT` when no step is registered. Calls into
+/// `OUTBE_SYSTEM_TX_ADDRESS` build the system-call `TxEnv` locally.
+/// Other system calls keep upstream semantics.
 #[expect(missing_debug_implementations)]
 pub struct OutbeEvm<DB: Database, I, PRECOMPILE = EthPrecompiles> {
     inner: RevmEvm<
@@ -160,6 +160,20 @@ pub fn outbe_evm<DB: Database, I, PRECOMPILE>(
 }
 
 impl<DB: Database, I, PRECOMPILE> OutbeEvm<DB, I, PRECOMPILE> {
+    fn resolve_outbe_system_call_gas_limit(&self, data: &[u8]) -> u64 {
+        crate::system_tx::SystemTx::decode(data)
+            .ok()
+            .and_then(|sys_tx| {
+                self.runtime_host
+                    .as_deref()
+                    .and_then(|host| host.block_order().step_for_tx(&sys_tx))
+            })
+            .map_or(
+                outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT,
+                |step| step.gas_limit,
+            )
+    }
+
     pub(crate) fn set_owned_by_executor(&mut self, owned: bool) {
         self.owned_by_executor = owned;
     }
@@ -359,7 +373,7 @@ where
             ));
         }
 
-        let gas_limit = outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT;
+        let gas_limit = self.resolve_outbe_system_call_gas_limit(&data);
         let tx = TxEnv::builder()
             .caller(caller)
             .kind(TxKind::Call(contract))
@@ -522,6 +536,7 @@ impl EvmFactory for OutbeEvmFactory {
             .build_mainnet_with_inspector(NoOpInspector {})
             .with_precompiles(precompiles);
         create_guard::install(&mut evm.instruction);
+        crate::selfdestruct_guard::install(&mut evm.instruction);
 
         let mut evm = outbe_evm(evm, false);
         evm.abort_bridge = abort_bridge;
@@ -557,6 +572,269 @@ mod tests {
     use super::*;
     use alloy_primitives::Address;
     use revm::database_interface::EmptyDB;
+
+    use outbe_primitives::{
+        block::{BlockHeightRegime, BlockRuntimeContext},
+        committee_snapshot::CommitteeSnapshot,
+        consensus::{DkgBoundaryArtifact, GenesisValidators},
+        consensus_metadata::CertifiedParentAccountingMetadata,
+        error::Result,
+        reshare_artifact::{LateFinalizeCreditsArtifact, PerBlockCredit},
+        storage::{MutationEntitlements, StorageHandle},
+        system_tx_context::SystemTxExecutionContext,
+    };
+
+    use alloy_primitives::U256;
+
+    struct NopModule;
+
+    impl outbe_primitives::block::ProtocolModule for NopModule {
+        const NAME: &'static str = "nop";
+    }
+
+    #[derive(Debug)]
+    struct StepGasHost {
+        stub: std::sync::Arc<dyn crate::EvmRuntimeHost>,
+    }
+
+    impl crate::EvmRuntimeHost for StepGasHost {
+        fn block_order(&self) -> crate::system_tx::BlockOrder {
+            use crate::system_tx::{begin_step, consensus_step, end_step, BlockOrder};
+            const ORDER: BlockOrder = BlockOrder {
+                consensus: &[consensus_step::<NopModule>().with_gas_limit(123_456)],
+                begin_block: &[begin_step::<NopModule>().with_gas_limit(234_567)],
+                end_block: &[end_step::<NopModule>().with_gas_limit(345_678)],
+            };
+            ORDER
+        }
+
+        fn marker_addresses(&self) -> &'static [Address] {
+            self.stub.marker_addresses()
+        }
+
+        fn is_registered_precompile(&self, address: &Address) -> bool {
+            self.stub.is_registered_precompile(address)
+        }
+
+        fn precompile_is_payable(&self, address: &Address) -> bool {
+            self.stub.precompile_is_payable(address)
+        }
+
+        fn precompile_base_gas(&self, address: &Address, input: &[u8]) -> u64 {
+            self.stub.precompile_base_gas(address, input)
+        }
+
+        fn dispatch_precompile(
+            &self,
+            storage: StorageHandle<'_>,
+            address: &Address,
+            data: &[u8],
+            caller: Address,
+            value: U256,
+        ) -> Result<Bytes> {
+            self.stub
+                .dispatch_precompile(storage, address, data, caller, value)
+        }
+
+        fn dispatch_system_tx(
+            &self,
+            storage: StorageHandle<'_>,
+            data: &[u8],
+            caller: Address,
+            value: U256,
+            tee: &crate::tee_attestation_activation::TeeAttestationChainSpecStateV1,
+        ) -> Result<Bytes> {
+            self.stub
+                .dispatch_system_tx(storage, data, caller, value, tee)
+        }
+
+        fn validate_finalized_metadata(
+            &self,
+            storage: StorageHandle<'_>,
+            metadata: &CertifiedParentAccountingMetadata,
+        ) -> Result<()> {
+            self.stub.validate_finalized_metadata(storage, metadata)
+        }
+
+        fn run_finalization_and_slashing(
+            &self,
+            ctx: &BlockRuntimeContext<'_>,
+            metadata: &CertifiedParentAccountingMetadata,
+            execution: &SystemTxExecutionContext,
+        ) -> Result<()> {
+            self.stub
+                .run_finalization_and_slashing(ctx, metadata, execution)
+        }
+
+        fn authenticate_late_credit(
+            &self,
+            storage: &StorageHandle<'_>,
+            credit: &PerBlockCredit,
+        ) -> Result<()> {
+            self.stub.authenticate_late_credit(storage, credit)
+        }
+
+        fn run_late_finalize_credits(
+            &self,
+            ctx: &BlockRuntimeContext<'_>,
+            artifact: &LateFinalizeCreditsArtifact,
+            execution: Option<&SystemTxExecutionContext>,
+        ) -> Result<()> {
+            self.stub
+                .run_late_finalize_credits(ctx, artifact, execution)
+        }
+
+        fn apply_boundary_outcome(
+            &self,
+            storage: StorageHandle<'_>,
+            boundary: &DkgBoundaryArtifact,
+            block_number: u64,
+            timestamp: u64,
+        ) -> Result<()> {
+            self.stub
+                .apply_boundary_outcome(storage, boundary, block_number, timestamp)
+        }
+
+        fn prepare_boundary(
+            &self,
+            storage: StorageHandle<'_>,
+            boundary: &DkgBoundaryArtifact,
+            block_number: u64,
+        ) -> Result<()> {
+            self.stub.prepare_boundary(storage, boundary, block_number)
+        }
+
+        fn consensus_validators(&self, storage: StorageHandle<'_>) -> Result<Vec<Address>> {
+            self.stub.consensus_validators(storage)
+        }
+
+        fn is_consensus_participant(
+            &self,
+            storage: StorageHandle<'_>,
+            proposer: Address,
+        ) -> Result<bool> {
+            self.stub.is_consensus_participant(storage, proposer)
+        }
+
+        fn is_validator(&self, storage: StorageHandle<'_>, proposer: Address) -> Result<bool> {
+            self.stub.is_validator(storage, proposer)
+        }
+
+        fn read_committee_snapshot(
+            &self,
+            storage: StorageHandle<'_>,
+            key: B256,
+        ) -> Result<Option<CommitteeSnapshot>> {
+            self.stub.read_committee_snapshot(storage, key)
+        }
+
+        fn validate_genesis_state_for_regime(
+            &self,
+            regime: BlockHeightRegime,
+            storage: StorageHandle<'_>,
+            genesis_validators: Option<&GenesisValidators>,
+        ) -> Result<()> {
+            self.stub
+                .validate_genesis_state_for_regime(regime, storage, genesis_validators)
+        }
+
+        fn validate_genesis_state(
+            &self,
+            storage: StorageHandle<'_>,
+            genesis: &GenesisValidators,
+        ) -> Result<()> {
+            self.stub.validate_genesis_state(storage, genesis)
+        }
+
+        fn proposer_attestation(
+            &self,
+            storage: StorageHandle<'_>,
+            proposer: Address,
+        ) -> Result<Option<[u8; 32]>> {
+            self.stub.proposer_attestation(storage, proposer)
+        }
+
+        fn mutation_entitlements(
+            &self,
+            _call: crate::precompiles::PrecompileMutationCall<'_>,
+        ) -> MutationEntitlements {
+            MutationEntitlements::NONE
+        }
+
+        fn is_protocol_cycle_call(&self, address: Address, caller: Address, data: &[u8]) -> bool {
+            self.stub.is_protocol_cycle_call(address, caller, data)
+        }
+
+        fn derive_active_utc_day(
+            &self,
+            storage: StorageHandle<'_>,
+            genesis_timestamp: u64,
+            block_timestamp: u64,
+        ) -> Result<u32> {
+            self.stub
+                .derive_active_utc_day(storage, genesis_timestamp, block_timestamp)
+        }
+
+        fn settle_block_burned_fees(&self, storage: StorageHandle<'_>, amount: U256) -> Result<()> {
+            self.stub.settle_block_burned_fees(storage, amount)
+        }
+
+        fn user_fee_policy(&self) -> &dyn crate::UserTxFeePolicy {
+            self.stub.user_fee_policy()
+        }
+    }
+
+    #[test]
+    fn outbe_system_call_resolves_step_gas_limits_and_fallbacks() {
+        use crate::system_tx::SystemTx;
+
+        let host = std::sync::Arc::new(StepGasHost {
+            stub: crate::host::stub_host(),
+        });
+        let factory = OutbeEvmFactory::new(host);
+        let mut evm = factory.create_evm(EmptyDB::default(), test_env());
+        let fallback = outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT;
+        for (data, expected) in [
+            (
+                SystemTx::Consensus {
+                    step_index: 0,
+                    payload: Bytes::new(),
+                }
+                .encode()
+                .unwrap(),
+                123_456,
+            ),
+            (
+                SystemTx::BeginBlock { step_index: 0 }.encode().unwrap(),
+                234_567,
+            ),
+            (
+                SystemTx::EndBlock { step_index: 0 }.encode().unwrap(),
+                345_678,
+            ),
+            (
+                SystemTx::BeginBlock { step_index: 99 }.encode().unwrap(),
+                fallback,
+            ),
+            (Bytes::from_static(b"unknown"), fallback),
+        ] {
+            let _ = evm.transact_system_call(
+                outbe_primitives::addresses::SYSTEM_ADDRESS,
+                outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
+                data,
+            );
+            assert_eq!(evm.ctx().tx.gas_limit, expected);
+            assert_eq!(evm.ctx().block.gas_limit, USER_BLOCK_GAS_LIMIT);
+        }
+        evm.runtime_host = None;
+        let _ = evm.transact_system_call(
+            outbe_primitives::addresses::SYSTEM_ADDRESS,
+            outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
+            SystemTx::BeginBlock { step_index: 0 }.encode().unwrap(),
+        );
+        assert_eq!(evm.ctx().tx.gas_limit, fallback);
+        assert_eq!(evm.ctx().block.gas_limit, USER_BLOCK_GAS_LIMIT);
+    }
 
     const USER_BLOCK_GAS_LIMIT: u64 = 30_000_000;
 

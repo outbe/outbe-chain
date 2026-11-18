@@ -1,8 +1,8 @@
 use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 
-use crate::abi::IStablecoinPolicyRegistry;
 use crate::errors::PolicyRegistryError;
+use crate::precompile::IStablecoinPolicyRegistry;
 use crate::schema::{
     PolicyDescriptor, PolicyLane, PolicyType, StablecoinPolicyRegistryContract,
     ALLOW_ALL_POLICY_ID, DENY_ALL_POLICY_ID, FIRST_MUTABLE_POLICY_ID,
@@ -118,7 +118,7 @@ impl StablecoinPolicyRegistryContract<'_> {
         )
     }
 
-    pub fn begin_policy_admin_transfer(
+    pub fn start_policy_admin_transfer(
         &mut self,
         policy_id: U256,
         caller: Address,

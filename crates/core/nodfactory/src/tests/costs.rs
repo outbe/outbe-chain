@@ -14,17 +14,7 @@ fn a_dust_cost_nod_requires_erc20_payment_and_quotes_one_minor_unit() {
         .unwrap();
     assert_eq!(quote, (840, U256::ONE, U256::ZERO));
 
-    world.provider.stub_sub_call_at_selector(
-        SETTLEMENT_ASSET,
-        IERC20::transferFromCall::SELECTOR,
-        Bytes::from(IERC20::transferFromCall::abi_encode_returns(&true)),
-    );
-    world.provider.stub_sub_call_at_selector(
-        SETTLEMENT_ASSET,
-        IERC20::balanceOfCall::SELECTOR,
-        Bytes::from(IERC20::balanceOfCall::abi_encode_returns(&U256::ZERO)),
-    );
-    // A transfer with no received funds must fail, even for a dust cost.
+    // Even a dust cost goes to the router, which takes exactly one minor unit from the payer.
     let error = world
         .enter(|storage| {
             api::settle_nod(
@@ -40,7 +30,12 @@ fn a_dust_cost_nod_requires_erc20_payment_and_quotes_one_minor_unit() {
         .unwrap_err();
     assert_eq!(
         error.to_string(),
-        PrecompileError::from(SettlementError::AmountMismatch).to_string()
+        outbe_vaultrouter::test_support::unanswered_deposit_from().to_string()
+    );
+    let pull = outbe_vaultrouter::test_support::last_deposit_from(&world.provider).unwrap();
+    assert_eq!(
+        (pull.payer, pull.asset, pull.assetsMinor),
+        (input.owner, SETTLEMENT_ASSET, U256::ONE)
     );
     assert!(!is_settled(&mut world, nod_id));
 }

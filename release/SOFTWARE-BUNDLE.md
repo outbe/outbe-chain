@@ -22,9 +22,10 @@ pinned Intel QVL shared library listed in `release/dcap-native-qvl-v1.json`.
 local networks. Both builds run inside the pinned project-toolchain container and require a clean
 Git checkout. The builder downloads the canonical CRS prefix and verifies its pinned SHA-256.
 
-The output name includes the profile and full source commit. `software-manifest.json` is the first
-archive entry and records the release identity, target, profile, mode, size, and SHA-256 of every
-file. The build verifies the completed archive before returning it.
+Production is the default. Output names include the full source commit; the development output
+has a `development-` prefix. The shared `software-manifest.json` is the first archive entry and
+records the release identity, target, mode, size, and SHA-256 of every file. The build verifies
+the completed archive with the same verifier that `outbe-up` uses.
 
 ## Contents
 
@@ -43,9 +44,8 @@ their compact specifications contain only the commands, dependencies, and paths 
 ## CI
 
 `17. Software bundle — preflight` builds either profile and uploads the verified bundle without
-publishing it. Standard version tags build the production profile, create `SHA256SUMS`, sign the
+publishing it. Version tags build the production profile, create `SHA256SUMS`, sign the
 checksum file with Sigstore, and publish those artifacts to the GitHub release.
 
-Protected testnet and mainnet tags publish separately. Two builders reproduce the ELF archive,
-then the network's protected workflow signs the checksums for the archive and comparison evidence.
-These releases do not publish an enclave image, SGX evidence, or a genesis.
+The separate ELF build remains available through `release/scripts/reproducible-build.sh`. The
+software release workflow does not publish ELF comparison evidence, enclave images, or a genesis.

@@ -1,192 +1,12 @@
 use super::*;
 
-#[test]
-fn a_series_called_in_the_same_block_cannot_be_sent() {
-    assert_called_source_cannot_be_sent(T_NOW);
-}
-
-#[test]
-fn a_called_series_at_its_deadline_cannot_be_sent() {
-    assert_called_source_cannot_be_sent(T_NOW - u64::from(SOURCE_NOTICE_SECONDS));
-}
-
-#[test]
-fn a_series_past_its_deadline_cannot_be_sent() {
-    assert_called_source_cannot_be_sent(T_NOW - u64::from(SOURCE_NOTICE_SECONDS) - 1);
-}
-
-#[test]
-fn an_issued_series_is_sent_once_without_a_promis_limit_credit() {
-    with_storage(Some(six_decimal_unit()), |storage| {
-        seed_source_series(
-            storage,
-            six_decimal_unit(),
-            six_decimal_u128(),
-            outbe_intex::IntexCallTrigger::default(),
-        );
-        let promis_limit = unallocated(storage);
-
-        let id = send_whole_holding(storage).unwrap();
-
-        let capacity = sent_capacity(six_decimal_u128());
-        let factory = GemFactoryContract::new(storage.clone());
-        assert_eq!(
-            factory
-                .positions
-                .get(id)
-                .unwrap()
-                .unwrap()
-                .remaining_capacity_minor,
-            capacity
-        );
-        assert_eq!(factory.total_capacity_minor.read().unwrap(), capacity);
-        assert!(
-            !outbe_intex::api::series_exists(storage, source_series_id()).unwrap(),
-            "every unit went into the position, so the source series is spent"
-        );
-        assert_eq!(unallocated(storage), promis_limit);
-    });
-}
-
-#[test]
-fn issue_gem_position_burns_sends_and_issues_nft() {
-    with_storage(None, |storage| {
-        let id = seed_and_send(storage, six_decimal_unit(), six_decimal_u128());
-        let capacity = sent_capacity(six_decimal_u128());
-
-        let factory = GemFactoryContract::new(storage.clone());
-        let rec = factory.positions.get(id).unwrap().unwrap();
-        assert_eq!(rec.merchant, ALICE);
-        assert_eq!(rec.source_series_id, source_series_id());
-        assert_eq!(rec.remaining_capacity_minor, capacity);
-        assert_eq!(factory.total_capacity_minor.read().unwrap(), capacity);
-
-        // Position NFT issued to the merchant.
-        assert_eq!(factory.owner_of(id).unwrap(), ALICE);
-        assert_eq!(factory.balance_of(ALICE).unwrap(), 1);
-        assert_eq!(factory.tokens_by_owner(ALICE).unwrap(), vec![id]);
-    });
-}
-
-#[test]
-fn sending_every_unit_deletes_the_spent_source_series() {
-    with_storage(None, |storage| {
-        seed_and_send(storage, six_decimal_unit(), six_decimal_u128());
-        // Their load lives in the position now, so nothing is left in the source series.
-        assert!(!outbe_intex::api::series_exists(storage, source_series_id()).unwrap());
-    });
-}
+mod positions;
 
 /// This function returns the closing timestamp of the deadline day that contains `at`.
 fn day_closed(at: u64) -> u64 {
     outbe_core_common::deadline_queue::day_end(
         outbe_core_common::deadline_queue::deadline_day(at).unwrap(),
     )
-}
-
-/// An expired position reads empty at once, returns its remainder with its hour and is
-/// then deleted.
-#[test]
-fn an_expired_position_returns_its_remainder() {
-    with_storage(None, |storage| {
-        let id = seed_and_send(storage, six_decimal_unit(), six_decimal_u128());
-        let capacity = sent_capacity(six_decimal_u128());
-        let expires = T_NOW + POSITION_VALIDITY_SECONDS;
-
-        daily_pass(&block_ctx(storage, expires)).unwrap();
-        assert_eq!(unallocated(storage), U256::ZERO);
-        storage.set_block_timestamp(U256::from(expires)).unwrap();
-        assert_eq!(
-            runtime::position_data(storage, id)
-                .unwrap()
-                .remainingCapacityMinor,
-            U256::ZERO
-        );
-
-        let block = daily_pass(&block_ctx(storage, day_closed(expires))).unwrap();
-        assert_eq!(unallocated(storage), capacity);
-        assert_eq!(positions_expired::cleanup_positions(&block).unwrap(), 1);
-
-        let factory = GemFactoryContract::new(storage.clone());
-        assert!(factory.positions.get(id).unwrap().is_none());
-        assert_eq!(factory.balance_of(ALICE).unwrap(), 0);
-        assert!(runtime::position_data(storage, id).is_err());
-    });
-}
-
-/// A storage fault is this node's own: it fails the block instead of skipping the hour.
-#[test]
-fn a_storage_fault_in_the_position_sweep_fails_the_block() {
-    let mut provider = test_storage(None);
-    let id = StorageHandle::enter(&mut provider, |storage| {
-        seed_and_send(&storage, six_decimal_unit(), six_decimal_u128())
-    });
-
-    provider.fail_mutation_at_address(outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS);
-    StorageHandle::enter(&mut provider, |storage| {
-        let ctx = block_ctx(&storage, day_closed(T_NOW + POSITION_VALIDITY_SECONDS));
-        assert!(matches!(
-            daily_pass(&ctx),
-            Err(outbe_primitives::error::PrecompileError::Storage(_))
-        ));
-        let factory = GemFactoryContract::new(storage.clone());
-        let record = factory.positions.get(id).unwrap().unwrap();
-        assert_ne!(
-            factory
-                .hour_capacity_minor
-                .read(&record.expiry_hour())
-                .unwrap(),
-            U256::ZERO
-        );
-    });
-}
-
-#[test]
-fn a_drained_position_returns_nothing_and_is_deleted() {
-    with_storage(Some(six_decimal_unit()), |storage| {
-        seed_day_vwap(storage, 840, six_decimal_unit());
-        let id = seed_and_send(storage, six_decimal_unit(), six_decimal_u128());
-        runtime::issue_merchant_gem(
-            storage,
-            crate::schema::MerchantGemIssueParams {
-                caller: ALICE,
-                position_id: id,
-                owner: BOB,
-                promis_load_minor: sent_capacity(six_decimal_u128()),
-                issuance_currency: 840,
-                reference_currency: 840,
-            },
-        )
-        .unwrap();
-
-        let block = daily_pass(&block_ctx(
-            storage,
-            day_closed(T_NOW + POSITION_VALIDITY_SECONDS),
-        ))
-        .unwrap();
-        assert_eq!(unallocated(storage), U256::ZERO);
-        assert_eq!(positions_expired::cleanup_positions(&block).unwrap(), 1);
-        assert!(GemFactoryContract::new(storage.clone())
-            .positions
-            .get(id)
-            .unwrap()
-            .is_none());
-    });
-}
-
-#[test]
-fn issue_gem_position_unknown_source_rejects() {
-    with_storage(None, |storage| {
-        let r =
-            runtime::issue_gem_position(storage, ALICE, source_series_id(), U256::from(SENT_UNITS));
-        assert_eq!(
-            r.unwrap_err().to_string(),
-            outbe_primitives::error::PrecompileError::from(
-                crate::errors::GemFactoryError::SourceIntexNotFound
-            )
-            .to_string()
-        );
-    });
 }
 
 #[test]
@@ -762,7 +582,8 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_group() {
     let events = provider.get_ordered_events();
     let issued: Vec<_> = events
         .iter()
-        .filter_map(|log| crate::precompile::IGemFactory::GemIssued::decode_log(log).ok())
+        .filter(|log| log.address == outbe_system_common::addresses::GEM_ADDRESS)
+        .filter_map(|log| outbe_gem::precompile::IGem::GemIssued::decode_log(log).ok())
         .map(|log| log.data)
         .collect();
     assert_eq!(issued.len(), 2);
@@ -856,6 +677,7 @@ fn a_series_numbers_each_source_call_price_on_first_use() {
                 GemContract::generate_gem_id(
                     item.series_id,
                     sub_series,
+                    ALICE,
                     item.owner,
                     storage.block_number().unwrap(),
                 )
@@ -881,7 +703,9 @@ fn a_series_numbers_each_source_call_price_on_first_use() {
 #[test]
 fn one_owner_gets_one_gem_of_a_sub_series_in_a_block() {
     let unit = six_decimal_unit();
-    with_storage(Some(U256::from(2u64) * unit), |storage| {
+    let mut provider = test_storage(Some(U256::from(2u64) * unit));
+    let id = StorageHandle::enter(&mut provider, |storage| {
+        let storage = &storage;
         seed_day_vwap(storage, 840, U256::from(2u64) * unit);
         let id = seed_and_send(storage, U256::from(3u64) * unit, six_decimal_u128());
         merchant_gem_to(storage, id, BOB).unwrap();
@@ -896,6 +720,71 @@ fn one_owner_gets_one_gem_of_a_sub_series_in_a_block() {
             )
             .to_string()
         );
+        id
+    });
+    provider.set_block_number(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        merchant_gem_to(&storage, id, BOB).unwrap();
+    });
+}
+
+#[test]
+fn gem_id_holds_the_issuer() {
+    let unit = six_decimal_unit();
+    with_storage(Some(U256::from(2u64) * unit), |storage| {
+        seed_day_vwap(storage, 840, U256::from(2u64) * unit);
+        let id = seed_and_send(storage, U256::from(3u64) * unit, six_decimal_u128());
+        set_source_price(storage, unit);
+        let merchant = gem_item(storage, merchant_gem_to(storage, id, BOB).unwrap());
+        let reward = gem_item(
+            storage,
+            issue_at_live_rate(storage, BOB, unit, 840, 840).unwrap(),
+        );
+        assert_ne!(merchant.gem_id, reward.gem_id);
+        assert_eq!(
+            (merchant.series_id, merchant.sub_series_id, merchant.owner),
+            (reward.series_id, reward.sub_series_id, reward.owner)
+        );
+        assert_eq!(merchant.issuer, ALICE);
+        assert_eq!(
+            reward.issuer,
+            outbe_system_common::addresses::AGENT_REWARD_ADDRESS
+        );
+    });
+}
+
+#[test]
+fn forfeited_gem_loads_go_to_the_promis_limit_once() {
+    let unit = six_decimal_unit();
+    with_storage(Some(U256::from(2u64) * unit), |storage| {
+        seed_day_vwap(storage, 840, U256::from(2u64) * unit);
+        let id = seed_and_send(storage, U256::from(3u64) * unit, six_decimal_u128());
+        set_source_price(storage, unit);
+        let merchant = merchant_gem_to(storage, id, BOB).unwrap();
+        let reward = issue_at_live_rate(storage, BOB, unit, 840, 840).unwrap();
+        let settled = issue_at_live_rate(storage, ALICE, unit, 840, 840).unwrap();
+        force_settled(storage, settled);
+        let group = gem_item(storage, merchant).group_key;
+        for gem_id in [reward, settled] {
+            assert_eq!(gem_item(storage, gem_id).group_key, group);
+        }
+        let mut gem = GemContract::new(storage.clone());
+        let terms = gem.read_call_terms(group).unwrap();
+        crate::called::mark_called(&mut gem, group, &terms, T_NOW).unwrap();
+        let forfeited = gem_item(storage, merchant).promis_load_minor
+            + gem_item(storage, reward).promis_load_minor;
+        let before = unallocated(storage);
+
+        let closed = day_closed(gem_view(storage, merchant).settlement_deadline());
+        daily_pass(&block_ctx(storage, closed)).unwrap();
+        assert_eq!(unallocated(storage), before + forfeited);
+        assert_eq!(
+            gem_view(storage, settled).item.state,
+            GemState::Settled as u8
+        );
+
+        daily_pass(&block_ctx(storage, closed + SECONDS_PER_DAY)).unwrap();
+        assert_eq!(unallocated(storage), before + forfeited);
     });
 }
 

@@ -26,7 +26,8 @@ pub struct OperatorConfig {
 pub struct NetworkConfig {
     pub chain_id: u64,
     pub certified_rpc: String,
-    pub external_ip: Ipv4Addr,
+    #[serde(alias = "external_ip")]
+    pub advertise_ip: Ipv4Addr,
     #[serde(default = "default_rpc_bind_ip")]
     pub rpc_bind_ip: Ipv4Addr,
     pub bootnodes: Vec<String>,
@@ -83,7 +84,7 @@ impl OperatorConfig {
                 "OUTBE_CONSENSUS_EXTRA_ARGS=\"{}\"\n",
                 "OUTBE_CHAIN_ID=\"{}\"\n"
             ),
-            self.network.external_ip,
+            self.network.advertise_ip,
             self.network.rpc_bind_ip,
             self.network.certified_rpc,
             validator,
@@ -195,13 +196,13 @@ mod tests {
 
     #[test]
     fn validates_minimal_config() {
-        let config: OperatorConfig = serde_yaml_ng::from_str(&format!(
+        let template = format!(
             r#"
 version: 1
 network:
   chain_id: 424242
   certified_rpc: https://rpc.example
-  external_ip: 192.0.2.10
+  advertise_ip: 192.0.2.10
   bootnodes: ["enode://abc@192.0.2.1:30303"]
   consensus_peers: ["{}@192.0.2.1:30400"]
   use_local_defaults: true
@@ -211,9 +212,15 @@ feeder:
     sources = "local"
 "#,
             "c".repeat(96),
-        ))
-        .unwrap();
-        config.validate().unwrap();
-        assert_eq!(config.network.rpc_bind_ip, Ipv4Addr::LOCALHOST);
+        );
+        for yaml in [
+            template.clone(),
+            template.replace("advertise_ip:", "external_ip:"),
+        ] {
+            let config: OperatorConfig = serde_yaml_ng::from_str(&yaml).unwrap();
+            config.validate().unwrap();
+            assert_eq!(config.network.advertise_ip, Ipv4Addr::new(192, 0, 2, 10));
+            assert_eq!(config.network.rpc_bind_ip, Ipv4Addr::LOCALHOST);
+        }
     }
 }

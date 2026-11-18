@@ -30,7 +30,6 @@ use outbe_enclave::{
     process::{process_tribute_offer_batch, TributeOfferKeyMaterial},
 };
 use outbe_l2registry::L2RegistryContract;
-use outbe_metadosis::genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay};
 use outbe_oracle::{
     genesis::{init_from_genesis, OracleGenesisConfig},
     schema::OracleContract,
@@ -93,7 +92,7 @@ const L2_CHAIN_ID: u32 = 0xdead;
 const L2_CIRCUIT_VERSION: &str = "1.1.0";
 const BLOCK_GAS_LIMIT: u64 = 30_000_000;
 const TARGET_WWD: WorldwideDay = WorldwideDay::new(20_260_802);
-const REWARD_UTC_DAY: u32 = 20_260_825;
+const REWARD_UTC_DAY: u32 = 20_260_805;
 const CALLER: Address = Address::repeat_byte(0x77);
 const SU_HASH: B256 = B256::with_last_byte(0x22);
 const OFFER_PRIVATE_KEY: [u8; 32] = [0x33; 32];
@@ -322,17 +321,14 @@ fn calldata(fixture: &Fixture) -> Vec<u8> {
 }
 
 fn seed_offer_world(storage: StorageHandle<'_>) {
-    FreshDevnetGenesisBuilder::new()
-        .seed_active_worldwide_day(GenesisWorldwideDay {
-            worldwide_day: TARGET_WWD,
-            day: 0,
-            forming_start: 1,
-            forming_end: 2,
-            offerings_start: 3,
-            offering_end: date_key_to_utc_timestamp(REWARD_UTC_DAY).unwrap() + 86_400,
-        })
-        .apply(storage.clone())
-        .unwrap();
+    outbe_metadosis::bench_support::create_worldwide_day(
+        storage.clone(),
+        storage.block_number().unwrap(),
+        storage.now_secs().unwrap(),
+        CHAIN_ID,
+        TARGET_WWD,
+    )
+    .unwrap();
 
     let mut oracle = OracleContract::new(storage.clone());
     init_from_genesis(&mut oracle, &OracleGenesisConfig::default_config()).unwrap();

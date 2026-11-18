@@ -8,8 +8,8 @@
 
 chain_id: 424242
 
-# One host or IP per founding validator, in order. The bootstrap profile fixes the
-# founding committee at four members. Append `:port` to give one validator a
+# One host or IP per founding validator, in order. At least four founders are
+# required. Append `:port` to give one validator a
 # consensus port of its own (`- 10.0.0.3:31555`).
 validators:
   - 10.0.0.1
@@ -88,8 +88,6 @@ tee:
 # dkg_activation_grace_blocks: 30
 # prefund_coen_units: "100000000000000000000000000" # 100000000 COEN per validator
 # min_stake: "10000000000000000000000000"           # 10000000 COEN minimum stake
-# worldwide_day: 20260824             # default: derived from the timestamp
-# fresh_metadosis: true               # do not seed an already-OFFERING day
 # contracts_dir: contracts/predeploys    # code files for the `contracts` section
 
 # Protocol timings, copied verbatim into config.outbeProtocol.
@@ -160,18 +158,10 @@ tee:
 #   scurve_seeds:
 #     - pair_base: COEN
 #       pair_quote: "840"
-#       peak_day: 20241220
 #       peak_price: "1000000"
-
-# Worldwide days are NOT seeded. The runtime creates the first one at block 1
-# and the live testnet genesis holds no metadosis storage; seeding one here
-# writes its limit amount without the formation record the runtime requires,
-# so the day kills the ProtocolCycle the moment it reaches MissedOffering.
 
 # balance:                            # extra native-token balances
 #   "0x4FE927aB711793954B3a29969Ecd4A60D6D265d0": "1000000000000000000000"
-
-# tributes: []
 
 # contracts:                          # pre-deployed external contracts;
 #   - address: "0x4e59b44847b379578588920cA78FbF26c0B4956C"   # the default set

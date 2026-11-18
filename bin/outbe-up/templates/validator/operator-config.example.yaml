@@ -3,7 +3,7 @@ version: 1
 network:
   chain_id: 54322345
   certified_rpc: "https://rpc.example.invalid"
-  external_ip: 192.0.2.10
+  advertise_ip: 192.0.2.10
   rpc_bind_ip: 127.0.0.1
   bootnodes:
     - "enode://REPLACE_WITH_NODE_ID@192.0.2.20:30303"

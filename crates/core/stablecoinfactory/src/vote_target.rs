@@ -109,7 +109,7 @@ impl VoteTarget for StablecoinFactoryVoteTarget {
         payload: &[u8],
         context: VoteTargetContext,
     ) -> Result<TargetExecutionOutcome> {
-        match StablecoinFactoryApi::execute_approved(
+        match StablecoinFactoryApi::create_stablecoin(
             ctx.storage.clone(),
             proposal_id,
             context.proposer,

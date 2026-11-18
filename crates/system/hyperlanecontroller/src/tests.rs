@@ -1119,6 +1119,8 @@ mod vote_target {
     use outbe_system_common::vote_target::{TargetExecutionOutcome, VoteTarget, VoteTargetContext};
 
     const APPROVED_AT: u64 = 30;
+    const DELAY: u64 = 100;
+    const UNLOCK: u64 = APPROVED_AT + DELAY;
     const ARBITRUM: u32 = 42_161;
 
     fn context() -> VoteTargetContext {
@@ -1132,7 +1134,7 @@ mod vote_target {
 
     fn add_arbitrum() -> String {
         format!(
-            r#"{{"operation":"addHyperlaneChain","chainId":{ARBITRUM},"icaRouter":"{:#x}","ism":"{:#x}","hook":"{:#x}","validatorAnnounce":"{:#x}"}}"#,
+            r#"{{"operation":"addHyperlaneChain","executionDelayBlocks":{DELAY},"chainId":{ARBITRUM},"icaRouter":"{:#x}","ism":"{:#x}","hook":"{:#x}","validatorAnnounce":"{:#x}"}}"#,
             v(0xe1),
             v(0xd1),
             hook(9),
@@ -1141,7 +1143,9 @@ mod vote_target {
     }
 
     fn remove(chain_id: u32) -> String {
-        format!(r#"{{"operation":"removeHyperlaneChain","chainId":{chain_id}}}"#)
+        format!(
+            r#"{{"operation":"removeHyperlaneChain","executionDelayBlocks":{DELAY},"chainId":{chain_id}}}"#
+        )
     }
 
     fn approve(p: &mut HashMapStorageProvider, payload: &str) {
@@ -1167,7 +1171,7 @@ mod vote_target {
                 TargetExecutionOutcome::Applied
             );
         });
-        p.set_block_number(APPROVED_AT);
+        p.set_block_number(UNLOCK);
     }
 
     fn apply(p: &mut HashMapStorageProvider, payload: &str) -> Result<Bytes, PrecompileError> {
@@ -1197,6 +1201,8 @@ mod vote_target {
             add_arbitrum().replace(&format!(r#","validatorAnnounce":"{:#x}""#, announce(9)), ""),
             add_arbitrum().replace('}', r#","extra":1}"#),
             r#"{"operation":"setBridgePaused","chainId":97}"#.to_string(),
+            remove(ARBITRUM).replace(&format!(r#""executionDelayBlocks":{DELAY},"#), ""),
+            remove(ARBITRUM).replace(&format!(":{DELAY},"), ":49,"),
         ] {
             assert!(
                 HyperlaneVoteTarget
@@ -1264,9 +1270,16 @@ mod vote_target {
     }
 
     #[test]
-    fn apply_runs_once_rejects_another_payload_and_drops_an_expired_action() {
+    fn apply_waits_for_the_delay_runs_once_rejects_another_payload_and_drops_an_expired_action() {
         let mut p = initialized_provider();
         approve(&mut p, &remove(SEPOLIA));
+        p.set_block_number(UNLOCK - 1);
+        let err = apply(&mut p, &remove(SEPOLIA)).unwrap_err();
+        assert_eq!(
+            revert_selector(err),
+            IHyperlaneController::ApprovedActionLocked::SELECTOR
+        );
+        p.set_block_number(UNLOCK);
         let err = apply(&mut p, &remove(BSC)).unwrap_err();
         assert_eq!(
             revert_selector(err),
@@ -1282,7 +1295,7 @@ mod vote_target {
         let mut p = initialized_provider();
         approve(&mut p, &remove(BSC));
         p.set_block_number(
-            APPROVED_AT + outbe_chain_constants::get_governance_voting_window_blocks() + 1,
+            UNLOCK + outbe_chain_constants::get_governance_voting_window_blocks() + 1,
         );
         apply(&mut p, &remove(BSC)).unwrap();
         StorageHandle::enter(&mut p, |storage| {
@@ -1297,7 +1310,7 @@ mod vote_target {
             setDestinationGasConfigsCall, DomainGasConfig, GasParam,
         };
         let payload = format!(
-            r#"{{"operation":"setGasConfig","igp":"{:#x}","chainId":{ARBITRUM},"gasOverhead":200000}}"#,
+            r#"{{"operation":"setGasConfig","executionDelayBlocks":{DELAY},"igp":"{:#x}","chainId":{ARBITRUM},"gasOverhead":200000}}"#,
             v(0x16)
         );
         let mut p = initialized_provider();
@@ -1324,7 +1337,7 @@ mod vote_target {
     fn set_outbe_gas_data_sends_the_outbe_gas_price_to_the_remote_gas_oracle() {
         use crate::sol_ext::IStorageGasOracle::{setRemoteGasDataConfigsCall, RemoteGasDataConfig};
         let payload = format!(
-            r#"{{"operation":"setOutbeGasData","chainId":{ARBITRUM},"gasOracle":"{:#x}","gasPrice":"8"}}"#,
+            r#"{{"operation":"setOutbeGasData","executionDelayBlocks":{DELAY},"chainId":{ARBITRUM},"gasOracle":"{:#x}","gasPrice":"8"}}"#,
             v(0x17)
         );
         let mut p = initialized_provider();
@@ -1346,11 +1359,56 @@ mod vote_target {
     }
 
     #[test]
-    fn set_gas_markup_writes_the_markup() {
-        let payload = r#"{"operation":"setGasMarkup","markupBps":5000}"#;
+    fn vote_step_calls_apply_approved_once_the_delay_ends() {
+        let payload = remove(ARBITRUM);
         let mut p = initialized_provider();
-        approve(&mut p, payload);
-        apply(&mut p, payload).unwrap();
+        p.enable_sub_call_stub();
+        approve(&mut p, &payload);
+        StorageHandle::enter(&mut p, |storage| {
+            outbe_system_common::vote_target::vote_proposals(storage)
+                .create(&outbe_system_common::vote_target::ProposalRecord {
+                    id: U256::ONE,
+                    proposer: v(1),
+                    target_module: HYPERLANE_CONTROLLER_ADDRESS,
+                    payload: payload.clone(),
+                    created_height: 0,
+                    voting_deadline_height: 0,
+                    status: outbe_system_common::vote_target::ProposalStatus::Approved.to_u8(),
+                })
+                .unwrap();
+        });
+        let run = |p: &mut HashMapStorageProvider, block| {
+            StorageHandle::enter(p, |storage| {
+                crate::apply_due_approved_actions(&storage, block).unwrap()
+            })
+        };
+        let start = p.sub_call_inputs().len();
+        run(&mut p, UNLOCK - 1);
+        assert_eq!(p.sub_call_inputs().len(), start);
+        run(&mut p, UNLOCK);
+        let calls = &p.sub_call_inputs()[start..];
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].target, HYPERLANE_CONTROLLER_ADDRESS);
+        let expected = IHyperlaneController::applyApprovedCall {
+            proposalId: U256::ONE,
+            payload: payload.as_bytes().to_vec().into(),
+        }
+        .abi_encode();
+        assert_eq!(calls[0].calldata.to_vec(), expected);
+        StorageHandle::enter(&mut p, |storage| {
+            let c = HyperlaneControllerContract::new(storage);
+            assert_eq!(c.queued_approved_actions.len().unwrap(), 0);
+        });
+    }
+
+    #[test]
+    fn set_gas_markup_writes_the_markup() {
+        let payload = format!(
+            r#"{{"operation":"setGasMarkup","executionDelayBlocks":{DELAY},"markupBps":5000}}"#
+        );
+        let mut p = initialized_provider();
+        approve(&mut p, &payload);
+        apply(&mut p, &payload).unwrap();
         StorageHandle::enter(&mut p, |storage| {
             let c = HyperlaneControllerContract::new(storage);
             assert_eq!(c.gas_markup_bps.read().unwrap(), 5_000);

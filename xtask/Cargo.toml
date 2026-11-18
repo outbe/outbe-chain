@@ -11,13 +11,11 @@ name = "xtask"
 path = "src/main.rs"
 
 [dependencies]
-base64 = "0.22"
 clap.workspace = true
 eyre.workspace = true
 hex.workspace = true
-outbe-simplex.workspace = true
 outbe-operator-systemd.workspace = true
-reth-ethereum.workspace = true
+outbe-software-bundle.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -30,7 +28,6 @@ zstd.workspace = true
 
 [dev-dependencies]
 outbe-genesis-cli.workspace = true
-reth-ethereum = { workspace = true, features = ["cli"] }
 
 [lints]
 workspace = true

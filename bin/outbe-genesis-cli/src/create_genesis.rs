@@ -79,39 +79,13 @@ pub fn run_create_genesis_with_min_stake(
 
     let chain_binary = resolve_binary(&config, "chain_binary", "outbe-chain")?;
     let keygen_binary = resolve_binary(&config, "keygen_binary", "outbe-keygen")?;
-    let validators = discover_validators(&config, &keys_dir, &keygen_binary)?;
-
-    println!("Founding validators:");
-    for (index, validator) in validators.iter().enumerate() {
-        let p2p = validator
-            .get("p2p_address")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let addr = validator
-            .get("address")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        println!("  validator-{index}  {p2p}  {addr}");
-    }
-    println!();
-
-    let mut base_genesis = build_base_genesis(&config)?;
-    prefund_validators(&mut base_genesis, &config, &validators)?;
-    let seed = build_seed(&config)?;
-
-    {
-        let temp_dir = tempfile::Builder::new()
-            .prefix("outbe-genesis-")
-            .tempdir()
-            .map_err(|err| GenesisError::io(std::env::temp_dir(), err))?;
-        let inputs = SeedInputs {
-            base_genesis,
-            seed,
-            validators: validators.clone(),
-        };
-        let seeded = run_seed_stage(temp_dir.path(), &inputs, &config)?;
-        run_tee_stage(&chain_binary, &seeded, &output, &config)?;
-    }
+    let temp_dir = tempfile::Builder::new()
+        .prefix("outbe-genesis-")
+        .tempdir()
+        .map_err(|err| GenesisError::io(std::env::temp_dir(), err))?;
+    let seeded = temp_dir.path().join("genesis.seeded.json");
+    let validators = create_seeded_genesis(&config, &keys_dir, &keygen_binary, &seeded)?;
+    run_tee_stage(&chain_binary, &seeded, &output, &config)?;
 
     launch_bundle::render(&config, &validators, &output, &keys_dir)?;
 
@@ -141,6 +115,58 @@ pub fn run_create_genesis_with_min_stake(
     Ok(output)
 }
 
+/// Build the approved pre-TEE genesis and return its ordered founding validators.
+///
+/// The caller binds the selected TEE policy after this deterministic seed stage.
+pub fn create_seeded_genesis(
+    config: &Value,
+    keys_dir: &Path,
+    keygen_binary: &str,
+    output: &Path,
+) -> Result<Vec<Value>, GenesisError> {
+    validate_config(config)?;
+    network_identity(config)?;
+    if output.exists() {
+        return Err(GenesisError::validation(format!(
+            "refusing to overwrite existing seeded genesis: {}",
+            output.display()
+        )));
+    }
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent).map_err(|error| GenesisError::io(parent, error))?;
+    }
+
+    let validators = discover_validators(config, keys_dir, keygen_binary)?;
+    println!("Founding validators:");
+    for (index, validator) in validators.iter().enumerate() {
+        let p2p = validator
+            .get("p2p_address")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let address = validator
+            .get("address")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        println!("  validator-{index}  {p2p}  {address}");
+    }
+    println!();
+
+    let mut base_genesis = build_base_genesis(config)?;
+    prefund_validators(&mut base_genesis, config, &validators)?;
+    let inputs = SeedInputs {
+        base_genesis,
+        seed: build_seed(config)?,
+        validators: validators.clone(),
+    };
+    let temp_dir = tempfile::Builder::new()
+        .prefix("outbe-seed-")
+        .tempdir()
+        .map_err(|error| GenesisError::io(std::env::temp_dir(), error))?;
+    let staged = run_seed_stage(temp_dir.path(), &inputs, config)?;
+    fs::copy(&staged, output).map_err(|error| GenesisError::io(output, error))?;
+    Ok(validators)
+}
+
 /// CLI arguments for `seed_genesis` mode.
 #[derive(Debug, Clone)]
 pub struct SeedCliArgs {
@@ -154,10 +180,6 @@ pub struct SeedCliArgs {
     pub output: PathBuf,
     /// Optional directory containing external contract files.
     pub contracts_dir: Option<PathBuf>,
-    /// Optional WorldwideDay override (`YYYYMMDD`).
-    pub worldwide_day: Option<u32>,
-    /// Do not seed an already-OFFERING WorldwideDay.
-    pub fresh_metadosis: bool,
 }
 
 /// Execute the `seed_genesis` CLI pipeline.
@@ -212,11 +234,7 @@ pub fn run_seed_cli_with_min_stake(
             seed,
             validators,
         },
-        &SeedOptions {
-            contracts_dir,
-            worldwide_day: args.worldwide_day,
-            fresh_metadosis: args.fresh_metadosis,
-        },
+        &SeedOptions { contracts_dir },
     )?;
 
     if let Some(parent) = args.output.parent() {

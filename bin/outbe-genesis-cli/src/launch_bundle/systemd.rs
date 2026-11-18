@@ -118,7 +118,14 @@ pub fn write_systemd_units(
     let base = quote(base_dir);
     let install = format!(
         "\n{root_helper}\n\n\
-# Install and start this machine's single founding validator.\n\
+# Install this machine's single founding validator. `--prepare-only` installs\n\
+# the units without enabling or starting the network.\n\
+START=true\n\
+case \"${{1:-}}\" in\n\
+  \"\") ;;\n\
+  --prepare-only) START=false ;;\n\
+  *) echo \"usage: $0 [--prepare-only]\" >&2; exit 2 ;;\n\
+esac\n\
 UNIT_DIR=\"$(cd -- \"$(dirname -- \"${{BASH_SOURCE[0]}}\")/systemd\" && pwd)\"\n\
 \n\
 getent group outbe >/dev/null || as_root groupadd --system outbe\n\
@@ -127,12 +134,12 @@ as_root chown -R outbe:outbe {base}\n\
 as_root install -m 0644 \"$UNIT_DIR\"/outbe-* /etc/systemd/system/\n\
 as_root systemctl daemon-reload\n\
 \n\
-as_root systemctl enable --now outbe-validator.target\n\
-echo\n\
-echo \"founding validator services:\"\n\
-systemctl list-units 'outbe-*' --no-pager --no-legend | sed 's/^/  /'\n\
-echo\n\
-echo \"follow the node with: journalctl -u outbe-validator -f\"\n",
+if \"$START\"; then\n\
+  as_root systemctl enable --now outbe-validator.target >/dev/null\n\
+else\n\
+  as_root systemctl disable --now outbe-validator.target >/dev/null 2>&1 || true\n\
+fi\n\
+",
         root_helper = ROOT_HELPER,
     );
     write_script(&output_dir.join("install-systemd.sh"), &install)
@@ -168,6 +175,11 @@ done\n\
 for port in {rpc_port}; do\n\
   ss -ltn 2>/dev/null | grep -q \":$port \" && {{ note \"port $port\" \"already in use\"; fail=1; }}\n\
 done\n\
+\n\
+if command -v ufw >/dev/null 2>&1 \
+  && ufw status 2>/dev/null | grep -Eq '(^|[[:space:]]){rpc_port}(/tcp)?[[:space:]]+ALLOW'; then\n\
+  note \"firewall warning\" \"RPC port {rpc_port} has an allow rule; verify its source scope\"\n\
+fi\n\
 \n\
 if [ \"$fail\" = 0 ]; then echo; echo \"  preflight OK\"; else echo; echo \"  preflight FAILED\"; fi\n\
 exit \"$fail\"\n",

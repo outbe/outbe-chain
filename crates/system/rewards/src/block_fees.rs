@@ -18,9 +18,9 @@
 //! These are deterministic storage functions over an explicit
 //! [`BlockRuntimeContext`]. The executor wires them into the begin-zone CPA phase
 //! (escrow) and the `LateFinalizeCredits` phase (record + settle). At settle, the
-//! shared Promis Limit helper burns the entire native residue from `REWARDS_ADDRESS`.
-//! Only fractional protocol credit remains in the shared accumulator, never native
-//! funds on Rewards. `transfer_block_fees` then frees per-window state; the
+//! Promis Limit burns the residue from `REWARDS_ADDRESS` with code 42; the part below
+//! one minor stays on Rewards as the rest of that code. `transfer_block_fees` then frees
+//! per-window state; the
 //! `fees_transferred` tombstone stays until guard-ring eviction.
 
 use alloy_primitives::{Address, B256, U256};
@@ -190,7 +190,7 @@ pub fn seal_block_votes(
 
 /// Settle the matured window for `fb_hash` exactly once:
 /// 1. Pay each credited voter `pending * w(k_i) / D` from `REWARDS_ADDRESS`.
-/// 2. Burn the entire native residue through the shared Promis Limit helper.
+/// 2. Burn the residue into the Promis Limit with code 42.
 /// 3. Assert `sum payout + residue == pending`.
 ///
 /// Returns `(distributed, residue)` in native wei. The caller must checkpoint
@@ -224,11 +224,8 @@ pub fn transfer_block_fees(
     let residue = pending
         .checked_sub(distributed)
         .ok_or(RewardsError::SumOfVoterPortionsExceedsBlockFees)?;
-    outbe_promislimit::PromisLimitContract::new(ctx.storage.clone()).burn_to_promis_limit(
-        REWARDS_ADDRESS,
-        residue,
-        outbe_promislimit::runtime::BurnSource::BlockFee,
-    )?;
+    outbe_promislimit::PromisLimitContract::new(ctx.storage.clone())
+        .burn(outbe_promislimit::BurnSource::PriorityFees, residue)?;
 
     // Parity invariant (checked once): sum payout + residue == pending.
     if distributed
@@ -480,16 +477,18 @@ mod tests {
             .unwrap();
     }
 
-    /// Seed carry through a different real burn source, not Rewards-owned state.
-    fn seed_shared_remainder(ctx: &BlockRuntimeContext, remainder: U256) {
-        ctx.storage.increase_balance(V3, remainder).unwrap();
+    /// A rest of code 42 below one minor, which stays on REWARDS for the next burn.
+    fn seed_priority_fee_rest(ctx: &BlockRuntimeContext, rest: U256) {
+        fund(ctx, rest);
         PromisLimitContract::new(ctx.storage.clone())
-            .burn_to_promis_limit(
-                V3,
-                remainder,
-                outbe_promislimit::runtime::BurnSource::ProposalBond,
-            )
+            .burn(outbe_promislimit::BurnSource::PriorityFees, rest)
             .unwrap();
+    }
+
+    fn priority_fee_rest(ctx: &BlockRuntimeContext) -> U256 {
+        PromisLimitContract::new(ctx.storage.clone())
+            .burn_rest(outbe_promislimit::BurnSource::PriorityFees)
+            .unwrap()
     }
 
     /// Full k=0 attendance pays exactly the pool. REWARDS is fully drained.
@@ -558,19 +557,17 @@ mod tests {
     #[test]
     fn zero_fee_escrow_replay_emits_once_and_missing_window_emits_nothing() {
         let storage = run(|ctx| {
-            seed_shared_remainder(ctx, U256::from(7));
+            seed_priority_fee_rest(ctx, U256::from(7));
             seal_block_votes(ctx, 12, 3).unwrap();
             escrow_block_fee(ctx, &block_at(10, FB), U256::ZERO, &[V0]).unwrap();
             escrow_block_fee(ctx, &block_at(10, FB), U256::ZERO, &[V0]).unwrap();
             seal_block_votes(ctx, 13, 3).unwrap();
             seal_block_votes(ctx, 13, 3).unwrap();
+            assert_eq!(priority_fee_rest(ctx), U256::from(7));
             assert_eq!(
-                PromisLimitContract::new(ctx.storage.clone())
-                    .rest_minor()
-                    .unwrap(),
-                U256::from(7)
+                ctx.storage.balance(REWARDS_ADDRESS).unwrap(),
+                priority_fee_rest(ctx)
             );
-            assert_eq!(ctx.storage.balance(REWARDS_ADDRESS).unwrap(), U256::ZERO);
         });
         let logs = storage.get_events(REWARDS_ADDRESS);
         assert_eq!(logs.len(), 2);
@@ -590,7 +587,7 @@ mod tests {
                 let unit = UNITS_PER_PROTOCOL_MINOR;
                 let pending = U256::from(24) * unit / U256::from(10);
                 let remainder = U256::from(6) * unit / U256::from(10);
-                seed_shared_remainder(ctx, remainder);
+                seed_priority_fee_rest(ctx, remainder);
                 fund(ctx, pending);
                 escrow_block_fee(ctx, &block_at(10, FB), pending, &[V0, V1, V2]).unwrap();
             })
@@ -615,7 +612,7 @@ mod tests {
                         .read(&V0)
                         .unwrap(),
                     PromisLimitContract::new(handle.clone())
-                        .rest_minor()
+                        .burn_rest(outbe_promislimit::BurnSource::PriorityFees)
                         .unwrap(),
                     rewards.fees_transferred.read(&FB).unwrap(),
                     PromisLimitContract::new(handle.clone())
@@ -743,33 +740,26 @@ mod tests {
                     .unwrap(),
                 U256::from(1_000)
             );
+            assert_eq!(priority_fee_rest(ctx), U256::from(4));
             assert_eq!(
-                PromisLimitContract::new(ctx.storage.clone())
-                    .rest_minor()
-                    .unwrap(),
-                U256::from(4)
+                ctx.storage.balance(REWARDS_ADDRESS).unwrap(),
+                priority_fee_rest(ctx)
             );
-            assert_eq!(ctx.storage.balance(REWARDS_ADDRESS).unwrap(), U256::ZERO);
 
             assert_eq!(
                 transfer_block_fees(ctx, FB, 4).unwrap(),
                 (U256::ZERO, U256::ZERO)
             );
-            assert_eq!(
-                PromisLimitContract::new(ctx.storage.clone())
-                    .rest_minor()
-                    .unwrap(),
-                U256::from(4)
-            );
+            assert_eq!(priority_fee_rest(ctx), U256::from(4));
         });
     }
 
     #[test]
-    fn residue_crosses_unit_boundary_with_preexisting_shared_remainder() {
+    fn residue_crosses_unit_boundary_with_preexisting_rest() {
         let storage = run(|ctx| {
             let unit = outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
             let pending = U256::from(24) * unit / U256::from(10);
-            seed_shared_remainder(ctx, unit / U256::from(2));
+            seed_priority_fee_rest(ctx, unit / U256::from(2));
             let second = B256::repeat_byte(0xCD);
             let rewards = ctx.storage.contract::<Rewards>();
             rewards.pending_reward_day.write(&second, 19700101).unwrap();
@@ -784,22 +774,18 @@ mod tests {
 
             transfer_block_fees(ctx, FB, 4).unwrap();
             assert_eq!(carry_over(), U256::from(1));
-            assert_eq!(
-                PromisLimitContract::new(ctx.storage.clone())
-                    .rest_minor()
-                    .unwrap(),
-                unit / U256::from(10)
-            );
+            assert_eq!(priority_fee_rest(ctx), unit / U256::from(10));
 
             transfer_block_fees(ctx, second, 4).unwrap();
             assert_eq!(carry_over(), U256::from(1));
             assert_eq!(
-                PromisLimitContract::new(ctx.storage.clone())
-                    .rest_minor()
-                    .unwrap(),
+                priority_fee_rest(ctx),
                 U256::from(7) * unit / U256::from(10)
             );
-            assert_eq!(ctx.storage.balance(REWARDS_ADDRESS).unwrap(), U256::ZERO);
+            assert_eq!(
+                ctx.storage.balance(REWARDS_ADDRESS).unwrap(),
+                priority_fee_rest(ctx)
+            );
         });
         let summaries: Vec<_> = storage
             .get_events(REWARDS_ADDRESS)

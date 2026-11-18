@@ -9014,6 +9014,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-software-bundle"
+version = "0.1.0"
+dependencies = [
+ "eyre",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "zstd",
+]
+
+[[package]]
 name = "outbe-stablecoin"
 version = "0.1.0"
 dependencies = [
@@ -9260,8 +9273,11 @@ dependencies = [
  "hex",
  "indicatif",
  "k256 0.13.4",
+ "outbe-genesis-cli",
  "outbe-operator-systemd",
+ "outbe-primitives",
  "outbe-snapshot",
+ "outbe-software-bundle",
  "reqwest 0.12.28",
  "rustix",
  "serde",
@@ -17290,14 +17306,12 @@ dependencies = [
 name = "xtask"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
  "clap",
  "eyre",
  "hex",
  "outbe-genesis-cli",
  "outbe-operator-systemd",
- "outbe-simplex",
- "reth-ethereum",
+ "outbe-software-bundle",
  "serde",
  "serde_json",
  "sha2 0.10.9",

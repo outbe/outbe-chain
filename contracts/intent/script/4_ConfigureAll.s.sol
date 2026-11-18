@@ -27,8 +27,8 @@ import {IntentCreate3} from "./IntentCreate3.sol";
 ///   CONTRACT_SALT     - salt string used at deploy (default SALT_VERSION)
 /// Optional:
 ///   REMOTE_CHAIN_IDS      - csv of remote EVM chain ids to register (skipped if unset)
-///   AUCTION_COMMIT_PERIOD - commit window in seconds (skipped if unset. Set it per target chain.)
-///   AUCTION_REVEAL_PERIOD - reveal window in seconds (skipped if unset. Set it per target chain.)
+///   AUCTION_COMMIT_PERIOD - commit window in blocks (skipped if unset. Set it per target chain.)
+///   AUCTION_REVEAL_PERIOD - reveal window in blocks (skipped if unset. Set it per target chain.)
 ///   AUCTION_MAX_QUOTES    - max commits per order, at most 50 (skipped if unset)
 contract ConfigureAll is Script {
     function run() public virtual {

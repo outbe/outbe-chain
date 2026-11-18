@@ -149,8 +149,7 @@ pub fn deploy_markdown(
             .ok_or_else(|| GenesisError::validation("chain_id is required"))?,
     )?;
     let mode = config
-        .get("tee")
-        .and_then(|t| t.get("mode"))
+        .pointer("/tee/mode")
         .and_then(Value::as_str)
         .ok_or_else(|| GenesisError::validation("tee.mode is required"))?;
     let first_p2p = validators
@@ -176,6 +175,8 @@ pub fn deploy_markdown(
         rows.push(format!("| validator-{index} | `{p2p}` | `{addr}` |"));
     }
     let rows_joined = rows.join("\n");
+    let founder_count = validators.len();
+    let last_founder = founder_count.saturating_sub(1);
     let bootnode_lines = enodes
         .iter()
         .map(|enode| format!("  - `{enode}`"))
@@ -184,9 +185,9 @@ pub fn deploy_markdown(
     let dev_warning = if mode == "dcap-required" {
         ""
     } else {
-        "\n> **`no-attestation-dev`**: the enclave runs unattested. Use it for a \
-devnet only. A production network needs `tee.mode: dcap-required`, real \
-SGX hardware, and the exact release measurements.\n"
+        "\n> **`no-attestation-dev`**: the node runs TEE operations without \
+hardware attestation. Use this mode only on devnet or testnet. Mainnet requires \
+`tee.mode: dcap-required` and a compatible attestation source.\n"
     };
 
     let reth_p2p_port = port_of(config, "reth_p2p_port")?;
@@ -209,7 +210,7 @@ SGX hardware, and the exact release measurements.\n"
     Ok(format!(
         "# Deploying this network\n\
 \n\
-Chain id `{chain_id}`, four founding validators, TEE mode `{mode}`.\n\
+Chain id `{chain_id}`, {founder_count} founding validators, TEE mode `{mode}`.\n\
 {dev_warning}\n\
 | Machine | Consensus p2p | Validator address |\n\
 |---|---|---|\n\
@@ -225,7 +226,7 @@ archive contains the shared genesis and bootnodes, systemd units and installer,\
 launch scripts, and **only that validator's** keys.\n\
 \n\
 ```bash\n\
-# From the generated output directory, for machine N (0..3):\n\
+# From the generated output directory, for machine N (0..{last_founder}):\n\
 scp dist/validator-N.tgz dist/SHA256SUMS dist/unpack.sh <machine-N>:~/\n\
 ssh <machine-N>\n\
 cd ~\n\
@@ -238,7 +239,7 @@ Never copy one validator's archive or key directory to another machine.\n\
 \n\
 ## 2. Open the ports\n\
 \n\
-Between the four machines:\n\
+Between all founding machines:\n\
 \n\
 | Port | Purpose |\n\
 |---|---|\n\
@@ -270,16 +271,17 @@ cd {base_dir}/validator-N\n\
 \n\
 `install-systemd.sh` installs one non-templated unit per role and starts the\n\
 `outbe-validator.target`. The node manages its resident TEE lifecycle and renewal.\n\
+Use `./install-systemd.sh --prepare-only` to install without starting it.\n\
 The services recover after clean or failed exits. `preflight.sh`\n\
 is read-only: run it first and compare the genesis digest it prints across all\n\
-four machines.\n\
+founding machines.\n\
 \n\
 Inspect the stack with `systemctl status outbe-validator.target` and follow the\n\
 node with `journalctl -u outbe-validator -f`.\n\
 \n\
-**Start all four machines within a few minutes of each other.** Block 1 carries\n\
+**Start all {founder_count} machines within a few minutes of each other.** Block 1 carries\n\
 the founding DKG ceremony and needs every genesis validator online - unlike a\n\
-later reshare it does not complete on a threshold. If it fails, stop all four,\n\
+later reshare it does not complete on a threshold. If it fails, stop all founders,\n\
 delete `{base_dir}/validator-N/data` on each machine, and start again; the\n\
 genesis itself stays valid.\n\
 \n\
@@ -291,7 +293,7 @@ curl -s -X POST http://{rpc_bind}:{rpc_port} \\\n\
   -H 'content-type: application/json' \\\n\
   -d '{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_blockNumber\",\"params\":[]}}'\n\
 \n\
-# all four validators active\n\
+# all {founder_count} validators active\n\
 outbe-cli --rpc-url http://{rpc_bind}:{rpc_port} validator list\n\
 \n\
 # feeder health\n\
@@ -299,7 +301,7 @@ curl -s http://127.0.0.1:{feeder_health_port}/health\n\
 ```\n\
 \n\
 The network is healthy when every machine reports an advancing non-zero block\n\
-number and `validator list` shows four active validators.\n\
+number and `validator list` shows {founder_count} active validators.\n\
 \n\
 ## What runs where\n\
 \n\

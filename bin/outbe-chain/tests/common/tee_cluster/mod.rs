@@ -3,23 +3,15 @@ use crate::{rpc::Rpc, services::Radicle};
 use alloy_primitives::Address;
 use commonware_cryptography::{bls12381, Signer as _};
 use outbe_consensus::bls::{self, KeyBackend};
-use outbe_primitives::{
-    tee_attestation_v1::TeePolicyScheduleV1, tee_genesis_v1::tee_attestation_v1_genesis_field,
-};
 use serde_json::{json, Value};
 use std::{
     fs,
     net::{SocketAddr, TcpListener},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    time::{Duration, Instant},
 };
 
 const FOUNDERS: usize = 4;
-
-pub fn port() -> u16 {
-    reserve_port().local_addr().unwrap().port()
-}
 
 fn reserve_port() -> TcpListener {
     TcpListener::bind("127.0.0.1:0").expect("reserve a loopback TCP port")
@@ -67,10 +59,6 @@ impl Process {
         }
     }
 
-    pub fn id(&self) -> u32 {
-        self.0.id()
-    }
-
     pub fn stop(&mut self) {
         let _ = self.0.kill();
         let _ = self.0.wait();
@@ -89,20 +77,11 @@ pub struct Cluster {
     pub addresses: Vec<Address>,
     pub peers: Vec<(bls12381::PublicKey, SocketAddr)>,
     pub root: PathBuf,
-    launch_commands: Vec<Command>,
     _radicle: Vec<Radicle>,
     _directory: tempfile::TempDir,
 }
 impl Cluster {
     pub fn start_with_genesis(config: Value, prepare: impl FnOnce(&mut Value, &[Address])) -> Self {
-        Self::start_with_lease(config, None, prepare)
-    }
-
-    pub fn start_with_lease(
-        config: Value,
-        lease_seconds: Option<u64>,
-        prepare: impl FnOnce(&mut Value, &[Address]),
-    ) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().to_owned();
         run(binary()
@@ -154,8 +133,6 @@ impl Cluster {
                 seed,
                 validators: Some(manifest),
                 output: seeded.clone(),
-                worldwide_day: None,
-                fresh_metadosis: false,
                 contracts_dir: None,
             },
         )
@@ -170,9 +147,6 @@ impl Cluster {
             .arg("--output")
             .arg(&final_genesis)
             .args(["--mode", "no-attestation-dev"]));
-        if let Some(seconds) = lease_seconds {
-            set_lease_policy(&final_genesis, seconds);
-        }
         let peer_args = validators
             .iter()
             .zip(&peers)
@@ -185,7 +159,6 @@ impl Cluster {
         let mut rpcs = Vec::new();
         let mut metrics = Vec::new();
         let mut radicle = Vec::new();
-        let mut launch_commands = Vec::new();
         let reth_ports: Vec<_> = ports.iter().map(|addresses| addresses[1].port()).collect();
         let enodes: Vec<_> = reth_ports
             .iter()
@@ -279,7 +252,6 @@ impl Cluster {
                 ]);
             drop(reserve);
             processes.push(Process::spawn(&mut child, &validator.join("node.log")));
-            launch_commands.push(child);
             rpcs.push(Rpc::new(rpc.port()));
             metrics.push(metric.port());
         }
@@ -290,46 +262,8 @@ impl Cluster {
             addresses,
             peers,
             root,
-            launch_commands,
             _radicle: radicle,
             _directory: directory,
-        }
-    }
-
-    pub fn reboot_founder(&mut self, index: usize, clock_offset_seconds: i64) -> u32 {
-        assert_ne!(index, 0, "founder zero is the lifecycle upstream");
-        let mut command = binary();
-        command.args(self.launch_commands[index].get_args()).args([
-            "--upstream",
-            self.rpcs[0].url(),
-            "--testnet.unix-time-offset-secs",
-            &clock_offset_seconds.to_string(),
-        ]);
-        self.processes[index].stop();
-        self.processes[index] = Process::spawn(
-            &mut command,
-            &self.root.join(format!("validator-{index}/node.log")),
-        );
-        self.processes[index].id()
-    }
-    pub async fn wait_finalized_on(&mut self, height: u64, live_founders: usize) -> u64 {
-        assert!(live_founders > 0 && live_founders <= self.processes.len());
-        let start = Instant::now();
-        loop {
-            self.assert_running(live_founders);
-            let mut common_height = u64::MAX;
-            for rpc in &self.rpcs[..live_founders] {
-                common_height = common_height.min(rpc.finalized().await.unwrap_or_default());
-            }
-            if common_height >= height {
-                return common_height;
-            }
-            assert!(
-                start.elapsed() < Duration::from_secs(180),
-                "finalization stalled before block {height}; logs: {}",
-                self.logs()
-            );
-            tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
 
@@ -353,20 +287,4 @@ impl Cluster {
             .collect::<Vec<_>>()
             .join("\n")
     }
-}
-
-fn set_lease_policy(path: &Path, seconds: u64) {
-    let mut genesis: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
-    let field = &mut genesis["config"]["teeAttestationV1"];
-    let encoded = field["policySchedule"]
-        .as_str()
-        .unwrap()
-        .trim_start_matches("0x");
-    let mut schedule =
-        TeePolicyScheduleV1::decode_canonical(&hex::decode(encoded).unwrap()).unwrap();
-    assert_eq!(schedule.entries.len(), 1);
-    let policy = &mut schedule.entries[0].policy;
-    policy.maximum_lease = seconds;
-    *field = tee_attestation_v1_genesis_field(policy).unwrap();
-    write(path, &genesis);
 }

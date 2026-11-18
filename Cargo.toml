@@ -3,6 +3,7 @@ members = [
     "xtask",
     "crates/runtime",
     "crates/operator/systemd",
+    "crates/operator/software-bundle",
     # blockchain
     "crates/blockchain/macros",
     "crates/blockchain/primitives",
@@ -90,6 +91,7 @@ default-members = [
     "xtask",
     "crates/runtime",
     "crates/operator/systemd",
+    "crates/operator/software-bundle",
     # blockchain
     "crates/blockchain/macros",
     "crates/blockchain/primitives",
@@ -197,6 +199,7 @@ undocumented_unsafe_blocks = "deny"
 outbe-runtime = { path = "crates/runtime" }
 # Internal - operator tooling
 outbe-operator-systemd = { path = "crates/operator/systemd" }
+outbe-software-bundle = { path = "crates/operator/software-bundle" }
 # Internal - blockchain
 outbe-macros = { path = "crates/blockchain/macros" }
 outbe-primitives = { path = "crates/blockchain/primitives" }
@@ -428,7 +431,6 @@ parking_lot = "0.12"
 tracing = "0.1"
 futures = "0.3"
 time = "0.3"
-filetime = "0.2"
 flate2 = "1"
 sha2 = "0.10"
 walkdir = "2"

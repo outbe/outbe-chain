@@ -187,9 +187,11 @@ fn config_validation_matrix_and_rejections() {
     for key in [
         "bogus",
         "enclave_dir",
+        "enclave_image",
         "enclave_runner",
         "enclave_sgx",
         "signed_enclave_dir",
+        "tee_enclave_port",
     ] {
         let mut config = minimal_config("./keys");
         config[key] = json!("unsupported");
@@ -209,7 +211,18 @@ fn config_validation_matrix_and_rejections() {
         json!({"validators": ["10.0.0.1", "10.0.0.2", "10.0.0.3"]}),
     ))
     .expect_err("wrong validator count");
-    assert!(err.to_string().contains("exactly 4"));
+    assert!(err.to_string().contains("at least 4"));
+
+    for count in [4_usize, 5, 7] {
+        let validators: Vec<Value> = (1..=count)
+            .map(|index| Value::String(format!("10.0.0.{index}")))
+            .collect();
+        validate_config(&merge_obj(
+            minimal_config("./keys"),
+            json!({"validators": validators}),
+        ))
+        .unwrap_or_else(|error| panic!("{count} founders must validate: {error}"));
+    }
 
     let mut no_keys_dir = minimal_config("./keys");
     no_keys_dir.as_object_mut().expect("obj").remove("keys_dir");
@@ -228,7 +241,7 @@ fn config_validation_matrix_and_rejections() {
 
     for (network, chain_id) in [("devnet", 424242_u64), ("testnet", 54322345_u64)] {
         for tee_mode in ["dcap-required", "no-attestation-dev"] {
-            let mut cfg = merge_obj(
+            let cfg = merge_obj(
                 minimal_config("./keys"),
                 json!({
                     "network": network,
@@ -236,9 +249,6 @@ fn config_validation_matrix_and_rejections() {
                     "tee": {"mode": tee_mode},
                 }),
             );
-            if tee_mode == "dcap-required" {
-                cfg["enclave_image"] = json!(format!("outbe-image@sha256:{}", "ab".repeat(32)));
-            }
             validate_config(&cfg).expect("canonical attestation matrix");
         }
     }
@@ -249,11 +259,10 @@ fn config_validation_matrix_and_rejections() {
             "network": "mainnet",
             "chain_id": 676,
             "tee": {"mode": "dcap-required"},
-            "enclave_image": format!("outbe-image@sha256:{}", "ab".repeat(32)),
             "price_feed_rest": "https://prices.outbe.net",
         }),
     );
-    validate_config(&mainnet).expect("mainnet valid");
+    validate_config(&mainnet).expect("attestation-required mainnet");
     assert_eq!(
         network_identity(&mainnet).expect("identity"),
         ("mainnet".to_owned(), 676, "outbe-mainnet-1".to_owned())
@@ -262,13 +271,6 @@ fn config_validation_matrix_and_rejections() {
     mainnet["tee"] = json!({"mode": "no-attestation-dev"});
     let err = validate_config(&mainnet).expect_err("mainnet rejects direct dev");
     assert!(err.to_string().contains("Mainnet requires"));
-
-    let unpinned_dcap = merge_obj(
-        minimal_config("./keys"),
-        json!({"chain_id": 424242, "tee": {"mode": "dcap-required"}}),
-    );
-    let err = validate_config(&unpinned_dcap).expect_err("unpinned dcap");
-    assert!(err.to_string().contains("immutable digest"));
 
     let port_collision = merge_obj(minimal_config("./keys"), json!({"rpc_port": 9101}));
     let err = validate_config(&port_collision).expect_err("port collision");
@@ -588,7 +590,6 @@ fn seed_stage_end_to_end_and_reproducibility() {
             "network": "mainnet",
             "chain_id": 676,
             "tee": {"mode": "dcap-required"},
-            "enclave_image": format!("outbe-image@sha256:{}", "ab".repeat(32)),
             "price_feed_rest": "https://prices.outbe.net",
         }),
     );

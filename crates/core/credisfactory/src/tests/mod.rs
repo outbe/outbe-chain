@@ -530,36 +530,33 @@ pub fn advance_to(storage: &StorageHandle<'_>, timestamp: u64) {
     storage.set_block_timestamp(U256::from(timestamp)).unwrap();
 }
 
-/// Has the settlement asset's `balanceOf` answer the shared collector as a token that
-/// moves `amount`, capped at what `credis_id` owes: before the pull, after it, and after
-/// the vault deposit.
-pub fn stub_payment(provider: &mut HashMapStorageProvider, credis_id: U256, amount: U256) {
-    let owed = StorageHandle::enter(provider, |storage| {
-        runtime::quote_settlement(&storage, credis_id).unwrap()
-    });
-    let moved = amount.min(owed);
-    provider.stub_sub_call_sequence_at_selector(
-        settlement_asset(),
-        crate::sol_ext::IERC20::balanceOfCall::SELECTOR,
-        [U256::ZERO, moved, U256::ZERO]
-            .map(|balance| Bytes::from(balance.to_be_bytes::<32>().to_vec())),
-    );
-}
-
-/// Runs `pay` against a token that moves `amount` towards `credis_id`.
+/// Runs `pay`, a payment of up to `amount` towards `credis_id`. The router stub answers
+/// the payment. A payment that reaches the router asks it for exactly what the Credis
+/// owes, capped at `amount`.
 pub fn paying<R>(
     provider: &mut HashMapStorageProvider,
     credis_id: U256,
     amount: U256,
     pay: impl FnOnce(StorageHandle<'_>) -> R,
 ) -> R {
-    stub_payment(provider, credis_id, amount);
+    let owed = StorageHandle::enter(provider, |storage| {
+        runtime::quote_settlement(&storage, credis_id).unwrap()
+    });
+    let calls = provider.sub_call_inputs().len();
     let out = StorageHandle::enter(provider, pay);
-    provider.stub_sub_call_sequence_at_selector(
-        settlement_asset(),
-        crate::sol_ext::IERC20::balanceOfCall::SELECTOR,
-        [],
-    );
+    let pull = provider.sub_call_inputs()[calls..]
+        .iter()
+        .filter(|input| input.target == VAULT_ROUTER_ADDRESS)
+        .find_map(|input| {
+            outbe_vaultrouter::precompile::IVaultRouter::depositFromCall::abi_decode(
+                &input.calldata,
+            )
+            .ok()
+        });
+    if let Some(pull) = pull {
+        assert_eq!(pull.asset, settlement_asset());
+        assert_eq!(pull.assetsMinor, amount.min(owed));
+    }
     out
 }
 
@@ -657,18 +654,8 @@ pub fn env() -> HashMapStorageProvider {
     storage.stub_sub_call_at(VAULT_ROUTER_ADDRESS, zero_word());
     storage.stub_sub_call_at(settlement_asset(), iso_word(ISSUANCE_ISO));
     storage.stub_sub_call_at_selector(
-        settlement_asset(),
-        crate::sol_ext::IERC20::transferFromCall::SELECTOR,
-        iso_word(1),
-    );
-    storage.stub_sub_call_at_selector(
-        settlement_asset(),
-        crate::sol_ext::IERC20::approveCall::SELECTOR,
-        iso_word(1),
-    );
-    storage.stub_sub_call_at_selector(
         VAULT_ROUTER_ADDRESS,
-        outbe_vaultrouter::api::IVaultRouter::releaseReservationCall::SELECTOR,
+        outbe_vaultrouter::precompile::IVaultRouter::releaseReservationCall::SELECTOR,
         Bytes::from(pledge_stables().to_be_bytes::<32>().to_vec()),
     );
     storage.stub_sub_call_at_selector(

@@ -3,8 +3,9 @@ description: Build the deterministic software bundle with the pinned release too
 
 inputs:
   profile:
-    description: Software profile to build
-    required: true
+    description: Resident TEE software profile to build
+    required: false
+    default: production
   output:
     description: Empty directory that receives the bundle
     required: true
