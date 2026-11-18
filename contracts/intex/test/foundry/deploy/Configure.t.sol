@@ -70,9 +70,6 @@ contract ConfigureOriginTest is ConfigureTest {
         assertTrue(router.hasRole(router.INTEX_FACTORY_ROLE(), o.system));
         assertTrue(router.hasRole(router.INTEX_FACTORY_ROLE(), o.desis));
         IntexNFT1155 nft = IntexNFT1155(o.nft);
-        assertTrue(nft.hasRole(nft.RELAYER_ROLE(), o.system));
-        assertTrue(nft.hasRole(nft.RELAYER_ROLE(), o.desis));
-        assertTrue(nft.hasRole(nft.RELAYER_ROLE(), o.intexFactory));
         assertTrue(nft.hasRole(nft.BURNER_ROLE(), o.intexFactory));
         assertTrue(nft.hasRole(nft.BURNER_ROLE(), o.gemFactory));
     }
@@ -105,7 +102,7 @@ contract ConfigureOriginTest is ConfigureTest {
     function test_RevertWhen_HandedOverAndARoleIsMissing() public {
         script.configure(deployer, o);
         _handOver(o.nft, deployer);
-        o.system = makeAddr("newSystem");
+        o.gemFactory = makeAddr("newGemFactory");
 
         vm.expectRevert(abi.encodeWithSelector(BaseScript.HandedOverToGovernance.selector, o.nft));
         script.configure(deployer, o);

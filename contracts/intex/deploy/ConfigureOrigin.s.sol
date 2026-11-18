@@ -63,9 +63,6 @@ contract ConfigureOrigin is BaseScript {
         grantRoleIfMissing(o.router, router.INTEX_FACTORY_ROLE(), o.desis, deployer);
 
         IntexNFT1155 nft = IntexNFT1155(o.nft);
-        grantRoleIfMissing(o.nft, nft.RELAYER_ROLE(), o.system, deployer);
-        grantRoleIfMissing(o.nft, nft.RELAYER_ROLE(), o.desis, deployer);
-        grantRoleIfMissing(o.nft, nft.RELAYER_ROLE(), o.intexFactory, deployer);
         grantRoleIfMissing(o.nft, nft.BURNER_ROLE(), o.intexFactory, deployer);
         grantRoleIfMissing(o.nft, nft.BURNER_ROLE(), o.gemFactory, deployer);
     }
