@@ -11,7 +11,9 @@ fn distribute_rejects_non_origin_router() {
     with_factory(|s| {
         s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(100u64))
             .unwrap();
-        let err = runtime::distribute(&s, owner(), 7.into(), 10, U256::from(100u64)).unwrap_err();
+        let err =
+            runtime::burn_intex_auction_proceeds(&s, owner(), 7.into(), 10, U256::from(100u64))
+                .unwrap_err();
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(
@@ -24,7 +26,8 @@ fn distribute_rejects_non_origin_router() {
 
 fn deliver(s: &StorageHandle<'_>, src_chain_id: u32, amount: U256) {
     s.increase_balance(INTEX_FACTORY_ADDRESS, amount).unwrap();
-    runtime::distribute(s, ORIGIN_ROUTER_ADDRESS, 7.into(), src_chain_id, amount).unwrap();
+    runtime::burn_intex_auction_proceeds(s, ORIGIN_ROUTER_ADDRESS, 7.into(), src_chain_id, amount)
+        .unwrap();
 }
 
 fn pool(s: &StorageHandle<'_>) -> U256 {
@@ -132,7 +135,8 @@ fn proceeds_above_the_factory_balance_change_nothing() {
     StorageHandle::enter(&mut storage, |s| {
         s.increase_balance(INTEX_FACTORY_ADDRESS, unit).unwrap();
         let before = pool(&s);
-        runtime::distribute(&s, ORIGIN_ROUTER_ADDRESS, 7.into(), 10, unit + unit).unwrap_err();
+        runtime::burn_intex_auction_proceeds(&s, ORIGIN_ROUTER_ADDRESS, 7.into(), 10, unit + unit)
+            .unwrap_err();
 
         assert_eq!(pool(&s), before);
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), unit);
@@ -204,7 +208,7 @@ fn unpublished_selectors_refuse_native_value() {
     });
 }
 
-/// `distribute` is the one published payable selector here, and it burns
+/// `burnIntexAuctionProceeds` is the one published payable selector here, and it burns
 /// auction proceeds straight from `msg.value`. The route table only decides that
 /// this *address* may be credited. Nothing in it proves the dispatch actually
 /// hands the value to the handler. This does: the handler rejects a zero amount,

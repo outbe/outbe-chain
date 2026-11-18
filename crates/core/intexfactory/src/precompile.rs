@@ -112,7 +112,7 @@ pub fn dispatch(
                         value,
                     },
                     |sender, c, val| {
-                        runtime::distribute(
+                        runtime::burn_intex_auction_proceeds(
                             &storage,
                             sender,
                             c.emissionDay.into(),
