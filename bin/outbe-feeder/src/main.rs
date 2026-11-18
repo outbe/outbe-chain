@@ -468,7 +468,7 @@ impl FeederTickContext<'_> {
         // Gas prices come before the period check below, so a slow RPC cannot
         // carry the vote into the next period.
         let gas = self.gas_votes(period, &aggregated).await;
-        let rates = self.rates.collect(&self.config.rate_providers).await;
+        self.rates.refresh(&self.config.rate_providers).await;
         let fresh = self.client.head().await?;
         if fresh.period(self.config.oracle.vote_period) != period {
             self.health
@@ -492,6 +492,11 @@ impl FeederTickContext<'_> {
         if aggregated.is_empty() {
             return Err(FeederError::NoPriceDataAvailable.into());
         }
+        // The time of the head block: the vote goes into a later block, and
+        // the Oracle rejects a rate that is newer than its block.
+        let rates = self
+            .rates
+            .votes(&self.config.rate_providers, fresh.timestamp);
         let rates = self.client.only_rate_targets(&fresh, rates).await?;
         let calldata = vote_builder::encode_vote(&aggregated, &gas, &rates);
         if let Ok(decoded) = vote_builder::decode_vote_log(&calldata) {

@@ -29,6 +29,8 @@ const UPDATE_ADDRESS: Address =
 pub struct Head {
     pub height: u64,
     pub hash: String,
+    /// The block time, in Unix seconds.
+    pub timestamp: u64,
 }
 impl Head {
     pub fn period(&self, length: u64) -> u64 {
@@ -101,6 +103,7 @@ impl OracleClient {
                 .as_str()
                 .ok_or(OracleError::MissingBlockHash)?
                 .into(),
+            timestamp: quantity(&value["timestamp"])?,
         })
     }
     /// Timestamp of the Outbe block at `height`.
@@ -443,7 +446,8 @@ mod tests {
             assert_eq!(
                 Head {
                     height: h,
-                    hash: String::new()
+                    hash: String::new(),
+                    timestamp: 0,
                 }
                 .period(8),
                 p

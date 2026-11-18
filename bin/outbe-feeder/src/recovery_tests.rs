@@ -66,7 +66,7 @@ impl RpcState {
                     u64::from_str_radix(params[0].as_str().unwrap().trim_start_matches("0x"), 16)
                         .unwrap()
                 };
-                json!({"number":format!("{height:#x}"),"hash":block_hash(height)})
+                json!({"number":format!("{height:#x}"),"hash":block_hash(height),"timestamp":"0x0"})
             }
             "eth_chainId" => json!("0x1"),
             "eth_getTransactionCount" => json!(format!(

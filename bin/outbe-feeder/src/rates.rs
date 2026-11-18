@@ -86,40 +86,56 @@ pub struct RateCache {
 impl RateCache {
     /// The rate votes of this vote, within [`COLLECT_TIMEOUT`]. A timeout
     /// gives no rates, and the pair prices still go.
-    pub async fn collect(&mut self, providers: &[RateProviderConfig]) -> Vec<RateVote> {
-        if providers.is_empty() {
-            return Vec::new();
+    /// Reads the sources that are due, within [`COLLECT_TIMEOUT`]. A source
+    /// that fails or is slow keeps its last value.
+    pub async fn refresh(&mut self, providers: &[RateProviderConfig]) {
+        if providers.iter().all(|entry| entry.kind == RateKind::Fixed) {
+            return;
         }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.as_secs());
-        match tokio::time::timeout(COLLECT_TIMEOUT, self.votes(providers, now)).await {
-            Ok(rates) => rates,
-            Err(_) => {
-                warn!("policy rates took longer than 15 seconds; no rates in this vote");
-                Vec::new()
-            }
+        if tokio::time::timeout(COLLECT_TIMEOUT, self.read_due(providers, now))
+            .await
+            .is_err()
+        {
+            warn!("policy rates took longer than 15 seconds; keeping the last rates");
         }
     }
 
-    /// The rate votes of this vote. `now` is the Unix time.
+    /// The rate votes for a vote on top of a block with time `block_time`.
     ///
-    /// A source that fails keeps its last value. A currency with no value
-    /// gets no vote, and the Oracle keeps its last rate.
-    pub async fn votes(&mut self, providers: &[RateProviderConfig], now: u64) -> Vec<RateVote> {
-        let mut entries = Vec::with_capacity(providers.len());
-        for entry in providers {
-            match entry.currency.parse::<u16>() {
-                Ok(currency) => entries.push((currency, entry)),
-                Err(_) => warn!(currency = %entry.currency, "invalid rate currency; no rate vote"),
-            }
-        }
-        let due: Vec<_> = entries
-            .iter()
-            .filter(|(currency, _)| {
-                self.asked
-                    .get(currency)
-                    .is_none_or(|asked| asked.elapsed().as_secs() >= REFRESH_SECS)
+    /// A fixed rate has the UTC day of the block time. A currency with no
+    /// value gets no vote, and the Oracle keeps its last rate. A rate with a
+    /// publication time after the block time gets no vote: the Oracle rejects
+    /// the whole vote for such a rate.
+    pub fn votes(&self, providers: &[RateProviderConfig], block_time: u64) -> Vec<RateVote> {
+        entries(providers)
+            .into_iter()
+            .filter_map(|(currency, entry)| {
+                let (rate, published_at) = if entry.kind == RateKind::Fixed {
+                    fixed(entry, block_time)
+                        .inspect_err(|error| warn!(currency, %error, "invalid fixed rate"))
+                        .ok()?
+                } else {
+                    *self.rates.get(&currency)?
+                };
+                (published_at <= block_time).then_some((currency, rate, published_at))
+            })
+            .collect()
+    }
+
+    /// Reads each source that the feeder did not ask in the last
+    /// [`REFRESH_SECS`]. `now` is the Unix time of the host.
+    async fn read_due(&mut self, providers: &[RateProviderConfig], now: u64) {
+        let due: Vec<_> = entries(providers)
+            .into_iter()
+            .filter(|(currency, entry)| {
+                entry.kind != RateKind::Fixed
+                    && self
+                        .asked
+                        .get(currency)
+                        .is_none_or(|asked| asked.elapsed().as_secs() >= REFRESH_SECS)
             })
             .collect();
         // The sources are read in parallel: the time is that of the slowest.
@@ -136,24 +152,33 @@ impl RateCache {
                 Err(error) => warn!(currency, %error, "rate source failed; keeping the last rate"),
             }
         }
-        entries
-            .iter()
-            .filter_map(|(currency, _)| {
-                let (rate, published_at) = *self.rates.get(currency)?;
-                // The Oracle rejects a publication time after the block time.
-                (published_at <= now).then_some((*currency, rate, published_at))
-            })
-            .collect()
     }
+}
+
+/// The providers with a valid currency code.
+fn entries(providers: &[RateProviderConfig]) -> Vec<(u16, &RateProviderConfig)> {
+    providers
+        .iter()
+        .filter_map(|entry| match entry.currency.parse::<u16>() {
+            Ok(currency) => Some((currency, entry)),
+            Err(_) => {
+                warn!(currency = %entry.currency, "invalid rate currency; no rate vote");
+                None
+            }
+        })
+        .collect()
+}
+
+/// The fixed rate of `entry`, published at 00:00 UTC of the day of
+/// `block_time`.
+fn fixed(entry: &RateProviderConfig, block_time: u64) -> Result<(U256, u64)> {
+    let day = date_key_to_utc_timestamp(timestamp_to_date_key(block_time))
+        .map_err(|_| eyre!("invalid time {block_time}"))?;
+    Ok((percent_to_1e6(&entry.rate)?, day))
 }
 
 /// Reads the rate of `entry` and its publication time from its source.
 async fn read(http: &reqwest::Client, entry: &RateProviderConfig, now: u64) -> Result<(U256, u64)> {
-    if entry.kind == RateKind::Fixed {
-        let day = date_key_to_utc_timestamp(timestamp_to_date_key(now))
-            .map_err(|_| eyre!("invalid time {now}"))?;
-        return Ok((percent_to_1e6(&entry.rate)?, day));
-    }
     let from = timestamp_to_date_key(now.saturating_sub(HISTORY_DAYS * 86_400));
     let (year, month, day) = (from / 10_000, from / 100 % 100, from % 100);
     let url = match entry.kind {
@@ -383,8 +408,8 @@ mod tests {
         assert!(percent_to_1e6("").is_err());
     }
 
-    #[tokio::test]
-    async fn a_fixed_rate_has_the_current_day_and_a_future_rate_gets_no_vote() {
+    #[test]
+    fn a_fixed_rate_has_the_day_of_the_block_and_a_future_rate_gets_no_vote() {
         let entry = |currency: &str, rate: &str| RateProviderConfig {
             currency: currency.to_owned(),
             kind: RateKind::Fixed,
@@ -393,12 +418,26 @@ mod tests {
         };
         let mut cache = RateCache::default();
 
-        let votes = cache
-            .votes(&[entry("840", "4.3"), entry("x", "1")], NOV_17 + 3_600)
-            .await;
+        let votes = cache.votes(&[entry("840", "4.3"), entry("x", "1")], NOV_17 + 3_600);
         assert_eq!(votes, vec![(840, rate(43_000), NOV_17)]);
 
-        // The cached value has a date after this block time.
-        assert!(cache.votes(&[entry("840", "4.3")], NOV_16).await.is_empty());
+        // The host is in the next day, and the block is not: the fixed rate
+        // has the day of the block.
+        let votes = cache.votes(&[entry("840", "4.3")], NOV_17 - 1);
+        assert_eq!(votes, vec![(840, rate(43_000), NOV_16)]);
+
+        // A source rate with a date after the block time gets no vote.
+        let source = RateProviderConfig {
+            kind: RateKind::Nyfed,
+            ..entry("840", "")
+        };
+        cache.rates.insert(840, (rate(39_300), NOV_17));
+        assert!(cache
+            .votes(std::slice::from_ref(&source), NOV_17 - 1)
+            .is_empty());
+        assert_eq!(
+            cache.votes(&[source], NOV_17),
+            vec![(840, rate(39_300), NOV_17)]
+        );
     }
 }
