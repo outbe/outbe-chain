@@ -114,9 +114,9 @@ contract TargetRouter is
         return (p.emissionDay, p.pageIndex, p.amount, p.exists, p.done);
     }
 
-    /// @notice How many proceeds routes have ever parked here. `done` in the view tells which are
+    /// @notice How many proceeds sends have ever failed here. `done` in the view tells which are
     ///         resolved.
-    function failedIntexAuctionProceedsReceiveCount() external view returns (uint256) {
+    function failedIntexAuctionProceedsSendCount() external view returns (uint256) {
         return _ts().nextFailedIntexAuctionProceedsSendIdx;
     }
 
