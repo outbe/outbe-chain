@@ -142,7 +142,16 @@ fn local_answer(
     state: &Arc<Mutex<WitnessState>>,
     transport: impl FnOnce() -> Result<([u8; 32], EnclaveResponse), TransportError>,
 ) -> Result<([u8; 32], EnclaveResponse), TransportError> {
-    match transport() {
+    let outcome = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(transport)) {
+        Ok(outcome) => outcome,
+        Err(_panic_payload) => {
+            locked(state)?.latch(BlockWitnessFault::LocalUnavailable);
+            return Err(TransportError::Unavailable(
+                "local enclave transport panicked".into(),
+            ));
+        }
+    };
+    match outcome {
         Ok((_, EnclaveResponse::Error { message })) => {
             unsigned_failure(state)?;
             Err(TransportError::EnclaveError(message))

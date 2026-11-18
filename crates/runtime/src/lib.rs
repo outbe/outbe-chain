@@ -37,7 +37,10 @@ pub use configuration::{
 pub use launch::run_node;
 pub(crate) use launch::LaunchConfig;
 pub use metrics_recorder::install_outbe_prometheus_recorder;
-pub use system_tx::BLOCK_ORDER;
+pub use system_tx::{
+    BLOCK_ORDER, END_BLOCK_FACTORY_STEP_GAS_LIMIT, HYPERLANE_STEP_GAS_LIMIT,
+    ORACLE_SLASH_STEP_GAS_LIMIT,
+};
 #[cfg(any(test, feature = "test-hooks"))]
 pub use tee_canary_probe::TributeCanaryProbe;
 pub use wiring::OutbeRuntime;

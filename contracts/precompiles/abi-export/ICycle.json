@@ -125,6 +125,25 @@
   },
   {
     "type": "event",
+    "name": "CycleWorkerFailed",
+    "inputs": [
+      {
+        "name": "workerId",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "blockNumber",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "DayEmissionLimitAllocationFailed",
     "inputs": [
       {

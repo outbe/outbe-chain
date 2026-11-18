@@ -401,3 +401,86 @@ fn assert_fsm_reaches_completed(plan: outbe_evm::system_tx::BlockSystemPlan) {
     assert_eq!(fsm.stage(), BlockExecutionStage::Completed);
     fsm.finish().unwrap();
 }
+
+#[test]
+fn block_order_preserves_hard_criticality_and_pins_calibrated_soft_step_gas_limits() {
+    let order = outbe_runtime::BLOCK_ORDER;
+    let actual: Vec<_> = order
+        .consensus
+        .iter()
+        .chain(order.begin_block)
+        .chain(order.end_block)
+        .map(|step| (step.name, step.revert_fails_block, step.gas_limit))
+        .collect();
+    let hard = SYSTEM_TX_ARTIFACT_GAS_LIMIT;
+    assert_eq!(
+        actual,
+        vec![
+            ("certified_parent_accounting", true, hard),
+            ("late_finalize_credits", true, hard),
+            ("boundary_outcome", true, hard),
+            ("tee_bootstrap", true, hard),
+            ("validator_liveness", true, hard),
+            ("radicle_publication", true, hard),
+            ("vote", true, hard),
+            ("update", true, hard),
+            ("enclave_upgrade_deadline", true, hard),
+            ("rewards", true, hard),
+            ("staking", true, hard),
+            ("oracle", true, hard),
+            ("oracle_slash", false, 701_035_000),
+            ("hyperlane_slash", false, 1_362_315_000),
+            ("cycle_tick", true, hard),
+            ("nod_factory", false, 500_000_000),
+            ("gem_factory", false, 500_000_000),
+            ("intex_factory", false, 500_000_000),
+            ("credis_factory", false, 500_000_000),
+            ("gem_cleanup", false, 500_000_000),
+        ]
+    );
+}
+
+#[test]
+fn outbe_evm_factory_applies_runtime_step_gas_limits_to_every_encoded_system_tx() {
+    use alloy_evm::{Evm, EvmEnv, EvmFactory};
+    use outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS;
+    use revm::{
+        context::BlockEnv, context::CfgEnv, database::EmptyDB, primitives::hardfork::SpecId,
+    };
+    use std::sync::Arc;
+
+    let factory = outbe_evm::OutbeEvmFactory::new(Arc::new(outbe_runtime::OutbeRuntime::new()));
+    let order = outbe_runtime::BLOCK_ORDER;
+    for (stage, steps) in [order.consensus, order.begin_block, order.end_block]
+        .into_iter()
+        .enumerate()
+    {
+        for (index, step) in steps.iter().enumerate() {
+            let step_index = u8::try_from(index).unwrap();
+            let tx = match stage {
+                0 => SystemTx::Consensus {
+                    step_index,
+                    payload: Default::default(),
+                },
+                1 => SystemTx::BeginBlock { step_index },
+                _ => SystemTx::EndBlock { step_index },
+            };
+            let mut evm = factory.create_evm(
+                EmptyDB::default(),
+                EvmEnv {
+                    cfg_env: CfgEnv::new()
+                        .with_chain_id(CHAIN_ID)
+                        .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
+                    block_env: BlockEnv::default(),
+                },
+            );
+            // Execution may reject unseeded state; gas selection precedes dispatch.
+            let _ = evm.transact_system_call(
+                SYSTEM_ADDRESS,
+                OUTBE_SYSTEM_TX_ADDRESS,
+                tx.encode().unwrap(),
+            );
+            assert_eq!(evm.ctx().tx.gas_limit, step.gas_limit, "{}", step.name);
+        }
+    }
+}
