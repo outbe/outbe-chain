@@ -8,20 +8,15 @@ use super::{
     consensus_domain_call,
     errors::BalanceClientError,
     protocol::{
-        gratis_op_canonical_hash, mine_gratis_from_promis_canonical_hash, promis_op_canonical_hash,
-        EnclaveRequest, EnclaveResponse,
+        gratis_op_canonical_hash, promis_op_canonical_hash, EnclaveRequest, EnclaveResponse,
     },
-    verification::{
-        verify_gratis_op_attestation, verify_mine_gratis_from_promis_attestation,
-        verify_promis_op_attestation,
-    },
+    verification::{verify_gratis_op_attestation, verify_promis_op_attestation},
 };
 
 #[derive(Clone, Copy)]
 enum BalanceOperation {
     Gratis,
     Promis,
-    MineGratisFromPromis,
 }
 
 impl BalanceOperation {
@@ -29,7 +24,6 @@ impl BalanceOperation {
         match self {
             Self::Gratis => "ApplyGratisOp",
             Self::Promis => "ApplyPromisOp",
-            Self::MineGratisFromPromis => "MineGratisFromPromisV1",
         }
     }
 }
@@ -43,10 +37,6 @@ pub fn execute_confidential_balance_op(request: EnclaveRequest) -> Result<Enclav
         EnclaveRequest::ApplyPromisOp { request } => {
             (BalanceOperation::Promis, promis_op_canonical_hash(request))
         }
-        EnclaveRequest::MineGratisFromPromisV1 { request } => (
-            BalanceOperation::MineGratisFromPromis,
-            mine_gratis_from_promis_canonical_hash(request),
-        ),
         _ => return Err(BalanceClientError::NotConfidentialBalanceOperation.into()),
     };
     let (attestation_pub, response) = consensus_domain_call(
@@ -91,20 +81,6 @@ fn validate_response(
             let actual_hash = result.inputs_canonical_hash;
             check_canonical_hash(expected_hash, actual_hash)?;
             verify_promis_op_attestation(
-                attestation_pub,
-                actual_hash,
-                result,
-                &result.attestation_tag,
-            )
-            .map_err(BalanceClientError::promis_attestation_invalid)
-        }
-        (
-            BalanceOperation::MineGratisFromPromis,
-            EnclaveResponse::GratisMinedFromPromisV1 { result },
-        ) => {
-            let actual_hash = result.inputs_canonical_hash;
-            check_canonical_hash(expected_hash, actual_hash)?;
-            verify_mine_gratis_from_promis_attestation(
                 attestation_pub,
                 actual_hash,
                 result,

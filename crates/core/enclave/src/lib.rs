@@ -66,10 +66,10 @@ pub use host::{
     tribute_decrypt, tribute_source, tribute_v2, try_domain_account_query, try_with_domain_enclave,
     verification, verify_fidelity_cohort_attestation, verify_fidelity_query_attestation,
     verify_fidelity_snapshot_attestation, verify_gratis_op_attestation,
-    verify_mine_gratis_from_promis_attestation, verify_promis_op_attestation,
-    verify_tribute_offer_attestation, BalanceClientError, EnclaveClientError, LocalCryptoError,
-    TributeSourceError, FIDELITY_ATTESTATION, GRATIS_OP_ATTESTATION, NOD_MINT_REJECTED,
-    OFFER_HKDF_SALT, PROMIS_OP_ATTESTATION, TRIBUTE_OFFER_ATTESTATION, TRIBUTE_SOURCE_REJECTED,
+    verify_promis_op_attestation, verify_tribute_offer_attestation, BalanceClientError,
+    EnclaveClientError, LocalCryptoError, TributeSourceError, FIDELITY_ATTESTATION,
+    GRATIS_OP_ATTESTATION, NOD_MINT_REJECTED, OFFER_HKDF_SALT, PROMIS_OP_ATTESTATION,
+    TRIBUTE_OFFER_ATTESTATION, TRIBUTE_SOURCE_REJECTED,
 };
 
 /// Confidential NOD mining protocol types, host client, and (with `engine`) execution.

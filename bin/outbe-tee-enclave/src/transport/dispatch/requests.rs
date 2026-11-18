@@ -266,7 +266,6 @@ fn dispatch_domain_with_context(
         | DomainRequest::SnapshotFidelityLeagues { .. }
         | DomainRequest::QueryFidelityIndex { .. }
         | DomainRequest::ApplyPromisOp { .. }
-        | DomainRequest::MineGratisFromPromisV1 { .. }
         | DomainRequest::DeriveAccountKeys { .. }) => super::ledgers::dispatch(req, resident),
     }
 }

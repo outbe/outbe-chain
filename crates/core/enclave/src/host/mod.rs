@@ -49,8 +49,7 @@ pub use tribute_client::set_test_local_enclave_hook;
 pub use verification::{
     verify_fidelity_cohort_attestation, verify_fidelity_query_attestation,
     verify_fidelity_snapshot_attestation, verify_gratis_op_attestation,
-    verify_mine_gratis_from_promis_attestation, verify_promis_op_attestation,
-    verify_tribute_offer_attestation,
+    verify_promis_op_attestation, verify_tribute_offer_attestation,
 };
 
 /// Execute a domain [`protocol::EnclaveRequest`] over an [`EnclaveSession`] on `lane`.

@@ -44,3 +44,7 @@ target-docker/
 .qlty/out
 .qlty/plugin_cachedir
 .qlty/results
+
+**/node_modules/
+**/.yarn/
+**/dist/
