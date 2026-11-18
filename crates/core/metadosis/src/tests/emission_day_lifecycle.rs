@@ -189,6 +189,8 @@ fn schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_due_after_
             },
             storage.clone(),
         );
+        let briefed = outbe_system_common::time::EmissionDate::new(20260905);
+        outbe_desis::api::schedule_auction(storage.clone(), briefed).unwrap();
         crate::commands::process_emission_day(&aligned, 20260905).unwrap();
         let completed = api::emission_day(storage.clone(), 20260905)
             .unwrap()
@@ -197,11 +199,7 @@ fn schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_due_after_
         assert_eq!(completed.wwd, wwd_sep_01);
         assert_eq!(completed.state, metadosis_state::COMPLETED);
         let desis = outbe_desis::schema::DesisContract::new(storage);
-        let briefed = outbe_system_common::time::EmissionDate::new(20260905);
-        assert_eq!(
-            desis.auction_stage.read(&briefed).unwrap(),
-            outbe_desis::schema::AuctionStage::None as u8
-        );
+        assert_eq!(desis.desis_limit_set.read(&briefed).unwrap(), 1);
         assert_eq!(desis.has_desis_limit.read(&briefed).unwrap(), 0);
     });
 }

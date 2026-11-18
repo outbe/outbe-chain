@@ -260,11 +260,15 @@ fn native_completion_credits_the_unused_lysis_limit_once() {
 
 #[test]
 fn native_completion_briefs_the_emission_day() {
+    let day = outbe_system_common::time::EmissionDate::new(DAY);
     let mut provider = fixture();
+    StorageHandle::enter(&mut provider, |storage| {
+        outbe_desis::api::schedule_auction(storage, day).unwrap();
+    });
     run(&mut provider).unwrap();
     StorageHandle::enter(&mut provider, |storage| {
         let desis = outbe_desis::schema::DesisContract::new(storage);
-        let day = outbe_system_common::time::EmissionDate::new(DAY);
+        assert_eq!(desis.desis_limit_set.read(&day).unwrap(), 1);
         assert_eq!(
             desis.auction_stage.read(&day).unwrap(),
             outbe_desis::schema::AuctionStage::None as u8
