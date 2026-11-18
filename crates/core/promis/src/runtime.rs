@@ -13,7 +13,9 @@
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_enclave::protocol::{
+use outbe_core_common::confidential_tee::ENCRYPTED_TEE_AMOUNT_LEN;
+
+use crate::protocol::{
     FidelityOpSection, MineGratisFromPromisRequestV1, MineGratisFromPromisResultV1,
     MineGratisFromPromisStatusV1, ModifyAuth, PromisOp, PromisOpRequest, PromisOpResult,
     PromisOpStatus,
@@ -186,8 +188,7 @@ pub(crate) fn execute_mine_gratis(
     storage: &StorageHandle<'_>,
     input: MineGratisInput,
 ) -> Result<MineGratisFromPromisResultV1> {
-    if input.encrypted_promis_minor.len() != outbe_enclave::offer_encrypt::ENCRYPTED_TEE_AMOUNT_LEN
-    {
+    if input.encrypted_promis_minor.len() != ENCRYPTED_TEE_AMOUNT_LEN {
         return Err(PromisError::Rejected("decrypt failed".into()).into());
     }
     let promis = Promis::new(storage.clone());

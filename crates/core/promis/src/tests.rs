@@ -3,10 +3,10 @@
 //! fixed dev state key. The tests assert balances by decrypting the ciphertext with
 //! the account's view key exactly as a client would.
 
+use crate::engine::{decrypt_balance, derive_view_key};
+use crate::protocol::{ModifyAuth, PromisOp};
 use alloy_primitives::{address, Address, B256, U256};
 use alloy_sol_types::{SolCall, SolError, SolEvent};
-use outbe_enclave::promis::{decrypt_balance, derive_view_key};
-use outbe_enclave::protocol::{ModifyAuth, PromisOp};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -307,8 +307,8 @@ fn metadata_and_layout() {
 
 #[test]
 fn an_owner_result_that_differs_from_the_request_is_refused() {
+    use crate::protocol::{PromisOpResult, PromisOpStatus};
     use crate::runtime::ensure_owner_result;
-    use outbe_enclave::protocol::{PromisOpResult, PromisOpStatus};
     let result = |event_amount: u64, next_op_nonce: u64| PromisOpResult {
         status: PromisOpStatus::Applied,
         new_balance: vec![1],
@@ -394,13 +394,11 @@ fn event_amount_differs_from_balance_and_opens_to_the_delta() {
     assert_eq!(first_mint[0].encryptedAmountMinor.len(), 92);
     assert_eq!(&first_mint[0].encryptedAmountMinor[8..12], b"PRO2");
     assert_eq!(second_mint.len(), 1);
-    let delta =
-        outbe_enclave::promis::decrypt_balance(&vk, alice(), &second_mint[0].encryptedAmountMinor)
-            .unwrap();
+    let delta = decrypt_balance(&vk, alice(), &second_mint[0].encryptedAmountMinor).unwrap();
     assert_eq!(delta, second_amount);
     assert_ne!(delta, first_amount + second_amount);
     assert_eq!(
-        outbe_enclave::promis::decrypt_balance(&vk, alice(), &second_balance).unwrap(),
+        decrypt_balance(&vk, alice(), &second_balance).unwrap(),
         first_amount + second_amount
     );
 }
