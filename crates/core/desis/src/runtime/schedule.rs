@@ -248,6 +248,9 @@ fn cancel_auction(
     return_unused_desis_limit(storage, contract, emission_day)?;
     contract.cancel_reason.write(&emission_day, 0)?;
     contract.write_stage(emission_day, AuctionStage::Canceled)?;
+    if stage != AuctionStage::None {
+        contract.queue_intake_cleanup(emission_day)?;
+    }
     contract.remove_sched_active(emission_day)
 }
 
