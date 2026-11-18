@@ -49,7 +49,7 @@ pub fn encrypted_fixture(params: &NodIssueParams, chain_id: u64) -> EncryptedNod
 }
 fn encrypt(terms: NodTermsV1, amount: U256) -> EncryptedNodV1 {
     install();
-    outbe_enclave::nod_encryption::encrypt_nod(&state_key(), terms, amount).unwrap()
+    crate::nod_encryption::encrypt_nod(&state_key(), terms, amount).unwrap()
 }
 /// Test-only plaintext inputs; never accepted by a production writer.
 pub struct NodItemFixture {
@@ -233,28 +233,30 @@ pub fn decrypt_quote(
     view_key: &outbe_tee::resident::StateKeyHandle,
     context: &outbe_core_common::nod_encryption::NodQuoteContextV1,
     encrypted_payment: &[u8],
-) -> outbe_enclave::errors::Result<U256> {
+) -> Result<U256, crate::nod_encryption::NodEncryptionError> {
+    use outbe_core_common::confidential_tee::SlotCipherDomain;
     let key = view_key.derive_with_salt(
         context.context_digest().as_slice(),
         &context.quote_key_info(),
     )?;
-    outbe_enclave::confidential::SlotCipherDomain {
+    Ok(SlotCipherDomain {
         nonce_info: outbe_core_common::nod_encryption::NOD_QUOTE_NONCE_INFO,
     }
     .slot(&key, context.crypto_slot(), 0)
-    .read_u256(Some(1), encrypted_payment)
+    .read_u256(Some(1), encrypted_payment)?)
 }
 
 /// Open a fixture NOD with its owner's opaque view capability.
 pub fn decrypt_for_owner(
     view_key: &outbe_tee::resident::StateKeyHandle,
     nod: &EncryptedNodV1,
-) -> outbe_enclave::errors::Result<U256> {
+) -> Result<U256, crate::nod_encryption::NodEncryptionError> {
+    use outbe_core_common::confidential_tee::SlotCipherDomain;
     assert!(nod.has_valid_encoding(), "valid encrypted NOD fixture");
     let key = view_key.derive_with_salt(nod.context_digest().as_slice(), &nod.amount_key_info())?;
-    outbe_enclave::confidential::SlotCipherDomain {
+    Ok(SlotCipherDomain {
         nonce_info: outbe_core_common::nod_encryption::NOD_AMOUNT_NONCE_INFO,
     }
     .slot(&key, nod.crypto_slot(), 0)
-    .read_u256(Some(1), &nod.encrypted_gratis_amount)
+    .read_u256(Some(1), &nod.encrypted_gratis_amount)?)
 }
