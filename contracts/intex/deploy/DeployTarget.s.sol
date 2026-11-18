@@ -21,7 +21,7 @@ import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 /// @dev Env: DEPLOYER_PK, BRIDGE_ADDRESS, ORIGIN_CHAIN_ID (where OriginRouter lives),
 ///      TARGET_CHAIN_IDS (comma-separated, for the NFT-bridge mesh), optional WCOEN_BRIDGE
 ///      (proceeds route). The deployer is admin + delegate. The auction gets its collection and
-///      the issue role here. ConfigureTarget wires the rest (escrow/compact, relayer roles).
+///      the issue role here. ConfigureTarget wires the rest (escrow/compact, router and bridge roles).
 ///      Peers are CREATE3-deterministic across chains.
 contract DeployTarget is BaseScript {
     function run() external {

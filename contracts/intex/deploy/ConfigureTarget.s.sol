@@ -12,8 +12,8 @@ import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 /// @title ConfigureTarget
 /// @author Outbe
 /// @notice Wires the auction stack of one target chain: the auction to its escrow, the escrow to
-///         the auction, The Compact and wCOEN, and the router to all three, plus the relayer
-///         roles of the router and the NFT bridge. Run it after DeployTarget, before HandOver,
+///         the auction, The Compact and wCOEN, and the router to all three, plus the roles of
+///         the router and the NFT bridge. Run it after DeployTarget, before HandOver,
 ///         on every target, Outbe included. A step that already holds is skipped, so a re-run
 ///         sends nothing.
 /// @dev Env: DEPLOYER_PK, CREATE3_FACTORY_ADDRESS, CONTRACT_SALT (optional), COMPACT_ADDRESS,

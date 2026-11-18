@@ -78,10 +78,10 @@ contract ConfigureOriginTest is ConfigureTest {
         script.configure(deployer, o);
 
         IntexNFT1155 nft = IntexNFT1155(o.nft);
-        address[3] memory precompiles = [o.system, o.desis, o.intexFactory];
-        for (uint256 i = 0; i < precompiles.length; i++) {
-            assertFalse(nft.hasRole(nft.ROUTER_ROLE(), precompiles[i]));
-            assertFalse(nft.hasRole(nft.BRIDGE_ROLE(), precompiles[i]));
+        address[3] memory callers = [o.system, o.desis, o.intexFactory];
+        for (uint256 i = 0; i < callers.length; i++) {
+            assertFalse(nft.hasRole(nft.ROUTER_ROLE(), callers[i]));
+            assertFalse(nft.hasRole(nft.BRIDGE_ROLE(), callers[i]));
         }
     }
 
