@@ -26,7 +26,7 @@ struct IntexAuctionReturnState {
     uint16 pagesSeen;
 }
 
-/// @custom:storage-location erc7201:outbe.intexContract.TargetRouter
+/// @custom:storage-location erc7201:outbe.intex.TargetRouter
 struct TargetRouterStorage {
     /// @dev Auction contract that originates outbound bids and receives inbound stage transitions.
     IIntexAuction intexAuction;
