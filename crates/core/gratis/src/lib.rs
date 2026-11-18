@@ -30,16 +30,38 @@ compile_error!(
 );
 
 pub mod api;
+pub mod attest;
+pub mod cipher;
+pub mod decrypt;
 pub mod enclave_client;
+pub mod engine;
 pub mod errors;
+pub mod nod_mine;
 pub mod precompile;
+pub mod protocol;
 pub mod schema;
+pub mod witness;
 
 pub(crate) mod metadata;
+pub(crate) mod resident;
 pub(crate) mod runtime;
 pub(crate) mod state;
 
+pub use attest::{verify_gratis_op_attestation, GRATIS_OP_ATTESTATION};
+pub use decrypt::decrypt_gratis_balance;
+pub use engine::{
+    apply_op, decrypt_balance, decrypt_pledged, derive_account_keys, derive_gratis_state_key,
+    derive_view_key, modify_mac, rejected_result, ModifyOperation,
+};
+pub use protocol::{
+    derive_gratis_keys_message, gratis_op_attestation_preimage, gratis_op_canonical_hash,
+    mine_gratis_from_promis_attestation_preimage, mine_gratis_from_promis_canonical_hash, GratisOp,
+    GratisOpRequest, GratisOpResult, GratisOpStatus, MineGratisFromPromisRequestV1,
+    MineGratisFromPromisResultV1, MineGratisFromPromisStatusV1, ModifyAuth,
+};
 pub use schema::Gratis;
 
+#[cfg(test)]
+mod engine_tests;
 #[cfg(test)]
 mod tests;
