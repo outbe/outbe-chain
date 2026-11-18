@@ -247,9 +247,16 @@ contract OriginRouter is
         } else if (msgType == BridgeMsgCodec.MSG_INTEX_AUCTION_RESULT) {
             emit IntexAuctionResultSent(sendId, emissionDay, dstChainId, _word32(payload, 6), _word32(payload, 10));
         } else if (msgType == BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS) {
-            (, uint16 pageIndex, uint16 totalPages,,, address[] memory winners,,) =
-                abi.decode(_body(payload), (uint32, uint16, uint16, uint64, uint128, address[], uint16, uint16));
-            emit IntexAuctionWinnersSent(sendId, emissionDay, dstChainId, pageIndex, totalPages, uint32(winners.length));
+            uint256 winnersCount = _wordAt(payload, BridgeMsgCodec.HEADER_LEN + _bodyWord(payload, 5));
+            emit IntexAuctionWinnersSent(
+                sendId,
+                emissionDay,
+                dstChainId,
+                uint16(_bodyWord(payload, 1)),
+                uint16(_bodyWord(payload, 2)),
+                // forge-lint: disable-next-line(unsafe-typecast) -- the codec caps a page at MAX_PAYLOAD_ARRAY_LEN
+                uint32(winnersCount)
+            );
         }
     }
 
@@ -258,8 +265,7 @@ contract OriginRouter is
         uint8 msgType = uint8(payload[1]);
         uint256 day = _dayOf(payload);
         if (msgType == BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS || msgType == BridgeMsgCodec.MSG_INTEX_SERIES) {
-            (, uint16 pageIndex) = abi.decode(_body(payload), (uint32, uint16));
-            return bytes32((day << 16) | pageIndex);
+            return bytes32((day << 16) | uint16(_bodyWord(payload, 1)));
         }
         return bytes32(day);
     }
@@ -272,23 +278,25 @@ contract OriginRouter is
             msgType == BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS || msgType == BridgeMsgCodec.MSG_INTEX_SERIES
                 || msgType == BridgeMsgCodec.MSG_INTEX_SERIES_CALL_NOTICE
         ) {
-            return abi.decode(_body(payload), (uint32));
+            return uint32(_bodyWord(payload, 0));
         }
         return _word32(payload, 2);
     }
 
     /// @dev The big-endian `uint32` at byte `at` of `payload`.
-    function _word32(bytes memory payload, uint256 at) private pure returns (uint32 value) {
-        for (uint256 i = 0; i < 4; ++i) {
-            value = (value << 8) | uint8(payload[at + i]);
-        }
+    function _word32(bytes memory payload, uint256 at) private pure returns (uint32) {
+        return uint32(_wordAt(payload, at) >> 224);
     }
 
-    /// @dev `payload` without its two-byte header.
-    function _body(bytes memory payload) private pure returns (bytes memory body) {
-        body = new bytes(payload.length - BridgeMsgCodec.HEADER_LEN);
-        for (uint256 i = 0; i < body.length; ++i) {
-            body[i] = payload[i + BridgeMsgCodec.HEADER_LEN];
+    /// @dev Word `i` of the ABI-encoded body after the two-byte header.
+    function _bodyWord(bytes memory payload, uint256 i) private pure returns (uint256) {
+        return _wordAt(payload, BridgeMsgCodec.HEADER_LEN + 32 * i);
+    }
+
+    /// @dev The 32 bytes at byte `at` of `payload`.
+    function _wordAt(bytes memory payload, uint256 at) private pure returns (uint256 word) {
+        assembly ("memory-safe") {
+            word := mload(add(add(payload, 32), at))
         }
     }
 

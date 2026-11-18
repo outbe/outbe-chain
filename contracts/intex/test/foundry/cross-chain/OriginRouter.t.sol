@@ -6,6 +6,7 @@ import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
+import {Vm} from "forge-std/Vm.sol";
 
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
@@ -227,6 +228,44 @@ contract OriginRouterTest is CrossChainTest {
         originRouter.sendIntexAuctionWinners{value: 0.1 ether}(
             BNB_CHAIN_ID, EMISSION_DAY, 0, 1, 600_000, 1e6, winners, 2, 1
         );
+    }
+
+    function _fullWinnersPage() private pure returns (address[] memory winners) {
+        winners = new address[](BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN);
+        for (uint256 i; i < winners.length; ++i) {
+            winners[i] = address(uint160(0x1000 + i));
+        }
+    }
+
+    function test_winners_page_sent_event_reads_the_page_and_its_winners() public {
+        vm.prank(desis);
+        originRouter.sendIntexAuctionStart(_baseStageStartParams());
+        address[] memory winners = _fullWinnersPage();
+
+        vm.expectEmit(false, true, true, true, address(originRouter));
+        emit IOriginRouter.IntexAuctionWinnersSent(bytes32(0), EMISSION_DAY, BNB_CHAIN_ID, 3, 7, uint32(winners.length));
+        vm.prank(desis);
+        uint256 before = gasleft();
+        originRouter.sendIntexAuctionWinners(BNB_CHAIN_ID, EMISSION_DAY, 3, 7, 600_000, 1e6, winners, 0, 0);
+        assertLt(before - gasleft(), 2_000_000, "a full page reads its fields without copying the payload");
+    }
+
+    function test_kept_winners_page_is_keyed_by_its_day_and_page() public {
+        vm.prank(desis);
+        originRouter.sendIntexAuctionStart(_baseStageStartParams());
+        originRouter.registerRemoteMessenger(BNB_CHAIN_ID, "");
+
+        vm.recordLogs();
+        vm.prank(desis);
+        originRouter.sendIntexAuctionWinners(BNB_CHAIN_ID, EMISSION_DAY, 3, 7, 600_000, 1e6, _fullWinnersPage(), 0, 0);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 key;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics[0] == IOriginRouter.MessageSendFailed.selector) {
+                (, key,) = abi.decode(logs[i].data, (uint8, bytes32, bytes));
+            }
+        }
+        assertEq(key, bytes32((uint256(EMISSION_DAY) << 16) | 3));
     }
 
     // --- ERC165 Tests ---
