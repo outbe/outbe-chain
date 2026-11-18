@@ -43,7 +43,7 @@ impl CredisParams {
 
     /// TESTNET terms with a notice the end-to-end tests wait out in real time.
     pub const E2E: Self = Self {
-        call_notice_period_seconds: 600,
+        call_notice_period_seconds: 1_800,
         ..Self::TESTNET
     };
 

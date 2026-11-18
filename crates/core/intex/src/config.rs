@@ -60,7 +60,7 @@ impl IntexParams {
     /// TESTNET terms with a notice and a transit margin the end-to-end tests wait out
     /// in real time.
     pub const E2E: Self = Self {
-        call_notice_period_seconds: 600,
+        call_notice_period_seconds: 1_800,
         transit_margin_seconds: 60,
         ..Self::TESTNET
     };

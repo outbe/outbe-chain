@@ -49,7 +49,7 @@ impl GemParams {
 
     /// TESTNET terms with a notice and a validity the end-to-end tests wait out in real time.
     pub const E2E: Self = Self {
-        call_notice_period_seconds: 600,
+        call_notice_period_seconds: 1_800,
         position_validity: 900,
         ..Self::TESTNET
     };
