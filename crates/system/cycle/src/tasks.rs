@@ -177,20 +177,11 @@ impl TaskHandler {
 /// Each tick advances every scheduled day that has a due step. So the days due at the
 /// same midnight all move on the first tick after it. A brief only becomes a live auction
 /// on this tick: a slower cadence would spend the commit window on waiting for the start.
-///
-/// An e2e day is minutes long, so it advances faster still.
 /// `complete_auctions` uses the same cadence.
-#[cfg(not(feature = "e2e-test"))]
 const ADVANCE_AUCTIONS_PERIOD_SECONDS: u64 = 3_600;
-#[cfg(feature = "e2e-test")]
-const ADVANCE_AUCTIONS_PERIOD_SECONDS: u64 = 60;
 
-/// Every right's call sweep schedules a closed day, daily in production. An e2e run
-/// seeds the days it reads instead of living through them, so it recurs sooner.
-#[cfg(not(feature = "e2e-test"))]
+/// Every right's call sweep schedules a closed day, once a day.
 const CALL_SWEEP_PERIOD_SECONDS: u64 = outbe_primitives::time::SECONDS_PER_DAY;
-#[cfg(feature = "e2e-test")]
-const CALL_SWEEP_PERIOD_SECONDS: u64 = 60;
 
 /// Const `?` is unstable on this toolchain (rust-lang/rust#143874).
 /// The expansion returns the constructor error from the const function.

@@ -1,5 +1,3 @@
-#![cfg(not(feature = "e2e-test"))]
-
 use super::*;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 

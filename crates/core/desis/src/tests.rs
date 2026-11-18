@@ -1,6 +1,5 @@
 #![cfg(test)]
 
-#[cfg(not(feature = "e2e-test"))]
 mod advance_sweep;
 mod clearing_cleanup;
 mod deadline_cleanup;
@@ -13,11 +12,9 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::time::SECONDS_PER_DAY;
 use outbe_system_common::time::{previous_date_key, timestamp_to_date_key, EmissionDate};
-#[cfg(not(feature = "e2e-test"))]
 use outbe_system_common::units::SCALE_1E6_U128;
 
 use crate::api::{AuctionBriefReceipt, AuctionBriefRejectionReason};
-#[cfg(not(feature = "e2e-test"))]
 use crate::constants::{IGNORED_CONFLICT, IGNORED_OBSOLETE};
 use crate::constants::{IGNORED_NOT_FOUND, ORIGIN_ROUTER_ADDRESS};
 use crate::runtime;
@@ -28,7 +25,6 @@ const CHAIN_ID: u64 = 1;
 const REFERENCE_ISO: u16 = 840;
 /// The emission day whose auction starts at `ANCHOR`, the midnight after it.
 const EMISSION_DAY: EmissionDate = EmissionDate::new(20231113);
-#[cfg(not(feature = "e2e-test"))]
 const NEXT_EMISSION_DAY: EmissionDate = EmissionDate::new(20231114);
 const PROMIS_LOAD_MINOR: u128 = 1_000_000; // 1 PROMIS in PROMIS-unit
 /// Registry indices of the seeded oracle pairs: the reference currency, and one
@@ -50,11 +46,9 @@ const ADVANCE_BUDGET: u64 = crate::constants::ADVANCE_AUCTIONS_BUDGET_GAS;
 // --- PROMIS load ladder ---
 
 /// The launch rung: 1 000 000 PROMIS.
-#[cfg(not(feature = "e2e-test"))]
 const LAUNCH_EXPONENT: u32 = 12;
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn the_first_priced_start_captures_its_currency_at_the_launch_rung() {
     with_storage(|s| {
         brief(&s, true);
@@ -89,15 +83,7 @@ fn the_first_priced_start_captures_its_currency_at_the_launch_rung() {
     });
 }
 
-/// The override is an e2e affordance. A production build must run the ladder.
 #[test]
-#[cfg(not(feature = "e2e-test"))]
-fn a_production_build_has_no_load_override() {
-    assert!(crate::constants::PROMIS_LOAD_OVERRIDE.is_none());
-}
-
-#[test]
-#[cfg(not(feature = "e2e-test"))]
 fn the_fixture_load_is_the_one_the_ladder_picks() {
     assert_eq!(LOAD_MINOR, runtime::promis_load_minor(LAUNCH_EXPONENT));
     with_storage(|s| {
@@ -355,7 +341,6 @@ fn relay_bids(s: &StorageHandle, chain: u32, n: u8, rate: u32) {
 }
 
 /// Run the begin-block gate clearing for the day (every snapshot chain finalized).
-#[cfg(not(feature = "e2e-test"))]
 fn clear(s: &StorageHandle) -> crate::schema::ClearingResult {
     runtime::force_clear(s.clone(), EMISSION_DAY, NOW)
         .unwrap()
@@ -376,7 +361,6 @@ fn bids(n: u8, rate: u32) -> Vec<BidData> {
 }
 
 /// One bid at `rate` from `who`. The other bid fields stay at the fixture defaults.
-#[cfg(not(feature = "e2e-test"))]
 fn one_bid(who: Address, rate: u32) -> Vec<BidData> {
     vec![BidData {
         bidder_address: who,
@@ -389,7 +373,6 @@ fn one_bid(who: Address, rate: u32) -> Vec<BidData> {
 }
 
 /// Bids at distinct rates. Bidder `i` gets `rates[i]`.
-#[cfg(not(feature = "e2e-test"))]
 fn priced_bids(rates: &[u32]) -> Vec<BidData> {
     rates
         .iter()
@@ -1009,7 +992,6 @@ fn a_brief_anchors_at_the_midnight_after_its_emission_day() {
 /// A brief that comes hours after the midnight still opens at that midnight and prices
 /// from its own emission day, not from the day before the late start.
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn a_late_brief_keeps_its_emission_day_anchor_and_prices() {
     with_storage(|s| {
         seed_rate(&s, ANCHOR + SECONDS_PER_DAY, 7 * ENTRY_PRICE);
@@ -1035,12 +1017,10 @@ fn a_late_brief_keeps_its_emission_day_anchor_and_prices() {
 }
 
 /// The last moment a day may start: exactly the minimum commit window left.
-#[cfg(not(feature = "e2e-test"))]
 const LAST_START: u64 =
     ANCHOR + crate::constants::COMMIT_WINDOW_SECONDS - crate::constants::MIN_COMMIT_WINDOW_SECONDS;
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn a_start_with_the_minimum_commit_window_opens() {
     with_storage(|s| {
         brief_at_rate_from(
@@ -1065,7 +1045,6 @@ fn a_start_with_the_minimum_commit_window_opens() {
 /// Brief with `brief`, tick at `start`, and report the day's stage, the unallocated
 /// pool and whether the late-start cancellation was emitted. Without `router` every
 /// message the start sends fails.
-#[cfg(not(feature = "e2e-test"))]
 fn start_at(
     start: u64,
     router: bool,
@@ -1109,7 +1088,6 @@ fn start_at(
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn a_start_past_the_minimum_commit_window_cancels_the_day_and_returns_its_limit() {
     let start = LAST_START + 1;
     let outcome = start_at(start, true, |s| {
@@ -1132,7 +1110,6 @@ fn a_start_past_the_minimum_commit_window_cancels_the_day_and_returns_its_limit(
 /// A late day goes out as a cancelled START. A router that cannot take it therefore keeps
 /// the day briefed for the next tick and does not cancel it unannounced.
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn a_late_day_is_cancelled_only_once_its_cancelled_start_is_sent() {
     let start = LAST_START + 1;
     let outcome = start_at(start, false, |s| {
@@ -1149,7 +1126,6 @@ fn a_late_day_is_cancelled_only_once_its_cancelled_start_is_sent() {
     assert_eq!(outcome, (AuctionStage::Briefed, U256::ZERO, false));
 }
 
-#[cfg(not(feature = "e2e-test"))]
 fn native_brief_at_now(s: &StorageHandle) {
     crate::api::brief_auction(
         s.clone(),
@@ -1166,7 +1142,6 @@ fn native_brief_at_now(s: &StorageHandle) {
 /// therefore still anchors to its midnight. The start therefore measures what is left of
 /// the window.
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn a_late_native_brief_cancels_its_day() {
     let outcome = start_at(ANCHOR + 9 * 3600, true, native_brief_at_now);
     assert_eq!(
@@ -1178,7 +1153,6 @@ fn a_late_native_brief_cancels_its_day() {
 /// A day that never started is still a late start past its whole issuance window, so
 /// its targets hear of it. Only a started day can fail.
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn a_brief_past_the_issuance_window_is_still_a_late_start() {
     let outcome = start_at(ANCHOR + 3 * SECONDS_PER_DAY, true, native_brief_at_now);
     assert_eq!(
@@ -1190,7 +1164,6 @@ fn a_brief_past_the_issuance_window_is_still_a_late_start() {
 /// Past its issuance window, a day whose START the router still refuses is cancelled with
 /// no message. Its limit therefore does not wait on the router forever.
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn a_briefed_day_the_router_never_takes_is_cancelled_past_its_issuance_window() {
     let outcome = start_at(ANCHOR + 3 * SECONDS_PER_DAY, false, native_brief_at_now);
     assert_eq!(
@@ -1231,7 +1204,6 @@ fn a_price_lost_between_brief_and_start_cancels_the_day_and_returns_its_limit() 
 /// Terms are fixed at the start and copied into the series: the oracle moving
 /// during the auction changes neither.
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn the_price_chosen_at_start_is_the_one_the_series_carries() {
     use outbe_intexfactory::SeriesId;
 
@@ -1268,7 +1240,6 @@ fn schedule_starts_a_brief_with_a_limit() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn schedule_flips_to_revealing_at_commit_end() {
     with_storage(|s| {
         brief(&s, true);
@@ -1284,7 +1255,6 @@ fn schedule_flips_to_revealing_at_commit_end() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn schedule_arms_the_clearing_gate_at_reveal_end() {
     with_storage(|s| {
         brief(&s, true);
@@ -1313,7 +1283,6 @@ fn schedule_arms_the_clearing_gate_at_reveal_end() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn schedule_catches_up_over_missed_ticks() {
     with_storage(|s| {
         brief(&s, true);
@@ -1343,7 +1312,6 @@ fn schedule_cancels_a_brief_with_no_limit() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn schedule_cancels_a_missed_start() {
     use outbe_promislimit::PromisLimitContract;
     with_storage(|s| {
@@ -1380,7 +1348,6 @@ fn last_clearing_for(s: &StorageHandle) -> u64 {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn a_started_day_with_no_result_fails_at_its_last_clearing_time_without_a_message() {
     use crate::precompile::IDesis;
     use alloy_sol_types::SolEvent;
@@ -1453,7 +1420,6 @@ fn holds_bids(s: &StorageHandle, chain: u32, n: u32) -> bool {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn a_completed_day_retires_its_intake_before_bounded_deletion() {
     with_storage(|s| {
         open_clearing(&s, 100);
@@ -1512,7 +1478,6 @@ fn a_failed_day_queues_its_bids_for_bounded_deletion() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn failed_auction_needs_no_message() {
     use crate::constants::BIDS_FANIN_TIMEOUT_SECS;
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
@@ -1560,7 +1525,6 @@ fn failed_auction_needs_no_message() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn desis_deletes_bids_of_closed_auction() {
     for (completes, end_stage) in [
         (true, AuctionStage::Completed),
@@ -1588,7 +1552,6 @@ fn desis_deletes_bids_of_closed_auction() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn a_day_fails_even_when_the_router_cannot_name_its_chains() {
     use crate::sol_ext::IOriginRouter::targetsOfCall;
     use alloy_sol_types::SolCall;
@@ -1619,7 +1582,6 @@ fn a_day_fails_even_when_the_router_cannot_name_its_chains() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn the_gate_does_not_clear_past_the_last_clearing_time() {
     with_storage(|s| {
         open_clearing(&s, 100);
@@ -1644,7 +1606,6 @@ fn the_gate_does_not_clear_past_the_last_clearing_time() {
 /// One decade up the rate ladder, the same PROMIS buys ten times the Intexes. The
 /// bid floor has to be restated with it, or it sits above the whole tirage.
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
     with_storage(|s| {
         open_clearing(&s, 100);
@@ -1705,7 +1666,6 @@ fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn schedule_derives_min_bid_qty_from_prior_clearing() {
     with_storage(|s| {
         open_clearing(&s, 100);
@@ -1794,7 +1754,6 @@ fn process_bids_rejects_an_oversized_batch() {
 // --- Bid ingestion ---
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn process_bids_accumulate_across_batches() {
     with_storage(|s| {
         open_revealing(&s);
@@ -1844,7 +1803,6 @@ fn process_bids_accumulate_across_batches() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn marker_finalizes_chain_once_batches_and_totals_match() {
     with_storage(|s| {
         // Marker with matching totals opens the gate for this chain.
@@ -1853,7 +1811,6 @@ fn marker_finalizes_chain_once_batches_and_totals_match() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn marker_arriving_before_batches_still_finalizes() {
     with_storage(|s| {
         open_revealing(&s);
@@ -1888,7 +1845,6 @@ fn marker_total_mismatch_keeps_chain_not_done() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn a_redelivered_batch_counts_once() {
     with_storage(|s| {
         open_revealing(&s);
@@ -1917,7 +1873,6 @@ fn a_redelivered_batch_counts_once() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn a_batch_declaring_another_total_is_refused() {
     with_storage(|s| {
         open_revealing(&s);
@@ -1954,7 +1909,6 @@ fn a_batch_declaring_another_total_is_refused() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn no_bids_clears_as_no_sale() {
     with_storage(|s| {
         open_clearing(&s, 10);
@@ -1990,7 +1944,6 @@ fn no_bids_clears_as_no_sale() {
 // --- Clearing algorithm ---
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn clearing_allocates_up_to_the_limit() {
     with_storage(|s| {
         let supply = 3u32;
@@ -2016,7 +1969,6 @@ fn clearing_allocates_up_to_the_limit() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn clearing_transitions_to_cleared() {
     with_storage(|s| {
         open_clearing(&s, 1);
@@ -2090,7 +2042,6 @@ fn below_one_unit(
 /// A day whose start steps the load still keeps the step when the new load cancels it, and its
 /// "below one unit" check measures against the load after the step.
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn the_load_steps_on_a_day_the_new_load_cancels() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
@@ -2131,7 +2082,6 @@ fn the_load_steps_on_a_day_the_new_load_cancels() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn a_limit_short_of_one_unit_is_cancelled_at_start() {
     let (stage, unallocated, events, returns) = start_day(LOAD_MINOR - 1, true);
 
@@ -2209,7 +2159,6 @@ fn limit_amounts(
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn a_day_cancelled_at_start_records_a_zero_desis_allocation() {
     let (stage, _, events, returns) = start_day(LOAD_MINOR - 1, true);
 
@@ -2300,7 +2249,6 @@ fn a_day_briefed_with_no_limit_is_cancelled_with_no_limit() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn clearing_uniform_price_is_last_allocated_bid() {
     with_storage(|s| {
         open_clearing(&s, 2);
@@ -2315,7 +2263,6 @@ fn clearing_uniform_price_is_last_allocated_bid() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn clear_bids_below_min_price_skipped() {
     with_storage(|s| {
         open_clearing(&s, 3);
@@ -2361,7 +2308,6 @@ fn clear_bids_below_min_price_skipped() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn clear_refunds_equal_locked_minus_paid() {
     with_storage(|s| {
         let supply = 1u32;
@@ -2425,7 +2371,6 @@ fn clear_refunds_equal_locked_minus_paid() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn clear_rate_escrow_scales_by_basis() {
     // escrow basis != 1_000_000, so this exercises the scaled division.
     with_storage(|s| {
@@ -2459,7 +2404,6 @@ fn clear_rate_escrow_scales_by_basis() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn clearing_returns_the_unused_limit_and_dust_to_promis() {
     use outbe_promislimit::PromisLimitContract;
 
@@ -2505,7 +2449,6 @@ fn clearing_returns_the_unused_limit_and_dust_to_promis() {
 /// Auction clearing over two target chains: bids merge into one clearing, and each
 /// winner/bidder is tagged with its source chain for per-chain result/refund routing.
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn two_chain_bids_merge_and_carry_source_chain() {
     let chain_a = 10u32;
     let chain_b = 20u32;
@@ -2532,7 +2475,6 @@ fn two_chain_bids_merge_and_carry_source_chain() {
 /// Manual clearing must wait until every snapshot chain has finalized.
 /// The tick clears only once the gate is satisfied; before then `force_clear` yields `None`.
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn force_clear_waits_then_fires_when_all_done() {
     let chain_a = 10u32;
     let chain_b = 20u32;
@@ -2589,7 +2531,6 @@ fn force_clear_waits_then_fires_when_all_done() {
 
 /// A clearing names its Desis Allocation and returns the unused Desis Limit.
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn clearing_reports_the_desis_allocation_and_the_unused_limit() {
     use crate::precompile::IDesis;
     use alloy_sol_types::SolEvent;
@@ -2630,7 +2571,6 @@ fn clearing_reports_the_desis_allocation_and_the_unused_limit() {
 
 /// After the deadline, clearing proceeds without the missing chain and reports it skipped.
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn force_clear_skips_missing_chain_after_deadline() {
     use crate::precompile::IDesis;
     use alloy_sol_types::SolEvent;
@@ -2710,7 +2650,6 @@ fn complete_auctions_without_active_days_is_noop() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn complete_auctions_clears_a_ready_day() {
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
     with_storage(|s| {
@@ -2784,7 +2723,6 @@ fn open_clearing_priced(s: &StorageHandle, units: u128, references: &[u16]) {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn clearing_issues_one_series_per_winning_currency_pair() {
     use outbe_intexfactory::SeriesId;
 
@@ -2953,7 +2891,6 @@ fn a_chain_whose_bids_all_lost_gets_one_empty_chunk() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn clearing_marks_the_bid_supply_ran_out_in() {
     with_storage(|s| {
         open_clearing(&s, 3);
@@ -3003,7 +2940,6 @@ fn rate_lock_matches_the_escrow_vectors() {
 // --- Days the oracle could not price ---
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn a_day_nobody_priced_carries_the_launch_load_and_captures_nothing() {
     with_storage(|s| {
         brief_at(&s, EMISSION_DAY, 10 * LOAD_MINOR, true);
@@ -3150,7 +3086,6 @@ fn a_batch_for_a_day_never_briefed_is_acknowledged() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn a_batch_after_clearing_is_acknowledged_as_obsolete() {
     let mut storage = inbound_storage();
     StorageHandle::enter(&mut storage, |s| {
@@ -3196,7 +3131,6 @@ fn a_batch_before_reveal_still_reverts_so_the_transport_redelivers() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn an_early_marker_stands_against_a_conflicting_one() {
     let mut storage = inbound_storage();
     StorageHandle::enter(&mut storage, |s| {
@@ -3236,7 +3170,6 @@ fn an_early_marker_stands_against_a_conflicting_one() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn a_repeated_marker_is_a_no_op_and_a_differing_one_is_reported() {
     let mut storage = inbound_storage();
     StorageHandle::enter(&mut storage, |s| {
@@ -3306,12 +3239,9 @@ fn a_clearing_round_is_sized_from_the_chains_recent_days() {
     });
 }
 
-#[cfg(not(feature = "e2e-test"))]
 mod capacity_conservation;
 
 mod fixed_conditions;
 
-#[cfg(not(feature = "e2e-test"))]
 mod emission_day_events;
-#[cfg(not(feature = "e2e-test"))]
 mod promis_load;

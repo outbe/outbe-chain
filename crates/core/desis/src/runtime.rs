@@ -19,7 +19,7 @@ use crate::constants::{
     CLEARING_HISTORY_DAYS, CLEARING_MIN_BIDS, COMMIT_WINDOW_SECONDS, DAY_STATE_CANCELLED,
     DAY_STATE_LIVE, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE,
     INTEX_ISSUANCE_WINDOW_SECONDS, MAX_BID_BATCHES, MAX_PAYLOAD_ARRAY_LEN, MAX_REFUND_CHUNKS,
-    MAX_TARGET_CHAINS, MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, PROMIS_LOAD_OVERRIDE,
+    MAX_TARGET_CHAINS, MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS,
     RESULT_DELIVERY_MARGIN_SECONDS, REVEAL_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
@@ -192,9 +192,6 @@ pub(crate) fn step_promis_load(
     emission_day: EmissionDate,
     reference_prices: &[ReferenceCurrencyPrice],
 ) -> Result<u128> {
-    if let Some(fixed) = PROMIS_LOAD_OVERRIDE {
-        return Ok(fixed);
-    }
     let launch_exponent = if contract.promis_load_exponent.read()? == 0 {
         outbe_intex::config::read(&contract.storage)?.promis_load_launch_exponent
     } else {
@@ -383,7 +380,7 @@ mod schedule;
 #[cfg(test)]
 pub(crate) use algorithm::rate_lock;
 pub use clearing::complete_auctions;
-#[cfg(all(test, not(feature = "e2e-test")))]
+#[cfg(test)]
 pub(crate) use clearing::force_clear;
 #[cfg(test)]
 pub(crate) use clearing::{

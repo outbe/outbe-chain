@@ -3,13 +3,6 @@ pub use outbe_core_common::addresses::ORIGIN_ROUTER_ADDRESS;
 /// Minimum-bid-quantity floor: 4% of the prior series' issued count (basis points).
 pub const BID_QUANTITY_FLOOR_BPS: u32 = 400;
 
-/// Fixed load bypassing the ladder. The harness seeds the day's mint cap at 500
-/// PROMIS, far under one laddered Intex, so a laddered e2e day would issue none.
-#[cfg(not(feature = "e2e-test"))]
-pub const PROMIS_LOAD_OVERRIDE: Option<u128> = None;
-#[cfg(feature = "e2e-test")]
-pub const PROMIS_LOAD_OVERRIDE: Option<u128> = Some(1);
-
 /// Bid fan-in deadline: clearing proceeds without chains that have not reported
 /// BIDS_DONE within this window after the collection stage starts. A repair window
 /// for parked legs. It must stay under 24h so the deadline clear lands on the
@@ -33,29 +26,13 @@ pub const ADVANCE_AUCTIONS_BUDGET_GAS: u64 =
     ADVANCE_START_GAS + ADVANCE_REVEAL_END_GAS + 5 * ADVANCE_DAY_BASE_GAS;
 
 /// Midnight-anchored schedule: the commit, reveal and Intex issuance windows each span one day.
-#[cfg(not(feature = "e2e-test"))]
 pub const COMMIT_WINDOW_SECONDS: u64 = outbe_primitives::time::SECONDS_PER_DAY;
-#[cfg(not(feature = "e2e-test"))]
 pub const REVEAL_WINDOW_SECONDS: u64 = outbe_primitives::time::SECONDS_PER_DAY;
-#[cfg(not(feature = "e2e-test"))]
 pub const INTEX_ISSUANCE_WINDOW_SECONDS: u64 = outbe_primitives::time::SECONDS_PER_DAY;
-
-/// An e2e run walks the same stages inside one day, so its windows have to fit
-/// there: a day-long window would carry the auction over a midnight the run
-/// never formed.
-#[cfg(feature = "e2e-test")]
-pub const COMMIT_WINDOW_SECONDS: u64 = 900;
-#[cfg(feature = "e2e-test")]
-pub const REVEAL_WINDOW_SECONDS: u64 = 1800;
-#[cfg(feature = "e2e-test")]
-pub const INTEX_ISSUANCE_WINDOW_SECONDS: u64 = 1800;
 
 /// Desis clears no later than this before the end of the Intex issuance window, so a result
 /// sent at the last moment still reaches every chain before the day ends there.
-#[cfg(not(feature = "e2e-test"))]
 pub const RESULT_DELIVERY_MARGIN_SECONDS: u64 = 8 * 3600;
-#[cfg(feature = "e2e-test")]
-pub const RESULT_DELIVERY_MARGIN_SECONDS: u64 = 600;
 
 /// Mirrors `EscrowTimes.UNFINALIZED_REFUND_DELAY`: the other chains read a day without a result
 /// as failed once this much has passed since its commit end.
@@ -68,10 +45,7 @@ const _: () = assert!(
 );
 
 /// An auction that would start with less commit window than this is cancelled.
-#[cfg(not(feature = "e2e-test"))]
 pub const MIN_COMMIT_WINDOW_SECONDS: u64 = 16 * 3600;
-#[cfg(feature = "e2e-test")]
-pub const MIN_COMMIT_WINDOW_SECONDS: u64 = 300;
 
 /// `dayState` wire values carried by AUCTION_STAGE_START.
 pub const DAY_STATE_LIVE: u8 = 1;

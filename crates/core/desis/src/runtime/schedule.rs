@@ -58,32 +58,16 @@ fn budget_pays_for(storage: &StorageHandle<'_>, gas: u64) -> Result<bool> {
         .is_none_or(|remaining| remaining >= gas))
 }
 
-/// The anchor and the windows that `advance_day` reads for a day at `stage`.
-#[cfg_attr(not(feature = "e2e-test"), allow(unused_variables))]
-fn day_windows(
-    contract: &DesisContract<'_>,
-    emission_day: EmissionDate,
-    stage: AuctionStage,
-    now: u64,
-) -> Result<(u64, Windows)> {
-    let stored_anchor = u64::from(contract.auction_at.read(&emission_day)?);
-    // An e2e day never reaches its production anchor, so a briefed day starts
-    // from the tick that observes the brief.
-    #[cfg(feature = "e2e-test")]
-    let anchor = if stage == AuctionStage::Briefed {
-        now
-    } else {
-        stored_anchor
-    };
-    #[cfg(not(feature = "e2e-test"))]
-    let anchor = stored_anchor;
+/// The anchor and the windows that `advance_day` reads for a day.
+fn day_windows(contract: &DesisContract<'_>, emission_day: EmissionDate) -> Result<(u64, Windows)> {
+    let anchor = u64::from(contract.auction_at.read(&emission_day)?);
     Ok((anchor, Windows::from_anchor(anchor)))
 }
 
 /// Upper bound of the work `advance_day` does for a day at `now`, over every step that is due.
 fn due_work_gas(contract: &DesisContract<'_>, emission_day: EmissionDate, now: u64) -> Result<u64> {
     let mut stage = contract.read_stage(emission_day)?;
-    let (anchor, windows) = day_windows(contract, emission_day, stage, now)?;
+    let (anchor, windows) = day_windows(contract, emission_day)?;
     let mut gas = ADVANCE_DAY_BASE_GAS;
     loop {
         match stage {
@@ -118,7 +102,7 @@ fn advance_day(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u64
     loop {
         let mut contract = storage.contract::<DesisContract>();
         let stage = contract.read_stage(emission_day)?;
-        let (anchor, windows) = day_windows(&contract, emission_day, stage, now)?;
+        let (anchor, windows) = day_windows(&contract, emission_day)?;
         match stage {
             AuctionStage::Completed | AuctionStage::Cancelled | AuctionStage::Failed => {
                 return contract.remove_sched_active(emission_day);
@@ -131,9 +115,6 @@ fn advance_day(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u64
                 };
             }
             AuctionStage::Briefed if now >= anchor => {
-                // The chain has to run the windows the START message announces.
-                #[cfg(feature = "e2e-test")]
-                contract.auction_at.write(&emission_day, ts32(anchor)?)?;
                 if let StartOutcome::Retired =
                     start_auction(storage, &mut contract, emission_day, windows, now)?
                 {

@@ -459,9 +459,7 @@ const TOPUP_VOTERS: [Address; 3] = [
 /// Block time of the first settlement dispatch on day 2.
 const TOPUP_FIRE_TS: u64 = GENESIS_TS + SECONDS_PER_DAY + 60;
 
-/// Returns the slot that task `id` records at `TOPUP_FIRE_TS`.
-/// The slot is the day boundary in production. Under `e2e-test`, a period of
-/// 60 s gives a later slot.
+/// Returns the slot that task `id` records at `TOPUP_FIRE_TS`: the day boundary.
 fn topup_slot(id: TaskId) -> u64 {
     let spec = ACTIVE_TASKS
         .iter()

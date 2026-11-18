@@ -153,7 +153,6 @@ fn an_unpriced_day_still_fixes_and_announces_the_call_trigger() {
 /// gives the series the conditions the bidders saw, not the new profile's.
 /// The test walks the day-long production windows, so an e2e build does not run it.
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn a_profile_change_after_the_start_leaves_the_series_conditions_fixed() {
     use outbe_intexfactory::SeriesId;
 
