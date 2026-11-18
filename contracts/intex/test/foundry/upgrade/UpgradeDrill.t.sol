@@ -77,7 +77,7 @@ contract UpgradeDrillTest is CrossChainTest {
         IIntexNFT1155.SeriesData memory data = nft.readData(CreateSeriesLib.seriesId(7));
         assertGt(data.issuedAt, 0, "series record lost");
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Issued), "state lost");
-        assertTrue(nft.hasRole(nft.RELAYER_ROLE(), admin), "role lost");
+        assertTrue(nft.hasRole(nft.ROUTER_ROLE(), admin), "role lost");
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.IntexNFT1155V2Reinit")) - 1)) & ~bytes32(uint256(0xff))

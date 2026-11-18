@@ -76,12 +76,12 @@ contract TargetRouterTest is CrossChainTest {
         // Wire Outbe adapter dependencies
         originRouter.wire(desis, makeAddr("factory"));
 
-        // Grant RELAYER_ROLE to adapter
+        // Grant ROUTER_ROLE to the router
         auction.grantRole(auction.RELAYER_ROLE(), address(targetRouter));
-        intex.grantRole(intex.RELAYER_ROLE(), address(targetRouter));
+        intex.grantRole(intex.ROUTER_ROLE(), address(targetRouter));
 
-        // Grant RELAYER_ROLE to batch adapter on intex (for crosschainBurn)
-        intex.grantRole(intex.RELAYER_ROLE(), address(nftBridge));
+        // Grant BRIDGE_ROLE to batch adapter on intex (for crosschainBurn)
+        intex.grantRole(intex.BRIDGE_ROLE(), address(nftBridge));
     }
 
     // --- Constructor Tests ---

@@ -79,7 +79,8 @@ contract IntexNFT1155Test is Test {
 
     function test_InitialState() public view {
         assertTrue(nft.hasRole(nft.DEFAULT_ADMIN_ROLE(), admin));
-        assertTrue(nft.hasRole(nft.RELAYER_ROLE(), bridger));
+        assertTrue(nft.hasRole(nft.ROUTER_ROLE(), bridger));
+        assertTrue(nft.hasRole(nft.BRIDGE_ROLE(), bridger));
     }
 
     function test_CreateSeries() public {
@@ -309,7 +310,7 @@ contract IntexNFT1155Test is Test {
     function test_CrosschainBurn_InCalled_CarriesToAnotherHolder() public {
         address plainRelayer = address(0x9999);
         vm.startPrank(admin);
-        nft.grantRole(nft.RELAYER_ROLE(), plainRelayer);
+        nft.grantRole(nft.BRIDGE_ROLE(), plainRelayer);
         vm.stopPrank();
 
         _createSeries(SERIES_ID_1_DAY, 0);

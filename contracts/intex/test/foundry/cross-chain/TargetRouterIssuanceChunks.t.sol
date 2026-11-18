@@ -33,7 +33,7 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
 
         router.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
         router.wire(makeAddr("auction"), address(intex), makeAddr("escrow"));
-        intex.grantRole(intex.RELAYER_ROLE(), address(router));
+        intex.grantRole(intex.ROUTER_ROLE(), address(router));
     }
 
     // --- helpers ---

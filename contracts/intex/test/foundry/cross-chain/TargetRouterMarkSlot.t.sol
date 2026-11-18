@@ -35,7 +35,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
 
         router.setRemoteMessenger(uint32(block.chainid), _interop(uint32(block.chainid), originSender));
         router.wire(makeAddr("auction"), address(intex), makeAddr("escrow"));
-        intex.grantRole(intex.RELAYER_ROLE(), address(router));
+        intex.grantRole(intex.ROUTER_ROLE(), address(router));
         series = CreateSeriesLib.seriesId(DAY);
     }
 

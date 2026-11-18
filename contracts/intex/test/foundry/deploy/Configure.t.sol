@@ -152,8 +152,8 @@ contract ConfigureTargetTest is ConfigureTest {
         assertTrue(IntexAuction(t.auction).hasRole(IntexAuction(t.auction).RELAYER_ROLE(), t.router));
         assertTrue(escrow.hasRole(escrow.RELAYER_ROLE(), t.router));
         IntexNFT1155 nft = IntexNFT1155(t.nft);
-        assertTrue(nft.hasRole(nft.RELAYER_ROLE(), t.router));
-        assertTrue(nft.hasRole(nft.RELAYER_ROLE(), t.nftBridge));
+        assertTrue(nft.hasRole(nft.ROUTER_ROLE(), t.router));
+        assertTrue(nft.hasRole(nft.BRIDGE_ROLE(), t.nftBridge));
     }
 
     function test_Configure_SecondRunWritesNothing() public {

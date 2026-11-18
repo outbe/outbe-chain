@@ -24,7 +24,7 @@ contract IntexNFT1155UupsTest is Test {
 
     function test_Initialize_GrantsRoles() public view {
         assertTrue(nft.hasRole(nft.DEFAULT_ADMIN_ROLE(), admin));
-        assertTrue(nft.hasRole(nft.RELAYER_ROLE(), bridger));
+        assertTrue(nft.hasRole(nft.ROUTER_ROLE(), bridger));
     }
 
     function test_RevertWhen_InitializeCalledTwice() public {
@@ -68,6 +68,6 @@ contract IntexNFT1155UupsTest is Test {
         uint256 tokenId = nft.issuedTokenId(CreateSeriesLib.seriesId(7));
         assertEq(nft.balanceOf(stranger, tokenId), 3);
         assertEq(nft.totalSupply(tokenId), 3);
-        assertTrue(nft.hasRole(nft.RELAYER_ROLE(), bridger));
+        assertTrue(nft.hasRole(nft.ROUTER_ROLE(), bridger));
     }
 }

@@ -85,8 +85,8 @@ contract ConfigureTarget is BaseScript {
 
         grantRoleIfMissing(t.auction, auction.RELAYER_ROLE(), t.router, deployer);
         grantRoleIfMissing(t.escrow, escrow.RELAYER_ROLE(), t.router, deployer);
-        bytes32 relayer = IntexNFT1155(t.nft).RELAYER_ROLE();
-        grantRoleIfMissing(t.nft, relayer, t.router, deployer);
-        grantRoleIfMissing(t.nft, relayer, t.nftBridge, deployer);
+        IntexNFT1155 nft = IntexNFT1155(t.nft);
+        grantRoleIfMissing(t.nft, nft.ROUTER_ROLE(), t.router, deployer);
+        grantRoleIfMissing(t.nft, nft.BRIDGE_ROLE(), t.nftBridge, deployer);
     }
 }

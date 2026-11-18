@@ -36,7 +36,7 @@ contract BridgeRecipientValidationTest is CrossChainTest {
 
         token = DeployProxy.intexNFT1155(admin, admin);
         adapter = DeployProxy.intexNFT1155Bridge(address(token), address(bridge), admin);
-        token.grantRole(token.RELAYER_ROLE(), address(adapter));
+        token.grantRole(token.BRIDGE_ROLE(), address(adapter));
         adapter.setRemoteMessenger(B_CHAIN_ID, _interop(B_CHAIN_ID, address(adapter)));
 
         token.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
