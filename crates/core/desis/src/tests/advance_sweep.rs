@@ -251,3 +251,92 @@ fn a_small_budget_stops_before_overrun_and_the_next_run_moves_the_rest() {
         );
     });
 }
+
+fn promis_limit(s: &StorageHandle) -> U256 {
+    outbe_promislimit::PromisLimitContract::new(s.clone())
+        .promis_limit()
+        .unwrap()
+}
+
+#[test]
+fn a_brief_cancel_of_a_started_day_is_budgeted_as_a_cancel() {
+    let mut provider = fixture_provider(&[SRC_CHAIN]);
+    StorageHandle::enter(&mut provider, |s| {
+        schedule_committing(&s);
+        s.contract::<DesisContract>()
+            .has_desis_limit
+            .write(&COMMITTING, 0)
+            .unwrap();
+    });
+    metered(&mut provider);
+    let commit_end = 2 * ADVANCE_DAY_BASE_GAS;
+    StorageHandle::enter(&mut provider, |s| {
+        // Enough for a commit end, not for the cancel the brief asks for.
+        let small = commit_end + 1_000;
+        let before = s.gas_used().unwrap();
+        s.with_trigger_budget(small, || runtime::schedule_tick(&s, NOW))
+            .unwrap();
+        assert!(s.gas_used().unwrap() - before <= small);
+        assert_eq!(stage(&s, COMMITTING), AuctionStage::CommittingBids);
+
+        s.with_trigger_budget(ADVANCE_BUDGET, || runtime::schedule_tick(&s, NOW))
+            .unwrap();
+        assert_eq!(stage(&s, COMMITTING), AuctionStage::Canceled);
+    });
+}
+
+#[test]
+fn a_cancel_that_cannot_be_sent_fails_the_day_at_its_last_clearing_time() {
+    use crate::constants::{
+        COMMIT_WINDOW_SECONDS, INTEX_ISSUANCE_WINDOW_SECONDS, RESULT_DELIVERY_MARGIN_SECONDS,
+        REVEAL_WINDOW_SECONDS,
+    };
+    let mut provider = fixture_provider(&[SRC_CHAIN]);
+    StorageHandle::enter(&mut provider, |s| {
+        schedule_committing(&s);
+        s.contract::<DesisContract>()
+            .cancel_reason
+            .write(&COMMITTING, crate::constants::CANCELED_NO_LIMIT)
+            .unwrap();
+    });
+    provider.stub_sub_call_revert_at(ORIGIN_ROUTER_ADDRESS, Bytes::new());
+    let last_clearing = ANCHOR - SECONDS_PER_DAY
+        + COMMIT_WINDOW_SECONDS
+        + REVEAL_WINDOW_SECONDS
+        + INTEX_ISSUANCE_WINDOW_SECONDS
+        - RESULT_DELIVERY_MARGIN_SECONDS;
+    StorageHandle::enter(&mut provider, |s| {
+        let limit_before = promis_limit(&s);
+        runtime::schedule_tick(&s, NOW).unwrap();
+        assert_eq!(stage(&s, COMMITTING), AuctionStage::CommittingBids);
+        assert!(is_scheduled(&s, COMMITTING));
+
+        runtime::schedule_tick(&s, last_clearing).unwrap();
+        assert_eq!(stage(&s, COMMITTING), AuctionStage::Failed);
+        assert!(!is_scheduled(&s, COMMITTING));
+        assert_eq!(promis_limit(&s) - limit_before, U256::from(10 * LOAD_MINOR));
+
+        runtime::schedule_tick(&s, last_clearing + 3_600).unwrap();
+        assert_eq!(promis_limit(&s) - limit_before, U256::from(10 * LOAD_MINOR));
+    });
+}
+
+#[test]
+fn a_canceled_started_day_queues_its_bid_intake_cleanup() {
+    with_storage(|s| {
+        schedule_revealing(&s, PROMIS_LOAD_MINOR);
+        s.contract::<DesisContract>()
+            .cancel_reason
+            .write(&REVEALING, crate::constants::CANCELED_NO_LIMIT)
+            .unwrap();
+        runtime::schedule_tick(&s, NOW).unwrap();
+        assert_eq!(stage(&s, REVEALING), AuctionStage::Canceled);
+        assert_eq!(
+            s.contract::<DesisContract>()
+                .cleanup_pending
+                .read(&REVEALING)
+                .unwrap(),
+            1
+        );
+    });
+}
