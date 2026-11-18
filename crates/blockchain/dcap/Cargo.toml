@@ -33,8 +33,7 @@ sgx-noattest = []
 e2e-test = ["sgx-noattest"]
 # Pure-Rust collateral grammar and validity windows; never links Intel QVL.
 collateral = ["dep:der", "dep:pem", "dep:time"]
-# Consensus V1 path: links the exact-pinned Intel native QVL into the Gramine
-# enclave.
+# Consensus V1 path: links the exact-pinned Intel native QVL into the enclave.
 native-dcap = [
     "collateral",
 ]

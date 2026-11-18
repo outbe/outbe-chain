@@ -393,6 +393,8 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 reqwest = { version = "0.12", features = ["json"] }
 # Security floor for RUSTSEC-2026-0538 (via reqwest 0.13 -> quinn)
 quinn-udp = "0.5.16"
+# Security floor for RUSTSEC-2026-0544 (via libgit2-sys / librocksdb-sys)
+libz-sys = "1.1.33"
 
 # Runtime
 rand = "0.8"
@@ -450,8 +452,8 @@ debug = 0
 # `outbe-runtime` / `outbe-execution` shutdown paths rely on `catch_unwind`.
 # Cost: slower `--release` / `bench` link passes, and `strip = "symbols"` drops
 # `.symtab` function names from `RUST_BACKTRACE=1` and `perf` (switch to
-# `strip = "debuginfo"` if symbolicated backtraces are needed; `.dynsym` for
-# Gramine SGX and `.dep-v0` for `cargo auditable` stay intact).
+# `strip = "debuginfo"` if symbolicated backtraces are needed; `.dep-v0` for
+# `cargo auditable` stays intact).
 [profile.release]
 strip = "symbols"
 lto = "thin"
