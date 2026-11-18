@@ -28,7 +28,7 @@ library BridgeMsgCodec {
     uint8 internal constant MSG_INTEX_SERIES_CALL_NOTICE = 8;
     /// @dev Target -> origin: the day's relay stopped with chunks left, so the origin sends another round.
     uint8 internal constant MSG_BIDS_PAUSE = 9;
-    /// @dev Outbe -> target chain: the day is cancelled before its result.
+    /// @dev Outbe -> target chain: the day is canceled before its result.
     uint8 internal constant MSG_INTEX_AUCTION_CANCEL = 10;
 
     /// @notice Upper bound on every caller-supplied cross-chain payload array

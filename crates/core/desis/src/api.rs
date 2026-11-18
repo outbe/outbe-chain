@@ -57,7 +57,7 @@ pub fn schedule_auction(storage: StorageHandle<'_>, emission_day: EmissionDate) 
     runtime::schedule_auction(&storage, emission_day)
 }
 
-/// Cancel the auction of a day whose Metadosis failed or was cancelled. The next schedule step
+/// Cancel the auction of a day whose Metadosis failed or was canceled. The next schedule step
 /// carries the cancel out. A day with a result, or with none to wait for, does not change.
 pub fn cancel_auction(storage: StorageHandle<'_>, emission_day: EmissionDate) -> Result<()> {
     runtime::request_cancel(&storage, emission_day, CANCELED_NO_LIMIT)

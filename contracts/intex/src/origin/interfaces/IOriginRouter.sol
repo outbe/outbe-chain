@@ -68,7 +68,7 @@ interface IOriginRouter {
     event TargetRemoved(uint32 indexed chainId);
 
     /// @notice Emitted when the cancel of a day is sent to a target chain.
-    /// @param sendId Bridge send identifier (0 when the send failed and was kept).
+    /// @param sendId Bridge send identifier.
     /// @param emissionDay Emission day (yyyymmdd).
     /// @param dstChainId Target chain of the send.
     event IntexAuctionCancelSent(bytes32 indexed sendId, uint32 indexed emissionDay, uint32 indexed dstChainId);
@@ -306,8 +306,8 @@ interface IOriginRouter {
         view
         returns (FailedIntexAuctionProceedsReceive memory);
 
-    /// @notice How many proceeds have ever parked. `settled` in {parkedProceeds} tells which are
-    ///         resolved.
+    /// @notice How many proceeds have ever parked. `settled` in {getFailedIntexAuctionProceedsReceive} tells
+    ///         which are resolved.
     function failedIntexAuctionProceedsReceiveCount() external view returns (uint256);
     /// @notice Permissionless retry of a parked distribution.
     function retryIntexAuctionProceedsReceive(uint256 idx) external;

@@ -471,7 +471,7 @@ contract IntexAuction is
         if (a.schedule.commitEnd == 0) revert AuctionNotFound();
 
         // A bond that outlives its reveal window belongs to a no-reveal. It waits until the end of
-        // the penalty window anchored at the (possibly snapped-forward) `revealEnd`. A cancelled
+        // the penalty window anchored at the (possibly snapped-forward) `revealEnd`. A canceled
         // day has no reveal to miss.
         if (a.dayState != IIntexAuction.DayState.Canceled) {
             uint32 unlockableAt = a.schedule.revealEnd + UNREVEALED_BOND_LOCK_PERIOD;
@@ -583,7 +583,7 @@ contract IntexAuction is
     // --- Internal helpers ---
     /// @notice Compute the current auction stage from the schedule and emission-day state.
     /// @dev Reverts `AuctionNotFound` when the series has no entry. Stage resolution:
-    ///      - A cancelled day short-circuits to `Canceled`.
+    ///      - A canceled day short-circuits to `Canceled`.
     ///      - A cleared auction short-circuits to `Completed`. The `cleared` flag, set by
     ///        `completeAuction`, also covers a no-sale clearing whose rate is 0.
     ///      - A day with no result by the time its first bid can be refunded is `Failed`:

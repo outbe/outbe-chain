@@ -72,7 +72,7 @@ fn is_open(contract: &DesisContract<'_>, emission_day: EmissionDate) -> Result<b
     })
 }
 
-/// Whether the day can still take its brief: open, not briefed and not being cancelled.
+/// Whether the day can still take its brief: open, not briefed and not being canceled.
 pub(crate) fn takes_desis_limit(
     storage: &StorageHandle<'_>,
     emission_day: EmissionDate,

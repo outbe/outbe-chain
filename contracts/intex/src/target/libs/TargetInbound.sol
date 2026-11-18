@@ -81,7 +81,7 @@ library TargetInbound {
     /// @dev These days cannot take the transition any more. The handler acknowledges them without
     ///      effect (and without a intexAuctionBidsSendState):
     ///      - a day already past clearing (Completed)
-    ///      - a cancelled day
+    ///      - a canceled day
     ///      - a failed day, which found no result in time
     ///      - a day this chain never opened
     ///      A day whose commit stage is still running propagates. Time alone makes the transition
@@ -140,7 +140,7 @@ library TargetInbound {
     /// @notice Decode INTEX_AUCTION_RESULT and execute auction clearing on the Auction contract.
     /// @dev The handler acknowledges these cases without effect:
     ///      - a result the day already holds (same -> duplicate, other -> conflict)
-    ///      - a cancelled, failed or unknown day
+    ///      - a canceled, failed or unknown day
     ///      - a result that fails the auction's permanent sanity bounds
     ///      A day whose reveal stage has not closed yet (clock skew) propagates so the bridge
     ///      redelivers.
@@ -189,9 +189,9 @@ library TargetInbound {
     /// @notice Decode INTEX_AUCTION_CANCEL, cancel the day on the Auction contract and close it in the escrow as a
     ///         result of zero units does, so every lock and bond is returned at once.
     /// @dev The handler acknowledges these cases without effect:
-    ///      - a day that is already cancelled (duplicate)
+    ///      - a day that is already canceled (duplicate)
     ///      - a day with a result, or one that failed (obsolete)
-    ///      A day this chain has not started is recorded as cancelled.
+    ///      A day this chain has not started is recorded as canceled.
     function handleIntexAuctionCancel(
         TargetRouterStorage storage $,
         uint32 srcChainId,

@@ -169,7 +169,7 @@ fn end_past_deadline(
     }
 }
 
-/// The clearing needs the size, so a day with no brief by the end of its reveal is cancelled.
+/// The clearing needs the size, so a day with no brief by the end of its reveal is canceled.
 fn end_reveal(
     storage: &StorageHandle<'_>,
     contract: &mut DesisContract<'_>,
@@ -230,7 +230,7 @@ fn pending_cancel(
 }
 
 /// Cancel a day before its result. A started day sends the cancel to every chain it started on.
-/// A day that never started is cancelled with no message.
+/// A day that never started is canceled with no message.
 fn cancel_auction(
     storage: &StorageHandle<'_>,
     contract: &mut DesisContract<'_>,
@@ -332,12 +332,12 @@ impl Windows {
 enum StartOutcome {
     /// Auction started. The schedule loop continues from `CommittingBids`.
     Started,
-    /// Day was cancelled and retired. The schedule loop stops.
+    /// Day was canceled and retired. The schedule loop stops.
     Retired,
 }
 
 /// Start a scheduled day. An unpriced or late day, or one whose brief came with no limit or a
-/// sub-unit limit, is cancelled with no message. Any other day starts live.
+/// sub-unit limit, is canceled with no message. Any other day starts live.
 fn start_auction(
     storage: &StorageHandle<'_>,
     contract: &mut DesisContract<'_>,

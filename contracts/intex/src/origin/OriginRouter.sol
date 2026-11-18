@@ -58,7 +58,7 @@ contract OriginRouter is
         address wcoen;
         /// @dev Parked distributions awaiting permissionless retry, by enqueue index.
         mapping(uint256 idx => FailedIntexAuctionProceedsReceive) failedIntexAuctionProceedsReceive;
-        /// @dev Next index to assign in `parkedProceeds`.
+        /// @dev Next index to assign in `failedIntexAuctionProceedsReceive`.
         uint256 nextFailedIntexAuctionProceedsReceiveIdx;
         // --- Multi-target registry ---
         /// @dev Registered target chainIds. `targetIndexPlus1` records membership.
@@ -546,7 +546,7 @@ contract OriginRouter is
         (uint32 emissionDay, uint32 bodySrcChainId,,) = BridgeMsgCodec.decodeBidsPause(payload);
         if (!_acceptBids(receiveId, srcChainId, bodySrcChainId, emissionDay)) return;
 
-        // A day whose intake has closed (cleared on the fan-in timeout, or cancelled) would have
+        // A day whose intake has closed (cleared on the fan-in timeout, or canceled) would have
         // every chunk of the next round ignored on arrival. So the round is not worth paying for.
         IDesis.AuctionStage stage = IDesis(_os().desis).auctionStage(emissionDay);
         if (stage != IDesis.AuctionStage.RevealingBids && stage != IDesis.AuctionStage.CollectingBids) {

@@ -60,7 +60,7 @@ struct TargetRouterStorage {
     mapping(uint32 emissionDay => uint256 bitmap) intexAuctionWinnersPagesApplied;
     /// @dev Parked proceeds routes awaiting permissionless retry, keyed by enqueue index.
     mapping(uint256 idx => FailedIntexAuctionProceedsSend) failedIntexAuctionProceedsSend;
-    /// @dev Next index to assign in `parkedProceeds`. It is also the count ever enqueued.
+    /// @dev Next index to assign in `failedIntexAuctionProceedsSend`. It is also the count ever enqueued.
     uint256 nextFailedIntexAuctionProceedsSendIdx;
     /// @dev Hash of the result the day took, so a redelivered result tells a duplicate from a conflict.
     mapping(uint32 emissionDay => bytes32) intexAuctionResultHash;

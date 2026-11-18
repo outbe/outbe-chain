@@ -201,7 +201,7 @@ contract TargetRouter is
     // --- Receive ---
     /// @inheritdoc ERC7786MessengerBase
     /// @dev nonReentrant guards against re-entry through downstream
-    ///      `auction`/`escrowAdapter`/`intex` calls.
+    ///      `intexAuction`/`escrow`/`intexContract` calls.
     function receiveMessage(bytes32 receiveId, bytes calldata sender, bytes calldata payload)
         public
         payable

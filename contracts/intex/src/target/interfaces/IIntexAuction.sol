@@ -216,7 +216,7 @@ interface IIntexAuction {
     error ClearingRateBelowMin(uint64 clearingRate, uint32 minBidRate);
     /// @notice Schedule timestamps are not strictly increasing or are in the past.
     error InvalidSchedule();
-    /// @notice The day is cancelled.
+    /// @notice The day is canceled.
     error AuctionCanceled();
     /// @notice The day does not carry a price for this reference currency.
     error ReferenceCurrencyNotPriced(uint32 emissionDay, uint16 isoCode);
@@ -254,15 +254,15 @@ interface IIntexAuction {
     /// @notice Create and start a new auction for `emissionDay`.
     /// @dev The schedule (`commitEnd`/`revealEnd`/`issuanceEnd`) is computed on the
     ///      Outbe side (Desis) and passed in. Stage transitions follow the stored timestamps.
-    ///      A day that a cancel reached first stays cancelled (`AuctionCanceled`).
+    ///      A day that a cancel reached first stays canceled (`AuctionCanceled`).
     /// @param emissionDay Emission day (yyyymmdd, uint32).
     /// @param schedule Stage-end timestamps.
     /// @param params Auction input parameters.
     function startAuction(uint32 emissionDay, AuctionSchedule calldata schedule, AuctionParams calldata params) external;
 
     /// @notice Cancel the auction of `emissionDay` at any stage before its result.
-    /// @dev A day this chain has not started yet is recorded as cancelled, so its later start
-    ///      fails. A cleared or failed day reverts `StageRequired`, and a cancelled one
+    /// @dev A day this chain has not started yet is recorded as canceled, so its later start
+    ///      fails. A cleared or failed day reverts `StageRequired`, and a canceled one
     ///      `AuctionCanceled`.
     /// @param emissionDay Emission day (yyyymmdd).
     /// @param reason Reason code of the cancel on Outbe.
@@ -305,7 +305,7 @@ interface IIntexAuction {
 
     /// @notice Cancel an existing commit during the commit stage.
     /// @dev Only callable before `commitEnd`. Once the commit window closes a commit can no longer
-    ///      be cancelled or revealed. An unrevealed commit is permanently forfeited (its bond
+    ///      be canceled or revealed. An unrevealed commit is permanently forfeited (its bond
     ///      stays claimable via `unlockIntexAuctionBidBond`). Cancelling returns the bond immediately.
     /// @param emissionDay Emission day (yyyymmdd).
     function cancelIntexAuctionBid(uint32 emissionDay) external;
@@ -349,7 +349,7 @@ interface IIntexAuction {
     function redeemWinNote(uint32 emissionDay, address bidder) external;
 
     /// @notice Permissionless commit-bond claim for a bidder who committed but never revealed.
-    ///         A cancelled-day auction releases immediately. Otherwise the bond is claimable
+    ///         A canceled-day auction releases immediately. Otherwise the bond is claimable
     ///         only after `revealEnd + UNREVEALED_BOND_LOCK_PERIOD`. Pays the stored bidder, not the
     ///         caller. The escrow-local time-based valve (`unlockAbandonedIntexAuctionBidBond`) is the fallback
     ///         if the auction contract itself is rotated away.

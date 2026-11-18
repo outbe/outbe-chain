@@ -94,7 +94,7 @@ impl AuctionConfig {
             .find(|row| row.iso_code == iso_code)
     }
 
-    /// Per-Intex escrow basis = `promis_load` COEN, which the day is briefed at. The escrow
+    /// Per-Intex escrow basis = `promis_load` COEN, which the day starts at. The escrow
     /// pays wCOEN, so the bid rate applies against this. entry_price feeds only the call price.
     pub fn escrow_basis_minor(&self) -> u128 {
         self.promis_load_minor
@@ -207,7 +207,7 @@ pub struct DesisContract {
     #[attribute(order = 16)]
     pub config_bid_bond_minor: outbe_primitives::storage::dsl::Map<EmissionDate, U256>,
 
-    /// series/day -> scheduled auction timestamp, recorded at start (bounded until 2106).
+    /// emission_day -> auction start time, recorded when the day is scheduled (bounded until 2106).
     #[attribute(order = 17)]
     pub auction_at: outbe_primitives::storage::dsl::Map<EmissionDate, u32>,
 
@@ -289,7 +289,7 @@ pub struct DesisContract {
 
     // --- PROMIS load ladder ---
     /// Exponent `k` of the current load, `promis_load_minor = 10^k`. Zero until the
-    /// chain has briefed a day it could price.
+    /// chain has started a day it could price.
     #[attribute(order = 38)]
     pub promis_load_exponent: outbe_primitives::storage::dsl::Value<u32>,
     /// iso_code -> price the currency was captured at. Zero until captured.

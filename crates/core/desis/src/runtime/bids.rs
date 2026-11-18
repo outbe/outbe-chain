@@ -1,7 +1,7 @@
 use super::*;
 
 /// - `Open` while `RevealingBids`/`CollectingBids`.
-/// - `Closed` once the day ended, and `UnknownDay` for an unbriefed day. Both are acknowledged,
+/// - `Closed` once the day ended, and `UnknownDay` for a day that has not started. Both are acknowledged,
 ///   since nothing can make them applicable.
 /// - `Err` before reveal, so the transport redelivers.
 fn intake_state(stage: AuctionStage) -> Result<Intake> {
@@ -58,8 +58,8 @@ fn emit_intex_auction_bids_ignored(
 /// `page_index` tracks completeness. The chain finalizes once its BIDS_DONE marker and every batch
 /// have arrived (see `try_complete_intex_auction_bids`). The first batch fixes the chain's `total_pages` and
 /// every later one must agree. A redelivered batch (its bit already set) is an idempotent no-op, so
-/// the transport may safely re-deliver. A batch past clearing, or for a day this chain never
-/// briefed, is acknowledged with `IntexAuctionBidsIgnored`: no later state could make it applicable.
+/// the transport may safely re-deliver. A batch past clearing, or for a day that has not
+/// started, is acknowledged with `IntexAuctionBidsIgnored`: no later state could make it applicable.
 pub fn collect_intex_auction_bids(
     storage: StorageHandle<'_>,
     inbound: Inbound,

@@ -70,7 +70,7 @@ contract ConfigureOrigin is BaseScript {
         grantRoleIfMissing(o.nft, nft.BURNER_ROLE(), o.gemFactory, deployer);
     }
 
-    /// @dev A fork cannot run the Desis precompile, so `OriginRouter.wire` gets the node's answer to
+    /// @dev A fork cannot run the Desis precompile, so `OriginRouter.setDependencies` gets the node's answer to
     ///      its interface check. `virtual` so a test, which has no node, can skip it.
     function _mirrorDesisInterface(address desis) internal virtual {
         bytes memory data = abi.encodeCall(IERC165.supportsInterface, (type(IDesis).interfaceId));
