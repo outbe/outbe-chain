@@ -160,7 +160,7 @@ fn lease_identity_mismatch(error: &PrecompileError) -> bool {
         || message == "scoped mutation frame identity mismatch"
 }
 
-/// Init-genesis, cycle allocation, advance-due, and process-ready create worldwide days.
+/// Init-genesis, cycle allocation, Metadosis-ready and advance-due create worldwide days.
 pub fn require_worldwide_day_creation_lease(
     storage: &StorageHandle<'_>,
     day: WorldwideDay,
