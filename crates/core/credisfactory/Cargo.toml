@@ -43,5 +43,3 @@ alloy-primitives.workspace = true
 workspace = true
 
 [features]
-# Short notice period and the test hooks, so an e2e run can watch a Credis lapse.
-e2e-test = ["outbe-credis/e2e-test"]

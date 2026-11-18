@@ -32,8 +32,6 @@ test-utils = ["outbe-primitives/test-utils"]
 # the attestation-skipping in-process stand-in is not in this build.
 production-enclave = []
 test-enclave = ["outbe-enclave/engine"]
-# Shortens the DEV call notice to a real e2e wait. Never enabled in a release build.
-e2e-test = []
 
 [lints]
 workspace = true
