@@ -37,7 +37,13 @@ pub fn mine_promis(
     // PoW over the per-(series, owner) sequence. Bump it on success.
     let mut factory = IntexFactoryContract::new(storage.clone());
     let seq = factory.read_mine_seq(series_id, owner)?;
-    validate_pow(owner, promis_minor, series_id, seq, nonce)?;
+    validate_pow(
+        owner,
+        outbe_intex::intex_id(series_id),
+        u64::from(seq),
+        promis_minor,
+        nonce,
+    )?;
     let next_seq = seq
         .checked_add(1)
         .ok_or(IntexFactoryError::MiningSequenceOverflow)?;
@@ -63,39 +69,21 @@ pub fn mine_promis(
     })
 }
 
-/// PoW hash: `SHA256(owner ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)`.
-///
-/// `owner` and `seq` earn their place here, unlike in the shared scheme: the
-/// owner arrives as a call argument, and the sequence rises with every
-/// successful partial mining, so one solved nonce cannot serve the next.
-pub(crate) fn compute_pow_hash(
-    owner: Address,
-    promis_amount: U256,
-    series_id: SeriesId,
-    seq: u32,
-    nonce: u64,
-) -> [u8; 32] {
-    let mut data = Vec::with_capacity(20 + 32 + SERIES_ID_LEN + 4 + 8);
-    data.extend_from_slice(owner.as_slice());
-    data.extend_from_slice(&promis_amount.to_be_bytes::<32>());
-    data.extend_from_slice(series_id.as_bytes());
-    data.extend_from_slice(&seq.to_be_bytes());
-    data.extend_from_slice(&nonce.to_be_bytes());
-
-    let digest = ring::digest::digest(&ring::digest::SHA256, &data);
-    let mut out = [0u8; 32];
-    out.copy_from_slice(digest.as_ref());
-    out
-}
-
-/// The preimage is Intex's own. The difficulty it must clear is the protocol's.
+/// The `minePromis` work check: the common mining preimage with the Intex tag and the
+/// mined Promis amount.
 pub(crate) fn validate_pow(
     owner: Address,
+    intex_id: U256,
+    mining_sequence: u64,
     promis_amount: U256,
-    series_id: SeriesId,
-    seq: u32,
     nonce: u64,
 ) -> Result<()> {
-    let hash = compute_pow_hash(owner, promis_amount, series_id, seq, nonce);
+    let hash = outbe_core_common::pow::compute_intex_mining_pow_hash(
+        intex_id,
+        owner,
+        mining_sequence,
+        nonce,
+        promis_amount,
+    );
     outbe_core_common::pow::meets_difficulty(&hash).map_err(|e| IntexFactoryError::from(e).into())
 }

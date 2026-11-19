@@ -26,7 +26,14 @@ fn a_mining_sequence_at_its_maximum_refuses_the_next_mining_without_writes() {
         factory.write_mine_seq(sid(7), owner(), u32::MAX).unwrap();
         (0u64..)
             .find(|nonce| {
-                runtime::validate_pow(owner(), promis_amount, sid(7), u32::MAX, *nonce).is_ok()
+                runtime::validate_pow(
+                    owner(),
+                    outbe_intex::intex_id(sid(7)),
+                    u64::from(u32::MAX),
+                    promis_amount,
+                    *nonce,
+                )
+                .is_ok()
             })
             .unwrap()
     });

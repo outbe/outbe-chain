@@ -552,24 +552,27 @@ fn a_series_called_past_its_deadline_stays_closed() {
 }
 
 #[test]
-fn compute_pow_hash_matches_manual_sha256() {
-    // SHA256(owner ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)
+fn validate_pow_hashes_the_common_preimage_with_the_amount() {
+    // SHA256(tag ++ intexId_be32 ++ owner ++ seq_be8 ++ nonce_be8 ++ promisAmount_be32)
     let promis_amount = U256::from(1_000u64);
-    let (series_id, seq, nonce) = (sid(7), 3u32, 42u64);
-    let got = runtime::compute_pow_hash(owner(), promis_amount, series_id, seq, nonce);
+    let (intex_id, seq) = (outbe_intex::intex_id(sid(7)), 3u64);
+    let nonce = (0u64..)
+        .find(|n| runtime::validate_pow(owner(), intex_id, seq, promis_amount, *n).is_ok())
+        .unwrap();
 
-    let mut data = owner().as_slice().to_vec();
-    data.extend_from_slice(&promis_amount.to_be_bytes::<32>());
-    data.extend_from_slice(series_id.as_bytes());
+    let mut data = b"OUTBE_ITX_MINING_V1".to_vec();
+    data.extend_from_slice(&intex_id.to_be_bytes::<32>());
+    data.extend_from_slice(owner().as_slice());
     data.extend_from_slice(&seq.to_be_bytes());
     data.extend_from_slice(&nonce.to_be_bytes());
-    let expected = ring::digest::digest(&ring::digest::SHA256, &data);
-    assert_eq!(got.as_slice(), expected.as_ref());
+    data.extend_from_slice(&promis_amount.to_be_bytes::<32>());
+    let digest = ring::digest::digest(&ring::digest::SHA256, &data);
+    assert_eq!(&digest.as_ref()[..2], &[0, 0]);
 }
 
-/// Check the historical MCP miner vectors preserved from commit 6c6cb705.
+/// The vectors a client miner must reproduce byte for byte.
 #[test]
-fn compute_pow_hash_matches_the_shared_client_vectors() {
+fn validate_pow_matches_the_shared_client_vectors() {
     let fixture: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/pow.vectors.json")).unwrap();
     assert_eq!(
@@ -581,22 +584,19 @@ fn compute_pow_hash_matches_the_shared_client_vectors() {
     for vector in vectors {
         let field = |name: &str| vector[name].as_str().unwrap();
         let owner: Address = field("owner").parse().unwrap();
+        let intex_id: U256 = field("intex_id").parse().unwrap();
+        let seq: u64 = field("mining_sequence").parse().unwrap();
         let promis_amount: U256 = field("promis_amount").parse().unwrap();
-        let series_id = SeriesId::from(
-            field("series_id")
-                .parse::<alloy_primitives::FixedBytes<14>>()
-                .unwrap(),
-        );
-        let seq = u32::try_from(vector["seq"].as_u64().unwrap()).unwrap();
         let hash = |nonce: u64| {
-            B256::from(runtime::compute_pow_hash(
+            B256::from(outbe_core_common::pow::compute_intex_mining_pow_hash(
+                intex_id,
                 owner,
-                promis_amount,
-                series_id,
                 seq,
                 nonce,
+                promis_amount,
             ))
         };
+        let validate = |nonce| runtime::validate_pow(owner, intex_id, seq, promis_amount, nonce);
 
         let nonce: u64 = field("nonce").parse().unwrap();
         assert_eq!(hash(nonce), field("hash").parse::<B256>().unwrap());
@@ -606,27 +606,20 @@ fn compute_pow_hash_matches_the_shared_client_vectors() {
             hash(first_valid),
             field("first_valid_hash").parse::<B256>().unwrap()
         );
-        assert!(runtime::validate_pow(owner, promis_amount, series_id, seq, first_valid).is_ok());
-        assert!((0..first_valid).all(|nonce| runtime::validate_pow(
-            owner,
-            promis_amount,
-            series_id,
-            seq,
-            nonce
-        )
-        .is_err()));
+        assert!(validate(first_valid).is_ok());
+        assert!((0..first_valid).all(|nonce| validate(nonce).is_err()));
     }
 }
 
 #[test]
 fn validate_pow_accepts_valid_and_rejects_invalid_nonce() {
     let pa = U256::from(1_000u64);
-    let (series_id, seq) = (sid(7), 0u32);
+    let (intex_id, seq) = (outbe_intex::intex_id(sid(7)), 0u64);
     // Difficulty 2: ~1/65536 of nonces pass. Brute-force a valid and an invalid one.
     let mut good = None;
     let mut bad = None;
     for n in 0u64..1_000_000 {
-        let ok = runtime::validate_pow(owner(), pa, series_id, seq, n).is_ok();
+        let ok = runtime::validate_pow(owner(), intex_id, seq, pa, n).is_ok();
         if ok && good.is_none() {
             good = Some(n);
         }
@@ -638,10 +631,10 @@ fn validate_pow_accepts_valid_and_rejects_invalid_nonce() {
         }
     }
     assert!(
-        runtime::validate_pow(owner(), pa, series_id, seq, good.expect("a valid nonce")).is_ok()
+        runtime::validate_pow(owner(), intex_id, seq, pa, good.expect("a valid nonce")).is_ok()
     );
     assert!(
-        runtime::validate_pow(owner(), pa, series_id, seq, bad.expect("an invalid nonce")).is_err()
+        runtime::validate_pow(owner(), intex_id, seq, pa, bad.expect("an invalid nonce")).is_err()
     );
 }
 
@@ -711,7 +704,14 @@ fn a_mining_that_fails_after_any_write_changes_nothing() {
                 .promis_load_minor;
             (0u64..)
                 .find(|nonce| {
-                    runtime::validate_pow(owner(), promis_amount, sid(7), 0, *nonce).is_ok()
+                    runtime::validate_pow(
+                        owner(),
+                        outbe_intex::intex_id(sid(7)),
+                        0,
+                        promis_amount,
+                        *nonce,
+                    )
+                    .is_ok()
                 })
                 .unwrap()
         });
