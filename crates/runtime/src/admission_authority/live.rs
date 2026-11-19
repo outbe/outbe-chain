@@ -115,9 +115,62 @@ impl LiveTeeRuntimeV1 {
         })
     }
 
+    /// Binds the door-side refresh to this owner.
+    ///
+    /// `upgradeKey`, `derive*Keys`, and Signer call the hook on every freshness
+    /// check. The hook does not own this runtime, and it publishes only for the
+    /// generation pinned by that check.
+    pub(crate) fn bind_sync_refresh<P>(
+        self: &Arc<Self>,
+        provider: P,
+        protocol: Arc<dyn outbe_consensus::protocol_state::EngineProtocolState>,
+        chain: outbe_execution::tee_remote_session::RegistryChainIdentity,
+    ) where
+        P: crate::BlockIdReader
+            + crate::HeaderProvider<Header = crate::OutbeHeader>
+            + crate::StateProviderFactory
+            + Clone
+            + Send
+            + Sync
+            + 'static,
+    {
+        let owner = Arc::downgrade(self);
+        self.authority.install_sync_refresh(move || {
+            let Some(owner) = owner.upgrade() else {
+                return;
+            };
+            let _ = owner.refresh_pinned(&provider, protocol.as_ref(), &chain);
+        });
+    }
+
     /// Refresh synchronously after resident activation, before starting Signer;
     /// the same operation is used by the finalized-block guard afterward.
     pub(crate) fn refresh<P>(
+        &self,
+        provider: &P,
+        protocol: &dyn outbe_consensus::protocol_state::EngineProtocolState,
+        chain: &outbe_execution::tee_remote_session::RegistryChainIdentity,
+    ) -> eyre::Result<outbe_tee::TeeAuthorityState>
+    where
+        P: crate::BlockIdReader
+            + crate::HeaderProvider<Header = crate::OutbeHeader>
+            + crate::StateProviderFactory,
+    {
+        if outbe_tee::authority::pinned_refresh_generation().is_some() {
+            return self.refresh_pinned(provider, protocol, chain);
+        }
+        // Sample before the gate. A stop that lands while this call waits must
+        // not become the generation this refresh is allowed to publish.
+        let sampled = self.authority.refresh_generation();
+        let _gate = self.authority.lock_refresh_gate();
+        let Some(generation) = self.authority.accept_sampled_refresh(sampled) else {
+            return Ok(self.authority.snapshot());
+        };
+        let _pin = outbe_tee::authority::pin_refresh_generation(generation);
+        self.refresh_pinned(provider, protocol, chain)
+    }
+
+    fn refresh_pinned<P>(
         &self,
         provider: &P,
         protocol: &dyn outbe_consensus::protocol_state::EngineProtocolState,
@@ -150,9 +203,17 @@ impl LiveTeeRuntimeV1 {
             || resident,
         );
         self.bootstrap_allowed.store(bootstrap, Ordering::Relaxed);
-        if result.is_err() {
+        let result = if self.authority.applied_finalized_height()
+            < self.authority.observed_finalized_height()
+        {
             super::publish_failure(&self.authority, has_resident);
-        }
+            Ok(self.authority.snapshot())
+        } else if result.is_err() {
+            super::publish_failure(&self.authority, has_resident);
+            result
+        } else {
+            result
+        };
         if let Some(armed) = self
             .armed
             .lock()

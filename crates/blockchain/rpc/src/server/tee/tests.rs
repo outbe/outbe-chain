@@ -103,6 +103,108 @@ fn health_json_keeps_schema_and_omits_in_process_heap() {
     }
 }
 
+#[derive(Clone, Copy)]
+enum UpgradeProviderHead {
+    Open { height: u64, valid_until: u64 },
+    Jailed { height: u64 },
+    Expired { height: u64 },
+}
+
+impl UpgradeProviderHead {
+    fn height(self) -> u64 {
+        match self {
+            Self::Open { height, .. } | Self::Jailed { height } | Self::Expired { height } => {
+                height
+            }
+        }
+    }
+
+    fn authority(self) -> outbe_tee::authority::TeeAuthorityState {
+        match self {
+            Self::Jailed { .. } => outbe_tee::authority::TeeAuthorityState::SuspendedJailed,
+            Self::Expired { .. } => outbe_tee::authority::TeeAuthorityState::SuspendedLeaseExpired,
+            Self::Open { valid_until, .. } => outbe_tee::authority::TeeAuthorityState::Armed {
+                enclave_id: B256::repeat_byte(4),
+                valid_until,
+            },
+        }
+    }
+}
+
+fn publish_upgrade_provider_head(
+    publisher: &outbe_tee::authority::TeeAuthorityChannel,
+    head: UpgradeProviderHead,
+) {
+    let height = head.height();
+    if height >= publisher.observed_finalized_height() {
+        publisher.publish(head.authority());
+        publisher.note_applied_finalized_height(height);
+    }
+}
+
+async fn upgrade_key_v1_closes_from_fresh_armed(next: UpgradeProviderHead) {
+    use outbe_tee::authority::{
+        install_tee_authority_watch, tee_authority_test_guard, TeeAuthorityChannel,
+    };
+    let _guard = tee_authority_test_guard();
+    let head = std::sync::Arc::new(std::sync::Mutex::new(UpgradeProviderHead::Open {
+        height: 7,
+        valid_until: 1_800_001_000,
+    }));
+    let channel = TeeAuthorityChannel::default();
+    install_tee_authority_watch(channel.subscribe()).unwrap();
+    let published = std::sync::Arc::clone(&head);
+    let publisher = channel.clone();
+    channel.install_sync_refresh(move || {
+        publish_upgrade_provider_head(&publisher, *published.lock().expect("provider head"));
+    });
+    channel.note_observed_finalized_height(7);
+    let provider: Arc<
+        reth_ethereum::storage::noop::NoopProvider<
+            reth_ethereum::chainspec::ChainSpec<OutbeHeader>,
+            outbe_primitives::OutbePrimitives,
+        >,
+    > = Arc::new(reth_ethereum::storage::noop::NoopProvider::new(Arc::new(
+        reth_ethereum::chainspec::ChainSpec::default(),
+    )));
+    let rpc = OutbeApiHandler::new(provider, Arc::new(crate::state_reader::ClosedRpcReader));
+    let proof = outbe_tee::upgrade_transfer::UpgradeKeyProofV1 {
+        anchor_outcome: Bytes::new(),
+        committee_transitions: Vec::new(),
+        admission: Bytes::new(),
+    };
+    let open_error = rpc
+        .upgrade_key_v1(Bytes::new(), proof.clone(), false)
+        .await
+        .unwrap_err();
+    assert_ne!(open_error.message(), "PrivateExecutionUnavailable");
+    assert!(channel.snapshot().is_authority_open());
+    let resident = channel.snapshot().has_verified_resident_key();
+    assert!(resident);
+
+    *head.lock().expect("provider head") = next;
+    channel.note_observed_finalized_height(next.height());
+    let closed_error = rpc
+        .upgrade_key_v1(Bytes::new(), proof, false)
+        .await
+        .unwrap_err();
+    assert_eq!(closed_error.message(), "PrivateExecutionUnavailable");
+    let closed = channel.snapshot();
+    assert_eq!(closed, next.authority());
+    assert!(closed.has_verified_resident_key());
+    assert!(!closed.is_authority_open());
+}
+
+#[tokio::test]
+async fn upgrade_key_v1_closes_from_fresh_armed_to_jailed() {
+    upgrade_key_v1_closes_from_fresh_armed(UpgradeProviderHead::Jailed { height: 8 }).await;
+}
+
+#[tokio::test]
+async fn upgrade_key_v1_closes_from_fresh_armed_to_lease_expiry() {
+    upgrade_key_v1_closes_from_fresh_armed(UpgradeProviderHead::Expired { height: 9 }).await;
+}
+
 #[tokio::test]
 async fn upgrade_export_requires_live_authority_key_and_finalized_lease() {
     use outbe_tee::authority::{

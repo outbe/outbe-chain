@@ -278,7 +278,7 @@ fn authorize_current_signer(
 }
 
 /// TEE admission narrows the ordinary validator role; it never creates one.
-pub(super) fn authority_signer_enabled(
+pub fn authority_signer_enabled(
     authority: Option<&outbe_tee::TeeAuthorityWatch>,
     accountable_validator: bool,
     has_share: bool,
@@ -287,7 +287,7 @@ pub(super) fn authority_signer_enabled(
     let ordinary = radicle_signer_enabled(gate, has_share)?;
     Ok(ordinary
         && accountable_validator
-        && authority.is_some_and(|watch| watch.snapshot().is_authority_open()))
+        && authority.is_some_and(|watch| watch.ensure_current().is_authority_open()))
 }
 
 impl<E, N: StackNodeAccess> super::runtime::EpochSupervisor<E, N>
@@ -412,5 +412,90 @@ mod authority_tests {
             .now_or_never()
             .expect("publisher shutdown must wake the live role monitor")
             .unwrap());
+    }
+
+    #[derive(Clone, Copy)]
+    struct ProviderHead {
+        height: u64,
+        jailed: bool,
+        timestamp: u64,
+        valid_until: u64,
+    }
+
+    fn fresh_armed_then(next: ProviderHead, expected: State) {
+        let head = std::sync::Arc::new(std::sync::Mutex::new(ProviderHead {
+            height: 7,
+            jailed: false,
+            timestamp: 1_800_000_000,
+            valid_until: 1_800_001_000,
+        }));
+        let channel = TeeAuthorityChannel::default();
+        let watch = channel.subscribe();
+        let published = std::sync::Arc::clone(&head);
+        let publisher = channel.clone();
+        channel.install_sync_refresh(move || {
+            let facts = *published.lock().expect("provider head");
+            if facts.height < publisher.observed_finalized_height() {
+                return;
+            }
+            let closed = match (facts.jailed, facts.timestamp >= facts.valid_until) {
+                (true, _) => State::SuspendedJailed,
+                (false, true) => State::SuspendedLeaseExpired,
+                (false, false) => State::Armed {
+                    enclave_id: B256::repeat_byte(1),
+                    valid_until: facts.valid_until,
+                },
+            };
+            publisher.publish(closed);
+            publisher.note_applied_finalized_height(facts.height);
+        });
+        channel.note_observed_finalized_height(7);
+        assert!(authority_signer_enabled(
+            Some(&watch),
+            true,
+            true,
+            RadicleVotingGate::SignerAllowed,
+        )
+        .unwrap());
+        assert!(channel.snapshot().has_verified_resident_key());
+        *head.lock().expect("provider head") = next;
+        channel.note_observed_finalized_height(next.height);
+        assert!(!authority_signer_enabled(
+            Some(&watch),
+            true,
+            true,
+            RadicleVotingGate::SignerAllowed,
+        )
+        .unwrap());
+        let closed = channel.snapshot();
+        assert_eq!(closed, expected);
+        assert!(closed.has_verified_resident_key());
+        assert!(!closed.is_authority_open());
+    }
+
+    #[test]
+    fn signer_voting_gate_closes_from_fresh_armed_to_jailed() {
+        fresh_armed_then(
+            ProviderHead {
+                height: 8,
+                jailed: true,
+                timestamp: 1_800_000_000,
+                valid_until: 1_800_001_000,
+            },
+            State::SuspendedJailed,
+        );
+    }
+
+    #[test]
+    fn signer_voting_gate_closes_from_fresh_armed_to_lease_expiry() {
+        fresh_armed_then(
+            ProviderHead {
+                height: 9,
+                jailed: false,
+                timestamp: 1_800_000_000,
+                valid_until: 1_800_000_000,
+            },
+            State::SuspendedLeaseExpired,
+        );
     }
 }

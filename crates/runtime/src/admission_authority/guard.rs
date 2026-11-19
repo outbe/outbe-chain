@@ -19,11 +19,13 @@ where
     P: BlockIdReader
         + HeaderProvider<Header = OutbeHeader>
         + StateProviderFactory
+        + Clone
         + Send
         + Sync
         + 'static,
 {
     let _lifetime = AuthorityPublisherLifetime(owner.authority.clone());
+    owner.bind_sync_refresh(provider.clone(), Arc::clone(&protocol), config.chain);
     let mut failed_state = None;
     let mut interval = tokio::time::interval(Duration::from_secs(1));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -31,6 +33,7 @@ where
         tokio::select! {
             biased;
             _ = shutdown.cancelled() => return Ok(None),
+            _ = owner.authority.guard_notified() => {},
             _ = config.finalization_notify.notified() => {},
             _ = interval.tick() => {},
         }
@@ -68,7 +71,7 @@ where
     P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
     let resident = resident()?;
-    let (admitted, canonical, bootstrap) = read_authority_admission(
+    let ((admitted, canonical, bootstrap), finalized_height) = read_authority_admission(
         (provider, protocol),
         (chain, identity),
         (gate, allow_bootstrap),
@@ -97,7 +100,14 @@ where
         } else {
             state
         };
-    super::publish_state(authority, state);
+    let generation = outbe_tee::authority::pinned_refresh_generation()
+        .unwrap_or_else(|| authority.refresh_generation());
+    if !authority.publish_if_generation(generation, state) {
+        return Ok(authority.snapshot());
+    }
+    if let Some(height) = finalized_height {
+        authority.note_applied_finalized_height(height);
+    }
     if state == TeeAuthorityState::SuspendedPolicyMismatch
         && matches!(
             admitted,
@@ -124,12 +134,13 @@ fn read_authority_admission<P>(
     ),
     (gate, allow_bootstrap): (&mut TeeLeaseGuardGateV1, &mut bool),
     resident: Option<alloy_primitives::B256>,
-) -> eyre::Result<AdmissionFacts>
+) -> eyre::Result<(AdmissionFacts, Option<u64>)>
 where
     P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
     let checkpoint =
         admission::read_consistent_finalized_head(provider, "read authority checkpoint")?;
+    let finalized_height = checkpoint.map(|(head, _)| head.number);
     let facts = if let Some((head, _)) = checkpoint {
         *allow_bootstrap = false;
         let admitted = admission::read_gated_finalized_local_tee_admission_with_resident_offer(
@@ -145,7 +156,10 @@ where
         if admission::read_consistent_finalized_head(provider, "confirm authority checkpoint")?
             != checkpoint
         {
-            return Ok((None, None, BootstrapAdmissionPolicy::RejectBootstrap));
+            return Ok((
+                (None, None, BootstrapAdmissionPolicy::RejectBootstrap),
+                None,
+            ));
         }
         (
             admitted,
@@ -188,7 +202,7 @@ where
         (None, None, BootstrapAdmissionPolicy::RejectBootstrap)
     };
 
-    Ok(facts)
+    Ok((facts, finalized_height))
 }
 
 struct GenesisStateReader<'a>(&'a reth_provider::StateProviderBox);
@@ -212,6 +226,110 @@ impl outbe_primitives::storage::readonly::StorageReader for GenesisStateReader<'
 struct AuthorityPublisherLifetime(TeeAuthorityChannel);
 impl Drop for AuthorityPublisherLifetime {
     fn drop(&mut self) {
-        super::publish_failure(&self.0, false);
+        self.0.retire_publisher(false);
+    }
+}
+
+#[cfg(test)]
+mod sync_refresh_tests {
+    use super::super::live::{LiveTeeRuntimeV1, LiveTeeSnapshotV1};
+    use super::super::test_support as support;
+    use crate::admission::TeeLeaseGuardGateV1;
+    use outbe_consensus::protocol_state::EngineProtocolState;
+    use outbe_tee::{TeeAuthorityChannel, TeeAuthorityState};
+    use std::sync::{Arc, Mutex};
+
+    struct ArmedRuntime {
+        owner: Arc<LiveTeeRuntimeV1>,
+        provider: support::SharedProvider,
+        channel: TeeAuthorityChannel,
+        context: Arc<outbe_tee::in_process::InProcessTeeContext>,
+        chain: outbe_execution::tee_remote_session::RegistryChainIdentity,
+        protocol: Arc<dyn EngineProtocolState>,
+    }
+
+    fn fresh_armed() -> ArmedRuntime {
+        let context = support::context(9);
+        let initial = support::provider(&context, 7, 1_800_000_000, 1_800_001_000, false);
+        let provider = support::SharedProvider(Arc::new(Mutex::new(initial.0)));
+        let channel = TeeAuthorityChannel::default();
+        let owner = Arc::new(
+            LiveTeeRuntimeV1::new(
+                LiveTeeSnapshotV1 {
+                    identity: initial.2,
+                    gate: TeeLeaseGuardGateV1::Armed,
+                    context: Arc::clone(&context),
+                },
+                channel.clone(),
+            )
+            .unwrap(),
+        );
+        let protocol: Arc<dyn EngineProtocolState> = Arc::new(crate::OutbeRuntime::new());
+        let chain = initial.1;
+        let before_guard = owner.refresh(&provider, protocol.as_ref(), &chain).unwrap();
+        assert!(before_guard.is_authority_open());
+        owner.bind_sync_refresh(provider.clone(), Arc::clone(&protocol), chain);
+        owner.refresh(&provider, protocol.as_ref(), &chain).unwrap();
+        assert_eq!(channel.applied_finalized_height(), 7);
+        assert!(channel.snapshot().is_authority_open());
+        ArmedRuntime {
+            owner,
+            provider,
+            channel,
+            context,
+            chain,
+            protocol,
+        }
+    }
+
+    #[test]
+    fn sync_refresh_closes_from_fresh_armed_to_jailed() {
+        let armed = fresh_armed();
+        let resident = armed.context.network_encryption_public().unwrap();
+        armed.channel.note_observed_finalized_height(8);
+        let lagging = armed.channel.subscribe().ensure_current();
+        assert!(!lagging.is_authority_open());
+        assert!(lagging.has_verified_resident_key());
+        *armed.provider.0.lock().expect("provider lock") =
+            support::provider(&armed.context, 8, 1_800_000_000, 1_800_001_000, true).0;
+        let jailed = armed.channel.subscribe().ensure_current();
+        assert_eq!(jailed, TeeAuthorityState::SuspendedJailed);
+        assert!(jailed.has_verified_resident_key());
+        assert_eq!(armed.context.network_encryption_public().unwrap(), resident);
+        assert!(Arc::ptr_eq(
+            &armed.owner.lock().unwrap().context,
+            &armed.context
+        ));
+    }
+
+    #[test]
+    fn sync_refresh_closes_from_fresh_armed_to_lease_expiry() {
+        let armed = fresh_armed();
+        let resident = armed.context.network_encryption_public().unwrap();
+        *armed.provider.0.lock().expect("provider lock") =
+            support::provider(&armed.context, 9, 1_800_000_000, 1_800_000_000, false).0;
+        armed.channel.note_observed_finalized_height(9);
+        let expired = armed.channel.subscribe().ensure_current();
+        assert_eq!(expired, TeeAuthorityState::SuspendedLeaseExpired);
+        assert!(expired.has_verified_resident_key());
+        assert!(!expired.is_authority_open());
+        assert_eq!(armed.context.network_encryption_public().unwrap(), resident);
+    }
+
+    #[test]
+    fn refresh_after_guard_stop_cannot_republish_armed() {
+        let armed = fresh_armed();
+        let resident = armed.context.network_encryption_public().unwrap();
+        let sampled = armed.channel.refresh_generation();
+        armed.channel.retire_publisher(true);
+        assert!(armed.channel.accept_sampled_refresh(sampled).is_none());
+        let closed = armed
+            .owner
+            .refresh(&armed.provider, armed.protocol.as_ref(), &armed.chain)
+            .unwrap();
+        assert!(!closed.is_authority_open());
+        assert!(closed.has_verified_resident_key());
+        assert!(!armed.channel.snapshot().is_authority_open());
+        assert_eq!(armed.context.network_encryption_public().unwrap(), resident);
     }
 }
