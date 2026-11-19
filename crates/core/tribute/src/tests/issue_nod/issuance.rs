@@ -130,7 +130,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
             nod_item.encrypted.terms.entry_price_minor,
             U256::from(1_234_567u64)
         );
-        let nod_view_key = outbe_enclave::nod_encryption::derive_view_key(
+        let nod_view_key = outbe_nod::nod_encryption::derive_view_key(
             &crate::enclave_client::test_enclave::state_key(),
             owner1,
         )
@@ -138,7 +138,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
         let owner_decrypted =
             outbe_nod::test_support::decrypt_for_owner(&nod_view_key, &nod_item.encrypted)
                 .expect("owner must decrypt real encrypted Nod");
-        let enclave_decrypted = outbe_enclave::nod_encryption::decrypt_nod(
+        let enclave_decrypted = outbe_nod::nod_encryption::decrypt_nod(
             &crate::enclave_client::test_enclave::state_key(),
             &nod_item.encrypted,
         )
@@ -357,7 +357,7 @@ fn lysis_keys_its_result_by_the_emission_day_and_binds_the_nod_to_it() {
                 tribute.reference_currency,
             )
             .unwrap();
-            outbe_enclave::nod_mine::IssueNodFromTributeRequestV1 {
+            crate::confidential::IssueNodFromTributeRequestV1 {
                 tribute: record.encrypted().unwrap().clone(),
                 day_fractions: tc.day_fractions_record(fractions_day).unwrap().unwrap(),
                 terms: outbe_core_common::nod_encryption::NodTermsV1 {
@@ -409,7 +409,7 @@ fn the_enclave_refuses_a_lysis_list_that_differs_from_the_frozen_day_nominal() {
         ids.sort();
         let inputs: Vec<_> = ids
             .iter()
-            .map(|id| outbe_enclave::tribute_day::LysisTributeInputV1 {
+            .map(|id| crate::confidential::LysisTributeInputV1 {
                 tribute: tc
                     .get_record(*id)
                     .unwrap()
@@ -423,7 +423,7 @@ fn the_enclave_refuses_a_lysis_list_that_differs_from_the_frozen_day_nominal() {
             .collect();
         let lysis = |tributes| {
             crate::enclave_client::execute_lysis_fractions(
-                outbe_enclave::tribute_day::LysisFractionsRequestV1 {
+                crate::confidential::LysisFractionsRequestV1 {
                     chain_id: storage.chain_id().unwrap(),
                     worldwide_day: day,
                     emission_day: EmissionDate::new(20241221),
@@ -533,7 +533,7 @@ fn series_sealing_zero_nod_forfeit_returns_unclaimed_load_and_enables_permission
         let nod_id = tc.issue_nod(owner1, t1.tribute_id).unwrap();
         let t1_item = outbe_nod::api::get_item(&storage, nod_id).unwrap().unwrap();
         assert_eq!(t1_item.group_key, group_key);
-        let t1_load = outbe_enclave::nod_encryption::decrypt_nod(
+        let t1_load = outbe_nod::nod_encryption::decrypt_nod(
             &crate::enclave_client::test_enclave::state_key(),
             &t1_item.encrypted,
         )

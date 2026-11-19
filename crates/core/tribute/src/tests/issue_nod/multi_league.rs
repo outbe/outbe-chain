@@ -104,12 +104,12 @@ fn multi_league_lysis_and_issue_nod_keep_league_nominals_fractions_and_loads_pri
             let rec2 = outbe_nod::api::get_item(&storage, nod2_id)
                 .unwrap()
                 .unwrap();
-            let view_key1 = outbe_enclave::nod_encryption::derive_view_key(
+            let view_key1 = outbe_nod::nod_encryption::derive_view_key(
                 &crate::enclave_client::test_enclave::state_key(),
                 owner1,
             )
             .unwrap();
-            let view_key2 = outbe_enclave::nod_encryption::derive_view_key(
+            let view_key2 = outbe_nod::nod_encryption::derive_view_key(
                 &crate::enclave_client::test_enclave::state_key(),
                 owner2,
             )
@@ -184,7 +184,7 @@ fn multi_league_lysis_and_issue_nod_keep_league_nominals_fractions_and_loads_pri
                 &quote_raw,
             )
             .unwrap();
-        let view_key1 = outbe_enclave::nod_encryption::derive_view_key(
+        let view_key1 = outbe_nod::nod_encryption::derive_view_key(
             &crate::enclave_client::test_enclave::state_key(),
             owner1,
         )

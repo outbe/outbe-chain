@@ -37,7 +37,7 @@ fn in_process_ready<R>(
 fn encrypted_body() -> outbe_core_common::tribute_encryption::EncryptedTributeV2 {
     use outbe_core_common::tribute_encryption::{TributeAmountsV2, TributeContextV2};
     let plain = tribute(Address::repeat_byte(0x73), 20_260_723);
-    outbe_enclave::tribute_encryption::encrypt_tribute(
+    outbe_tribute::confidential::encrypt_tribute(
         &outbe_tribute::enclave_client::test_enclave::state_key(),
         TributeContextV2 {
             chain_id: 1,
