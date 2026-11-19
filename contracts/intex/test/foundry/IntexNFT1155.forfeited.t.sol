@@ -4,6 +4,7 @@ pragma solidity 0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
+import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
 
@@ -81,9 +82,12 @@ contract IntexNFT1155ForfeitedTest is Test {
 
     function test_BurnForfeited_BurnsTheOwnersUnitsForAnyCaller() public {
         vm.warp(closeAt + 1);
+        address anyone = makeAddr("anyone");
+        vm.expectEmit(address(token));
+        emit IERC1155.TransferSingle(anyone, user, address(0), iTok, 10);
         vm.expectEmit(address(token));
         emit IIntexNFT1155.IntexForfeited(iTok, user, 840, 840, 10);
-        vm.prank(makeAddr("anyone"));
+        vm.prank(anyone);
         token.burnForfeited(user, SERIES_ID);
 
         assertEq(token.balanceOf(user, iTok), 0);
