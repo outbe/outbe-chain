@@ -80,17 +80,6 @@ pub(super) async fn prepare_supervisor(
     Ok((anchor, Some(supervisor)))
 }
 
-pub(super) fn local_lifecycle_endpoint(
-    args: &ConsensusArgs,
-    has_signer: bool,
-    local: Option<std::net::SocketAddr>,
-) -> Option<String> {
-    if args.upstream.is_some() || !has_signer {
-        return None;
-    }
-    local.map(|addr| format!("http://{addr}"))
-}
-
 pub(super) fn new_supervisor(
     config: &LaunchConfig,
     node_data_dir: &Path,
@@ -98,6 +87,66 @@ pub(super) fn new_supervisor(
     signer: &Arc<OutbeEvmSigner>,
     endpoint: &str,
 ) -> Result<crate::tee_supervisor::TeeLifecycleSupervisor, Box<AutonomousStartupError>> {
+    let resident = resident_supervisor_parts(config, node_data_dir, policy)?;
+    Ok(crate::tee_supervisor::TeeLifecycleSupervisor::new(
+        endpoint,
+        (signer.clone(), resident.node_signing),
+        (resident.live, resident.node_data_dir, resident.descriptor),
+    )
+    .map_err(AutonomousStartupError::Supervisor)?)
+}
+
+pub(super) fn construct_in_process_supervisor(
+    methods: jsonrpsee::Methods,
+    signer: &Arc<OutbeEvmSigner>,
+    resident: super::FoundingResident,
+) -> Result<crate::tee_supervisor::TeeLifecycleSupervisor, Box<AutonomousStartupError>> {
+    crate::tee_supervisor::TeeLifecycleSupervisor::new_in_process(
+        methods,
+        (signer.clone(), resident.node_signing),
+        (resident.live, resident.node_data_dir, resident.descriptor),
+    )
+    .map_err(AutonomousStartupError::Supervisor)
+    .map_err(Box::new)
+}
+
+pub(super) fn founding_resident(
+    config: &LaunchConfig,
+    node_data_dir: &Path,
+    policy: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
+) -> Result<super::FoundingResident, Box<AutonomousStartupError>> {
+    let resident = resident_supervisor_parts(config, node_data_dir, policy)?;
+    Ok(super::FoundingResident {
+        node_signing: resident.node_signing,
+        live: resident.live,
+        node_data_dir: resident.node_data_dir,
+        descriptor: resident.descriptor,
+    })
+}
+
+pub(super) fn new_local_supervisor(
+    config: &LaunchConfig,
+    node_data_dir: &Path,
+    policy: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
+    signer: &Arc<OutbeEvmSigner>,
+    methods: jsonrpsee::Methods,
+) -> Result<crate::tee_supervisor::TeeLifecycleSupervisor, Box<AutonomousStartupError>> {
+    let resident = founding_resident(config, node_data_dir, policy)?;
+    construct_in_process_supervisor(methods, signer, resident)
+}
+
+struct ResidentParts {
+    node_signing: k256::ecdsa::SigningKey,
+    live: Arc<InProcessTeeContext>,
+    node_data_dir: PathBuf,
+    descriptor: TrustedNetworkDescriptorV1,
+}
+
+fn resident_supervisor_parts(
+    config: &LaunchConfig,
+    node_data_dir: &Path,
+    policy: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
+) -> Result<ResidentParts, Box<AutonomousStartupError>> {
     let (node_signing, _) =
         load_reth_p2p_node_host_signer(&config.network, config.datadir().p2p_secret())
             .map_err(AutonomousStartupError::Identity)?;
@@ -111,12 +160,12 @@ pub(super) fn new_supervisor(
         genesis_consensus_keys: binding.genesis_consensus_keys,
     };
     let live = outbe_tee::in_process_tee_context().ok_or(AutonomousStartupError::MissingContext)?;
-    Ok(crate::tee_supervisor::TeeLifecycleSupervisor::new(
-        endpoint,
-        (signer.clone(), node_signing),
-        (live, node_data_dir.to_path_buf(), descriptor),
-    )
-    .map_err(AutonomousStartupError::Supervisor)?)
+    Ok(ResidentParts {
+        node_signing,
+        live,
+        node_data_dir: node_data_dir.to_path_buf(),
+        descriptor,
+    })
 }
 
 #[derive(Debug, thiserror::Error)]

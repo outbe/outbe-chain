@@ -23,7 +23,7 @@ impl RpcLifecyclePort {
         self.check(at).await?;
         Ok(Some(receipt))
     }
-    async fn canonical_block(
+    pub(super) async fn canonical_block(
         &self,
         height: u64,
         expected_hash: B256,

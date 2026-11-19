@@ -1,6 +1,29 @@
 use super::*;
 mod in_process;
 use crate::errors::LaunchError;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[cfg(test)]
+pub(crate) static PREPARE_ENTRIES: AtomicUsize = AtomicUsize::new(0);
+#[cfg(test)]
+pub(crate) static REGISTER_ENCLAVE_SENDS: AtomicUsize = AtomicUsize::new(0);
+
+pub(crate) fn note_register_enclave_payload(raw: &[u8]) {
+    #[cfg(test)]
+    {
+        use alloy_sol_types::SolCall;
+        let selector =
+            outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1::registerEnclaveCall::SELECTOR;
+        if raw.windows(selector.len()).any(|window| window == selector) {
+            REGISTER_ENCLAVE_SENDS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    #[cfg(not(test))]
+    {
+        let _ = raw;
+    }
+}
 
 pub(crate) async fn prepare(
     config: &LaunchConfig,
@@ -14,6 +37,8 @@ pub(crate) async fn prepare(
     Option<crate::admission::LocalTeeAdmissionAnchorV1>,
     Option<crate::tee_supervisor::TeeLifecycleSupervisor>,
 )> {
+    #[cfg(test)]
+    PREPARE_ENTRIES.fetch_add(1, Ordering::SeqCst);
     let evm_key = args.effective_validator_evm_key()?;
     if args.is_validator && evm_key.is_none() {
         return Err(LaunchError::MissingValidatorEvmSignerKey.into());
@@ -70,6 +95,10 @@ pub(crate) async fn prepare(
         cancellation,
     )
     .await?;
+    let mut identity = identity;
+    if let Some(context) = outbe_tee::in_process_tee_context() {
+        identity.expected_enclave_id = Some(context.manifest().enclave_id()?);
+    }
     Ok((
         evm_signer,
         outbe_consensus::validators::LocalTeeRuntimeIdentityV1 {
@@ -162,10 +191,61 @@ fn keyless_runtime_workers() -> TeeRuntimeWorkers {
     }
 }
 
+pub(crate) struct FoundingSlotRequest<'a> {
+    pub rpc: &'a reth_node_core::args::RpcServerArgs,
+    pub upstream: Option<&'a str>,
+    pub evm_signer: Option<&'a Arc<OutbeEvmSigner>>,
+    pub is_validator: bool,
+}
+
+/// Choose the founding supervisor from the launch slot.
+///
+/// Production calls this from [`start_runtime_workers`] with `node.config.rpc`
+/// (`rpc.http == false`), `args.upstream == None`, and `evm_signer == Some`.
+pub(crate) fn founding_supervisor_from_launch_slot<F>(
+    existing: Option<crate::tee_supervisor::TeeLifecycleSupervisor>,
+    founding_slot: &std::sync::Mutex<Option<jsonrpsee::Methods>>,
+    request: FoundingSlotRequest<'_>,
+    build: F,
+) -> eyre::Result<Option<crate::tee_supervisor::TeeLifecycleSupervisor>>
+where
+    F: FnOnce(
+        jsonrpsee::Methods,
+        &Arc<OutbeEvmSigner>,
+    ) -> eyre::Result<crate::tee_supervisor::TeeLifecycleSupervisor>,
+{
+    if let Some(supervisor) = existing {
+        return Ok(Some(supervisor));
+    }
+    let methods = founding_slot
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take();
+    let FoundingSlotRequest {
+        rpc,
+        upstream,
+        evm_signer,
+        is_validator,
+    } = request;
+    // Operator HTTP off, no upstream, and an EVM signer: the launch slot is the module.
+    if !rpc.http && upstream.is_none() {
+        if let (Some(methods), Some(signer)) = (methods, evm_signer) {
+            return Ok(Some(build(methods, signer)?));
+        }
+    } else if let (Some(methods), Some(signer)) = (methods, evm_signer) {
+        return Ok(Some(build(methods, signer)?));
+    }
+    if is_validator && upstream.is_none() && evm_signer.is_some() {
+        eyre::bail!("founding validator has no in-process lifecycle module");
+    }
+    Ok(None)
+}
+
 pub(crate) fn start_runtime_workers(
-    (protocol, supervisor): (
+    (protocol, supervisor, founding_slot): (
         Arc<crate::OutbeRuntime>,
         Option<crate::tee_supervisor::TeeLifecycleSupervisor>,
+        &std::sync::Mutex<Option<jsonrpsee::Methods>>,
     ),
     (node, args, evm_signer): (&OutbeFullNode, &ConsensusArgs, Option<&Arc<OutbeEvmSigner>>),
     (proof_chain_id, genesis_hash, node_data_dir): (u64, alloy_primitives::B256, &Path),
@@ -191,34 +271,51 @@ pub(crate) fn start_runtime_workers(
     };
     let context = outbe_tee::in_process_tee_context()
         .ok_or(in_process::AutonomousStartupError::MissingContext)?;
-    if args.is_validator
-        && args.upstream.is_none()
-        && node.rpc_server_handles.rpc.http_local_addr().is_none()
-    {
-        tracing::warn!(
-            "validator has no upstream or local HTTP RPC endpoint; autonomous founder lease renewal is unavailable. Enable local HTTP RPC (--http) to allow the lifecycle supervisor to renew"
-        );
+    // Founding renewal uses the in-process module for every HTTP, JWT, and instance setting.
+    let fresh_supervisor = supervisor.is_none();
+    let http_off = !node.config.rpc.http;
+    let no_upstream = args.upstream.is_none();
+    let launch_slot = fresh_supervisor && http_off && no_upstream;
+    let validator_signer = args.is_validator && evm_signer.is_some();
+    let direct_founding = launch_slot && validator_signer;
+    let slot_ready = founding_slot
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .is_some();
+    if direct_founding && !slot_ready {
+        eyre::bail!("founding validator has no in-process lifecycle module");
     }
-    // Founding validators acquire their key at block one, after local RPC starts.
-    let supervisor = if supervisor.is_none() {
-        in_process::local_lifecycle_endpoint(
-            args,
-            evm_signer.is_some(),
-            node.rpc_server_handles.rpc.http_local_addr(),
+    let founding_resident = if direct_founding {
+        Some(
+            in_process::founding_resident(&node.config, node_data_dir, initial_tee_policy)
+                .map_err(|error| eyre::Report::new(*error))?,
         )
-        .zip(evm_signer)
-        .map(|(endpoint, signer)| {
-            in_process::new_supervisor(
-                &node.config,
-                node_data_dir,
-                initial_tee_policy,
-                signer,
-                &endpoint,
-            )
-        })
-        .transpose()?
     } else {
-        supervisor
+        None
+    };
+    let supervisor = if founding_resident.is_some() {
+        None
+    } else {
+        founding_supervisor_from_launch_slot(
+            supervisor,
+            founding_slot,
+            FoundingSlotRequest {
+                rpc: &node.config.rpc,
+                upstream: args.upstream.as_deref(),
+                evm_signer,
+                is_validator: args.is_validator,
+            },
+            |methods, signer| {
+                in_process::new_local_supervisor(
+                    &node.config,
+                    node_data_dir,
+                    initial_tee_policy,
+                    signer,
+                    methods,
+                )
+                .map_err(|error| eyre::Report::new(*error))
+            },
+        )?
     };
     let gate = if args.upstream.is_none()
         && args.is_validator
@@ -268,19 +365,47 @@ pub(crate) fn start_runtime_workers(
     let supervisor_protocol = protocol.clone();
     let supervisor_shutdown = shutdown_token.clone();
     let supervisor_finalized = finalization_notify.clone();
+    let lifecycle = if let Some(resident) = founding_resident {
+        spawn_founding_validator_supervisor(
+            founding_slot,
+            FoundingSlotRequest {
+                rpc: &node.config.rpc,
+                upstream: None,
+                evm_signer: Some(evm_signer.expect("direct founding carries the EVM signer")),
+                is_validator: true,
+            },
+            resident,
+            FoundingRun {
+                owner: supervisor_owner,
+                provider: supervisor_provider,
+                protocol: supervisor_protocol,
+                shutdown: supervisor_shutdown,
+                finalized: supervisor_finalized,
+            },
+            &shutdown,
+        )?
+    } else {
+        spawn_supervisor_run(
+            supervisor,
+            FoundingRun {
+                owner: supervisor_owner,
+                provider: supervisor_provider,
+                protocol: supervisor_protocol,
+                shutdown: supervisor_shutdown,
+                finalized: supervisor_finalized,
+            },
+            &shutdown,
+        )
+    };
     let tee_lease_guard_handle = tokio::spawn(shutdown.track_task(
         "TEE lease guard and lifecycle",
         async move {
             let lifecycle = async move {
-                if let Some(supervisor) = supervisor {
-                    supervisor
-                        .run(
-                            supervisor_owner,
-                            (supervisor_provider, supervisor_protocol),
-                            supervisor_shutdown,
-                            supervisor_finalized,
-                        )
-                        .await;
+                if let Err(join_err) = lifecycle.await {
+                    if join_err.is_panic() {
+                        std::panic::resume_unwind(join_err.into_panic());
+                    }
+                    tracing::error!(%join_err, "TEE lifecycle task failed");
                 }
             };
             let (guard, ()) = tokio::join!(lease_check, lifecycle);
@@ -314,6 +439,92 @@ pub(crate) fn start_runtime_workers(
         tee_lease_guard_handle: Some(tee_lease_guard_handle),
         tee_canary_handle,
     })
+}
+
+pub(crate) struct FoundingResident {
+    pub node_signing: k256::ecdsa::SigningKey,
+    pub live: Arc<outbe_tee::in_process::InProcessTeeContext>,
+    pub node_data_dir: PathBuf,
+    pub descriptor: outbe_primitives::tee_attestation_v1::TrustedNetworkDescriptorV1,
+}
+
+pub(crate) struct FoundingRun<P> {
+    pub owner: Arc<crate::admission_authority::live::LiveTeeRuntimeV1>,
+    pub provider: P,
+    pub protocol: Arc<crate::OutbeRuntime>,
+    pub shutdown: tokio_util::sync::CancellationToken,
+    pub finalized: Arc<tokio::sync::Notify>,
+}
+
+/// Build the founding supervisor from the launch slot and spawn `supervisor.run`.
+///
+/// Production startup uses the same constructor and the same spawn. The slot is
+/// the in-process module when operator HTTP is off, upstream is absent, and the
+/// node is a validator.
+pub(crate) fn spawn_founding_validator_supervisor<P>(
+    founding_slot: &std::sync::Mutex<Option<jsonrpsee::Methods>>,
+    request: FoundingSlotRequest<'_>,
+    resident: FoundingResident,
+    run: FoundingRun<P>,
+    shutdown: &outbe_execution::shutdown::NodeShutdown,
+) -> eyre::Result<tokio::task::JoinHandle<()>>
+where
+    P: BlockIdReader
+        + HeaderProvider<Header = OutbeHeader>
+        + StateProviderFactory
+        + Send
+        + Sync
+        + 'static,
+{
+    let FoundingResident {
+        node_signing,
+        live,
+        node_data_dir,
+        descriptor,
+    } = resident;
+    let supervisor =
+        founding_supervisor_from_launch_slot(None, founding_slot, request, |methods, signer| {
+            in_process::construct_in_process_supervisor(
+                methods,
+                signer,
+                FoundingResident {
+                    node_signing,
+                    live,
+                    node_data_dir,
+                    descriptor,
+                },
+            )
+            .map_err(|error| eyre::Report::new(*error))
+        })?
+        .ok_or_else(|| eyre::eyre!("founding validator has no in-process lifecycle module"))?;
+    Ok(spawn_supervisor_run(Some(supervisor), run, shutdown))
+}
+
+fn spawn_supervisor_run<P>(
+    supervisor: Option<crate::tee_supervisor::TeeLifecycleSupervisor>,
+    run: FoundingRun<P>,
+    shutdown: &outbe_execution::shutdown::NodeShutdown,
+) -> tokio::task::JoinHandle<()>
+where
+    P: BlockIdReader
+        + HeaderProvider<Header = OutbeHeader>
+        + StateProviderFactory
+        + Send
+        + Sync
+        + 'static,
+{
+    tokio::spawn(shutdown.track_task("TEE lifecycle supervisor", async move {
+        if let Some(supervisor) = supervisor {
+            supervisor
+                .run(
+                    run.owner,
+                    (run.provider, run.protocol),
+                    run.shutdown,
+                    run.finalized,
+                )
+                .await;
+        }
+    }))
 }
 
 #[cfg(test)]
@@ -368,27 +579,22 @@ mod tests {
     }
 
     #[test]
-    fn founding_lifecycle_uses_local_http_only_for_resident_keyed_launch() {
-        let local = "127.0.0.1:8545".parse().unwrap();
-        let mut args = parsed_args(&[]);
-        args.is_validator = true;
-        assert_eq!(
-            in_process::local_lifecycle_endpoint(&args, true, Some(local)),
-            Some("http://127.0.0.1:8545".into())
-        );
-        assert_eq!(
-            in_process::local_lifecycle_endpoint(&args, true, None),
-            None
-        );
-        assert_eq!(
-            in_process::local_lifecycle_endpoint(&args, false, Some(local)),
-            None
-        );
-        args.upstream = Some("http://upstream:8545".into());
-        assert_eq!(
-            in_process::local_lifecycle_endpoint(&args, true, Some(local)),
-            None
-        );
+    fn founding_validator_without_http_spawns_in_process_supervisor() {
+        let context = crate::admission_authority::test_support::context(4);
+        let descriptor = outbe_primitives::tee_attestation_v1::TrustedNetworkDescriptorV1 {
+            network_binding: context.manifest().network_binding(),
+            genesis_consensus_keys: vec![],
+        };
+        let root = tempfile::tempdir().unwrap();
+        crate::tee_supervisor::TeeLifecycleSupervisor::new_in_process(
+            jsonrpsee::Methods::new(),
+            (
+                Arc::new(outbe_evm::OutbeEvmSigner::from_secret_bytes([0x11; 32]).unwrap()),
+                k256::ecdsa::SigningKey::from_slice(&[0x21; 32]).unwrap(),
+            ),
+            (context, root.path().to_path_buf(), descriptor),
+        )
+        .expect("founding validator spawns TeeLifecycleSupervisor without a socket");
     }
 
     #[test]

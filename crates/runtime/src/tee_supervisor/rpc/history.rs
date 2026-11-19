@@ -1,86 +1,21 @@
 use super::proof::invalid;
 use super::*;
-use alloy_consensus::{private::alloy_rlp, BlockHeader};
+use alloy_consensus::BlockHeader;
 use outbe_primitives::reshare_artifact::{decode_outbe_block_artifacts, ConsensusHeaderArtifact};
 use outbe_tee::finalized_admission::*;
 
-impl RpcLifecyclePort {
-    async fn certified(
-        &self,
-        height: u64,
-    ) -> Result<(outbe_consensus::block::ConsensusBlock, CertifiedHeaderV1), RpcLifecycleError>
-    {
-        let public: Value = match self
-            .client
-            .request("outbe_getFinalityProof", rpc_params![height])
-            .await
-        {
-            Err(jsonrpsee::core::client::Error::Call(e)) if e.code() == -32601 => {
-                self.client
-                    .request("outbe_getFinalization", rpc_params![height])
-                    .await?
-            }
-            result => result?,
-        };
-        let finalization = bytes(&public, "finalizationHex")?;
-        let encoded = bytes(&public, "blockHex")?;
-        let certified = outbe_consensus::committee_chain::decode_public_finalized_block(
-            &finalization,
-            &encoded,
-            outbe_consensus::bls::MAX_COMMITTEE_MEMBERS,
-        )
-        .map_err(|e| RpcLifecycleError::Finality(e.into()))?;
-        if certified.finalization.proposal.payload != certified.block.digest() {
-            return Err(invalid(ProofFailure::InvalidEnvelope));
-        }
-        let mut blocks = Vec::new();
-        if let Some(ancestors) = public.get("ancestorBlocksHex") {
-            let array = ancestors
-                .as_array()
-                .ok_or(RpcLifecycleError::Missing("ancestorBlocksHex array"))?;
-            if array.len() > MAX_FINALITY_DESCENDANTS {
-                return Err(invalid(ProofFailure::InvalidEnvelope));
-            }
-            for ancestor in array {
-                let raw: Bytes = serde_json::from_value(ancestor.clone())?;
-                blocks.push(
-                    outbe_consensus::committee_chain::decode_public_block(&raw)
-                        .map_err(|e| RpcLifecycleError::Finality(e.into()))?,
-                );
-            }
-        }
-        blocks.push(certified.block);
-        if blocks[0].number() != height
-            || blocks.windows(2).any(|p| {
-                p[0].number().checked_add(1) != Some(p[1].number())
-                    || p[1].parent_digest() != p[0].digest()
-            })
-        {
-            return Err(invalid(ProofFailure::InvalidEnvelope));
-        }
-        let target = blocks[0].clone();
-        let canonical = self.block(json!(format!("0x{height:x}"))).await?;
-        if hash(&canonical, "hash")? != target.block_hash() {
-            return Err(RpcLifecycleError::CheckpointMismatch);
-        }
-        let compact = CertifiedHeaderV1 {
-            finalization,
-            header: alloy_rlp::encode(target.header()),
-            descendants: blocks
-                .iter()
-                .skip(1)
-                .map(|b| alloy_rlp::encode(b.header()))
-                .collect(),
-        };
-        Ok((target, compact))
-    }
-}
+#[path = "history_replay.rs"]
+mod replay;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct AdmissionHistory {
     anchor: Option<Bytes>,
     transitions: Vec<Bytes>,
     admission: Option<CertifiedHeaderV1>,
+    /// Verified CommitteePreAnnounce at the admitted height. The witness excludes
+    /// it until a later certificate's epoch is that announced committee. The
+    /// block after the preannounce can still be signed by the outgoing committee.
+    boundary_transition: Option<Bytes>,
 }
 impl AdmissionHistory {
     fn needs_certificate(
@@ -103,7 +38,7 @@ impl AdmissionHistory {
         }
     }
     fn next_epoch(&self) -> u64 {
-        self.transitions.len() as u64 + 1
+        (self.transitions.len() + usize::from(self.boundary_transition.is_some())) as u64 + 1
     }
     fn record_artifact(
         &mut self,
@@ -119,12 +54,10 @@ impl AdmissionHistory {
                 self.anchor = Some(boundary.outcome)
             }
             Some(ConsensusHeaderArtifact::CommitteePreAnnounce { epoch, .. })
-                if block.number() < at.height && epoch == self.next_epoch() =>
+                if block.number() <= at.height && epoch == self.next_epoch() =>
             {
-                self.transitions.push(compact.encode_canonical()?.into());
-                if self.transitions.len() > outbe_tee::upgrade_transfer::MAX_UPGRADE_COMMITTEES {
-                    return Err(invalid(ProofFailure::InvalidEnvelope));
-                }
+                let encoded: Bytes = compact.encode_canonical()?.into();
+                self.boundary_transition = Some(encoded);
             }
             _ => {}
         }
@@ -155,25 +88,209 @@ impl AdmissionHistory {
             .ok_or_else(|| invalid(ProofFailure::MissingAnchor))?;
         Ok((anchor, self.transitions, admission))
     }
+    fn promote_boundary(&mut self) -> Result<(), RpcLifecycleError> {
+        let Some(encoded) = self.boundary_transition.take() else {
+            return Ok(());
+        };
+        self.transitions.push(encoded);
+        if self.transitions.len() > outbe_tee::upgrade_transfer::MAX_UPGRADE_COMMITTEES {
+            return Err(invalid(ProofFailure::InvalidEnvelope));
+        }
+        Ok(())
+    }
 }
+pub(super) struct VerifierCheckpoint {
+    chain: outbe_consensus::committee_chain::CommitteeChain,
+    applied: usize,
+}
+
+pub(super) struct CachedHistory {
+    height: u64,
+    hash: B256,
+    admitted_height: u64,
+    history: AdmissionHistory,
+    verifier: Option<VerifierCheckpoint>,
+}
+
+enum HistoryScan {
+    Done(AdmissionHistory),
+    Restart,
+}
+
 impl RpcLifecyclePort {
+    fn cached_view(&self) -> Option<(u64, B256, u64, AdmissionHistory)> {
+        let guard = self
+            .history
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let cached = guard.as_ref()?;
+        Some((
+            cached.height,
+            cached.hash,
+            cached.admitted_height,
+            cached.history.clone(),
+        ))
+    }
+    fn take_verifier(&self) -> Option<VerifierCheckpoint> {
+        self.history
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_mut()
+            .and_then(|cached| cached.verifier.take())
+    }
+    fn set_verifier(&self, verifier: Option<VerifierCheckpoint>) {
+        let mut guard = self
+            .history
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(cached) = guard.as_mut() {
+            cached.verifier = verifier;
+            return;
+        }
+        if let Some(verifier) = verifier {
+            *guard = Some(CachedHistory {
+                height: u64::MAX,
+                hash: B256::ZERO,
+                admitted_height: 0,
+                history: AdmissionHistory::default(),
+                verifier: Some(verifier),
+            });
+        }
+    }
+    fn store_history(
+        &self,
+        height: u64,
+        hash: B256,
+        admitted_height: u64,
+        history: &AdmissionHistory,
+    ) {
+        let mut guard = self
+            .history
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let verifier = guard.as_mut().and_then(|cached| cached.verifier.take());
+        *guard = Some(CachedHistory {
+            height,
+            hash,
+            admitted_height,
+            history: history.clone(),
+            verifier,
+        });
+    }
+    fn clear_history(&self) {
+        *self
+            .history
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    }
+    async fn resume(
+        &self,
+        at: LifecycleCheckpointV1,
+    ) -> Result<(AdmissionHistory, u64, Option<B256>), RpcLifecycleError> {
+        let Some((height, cached_hash, admitted_height, history)) = self.cached_view() else {
+            return Ok((AdmissionHistory::default(), 1, None));
+        };
+        if height > at.height {
+            self.clear_history();
+            return Ok((AdmissionHistory::default(), 1, None));
+        }
+        if admitted_height == height && height < at.height {
+            return Ok((history, height.saturating_add(1), Some(cached_hash)));
+        }
+        let header = self.block(json!(format!("0x{height:x}"))).await?;
+        if number(&header, "number")? != height || hash(&header, "hash")? != cached_hash {
+            self.clear_history();
+            return Ok((AdmissionHistory::default(), 1, None));
+        }
+        if height == at.height && admitted_height == at.height {
+            return Ok((history, height.saturating_add(1), None));
+        }
+        let start = if admitted_height == 0 && height == at.height {
+            height
+        } else {
+            height.saturating_add(1)
+        };
+        Ok((history, start, Some(cached_hash)))
+    }
+    async fn linked_header(
+        &self,
+        height: u64,
+        parent: Option<B256>,
+    ) -> Result<Option<(serde_json::Value, B256)>, RpcLifecycleError> {
+        let header = self.block(json!(format!("0x{height:x}"))).await?;
+        if number(&header, "number")? != height {
+            return Err(RpcLifecycleError::CheckpointMismatch);
+        }
+        let block_hash = hash(&header, "hash")?;
+        let parent_hash = hash(&header, "parentHash")?;
+        if parent.is_some_and(|expected| expected != parent_hash) {
+            self.clear_history();
+            return Ok(None);
+        }
+        Ok(Some((header, block_hash)))
+    }
+    async fn ingest_certificate(
+        &self,
+        at: LifecycleCheckpointV1,
+        history: &mut AdmissionHistory,
+        height: u64,
+        artifact: &Option<ConsensusHeaderArtifact>,
+    ) -> Result<(), RpcLifecycleError> {
+        if !history.needs_certificate(height, at, artifact) {
+            return Ok(());
+        }
+        let (block, compact) = match self.certified(height, history).await {
+            Ok(certified) => certified,
+            Err(error @ RpcLifecycleError::Unauthenticated) => {
+                self.clear_history();
+                return Err(error);
+            }
+            Err(error) => return Err(error),
+        };
+        if let Err(error) = history
+            .record_artifact(at, &block, &compact)
+            .and_then(|()| history.record_admission(at, &block, compact))
+        {
+            self.clear_history();
+            return Err(error);
+        }
+        Ok(())
+    }
+    async fn scan_history(
+        &self,
+        at: LifecycleCheckpointV1,
+    ) -> Result<HistoryScan, RpcLifecycleError> {
+        let (mut history, mut height, mut parent) = self.resume(at).await?;
+        while height <= at.height {
+            let Some((header, block_hash)) = self.linked_header(height, parent).await? else {
+                return Ok(HistoryScan::Restart);
+            };
+            let discovery = decode_outbe_block_artifacts(&bytes(&header, "extraData")?)?;
+            self.ingest_certificate(
+                at,
+                &mut history,
+                height,
+                &discovery.consensus_header_artifact,
+            )
+            .await?;
+            let admitted = if height == at.height { at.height } else { 0 };
+            self.store_history(height, block_hash, admitted, &history);
+            parent = Some(block_hash);
+            height = height.saturating_add(1);
+        }
+        Ok(HistoryScan::Done(history))
+    }
     pub(super) async fn admission_history(
         &self,
         at: LifecycleCheckpointV1,
     ) -> Result<AdmissionHistory, RpcLifecycleError> {
-        let mut history = AdmissionHistory::default();
-        for height in 1..=at.height {
-            let header = self.block(json!(format!("0x{height:x}"))).await?;
-            if number(&header, "number")? != height {
-                return Err(RpcLifecycleError::CheckpointMismatch);
-            }
-            let discovery = decode_outbe_block_artifacts(&bytes(&header, "extraData")?)?;
-            if history.needs_certificate(height, at, &discovery.consensus_header_artifact) {
-                let (block, compact) = self.certified(height).await?;
-                history.record_artifact(at, &block, &compact)?;
-                history.record_admission(at, &block, compact)?;
-            }
+        if let HistoryScan::Done(history) = self.scan_history(at).await? {
+            return Ok(history);
         }
-        Ok(history)
+        self.clear_history();
+        match self.scan_history(at).await? {
+            HistoryScan::Done(history) => Ok(history),
+            HistoryScan::Restart => Err(RpcLifecycleError::CheckpointMismatch),
+        }
     }
 }
