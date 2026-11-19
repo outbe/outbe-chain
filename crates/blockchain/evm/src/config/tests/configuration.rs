@@ -24,7 +24,7 @@ fn new_with_bridge_installs_cache_summary_provider() {
 }
 
 #[test]
-fn config_fixture_uses_the_gramine_direct_dev_chain_identity() {
+fn config_fixture_uses_the_no_attestation_dev_chain_identity() {
     let chain_spec = test_chain_spec();
     assert_eq!(chain_spec.chain().id(), NO_ATTESTATION_DEV_CHAIN_ID);
     assert_eq!(
