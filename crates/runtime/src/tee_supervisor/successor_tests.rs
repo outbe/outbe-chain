@@ -54,6 +54,7 @@ async fn supervisor_publishes_finalized_successor_only_once() {
         candidate: candidate.clone(),
         attempt,
         finalized: true,
+        cold: false,
     });
     supervisor.phase = RenewalUpgradePhaseV1::Finalized;
     let (_, _, identity) = support::provider(&old, 7, 1_800_000_000, 1_800_001_000, false);
@@ -102,7 +103,7 @@ async fn supervisor_publishes_finalized_successor_only_once() {
     ));
 }
 
-fn source_for_promotion(
+pub(super) fn source_for_promotion(
     host_key: &NodeHostIdentityKey,
     committee: &FinalityCommitteeFixture,
 ) -> (Arc<InProcessTeeContext>, TrustedNetworkDescriptorV1) {
@@ -129,7 +130,7 @@ fn source_for_promotion(
     (old, descriptor)
 }
 
-fn admit_successor(
+pub(super) fn admit_successor(
     source: &InProcessTeeContext,
     candidate: &InProcessTeeContext,
     committee: &FinalityCommitteeFixture,
@@ -485,4 +486,94 @@ fn restaged_candidate_cannot_be_overwritten_by_an_older_promotion() {
         &outbe_tee::in_process_tee_context().unwrap(),
         &old
     ));
+}
+
+#[test]
+fn provisioned_cold_candidate_stays_cold_after_cancel_required() {
+    let live = support::context(3);
+    assert!(live.offer_key_ready().unwrap());
+    let mut binding = outbe_tee::test_utils::RenewalBindingFixtureV1::new(1)
+        .lease(0, 500, 500)
+        .build();
+    binding.enclave_id = live.manifest().enclave_id().unwrap();
+    let owns = owns_live_binding(&live, Some(&binding), 100).unwrap();
+    assert!(owns);
+    // A matching binding plus a ready offer key is the warm validate_source trap.
+    assert!(!cold_from_signals(owns, false));
+    let root = tempfile::tempdir().unwrap();
+    write_cold_marker(root.path()).unwrap();
+    // CancelRequired drops the resident successor and leaves the marker in place.
+    assert!(cold_recovery_marked(root.path()));
+    assert!(cold_from_signals(owns, cold_recovery_marked(root.path())));
+    use std::os::unix::fs::PermissionsExt as _;
+    let meta = std::fs::symlink_metadata(root.path().join("tee-cold-recovery-v1")).unwrap();
+    assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+}
+
+#[test]
+fn complete_cold_recovery_updates_global_context_identity_and_anchor() {
+    use outbe_tee::lifecycle::enrollment::load_live_join_admission_anchor_v1;
+    use std::os::unix::fs::DirBuilderExt as _;
+
+    let root = tempfile::tempdir().unwrap();
+    let host = root.path().join(NODE_HOST_DIRECTORY_V1);
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&host)
+        .unwrap();
+    let host_key = NodeHostIdentityKey::create_new(&host.join(NODE_HOST_IDENTITY_KEY_V1)).unwrap();
+    let committee = FinalityCommitteeFixture::new(10);
+    let (old, descriptor) = source_for_promotion(&host_key, &committee);
+    let candidate = fresh_candidate(&old, descriptor.clone()).unwrap();
+    let attempt = admit_successor(&old, &candidate, &committee);
+    write_cold_marker(root.path()).unwrap();
+    let mut supervisor = TeeLifecycleSupervisor::new(
+        "http://127.0.0.1:1",
+        (
+            Arc::new(outbe_evm::OutbeEvmSigner::from_secret_bytes([0x47; 32]).unwrap()),
+            k256::ecdsa::SigningKey::from_slice(&[0x31; 32]).unwrap(),
+        ),
+        (old.clone(), root.path().to_owned(), descriptor),
+    )
+    .unwrap();
+    supervisor.successor = Some(ResidentSuccessor {
+        candidate: candidate.clone(),
+        attempt,
+        finalized: true,
+        cold: true,
+    });
+    let (_, _, identity) = support::provider(&old, 7, 1_800_000_000, 1_800_001_000, false);
+    let owner = LiveTeeRuntimeV1::new(
+        LiveTeeSnapshotV1 {
+            identity,
+            gate: TeeLeaseGuardGateV1::Armed,
+            context: old.clone(),
+        },
+        TeeAuthorityChannel::default(),
+    )
+    .unwrap();
+    let _dispatch =
+        outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some(old.clone()));
+
+    let anchor = supervisor
+        .complete_cold_recovery(Some(&owner))
+        .expect("cold recovery");
+    let snapshot = owner.lock().unwrap();
+    assert!(Arc::ptr_eq(&snapshot.context, &candidate));
+    assert_eq!(
+        snapshot.identity.expected_enclave_id,
+        Some(candidate.manifest().enclave_id().unwrap())
+    );
+    assert_eq!(snapshot.gate, TeeLeaseGuardGateV1::Pending(anchor));
+    assert!(Arc::ptr_eq(
+        &outbe_tee::in_process_tee_context().unwrap(),
+        &candidate
+    ));
+    assert!(!cold_recovery_marked(root.path()));
+    assert!(supervisor.successor.is_none());
+    assert!(Arc::ptr_eq(&supervisor.live, &candidate));
+    let persisted = load_live_join_admission_anchor_v1(root.path(), &candidate)
+        .unwrap()
+        .expect("anchor persisted");
+    assert_eq!(persisted.finalized_hash, anchor.finalized_hash);
 }

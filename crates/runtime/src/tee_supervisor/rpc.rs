@@ -26,7 +26,7 @@ mod tests;
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum RpcLifecycleError {
     #[error("upstream JSON-RPC request failed")]
-    Rpc(#[from] jsonrpsee::core::client::Error),
+    Rpc(#[source] Box<jsonrpsee::core::client::Error>),
     #[error("invalid certified RLP header")]
     Rlp(#[source] alloy_consensus::private::alloy_rlp::Error),
     #[error("invalid RPC JSON")]
@@ -59,6 +59,20 @@ pub(crate) enum RpcLifecycleError {
     Finality(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("quantity exceeds supported width")]
     Overflow,
+    #[error("finality certificate failed authentication")]
+    Unauthenticated,
+    #[error("eth proof window moved from height {proved} to {fresh_height}")]
+    ProofWindowMoved {
+        proved: u64,
+        fresh_height: u64,
+        fresh: Box<LifecycleCheckpointV1>,
+    },
+}
+
+impl From<jsonrpsee::core::client::Error> for RpcLifecycleError {
+    fn from(source: jsonrpsee::core::client::Error) -> Self {
+        Self::Rpc(Box::new(source))
+    }
 }
 
 #[derive(Debug)]
@@ -84,10 +98,49 @@ impl From<RpcLifecycleError> for LifecyclePortError<RpcLifecycleError> {
     }
 }
 
+enum RpcTransport {
+    Http(HttpClient),
+    InProcess(jsonrpsee::Methods),
+}
+
+impl RpcTransport {
+    async fn request<R, P>(
+        &self,
+        method: &str,
+        params: P,
+    ) -> Result<R, jsonrpsee::core::client::Error>
+    where
+        R: serde::de::DeserializeOwned + Clone,
+        P: jsonrpsee::core::traits::ToRpcParams + Send,
+    {
+        match self {
+            Self::Http(client) => client.request(method, params).await,
+            Self::InProcess(methods) => methods
+                .call(method, params)
+                .await
+                .map_err(client_error_from_methods),
+        }
+    }
+}
+
+fn client_error_from_methods(error: jsonrpsee::MethodsError) -> jsonrpsee::core::client::Error {
+    match error {
+        jsonrpsee::MethodsError::JsonRpc(object) => jsonrpsee::core::client::Error::Call(object),
+        jsonrpsee::MethodsError::Parse(error) => jsonrpsee::core::client::Error::ParseError(error),
+        jsonrpsee::MethodsError::InvalidSubscriptionId(_) => {
+            jsonrpsee::core::client::Error::InvalidSubscriptionId
+        }
+    }
+}
+
 pub(crate) struct RpcLifecyclePort {
-    client: HttpClient,
+    client: RpcTransport,
     chain_id: u64,
     genesis_hash: B256,
+    history: std::sync::Mutex<Option<history::CachedHistory>>,
+    sealed_txs: std::sync::Mutex<Vec<B256>>,
+    network:
+        std::sync::Mutex<Option<outbe_primitives::tee_attestation_v1::TrustedNetworkDescriptorV1>>,
 }
 impl RpcLifecyclePort {
     pub(crate) fn new(
@@ -105,11 +158,65 @@ impl RpcLifecyclePort {
             .request_timeout(limits.request_timeout)
             .max_response_size(limits.max_response_bytes)
             .build(url)?;
-        Ok(Self {
+        Ok(Self::from_transport(
+            RpcTransport::Http(client),
+            chain_id,
+            genesis_hash,
+        ))
+    }
+
+    pub(super) fn in_process(
+        methods: jsonrpsee::Methods,
+        chain_id: u64,
+        genesis_hash: B256,
+    ) -> Self {
+        Self::from_transport(RpcTransport::InProcess(methods), chain_id, genesis_hash)
+    }
+
+    fn from_transport(client: RpcTransport, chain_id: u64, genesis_hash: B256) -> Self {
+        Self {
             client,
             chain_id,
             genesis_hash,
-        })
+            history: std::sync::Mutex::new(None),
+            sealed_txs: std::sync::Mutex::new(Vec::new()),
+            network: std::sync::Mutex::new(None),
+        }
+    }
+    pub(super) fn bind_network(
+        &mut self,
+        descriptor: outbe_primitives::tee_attestation_v1::TrustedNetworkDescriptorV1,
+    ) {
+        *self
+            .network
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(descriptor);
+    }
+    fn network_descriptor(
+        &self,
+    ) -> Option<outbe_primitives::tee_attestation_v1::TrustedNetworkDescriptorV1> {
+        self.network
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+    fn remember_sealed(&self, hash: B256) {
+        let mut txs = self
+            .sealed_txs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !txs.contains(&hash) {
+            txs.push(hash);
+            if txs.len() > 16 {
+                txs.remove(0);
+            }
+        }
+    }
+    fn sealed_transactions(&self) -> Vec<B256> {
+        self.sealed_txs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
     fn tag(at: LifecycleCheckpointV1) -> Value {
         json!({"blockHash":at.hash,"requireCanonical":true})
@@ -286,6 +393,7 @@ impl LifecycleChainPort for RpcLifecyclePort {
         &self,
         raw_signed_tx: &[u8],
     ) -> Result<B256, LifecyclePortError<Self::Error>> {
+        crate::tee::note_register_enclave_payload(raw_signed_tx);
         match self
             .client
             .request(
@@ -294,14 +402,17 @@ impl LifecycleChainPort for RpcLifecyclePort {
             )
             .await
         {
-            Ok(hash) => Ok(hash),
+            Ok(hash) => {
+                self.remember_sealed(hash);
+                Ok(hash)
+            }
             Err(error) => {
                 let classification = if matches!(&error, jsonrpsee::core::client::Error::Call(_)) {
                     self.rejected_nonce(raw_signed_tx).await
                 } else {
                     None
                 };
-                let source = RpcLifecycleError::Rpc(error);
+                let source = RpcLifecycleError::Rpc(Box::new(error));
                 match classification {
                     Some(RejectedNonce::Consumed) => {
                         Err(LifecyclePortError::NonceTooLow { source })
@@ -337,7 +448,7 @@ impl LifecycleChainPort for RpcLifecyclePort {
         self.check(at).await?;
         self.context_identity(context)?;
         proof.validate().map_err(RpcLifecycleError::from)?;
-        self.proof_checkpoint(at, proof)?;
+        self.confirm_proof_checkpoint(at, proof).await?;
         let artifact: Bytes = self
             .client
             .request(
@@ -357,5 +468,34 @@ impl LifecycleChainPort for RpcLifecyclePort {
             artifact,
             proof: proof.clone(),
         })
+    }
+}
+
+#[cfg(test)]
+mod transport_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn in_process_request_keeps_the_jsonrpc_code() {
+        let mut module = jsonrpsee::RpcModule::new(());
+        module
+            .register_method("eth_chainId", |_, _, _| {
+                Err::<String, _>(jsonrpsee::types::ErrorObjectOwned::owned(
+                    -32000,
+                    "nonce too low",
+                    None::<()>,
+                ))
+            })
+            .unwrap();
+        let port = RpcLifecyclePort::in_process(module.into(), 1, B256::ZERO);
+        let error = port
+            .client
+            .request::<String, _>("eth_chainId", rpc_params![])
+            .await
+            .expect_err("json-rpc error");
+        let jsonrpsee::core::client::Error::Call(object) = error else {
+            panic!("json-rpc code erased: {error:?}");
+        };
+        assert_eq!(object.code(), -32000);
     }
 }

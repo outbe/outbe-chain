@@ -1,10 +1,12 @@
 use super::*;
+use crate::admission::TeeLeaseGuardGateV1;
 use outbe_tee::{lifecycle::successor::*, registry_view::NodeBindingSelectorV1};
 
 pub(super) struct ResidentSuccessor {
-    candidate: Arc<InProcessTeeContext>,
-    attempt: SuccessorAttemptV1,
+    pub(super) candidate: Arc<InProcessTeeContext>,
+    pub(super) attempt: SuccessorAttemptV1,
     pub(super) finalized: bool,
+    pub(super) cold: bool,
 }
 
 impl TeeLifecycleSupervisor {
@@ -82,7 +84,7 @@ impl TeeLifecycleSupervisor {
                 &self.signer,
                 (&self.live, &pending.candidate),
                 &mut self.journal,
-                lease,
+                (lease, pending.cold),
             )
             .await?;
             pending.attempt = attempt;
@@ -135,12 +137,13 @@ impl TeeLifecycleSupervisor {
             .await?;
             return Ok(());
         }
-        let cold = !self.live.offer_key_ready()?;
-        let candidate = if cold {
-            self.live.clone()
-        } else {
-            fresh_candidate(&self.live, self.descriptor.clone())?
-        };
+        let cold = cold_successor(&self.live, view, &self.node_data_dir)?;
+        if cold {
+            write_cold_marker(&self.node_data_dir)?;
+        }
+        // Cold recovery of an expired own binding must not reuse that enclave id.
+        // A new attempt also starts with offer_key_ready == false.
+        let candidate = fresh_candidate(&self.live, self.descriptor.clone())?;
         let policy = view
             .successor_policy
             .as_ref()
@@ -158,13 +161,14 @@ impl TeeLifecycleSupervisor {
             &self.signer,
             (&self.live, &candidate),
             &mut self.journal,
-            lease,
+            (lease, cold),
         )
         .await?;
         self.successor = Some(ResidentSuccessor {
             candidate,
             attempt,
             finalized: false,
+            cold,
         });
         self.phase = RenewalUpgradePhaseV1::CandidatePrepared;
         Ok(())
@@ -174,47 +178,91 @@ impl TeeLifecycleSupervisor {
         &self,
         successor: &ResidentSuccessor,
     ) -> Result<LocalTeeAdmissionAnchorV1, SuccessorRuntimeError> {
-        let verified = successor
-            .candidate
-            .admission_anchor()?
-            .ok_or(SuccessorRuntimeError::MissingAdmission)?;
-        let intent = &successor.attempt.prepare_intent;
+        let (record, local) = finalized_join_anchor(successor)?;
         outbe_tee::lifecycle::enrollment::persist_live_join_admission_anchor_v1(
             &self.node_data_dir,
             &successor.candidate,
-            outbe_tee::FinalizedJoinAdmissionAnchorV1 {
-                chain_id: intent.chain_id,
-                genesis_hash: intent.genesis_hash,
-                node_id_hash: intent.node_id.node_id_hash()?,
-                enclave_id: intent.enclave_id,
-                intent_hash: intent.intent_hash()?,
-                finalized_height: verified.block_number,
-                finalized_hash: verified.block_hash,
-                finalized_state_root: verified.state_root,
-                finalized_consensus_timestamp: verified.consensus_timestamp,
-            },
+            record,
         )?;
-        Ok(LocalTeeAdmissionAnchorV1 {
-            finalized_height: verified.block_number,
-            finalized_hash: verified.block_hash,
-        })
+        Ok(local)
+    }
+
+    pub(super) fn cold_finalized(&self) -> bool {
+        self.successor
+            .as_ref()
+            .is_some_and(|pending| pending.finalized && pending.cold)
     }
 
     pub(super) fn complete_cold_recovery(
         &mut self,
+        owner: Option<&LiveTeeRuntimeV1>,
     ) -> Result<LocalTeeAdmissionAnchorV1, SuccessorRuntimeError> {
-        let pending = self
-            .successor
-            .as_ref()
-            .ok_or(SuccessorRuntimeError::MissingCandidate)?;
-        let anchor = self.persist_candidate(pending)?;
-        self.live = pending.candidate.clone();
-        self.phase = RenewalUpgradePhaseV1::Promoted {
-            candidate_manifest_hash: self.live.manifest().authorization_hash()?,
-            successor_policy_hash: pending.attempt.prepare_intent.policy_hash,
+        let mut owner_guard = owner.map(LiveTeeRuntimeV1::lock).transpose()?;
+        let (record, anchor, candidate, enclave_id, phase, marked) = {
+            let pending = self
+                .successor
+                .as_ref()
+                .ok_or(SuccessorRuntimeError::MissingCandidate)?;
+            let cold = pending.cold;
+            if cold {
+                ensure_marker_clearable(&self.node_data_dir, false)?;
+            }
+            let (record, anchor) = finalized_join_anchor(pending)?;
+            let candidate = pending.candidate.clone();
+            let enclave_id = candidate.manifest().enclave_id()?;
+            let phase = RenewalUpgradePhaseV1::Promoted {
+                candidate_manifest_hash: candidate.manifest().authorization_hash()?,
+                successor_policy_hash: pending.attempt.prepare_intent.policy_hash,
+            };
+            let marked = cold && cold_recovery_marked(&self.node_data_dir);
+            (record, anchor, candidate, enclave_id, phase, marked)
         };
+        // A restarted process keeps the previous enclave's anchor.bin. Do not
+        // load it through this enclave. persist overwrites a same-host anchor
+        // whose height and timestamp are strictly older. replace runs that
+        // write only when the installed context is still self.live, and swaps
+        // the context only after the closure returns Ok.
+        if outbe_tee::in_process_tee_context().is_none() {
+            outbe_tee::install_in_process_tee_context(Arc::clone(&self.live))
+                .map_err(SuccessorRuntimeError::Install)?;
+        }
+        outbe_tee::replace_in_process_tee_context(&self.live, candidate.clone(), || {
+            outbe_tee::lifecycle::enrollment::persist_live_join_admission_anchor_v1(
+                &self.node_data_dir,
+                &candidate,
+                record,
+            )?;
+            Ok::<(), SuccessorRuntimeError>(())
+        })?;
+        if let Some(snapshot) = owner_guard.as_deref_mut() {
+            snapshot.identity.expected_enclave_id = Some(enclave_id);
+            snapshot.context = candidate.clone();
+            snapshot.gate = TeeLeaseGuardGateV1::Pending(anchor);
+        }
+        self.live = candidate;
+        self.phase = phase;
         self.successor = None;
+        if marked {
+            if let Err(error) = clear_cold_marker(&self.node_data_dir) {
+                tracing::warn!(
+                    ?error,
+                    "deferred cold-recovery marker cleanup after committed promotion"
+                );
+            }
+        }
         Ok(anchor)
+    }
+
+    pub(super) async fn owns_live_binding_now(&self) -> Result<bool, SuccessorRuntimeError> {
+        let at = self.port.finalized_checkpoint().await?;
+        let view = self
+            .port
+            .registry_state(
+                at,
+                &NodeBindingSelectorV1::Validator(self.signer.operator.address()),
+            )
+            .await?;
+        owns_live_binding(&self.live, view.binding.as_ref(), view.checkpoint.timestamp)
     }
 
     pub(super) fn publish_successor<P>(
@@ -312,10 +360,6 @@ where
     Ok(())
 }
 
-#[cfg(test)]
-#[path = "successor_tests.rs"]
-mod tests;
-
 async fn reconcile_attempt(
     port: &rpc::RpcLifecyclePort,
     signer: &signer::RuntimeSigner,
@@ -337,13 +381,137 @@ async fn prepare_candidate(
     signer: &signer::RuntimeSigner,
     (source, candidate): (&InProcessTeeContext, &InProcessTeeContext),
     journal: &mut ServiceTxJournalV1,
-    lease: SuccessorLeaseV1,
+    (lease, cold): (SuccessorLeaseV1, bool),
 ) -> Result<(SuccessorAttemptV1, SuccessorStep), SuccessorRuntimeError> {
-    Ok(if source.offer_key_ready()? {
-        prepare_successor_v1(port, signer, (source, candidate), journal, lease).await?
-    } else {
+    Ok(if cold {
         prepare_cold_successor_v1(port, signer, candidate, journal, lease).await?
+    } else {
+        prepare_successor_v1(port, signer, (source, candidate), journal, lease).await?
     })
+}
+
+fn cold_successor(
+    live: &InProcessTeeContext,
+    view: &LifecycleRegistryStateV1,
+    node_data_dir: &std::path::Path,
+) -> Result<bool, SuccessorRuntimeError> {
+    let owns = owns_live_binding(live, view.binding.as_ref(), view.checkpoint.timestamp)?;
+    if owns {
+        let _ = ensure_marker_clearable(node_data_dir, true);
+        return Ok(false);
+    }
+    Ok(cold_from_signals(owns, cold_recovery_marked(node_data_dir)))
+}
+
+/// A provisioned offer key is not a live on-chain binding.
+fn cold_from_signals(owns_live_binding: bool, marker: bool) -> bool {
+    marker || !owns_live_binding
+}
+
+fn owns_live_binding(
+    live: &InProcessTeeContext,
+    binding: Option<&outbe_tee::registry_view::RenewalBindingV1>,
+    timestamp: u64,
+) -> Result<bool, SuccessorRuntimeError> {
+    let enclave_id = live.manifest().enclave_id()?;
+    Ok(binding
+        .is_some_and(|binding| binding.enclave_id == enclave_id && timestamp < binding.valid_until))
+}
+
+fn cold_marker_path(node_data_dir: &std::path::Path) -> std::path::PathBuf {
+    node_data_dir.join("tee-cold-recovery-v1")
+}
+
+pub(super) fn cold_recovery_marked(node_data_dir: &std::path::Path) -> bool {
+    std::fs::symlink_metadata(cold_marker_path(node_data_dir))
+        .is_ok_and(|meta| meta.file_type().is_file())
+}
+
+fn write_cold_marker(node_data_dir: &std::path::Path) -> Result<(), SuccessorRuntimeError> {
+    if cold_recovery_marked(node_data_dir) {
+        return Ok(());
+    }
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(cold_marker_path(node_data_dir))
+        .map_err(SuccessorRuntimeError::Marker)?;
+    file.write_all(b"cold-recovery-v1")
+        .map_err(SuccessorRuntimeError::Marker)?;
+    Ok(())
+}
+
+fn ensure_marker_clearable(
+    node_data_dir: &std::path::Path,
+    owns_live_binding: bool,
+) -> Result<(), SuccessorRuntimeError> {
+    if owns_live_binding {
+        let _ = clear_cold_marker(node_data_dir);
+        return Ok(());
+    }
+    let path = cold_marker_path(node_data_dir);
+    match std::fs::symlink_metadata(&path) {
+        Ok(meta) if meta.file_type().is_file() => Ok(()),
+        Ok(_) => Err(SuccessorRuntimeError::Marker(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "cold recovery marker is not a regular file",
+        ))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(SuccessorRuntimeError::Marker(error)),
+    }
+}
+
+fn finalized_join_anchor(
+    successor: &ResidentSuccessor,
+) -> Result<
+    (
+        outbe_tee::FinalizedJoinAdmissionAnchorV1,
+        LocalTeeAdmissionAnchorV1,
+    ),
+    SuccessorRuntimeError,
+> {
+    let verified = successor
+        .candidate
+        .admission_anchor()?
+        .ok_or(SuccessorRuntimeError::MissingAdmission)?;
+    let intent = &successor.attempt.prepare_intent;
+    Ok((
+        outbe_tee::FinalizedJoinAdmissionAnchorV1 {
+            chain_id: intent.chain_id,
+            genesis_hash: intent.genesis_hash,
+            node_id_hash: intent.node_id.node_id_hash()?,
+            enclave_id: intent.enclave_id,
+            intent_hash: intent.intent_hash()?,
+            finalized_height: verified.block_number,
+            finalized_hash: verified.block_hash,
+            finalized_state_root: verified.state_root,
+            finalized_consensus_timestamp: verified.consensus_timestamp,
+        },
+        LocalTeeAdmissionAnchorV1 {
+            finalized_height: verified.block_number,
+            finalized_hash: verified.block_hash,
+        },
+    ))
+}
+
+pub(super) fn clear_cold_marker(
+    node_data_dir: &std::path::Path,
+) -> Result<(), SuccessorRuntimeError> {
+    let path = cold_marker_path(node_data_dir);
+    match std::fs::symlink_metadata(&path) {
+        Ok(meta) if meta.file_type().is_file() => {
+            std::fs::remove_file(path).map_err(SuccessorRuntimeError::Marker)
+        }
+        Ok(_) => Err(SuccessorRuntimeError::Marker(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "cold recovery marker is not a regular file",
+        ))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(SuccessorRuntimeError::Marker(error)),
+    }
 }
 
 fn fresh_candidate(
@@ -401,6 +569,12 @@ pub(crate) enum SuccessorRuntimeError {
     MissingAdmission,
     #[error("local finalized checkpoint changed during promotion")]
     MovingFinality,
+    #[error("cold recovery marker update failed")]
+    Marker(#[source] std::io::Error),
+    #[error(transparent)]
+    Dispatch(#[from] outbe_tee::InProcessDispatchError),
+    #[error("resident TEE context install failed")]
+    Install(#[source] outbe_tee::InstallError),
 }
 
 impl SuccessorRuntimeError {
@@ -412,3 +586,10 @@ impl SuccessorRuntimeError {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "cold_recovery_tests.rs"]
+mod cold_recovery_tests;
+#[cfg(test)]
+#[path = "successor_tests.rs"]
+mod tests;
