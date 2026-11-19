@@ -12,7 +12,7 @@ use outbe_emission::{
     allocation::{allocate_day_emission_limit, EmissionSinkId},
     api::DayAllocationAmounts,
     day_emission::emission_limit_of_day,
-    schema::emission_day_state,
+    schema::{emission_day_state, metadosis_state},
 };
 use outbe_metadosis::commands::set_metadosis_limit;
 use outbe_primitives::{
@@ -398,7 +398,7 @@ pub(crate) fn run_advance_worldwide_days_step(
     }
 }
 
-/// Allocates `day` and returns it when Metadosis of `day` is to run in this run.
+/// Allocates `day` and returns it when this run allocated it.
 fn run_allocate_emission_day_step(ctx: &BlockRuntimeContext, day: u32) -> Result<Option<u32>> {
     if is_day_allocated(ctx, day)? {
         return Ok(None);
@@ -472,13 +472,16 @@ fn record_failed_metadosis_fallback(ctx: &BlockRuntimeContext, day: u32) -> Resu
 }
 
 /// Runs the single hourly protocol orchestration entry point (`OIP-00343`). Until the votes of
-/// the day to allocate are sealed, it changes nothing and answers not ready.
+/// the day to allocate are sealed, it allocates nothing, and with no Metadosis due it changes
+/// nothing and answers not ready.
 /// 1. `allocate_emission_limit` (step A4) for the oldest unallocated day `E_next` in its own
 ///    checkpoint with fallback to `record_failed_day_allocation` + `PromisLimit`.
 /// 2. `advance_worldwide_days` (step A6) once per UTC day at 00:00 UTC in its own checkpoint,
 ///    logging the cause and retrying on the next hour if it reverts.
-/// 3. `process_emission_day` (step A7) for the day that step A4 allocated, in its own checkpoint
-///    with fallback to `record_metadosis_failed` + `PromisLimit`.
+/// 3. `process_emission_day` (step A7) once its start time has come, at 12:00 UTC after the
+///    allocation, for the latest day allocated before this run, else for the day that step A4
+///    allocated now. It runs in its own checkpoint with fallback to `record_metadosis_failed` +
+///    `PromisLimit`.
 pub fn process_emission_day(ctx: &BlockRuntimeContext) -> Result<Readiness> {
     process_emission_day_steps(ctx).map_err(fail_block)
 }
@@ -502,20 +505,31 @@ fn process_emission_day_steps(ctx: &BlockRuntimeContext) -> Result<Readiness> {
         ctx.block.timestamp,
     )?;
     let day = day_to_allocate(active_utc_day, block_utc_day)?;
-    let allocated = match day {
+    let due_metadosis = match previous_date_key(active_utc_day) {
+        Ok(latest_allocated) => metadosis_due(ctx, latest_allocated)?,
+        Err(_) => None,
+    };
+    let allocate = match day {
+        Some(day) if outbe_rewards::api::is_voting_complete(ctx, day)? => Some(day),
+        Some(_) if due_metadosis.is_none() => return Ok(Readiness::NotReady),
+        _ => None,
+    };
+    let allocated = match allocate {
+        Some(day) => run_allocate_emission_day_step(ctx, day)?,
         None => None,
-        Some(day) => {
-            if !outbe_rewards::api::is_voting_complete(ctx, day)? {
-                return Ok(Readiness::NotReady);
-            }
-            run_allocate_emission_day_step(ctx, day)?
-        }
     };
 
     run_advance_worldwide_days_step(ctx, block_utc_day)?;
 
-    if let Some(day) = allocated {
+    if allocated.is_some() {
         outbe_promislimit::PromisLimitContract::new(ctx.storage.clone()).settle_day_burns()?;
+    }
+    let metadosis_day = match (due_metadosis, allocated) {
+        (Some(day), _) => Some(day),
+        (None, Some(day)) => metadosis_due(ctx, day)?,
+        (None, None) => None,
+    };
+    if let Some(day) = metadosis_day {
         run_metadosis_step(ctx, day)?;
     }
 
@@ -526,9 +540,22 @@ fn process_emission_day_steps(ctx: &BlockRuntimeContext) -> Result<Readiness> {
         active_utc_day,
         block_utc_day,
         day_to_allocate = ?day,
+        metadosis_day = ?metadosis_day,
         "process_emission_day completed"
     );
     Ok(Readiness::Done)
+}
+
+/// Returns `day` when it is allocated, its Metadosis is pending and its start time has come.
+fn metadosis_due(ctx: &BlockRuntimeContext, day: u32) -> Result<Option<u32>> {
+    let due = outbe_emission::api::get_emission_day_record(ctx.storage.clone(), day)?.is_some_and(
+        |record| {
+            record.state == emission_day_state::PROCESSING
+                && record.metadosis_state == metadosis_state::PENDING
+                && ctx.block.timestamp >= record.metadosis_start
+        },
+    );
+    Ok(due.then_some(day))
 }
 
 #[cfg(test)]

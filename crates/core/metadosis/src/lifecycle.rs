@@ -40,6 +40,7 @@ pub(crate) fn ready_emission_day(
     };
     if record.state != outbe_emission::schema::emission_day_state::PROCESSING
         || record.metadosis_state != metadosis_state::PENDING
+        || ctx.block.timestamp < record.metadosis_start
     {
         return Ok(None);
     }
@@ -139,6 +140,14 @@ pub(crate) fn fail_metadosis(
         if !limit_minor.is_zero() {
             PromisLimitContract::new(metadosis.storage.clone())
                 .add(outbe_promislimit::LimitSource::MetadosisLimit, limit_minor)?;
+        }
+        if record.wwd.value() != 0 {
+            let timestamp = metadosis.storage.timestamp()?.saturating_to::<u64>();
+            outbe_fidelity::api::finalize_wwd_max_fidelity(
+                metadosis.storage.clone(),
+                record.wwd,
+                timestamp,
+            )?;
         }
         if !outbe_agentreward::distribution::has_pending_accruals_for_day(
             &metadosis.storage,

@@ -73,13 +73,15 @@ pub enum RewardPool {
     Cca,
 }
 
+const METADOSIS_START_AFTER_MIDNIGHT_SECONDS: u64 = 12 * 60 * 60;
+
 /// Converts a `U256` protocol minor-unit amount to `u128`, returning `EmissionError::AmountOverflow` on overflow.
 #[inline]
 pub fn to_u128_checked(amount: U256) -> Result<u128> {
     u128::try_from(amount).map_err(|_| EmissionError::AmountOverflow.into())
 }
 
-/// Computes `metadosis_start = 00:00:01 UTC` of `next_date_key(day)`.
+/// Metadosis of `day` starts at 12:00 UTC of the next day, when the offering window of `day` ends.
 pub fn compute_metadosis_start(day: u32) -> Result<u64> {
     if !EmissionDate::new(day).is_valid() {
         return Err(EmissionError::InvalidEmissionDay { day }.into());
@@ -87,7 +89,7 @@ pub fn compute_metadosis_start(day: u32) -> Result<u64> {
     let next_day = next_date_key(day).map_err(EmissionError::from)?;
     date_key_to_utc_timestamp(next_day)
         .map_err(EmissionError::from)?
-        .checked_add(1)
+        .checked_add(METADOSIS_START_AFTER_MIDNIGHT_SECONDS)
         .ok_or_else(|| EmissionError::WaitingWindowOverflow.into())
 }
 
@@ -119,7 +121,7 @@ pub fn put_emission_day_record(storage: StorageHandle<'_>, record: &EmissionDay)
 
 /// Links `WorldwideDay` `wwd` (`D`) to `EmissionDay` `day` (`E`).
 ///
-/// - Creates a `Pending` shell with `metadosis_start = 00:00:01 UTC` of `E+1` if `day` does not exist.
+/// - Creates a `Pending` shell with `metadosis_start = 12:00 UTC` of `E+1` if `day` does not exist.
 /// - Idempotent no-op if `day` is already linked to the same `wwd`.
 /// - Reverts with `DayAlreadyAllocated` if `day` has already left `Pending` with a different `wwd`.
 /// - Reverts with `ConflictingWwdLink` if `day` is already linked to a different non-zero `wwd`.
