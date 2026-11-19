@@ -24,7 +24,6 @@ import {SALT_VERSION} from "@shared/SaltVersion.sol";
 /// Optional: `ACTIVE_GATEWAY` ("lz" | "hyperlane"),
 ///   `REMOTE_CHAIN_IDS` (csv, step 3 is a no-op if unset), `REMOTE_EIDS` (csv, parallel) for
 ///   LayerZero,
-///   `WIRE_LOOPBACK` (route the local chain through the loopback adapter),
 ///   `OUTBE_RPC` (an `rpc_endpoints` alias to read the governance account, default `outbe-testnet`),
 ///   `KEEP_DEPLOYER_AS_OWNER` (skip step 4 and keep the deployer as the owner. Run `4_HandOver`
 ///   later).
@@ -53,7 +52,6 @@ contract DeployAll is DeployAdapters, DeployBridge, ConfigureBridge, HandOver {
         console2.log("[1/4] Deploy adapters...");
         address lz;
         address hl;
-        address lb;
         if (lzEndpoint != address(0)) {
             lz = deployLayerZeroAdapter(factory, salt, deployer, lzEndpoint);
             console2.log("  LayerZeroGatewayAdapter:", lz);
@@ -61,10 +59,6 @@ contract DeployAll is DeployAdapters, DeployBridge, ConfigureBridge, HandOver {
         if (mailbox != address(0)) {
             hl = deployHyperlaneAdapter(factory, salt, deployer, mailbox);
             console2.log("  HyperlaneGatewayAdapter:", hl);
-        }
-        if (vm.envOr("WIRE_LOOPBACK", false)) {
-            lb = deployLoopbackAdapter(factory, salt, deployer, deployer);
-            console2.log("  LoopbackGatewayAdapter:", lb);
         }
 
         // 2. Deploy bridge with the active gateway
@@ -77,14 +71,13 @@ contract DeployAll is DeployAdapters, DeployBridge, ConfigureBridge, HandOver {
         // 3. Wire remotes (no-op when REMOTE_CHAIN_IDS is unset)
         console2.log("[3/4] Configure remotes...");
         configureBridge(bridge, lz, hl);
-        if (lb != address(0)) configureLoopback(bridge, lb);
 
         // 4. Give every owner role to governance
         if (keepDeployer) {
             console2.log("[4/4] Skipped: the deployer keeps every owner role");
         } else {
             console2.log("[4/4] Hand over to governance...");
-            handOver(deployer, governance, bridge, lz, hl, lb);
+            handOver(deployer, governance, bridge, lz, hl);
         }
 
         vm.stopBroadcast();

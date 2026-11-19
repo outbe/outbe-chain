@@ -11,7 +11,6 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 import {ERC7786Bridge} from "src/ERC7786Bridge.sol";
 import {HyperlaneGatewayAdapter} from "src/adapters/HyperlaneGatewayAdapter.sol";
 import {LayerZeroGatewayAdapter} from "src/adapters/LayerZeroGatewayAdapter.sol";
-import {LoopbackGatewayAdapter} from "src/adapters/LoopbackGatewayAdapter.sol";
 import {EndpointV2Mock} from "./mocks/MockLayerZeroEndpoint.sol";
 import {MockHyperlaneMailbox} from "./mocks/MockHyperlaneMailbox.sol";
 import {Proxies} from "./utils/Proxies.sol";
@@ -81,20 +80,8 @@ contract UpgradeTest is Test {
         assertEq(adapter.defaultGasLimit(), 300_000, "gas limit");
     }
 
-    function test_Loopback_KeepsStateAcrossUpgrade() public {
-        LoopbackGatewayAdapter adapter = Proxies.loopback(remoteBridge, owner);
-        vm.prank(owner);
-        adapter.setDefaultGasLimit(300_000);
-
-        _upgrade(address(adapter), address(new LoopbackGatewayAdapter(remoteBridge)));
-
-        assertEq(adapter.owner(), owner, "owner");
-        assertEq(adapter.HUB(), remoteBridge, "hub");
-        assertEq(adapter.defaultGasLimit(), 300_000, "gas limit");
-    }
-
     function test_RevertWhen_NotOwnerUpgrades() public {
-        address[4] memory proxies = _deployAll();
+        address[3] memory proxies = _deployAll();
         address implementation = address(new ERC7786Bridge());
         for (uint256 i = 0; i < proxies.length; i++) {
             vm.prank(stranger);
@@ -104,7 +91,7 @@ contract UpgradeTest is Test {
     }
 
     function test_RevertWhen_InitializedAgain() public {
-        address[4] memory proxies = _deployAll();
+        address[3] memory proxies = _deployAll();
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         ERC7786Bridge(proxies[0]).initialize(stranger, gateway);
         for (uint256 i = 1; i < proxies.length; i++) {
@@ -119,12 +106,11 @@ contract UpgradeTest is Test {
         implementation.initialize(stranger, gateway);
     }
 
-    function _deployAll() internal returns (address[4] memory) {
+    function _deployAll() internal returns (address[3] memory) {
         return [
             address(Proxies.bridge(owner, gateway)),
             address(Proxies.hyperlane(address(new MockHyperlaneMailbox(1)), owner)),
-            address(Proxies.layerZero(address(new EndpointV2Mock(1)), owner)),
-            address(Proxies.loopback(remoteBridge, owner))
+            address(Proxies.layerZero(address(new EndpointV2Mock(1)), owner))
         ];
     }
 

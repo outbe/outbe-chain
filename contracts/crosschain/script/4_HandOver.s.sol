@@ -23,7 +23,7 @@ interface IEndpointDelegates {
 ///
 /// Required env: `DEPLOYER_PK` (the current owner), `CONTRACT_SALT` (default `SALT_VERSION`), `CREATE3_FACTORY_ADDRESS`,
 ///   `OUTBE_CHAIN_ID`.
-/// Optional env: `LZ_ENDPOINT`, `HYPERLANE_MAILBOX`, `WIRE_LOOPBACK` (select the adapters, as in the
+/// Optional env: `LZ_ENDPOINT`, `HYPERLANE_MAILBOX` (select the adapters, as in the
 ///   deploy), `OUTBE_RPC` (an `rpc_endpoints` alias, default `outbe-testnet`).
 contract HandOver is Script {
     error DomainTooLarge(uint256 chainId);
@@ -42,12 +42,10 @@ contract HandOver is Script {
         address hl = vm.envOr("HYPERLANE_MAILBOX", address(0)) != address(0)
             ? _predict(factory, salt, deployer, "HyperlaneGatewayAdapter")
             : address(0);
-        address lb =
-            vm.envOr("WIRE_LOOPBACK", false) ? _predict(factory, salt, deployer, "LoopbackGatewayAdapter") : address(0);
         address governance = governanceOwner();
 
         vm.startBroadcast(deployerPk);
-        handOver(deployer, governance, _predict(factory, salt, deployer, "ERC7786Bridge"), lz, hl, lb);
+        handOver(deployer, governance, _predict(factory, salt, deployer, "ERC7786Bridge"), lz, hl);
         vm.stopBroadcast();
     }
 
@@ -60,7 +58,7 @@ contract HandOver is Script {
 
     /// @dev Requires an active broadcast. Each contract must still belong to the deployer or already
     ///      belong to governance. A zero adapter address means the adapter is not deployed.
-    function handOver(address deployer, address governance, address bridge, address lz, address hl, address lb) public {
+    function handOver(address deployer, address governance, address bridge, address lz, address hl) public {
         if (lz != address(0)) {
             address holder = Ownable(lz).owner();
             if (holder == deployer) {
@@ -74,7 +72,7 @@ contract HandOver is Script {
             }
             _require(lz, IEndpointDelegates(address(LayerZeroGatewayAdapter(lz).endpoint())).delegates(lz), governance);
         }
-        address[3] memory owned = [bridge, hl, lb];
+        address[2] memory owned = [bridge, hl];
         for (uint256 i = 0; i < owned.length; i++) {
             if (owned[i] == address(0)) continue;
             address holder = Ownable(owned[i]).owner();
@@ -84,7 +82,7 @@ contract HandOver is Script {
                 revert UnexpectedOwner(owned[i], holder);
             }
         }
-        address[4] memory all = [bridge, lz, hl, lb];
+        address[3] memory all = [bridge, lz, hl];
         for (uint256 i = 0; i < all.length; i++) {
             if (all[i] != address(0)) _require(all[i], Ownable(all[i]).owner(), governance);
         }
