@@ -464,6 +464,8 @@ pub fn hyperlane_public_config(config: &Value, index: usize) -> Result<String, G
         },
         "origin": origins,
     });
+    let value: toml::Value = serde_json::from_value(value)
+        .map_err(|error| GenesisError::validation(format!("Hyperlane TOML: {error}")))?;
     toml::to_string_pretty(&value)
         .map_err(|error| GenesisError::validation(format!("Hyperlane TOML: {error}")))
 }

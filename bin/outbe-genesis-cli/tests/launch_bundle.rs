@@ -166,6 +166,12 @@ fn render_writes_valid_bash_scripts_and_stable_bootnodes() {
             fs::read_to_string(directory.join("hyperlane-public.toml")).expect("Hyperlane config");
         assert!(hyperlane.contains("bind_address = \"0.0.0.0:9000\""));
         assert!(!hyperlane.contains("private_key"));
+        let hyperlane: toml::Value = toml::from_str(&hyperlane).expect("valid Hyperlane TOML");
+        assert_eq!(
+            hyperlane["hyperlane"]["poll_interval_secs"].as_integer(),
+            Some(30)
+        );
+        assert_eq!(hyperlane["origin"][0]["domain"].as_integer(), Some(424_242));
         let feeder = fs::read_to_string(directory.join("feeder.toml")).expect("feeder config");
         assert!(feeder.contains(&format!("private_key = \"0x{:064x}\"", index + 11)));
         assert!(!feeder.contains(&format!("private_key = \"0x{:064x}\"", index + 1)));
