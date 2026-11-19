@@ -4,7 +4,6 @@ pragma solidity 0.8.30;
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import {IERC1155Bridgeable} from "./interfaces/IERC1155Bridgeable.sol";
 import {
@@ -297,7 +296,7 @@ contract IntexNFT1155Bridge is
         catch (bytes memory reason) {
             _bs().failedCrosschainMints[receiveId][idx] =
                 FailedCrosschainMint({to: to, srcChainId: srcChainId, exists: true, tokenId: tokenId, units: units});
-            emit IntexCrosschainReceiveFailed(receiveId, srcChainId, idx, to, tokenId, SafeCast.toUint32(units), reason);
+            emit IntexCrosschainReceiveFailed(receiveId, srcChainId, idx, to, tokenId, _units32(units), reason);
         }
     }
 
@@ -315,7 +314,7 @@ contract IntexNFT1155Bridge is
         if (!f.exists) revert NoSuchFailedCrosschainMint(receiveId, idx);
         delete $.failedCrosschainMints[receiveId][idx];
         token.crosschainMint(f.to, f.tokenId, f.units);
-        emit IntexCrosschainReceived(receiveId, f.srcChainId, f.to, f.tokenId, SafeCast.toUint32(f.units));
+        emit IntexCrosschainReceived(receiveId, f.srcChainId, f.to, f.tokenId, _units32(f.units));
     }
 
     /// @notice Permissionless reclaim of a batch item that the destination gate rejects
@@ -332,19 +331,21 @@ contract IntexNFT1155Bridge is
 
         sendId = _sendPaidByCaller(f.srcChainId, _buildReclaimMsg(f), IntexGas.nftMint(1));
         emit IntexCrosschainSentBack(
-            sendId, f.srcChainId, receiveId, idx, bytes32(uint256(uint160(f.to))), f.tokenId, SafeCast.toUint32(f.units)
+            sendId, f.srcChainId, receiveId, idx, bytes32(uint256(uint160(f.to))), f.tokenId, _units32(f.units)
         );
     }
 
-    /// @dev Units of one series fit `uint32`: the token caps its supply there.
+    /// @dev Units of one series fit `uint32`: the token caps its supply there. A wider count, which
+    ///      only a malformed message can carry, saturates, so a receive never reverts on its content.
     function _units32(uint256 units) private pure returns (uint32) {
-        return SafeCast.toUint32(units);
+        // forge-lint: disable-next-line(unsafe-typecast) -- at most type(uint32).max here
+        return units > type(uint32).max ? type(uint32).max : uint32(units);
     }
 
     function _units32(uint256[] memory units) private pure returns (uint32[] memory narrow) {
         narrow = new uint32[](units.length);
         for (uint256 i = 0; i < units.length; i++) {
-            narrow[i] = SafeCast.toUint32(units[i]);
+            narrow[i] = _units32(units[i]);
         }
     }
 
