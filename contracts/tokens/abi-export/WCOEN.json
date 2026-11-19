@@ -248,19 +248,19 @@
     "name": "Approval",
     "inputs": [
       {
-        "name": "src",
+        "name": "owner",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "guy",
+        "name": "spender",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "wad",
+        "name": "value",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -292,19 +292,19 @@
     "name": "Transfer",
     "inputs": [
       {
-        "name": "src",
+        "name": "from",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "dst",
+        "name": "to",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "wad",
+        "name": "value",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

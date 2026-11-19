@@ -11,11 +11,6 @@ contract WCOEN is IWCOEN {
 
     error NativeTransferFailed(address to, uint256 amount);
 
-    event Approval(address indexed src, address indexed guy, uint256 wad);
-    event Transfer(address indexed src, address indexed dst, uint256 wad);
-    event Deposit(address indexed dst, uint256 wad);
-    event Withdrawal(address indexed src, uint256 wad);
-
     uint256 private _totalSupply;
 
     mapping(address => uint256) public balanceOf;
