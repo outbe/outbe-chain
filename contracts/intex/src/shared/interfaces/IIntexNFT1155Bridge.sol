@@ -35,97 +35,82 @@ struct SendParam {
 ///      return the bridge `sendId`. `quote*` return the native fee.
 interface IIntexNFT1155Bridge {
     // --- Events ---
-    /// @notice Emitted when a batch of tokens is sent to one recipient.
-    /// @param sendId Bridge send identifier.
-    /// @param dstChainId Destination chainId.
-    /// @param from Sender address.
-    /// @param tokenIds Array of token IDs sent.
-    /// @param units Units for each token ID.
-    event BatchBridged(
-        bytes32 indexed sendId, uint32 dstChainId, address indexed from, uint256[] tokenIds, uint256[] units
-    );
-
-    /// @notice Emitted when a single token type is sent to one recipient.
-    /// @param sendId Bridge send identifier.
-    /// @param dstChainId Destination chainId.
-    /// @param from Sender address.
-    /// @param tokenId Token ID sent.
-    /// @param units Units sent.
-    event Bridged(bytes32 indexed sendId, uint32 dstChainId, address indexed from, uint256 tokenId, uint256 units);
-
-    /// @notice Emitted when tokens are sent to multiple recipients.
-    /// @param sendId Bridge send identifier.
-    /// @param dstChainId Destination chainId.
-    /// @param from Sender address.
-    /// @param recipients Array of recipient addresses (bytes32-encoded).
-    /// @param tokenIds Array of token IDs sent.
-    /// @param units Units for each recipient.
-    event MultiBridged(
+    /// @notice Emitted when units of one series leave for one recipient.
+    /// @param owner The account whose units this chain burned.
+    event IntexCrosschainSent(
         bytes32 indexed sendId,
-        uint32 dstChainId,
-        address indexed from,
+        uint32 indexed dstChainId,
+        address indexed owner,
+        bytes32 to,
+        uint256 intexId,
+        uint32 units
+    );
+
+    /// @notice Emitted when units of several series leave for one recipient.
+    /// @param owner The account whose units this chain burned.
+    event IntexCrosschainBatchSent(
+        bytes32 indexed sendId,
+        uint32 indexed dstChainId,
+        address indexed owner,
+        bytes32 to,
+        uint256[] intexIds,
+        uint32[] units
+    );
+
+    /// @notice Emitted when units leave for several recipients.
+    /// @param owner The account whose units this chain burned.
+    event IntexCrosschainMultiSent(
+        bytes32 indexed sendId,
+        uint32 indexed dstChainId,
+        address indexed owner,
         bytes32[] recipients,
-        uint256[] tokenIds,
-        uint256[] units
+        uint256[] intexIds,
+        uint32[] units
     );
 
-    /// @notice Emitted when a batch of tokens is received for one recipient.
-    /// @param receiveId Bridge message identifier.
-    /// @param srcChainId Source chainId.
-    /// @param to Recipient address.
-    /// @param tokenIds Array of token IDs received.
-    /// @param units Units for each token ID.
-    event BatchReceived(
-        bytes32 indexed receiveId, uint32 srcChainId, address indexed to, uint256[] tokenIds, uint256[] units
+    /// @notice Emitted when a message for one recipient is received. A failed item has its own
+    ///         {IntexCrosschainReceiveFailed}.
+    event IntexCrosschainBatchReceived(
+        bytes32 indexed receiveId, uint32 indexed srcChainId, address indexed to, uint256[] intexIds, uint32[] units
     );
 
-    /// @notice Emitted when tokens are received for multiple recipients.
-    /// @param receiveId Bridge message identifier.
-    /// @param srcChainId Source chainId.
-    /// @param recipients Array of recipient addresses (bytes32-encoded).
-    /// @param tokenIds Array of token IDs received.
-    /// @param units Units for each recipient.
-    event MultiReceived(
-        bytes32 indexed receiveId, uint32 srcChainId, bytes32[] recipients, uint256[] tokenIds, uint256[] units
+    /// @notice Emitted when a message for several recipients is received. A failed item has its own
+    ///         {IntexCrosschainReceiveFailed}.
+    event IntexCrosschainMultiReceived(
+        bytes32 indexed receiveId, uint32 indexed srcChainId, address[] recipients, uint256[] intexIds, uint32[] units
     );
 
-    /// @notice Emitted when one item in an inbound batch reverts `token.crosschainMint`.
-    /// @param srcChainId Source chainId.
-    /// @param receiveId Inbound bridge message id.
-    /// @param idx Position of the failed item in the original batch.
-    /// @param to Recipient address.
-    /// @param tokenId ERC-1155 token id.
-    /// @param units Units that failed to crosschainMint.
-    /// @param reason Raw revert bytes from `token.crosschainMint`.
-    event CrosschainMintFailed(
-        uint32 indexed srcChainId,
+    /// @notice Emitted when the units of one item are minted, by a retry of an item that failed.
+    event IntexCrosschainReceived(
+        bytes32 indexed receiveId, uint32 indexed srcChainId, address indexed to, uint256 intexId, uint32 units
+    );
+
+    /// @notice Emitted when one item of a received message cannot be minted, and the bridge keeps
+    ///         it for {retryCrosschainMint} or {reclaimToSource}.
+    /// @param idx Position of the item in the message.
+    /// @param errorData Raw revert data of `token.crosschainMint`.
+    event IntexCrosschainReceiveFailed(
         bytes32 indexed receiveId,
+        uint32 indexed srcChainId,
         uint256 idx,
         address indexed to,
-        uint256 tokenId,
-        uint256 units,
-        bytes reason
+        uint256 intexId,
+        uint32 units,
+        bytes errorData
     );
 
-    /// @notice Emitted when `retryCrosschainMint` successfully mints a previously failed item.
-    /// @param receiveId Inbound bridge message id where the crosschainMint originally failed.
-    /// @param idx Position of the retried item in the original batch.
-    event CrosschainMintRetried(bytes32 indexed receiveId, uint256 indexed idx);
-
-    /// @notice Emitted when a terminally-failed item is reclaimed to its origin chain for re-mint.
-    /// @param receiveId Inbound bridge message id whose item was reclaimed.
-    /// @param idx Position of the reclaimed item in the original batch.
-    /// @param srcChainId Origin chainId the reverse transfer was sent to.
-    /// @param to Owner re-minted on the origin chain.
-    /// @param tokenId Token ID reclaimed.
-    /// @param units Units reclaimed.
-    event CrosschainMintReclaimed(
+    /// @notice Emitted when a kept item goes back to its source chain.
+    /// @param receiveId The message the item came in.
+    /// @param idx Position of the item in that message.
+    /// @param to The address the source chain mints the units to.
+    event IntexCrosschainSentBack(
+        bytes32 indexed sendId,
+        uint32 indexed dstChainId,
         bytes32 indexed receiveId,
-        uint256 indexed idx,
-        uint32 indexed srcChainId,
-        address to,
-        uint256 tokenId,
-        uint256 units
+        uint256 idx,
+        bytes32 to,
+        uint256 intexId,
+        uint32 units
     );
 
     // --- Errors ---

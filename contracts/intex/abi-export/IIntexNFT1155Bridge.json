@@ -265,44 +265,7 @@
   },
   {
     "type": "event",
-    "name": "BatchBridged",
-    "inputs": [
-      {
-        "name": "sendId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "dstChainId",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "from",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "tokenIds",
-        "type": "uint256[]",
-        "indexed": false,
-        "internalType": "uint256[]"
-      },
-      {
-        "name": "units",
-        "type": "uint256[]",
-        "indexed": false,
-        "internalType": "uint256[]"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BatchReceived",
+    "name": "IntexCrosschainBatchReceived",
     "inputs": [
       {
         "name": "receiveId",
@@ -313,7 +276,7 @@
       {
         "name": "srcChainId",
         "type": "uint32",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint32"
       },
       {
@@ -323,23 +286,23 @@
         "internalType": "address"
       },
       {
-        "name": "tokenIds",
+        "name": "intexIds",
         "type": "uint256[]",
         "indexed": false,
         "internalType": "uint256[]"
       },
       {
         "name": "units",
-        "type": "uint256[]",
+        "type": "uint32[]",
         "indexed": false,
-        "internalType": "uint256[]"
+        "internalType": "uint32[]"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "Bridged",
+    "name": "IntexCrosschainBatchSent",
     "inputs": [
       {
         "name": "sendId",
@@ -350,34 +313,46 @@
       {
         "name": "dstChainId",
         "type": "uint32",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint32"
       },
       {
-        "name": "from",
+        "name": "owner",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "tokenId",
-        "type": "uint256",
+        "name": "to",
+        "type": "bytes32",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "bytes32"
+      },
+      {
+        "name": "intexIds",
+        "type": "uint256[]",
+        "indexed": false,
+        "internalType": "uint256[]"
       },
       {
         "name": "units",
-        "type": "uint256",
+        "type": "uint32[]",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "uint32[]"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "CrosschainMintFailed",
+    "name": "IntexCrosschainMultiReceived",
     "inputs": [
+      {
+        "name": "receiveId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
       {
         "name": "srcChainId",
         "type": "uint32",
@@ -385,10 +360,84 @@
         "internalType": "uint32"
       },
       {
+        "name": "recipients",
+        "type": "address[]",
+        "indexed": false,
+        "internalType": "address[]"
+      },
+      {
+        "name": "intexIds",
+        "type": "uint256[]",
+        "indexed": false,
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "units",
+        "type": "uint32[]",
+        "indexed": false,
+        "internalType": "uint32[]"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IntexCrosschainMultiSent",
+    "inputs": [
+      {
+        "name": "sendId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "recipients",
+        "type": "bytes32[]",
+        "indexed": false,
+        "internalType": "bytes32[]"
+      },
+      {
+        "name": "intexIds",
+        "type": "uint256[]",
+        "indexed": false,
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "units",
+        "type": "uint32[]",
+        "indexed": false,
+        "internalType": "uint32[]"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IntexCrosschainReceiveFailed",
+    "inputs": [
+      {
         "name": "receiveId",
         "type": "bytes32",
         "indexed": true,
         "internalType": "bytes32"
+      },
+      {
+        "name": "srcChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
       },
       {
         "name": "idx",
@@ -403,19 +452,19 @@
         "internalType": "address"
       },
       {
-        "name": "tokenId",
+        "name": "intexId",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
         "name": "units",
-        "type": "uint256",
+        "type": "uint32",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "uint32"
       },
       {
-        "name": "reason",
+        "name": "errorData",
         "type": "bytes",
         "indexed": false,
         "internalType": "bytes"
@@ -425,19 +474,13 @@
   },
   {
     "type": "event",
-    "name": "CrosschainMintReclaimed",
+    "name": "IntexCrosschainReceived",
     "inputs": [
       {
         "name": "receiveId",
         "type": "bytes32",
         "indexed": true,
         "internalType": "bytes32"
-      },
-      {
-        "name": "idx",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
       },
       {
         "name": "srcChainId",
@@ -448,46 +491,27 @@
       {
         "name": "to",
         "type": "address",
-        "indexed": false,
+        "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "tokenId",
+        "name": "intexId",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
         "name": "units",
-        "type": "uint256",
+        "type": "uint32",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "uint32"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "CrosschainMintRetried",
-    "inputs": [
-      {
-        "name": "receiveId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "idx",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "MultiBridged",
+    "name": "IntexCrosschainSent",
     "inputs": [
       {
         "name": "sendId",
@@ -498,40 +522,52 @@
       {
         "name": "dstChainId",
         "type": "uint32",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint32"
       },
       {
-        "name": "from",
+        "name": "owner",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "recipients",
-        "type": "bytes32[]",
+        "name": "to",
+        "type": "bytes32",
         "indexed": false,
-        "internalType": "bytes32[]"
+        "internalType": "bytes32"
       },
       {
-        "name": "tokenIds",
-        "type": "uint256[]",
+        "name": "intexId",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "uint256[]"
+        "internalType": "uint256"
       },
       {
         "name": "units",
-        "type": "uint256[]",
+        "type": "uint32",
         "indexed": false,
-        "internalType": "uint256[]"
+        "internalType": "uint32"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "MultiReceived",
+    "name": "IntexCrosschainSentBack",
     "inputs": [
+      {
+        "name": "sendId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
       {
         "name": "receiveId",
         "type": "bytes32",
@@ -539,28 +575,28 @@
         "internalType": "bytes32"
       },
       {
-        "name": "srcChainId",
-        "type": "uint32",
+        "name": "idx",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "uint32"
+        "internalType": "uint256"
       },
       {
-        "name": "recipients",
-        "type": "bytes32[]",
+        "name": "to",
+        "type": "bytes32",
         "indexed": false,
-        "internalType": "bytes32[]"
+        "internalType": "bytes32"
       },
       {
-        "name": "tokenIds",
-        "type": "uint256[]",
+        "name": "intexId",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "uint256[]"
+        "internalType": "uint256"
       },
       {
         "name": "units",
-        "type": "uint256[]",
+        "type": "uint32",
         "indexed": false,
-        "internalType": "uint256[]"
+        "internalType": "uint32"
       }
     ],
     "anonymous": false
