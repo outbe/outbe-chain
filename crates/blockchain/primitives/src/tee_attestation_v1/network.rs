@@ -73,20 +73,18 @@ impl NetworkBindingV1 {
     }
 }
 
-/// Release-measured authority for one SGX network.
+/// Chain-bound authority for one TEE network.
 ///
-/// The ordinary [`NetworkBindingV1`] is carried through node/enclave protocol
-/// messages. A modified NodeHost can choose those bytes, so they are not by
-/// themselves a trust root. SGX release bundles additionally measure this
-/// descriptor as a Gramine trusted file. The enclave accepts an initialization
-/// manifest only when its network binding equals this descriptor exactly.
+/// [`NetworkBindingV1`] travels in node protocol messages. A modified NodeHost
+/// can choose those bytes, so they are not by themselves a trust root. The
+/// resident process accepts an initialization manifest only when its network
+/// binding equals this descriptor exactly.
 ///
-/// `genesis_consensus_keys` are derived from that same final ChainSpec. The
-/// sorted MinPk keys are the epoch-0 finality trust root. Every later committee
-/// must be authenticated by a certificate from its predecessor. The active TEE
-/// policy is deliberately not measured here: it contains `MRENCLAVE`, while a
-/// Gramine trusted file contributes to `MRENCLAVE`. Instead, onboarding proves
-/// the active policy hash from finalized TeeRegistry state.
+/// `genesis_consensus_keys` come from that same final ChainSpec. The sorted
+/// MinPk keys are the epoch-0 finality trust root. Every later committee must
+/// be authenticated by a certificate from its predecessor. The active TEE
+/// policy is not part of this descriptor. Onboarding proves the active policy
+/// hash from finalized TeeRegistry state.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TrustedNetworkDescriptorV1 {
     pub network_binding: NetworkBindingV1,

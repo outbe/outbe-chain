@@ -4,14 +4,16 @@
 pub(crate) enum TeeStatusError {
     #[error("critical renewal margin cannot exceed warning margin")]
     CriticalMarginExceedsWarning,
-    #[error("read public NodeHost manifest: {0}")]
-    ReadPublicManifest(#[source] std::io::Error),
-    #[error("NodeHost manifest must be a regular file of at most 512 bytes")]
-    InvalidPublicManifestFile,
-    #[error("decode public NodeHost manifest: {0}")]
-    DecodePublicManifest(#[source] outbe_primitives::tee_attestation_v1::CodecError),
-    #[error("committed NodeHost manifest chain identity does not match finalized policy")]
-    ManifestChainIdentityMismatch,
+    #[error("read discovery-secret: {0}")]
+    ReadDiscoverySecret(#[source] eyre::Report),
+    #[error("discovery-secret is not a canonical Reth P2P private key: {0}")]
+    InvalidDiscoverySecret(#[source] eyre::Report),
+    #[error("encrypted reth key backend requires --reth-passphrase")]
+    MissingRethPassphrase,
+    #[error("reth passphrase requires the encrypted key backend")]
+    PassphraseRequiresEncryptedBackend,
+    #[error("unknown reth key backend: {0}")]
+    UnknownRethKeyBackend(String),
     #[error("consensus status has no enclave health")]
     MissingEnclaveHealth,
 }

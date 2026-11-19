@@ -16,17 +16,14 @@ use outbe_primitives::{
         readonly::{ReadOnlyStorageProvider, StorageReader},
         StorageHandle,
     },
-    tee_attestation_v1::{
-        AttestationEvidenceV1, NodeHostAuthorizationWitnessV1, NodeIdV1, TeePolicyV1,
-    },
+    tee_attestation_v1::{NodeHostAuthorizationWitnessV1, NodeIdV1, TeePolicyV1},
     tee_registry_abi_v1::NodeEnclaveBindingV1,
 };
 use outbe_tee::{
     admit_remote_session_v1, construct_finalized_replacement_authorization_v1,
-    load_replacement_candidate_submission, FinalizedRegistryBindingV1, FinalizedRegistryViewV1,
-    FinalizedReplacementAuthorizationV1, FinalizedReplacementBindingV1,
-    RemoteSessionAdmissionError, RemoteSessionAdmissionV1, RemoteSessionExpectationV1,
-    TransportError,
+    FinalizedRegistryBindingV1, FinalizedRegistryViewV1, FinalizedReplacementAuthorizationV1,
+    FinalizedReplacementBindingV1, RemoteSessionAdmissionError, RemoteSessionAdmissionV1,
+    RemoteSessionExpectationV1, TransportError,
 };
 use reth_provider::{BlockIdReader, HeaderProvider, StateProviderFactory};
 use reth_storage_api::StateProvider;
@@ -440,13 +437,8 @@ where
         genesis_hash,
         session,
         |view, reader, storage| {
-            let finalized_binding = read_finalized_replacement_binding(
-                view,
-                reader,
-                storage.clone(),
-                node_data_dir,
-                node_id,
-            )?;
+            let finalized_binding =
+                read_finalized_replacement_binding(view, reader, storage.clone(), node_id)?;
             let authorization =
                 construct_finalized_replacement_authorization_v1(node_data_dir, &finalized_binding)
                     .map_err(LocalRegistryAdmissionError::replacement_authorization)?;
@@ -476,36 +468,13 @@ fn read_finalized_replacement_binding(
     view: FinalizedRegistryViewV1,
     reader: &dyn TeeSessionStateReader,
     storage: StorageHandle<'_>,
-    node_data_dir: &Path,
     node_id: &NodeIdV1,
 ) -> Result<FinalizedReplacementBindingV1, LocalRegistryAdmissionError> {
     let binding = reader
         .node_binding(storage, node_id)
         .map_err(registry_error)?
         .ok_or(LocalRegistryAdmissionError::ReplacementBindingMissing)?;
-    let submission = load_replacement_candidate_submission(node_data_dir)
-        .map_err(LocalRegistryAdmissionError::replacement_authorization)?;
-    let submission = submission.ok_or_else(|| {
-        LocalRegistryAdmissionError::ReplacementAuthorization(
-            "durable replacement submission is missing".into(),
-        )
-    })?;
-    let AttestationEvidenceV1::Dcap(dcap) =
-        AttestationEvidenceV1::decode_canonical(submission.evidence())
-            .map_err(LocalRegistryAdmissionError::replacement_authorization)?
-    else {
-        return Err(LocalRegistryAdmissionError::ReplacementAuthorization(
-            "durable replacement evidence is not DCAP".into(),
-        ));
-    };
-    let intent_hash = dcap
-        .intent
-        .intent_hash()
-        .map_err(LocalRegistryAdmissionError::replacement_authorization)?;
-    if !replacement_intent_matches(&binding, &dcap.intent, intent_hash) {
-        return Err(LocalRegistryAdmissionError::ReplacementBindingMissing);
-    }
-    let finalized_binding = FinalizedReplacementBindingV1 {
+    Ok(FinalizedReplacementBindingV1 {
         view,
         node_id_hash: binding.node_id_hash,
         enclave_id: binding.enclave_id,
@@ -518,24 +487,7 @@ fn read_finalized_replacement_binding(
         attestation_ed25519: binding.attestation_ed25519.into(),
         noise_responder_x25519: binding.noise_responder_x25519.into(),
         node_host_authorization_hash: binding.node_host_authorization_hash,
-    };
-
-    Ok(finalized_binding)
-}
-fn replacement_intent_matches(
-    binding: &NodeEnclaveBindingV1,
-    intent: &outbe_primitives::tee_attestation_v1::RegistrationIntentV1,
-    intent_hash: B256,
-) -> bool {
-    if binding.intent_hash != intent_hash {
-        return false;
-    }
-    if binding.enclave_id != intent.enclave_id || binding.binding_id != intent.binding_id {
-        return false;
-    }
-    binding.binding_version == intent.binding_version
-        && binding.registration_version == intent.registration_version
-        && binding.transition_nonce == intent.transition_nonce
+    })
 }
 
 /// Inspect only node-local consensus-finalized rollout state. This supplies

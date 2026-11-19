@@ -1,14 +1,21 @@
 //! Finalized read-only TEE chain state and separately observed local health.
 
-use std::{io::Read, os::unix::fs::OpenOptionsExt, path::Path};
+use std::{
+    fs::Metadata,
+    io::Read,
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
+    path::Path,
+};
 
 use alloy_primitives::Address;
 use alloy_sol_types::SolCall;
-use eyre::Result;
-use outbe_primitives::tee_attestation_v1::{AttestationMode, EnclaveInitializationManifestV1};
+use eyre::{bail, Result};
+use outbe_primitives::tee_attestation_v1::AttestationMode;
+use outbe_simplex::bls::{self, KeyBackend, KeyBackendNameError};
 use outbe_tee::registry_view::{read_finalized_registry_view_v1, NodeBindingSelectorV1};
 use serde::Serialize;
 use serde_json::{json, Value};
+use zeroize::Zeroizing;
 
 use super::{args::StatusArgs, rpc::CliFinalityRpc};
 use crate::{
@@ -29,22 +36,11 @@ pub(super) async fn read_status(client: &(impl Rpc + Sync), args: &StatusArgs) -
     if args.critical_blocks > args.warning_blocks {
         return Err(TeeStatusError::CriticalMarginExceedsWarning.into());
     }
-    let manifest = args
-        .node_data_dir
-        .as_deref()
-        .map(read_public_manifest)
-        .transpose()?;
-    let selector = manifest.as_ref().map_or(
-        NodeBindingSelectorV1::Validator(Address::ZERO),
-        |manifest| NodeBindingSelectorV1::NodeHost(manifest.node_id.reth_p2p_public),
-    );
+    let selected = binding_selector(args)?;
+    let selector = selected
+        .clone()
+        .unwrap_or(NodeBindingSelectorV1::Validator(Address::ZERO));
     let view = read_finalized_registry_view_v1(&CliFinalityRpc(client), &selector).await?;
-    if manifest
-        .as_ref()
-        .is_some_and(|manifest| manifest.network_binding() != view.policy.network_binding())
-    {
-        return Err(TeeStatusError::ManifestChainIdentityMismatch.into());
-    }
     let tag = format!("0x{:x}", view.schedule.finalized_height);
     let upgrade = client
         .eth_call_at(
@@ -66,7 +62,7 @@ pub(super) async fn read_status(client: &(impl Rpc + Sync), args: &StatusArgs) -
     let enclave = consensus
         .get("enclave")
         .ok_or(TeeStatusError::MissingEnclaveHealth)?;
-    let lease = manifest.as_ref().and(view.binding.as_ref()).map(|binding| {
+    let lease = selected.as_ref().and(view.binding.as_ref()).map(|binding| {
         let collateral = match view.policy.attestation_mode {
             AttestationMode::DcapRequired => Some(binding.collateral_valid_until),
             AttestationMode::NoAttestationDev => None,
@@ -88,7 +84,7 @@ pub(super) async fn read_status(client: &(impl Rpc + Sync), args: &StatusArgs) -
             "activationHeight": view.policy.activation_height,
         },
         "networkEncryptionPublicKey": view.network_encryption_public_key,
-        "binding": manifest.as_ref().and(view.binding.as_ref()),
+        "binding": selected.as_ref().and(view.binding.as_ref()),
         "lease": lease,
         "upgrade": {
             "proposalId": upgrade.proposalId,
@@ -107,33 +103,152 @@ pub(super) async fn read_status(client: &(impl Rpc + Sync), args: &StatusArgs) -
     }))
 }
 
-// The runtime loader acquires a write lock and reconciles journals; status must not.
-fn read_public_manifest(node_data_dir: &Path) -> Result<EnclaveInitializationManifestV1> {
-    use outbe_tee::node_host::{NODE_HOST_DIRECTORY_V1, NODE_HOST_MANIFEST_V1};
-    let path = node_data_dir
-        .join(NODE_HOST_DIRECTORY_V1)
-        .join(NODE_HOST_MANIFEST_V1);
+/// `None` keeps the historical network-wide validator-zero selector and hides
+/// the binding. A selected host or validator shows the finalized binding.
+fn binding_selector(args: &StatusArgs) -> Result<Option<NodeBindingSelectorV1>> {
+    let choices = [
+        args.node_data_dir.is_some(),
+        args.node_id.is_some(),
+        args.validator.is_some(),
+    ]
+    .into_iter()
+    .filter(|present| *present)
+    .count();
+    if choices > 1 {
+        bail!("pass only one of --node-data-dir, --node-id, or --validator");
+    }
+    if let Some(dir) = args.node_data_dir.as_deref() {
+        let backend = reth_discovery_backend(args)?;
+        return Ok(Some(NodeBindingSelectorV1::NodeHost(
+            node_host_public_from_discovery_secret(dir, &backend)?,
+        )));
+    }
+    if let Some(node_id) = args.node_id {
+        return Ok(Some(NodeBindingSelectorV1::NodeHost(node_id)));
+    }
+    if let Some(validator) = args.validator {
+        return Ok(Some(NodeBindingSelectorV1::Validator(validator)));
+    }
+    Ok(None)
+}
+
+/// Same custody selector the node launcher uses for `<datadir>/discovery-secret`.
+fn reth_discovery_backend(args: &StatusArgs) -> Result<KeyBackend> {
+    if args.reth_key_backend != "encrypted" && args.reth_passphrase.is_some() {
+        return Err(TeeStatusError::PassphraseRequiresEncryptedBackend.into());
+    }
+    let passphrase = args
+        .reth_passphrase
+        .clone()
+        .filter(|passphrase| !passphrase.is_empty());
+    bls::parse_key_backend_name(&args.reth_key_backend, passphrase).map_err(|error| match error {
+        KeyBackendNameError::MissingPassphrase => TeeStatusError::MissingRethPassphrase.into(),
+        KeyBackendNameError::Unknown(name) => TeeStatusError::UnknownRethKeyBackend(name).into(),
+    })
+}
+
+const DISCOVERY_SECRET_READ_LIMIT: u64 = 4096;
+
+/// The node publishes the compressed SEC1 key from `<datadir>/discovery-secret`
+/// as `NodeHostIdentityV1.reth_p2p_public`. Status reads that file once and
+/// does not create a key or change its mode.
+fn node_host_public_from_discovery_secret(
+    node_data_dir: &Path,
+    backend: &KeyBackend,
+) -> Result<[u8; 33]> {
+    let path = node_data_dir.join("discovery-secret");
+    let (metadata, raw) = read_discovery_secret_file(&path)?;
+    let secret = if bls::reads_as_protected_custody(&raw) {
+        ensure_private_custody_mode(&path, &metadata)?;
+        bls::load_secp256k1_secret_from_bytes(&raw, backend)
+            .map_err(classify_discovery_secret_error)?
+    } else {
+        decode_plaintext_reth_secret(&raw)?
+    };
+    Ok(compressed_reth_p2p_public(&secret)?)
+}
+
+fn read_discovery_secret_file(path: &Path) -> Result<(Metadata, Zeroizing<Vec<u8>>)> {
     let file = std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)
-        .map_err(TeeStatusError::ReadPublicManifest)?;
+        .map_err(|error| TeeStatusError::ReadDiscoverySecret(eyre::Report::from(error)))?;
     let metadata = file
         .metadata()
-        .map_err(TeeStatusError::ReadPublicManifest)?;
-    // Match the runtime's initialization-manifest ceiling, including racing growth.
-    if !metadata.is_file() || metadata.len() > 512 {
-        return Err(TeeStatusError::InvalidPublicManifestFile.into());
+        .map_err(|error| TeeStatusError::ReadDiscoverySecret(eyre::Report::from(error)))?;
+    if !metadata.file_type().is_file() {
+        return Err(TeeStatusError::InvalidDiscoverySecret(eyre::eyre!(
+            "discovery-secret must be a regular file"
+        ))
+        .into());
     }
-    let mut bytes = Vec::new();
-    file.take(513)
-        .read_to_end(&mut bytes)
-        .map_err(TeeStatusError::ReadPublicManifest)?;
-    if bytes.len() > 512 {
-        return Err(TeeStatusError::InvalidPublicManifestFile.into());
+    let mut raw = Zeroizing::new(Vec::new());
+    file.take(DISCOVERY_SECRET_READ_LIMIT + 1)
+        .read_to_end(&mut raw)
+        .map_err(|error| TeeStatusError::ReadDiscoverySecret(eyre::Report::from(error)))?;
+    if raw.len() > DISCOVERY_SECRET_READ_LIMIT as usize {
+        return Err(TeeStatusError::InvalidDiscoverySecret(eyre::eyre!(
+            "discovery-secret exceeds {DISCOVERY_SECRET_READ_LIMIT} bytes"
+        ))
+        .into());
     }
-    EnclaveInitializationManifestV1::decode_canonical(&bytes)
-        .map_err(|error| TeeStatusError::DecodePublicManifest(error).into())
+    Ok((metadata, raw))
+}
+
+fn ensure_private_custody_mode(path: &Path, metadata: &Metadata) -> Result<()> {
+    let mode = metadata.permissions().mode();
+    if mode & 0o077 == 0 {
+        return Ok(());
+    }
+    Err(TeeStatusError::InvalidDiscoverySecret(eyre::Report::from(
+        outbe_simplex::errors::BlsKeyError::InsecureFileMode {
+            kind: "secp256k1 secret".to_owned(),
+            path: path.display().to_string(),
+            mode: mode & 0o777,
+        },
+    ))
+    .into())
+}
+
+fn decode_plaintext_reth_secret(raw: &[u8]) -> Result<Zeroizing<[u8; 32]>, TeeStatusError> {
+    const HEX_LEN: usize = 64;
+    if raw.len() != HEX_LEN {
+        return Err(TeeStatusError::InvalidDiscoverySecret(eyre::eyre!(
+            "discovery-secret must be 64 ASCII hex bytes"
+        )));
+    }
+    let mut secret = Zeroizing::new([0_u8; 32]);
+    hex::decode_to_slice(raw, &mut secret[..])
+        .map_err(|error| TeeStatusError::InvalidDiscoverySecret(eyre::Report::from(error)))?;
+    Ok(secret)
+}
+
+fn classify_discovery_secret_error(error: eyre::Report) -> TeeStatusError {
+    let missing = error.chain().any(|item| {
+        item.downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+    });
+    if missing {
+        TeeStatusError::ReadDiscoverySecret(error)
+    } else {
+        TeeStatusError::InvalidDiscoverySecret(error)
+    }
+}
+
+fn compressed_reth_p2p_public(secret: &[u8; 32]) -> Result<[u8; 33], TeeStatusError> {
+    let signing = k256::ecdsa::SigningKey::from_slice(secret)
+        .map_err(|error| TeeStatusError::InvalidDiscoverySecret(eyre::Report::from(error)))?;
+    signing
+        .verifying_key()
+        .to_encoded_point(true)
+        .as_bytes()
+        .try_into()
+        .map_err(|_| {
+            TeeStatusError::InvalidDiscoverySecret(eyre::eyre!(
+                "compressed SEC1 public key must be 33 bytes"
+            ))
+        })
 }
 
 fn lease_is_safe_for_next_freeze(
