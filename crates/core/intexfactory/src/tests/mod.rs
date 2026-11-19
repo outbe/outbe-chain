@@ -102,6 +102,19 @@ fn owner() -> Address {
     address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 }
 
+/// A cap above every quoted cost that [`fund_payer`] covers.
+fn amount_cap() -> U256 {
+    U256::from(u128::MAX)
+}
+
+/// Stub the payer's allowance and balance of `asset` at [`amount_cap`].
+fn fund_payer(storage: &mut HashMapStorageProvider, asset: Address) {
+    use crate::sol_ext::IERC20;
+    let cap = alloy_primitives::Bytes::from(amount_cap().to_be_bytes::<32>().to_vec());
+    storage.stub_sub_call_at_selector(asset, IERC20::balanceOfCall::SELECTOR, cap.clone());
+    storage.stub_sub_call_at_selector(asset, IERC20::allowanceCall::SELECTOR, cap);
+}
+
 fn settlement_asset() -> Address {
     address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC")
 }
@@ -147,6 +160,7 @@ fn factory_provider() -> HashMapStorageProvider {
         crate::constants::ORIGIN_ROUTER_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
+    fund_payer(&mut storage, settlement_asset());
     storage
 }
 

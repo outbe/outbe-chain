@@ -9,6 +9,7 @@ fn dispatch_rejects_value() {
             units: U256::from(1),
             asset: Address::ZERO,
             snapshotId: U256::ZERO,
+            amountCapMinor: U256::ZERO,
         }
         .abi_encode();
         assert!(precompile::dispatch(s.clone(), &data, owner(), U256::from(1)).is_err());

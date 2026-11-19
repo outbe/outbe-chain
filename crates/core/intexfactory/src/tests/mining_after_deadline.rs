@@ -90,6 +90,7 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
                 asset: settlement_asset(),
                 snapshot_id: U256::ZERO,
             },
+            amount_cap(),
         )
         .unwrap_err();
         assert_eq!(

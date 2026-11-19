@@ -62,10 +62,11 @@ pub fn dispatch(
                             asset: c.asset,
                             snapshot_id: c.snapshotId,
                         },
+                        c.amountCapMinor,
                     )
                 }),
                 quoteSettlement(c) => metadata::<IIntexFactory::quoteSettlementCall>(|| {
-                    let (settlement_currency, payment_minor, snapshot_id) =
+                    let (settlement_currency, amount_minor, snapshot_id) =
                         runtime::quote_settlement(
                             &storage,
                             series_of(&storage, c.intexId)?,
@@ -74,7 +75,7 @@ pub fn dispatch(
                         )?;
                     Ok(IIntexFactory::quoteSettlementReturn {
                         settlementCurrency: settlement_currency,
-                        paymentMinor: payment_minor,
+                        amountMinor: amount_minor,
                         snapshotId: snapshot_id,
                     })
                 }),

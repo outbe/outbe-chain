@@ -189,6 +189,7 @@ fn unpublished_selectors_refuse_native_value() {
         units: U256::ZERO,
         asset: Address::ZERO,
         snapshotId: U256::ZERO,
+        amountCapMinor: U256::ZERO,
     }
     .abi_encode()];
 

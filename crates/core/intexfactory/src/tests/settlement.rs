@@ -200,6 +200,7 @@ fn with_payment_token<R>(
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT));
+    fund_payer(&mut storage, settlement_asset());
     storage.stub_sub_call_at(crate::constants::INTEX_NFT1155_ADDRESS, word(0));
     storage.stub_sub_call_at(crate::constants::ORIGIN_ROUTER_ADDRESS, word(0));
     storage.stub_sub_call_at_selector(
@@ -296,7 +297,7 @@ fn settlement_quote_dispatch() {
         .unwrap();
         let ret = IIntexFactory::quoteSettlementCall::abi_decode_returns(&out).unwrap();
         assert_eq!(ret.settlementCurrency, 840);
-        assert_eq!(ret.paymentMinor, U256::from(2_000_000_000_000_000_000u64));
+        assert_eq!(ret.amountMinor, U256::from(2_000_000_000_000_000_000u64));
     });
 }
 
@@ -308,6 +309,7 @@ fn erc20_series() -> HashMapStorageProvider {
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT));
+    fund_payer(&mut storage, settlement_asset());
     storage.stub_sub_call_at(crate::constants::INTEX_NFT1155_ADDRESS, word(0));
     storage.stub_sub_call_at_selector(
         crate::constants::INTEX_NFT1155_ADDRESS,
@@ -359,6 +361,7 @@ fn erc20_settle_asks_the_router_to_take_the_cost_from_the_caller() {
                 asset: settlement_asset(),
                 snapshot_id: U256::ZERO,
             },
+            amount_cap(),
         )
         .unwrap_err();
         assert_eq!(
@@ -397,7 +400,8 @@ fn erc20_settle_rejects_an_unaccepted_asset_before_any_transfer() {
                 payer: owner(),
                 asset: foreign,
                 snapshot_id: U256::ZERO
-            }
+            },
+            amount_cap(),
         )
         .is_err());
         assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 0);
@@ -420,7 +424,8 @@ fn settle_rejects_zero_amount() {
                 payer: owner(),
                 asset: settlement_asset(),
                 snapshot_id: U256::ZERO
-            }
+            },
+            amount_cap(),
         )
         .is_err());
     });
@@ -438,7 +443,8 @@ fn settle_rejects_missing_series() {
                 payer: owner(),
                 asset: settlement_asset(),
                 snapshot_id: U256::ZERO
-            }
+            },
+            amount_cap(),
         )
         .is_err());
     });
@@ -473,6 +479,7 @@ fn settle_rejects_expired_deadline() {
                 asset: settlement_asset(),
                 snapshot_id: U256::ZERO,
             },
+            amount_cap(),
         )
         .unwrap_err();
         assert_eq!(
@@ -506,6 +513,7 @@ fn settle_stays_open_through_the_transit_margin() {
                 asset: settlement_asset(),
                 snapshot_id: U256::ZERO,
             },
+            amount_cap(),
         )
         .unwrap_err();
         assert_eq!(
@@ -539,6 +547,7 @@ fn a_series_called_past_its_deadline_stays_closed() {
                 asset: settlement_asset(),
                 snapshot_id: U256::ZERO,
             },
+            amount_cap(),
         )
         .unwrap_err();
         assert_eq!(

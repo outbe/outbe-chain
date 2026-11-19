@@ -352,6 +352,7 @@ pub(super) fn dual_currency_series(iso: u64) -> HashMapStorageProvider {
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT));
+    super::fund_payer(&mut storage, settlement_asset());
     storage.stub_sub_call_at(crate::constants::INTEX_NFT1155_ADDRESS, word(0));
     storage.stub_sub_call_at_selector(
         crate::constants::INTEX_NFT1155_ADDRESS,
@@ -540,6 +541,7 @@ fn settle_series_7(storage: &mut HashMapStorageProvider, snapshot: U256) -> Stri
                 asset: settlement_asset(),
                 snapshot_id: snapshot,
             },
+            amount_cap(),
         )
         .unwrap_err()
         .to_string()
@@ -681,6 +683,7 @@ fn a_reference_payment_ignores_the_snapshot_it_names() {
                 asset: settlement_asset(),
                 snapshot_id: U256::from(7u64),
             },
+            amount_cap(),
         )
         .unwrap_err();
         assert_eq!(
