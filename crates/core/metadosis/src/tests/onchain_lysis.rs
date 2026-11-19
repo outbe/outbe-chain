@@ -452,6 +452,23 @@ fn block_at(storage: StorageHandle<'_>, timestamp: u64) -> BlockRuntimeContext<'
 }
 
 #[test]
+fn failed_metadosis_rolls_the_max_fidelity_of_its_wwd() {
+    let mut provider = fixture_with_amounts(LIMIT, &[NOMINAL + 1]);
+    StorageHandle::enter(&mut provider, |storage| {
+        let peak = U256::from(u128::MAX);
+        let later = WorldwideDay::new(20261001);
+        outbe_fidelity::api::league_from_rcfi_for_wwd(storage.clone(), WWD, peak).unwrap();
+        assert!(outbe_fidelity::api::max_fidelity_for_wwd(storage.clone(), later).unwrap() < peak);
+
+        crate::commands::fail_metadosis(&block_at(storage.clone(), CLOCK), DAY).unwrap();
+        assert_eq!(
+            outbe_fidelity::api::max_fidelity_for_wwd(storage.clone(), later).unwrap(),
+            peak
+        );
+    });
+}
+
+#[test]
 fn failed_metadosis_cancels_the_auction_of_its_day() {
     let day = outbe_system_common::time::EmissionDate::new(DAY);
     let mut provider = fixture_with_amounts(LIMIT, &[NOMINAL + 1]);
