@@ -12,7 +12,7 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 
 import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
 import {IOriginRouter} from "./interfaces/IOriginRouter.sol";
-import {IDesis} from "./interfaces/IDesis.sol";
+import {IDesis} from "@precompiles/IDesis.sol";
 import {IIntexFactory} from "@precompiles/IIntexFactory.sol";
 import {IWCOEN} from "@tokens/interfaces/IWCOEN.sol";
 import {IERC7786TokenReceiver} from "@tokens/interfaces/IERC7786TokenReceiver.sol";

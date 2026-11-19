@@ -11,7 +11,7 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
-import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
+import {IDesis} from "@precompiles/IDesis.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";

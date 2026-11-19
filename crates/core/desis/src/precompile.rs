@@ -18,13 +18,9 @@ use crate::schema::BidData;
 /// without flipping the route fails the build.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
-mod router_abi {
-    alloy_sol_types::sol!("../../../contracts/intex/src/origin/interfaces/IDesis.sol");
-}
-
-/// `type(IDesis).interfaceId` of the router-facing interface that `OriginRouter.wire` probes.
+/// `type(IDesis).interfaceId` that `OriginRouter.wire` probes.
 pub(crate) const IDESIS_INTERFACE_ID: [u8; 4] = {
-    let selectors = router_abi::IDesis::IDesisCalls::SELECTORS;
+    let selectors = abi::IDesis::IDesisCalls::SELECTORS;
     let mut id = [0u8; 4];
     let mut i = 0;
     while i < selectors.len() {

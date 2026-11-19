@@ -7,7 +7,7 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
-import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
+import {IDesis} from "@precompiles/IDesis.sol";
 import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
