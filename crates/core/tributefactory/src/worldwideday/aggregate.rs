@@ -184,12 +184,18 @@ pub fn close_worldwide_day(
 }
 
 fn validate_schedule_shape(wwd: WorldwideDay, schedule: &NewWwdSchedule) -> Result<()> {
-    if schedule.offerings_start == 0
-        || schedule.forming_start > schedule.forming_end
-        || schedule.forming_start > schedule.offerings_start
-        || schedule.offerings_start >= schedule.offering_end
-        || schedule.forming_end > schedule.offering_end
-    {
+    let ordered = |times: [u64; 3]| times.windows(2).all(|pair| pair[0] <= pair[1]);
+    let forming = [
+        schedule.forming_start,
+        schedule.forming_end,
+        schedule.offering_end,
+    ];
+    let offering = [
+        schedule.forming_start,
+        schedule.offerings_start,
+        schedule.offering_end,
+    ];
+    if schedule.offerings_start == 0 || !ordered(forming) || !ordered(offering) {
         return Err(WwdStorageCorruptionError::WwdNonMonotonicPhaseBoundaries { wwd }.into());
     }
     Ok(())
