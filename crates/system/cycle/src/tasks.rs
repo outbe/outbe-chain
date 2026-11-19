@@ -205,8 +205,8 @@ macro_rules! const_spec {
 
 /// Hourly cadence of `process_emission_day`.
 pub const PROCESS_EMISSION_DAY_PERIOD_SECONDS: u64 = 3_600;
-/// `process_emission_day` runs from one second into each hour, so Metadosis of E is no earlier
-/// than 00:00:01 of E+1. The auction tasks share the offset to land in the slot of the brief.
+/// `process_emission_day` runs from one second into each hour, so Metadosis of E runs in the
+/// slot at 12:00:01 of E+1. The auction tasks share the offset to land in the slot of the brief.
 pub const PROCESS_EMISSION_DAY_START_OFFSET_SECONDS: u64 = 1;
 
 /// Agent rewards: 16,505,700 measured storage gas for 256 accrual and 3x256 cleanup

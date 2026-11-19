@@ -210,6 +210,8 @@ fn late_protocol_exhaustion_rolls_back_calendar_and_allocation_then_retries_acro
             .unwrap();
         let world_before =
             outbe_metadosis::api::worldwide_day(ctx.storage.clone(), 20_240_102u32.into()).unwrap();
+        let record_before =
+            outbe_emission::api::get_emission_day_record(ctx.storage.clone(), 20_240_101).unwrap();
         let cycle = ctx.storage.contract::<Cycle>();
         let timestamp_before = cycle.last_executed_at.read(&0).unwrap();
         let height_before = cycle.last_executed_block_number.read(&0).unwrap();
@@ -221,10 +223,9 @@ fn late_protocol_exhaustion_rolls_back_calendar_and_allocation_then_retries_acro
         );
         assert_eq!(active_utc_day(&ctx), 20_240_101);
         assert!(!is_day_allocated(&ctx, 20_240_101));
-        assert!(
-            outbe_emission::api::get_emission_day_record(ctx.storage.clone(), 20_240_101)
-                .unwrap()
-                .is_none()
+        assert_eq!(
+            outbe_emission::api::get_emission_day_record(ctx.storage.clone(), 20_240_101).unwrap(),
+            record_before
         );
         assert_eq!(
             outbe_metadosis::api::worldwide_day(ctx.storage.clone(), 20_240_102u32.into()).unwrap(),
