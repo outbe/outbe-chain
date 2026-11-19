@@ -315,7 +315,7 @@ fn release_manifest_is_canonical_and_enforces_schema_invariants() {
             "id": "https://github.com/outbe/outbe-chain/reproducible-elf-builder/v1",
             "base_images": [
                 format!("rust:1.96.0-bookworm@sha256:{}", "1".repeat(64)),
-                format!("gramineproject/gramine:1.9-noble@sha256:{}", "2".repeat(64)),
+                format!("ubuntu:24.04@sha256:{}", "2".repeat(64)),
             ],
             "recipe": "Dockerfile.project-toolchain",
             "system_packages": ["clang=1.0", "cmake=1.0"],
@@ -356,7 +356,7 @@ fn release_manifest_is_canonical_and_enforces_schema_invariants() {
     let encoded = canonical_json(&manifest).unwrap();
     assert_eq!(
         hex::encode(Sha256::digest(&encoded)),
-        "f8e36048155639bb1acbb0fac4c623ee6762757f5e8a60c0d8b547630fe07c04"
+        "6c8ea665ce9a7354d12f31be8503c5546deedbfb75f9b7ec74e7ca0bb88e04d1"
     );
 
     let mut bad_verified = manifest.clone();

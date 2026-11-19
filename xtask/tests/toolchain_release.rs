@@ -73,7 +73,7 @@ fn project_declares_one_version_pin_without_registry_delivery_and_consumers_foll
     assert_eq!(pin["target"].as_str(), Some("x86_64-unknown-linux-gnu"));
     assert_eq!(pin["platform"].as_str(), Some("linux/amd64"));
     assert_eq!(pin["rust"]["version"].as_str(), Some("1.96.0"));
-    assert_eq!(pin["gramine"]["version"].as_str(), Some("1.9"));
+    assert!(pin.get("gramine").is_none());
     assert_eq!(
         pin["host_only_packages"]["libsgx-dcap-default-qpl"].as_str(),
         Some("1.26.100.1-noble1")
@@ -153,6 +153,7 @@ fn toolchain_dockerfile_and_apt_inputs_contract() {
     assert!(!lowered.contains("apt upgrade"));
     assert!(!lowered.contains("qpl"));
     assert!(!lowered.contains("pccs"));
+    assert!(!lowered.contains("gramine"));
 
     let dir = tempdir().expect("tempdir");
     for source in pin["apt_provenance"]["source_files"].as_array().unwrap() {
@@ -229,7 +230,6 @@ fn synthetic_qvl_fixture(root: &Path, pin: &Value) -> (Value, Vec<Value>, Vec<Va
         "schema_version": 1,
         "status": "active",
         "target": "x86_64-unknown-linux-gnu",
-        "gramine_version": "1.9",
         "intel_dcap": toolchain::expected_dcap(pin),
         "build_inputs": build_inputs,
         "artifacts": artifacts,
