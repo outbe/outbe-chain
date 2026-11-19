@@ -846,3 +846,76 @@ fn the_owner_balances_view_reports_live_units_and_owner_history() {
         assert_eq!(forfeited.ownerUnits, 25);
     });
 }
+
+/// A payer who is not the owner of the units.
+fn other() -> Address {
+    address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB")
+}
+
+fn settle_capped(s: &StorageHandle<'_>, cap: U256) -> String {
+    runtime::settle_intex(
+        s,
+        sid(7),
+        owner(),
+        U256::from(2),
+        SettlementPayment {
+            payer: other(),
+            asset: settlement_asset(),
+            snapshot_id: U256::ZERO,
+        },
+        cap,
+    )
+    .unwrap_err()
+    .to_string()
+}
+
+fn settlement_error(error: outbe_vaultrouter::settlement::SettlementError) -> String {
+    outbe_primitives::error::PrecompileError::from(error).to_string()
+}
+
+#[test]
+fn settle_intex_checks_funds_before_the_cost() {
+    use crate::sol_ext::IERC20;
+
+    for short in [
+        IERC20::balanceOfCall::SELECTOR,
+        IERC20::allowanceCall::SELECTOR,
+    ] {
+        let mut storage = erc20_series();
+        storage.stub_sub_call_at_selector(settlement_asset(), short, word(1));
+        StorageHandle::enter(&mut storage, |s| {
+            let (_, cost, _) =
+                runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::from(2)).unwrap();
+            for cap in [U256::from(2u64), cost + U256::ONE] {
+                assert_eq!(
+                    settle_capped(&s, cap),
+                    settlement_error(
+                        outbe_vaultrouter::settlement::SettlementError::InsufficientFunds
+                    )
+                );
+            }
+            assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 0);
+        });
+    }
+}
+
+#[test]
+fn settle_intex_takes_only_the_cost_within_the_cap() {
+    let mut storage = erc20_series();
+    let cost = StorageHandle::enter(&mut storage, |s| {
+        let (_, cost, _) =
+            runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::from(2)).unwrap();
+        assert_eq!(
+            settle_capped(&s, cost - U256::ONE),
+            settlement_error(outbe_vaultrouter::settlement::SettlementError::CostAboveCap)
+        );
+        // The router does not run, so an admitted payment stops at its `depositFrom`.
+        assert_eq!(
+            settle_capped(&s, cost + U256::ONE),
+            outbe_vaultrouter::test_support::unanswered_deposit_from().to_string()
+        );
+        cost
+    });
+    let deposit = outbe_vaultrouter::test_support::last_deposit_from(&storage).unwrap();
+    assert_eq!((deposit.payer, deposit.assetsMinor), (other(), cost));
+}

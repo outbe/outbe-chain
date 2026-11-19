@@ -198,3 +198,46 @@ fn a_node_local_failure_inside_the_call_notice_send_fails_the_drain() {
     send_notices_in_block(&mut provider).unwrap();
     assert_eq!(queue(&mut provider), (0, 0, [U256::ZERO; 2]));
 }
+
+#[test]
+fn a_node_local_failure_inside_a_leg_retry_fails_the_drain_and_counts_no_try() {
+    use super::router_fault::RouterFaultProvider;
+    use crate::notify::{enqueue_leg, KeptLeg};
+    use crate::sol_ext::IOriginRouter;
+
+    let leg = KeptLeg {
+        idx: 3,
+        dst_chain_id: 97,
+        attempts: 1,
+        retry_at: ISSUED_AT,
+    };
+    let mut provider = RouterFaultProvider::new(
+        factory_provider(),
+        IOriginRouter::retryMessageSendCall::SELECTOR,
+    );
+    StorageHandle::enter(&mut provider, |s| {
+        enqueue_leg(&IntexFactoryContract::new(s), leg).unwrap();
+    });
+    let legs = |provider: &mut RouterFaultProvider| {
+        StorageHandle::enter(provider, |s| {
+            let factory = IntexFactoryContract::new(s);
+            (
+                factory.leg_head.read().unwrap(),
+                factory.leg_tail.read().unwrap(),
+                factory.leg_at.read(&0).unwrap(),
+            )
+        })
+    };
+
+    assert!(matches!(
+        send_notices_in_block(&mut provider),
+        Err(outbe_primitives::error::PrecompileError::SubCall(
+            outbe_primitives::storage::SubCallError::DatabaseError(_)
+        ))
+    ));
+    assert_eq!(legs(&mut provider), (0, 1, leg.pack()));
+
+    provider.heal();
+    send_notices_in_block(&mut provider).unwrap();
+    assert_eq!(legs(&mut provider), (0, 0, U256::ZERO));
+}

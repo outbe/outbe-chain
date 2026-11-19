@@ -376,4 +376,53 @@ mod tests {
         }
         panic!("no failing nonce found");
     }
+
+    #[test]
+    fn intex_mining_hash_has_the_common_form() {
+        let intex_id = U256::from(0x5EEDu64);
+        let owner = Address::repeat_byte(0x66);
+        let amount = U256::from(1_000_000u64);
+        let hash = compute_intex_mining_pow_hash(intex_id, owner, 3, 42, amount);
+
+        let mut data = INTEX_MINING_DOMAIN_TAG.to_vec();
+        data.extend_from_slice(&intex_id.to_be_bytes::<32>());
+        data.extend_from_slice(owner.as_slice());
+        data.extend_from_slice(&3u64.to_be_bytes());
+        data.extend_from_slice(&42u64.to_be_bytes());
+        data.extend_from_slice(&amount.to_be_bytes::<32>());
+        assert_eq!(hash.as_ref(), digest(&SHA256, &data).as_ref());
+
+        for domain in [MiningDomain::Nod, MiningDomain::Gem] {
+            assert_ne!(
+                hash,
+                compute_mining_pow_hash(domain, intex_id, owner, 3, 42)
+            );
+        }
+        for changed in [
+            compute_intex_mining_pow_hash(intex_id + U256::ONE, owner, 3, 42, amount),
+            compute_intex_mining_pow_hash(intex_id, Address::repeat_byte(0x67), 3, 42, amount),
+            compute_intex_mining_pow_hash(intex_id, owner, 4, 42, amount),
+            compute_intex_mining_pow_hash(intex_id, owner, 3, 42, amount + U256::ONE),
+        ] {
+            assert_ne!(hash, changed);
+        }
+    }
+
+    #[test]
+    fn an_intex_nonce_does_not_carry_to_nod_or_gem() {
+        let intex_id = U256::from(0x5EEDu64);
+        let owner = Address::repeat_byte(0x66);
+        let amount = U256::from(1_000_000u64);
+        let nonce = (0u64..)
+            .find(|n| {
+                meets_difficulty(&compute_intex_mining_pow_hash(
+                    intex_id, owner, 0, *n, amount,
+                ))
+                .is_ok()
+            })
+            .unwrap();
+        for domain in [MiningDomain::Nod, MiningDomain::Gem] {
+            assert!(validate_mining_pow(domain, intex_id, owner, 0, nonce).is_err());
+        }
+    }
 }

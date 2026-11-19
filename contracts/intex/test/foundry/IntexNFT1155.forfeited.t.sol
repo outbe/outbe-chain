@@ -78,4 +78,33 @@ contract IntexNFT1155ForfeitedTest is Test {
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, iTok, uint32(deadline)));
         token.crosschainBurn(user, user, iTok, 1);
     }
+
+    function test_BurnForfeited_BurnsTheOwnersUnitsForAnyCaller() public {
+        vm.warp(closeAt + 1);
+        vm.expectEmit(address(token));
+        emit IIntexNFT1155.IntexForfeited(iTok, user, 840, 840, 10);
+        vm.prank(makeAddr("anyone"));
+        token.burnForfeited(user, SERIES_ID);
+
+        assertEq(token.balanceOf(user, iTok), 0);
+        assertEq(token.readData(SERIES_ID).totalSupply, 0);
+    }
+
+    function test_BurnForfeited_RevertsUpToTheTransitClose() public {
+        vm.warp(closeAt);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IIntexNFT1155.InvalidState.selector,
+                uint8(IIntexNFT1155.IntexState.Forfeited),
+                uint8(IIntexNFT1155.IntexState.Called)
+            )
+        );
+        token.burnForfeited(user, SERIES_ID);
+    }
+
+    function test_BurnForfeited_RevertsForAnEmptyBalance() public {
+        vm.warp(closeAt + 1);
+        vm.expectRevert(IIntexNFT1155.ZeroUnits.selector);
+        token.burnForfeited(makeAddr("other"), SERIES_ID);
+    }
 }

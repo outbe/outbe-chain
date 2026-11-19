@@ -121,6 +121,38 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         assertTrue(origin.getFailedMessageSend(1).sent, "the cancel leaves");
     }
 
+    // --- Call notice ---
+    function _countCallNoticeSent(Vm.Log[] memory logs, uint32 chain) internal pure returns (uint256 n) {
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics[0] == IOriginRouter.IntexSeriesCallNoticeSent.selector) {
+                assertEq(uint256(logs[i].topics[3]), chain, "only the chain the leg left for");
+                n++;
+            }
+        }
+    }
+
+    function test_call_notice_reports_the_kept_leg_and_emits_sent_when_it_leaves() public {
+        _fireStart(DAY);
+        origin.registerRemoteMessenger(TARGET_B, ""); // B's leg is kept
+        bytes14[] memory ids = new bytes14[](2);
+        ids[0] = "20260716-USD-U";
+        ids[1] = "20260716-EUR-U";
+
+        vm.recordLogs();
+        vm.prank(factory);
+        IOriginRouter.FailedCallNoticeLeg[] memory kept =
+            origin.sendIntexSeriesCallNotice(DAY, uint64(block.timestamp), ids);
+        assertEq(_countCallNoticeSent(vm.getRecordedLogs(), TARGET_A), 2, "one event per series that left");
+        assertEq(kept.length, 1, "one kept leg");
+        assertEq(kept[0].dstChainId, TARGET_B);
+        assertFalse(origin.getFailedMessageSend(kept[0].idx).sent);
+
+        origin.registerRemoteMessenger(TARGET_B, _interop(TARGET_B, peerB));
+        vm.recordLogs();
+        origin.retryMessageSend(kept[0].idx);
+        assertEq(_countCallNoticeSent(vm.getRecordedLogs(), TARGET_B), 2, "the retry that leaves emits them");
+    }
+
     // --- Registry ---
     function test_registry_views() public view {
         assertTrue(origin.isTarget(TARGET_A));
