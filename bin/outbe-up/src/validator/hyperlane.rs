@@ -140,7 +140,14 @@ pub async fn run_service() -> Result<()> {
     let rpc_url = format!("http://{rpc_bind}:8545");
     let rpc = RpcClient::new(&rpc_url)?;
     let validator = required_env("OUTBE_VALIDATOR_ADDRESS")?.parse()?;
-    let hyperlane_key = required_path("OUTBE_HYPERLANE_KEY_PATH")?;
+    let hyperlane_key = std::env::var_os("OUTBE_HYPERLANE_KEY_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(process::ROOT).join("keys/hyperlane-key.hex"));
+    ensure!(
+        hyperlane_key.is_file(),
+        "Hyperlane key does not name a file: {}",
+        hyperlane_key.display()
+    );
     let signer = validator_address(&hyperlane_key)?;
     let mut progress = Progress::new();
 
