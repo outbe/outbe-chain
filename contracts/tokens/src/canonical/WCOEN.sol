@@ -2,8 +2,9 @@
 pragma solidity ^0.8.30;
 
 import {DEAD_ADDRESS} from "@shared/BurnAddress.sol";
+import {IWCOEN} from "../interfaces/IWCOEN.sol";
 
-contract WCOEN {
+contract WCOEN is IWCOEN {
     string public name = "Wrapped COEN";
     string public symbol = "WCOEN";
     uint8 public decimals = 18;

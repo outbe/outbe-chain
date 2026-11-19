@@ -14,7 +14,7 @@ import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
 import {IOriginRouter} from "./interfaces/IOriginRouter.sol";
 import {IDesis} from "./interfaces/IDesis.sol";
 import {IIntexFactory} from "./interfaces/IIntexFactory.sol";
-import {IWCOEN} from "./interfaces/IWCOEN.sol";
+import {IWCOEN} from "@tokens/interfaces/IWCOEN.sol";
 import {IERC7786TokenReceiver} from "@tokens/interfaces/IERC7786TokenReceiver.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../shared/libs/IntexGas.sol";
