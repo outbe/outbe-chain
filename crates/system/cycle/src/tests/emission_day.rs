@@ -747,3 +747,68 @@ fn a_stop_between_the_allocation_and_its_metadosis_runs_each_metadosis_one_run_l
         ],
     );
 }
+
+#[test]
+fn the_auction_starts_live_at_00_00_and_takes_its_brief_at_12_00() {
+    use alloy_sol_types::SolEvent;
+    use outbe_desis::precompile::IDesis;
+    use outbe_desis::schema::{AuctionStage, DesisContract};
+    use outbe_system_common::addresses::DESIS_ADDRESS;
+    let day = outbe_system_common::time::EmissionDate::new(20_240_101);
+    let mut storage = started_cycle();
+    storage.enter(|handle| {
+        let (_, index) = outbe_oracle::api::require_coen_pair(handle.clone(), 840).unwrap();
+        let oracle = OracleContract::new(handle);
+        for priced in [20_231_231, 20_240_101] {
+            oracle
+                .record_utc_day_vwap(priced, index, U256::from(2_000_000u64))
+                .unwrap();
+        }
+    });
+    let desis_events = |storage: &HashMapStorageProvider| {
+        let logs = storage.get_events(DESIS_ADDRESS);
+        let limits: Vec<_> = logs
+            .iter()
+            .filter_map(|log| IDesis::DesisLimitSet::decode_log_data(log).ok())
+            .map(|ev| (ev.emissionDay, ev.amountMinor))
+            .collect();
+        let cancels: Vec<_> = logs
+            .iter()
+            .filter_map(|log| IDesis::DesisCanceled::decode_log_data(log).ok())
+            .map(|ev| (ev.emissionDay, ev.reason))
+            .collect();
+        (limits, cancels)
+    };
+
+    storage.set_block_number(2);
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 16);
+    storage.enter(|handle| {
+        dispatch_at(handle.clone(), 2, jan(2, 0));
+        let desis = DesisContract::new(handle);
+        assert_eq!(
+            desis.auction_stage.read(&day).unwrap(),
+            AuctionStage::CommittingBids as u8
+        );
+        assert_eq!(desis.desis_limit_set.read(&day).unwrap(), 0);
+    });
+    assert_eq!(desis_events(&storage), (vec![], vec![]));
+
+    // The day has no Tribute, so its brief at 12:00 carries a zero limit and cancels the started
+    // auction.
+    storage.set_block_number(3);
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 16);
+    storage.enter(|handle| {
+        dispatch_at(handle.clone(), 3, jan(2, 12));
+        assert_eq!(
+            DesisContract::new(handle).auction_stage.read(&day).unwrap(),
+            AuctionStage::Canceled as u8
+        );
+    });
+    assert_eq!(
+        desis_events(&storage),
+        (
+            vec![(20_240_101, U256::ZERO)],
+            vec![(20_240_101, outbe_desis::constants::CANCELED_NO_LIMIT)]
+        )
+    );
+}
