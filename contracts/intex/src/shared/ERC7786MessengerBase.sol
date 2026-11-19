@@ -4,7 +4,7 @@ pragma solidity 0.8.30;
 import {IERC7786GatewaySource, IERC7786Recipient} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {IGatewayQuote} from "./interfaces/IGatewayQuote.sol";
+import {IGatewayQuote} from "@crosschain/interfaces/IGatewayQuote.sol";
 
 /// @title ERC7786MessengerBase
 /// @author Outbe

@@ -8,7 +8,7 @@ import {IERC7786GatewaySource, IERC7786Recipient} from "@openzeppelin/contracts/
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
-import {IGatewayQuote} from "@contracts/shared/interfaces/IGatewayQuote.sol";
+import {IGatewayQuote} from "@crosschain/interfaces/IGatewayQuote.sol";
 import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";

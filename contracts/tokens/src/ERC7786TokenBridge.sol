@@ -14,7 +14,7 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 import {IStablecoin} from "@precompiles/IStablecoin.sol";
 
 import {DEAD_ADDRESS} from "@shared/BurnAddress.sol";
-import {IGatewayQuote} from "./interfaces/IGatewayQuote.sol";
+import {IGatewayQuote} from "@crosschain/interfaces/IGatewayQuote.sol";
 import {IERC7786TokenReceiver} from "./interfaces/IERC7786TokenReceiver.sol";
 
 /// @title ERC7786TokenBridge
