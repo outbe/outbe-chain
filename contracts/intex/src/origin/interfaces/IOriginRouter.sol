@@ -89,10 +89,9 @@ interface IOriginRouter {
     /// @param seriesCount Number of series the chunk carries.
     event IssuanceInstructionsSent(bytes32 indexed sendId, bytes14 indexed seriesId, uint256 seriesCount);
 
-    /// @notice Emitted when a mark-called message is sent to a target chain.
-    /// @param sendId Bridge send identifier.
-    /// @param seriesId Series identifier.
-    event MarkCalledSent(bytes32 indexed sendId, bytes14 indexed seriesId);
+    /// @notice Emitted for each series of a call notice that leaves for a target chain, also when a
+    ///         kept notice leaves through {retryMessageSend}.
+    event IntexSeriesCallNoticeSent(bytes32 indexed sendId, bytes14 indexed seriesId, uint32 indexed dstChainId);
 
     /// @notice Caller of the proceeds hook is not the wired token bridge.
     error UnauthorizedProceedsCaller(address caller);
@@ -118,6 +117,12 @@ interface IOriginRouter {
         uint64 gasLimit;
         bool sent;
         bytes payload;
+    }
+
+    /// @notice A call notice leg the router kept: its chain and the index for {retryMessageSend}.
+    struct FailedCallNoticeLeg {
+        uint32 dstChainId;
+        uint256 idx;
     }
 
     /// @notice Entry and call price of one reference currency for a day.
@@ -276,9 +281,11 @@ interface IOriginRouter {
     ///         series that share both the decision that called them and its timestamp.
     ///         Restricted to `INTEX_FACTORY_ROLE`.
     /// @dev `calledAt` is the origin's own stamp, so delivery lag never lengthens a target's deadline.
+    /// @return failedLegs The legs the router kept, so the caller can retry each chain.
     function sendIntexSeriesCallNotice(uint32 emissionDay, uint64 calledAt, bytes14[] calldata seriesIds)
         external
-        payable;
+        payable
+        returns (FailedCallNoticeLeg[] memory failedLegs);
 
     /// @notice Permissionless flush of a parked outbound leg.
     function retryMessageSend(uint256 idx) external;
